@@ -75,7 +75,7 @@ const rowWithFacts = {
   tileBlockedNow: false,
 };
 
-const SCRIPT = 'builder.water_crop({ x: 10, y: 12, expectedTargetId: "crop_deadbeef" });';
+const SCRIPT = 'builder.water_crop({ x: 10, y: 12, expectedTargetId: "crop_deadbeef", charge: 0 });';
 
 function compileAgainst(cropTargets: readonly Readonly<Record<string, unknown>>[]) {
   const snapshot = { ...baseSnapshot, cropTargets } as unknown as Snapshot;
@@ -115,8 +115,8 @@ test("the warning list is bounded while its count is not", () => {
   const steps = Array.from(
     { length: 6 },
     (_, index) =>
-      `builder.water_crop({ x: ${10 + index}, y: 12, expectedTargetId: "crop_deadbeef" });\n` +
-      `builder.water_crop({ x: ${10 + index}, y: 13, expectedTargetId: "crop_deadbeef" });`,
+      `builder.water_crop({ x: ${10 + index}, y: 12, expectedTargetId: "crop_deadbeef", charge: 0 });\n` +
+      `builder.water_crop({ x: ${10 + index}, y: 13, expectedTargetId: "crop_deadbeef", charge: 0 });`,
   ).join("\n");
   const rows = Array.from({ length: 6 }, (_, index) =>
     ["a", "b"].map((suffix) => ({

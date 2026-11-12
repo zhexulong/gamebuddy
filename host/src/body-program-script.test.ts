@@ -232,7 +232,7 @@ const WATER_BY_DOOR = `
 for (const crop of snapshot.cropTargets ?? []) {
   if (builder.isFull()) break;
   builder.move_to_tile({ x: crop.x, y: crop.y });
-  builder.water_crop({ x: crop.x, y: crop.y, expectedTargetId: crop.targetId });
+  builder.water_crop({ x: crop.x, y: crop.y, expectedTargetId: crop.targetId, charge: 0 });
 }
 `;
 
@@ -306,7 +306,7 @@ function skipsOf(nodes: readonly PlanNode[], failedNodeId: string): readonly str
  */
 test("a strip of independent steps is ordered, not chained, so one failed tile skips no other tile", () => {
   const nodes = nodesOf(
-    compile("for (const tile of snapshot.soilTiles ?? []) { builder.till_soil({ x: tile.x, y: tile.y }); }", {
+    compile("for (const tile of snapshot.soilTiles ?? []) { builder.till_soil({ x: tile.x, y: tile.y, charge: 0 }); }", {
       enabledActionIds: ["till_soil"],
       soilTiles: [
         { x: 60, y: 18 },
@@ -345,7 +345,7 @@ test("each tile's planting consumes that tile's tilling, and only that tile's", 
   const nodes = nodesOf(
     compile(
       "for (const tile of snapshot.soilTiles ?? []) {\n" +
-        "  builder.till_soil({ x: tile.x, y: tile.y });\n" +
+        "  builder.till_soil({ x: tile.x, y: tile.y, charge: 0 });\n" +
         '  builder.plant_seed({ x: tile.x, y: tile.y, slot: 4, expectedQualifiedItemId: "472", expectedTargetId: `seed_${tile.x}` });\n' +
         "}",
       {
@@ -763,7 +763,7 @@ test("a step after talk_to_npc gets the dismissal inserted, and the answer says 
 test("a plan whose steps never hold the body gets no dismissal inserted", () => {
   const result = compile(`
   builder.move_to_tile({ x: 12, y: 8 });
-  builder.water_crop({ x: 12, y: 8, expectedTargetId: "crop_01" });
+  builder.water_crop({ x: 12, y: 8, expectedTargetId: "crop_01", charge: 0 });
   `);
   assert.deepEqual(
     nodesOf(result).map((node) => node.actionId),
@@ -1110,7 +1110,7 @@ builder.sleep();
   const afterMenu = nodesOf(
     compile(`
 builder.dismiss_modal();
-builder.water_crop({ x: 12, y: 8, expectedTargetId: "crop_01" });
+builder.water_crop({ x: 12, y: 8, expectedTargetId: "crop_01", charge: 0 });
 `),
   );
   assert.deepEqual(

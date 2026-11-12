@@ -7,6 +7,7 @@ import {
   MAX_FOR_EACH_ROWS,
   MAX_FOR_EACH_RULES,
   MAX_FOR_EACH_STEPS,
+  PLAN_FOR_EACH_ROW_IDENTITY_ARGUMENT,
   PLAN_FOR_EACH_ROW_IDENTITY_REFUSAL,
   PLAN_FOR_EACH_SOURCES,
   type PlanForEachLoop,
@@ -214,7 +215,7 @@ const MAX_REPORTED_PLAN_INSERTIONS = 16;
  * reached and cannot be enumerated here. That answer carries its own `reasonCode`, which names the call it died on
  * (`plan_script_unknown_action:<name>`), and the lists name the calls that had compiled before it.
  */
-export type PlanCallAccount = Readonly<{
+type PlanCallAccount = Readonly<{
   /** Her calls whose own step is a node of the program. */
   acceptedSteps: readonly string[];
   acceptedStepsCount: number;
@@ -897,12 +898,12 @@ export function planWorkDescription(actions: readonly PublishedPlanAction[]): st
     "builder.for_each({\n" +
     "  source: { area: { x: 60, y: 18, w: 20, h: 3 } },\n" +
     "  where: [{ col: { every: 3, offset: 0 } }],\n" +
-    '  do: { action: "till_soil" }\n' +
+    '  do: { action: "till_soil", charge: 0 }\n' +
     "});\n" +
     "// A tile's work is a CHAIN when one action does not finish it - till, then sow, in this order:\n" +
     "builder.for_each({\n" +
     "  source: { area: { x: 60, y: 18, w: 20, h: 3 } },\n" +
-    '  do: [{ action: "till_soil" }, { action: "plant_seed", seed: "hops" }]\n' +
+    '  do: [{ action: "till_soil", charge: 0 }, { action: "plant_seed", seed: "hops" }]\n' +
     "});\n" +
     "// Or a batch over a snapshot family:\n" +
     "for (const crop of snapshot.cropTargets) {\n" +
@@ -914,7 +915,7 @@ export function planWorkDescription(actions: readonly PublishedPlanAction[]): st
     forEachRowIdentityText() +
     "A row no predicate claims is reported rather than skipped: ONE code for the whole patch when NO row matched it (no_row_matched_where:<field>_<test>_<value>:<the occupants the tiles carry>), and one per tile (no_rule_matched:<kind>@<x>,<y>) when some rows did. One loop addresses at most " +
     String(MAX_FOR_EACH_ROWS) +
-    " rows, and a loop inside a loop is refused by name. The Mod EXECUTES the loop: each row is decided against the world as it is at that moment and dispatched through the same action path a single step takes, so the node's answer carries `succeeded`/`failed`/`refused`/`left_alone`/`not_matched`/`deferred` counts and ONE ROW PER TILE with its own action, state and reasonCode - and a row worked as a chain also carries its `steps` in the order it took them, plus `stopped_at=<step>:<reasonCode>` when it stopped before its last step, so a tile that stopped half-done says where. A tile that is not on the farm (not_on_farm), a kind `by_kind` cannot resolve (no_action_for_kind:<kind>), an action the live policy disables (row_action_not_enabled:<actionId>) and an argument the action declares that the loop cannot supply (row_argument_missing:<name>) are each NAMED PER ROW rather than skipped - a skipped row reads as a cleared patch. THE ARGUMENTS A STEP MAY CARRY ARE THAT ACTION'S OWN (its `argumentSchema`): row_argument_missing:<name> means the action declares `name` and your step left it out, and a name the action does NOT declare is row_argument_unknown:<name> - `slot` belongs to `cut_weeds`, not to `till_soil`, so one action's argument list is never another's. Only { area } is expanded today: { family } and { query } are refused by name as " +
+    " rows, and a loop inside a loop is refused by name. The Mod EXECUTES the loop: each row is decided against the world as it is at that moment and dispatched through the same action path a single step takes, so the node's answer carries `succeeded`/`failed`/`refused`/`left_alone`/`not_matched`/`deferred` counts and ONE ROW PER TILE with its own action, state and reasonCode - and a row worked as a chain also carries its `steps` in the order it took them, plus `stopped_at=<step>:<reasonCode>` when it stopped before its last step, so a tile that stopped half-done says where. A tile that is not on the farm (not_on_farm), a kind `by_kind` cannot resolve (no_action_for_kind:<kind>), an action the live policy disables (row_action_not_enabled:<actionId>) and an argument the action declares that the loop cannot supply (row_argument_missing:<name>) are each NAMED PER ROW rather than skipped - a skipped row reads as a cleared patch. THE ARGUMENTS A STEP MAY CARRY ARE THAT ACTION'S OWN (its `argumentSchema`): row_argument_missing:<name> means the action declares `name` and your step left it out, and a name the action does NOT declare is row_argument_unknown:<name> - `slot` belongs to `cut_weeds`, not to `till_soil`, so one action's argument list is never another's. A STEP THAT LEAVES OUT AN ARGUMENT ONLY THE CALLER CAN SUPPLY IS REFUSED AT COMPILE TIME (loop_do_argument_missing:<name>:declared=[<the action's arguments>]) rather than per row, so one wrong step costs one repair and not a whole pass: fresh ground is tilled with `{ action: \"till_soil\", charge: 0 }` - charge 0 is the one named tile, and a charge the held tool cannot reach is refused by name instead of being quietly reduced - while `by_kind` covers only the kinds whose work needs no per-action argument. Only { area } is expanded today: { family } and { query } are refused by name as " +
     forEachSourcesUnavailableText() +
     ", and one loop document may be at most " +
     String(MAX_FOR_EACH_LOOP_DOCUMENT_CHARS) +
@@ -973,7 +974,7 @@ function planActionVocabularyText(actions: readonly PublishedPlanAction[]): stri
  * on every planting node with a fact the row cannot carry, which is a banner, not a signal.
  * </p>
  */
-export const PLAN_LAYOUT_FACTS: Readonly<Record<string, readonly string[]>> = Object.freeze({
+const PLAN_LAYOUT_FACTS: Readonly<Record<string, readonly string[]>> = Object.freeze({
   cropTargets: Object.freeze(["isRaised", "tileBlockedNow"]),
 });
 
@@ -1010,7 +1011,7 @@ function nodeTile(node: PlanNode): Readonly<{ x: number; y: number }> | undefine
  * a window and a silent prefix, and it is why the list and `layoutFactsAbsentCount` can never be read as disagreeing.
  * </p>
  */
-export function layoutFactsAbsent(
+function layoutFactsAbsent(
   nodes: readonly PlanNode[],
   actions: readonly PublishedPlanAction[],
   snapshot: Snapshot,
@@ -2195,6 +2196,9 @@ function emitForEachNode(value: unknown, actions: readonly PublishedPlanAction[]
       state,
     );
   const loop: PlanForEachLoop = reading.loop;
+  // The step's own arguments are checked HERE as well as per row: an argument only the caller can supply, left out of a
+  // step, is a fact the compiler knows - and learning it from a spent pass costs the whole patch.
+  refuseMissingStepArguments(loop, actions, state);
   const previous = state.nodes[state.nodes.length - 1];
   if (previous !== undefined && previous.actionId === FOR_EACH_PLAN_ACTION_ID) {
     const previousLoop = previous.arguments.loop as PlanForEachLoop | undefined;
@@ -2526,4 +2530,72 @@ function deepFreeze<TValue>(value: TValue): TValue {
   Object.freeze(value);
   for (const nested of Object.values(value as Record<string, unknown>)) deepFreeze(nested);
   return value;
+}
+
+/**
+ * The arguments a loop row derives from the tile itself, so a step neither supplies nor withholds.
+ *
+ * One fact, one spelling: the Mod's dispatch seam keeps the same three (`x`, `y`, and the row's minted target id) and
+ * refuses a step that names one of them (`row_argument_reserved:<name>`), so the compiler's check below cannot drift
+ * from the rule the row answers with.
+ */
+const ROW_DERIVED_STEP_ARGUMENTS: readonly string[] = Object.freeze(["x", "y", PLAN_FOR_EACH_ROW_IDENTITY_ARGUMENT]);
+
+/**
+ * The arguments a step may still leave out, and why it is not every argument.
+ *
+ * MEASURED, and it is a finding rather than a permission: every shipped loop example - the one in the description and the
+ * intercropping one in `body-program-area-dispatch.test.ts` - writes `do: { action: "plant_seed", seed: "hops" }`,
+ * which omits `slot` and `expectedQualifiedItemId` (and names an argument `plant_seed` does not declare at all). The Mod
+ * refuses every one of those rows today, because `TryBuildRowArguments` demands each declared argument the row cannot
+ * derive, so those examples are ALREADY broken per row. Moving them to plan time here would turn a repair of this unit
+ * into a rewrite of that form's documentation, so they are named instead; a THIRD name is a capability decision, and the
+ * test that reads this list asserts it holds exactly these two.
+ */
+export const STEP_ARGUMENTS_STILL_OMISSIBLE: readonly string[] = Object.freeze(["slot", "expectedQualifiedItemId"]);
+
+/**
+ * Refuses a loop whose step names an action and leaves out an argument the row could never supply.
+ *
+ * <p>
+ * THE ROW CANNOT SUPPLY IT EITHER. A `for_each` row's arguments are the tile's own coordinates, the identity the family
+ * mints from the live tile, and the step's scalars - nothing else. So a step that omits a declared argument is not a
+ * step the Mod can complete: every row closes `row_argument_missing:<name>` and the pass does nothing. Discovering that
+ * costs a whole pass, which is why the compiler says it here, in the call that wrote it, with the arguments the action
+ * actually declares. `charge` on `till_soil` and `water_crop` is that shape: `0` is the one named tile.
+ * </p>
+ *
+ * <p>
+ * A `by_kind` step names no action of its own - the Mod's classifier decides per row - so there is nothing here to
+ * compare it against, and its refusals stay the row's (`no_action_for_kind:<kind>`).
+ * </p>
+ */
+function refuseMissingStepArguments(
+  loop: PlanForEachLoop,
+  actions: readonly PublishedPlanAction[],
+  state: PlanScriptState,
+): void {
+  const declared = new Map(actions.map((action) => [action.actionId, action.arguments]));
+  for (const rule of forEachRules(loop)) {
+    if (rule.do === null) continue;
+    for (const step of rule.do) {
+      const arguments_ = declared.get(step.action);
+      if (arguments_ === undefined) continue;
+      const supplied = new Set(Object.keys(step));
+      const declaredNames = arguments_.map((argument) => argument.name);
+      const missing = declaredNames.filter(
+        (name) =>
+          !ROW_DERIVED_STEP_ARGUMENTS.includes(name) &&
+          !STEP_ARGUMENTS_STILL_OMISSIBLE.includes(name) &&
+          !supplied.has(name),
+      );
+      if (missing.length === 0) continue;
+      rejectPlanCall(
+        `plan_script_loop_do_argument_missing:${missing[0]!}:declared=[${declaredNames.join(",")}]`,
+        state,
+        undefined,
+        Object.freeze(missing),
+      );
+    }
+  }
 }

@@ -142,7 +142,7 @@ test("every accepted semantic evidence field rejects protocol scalar sentinels",
     [
       "water_crop",
       "crop_watered",
-      "location=Farm;target=crop_01;tile=37,18;tool_selected=watering_can;slot=2;tool_before=none;slot_before=0;before_watered=false;after_watered=true;water_before=1;water_after=0;water_consumed=true;stamina_before=100;stamina_after=98;stamina_delta=-2;expected_stamina_cost=2;tool_restored=none",
+      "location=Farm;target=crop_01;tile=37,18;tool_selected=watering_can;slot=2;tool_before=none;slot_before=0;before_watered=false;after_watered=true;water_before=1;water_after=0;water_consumed=true;water_expected_cost=1;charge_requested=0;charge_applied=0;window=32,13:42,23;tiles_changed=1;changed=37:18;stamina_before=100;stamina_after=98;stamina_delta=-2;expected_stamina_cost=2;tool_restored=none",
       ["location", "target", "tile"],
     ],
     [
@@ -333,7 +333,7 @@ test("a tool action's receipt is completed only with both the selection facts an
     [
       "water_crop",
       "crop_watered",
-      "location=Farm;target=crop_01;tile=38,18;tool_selected=watering_can;slot=2;tool_before=axe;slot_before=0;before_watered=false;after_watered=true;water_before=40;water_after=39;water_consumed=true;stamina_before=100;stamina_after=98;stamina_delta=-2;expected_stamina_cost=2;tool_restored=axe",
+      "location=Farm;target=crop_01;tile=38,18;tool_selected=watering_can;slot=2;tool_before=axe;slot_before=0;before_watered=false;after_watered=true;water_before=40;water_after=39;water_consumed=true;water_expected_cost=1;charge_requested=0;charge_applied=0;window=33,13:43,23;tiles_changed=1;changed=38:18;stamina_before=100;stamina_after=98;stamina_delta=-2;expected_stamina_cost=2;tool_restored=axe",
     ],
   ] as const;
   const completed = (actionId: string, reasonCode: string, detail: string): boolean =>
@@ -371,7 +371,7 @@ test("a tool action's receipt is completed only with both the selection facts an
 
 test("water_crop completion evidence accepts both Mod water relations and rejects inconsistent variants", () => {
   const normal =
-    "location=Farm;target=crop_abcdef0123456789;tile=38,18;tool_selected=watering_can;slot=2;tool_before=axe;slot_before=0;before_watered=false;after_watered=true;water_before=40;water_after=39;water_consumed=true;stamina_before=100;stamina_after=98;stamina_delta=-2;expected_stamina_cost=2;tool_restored=axe";
+    "location=Farm;target=crop_abcdef0123456789;tile=38,18;tool_selected=watering_can;slot=2;tool_before=axe;slot_before=0;before_watered=false;after_watered=true;water_before=40;water_after=39;water_consumed=true;water_expected_cost=1;charge_requested=0;charge_applied=0;window=33,13:43,23;tiles_changed=1;changed=38:18;stamina_before=100;stamina_after=98;stamina_delta=-2;expected_stamina_cost=2;tool_restored=axe";
   // FarmhandExecutionController emits no bottomless/enchantment discriminator.
   // Its producer-defined waterConsumed=true branch can leave WaterLeft
   // unchanged.
@@ -1301,7 +1301,7 @@ function succeededWaterCropReceipt(): ExecutionReceipt {
     revision: 7,
     evidence: {
       detail:
-        "location=Farm;target=crop_abcdef0123456789;tile=38,18;tool_selected=watering_can;slot=2;tool_before=axe;slot_before=0;before_watered=false;after_watered=true;water_before=40;water_after=39;water_consumed=true;stamina_before=100;stamina_after=98;stamina_delta=-2;expected_stamina_cost=2;tool_restored=axe",
+        "location=Farm;target=crop_abcdef0123456789;tile=38,18;tool_selected=watering_can;slot=2;tool_before=axe;slot_before=0;before_watered=false;after_watered=true;water_before=40;water_after=39;water_consumed=true;water_expected_cost=1;charge_requested=0;charge_applied=0;window=33,13:43,23;tiles_changed=1;changed=38:18;stamina_before=100;stamina_after=98;stamina_delta=-2;expected_stamina_cost=2;tool_restored=axe",
     },
   };
 }

@@ -549,83 +549,155 @@ function canBeSerializedExactArrival(tile: readonly [number, number], target: re
   return x * x + y * y <= 0.04;
 }
 
-function hasTillSoilCompletionEvidence(detail: string): boolean {
-  const evidence = parseSemicolonEvidence(detail);
-  if (evidence === null) return false;
-  const expectedKeys = [
-    "location",
-    "target",
-    "tool_selected",
-    "slot",
-    "tool_before",
-    "slot_before",
-    "before",
-    "after",
-    "stamina_before",
-    "stamina_after",
-    "stamina_delta",
-    "expected_stamina_cost",
-    "tool_restored",
-  ];
-  if (Object.keys(evidence).length !== expectedKeys.length || !expectedKeys.every((key) => key in evidence))
-    return false;
+/**
+ * The receipt-detail keys a `till_soil` success publishes, declared ONCE.
+ *
+ * The Mod states its own copy in `ToolActionEvidence.TillSoil` and
+ * `DeclaredToolSelectionTests.EveryToolActionStillPublishesExactlyTheEvidenceKeysTheHostPins` compares the two, so a
+ * key added on one side and not the other fails there rather than in a live run. `charge_requested` and
+ * `charge_applied` are separate keys because a charge above the held tool's ceiling is REFUSED rather than clamped:
+ * the two being equal is the receipt's own proof that the swing was performed at the charge the caller named.
+ * `window`, `tiles_changed` and `changed` describe what the ONE native use actually touched - a measured consequence
+ * of the engine's own footprint, never the completion condition.
+ */
+const TILL_SOIL_EVIDENCE_KEYS = Object.freeze([
+  "location",
+  "target",
+  "tool_selected",
+  "slot",
+  "tool_before",
+  "slot_before",
+  "before",
+  "after",
+  "charge_requested",
+  "charge_applied",
+  "window",
+  "tiles_changed",
+  "changed",
+  "stamina_before",
+  "stamina_after",
+  "stamina_delta",
+  "expected_stamina_cost",
+  "tool_restored",
+]);
+
+/** The same declaration for `water_crop`, plus `water_expected_cost` (the engine spends `power + 1` water, not one). */
+const WATER_CROP_EVIDENCE_KEYS = Object.freeze([
+  "location",
+  "target",
+  "tile",
+  "tool_selected",
+  "slot",
+  "tool_before",
+  "slot_before",
+  "before_watered",
+  "after_watered",
+  "water_before",
+  "water_after",
+  "water_consumed",
+  "water_expected_cost",
+  "charge_requested",
+  "charge_applied",
+  "window",
+  "tiles_changed",
+  "changed",
+  "stamina_before",
+  "stamina_after",
+  "stamina_delta",
+  "expected_stamina_cost",
+  "tool_restored",
+]);
+
+/** The tool-charge facts both generated-tool rows publish, read as one shape. */
+function hasToolChargeEvidence(evidence: Readonly<Record<string, string>>): boolean {
+  const requested = integerEvidenceValue(evidence.charge_requested);
+  const applied = integerEvidenceValue(evidence.charge_applied);
   return (
-    hasBoundedNonemptyEvidenceValue(evidence.location) &&
-    evidence.location !== "none" &&
-    hasTileEvidenceValue(evidence.target) &&
-    hasToolSelectionEvidence(evidence, "hoe") &&
-    evidence.before === "none" &&
-    evidence.after === "HoeDirt" &&
-    hasStaminaConservationEvidence(evidence)
+    requested !== null &&
+    applied !== null &&
+    // `0` is the uncharged tap and covers exactly the named tile; 5 is the top of the engine's ladder
+    // (`Tool.tilesAffected`'s last case is `power >= 6`, Tool.cs:1062).
+    requested <= 5 &&
+    // Refused rather than clamped, so a receipt that says otherwise is reporting a swing the caller did not ask for.
+    applied === requested
   );
 }
 
-function hasWaterCropCompletionEvidence(detail: string): boolean {
-  const evidence = parseSemicolonEvidence(detail);
-  if (evidence === null) return false;
-  const expectedKeys = [
-    "location",
-    "target",
-    "tile",
-    "tool_selected",
-    "slot",
-    "tool_before",
-    "slot_before",
-    "before_watered",
-    "after_watered",
-    "water_before",
-    "water_after",
-    "water_consumed",
-    "stamina_before",
-    "stamina_after",
-    "stamina_delta",
-    "expected_stamina_cost",
-    "tool_restored",
-  ];
-  if (Object.keys(evidence).length !== expectedKeys.length || !expectedKeys.every((key) => key in evidence))
-    return false;
-  const before = integerEvidenceValue(evidence.water_before);
-  const after = integerEvidenceValue(evidence.water_after);
-  return (
-    hasBoundedNonemptyEvidenceValue(evidence.location) &&
-    evidence.location !== "none" &&
-    hasOpaqueIdEvidenceValue(evidence.target) &&
-    hasTileEvidenceValue(evidence.tile) &&
-    hasToolSelectionEvidence(evidence, "watering_can") &&
-    evidence.before_watered === "false" &&
-    evidence.after_watered === "true" &&
-    before !== null &&
-    after !== null &&
-    // FarmhandExecutionController emits only waterConsumed plus before/after
-    // quantities: bottomless cans and watering-can enchantments legitimately
-    // report a consumed watering operation without decrementing WaterLeft.
-    // Therefore accept exactly the producer-observable relation, 0 or 1 used,
-    // rather than inventing an unavailable branch discriminator.
-    after <= before &&
-    before - after <= 1 &&
-    evidence.water_consumed === "true" &&
-    hasStaminaConservationEvidence(evidence)
+/**
+ * The box a charged swing scanned and the tiles it moved, as `x:y|x:y` (or `none`).
+ *
+ * `tiles_changed` is the count of `changed` and nothing else - the Mod never publishes a number it did not read, so a
+ * mismatch here means the receipt was assembled from two different reads.
+ */
+function hasAreaFootprintEvidence(evidence: Readonly<Record<string, string>>): boolean {
+  const box = /^(-?(?:0|[1-9][0-9]*)),(-?(?:0|[1-9][0-9]*)):(-?(?:0|[1-9][0-9]*)),(-?(?:0|[1-9][0-9]*))$/.exec(
+    evidence.window ?? "",
   );
+  const changed = evidence.changed;
+  const tilesChanged = integerEvidenceValue(evidence.tiles_changed);
+  if (box === null || changed === undefined || tilesChanged === null) return false;
+  const left = Number(box[1]);
+  const top = Number(box[2]);
+  const right = Number(box[3]);
+  const bottom = Number(box[4]);
+  // The scanned box is a real box, which is what makes it a superset of the footprint rather than a decorative field.
+  if (!(left < right && top < bottom)) return false;
+  if (changed === "none") return tilesChanged === 0;
+  const tiles = changed.split("|");
+  if (tiles.length !== tilesChanged) return false;
+  return tiles.every((tile) => {
+    const match = /^(-?(?:0|[1-9][0-9]*)):(-?(?:0|[1-9][0-9]*))$/.exec(tile);
+    if (match === null) return false;
+    const x = Number(match[1]);
+    const y = Number(match[2]);
+    return x >= left && x <= right && y >= top && y <= bottom;
+  });
+}
+
+function hasTillSoilCompletionEvidence(detail: string): boolean {
+  return declaredCompletionEvidence(detail, TILL_SOIL_EVIDENCE_KEYS, (evidence) => {
+    return (
+      hasBoundedNonemptyEvidenceValue(evidence.location) &&
+      evidence.location !== "none" &&
+      hasTileEvidenceValue(evidence.target) &&
+      hasToolSelectionEvidence(evidence, "hoe") &&
+      evidence.before === "none" &&
+      evidence.after === "HoeDirt" &&
+      hasToolChargeEvidence(evidence) &&
+      hasAreaFootprintEvidence(evidence) &&
+      hasStaminaConservationEvidence(evidence)
+    );
+  });
+}
+
+function hasWaterCropCompletionEvidence(detail: string): boolean {
+  return declaredCompletionEvidence(detail, WATER_CROP_EVIDENCE_KEYS, (evidence) => {
+    const before = integerEvidenceValue(evidence.water_before);
+    const after = integerEvidenceValue(evidence.water_after);
+    const expected = integerEvidenceValue(evidence.water_expected_cost);
+    return (
+      hasBoundedNonemptyEvidenceValue(evidence.location) &&
+      evidence.location !== "none" &&
+      hasOpaqueIdEvidenceValue(evidence.target) &&
+      hasTileEvidenceValue(evidence.tile) &&
+      hasToolSelectionEvidence(evidence, "watering_can") &&
+      evidence.before_watered === "false" &&
+      evidence.after_watered === "true" &&
+      before !== null &&
+      after !== null &&
+      expected !== null &&
+      // THE ENGINE SPENDS WATER BY THE CHARGE, NOT BY THE TILE: `WaterLeft -= power + 1` (WateringCan.cs:189-191), so a
+      // charge-4 watering of eighteen tiles spends 5 units, and a bottomless can spends none. The Mod publishes the
+      // engine's own cost as `water_expected_cost` (`charge_applied + 1`, or 0 for a bottomless can) and this checks the
+      // measured drop against it exactly, rather than accepting a fixed one-unit window that was only ever right for an
+      // uncharged tap.
+      before - after === expected &&
+      evidence.water_consumed === "true" &&
+      hasToolChargeEvidence(evidence) &&
+      hasAreaFootprintEvidence(evidence) &&
+      hasStaminaConservationEvidence(evidence)
+    );
+  });
 }
 
 /** Parses bounded key/value evidence without accepting duplicate fields. */

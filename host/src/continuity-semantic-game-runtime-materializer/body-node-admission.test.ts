@@ -274,7 +274,7 @@ test("a loop whose row names an action this connection does not offer is refused
 
 /** The ordinary node keeps the word it had: this fix changed what a FORM is, not what an action is. */
 test("an action this connection does not offer is still refused policy_denied", async () => {
-  const node = compiledNode('builder.water_crop({ x: 60, y: 9, expectedTargetId: "crop_deadbeef" });');
+  const node = compiledNode('builder.water_crop({ x: 60, y: 9, expectedTargetId: "crop_deadbeef", charge: 0 });');
   assert.equal(node.actionId, "water_crop");
   assert.deepEqual(await admit(node, ["till_soil"]), { result: "rejected", code: "policy_denied" });
 });

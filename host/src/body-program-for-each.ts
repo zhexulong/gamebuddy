@@ -24,10 +24,10 @@ import { hasOnlyKeys, isNonNegativeSafeInteger, isOpaqueId, isRecord } from "./p
  */
 
 /** One scalar a `where` predicate or a `do` argument may carry. */
-export type PlanForEachScalar = string | number | boolean;
+type PlanForEachScalar = string | number | boolean;
 
 /** A repeating position guard: `every: 3, offset: 1` claims local index 1, 4, 7 ... */
-export type PlanForEachStride = Readonly<{ every: number; offset: number }>;
+type PlanForEachStride = Readonly<{ every: number; offset: number }>;
 
 /**
  * One predicate over a row. THREE SPELLINGS: a FIELD test, a POSITION guard on `col`/`row`, or the OCCUPANT of the tile.
@@ -42,7 +42,7 @@ export type PlanForEachStride = Readonly<{ every: number; offset: number }>;
  * It exists because `kind` answers a different question: a mixed patch filtered by kind says "work whatever the Mod would
  * clear with a scythe", and one filtered by occupant says "work the weeds and leave the stones".
  */
-export type PlanForEachPredicate = Readonly<{
+type PlanForEachPredicate = Readonly<{
   col?: PlanForEachStride;
   row?: PlanForEachStride;
   field?: string;
@@ -56,10 +56,10 @@ export type PlanForEachPredicate = Readonly<{
   in?: readonly PlanForEachScalar[];
 }>;
 
-export type PlanForEachArea = Readonly<{ x: number; y: number; w: number; h: number }>;
+type PlanForEachArea = Readonly<{ x: number; y: number; w: number; h: number }>;
 
 /** Where a loop reads its rows from: one rectangle, one published family, or one subject the Mod classifies. */
-export type PlanForEachSource =
+type PlanForEachSource =
   | Readonly<{ area: PlanForEachArea }>
   | Readonly<{ family: string }>
   | Readonly<{ query: Readonly<{ subject: string; only?: string }> }>;
@@ -70,7 +70,7 @@ export type PlanForEachSource =
  * The SHAPE is exactly the object a lone `do` has always been - `{ action, <argument>: <scalar> }` - so a chain is that
  * object written several times and never a second argument spelling beside it.
  */
-export type PlanForEachStep = Readonly<{ action: string }> & Readonly<Record<string, PlanForEachScalar>>;
+type PlanForEachStep = Readonly<{ action: string }> & Readonly<Record<string, PlanForEachScalar>>;
 
 /**
  * What a matching row gets: an ORDERED CHAIN of steps worked on one tile in one pass, or `null` for "leave this row alone".
@@ -87,7 +87,7 @@ export type PlanForEachStep = Readonly<{ action: string }> & Readonly<Record<str
  * has one shape to run.
  * </p>
  */
-export type PlanForEachEffect = readonly PlanForEachStep[];
+type PlanForEachEffect = readonly PlanForEachStep[];
 
 /**
  * One more rule of the same pass: an optional predicate list and what a matching row gets.
@@ -111,7 +111,7 @@ export type PlanForEachLoop = Readonly<{
 export const PLAN_FOR_EACH_SOURCES: readonly string[] = Object.freeze(["area", "family", "query"]);
 
 /** The two axes a repeating position guard claims. */
-export const PLAN_FOR_EACH_AXES: readonly string[] = Object.freeze(["col", "row"]);
+const PLAN_FOR_EACH_AXES: readonly string[] = Object.freeze(["col", "row"]);
 
 /**
  * The spellings a `where` predicate may be written with: the keys that say WHAT one predicate tests.
@@ -128,7 +128,7 @@ export const PLAN_FOR_EACH_PREDICATE_SPELLINGS: readonly string[] = Object.freez
 ]);
 
 /** The two keys a repeating position guard is written with, declared once for the same reason the spellings are. */
-export const PLAN_FOR_EACH_STRIDE_SPELLINGS: readonly string[] = Object.freeze(["every", "offset"]);
+const PLAN_FOR_EACH_STRIDE_SPELLINGS: readonly string[] = Object.freeze(["every", "offset"]);
 
 /**
  * The word both sides answer when a declaration names something the `where` grammar does not have.
@@ -140,12 +140,12 @@ export const PLAN_FOR_EACH_STRIDE_SPELLINGS: readonly string[] = Object.freeze([
 export const FOR_EACH_WHERE_UNRECOGNISED = "for_each_where_unrecognised";
 
 /** `<given>;allowed=<a>,<b>`, with the alternatives taken from the declaration that owns them. */
-export function forEachWhereUnrecognised(given: string, allowed: readonly string[]): string {
+function forEachWhereUnrecognised(given: string, allowed: readonly string[]): string {
   return `${given};allowed=${allowed.join(",")}`;
 }
 
 /** The comparisons a field predicate offers. `in` is the only one that takes a list. */
-export const PLAN_FOR_EACH_COMPARISONS: readonly string[] = Object.freeze(["eq", "ne", "lt", "lte", "gt", "gte", "in"]);
+const PLAN_FOR_EACH_COMPARISONS: readonly string[] = Object.freeze(["eq", "ne", "lt", "lte", "gt", "gte", "in"]);
 
 /**
  * The token that means "whatever action the Mod's own classifier names for this row's kind".
@@ -174,7 +174,6 @@ export const PLAN_FOR_EACH_ROW_IDENTITY_ARGUMENT = "expectedTargetId";
  * and the compiler answers the same word so the caller cannot be told one code and refused with another.
  */
 export const PLAN_FOR_EACH_ROW_IDENTITY_REFUSAL = "for_each_row_identity_is_not_the_callers";
-
 /**
  * How many rows one loop may address.
  *
@@ -186,7 +185,7 @@ export const PLAN_FOR_EACH_ROW_IDENTITY_REFUSAL = "for_each_row_identity_is_not_
 export const MAX_FOR_EACH_ROWS = 64;
 
 /** How many predicates one loop may carry: a conjunction long enough to be a rule, short enough to be read. */
-export const MAX_FOR_EACH_PREDICATES = 8;
+const MAX_FOR_EACH_PREDICATES = 8;
 
 /** How many rules one pass may carry, this loop's own included. */
 export const MAX_FOR_EACH_RULES = 8;
@@ -218,7 +217,7 @@ export function forEachDocumentLength(loop: PlanForEachLoop): number {
 }
 
 /** How many values one `in` list may carry. */
-export const MAX_FOR_EACH_VALUES = 8;
+const MAX_FOR_EACH_VALUES = 8;
 
 /**
  * How long the word `where: { occupant }` names may be.
@@ -230,7 +229,7 @@ export const MAX_FOR_EACH_VALUES = 8;
 export const MAX_FOR_EACH_OCCUPANT_CHARS = 64;
 
 /** How many arguments one `do` effect may name. */
-export const MAX_FOR_EACH_EFFECT_ARGUMENTS = 16;
+const MAX_FOR_EACH_EFFECT_ARGUMENTS = 16;
 
 /**
  * How many steps one row may chain: long enough to be the clear-till-water-sow chain a farm tile really needs, short enough
@@ -244,7 +243,7 @@ export const MAX_FOR_EACH_STEPS = 4;
  * `code` is the grammar's own name for the mistake and `detail` says WHICH row of the declaration broke it, so the
  * caller's refusal names the thing to fix instead of the whole document it already wrote.
  */
-export type PlanForEachRejection = Readonly<{ ok: false; code: string; detail: string }>;
+type PlanForEachRejection = Readonly<{ ok: false; code: string; detail: string }>;
 
 export type PlanForEachReading = Readonly<{ ok: true; loop: PlanForEachLoop }> | PlanForEachRejection;
 

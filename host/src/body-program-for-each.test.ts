@@ -28,6 +28,7 @@ import {
   PLAN_FORM_ACTION_IDS,
   planActionsFromRegistrations,
   planWorkDescription,
+  STEP_ARGUMENTS_STILL_OMISSIBLE,
 } from "./body-program-script.js";
 import { type ActionRegistration, type Snapshot, validateBodyProgramCandidateRequest } from "./protocol.js";
 
@@ -295,9 +296,9 @@ test("merge_rule_union: a merged pass carries every rule both loops wrote, or re
  */
 test("a refused loop refuses the plan, and the answer names the loop and the steps beside it", () => {
   const result = compile(
-    `builder.till_soil({ x: 60, y: 18 });
+    `builder.till_soil({ x: 60, y: 18, charge: 0 });
      builder.for_each({ source: { area: { x: 0, y: 0, w: 20, h: 20 } }, do: { action: "cut_weeds" } });
-     builder.till_soil({ x: 61, y: 18 });`,
+     builder.till_soil({ x: 61, y: 18, charge: 0 });`,
   );
   assert.equal(result.ok, false, "a plan that lost a step must not be reported as accepted");
   assert.deepEqual(result.ok ? [] : result.rejected.map((entry) => entry.reasonCode), [
@@ -518,7 +519,7 @@ test("a row identity the caller wrote is refused by name, and the name is the Mo
   );
 
   const result = compile(
-    `builder.till_soil({ x: 60, y: 18 });
+    `builder.till_soil({ x: 60, y: 18, charge: 0 });
      builder.for_each({ source: { area: ${PATCH} }, do: { action: "harvest_crop", expectedQualifiedItemId: "(O)24", expectedTargetId: "crop_0123456789abcdef" } });`,
   );
   assert.equal(
@@ -855,4 +856,93 @@ test("an occupant predicate is read, compiled, carried by the wire, and bounded 
     [...PLAN_FOR_EACH_PREDICATE_SPELLINGS],
     "a second test beside `occupant` is refused with the spellings this form has, not with a list written beside the message",
   );
+});
+
+/**
+ * An argument only the caller can supply is refused WHEN THE PLAN IS COMPILED, not once per row.
+ *
+ * <p>
+ * `till_soil` declares `charge` since the area-tool unit: one native use covers the tool's own footprint, and `0` is
+ * the single named tile. A `for_each` row supplies the tile, the identity the family mints from it, and the step's own
+ * scalars - so a step that leaves the charge out closes EVERY row `row_argument_missing:charge`, and the pass reports
+ * nothing worked. Learning that from a spent pass costs the whole patch, so the compiler answers it in the call that
+ * wrote it, naming the argument and the list the action actually declares.
+ * </p>
+ *
+ * <p>
+ * red-proof: remove `refuseMissingStepArguments` from `emitForEachNode` -> this compile is accepted and the loop is
+ * submitted, which is the per-row answer this exists to pre-empt.
+ * </p>
+ */
+test("a step that omits an argument only the caller can supply is refused at compile time", () => {
+  const missing = compile(`builder.for_each({ source: { area: { x: 60, y: 18, w: 3, h: 1 } }, do: { action: "till_soil" } });`);
+  assert.equal(missing.ok, false, "a step the rows could never complete must not be accepted");
+  assert.deepEqual(missing.ok ? [] : missing.rejected.map((entry) => entry.reasonCode), [
+    "plan_script_loop_do_argument_missing:charge:declared=[x,y,charge]",
+  ]);
+  assert.deepEqual(missing.dropped, ["n01:plan_script_loop_do_argument_missing:charge:declared=[x,y,charge]"]);
+  const refusedNames = missing.ok ? [] : (missing.missingArguments ?? []);
+  assert.deepEqual(refusedNames, ["charge"], "the answer names every argument left out, not just the first");
+
+  // With the charge supplied the same step compiles: the refusal names a missing argument, never the action.
+  const supplied = compile(
+    `builder.for_each({ source: { area: { x: 60, y: 18, w: 3, h: 1 } }, do: { action: "till_soil", charge: 0 } });`,
+  );
+  assert.equal(supplied.ok, true);
+
+  // And `by_kind` names no action of its own, so there is nothing for this check to compare against: the Mod's
+  // classifier decides per row and its answers stay the row's.
+  const byKind = compile(`builder.for_each({ source: { area: { x: 60, y: 18, w: 3, h: 1 } }, do: { action: "by_kind" } });`);
+  assert.equal(byKind.ok, true);
+
+  // The two names a step can still leave out are exactly the two the shipped examples omit, and no others: a third
+  // would be a capability decision taken outside a plan-time answer.
+  assert.deepEqual(
+    [...STEP_ARGUMENTS_STILL_OMISSIBLE],
+    ["slot", "expectedQualifiedItemId"],
+    "the omissible set is a measured finding, so it cannot grow silently",
+  );
+});
+
+/**
+ * The description TEACHES the repair, and the example it prints is a call the compiler accepts.
+ *
+ * <p>
+ * A refusal without a taught repair is the shape this repository keeps paying for: `by_kind` cannot work fresh ground
+ * any more (its step has nowhere to put a charge), and an agent that is only denied will retry the same loop. So the
+ * description says, in one sentence, that fresh ground is tilled with an explicit `charge: 0` step - and the loop
+ * example it prints carries the argument, because a description that teaches a shape the compiler refuses is the same
+ * defect in reverse.
+ * </p>
+ *
+ * <p>
+ * red-proof: drop the sentence from `planWorkDescription`, or drop `charge: 0` from the printed example -> this test
+ * names what stopped being taught.
+ * </p>
+ */
+test("the loop description teaches the charge and prints a step the compiler accepts", () => {
+  const description = planWorkDescription(ACTIONS);
+  assert.ok(
+    description.includes('do: { action: "till_soil", charge: 0 }'),
+    "the printed loop example must be a step the compiler accepts, so it carries the argument the action declares",
+  );
+  assert.ok(
+    description.includes("loop_do_argument_missing"),
+    "the description names the compile-time refusal, so a caller can recognise the answer it will get",
+  );
+  assert.ok(
+    description.includes("fresh ground is tilled with"),
+    "the repair for the kind `by_kind` can no longer work is taught, not merely denied",
+  );
+  assert.ok(
+    description.includes("by_kind"),
+    "the sentence must say which kinds `by_kind` still covers, or the caller is left guessing",
+  );
+
+  // The example the description prints is compiled HERE, so a description that drifts from the compiler fails rather
+  // than teaching a call that is refused.
+  const example = compile(
+    `builder.for_each({ source: { area: { x: 60, y: 18, w: 20, h: 3 } }, where: [{ col: { every: 3, offset: 0 } }], do: { action: "till_soil", charge: 0 } });`,
+  );
+  assert.equal(example.ok, true, "the loop the description prints must compile");
 });

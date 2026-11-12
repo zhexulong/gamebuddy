@@ -361,6 +361,63 @@ const completionFixtures: Readonly<Record<string, CompletionFixture>> = {
       ["inventory_units_after", "0"],
     ],
   },
+  // The two area-tool actions. `charge_requested`/`charge_applied` are the charge the caller named and the one the
+  // swing was given - equal by construction, because a charge the held tool cannot reach is refused rather than
+  // clamped - and `window`/`tiles_changed`/`changed` are the box that was scanned and the tiles that actually entered
+  // the postcondition in ONE native use. `charge: 0` is the single named tile, which is why the footprint is one tile.
+  till_soil: {
+    reasonCode: "soil_tilled",
+    fields: [
+      ["location", "Farm"],
+      ["target", "37,18"],
+      ["tool_selected", "hoe"],
+      ["slot", "3"],
+      ["tool_before", "none"],
+      ["slot_before", "0"],
+      ["before", "none"],
+      ["after", "HoeDirt"],
+      ["charge_requested", "0"],
+      ["charge_applied", "0"],
+      ["window", "32,13:42,23"],
+      ["tiles_changed", "1"],
+      ["changed", "37:18"],
+      ["stamina_before", "100"],
+      ["stamina_after", "98"],
+      ["stamina_delta", "-2"],
+      ["expected_stamina_cost", "2"],
+      ["tool_restored", "none"],
+    ],
+  },
+  water_crop: {
+    reasonCode: "crop_watered",
+    fields: [
+      ["location", "Farm"],
+      ["target", "crop_abcdef0123456789"],
+      ["tile", "38,18"],
+      ["tool_selected", "watering_can"],
+      ["slot", "2"],
+      ["tool_before", "axe"],
+      ["slot_before", "0"],
+      ["before_watered", "false"],
+      ["after_watered", "true"],
+      ["water_before", "40"],
+      ["water_after", "39"],
+      ["water_consumed", "true"],
+      // THE ENGINE SPENDS WATER BY THE CHARGE, NOT BY THE TILE: `WaterLeft -= power + 1` (WateringCan.cs:189-191), so
+      // a charge-4 watering of eighteen tiles costs five units. `charge: 0` is one tile and one unit.
+      ["water_expected_cost", "1"],
+      ["charge_requested", "0"],
+      ["charge_applied", "0"],
+      ["window", "33,13:43,23"],
+      ["tiles_changed", "1"],
+      ["changed", "38:18"],
+      ["stamina_before", "100"],
+      ["stamina_after", "98"],
+      ["stamina_delta", "-2"],
+      ["expected_stamina_cost", "2"],
+      ["tool_restored", "axe"],
+    ],
+  },
   water_pet_bowl: {
     reasonCode: "pet_bowl_watered",
     fields: [
@@ -1266,22 +1323,22 @@ test("till_soil: the selection half is published, and the extended key list is w
   // set. Both directions are checked here: without the publication the rule refuses, and with a key the producer does
   // not write the rule refuses too, which is what makes the widened list - not a permissive rule - the thing that
   // admits the selection half.
-  const shape: readonly (readonly [string, string])[] = [
-    ["location", "Farm"],
-    ["target", "37,18"],
-    ["tool_selected", "hoe"],
-    ["slot", "3"],
-    ["tool_before", "none"],
-    ["slot_before", "0"],
-    ["before", "none"],
-    ["after", "HoeDirt"],
-    ["stamina_before", "100"],
-    ["stamina_after", "98"],
-    ["stamina_delta", "-2"],
-    ["expected_stamina_cost", "2"],
-    ["tool_restored", "none"],
-  ];
+  const tillSoil = completionFixtures.till_soil;
+  assert.ok(tillSoil !== undefined, "the till_soil fixture must exist");
+  const shape = tillSoil.fields;
   assert.equal(completionEvidence("till_soil", "soil_tilled", detail(shape)), true);
+  // The three facts of the footprint are load-bearing in their own right: a receipt that witnessed no tiles, that
+  // claims more tiles than it names, or that names a tile outside the box it scanned, is not a measurement.
+  for (const broken of [
+    shape.map(([key, value]) => [key, key === "tiles_changed" ? "2" : value] as const),
+    shape.map(([key, value]) => [key, key === "changed" ? "99:99" : value] as const),
+    shape.map(([key, value]) => [key, key === "charge_applied" ? "4" : value] as const),
+  ])
+    assert.equal(
+      completionEvidence("till_soil", "soil_tilled", detail(broken)),
+      false,
+      "the changed set, its box and the applied charge are the measurement, not decoration",
+    );
   assert.equal(
     completionEvidence("till_soil", "soil_tilled", detail(shape.filter(([key]) => key !== "tool_selected"))),
     false,

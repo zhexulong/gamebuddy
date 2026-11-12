@@ -3951,7 +3951,15 @@ export const EXECUTION_REQUEST_ARGUMENT_RULES = Object.freeze({
   // at `-1` on the axis it is the boundary of. The in-map floor belongs to the walk targets, not to the tile a transition
   // leaves from.
   enter_exit: [exactArgs(["x", "y"], "invalid_args"), warpSourceRow("invalid_door_target")],
-  till_soil: [exactArgs(["x", "y"], "invalid_args"), tileRow("invalid_soil_target")],
+  // till_soil names the tile and the tool charge ONE native use covers. `charge` is required, not optional: the Mod's
+  // own argument whitelist demands exact arity (an optional argument is not expressible there), and `0` is how a caller
+  // asks for the single named tile. The ladder's ends are the engine's (`Tool.tilesAffected`'s last case is `power >= 6`);
+  // a charge above the HELD tool's ceiling is refused by the Mod by name, never clamped.
+  till_soil: [
+    exactArgs(["x", "y", "charge"], "invalid_args"),
+    tileRow("invalid_soil_target"),
+    integerRow("charge", 0, 5, "invalid_args"),
+  ],
   pickup_forage: [
     exactArgs(["x", "y", "expectedQualifiedItemId", "expectedTargetId"], "invalid_args"),
     ...tileItemAndTarget("invalid_forage_target", boundedItemRow("invalid_forage_target", 128)),
@@ -3960,7 +3968,11 @@ export const EXECUTION_REQUEST_ARGUMENT_RULES = Object.freeze({
     exactArgs(["x", "y", "expectedQualifiedItemId", "expectedTargetId"], "invalid_args"),
     ...tileItemAndTarget("invalid_item_target", boundedItemRow("invalid_item_target", 128)),
   ],
-  water_crop: [exactArgs(["x", "y", "expectedTargetId"], "invalid_args"), ...tileAndTarget("invalid_crop_target")],
+  water_crop: [
+    exactArgs(["x", "y", "expectedTargetId", "charge"], "invalid_args"),
+    ...tileAndTarget("invalid_crop_target"),
+    integerRow("charge", 0, 5, "invalid_args"),
+  ],
   refill_watering_can: [
     exactArgs(["slot", "x", "y", "expectedTargetId"], "invalid_args"),
     ...toolTileAndTarget("invalid_refill_watering_can_target"),
