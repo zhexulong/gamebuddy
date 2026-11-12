@@ -42,16 +42,16 @@ import {
 export const GAME_SESSION_PRESET_FILE = "preset.json";
 
 /** The preset entry the system segment names (§2.4's `before` block, `system_prompt: true`). */
-export const GAME_SESSION_PRESET_MAIN_IDENTIFIER = "main";
+const GAME_SESSION_PRESET_MAIN_IDENTIFIER = "main";
 
 /**
  * The preset entry that goes after the transcript. SillyTavern calls it `jailbreak` and marks it
  * `injection_position: 1, injection_depth: 0` - absolute, at depth zero, i.e. the tail (`preset-placement.ts`).
  */
-export const GAME_SESSION_PRESET_POST_HISTORY_IDENTIFIER = "jailbreak";
+const GAME_SESSION_PRESET_POST_HISTORY_IDENTIFIER = "jailbreak";
 
 /** Where a taken entry goes in the request. */
-export type GameSessionPresetSegment = "system" | "tail";
+type GameSessionPresetSegment = "system" | "tail";
 
 /**
  * Why an entry contributes the text it does.
@@ -60,7 +60,7 @@ export type GameSessionPresetSegment = "system" | "tail";
  * to `injection_depth: 3` means it inside the conversation, and this product has no seam there. The entry is named and
  * not sent rather than moved to the tail, because moving it would send text the author placed somewhere else.
  */
-export type GameSessionPresetDisposition =
+type GameSessionPresetDisposition =
   | "applied"
   | "disabled_by_preset"
   | "absent_from_preset"
@@ -97,7 +97,7 @@ export type GameSessionPreset = Readonly<{
  * `preset-assembler.ts` seeds every entry with its own identifier (§2.7), which is what makes a `{{random}}` draw
  * stable across turns.
  */
-export function gameSessionPresetMacros(profile: IdentityProfile, locale?: string): MacroContext {
+function gameSessionPresetMacros(profile: IdentityProfile, locale?: string): MacroContext {
   const table = identityProfileMacros(profile, locale);
   const persona = [profile.persona?.core, profile.persona?.interactionStyle, profile.persona?.expressionStyle]
     .filter((part) => typeof part === "string" && part.length > 0)
@@ -173,7 +173,7 @@ export async function readGameSessionPreset(
 }
 
 /**
- * One place where a taken segment repeats a line the prompt floor already states.
+ * One place where a taken segment repeats a sentence the prompt floor already states.
  *
  * Both texts are kept. The operator's ruling is "apply the preset", not "apply it where convenient", so a duplicate is
  * REPORTED and sent twice rather than resolved by dropping one side - a reader can then decide whether the preset or
@@ -184,30 +184,36 @@ export type PresetOverlap = Readonly<{
   identifier: string;
   presetChars: number;
   floorChars: number;
-  /** The floor's own line that the preset repeats, bounded, so the report names what to look at. */
+  /** The floor's own sentence that the preset repeats, bounded, so the report names what to look at. */
   floorAnchor: string;
 }>;
 
-/** A shared line shorter than this is a coincidence of punctuation, not a duplicated instruction. */
+/** A shared sentence shorter than this is a coincidence of punctuation, not a duplicated instruction. */
 const MIN_OVERLAP_ANCHOR_CHARS = 8;
-/** How much of the floor's own line the report carries. */
+/** How much of the floor's own sentence the report carries. */
 const MAX_OVERLAP_ANCHOR_CHARS = 120;
 
 /**
- * Every taken segment that repeats a line of `floor`, one row per segment.
+ * Every taken segment that repeats a sentence of `floor`, one row per segment.
  *
- * Lines are compared trimmed and non-empty, which is how both texts are written: the floor is a multi-line block and
- * the preset's entries are too, so a repeated instruction repeats a LINE rather than the whole segment.
+ * The unit is the SENTENCE. It used to be the line, which made this report impossible to earn: `floor` is the assembled
+ * Game prompt, whose rules are one long paragraph per rule class (`game-surface-prompt-floor.ts`,
+ * `GAME_SURFACE_INTERACTION_CONDUCT`), so a sentence a preset repeats verbatim is never a floor LINE - the comparison
+ * reported zero overlaps for every preset that could exist. Both sides are split the same way, from their own text, so
+ * neither carries a hand-written list of the units and a rewritten floor cannot silently empty the population.
+ *
+ * The sentence is also the more useful anchor to report: it names the exact rule to look at rather than the paragraph
+ * that contains it.
  */
 export function presetOverlaps(
   input: Readonly<{ preset: GameSessionPreset; floor: string }>,
 ): readonly PresetOverlap[] {
-  const floorLines = new Set(lineSet(input.floor));
+  const floorSentences = new Set(sentenceUnits(input.floor));
   const overlaps: PresetOverlap[] = [];
   for (const prompt of [input.preset.main, input.preset.postHistory]) {
     if (prompt.disposition !== "applied") continue;
-    const repeated = lineSet(prompt.text).find(
-      (line) => line.length >= MIN_OVERLAP_ANCHOR_CHARS && floorLines.has(line),
+    const repeated = sentenceUnits(prompt.text).find(
+      (sentence) => sentence.length >= MIN_OVERLAP_ANCHOR_CHARS && floorSentences.has(sentence),
     );
     if (repeated === undefined) continue;
     overlaps.push(
@@ -262,13 +268,20 @@ export function renderPresetMainSegment(main: GameSessionPresetPrompt): string {
   ].join("\n");
 }
 
-function lineSet(text: string): readonly string[] {
-  const lines: string[] = [];
-  for (const raw of text.split("\n")) {
-    const line = raw.trim();
-    if (line.length > 0 && !lines.includes(line)) lines.push(line);
-  }
-  return lines;
+/**
+ * A text's sentences, in order, trimmed, non-empty and deduplicated.
+ *
+ * Sentence granularity is the unit the two texts actually share: the floor joins one rule per paragraph and a preset's
+ * entry is a block of prose, while neither promises one sentence per line.
+ */
+function sentenceUnits(text: string): readonly string[] {
+  const sentences: string[] = [];
+  for (const paragraph of text.split("\n"))
+    for (const piece of paragraph.match(/[^。！？.!?]+[。！？.!?]*/gu) ?? []) {
+      const sentence = piece.trim();
+      if (sentence.length > 0 && !sentences.includes(sentence)) sentences.push(sentence);
+    }
+  return sentences;
 }
 
 /**
