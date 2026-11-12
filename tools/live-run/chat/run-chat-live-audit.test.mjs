@@ -11,11 +11,12 @@ import test from "node:test";
 import {
   CHAT_RUN_AUDIT_CODES_BY_KIND,
   CHAT_RUN_AUDIT_KINDS,
-  CHAT_RUN_AUDIT_META_KEYS as KERNEL_META_KEYS,
   CHAT_RUN_AUDIT_PROBE_DIMENSIONS,
   CHAT_RUN_AUDIT_PROBE_DISTANCES,
+  CHAT_RUN_AUDIT_META_KEYS as KERNEL_META_KEYS,
   validateChatRunAudit,
 } from "../../lib/chat-run-audit.mjs";
+import { startLocalStubProvider } from "../core/stub-provider.mjs";
 import {
   AUDIT_KINDS,
   AUDIT_META_KEYS,
@@ -50,12 +51,30 @@ import {
   summariseWireRequest,
   validateAuditEvent,
   validateAuditTrace,
-  writeAuditTrace,
-  wireCaptureRequested,
   WIRE_MODEL_ID,
+  wireCaptureRequested,
+  writeAuditTrace,
 } from "./run-chat-live-audit.mjs";
 
-import { startLocalStubProvider } from "../core/stub-provider.mjs";
+/**
+ * The harness's own text, for the source-level assertions below: the runner plus the modules it was split into, so
+ * an assertion about where a fact comes from keeps its force no matter which of them owns the line.
+ */
+const HARNESS_MODULES = [
+  "./run-chat-live-audit.mjs",
+  "./audit-trace.mjs",
+  "./chat-audit-contract.mjs",
+  "./chat-audit-values.mjs",
+  "./host-build-modules.mjs",
+  "./probe-manifest.mjs",
+  "./provider-admission.mjs",
+  "./stderr-markers.mjs",
+  "./usage-reading.mjs",
+  "./wire-capture.mjs",
+];
+
+const harnessSource = async () =>
+  (await Promise.all(HARNESS_MODULES.map((path) => readFile(new URL(path, import.meta.url), "utf8")))).join("\n");
 
 const DIGEST = "a".repeat(64);
 
@@ -934,13 +953,13 @@ test("durable state projection and reload comparison use only the authoritative 
 });
 
 test("audit harness stays on the composition bootstrap and authenticated Chat API and never fabricates a completed turn", async () => {
-  const source = await readFile(new URL("./run-chat-live-audit.mjs", import.meta.url), "utf8");
+  const source = await harnessSource();
   assert.doesNotMatch(source, /node:sqlite|DatabaseSync|sqlite3/i);
   assert.doesNotMatch(source, /page\.route|autoPromote|auto_promote\s*:\s*true/i);
   assert.match(source, /from "\.\.\/\..\/desktop-composition-launch\.mjs"/);
   assert.match(source, /launchDesktopCompositionGateChild\(/);
   assert.match(source, /surface: AUDIT_SURFACE/);
-  assert.match(source, /const AUDIT_SURFACE = "chat-only";/);
+  assert.match(source, /(?:export )?const AUDIT_SURFACE = "chat-only";/);
   assert.match(source, /outputRoot: AUDIT_OUTPUT_ROOT/);
   // The composition launch performs the bootstrap handshake (see the two
   // assertions above); the harness only talks to the authenticated Chat API and
@@ -993,7 +1012,7 @@ test("a conversation turn contributes a boundary reason when it is unsettled or 
     "conversation_turn_not_terminal",
   );
   assert.equal(conversationTurnBoundaryReason(undefined), "conversation_turn_not_terminal");
-  const source = await readFile(new URL("./run-chat-live-audit.mjs", import.meta.url), "utf8");
+  const source = await harnessSource();
   assert.match(source, /conversationTurnBoundaryReason\(turn\)/);
 });
 
@@ -1198,7 +1217,7 @@ test("the wire-contract reading is published beside the wire reading, and both a
   // Game tool name appeared on a surface that mounts none, and whether the card's voice sits after the Host
   // floor. A source-level assertion, because the failure this prevents is a wiring regression: the reading
   // exists and the line that writes it is dropped.
-  const source = await readFile(new URL("./run-chat-live-audit.mjs", import.meta.url), "utf8");
+  const source = await harnessSource();
   assert.match(source, /from "\.\/wire-contract\.mjs";/u);
   for (const name of ["buildWireContractReading", "narrateWireContract"])
     assert.match(source, new RegExp(`\\b${name}\\b`, "u"), `${name} must be imported by the harness`);

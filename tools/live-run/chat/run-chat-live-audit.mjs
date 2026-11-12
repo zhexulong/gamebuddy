@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { spawn } from "node:child_process";
 /**
  * Chat live audit run harness (design/tasks/active/chat-run-audit-and-release-verdict.md Task 2).
  *
@@ -56,10 +57,8 @@
  * 4. Never upgrade `blocked`/`inconclusive` to `passed`, and never suppress an
  *    audit signal to make a run look clean.
  */
-import { createHash, randomBytes } from "node:crypto";
-import { spawn } from "node:child_process";
-import { readdirSync } from "node:fs";
-import { lstat, mkdir, mkdtemp, open, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { randomBytes } from "node:crypto";
+import { lstat, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -69,27 +68,130 @@ import { launchDesktopCompositionGateChild } from "../../desktop-composition-lau
 // message in `errorMessage` beside the class, stack and first frame - the ONE spelling the tree already uses
 // (`tools/check-failure-reason-codes.mjs` gates every `tools/live-run` consumer on it).
 import { classifyFailure } from "../../lib/failure-dump.mjs";
-import { OPERATOR_GATEWAY_PROVIDER_ID } from "../../lib/operator-gateway.mjs";
-// The session-record parse has ONE spelling, shared with `tools/perf/report-run-cost.mjs`: a second copy of it would
-// quote different tokens for the same run the day either learns a new usage field.
-import { cacheBreaks, peakContext, readUsages, sumOf } from "../../perf/run-cost-usage.mjs";
-import { openLiveRunCapture } from "../core/capture.mjs";
-import { buildCompanionExperience, evaluateCompanionReply } from "../core/companion-experience.mjs";
-import { isPass, judgeObserved } from "../core/evidence-verdict.mjs";
-// Aliased on purpose: the usage reading above imports `judgeObserved` under its own name from the same module, and a
-// second binding for one identifier would be a duplicate declaration the day both land. Same function, one spelling.
-import { judgeObserved as judgeWireObserved } from "../core/evidence-verdict.mjs";
-import { buildChatRunVerdict, narrateRunVerdict } from "../core/run-verdict.mjs";
-import { startLocalStubProvider } from "../core/stub-provider.mjs";
-import { buildWireContractReading, narrateWireContract, wireMessageText } from "./wire-contract.mjs";
 import {
   assertRenderedTranscript,
   findBrowserExecutable,
   openBrowserEvidenceSession,
   reserveFreePort,
 } from "../core/browser-evidence.mjs";
+import { openLiveRunCapture } from "../core/capture.mjs";
+import { buildCompanionExperience, evaluateCompanionReply } from "../core/companion-experience.mjs";
+import { buildChatRunVerdict, narrateRunVerdict } from "../core/run-verdict.mjs";
+import { startLocalStubProvider } from "../core/stub-provider.mjs";
+import {
+  buildAuditTrace,
+  createAuditDeploymentManifest,
+  createAuditRecorder,
+  writeAuditTrace,
+} from "./audit-trace.mjs";
+import {
+  AUDIT_IDENTITY,
+  AUDIT_SURFACE,
+  GENERATION,
+  HARNESS_OUTCOME_SCHEMA,
+  OPERATION_HANDLE,
+  SHA256_HEX,
+} from "./chat-audit-contract.mjs";
+import { delay, isPlainObject, safeReasonCode, sha256 } from "./chat-audit-values.mjs";
+import { HOST_ROOT } from "./host-build-modules.mjs";
+import {
+  boundedReason,
+  conversationTurnBoundaryReason,
+  evaluateProbeReply,
+  loadProbeManifest,
+  probeTurnCommittedGate,
+  probeVerdict,
+} from "./probe-manifest.mjs";
+import {
+  admitChatRun,
+  chatRunReadinessTargets,
+  declareChatDeliveryPreference,
+  declareChatModelProfile,
+  refusalCode,
+} from "./provider-admission.mjs";
+import {
+  classifyGateMarkerFailures,
+  classifyPresentationMarkers,
+  classifyProbeMaterializationMarkers,
+  classifyStartupFailure,
+  evaluateProviderPreSendMarker,
+  evaluateProviderRuntimeMarker,
+  parseSseFrame,
+  providerFirstResponseMs,
+} from "./stderr-markers.mjs";
+import { narrateUsage, readRunUsage } from "./usage-reading.mjs";
+import {
+  admitWireCaptureRun,
+  buildWireReading,
+  loadWireContractAnchors,
+  narrateWireReading,
+  narrateWireTrade,
+  WIRE_MODEL_ID,
+  WIRE_STUB_REPLY,
+  wireCaptureRequested,
+} from "./wire-capture.mjs";
+import { buildWireContractReading, narrateWireContract } from "./wire-contract.mjs";
 
-const HOST_ROOT = resolve(fileURLToPath(new URL("../../../host/", import.meta.url)));
+// The runner's public surface did not move with the code. Consumers (the audit suite, the compare tools) import these
+// names from this file, and the split is about which file a fact is defined in, not about renaming what they read.
+export {
+  buildAuditTrace,
+  contentFree,
+  createAuditDeploymentManifest,
+  createAuditRecorder,
+  validateAuditEvent,
+  validateAuditTrace,
+  writeAuditTrace,
+} from "./audit-trace.mjs";
+export {
+  AUDIT_KINDS,
+  AUDIT_META_KEYS,
+  AUDIT_PROBE_DIMENSIONS,
+  AUDIT_PROBE_DISTANCES,
+  AUDIT_VOCABULARY,
+} from "./chat-audit-contract.mjs";
+export {
+  conversationTurnBoundaryReason,
+  evaluateProbeReply,
+  loadProbeManifest,
+  probeTurnCommittedGate,
+  probeVerdict,
+} from "./probe-manifest.mjs";
+export {
+  admitChatRun,
+  declareChatDeliveryPreference,
+  declareChatModelProfile,
+  foreignMagicContextStore,
+  probeChatProviderReadiness,
+  providerReadinessRefusal,
+  refusalCode,
+} from "./provider-admission.mjs";
+export {
+  classifyGateMarkerFailures,
+  classifyPresentationMarkers,
+  classifyProbeMaterializationMarkers,
+  classifyStartupFailure,
+  classifyStartupStderr,
+  evaluateProviderPreSendMarker,
+  evaluateProviderRuntimeMarker,
+  parseSseFrame,
+  providerFirstResponseMs,
+} from "./stderr-markers.mjs";
+export { CHAT_USAGE_SCHEMA, narrateUsage, readRunUsage } from "./usage-reading.mjs";
+export {
+  admitWireCaptureRun,
+  buildWireReading,
+  narrateWireReading,
+  narrateWireTrade,
+  summariseWireRequest,
+  WIRE_CAPTURE_ENV,
+  WIRE_MODEL_ID,
+  WIRE_PROVIDER_ID,
+  WIRE_READING_SCHEMA,
+  WIRE_STUB_REPLY,
+  wireCaptureRequested,
+} from "./wire-capture.mjs";
+
 // The audited generation root. Production consumes the canonical `host/dist`
 // pointer; local iteration may point this at a disposable generation built by
 // host/scripts/build-desktop-launcher-test-generation.mjs, so a source change can
@@ -98,9 +200,6 @@ const HOST_ROOT = resolve(fileURLToPath(new URL("../../../host/", import.meta.ur
 const AUDIT_OUTPUT_ROOT = process.env.GAMEBUDDY_CHAT_AUDIT_OUTPUT_ROOT
   ? resolve(process.env.GAMEBUDDY_CHAT_AUDIT_OUTPUT_ROOT)
   : join(HOST_ROOT, "dist");
-const AUDIT_SCHEMA = "chat_run_audit/v1";
-const HARNESS_OUTCOME_SCHEMA = "chat_run_audit/harness-outcome/v1";
-const AUDIT_SURFACE = "chat-only";
 const START_TIMEOUT_MS = 60_000;
 const REQUEST_TIMEOUT_MS = 12_000;
 const TURN_TIMEOUT_MS = 180_000;
@@ -131,158 +230,6 @@ const CONVERSATION_PROMPTS = (process.env.GAMEBUDDY_CHAT_PROMPTS ?? "")
   .filter((prompt) => prompt.length > 0);
 
 const TERMINAL_TURN_STATES = Object.freeze(new Set(["completed", "cancelled", "failed"]));
-
-/**
- * Frozen audit vocabulary (task doc §3.1). Keyed by `<kind>.<code>`; the actor
- * is the frozen producer of the fact, and the pair may not be extended here.
- *
- * This table is a second copy of the kernel's `CHAT_RUN_AUDIT_CODES_BY_KIND`, so
- * the two are pinned equal in both directions by the producer/consumer parity
- * test (`tools/live-run/chat/run-chat-live-audit.test.mjs`). The load-time drift check inside
- * `tools/compare-chat-live-runs.mjs` only covers kernel<->compare, so without
- * that test a change to either table alone would go unnoticed.
- */
-export const AUDIT_VOCABULARY = Object.freeze({
-  "lifecycle.run.started": "harness",
-  "lifecycle.run.finished": "harness",
-  "lifecycle.turn.submitted": "harness",
-  "lifecycle.turn.terminal": "harness",
-  "http.state.read": "harness",
-  "http.state.conflict": "harness",
-  "sse.frame.received": "host",
-  "sse.frame.invalid": "harness",
-  "sse.stream.resync": "host",
-  "provider.request.sent": "host",
-  "provider.settled": "host",
-  "provider.error": "host",
-  "provider.observability_gap": "harness",
-  "provider.boundary_unsettled": "harness",
-  "presentation.admitted": "harness",
-  "presentation.piece": "host",
-  "presentation.committed": "host",
-  "presentation.rejected": "harness",
-  "presentation.observability_gap": "harness",
-  "memory.read": "host",
-  "memory.mutated": "host",
-  "memory.conflict": "host",
-  "recovery.reload.started": "harness",
-  "recovery.reload.settled": "harness",
-  "recovery.reload.mismatch": "harness",
-  // Probe results are emitted by the orchestrator that holds the probe evidence,
-  // never by the run's own harness; the harness accepts them so a produced trace
-  // validates, and validates their per-code obligations below.
-  "probe.needle.hit": "harness",
-  "probe.needle.miss": "harness",
-  "probe.distractor.clean": "harness",
-  "probe.distractor.confused": "harness",
-  "probe.supersede.pass": "harness",
-  "probe.supersede.fail": "harness",
-  "probe.isolation.clean": "harness",
-  "probe.isolation.breach": "harness",
-  "probe.observability_gap": "harness",
-});
-export const AUDIT_KINDS = Object.freeze([
-  "lifecycle",
-  "sse",
-  "http",
-  "provider",
-  "presentation",
-  "memory",
-  "recovery",
-  "probe",
-]);
-const AUDIT_EVENT_KEYS = Object.freeze(["at", "kind", "actor", "code", "meta"]);
-const AUDIT_CATEGORY_KEYS = Object.freeze([
-  "schema",
-  "runId",
-  "startedAt",
-  "completedAt",
-  "surface",
-  "artifact",
-  "provider",
-  "originMs",
-  "events",
-]);
-const AUDIT_ARTIFACT_KEYS = Object.freeze(["generation", "inventoryDigest"]);
-const AUDIT_PROVIDER_KEYS = Object.freeze(["embedded", "observed"]);
-/** The only `meta` keys the frozen interface permits. */
-export const AUDIT_META_KEYS = Object.freeze([
-  "state",
-  "reason",
-  "problemCode",
-  "disposition",
-  "status",
-  "count",
-  "cursor",
-  "generation",
-  "providerObservability",
-  "gateMarker",
-  "firstResponseMs",
-  "probeId",
-  "distance",
-  "dimension",
-  "manifestDigest",
-]);
-const CODE_PATTERN = /^[a-z0-9_.:-]{1,160}$/;
-const OPAQUE_RUN_ID = /^[A-Za-z0-9_-]{1,128}$/;
-const GENERATION = /^[a-z0-9-]{1,160}$/i;
-const OPERATION_HANDLE = /^[A-Za-z0-9_-]{1,160}$/;
-const SHA256_HEX = /^[a-f0-9]{64}$/;
-const PI_SESSION_ID = /^[A-Za-z0-9_-]{1,256}$/;
-const STARTUP_STDERR_CODE = /^[a-z][a-z0-9_.:-]{2,159}$/i;
-const STARTUP_STDERR_REASON_PREFIX = "dialogue_start_stderr:";
-/** Terminal states a `turn.terminal` may carry; mirrors the audit kernel. */
-const AUDIT_TERMINAL_STATES = Object.freeze(["completed", "cancelled", "failed"]);
-/** Observer self-report values a `run.finished` may carry; mirrors the kernel. */
-const AUDIT_PROVIDER_OBSERVABILITY = Object.freeze(["observed", "unobserved"]);
-/** `probe.distance` domain; mirrors the audit kernel. */
-export const AUDIT_PROBE_DISTANCES = Object.freeze(["turn", "fold", "session"]);
-
-/** `probe.dimension` domain; mirrors the audit kernel. */
-export const AUDIT_PROBE_DIMENSIONS = Object.freeze(["retention", "discrimination", "supersession", "isolation"]);
-const PROBE_KIND = "probe";
-const PROBE_ISOLATION_BREACH_CODE = "isolation.breach";
-const PROBE_BREACH_DIMENSION = "isolation";
-/** An opaque probe identifier: bounded, no whitespace, never contents. */
-const PROBE_ID = /^[A-Za-z0-9_.:-]{1,160}$/;
-
-/**
- * Content guard for the persisted trace. It targets the exact leak classes the
- * frozen interface forbids (prompt material, message bodies, credentials, raw
- * provider payloads) rather than incidental system words, so a truthful
- * diagnostic code can still be reported without the guard rejecting it.
- */
-const CONTENT_GUARD =
-  /(?:private prompt|prompt text|player prefers|private dialogue|raw provider|authorization|bearer\s|api[_-]?key|set-cookie|statetoken|sk-[A-Za-z0-9_-]{16,})/i;
-
-const AUDIT_IDENTITY = Object.freeze({
-  playerId: "chat_audit_player",
-  companionId: "chat_audit_companion",
-  continuityId: "chat_audit_continuity",
-});
-
-function sha256(value) {
-  return createHash("sha256").update(value, "utf8").digest("hex");
-}
-
-function isPlainObject(value) {
-  return (
-    value !== null &&
-    typeof value === "object" &&
-    !Array.isArray(value) &&
-    Object.getPrototypeOf(value) === Object.prototype
-  );
-}
-
-function hasExactKeys(value, keys) {
-  if (!isPlainObject(value)) return false;
-  const names = Object.keys(value);
-  return names.length === keys.length && keys.every((key) => Object.hasOwn(value, key));
-}
-
-function delay(ms) {
-  return new Promise((resolveDelay) => setTimeout(resolveDelay, ms));
-}
 
 export function parseArguments(argv) {
   if (argv.length === 0) return Object.freeze({ reportPath: undefined });
@@ -320,976 +267,14 @@ export async function prepareReportTarget(path) {
   return join(canonicalParent, basename(path));
 }
 
-function safeReasonCode(error) {
-  const value = error instanceof Error ? error.message : String(error);
-  return /^[a-z0-9_:.-]{1,160}$/i.test(value) ? value : "chat_audit_runner_internal_error";
-}
-
-// ── Run admission: what a Chat run refuses BEFORE it launches anything ──
-//
-// Measured 2026-10-23 (runs db5b0a61 at 15:14 and 2d3e086a at 15:22): each ran ~192 s, recorded two `provider`
-// events with `problemCode: runtime_unavailable`, and finished `conversation_turn_failed` with zero replies. The
-// pipeline was fine - run 528ee184 answered 2/2 against the identical model manifest - and the cause was
-// environmental twice over: the child inherited a `MAGIC_CONTEXT_STORAGE_DIR` owned by a store this runtime does
-// not own, and nothing had asked the provider whether it could answer at all. Both facts are knowable before the
-// child exists, so both refuse here, by name, with no runtime behind them. The game runner has made exactly this
-// refusal since 2026-10-19 (`tools/live-run/game/**` -> `tools/lib/live-run-preflight.mjs`); this is the Chat
-// surface's port of it, with the same `provider_not_ready:<provider>:<model>:<reason>` vocabulary.
-const MAGIC_CONTEXT_STORE_VARIABLE = "MAGIC_CONTEXT_STORAGE_DIR";
-/** The provider a saved Chat model profile resolves to, per `resolveModelProfileConfig`. */
-const CHAT_PROFILE_PROVIDER = OPERATOR_GATEWAY_PROVIDER_ID;
-/** The credential Pi resolves at request time for that provider (the entry carries `$CPA_OAI_API_KEY`). */
-const CHAT_PROVIDER_KEY_VARIABLE = "CPA_OAI_API_KEY";
-/**
- * The model a run DECLARES when its root carries no profile yet. A run that leaves this to the product's shipped
- * default cannot name the model it measured in its own artifacts, and a default that moved would silently change
- * what the run tests; declaring it keeps the profile, the readiness probe and the artifact on one model id.
- */
-const CHAT_PROFILE_MODEL = "deepseek-v4.1-flash";
-const CHAT_PROFILE_THINKING_LEVEL = "high";
-const PROVIDER_PROBE_TIMEOUT_MS = 10_000;
-const PROVIDER_LISTING_MAX_CHARS = 200_000;
-const PROVIDER_CATALOG_MAX_MODELS = 1_000;
-
-const nonEmpty = (value) => (typeof value === "string" && value.length > 0 ? value : null);
-
-async function readJsonFile(path) {
-  try {
-    return JSON.parse(await readFile(path, "utf8"));
-  } catch {
-    return null;
-  }
-}
-
-/**
- * The inherited-store refusal, or `null` when the run may proceed.
- *
- * Magic Context's extension gives `MAGIC_CONTEXT_STORAGE_DIR` precedence over the XDG-derived path, and the
- * composed child inherits this process's environment (`composeDesktopChildEnvironment`). A value inherited from an
- * operator shell therefore decides which store the run opens - and a store whose migration lane is ahead of this
- * build's schema fence leaves the extension fail-closed, aborting every turn in-process. Refusing is the honest
- * answer: quietly unsetting the variable would hide the same class of failure the next time.
- */
-export function foreignMagicContextStore({ runtimeRoot, env = process.env }) {
-  const configured = nonEmpty(env?.[MAGIC_CONTEXT_STORE_VARIABLE]);
-  if (configured === null) return null;
-  // The child resolves a relative override against its own cwd, exactly as `resolve` does here.
-  const root = resolve(runtimeRoot);
-  const store = resolve(configured);
-  // `relative` is case-insensitive on win32, which is the platform a run's store path is spelled on.
-  const relation = relative(root, store);
-  const inside = relation === "" || !(relation.startsWith("..") || isAbsolute(relation));
-  return inside ? null : `foreign_magic_context_store:${configured}`;
-}
-
-/**
- * The code a named refusal is filed under in the run artifacts. A refusal may name a path or an
- * endpoint-derived id, which is not a bounded code, so the leading code is what `reasonCode` carries and the whole
- * line travels beside it as `refusal`.
- */
-export function refusalCode(refusal) {
-  const code = String(refusal).split(":")[0];
-  return CODE_PATTERN.test(code) ? code : "chat_audit_harness_blocked";
-}
-
-/** The name a caller refuses with, so a refused run says which provider and model never answered, and why. */
-export function providerReadinessRefusal(readiness) {
-  const model = readiness.model ?? "unknown";
-  return readiness.reason === "model_not_in_provider_catalog"
-    ? `model_not_in_provider_catalog:${model}`
-    : `provider_not_ready:${readiness.provider}:${model}:${readiness.reason}`;
-}
-
-/**
- * Whether this run may launch at all: the store it would open is its own, and the provider it would ask can answer.
- *
- * Both refusals are decided here, before a child exists, because both cost a whole run's budget to discover from a
- * turn that failed: the store check is pure file-system, and the provider check is one model listing.
- */
-export async function admitChatRun({
-  runtimeRoot,
-  agentDir,
-  baseUrl = null,
-  env = process.env,
-  transport = fetch,
-  timeoutMs = PROVIDER_PROBE_TIMEOUT_MS,
-}) {
-  const foreign = foreignMagicContextStore({ runtimeRoot, env });
-  if (foreign !== null)
-    return Object.freeze({ ok: false, stage: "magic_context_store", refusal: foreign, readiness: null });
-  const readiness = await probeChatProviderReadiness({ runtimeRoot, agentDir, baseUrl, env, transport, timeoutMs });
-  if (!readiness.ok)
-    return Object.freeze({
-      ok: false,
-      stage: "provider_readiness",
-      refusal: providerReadinessRefusal(readiness),
-      readiness,
-    });
-  return Object.freeze({ ok: true, stage: "ready", refusal: null, readiness });
-}
-
-/** The host-owned modules this admission reads its identity and endpoint from. */
-let hostRuntimeIdentityPromise;
-const loadHostRuntimeIdentity = () =>
-  (hostRuntimeIdentityPromise ??= import(pathToFileURL(join(HOST_ROOT, "dist-test", "runtime-identity.js")).href));
-let hostProviderCatalogPromise;
-const loadHostProviderCatalog = () =>
-  (hostProviderCatalogPromise ??= import(
-    pathToFileURL(join(HOST_ROOT, "dist-test", "tavern", "provider-catalog.js")).href
-  ));
-
-/**
- * The agent dir and endpoint admission checks against, both derived from the product's own modules rather than
- * spelled again here: `resolveRuntimePaths` owns where a runtime's `models.json` and `auth.json` live, and the
- * provider catalog owns the endpoint the environment provider serves.
- */
-async function chatRunReadinessTargets({ root }) {
-  const { resolveRuntimePaths } = await loadHostRuntimeIdentity();
-  const { catalogProvider, TAVERN_ENVIRONMENT_PROVIDER_ID } = await loadHostProviderCatalog();
-  return Object.freeze({
-    agentDir: resolveRuntimePaths(AUDIT_IDENTITY, root).agentDir,
-    baseUrl: catalogProvider(TAVERN_ENVIRONMENT_PROVIDER_ID)?.baseUrl ?? null,
-  });
-}
-
-/**
- * The model profile this run measures. A live-audit root is a fresh `mkdtemp`, so there is never an operator profile
- * to preserve: the run DECLARES the model it is about to measure, which is also what lets the readiness probe name it
- * and what the run's artifact can then be compared against.
- */
-export async function declareChatModelProfile(runtimeRoot) {
-  await mkdir(join(runtimeRoot, "settings"), { recursive: true });
-  const profile = Object.freeze({
-    revision: 0,
-    modelId: CHAT_PROFILE_MODEL,
-    thinkingLevel: CHAT_PROFILE_THINKING_LEVEL,
-  });
-  await writeFile(
-    join(runtimeRoot, "settings", "model-profiles.json"),
-    JSON.stringify({ schemaVersion: 1, chat: profile, game: profile }),
-  );
-  return profile;
-}
-
-/**
- * Whether this run measures paced delivery. A fresh audit root has no player, so
- * nobody has chosen anything and the Chat default (off) is what a real new
- * player gets. Setting `GAMEBUDDY_CHAT_PACED=1` writes the record the settings
- * route would write, so the same harness can measure both sides of the switch
- * and the two runs differ in exactly one thing.
- */
-const CHAT_PACED = process.env.GAMEBUDDY_CHAT_PACED === "1";
-
-export async function declareChatDeliveryPreference(runtimeRoot) {
-  // Written ONLY when pacing is asked for. A generation older than the `paced`
-  // field refuses the whole record (its validator requires an exact key set), so
-  // writing it on every run would break the default path on every tree that has
-  // not been rebuilt - a measurement switch must not be able to do that.
-  if (!CHAT_PACED) return false;
-  await mkdir(join(runtimeRoot, "settings"), { recursive: true });
-  const record = Object.freeze({
-    schemaVersion: 1,
-    revision: 1,
-    locale: null,
-    disclosureVersion: null,
-    consent: "undecided",
-    decidedAtMs: null,
-    outputDevice: null,
-    persona: null,
-    paced: true,
-  });
-  await writeFile(join(runtimeRoot, "settings", "player-preference.json"), JSON.stringify(record));
-  return true;
-}
-
-/** The model this root's CHAT profile names, or null when it names none. */
-async function readChatProfileModel(runtimeRoot) {
-  const profile = await readJsonFile(join(runtimeRoot, "settings", "model-profiles.json"));
-  return nonEmpty(profile?.chat?.modelId);
-}
-
-/**
- * One provider entry of Pi's own `models.json`. `modelIds` is `null` when the entry describes no catalog at all:
- * a catalog provider other than the environment one deliberately contributes no `models` list (Pi's model
- * middleware already ships full metadata), and treating that absence as "the model is not served" would refuse
- * every player connection.
- */
-async function readProviderCatalogEntry(agentDir, provider) {
-  const catalog = await readJsonFile(join(agentDir, "models.json"));
-  const entry = catalog?.providers?.[provider];
-  if (entry === null || typeof entry !== "object") return null;
-  const modelIds = Array.isArray(entry.models)
-    ? entry.models.map((model) => model?.id).filter((id) => typeof id === "string" && id.length > 0)
-    : null;
-  return Object.freeze({ baseUrl: nonEmpty(entry.baseUrl), modelIds });
-}
-
-/** The credential Pi reads for that provider: `auth.json` sits beside `models.json` in the agent dir. */
-async function readProviderCredential(agentDir, provider) {
-  const auth = await readJsonFile(join(agentDir, "auth.json"));
-  return nonEmpty(auth?.[provider]?.key);
-}
-
-/**
- * Whether the provider this root's CHAT model profile names can answer at all, asked BEFORE the runtime exists.
- *
- * Resolved from the files the runtime itself reads - the Chat profile's model id, the provider entry in Pi's
- * `models.json` when the root has run before, the credential in `auth.json` or the environment variable the entry
- * points at - and then confirmed against the endpoint with one minimal request. A fresh root has no catalog yet,
- * so `baseUrl` supplies the endpoint the runtime will write for this provider.
- *
- * Each reason is a different repair, which is why it is named:
- *   `profile-invalid`             the profile names no model, so nothing says what to check
- *   `model_not_in_provider_catalog` the catalog does not list the model the profile names
- *   `auth`                        no credential, or the endpoint refused it (401/403)
- *   `unreachable`                 no endpoint, a transport failure, a timeout, or any other non-2xx answer
- *   `ready`                       the endpoint answered and (when it listed its models) serves this one
- *
- * The endpoint's model listing is read for its ids only and never kept: "does this endpoint serve the model we
- * chose" is the whole question, and provider prose is not this harness's evidence. A 2xx whose body yields no id
- * list is accepted rather than refused, because only positive evidence that the model is absent may refuse a run.
- */
-export async function probeChatProviderReadiness({
-  runtimeRoot,
-  agentDir,
-  baseUrl = undefined,
-  env = process.env,
-  transport = fetch,
-  timeoutMs = PROVIDER_PROBE_TIMEOUT_MS,
-}) {
-  const provider = CHAT_PROFILE_PROVIDER;
-  const model = await readChatProfileModel(runtimeRoot);
-  if (model === null) return Object.freeze({ ok: false, provider, model: null, reason: "profile-invalid" });
-  const catalog = await readProviderCatalogEntry(agentDir, provider);
-  if (catalog !== null && catalog.modelIds !== null && !catalog.modelIds.includes(model))
-    return Object.freeze({ ok: false, provider, model, reason: "model_not_in_provider_catalog" });
-  const apiKey = (await readProviderCredential(agentDir, provider)) ?? nonEmpty(env?.[CHAT_PROVIDER_KEY_VARIABLE]);
-  if (apiKey === null) return Object.freeze({ ok: false, provider, model, reason: "auth" });
-  const endpoint = catalog?.baseUrl ?? nonEmpty(baseUrl);
-  if (endpoint === null) return Object.freeze({ ok: false, provider, model, reason: "unreachable" });
-  const answer = await requestProviderListing(endpoint, apiKey, transport, timeoutMs);
-  if (answer.reason !== null) return Object.freeze({ ok: false, provider, model, reason: answer.reason });
-  if (answer.modelIds !== null && !answer.modelIds.includes(model))
-    return Object.freeze({ ok: false, provider, model, reason: "model_not_in_provider_catalog" });
-  return Object.freeze({ ok: true, provider, model, reason: "ready" });
-}
-
-/** `reason: null` when the endpoint answered, with the ids it listed (`null` when it listed none). */
-async function requestProviderListing(endpoint, apiKey, transport, timeoutMs) {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    const response = await transport(`${endpoint.replace(/\/+$/u, "")}/models`, {
-      method: "GET",
-      signal: controller.signal,
-      headers: { accept: "application/json", authorization: `Bearer ${apiKey}` },
-    });
-    if (response.ok !== true)
-      return Object.freeze({
-        reason: response.status === 401 || response.status === 403 ? "auth" : "unreachable",
-        modelIds: null,
-      });
-    return Object.freeze({ reason: null, modelIds: await readListingModelIds(response) });
-  } catch {
-    return Object.freeze({ reason: "unreachable", modelIds: null });
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
-async function readListingModelIds(response) {
-  if (typeof response.text !== "function") return null;
-  let text;
-  try {
-    text = await response.text();
-  } catch {
-    return null;
-  }
-  if (typeof text !== "string" || text.length === 0 || text.length > PROVIDER_LISTING_MAX_CHARS) return null;
-  let value;
-  try {
-    value = JSON.parse(text);
-  } catch {
-    return null;
-  }
-  const candidates = [value?.data, value?.models].filter(Array.isArray);
-  const list = candidates[0] ?? null;
-  if (list === null) return null;
-  const ids = list
-    .slice(0, PROVIDER_CATALOG_MAX_MODELS)
-    .map((entry) => (typeof entry === "string" ? entry : entry?.id))
-    .filter((id) => typeof id === "string" && id.length > 0 && id.length <= 128);
-  return ids.length === 0 ? null : ids;
-}
-
-// ── The prompt-bytes reading: what the model was actually TOLD ──
-//
-// Everything above measures the RUN; none of it measures the REQUEST. The stderr markers are Class B
-// diagnostics and the trace is content-free by construction, so today the only prompt-layer evidence is three Magic
-// Context markers (`[probe:m0_memory_ids]`, `[probe:m0_digest]`, `[probe:m0_sources]`): they say a `m[0]` was
-// materialized and give its digest, and they say NOTHING about the system prompt, the tool declarations, or the
-// message array the product handed Pi. That is the effect half of the question - not "did a marker fire" but "what
-// bytes went out" - and it is exactly what `tools/live-run/chat/run-post-history-live.mjs` settles for one field by
-// serving its own OpenAI-compatible endpoint.
-//
-// So this mode mounts the same endpoint
-// (`tools/live-run/core/stub-provider.mjs`) through the product's OWN escape-hatch provider
-// (`gamebuddy-openai-compatible`, the entry a player uses for a custom host), records the connection through the
-// product's own probe and store, and reads the request bodies Pi actually posted.
-//
-// TWO THINGS IT IS NOT. It is OFF BY DEFAULT (`GAMEBUDDY_CHAT_WIRE_CAPTURE=1` turns it on), because a stub silently
-// replacing real-model evidence for every existing run would retire the one thing those runs prove. And it is a
-// STUB: no model is called, so the run asserts what the product SENDS, never what a model REPLIES
-// (`tools/live-run/README.md` §4 and §6). Every run that mounts it says so in its own output, because that sentence
-// is the whole qualification of the evidence it produces.
-export const WIRE_CAPTURE_ENV = "GAMEBUDDY_CHAT_WIRE_CAPTURE";
-/** The product's own escape hatch: a local OpenAI-compatible endpoint with a chosen model id (design/28 §1). */
-export const WIRE_PROVIDER_ID = "gamebuddy-openai-compatible";
-export const WIRE_MODEL_ID = "gamebuddy-wire-capture";
-/** The one fixed reply the stub streams. Distinctive, and never asserted as a model's answer. */
-export const WIRE_STUB_REPLY = "[wire-capture stub] The kettle is on.";
-/** The reading's own envelope name: one run's prompt-bytes observation, never a lifecycle fact. */
-export const WIRE_READING_SCHEMA = "chat_run_audit/wire-reading/v1";
-
-/**
- * Whether this process is in wire-capture mode. Read from the environment like the run's other switches, and OFF
- * unless the value is exactly `1`: a typo must leave the run measuring a real provider rather than silently
- * replacing it.
- */
-export function wireCaptureRequested(env = process.env) {
-  return env?.[WIRE_CAPTURE_ENV] === "1";
-}
-
-/**
- * One wire message's text, from a string or from the text parts of a structured content array.
- *
- * The shape matters: Pi's `openai-completions` adapter posts `content` as an array of parts on some turns and as a
- * bare string on others, so a reading that assumes either one sees `undefined` on the other.
- *
- * The ONE spelling lives in `wire-contract.mjs`, which is the module that reads message text for a judgement;
- * this harness re-exports it so its own readers keep one import site.
- */
-export { wireMessageText } from "./wire-contract.mjs";
-
-const AUTHORED_CONTEXT_MARKER = '<gamebuddy-authored-context version="v2"';
-
-const wireBytes = (value) => (typeof value === "string" ? Buffer.byteLength(value, "utf8") : 0);
-const wireJson = (value) => JSON.stringify(value ?? null);
-
-/**
- * One captured request, as a READING: sizes and digests, never the bytes themselves.
- *
- * Every field below may carry the player's own words - the system prompt is her persona, `m[0]` is her authored
- * context, the messages are the conversation - so this travels to the run directory and the log as measurements
- * only. That is not squeamishness: the frozen trace's content guard forbids prompt material, and a reading that
- * could only be compared by eye would be re-read rather than diffed.
- *
- * `m0` is the message the hosted Magic Context assembles the authored baseline INTO (it opens with
- * `<gamebuddy-authored-context`), not "the first message": the system prompt is m[0] on a transport Pi builds
- * itself, so naming it by position would silently measure the wrong thing on the turn it moved.
- * `tools/live-run/chat/run-post-history-live.mjs` makes the same distinction for the same reason.
- */
-export function summariseWireRequest(body) {
-  const messages = Array.isArray(body?.messages) ? body.messages : [];
-  const tools = Array.isArray(body?.tools) ? body.tools : [];
-  const systemIndex = messages.findIndex((message) => message?.role === "system");
-  const authoredIndex = messages.findIndex((message) => wireMessageText(message).includes(AUTHORED_CONTEXT_MARKER));
-  const system = systemIndex < 0 ? undefined : messages[systemIndex];
-  const authored = authoredIndex < 0 ? undefined : messages[authoredIndex];
-  return Object.freeze({
-    // The assembled system prompt: the Host's own instruction text for this surface.
-    systemBytes: system === undefined ? 0 : wireBytes(wireMessageText(system)),
-    systemSha256: system === undefined ? null : sha256(wireMessageText(system)),
-    systemMessageIndex: systemIndex,
-    // m[0]: the authored baseline Magic Context assembles, which is the prefix a turn may not disturb.
-    m0Present: authored !== undefined,
-    m0Bytes: authored === undefined ? 0 : wireBytes(wireMessageText(authored)),
-    m0Sha256: authored === undefined ? null : sha256(wireMessageText(authored)),
-    m0MessageIndex: authoredIndex,
-    // The tool declarations exactly as the provider serializes them: the schema the model is handed.
-    toolCount: tools.length,
-    toolBytes: wireBytes(wireJson(tools)),
-    toolSha256: tools.length === 0 ? null : sha256(wireJson(tools)),
-    toolNames: Object.freeze(
-      tools.map((tool) => (typeof tool?.function?.name === "string" ? tool.function.name : null)),
-    ),
-    // The whole conversation the model reads on this turn, and its parts.
-    messageCount: messages.length,
-    messagesBytes: wireBytes(wireJson(messages)),
-    messageRoles: Object.freeze(messages.map((message) => (typeof message?.role === "string" ? message.role : null))),
-  });
-}
-
-/**
- * Admit one WIRE-CAPTURE run: the same inherited-store refusal every run pays, and then a readiness fact that
- * really crossed the wire - the PRODUCT's own connection writer and probe, against the endpoint this process serves.
- *
- * The connection is recorded through the product's own store (`TavernConnectionStore`), which is the writer the
- * management surface uses and the one the runtime reads back when it resolves the escape hatch's endpoint; readiness
- * is the product's own `probeTavernConnection` answering `/models`, not a flag this harness sets. A stub that is not
- * answering therefore refuses the run by name instead of launching a child whose every turn would fail.
- *
- * It is deliberately NOT a second `probeChatProviderReadiness`: that probe resolves a CHAT profile that names the
- * environment provider from `models.json`/`auth.json`, while an escape-hatch record's endpoint and API shape live in
- * the connection document - the same two files, read by the one owner that knows the escape hatch exists.
- */
-export async function admitWireCaptureRun({ runtimeRoot, agentDir, stub, env = process.env }) {
-  const foreign = foreignMagicContextStore({ runtimeRoot, env });
-  if (foreign !== null)
-    return Object.freeze({ ok: false, stage: "magic_context_store", refusal: foreign, readiness: null });
-  let document;
-  try {
-    const { TavernConnectionStore } = await loadHostConnectionStore();
-    const { probeTavernConnection } = await loadHostConnectionProbe();
-    const { catalogProvider } = await loadHostProviderCatalog();
-    await bindHostPathLock();
-    const store = new TavernConnectionStore(agentDir);
-    document = await store.create({
-      providerId: WIRE_PROVIDER_ID,
-      // A placeholder, never a credential: the endpoint is this process's own loopback server.
-      apiKey: "wire-capture-placeholder",
-      baseUrl: stub.baseUrl,
-      apiShape: "openai-completions",
-      modelId: stub.modelId,
-    });
-    const record = document.connections.find(
-      (entry) => entry.providerId === WIRE_PROVIDER_ID && entry.modelId === stub.modelId,
-    );
-    if (record === undefined) throw new Error("wire_capture_connection_missing");
-    const provider = catalogProvider(WIRE_PROVIDER_ID);
-    const result = await probeTavernConnection({
-      provider,
-      baseUrl: stub.baseUrl,
-      apiKey: "wire-capture-placeholder",
-      apiKeyRequired: true,
-      modelId: stub.modelId,
-    });
-    if (result.outcome !== "ready")
-      return Object.freeze({
-        ok: false,
-        stage: "wire_provider_readiness",
-        refusal: `wire_capture_provider_not_ready:${result.failure}`,
-        readiness: null,
-      });
-    document = await store.recordProbe(record.connectionId, result);
-    const active = await store.activate(record.connectionId, document.revision);
-    return Object.freeze({
-      ok: true,
-      stage: "ready",
-      refusal: null,
-      readiness: Object.freeze({
-        provider: WIRE_PROVIDER_ID,
-        model: stub.modelId,
-        reason: "ready",
-        baseUrl: stub.baseUrl,
-        // The product's own decision, not this harness's: the record is written, probed and active in the exact
-        // document the child reads back.
-        connections: active.connections.length,
-      }),
-    });
-  } catch (error) {
-    return Object.freeze({
-      ok: false,
-      stage: "wire_connection_failed",
-      refusal: `wire_capture_connection_failed:${safeReasonCode(error)}`,
-      readiness: null,
-    });
-  }
-}
-
-let hostConnectionStorePromise;
-const loadHostConnectionStore = () =>
-  (hostConnectionStorePromise ??= import(
-    pathToFileURL(join(HOST_ROOT, "dist-test", "tavern", "connection-store.js")).href
-  ));
-let hostConnectionProbePromise;
-const loadHostConnectionProbe = () =>
-  (hostConnectionProbePromise ??= import(
-    pathToFileURL(join(HOST_ROOT, "dist-test", "tavern", "connection-probe.js")).href
-  ));
-
-/**
- * The product's durable path lock releases through a Windows reclaimer a PROCESS binds (`host/src/path-lock.ts:49`);
- * the runtime binds its own at startup, and a harness that writes through the same store modules before any child
- * exists has to bind the same capability itself - exactly as `tools/live-run/core/persona.mjs` and
- * `tools/live-run/memory/run-memory-live-loop.mjs` do. Without it every product write fails closed with
- * `durable_path_lock_release_failed`.
- */
-let hostPathLockBound = false;
-async function bindHostPathLock() {
-  if (hostPathLockBound) return;
-  const [{ bindWindowsStaleLockReclaimer }, { createBuildWindowsStaleLockReclaimer }] = await Promise.all([
-    import(pathToFileURL(join(HOST_ROOT, "dist-test", "path-lock.js")).href),
-    import(pathToFileURL(join(HOST_ROOT, "dist-test", "windows-stale-lock-reclaimer", "index.js")).href),
-  ]);
-  bindWindowsStaleLockReclaimer(await createBuildWindowsStaleLockReclaimer());
-  hostPathLockBound = true;
-}
-
-/**
- * The two product declarations a wire-contract reading sources its population and its anchor from.
- *
- * Read from the Host build the harness family already runs against rather than written here: the Game tool
- * names are a closed registry projection, and the floor anchor is the one asterisk form the Chat surface
- * teaches. A hand-written copy of either would keep asserting a list the product stopped shipping.
- */
-async function loadWireContractAnchors() {
-  const [{ STARDEW_ACTION_TOOL_NAMES }, { COMPANION_ACTION_SYNTAX }] = await Promise.all([
-    import(pathToFileURL(join(HOST_ROOT, "dist-test", "action-registry.js")).href),
-    import(pathToFileURL(join(HOST_ROOT, "dist-test", "identity-profile.js")).href),
-  ]);
-  return Object.freeze({
-    gameToolNames: Object.freeze(Object.values(STARDEW_ACTION_TOOL_NAMES)),
-    houseFloor: COMPANION_ACTION_SYNTAX,
-  });
-}
-
-/**
- * What the run printed about the trade, and the reading it printed it beside. One function so the qualification and
- * the numbers can never be separated in the log: a stubbed provider means this run asserts what the product SENDS,
- * never what a real model replies (`tools/live-run/README.md` §4 and §6).
- */
-export function narrateWireTrade(stub) {
-  return (
-    `[chat-live-audit] wire provider=STUB endpoint=${stub.baseUrl} model=${stub.modelId}\n` +
-    "  this run asserts what the product SENDS, never what a real model replies"
-  );
-}
-
-export function narrateWireReading(reading) {
-  if (reading.state !== "verified")
-    return `[chat-live-audit] wire provider=STUB state=${reading.state} reason=${reading.reason} - no request was captured`;
-  const lines = [
-    `[chat-live-audit] wire provider=STUB endpoint=${reading.baseUrl} model=${reading.modelId}`,
-    "  a stubbed provider: this run asserts what the product SENDS, never what a real model replies",
-    `  requests=${reading.requestsReceived} of ${reading.turnsDrove} turn(s) driven`,
-  ];
-  for (const turn of reading.readings) {
-    lines.push(
-      `  request ${turn.requestIndex}: system=${turn.systemBytes}B (sha256 ${turn.systemSha256})` +
-        ` m[0]=${turn.m0Present ? `${turn.m0Bytes}B (sha256 ${turn.m0Sha256})` : "absent"}` +
-        ` tools=${turn.toolCount} (${turn.toolBytes}B)` +
-        ` messages=${turn.messageCount} (${turn.messagesBytes}B)`,
-    );
-  }
-  return lines.join("\n");
-}
-
-/**
- * The wire reading for a run, from the requests the stub was handed.
- *
- * `unobserved` is a real answer and the reason travels with it: a run asked for wire capture and got no request
- * (the turn never reached the provider) must not publish an empty reading that a reader would take for "the request
- * carried nothing". The verdict vocabulary is `tools/live-run/core/evidence-verdict.mjs`'s, not a second one.
- */
-export function buildWireReading({ requested, provider, turnsDrove = 0 }) {
-  const requests = Array.isArray(provider?.requests) ? provider.requests : [];
-  const bodies = requests.map((request) => request?.body).filter((body) => body !== undefined);
-  const verdict = judgeWireObserved({
-    observed: requested === true && bodies.length > 0,
-    ok: requested === true && bodies.length > 0,
-    reason: requested === true ? "provider_received_no_request" : "wire_capture_not_requested",
-  });
-  return Object.freeze({
-    schema: WIRE_READING_SCHEMA,
-    state: verdict.state,
-    reason: verdict.reason,
-    // The product's own escape hatch, and the id this stub served: a reader can tell a stubbed run from a real
-    // one by this alone, which is why it is published even when nothing was captured.
-    providerId: WIRE_PROVIDER_ID,
-    baseUrl: typeof provider?.baseUrl === "string" ? provider.baseUrl : null,
-    modelId: typeof provider?.modelId === "string" ? provider.modelId : null,
-    // How many turns the run drove and how many requests the stub actually answered, so a run whose second turn
-    // never reached the wire is visible instead of looking like a one-turn conversation.
-    turnsDrove: Number.isSafeInteger(turnsDrove) ? turnsDrove : 0,
-    requestsReceived: bodies.length,
-    readings: Object.freeze(
-      bodies.map((body, index) => Object.freeze({ requestIndex: index + 1, ...summariseWireRequest(body) })),
-    ),
-  });
-}
-
-const PROBE_MANIFEST_SCHEMA = "chat_memory_probe_manifest/v1";
-const PROBE_DISTANCES = Object.freeze(new Set(["turn", "fold", "session"]));
-const PROBE_DIMENSIONS = Object.freeze(new Set(["retention", "discrimination", "supersession", "isolation"]));
-const PROBE_STEP_KIND = Object.freeze(new Set(["seed", "filler", "probe"]));
-const PROBE_ROLE = /^(companion|player)$/;
-
-/**
- * Load and validate a probe manifest (fixture sidecar, never a product trace).
- * The schema is the proposal from the long-horizon-memory-probe design
- * (bounded, fixture-owned): an opaque manifest id + digest, a single continuity
- * topology, and a list of probe scenarios. Nothing here is allowed to reach a
- * trace except through the frozen `probe` vocabulary (probeId + manifestDigest).
- */
-function validateProbeStepShape(step) {
-  const kind = step?.kind;
-  if (!PROBE_STEP_KIND.has(kind)) return "probe_step_kind_invalid";
-  if (kind !== "probe" && kind !== "seed" && (typeof step.role !== "string" || !PROBE_ROLE.test(step.role)))
-    return "probe_step_role_invalid";
-  if (typeof step.text !== "string" || step.text.length === 0) return "probe_step_text_invalid";
-  if (kind === "probe") {
-    if (!Array.isArray(step.requiredKeywords) || step.requiredKeywords.some((keyword) => typeof keyword !== "string"))
-      return "probe_step_keywords_invalid";
-    if (
-      step.forbiddenKeywords !== undefined &&
-      (!Array.isArray(step.forbiddenKeywords) || step.forbiddenKeywords.some((keyword) => typeof keyword !== "string"))
-    )
-      return "probe_step_keywords_invalid";
-  }
-  if (
-    kind === "seed" &&
-    (typeof step.persistVia !== "string" || !["memory_route", "conversation"].includes(step.persistVia))
-  )
-    return "probe_step_persistvia_invalid";
-  return undefined;
-}
-
-function validateProbeShape(probe, index) {
-  if (probe === null || typeof probe !== "object" || Array.isArray(probe))
-    throw new Error(`probe_manifest_probe_invalid:${index}`);
-  const probeKeys = new Set(["probeId", "distance", "dimension", "seedClass", "steps"]);
-  for (const key of Object.keys(probe))
-    if (!probeKeys.has(key)) throw new Error(`probe_manifest_probe_field_unknown:${index}:${key}`);
-  if (typeof probe.probeId !== "string" || !PROBE_ID.test(probe.probeId))
-    throw new Error(`probe_manifest_probe_id_invalid:${index}`);
-  if (!PROBE_DISTANCES.has(probe.distance))
-    throw new Error(`probe_manifest_probe_distance_invalid:${index}:${probe.distance}`);
-  if (!PROBE_DIMENSIONS.has(probe.dimension))
-    throw new Error(`probe_manifest_probe_dimension_invalid:${index}:${probe.dimension}`);
-  if (probe.seedClass !== "explicit" && probe.seedClass !== "conversational")
-    throw new Error(`probe_manifest_probe_seedclass_invalid:${index}:${probe.seedClass}`);
-  if (!Array.isArray(probe.steps) || probe.steps.length === 0)
-    throw new Error(`probe_manifest_probe_steps_missing:${index}`);
-  const steps = probe.steps.map((step, stepIndex) => {
-    const issue = validateProbeStepShape(step);
-    if (issue !== undefined) throw new Error(`probe_manifest_${issue}:${index}:${stepIndex}`);
-    return Object.freeze({ ...step });
-  });
-  return Object.freeze({ ...probe, steps });
-}
-
-export function loadProbeManifest(text) {
-  let manifest;
-  try {
-    manifest = JSON.parse(text);
-  } catch {
-    throw new Error("probe_manifest_invalid_json");
-  }
-  if (manifest === null || typeof manifest !== "object" || Array.isArray(manifest))
-    throw new Error("probe_manifest_invalid");
-  const allowedKeys = new Set(["schema", "manifestId", "manifestDigest", "continuityTopology", "probes"]);
-  for (const key of Object.keys(manifest))
-    if (!allowedKeys.has(key)) throw new Error(`probe_manifest_unknown_field:${key}`);
-  if (manifest.schema !== PROBE_MANIFEST_SCHEMA) throw new Error(`probe_manifest_schema_mismatch:${manifest.schema}`);
-  if (typeof manifest.manifestId !== "string" || !/^[A-Za-z0-9_.:-]{1,160}$/.test(manifest.manifestId))
-    throw new Error("probe_manifest_id_invalid");
-  if (typeof manifest.manifestDigest !== "string" || !SHA256_HEX.test(manifest.manifestDigest))
-    throw new Error("probe_manifest_digest_invalid");
-  if (manifest.continuityTopology !== "single" && manifest.continuityTopology !== "dual")
-    throw new Error("probe_manifest_topology_invalid");
-  if (!Array.isArray(manifest.probes) || manifest.probes.length === 0) throw new Error("probe_manifest_probes_missing");
-  const probes = manifest.probes.map((probe, index) => validateProbeShape(probe, index));
-  const digest = sha256(
-    JSON.stringify(
-      Object.freeze({
-        schema: PROBE_MANIFEST_SCHEMA,
-        manifestId: manifest.manifestId,
-        continuityTopology: manifest.continuityTopology,
-        probes,
-      }),
-    ),
-  );
-  if (digest !== manifest.manifestDigest) throw new Error("probe_manifest_digest_mismatch");
-  return Object.freeze({
-    schema: PROBE_MANIFEST_SCHEMA,
-    manifestId: manifest.manifestId,
-    manifestDigest: manifest.manifestDigest,
-    continuityTopology: manifest.continuityTopology,
-    probes,
-  });
-}
-
-function boundedReason(value, fallback) {
-  return typeof value === "string" && CODE_PATTERN.test(value) ? value : fallback;
-}
-
-/**
- * Keyword evidence for one probe turn comes only from the authenticated durable
- * transcript (Class A, same source as `presentation.committed`). The reply text
- * is matched here and NEVER reaches a trace; only the probe's opaque id + the
- * manifest digest do. `requiredKeywords` follow the design threshold: >=0.5 of
- * them by substring (after normalize), and any `forbiddenKeywords` hit fails.
- */
-export function evaluateProbeReply({ transcriptText, step }) {
-  if (typeof transcriptText !== "string" || transcriptText.length === 0)
-    return Object.freeze({ hit: false, forbiddenCount: 0, reason: "no_presentation_text" });
-  const required = Array.isArray(step.requiredKeywords) ? step.requiredKeywords : [];
-  const forbidden = Array.isArray(step.forbiddenKeywords) ? step.forbiddenKeywords : [];
-  if (required.length === 0) return Object.freeze({ hit: false, forbiddenCount: 0, reason: "no_required_keywords" });
-  const normalized = normalizeKeywordText(transcriptText);
-  const hitCount = required.filter((kw) => normalized.includes(normalizeKeywordText(kw))).length;
-  const forbiddenCount = forbidden.filter((kw) => normalized.includes(normalizeKeywordText(kw))).length;
-  const threshold =
-    step.minHitRate !== undefined && Number.isFinite(step.minHitRate) ? Math.min(1, Math.max(0, step.minHitRate)) : 0.5;
-  return Object.freeze({ hit: hitCount >= Math.ceil(required.length * threshold), forbiddenCount });
-}
-
-/**
- * The probe "was there a durable reply for THIS turn" gate (audit design §3.3).
- *
- * A keyword verdict may only be scored against the DURABLE committed-companion
- * delta of the current turn. The Class B stderr marker only reports that the
- * admission boundary was crossed — it can be `rejected`, and it is not the
- * durable fact — so a turn whose presentation never committed (or was rejected)
- * must be an observability gap, never a scored match against older transcript
- * text.
- */
-export function probeTurnCommittedGate(outcome) {
-  if (outcome === undefined || outcome.terminal !== true)
-    return Object.freeze({ ok: false, reason: "probe_turn_not_terminal" });
-  if (!(outcome.committedCompanionDelta > 0))
-    return Object.freeze({ ok: false, reason: "probe_turn_no_committed_presentation" });
-  return Object.freeze({ ok: true });
-}
-
-/**
- * The probe turn's verdict, given its gate decision and (only when the gate
- * passed) the keyword matches.
- *
- * This is the routing seam, not just the predicate: a failed gate SHORT-CIRCUITS
- * to `observability_gap` and the keyword matches are never even consulted, so a
- * turn whose presentation was rejected or never committed can never be scored —
- * not against this turn, and not against older transcript text. Tested directly
- * so that reordering this decision (scoring first, gating later) fails.
- */
-export function probeVerdict({ gate, keywords, dimension }) {
-  if (!gate.ok) return Object.freeze({ event: "observability_gap", reason: gate.reason });
-  if (keywords === undefined) return Object.freeze({ event: "observability_gap", reason: "probe_keywords_missing" });
-  // The supersession dimension answers a different question from retention: not "is
-  // the fact present" but "did the overwrite take effect in BOTH directions". It has
-  // its own frozen codes and its own `reason` vocabulary (design 3.5,
-  // `old_retained` / `new_missing`), and it was specified but never produced - the
-  // codes sat in the frozen table while no branch emitted them.
-  if (dimension === "supersession") {
-    // The old fact surviving is the more specific failure: it means the supersede
-    // chain did not take effect in the assembled prompt. A reply that names both (the
-    // "you like parsnips and amethyst" fudge) therefore lands here rather than on
-    // `new_missing`, which is what makes the both-answers case detectable at all.
-    if (keywords.forbiddenCount > 0) return Object.freeze({ event: "supersede.fail", reason: "old_retained" });
-    if (keywords.hit) return Object.freeze({ event: "supersede.pass" });
-    return Object.freeze({ event: "supersede.fail", reason: "new_missing" });
-  }
-  if (keywords.hit && keywords.forbiddenCount === 0) return Object.freeze({ event: "needle.hit" });
-  if (!keywords.hit && keywords.forbiddenCount === 0) return Object.freeze({ event: "needle.miss" });
-  // `distractor.confused` has two distinct causes and they must stay
-  // distinguishable in the report, because only one of them is a memory
-  // failure: `needle_only` means the needle WAS recalled and a forbidden word
-  // merely co-occurred (which a correct reply that denies the distractor also
-  // does), while `recall_failed` means the needle was not recalled at all.
-  // The code is unchanged and the frozen vocabulary is untouched; the cause
-  // rides on the already-permitted scalar `reason` meta key.
-  return Object.freeze({
-    event: "distractor.confused",
-    reason: keywords.hit ? "needle_only" : "recall_failed",
-  });
-}
-
-/** Substring keyword normalization mirroring the conversational quality gate. */
-function normalizeKeywordText(value) {
-  return value.toLowerCase().replace(/\s+/g, " ").trim();
-}
-
-/**
- * The boundary reason a CONVERSATION turn contributes, or `undefined` when it settled cleanly.
- *
- * A `failed` terminal is as much a product fact as an unsettled one, and it used to leave the run
- * reporting `collected` while one of its own turns had died — which is exactly the kind of silent
- * downgrade this harness is forbidden to make. The per-turn state itself is recorded in the trace
- * (`turn.terminal`, with its bounded `problemCode`); this decision only carries it into the run verdict.
- */
-export function conversationTurnBoundaryReason(turn) {
-  if (turn?.terminal !== true) return "conversation_turn_not_terminal";
-  return turn.projection?.turnState === "failed" ? "conversation_turn_failed" : undefined;
-}
-
-/**
- * Deployment manifest for one audit run. The schema is the frozen Host
- * deployment identity (`host/src/deployment-manifest.ts`, schemaVersion 2).
- */
-export function createAuditDeploymentManifest(runtimeRoot, principal, bootstrapOperationId) {
-  return Object.freeze({
-    schemaVersion: 2,
-    topology: "independent_chat_and_game_surfaces",
-    runtimeRoot,
-    principal: Object.freeze({ ...principal }),
-    bootstrapOperationId,
-    authorityGeneration: 1,
-  });
-}
-
-/**
- * Per-row obligations for the `probe` kind. Mirrors the audit kernel's
- * `validateProbeEvent` exactly (same obligations, same order): every probe event
- * carries the opaque `probeId` and the `manifestDigest` of the sidecar that
- * holds the probe material, and `isolation.breach` additionally carries the
- * distance and `dimension=isolation`. Returns a reason code or undefined.
- */
-function probeEventReason(meta) {
-  if (!isPlainObject(meta)) return "event_probe_metadata_missing";
-  if (typeof meta.probeId !== "string" || !PROBE_ID.test(meta.probeId)) return "event_probe_id_invalid";
-  if (typeof meta.manifestDigest !== "string" || !SHA256_HEX.test(meta.manifestDigest))
-    return "event_probe_manifest_digest_invalid";
-  if (meta.distance !== undefined && !AUDIT_PROBE_DISTANCES.includes(meta.distance))
-    return "event_probe_distance_invalid";
-  if (meta.dimension !== undefined && !AUDIT_PROBE_DIMENSIONS.includes(meta.dimension))
-    return "event_probe_dimension_invalid";
-  return undefined;
-}
-
-/**
- * The extra obligations `isolation.breach` carries beyond every probe event.
- * Split out because the missing-meta branch must reach them too.
- */
-function probeBreachReason(event, meta) {
-  if (event.code !== PROBE_ISOLATION_BREACH_CODE || event.kind !== PROBE_KIND) return undefined;
-  if (!(isPlainObject(meta) && AUDIT_PROBE_DISTANCES.includes(meta.distance)))
-    return "event_probe_breach_distance_missing";
-  if (meta.dimension !== PROBE_BREACH_DIMENSION) return "event_probe_breach_dimension_invalid";
-  return undefined;
-}
-
-export function validateAuditEvent(event) {
-  if (!isPlainObject(event)) return Object.freeze({ ok: false, reasonCode: "event_not_object" });
-  if (!Object.keys(event).every((key) => AUDIT_EVENT_KEYS.includes(key)))
-    return Object.freeze({ ok: false, reasonCode: "event_unknown_field" });
-  if (!Number.isSafeInteger(event.at) || event.at < 0)
-    return Object.freeze({ ok: false, reasonCode: "event_at_invalid" });
-  if (!AUDIT_KINDS.includes(event.kind)) return Object.freeze({ ok: false, reasonCode: "event_kind_unknown" });
-  if (typeof event.code !== "string" || !CODE_PATTERN.test(event.code))
-    return Object.freeze({ ok: false, reasonCode: "event_code_charset_invalid" });
-  const actor = AUDIT_VOCABULARY[`${event.kind}.${event.code}`];
-  if (actor === undefined) return Object.freeze({ ok: false, reasonCode: "event_code_unknown" });
-  if (actor !== event.actor) return Object.freeze({ ok: false, reasonCode: "event_actor_mismatch" });
-  if (event.meta === undefined) {
-    // Per-code obligations still apply with no meta at all: `turn.terminal`,
-    // `run.finished` and every `probe` event require one.
-    if (event.code === "turn.terminal")
-      return Object.freeze({ ok: false, reasonCode: "event_turn_terminal_state_missing" });
-    if (event.code === "run.finished")
-      return Object.freeze({ ok: false, reasonCode: "event_provider_observability_missing" });
-    if (event.kind === PROBE_KIND) return Object.freeze({ ok: false, reasonCode: "event_probe_metadata_missing" });
-    return Object.freeze({ ok: true, reasonCode: undefined });
-  }
-  if (!isPlainObject(event.meta)) return Object.freeze({ ok: false, reasonCode: "event_meta_not_object" });
-  const metaKeys = Object.keys(event.meta);
-  if (metaKeys.length > 8) return Object.freeze({ ok: false, reasonCode: "event_meta_too_many_keys" });
-  for (const key of metaKeys) {
-    if (!AUDIT_META_KEYS.includes(key)) return Object.freeze({ ok: false, reasonCode: "event_meta_key_unknown" });
-    const value = event.meta[key];
-    const valid =
-      typeof value === "boolean" ||
-      (typeof value === "number" && Number.isFinite(value)) ||
-      (typeof value === "string" && value.length <= 160 && !/[\u0000-\u001f\u007f]/.test(value));
-    if (!valid) return Object.freeze({ ok: false, reasonCode: "event_meta_value_invalid" });
-  }
-  // Per-code obligations the frozen table states as part of the row contract.
-  // These MUST stay in step with the audit kernel's own obligations
-  // (`tools/lib/chat-run-audit.mjs`): a trace this validator accepts but the
-  // kernel rejects would be written to disk and then analysed as nothing.
-  if (event.code === "turn.terminal" && !AUDIT_TERMINAL_STATES.includes(event.meta.state))
-    return Object.freeze({ ok: false, reasonCode: "event_turn_terminal_state_invalid" });
-  if (event.code === "run.finished" && !AUDIT_PROVIDER_OBSERVABILITY.includes(event.meta.providerObservability))
-    return Object.freeze({ ok: false, reasonCode: "event_provider_observability_missing" });
-  if (event.kind === PROBE_KIND) {
-    const probeReason = probeEventReason(event.meta);
-    if (probeReason !== undefined) return Object.freeze({ ok: false, reasonCode: probeReason });
-  }
-  const breachReason = probeBreachReason(event, event.meta);
-  if (breachReason !== undefined) return Object.freeze({ ok: false, reasonCode: breachReason });
-  return Object.freeze({ ok: true, reasonCode: undefined });
-}
-
-/**
- * The single fail-closed gate over the harness's own output. Any unknown field,
- * unknown code, actor mismatch, out-of-range value, non-monotonic `at`, or
- * content-bearing line is rejected; nothing is silently dropped and collection
- * never continues past an invalid emit.
- */
-export function validateAuditTrace(trace) {
-  if (!hasExactKeys(trace, AUDIT_CATEGORY_KEYS))
-    return Object.freeze({ ok: false, reasonCode: "trace_category_invalid" });
-  if (trace.schema !== AUDIT_SCHEMA) return Object.freeze({ ok: false, reasonCode: "trace_schema_invalid" });
-  if (typeof trace.runId !== "string" || !OPAQUE_RUN_ID.test(trace.runId))
-    return Object.freeze({ ok: false, reasonCode: "trace_run_id_invalid" });
-  const startedAtMs = typeof trace.startedAt === "string" ? Date.parse(trace.startedAt) : Number.NaN;
-  const completedAtMs = typeof trace.completedAt === "string" ? Date.parse(trace.completedAt) : Number.NaN;
-  if (!(Number.isFinite(startedAtMs) && Number.isFinite(completedAtMs)))
-    return Object.freeze({ ok: false, reasonCode: "trace_timestamp_invalid" });
-  if (completedAtMs < startedAtMs) return Object.freeze({ ok: false, reasonCode: "trace_timestamp_order_invalid" });
-  if (trace.surface !== AUDIT_SURFACE) return Object.freeze({ ok: false, reasonCode: "trace_surface_invalid" });
-  if (!hasExactKeys(trace.artifact, AUDIT_ARTIFACT_KEYS))
-    return Object.freeze({ ok: false, reasonCode: "trace_artifact_invalid" });
-  if (typeof trace.artifact.generation !== "string" || !GENERATION.test(trace.artifact.generation))
-    return Object.freeze({ ok: false, reasonCode: "trace_artifact_invalid" });
-  if (typeof trace.artifact.inventoryDigest !== "string" || !SHA256_HEX.test(trace.artifact.inventoryDigest))
-    return Object.freeze({ ok: false, reasonCode: "trace_artifact_invalid" });
-  if (!hasExactKeys(trace.provider, AUDIT_PROVIDER_KEYS))
-    return Object.freeze({ ok: false, reasonCode: "trace_provider_invalid" });
-  if (trace.provider.embedded !== true || typeof trace.provider.observed !== "boolean")
-    return Object.freeze({ ok: false, reasonCode: "trace_provider_invalid" });
-  if (trace.originMs !== 0) return Object.freeze({ ok: false, reasonCode: "trace_origin_invalid" });
-  if (!Array.isArray(trace.events) || trace.events.length === 0)
-    return Object.freeze({ ok: false, reasonCode: "trace_events_invalid" });
-  let previousAt = 0;
-  let finished = 0;
-  let started = 0;
-  let providerObservability;
-  for (const event of trace.events) {
-    const validation = validateAuditEvent(event);
-    if (!validation.ok) return Object.freeze({ ok: false, reasonCode: validation.reasonCode });
-    if (event.at < previousAt) return Object.freeze({ ok: false, reasonCode: "trace_at_not_monotonic" });
-    previousAt = event.at;
-    if (event.kind === "lifecycle" && event.code === "run.started") started += 1;
-    if (event.kind === "lifecycle" && event.code === "run.finished") {
-      finished += 1;
-      const value = event.meta?.providerObservability;
-      if (value !== "observed" && value !== "unobserved")
-        return Object.freeze({ ok: false, reasonCode: "trace_provider_observability_missing" });
-      providerObservability = value;
-    }
-  }
-  if (finished !== 1) return Object.freeze({ ok: false, reasonCode: "trace_run_finished_invalid" });
-  // Mirrors the audit kernel: a trace whose run never started describes no run.
-  if (started === 0) return Object.freeze({ ok: false, reasonCode: "trace_run_started_missing" });
-  if (providerObservability !== (trace.provider.observed ? "observed" : "unobserved"))
-    return Object.freeze({ ok: false, reasonCode: "trace_provider_observability_inconsistent" });
-  return Object.freeze({ ok: true, reasonCode: undefined });
-}
-
-export function contentFree(serialized) {
-  return !CONTENT_GUARD.test(serialized);
-}
-
-/**
- * Validates, then writes the trace create-only. A trace that fails validation
- * or trips the content guard is never written.
- */
-export async function writeAuditTrace(path, trace) {
-  const validation = validateAuditTrace(trace);
-  if (!validation.ok) throw new Error(`audit_trace_invalid:${validation.reasonCode}`);
-  const serialized = `${JSON.stringify(trace, null, 2)}\n`;
-  if (!contentFree(serialized)) throw new Error("audit_trace_content_guard_rejected");
-  if (path === undefined) return serialized;
-  const handle = await open(path, "wx", 0o600);
-  try {
-    await handle.writeFile(serialized, "utf8");
-  } finally {
-    await handle.close();
-  }
-  return serialized;
-}
-
+import {
+  buildLiveRunTextSideFile,
+  createLiveRunTextCollector,
+  LIVE_RUN_TEXT_MAX_CHARS,
+  LIVE_RUN_TEXT_MAX_ENTRIES,
+  liveRunTextSideFilePath,
+  redactLiveRunText,
+} from "../core/capture-text.mjs";
 /**
  * Side-file transcript capture (option B — independent of the frozen trace).
  *
@@ -1299,14 +284,6 @@ export async function writeAuditTrace(path, trace) {
  * reader can still see that the reply contained one.
  */
 import { assertLiveRunPersonaMounted, provisionLiveRunPersona } from "../core/persona.mjs";
-import {
-  buildLiveRunTextSideFile,
-  createLiveRunTextCollector,
-  LIVE_RUN_TEXT_MAX_CHARS,
-  LIVE_RUN_TEXT_MAX_ENTRIES,
-  liveRunTextSideFilePath,
-  redactLiveRunText,
-} from "../core/capture-text.mjs";
 
 // The surface's own schema name; the POLICY (bounds, redaction, beside-not-inside) lives in core, so a
 // change to it lands in one place instead of once per surface.
@@ -1337,220 +314,6 @@ export function buildTranscriptSideFile({ runId, entries }) {
 const capturedTranscriptEntries = createLiveRunTextCollector({ maxEntries: LIVE_RUN_TEXT_MAX_ENTRIES });
 
 export const transcriptSideFilePath = (reportTarget) => liveRunTextSideFilePath(reportTarget);
-
-export function buildAuditTrace({ runId, startedAt, completedAt, artifact, providerObserved, events }) {
-  return Object.freeze({
-    schema: AUDIT_SCHEMA,
-    runId,
-    startedAt,
-    completedAt,
-    surface: AUDIT_SURFACE,
-    artifact: Object.freeze({ generation: artifact.generation, inventoryDigest: artifact.inventoryDigest }),
-    provider: Object.freeze({ embedded: true, observed: providerObserved === true }),
-    originMs: 0,
-    events: Object.freeze([...events]),
-  });
-}
-
-/**
- * Monotonic emitter. `at` is a millisecond offset from the run origin, clamped
- * to never move backwards, and every event is validated as it is recorded so a
- * malformed emit fails closed at the source instead of producing a trace that
- * later has to be discarded.
- */
-export function createAuditRecorder({ startedAtMs, now = Date.now }) {
-  if (!Number.isSafeInteger(startedAtMs)) throw new Error("audit_recorder_origin_invalid");
-  const events = [];
-  let cursor = 0;
-  return Object.freeze({
-    record(kind, actor, code, meta) {
-      const elapsed = Math.floor(now() - startedAtMs);
-      const at = elapsed > cursor ? elapsed : cursor;
-      cursor = at;
-      const event =
-        meta === undefined ? { at, kind, actor, code } : { at, kind, actor, code, meta: Object.freeze({ ...meta }) };
-      const validation = validateAuditEvent(event);
-      if (!validation.ok) throw new Error(`audit_event_emitted_invalid:${validation.reasonCode}`);
-      events.push(Object.freeze(event));
-      return event;
-    },
-    events() {
-      return Object.freeze([...events]);
-    },
-  });
-}
-
-export function parseSseFrame(frame) {
-  const lines = frame.split("\n");
-  let cursor;
-  let eventType;
-  let data;
-  for (const line of lines) {
-    if (line.length === 0) continue;
-    if (line.startsWith("id: ")) cursor = line.slice(4);
-    else if (line.startsWith("event: ")) eventType = line.slice(7);
-    else if (line.startsWith("data: ")) data = data === undefined ? line.slice(6) : `${data}\n${line.slice(6)}`;
-    else return Object.freeze({ ok: false, reason: "malformed_line" });
-  }
-  if (eventType === undefined || data === undefined) return Object.freeze({ ok: false, reason: "incomplete_frame" });
-  let payload;
-  try {
-    payload = JSON.parse(data);
-  } catch {
-    return Object.freeze({ ok: false, reason: "invalid_json" });
-  }
-  if (!isPlainObject(payload)) return Object.freeze({ ok: false, reason: "invalid_payload" });
-  if (payload.eventType !== eventType) return Object.freeze({ ok: false, reason: "event_type_mismatch" });
-  return Object.freeze({ ok: true, cursor, eventType, payload });
-}
-
-export function classifyStartupStderr(stderr) {
-  if (typeof stderr !== "string" || stderr.length === 0) return undefined;
-  for (const line of stderr.split(/\r?\n/).map((value) => value.trim())) {
-    if (line.length === 0) continue;
-    const code = line.replace(/^Error:\s*/i, "");
-    if (!STARTUP_STDERR_CODE.test(code)) continue;
-    const reason = `${STARTUP_STDERR_REASON_PREFIX}${code.toLowerCase()}`;
-    if (CODE_PATTERN.test(reason)) return reason;
-  }
-  return undefined;
-}
-
-export function classifyStartupFailure(error, stderr) {
-  const reason = safeReasonCode(error);
-  if (!reason.startsWith("dialogue_exited_before_ready:") && reason !== "dialogue_start_timeout") return reason;
-  return classifyStartupStderr(stderr) ?? reason;
-}
-
-/**
- * Class A child IPC: the pre-send marker proves only that Pi serialized a
- * request immediately before the provider call. It is scoped to the exact
- * session identity reported by the separate runtime frame.
- */
-export function evaluateProviderRuntimeMarker(value) {
-  if (
-    value?.schema !== "gamebuddy-tavern-narrative-gate-runtime/v1" ||
-    typeof value.piSessionId !== "string" ||
-    !PI_SESSION_ID.test(value.piSessionId)
-  )
-    return Object.freeze({ observed: false, reasonCode: "provider_runtime_session_unavailable" });
-  return Object.freeze({ observed: true, piSessionId: value.piSessionId });
-}
-
-export function evaluateProviderPreSendMarker(value, expectedDigest, expectedSessionId) {
-  if (value === undefined) return Object.freeze({ observed: false, reasonCode: "provider_marker_unavailable" });
-  if (
-    value?.schema !== "gamebuddy-tavern-narrative-gate-marker/v1" ||
-    typeof value.sessionId !== "string" ||
-    typeof value.nonceSha256 !== "string" ||
-    !PI_SESSION_ID.test(value.sessionId) ||
-    !SHA256_HEX.test(value.nonceSha256)
-  )
-    return Object.freeze({ observed: false, reasonCode: "provider_marker_schema_invalid" });
-  if (value.sessionId !== expectedSessionId || value.nonceSha256 !== expectedDigest)
-    return Object.freeze({ observed: false, reasonCode: "provider_marker_digest_mismatch" });
-  return Object.freeze({ observed: true, preSendSerialized: true });
-}
-
-/**
- * Class B diagnostic markers. Only admission and rejection are expressible; the
- * `commit_done` marker is intentionally absent because the authoritative
- * presentation fact may only come from `/state`.
- */
-const PRESENTATION_MARKER =
-  /\[DEBUG-chat-live-p4c\] (admission_ok|commit_rejected|commit_error|native_rejected_[a-z_]+)/g;
-
-/**
- * The gate marker's own failure line, produced by the Host when it cannot
- * announce the runtime. Matching the whole line (not a presence flag) is
- * deliberate: the point is to carry WHICH condition failed, so the run can say
- * "the transport was not connected" instead of "no marker", which reads as a
- * product that never called the provider.
- */
-const FIRST_RESPONSE_MS = /\[provider-start\] first_response_ms=(\d+)/;
-
-/** The provider-boundary wait this turn actually paid, when the host measured it. */
-export function providerFirstResponseMs(stderr) {
-  if (typeof stderr !== "string" || stderr.length === 0) return null;
-  // The LAST match is the turn being reported: one line is written per turn.
-  let value = null;
-  for (const match of stderr.matchAll(FIRST_RESPONSE_MS)) {
-    const parsed = Number(match[1]);
-    if (Number.isSafeInteger(parsed) && parsed >= 0) value = parsed;
-  }
-  return value;
-}
-
-const GATE_MARKER_FAILURE = /\[tavern-gate\] runtime marker (unavailable|rejected): ([^\n]*)/g;
-
-/**
- * Class B probe materialization markers emitted by Magic Context on vendor
- * stderr after a durable fold COMMIT (D-1 approved: vendor stderr). They are
- * consumed internally by the probe driver for P-fold positioning and m[0]
- * bit-stability; they NEVER become frozen audit event codes.
- *   `[probe:m0_digest] <sha256-of-persisted-m0-bytes>`
- *   `[probe:fold_committed] <opaque-materialization-revision>`
- */
-// The value alternative is ordered: a `rev_`-prefixed revision can never be a
-// 64-char lowercase hex digest (the `r` is not a hex digit), so a bound value is
-// unambiguous and there is no backtracking ambiguity between the two kinds. The
-// digest marker carries its materialization revision as a third token because
-// §5.4's bit-stability check is "same revision, same digest" — without the pair a
-// legitimate re-render is indistinguishable from drift.
-const PROBE_MATERIALIZATION_MARKER =
-  /\[probe:(m0_digest|fold_committed)\] (rev_[A-Za-z0-9_-]{1,120}|[a-f0-9]{64})(?: (rev_[A-Za-z0-9_-]{1,120}))?/g;
-
-export function classifyProbeMaterializationMarkers(stderr) {
-  if (typeof stderr !== "string" || stderr.length === 0) return Object.freeze([]);
-  const markers = [];
-  for (const match of stderr.matchAll(PROBE_MATERIALIZATION_MARKER)) {
-    const kind = match[1];
-    const value = match[2];
-    if (kind === "fold_committed") {
-      markers.push(Object.freeze({ code: "fold_committed", revision: value }));
-      continue;
-    }
-    // A digest without its revision cannot be compared, so a digest marker that
-    // is missing the paired token is not evidence and is not reported as one.
-    const revision = match[3];
-    if (revision === undefined) continue;
-    markers.push(Object.freeze({ code: "m0_digest", digest: value, revision }));
-  }
-  return Object.freeze(markers);
-}
-
-export function classifyPresentationMarkers(stderr) {
-  if (typeof stderr !== "string" || stderr.length === 0) return Object.freeze([]);
-  const markers = [];
-  for (const match of stderr.matchAll(PRESENTATION_MARKER)) {
-    const token = match[1];
-    markers.push(
-      token === "admission_ok"
-        ? Object.freeze({ code: "admitted", status: "admission_ok" })
-        : Object.freeze({ code: "rejected", reason: token.slice(0, 160) }),
-    );
-  }
-  return Object.freeze(markers);
-}
-
-/**
- * Why the runtime never announced itself, when it could not.
- *
- * The runtime marker is the ONLY producer of the Pi session identity the pre-send
- * marker is cross-checked against, so without it no `provider.request.sent` can
- * exist and the run reports `no_pre_send_marker`. That reason is indistinguishable
- * from "the product never reached the provider" - the exact collapse that made
- * provider timing unmeasurable. The host names the cause on one bounded stderr
- * line; this reads it, so the run's evidence can say which world it was in.
- */
-export function classifyGateMarkerFailures(stderr) {
-  if (typeof stderr !== "string" || stderr.length === 0) return Object.freeze([]);
-  const failures = [];
-  for (const match of stderr.matchAll(GATE_MARKER_FAILURE)) {
-    failures.push(Object.freeze({ phase: match[1], detail: match[2].trim().slice(0, 200) }));
-  }
-  return Object.freeze(failures);
-}
 
 /**
  * Durable projection of one authenticated `/state` read. `chat.turn` is the
@@ -2419,92 +1182,6 @@ async function collectRun({ root, recorder, nonceSha256, environment, attachChil
   // beside the trace and printed, because a reader of the log needs the number without opening the directory.
   environment.usage = readRunUsage({ personaCwd: environment.personaCwd });
   console.log(narrateUsage(environment.usage));
-}
-
-export const CHAT_USAGE_SCHEMA = "chat_run_audit/usage/v1";
-
-/** Every `.jsonl` session record under this run's identity context, or the reason none could be listed. */
-function runSessionRecords(personaCwd) {
-  if (typeof personaCwd !== "string" || personaCwd.length === 0)
-    return Object.freeze({ records: [], reason: "runtime_cwd_not_established" });
-  const surfacesRoot = join(personaCwd, "surface-sessions");
-  let surfaces;
-  try {
-    surfaces = readdirSync(surfacesRoot, { withFileTypes: true });
-  } catch {
-    return Object.freeze({ records: [], reason: "no_surface_sessions_directory" });
-  }
-  const records = [];
-  for (const surface of surfaces) {
-    if (!surface.isDirectory()) continue;
-    let entries;
-    try {
-      entries = readdirSync(join(surfacesRoot, surface.name, "sessions"), { withFileTypes: true });
-    } catch {
-      continue;
-    }
-    for (const entry of entries)
-      if (entry.isFile() && entry.name.endsWith(".jsonl"))
-        records.push(join(surfacesRoot, surface.name, "sessions", entry.name));
-  }
-  records.sort();
-  const reason = records.length === 0 ? "no_session_record_for_run_surface_session" : null;
-  return Object.freeze({ records: Object.freeze(records), reason });
-}
-
-/** The reading in its published shape; `state` and `reason` come from the evidence verdict, never from a zero. */
-function usageReading({ verdict, sessionRecord, usages }) {
-  const measurable = isPass(verdict);
-  const peak = measurable ? peakContext(usages) : { peak: null, at: null };
-  const cacheRead = measurable ? sumOf(usages, "cacheRead") : 0;
-  const billable = measurable ? sumOf(usages, "input") + cacheRead : 0;
-  return Object.freeze({
-    schema: CHAT_USAGE_SCHEMA,
-    state: verdict.state,
-    reason: verdict.reason,
-    // The file every number below was derived from, so a reader never has to trust a bare figure.
-    sessionRecord,
-    turns: measurable ? usages.length : null,
-    peakInputPlusCacheRead: peak.peak,
-    peakAt: peak.at,
-    cacheHitRate: measurable && billable > 0 ? cacheRead / billable : null,
-    cacheBreaks: measurable ? Object.freeze(cacheBreaks(usages)) : null,
-  });
-}
-
-/** The reading, or the named reason there is none. Never throws: a diagnostic must not fail the run it measured. */
-export function readRunUsage({ personaCwd }) {
-  const unobserved = (reason, sessionRecord = null) =>
-    usageReading({ verdict: judgeObserved({ observed: false, reason }), sessionRecord, usages: [] });
-  const found = runSessionRecords(personaCwd);
-  // Two records in one run are two possible answers, and picking either would report a neighbour's tokens as this
-  // run's. The count names what to go and look at.
-  if (found.records.length > 1) return unobserved(`session_record_ambiguous:${found.records.length}`);
-  const sessionRecord = found.records[0] ?? null;
-  if (sessionRecord === null) return unobserved(found.reason);
-  let usages;
-  try {
-    ({ usages } = readUsages(sessionRecord));
-  } catch (error) {
-    return unobserved(`session_record_unreadable:${safeReasonCode(error)}`, sessionRecord);
-  }
-  // A record holding no provider turn is unobserved too: there is no number to publish, and a zero would be a
-  // measurement nobody took.
-  if (usages.length === 0) return unobserved("no_provider_usage_in_session_record", sessionRecord);
-  return usageReading({ verdict: judgeObserved({ observed: true, ok: true }), sessionRecord, usages });
-}
-
-/** One line a human reading the log can use without opening the run directory. */
-export function narrateUsage(usage) {
-  const where = usage.sessionRecord === null ? "" : ` source=${usage.sessionRecord}`;
-  if (usage.state !== "verified")
-    return `[chat-live-audit] usage state=${usage.state} reason=${usage.reason}${where} (an unobserved reading is not zero)`;
-  const hitRate = usage.cacheHitRate === null ? "n/a" : `${(usage.cacheHitRate * 100).toFixed(1)}%`;
-  return (
-    `[chat-live-audit] usage state=verified turns=${usage.turns} ` +
-    `peakInputPlusCacheRead=${usage.peakInputPlusCacheRead} cacheHitRate=${hitRate} ` +
-    `cacheBreaks=${usage.cacheBreaks.length}${where}`
-  );
 }
 
 function finishRun({ recorder, environment }) {
