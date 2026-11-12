@@ -22,7 +22,8 @@
  * </p>
  *
  * <ul>
- *   <li>`<player-note>` - the player's own words, verbatim, first, never mixed with a fact;</li>
+ *   <li>`<player-note>` - the player's own words, verbatim, first, never mixed with a fact: his text split by whose
+ *       each sentence is, one label per run (`player-note.ts` reads the note);</li>
  *   <li>`<world-state>` - the snapshot as a paragraph: clock, date, weather, where, stamina, what she carries, and the
  *       nearby target families with their tiles;</li>
  *   <li>`<in-flight>` - the programme she has DISPATCHED and not yet seen settle: what `action_program_status` would
@@ -49,6 +50,7 @@ import {
   MAX_TARGET_FAMILIES_SHOWN,
   nearbyTargetFamilies,
 } from "./game-world-vocabulary.js";
+import { playerNoteLines } from "./player-note.js";
 import type { InFlightProgramme, InFlightProgrammeReading } from "./program-status-wait.js";
 import { MAX_BODY_PROGRAM_REFUSAL_DETAIL_LENGTH, type Snapshot } from "./protocol.js";
 
@@ -214,9 +216,10 @@ export function composeFactBrief(input: FactBriefInput): string {
   return blocks.join("\n");
 }
 
-/** The player's own words, verbatim, one line per utterance. Empty when nobody said anything. */
+/** The player's own words, verbatim, split by whose each sentence is (`player-note.ts` reads the note). Empty when
+ * nobody said anything. */
 function composePlayerNote(inputs: readonly PlayerInput[]): string {
-  const lines = inputs.map((input) => input.text.trim()).filter((text) => text !== "");
+  const lines = playerNoteLines(inputs.map((input) => input.text));
   if (lines.length === 0) return "";
   return block("player-note", lines.join("\n"));
 }

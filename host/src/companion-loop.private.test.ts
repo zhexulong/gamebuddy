@@ -3,6 +3,7 @@ import test from "node:test";
 import { GAME_DELIVERY_PACING, selectReactionSound } from "./companion-delivery-pacing.js";
 import { CompanionLoop } from "./companion-loop.js";
 import { MAGIC_CONTEXT_REFUSED_TURN_ENTRY_TYPE } from "./companion-turn-refusal.js";
+import { playerNoteLines } from "./player-note.js";
 import { programSettledDigest } from "./program-settlement-digest.js";
 
 /**
@@ -83,8 +84,10 @@ test("CompanionLoop explicitly steers player input and includes the latest snaps
   assert.equal(received[0]?.deliverAs, "steer");
   const text = received[0]?.text ?? "";
   // The message is the composed prose, not an envelope: the player's own words are a block of their own, and the
-  // reading rides beside it.
-  assert.match(text, /<player-note>\n我们去哪里？\n<\/player-note>/u);
+  // reading rides beside it. The note's wording (his words under the label `player-note.ts` gives them) belongs to that
+  // module's own test; what this one owns is that the loop delivers the input through it.
+  const note = /<player-note>\n([\s\S]*?)\n<\/player-note>/u.exec(text)?.[1] ?? "";
+  assert.equal(note, playerNoteLines(["我们去哪里？"]).join("\n"));
   assert.match(text, /<world-state>\n世界（revision 3，刚刚更新）/u);
 });
 
