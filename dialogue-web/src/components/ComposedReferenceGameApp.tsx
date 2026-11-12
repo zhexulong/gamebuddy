@@ -53,6 +53,7 @@ import { newIdempotencyKey, type ReadyView } from "./composed-reference-game-vie
 import { GameSurface } from "./GameSurface";
 import { MemorySurface } from "./MemorySurface";
 import { createManagementPipelineApi } from "./management-surface-panels";
+import { type ChatMutationKind, createMessageMutation, type MessageMutationOutcome } from "./message-mutation";
 import { ProblemView } from "./ProblemView";
 import { PresetAssemblySurface } from "./PresetAssemblySurface";
 import { SettingsSurface } from "./SettingsSurface";
@@ -68,9 +69,6 @@ import { type ComposedPreviewV1, terminalTurn, useComposedBootstrap } from "./us
 /** The recovery read's first retry delay, and the ceiling its doubling stops at. */
 const RETRY_FIRST_MS = 1_000;
 const RETRY_CEILING_MS = 5_000;
-
-/** Every message-level mutation this surface can have in flight, and show as busy on its own row. */
-type ChatMutationKind = "swipe" | "swipeRemove" | "regenerate" | "opening" | "rewind" | "edit" | "delete";
 
 /**
  * True when a failed read says something about the conversation rather than about the link.
@@ -896,6 +894,22 @@ export function ComposedReferenceGameApp() {
   };
 
   /**
+   * The one envelope every message-level mutation runs through (`message-mutation`): the guards, the
+   * press's own admission, the single-flight latch, the wire call and the authoritative reread that
+   * follows it. The commands below are requests to it, so none of them can spell the refusal
+   * sentence, the latch release or the reread for itself.
+   */
+  const mutateMessage = createMessageMutation({
+    viewRef,
+    chatMutationRef,
+    beginMessageMutation,
+    rereadChat,
+    commit,
+    setMessageMutationNotice,
+    setChatMutation,
+  });
+
+  /**
    * Swipe selection and regenerate are Chat-owned mutations the reference
    * surface offered and the composed shell did not: with the reference entry
    * gone they live here. Both take their own idempotency key and never append a
@@ -903,33 +917,16 @@ export function ComposedReferenceGameApp() {
    * and a failed attempt resolves through that same reread rather than a local
    * guess.
    */
-  const handleSwipe = async (messageHandle: string, direction: "prev" | "next"): Promise<void> => {
-    const current = viewRef.current;
-    if (current.kind !== "ready") return;
-    // Single-flight: a second click while the first is in flight is dropped, not
-    // sent. Only this attempt's own resolution clears the latch.
-    if (chatMutationRef.current) return;
-    const selection = current.session.snapshot.selection;
-    if (selection === null) return;
-    beginMessageMutation("swipe", messageHandle);
-    try {
-      await tavernApiRef.current.selectSwipe(
-        { apiVersion: 1, selectionGeneration: selection.generation, messageHandle, direction },
-        { csrfToken: current.session.snapshot.csrfToken },
-      );
-      await rereadChat();
-    } catch (error) {
-      // Said out loud before the reread: the reread restores the variant the Host still holds, so
-      // without this line the row flickers back with nothing explaining the press.
-      setMessageMutationNotice(problemView(error, messages(current.locale)).detail);
-      await rereadChat().catch(() => {
-        commit(problemView(error, messages(current.locale)));
-      });
-    } finally {
-      chatMutationRef.current = false;
-      setChatMutation(null);
-    }
-  };
+  const handleSwipe = (messageHandle: string, direction: "prev" | "next"): Promise<MessageMutationOutcome> =>
+    mutateMessage({
+      kind: "swipe",
+      handle: messageHandle,
+      send: ({ selectionGeneration, csrfToken }) =>
+        tavernApiRef.current.selectSwipe(
+          { apiVersion: 1, selectionGeneration, messageHandle, direction },
+          { csrfToken },
+        ),
+    });
 
   /**
    * The new-chat opening choice. It has the same shape as swipe - single-flight, no local variant
@@ -937,74 +934,54 @@ export function ComposedReferenceGameApp() {
    * authoritative snapshot, because the committed variant and the sealed-opening fact are the
    * Host's, never React state's.
    */
-  const handleOpeningVariant = async (messageHandle: string, direction: "prev" | "next"): Promise<void> => {
-    const current = viewRef.current;
-    if (current.kind !== "ready") return;
-    if (chatMutationRef.current) return;
-    const selection = current.session.snapshot.selection;
-    if (selection === null) return;
-    beginMessageMutation("opening", messageHandle);
-    try {
-      await managementPipelineApiRef.current.selectOpeningVariant(
-        { apiVersion: 1, selectionGeneration: selection.generation, direction },
-        current.session.snapshot.csrfToken,
-      );
-      await rereadChat();
-    } catch (error) {
-      setMessageMutationNotice(problemView(error, messages(current.locale)).detail);
-      await rereadChat().catch(() => {
-        commit(problemView(error, messages(current.locale)));
-      });
-    } finally {
-      chatMutationRef.current = false;
-      setChatMutation(null);
-    }
-  };
+  const handleOpeningVariant = (messageHandle: string, direction: "prev" | "next"): Promise<MessageMutationOutcome> =>
+    mutateMessage({
+      kind: "opening",
+      handle: messageHandle,
+      send: ({ selectionGeneration, csrfToken }) =>
+        managementPipelineApiRef.current.selectOpeningVariant(
+          { apiVersion: 1, selectionGeneration, direction },
+          csrfToken,
+        ),
+    });
 
   const handleRegenerate = async (messageHandle: string): Promise<void> => {
-    const current = viewRef.current;
-    if (current.kind !== "ready") return;
-    // Single-flight, exactly as swipe: without it a double click mints two fresh
-    // idempotency keys and the Host admits two regenerations.
-    if (chatMutationRef.current) return;
-    const selection = current.session.snapshot.selection;
-    if (selection === null) return;
-    // Regeneration starts a real turn, so it begins the way a send does: only
-    // while the profile offers an available `chat.submit` (one turn at a time)
-    // and under a published pending record. That record is what makes the
-    // fallback poll live; without it the poll this handler starts dies on its
-    // first tick (nothing is pending), and on a dropped event stream the
-    // transcript never leaves the pre-regenerate variant.
+    // The turn is the request's subject and the request is the turn's, so they share one
+    // idempotency key: the record this press publishes is the record the Host answers under it.
     const idempotencyKey = newIdempotencyKey();
-    if (beginTurnMutation(idempotencyKey, current) === null) return;
-    // The turn-key discipline is `handleSend`'s, word for word, and it is here for the same reason:
-    // this regenerate mints a NEW durable turn - it reuses message identities, never a turn handle -
-    // so every mark the turn produces has to name it. Without these two lines the turn's
-    // `accepted`/`first-token`/`settled` marks named no turn at all, and after a turn settled by
-    // the fallback poll or a committed message rather than a terminal state event - the only thing
-    // that clears `turnKeyRef` - they named the turn BEFORE this one.
-    turnKeyRef.current = idempotencyKey;
-    markTurn("submit", { surface: "chat", turnKey: idempotencyKey });
-    beginMessageMutation("regenerate", messageHandle);
-    try {
-      await tavernApiRef.current.regenerate(
-        { apiVersion: 1, selectionGeneration: selection.generation, messageHandle },
-        { csrfToken: current.session.snapshot.csrfToken, idempotencyKey },
-      );
-      await rereadChat();
+    const outcome = await mutateMessage({
+      kind: "regenerate",
+      handle: messageHandle,
+      // Regeneration starts a real turn, so it begins the way a send does: only while the profile
+      // offers an available `chat.submit` (one turn at a time) and under a published pending record.
+      // That record is what makes the fallback poll live; without it the poll this handler starts
+      // dies on its first tick (nothing is pending), and on a dropped event stream the transcript
+      // never leaves the pre-regenerate variant.
+      before: (current) => {
+        if (beginTurnMutation(idempotencyKey, current) === null) return false;
+        // The turn-key discipline is `handleSend`'s, word for word, and it is here for the same
+        // reason: this regenerate mints a NEW durable turn - it reuses message identities, never a
+        // turn handle - so every mark the turn produces has to name it. Without these two lines the
+        // turn's `accepted`/`first-token`/`settled` marks named no turn at all, and after a turn
+        // settled by the fallback poll or a committed message rather than a terminal state event -
+        // the only thing that clears `turnKeyRef` - they named the turn BEFORE this one.
+        turnKeyRef.current = idempotencyKey;
+        markTurn("submit", { surface: "chat", turnKey: idempotencyKey });
+        return true;
+      },
+      send: ({ selectionGeneration, csrfToken }) =>
+        tavernApiRef.current.regenerate(
+          { apiVersion: 1, selectionGeneration, messageHandle },
+          { csrfToken, idempotencyKey },
+        ),
+    });
+    if (outcome.kind === "landed") {
       startPolling();
-    } catch (error) {
-      setMessageMutationNotice(problemView(error, messages(current.locale)).detail);
-      await rereadChat().catch(() => {
-        commit(problemView(error, messages(current.locale)));
-      });
-      // Last, so the record's fate is decided against the view the reread left behind: a refusal
-      // spends the record this regenerate published, and an unanswered attempt keeps it and hands
-      // it to the poll.
-      settleFailedTurnMutation(error);
-    } finally {
-      chatMutationRef.current = false;
-      setChatMutation(null);
+    } else if (outcome.kind === "failed") {
+      // After the envelope's own reread, so the record's fate is decided against the view that read
+      // left behind: a refusal spends the record this regenerate published, and an unanswered
+      // attempt keeps it and hands it to the poll.
+      settleFailedTurnMutation(outcome.error);
     }
   };
 
@@ -1034,30 +1011,19 @@ export function ComposedReferenceGameApp() {
     setArm(null);
   };
 
-  const handleRewindConfirm = async (messageHandle: string, expectedOrder: number): Promise<void> => {
-    const current = viewRef.current;
-    if (current.kind !== "ready") return;
-    if (chatMutationRef.current) return;
-    const selection = current.session.snapshot.selection;
-    if (selection === null) return;
-    setArm(null);
-    beginMessageMutation("rewind", messageHandle);
-    try {
-      await tavernApiRef.current.rewind(
-        { apiVersion: 1, selectionGeneration: selection.generation, messageHandle, expectedOrder },
-        { csrfToken: current.session.snapshot.csrfToken },
-      );
-      await rereadChat();
-    } catch (error) {
-      setMessageMutationNotice(problemView(error, messages(current.locale)).detail);
-      await rereadChat().catch(() => {
-        commit(problemView(error, messages(current.locale)));
-      });
-    } finally {
-      chatMutationRef.current = false;
-      setChatMutation(null);
-    }
-  };
+  const handleRewindConfirm = (messageHandle: string, expectedOrder: number): Promise<MessageMutationOutcome> =>
+    mutateMessage({
+      kind: "rewind",
+      handle: messageHandle,
+      // The arm is spent by the press it confirmed, and only after the guards admitted that press: a
+      // stale confirmation must not survive the mutation it sent.
+      before: () => setArm(null),
+      send: ({ selectionGeneration, csrfToken }) =>
+        tavernApiRef.current.rewind(
+          { apiVersion: 1, selectionGeneration, messageHandle, expectedOrder },
+          { csrfToken },
+        ),
+    });
 
   const handleDeleteArm = (messageHandle: string, expectedOrder: number): void => {
     setArm(Object.freeze({ action: "delete", targetId: messageHandle, expectedOrder }));
@@ -1067,30 +1033,18 @@ export function ComposedReferenceGameApp() {
     setArm(null);
   };
 
-  const handleDeleteConfirm = async (messageHandle: string, expectedOrder: number): Promise<void> => {
-    const current = viewRef.current;
-    if (current.kind !== "ready") return;
-    if (chatMutationRef.current) return;
-    const selection = current.session.snapshot.selection;
-    if (selection === null) return;
-    setArm(null);
-    beginMessageMutation("delete", messageHandle);
-    try {
-      await tavernApiRef.current.delete(
-        { apiVersion: 1, selectionGeneration: selection.generation, messageHandle, expectedOrder },
-        { csrfToken: current.session.snapshot.csrfToken },
-      );
-      await rereadChat();
-    } catch (error) {
-      setMessageMutationNotice(problemView(error, messages(current.locale)).detail);
-      await rereadChat().catch(() => {
-        commit(problemView(error, messages(current.locale)));
-      });
-    } finally {
-      chatMutationRef.current = false;
-      setChatMutation(null);
-    }
-  };
+  const handleDeleteConfirm = (messageHandle: string, expectedOrder: number): Promise<MessageMutationOutcome> =>
+    mutateMessage({
+      kind: "delete",
+      handle: messageHandle,
+      // The arm is spent by the press it confirmed, and only after the guards admitted that press.
+      before: () => setArm(null),
+      send: ({ selectionGeneration, csrfToken }) =>
+        tavernApiRef.current.delete(
+          { apiVersion: 1, selectionGeneration, messageHandle, expectedOrder },
+          { csrfToken },
+        ),
+    });
 
   /**
    * The variant discard's arm and its confirmation, the delete arm's own shape one row over: the arm names
@@ -1116,32 +1070,18 @@ export function ComposedReferenceGameApp() {
    * last variant by name and that sentence is what the player reads, because a disappeared button with
    * nothing said about it is exactly the state this control exists to avoid.
    */
-  const handleSwipeRemoveConfirm = async (messageHandle: string, targetIndex: number): Promise<void> => {
-    const current = viewRef.current;
-    if (current.kind !== "ready") return;
-    if (chatMutationRef.current) return;
-    const selection = current.session.snapshot.selection;
-    if (selection === null) return;
-    setArm(null);
-    beginMessageMutation("swipeRemove", messageHandle);
-    try {
-      await tavernApiRef.current.removeSwipeVariant(
-        { apiVersion: 1, selectionGeneration: selection.generation, messageHandle, targetIndex },
-        { csrfToken: current.session.snapshot.csrfToken },
-      );
-      await rereadChat();
-    } catch (error) {
-      // The refusal's own sentence, said out loud before the reread: a variant that did not leave is a
-      // fact about this press, and the words for it already exist in the catalogue.
-      setMessageMutationNotice(problemView(error, messages(current.locale)).detail);
-      await rereadChat().catch(() => {
-        commit(problemView(error, messages(current.locale)));
-      });
-    } finally {
-      chatMutationRef.current = false;
-      setChatMutation(null);
-    }
-  };
+  const handleSwipeRemoveConfirm = (messageHandle: string, targetIndex: number): Promise<MessageMutationOutcome> =>
+    mutateMessage({
+      kind: "swipeRemove",
+      handle: messageHandle,
+      // The arm is spent by the press it confirmed, and only after the guards admitted that press.
+      before: () => setArm(null),
+      send: ({ selectionGeneration, csrfToken }) =>
+        tavernApiRef.current.removeSwipeVariant(
+          { apiVersion: 1, selectionGeneration, messageHandle, targetIndex },
+          { csrfToken },
+        ),
+    });
 
   /**
    * The edit: the player's own message carries different text from now on, in the transcript and in
@@ -1150,32 +1090,16 @@ export function ComposedReferenceGameApp() {
    * because the transcript is what a position means and the Host refuses a row that has moved. The
    * authoritative reread owns what the conversation then shows.
    */
-  const handleEdit = async (messageHandle: string, expectedOrder: number, text: string): Promise<void> => {
-    const current = viewRef.current;
-    if (current.kind !== "ready") return;
-    if (chatMutationRef.current) return;
-    const selection = current.session.snapshot.selection;
-    if (selection === null) return;
-    beginMessageMutation("edit", messageHandle);
-    try {
-      await tavernApiRef.current.edit(
-        { apiVersion: 1, selectionGeneration: selection.generation, messageHandle, expectedOrder, text },
-        { csrfToken: current.session.snapshot.csrfToken },
-      );
-      await rereadChat();
-    } catch (error) {
-      // The editor stays open on the words the player typed (the row closes it only on the edit that
-      // landed), so the sentence is what stands beside them: "nothing happened" with no reason is what
-      // sent players looking for a failure the page never named.
-      setMessageMutationNotice(problemView(error, messages(current.locale)).detail);
-      await rereadChat().catch(() => {
-        commit(problemView(error, messages(current.locale)));
-      });
-    } finally {
-      chatMutationRef.current = false;
-      setChatMutation(null);
-    }
-  };
+  const handleEdit = (messageHandle: string, expectedOrder: number, text: string): Promise<MessageMutationOutcome> =>
+    mutateMessage({
+      kind: "edit",
+      handle: messageHandle,
+      send: ({ selectionGeneration, csrfToken }) =>
+        tavernApiRef.current.edit(
+          { apiVersion: 1, selectionGeneration, messageHandle, expectedOrder, text },
+          { csrfToken },
+        ),
+    });
 
   /**
    * A rename from the Chats surface is a management mutation, and the composed
