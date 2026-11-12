@@ -1,3 +1,7 @@
+// red-proof: inject  the population check's "a guard with no row" rule disabled in
+//                    tools/audit-stardew-state-coverage.mjs -> `✖ an engine state with no row is named`, exit 1;
+//                    restored -> green
+//
 // Regression gate for the engine state-coverage audit.
 //
 // The audit answers ONE question that a live run used to answer instead: for each state the engine

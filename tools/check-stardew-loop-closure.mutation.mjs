@@ -6,6 +6,9 @@
  * GREEN means the rule is not actually load-bearing. The mutations work on a
  * temporary COPY of the gate (never the shared file) so a concurrent editor is
  * not affected -- the same hazard that was fixed for the scene-kind audit.
+ *
+ * red-proof: inject  the private-entry case removed from the loop-closure suite -> `STILL GREEN  M1 treat a private
+ *                    entry as callable` + `SOME MUTATIONS SURVIVED`, exit 1; restored -> `all mutations caught`, exit 0
  */
 import { execFile } from "node:child_process";
 import { cp, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";

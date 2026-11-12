@@ -1,3 +1,6 @@
+// red-proof: inject  the STOP body-settled rule disabled in the live-evidence module -> `✖ rejects tampering and fails
+//                    closed when a STOP has no authoritative body settled fact` (the expected `production_live_body_
+//                    settle_evidence_unavailable` code is gone), exit 1; restored -> green
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import test from "node:test";

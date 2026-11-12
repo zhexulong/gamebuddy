@@ -1,3 +1,6 @@
+// red-proof: inject  the canonical-drive-absolute grammar disabled in the production-admission module ->
+//                    `✖ production admission is Windows-only and accepts only canonical drive absolute grammar`,
+//                    `/admission_path_not_absolute/` did not throw; exit 1, restored -> green
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";

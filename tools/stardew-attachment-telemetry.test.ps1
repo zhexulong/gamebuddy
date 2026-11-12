@@ -1,3 +1,7 @@
+# red-proof: inject  the failed-outcome publication renamed in the attachment regression prover ->
+#                    `attachment_telemetry_contract_missing:Publish-Telemetry "failed"`, exit 1; restored ->
+#                    `stardew_attachment_telemetry_contract_passed`, exit 0
+#
 # Static deterministic contract check for the non-authoritative attachment
 # timing artifact. This does not start Stardew, inspect a real session, or
 # claim any production/attachment success.

@@ -25,6 +25,10 @@ const mismatch = (validate, value) =>
   );
 const phraseIdFor = (scenario) => `${scenario.phraseSet}:1`;
 
+// red-proof: inject  the phrase-manifest integrity comparison disabled in the live-scenario module ->
+//                    `✖ rejects structural fixture mutations` (a `sha256:deadbeef` integrity accepted), exit 1;
+//                    restored -> green
+//
 // Canonical scenario IDs, phrase IDs, event kinds, and silence windows are derived from the validated JSON loader.
 test("loads the canonical JSON-only fixture truth", async () => {
   const { manifest, phrases } = await loadCompanionLiveFixtures();

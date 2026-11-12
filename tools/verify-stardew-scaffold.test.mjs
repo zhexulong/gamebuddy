@@ -1,3 +1,6 @@
+// red-proof: inject  the forbidden-surface `new Farmer` term dropped from the scaffold verifier's exact-text list ->
+//                    `✖ scaffold checker rejects forbidden embodiment surfaces anywhere in the Mod source tree`, exit
+//                    1; restored -> green
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { cp, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
