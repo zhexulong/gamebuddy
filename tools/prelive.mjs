@@ -185,6 +185,26 @@ export const L0_GATES = Object.freeze([
   // under 24 method names in `integrations/stardew/farmhandexecutioncontroller.*.cs` read as "10.9% duplicated" and
   // therefore fine. ~1 s warm (4.3 s on a cold file cache), one child process, no network, no game.
   "tools/check-code-duplication.mjs",
+  // A terminal commit is ONE place: `ExecutionManager.RememberTerminal`. Measured here: `sites examined 917 · through the
+  // seam 917 · exempt 6 · families 46`, 0.1 s. No rung read this population before, so the hand-rolled
+  // `this.Remember(receipt); this.AddTrace(receipt);` this gate exists for could re-enter the tree with every other gate
+  // green - and each of the four facts the seam guarantees (the bound action identity, the published fact, the trace
+  // revision, the `body_idle`) has already been dropped by a copy at least once.
+  "tools/check-terminal-commit-single-entry.mjs",
+  // The third act of that seam, which nothing measured: a store-and-publish pair that says nothing about the body being
+  // free again. It reuses the scan above (one file), and prints the 910 seam calls standing outside its own population
+  // rather than folding them into a pass. Measured here: `sites examined 7 · silent 1`, one exemption in the ratchet, 0.1 s.
+  "tools/check-terminal-idle-publication.mjs",
+  // The Host test corpus read as SOURCE rather than run: an assertion that matches two code tokens across literal
+  // whitespace measures where the formatter put the line breaks, and a reformat turns it red with the product unchanged
+  // (measured 2026-11-12, `contained-game-runtime.internal.test.ts:205`). Measured here: `matches examined 142 · through
+  // the shape reader 142 · through raw text 0`, 400 test files, 0.9 s through the workspace's `typescript`.
+  "tools/check-source-shape-readers.mjs",
+  // The hang the corpus can write that no assertion sees: an `await` on a promise a listener settles, with no deadline.
+  // Measured 2026-11-12: one such await ran a suite to its 600 s budget while the other thirty tests in the same file
+  // summed 391 ms, and a hang reports nothing. Measured here: `awaits examined 12 · with a deadline 12`, 426 test files,
+  // 1.2 s.
+  "tools/check-test-await-deadlines.mjs",
   "tools/check-prelive-gate-registry.mjs",
 ]);
 
