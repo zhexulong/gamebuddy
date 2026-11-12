@@ -215,9 +215,10 @@ const WORD_THAT_CONTAINS_KEY: Readonly<Record<string, string>> = Object.freeze({
  * The assertion the rejected rules failed.
  *
  * Reading the shipped book rather than a list written here is the point: the population is the product's own
- * content, so a rule that silences a key fails by naming it. Measured on the shipped book: 95 multi-character han
- * keys, all 95 firing in the carrier; one single han character (`锅`), which must stand as its own word and must
- * NOT fire inside `火锅`.
+ * content, so a rule that silences a key fails by naming it. Measured on the shipped book: 97 keys, every one of them a
+ * multi-character han word, and all of them firing in the carrier. The book carried exactly one single han character
+ * (`锅`) until `f731fbb9` dropped that key, so that tier's shipped witness is gone; the tier's own rule is pinned by the
+ * tier cases above, and any single character the book ships again is checked by the loop below.
  */
 test("every han key the shipped book carries behaves as its own tier requires", () => {
   const keys = shippedKeys();
@@ -226,7 +227,14 @@ test("every han key the shipped book carries behaves as its own tier requires", 
   const hanWords = keys.filter((key) => HAN_WORD.test(key));
   const singleCharacters = keys.filter((key) => SINGLE_HAN_CHARACTER.test(key));
   assert.ok(hanWords.length > 0, "examined 0 multi-character han keys: the population did not load");
-  assert.ok(singleCharacters.length > 0, "examined 0 single han characters: the population did not load");
+  // How many keys land in the single-character tier is the book's own content, so it is measured and printed rather
+  // than required: the tier's shipped witness (`锅`) left the book on 2026-11-12, and requiring one back would be this
+  // file pinning content it does not own. The rule itself is pinned by the tier cases above, and the loop below refuses
+  // a single-character key the book ships without a carrier - which is where a returning one fails loudly.
+  console.log(
+    `shipped book keys: ${String(keys.length)} examined, ${String(hanWords.length)} multi-character han, ` +
+      `${String(singleCharacters.length)} single han character`,
+  );
 
   const silenced = hanWords.filter((key) => !fires(`我们聊聊${key}吧`, key));
   assert.deepEqual(
