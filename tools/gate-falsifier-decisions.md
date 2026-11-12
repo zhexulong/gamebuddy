@@ -1912,3 +1912,43 @@ the finding, not a marker.
   zero `baseline_entry_stale` and zero `no_red_proof`.
 - It did not claim `check:architecture` for itself. That gate is a `pnpm ... && pnpm ...` chain with no rule of its own;
   it left the debt set by inheritance, and the census prints the members it inherited from.
+
+## The sixteenth batch: the census prints its fifth bucket, and the arithmetic is the assertion
+
+The fifteenth batch left repairs to this document's own record that belong to one family: a claim a reader cannot
+reconcile from what is printed.
+
+### Line one: the bucket that was never printed
+
+`describeGateCensus` partitioned four buckets and printed five numbers, so the two gates whose claim `assignStatus` calls
+`malformed` or `pointer_missing` were in no term of the arithmetic. The line now prints them, and the numbers are read
+from the same run, before and after:
+
+```
+before  gates examined 357 · with a red proof 341 · external 7 · declared without 7 · undeclared 0 · zero-population-pass 0
+after   gates examined 357 · with a red proof 341 · external 7 · declared without 7 · unreadable 2 · undeclared 0 · zero-population-pass 0
+        341 + 7 + 7 + 2 + 0 = 357        (the line before read 341 + 7 + 7 = 355 of 357)
+```
+
+The bucket is `reading.unreadableClaims`, the same list `evaluate` turns into `red_proof_kind_unknown` /
+`red_proof_pointer_missing` findings on every run, so the line and the findings cannot disagree. `check-harness-conformance`
+prints the identical line from the same `describeGateCensus`, because the numbers are one reading of one population -
+`gateRedProofLedger` now carries `unreadable` beside `undeclared` and `external` for that reason.
+
+### Line two: printing it once would have left the next bucket unprintable
+
+Adding the bucket fixes this instance. What makes the class impossible is that `describeGateCensus` reads its own numbers
+back off the line it just built, sums the five partition terms, and compares the sum with the population it printed:
+
+```
+census_does_not_reconcile:<sum>:<examined>                 a bucket is printed and the arithmetic does not close
+census_does_not_reconcile:<bucket>_not_printed:<examined>  a partition bucket is absent from the line
+```
+
+Measured on the live numbers with the bucket printed as `0`: `census_does_not_reconcile:355:357`. Measured on a copy of
+`tools/` outside the live tree (`.tmp/census-copy`) with `· unreadable ${unreadable} ·` deleted from the template:
+`census_does_not_reconcile:unreadable_not_printed:357` - the pre-fix line is not just wrong now, it is unprintable. The
+line is the partition or it is not a reading.
+
+`zero-population-pass`, `unlisted` and `untracked_not_counted` stay off the partition on purpose: each cuts across it (a
+proven gate can also name no population field), so adding one to the sum would make a correct line look wrong.

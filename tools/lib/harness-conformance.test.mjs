@@ -7,7 +7,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { auditGateRedProofs } from "../audit-gate-red-proofs.mjs";
+import { auditGateRedProofs, describeGateCensus } from "../audit-gate-red-proofs.mjs";
 import { indexedGatePopulation } from "./indexed-sources.mjs";
 import {
   checkExperimentalRunners,
@@ -253,6 +253,9 @@ test("the census counts each gate in exactly one bucket and names the ones nobod
     withRedProof: 2,
     recorded: 1,
     undeclared: [{ gate: "test:host", detail: "no marker" }],
+    // The sixth member: `check:d` is judged, unlisted, and carries a claim nobody can read - which is a bucket of its
+    // own, not a subset of the debt. Without it the line's four buckets would add up to five of six.
+    unreadable: ["check:d"],
     stale: [],
     external: [
       {
@@ -281,6 +284,7 @@ test("the census counts each gate in exactly one bucket and names the ones nobod
     withRedProof: 2,
     recorded: 1,
     undeclared: ["test:host"],
+    unreadable: ["check:d"],
     external: [
       {
         gate: "test:a",
@@ -292,13 +296,33 @@ test("the census counts each gate in exactly one bucket and names the ones nobod
     untrackedNotCounted: [],
   });
   assert.deepEqual(describeGateFalsifierCensus(census), [
-    "gates examined 6 · with a red proof 2 · external 1 · declared without 1 · undeclared 1 · zero-population-pass 1 · " +
-      "unlisted 2 (tools/check-c.mjs, check:d)",
+    "gates examined 6 · with a red proof 2 · external 1 · declared without 1 · unreadable 1 · undeclared 1 · " +
+      "zero-population-pass 1 · unlisted 2 (tools/check-c.mjs, check:d)",
     "judged here 4 (with a self-report 1 · declared without a report 1) · excluded 2 (a package.json gate script " +
       "whose entry is not a tools/check-*.mjs gate file, so this suite has no default run to read): 1 proven, external " +
       "or recorded in the red-proof ledger, 1 undeclared and named below",
     "external 1 (rule lives in another program; run the command to watch it fail): test:a = `pnpm --dir pkg run test`",
   ]);
+});
+
+// The line is a partition or it is not printed at all. Measured 2026-11-13: the real line read `341 + 7 + 7 = 355` of
+// 357 while the sentence under it said "357 of 357 are accounted for", because the two gates whose claim cannot be read
+// were in no bucket the line printed. Printing that bucket fixes one instance; the sum read back OFF the line is what
+// makes the next forgotten bucket impossible, so both failures are asserted here rather than the one count.
+test("a census line whose buckets do not add up to its population is never printed", () => {
+  const reading = { examined: 357, withRedProof: 341, external: 7, recorded: 7, undeclared: 0, zeroPopulationPass: 0 };
+  assert.match(describeGateCensus({ ...reading, unreadable: 2 }), / · unreadable 2 · /u);
+  // The pre-fix line: the same reading with the bucket missing from it.
+  assert.throws(
+    () => describeGateCensus({ ...reading, unreadable: undefined }),
+    /census_does_not_reconcile:unreadable_not_printed:357/u,
+  );
+  // A bucket that is printed but leaves gates in none of them: the sum is not the population, so the line is not a
+  // partition and a reader adding it up would be told something the tool never measured.
+  assert.throws(
+    () => describeGateCensus({ ...reading, unreadable: 2, undeclared: 2 }),
+    /census_does_not_reconcile:359:357/u,
+  );
 });
 
 // The real tree, read the way both tools read it. What this pins is the SHAPE, not today's debt: every gate is in one
@@ -321,6 +345,12 @@ test("the real tree is one population, and the gates no ledger covers are named 
   );
   assert.equal(census.judged + census.excluded.length, census.examined);
   assert.equal(census.withReport + census.without + census.unlisted.length, census.judged);
+  // Building the line is the partition assertion: the buckets the reading produces must add up to the population it
+  // prints, or `describeGateCensus` throws instead of printing a line a reader cannot reconcile.
+  assert.ok(
+    describeGateFalsifierCensus(census)[0].startsWith(`gates examined ${census.examined} ·`),
+    "the census line names the population it partitions",
+  );
   // Both halves are populated on the real tree, so neither number can be a green zero.
   assert.ok(census.withReport > 0 && census.without > 0, "a registry half measured nothing");
   // The registry still classifies every gate file it enumerates; that is the invariant, not today's count.
@@ -349,7 +379,10 @@ test("the census judges the index: an untracked gate is published, and the same 
         ledger: {
           withRedProof: 0,
           recorded: 0,
-          undeclared: [],
+          // The red-proof reading is not what this case is about, but the census line has to partition the population
+          // it prints: the synthetic tree holds no marker at all, so every gate in it is one nobody declared.
+          undeclared: population.gates.map((gate) => ({ gate: gate.id, detail: "no marker in the synthetic tree" })),
+          unreadable: [],
           stale: [],
           external: [],
           externalWithoutRunner: [],

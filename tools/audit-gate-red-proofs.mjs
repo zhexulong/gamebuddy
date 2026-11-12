@@ -434,9 +434,49 @@ function inheritedStatus(memberStatuses) {
 }
 
 /**
+ * The buckets that PARTITION `examined`: every gate is in exactly one of them, so their printed values must sum to the
+ * population the same line prints. `zero-population-pass` is deliberately not one of them - a proven gate can also name
+ * no population field - so it is printed beside the partition rather than inside it.
+ */
+const CENSUS_PARTITION = Object.freeze([
+  "with a red proof",
+  "external",
+  "declared without",
+  "unreadable",
+  "undeclared",
+]);
+
+/** One label's count, read back out of the printed line: the arithmetic below is about what a reader can see. */
+function printedCount(line, label) {
+  const match = new RegExp(`(?:^|· )${label} (\\d+)(?: ·|$)`, "u").exec(line);
+  return match === null ? null : Number(match[1]);
+}
+
+/**
+ * The line is a partition or it is not printed at all.
+ *
+ * Measured 2026-11-13: the line read `357 · 341 · 7 · 7 · 0 · 0` while the sentence under it said "357 of 357 are
+ * accounted for", because the two gates whose claim cannot be read were in no bucket the line printed - `341 + 7 + 7`
+ * is 355. A reader who tries the arithmetic concludes the tool is broken. Printing that bucket fixed one instance; the
+ * sum read back off the line is what makes the next forgotten bucket impossible, because a line that does not
+ * reconcile is a throw and never a reading.
+ */
+function assertCensusReconciles(line) {
+  const examined = printedCount(line, "gates examined");
+  const missing = CENSUS_PARTITION.filter((label) => printedCount(line, label) === null);
+  if (examined === null || missing.length > 0)
+    throw new Error(
+      `census_does_not_reconcile:${missing.join(",") || "examined"}_not_printed:${examined === null ? "none" : examined}`,
+    );
+  const sum = CENSUS_PARTITION.reduce((total, label) => total + printedCount(line, label), 0);
+  if (sum !== examined) throw new Error(`census_does_not_reconcile:${sum}:${examined}`);
+  return line;
+}
+
+/**
  * The census line BOTH tools print, from the same reading: how many gates the population has, how many carry a red proof,
- * how many owe one with the debt recorded, how many nobody has declared at all, and how many print a report that cannot
- * show whether it measured anything.
+ * how many owe one with the debt recorded, how many carry a claim nobody can read, how many nobody has declared at all,
+ * and how many print a report that cannot show whether it measured anything.
  *
  * It lives here rather than in each printer because these numbers are one reading of one population. Two printers writing
  * them out separately is how "we have N gates" acquired two answers in the first place. The two trailing buckets are the
@@ -449,16 +489,18 @@ export function describeGateCensus({
   withRedProof,
   external,
   recorded,
+  unreadable,
   undeclared,
   zeroPopulationPass,
   unlisted = [],
   untrackedNotCounted = [],
 }) {
-  return (
+  return assertCensusReconciles(
     `gates examined ${examined} · with a red proof ${withRedProof} · external ${external} · ` +
-    `declared without ${recorded} · undeclared ${undeclared} · zero-population-pass ${zeroPopulationPass}` +
-    (unlisted.length === 0 ? "" : ` · unlisted ${unlisted.length} (${unlisted.join(", ")})`) +
-    (untrackedNotCounted.length === 0 ? "" : ` · untracked_not_counted ${describeUntracked(untrackedNotCounted)}`)
+      `declared without ${recorded} · unreadable ${unreadable} · undeclared ${undeclared} · ` +
+      `zero-population-pass ${zeroPopulationPass}` +
+      (unlisted.length === 0 ? "" : ` · unlisted ${unlisted.length} (${unlisted.join(", ")})`) +
+      (untrackedNotCounted.length === 0 ? "" : ` · untracked_not_counted ${describeUntracked(untrackedNotCounted)}`),
   );
 }
 
@@ -585,6 +627,9 @@ function report({ reading, held, gaps, undeclared = 0 }) {
       withRedProof: reading.proven.length,
       external: reading.external.length,
       recorded: held,
+      // The bucket the line was missing: a claim nobody can read is a gate whose verdict is a finding, so it is neither
+      // proven, external, declared debt nor undeclared - and leaving it off the line made the sum two short.
+      unreadable: reading.unreadableClaims.length,
       undeclared,
       zeroPopulationPass: zero.invisible.length,
       untrackedNotCounted: population.untrackedNotCounted,

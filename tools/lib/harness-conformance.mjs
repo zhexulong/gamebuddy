@@ -982,6 +982,9 @@ export function gateRedProofLedger({ root }) {
     // A gate the ledger neither proves nor records. Restricted to the two codes that mean exactly that, so an
     // unreadable claim or an external label with no invoked runner is its own finding instead of an undeclared gate.
     undeclared: findings.filter((entry) => ["no_red_proof", "gate_unassessed"].includes(entry.code)),
+    // The gates carrying a claim nobody can read (`malformed`, `pointer_missing`). The audit prints the same bucket and
+    // fails on it; here it is counted so the census line partitions the population without a reader having to subtract.
+    unreadable: reading.unreadableClaims.map((claim) => claim.gate),
     stale: findings.filter((entry) => entry.code === "baseline_entry_stale"),
     // The gates whose rule lives in another program - or whose every member's does - with the command a reader
     // would run to watch it fail. The count is this list's length in both tools, so the two censuses cannot disagree.
@@ -1001,6 +1004,7 @@ const EMPTY_LEDGER = Object.freeze({
   withRedProof: 0,
   recorded: 0,
   undeclared: [],
+  unreadable: [],
   stale: [],
   external: [],
   externalWithoutRunner: [],
@@ -1140,6 +1144,7 @@ export function gateFalsifierCensus({
     withRedProof: ledger.withRedProof,
     recorded: ledger.recorded,
     undeclared: [...undeclaredNames],
+    unreadable: [...ledger.unreadable],
     external: [...ledger.external],
     zeroPopulationPass: [...ledger.zeroPopulationPass],
     untrackedNotCounted: [...untrackedNotCounted],
@@ -1150,9 +1155,9 @@ export function gateFalsifierCensus({
  * The census as the lines the CLI prints beside the verdict.
  *
  * Line one is the answer to "how much of this is measured", in the words both tools use: the population, the gates with
- * a red proof, the gates whose missing proof someone recorded, the gates nobody declared at all, the gates whose report
- * cannot show whether it measured anything, and the gate files the index does not carry yet. Line two names the bucket
- * this suite excluded and the reason.
+ * a red proof, the gates whose missing proof someone recorded, the gates carrying a claim nobody can read, the gates
+ * nobody declared at all, the gates whose report cannot show whether it measured anything, and the gate files the index
+ * does not carry yet. Line two names the bucket this suite excluded and the reason.
  */
 export function describeGateFalsifierCensus(census) {
   return [
@@ -1161,6 +1166,7 @@ export function describeGateFalsifierCensus(census) {
       withRedProof: census.withRedProof,
       external: census.external.length,
       recorded: census.recorded,
+      unreadable: census.unreadable.length,
       undeclared: census.undeclared.length,
       zeroPopulationPass: census.zeroPopulationPass.length,
       unlisted: census.unlisted,
