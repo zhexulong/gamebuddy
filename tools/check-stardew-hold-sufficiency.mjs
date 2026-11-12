@@ -44,6 +44,38 @@ export const HELD_FACT = "Farmer.canMove";
  *
  * Nothing in this repository produces it and no commit has ever carried it, so a checkout has no subject for either
  * gate and neither can report on the invariants it exists to decide.
+ *
+ * WHY IT IS STILL BLOCKED, AND WHAT WOULD UNBLOCK IT (decided 2026-11-12; measured, not assumed):
+ *
+ *   The algebra half of this document IS derivable, and a producer should read it from the authorities that already
+ *   own each part rather than restating them: the states from `ActorDispositionKind` and its wire spellings
+ *   (`integrations/stardew/WorldModel.cs:23` and `:118`), the causes from `WorldModel.HoldReasonCode` (`:308`), the
+ *   companion reads from `WorldModel.ReadFacts` (`:251` - the facts the disposition is a pure function of, and the
+ *   only honest source for `environmentReads`), the actions and their `admissibleIn` from
+ *   `FarmhandActionCatalog.ModalResolvingActionIds` / `EventActingActionIds` / `ModalFamilyActionsWithoutAnEventPath`
+ *   (`integrations/stardew/src/Core/Policy/FarmhandActionDefinitions.cs:895`, `:921`, `:936`) joined to the profile
+ *   rule in `integrations/stardew/ExecutionAdmission.cs:353`, and the remedies from
+ *   `host/src/stardew-action-remedy.ts:49`.
+ *
+ *   What cannot be derived is `orphanHoldResidual`, and it is the part that blocks the document. Run with the
+ *   companion set above against `ref/external/StardewValleyDecompiled`, this search measures 948 files, 58 writes of
+ *   `Farmer.canMove = false`, 41 accompanied, **17 orphans and 4 unparsed sites** - and 16 of the 17 are holds no
+ *   declared read can name (the one exception releases the flag in its own method). Each row is a verdict about the
+ *   ENGINE - `missing_read` (our state space is incomplete: add the fact), `deeper_accompaniment` (established in a
+ *   callee this analysis cannot see: name the anchor) or `not_a_hold` (the write does not hold the actor: say why) -
+ *   and writing one from here would be a claim about Stardew's source that only a read of that source can support.
+ *   A `missing_read` verdict is not paperwork: it is a new fact in `ActorWorldFacts` plus a hold code in
+ *   `WorldModel.HoldReasonCode`, which is the Mod's gameplay state and therefore the `game-action-boundary` ->
+ *   `game-action-implement` pipeline's decision, not this gate's.
+ *
+ *   The four `unparsed` rows are this file's own bound rather than a decision (the brace walk in `enclosingMethod`
+ *   loses GameLocation.cs:9287/9297/9321/9345), and they block the CLI's green as well; they are recorded here
+ *   rather than silently dropped.
+ *
+ *   Once the residual is adjudicated and the rest is produced from the authorities above, this gate checks exactly
+ *   what it checks today: every write of `Farmer.canMove = false` in the decompiled tree is accompanied by one of the
+ *   declared reads, or carries an adjudicated row - compared bidirectionally, so a new orphan and a row that stopped
+ *   describing one are both red.
  */
 export const ACTOR_ADMISSIBILITY_CONTRACT =
   "integrations/stardew/action-development/contracts/actor-admissibility/actor-admissibility.v1.json";
