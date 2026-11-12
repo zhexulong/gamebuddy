@@ -2,12 +2,12 @@
  * Which native fields the model is never shown, and why that is allowed.
  *
  * The defect this exists for is not one missing field - it is the SHAPE of how fields go missing.
- * `SNAPSHOT_KEYS` (`host/src/protocol.ts:1599`) declares what the Mod publishes. Five projections decide what
- * reaches the model: `snapshot-projection.ts` (the user-turn fact block),
- * `runtime-core.internal.ts` (the `<runtime-environment>` line), `stardew-observation-budget.ts` (the
- * `stardew_observe` payload), `body-program-script.ts` (the plan builder's action set) and
- * `snapshot-hud.ts` (the standing state block re-sent with every turn). When the native layer
- * grows a field, nothing forces any of them to notice.
+ * `SNAPSHOT_KEYS` (`host/src/protocol.ts:1599`) declares what the Mod publishes. The projections decide what
+ * reaches the model: `snapshot-projection.ts` (the user-turn fact block), `fact-brief.ts` (the per-turn paragraph),
+ * `game-world-vocabulary.ts` (the world-sense line both of those render), `runtime-core.internal.ts` (the
+ * `<runtime-environment>` header), `stardew-observation-budget.ts` (the `stardew_observe` payload),
+ * `body-program-script.ts` (the plan builder's action set) and `snapshot-hud.ts` (the standing state block re-sent with
+ * every turn). When the native layer grows a field, nothing forces any of them to notice.
  *
  * Measured 2026-10-28: `actorDispositionDetail` had been on the wire since the disposition work
  * (`farmhandexecutioncontroller.cs:2401`, `protocol.ts:272-276`), and a `ShippingMenu` owned the screen while the
@@ -197,13 +197,21 @@ export const WITHHELD_SNAPSHOT_KEYS: Readonly<Record<string, string>> = Object.f
 });
 
 /**
- * The five projections, each read as source text.
+ * The modules that decide what reaches the model, each read as source text.
  *
  * Sources, not objects, because the question is "does this layer reference the key at all" - and importing the
  * projections would only answer it for the paths this test happens to construct.
+ *
+ * The list follows the code. `formatGameEnvironmentFacts`, the line that renders the world's senses from a snapshot,
+ * lived in `runtime-core.internal.ts` until it moved to `game-world-vocabulary.ts` (`b825068c`); the list did not
+ * move with it, so the environment line's own reads - `chestsSummary` among them - counted for nothing and this gate
+ * reported two fields no projection reads while `source.cookingStationTargets` sat in the formatter. `fact-brief.ts`
+ * is here for the same reason one layer out: it composes the per-turn paragraph and calls that same formatter.
  */
 export const PROJECTION_SOURCES = Object.freeze([
   "host/src/snapshot-projection.ts",
+  "host/src/fact-brief.ts",
+  "host/src/game-world-vocabulary.ts",
   "host/src/runtime-core.internal.ts",
   "host/src/stardew-observation-budget.ts",
   "host/src/body-program-script.ts",
