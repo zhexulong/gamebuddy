@@ -19,6 +19,7 @@ import { canonicalTestRoot } from "../../test-support/canonical-test-root.test-s
 import { readSourceShape } from "../../test-support/source-shape.test-support.js";
 import type { MountedChatRuntimeLease } from "../../continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.js";
 import type { HostDeploymentManifest } from "../../deployment-manifest.js";
+import { DEFAULT_COMPANION_PRESET } from "../default-companion-preset.js";
 import {
   composeTavernProfile,
   TAVERN_BROWSER_API_VERSION,
@@ -521,7 +522,10 @@ test("mounted binding service binds a managed item on a fresh Chat while the com
   // desired and applied alike.
   const durableCompanion = results.durableCompanion as { worldBookId: string; revision: number; provenance: string };
   assert.equal(durableCompanion.worldBookId, "gamebuddy-worldbook-default-companion");
-  assert.equal(durableCompanion.revision, 1);
+  // Her book's revision is the shipped preset's own: a mounted Chat seeds it from the
+  // compiled card, so a literal here is a second copy that goes stale the moment the
+  // book is re-authored - which is what happened (it reads 3 now, not 1).
+  assert.equal(durableCompanion.revision, DEFAULT_COMPANION_PRESET.worldBook.revision);
   assert.equal(durableCompanion.provenance, "reviewed-import");
   assert.equal("source" in (durableCompanion as Record<string, unknown>), false);
   assert.deepEqual(results.durableCompanionApplied, results.durableCompanion);
@@ -651,7 +655,7 @@ test("mounted binding service rechecks the coordinator lease after bindExact and
   assert.equal(results.durableManaged, undefined);
   const beforeCompanion = results.beforeCompanion as { worldBookId: string; revision: number; provenance: string };
   assert.equal(beforeCompanion.worldBookId, "gamebuddy-worldbook-default-companion");
-  assert.equal(beforeCompanion.revision, 1);
+  assert.equal(beforeCompanion.revision, DEFAULT_COMPANION_PRESET.worldBook.revision);
   assert.equal(beforeCompanion.provenance, "reviewed-import");
   assert.deepEqual(results.durableCompanion, results.beforeCompanion);
   assert.equal(results.beforeMessages, 1);

@@ -14,6 +14,7 @@ import { TavernArtifactStore } from "./artifact-store.js";
 import { createCompanionProfileService } from "./companion-profile-service.js";
 import { createGreetingManagementService } from "./greeting-management/greeting-management.js";
 import { createScenarioManagementService } from "./scenario-management/scenario-management.js";
+import { macroTable } from "./macro-engine.js";
 import { resolveTavernPaths } from "./tavern-paths.js";
 import { canonicalTestRoot } from "../test-support/canonical-test-root.test-support.js";
 
@@ -118,6 +119,14 @@ async function worldBookFile(seeded: Seeded, content: string): Promise<string> {
   return path;
 }
 
+/**
+ * The word the projection renders `{{user}}` to for this fixture's locale, read from
+ * the one macro table that decides it rather than restated here. The unnamed player
+ * fallback is a noun (SillyTavern substitutes a persona NAME, and a pronoun cannot
+ * agree with a third-person verb), and it has already been renamed once.
+ */
+const USER_WORD = macroTable({ char: "Mira", locale: "en-US" }).user;
+
 test("the projection renders every authored field, and the durable records keep the author's own text", async () => {
   const seeded = await seed();
   try {
@@ -129,21 +138,21 @@ test("the projection renders every authored field, and the durable records keep 
     assert.equal(profile.name, "Mira");
     assert.equal(profile.persona.present, true);
     assert.equal(profile.persona.core, "Mira keeps the ledgers and reads the weather.");
-    assert.equal(profile.persona.interactionStyle, "the player is late again, and she says so.");
+    assert.equal(profile.persona.interactionStyle, `${USER_WORD} is late again, and she says so.`);
     // Absent stays absent: a dimension the card never wrote is null, not an empty
     // string, so the drawer can leave the line out rather than print nothing.
     assert.equal(profile.persona.expressionStyle, null);
     assert.equal(profile.scenario.present, true);
     assert.equal(profile.scenario.name, "Winter on the ridge");
-    assert.equal(profile.scenario.description, "The pass closes in November, and the player knows it.");
+    assert.equal(profile.scenario.description, `The pass closes in November, and ${USER_WORD} knows it.`);
     assert.equal(profile.greetings.present, true);
     assert.equal(profile.greetings.label, "The porch");
     assert.deepEqual(
       profile.greetings.variants.map((variant) => variant.text),
-      ["You are late, the player, and the kettle is cold.", "There you are, the player. I kept the kettle on."],
+      [`You are late, ${USER_WORD}, and the kettle is cold.`, `There you are, ${USER_WORD}. I kept the kettle on.`],
     );
     assert.equal(profile.worldBook.present, true);
-    assert.equal(profile.worldBook.entries[0]!.content, "Mira and the player agreed to split the ridge.");
+    assert.equal(profile.worldBook.entries[0]!.content, `Mira and ${USER_WORD} agreed to split the ridge.`);
     const serialised = JSON.stringify(profile);
     assert.equal(serialised.includes("{{"), false, "no placeholder survives the projection");
 

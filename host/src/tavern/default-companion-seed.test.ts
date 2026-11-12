@@ -6,6 +6,7 @@ import test from "node:test";
 import {
   buildChatCompanionSystemPrompt,
   type IdentityProfile,
+  identityProfileMacros,
   identityProfileMetadata,
   readIdentityProfile,
   writeIdentityProfile,
@@ -27,7 +28,7 @@ import { DEFAULT_COMPANION_PRESET } from "./default-companion-preset.js";
 import { seedDefaultCompanionIntoFreshRuntimeRoot } from "./default-companion-seed.js";
 import { createGreetingManagementService } from "./greeting-management/greeting-management.js";
 import { createTavernLibraryService, resolveCompanionOwnScenario } from "./library-service.js";
-import { macroTable } from "./macro-engine.js";
+import { macroTable, renderMacros } from "./macro-engine.js";
 import { readCompanionPostHistoryInstructions } from "./post-history-instructions.js";
 import {
   createScenarioManagementService,
@@ -250,9 +251,13 @@ test("the seed persists the card's characterVoice and the rendered prompt carrie
     // a literal rule name in this file is a second copy of card text, and it goes
     // stale the moment the card is rewritten - which is exactly what happened when
     // 动率先于言 (act first, speak second) was replaced as the cause of a reply that
-    // read as an action report. What this case owns is POSITION, so it asserts the
-    // whole directive arrives and arrives after the floor.
-    const directive = profile.characterVoice.text;
+    // read as an action report. What this case owns is POSITION and COMPLETENESS, so
+    // it asserts the whole directive arrives and arrives after the floor.
+    //
+    // Rendered through the same macro table the prompt renders with: the card writes
+    // `{{user}}`, the prompt can only carry the run's word for the player, so the raw
+    // text is not - and must not be - a substring of what the model reads.
+    const directive = renderMacros(profile.characterVoice.text, identityProfileMacros(profile, "zh-CN"));
     assert.ok(prompt.includes(directive), "the card's whole directive must reach the prompt, not a prefix of it");
     assert.ok(
       prompt.indexOf(directive) > prompt.indexOf(floorMarker) &&

@@ -14,11 +14,12 @@ import {
   materializeTavernAuthoredContextCatalog,
 } from "./catalog-service.js";
 import { validateWorldBook, worldBookMetadata } from "../worldbook.js";
+import { ST_CARD_DECODER_LIMITS_V1 } from "./compatibility-manifest.v1.js";
 import { createManagedWorldInfoBindingResolver } from "./world-info-binding/managed-world-info-binding.js";
 import { createWorldInfoManagementRepository } from "./world-info-management/world-info-management.js";
 import { createChatThreadStore, createProfileAwareChatThreadCreationCapability } from "./chat-thread-store.js";
 import { DEFAULT_COMPANION_PRESET } from "./default-companion-preset.js";
-import { macroTable } from "./macro-engine.js";
+import { macroTable, renderMacros, renderWorldBookText } from "./macro-engine.js";
 import { writeCompanionPostHistoryInstructions } from "./post-history-instructions.js";
 import { resolveTavernPaths, tavernRevisionPath } from "./tavern-paths.js";
 import { type Scenario, validateTavernArtifact } from "./types.js";
@@ -1003,7 +1004,17 @@ test("every authored source reaches the model as prose, with the durable record'
     canonicalHash: metadata.canonicalHash,
     provenance: "reviewed-import" as const,
   };
-  const constants = book.entries.filter((entry) => entry.constant === true);
+  // Her book reaches the catalogue exactly as the production caller hands it over:
+  // `resolveBoundWorldBookSource` renders every entry through the run's macro table
+  // before the layer is built (`continuity-semantic-chat-runtime-construction.internal.ts`),
+  // because the catalogue publishes those fields verbatim. Rendering here keeps this
+  // fixture on the same side of that seam instead of asserting against a raw `{{char}}`.
+  const renderedEntry = (entry: (typeof book.entries)[number]) => ({
+    ...entry,
+    title: renderWorldBookText(entry.title, TEST_MACROS),
+    content: renderWorldBookText(entry.content, TEST_MACROS),
+  });
+  const constants = book.entries.filter((entry) => entry.constant === true).map(renderedEntry);
   const threads = createChatThreadStore(root, "continuity-key");
   try {
     const thread = await createProfileAwareChatThreadCreationCapability(threads, {
@@ -1035,9 +1046,9 @@ test("every authored source reaches the model as prose, with the durable record'
     const catalog = await materializeTavernAuthoredStableCatalog(paths, artifacts, thread.thread, scope, TEST_MACROS, {
       companionWorldBook: {
         binding,
-        alwaysOnPremise: book.alwaysOnPremise,
+        alwaysOnPremise: renderWorldBookText(book.alwaysOnPremise, TEST_MACROS),
         constantEntries: constants,
-        keywordEntries: book.entries.filter((entry) => entry.constant !== true),
+        keywordEntries: book.entries.filter((entry) => entry.constant !== true).map(renderedEntry),
       },
     });
     assert.deepEqual(
@@ -1068,11 +1079,15 @@ test("every authored source reaches the model as prose, with the durable record'
       // The renderer XML-escapes `<`, `>` and `&`; nothing else is rewritten.
       const readable = block.replaceAll("&lt;", "<").replaceAll("&gt;", ">").replaceAll("&amp;", "&");
       // Every authored word survives, byte for byte, in what the model receives.
+      // The authored texts are already rendered through the ONE macro table the
+      // catalogue renders with, so `{{char}}`/`{{user}}` reach the model as the run's
+      // own words rather than as the card's placeholders. What this case owns is that
+      // no authored sentence is dropped or rewritten beyond that substitution.
       for (const authored of [
         "阿明",
         PERSONA_TEXT,
-        DEFAULT_COMPANION_PRESET.scenario ?? "",
-        book.alwaysOnPremise,
+        renderMacros(DEFAULT_COMPANION_PRESET.scenario ?? "", TEST_MACROS),
+        renderWorldBookText(book.alwaysOnPremise, TEST_MACROS),
         ...constants.map((entry) => entry.content),
         EXAMPLE_TEXT,
       ])
@@ -1691,17 +1706,27 @@ test("a changed record reaches the NEXT materialization: freshness comes from re
   }
 });
 
-test("the closing direction refuses a macro the run cannot render and a rendered text past the shared 4 KB bound", async () => {
+test("the closing direction refuses a macro the run cannot render and a rendered text past the shared decoder bound", async () => {
   const root = await canonicalTestRoot("gamebuddy-catalog-post-history-bounds-");
   const fixture = await closingDirectionFixture(root);
+  // The bound is the decoder's own published constant, not a second literal: it moved
+  // from 4 KiB to 16 KiB when a measured card lost its whole directive at 8 KiB, and
+  // this case went on asserting the old number against a field that accepts the new one.
+  const bound = ST_CARD_DECODER_LIMITS_V1.postHistoryInstructionsBytes;
+  // The bound counts BYTES, and her closing direction is Chinese prose: three bytes a
+  // character, so a 16 KiB bound is ~5 460 characters while the artifact's own text
+  // ceiling is 8 192 characters. ASCII filler would make the byte bound unreachable and
+  // prove nothing, so the filler is the text this field actually carries.
+  const filler = "字";
+  const charactersAtBound = Math.floor(bound / Buffer.byteLength(filler, "utf8"));
   try {
     const companionRoot = fixture.paths.companionRoot;
-    await rewriteClosingDirection(fixture.artifacts, companionRoot, "x".repeat(4_096));
-    assert.equal((await fixture.catalog()).postHistoryInstructions?.length, 4_096);
+    await rewriteClosingDirection(fixture.artifacts, companionRoot, filler.repeat(charactersAtBound));
+    assert.equal((await fixture.catalog()).postHistoryInstructions?.length, charactersAtBound);
 
     // The bound is applied to the RENDERED bytes, so a macro that grows the text over
-    // 4 KB is refused here instead of being sent and refused by the fork.
-    await rewriteClosingDirection(fixture.artifacts, companionRoot, `${"x".repeat(4_092)}{{char}}`);
+    // it is refused here instead of being sent and refused by the fork.
+    await rewriteClosingDirection(fixture.artifacts, companionRoot, `${filler.repeat(charactersAtBound)}{{char}}`);
     await assert.rejects(() => fixture.catalog(), /tavern_stable_context_post_history_too_long/);
 
     await rewriteClosingDirection(fixture.artifacts, companionRoot, "Close as {{unknown_macro}} says.");
