@@ -1904,8 +1904,8 @@ export type BodyProgramStopRequest = Readonly<{ programId: string; stopEpoch: nu
  * a second authority over the same fact:
  *  - `moving` - not stopped; nothing has ended, so a reader is owed no reason at all.
  *  - `stopped_succeeded` - stopped, and the receipt proved the effect; the effect IS the answer.
- *  - `stopped_without_success` - stopped short of the effect; it owes a reason, and a settlement that carried none is a
- *    defect the reader must be told about (`unknown_reason:<state>`) instead of having quietly passed over.
+ *  - `stopped_without_success` - stopped short of the effect; it owes a reason, and a settlement that named none anywhere
+ *    on its row is a defect the reader must be told about (`unknown_reason:<state>`) instead of having quietly passed over.
  *
  * `partially_succeeded` answers `stopped_without_success` rather than a fourth verdict, and the word is exact there: the
  * node did NOT fully succeed, so it owes the reason for the part that did not happen - while its `state` token, which

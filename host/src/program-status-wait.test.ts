@@ -732,7 +732,6 @@ test("a plan answers every node it carries at its own index, never at the journa
       actionId: "move_to_tile",
       state: "rejected",
       reasonCode: "actor_held_by_modal",
-      reasonDetail: "unknown_reason:rejected",
       tile: { x: 5, y: 8 },
     },
     { index: 1, actionId: "move_to_tile", state: "succeeded" },
@@ -929,7 +928,7 @@ test("the Mod's own refusal detail reaches the plan answer byte for byte", () =>
 test("a live plan's rows carry a reason only where a node actually stopped", () => {
   const detail = "owner=Pierre;owner_tile=4,17;actor_tile=4,19;radius=1";
   const answer = planBatchAnswer(
-    ["n01", "n02", "n03", "n04", "n05"].map((nodeId) => answerNode(nodeId)),
+    ["n01", "n02", "n03", "n04", "n05", "n06"].map((nodeId) => answerNode(nodeId)),
     {
       programId: "p1",
       state: "active",
@@ -944,12 +943,13 @@ test("a live plan's rows carry a reason only where a node actually stopped", () 
           rejectionCode: "shop_counter_out_of_reach",
           refusalDetail: detail,
         },
+        { nodeId: "n06", state: "failed" },
       ],
     },
   );
   assert.deepEqual(
     answer.nodes.map((node) => node.state),
-    ["pending", "pending", "running", "failed", "rejected"],
+    ["pending", "pending", "running", "failed", "rejected", "failed"],
   );
   assert.equal(answer.settled, false);
   assert.equal(answer.remaining, 3, "the three rows that have not stopped are the outstanding work");
@@ -963,13 +963,27 @@ test("a live plan's rows carry a reason only where a node actually stopped", () 
       false,
       `the '${row.state}' node has not ended, so it has no reason to give - not even a placeholder`,
     );
-  // ...and the rows that DID end keep exactly the answer they had: the Mod's sentence, or the named defect.
-  assert.equal(answer.nodes[3]?.reasonDetail, "unknown_reason:failed");
+  // A row that NAMED its reason does not also say the reason is unknown: `no_native_path` is the why, and a placeholder
+  // beside it denies the code the same row carries.
+  assert.equal(answer.nodes[3]?.reasonCode, "no_native_path");
+  assert.equal(
+    Object.hasOwn(answer.nodes[3] as object, "reasonDetail"),
+    false,
+    "the row named its reason, so it owes no placeholder beside it",
+  );
+  // ...and the row that DID stop with nothing to say keeps the placeholder: that one is a settlement defect, and hiding
+  // it would be the same defect one layer down.
+  assert.equal(answer.nodes[5]?.reasonDetail, "unknown_reason:failed");
+  assert.equal(
+    "reasonCode" in (answer.nodes[5] as object),
+    false,
+    "nothing named it, which is what the placeholder says",
+  );
   assert.equal(answer.nodes[4]?.reasonDetail, detail);
   assert.deepEqual(
     answer.nodes.filter((node) => node.reasonDetail !== undefined).map((node) => node.state),
-    ["failed", "rejected"],
-    "the reason field marks the two rows that stopped without succeeding, and no others",
+    ["rejected", "failed"],
+    "the reason field marks the row that carries the Mod's detail and the row that carries nothing, and no other",
   );
 });
 
@@ -981,13 +995,16 @@ test("a live plan's rows carry a reason only where a node actually stopped", () 
  * this file. There are three of those, and a state in none of them fails here:
  *  - `moving` (not ended): the row carries NO `reasonDetail` key at all - there is nothing to explain yet;
  *  - `stopped_succeeded`: the row carries none either, because the receipt's effect is the answer;
- *  - `stopped_without_success`: the row carries the Mod's detail verbatim, or `unknown_reason:<state>` when it sent none.
+ *  - `stopped_without_success`: the row carries the Mod's detail verbatim, or `unknown_reason:<state>` when it sent none
+ *    AND named none anywhere else on the row.
  *
- * Why a gate and not a test: the defect is a row whose reason is a lie in ONE OF TWO DIRECTIONS - a settlement with no
- * reason, or a queued step dressed as one - and its members are states nobody has written yet. `round42` measured the
- * second direction: 100+ `unknown_reason:pending` rows in one run against 47 failed and 22 rejected, so the placeholder
- * that exists to name a defect buried every row that was one. The count is printed and refused at zero, because a gate
- * that examined nothing agrees with itself.
+ * Why a gate and not a test: the defect is a row whose reason is a lie in ONE OF THREE DIRECTIONS - a settlement with no
+ * reason, a queued step dressed as one, or a reason denied by the placeholder printed beside it - and its members are
+ * states nobody has written yet. `round42` measured the second direction: 100+ `unknown_reason:pending` rows in one run
+ * against 47 failed and 22 rejected, so the placeholder that exists to name a defect buried every row that was one.
+ * `2026-11-11` measured the third: every placeholder row of one session stood beside a `reasonCode` or a `skippedBecause`
+ * that already named the reason. The count is printed and refused at zero, because a gate that examined nothing agrees
+ * with itself.
  */
 test("every node state the wire names answers what its own verdict says it owes", () => {
   const states = [...BODY_PROGRAM_NODE_STATES];
@@ -1051,23 +1068,71 @@ test("every node state the wire names answers what its own verdict says it owes"
       const diagnosed = rowFor(state, { recoveryDiagnostic: "execution_uncertain" });
       assert.equal(diagnosed?.reasonDetail, "execution_uncertain", "the journal's own diagnostic is the reason");
     }
+    // A STATE THAT NAMED ITS REASON OWES NO PLACEHOLDER: `reasonCode` is on the same row, so `unknown_reason:<state>`
+    // beside it says the reason is unknown in the one field that carries it.
+    if (owesReason) {
+      const coded = rowFor(state, { failureCode: "named_code" });
+      assert.equal(coded?.reasonCode, "named_code");
+      assert.equal(
+        Object.hasOwn(coded as object, "reasonDetail"),
+        false,
+        `the state '${state}' names its reason in reasonCode, so a placeholder beside it would deny the code`,
+      );
+    }
     examined.push(state);
   }
   assert.deepEqual(examined, states, `examined ${examined.length} node states`);
   assert.equal(examined.length, BODY_PROGRAM_NODE_STATES.length);
+
+  // THE OTHER CARRIER: a skip whose producer is named owes no placeholder either. `skippedBecause` IS the reason, and the
+  // placeholder said the reason was unknown beside it (measured 2026-11-11: four such rows in one session, each naming a
+  // producer). A skip this graph cannot explain keeps the placeholder, so the gate's two arms are the two cases.
+  const skipRow = (dependsOn: readonly string[]) =>
+    planBatchAnswer(
+      [
+        { nodeId: "n01", actionId: "pickup_item", arguments: {} },
+        { nodeId: "n02", actionId: "claim_mail_attachment", arguments: {}, dependsOn },
+      ],
+      {
+        nodes: [
+          { nodeId: "n01", state: "failed", failureCode: "mail_target_changed" },
+          { nodeId: "n02", state: "skipped_dependency" },
+        ],
+      },
+    ).nodes[1];
+  assert.deepEqual(skipRow(["n01"]), {
+    index: 1,
+    actionId: "claim_mail_attachment",
+    state: "skipped_dependency",
+    skippedBecause: [{ nodeId: "n01", reasonCode: "mail_target_changed" }],
+  });
+  assert.equal(
+    skipRow([])?.reasonDetail,
+    "unknown_reason:skipped_dependency",
+    "a skip this graph cannot explain still says the reason is missing",
+  );
 });
 
 /**
  * The single decision point, asked directly: a reason is owed by the states that stopped short, and by nothing else.
  */
 test("a reason detail answers for every state that stopped short, and for no other", () => {
-  assert.equal(planNodeReasonDetail("succeeded", null, null), null);
-  assert.equal(planNodeReasonDetail("succeeded", "a detail a broken Mod sent", null), null, "a success has no reason");
-  assert.equal(planNodeReasonDetail("cancelled", "why", null), "why");
-  assert.equal(planNodeReasonDetail("failed", null, null), "unknown_reason:failed");
-  assert.equal(planNodeReasonDetail("recovery_required", null, "execution_uncertain"), "execution_uncertain");
+  assert.equal(planNodeReasonDetail("succeeded", false, null, null), null);
+  assert.equal(
+    planNodeReasonDetail("succeeded", false, "a detail a broken Mod sent", null),
+    null,
+    "a success has no reason",
+  );
+  assert.equal(planNodeReasonDetail("cancelled", false, "why", null), "why");
+  assert.equal(planNodeReasonDetail("failed", false, null, null), "unknown_reason:failed");
+  assert.equal(
+    planNodeReasonDetail("failed", true, null, null),
+    null,
+    "a row that named its reason in another field owes no placeholder beside it",
+  );
+  assert.equal(planNodeReasonDetail("recovery_required", false, null, "execution_uncertain"), "execution_uncertain");
   // A node that has not ended has nothing to report, so it reports nothing - the `round42` shape, at the decision point.
-  assert.equal(planNodeReasonDetail("pending", null, null), null);
-  assert.equal(planNodeReasonDetail("running", "a detail through the wrong door", null), null);
-  assert.equal(planNodeReasonDetail("unknown", null, null), null, "an unread row is not a settlement either");
+  assert.equal(planNodeReasonDetail("pending", false, null, null), null);
+  assert.equal(planNodeReasonDetail("running", false, "a detail through the wrong door", null), null);
+  assert.equal(planNodeReasonDetail("unknown", false, null, null), null, "an unread row is not a settlement either");
 });

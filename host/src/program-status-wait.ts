@@ -71,7 +71,7 @@ export const MAX_PROGRAM_STATUS_WAIT_MS = 30_000;
  * answer) and a `found` frame whose state is unreadable are answers that do not say whether the plan finished, and
  * folding them into "it did not finish" is how a caller that re-dispatches on that word runs work that already ran.
  */
-export type ProgramStatusWaitTerminality = "terminal" | "active" | "unknown";
+type ProgramStatusWaitTerminality = "terminal" | "active" | "unknown";
 
 /** What one `program_status` payload says about whether the plan has stopped, and what could not be read when it says nothing. */
 export interface ProgramStatusReadTerminality {
@@ -208,7 +208,7 @@ export interface ProgramNodeProgress {
  * `state` is the Mod's own token VERBATIM (`pending`, `host_admitted`, `running`), never a Host word for it: the batch
  * that carries this row and a `stardew_action_program_status` answer name one node one way.
  */
-export interface InFlightProgrammeNode {
+interface InFlightProgrammeNode {
   /** 0-based position in the journal's own node list, so the batch and the tool answer count the same steps. */
   readonly index: number;
   readonly nodeId: string;
@@ -487,8 +487,12 @@ interface PlanNodeAnswer {
    * against 159 pending, 400 succeeded, 47 failed and 22 rejected, which dressed every queued step as a defect and
    * buried the 69 rows that were one. A `succeeded` node proves its effect instead.
    *
-   * Where it IS owed, a settlement that carried no reason answers `unknown_reason:<state>` rather than omitting the key,
-   * so "the Mod had nothing more to say" and "the Host forgot to ask" cannot be the same answer.
+   * Where it IS owed, a settlement that named NO reason anywhere on the row answers `unknown_reason:<state>` rather than
+   * omitting the key, so "the Mod had nothing more to say" and "the Host forgot to ask" cannot be the same answer. A row
+   * that names its reason elsewhere - a `reasonCode`, or the `skippedBecause` producers a skip is owed to - does not owe
+   * this one, and must not carry it: measured 2026-11-11 (`multiday_routine`, 10 rows of one session) every placeholder
+   * stood beside a named reason, so `reasonCode: "no_modal_present"` arrived with `reasonDetail: "unknown_reason:failed"`
+   * and the model read the reason denied in the field that carries it.
    *
    * Never re-rendered and never summarised: `owner=Pierre;owner_tile=4,17;actor_tile=4,19;radius=1` is what the refusing
    * layer wrote, and a Host that reformatted it into prose would be a second author of a fact it did not observe.
@@ -582,10 +586,15 @@ export function planBatchAnswer(
     const state = row?.state ?? PLAN_NODE_STATE_UNREADABLE;
     const reasonCode = row?.rejectionCode ?? row?.failureCode ?? null;
     const hint = row?.hint ?? null;
-    const reasonDetail = planNodeReasonDetail(state, row?.refusalDetail ?? null, row?.recoveryDiagnostic ?? null);
+    const skippedBecause = state === "skipped_dependency" ? producersThatSkipped(node.dependsOn, journal) : [];
+    const reasonDetail = planNodeReasonDetail(
+      state,
+      reasonCode !== null || skippedBecause.length > 0,
+      row?.refusalDetail ?? null,
+      row?.recoveryDiagnostic ?? null,
+    );
     const tile = planNodeTile(node.arguments);
     const clock = NODE_STATES_SETTLED.has(state) ? undefined : elapsed.get(node.nodeId);
-    const skippedBecause = state === "skipped_dependency" ? producersThatSkipped(node.dependsOn, journal) : [];
     return Object.freeze({
       index,
       actionId: node.actionId,
@@ -610,18 +619,27 @@ export function planBatchAnswer(
  * "nothing to explain" in exactly two cases: the node has not stopped (`pending`, `host_admitted`, `running`, and the
  * Host's own `unknown` for a node the journal does not list - none of them has ended, so none of them has a reason), or
  * it `succeeded`, where the receipt's effect is the answer. Everything the declaration calls `stopped_without_success`
- * answers a string. That is deliberate. `round41` measured the whole defect this closes: `shop_purchase` refused
+ * answers a string or carries the reason in another field of the row (`reasonCode`, `skippedBecause`), never a bare
+ * silence. That is deliberate. `round41` measured the whole defect this closes: `shop_purchase` refused
  * `shop_counter_out_of_reach` six times while the Mod's receipt held
  * `owner=Pierre;owner_tile=4,17;actor_tile=4,19;radius=1`, the model read only the code, and it invented the world fact it
  * needed. Ninety-four `program_status` replies in that round carried no `evidence` and no `detail` at all.
  * </para>
  * <para>
- * `unknown_reason:<state>` is therefore the placeholder for "this node ENDED and the reason side of its frame is empty",
- * and where it is owed it must stay IMPOSSIBLE to omit: a row that simply dropped the key would be indistinguishable from
- * one whose refusal carried no detail, and the difference between "the Mod said nothing" and "there was nothing to say"
- * is the difference between a bug and a success. It never coexists with a real detail, because the two are arms of one
- * `??` chain. It is never owed by a node that has not ended: that row would report a settlement defect about a step that
- * is still queued, and `round42` shows it buries the rows that are real.
+ * `unknown_reason:<state>` is therefore the placeholder for "this node ENDED and NOTHING on its row says why", and where
+ * it is owed it must stay IMPOSSIBLE to omit: a row that simply dropped the key would be indistinguishable from one whose
+ * refusal carried no detail, and the difference between "the Mod said nothing" and "there was nothing to say" is the
+ * difference between a bug and a success. It never coexists with a real detail, because the two are arms of one `??`
+ * chain. It is never owed by a node that has not ended: that row would report a settlement defect about a step that is
+ * still queued, and `round42` shows it buries the rows that are real.
+ * </para>
+ * <para>
+ * IT IS NOT OWED BY A ROW THAT NAMES ITS REASON ELSEWHERE. `reasonCode` and `skippedBecause` are on the same row, so a
+ * placeholder beside either of them says the reason is unknown in the one field that carries it - measured 2026-11-11
+ * (`multiday_routine`): all ten placeholder rows of one session named their reason (six beside a `reasonCode` such as
+ * `no_modal_present`, four beside the `skippedBecause` producer), and not one of them stood for a silent Mod. The
+ * placeholder keeps its force only while it means "nothing here explains this", which is why it is the empty case's word
+ * alone.
  * </para>
  * <para>
  * `recoveryDiagnostic` is consulted for the same reason: the journal's own `execution_uncertain` did not use to reach the
@@ -631,11 +649,14 @@ export function planBatchAnswer(
  */
 export function planNodeReasonDetail(
   state: string,
+  reasonNamedOnTheRow: boolean,
   refusalDetail: string | null,
   recoveryDiagnostic: string | null,
 ): string | null {
   if (bodyProgramNodeStateVerdict(state) !== "stopped_without_success") return null;
-  return refusalDetail ?? recoveryDiagnostic ?? `unknown_reason:${state}`;
+  const modSaid = refusalDetail ?? recoveryDiagnostic;
+  if (modSaid !== null) return modSaid;
+  return reasonNamedOnTheRow ? null : `unknown_reason:${state}`;
 }
 
 /**

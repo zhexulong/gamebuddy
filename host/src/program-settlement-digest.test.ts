@@ -218,6 +218,16 @@ test("a refused move's reachability hint reaches the digest row and the text the
   });
   const text = batches[0]?.text ?? "";
   assert.match(text, /closest=49,14;closest_distance=1/u, "the batch the model reads carries the hint");
+  // THE ROW NAMED ITS REASON, SO THE TEXT SAYS IT ONCE. `failureWords` prints a node's `reasonCode` beside its `hint` and
+  // `reasonDetail`, so a placeholder in that field reached the model as `no_native_path：unknown_reason:failed` - the code
+  // that IS the reason, followed by the reason denied. Measured `2026-11-11` (`multiday_routine`): all ten placeholder rows
+  // of one session stood beside a named reason, six of them beside a `reasonCode` exactly like this one.
+  assert.match(text, /no_native_path/u, "the code the Mod named is the reason the model reads");
+  assert.doesNotMatch(
+    text,
+    /unknown_reason/u,
+    "a row that named its reason must not also tell the model the reason is unknown",
+  );
   const row = (
     batches[0]?.facts[0]?.payload as Readonly<{
       nodes: readonly Readonly<Record<string, unknown>>[];
@@ -229,9 +239,8 @@ test("a refused move's reachability hint reaches the digest row and the text the
     state: "failed",
     reasonCode: "no_native_path",
     hint: "closest=49,14;closest_distance=1",
-    // The row also states WHY in the Mod's own words, and this refusal's receipt carried none - so the placeholder is
-    // what the model reads rather than a silently missing key (see `planNodeReasonDetail`).
-    reasonDetail: "unknown_reason:failed",
+    // No `reasonDetail`: this refusal's receipt carried no detail, and `no_native_path` already names why the node stopped,
+    // so the row owes no placeholder beside it (see `planNodeReasonDetail`).
     tile: { x: 49, y: 14 },
   });
 });
