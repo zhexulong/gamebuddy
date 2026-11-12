@@ -981,6 +981,10 @@ const en = {
   // Whether the companion Mod is in the player's game folder. A loader without it loads nothing,
   // so these are shown beside the loader outcome rather than being folded into it.
   gameCompanionModReady: "The companion Mod is in your game folder. Stardew Valley can load it now.",
+  // The third answer, and the one that keeps silence from reading as success: a registration reply that did
+  // not mention the Mod says nothing at all about whether it is there.
+  gameCompanionModNotReported:
+    "We didn't get an answer about the companion Mod, so we can't say whether it is in your game folder. If the companion does not appear in the game, check the Mods/GameBuddy folder.",
   gameCompanionModLoaderMissing: "The companion Mod needs SMAPI first. Install SMAPI, then try again.",
   gameCompanionModModsDirectoryMissing:
     "That game folder has no Mods directory. Start the game once through SMAPI so it creates one, then try again.",
@@ -1952,6 +1956,8 @@ const zh: Messages = {
   gameInstallationModLoaderPresent: "这里已经装好了 SMAPI，这个文件夹可以直接加载伴侣。",
   gameInstallationModLoaderAcquire: "安装 SMAPI（打开 smapi.io）",
   gameCompanionModReady: "伴侣 Mod 已在游戏目录中，星露谷现在可以加载它了。",
+  gameCompanionModNotReported:
+    "没有收到伴侣 Mod 的安装结果，无法确认它是否已在游戏目录中。如果游戏里没有出现伴侣，请检查 Mods/GameBuddy 文件夹。",
   gameCompanionModLoaderMissing: "伴侣 Mod 需要先安装 SMAPI。安装 SMAPI 后再试。",
   gameCompanionModModsDirectoryMissing: "该游戏目录没有 Mods 文件夹。先用 SMAPI 启动一次游戏，它会自动创建，然后重试。",
   gameCompanionModModsDirectoryNotWritable: "游戏目录的 Mods 文件夹无法写入。请关闭星露谷和所有模组管理器后重试。",

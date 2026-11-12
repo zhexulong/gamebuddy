@@ -116,6 +116,17 @@ const isConfirmableCandidate = (status: StardewInstallationCandidateV1["status"]
  * operation or child process is involved.
  */
 const SMAPI_DOWNLOAD_URL = "https://smapi.io";
+/**
+ * What the registration said about the companion Mod.
+ *
+ * `not-reported` is the third fact, and the reason this is not simply an optional outcome. A reply that does not
+ * mention the Mod may not be rendered as a deployment that worked, and that is the state the shipped wire
+ * produces today: `GameDiscoveryMutationResultV1Schema` declares no `companionMod`
+ * (`host/src/game-browser-contract/index.ts:322`), so `projectDiscoveryMutationResult`
+ * (`host/src/games/stardew/provider.ts:94`) answers `registered` and says nothing about the Mod.
+ */
+type CompanionModReport = NonNullable<StardewInstallationMutationV1["companionMod"]> | "not-reported";
+
 export function StardewInstallationDiscovery({ api, labels, onAdmitted }: Props) {
   const [state, setState] = useState<InstallationDiscoveryState>("loading");
   /**
@@ -125,12 +136,18 @@ export function StardewInstallationDiscovery({ api, labels, onAdmitted }: Props)
    * first instant that folder provably holds a mod loader. Reported rather than assumed: a deployment that
    * refused names its refusal instead of the panel implying the companion is ready.
    */
-  const [companionMod] = useState<NonNullable<StardewInstallationMutationV1["companionMod"]> | null>(null);
+  const [companionMod, setCompanionMod] = useState<CompanionModReport | null>(null);
   const [discovery, setDiscovery] = useState<StardewInstallationDiscoveryV1 | null>(null);
-  const [selectedCandidateId, setSelectedCandidateId] = useState<string | null>(null);
   // What is outstanding, which gates the rendered controls; a ref would not re-render
   // the buttons that must become disabled.
   const [pending, setPending] = useState<Pending>("none");
+  /**
+   * A registration is the only reply that can report the Mod, so it is the only place the outcome is recorded -
+   * and a registration that says nothing about it is recorded as `not-reported` rather than left at the `null`
+   * that means "nothing has been registered yet".
+   */
+  const recordCompanionMod = (result: StardewInstallationMutationV1) =>
+    setCompanionMod(result.companionMod ?? "not-reported");
   const busy = pending !== "none";
   const refreshEpoch = useRef(0);
   const mounted = useRef(true);
@@ -149,7 +166,6 @@ export function StardewInstallationDiscovery({ api, labels, onAdmitted }: Props)
       const result = await api.readStardewInstallationDiscovery();
       if (!mounted.current || epoch !== refreshEpoch.current) return;
       setDiscovery(result);
-      setSelectedCandidateId(null);
       setState(installationDiscoveryState(result.candidates.length, result.diagnostics));
     } catch (error) {
       if (!mounted.current || epoch !== refreshEpoch.current) return;
@@ -235,6 +251,7 @@ export function StardewInstallationDiscovery({ api, labels, onAdmitted }: Props)
         // left to offer - so the outcome is stated after the refresh rather than
         // letting an empty scan stand in for it ("no installation was found" after
         // the player's installation had just been accepted).
+        recordCompanionMod(result);
         await read(true);
         if (mounted.current) setState("confirmed");
         onAdmitted?.();
@@ -242,6 +259,7 @@ export function StardewInstallationDiscovery({ api, labels, onAdmitted }: Props)
       }
       if (kind === "picker" && "status" in result) {
         if (result.status === "accepted" || result.status === "registered") {
+          recordCompanionMod(result);
           await read(true);
           if (mounted.current) setState("confirmed");
           onAdmitted?.();
@@ -293,8 +311,10 @@ export function StardewInstallationDiscovery({ api, labels, onAdmitted }: Props)
           and an `h4` above the guide's `h3`s would break the outline it leads. */}
       <h3 className="section-subtitle">{labels.gameInstallationTitle}</h3>
       {/* `data-state` above stays the typed state the tests assert; the sentence
-          a player reads is always the localized outcome (design/104 §10). */}
-      <p className="installation-state" role="status">
+          a player reads is always the localized outcome (design/104 §10). This is the panel's one status
+          sentence, and it carries its own hook: the companion Mod's outcome below is a second fact, so
+          "the panel's sentence" may not be selected by the class the two of them share. */}
+      <p className="installation-state" role="status" data-installation-sentence="">
         {installationStateLabel(labels, state)}
       </p>
       {showsCandidates && discovery !== null && discovery.candidates.length > 0 && (
@@ -347,10 +367,7 @@ export function StardewInstallationDiscovery({ api, labels, onAdmitted }: Props)
                   type="button"
                   className="game-action"
                   disabled={scannerDisabled || !isConfirmableCandidate(status)}
-                  onClick={() => {
-                    setSelectedCandidateId(candidateId);
-                    void action("confirm", candidateId);
-                  }}
+                  onClick={() => void action("confirm", candidateId)}
                 >
                   {labels.gameInstallationConfirm}
                 </button>
@@ -358,11 +375,6 @@ export function StardewInstallationDiscovery({ api, labels, onAdmitted }: Props)
             ),
           )}
         </ul>
-      )}
-      {selectedCandidateId !== null && state === "confirming" && (
-        <p className="installation-state" role="status">
-          {labels.gameInstallationConfirming}
-        </p>
       )}
       {/*
         The refusal above names the one thing missing, and the product does not supply it: SMAPI is installed
@@ -379,11 +391,14 @@ export function StardewInstallationDiscovery({ api, labels, onAdmitted }: Props)
       {/*
         What happened to the Mod itself, after a folder was registered. The Mod is this product's own, so the
         Host deploys it at that moment; reporting it here keeps "the folder is registered" from being mistaken
-        for "the companion will load", which are different facts.
+        for "the companion will load", which are different facts. Three answers, and the third is the one that
+        matters: a registration whose reply said nothing about the Mod is stated as unanswered, never as ready.
       */}
       {companionMod !== null && (
         <p className="installation-state" role="status" data-companion-mod-outcome={companionMod}>
-          {companionModLabel(labels, companionMod)}
+          {companionMod === "not-reported"
+            ? labels.gameCompanionModNotReported
+            : companionModLabel(labels, companionMod)}
         </p>
       )}
       <div className="game-actions">

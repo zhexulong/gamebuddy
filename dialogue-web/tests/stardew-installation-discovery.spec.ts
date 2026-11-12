@@ -94,9 +94,14 @@ async function openGameDrawer(page: import("@playwright/test").Page): Promise<vo
 const panel = (page: import("@playwright/test").Page) =>
   page.locator('section[aria-label="Game installation setup"]');
 
-/** The one sentence the panel is asserting - read from the panel's own status line. */
+/**
+ * The one sentence the panel is asserting - read from the panel's own status line.
+ *
+ * By its own hook, not by `.installation-state`: the companion Mod's outcome is a second line with the same
+ * class, so "the panel's sentence" has to name which of the two it means.
+ */
 const sentenceOf = (page: import("@playwright/test").Page) =>
-  panel(page).locator(".installation-state");
+  panel(page).locator("[data-installation-sentence]");
 
 async function mountWithDiscovery(
   page: import("@playwright/test").Page,
@@ -1193,6 +1198,95 @@ test.describe("B2 installation discovery: route-mocked UI behavior", () => {
    * answer (`candidates`, and the `confirming` that acts on one of its rows), not to a state
    * whose sentence is something else.
    */
+  /**
+   * Whether the companion Mod is in the folder that was just registered.
+   *
+   * Registering a game folder is the first instant that folder provably holds a mod loader, so it is the
+   * first instant the product's own Mod can be written where the game will load it
+   * (`stardew-production-lifecycle-coordinator.internal.ts`, whose `confirmInstallation` answers
+   * `{ status: "registered", companionMod }`). The panel kept that answer in state it had no setter for, so the
+   * outcome was `null` on every mount: a deployment that failed - no write permission under `C:\Program Files`,
+   * a read-only target - was presented as success, and the player found out when the game would not start.
+   *
+   * The three readings below are the rule rather than a wish, and the second is the one the shipped wire
+   * actually produces: `GameDiscoveryMutationResultV1Schema` (`host/src/game-browser-contract/index.ts:322`)
+   * declares no `companionMod`, and `projectDiscoveryMutationResult` (`host/src/games/stardew/provider.ts:94`)
+   * builds only `{ apiVersion, status }` - so today's reply answers `registered` and says nothing about the Mod.
+   * Silence is not a deployment: it may not read as "the companion is in your game folder".
+   */
+  test("a companion Mod the Host could not deploy is named, and an unanswered one is never called ready", async ({
+    page,
+  }) => {
+    let reads = 0;
+    let reply: unknown = { apiVersion: 1, status: "registered" };
+    await page.route(BOOTSTRAP_ROUTE, (route) => route.fulfill(jsonOk(root)));
+    await mountGameDrawerRoutes(page);
+    await page.route(DRAFT_ROUTE, (route) =>
+      route.fulfill(jsonOk({ apiVersion: 1, revision: 4, text: "A durable delegated draft." })),
+    );
+    await page.route(DISCOVERY_ROUTE, (route) => {
+      const body = reads === 0 ? foundInstallation : { apiVersion: 1, candidates: [], diagnostics: ["no-candidates"] };
+      reads += 1;
+      return route.fulfill(jsonOk(body));
+    });
+    await page.route(CONFIRM_ROUTE, (route) => route.fulfill(jsonOk(reply)));
+
+    let mounted = false;
+    const register = async () => {
+      reads = 0;
+      if (mounted) await page.reload();
+      else {
+        await page.goto(`/#profile=composed-reference-game&boot=${token}`);
+        mounted = true;
+      }
+      await openGameDrawer(page);
+      await expect(panel(page)).toHaveAttribute("data-state", "candidates");
+      await panel(page).getByRole("button", { name: "Confirm", exact: true }).click();
+      await expect(panel(page)).toHaveAttribute("data-state", "confirmed");
+    };
+    const reported = () => panel(page).locator("[data-companion-mod-outcome]");
+    const reading = async () => ({
+      outcome: await reported().getAttribute("data-companion-mod-outcome"),
+      sentence: (await reported().innerText()).trim(),
+    });
+
+    // Nothing has been registered yet, so the panel has no Mod outcome to report and claims none.
+    reads = 0;
+    await page.goto(`/#profile=composed-reference-game&boot=${token}`);
+    mounted = true;
+    await openGameDrawer(page);
+    await expect(panel(page)).toHaveAttribute("data-state", "candidates");
+    await expect(reported(), "no folder is registered, so there is no Mod outcome yet").toHaveCount(0);
+
+    // 1. The coordinator's own answer for a folder it cannot write: an installation under `C:\Program Files`.
+    reply = { apiVersion: 1, status: "registered", companionMod: "companion-mod-mods-directory-not-writable" };
+    await register();
+    await expect(reported(), "a failed deployment is reported, not passed over").toHaveCount(1);
+    expect(await reading()).toEqual({
+      outcome: "companion-mod-mods-directory-not-writable",
+      sentence: messages("en").gameCompanionModModsDirectoryNotWritable,
+    });
+    await expect(panel(page)).not.toContainText(messages("en").gameCompanionModReady);
+
+    // 2. The reply the wire actually carries today: `registered`, and no word about the Mod.
+    reply = { apiVersion: 1, status: "registered" };
+    await register();
+    await expect(reported(), "an unanswered deployment is still an outcome the panel states").toHaveCount(1);
+    expect(await reading()).toEqual({
+      outcome: "not-reported",
+      sentence: messages("en").gameCompanionModNotReported,
+    });
+    await expect(panel(page), "silence never reads as ready").not.toContainText(messages("en").gameCompanionModReady);
+
+    // 3. A deployment that worked says so.
+    reply = { apiVersion: 1, status: "registered", companionMod: "companion-mod-installed" };
+    await register();
+    expect(await reading()).toEqual({
+      outcome: "companion-mod-installed",
+      sentence: messages("en").gameCompanionModReady,
+    });
+  });
+
   test("a cancelled scan leaves its own sentence alone, not the rows it abandoned", async ({ page }) => {
     await page.route(BOOTSTRAP_ROUTE, (route) => route.fulfill(jsonOk(root)));
     await mountGameDrawerRoutes(page);
