@@ -1,27 +1,27 @@
 # Gate falsifier decisions
 
-`gates examined 348 · with a red proof 303 · external 4 · declared without 39 · undeclared 0 · zero-population-pass 0`
+`gates examined 348 · with a red proof 304 · external 4 · declared without 38 · undeclared 0 · zero-population-pass 0`
 
-**The arithmetic, stated rather than implied.** `303 + 4 + 39 = 346`, two short of the 348 the same line names.
+**The arithmetic, stated rather than implied.** `304 + 4 + 38 = 346`, two short of the 348 the same line names.
 The two missing gates are the ones carrying an unreadable claim — `check:code-duplication` (a marker whose kind reads
 `facades`, which is not one of the five) and `test:format-ratchet` (a marker whose prose names a planted
 `tools/legacy.mjs` that deliberately is not on disk). `evaluate` reports both as findings on every run, and the census
 line's five buckets cannot place them: it partitions proven / external / declared / undeclared and leaves
 `unreadableClaims` out. This is not new — before the fifth batch the same line read `253 + 4 + 86 = 343` of 345, and
-before this batch `294 + 4 + 46 = 344` of 346. It is written down here because a line that is two short cannot be
+before the seventh batch `294 + 4 + 46 = 344` of 346. It is written down here because a line that is two short cannot be
 quoted as a partition, and the next reader is owed the difference. Both gates belong to files another lane may not
 touch (`tools/check-code-duplication.mjs`, `tools/scripts/*ratchet*`), so they are recorded, not repaired.
 
-The 41 rows the baseline records (the 39 readable debt rows the census prints as `declared without`, plus the 2
-unreadable claims) divide exactly, and the split is what the fourth table is not responsible for: **19** are that
-table's `provable` rows, **5** are the gates measured red at HEAD (named below), **1** reads something other
+The 40 rows the baseline records (the 38 readable debt rows the census prints as `declared without`, plus the 2
+unreadable claims) divide exactly, and the split is what the fourth table is not responsible for: **18** are that
+table's `provable` rows, **6** are the gates measured red at HEAD (named below), **1** reads something other
 than it checks (`check:architecture`), **6** are the first table's kept rows (`check:live-run-isolation`,
 `test:stardew:core`, `test:stardew:integration`, `test:voice-protocol`, and the two `not measured` tools gates
-`tools/check-stardew-actor-admissibility.mjs` and `tools/check-stardew-hold-sufficiency.mjs`), and **8** were moved out
+`tools/check-stardew-actor-admissibility.mjs` and `tools/check-stardew-hold-sufficiency.mjs`), and **7** were moved out
 by the third batch for the environment or another lane (`check:publint`, `check:sandbox-acceptance`,
 `test:gameplay-capability-catalog`, `test:frontend-turn-gate`, `check:dialogue-web-boundaries`,
-`test:dialogue-web-boundaries`, `check:host-module-graph`, `audit:stardew-action-seam-terminals`).
-`19 + 5 + 1 + 6 + 8 = 39`, and the 2 unreadable claims make the 41 the file holds.
+`check:host-module-graph`, `audit:stardew-action-seam-terminals`).
+`18 + 6 + 1 + 6 + 7 = 38`, and the 2 unreadable claims make the 40 the file holds.
 
 `check-harness-conformance` prints the same numbers from the same reading (`tools/lib/harness-conformance.mjs` over
 `tools/audit-gate-red-proofs.mjs`).
@@ -131,9 +131,9 @@ what was done with it). The two places history was genuinely the only honest pro
 
 ## Provable, not yet proven
 
-Nineteen gates, each with the violation to inject. Twenty-three rows left this table in the fifth batch, twenty
-left it in the sixth (all proved there), seven left it in the seventh, and two moved down to the red-at-HEAD table (one
-in the sixth, `test:tool-corpus` in the seventh); none of them is repeated here.
+Eighteen gates, each with the violation to inject. Twenty-three rows left this table in the fifth batch, twenty
+left it in the sixth (all proved there), eight left it in the seventh, and three moved down to the red-at-HEAD table
+(one in the sixth, `test:tool-corpus` and `test:dialogue-web-boundaries` in the seventh); none of them is repeated here.
 Where the target is the module the suite imports it is named; where the injection is a fixture, a config or an
 environment, the artefact is named instead. Rows marked `(attempted; did not fire)` are cases where a lane tried an
 injection that the suite did not catch — they are still provable, but the first guess is recorded so nobody repeats
@@ -159,7 +159,6 @@ it.
 | `test:stardew-tile-action-selectors` | inject into `../src/analysis/stardew-tile-action-selectors.mjs` |
 | `test:stardew-uncovered-exit-expansion` | the artefact it reads |
 | `test:stardew-uncovered-exit-table` | the artefact it reads |
-| `test:stardew:all` | a member suite's own falsifier; it runs them. **Measured this batch:** its baseline run is the reason it is still owed — see the seventh batch's section |
 
 ## Precision: does `test:host-diagnostic-output` read the production surface, or a fixture set?
 
@@ -387,12 +386,12 @@ Two of the twenty needed a decision about what their proof establishes:
   quoted (`passed`, `examined 186`, `violations 0`), so the two numbers are from two different populations and the
   marker says so.
 
-## Five gates red at HEAD
+## Six gates red at HEAD
 
 These are the mirror of the debt this document was built for: gates that fire, name a real finding, and are read by
 nobody. Each was measured twice — on the clean HEAD copy and in the live worktree — and each printed the same line. No
 workflow invokes any of them (`grep` over `.github/workflows/*.yml` names none of them), which is why they have
-been red without anybody noticing. The fourth was added by the sixth batch, the fifth by the seventh.
+been red without anybody noticing. The fourth was added by the sixth batch, the fifth and sixth by the seventh.
 
 | gate | the reading at HEAD | where the fix belongs |
 | --- | --- | --- |
@@ -401,6 +400,7 @@ been red without anybody noticing. The fourth was added by the sixth batch, the 
 | `test:sandbox-configs` | exit 1: `FAIL gamebuddy-sandbox.wsb: not valid XML: not well-formed (invalid token): line 1, column 1` — the file is a `#`-comment document, and the validator globs `*.wsb` | `tools/sandbox/gamebuddy-sandbox.wsb`, committed in `3f319596` ("the Windows Sandbox harness joins the repository"). The gate has been red since the day that file landed |
 | `test:stardew-native-multiplayer-sensitivity` (added by the sixth batch) | exit 1: `✖ the committed register derives cleanly against the exact decompiled source` with `code: 'mp_sensitivity_classification_drift'`, `details: { actionId: 'use_mine_ladder', file: 'StardewValley.Locations/MineShaft.cs', sensitivity: 'mp-insensitive', decisiveTokens: [ 'IsLocalPlayer' ] }` | the same register as the `check:` row above: this suite runs that register over the committed tree, so it inherits the drift rather than contributing one. **What it adds to the census:** a gate can be red at HEAD because another gate's population is red, and the two share one defect — the ledger should name both, not count two findings |
 | `test:tool-corpus` (added by the seventh batch) | exit 1: `tool_test_corpus suites=235 quarantined=0` then 85 failing of 2506, of which the decisive one is a gate already red at HEAD — `✖ the committed register derives cleanly against the exact decompiled source`, `code: 'mp_sensitivity_classification_drift'`, naming `use_mine_ladder` | the corpus runs `tools/**`'s own suites, so it inherits every red member. Its row left the fourth table for the same reason the `mp-sensitivity` suite's did: a proof needs a green baseline, and its population contains a suite that is red at HEAD. **The aggregate inherits its members' debt** — the third gate in this table whose red is somebody else's defect |
+| `test:dialogue-web-boundaries` (added by the seventh batch) | exit 1: `✖ every dialogue-web/src file belongs to exactly one golden zone` — `AssertionError: file appearance.ts matches 0 zones:` | its own hand-written `ZONES` manifest, which is the population it is named for. The gate is doing its job: `dialogue-web/src/appearance.ts` landed in `8711b9af` and the manifest was never told about it, so this is shape 1 of the four the batch watches for — **a population keyed by a name that drifted**, here caught rather than passed. It was recorded as “moved out for another lane” by the third batch; the truth is that it is red at HEAD, and it belongs in this table |
 
 ## Message defects met this batch
 
@@ -525,15 +525,16 @@ reader needs is one hop away in the suite's own import, and the two markers whos
 `test:stardew-tool-family-stamina-evidence`'s checker) keep their paths and stayed `executed`. The count is recorded
 here because a marker convention that keeps a gate honest should not be inferred from silence.
 
-## The seventh batch: seven gates, and the bound the queue runs into
+## The seventh batch: eight gates, and the bound the queue runs into
 
 Every injection ran in a copy of HEAD **outside** the repository: `git archive HEAD` extracted to
 `E:/tmp/gateproof/b7`, with `node_modules`, `host/node_modules`, `dialogue-web/node_modules`, `ref/`, `vendor/` and
-`design/` junctioned in and its own `git init`/commit. The live worktree was never the injection site. For each of the
-seven the copy file was rewritten, the command run, then the file restored from the copy's own commit; the restore was
-proved two ways — `git status --porcelain -- <path>` empty **and** `git hash-object <path>` equal to
-`git rev-parse HEAD:<path>` — and the command re-run green. All seven answered `red exit=1 green exit=0
-restore-clean content-identical`.
+`design/` junctioned in and its own `git init`/commit. The live worktree was never the injection site. Seven of the
+eight are a file rewritten, the command run, the file restored from the copy's own commit and the command re-run green;
+the restore was proved two ways — `git status --porcelain -- <path>` empty **and** `git hash-object <path>` equal to
+`git rev-parse HEAD:<path>`. The eighth (`test:stardew:all`) plants a new file instead of rewriting one, so its restore
+proof is the deletion plus an empty `git status` for the whole copy; its red and green readings are two full gate runs,
+which is why it is the pair with the longest wall clock in the batch.
 
 | gate closed | marker lives in | the line that fired |
 | --- | --- | --- |
@@ -544,47 +545,62 @@ restore-clean content-identical`.
 | `test:stardew-attachment-telemetry` | `tools/stardew-attachment-telemetry.test.ps1` | `attachment_telemetry_contract_missing:Publish-Telemetry "failed"`, exit 1 — the failed-outcome publication renamed in the attachment regression prover |
 | `test:stardew-loop-closure-mutation` | `tools/check-stardew-loop-closure.mutation.mjs` | `STILL GREEN  M1 treat a private entry as callable` + `SOME MUTATIONS SURVIVED`, exit 1 — the private-entry case removed from the loop-closure suite, which is the defect the runner exists to find |
 | `test:stardew-scaffold` | `tools/verify-stardew-scaffold.test.mjs` | `✖ scaffold checker rejects forbidden embodiment surfaces anywhere in the Mod source tree`, exit 1 — the `new Farmer` term dropped from the scaffold verifier's exact-text list |
+| `test:stardew:all` | `tools/test-stardew-all.mjs` | `RED  GameBuddy.Stardew.Core.Tests/… 867/868`, `"status": "failed"` with that project named in `failed`, exit 1 — a failing xunit fact planted in the project inside the copy; probe deleted → `"status": "passed"`, `"failed": []`, exit 0 |
 
-The census moved from `with a red proof 296 · declared without 46` to `303 · 39`, `gate_falsifiers: passed`, and
-`tools/gate-red-proof-baseline.json` lost exactly those seven entries, written by `--update` rather than by hand
-(`git diff --stat`: `7 -------`).
+The census moved from `with a red proof 296 · declared without 46` to `304 · 38`, `gate_falsifiers: passed`, and
+`tools/gate-red-proof-baseline.json` lost exactly those eight entries, written by `--update` rather than by hand
+(`git diff --stat`: `8 --------`).
 
-### Why this batch is seven and not twenty, measured rather than split
+### Two rows left the queue for a measurement, not a proof
 
-The batch was asked for the next twenty. The remaining 39 debt rows do not offer twenty that a `tools/**` marker can
-close, and the arithmetic is worth writing down because it is the queue's real shape:
+Both were red at HEAD, and both are worth naming because the ledger had them filed under a gentler reason:
 
-| the remaining rows | count | why a proof cannot be written from here |
+| gate | the reading at HEAD | what it says about the ledger |
 | --- | --- | --- |
-| `integrations/stardew/action-development/tests/**` entry files | 14 | the marker must live in the gate's own entry file (or its sibling falsifier), so `test:stardew-action-candidates`, `-action-inventory-reconciliation`, `-action-seam-terminals`, `-branch-writeset`, `-method-resolution`, `-method-resolution-mutation`, `-player-reachable-exits`, `-reachable-exits-reconciliation`, `-rejected-layer-verdicts-mutation`, `-remaining-actions`, `-tile-action-selectors`, `-uncovered-exit-expansion`, `-uncovered-exit-table` and `audit:stardew-action-seam-terminals` each need a file this lane may not edit |
-| red at HEAD | 5 | `test:frontend-turn-gate`, `test:gameplay-capability-catalog`, `test:sandbox-configs`, `test:stardew-fixture-scenario-wiring`, `test:stardew-native-multiplayer-sensitivity` (and `test:tool-corpus` joined them this batch) — a proof needs a green baseline, and none exists |
-| environment or another program | 4 + 4 | `check:publint` (no `bun` binary for its `spawnSync`), `check:sandbox-acceptance` (no installer, and it stages on a real account), `check:live-run-isolation` (a machine preflight), `check:architecture` (an `echo`); plus `check:host-module-graph` and `check:dialogue-web-boundaries` whose entry is a root `.dependency-cruiser.*.cjs`, `test:stardew:core` / `test:stardew:integration` (`dotnet test`, and `integrations/**` is not this lane's), `test:voice-protocol` (a submodule) |
-| arg-requiring `check:` gates | 3 | `check:stardew-native-normal-player-ingress-register`, `check:stardew-native-source-closure`, `check:stardew-native-transition-ledger` need a **valid** synthetic report/register/universe triple to have a green baseline at all; reddening one rule first would be proving that an invalid input is refused, which is not the rule each gate exists for. Left owed with that reason rather than given a proof that establishes nothing |
-| unreadable claims in forbidden files | 2 | `check:code-duplication`, `test:format-ratchet` |
-| written but skipped | 1 | `test:stardew-soil-itm-canary`: all five cases `skip` where `.tmp-stardew-decompile/` is absent, so a violation there reddens nothing |
+| `test:tool-corpus` | `tool_test_corpus suites=235 quarantined=0` then `✖ the committed register derives cleanly against the exact decompiled source` — 85 failing of 2506 on a tree whose only modifications were this batch's own injections | the corpus is derived from `package.json` and green when every member is; one red member makes it red. It inherits `test:stardew-native-multiplayer-sensitivity`'s drift, so it belongs beside that row |
+| `test:dialogue-web-boundaries` | `✖ every dialogue-web/src file belongs to exactly one golden zone` — `file appearance.ts matches 0 zones:` | the third batch moved this row out as "red for a reason that is not its own rule". Measured now, it is its own rule firing on a hand-written `ZONES` list that was never told about `dialogue-web/src/appearance.ts` (committed in `8711b9af`) — shape 1, the population keyed by a name that drifted, **caught** rather than passed |
 
-That is 33 of the 39 accounted for; the seven proved and the one moved to the red-at-HEAD table close the other seven.
+### Why this batch is eight and not twenty, measured rather than split
+
+The batch was asked for the next twenty. The remaining 38 debt rows do not offer twenty that this lane can close, and
+the arithmetic is worth writing down because it is the queue's real shape:
+
+| the remaining rows, by reason | count | why a proof cannot be written from here |
+| --- | --- | --- |
+| the marker would have to live in another lane's file | 14 | thirteen `integrations/stardew/action-development/tests/**` entry files (`test:stardew-action-candidates`, `-action-inventory-reconciliation`, `-action-seam-terminals`, `-branch-writeset`, `-method-resolution`, `-method-resolution-mutation`, `-player-reachable-exits`, `-reachable-exits-reconciliation`, `-rejected-layer-verdicts-mutation`, `-remaining-actions`, `-tile-action-selectors`, `-uncovered-exit-expansion`, `-uncovered-exit-table`) plus `audit:stardew-action-seam-terminals`. The marker is a repo edit, and `integrations/stardew/**` is not this lane's |
+| red at HEAD, so no green baseline to redden | 8 | `test:sandbox-configs`, `test:stardew-fixture-scenario-wiring`, `test:stardew-native-multiplayer-sensitivity`, `check:stardew-native-multiplayer-sensitivity`, `test:frontend-turn-gate`, `test:gameplay-capability-catalog`, and the two this batch measured: `test:tool-corpus`, `test:dialogue-web-boundaries` |
+| the rule lives in another program or another repository | 5 | `check:publint` (no `bun` binary for its `spawnSync`), `check:sandbox-acceptance` (no installer, and it stages on a real account), `check:host-module-graph` and `check:dialogue-web-boundaries` (a root `.dependency-cruiser.*.cjs` is the entry file), `check:architecture` (an `echo`) |
+| kept rows whose runner is another lane's | 6 | `test:stardew:core`, `test:stardew:integration` (`dotnet test` over `integrations/stardew/tests/**`), `test:voice-protocol` (a submodule), `check:live-run-isolation` (a machine preflight), and the two `not measured` tools gates |
+| needs a valid synthetic input before any rule can be reddened | 3 | `check:stardew-native-normal-player-ingress-register`, `check:stardew-native-source-closure`, `check:stardew-native-transition-ledger` exit 1 or 2 on the argument list alone; with no fixture set there is no green baseline, and "an invalid input is refused" is not the rule each gate exists for. Left owed with that reason rather than given a proof that establishes nothing |
+| written but skipped | 1 | `test:stardew-soil-itm-canary`: all five cases `skip` where `.tmp-stardew-decompile/` is absent, so a violation there reddens nothing |
+| asserts a replica | 1 | `test:stardew-native-local-runner-fixture-contract`, on the sixth batch's reason |
+
+`14 + 8 + 5 + 6 + 3 + 1 + 1 = 38`. The split at the top of this document counts the same 38 as
+`18 + 6 + 1 + 6 + 7`, because it keeps the third batch's attribution for `test:frontend-turn-gate`,
+`test:gameplay-capability-catalog` (red, but filed as "moved out for another lane") and `check:architecture` (the
+reads-other row). Two counts of one population, agreeing at 38 — which is why the header says 38 and not something the
+reader has to derive.
 
 ### The four shapes, as this batch met them
 
-1. **A population keyed by a name that drifted** — met, in an unexpected place: `test:tool-corpus`'s population is
-   `package.json` (235 suites, derived, not listed), and its *verdict* is the corpus's own. It is green when every
-   member is green and red when one is not, so the population is fine and the gate is red at HEAD because a member is.
-   Recorded in the red-at-HEAD table rather than as a proof.
-2. **`status: failed` with an empty `violations` array** — not met. None of the seven prints a status report.
+1. **A population keyed by a name that drifted** — two members, both caught rather than passed:
+   `test:dialogue-web-boundaries`'s `ZONES` list no longer knows `appearance.ts`, and `test:tool-corpus`'s verdict is
+   only as green as its 235 derived members. The difference matters: the first is a hand-written population that went
+   stale and said so; the second derives its population and inherits a member's red.
+2. **`status: failed` with an empty `violations` array** — not met. `test:stardew:all` prints `"status": "failed"`
+   with the project named in `", "failed": [...]`, so both channels carry the member.
 3. **A failure line that cannot name the member** — one: `test:stardew-scaffold`'s red line names the *rule*
    ("rejects forbidden embodiment surfaces anywhere in the Mod source tree") but not *which* forbidden surface and not
-   the file the surface was found in, because the assertion is `assert.match(output, /forbidden Phase 1 surface: new
-   Farmer/)` against the verifier's console text and `assert.notEqual(code, 0)` fires first without a message. A reader
-   who breaks a different term sees a red case with no member. The other six name their member.
+   the file it was found in. The assertion is `assert.match(output, /forbidden Phase 1 surface: new Farmer/)` against
+   the verifier's console text, and `assert.notEqual(code, 0)` fires first without a message, so a reader who breaks a
+   *different* term sees a red case with no member named. The other seven name theirs.
 4. **A gate asserting a replica** — no new member; `test:stardew-native-local-runner-fixture-contract` still carries the
-   sixth batch's reason.
+   sixth batch's reason, and this batch did not manufacture a proof for it.
 
-### One reading the queue does not currently take
+### What the two Integration-bound injections do and do not establish
 
-`test:stardew:all` runs eight C# projects and this batch measured its baseline rather than assuming it: the gate
-reported `status: passed` with `GameBuddy.Stardew.Core.Tests 867/867`, `GameBuddy.Stardew.Integration.Tests
-2707/2709` and `GameBuddy.Stardew.NoGame.Tests 233/233`, and four `no_test_project` publication harnesses, so a proof is
-available one C# test away — inside `integrations/stardew/tests/**`, which this lane may not edit. Its row stays in the
-fourth table saying that, because "green, and breakable only from a file I cannot touch" is a different debt from "cannot
-fire".
+`test:stardew-scaffold` and `test:stardew:all` were reddened by editing `integrations/stardew/**` **inside the copy**,
+which is a different thing from editing it in the repository: nothing another lane owns was touched, and the copy was
+reverted to its own commit. What the two proofs establish is that each gate fires on a real violation of its rule. What
+they do not establish is anything about the Mod's own correctness — the injected violations were synthetic, and both
+markers say which rule was broken rather than claiming the suite guards a shipped defect.

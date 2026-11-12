@@ -36,7 +36,6 @@
     "test:stardew-tile-action-selectors",
     "test:stardew-uncovered-exit-expansion",
     "test:stardew-uncovered-exit-table",
-    "test:stardew:all",
     "test:stardew:core",
     "test:stardew:integration",
     "test:tool-corpus",

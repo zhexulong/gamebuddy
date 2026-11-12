@@ -11,6 +11,10 @@
  * Usage:
  *   node tools/test-stardew-all.mjs            # every project, summary at the end
  *   node tools/test-stardew-all.mjs --filter X # pass a --filter through to dotnet
+ *
+ * red-proof: inject  a failing xunit fact planted in `GameBuddy.Stardew.Core.Tests` (in a copy of HEAD outside the
+ *                    repository) -> `RED  GameBuddy.Stardew.Core.Tests/… 867/868`, `"status": "failed"` with that
+ *                    project named in `failed`, exit 1; probe removed -> `"status": "passed"`, exit 0
  */
 import { execFileSync } from "node:child_process";
 import { readdirSync, statSync } from "node:fs";
