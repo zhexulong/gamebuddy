@@ -81,8 +81,8 @@ export async function waitForChildExit(child, deadlineMs, describe) {
   });
 }
 export const testHash = (value) => createHash("sha256").update(value).digest("hex");
-export const testU16 = (value) => { const bytes = Buffer.alloc(2); bytes.writeUInt16LE(value); return bytes; };
-export const testU32 = (value) => { const bytes = Buffer.alloc(4); bytes.writeUInt32LE(value); return bytes; };
+const testU16 = (value) => { const bytes = Buffer.alloc(2); bytes.writeUInt16LE(value); return bytes; };
+const testU32 = (value) => { const bytes = Buffer.alloc(4); bytes.writeUInt32LE(value); return bytes; };
 export function syntheticRuntimeZip(files = [{ path: "node.exe", bytes: Buffer.from("test node runtime") }]) {
   const entries = files.map(({ path, bytes }) => {
     const name = Buffer.from(`node-v24.20.0-win-x64/${path}`);

@@ -30,10 +30,10 @@ export const RUN_TRACE_FILE_NAME = "run-trace.json";
  * it is a stage the run is inside, and deleting it would hide the stuck stage this file exists to show. That makes the
  * cap a soft one by the number of spans open at one instant, which is the action in flight (single digits).
  */
-export const RUN_TRACE_MAX_SPANS = 5_000;
+const RUN_TRACE_MAX_SPANS = 5_000;
 
 /** How often the export on disk is rewritten while the run is live. Bounds what a hard kill can lose to one tick. */
-export const RUN_TRACE_FLUSH_INTERVAL_MS = 5_000;
+const RUN_TRACE_FLUSH_INTERVAL_MS = 5_000;
 
 type RunTraceAttribute = string | number | boolean | null;
 type RunTraceAttributes = Readonly<Record<string, RunTraceAttribute>>;

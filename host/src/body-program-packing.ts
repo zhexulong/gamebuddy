@@ -73,7 +73,7 @@ export const TOOL_FOOTPRINT_MAXIMUM_CHARGE = TOOL_FOOTPRINT_TILES_BY_CHARGE.leng
  * 600 anywhere else is the same "two spellings of one fact" defect the rest of this work has been removing.
  * </p>
  */
-export const NATIVE_COST = Object.freeze({
+const NATIVE_COST = Object.freeze({
   /** One tool swing's animation, the class `till_soil` falls in: 8 frames x 60 ms (`Tool.cs:610-620`). */
   swingMs: 480,
   /** One level of charge held before release. */
@@ -137,7 +137,7 @@ export type PackingKind = "charged_rectangle" | "body_arc" | "single_tile";
 export const PLAN_PACKING_FOOTPRINT_UNKNOWN = "plan_packing_footprint_unknown";
 export const PLAN_PACKING_NOT_PACKABLE = "plan_packing_not_packable";
 
-export type PackedStep = Readonly<{
+type PackedStep = Readonly<{
   /** The tile the native use is named on. */
   x: number;
   y: number;
@@ -286,7 +286,7 @@ function tileAtCharge(
  * The three numbers are NOT this file's invention - see `NATIVE_COST` - and the walk is counted between CONSECUTIVE
  * stances rather than as a straight line, because that is the path the plan asks the body to take.
  */
-export function packingTimeMs(steps: readonly PackedStep[]): number {
+function packingTimeMs(steps: readonly PackedStep[]): number {
   let total = 0;
   for (const [index, step] of steps.entries()) {
     total += NATIVE_COST.swingMs + step.charge * NATIVE_COST.chargeMsPerLevel;
