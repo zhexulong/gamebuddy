@@ -1211,3 +1211,58 @@ on this machine only because its prerequisites happen to exist:
 Neither is a one-liner: each needs the same runner-or-guard shape as the canary, its rule belongs to another lane's
 gate, and the canary's own guard is the pattern to copy.
 
+
+### `check:publint`: three facts before a verdict
+
+`spawnSync("bun", ["x", "publint", "--strict"], { shell: false })` starts no file on a machine whose `bun` is npm's
+shim: Win32 needs an executable image, Node applies no `PATHEXT` without a shell, and it refuses a `.cmd` outright. The
+child never ran, `status` was `null`, the message list was empty, and the gate read that emptiness as "every failure
+maps to a known vendor baseline gap". Three facts are now required before any verdict is printed:
+
+1. the runner resolves to a file this process can spawn — the whole PATH is searched, so a shim in one directory cannot
+   hide a real `bun.exe` in the next, and each refused shim is named with why it cannot be started;
+2. it answers `<runner> --version`;
+3. the run's own output carries publint's `Running publint v<semver>` line.
+
+Any of the three missing is `publint_not_measured:<reason>:<what was found>`, exit 2 — not a failure, because no rule
+was evaluated. A run that started, spoke as publint and reported problems is `failed` with publint's own status. The
+vendor-gap tolerance survives but now needs parsed messages (`messages.length > 0 && blocked.length === 0 &&
+activeGaps.length > 0`), so an unexplained non-zero exit is red whether or not a gap happens to be active.
+
+The message shapes are publint 0.3.25's real ones, measured here rather than assumed: `publint run --help` lists
+`--level`, `--pack`, `--strict` and `--version` and **no JSON reporter**, and a real run prints
+`Running publint v0.3.25 for @cortexkit/pi-magic-context...`, `Packing files with bun pack...`, `Linting...` and then
+either a message list or nothing. That is why the parse accepts a per-line object or one array, and why the identity
+line, not a parsed message, is what proves publint itself spoke: on this package's current shape publint exits 0 with
+one suggestion and no machine-readable code at all.
+
+The red proof is the pre-fix tolerance branch, injected into a copy of the gate under `.tmp/red/` and driven by the real
+falsifier: `tools/check-publint.test.mjs` reported `an unexplained non-zero exit is a failure, not a tolerated gap` →
+`AssertionError: no parsed message means no gap could be matched, 'passed' !== 'failed'`. The second reading is the
+history one: at HEAD this gate printed the false pass above at exit 0, and on the same machine it now prints the
+`executable_unresolvable` marker at exit 2.
+
+### The census
+
+| reading | before this batch | after |
+| --- | --- | --- |
+| `node tools/check-harness-conformance.mjs` | exit 0, `gates examined 351 · with a red proof 326 · external 4 · declared without 19 · undeclared 0 · zero-population-pass 0` | exit 0, the same line |
+| `gate_falsifiers` verdict | `passed` | `passed` |
+| the intermediate reading, with the canary's runner not yet in the index | `350 · 326 · 4 · 18 · 0 · 0 · untracked_not_counted 1: tools/stardew-soil-itm-canary-gate.mjs` and `gate_declaration_stale: test:stardew-soil-itm-canary` | gone once the file was staged — the population is the index, so a gate file no commit carries is inert and named, never silently counted |
+
+`326 + 4 + 19 = 349`, plus the two unreadable claims the header still names (`check:code-duplication`'s malformed
+marker and `test:format-ratchet`'s pointer to a planted file) is the 351 examined. Both gates of this batch stay in the
+recorded bucket for the reason given above, so this batch moves no census number: it moves two gates from *green having
+measured nothing* to *blocked with a reason*, which no column counts.
+
+### What this batch did not do: the class gate
+
+The task this lane was given also asked for one gate over `tools/**` and `package.json` that flags a test script able to
+report green with `skip ≡ pass`. It is not here, and the reason is measurable rather than aesthetic: the population is
+derivable (every `test:` script, from `package.json`, exactly as `tools/lib/gate-population.mjs` derives it), but the
+property is not. "This suite can go green with every case skipped" is a fact about a run, and the only static evidence
+is the presence of a `skip:` option — a string test, which is the form the request excluded. Of the three all-skip
+members this batch found, two are green here and skip elsewhere, so a string gate would flag them without telling a
+guarded suite (the canary now) from an unguarded one (its old shape). The detection that does work is the one applied
+to each member: run it where its prerequisite is absent and read the exit code.
+
