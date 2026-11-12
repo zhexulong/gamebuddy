@@ -5,9 +5,9 @@
 //                    `✖ a failed run without its snapshot or its replay is not evidence`, exit 1; the unmodified
 //                    bundle prints `fail 0`, exit 0 (tools/lib/evidence-bundle.test.mjs)
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import test from "node:test";
 
 import {
@@ -76,6 +76,14 @@ const bundle = (overrides = {}) => ({
   },
   timeline: { path: EVIDENCE_BUNDLE_FILES.timeline, records: 1, sources: ["player", "llm"] },
   actionTrace: { path: EVIDENCE_BUNDLE_FILES.actionTrace, records: TRACE.length },
+  // The run trace's record, as the run directory's writer publishes it: a source the product wrote, or a named absence.
+  runTrace: {
+    path: EVIDENCE_BUNDLE_FILES.runTrace,
+    present: false,
+    reason: "run_trace_not_declared",
+    sourcePath: null,
+    spans: null,
+  },
   keyFrames: { status: "skipped", reason: "no_evidence_display", dir: null },
   hostMemory: {
     state: "measured",
@@ -470,4 +478,121 @@ test("round40's reclamation - completed, with no steps - is refused", () => {
     "reclamation_step_malformed",
   ]);
   assert.deepEqual(codesFor(bundle({ reclamation: RECLAMATION, hostMemory: HOST_MEMORY })), []);
+});
+
+// ── The run trace: the slot a declared span name lands in ─────────────────────────────────────────────────────────
+//
+// MEASURED 2026-11-11: the product wrote `run-trace.json` for every graceful run (152 KB beside one run's manifest) and
+// every evidence package published `runTrace: {present: false, reason: "product_did_not_flush_run_trace"}`, because the
+// runner probed for the file while assembling the package - before `runtime.close()` ran - and nothing ever copied it
+// in. A slot for a file that is read too early is still empty, and a bundle that cannot answer "how long did admission
+// take" is the whole reason the trace exists.
+
+const RUN_TRACE_SPANS = [
+  {
+    ph: "X",
+    ts: 1_000_000,
+    dur: 40_000,
+    pid: 1,
+    tid: 1,
+    name: "admission",
+    args: { programId: "program_01", nodeId: "node_01", actionId: "water_crop", result: "granted" },
+  },
+  { ph: "X", ts: 1_040_000, dur: 90_000, pid: 1, tid: 1, name: "mod.execute", args: { actionId: "water_crop" } },
+];
+
+/** A trace file in the product's own format (`host/src/run-trace.ts`), written where the product would put it. */
+const runTraceSource = (root) => {
+  const path = join(root, "runtime-root", "surface-sessions", "game-1", "run-trace.json");
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(path, `${JSON.stringify({ displayTimeUnit: "ms", droppedSpans: 0, traceEvents: RUN_TRACE_SPANS })}\n`);
+  return path;
+};
+
+test("the run trace is copied into the package, and the manifest's record is the file's own", async () => {
+  const root = mkdtempSync(join(tmpdir(), "evidence-bundle-run-trace-"));
+  try {
+    const sourcePath = runTraceSource(root);
+    const written = await writeEvidenceBundle(join(root, "run"), {
+      bundle: bundle({ runTrace: { path: sourcePath } }),
+      timeline: [{ atMs: 1, source: "llm" }],
+      actionTrace: TRACE,
+    });
+    assert.equal(written.files.runTrace, join(root, "run", EVIDENCE_BUNDLE_FILES.runTrace));
+    const copied = JSON.parse(readFileSync(written.files.runTrace, "utf8"));
+    assert.deepEqual(
+      copied.traceEvents.map((event) => event.name),
+      ["admission", "mod.execute"],
+    );
+    const manifest = JSON.parse(readFileSync(join(root, "run", EVIDENCE_BUNDLE_FILES.manifest), "utf8"));
+    assert.equal(manifest.runTrace.present, true);
+    assert.equal(manifest.runTrace.reason, null);
+    assert.equal(manifest.runTrace.spans, RUN_TRACE_SPANS.length);
+    assert.equal(manifest.runTrace.sourcePath, sourcePath);
+    assert.deepEqual((await readEvidenceBundle(join(root, "run"))).violations, []);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("a run that ended without a graceful close still publishes the trace it had written", async () => {
+  // The file exists because the product rewrites it while the run is live; the close never ran, so the only evidence
+  // that it ever existed is this copy. A killed run is not a failure assertion either - it is its own verdict.
+  const root = mkdtempSync(join(tmpdir(), "evidence-bundle-killed-run-trace-"));
+  try {
+    const sourcePath = runTraceSource(root);
+    const written = await writeEvidenceBundle(join(root, "run"), {
+      bundle: bundle({
+        verdict: {
+          state: "killed",
+          reasonCode: "run_killed_by_signal:SIGTERM",
+          rubric: { broken: [], unmeasured: [] },
+        },
+        runTrace: { path: sourcePath, present: false, reason: "product_did_not_flush_run_trace" },
+      }),
+      timeline: [{ atMs: 1, source: "llm" }],
+      actionTrace: TRACE,
+    });
+    const manifest = JSON.parse(readFileSync(join(root, "run", EVIDENCE_BUNDLE_FILES.manifest), "utf8"));
+    // The writer's answer wins: the file is the authority, not the probe the runner took before teardown.
+    assert.equal(manifest.runTrace.present, true);
+    assert.equal(manifest.verdict.state, "killed");
+    assert.equal(written.files.runTrace !== null, true);
+    assert.deepEqual((await readEvidenceBundle(join(root, "run"))).violations, []);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("a missing trace is a named absence, and a claimed one must be on disk", async () => {
+  const root = mkdtempSync(join(tmpdir(), "evidence-bundle-no-run-trace-"));
+  try {
+    const written = await writeEvidenceBundle(join(root, "run"), {
+      bundle: bundle({ runTrace: { path: join(root, "never-written", "run-trace.json") } }),
+      timeline: [{ atMs: 1, source: "llm" }],
+      actionTrace: TRACE,
+    });
+    const manifest = JSON.parse(readFileSync(join(root, "run", EVIDENCE_BUNDLE_FILES.manifest), "utf8"));
+    assert.equal(manifest.runTrace.present, false);
+    assert.equal(manifest.runTrace.reason, "run_trace_absent_at_bundle_time");
+    assert.equal(written.files.runTrace, null);
+    // The package is still honest: an absent trace is reported, and reading it back reports nothing new.
+    assert.deepEqual((await readEvidenceBundle(join(root, "run"))).violations, []);
+
+    // A bundle whose manifest CLAIMS a trace the directory does not hold is a lie about the run.
+    writeFileSync(
+      join(root, "run", EVIDENCE_BUNDLE_FILES.manifest),
+      `${JSON.stringify(bundle({ runTrace: { path: EVIDENCE_BUNDLE_FILES.runTrace, present: true, reason: null, spans: 2 } }))}\n`,
+    );
+    assert.ok(
+      (await readEvidenceBundle(join(root, "run"))).violations.map((item) => item.code).includes("run_trace_missing"),
+    );
+    // ...and one whose declaration is not a record at all is named rather than skipped.
+    assert.ok(codesFor(bundle({ runTrace: undefined })).includes("run_trace_declaration_missing"));
+    assert.ok(codesFor(bundle({ runTrace: { present: false, reason: null } })).includes("run_trace_reason_missing"));
+    assert.ok(codesFor(bundle({ runTrace: { present: "yes" } })).includes("run_trace_presence_unstated"));
+    assert.ok(codesFor(bundle({ runTrace: { present: true, reason: null } })).includes("run_trace_spans_invalid"));
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });

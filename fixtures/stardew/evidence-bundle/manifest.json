@@ -25,6 +25,13 @@
   },
   "timeline": { "path": "timeline.jsonl", "records": 0, "sources": ["player", "smapi", "llm"] },
   "actionTrace": { "path": "actionTrace.jsonl", "records": 1 },
+  "runTrace": {
+    "path": "run-trace.json",
+    "present": true,
+    "reason": null,
+    "sourcePath": "D:\\GameBuddy\\runtimes\\lane-a\\contexts\\example\\surface-sessions\\game-1794386236213\\run-trace.json",
+    "spans": 2
+  },
   "keyFrames": { "status": "skipped", "reason": "headless_environment", "dir": null },
   "reclamation": { "state": "clean", "exitReason": "completed", "steps": [], "reflection": "completed" },
   "voice": { "state": "disabled", "playback": "disabled", "reasonCode": "voice_preference_absent" },

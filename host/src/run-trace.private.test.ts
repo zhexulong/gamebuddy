@@ -1,11 +1,14 @@
 import assert from "node:assert/strict";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
 import { ExecutionCorrelationLedger } from "./execution-correlation-ledger.js";
 import { createFarmhandCompanionPresentationPort } from "./farmhand-companion-presentation.js";
 import type { StardewBridgeConnection } from "./game-connection.js";
 import { createStardewActionTools, type MoveCapableIntegration } from "./game-tools.js";
 import type { Scope } from "./protocol.js";
-import { createRunTrace, RUN_SPAN_NAMES, type RunTraceSpan, toChromeTrace } from "./run-trace.js";
+import { createRunTrace, RUN_SPAN_NAMES, type RunTraceSpan, startRunTraceFile, toChromeTrace } from "./run-trace.js";
 import { summarizeActionCadenceFromSpans } from "./run-trace-cadence.js";
 import { STARDEW_GAME_INTEGRATION_ADAPTER } from "./stardew-game-integration-adapter.js";
 import { TEST_MOD_REGISTRATIONS } from "./stardew-test-fixtures.js";
@@ -324,4 +327,61 @@ test("a present span ends at the moment the companion text committed", async () 
     toChromeTrace([present!]).traceEvents[0]!.ts + toChromeTrace([present!]).traceEvents[0]!.dur,
     present!.endMs! * 1000,
   );
+});
+
+test("the span log is bounded by evicting the oldest settled span, and says how many it dropped", () => {
+  const clock = fixedClock();
+  const trace = createRunTrace("run_cap", { now: clock.now, maxSpans: 2 });
+  const first = trace.begin(RUN_SPAN_NAMES.action, { actionId: "one" });
+  clock.advance(10);
+  first.end();
+  const open = trace.begin(RUN_SPAN_NAMES.admission, { actionId: "two" });
+  clock.advance(10);
+  // A third span forces one out. The settled one goes; the span the run is inside does not.
+  trace.begin(RUN_SPAN_NAMES.present, { actionId: "three" });
+  assert.deepEqual(
+    trace.spans().map((span) => span.name),
+    [RUN_SPAN_NAMES.admission, RUN_SPAN_NAMES.present],
+  );
+  assert.equal(trace.dropped(), 1);
+  // A handle whose span was evicted is inert: closing it must not resurrect the record or move the count.
+  first.end();
+  open.end({ state: "prepared" });
+  assert.deepEqual(
+    trace.spans().map((span) => span.name),
+    [RUN_SPAN_NAMES.admission, RUN_SPAN_NAMES.present],
+  );
+  assert.equal(trace.dropped(), 1);
+  // The export names the truncation, so a capped trace cannot be read as a short run.
+  assert.equal(toChromeTrace(trace.spans(), { droppedSpans: trace.dropped() }).droppedSpans, 1);
+});
+
+test("the export is on disk while the run is live, so a run that never closes still has a trace", async () => {
+  const root = await mkdtemp(join(tmpdir(), "run-trace-file-"));
+  const file = join(root, "run-trace.json");
+  const clock = fixedClock();
+  const trace = createRunTrace("run_live_file", { now: clock.now });
+  const traceFile = startRunTraceFile(file, trace, { intervalMs: 60_000 });
+  try {
+    clock.advance(5);
+    trace.begin(RUN_SPAN_NAMES.admission, { programId: "program_01" }).end({ result: "granted" });
+    await traceFile.flush();
+    // Read from disk with the writer still armed and the run still open: this is the state a killed run leaves.
+    const live = JSON.parse(await readFile(file, "utf8")) as { traceEvents: Array<{ name: string }> };
+    assert.deepEqual(
+      live.traceEvents.map((event) => event.name),
+      [RUN_SPAN_NAMES.admission],
+    );
+    clock.advance(40);
+    trace.begin(RUN_SPAN_NAMES.action, { actionId: "harvest_crop" }).end();
+    await traceFile.stop();
+    const settled = JSON.parse(await readFile(file, "utf8")) as { traceEvents: Array<{ name: string }> };
+    assert.deepEqual(
+      settled.traceEvents.map((event) => event.name),
+      [RUN_SPAN_NAMES.admission, RUN_SPAN_NAMES.action],
+    );
+  } finally {
+    await traceFile.stop();
+    await rm(root, { recursive: true, force: true });
+  }
 });

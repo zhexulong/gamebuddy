@@ -65,7 +65,14 @@ import { identityProfileMetadata } from "../identity-profile.js";
 import { resolveRuntimePaths } from "../runtime-identity.js";
 import { buildGameSurfaceAuthoredCatalog } from "../tavern/catalog-service.js";
 import { createMaterializedGameCompanionRuntime } from "../game-runtime-fixed-tools.internal.js";
-import { createRunTrace, writeRunTrace, type RunTrace } from "../run-trace.js";
+import {
+  createRunTrace,
+  describeTraceFailure,
+  RUN_SPAN_NAMES,
+  RUN_TRACE_FILE_NAME,
+  startRunTraceFile,
+  type RunTrace,
+} from "../run-trace.js";
 import {
   validateBodyProgramCandidateRequest,
   validateBodyProgramEventsResult,
@@ -1299,6 +1306,41 @@ function projectBodyNodeAdmissionResult(
   }
 }
 
+/**
+ * The composition's body-node admission, measured: from the Mod's challenge reaching this Host to the result this Host
+ * sends back.
+ *
+ * This is the interval the cross-language gap lives in - the Mod's own journal append is measured on the Mod side, and
+ * everything between that append and its effect on the Host is either this admission or the wire. It is deliberately
+ * NOT a `bridgeDiagnostics` stage: that union is the fail-closed refusal channel, and a duration published there would
+ * make "this was refused" and "this took 40 ms" the same field.
+ */
+export function createTracedBodyNodeAdmission(
+  runTrace: RunTrace,
+  admit: (challenge: BodyNodeAdmissionChallenge) => Promise<HostNodeAdmissionResult>,
+): (challenge: BodyNodeAdmissionChallenge) => Promise<BodyNodeAdmissionResult> {
+  return async (challenge) => {
+    const span = runTrace.begin(RUN_SPAN_NAMES.admission, {
+      programId: challenge.programId,
+      nodeId: challenge.nodeId,
+      nodeAttempt: challenge.nodeAttempt,
+      admissionAttempt: challenge.admissionAttempt,
+      actionId: challenge.actionId,
+    });
+    let decision: HostNodeAdmissionResult;
+    try {
+      decision = await admit(challenge);
+    } catch (error) {
+      span.end({ failed: describeTraceFailure(error) });
+      throw error;
+    }
+    span.end(
+      decision.result === "granted" ? { result: decision.result } : { result: decision.result, code: decision.code },
+    );
+    return projectBodyNodeAdmissionResult(challenge, decision);
+  };
+}
+
 function hasExactKeys(value: Record<string, unknown>, keys: readonly string[]): boolean {
   const actual = Object.keys(value);
   return actual.length === keys.length && keys.every((key) => Object.hasOwn(value, key));
@@ -1494,8 +1536,9 @@ export function createHostGameRuntimeMaterializer(
         const ports = materializeAuthenticatedStardewLaunchPorts(
           execution,
           admission,
-          async (challenge: BodyNodeAdmissionChallenge): Promise<BodyNodeAdmissionResult> =>
-            projectBodyNodeAdmissionResult(challenge, await bodyProgramAdmission.admit(challenge)),
+          createTracedBodyNodeAdmission(runTrace, (challenge: BodyNodeAdmissionChallenge) =>
+            bodyProgramAdmission.admit(challenge),
+          ),
         );
         const recoveryContext = createStardewRecoveryBindingContext(execution, recoveryJournal);
         const bodyProgramConsumer = Object.freeze(Object.create(null)) as BodyProgramConsumer;
@@ -1587,6 +1630,13 @@ export function createHostGameRuntimeMaterializer(
           throw error;
         }
         const runtime = constructed.runtime;
+        // The export lands beside this runtime's run manifest and is rewritten while the run is live (see
+        // `startRunTraceFile`): the evidence package is written before teardown, and a killed run never reaches
+        // teardown at all, so a trace written only by the flush below would not exist for either.
+        const traceFile = startRunTraceFile(
+          join(dirname(runtime.paths.runManifestPath), RUN_TRACE_FILE_NAME),
+          runTrace,
+        );
         if (bodyProgramMounted) revealProgramReaders = mountProgramReadersAfterSubmission(runtime.session);
         await runtime.recoverStardewExecutionReceipts?.(
           Object.freeze({
@@ -1730,10 +1780,10 @@ export function createHostGameRuntimeMaterializer(
               }),
           ...(operationalGateEvidence === undefined ? {} : { operationalGateEvidence }),
           closeRecoveryJournal: () => recoveryJournal.close(),
-          // Written last on purpose: the export is the run's own evidence, so it must include every span that settled
-          // before teardown. Perfetto and chrome://tracing open it directly.
-          flushRunTrace: () =>
-            writeRunTrace(join(dirname(runtime.paths.runManifestPath), "run-trace.json"), runTrace.spans()),
+          // Written last on purpose, and written again HERE after the interval writer has been running: the export is
+          // the run's own evidence, so it must include every span that settled before teardown. Perfetto and
+          // chrome://tracing open it directly.
+          flushRunTrace: () => traceFile.stop(),
           closeFixedTools,
           ...(constructed.clearAuthoredContext === undefined
             ? {}

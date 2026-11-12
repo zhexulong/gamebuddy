@@ -12,7 +12,7 @@
  */
 
 import { existsSync } from "node:fs";
-import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { parseInGameTime } from "./replay-clock.mjs";
 import { HOST_MEMORY_TURN_CAP } from "./live-run-memory.mjs";
@@ -25,6 +25,8 @@ export const EVIDENCE_BUNDLE_FILES = Object.freeze({
   manifest: "manifest.json",
   timeline: "timeline.jsonl",
   actionTrace: "actionTrace.jsonl",
+  // The product's own span export: what the run's wall clock went to, stage by stage (host/src/run-trace.ts).
+  runTrace: "run-trace.json",
   failure: "failure.json",
   repro: "repro.json",
   keyFrames: "key-frames",
@@ -230,6 +232,20 @@ export function validateEvidenceBundle(bundle, { actionTrace = null } = {}) {
     }
   }
 
+  // The run trace: the slot a declared span name lands in. The WRITER decides `present` from the file it actually
+  // copied, so a bundle cannot publish a reading taken before the product wrote it - which is exactly what the
+  // runner's own pre-write probe did (present:false while the trace was on disk, measured 2026-11-11).
+  const runTrace = bundle.runTrace;
+  if (!isPlainObject(runTrace)) {
+    violations.push(violation("run_trace_declaration_missing", "runTrace"));
+  } else if (typeof runTrace.present !== "boolean") {
+    violations.push(violation("run_trace_presence_unstated", "runTrace.present"));
+  } else if (runTrace.present === false) {
+    if (!isNonEmptyString(runTrace.reason)) violations.push(violation("run_trace_reason_missing", "runTrace.reason"));
+  } else if (!Number.isInteger(runTrace.spans) || runTrace.spans < 0) {
+    violations.push(violation("run_trace_spans_invalid", "runTrace.spans"));
+  }
+
   const keyFrames = bundle.keyFrames;
   if (!isPlainObject(keyFrames) || (keyFrames.status !== "captured" && keyFrames.status !== "skipped")) {
     violations.push(violation("key_frames_status_unknown", "keyFrames.status"));
@@ -395,6 +411,10 @@ const CHECKED_OBLIGATIONS = Object.freeze([
   "action_trace_in_game_time_invalid",
   "action_trace_date_invalid",
   "action_trace_dispatched_at_invalid",
+  "run_trace_declaration_missing",
+  "run_trace_presence_unstated",
+  "run_trace_reason_missing",
+  "run_trace_spans_invalid",
   "key_frames_status_unknown",
   "key_frames_dir_missing",
   "key_frames_reason_missing",
@@ -427,6 +447,66 @@ const CHECKED_OBLIGATIONS = Object.freeze([
   "repro_budget_missing",
   "repro_reach_unstated",
 ]);
+
+/**
+ * What a bundle publishes about its run trace, decided from the product's OWN file.
+ *
+ * The product writes the export beside its run manifest and keeps rewriting it while the run is live
+ * (`host/src/run-trace.ts`), so this record answers two questions at the moment the package is written: was there a
+ * trace, and how many spans did it hold. A run that ended without a graceful close still has one, because the file is
+ * not written by the close. The bound on the copy is the product's own span cap, which is why the record carries the
+ * count a reader can check the file against.
+ */
+async function decideRunTraceRecord(declared) {
+  const sourcePath = isPlainObject(declared) && isNonEmptyString(declared.path) ? declared.path : null;
+  if (sourcePath === null) {
+    return Object.freeze({
+      record: Object.freeze({
+        path: EVIDENCE_BUNDLE_FILES.runTrace,
+        present: false,
+        reason: "run_trace_not_declared",
+        sourcePath: null,
+        spans: null,
+      }),
+      sourcePath: null,
+    });
+  }
+  if (!existsSync(sourcePath)) {
+    return Object.freeze({
+      record: Object.freeze({
+        path: EVIDENCE_BUNDLE_FILES.runTrace,
+        present: false,
+        reason: "run_trace_absent_at_bundle_time",
+        sourcePath,
+        spans: null,
+      }),
+      sourcePath: null,
+    });
+  }
+  let spans = null;
+  try {
+    const parsed = JSON.parse(await readFile(sourcePath, "utf8"));
+    spans = isPlainObject(parsed) && Array.isArray(parsed.traceEvents) ? parsed.traceEvents.length : null;
+  } catch {
+    spans = null;
+  }
+  if (spans === null) {
+    return Object.freeze({
+      record: Object.freeze({
+        path: EVIDENCE_BUNDLE_FILES.runTrace,
+        present: false,
+        reason: "run_trace_unreadable",
+        sourcePath,
+        spans: null,
+      }),
+      sourcePath: null,
+    });
+  }
+  return Object.freeze({
+    record: Object.freeze({ path: EVIDENCE_BUNDLE_FILES.runTrace, present: true, reason: null, sourcePath, spans }),
+    sourcePath,
+  });
+}
 
 async function readJsonLines(path) {
   const text = await readFile(path, "utf8");
@@ -489,6 +569,27 @@ export async function readEvidenceBundle(runDir) {
       extraViolations.push(violation("timeline_unreadable", EVIDENCE_BUNDLE_FILES.timeline));
     }
   }
+  const runTracePath = join(runDir, EVIDENCE_BUNDLE_FILES.runTrace);
+  const declaresRunTrace = isPlainObject(bundle.runTrace) && bundle.runTrace.present === true;
+  if (declaresRunTrace && !existsSync(runTracePath)) {
+    extraViolations.push(violation("run_trace_missing", EVIDENCE_BUNDLE_FILES.runTrace));
+  }
+  if (existsSync(runTracePath)) {
+    if (!isPlainObject(bundle.runTrace)) {
+      extraViolations.push(violation("run_trace_file_not_declared", EVIDENCE_BUNDLE_FILES.runTrace));
+    } else {
+      try {
+        const parsed = JSON.parse(await readFile(runTracePath, "utf8"));
+        const events = isPlainObject(parsed) && Array.isArray(parsed.traceEvents) ? parsed.traceEvents : null;
+        if (events === null) extraViolations.push(violation("run_trace_unreadable", EVIDENCE_BUNDLE_FILES.runTrace));
+        else if (declaresRunTrace && events.length !== bundle.runTrace.spans) {
+          extraViolations.push(violation("run_trace_records_mismatch", EVIDENCE_BUNDLE_FILES.runTrace));
+        }
+      } catch {
+        extraViolations.push(violation("run_trace_unreadable", EVIDENCE_BUNDLE_FILES.runTrace));
+      }
+    }
+  }
   const failureFile = existsSync(join(runDir, EVIDENCE_BUNDLE_FILES.failure));
   if (failureFile && !isPlainObject(bundle.failure)) {
     extraViolations.push(violation("failure_file_not_declared", EVIDENCE_BUNDLE_FILES.failure));
@@ -514,15 +615,22 @@ export async function readEvidenceBundle(runDir) {
  * must fail there rather than leave a manifest other tools will read as a measurement.
  */
 export async function writeEvidenceBundle(runDir, { bundle, timeline = [], actionTrace = [] } = {}) {
-  const result = validateEvidenceBundle(bundle, { actionTrace });
+  if (!Array.isArray(timeline)) throw new Error("evidence_bundle_invalid:timeline_not_array");
+  // The manifest this writes is the one the WRITER can vouch for: `runTrace` is replaced by what is about to be copied,
+  // never by the caller's pre-write probe (which read the file before the product's close had run).
+  const runTrace = await decideRunTraceRecord(bundle.runTrace);
+  const manifest = Object.freeze({ ...bundle, runTrace: runTrace.record });
+  const result = validateEvidenceBundle(manifest, { actionTrace });
   if (!result.ok) {
     const codes = [...new Set(result.violations.map((item) => item.code))].sort().join(",");
     throw new Error(`evidence_bundle_invalid:${codes}`);
   }
-  if (!Array.isArray(timeline)) throw new Error("evidence_bundle_invalid:timeline_not_array");
   const lines = (records) => `${records.map((record) => JSON.stringify(record)).join("\n")}\n`;
   await mkdir(runDir, { recursive: true });
-  await writeFile(join(runDir, EVIDENCE_BUNDLE_FILES.manifest), `${JSON.stringify(bundle, null, 2)}\n`, "utf8");
+  await writeFile(join(runDir, EVIDENCE_BUNDLE_FILES.manifest), `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
+  if (runTrace.sourcePath !== null) {
+    await copyFile(runTrace.sourcePath, join(runDir, EVIDENCE_BUNDLE_FILES.runTrace));
+  }
   await writeFile(join(runDir, EVIDENCE_BUNDLE_FILES.timeline), lines(timeline), "utf8");
   await writeFile(join(runDir, EVIDENCE_BUNDLE_FILES.actionTrace), lines(actionTrace), "utf8");
   if (isPlainObject(bundle.failure)) {
@@ -546,6 +654,7 @@ export async function writeEvidenceBundle(runDir, { bundle, timeline = [], actio
       manifest: join(runDir, EVIDENCE_BUNDLE_FILES.manifest),
       timeline: join(runDir, EVIDENCE_BUNDLE_FILES.timeline),
       actionTrace: join(runDir, EVIDENCE_BUNDLE_FILES.actionTrace),
+      runTrace: runTrace.record.present ? join(runDir, EVIDENCE_BUNDLE_FILES.runTrace) : null,
       failure: isPlainObject(bundle.failure) ? join(runDir, EVIDENCE_BUNDLE_FILES.failure) : null,
       repro: isPlainObject(bundle.repro) ? join(runDir, EVIDENCE_BUNDLE_FILES.repro) : null,
     }),

@@ -1,0 +1,31 @@
+{
+  "displayTimeUnit": "ms",
+  "droppedSpans": 0,
+  "traceEvents": [
+    {
+      "ph": "X",
+      "ts": 1000000,
+      "dur": 40000,
+      "pid": 1,
+      "tid": 1,
+      "name": "admission",
+      "args": {
+        "programId": "program_01",
+        "nodeId": "node_01",
+        "nodeAttempt": 1,
+        "admissionAttempt": 1,
+        "actionId": "water_crop",
+        "result": "granted"
+      }
+    },
+    {
+      "ph": "X",
+      "ts": 1040000,
+      "dur": 90000,
+      "pid": 1,
+      "tid": 1,
+      "name": "mod.execute",
+      "args": { "actionId": "water_crop", "requestId": "req_01" }
+    }
+  ]
+}
