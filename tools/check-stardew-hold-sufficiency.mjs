@@ -318,6 +318,37 @@ export function releasePins(root, rows) {
   return { examined, failures };
 }
 
+/**
+ * Whether each row's adjudication is a REAL one, in both directions.
+ *
+ * A `named_by_fact` row must name a fact the contract itself declares (`environmentReads`, derived from `ReadFacts`),
+ * because the row's whole claim is "a read we publish covers this hold" and a name nobody reads covers nothing. A row
+ * that no fact names must state why and what would settle it - a named unknown is acceptable, a silent one is not.
+ * The population is the contract's rows, so a hand-edited row is checked by the same rule as a derived one.
+ */
+export function adjudicationNames(model, rows) {
+  const facts = new Set((model.environmentReads ?? []).map((read) => read.fact));
+  const failures = [];
+  let named = 0;
+  let unnamed = 0;
+  for (const row of rows) {
+    if (row.namedBy === null) {
+      unnamed += 1;
+      if (row.verdict !== "named_unknown")
+        failures.push(`${row.site}: names no fact but its verdict is "${row.verdict}", not named_unknown`);
+      if (!row.unknownReason || !row.settledBy)
+        failures.push(`${row.site}: no fact names it, so it must state why and what would settle it`);
+      continue;
+    }
+    named += 1;
+    if (row.verdict !== "named_by_fact")
+      failures.push(`${row.site}: names ${row.namedBy} but its verdict is "${row.verdict}", not named_by_fact`);
+    if (!facts.has(row.namedBy))
+      failures.push(`${row.site}: namedBy "${row.namedBy}" is not a declared fact of ${[...facts].join(", ")}`);
+  }
+  return { named, unnamed, failures };
+}
+
 // ------------------------------------------------------------------ CLI
 // Windows: import.meta.url is file:///E:/... while argv[1] is E:\..., so compare by resolved URL.
 const invokedDirectly = (() => {
@@ -344,7 +375,10 @@ if (invokedDirectly) {
   const residual = model.orphanHoldResidual ?? [];
   const unattributed = model.unattributedHoldSites ?? [];
   const found = searchCounterExamples({ root, companions, residual, unattributed });
-  const pins = releasePins(root, residual);
+  // Every row states the release it blames, whether the analysis could place it or not: an entry site whose release
+  // nobody checked is the hole both gates used to have.
+  const pins = releasePins(root, [...residual, ...unattributed]);
+  const naming = adjudicationNames(model, [...residual, ...unattributed]);
 
   const checks = [
     {
@@ -380,6 +414,16 @@ if (invokedDirectly) {
           ? `; UNNAMED: ${found.undeclaredUnattributed.map((u) => u.site).join(", ")}`
           : "") +
         (found.staleUnattributed.length > 0 ? `; STALE: ${found.staleUnattributed.map((r) => r.site).join(", ")}` : ""),
+    },
+    {
+      id: "adjudication_named",
+      status: naming.failures.length === 0 && naming.named + naming.unnamed > 0 ? "passed" : "failed",
+      detail:
+        naming.failures.length > 0
+          ? naming.failures.join("; ")
+          : naming.named + naming.unnamed === 0
+            ? "no adjudicated row, so nothing named the holds"
+            : `${naming.named} row(s) name a declared fact; ${naming.unnamed} state why none can`,
     },
     {
       id: "release_pins",

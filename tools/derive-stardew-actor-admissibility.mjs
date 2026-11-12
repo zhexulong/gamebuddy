@@ -22,7 +22,8 @@
  *   - the RESIDUAL: one row per engine site that writes `canMove = false` with no declared fact established there,
  *     each with the fact that names it (or a stated reason no fact can), the engine line that releases it, and the
  *     evidence a reader would need to check the judgement;
- *   - the sites the analysis cannot attribute at all, named with the reason and what would settle them;
+ *   - the sites the analysis cannot place at all, each carrying BOTH the parser fact that lost it and the adjudication
+ *     the engine supports (the fact that names the hold, or the reason none can, and its release);
  *   - the decision sites and derived inputs the admissibility gate adjudicates.
  *
  * A row is a claim about Stardew's source, so the gate re-reads the cited line and refuses the claim when the line no
@@ -575,11 +576,12 @@ const RESIDUAL = [
     verdict: "named_unknown",
     namedBy: null,
     unknownReason:
-      "the release lives in a per-location `NetMutex`: `RequestLock` defers both callbacks (NetMutex.cs:44-59) and runs them from `Update` (:83-90), so the flag is false for at least one update tick and one server round-trip in multiplayer, and the only readable state is that perch's own mutex",
+      "the release is owned by a per-location `NetMutex`, and `RequestLock` is not where it runs: `lockRequest.Fire` (NetMutex.cs:56) polls itself synchronously (AbstractNetEvent1.cs:43-50), but the handler it fires claims the lock only on the MASTER (NetMutex.cs:34-41), so the two callbacks stored at :57-58 run from `NetMutex.Update` (:86-98) and only when `owner` changes. As the master that is still the same frame - `Game1.Update` runs `UpdateControlInput` (Game1.cs:4288) before `UpdateLocations` (:4315) - so `canMove` is false only inside the frame that re-trues it and no declared read can see it; as a REMOTE farmhand `owner` stays -1 until the host's grant arrives, so the body is held for a network round trip, and for as long as the host never grants it",
     settledBy:
-      "a 30-second live probe on the perch logging `IsLocked()` per tick, or a `NetMutex`-scoped fact on the actor (a new `ActorWorldFacts` member this contract cannot invent)",
+      "a live probe on the perch in the farmhand topology recording per tick `upgradeMutex.IsLockHeld()`, `player.CanMove` and the declared facts: it settles whether any tick has `CanMove == false` with every fact false, and how long that window lasts. If one does, the fact owed is a C# lane item - the body flag itself (`Farmer.CanMove`, which `WorldModel.DescribeNavigationHold` already publishes as `unknown_holder:CanMove` with `next_step=observe_again`, WorldModel.cs:514-525, :540-545), or `upgradeMutex.IsLockHeld()`, which is not actor-scoped and so is not a fact about the body",
     release: { anchor: "StardewValley.BellsAndWhistles/ParrotUpgradePerch.cs:800", kind: "mutex-callback" },
-    bound: "at least one mutex update tick, one server round-trip in multiplayer",
+    bound:
+      "one mutex update after the grant: inside a single frame as the master, at least one network round trip as a remote farmhand, unbounded if the grant never comes",
   },
   {
     site: "StardewValley.BellsAndWhistles/ScreenFade.cs:88",
@@ -671,30 +673,78 @@ const RESIDUAL = [
 ];
 
 /**
- * The four sites the analysis cannot attribute at all. They are this tool's own bound, not an engine fact: the brace
- * walk in `enclosingMethod` loses them, so no verdict about them is derivable from it.
+ * The four sites the analysis cannot PLACE - and, unlike a residual row, the reason is a property of the tool rather
+ * than of the engine, so each row also carries the adjudication the engine does support: the script that reads it here
+ * loses it, but the file:line facts below are the same kind a residual row carries.
+ *
+ * `reason` is the measured cause (`enclosingMethod` scans back 400 lines for the signature, the enclosing method starts
+ * 592-650 lines above); `settledBy` is the attribution fix, which is NOT a wider window - measured, a 4000-line window
+ * places all four and then greens them on `Game1.activeClickableMenu = new ChooseFromIconsMenu("bobbers")` in an
+ * unrelated arm of the same 1498-line method.
  */
+const ATTRIBUTION_FIX =
+  "narrow the attributed body to the innermost enclosing `case` arm before asking for accompaniment, then hand these " +
+  "four rows to `orphanHoldResidual` (the arm establishes no fact, so they are orphans); widening the 400-line window " +
+  "alone is not the fix - measured, it places all four and then greens them on an unrelated arm's " +
+  "`Game1.activeClickableMenu = new ChooseFromIconsMenu(...)` (GameLocation.cs:8722)";
+
 const UNATTRIBUTED = [
   {
     site: "StardewValley/GameLocation.cs:9287",
-    reason: "the enclosing `switch` arm sits inside a method `enclosingMethod` cannot attribute",
-    settledBy:
-      "attribute the enclosing method through the switch arm (a brace walk that tracks `case` bodies), then re-derive the row; all four are followed by `Game1.multipleDialogues(...)` (:9289), so they are the same family as ManorHouse.cs:44",
+    method: "performAction",
+    reason:
+      '`enclosingMethod` scans back only 400 lines for the signature (tools/check-stardew-hold-sufficiency.mjs:94) and the enclosing `performAction(string[] action, Farmer who, Location tileLocation)` starts at GameLocation.cs:8695, 592 lines above this write, so the walk returns null before it counts a brace; the `case "LumberPile":` arm is not what defeats it',
+    verdict: "named_by_fact",
+    namedBy: "SelfAnimation",
+    establishedAt: "StardewValley/Farmer.cs:4052",
+    evidence:
+      "the next statement hands the item to `addItemByMenuIfNecessaryElseHoldUp` (GameLocation.cs:9289), and every exit from that call carries a declared fact: `holdUpItemThenMessage` raises `freezePause = 4000` (Farmer.cs:4051) and then `FarmerSprite.animateOnce(...)` (Farmer.cs:4052, the pause flag at FarmerSprite.cs:635) and takes the body itself (Farmer.cs:4065); an inventory that cannot hold the item mounts an `ItemGrabMenu` instead (the `activeClickableMenu == null` guard at Farmer.cs:4432), which is `MenuType`. No fact is up AT the write - the hold is one cross-file call away",
+    release: { anchor: "StardewValley/FarmerSprite.cs:789", kind: "animation-end" },
+    bound:
+      "the hold-up animation (0 + 2500 + 500 ms frames, Farmer.cs:4052-4063) inside a 4000 ms `freezePause`; the trailing second is `FreezePaused`, not a second orphan",
+    settledBy: ATTRIBUTION_FIX,
   },
   {
     site: "StardewValley/GameLocation.cs:9297",
-    reason: "the same brace-walk limit",
-    settledBy: "the same attribution fix; followed by `Game1.multipleDialogues(...)` at :9300",
+    method: "performAction",
+    reason:
+      "the same 400-line backward window: the enclosing method starts at GameLocation.cs:8695, 602 lines above this write",
+    verdict: "named_by_fact",
+    namedBy: "DialogueUp",
+    establishedAt: "StardewValley/Game1.cs:9560",
+    evidence:
+      '`Game1.multipleDialogues(...)` at GameLocation.cs:9300 is the companion, and it is the one that mounts the box: `activeClickableMenu = new DialogueBox(messages.ToList()); dialogueUp = true; player.CanMove = false;` (Game1.cs:9559-9561). The two statements before the write (`localSound("eat")`, `who.reduceActiveItemByOne()`) establish no fact, so this is the ManorHouse row\'s family',
+    release: { anchor: "StardewValley.Menus/DialogueBox.cs:226", kind: "dialogue-closed" },
+    bound: "until the box is closed",
+    settledBy: ATTRIBUTION_FIX,
   },
   {
     site: "StardewValley/GameLocation.cs:9321",
-    reason: "the same brace-walk limit",
-    settledBy: "the same attribution fix; followed by `Game1.multipleDialogues(...)` at :9324",
+    method: "performAction",
+    reason:
+      "the same 400-line backward window: the enclosing method starts at GameLocation.cs:8695, 626 lines above this write",
+    verdict: "named_by_fact",
+    namedBy: "DialogueUp",
+    establishedAt: "StardewValley/Game1.cs:9560",
+    evidence:
+      '`Game1.multipleDialogues(...)` at GameLocation.cs:9324, i.e. `dialogueUp = true` and a mounted `DialogueBox` (Game1.cs:9559-9560); `who.reduceActiveItemByOne()` and `localSound("Ship")` establish no fact',
+    release: { anchor: "StardewValley.Menus/DialogueBox.cs:226", kind: "dialogue-closed" },
+    bound: "until the box is closed",
+    settledBy: ATTRIBUTION_FIX,
   },
   {
     site: "StardewValley/GameLocation.cs:9345",
-    reason: "the same brace-walk limit",
-    settledBy: "the same attribution fix; followed by `Game1.multipleDialogues(...)` at :9349",
+    method: "performAction",
+    reason:
+      "the same 400-line backward window: the enclosing method starts at GameLocation.cs:8695, 650 lines above this write",
+    verdict: "named_by_fact",
+    namedBy: "DialogueUp",
+    establishedAt: "StardewValley/Game1.cs:9560",
+    evidence:
+      '`Game1.multipleDialogues(...)` at GameLocation.cs:9349, again `dialogueUp = true` plus a mounted `DialogueBox` (Game1.cs:9559-9560); `playSound("openBox")` and `DelayedAction.playSoundAfterDelay("doorCreakReverse", 500)` before it establish no fact',
+    release: { anchor: "StardewValley.Menus/DialogueBox.cs:226", kind: "dialogue-closed" },
+    bound: "until the box is closed",
+    settledBy: ATTRIBUTION_FIX,
   },
 ];
 
@@ -860,27 +910,57 @@ const holdReasons = [...wire.keys()].map((kind) => ({
     .map((entry) => entry.fact),
 }));
 
+/**
+ * A row's release, re-read from the engine: the anchor must exist, and its statement is pinned by content so a moved,
+ * edited or deleted release line fails instead of quietly describing another line.
+ */
+const releaseOf = (row) => ({
+  anchor: anchorOf(row.release.anchor),
+  kind: row.release.kind,
+  statement: normalize(engineLineOf(anchorOf(row.release.anchor))),
+});
+
+/**
+ * The fact half of a row, validated against `ActorWorldFacts`: a named fact must be a real member (a typo would be a
+ * silent hole), and an unnamed one must state why no fact can name it AND what would settle it.
+ */
+function factAdjudication(row) {
+  if (row.namedBy === null) {
+    if (row.unknownReason === undefined || row.settledBy === undefined)
+      throw new Error(`${row.site}: an unnamed hold must state why and what would settle it`);
+    return { unknownReason: row.unknownReason, settledBy: row.settledBy };
+  }
+  if (!factNames.includes(row.namedBy))
+    throw new Error(`${row.site}: namedBy "${row.namedBy}" is not a member of ActorWorldFacts`);
+  return { establishedAt: anchorOf(row.establishedAt), evidence: row.evidence };
+}
+
 const residual = RESIDUAL.map((row) => ({
   site: `${ENGINE_ROOT}/${row.site}`,
   method: row.method,
   verdict: row.verdict,
   namedBy: row.namedBy,
-  ...(row.namedBy === null
-    ? { unknownReason: row.unknownReason, settledBy: row.settledBy }
-    : { establishedAt: anchorOf(row.establishedAt), evidence: row.evidence }),
-  release: {
-    anchor: anchorOf(row.release.anchor),
-    kind: row.release.kind,
-    statement: normalize(engineLineOf(anchorOf(row.release.anchor))),
-  },
+  ...factAdjudication(row),
+  release: releaseOf(row),
   bound: row.bound,
 }));
-for (const row of residual) {
-  if (row.verdict === "named_by_fact" && !factNames.includes(row.namedBy))
-    throw new Error(`${row.site}: namedBy "${row.namedBy}" is not a member of ActorWorldFacts`);
-  if (row.verdict === "named_unknown" && (row.unknownReason === undefined || row.settledBy === undefined))
-    throw new Error(`${row.site}: an unnamed hold must state why and what would settle it`);
-}
+
+/**
+ * A site the analysis cannot place carries its adjudication too, plus the two parser facts: what the script lost
+ * (`unattributedBecause`) and the fix that would place it (`attributionFix`). Those are properties of the tool, so
+ * they are named apart from `settledBy`, which is a fact question everywhere else.
+ */
+const unattributed = UNATTRIBUTED.map((row) => ({
+  site: `${ENGINE_ROOT}/${row.site}`,
+  method: row.method,
+  verdict: row.verdict,
+  namedBy: row.namedBy,
+  ...factAdjudication(row),
+  release: releaseOf(row),
+  bound: row.bound,
+  unattributedBecause: row.reason,
+  attributionFix: row.settledBy,
+}));
 
 const contract = {
   schemaVersion: 1,
@@ -913,11 +993,7 @@ const contract = {
     })),
   ),
   orphanHoldResidual: residual,
-  unattributedHoldSites: UNATTRIBUTED.map((row) => ({
-    site: `${ENGINE_ROOT}/${row.site}`,
-    reason: row.reason,
-    settledBy: row.settledBy,
-  })),
+  unattributedHoldSites: unattributed,
   adjudication: {
     decisionSites: DECISION_SITES,
     derivedInputs: DERIVED_INPUTS,

@@ -1312,14 +1312,14 @@
       "method": "AttemptConstruction",
       "verdict": "named_unknown",
       "namedBy": null,
-      "unknownReason": "the release lives in a per-location `NetMutex`: `RequestLock` defers both callbacks (NetMutex.cs:44-59) and runs them from `Update` (:83-90), so the flag is false for at least one update tick and one server round-trip in multiplayer, and the only readable state is that perch's own mutex",
-      "settledBy": "a 30-second live probe on the perch logging `IsLocked()` per tick, or a `NetMutex`-scoped fact on the actor (a new `ActorWorldFacts` member this contract cannot invent)",
+      "unknownReason": "the release is owned by a per-location `NetMutex`, and `RequestLock` is not where it runs: `lockRequest.Fire` (NetMutex.cs:56) polls itself synchronously (AbstractNetEvent1.cs:43-50), but the handler it fires claims the lock only on the MASTER (NetMutex.cs:34-41), so the two callbacks stored at :57-58 run from `NetMutex.Update` (:86-98) and only when `owner` changes. As the master that is still the same frame - `Game1.Update` runs `UpdateControlInput` (Game1.cs:4288) before `UpdateLocations` (:4315) - so `canMove` is false only inside the frame that re-trues it and no declared read can see it; as a REMOTE farmhand `owner` stays -1 until the host's grant arrives, so the body is held for a network round trip, and for as long as the host never grants it",
+      "settledBy": "a live probe on the perch in the farmhand topology recording per tick `upgradeMutex.IsLockHeld()`, `player.CanMove` and the declared facts: it settles whether any tick has `CanMove == false` with every fact false, and how long that window lasts. If one does, the fact owed is a C# lane item - the body flag itself (`Farmer.CanMove`, which `WorldModel.DescribeNavigationHold` already publishes as `unknown_holder:CanMove` with `next_step=observe_again`, WorldModel.cs:514-525, :540-545), or `upgradeMutex.IsLockHeld()`, which is not actor-scoped and so is not a fact about the body",
       "release": {
         "anchor": "ref/external/StardewValleyDecompiled/Stardew Valley/StardewValley.BellsAndWhistles/ParrotUpgradePerch.cs:800",
         "kind": "mutex-callback",
         "statement": "Game1.player.canMove = true;"
       },
-      "bound": "at least one mutex update tick, one server round-trip in multiplayer"
+      "bound": "one mutex update after the grant: inside a single frame as the master, at least one network round trip as a remote farmhand, unbounded if the grant never comes"
     },
     {
       "site": "ref/external/StardewValleyDecompiled/Stardew Valley/StardewValley.BellsAndWhistles/ScreenFade.cs:88",
@@ -1437,23 +1437,67 @@
   "unattributedHoldSites": [
     {
       "site": "ref/external/StardewValleyDecompiled/Stardew Valley/StardewValley/GameLocation.cs:9287",
-      "reason": "the enclosing `switch` arm sits inside a method `enclosingMethod` cannot attribute",
-      "settledBy": "attribute the enclosing method through the switch arm (a brace walk that tracks `case` bodies), then re-derive the row; all four are followed by `Game1.multipleDialogues(...)` (:9289), so they are the same family as ManorHouse.cs:44"
+      "method": "performAction",
+      "verdict": "named_by_fact",
+      "namedBy": "SelfAnimation",
+      "establishedAt": "ref/external/StardewValleyDecompiled/Stardew Valley/StardewValley/Farmer.cs:4052",
+      "evidence": "the next statement hands the item to `addItemByMenuIfNecessaryElseHoldUp` (GameLocation.cs:9289), and every exit from that call carries a declared fact: `holdUpItemThenMessage` raises `freezePause = 4000` (Farmer.cs:4051) and then `FarmerSprite.animateOnce(...)` (Farmer.cs:4052, the pause flag at FarmerSprite.cs:635) and takes the body itself (Farmer.cs:4065); an inventory that cannot hold the item mounts an `ItemGrabMenu` instead (the `activeClickableMenu == null` guard at Farmer.cs:4432), which is `MenuType`. No fact is up AT the write - the hold is one cross-file call away",
+      "release": {
+        "anchor": "ref/external/StardewValleyDecompiled/Stardew Valley/StardewValley/FarmerSprite.cs:789",
+        "kind": "animation-end",
+        "statement": "owner.CanMove = true;"
+      },
+      "bound": "the hold-up animation (0 + 2500 + 500 ms frames, Farmer.cs:4052-4063) inside a 4000 ms `freezePause`; the trailing second is `FreezePaused`, not a second orphan",
+      "unattributedBecause": "`enclosingMethod` scans back only 400 lines for the signature (tools/check-stardew-hold-sufficiency.mjs:94) and the enclosing `performAction(string[] action, Farmer who, Location tileLocation)` starts at GameLocation.cs:8695, 592 lines above this write, so the walk returns null before it counts a brace; the `case \"LumberPile\":` arm is not what defeats it",
+      "attributionFix": "narrow the attributed body to the innermost enclosing `case` arm before asking for accompaniment, then hand these four rows to `orphanHoldResidual` (the arm establishes no fact, so they are orphans); widening the 400-line window alone is not the fix - measured, it places all four and then greens them on an unrelated arm's `Game1.activeClickableMenu = new ChooseFromIconsMenu(...)` (GameLocation.cs:8722)"
     },
     {
       "site": "ref/external/StardewValleyDecompiled/Stardew Valley/StardewValley/GameLocation.cs:9297",
-      "reason": "the same brace-walk limit",
-      "settledBy": "the same attribution fix; followed by `Game1.multipleDialogues(...)` at :9300"
+      "method": "performAction",
+      "verdict": "named_by_fact",
+      "namedBy": "DialogueUp",
+      "establishedAt": "ref/external/StardewValleyDecompiled/Stardew Valley/StardewValley/Game1.cs:9560",
+      "evidence": "`Game1.multipleDialogues(...)` at GameLocation.cs:9300 is the companion, and it is the one that mounts the box: `activeClickableMenu = new DialogueBox(messages.ToList()); dialogueUp = true; player.CanMove = false;` (Game1.cs:9559-9561). The two statements before the write (`localSound(\"eat\")`, `who.reduceActiveItemByOne()`) establish no fact, so this is the ManorHouse row's family",
+      "release": {
+        "anchor": "ref/external/StardewValleyDecompiled/Stardew Valley/StardewValley.Menus/DialogueBox.cs:226",
+        "kind": "dialogue-closed",
+        "statement": "Game1.player.CanMove = true;"
+      },
+      "bound": "until the box is closed",
+      "unattributedBecause": "the same 400-line backward window: the enclosing method starts at GameLocation.cs:8695, 602 lines above this write",
+      "attributionFix": "narrow the attributed body to the innermost enclosing `case` arm before asking for accompaniment, then hand these four rows to `orphanHoldResidual` (the arm establishes no fact, so they are orphans); widening the 400-line window alone is not the fix - measured, it places all four and then greens them on an unrelated arm's `Game1.activeClickableMenu = new ChooseFromIconsMenu(...)` (GameLocation.cs:8722)"
     },
     {
       "site": "ref/external/StardewValleyDecompiled/Stardew Valley/StardewValley/GameLocation.cs:9321",
-      "reason": "the same brace-walk limit",
-      "settledBy": "the same attribution fix; followed by `Game1.multipleDialogues(...)` at :9324"
+      "method": "performAction",
+      "verdict": "named_by_fact",
+      "namedBy": "DialogueUp",
+      "establishedAt": "ref/external/StardewValleyDecompiled/Stardew Valley/StardewValley/Game1.cs:9560",
+      "evidence": "`Game1.multipleDialogues(...)` at GameLocation.cs:9324, i.e. `dialogueUp = true` and a mounted `DialogueBox` (Game1.cs:9559-9560); `who.reduceActiveItemByOne()` and `localSound(\"Ship\")` establish no fact",
+      "release": {
+        "anchor": "ref/external/StardewValleyDecompiled/Stardew Valley/StardewValley.Menus/DialogueBox.cs:226",
+        "kind": "dialogue-closed",
+        "statement": "Game1.player.CanMove = true;"
+      },
+      "bound": "until the box is closed",
+      "unattributedBecause": "the same 400-line backward window: the enclosing method starts at GameLocation.cs:8695, 626 lines above this write",
+      "attributionFix": "narrow the attributed body to the innermost enclosing `case` arm before asking for accompaniment, then hand these four rows to `orphanHoldResidual` (the arm establishes no fact, so they are orphans); widening the 400-line window alone is not the fix - measured, it places all four and then greens them on an unrelated arm's `Game1.activeClickableMenu = new ChooseFromIconsMenu(...)` (GameLocation.cs:8722)"
     },
     {
       "site": "ref/external/StardewValleyDecompiled/Stardew Valley/StardewValley/GameLocation.cs:9345",
-      "reason": "the same brace-walk limit",
-      "settledBy": "the same attribution fix; followed by `Game1.multipleDialogues(...)` at :9349"
+      "method": "performAction",
+      "verdict": "named_by_fact",
+      "namedBy": "DialogueUp",
+      "establishedAt": "ref/external/StardewValleyDecompiled/Stardew Valley/StardewValley/Game1.cs:9560",
+      "evidence": "`Game1.multipleDialogues(...)` at GameLocation.cs:9349, again `dialogueUp = true` plus a mounted `DialogueBox` (Game1.cs:9559-9560); `playSound(\"openBox\")` and `DelayedAction.playSoundAfterDelay(\"doorCreakReverse\", 500)` before it establish no fact",
+      "release": {
+        "anchor": "ref/external/StardewValleyDecompiled/Stardew Valley/StardewValley.Menus/DialogueBox.cs:226",
+        "kind": "dialogue-closed",
+        "statement": "Game1.player.CanMove = true;"
+      },
+      "bound": "until the box is closed",
+      "unattributedBecause": "the same 400-line backward window: the enclosing method starts at GameLocation.cs:8695, 650 lines above this write",
+      "attributionFix": "narrow the attributed body to the innermost enclosing `case` arm before asking for accompaniment, then hand these four rows to `orphanHoldResidual` (the arm establishes no fact, so they are orphans); widening the 400-line window alone is not the fix - measured, it places all four and then greens them on an unrelated arm's `Game1.activeClickableMenu = new ChooseFromIconsMenu(...)` (GameLocation.cs:8722)"
     }
   ],
   "adjudication": {
