@@ -1,6 +1,13 @@
 # Gate falsifier decisions
 
-`gates examined 348 · with a red proof 307 · external 4 · declared without 35 · undeclared 0 · zero-population-pass 0`
+`gates examined 348 · with a red proof 321 · external 4 · declared without 21 · undeclared 0 · zero-population-pass 0`
+
+**The ninth batch moved that line from `307 · 4 · 35` to `321 · 4 · 21`** and the partition it states is now
+`321 + 4 + 23 = 348`, where the 23 owed are the 21 recorded rows plus the 2 unreadable claims. The paragraphs below keep
+the fifth-through-eighth-batch arithmetic they were written with, and each names the reading it was measured at;
+nothing in them is a claim about today's count except the reconciliation they show, which is the method this document
+has used since the first batch. The ninth batch's own section is at the end: it closed thirteen of the owed rows, which
+is why the third bucket reads 21 and not 34.
 
 **The arithmetic, stated rather than implied.** `307 + 4 + 35 = 346`, two short of the 348 the same line names.
 The two missing gates are the ones carrying an unreadable claim — `check:code-duplication` (a marker whose kind reads
@@ -193,7 +200,8 @@ maintained authorities against each other:
 
 ``js
 const schema = JSON.parse(await readFile(new URL("../security/dependency-advisories.schema.json", import.meta.url), "utf8"));
-assert.deepEqual([...DISPOSITION_STATUSES].sort(), [...schema.$defs.advisory.properties.status.enum].sort());
+assert.deepEqual([...DISPOSITION_STATUSES].sort(), [...schema.
+defs.advisory.properties.status.enum].sort());
 ``
 
 `DISPOSITION_STATUSES` is the gate's own constant — what the checker treats as a disposition it must validate.
@@ -787,3 +795,64 @@ measurement of `MERGED_SEAMS` rather than a zero with a reason attached.
   fails on that finding before and after this batch; it is not this batch's unit.
 - `check-preset-round-trip.mjs` reads `host/dist-test/tavern/preset-store.js`, which is a build artifact: the honest
   reading there is "build the test tree", not a contract anyone can author.
+
+## The ninth batch: thirteen gates, one marker file, and the eighty-five suites nobody triaged
+
+Two units share this batch and they have one question in common: does the thing we claim to check check something.
+
+### Part one — thirteen red proofs, and why the marker is in `package.json`
+
+Every injection ran in a copy of HEAD **outside** the repository (`git archive HEAD` extracted to
+`E:/tmp/gateproof/b9`, `node_modules`, `host/node_modules`, `dialogue-web/node_modules`, `host/dist-test`, `ref`,
+`vendor`, `design` and `integrations/stardew/action-development/node_modules` junctioned in, its own `git init` and
+commit `f1d3b9c`). The live worktree was never the injection site. Each file was restored from the copy's own commit
+and the restore is proved twice — `git status --porcelain -- <path>` empty **and** `git hash-object <path>` equal to
+`git rev-parse HEAD:<path>` — and every suite was re-run green from the restored file.
+
+The eighth batch's reason for leaving fourteen rows owed was that each marker would have to live under
+`integrations/stardew/**`, which that lane could not edit. It was right about the file and wrong about the mechanism:
+`tools/audit-gate-red-proofs.mjs` already reads a marker from `package.json`'s `gateRedProofs` map, beside the script
+that defines the gate, under the same keyword, kinds and claim syntax as a comment marker. The disposition batch used
+that map for `external` labels because a project runner has no file here to carry a comment; nothing in the reader
+restricts it to that kind, and a gate whose own entry file belongs to another lane is the other honest use — the
+declaration still sits beside the command, and the pointer it names is the suite `package.json` actually runs, so
+`evaluate` reads the proof as `executed` rather than as `proven_but_nothing_runs`.
+
+| gate closed | the one mutation | the gate's own red line | where |
+| --- | --- | --- | --- |
+| `test:stardew-action-candidates` | the rejected units' predicate list emptied | `✖ 被拒单元都带可追溯的理由（谓词或 no_branch）` + `AssertionError: AddSpecialOrder@Event 必须有被拒谓词、no_branch 或提取错误` | `gateRedProofs` |
+| `test:stardew-action-inventory-reconciliation` | completeness rule 3's missing-tier-B set emptied | `✖ 完备性②：B 档有单元没有裁定 → tier_b_unit_without_verdict` + `AssertionError: Missing expected exception.` | `gateRedProofs` |
+| `test:stardew-action-seam-terminals` | `seam_not_terminal` folded into `seam_ok` | `✖ 审计覆盖全部「已注册但九谓词全拒」的 seam，每个都落到一个已知判据` | `gateRedProofs` |
+| `test:stardew-branch-writeset` | `P4_terminalWrite` forced false | `✖ refill_watering_can：终态直写，产出候选分支` + `AssertionError: refill 应有且仅有一个候选分支` | `gateRedProofs` |
+| `test:stardew-method-resolution` | the chain's depth cap narrowed 5 → 2 | `✖ the chain is bounded by depth and does not loop forever` + `AssertionError: third hop is within the bound` | `gateRedProofs` |
+| `test:stardew-method-resolution-mutation` | the suite replaced by a no-op test | `STILL GREEN  M1 stop following the delegation chain` … `M5 revert to regex call extraction`, then `SOME MUTATIONS NOT CAUGHT` | `gateRedProofs` |
+| `test:stardew-player-reachable-exits` | `STARDEW_ROUTING_LAYER_SHAPE` so no `Check*` router matches | `✖ 深度 1 的出口必须包含输入根的直接 gameplay 分派` + `AssertionError: pressActionButton → CheckPetAnimal（路由层真实入口，未进 register）` | `gateRedProofs` |
+| `test:stardew-reachable-exits-reconciliation` | both shop-opener entries removed from `STARDEW_MENU_OPENERS` | `✖ R4：菜单绑定必须捕获无 Menu 后缀的开放器` | `gateRedProofs` |
+| `test:stardew-rejected-layer-verdicts-mutation` | the unused-verdict case reduced to `assert.ok(true)` | `STILL GREEN  R4 drop the unused-verdict completeness check` + `SOME MUTATIONS NOT CAUGHT` | `gateRedProofs` |
+| `test:stardew-remaining-actions` | tier C's branch writing tier B | `✖ 三档计数之和等于未匹配候选总数（总数来自 candidates 产物）` + `AssertionError: C_non_gameplay_writes 不应为空` | `gateRedProofs` |
+| `test:stardew-tile-action-selectors` | the menu priority replaced by the dialogue/event priority | `✖ 连续 case 标签是别名：kitchen/Kitchen 共享同一 body` + `AssertionError: 别名共享 body：ActivateKitchen 是菜单开放器` | `gateRedProofs` |
+| `test:stardew-uncovered-exit-expansion` | `INTERPRETER_SELECTOR_THRESHOLD` raised 8 → 800 | `✖ 解释器形态被识别（selector 数超阈值）` | `gateRedProofs` |
+| `test:stardew-uncovered-exit-table` | the pipe escape removed from the cell writer | `✖ 表单元格里的反斜杠必须转义,不能与管道符转义互相干扰` | `gateRedProofs` |
+
+The census moved from `with a red proof 308 · declared without 34` to `321 · 21` at the same `348` examined, and
+`tools/gate-red-proof-baseline.json` lost exactly those thirteen entries (`git diff --stat`: `13 -----------`), deleted
+by hand rather than by `--update` for the reason the last bullet of the previous section gives: a `--update` on this
+worktree would also delete `test:tool-corpus`, whose entry is stale only because another lane's
+`tools/run-tool-test-corpus.test.mjs` is untracked here and absent from a commit. Deleting it by hand keeps that row
+recorded and keeps this unit's diff exactly its own thirteen.
+
+### The one row this batch could not close, and the reason is the gate's shape
+
+`audit:stardew-action-seam-terminals` remains owed. Its module prints an audit and **exits 0 on findings**; the only
+`process.exit(1)` in it is the argument parser. A red proof would therefore have to redden the argument check, which is
+not the rule the gate exists for — the third answer the ledger has used since the third batch. Making it exit non-zero
+on its own findings is a change to `/integrations/stardew/**`, which this lane may not make.
+
+`test:stardew-method-resolution-mutation` was closed with the bluntest honest injection available and the marker says
+so: the suite has five mutations and each is defended by several cases at once, so removing one case at a time left the
+runner green through two attempts (the presentation case deleted, then its assertions alone). Replacing the whole suite
+with a no-op makes the runner name **all five** mutations as `STILL GREEN` and exit 1, which is the property the runner
+exists for — it reports a survivor rather than passing over it. What that does **not** establish is that the suite
+currently catches each of the five; the runner's own green did that before the injection, and this proof is about the
+runner.
+
