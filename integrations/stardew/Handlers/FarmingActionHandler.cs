@@ -21,6 +21,7 @@ internal sealed class FarmingActionHandler : IFarmhandActionHandler
                 request.RequestId,
                 (int)(request.Args.X ?? 0),
                 (int)(request.Args.Y ?? 0),
+                request.Args.Charge ?? 0,
                 request.DeadlineMs),
 
             "water_crop" => this.executions.RequestLocalWaterCrop(
@@ -28,6 +29,7 @@ internal sealed class FarmingActionHandler : IFarmhandActionHandler
                 (int)(request.Args.X ?? 0),
                 (int)(request.Args.Y ?? 0),
                 request.Args.ExpectedTargetId ?? string.Empty,
+                request.Args.Charge ?? 0,
                 request.DeadlineMs),
 
             "plant_seed" => this.executions.RequestLocalPlantSeed(

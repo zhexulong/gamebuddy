@@ -161,6 +161,7 @@ public sealed class ExecutionRequestFingerprintCoverageTests
         int? colorSelection = null;
         int? expectedSkill = null;
         int? expectedLevel = null;
+        int? charge = null;
         string? chestId = null;
         string? expectedQualifiedItemId = null;
         string? expectedTargetId = null;
@@ -186,6 +187,7 @@ public sealed class ExecutionRequestFingerprintCoverageTests
                 case "colorSelection": colorSelection = 8; break;
                 case "expectedSkill": expectedSkill = 1; break;
                 case "expectedLevel": expectedLevel = 9; break;
+                case "charge": charge = 3; break;
                 case "chestId": chestId = "chest_0000000000000000"; break;
                 case "expectedQualifiedItemId": expectedQualifiedItemId = descriptor.Acceptance?.ExactExpectedQualifiedItemId ?? "(O)472"; break;
                 case "expectedTargetId": expectedTargetId = "target_0000000000000000"; break;
@@ -216,6 +218,7 @@ public sealed class ExecutionRequestFingerprintCoverageTests
             ColorSelection = colorSelection,
             ExpectedSkill = expectedSkill,
             ExpectedLevel = expectedLevel,
+            Charge = charge,
             ChestId = chestId,
             ExpectedQualifiedItemId = expectedQualifiedItemId,
             ExpectedTargetId = expectedTargetId,

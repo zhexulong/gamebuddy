@@ -459,7 +459,7 @@ internal sealed partial class ExecutionManager
         return this.RememberTerminal(requestId, executionId, state, reasonCode, evidence);
     }
 
-    public LocalExecutionReceipt RequestLocalTillSoil(string requestId, int targetX, int targetY, long requestedDeadlineMs)
+    public LocalExecutionReceipt RequestLocalTillSoil(string requestId, int targetX, int targetY, int charge, long requestedDeadlineMs)
     {
         if (this.BeginLocalExecution(requestId, out string executionId, out long nowMs) is LocalExecutionReceipt replay) return replay;
         // Scope-bound actor proof. Authorization precedes the world/location
@@ -515,13 +515,13 @@ internal sealed partial class ExecutionManager
                 targetX,
                 targetY,
                 $"till_soil_{targetX}_{targetY}",
-                (arrivalExecutionId, arrivalRequestId) => this.ExecuteTillSoil(arrivalExecutionId, arrivalRequestId, targetX, targetY, requestedDeadlineMs),
+                (arrivalExecutionId, arrivalRequestId) => this.ExecuteTillSoil(arrivalExecutionId, arrivalRequestId, targetX, targetY, charge, requestedDeadlineMs),
                 nowMs,
                 requestedDeadlineMs,
                 noStandingTileCodePrefix: NoStandingTileCodePrefix);
         }
 
-        return this.ExecuteTillSoil(executionId, requestId, targetX, targetY, requestedDeadlineMs);
+        return this.ExecuteTillSoil(executionId, requestId, targetX, targetY, charge, requestedDeadlineMs);
     }
 
     /// <summary>
@@ -529,7 +529,7 @@ internal sealed partial class ExecutionManager
     /// tile because an approach leg may have taken several ticks. Shared by the
     /// in-range path and the post-approach path so the two cannot drift.
     /// </summary>
-    private LocalExecutionReceipt ExecuteTillSoil(string executionId, string requestId, int targetX, int targetY, long requestedDeadlineMs)
+    private LocalExecutionReceipt ExecuteTillSoil(string executionId, string requestId, int targetX, int targetY, int charge, long requestedDeadlineMs)
     {
         Vector2 tile = new(targetX, targetY);
         StardewValley.GameLocation location = Game1.player.currentLocation;
@@ -553,10 +553,17 @@ internal sealed partial class ExecutionManager
         {
             if (selection.Tool is not Hoe hoe)
                 return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, $"tool_not_selected:{selection.Category}", $"slot={selection.Slot}");
+            // The charge is refused BEFORE the tool is charged, so a refusal can never leave `toolPower` written.
+            if (RefuseToolCharge(charge, hoe, Game1.player, targetX, targetY) is { } chargeRefusal)
+                return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, chargeRefusal, $"target={targetX},{targetY};charge={charge};max={ToolChargeCeiling(hoe)}");
 
             LocalSoilTillingSpec specification = new(executionId, requestId, location.NameOrUniqueName, targetX, targetY, this.revision, requestedDeadlineMs);
+            // The one charged native use, bracketed by the same read on both sides: `Hoe.DoFunction` covers the engine's
+            // own rectangle (`Hoe.cs:60,66`), so what changed is measured over the scan box rather than assumed from the
+            // charge. The named tile's own read below stays the COMPLETION condition (the footprint is a consequence).
+            HashSet<Vector2> tilledBefore = AreaToolFootprint.Observe(targetX, targetY, tile => location.GetHoeDirtAtTile(tile) is not null);
             float staminaBefore = Game1.player.Stamina;
-            UseNativeToolOnTile(hoe, location, targetX, targetY, Game1.player, staminaBefore);
+            UseNativeToolOnTile(hoe, location, targetX, targetY, Game1.player, staminaBefore, charge);
             float staminaAfter = Game1.player.Stamina;
             float staminaDelta = staminaAfter - staminaBefore;
             float expectedStaminaCost = hoe.IsEfficient ? 0f : 2f - (Game1.player.FarmingLevel * 0.1f);
@@ -565,6 +572,7 @@ internal sealed partial class ExecutionManager
             StardewValley.TerrainFeatures.HoeDirt? dirtAfter = location.GetHoeDirtAtTile(tile);
             string after = DescribeSoilFeature(dirtAfter);
             bool tilled = dirtAfter is not null;
+            List<Vector2> changed = AreaToolFootprint.Changed(tilledBefore, AreaToolFootprint.Observe(targetX, targetY, scanTile => location.GetHoeDirtAtTile(scanTile) is not null));
             evidence["location"] = specification.Location;
             evidence["target"] = $"{targetX},{targetY}";
             evidence["before"] = before;
@@ -573,6 +581,14 @@ internal sealed partial class ExecutionManager
             evidence["stamina_after"] = staminaAfter.ToString("0.####", CultureInfo.InvariantCulture);
             evidence["stamina_delta"] = staminaDelta.ToString("0.####", CultureInfo.InvariantCulture);
             evidence["expected_stamina_cost"] = expectedStaminaCost.ToString("0.####", CultureInfo.InvariantCulture);
+            // The charge the caller asked for and the one the swing was given are the same integer BY CONSTRUCTION: a
+            // charge above the held hoe's ceiling is refused rather than clamped. The pair is therefore the receipt's
+            // own proof that no silent downgrade happened, and the Host asserts the two are equal.
+            evidence["charge_requested"] = charge.ToString(CultureInfo.InvariantCulture);
+            evidence["charge_applied"] = charge.ToString(CultureInfo.InvariantCulture);
+            evidence["window"] = AreaToolFootprint.Window(targetX, targetY);
+            evidence["tiles_changed"] = changed.Count.ToString(CultureInfo.InvariantCulture);
+            evidence["changed"] = AreaToolFootprint.Format(changed);
             state = tilled ? ExecutionState.Succeeded : ExecutionState.Uncertain;
             reasonCode = tilled ? "soil_tilled" : "soil_postcondition_unavailable";
         }
@@ -1823,7 +1839,8 @@ internal static class ToolActionEvidence
     internal static readonly IReadOnlyList<string> WaterCrop = Array.AsReadOnly(new[]
     {
         "location", "target", "tile", "tool_selected", "slot", "tool_before", "slot_before", "before_watered",
-        "after_watered", "water_before", "water_after", "water_consumed", "stamina_before", "stamina_after",
+        "after_watered", "water_before", "water_after", "water_consumed", "water_expected_cost",
+        "charge_requested", "charge_applied", "window", "tiles_changed", "changed", "stamina_before", "stamina_after",
         "stamina_delta", "expected_stamina_cost", "tool_restored",
     });
 
@@ -1837,7 +1854,8 @@ internal static class ToolActionEvidence
     internal static readonly IReadOnlyList<string> TillSoil = Array.AsReadOnly(new[]
     {
         "location", "target", "tool_selected", "slot", "tool_before", "slot_before", "before", "after",
-        "stamina_before", "stamina_after", "stamina_delta", "expected_stamina_cost", "tool_restored",
+        "charge_requested", "charge_applied", "window", "tiles_changed", "changed", "stamina_before",
+        "stamina_after", "stamina_delta", "expected_stamina_cost", "tool_restored",
     });
 
     /// <summary>

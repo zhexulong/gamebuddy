@@ -101,6 +101,13 @@ public sealed class DeclaredArgumentAcceptanceTests
             {
                 "quantity" => new[] { "0" },    // nothing may ask for zero units
                 "slot" => new[] { "99999" },    // far outside MaximumInventorySlot
+                // The charge ladder is a TWO-SIDED bound, so both halves are violated here; the numbers come from
+                // the facts the acceptance layer reads rather than from this file.
+                "charge" => new[]
+                {
+                    ((descriptor.Acceptance ?? FarmhandExecutionAcceptance.Default).MinimumToolCharge - 1).ToString(System.Globalization.CultureInfo.InvariantCulture),
+                    ((descriptor.Acceptance ?? FarmhandExecutionAcceptance.Default).MaximumToolCharge + 1).ToString(System.Globalization.CultureInfo.InvariantCulture),
+                },
                 // One below the coordinate floor the ACTION declares. The floor belongs to the descriptor (a
                 // transition's x/y is a warp SOURCE tile, and an edge exit's source is `-1`), so a value this test
                 // hard-coded would be the wrong perturbation for half the registry - and would pin the floor here
@@ -159,6 +166,7 @@ public sealed class DeclaredArgumentAcceptanceTests
         string? choice = null;
         int? expectedSkill = null;
         int? expectedLevel = null;
+        int? charge = null;
         BridgeNavigationDestinationSelector? destination = null;
 
         foreach ((string name, string value) in declared)
@@ -186,6 +194,7 @@ public sealed class DeclaredArgumentAcceptanceTests
                 case "choice": choice = effective; break;
                 case "expectedSkill": expectedSkill = int.Parse(effective); break;
                 case "expectedLevel": expectedLevel = int.Parse(effective); break;
+                case "charge": charge = int.Parse(effective); break;
                 case "destination":
                     // The only label-shaped combination the converter accepts carries the label
                     // and no ref; the invalid case sends both.
@@ -223,6 +232,7 @@ public sealed class DeclaredArgumentAcceptanceTests
             Choice = choice,
             ExpectedSkill = expectedSkill,
             ExpectedLevel = expectedLevel,
+            Charge = charge,
             Destination = destination,
             // A descriptor declaring a scene binding must receive a well-formed one: the
             // acceptance layer validates it as its own contract member, so omitting it fails

@@ -4,6 +4,23 @@ using GameBuddy.Stardew.Core.Protocol;
 namespace GameBuddy.Stardew.Core.Policy;
 
 /// <summary>
+/// The tool charge ladder's own ends, stated once.
+///
+/// <para>
+/// <c>Tool.tilesAffected</c> increments the argument and then compares it against 1..6, its last case being
+/// <c>power &gt;= 6</c> (<c>Tool.cs:915,1062</c>), so the integer a caller may ask for is 0..5. The ceiling that
+/// applies to one act is lower than this on most packs: <c>Game1</c> raises <c>toolPower</c> only up to the held
+/// tool's <c>upgradeLevel</c> plus the Reaching enchantment (<c>Game1.cs:13032-13051</c>), which lives in the game
+/// assembly and is refused by name on the game thread.
+/// </para>
+/// </summary>
+public static class ToolCharge
+{
+    public const int Minimum = 0;
+    public const int Maximum = 5;
+}
+
+/// <summary>
 /// Registry-owned execution-acceptance facts for one registered Farmhand
 /// action. Wire value bounds and product facts (for example the exact (O)322
 /// wood fence of place_wood_fence) are declared here, on the registration
@@ -15,7 +32,10 @@ public sealed record FarmhandExecutionAcceptanceFacts(
     int MaximumTileCoordinate = 1000,
     int MaximumInventorySlot = 36,
     int MaximumQualifiedItemIdLength = 128,
-    string? ExactExpectedQualifiedItemId = null);
+    string? ExactExpectedQualifiedItemId = null,
+    // The tool charge ladder's own ends, shared with the wire bound below rather than restated per action.
+    int MinimumToolCharge = ToolCharge.Minimum,
+    int MaximumToolCharge = ToolCharge.Maximum);
 
 /// <summary>
 /// Registry-derived execution-acceptance projection for Farmhand execution
@@ -79,6 +99,7 @@ public static class FarmhandExecutionAcceptance
     bool choice = args.Choice is not null;
     bool expectedSkill = args.ExpectedSkill.HasValue;
     bool expectedLevel = args.ExpectedLevel.HasValue;
+    bool charge = args.Charge.HasValue;
         return x == HasArgument(descriptor, "x")
             && y == HasArgument(descriptor, "y")
             && slot == HasArgument(descriptor, "slot")
@@ -98,7 +119,8 @@ public static class FarmhandExecutionAcceptance
             && colorSelection == HasArgument(descriptor, "colorSelection")
         && choice == HasArgument(descriptor, "choice")
         && expectedSkill == HasArgument(descriptor, "expectedSkill")
-        && expectedLevel == HasArgument(descriptor, "expectedLevel");
+        && expectedLevel == HasArgument(descriptor, "expectedLevel")
+        && charge == HasArgument(descriptor, "charge");
     }
 
     private static bool HasArgument(FarmhandActionDescriptor descriptor, string name) =>
@@ -132,6 +154,11 @@ public static class FarmhandExecutionAcceptance
         // assembly and not in this policy layer, so this arm refuses a negative index only and the handler
         // names `invalid_color_selection` for anything past the palette.
         "colorSelection" => args.ColorSelection is int colorSelectionValue && colorSelectionValue >= 0,
+        // The ladder's own range; the per-act ceiling (the held tool's upgrade level) is decided on the game thread,
+        // where the tool exists, and refused by name there rather than clamped here.
+        "charge" => args.Charge is int chargeValue
+            && chargeValue >= facts.MinimumToolCharge
+            && chargeValue <= facts.MaximumToolCharge,
         "text" => !string.IsNullOrWhiteSpace(args.Text) && args.Text.Length <= FarmhandActionCatalog.ChatMessageMaximumLength,
         "destination" => destinationValidator is { } validator && validator(args.Destination),
         "emote" => !string.IsNullOrWhiteSpace(args.Emote) && argument.Enum is { } emoteEnum

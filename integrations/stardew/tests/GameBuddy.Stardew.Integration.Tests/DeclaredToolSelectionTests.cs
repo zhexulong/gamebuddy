@@ -271,9 +271,9 @@ public sealed class DeclaredToolSelectionTests
     {
         // The Host recognises a success by a DECLARED receipt-detail key set
         // (`host/src/stardew-completion-contracts.ts`: the cut_weeds/cut_grass rows pass their keys to
-        // `declaredCompletionEvidence`, and `hasWaterCropCompletionEvidence` / `hasBreakRockSourceCompletionEvidence`
-        // still compare key counts). The Mod states each set once, in ToolActionEvidence, so the paired change is one
-        // edit - and this test is what makes a drift between the two sides fail HERE instead of in a live run.
+        // `declaredCompletionEvidence`, and `hasBreakRockSourceCompletionEvidence` still compares a key count). The Mod
+        // states each set once, in ToolActionEvidence, so the paired change is one edit - and this test is what makes a
+        // drift between the two sides fail HERE instead of in a live run.
         string adapter = Read(HostCompletionContracts);
 
         ToolActionEvidence.CutWeeds.Should().BeEquivalentTo(
@@ -282,8 +282,12 @@ public sealed class DeclaredToolSelectionTests
             HostEvidenceKeys(adapter, "  cut_grass: (claim) =>", "  clear_cask: (claim) =>"));
         ToolActionEvidence.BreakRockSource.Should().BeEquivalentTo(
             HostEvidenceKeys(adapter, "function hasBreakRockSourceCompletionEvidence(", "if (Object.keys(evidence).length"));
+        // till_soil and water_crop read their required keys from ONE named declaration each rather than from an inline
+        // array inside the validator, so the two sides are compared against a set that no longer lives in two shapes.
+        ToolActionEvidence.TillSoil.Should().BeEquivalentTo(
+            DeclaredEvidenceKeys(adapter, "const TILL_SOIL_EVIDENCE_KEYS = Object.freeze(["));
         ToolActionEvidence.WaterCrop.Should().BeEquivalentTo(
-            HostEvidenceKeys(adapter, "function hasWaterCropCompletionEvidence(", "if (Object.keys(evidence).length"));
+            DeclaredEvidenceKeys(adapter, "const WATER_CROP_EVIDENCE_KEYS = Object.freeze(["));
     }
 
     [Fact]
@@ -422,6 +426,23 @@ public sealed class DeclaredToolSelectionTests
         arrayStart.Should().BeGreaterThanOrEqualTo(0);
         arrayEnd.Should().BeGreaterThan(arrayStart);
         return Regex.Matches(region[arrayStart..arrayEnd], "\"([A-Za-z0-9_]+)\"")
+            .Select(match => match.Groups[1].Value)
+            .ToArray();
+    }
+
+    /// <summary>
+    /// The keys of ONE named declaration in the Host contract (`const X_EVIDENCE_KEYS = Object.freeze([...])`). The
+    /// declaration is the single place that set exists on the Host side, so a key added to it without the Mod's list, or
+    /// the reverse, is a failure here rather than a receipt the Host silently refuses.
+    /// </summary>
+    private static IReadOnlyList<string> DeclaredEvidenceKeys(string source, string marker)
+    {
+        int start = source.IndexOf(marker, StringComparison.Ordinal);
+        start.Should().BeGreaterThanOrEqualTo(0, $"{marker} must exist in the Host contract");
+        int arrayStart = source.IndexOf('[', start);
+        int arrayEnd = source.IndexOf(']', arrayStart);
+        arrayEnd.Should().BeGreaterThan(arrayStart, $"{marker} must be a list literal");
+        return Regex.Matches(source[arrayStart..arrayEnd], "\"([A-Za-z0-9_]+)\"")
             .Select(match => match.Groups[1].Value)
             .ToArray();
     }

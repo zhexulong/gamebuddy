@@ -503,11 +503,12 @@ public sealed class TillSoilRefusalNamingTests
             this.executions = new ExecutionManager(new DummyMonitor(), () => publication, executionScope: null);
         }
 
-        internal LocalExecutionReceipt RequestTill(int x, int y) =>
+        internal LocalExecutionReceipt RequestTill(int x, int y, int charge = 0) =>
             this.executions.RequestLocalTillSoil(
                 $"req_till_{x}_{y}",
                 x,
                 y,
+                charge,
                 DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() + 30_000);
 
         private xTile.Tiles.Tile NewTile() =>

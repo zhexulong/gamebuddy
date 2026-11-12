@@ -34,12 +34,22 @@ public static class FarmhandForEachKindActions
     public const string ObjectKind = "object";
 
     /// <summary>
-    /// The action that clears (or works) one kind, or null when no published action does.
+    /// The action that works one kind, or null when no action this form can dispatch does.
     ///
-    /// The kinds with an action are exactly the ones whose action already publishes the same kind as its target family:
-    /// weeds, grass and crops are cut, a stump is chopped, and an untouched tillable tile is tilled. A kind whose action
-    /// would need an identity this pass cannot derive yet (a rock) is deliberately absent instead of mapped to the
-    /// nearest tool call.
+    /// <para>
+    /// A CLASSIFIER MAPS ONLY KINDS ITS OWN FORM CAN DISPATCH. A `for_each` row supplies the tile, the target identity
+    /// the family mints from it, and the step's own scalars - nothing else - so an action that declares an argument only
+    /// the caller can supply is not dispatchable from a row. `till_soil` is that action since the area-tool unit gave it
+    /// `charge`: a row has nowhere to put the charge, and mapping `empty_tillable` to it would advertise a capability that
+    /// always refuses with `row_argument_missing:charge` - a refusal whose repair the caller cannot make from inside the
+    /// form. Fresh ground is tilled with an explicit `{ action: \"till_soil\", charge: 0 }` step instead, and the row's own
+    /// answer says what this form cannot do.
+    /// </para>
+    /// <para>
+    /// The kinds with an action are therefore the ones whose work needs no per-action argument: weeds, grass and crops
+    /// are cut, a stump is chopped. A kind whose action would need an identity this pass cannot derive (a rock) is
+    /// deliberately absent instead of mapped to the nearest tool call.
+    /// </para>
     /// </summary>
     public static string? ActionFor(string? kind) => kind switch
     {
@@ -47,7 +57,6 @@ public static class FarmhandForEachKindActions
         "grass" => "cut_grass",
         "crop" => "scythe_crop",
         "stump" => "chop_stump",
-        EmptyTillableKind => "till_soil",
         _ => null,
     };
 }

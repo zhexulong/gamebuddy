@@ -175,6 +175,7 @@ public sealed class WarpSourceAdmissionTests
         int? quantity = null;
         int? expectedSkill = null;
         int? expectedLevel = null;
+        int? charge = null;
         string? expectedQualifiedItemId = null;
         string? expectedTargetId = null;
         string? chestId = null;
@@ -207,6 +208,7 @@ public sealed class WarpSourceAdmissionTests
                 case "quantity": quantity = int.Parse(scalar); break;
                 case "expectedSkill": expectedSkill = int.Parse(scalar); break;
                 case "expectedLevel": expectedLevel = int.Parse(scalar); break;
+                case "charge": charge = int.Parse(scalar); break;
                 case "expectedQualifiedItemId": expectedQualifiedItemId = scalar; break;
                 case "expectedTargetId": expectedTargetId = scalar; break;
                 case "chestId": chestId = scalar; break;
@@ -237,6 +239,7 @@ public sealed class WarpSourceAdmissionTests
             Quantity = quantity,
             ExpectedSkill = expectedSkill,
             ExpectedLevel = expectedLevel,
+            Charge = charge,
             ExpectedQualifiedItemId = expectedQualifiedItemId,
             ExpectedTargetId = expectedTargetId,
             ChestId = chestId,

@@ -95,7 +95,7 @@ internal sealed partial class ExecutionManager
         return this.RememberTerminal(requestId, executionId, state, reasonCode, evidence);
     }
 
-    public LocalExecutionReceipt RequestLocalWaterCrop(string requestId, int targetX, int targetY, string expectedTargetId, long requestedDeadlineMs)
+    public LocalExecutionReceipt RequestLocalWaterCrop(string requestId, int targetX, int targetY, string expectedTargetId, int charge, long requestedDeadlineMs)
     {
         if (this.BeginLocalExecution(requestId, out string executionId, out long nowMs) is LocalExecutionReceipt replay) return replay;
         // Scope-bound actor proof. Authorization precedes the world/location
@@ -128,15 +128,15 @@ internal sealed partial class ExecutionManager
                 targetX,
                 targetY,
                 expectedTargetId,
-                (arrivalExecutionId, arrivalRequestId) => this.ExecuteWaterCrop(arrivalExecutionId, arrivalRequestId, targetX, targetY, expectedTargetId, requestedDeadlineMs),
+                (arrivalExecutionId, arrivalRequestId) => this.ExecuteWaterCrop(arrivalExecutionId, arrivalRequestId, targetX, targetY, expectedTargetId, charge, requestedDeadlineMs),
                 nowMs,
                 requestedDeadlineMs);
         }
 
-        return this.ExecuteWaterCrop(executionId, requestId, targetX, targetY, expectedTargetId, requestedDeadlineMs);
+        return this.ExecuteWaterCrop(executionId, requestId, targetX, targetY, expectedTargetId, charge, requestedDeadlineMs);
     }
 
-    private LocalExecutionReceipt ExecuteWaterCrop(string executionId, string requestId, int targetX, int targetY, string expectedTargetId, long requestedDeadlineMs)
+    private LocalExecutionReceipt ExecuteWaterCrop(string executionId, string requestId, int targetX, int targetY, string expectedTargetId, int charge, long requestedDeadlineMs)
     {
         StardewValley.GameLocation location = Game1.player.currentLocation;
         Vector2 tile = new(targetX, targetY);
@@ -160,18 +160,29 @@ internal sealed partial class ExecutionManager
             if (wateringCan.WaterLeft <= 0 && !Game1.player.hasWateringCanEnchantment)
                 return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "watering_can_empty",
                     $"water_left={wateringCan.WaterLeft};slot={selection.Slot}");
+            // The charge is refused BEFORE the tool is charged, so a refusal can never leave `toolPower` written.
+            if (RefuseToolCharge(charge, wateringCan, Game1.player, targetX, targetY) is { } chargeRefusal)
+                return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, chargeRefusal, $"target={targetX},{targetY};charge={charge};max={ToolChargeCeiling(wateringCan)}");
 
             LocalCropWateringSpec specification = new(executionId, requestId, location.NameOrUniqueName, targetX, targetY, expectedTargetId, dirt.crop.netSeedIndex.Value ?? dirt.crop.indexOfHarvest.Value ?? "unknown", this.revision, requestedDeadlineMs);
             bool beforeWatered = dirt.isWatered();
             int beforeWater = wateringCan.WaterLeft;
+            // The one charged native use, bracketed by the same reading: `WateringCan.DoFunction` walks the engine's own
+            // rectangle (`WateringCan.cs:152,154`), so the watered tiles are measured over the scan box rather than
+            // derived from the charge. The named crop's own read below stays the COMPLETION condition.
+            HashSet<Vector2> wateredBefore = AreaToolFootprint.Observe(targetX, targetY, tile => location.GetHoeDirtAtTile(tile) is { } scanDirt && scanDirt.isWatered());
             float staminaBefore = Game1.player.Stamina;
-            UseNativeToolOnTile(wateringCan, location, targetX, targetY, Game1.player, staminaBefore);
+            UseNativeToolOnTile(wateringCan, location, targetX, targetY, Game1.player, staminaBefore, charge);
             float staminaAfter = Game1.player.Stamina;
             float staminaDelta = staminaAfter - staminaBefore;
-            // WateringCan covers power with toolPower.Value (tap => 0), so a basic
-            // can tap costs 2*(0+1) - Farming*0.1 = 2 - Farming*0.1.
-            float expectedStaminaCost = wateringCan.IsEfficient ? 0f : 2f - (Game1.player.FarmingLevel * 0.1f);
+            // WateringCan reads the SAME charge for its stamina as for its footprint (`WateringCan.cs:169`: `2 * (power + 1)`),
+            // unlike the hoe, whose stamina keeps the `power` argument and is therefore flat in the charge.
+            float expectedStaminaCost = wateringCan.IsEfficient ? 0f : 2f * (charge + 1) - (Game1.player.FarmingLevel * 0.1f);
+            // Water is spent by the charge, not by the tiles: `WaterLeft -= power + 1` (`WateringCan.cs:189-191`), so a
+            // charge-4 watering of 18 tiles costs 5 units, and a bottomless can costs none.
+            int waterExpectedCost = wateringCan.IsBottomless ? 0 : charge + 1;
             bool afterWatered = dirt.isWatered();
+            List<Vector2> changed = AreaToolFootprint.Changed(wateredBefore, AreaToolFootprint.Observe(targetX, targetY, tile => location.GetHoeDirtAtTile(tile) is { } scanDirt && scanDirt.isWatered()));
             bool waterConsumed = wateringCan.IsBottomless || wateringCan.WaterLeft < beforeWater || Game1.player.hasWateringCanEnchantment;
             evidence["location"] = specification.Location;
             evidence["target"] = expectedTargetId;
@@ -181,10 +192,18 @@ internal sealed partial class ExecutionManager
             evidence["water_before"] = beforeWater.ToString(CultureInfo.InvariantCulture);
             evidence["water_after"] = wateringCan.WaterLeft.ToString(CultureInfo.InvariantCulture);
             evidence["water_consumed"] = waterConsumed.ToString().ToLowerInvariant();
+            evidence["water_expected_cost"] = waterExpectedCost.ToString(CultureInfo.InvariantCulture);
             evidence["stamina_before"] = staminaBefore.ToString("0.####", CultureInfo.InvariantCulture);
             evidence["stamina_after"] = staminaAfter.ToString("0.####", CultureInfo.InvariantCulture);
             evidence["stamina_delta"] = staminaDelta.ToString("0.####", CultureInfo.InvariantCulture);
             evidence["expected_stamina_cost"] = expectedStaminaCost.ToString("0.####", CultureInfo.InvariantCulture);
+            // Requested and applied are the same integer BY CONSTRUCTION - a charge above the held can's ceiling is
+            // refused, never clamped - so the pair is this receipt's proof that nothing was silently downgraded.
+            evidence["charge_requested"] = charge.ToString(CultureInfo.InvariantCulture);
+            evidence["charge_applied"] = charge.ToString(CultureInfo.InvariantCulture);
+            evidence["window"] = AreaToolFootprint.Window(targetX, targetY);
+            evidence["tiles_changed"] = changed.Count.ToString(CultureInfo.InvariantCulture);
+            evidence["changed"] = AreaToolFootprint.Format(changed);
             state = !beforeWatered && afterWatered ? ExecutionState.Succeeded : ExecutionState.Uncertain;
             reasonCode = state == ExecutionState.Succeeded ? "crop_watered" : "crop_water_postcondition_unavailable";
         }

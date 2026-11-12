@@ -170,6 +170,7 @@ public sealed class RouteReenteringBodyProgramExecutor : IBodyProgramNodeExecuto
         int? quantity = null;
         int? expectedSkill = null;
         int? expectedLevel = null;
+        int? charge = null;
         string? tool = null;
         string? buildingType = null;
         string? text = null;
@@ -217,6 +218,12 @@ public sealed class RouteReenteringBodyProgramExecutor : IBodyProgramNodeExecuto
                     break;
                 case "quantity" when value.Kind == BodyProgramArgumentKind.Integer && long.TryParse(value.CanonicalValue, out long parsedQuantity):
                     quantity = (int)parsedQuantity;
+                    break;
+                // The tool charge one native use covers (`till_soil`/`water_crop`). Without this case a node carrying
+                // a legal `charge` reached the handler with null - `?? 0` then silently swung the single tile, which is
+                // the silent downgrade the refusal codes exist to make impossible.
+                case "charge" when value.Kind == BodyProgramArgumentKind.Integer && long.TryParse(value.CanonicalValue, out long parsedCharge):
+                    charge = (int)parsedCharge;
                     break;
                 case "expectedSkill" when value.Kind == BodyProgramArgumentKind.Integer && long.TryParse(value.CanonicalValue, out long parsedExpectedSkill):
                     expectedSkill = (int)parsedExpectedSkill;
@@ -290,6 +297,7 @@ public sealed class RouteReenteringBodyProgramExecutor : IBodyProgramNodeExecuto
                 RightSlot = rightSlot,
                 ColorSelection = colorSelection,
                 Quantity = quantity,
+                Charge = charge,
                 ExpectedSkill = expectedSkill,
                 ExpectedLevel = expectedLevel,
                 Tool = tool,

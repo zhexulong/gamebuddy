@@ -1139,6 +1139,12 @@ public sealed class BridgeExecutionArgs
     /// <summary>One chat line's text (send_multiplayer_chat). The native ingress is a single
     /// 896-px line, so the value is bounded by the Mod's own maximum rather than by this type.</summary>
     public string? Text { get; init; }
+    /// <summary>How far the actor charges its tool before ONE native use (`till_soil`, `water_crop`). `0` is the plain
+    /// vanilla tap and covers exactly the named tile; above it the engine's own rectangle (`Tool.tilesAffected`, whose
+    /// power is `who.toolPower.Value`) covers 3/5/9/18/25 tiles, rotated by `who.FacingDirection`. The ladder's ends are
+    /// bounded here; the ceiling of a particular act is the held tool's upgrade level, which only the game thread can
+    /// read and which it refuses by name.</summary>
+    public int? Charge { get; init; }
 
     [JsonExtensionData]
     public Dictionary<string, JsonElement>? AdditionalProperties { get; init; }

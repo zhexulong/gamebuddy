@@ -11,6 +11,7 @@ using StardewValley;
 using StardewValley.Menus;
 using StardewValley.Tools;
 using StardewValley.Characters;
+using StardewValley.Enchantments;
 
 namespace GameBuddy.Stardew;
 
@@ -4517,8 +4518,21 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
     /// exactly the value the caller reports as <c>stamina_before</c> (a repeated
     /// swing loop keeps the value it captured once, as vanilla's single-swing
     /// caller does).
+    ///
+    /// <paramref name="charge"/> is the tool charge ONE native use covers, and this
+    /// method is the only place that writes it. <c>Hoe</c> and <c>WateringCan</c> discard
+    /// <c>DoFunction</c>'s power argument and read <c>who.toolPower.Value</c> instead
+    /// (<c>Hoe.cs:60</c>, <c>WateringCan.cs:152</c>), so that integer IS the footprint:
+    /// <c>Tool.tilesAffected</c> turns it into 1/3/5/9/18/25 tiles rotated by
+    /// <c>who.FacingDirection</c>. It is restored to zero - the engine's own reset
+    /// (<c>Game1.cs:11589</c>) - in a <c>finally</c>, because <c>WorldModel.ReadFacts</c>
+    /// publishes a non-zero value as <c>ToolCharged</c> and classifies it as the
+    /// <c>toolAnimation</c> hold, which refuses every later execution. The charged
+    /// section is therefore synchronous on purpose: no <c>await</c>, no continuation and
+    /// no reentrancy may sit between the write and the restore, or a STOP, a refusal or
+    /// an exception could leave the actor held.
     /// </summary>
-    private static void UseNativeToolOnTile(Tool tool, GameLocation location, int tileX, int tileY, Farmer who, float staminaBefore)
+    private static void UseNativeToolOnTile(Tool tool, GameLocation location, int tileX, int tileY, Farmer who, float staminaBefore, int charge = 0)
     {
         // Face the target before swinging, so the picture and the effect describe the same tile.
         //
@@ -4531,15 +4545,67 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         // Setting the facing where the engine can express it is the part that costs nothing: a diagonal
         // or out-of-reach target has no such facing, and the swing still lands on the target as before.
         // That asymmetry is deliberate - this change makes the two agree where agreement is possible, it
-        // does not make a previously-landing swing miss.
+        // does not make a previously-landing swing miss. A charge above zero is the exception, because
+        // there the facing is no longer cosmetic: `RefuseToolCharge` refuses it before this method runs.
         int? facing = SwingFacing.For(((int)who.Tile.X, (int)who.Tile.Y), (tileX, tileY));
         if (facing is { } direction)
             who.FacingDirection = direction;
 
-        tool.DoFunction(location, tileX * 64 + 32, tileY * 64 + 32, 1, who);
+        try
+        {
+            who.toolPower.Value = charge;
+            tool.DoFunction(location, tileX * 64 + 32, tileY * 64 + 32, 1, who);
+        }
+        finally
+        {
+            who.toolPower.Value = 0;
+        }
+
         who.lastClick = Vector2.Zero;
         who.checkForExhaustion(staminaBefore);
     }
+
+    /// <summary>
+    /// The ceiling a tool's own hold can reach: <c>Game1</c> increments <c>toolPower</c> only while
+    /// <c>CurrentTool.upgradeLevel + (Reaching ? 1 : 0) &gt; toolPower</c> (<c>Game1.cs:13032-13051</c>), so the held
+    /// tool's level IS the ceiling and the Reaching enchantment raises it by one. Read from the tool, never from a
+    /// table.
+    /// </summary>
+    private static int ToolChargeCeiling(Tool tool) =>
+        tool.UpgradeLevel + (tool.hasEnchantmentOfType<ReachingToolEnchantment>() ? 1 : 0);
+
+    /// <summary>
+    /// The refusal a requested charge earns BEFORE anything is written, or null when it can be performed: the ladder's
+    /// own range, the held tool's ceiling, and - above zero - the cardinal stance the footprint is rotated by.
+    ///
+    /// <para>
+    /// The ceiling is refused rather than clamped. The engine's own hold does nothing past it, which is the argument
+    /// that the ceiling is real, not an argument for performing less than the caller asked for: a clamp would report a
+    /// successful 18-tile sweep while the actor swung the 5-tile one the request did not name.
+    /// </para>
+    /// </summary>
+    private static string? RefuseToolCharge(int charge, Tool tool, Farmer who, int tileX, int tileY)
+    {
+        if (charge < ToolCharge.Minimum || charge > ToolCharge.Maximum)
+            return $"charge_out_of_range:{charge.ToString(CultureInfo.InvariantCulture)}";
+        int ceiling = ToolChargeCeiling(tool);
+        if (charge > ceiling)
+            return $"charge_exceeds_tool_upgrade:{charge.ToString(CultureInfo.InvariantCulture)}:{ceiling.ToString(CultureInfo.InvariantCulture)}";
+        // At charge 0 `tilesAffected` returns the named tile and the facing is irrelevant; above it, `who.FacingDirection`
+        // IS the footprint's direction (`Tool.cs:919`), so a diagonal stance would aim the rectangle somewhere the caller
+        // did not choose. Refused, never guessed.
+        if (charge > 0 && SwingFacing.For(((int)who.Tile.X, (int)who.Tile.Y), (tileX, tileY)) is null)
+            return "charge_needs_cardinal_stance";
+        return null;
+    }
+
+    /// <summary>
+    /// The scan half-width, in tiles, of the box one charged tool use can reach. <c>Tool.tilesAffected</c> is
+    /// <c>protected</c> (<c>Tool.cs:913</c>), so the Mod cannot ask the engine what it is about to touch - it can only
+    /// scan for what changed. The union over every facing at the ladder's top is 5 tiles on each axis, and
+    /// <c>AreaToolFootprintTests</c> derives that from the engine's own output rather than from this comment.
+    /// </summary>
+    internal const int AreaToolScanRadius = 5;
 
     private static IReadOnlyList<BridgeBaitCrabPotTarget> DiscoverBaitCrabPotTargets(Farmer player, DiscoveryExclusionRecorder exclusions)
     {
@@ -5697,4 +5763,67 @@ internal sealed class NavigationApproachNative
     internal Action<Farmer?, StardewValley.Warp> CommitWarp { get; }
 
     internal Func<Vector2, bool>? EvaluateCandidate { get; }
+}
+
+/// <summary>
+/// The measured footprint of ONE charged tool use.
+///
+/// <para>
+/// <c>Tool.tilesAffected</c> is <c>protected</c> (<c>Tool.cs:913</c>), so the Mod cannot ask the engine what it is
+/// about to touch, and re-writing its six facing cases here would be a second copy of an engine fact that agrees
+/// today and drifts later. So this class measures instead: it reads which tiles satisfy the action's own postcondition
+/// predicate immediately before the native call and again immediately after it, and the difference is the footprint
+/// the engine actually produced. A tile that was already in the state, or a tile inside the scanned box that never
+/// entered it, is deliberately NOT reported - the box is a superset of every footprint, so those two cases cannot be
+/// told apart from outside.
+/// </para>
+/// </summary>
+internal static class AreaToolFootprint
+{
+    /// <summary>
+    /// The tiles within <see cref="ExecutionManager.AreaToolScanRadius"/> of the named tile that satisfy
+    /// <paramref name="holds"/>. The scan is bounded by the engine's own footprint (see the radius) rather than by a
+    /// Mod budget, and it runs on the game thread inside the swing's tick, on both sides of the one native call.
+    /// </summary>
+    internal static HashSet<Vector2> Observe(int tileX, int tileY, Func<Vector2, bool> holds)
+    {
+        HashSet<Vector2> observed = new();
+        int radius = ExecutionManager.AreaToolScanRadius;
+        for (int x = tileX - radius; x <= tileX + radius; x++)
+        {
+            for (int y = tileY - radius; y <= tileY + radius; y++)
+            {
+                Vector2 tile = new(x, y);
+                if (holds(tile))
+                    observed.Add(tile);
+            }
+        }
+        return observed;
+    }
+
+    /// <summary>
+    /// The tiles that ENTERED the postcondition in this swing: the after read minus the before read, in a stable
+    /// order so two receipts for the same world are the same string.
+    /// </summary>
+    internal static List<Vector2> Changed(IReadOnlySet<Vector2> before, IReadOnlySet<Vector2> after) =>
+        after.Where(tile => !before.Contains(tile)).OrderBy(tile => tile.Y).ThenBy(tile => tile.X).ToList();
+
+    /// <summary>
+    /// The box the scan covered, spelled <c>x0,y0:x1,y1</c>, so a receipt says how far its own measurement reached
+    /// instead of leaving the reader to assume the whole farm was examined.
+    /// </summary>
+    internal static string Window(int tileX, int tileY)
+    {
+        int radius = ExecutionManager.AreaToolScanRadius;
+        return $"{tileX - radius},{tileY - radius}:{tileX + radius},{tileY + radius}";
+    }
+
+    /// <summary>
+    /// A changed set as receipt evidence: <c>x:y|x:y</c>, or <c>none</c> for an empty one. Neither <c>;</c> nor
+    /// <c>=</c> is usable - the detail is split on the first and then on the second - and <c>|</c> and <c>:</c> are.
+    /// </summary>
+    internal static string Format(IReadOnlyCollection<Vector2> tiles) =>
+        tiles.Count == 0
+            ? "none"
+            : string.Join("|", tiles.Select(tile => $"{tile.X:0}:{tile.Y:0}"));
 }

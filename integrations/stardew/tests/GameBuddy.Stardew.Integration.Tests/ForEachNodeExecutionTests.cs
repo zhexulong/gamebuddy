@@ -43,7 +43,7 @@ public sealed class ForEachNodeExecutionTests
     private const int MapHeight = 20;
 
     /// <summary>The measured intent: three rows by twenty columns, declared without reading the world.</summary>
-    private const string TillThePatch = "{\"source\":{\"area\":{\"x\":10,\"y\":10,\"w\":3,\"h\":2}},\"do\":{\"action\":\"till_soil\"}}";
+    private const string TillThePatch = "{\"source\":{\"area\":{\"x\":10,\"y\":10,\"w\":3,\"h\":2}},\"do\":{\"action\":\"till_soil\",\"charge\":0}}";
 
     /// <summary>One node, one loop, one pass - and every tile of the rectangle reaches the dispatch table by name.</summary>
     [Fact]
@@ -85,7 +85,7 @@ public sealed class ForEachNodeExecutionTests
         harness.SetDiggable(MapWidth - 2, 0);
         harness.SetDiggable(MapWidth - 1, 0);
 
-        harness.Run($"{{\"source\":{{\"area\":{{\"x\":{MapWidth - 2},\"y\":0,\"w\":4,\"h\":1}}}},\"do\":{{\"action\":\"till_soil\"}}}}");
+        harness.Run($"{{\"source\":{{\"area\":{{\"x\":{MapWidth - 2},\"y\":0,\"w\":4,\"h\":1}}}},\"do\":{{\"action\":\"till_soil\",\"charge\":0}}}}");
 
         harness.Status().State.Should().Be(BodyProgramState.Succeeded, harness.Diagnostic);
         harness.Handler.Requests.Should().HaveCount(2, "only the two tiles that exist are worked");
@@ -104,17 +104,17 @@ public sealed class ForEachNodeExecutionTests
     public void AKindWithNoActionIsARowRefusalAndNotASilentSkip()
     {
         using var harness = ForEachHarness.Create();
-        // One tillable tile and one that is not: `empty_tillable` has an action, `ground` has none.
+        // Two kinds this form cannot work: `empty_tillable`'s action declares `charge`, which a `by_kind` step has
+        // nowhere to put, and `ground` has no action at all.
         harness.SetDiggable(4, 4);
 
         harness.Run("{\"source\":{\"area\":{\"x\":4,\"y\":4,\"w\":2,\"h\":1}},\"do\":{\"action\":\"by_kind\"}}");
 
         BodyProgramStatusSnapshot status = harness.Status();
-        status.State.Should().Be(BodyProgramState.Succeeded, "the plan ran to its end and no node failed outright");
-        status.Nodes.Single().State.Should().Be(BodyProgramNodeState.PartiallySucceeded, harness.Diagnostic);
-        status.Nodes.Single().FailureCode.Should().Be("no_action_for_kind:ground", "the row that could not be resolved is named");
-        harness.Handler.Requests.Should().ContainSingle("the tillable row really ran; the other one was refused by name");
-        harness.Handler.Requests.Single().Args.X.Should().Be(4);
+        status.State.Should().Be(BodyProgramState.Failed, "no row ran, so the pass did nothing");
+        status.Nodes.Single().FailureCode.Should().Be("no_action_for_kind:empty_tillable",
+            "the kind this form cannot dispatch is named, and it is the first row's kind");
+        harness.Handler.Requests.Should().BeEmpty("a kind with no dispatchable action is a refusal, never a guess");
     }
 
     /// <summary>
@@ -195,7 +195,7 @@ public sealed class ForEachNodeExecutionTests
         harness.PlaceCrop(10, 10, seedIndex: "472");
         harness.PlaceCrop(11, 10, seedIndex: "473");
 
-        harness.Run("{\"source\":{\"area\":{\"x\":10,\"y\":10,\"w\":2,\"h\":1}},\"do\":{\"action\":\"water_crop\"}}");
+        harness.Run("{\"source\":{\"area\":{\"x\":10,\"y\":10,\"w\":2,\"h\":1}},\"do\":{\"action\":\"water_crop\",\"charge\":0}}");
 
         BodyProgramStatusSnapshot status = harness.Status();
         status.State.Should().Be(BodyProgramState.Succeeded, harness.Diagnostic);
@@ -228,7 +228,7 @@ public sealed class ForEachNodeExecutionTests
         // tile that carries nothing.
         harness.SetDiggable(10, 10);
 
-        harness.Run("{\"source\":{\"area\":{\"x\":10,\"y\":10,\"w\":2,\"h\":1}},\"do\":{\"action\":\"water_crop\"}}");
+        harness.Run("{\"source\":{\"area\":{\"x\":10,\"y\":10,\"w\":2,\"h\":1}},\"do\":{\"action\":\"water_crop\",\"charge\":0}}");
 
         BodyProgramStatusSnapshot status = harness.Status();
         status.State.Should().Be(BodyProgramState.Failed, "no row ran, so the pass did nothing");
@@ -320,7 +320,7 @@ public sealed class ForEachNodeExecutionTests
         // One crop tile and two bare ones under one rectangle: a mixed pass, which is the shape a reader most needs counted.
         harness.PlaceCrop(10, 10, seedIndex: "472");
 
-        harness.Run("{\"source\":{\"area\":{\"x\":10,\"y\":10,\"w\":3,\"h\":1}},\"do\":{\"action\":\"water_crop\"}}");
+        harness.Run("{\"source\":{\"area\":{\"x\":10,\"y\":10,\"w\":3,\"h\":1}},\"do\":{\"action\":\"water_crop\",\"charge\":0}}");
 
         BodyProgramStatusSnapshot status = harness.Status();
         status.Nodes.Single().State.Should().Be(
@@ -346,7 +346,7 @@ public sealed class ForEachNodeExecutionTests
     {
         using var harness = ForEachHarness.Create();
 
-        harness.Run($"{{\"source\":{{\"area\":{{\"x\":{MapWidth + 4},\"y\":0,\"w\":2,\"h\":1}}}},\"do\":{{\"action\":\"till_soil\"}}}}");
+        harness.Run($"{{\"source\":{{\"area\":{{\"x\":{MapWidth + 4},\"y\":0,\"w\":2,\"h\":1}}}},\"do\":{{\"action\":\"till_soil\",\"charge\":0}}}}");
 
         BodyProgramStatusSnapshot status = harness.Status();
         status.State.Should().Be(BodyProgramState.Failed);
@@ -373,7 +373,7 @@ public sealed class ForEachNodeExecutionTests
         harness.PlaceCrop(10, 10, seedIndex: "472");
         long startedAt = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
 
-        harness.Run("{\"source\":{\"area\":{\"x\":10,\"y\":10,\"w\":1,\"h\":1}},\"do\":{\"action\":\"water_crop\"}}");
+        harness.Run("{\"source\":{\"area\":{\"x\":10,\"y\":10,\"w\":1,\"h\":1}},\"do\":{\"action\":\"water_crop\",\"charge\":0}}");
 
         BridgeExecutionRequest request = harness.Handler.Requests.Should().ContainSingle().Subject;
         long settledAt = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
@@ -465,7 +465,7 @@ public sealed class ForEachNodeExecutionTests
             return "soil_not_diggable:occupied:stump";
         };
 
-        harness.Run("{\"source\":{\"area\":{\"x\":10,\"y\":10,\"w\":2,\"h\":1}},\"do\":{\"action\":\"till_soil\"}}");
+        harness.Run("{\"source\":{\"area\":{\"x\":10,\"y\":10,\"w\":2,\"h\":1}},\"do\":{\"action\":\"till_soil\",\"charge\":0}}");
 
         BodyProgramStatusSnapshot status = harness.Status();
         status.State.Should().Be(BodyProgramState.Succeeded, harness.Diagnostic);

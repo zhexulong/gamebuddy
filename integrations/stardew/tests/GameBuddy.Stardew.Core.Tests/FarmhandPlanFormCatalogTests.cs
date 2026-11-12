@@ -77,7 +77,7 @@ public sealed class FarmhandPlanFormCatalogTests
     [Fact]
     public void EveryKindTheClassifierNamesAnswersAPublishedOrLiveVerifiedAction()
     {
-        string[] kinds = { "weed", "grass", "crop", "stump", FarmhandForEachKindActions.EmptyTillableKind };
+        string[] kinds = { "weed", "grass", "crop", "stump" };
 
         foreach (string kind in kinds)
         {
@@ -90,6 +90,11 @@ public sealed class FarmhandPlanFormCatalogTests
                 new[] { FarmhandActionLifecycle.Published, FarmhandActionLifecycle.LiveVerified },
                 "a program node may only name a published or live-verified action");
         }
+
+        // `empty_tillable` is the kind whose action declares `charge`, which a `by_kind` step has nowhere to put: it is
+        // answered by the row's own `no_action_for_kind` rather than by a mapping that always refuses.
+        FarmhandForEachKindActions.ActionFor(FarmhandForEachKindActions.EmptyTillableKind).Should().BeNull(
+            "till_soil declares an argument only the caller can supply, so a `by_kind` row cannot dispatch it");
     }
 
     /// <summary>

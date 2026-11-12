@@ -156,12 +156,14 @@ public sealed class BodyProgramArgumentProjectionTests
 
             BodyProgramTerminalResult? terminal = new RouteReenteringBodyProgramExecutor(router, new StubLedger()).Execute(grant, binding);
 
-            terminal.Should().NotBeNull($"{registration.ActionId} declares `{argumentName}`, so the node must dispatch");
-            terminal!.Outcome.Should().Be(BodyProgramNodeOutcome.Succeeded);
+            terminal.Should().NotBeNull(
+                $"declared_argument_never_reaches_handler:{registration.ActionId}:{argumentName} - the node declares it, so the dispatch must happen");
+            terminal!.Outcome.Should().Be(BodyProgramNodeOutcome.Succeeded,
+                $"declared_argument_never_reaches_handler:{registration.ActionId}:{argumentName} - the node must not be refused for an argument it carried");
             handler.Seen.Should().NotBeNull();
             wireMember.GetValue(handler.Seen).Should().Be(
                 ExpectedValue(wireMember, declared, argumentName),
-                $"{registration.ActionId} declares `{argumentName}` and the program node carried it; the handler must receive it, not null");
+                $"declared_argument_never_reaches_handler:{registration.ActionId}:{argumentName} - the program node carried it, so the handler must receive it rather than null");
             covered.Add(registration.ActionId);
         }
 

@@ -86,8 +86,15 @@ public sealed class RefusalLayerNamingTests
     /// `water` layer (inventing one would put a token on the wire that names no countermeasure). The evidence each one
     /// publishes is judged by `refusal_informativeness/v1`, which is where a dropped fact is a failure.
     /// </para>
+    /// <para>
+    /// RAISED FROM 551 TO 553 by the area-tool-use unit, and the two sites are named rather than absorbed: the two
+    /// `RefuseToolCharge` refusals in `till_soil` and `water_crop`. The charge is a REQUEST value, not a world
+    /// precondition: no layer in the closed vocabulary refused it, and the two facts a caller needs (the charge asked for
+    /// and the ceiling the held tool actually has) are published as evidence rather than as a `blocked_by=` token.
+    /// Inventing a `charge` layer would put a word on the wire that names no countermeasure.
+    /// </para>
     /// </summary>
-    private const int RecordedBare = 551;
+    private const int RecordedBare = 553;
     [Fact]
     public void TheLayerVocabularyIsClosedAndWireShaped()
     {

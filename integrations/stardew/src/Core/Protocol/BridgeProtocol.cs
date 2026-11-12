@@ -2274,7 +2274,11 @@ private static bool IsValidBodyProgramEvent(BridgeBodyProgramEvent? @event) => @
 
     public static string[]? ExecutionArgumentProperties(string? action) => action switch
     {
-            "move_to_tile" or "enter_exit" or "travel" or "till_soil" => new[] { "x", "y" },
+            "move_to_tile" or "enter_exit" or "travel" => new[] { "x", "y" },
+            // till_soil names the tile AND the tool charge one native use covers. `charge` is required rather than
+            // optional: `BodyProgramVerifier.ArgumentsMatch` demands exact arity, so an optional argument is not
+            // expressible, and `0` is the spelling for "this tile only".
+            "till_soil" => new[] { "x", "y", "charge" },
             // ride_minecart is its own action rather than a `travel` objective
             // family: every declared argument is mandatory here, and its x,y is
             // the station tile while expectedTargetId selects one advertised
@@ -2289,7 +2293,9 @@ private static bool IsValidBodyProgramEvent(BridgeBodyProgramEvent? @event) => @
             "equip_tool" => new[] { "tool" },
         "pickup_forage" => new[] { "x", "y", "expectedQualifiedItemId", "expectedTargetId" },
         "pickup_item" or "harvest_crop" => new[] { "x", "y", "expectedQualifiedItemId", "expectedTargetId" },
-            "water_crop" or "water_pet_bowl" or "water_slime_hutch_trough" or "machine_inspect" or "machine_collect_output" or "npc_relationship" or "pet_animal" or "pet_farm_animal" or "harvest_bush" or "harvest_fruit_tree" or "shake_tree" or "take_pedestal_item" or "toggle_fence_gate" or "break_resource_clump" => new[] { "x", "y", "expectedTargetId" },
+            "water_pet_bowl" or "water_slime_hutch_trough" or "machine_inspect" or "machine_collect_output" or "npc_relationship" or "pet_animal" or "pet_farm_animal" or "harvest_bush" or "harvest_fruit_tree" or "shake_tree" or "take_pedestal_item" or "toggle_fence_gate" or "break_resource_clump" => new[] { "x", "y", "expectedTargetId" },
+            // water_crop carries the same required `charge` as till_soil, on top of the crop's opaque target id.
+            "water_crop" => new[] { "x", "y", "expectedTargetId", "charge" },
         // talk_to_npc names the villager through the NPC family's opaque target id
         // (the same one npc_relationship/interact_npc_with_item publish) plus the tile
         // it was published at, which is only the approach leg's destination: the Mod

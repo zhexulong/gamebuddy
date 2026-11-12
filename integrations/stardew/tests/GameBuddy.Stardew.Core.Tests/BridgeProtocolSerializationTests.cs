@@ -229,7 +229,7 @@ public sealed class BridgeProtocolSerializationTests
     [Fact]
     public void TryDeserializeExecutionRequest_ValidPayload_DeserializesCorrectly()
     {
-        var request = new BridgeExecutionRequest("req_100", "idemp_100", "till_soil", new BridgeExecutionArgs { X = 12f, Y = 34f }, 1, 5000);
+        var request = new BridgeExecutionRequest("req_100", "idemp_100", "till_soil", new BridgeExecutionArgs { X = 12f, Y = 34f, Charge = 0 }, 1, 5000);
         var envelope = new BridgeEnvelope<BridgeExecutionRequest>(1, "msg_1", "corr_1", 1000L, SampleScope, "execution_request", request);
 
         BridgeProtocol.TrySerialize(envelope, out string json, out string serializeReason).Should().BeTrue();
@@ -242,6 +242,7 @@ public sealed class BridgeProtocolSerializationTests
         roundTripEnvelope!.Payload.Action.Should().Be("till_soil");
         roundTripEnvelope.Payload.Args.X.Should().Be(12f);
         roundTripEnvelope.Payload.Args.Y.Should().Be(34f);
+        roundTripEnvelope.Payload.Args.Charge.Should().Be(0, "till_soil declares the charge, so the round trip must carry it");
     }
 
     [Fact]
