@@ -10,7 +10,7 @@
     "src/composed-reference-game-browser.test.ts",
     "src/composed-reference-game-browser-client.test.ts",
     "src/tavern/composed-reference-game-static-shell-composition.test.ts",
-    "src/composition/desktop-presentation-admission-owner.test.ts",
+    "src/composition/desktop-presentation-admission-owner.private.test.ts",
     "src/test-fixtures/desktop-presentation-admission-owner-worker.ts",
     "src/test-fixtures/desktop-presentation-admission-chat-only-worker.ts",
     "src/test-fixtures/desktop-presentation-admission-management-worker.ts",

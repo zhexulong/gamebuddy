@@ -31,7 +31,7 @@
  *   `declaresRoute` then matches exact route paths). Counting a prefix as a producer would make this gate blind to
  *   the very defect it was written for - `/api/tavern/v1/presets` sits under `/api/tavern/`.
  *   Which composition MOUNTS a declared route (profile `routeIds`) is a different fact with its own owner,
- *   `host/src/composition/desktop-presentation-admission-owner.test.ts`; this gate does not restate it.
+ *   `host/src/composition/desktop-presentation-admission-owner.private.test.ts`; this gate does not restate it.
  *
  * THE SUBTLE RULE. A route whose ONLY non-comment occurrences outside `dialogue-web/src` are in a spec or test file
  * counts as UNSERVED, and the report names that stub. A `page.route(...)` handler, a fixture server, a Host test's

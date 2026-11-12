@@ -16,9 +16,9 @@
     "src/tavern/library-service.test.ts",
     "src/tavern/catalog-service.test.ts",
     "src/tavern/reference-pipeline-state.test.ts",
-    "src/continuity-semantic-chat-runtime-construction/continuity-semantic-chat-runtime-construction.test.ts",
-    "src/continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.test.ts",
-    "src/continuity-semantic-deployment-composition/continuity-semantic-deployment-composition.test.ts",
+    "src/continuity-semantic-chat-runtime-construction/continuity-semantic-chat-runtime-construction.private.test.ts",
+    "src/continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.private.test.ts",
+    "src/continuity-semantic-deployment-composition/continuity-semantic-deployment-composition.private.test.ts",
     "src/continuity-semantic-composition/continuity-semantic-composition.test.ts"
   ]
 }

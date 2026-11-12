@@ -16,7 +16,7 @@ import { createTestWindowsReparseInspector } from "../windows-reparse-inspector/
 
 /**
  * Hermetic fixture for the composition-owned presentation admission owner. It is
- * spawned by desktop-presentation-admission-owner.test.ts with
+ * spawned by desktop-presentation-admission-owner.private.test.ts with
  * `--experimental-test-module-mocks`: only the two mounted-Chat lane builders
  * (the durable state facade and the Chat pipeline service) are mocked by URL,
  * so the real composed static shell composition still verifies a real browser

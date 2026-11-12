@@ -14,7 +14,7 @@ import { createTestWindowsReparseInspector } from "../windows-reparse-inspector/
 
 /**
  * Hermetic fixture for the composition-owned Tavern-management presentation
- * entry point. It is spawned by desktop-presentation-admission-owner.test.ts
+ * entry point. It is spawned by desktop-presentation-admission-owner.private.test.ts
  * with `--experimental-test-module-mocks`: the mounted-Chat lane builders (the
  * reference state facade and the Chat pipeline service) and the durable
  * Chat-owned management service builders are mocked by URL, so the real

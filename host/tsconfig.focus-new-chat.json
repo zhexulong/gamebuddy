@@ -9,7 +9,7 @@
   "files": [
     "src/tavern-management-dialogue-web.new-chat.test.ts",
     "src/tavern/browser-contract/index.private.test.ts",
-    "src/composition/desktop-presentation-admission-owner.test.ts",
+    "src/composition/desktop-presentation-admission-owner.private.test.ts",
     "src/test-fixtures/desktop-presentation-admission-owner-worker.ts",
     "src/test-fixtures/desktop-presentation-admission-chat-only-worker.ts",
     "src/test-fixtures/desktop-presentation-admission-management-worker.ts"
