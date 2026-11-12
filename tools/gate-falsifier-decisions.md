@@ -1845,6 +1845,13 @@ naming `tools/legacy.mjs` and `tools/inflight.mjs`, files the suite plants in a 
 belong to lanes that own the ratchets, and the honest change is in the reader — a fourth bucket on the census line — not
 in a claim rewritten to satisfy a regex.
 
+**The two spellings disagree inside one file, which is the sharpest reading of the defect.** The same run closes with
+`9 gate(s) still owe a red proof; 7 of them are recorded in tools/gate-red-proof-baseline.json; 7 are external and 357
+of 357 are accounted for` — and that sentence *does* reconcile, because it counts `reading.gaps.length`, which contains
+the two unreadable claims. So one line in `tools/audit-gate-red-proofs.mjs` accounts for every gate and the other, five
+lines above it, cannot. `describeGateCensus` is handed `recorded: held` and is never told about
+`reading.unreadableClaims.length`; a reader who checks the arithmetic finds the discrepancy and no way to close it.
+
 ### The proofs, each with the line that fired and the reading after the restore
 
 Every injection ran in the copy. Restored two ways for each: `git -C E:/tmp/gateproof/b18 hash-object <path>` equals
