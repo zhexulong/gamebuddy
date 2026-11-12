@@ -14,6 +14,7 @@ import {
   type AdmittedStardewInstallation,
 } from "./stardew-installation-admission.js";
 import { consumeAdmittedStardewInstallation } from "./stardew-installation-admission.core.js";
+import { readSourceShape } from "./test-support/source-shape.test-support.js";
 import { createTestWindowsReparseInspector } from "./windows-reparse-inspector/index.test-support.js";
 import type { WindowsPathObjectIdentity } from "./windows-reparse-inspector/index.js";
 
@@ -298,7 +299,7 @@ test("production source exposes no owner launch helper or raw launch input callb
   assert.doesNotMatch(source, /export function launchOwnedPlayerHost/);
   assert.doesNotMatch(source, /consumeAdmittedStardewInstallation/);
   assert.match(source, /stardew-installation-admission\.core\.js/);
-  const coreSource = await readFile(new URL("./stardew-installation-admission.core.js", import.meta.url), "utf8");
+  const { shape: coreSource } = readSourceShape(new URL("./stardew-installation-admission.core.js", import.meta.url));
   assert.match(coreSource, /export (?:async )?function consumeAdmittedStardewInstallation/);
   assert.match(coreSource, /later launch authority must inspect the path identity chain again/);
 });

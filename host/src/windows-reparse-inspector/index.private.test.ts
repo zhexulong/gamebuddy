@@ -512,11 +512,11 @@ test("native security operation remains a strict handle-derived current-user own
 });
 
 test("public policy entry does not expose test-only capability minting or filesystem fallback", async () => {
-  const source = await readFile(
+  const policySource = await readFile(
     resolve(fileURLToPath(new URL("../..", import.meta.url)), "src", "windows-reparse-inspector", "index.ts"),
     "utf8",
   );
-  assert.doesNotMatch(source, /__testOnly|test-support|\blstat\(absolutePath|customInspect/);
+  assert.doesNotMatch(policySource, /__testOnly|test-support|\blstat\(absolutePath|customInspect/);
 });
 
 function identityResponse(identity: WindowsPathObjectIdentity): string {

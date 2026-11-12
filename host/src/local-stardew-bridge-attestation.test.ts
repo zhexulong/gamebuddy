@@ -22,6 +22,7 @@ import {
   type OpaqueS4cMaterializationAdmission,
 } from "./continuity-semantic-game-runtime-materializer/continuity-semantic-game-runtime-materializer.internal.js";
 import { loadHostDeploymentManifest } from "./deployment-manifest.js";
+import { readSourceShape } from "./test-support/source-shape.test-support.js";
 import {
   PLAN_TOOL_SLOT_MEANING,
   planActionsFromRegistrations,
@@ -2216,9 +2217,8 @@ test("attested fixed closure drains the held request before revocation", async (
 });
 
 test("authenticated launch association has a lexical owner and generic handles expose no mutation escape hatch", async () => {
-  const source = await readFile(
+  const { shape: source } = readSourceShape(
     new URL("./stardew-integration-launcher-body-program.internal.js", import.meta.url),
-    "utf8",
   );
   assert.match(source, /const authenticatedStardewLaunchRecords = new WeakMap/);
   assert.match(source, /function associateAuthenticatedStardewLaunch\(/);
@@ -2237,9 +2237,8 @@ test("the connection liveness check stays lexical to the launcher producer; faca
   assert.doesNotMatch(facadeSource, /authenticatedStardewConnections/);
   assert.doesNotMatch(facadeSource, /requireLiveConnection/);
   assert.doesNotMatch(facadeSource, /isAuthenticatedStardewConnectionLive/);
-  const producerSource = await readFile(
+  const { shape: producerSource } = readSourceShape(
     new URL("./stardew-integration-launcher-body-program.internal.js", import.meta.url),
-    "utf8",
   );
   // Expiry of the deleted forgery gate. The association map must stay gone: keyed on the wrapper, it existed to
   // refuse objects this file never minted, and the constructor is the only place a connection is built.

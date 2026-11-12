@@ -15,6 +15,7 @@ import {
   type StardewInstallationRegistrationOwnerTransactionMarker,
   type StardewInstallationRegistrationRecordV1,
 } from "./stardew-installation-registration.internal.js";
+import { readSourceShape } from "./test-support/source-shape.test-support.js";
 import { createTestWindowsStaleLockReclaimer } from "./windows-stale-lock-reclaimer/index.test-support.js";
 
 const locator = "C:\\Games\\Stardew Valley";
@@ -565,12 +566,14 @@ test("public read and publish are unavailable when owner-transaction marker is p
 });
 
 test("source exposes no browser, action-development, recovery, or independent fence seam", async () => {
-  const source = await readFile(new URL("./stardew-installation-registration.internal.js", import.meta.url), "utf8");
+  const { shape: source } = readSourceShape(
+    new URL("./stardew-installation-registration.internal.js", import.meta.url),
+  );
   assert.doesNotMatch(
     source,
     /browser\/|action-development|readView|recovery|fence|AdmittedStardewInstallation|consumeAdmitted/,
   );
-  assert.doesNotMatch(source, /export (?:async )?function (?:prepare|settle|recover|clear|bind|replace).*Attempt/);
+  assert.doesNotMatch(source, /export (?:async )?function (?:prepare|settle|recover|clear|bind|replace)\w*Attempt/);
   assert.match(source, /export async function withStardewLifecycleInstallationRegistrationOwner/);
   assert.doesNotMatch(source, /export async function withStardewInstallationRegistrationOwnerTransaction/);
   assert.doesNotMatch(source, /export (?:async )?function replaceStardewInstallationRegistrationLocator/);

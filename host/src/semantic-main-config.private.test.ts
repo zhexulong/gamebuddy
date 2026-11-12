@@ -1,13 +1,14 @@
 import assert from "node:assert/strict";
-import { readFile, rm, writeFile } from "node:fs/promises";
+import { rm, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import test from "node:test";
 
 import { canonicalTestRoot } from "./test-support/canonical-test-root.test-support.js";
+import { readSourceShape } from "./test-support/source-shape.test-support.js";
 import { loadSemanticVoiceConfig, parseSemanticMainCommand } from "./semantic-main-config.js";
 
 test("main is the operational-gate child and the CLI-only recovery tool, with no operator/voice/control fallback", async () => {
-  const source = await readFile(resolve(import.meta.dirname, "../src/main.ts"), "utf8");
+  const { shape: source } = readSourceShape(resolve(import.meta.dirname, "../src/main.ts"));
   for (const forbidden of [
     "connectIntegrationCompanion",
     "createProductionGameContinuity",

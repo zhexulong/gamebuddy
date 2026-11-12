@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
@@ -15,6 +14,7 @@ import {
 } from "./program-settlement-digest.js";
 import type { PlanAnswerNode } from "./program-status-wait.js";
 import { planBatchAnswer } from "./program-status-wait.js";
+import { readSourceShape } from "./test-support/source-shape.test-support.js";
 
 type JournalNode = Readonly<{
   nodeId: string;
@@ -339,35 +339,34 @@ test("a watch whose journal read fails ends as `stopped`, and one that outlives 
 
 test("the digest is wired to the pump on the one path every program takes", async () => {
   const root = resolve(dirname(fileURLToPath(import.meta.url)), "../src");
-  const materializer = await readFile(
+  const { shape: materializer } = readSourceShape(
     join(root, "continuity-semantic-game-runtime-materializer/continuity-semantic-game-runtime-materializer.ts"),
-    "utf8",
   );
   // A digest that is composed and never enqueued is the defect this whole module exists to end, so the wiring is
   // asserted where it lives: the reporter is fed by the submission path, and the sink it announces to is the pump.
   assert.match(materializer, /const settlement = createProgramSettlementReporter\(announceSettledFact\);/u);
   assert.match(
     materializer,
-    /if \(code === "accepted" \|\| code === "idempotent"\) \{\n\s+revealReaders\(\);\n\s+startSettlementWatch\(request\.programId, request\.nodes\);/u,
+    /if \(code === "accepted" \|\| code === "idempotent"\) \{\s+revealReaders\(\);\s+startSettlementWatch\(request\.programId, request\.nodes\);/u,
   );
   assert.match(materializer, /announceHostFact = \(fact\) => host\.acceptHostMintedFact\(fact\);/u);
   // AND SO IS THE POLL. A status read of a STOPPED program answers with the ledger the fact was minted from, never
   // with a second derivation: this is the wiring that makes "one poll is enough" true rather than aspirational.
   assert.match(
     materializer,
-    /planAnswerReading\(\n\s+tracked\.result,\n\s+programStatusProgress\.observe\(tracked\.result\),\n\s+settlement\.settled\(params\.programId\),\n\s+\),/u,
+    /planAnswerReading\(\s*tracked\.result,\s+programStatusProgress\.observe\(tracked\.result\),\s+settlement\.settled\(params\.programId\)\),/u,
     "the plain status read answers a stopped plan from the settlement ledger",
   );
-  const digestSource = await readFile(join(root, "program-settlement-digest.ts"), "utf8");
+  const { shape: digestSource } = readSourceShape(join(root, "program-settlement-digest.ts"));
   assert.match(
     digestSource,
     /settled\(programId: string\): SettledProgramAnswer \| null;/u,
     "and the ledger is the reporter's own, not a third reading of the journal",
   );
-  const hostService = await readFile(join(root, "host-service.ts"), "utf8");
+  const { shape: hostService } = readSourceShape(join(root, "host-service.ts"));
   assert.match(
     hostService,
-    /public acceptHostMintedFact\(fact: WorldFact\): void \{\n\s+if \(this\.#closed\) return;\n\s+this\.loop\.pump\.enqueueFact\(fact\);/u,
+    /public acceptHostMintedFact\(fact: WorldFact\): void \{\s+if \(this\.#closed\) return;\s+this\.loop\.pump\.enqueueFact\(fact\);/u,
   );
 });
 
