@@ -33,7 +33,31 @@
     "spans": 2
   },
   "keyFrames": { "status": "skipped", "reason": "headless_environment", "dir": null },
-  "reclamation": { "state": "clean", "exitReason": "completed", "steps": [], "reflection": "completed" },
+  "hostMemory": {
+    "state": "measured",
+    "samples": 180,
+    "startRssMb": 300,
+    "minRssMb": 288,
+    "maxRssMb": 322,
+    "minFreeMb": 4096,
+    "turns": [
+      { "turn": 0, "rssMb": 300, "heapUsedMb": 210, "sessionBytes": 98304 },
+      { "turn": 1, "rssMb": 322, "heapUsedMb": 224, "sessionBytes": 121856 }
+    ],
+    "omitted": 0
+  },
+  "reclamation": {
+    "state": "clean",
+    "exitReason": "game_exit:code:0",
+    "steps": [
+      { "step": "runtime_close", "state": "ok", "detail": null, "pids": [] },
+      { "step": "binding_close", "state": "ok", "detail": null, "pids": [] },
+      { "step": "bridge_detach", "state": "ok", "detail": null, "pids": [] },
+      { "step": "process_reap", "state": "ok", "detail": "game_exit:code:0", "pids": [] },
+      { "step": "fixture_restore", "state": "ok", "detail": null, "pids": [] }
+    ],
+    "reflection": "completed"
+  },
   "voice": { "state": "disabled", "playback": "disabled", "reasonCode": "voice_preference_absent" },
   "failure": null,
   "repro": { "command": null, "expectedWallClockMs": null }

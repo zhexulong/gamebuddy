@@ -4,13 +4,18 @@
 // red-proof: inject  the `repro_command_missing` obligation dropped from `validateEvidenceBundle` ->
 //                    `✖ a failed run without its snapshot or its replay is not evidence`, exit 1; the unmodified
 //                    bundle prints `fail 0`, exit 0 (tools/lib/evidence-bundle.test.mjs)
+// red-proof: history  the shipped 2026-11-10 `fixtures/stardew/evidence-bundle/manifest.json` (no `hostMemory`, a
+//                    completed reclamation over no steps) -> `✖ the documented bundle publishes what its producers
+//                    derive`, exit 1; the corrected fixture prints `fail 0`, exit 0 (tools/lib/evidence-bundle.test.mjs)
 import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 
 import {
+  EVIDENCE_BUNDLE_CANONICAL_DIR,
   EVIDENCE_BUNDLE_FILES,
   EVIDENCE_BUNDLE_VERDICT_STATES,
   readEvidenceBundle,
@@ -19,7 +24,8 @@ import {
   writeEvidenceBundle,
 } from "./evidence-bundle.mjs";
 import { decideReplayDispatch, expectedReplayWallClockMs, REAL_MILLISECONDS_PER_GAME_MINUTE } from "./replay-clock.mjs";
-import { HOST_MEMORY_TURN_CAP } from "./live-run-memory.mjs";
+import { HOST_MEMORY_TURN_CAP, summarizeHostMemory } from "./live-run-memory.mjs";
+import { RECLAMATION_REQUIRED_STEPS, reclamationRecord, reclamationStep } from "./live-run-teardown.mjs";
 import { deriveLoopVerdict } from "../run-stardew-multiplayer-live-loop.mjs";
 
 const TRACE = [
@@ -595,4 +601,65 @@ test("a missing trace is a named absence, and a claimed one must be on disk", as
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
+});
+
+// ── The documented bundle is what its producers derive, not a copy of the shape ───────────────────────────────────
+//
+// MEASURED 2026-11-12: `fixtures/stardew/evidence-bundle` is the shape `pnpm check:evidence-bundle` validates in contract
+// mode, and it was never given the two facts this contract began requiring on 2026-11-10. So the gate read
+// `reclamation_completed_without_steps` and `host_memory_missing` on the DOCUMENTED shape while every real run's
+// manifest passed (`--run-dir` over the 2026-11-10 and 2026-11-11 runs: zero violations) - a standing red that named no
+// run, no writer and no fix. Two hand-written copies of one shape drift in silence; these assertions re-derive the
+// fixture's own facts with the producers, so a shape no producer can emit fails here by name.
+
+const CANONICAL_BUNDLE_DIR = fileURLToPath(new URL(`../../${EVIDENCE_BUNDLE_CANONICAL_DIR}`, import.meta.url));
+const readCanonicalBundle = (name) => readFileSync(join(CANONICAL_BUNDLE_DIR, name), "utf8");
+
+test("the documented bundle publishes what its producers derive", () => {
+  const documented = JSON.parse(readCanonicalBundle(EVIDENCE_BUNDLE_FILES.manifest));
+
+  assert.ok(
+    documented.reclamation !== null && typeof documented.reclamation === "object",
+    "the documented bundle publishes no reclamation account",
+  );
+  assert.ok(
+    documented.hostMemory !== null && typeof documented.hostMemory === "object",
+    "the documented bundle publishes no hostMemory",
+  );
+
+  // The teardown: `state` and `reflection` are DERIVED from the steps (`reclamationRecord`), never written by hand, which
+  // is what makes a completed reflection over no step impossible to publish.
+  const steps = documented.reclamation.steps.map((entry) =>
+    reclamationStep({ step: entry.step, ok: entry.state === "ok", detail: entry.detail, pids: entry.pids }),
+  );
+  assert.deepEqual(
+    documented.reclamation,
+    reclamationRecord({ steps, exitReason: documented.reclamation.exitReason }),
+    "the documented reclamation is not what reclamationRecord derives from its own steps",
+  );
+  // ...and a finished run owes every step, so the example cannot document a partial unwind either.
+  assert.deepEqual(
+    steps.map((entry) => entry.step),
+    [...RECLAMATION_REQUIRED_STEPS],
+    "the documented teardown omits a step every finished run owes",
+  );
+
+  // The memory: the field list and the state are `summarizeHostMemory`'s, derived here from the fixture's own samples.
+  assert.deepEqual(
+    Object.keys(documented.hostMemory).sort(),
+    Object.keys(summarizeHostMemory({})).sort(),
+    "the documented hostMemory is not the shape summarizeHostMemory publishes",
+  );
+  assert.equal(
+    documented.hostMemory.state,
+    summarizeHostMemory({ turns: documented.hostMemory.turns }).state,
+    "the documented hostMemory's state is not the one its own turn samples give it",
+  );
+
+  // The document is what the gate accepts, so this test and `pnpm check:evidence-bundle` can only disagree by name.
+  const actionTrace = readCanonicalBundle(EVIDENCE_BUNDLE_FILES.actionTrace)
+    .split(/\r?\n/u)
+    .filter((line) => line.trim().length > 0)
+    .map((line) => JSON.parse(line));
+  assert.deepEqual(validateEvidenceBundle(documented, { actionTrace }).violations, []);
 });

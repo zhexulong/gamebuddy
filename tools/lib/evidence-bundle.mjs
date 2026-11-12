@@ -33,6 +33,13 @@ export const EVIDENCE_BUNDLE_FILES = Object.freeze({
 });
 
 /**
+ * Where the documented bundle shape lives: the example `pnpm check:evidence-bundle` accepts in contract mode, and the
+ * artifact its test re-derives with the producers. One spelling, because a path two tools agree on today is a path they
+ * disagree about later.
+ */
+export const EVIDENCE_BUNDLE_CANONICAL_DIR = "fixtures/stardew/evidence-bundle";
+
+/**
  * The loop's own verdict vocabulary (`deriveLoopVerdict`) plus the one outcome the loop cannot produce; the bundle
  * reports, it does not invent.
  *

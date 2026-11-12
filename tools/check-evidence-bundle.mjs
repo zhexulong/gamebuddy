@@ -10,9 +10,12 @@ import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 
-import { EVIDENCE_BUNDLE_FILES, readEvidenceBundle, validateEvidenceBundle } from "./lib/evidence-bundle.mjs";
-
-const CANONICAL_DIR = "fixtures/stardew/evidence-bundle";
+import {
+  EVIDENCE_BUNDLE_CANONICAL_DIR,
+  EVIDENCE_BUNDLE_FILES,
+  readEvidenceBundle,
+  validateEvidenceBundle,
+} from "./lib/evidence-bundle.mjs";
 
 function parseCli(argv) {
   const options = { runDir: null };
@@ -28,7 +31,7 @@ function parseCli(argv) {
 }
 
 async function contractCheck() {
-  const path = join(CANONICAL_DIR, "manifest.json");
+  const path = join(EVIDENCE_BUNDLE_CANONICAL_DIR, "manifest.json");
   let bundle;
   try {
     bundle = JSON.parse(await readFile(path, "utf8"));
@@ -39,7 +42,7 @@ async function contractCheck() {
       detail: error.message,
     };
   }
-  const trace = await readFile(join(CANONICAL_DIR, "actionTrace.jsonl"), "utf8")
+  const trace = await readFile(join(EVIDENCE_BUNDLE_CANONICAL_DIR, "actionTrace.jsonl"), "utf8")
     .then((text) =>
       text
         .split(/\r?\n/u)
@@ -72,9 +75,16 @@ async function runDirCheck(runDir) {
 
 async function main(argv) {
   const options = parseCli(argv);
+  // The artifact this mode read: `mode: "contract"` alone named no file, so a red here read like a run's broken teardown
+  // when it is the documented shape that is stale (measured 2026-11-10..12).
   const report =
     options.runDir === null
-      ? { gate: "evidence_bundle/v1", mode: "contract", ...(await contractCheck()) }
+      ? {
+          gate: "evidence_bundle/v1",
+          mode: "contract",
+          bundle: EVIDENCE_BUNDLE_CANONICAL_DIR,
+          ...(await contractCheck()),
+        }
       : { gate: "evidence_bundle/v1", mode: "run_dir", runDir: options.runDir, ...(await runDirCheck(options.runDir)) };
   process.stdout.write(`${JSON.stringify(report)}\n`);
   if (report.status !== "passed") process.exitCode = 1;
