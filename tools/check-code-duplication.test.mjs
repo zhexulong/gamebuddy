@@ -18,6 +18,10 @@
  *                    verdict still `passed`, because the population is the index; `git add` the same file -> the same
  *                    group reads `clone_group_grew:<hash>: now 4 sites ...` and `untracked_not_counted` disappears
  *                    (tools/check-code-duplication.test.mjs)
+ * red-proof: inject  a baseline recording 4 sites beside a tree with 3 -> `recordShrinks` lowers the entry to those 3 and
+ *                    the next reading has no findings at all; a group that grew -> the payload is the recorded entries
+ *                    byte for byte and `clone_group_grew` still fails; an unrecorded group -> no entry is ever added, now
+ *                    or on the run after; no baseline file -> `baseline_shrink_refused`.
  */
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
@@ -43,6 +47,8 @@ import {
   MIN_LINES,
   MIN_TOKENS,
   normaliseSitePath,
+  readBaseline,
+  recordShrinks,
   runJscpd,
   serialiseBaseline,
   tokenCountLine,
@@ -535,4 +541,99 @@ test("--write-baseline records the duplication population, so a façade needs no
   assert.equal(payload.groups.length, reading.duplication.length);
   assert.ok(payload.groups.every((entry) => reading.duplication.some((group) => group.hash === entry.hash)));
   assert.ok(payload.groups.every((entry) => !reading.facade.some((group) => group.hash === entry.hash)));
+});
+
+/** Four sites of one text: the reading a baseline records before a lane removes one of the copies. */
+const fourCopies = () =>
+  groupClones(
+    [
+      pair({ fragment: FRAGMENT, first: "host/src/a.ts", second: "host/src/b.ts" }),
+      pair({ fragment: FRAGMENT, first: "host/src/a.ts", second: "host/src/c.ts" }),
+      pair({ fragment: FRAGMENT, first: "host/src/a.ts", second: "host/src/d.ts" }),
+    ],
+    REPO,
+  );
+
+test("--record-shrinks lowers a shrunken entry onto the sites the tree still has", () => {
+  const baseline = baselinePayload(fourCopies());
+  const reading = evaluateGroups({ groups: threeCopies(), baseline });
+  assert.equal(reading.stale, 1);
+  const outcome = recordShrinks({ reading, baseline });
+  assert.deepEqual(outcome.removed, []);
+  assert.deepEqual(outcome.lowered, [groupHash(FRAGMENT)]);
+  assert.deepEqual(
+    outcome.payload.groups.map((entry) => entry.sites.length),
+    [3],
+  );
+  assert.equal(outcome.payload.groups[0].tokens, 50, "a shrink never moves the recorded token count");
+  assert.deepEqual(outcome.after.findings, [], "the recorded shrink leaves nothing to report");
+  assert.equal(outcome.after.baselined, 1);
+});
+
+test("--record-shrinks leaves a grown group byte-identical, so the growth is never banked", () => {
+  const baseline = baselinePayload(threeCopies());
+  const reading = evaluateGroups({ groups: fourCopies(), baseline });
+  assert.equal(reading.grown, 1);
+  const outcome = recordShrinks({ reading, baseline });
+  assert.deepEqual(outcome.payload.groups, baseline.groups);
+  assert.deepEqual([outcome.removed, outcome.lowered], [[], []]);
+  assert.equal(outcome.after.grown, 1);
+  assert.match(outcome.after.findings[0].detail, /^clone_group_grew:/);
+});
+
+test("--record-shrinks deletes an entry whose group left the tree, and no later run puts it back", () => {
+  const baseline = baselinePayload(threeCopies());
+  const reading = evaluateGroups({ groups: [], baseline });
+  assert.equal(reading.stale, 1);
+  const outcome = recordShrinks({ reading, baseline });
+  assert.deepEqual(outcome.removed, [groupHash(FRAGMENT)]);
+  assert.deepEqual(outcome.payload.groups, []);
+  assert.deepEqual(outcome.after.findings, []);
+});
+
+test("--record-shrinks adds nothing for a group the baseline does not record, and the run after does not either", () => {
+  const groups = threeCopies();
+  const audited = { groups: [] };
+  const outcome = recordShrinks({ reading: evaluateGroups({ groups, baseline: audited }), baseline: audited });
+  assert.deepEqual(outcome.payload.groups, []);
+  assert.equal(outcome.after.newGroups, 1);
+  const again = recordShrinks({
+    reading: evaluateGroups({ groups, baseline: outcome.payload }),
+    baseline: outcome.payload,
+  });
+  assert.deepEqual(again.payload.groups, []);
+});
+
+test("--record-shrinks refuses without a baseline to shrink, where --write-baseline may create one", () => {
+  const reading = evaluateGroups({ groups: threeCopies(), baseline: null });
+  assert.match(
+    recordShrinks({ reading, baseline: null }).refused,
+    /^baseline_shrink_refused: there is no tools\/duplicate-code-baseline\.json to shrink/,
+  );
+  const blocked = recordShrinks({ reading: { ...reading, counted: undefined }, baseline: { groups: [] } });
+  assert.match(blocked.refused, /^baseline_shrink_refused: the reading is blocked/);
+  assert.deepEqual(baselineWriteRefusal({ reading, creating: true }), [], "--write-baseline keeps the first write");
+  assert.equal(readBaseline({ root: workspace({}).root }), null, "no file reads as no baseline, not an empty one");
+});
+
+test("a real shrink recorded against jscpd's report turns the same tree green, adding nothing", () => {
+  const { root, trees, formats } = workspace(copies(["Alpha", "Bravo", "Charlie", "Delta"]));
+  const baseline = baselinePayload(checkCodeDuplication({ root, trees, formats, baseline: null }).duplication);
+  assert.equal(baseline.groups.length, 1);
+  assert.equal(baseline.groups[0].sites.length, 4);
+
+  rmSync(join(root, "host/src/Delta.cs"));
+  const shrunk = checkCodeDuplication({ root, trees, formats, baseline });
+  assert.deepEqual(
+    shrunk.findings.map((entry) => entry.code),
+    ["stale_clone_baseline"],
+  );
+  const outcome = recordShrinks({ reading: shrunk, baseline });
+  assert.deepEqual(outcome.lowered, [baseline.groups[0].hash]);
+  assert.deepEqual(outcome.removed, []);
+
+  const after = checkCodeDuplication({ root, trees, formats, baseline: outcome.payload });
+  assert.equal(after.status, "passed");
+  assert.equal(after.stale, 0);
+  assert.equal(after.duplication.length, 1);
 });

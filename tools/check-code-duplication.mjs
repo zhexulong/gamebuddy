@@ -124,11 +124,22 @@
  * facade-only M · duplication K`. K is what the ratchet governs and what `--write-baseline` records; a new or grown
  * duplication group still fails, which is the hard failure this file always had.
  *
- * THE BASELINE IS A RATCHET, NOT AN ACCEPT LIST. `--write-baseline` records today's duplication groups when the file
- * does not exist yet, and after that REFUSES to write while any group is new or grew - a green run therefore never
- * becomes the way to accept new duplication, only the way to record a shrink. Line numbers in the baseline are
- * documentation; the comparisons are the site COUNT and, for growth, nothing else - a line inserted above a site must
- * not turn the gate red, and the token count is published rather than compared (above).
+ * THE BASELINE IS A RATCHET, NOT AN ACCEPT LIST, AND ITS TWO WRITES HAVE DIFFERENT POWERS. `--write-baseline` may ADD a
+ * group - that is how the tree is first written down - but only while the file does not exist or nothing is new or grew,
+ * so a green run never becomes the way to accept new duplication. `--record-shrinks` may only move an existing record
+ * DOWN: the entry of a group that left the duplication population is deleted, the entry of a group that survived with
+ * FEWER sites is lowered onto the tree's sites, and every other entry is left byte-identical - it can never add a group
+ * or raise one, which is what makes it safe to run on a tree that also carries somebody else's bad news. The second
+ * power exists because a lane that removes a duplicate produces good news on a tree that almost always holds bad news
+ * too, and a ratchet that can only be written when there is no bad news drifts from the tree until the next reader's
+ * only satisfying move is deleting and re-creating the file. Measured 2026-11-12 on this tree, which read `new 14 ·
+ * grown 1 · stale 46`: `--record-shrinks` removed 39 entries and lowered 7, and the same reading afterwards was `stale 0
+ * · new 14 · grown 1 · duplication 314` - nothing banked in either direction. DELETING a shrunken-but-extant entry
+ * instead of lowering it would turn that group into a `clone_group` finding, which banks the loss of a record as new
+ * duplication; lowering is the only honest spelling of "this duplicate now has 3 sites", and deleting is only for a
+ * group the tree no longer has. Line numbers in the baseline are documentation; the comparisons are the site COUNT and,
+ * for growth, nothing else - a line inserted above a site must not turn the gate red, and the token count is published
+ * rather than compared (above).
  *
  * THE POPULATION is this file's `SOURCE_TREES`, and `jscpd.json` must declare the same paths, formats, ignore list and
  * thresholds or `jscpd_config_disagrees:<field>` fails: two spellings of "what is examined" drift apart the first time
@@ -145,8 +156,9 @@
  * block copied a third time.
  *
  * USAGE:
- *   node tools/check-code-duplication.mjs                  # the verdict; exit 1 on a new/grown/stale group
- *   node tools/check-code-duplication.mjs --write-baseline  # record a shrink; refuses to record growth
+ *   node tools/check-code-duplication.mjs                   # the verdict; exit 1 on a new/grown/stale group
+ *   node tools/check-code-duplication.mjs --record-shrinks   # delete and lower entries only; adds nothing
+ *   node tools/check-code-duplication.mjs --write-baseline   # write the tree down; refuses while a group is new or grew
  *
  * red-proof: inject  a fourth copy of the admission pipeline body into a `farmhandexecutioncontroller.*.cs` partial
  *                    while that group's baseline entry stays at its recorded site count ->
@@ -155,6 +167,12 @@
  *                    `clone_group:64tokens:9sites: integrations/stardew/farmhandexecutioncontroller.<each partial>.cs`
  *                    beside `files examined 1270 · clone groups 354 · new 354`; an entry whose sites are gone ->
  *                    `stale_clone_baseline:<hash>`.
+ * red-proof: inject  a baseline recording 4 sites beside a tree that now has 3 -> `--record-shrinks` prints
+ *                    `shrinks recorded: 1 · removed 0 · nothing added`, the entry's site list is lowered to those 3, and
+ *                    `stale_clone_baseline` is gone from the next reading; a group deleted from the tree entirely -> its
+ *                    entry is removed and a later run never adds it back; a group that GREW -> its entry stays
+ *                    byte-identical, `clone_group_grew` still fails the gate, and nothing is banked; no baseline file at
+ *                    all -> `baseline_shrink_refused: there is no tools/duplicate-code-baseline.json to shrink`.
  * red-proof: facades  three controller partials whose methods share an envelope and one `AdmitLocalExecution(...)`
  *                    delegation, with no baseline -> `clone groups 1 · of which facade-only 1 · duplication 0`, status
  *                    `passed`, and `facade-only:<hash>: 3 sites at <n> tokens :: public LocalExecutionReceipt
@@ -393,7 +411,7 @@ export function evaluateGroups({ groups, baseline, minTokens = MIN_TOKENS, minSi
           "stale_clone_baseline",
           `stale_clone_baseline:${group.hash}: the baseline recorded ${entry.sites.length} sites at ${entry.tokens} ` +
             `tokens, the tree now has ${group.sites.length} at ${group.tokens} tokens - record the shrink with ` +
-            "--write-baseline",
+            "--record-shrinks",
           group,
         ),
       );
@@ -551,10 +569,11 @@ export function serialiseBaseline(payload) {
   return `{\n  "groups": [\n${groups.join(",\n")}\n  ]\n}\n`;
 }
 
+/** The baseline file, or `null` when there is none: "no baseline" and "an empty baseline" are different facts. */
 export function readBaseline({ root = REPO } = {}) {
-  const text = fs.existsSync(path.join(root, BASELINE)) ? fs.readFileSync(path.join(root, BASELINE), "utf8") : null;
-  if (text === null) return { groups: [] };
-  const parsed = JSON.parse(text);
+  const file = path.join(root, BASELINE);
+  if (!fs.existsSync(file)) return null;
+  const parsed = JSON.parse(fs.readFileSync(file, "utf8"));
   if (!Array.isArray(parsed.groups)) throw new Error("duplicate_code_baseline_malformed:groups");
   return parsed;
 }
@@ -724,11 +743,52 @@ export function baselineWriteRefusal({ reading, creating }) {
   return (reading.findings ?? []).filter((entry) => entry.code === "clone_group" || entry.code === "clone_group_grew");
 }
 
+/**
+ * The other write, and the only one whose power is downward: every recorded entry either loses its place because the
+ * group left the duplication population, is lowered onto the sites the tree still has, or is left exactly as it is. It
+ * cannot add a group or raise one, so the groups that are new or grew stay findings and are never banked here.
+ *
+ * `payload` is what the file becomes; `after` is the reading that file would produce, so the caller prints the truth it
+ * has just recorded rather than a hopeful verdict.
+ */
+export function recordShrinks({ reading, baseline }) {
+  if (reading.counted === undefined)
+    return { refused: "baseline_shrink_refused: the reading is blocked, so there is no population to compare" };
+  if (baseline === null)
+    return {
+      refused:
+        `baseline_shrink_refused: there is no ${BASELINE} to shrink - this operation may only remove or lower an existing ` +
+        "record; --write-baseline creates one",
+    };
+  const live = new Map(reading.duplication.map((group) => [group.hash, group]));
+  const groups = [];
+  const removed = [];
+  const lowered = [];
+  for (const entry of baseline.groups) {
+    const group = live.get(entry.hash);
+    if (group === undefined) {
+      removed.push(entry.hash);
+      continue;
+    }
+    if (group.sites.length < entry.sites.length) {
+      lowered.push(entry.hash);
+      groups.push({ ...entry, sites: group.sites.map((site) => `${site.file}:${site.line}`) });
+      continue;
+    }
+    groups.push(entry);
+  }
+  const payload = { groups };
+  return { payload, removed, lowered, after: evaluateGroups({ groups: reading.counted, baseline: payload }) };
+}
+
 function main(argv) {
   const writeBaseline = argv.includes("--write-baseline");
+  const recordingShrinks = argv.includes("--record-shrinks");
   let reading;
+  let baseline;
   try {
-    reading = checkCodeDuplication({});
+    baseline = readBaseline({ root: REPO });
+    reading = checkCodeDuplication({ baseline });
   } catch (error) {
     process.stdout.write(`code_duplication_blocked: ${String(error?.message ?? error)}\n`);
     process.stdout.write(`${reportLine({ status: "blocked", examined: 0 })}\n`);
@@ -739,6 +799,30 @@ function main(argv) {
   for (const group of reading.facade ?? []) lines.push(facadeLine(group));
   for (const entry of reading.tokenCountUnstable ?? []) lines.push(tokenCountLine(entry));
   for (const entry of reading.findings ?? []) lines.push(`  ${entry.detail}`);
+  if (recordingShrinks) {
+    const outcome = recordShrinks({ reading, baseline });
+    if (outcome.refused !== undefined) {
+      lines.push(outcome.refused);
+      process.stdout.write(`${lines.join("\n")}\n`);
+      process.stdout.write(`${reportLine(reading)}\n`);
+      process.exitCode = reading.counted === undefined ? 2 : 1;
+      return;
+    }
+    if (outcome.removed.length + outcome.lowered.length > 0)
+      fs.writeFileSync(path.join(REPO, BASELINE), serialiseBaseline(outcome.payload), "utf8");
+    lines.push(
+      `shrinks recorded: ${outcome.removed.length + outcome.lowered.length} · removed ${outcome.removed.length} · ` +
+        "nothing added",
+    );
+    if (outcome.after.newGroups + outcome.after.grown > 0)
+      lines.push(
+        `not recorded: new ${outcome.after.newGroups} · grown ${outcome.after.grown} - this operation may only ` +
+          "remove or lower an entry, so these stay findings for --write-baseline",
+      );
+    process.stdout.write(`${lines.join("\n")}\n`);
+    process.stdout.write(`${reportLine(outcome.after)}\n`);
+    return;
+  }
   if (writeBaseline) {
     if (reading.counted === undefined) {
       lines.push("baseline_write_refused: the reading is blocked, so there is no population to record");
@@ -747,7 +831,7 @@ function main(argv) {
       process.exitCode = 2;
       return;
     }
-    const creating = !fs.existsSync(path.join(REPO, BASELINE));
+    const creating = baseline === null;
     const refused = baselineWriteRefusal({ reading, creating });
     if (refused.length > 0) {
       lines.push(
