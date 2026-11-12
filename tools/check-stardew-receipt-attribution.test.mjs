@@ -1,3 +1,6 @@
+// red-proof: inject  `const measured = true;` replacing the measurement test in scanProductionSource ->
+//                    `✖ mutation: removing the measurement from a producer is blocked` (2 pass, 1 fail),
+//                    exit 1; the unmodified suite is green
 import assert from "node:assert/strict";
 import test from "node:test";
 import { checkStardewReceiptAttribution, validateReceiptAttribution } from "./check-stardew-receipt-attribution.mjs";

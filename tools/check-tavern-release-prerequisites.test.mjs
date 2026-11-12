@@ -1,3 +1,6 @@
+// red-proof: inject  `child.stderr !== "" ||` dropped from isExactWindowsReparseLiveGateSuccess ->
+//                    `✖ Tavern prerequisite checker fails closed for malformed, timed-out, stderr, and nonzero
+//                    live-gate results`, exit 1; the unmodified suite answers 9 passing
 import assert from "node:assert/strict";
 import test from "node:test";
 import {

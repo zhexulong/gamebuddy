@@ -1,3 +1,7 @@
+// red-proof: inject  `sourceCluster(...)` replaced by the first path segment in the grouping key -> two locations of
+//                    one category and family collapse into one family and the suite answers
+//                    `✖ family register partitions every raw syntax match exactly once without action semantics`;
+//                    the unmodified suite answers 1 passing
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import test from "node:test";

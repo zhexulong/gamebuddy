@@ -1,3 +1,6 @@
+// red-proof: inject  `if (forbidden.has(key))` guarded false in validateNativeVirtualReceiverRegister -> a register
+//                    carrying `primitiveId` is accepted and the suite answers `✖ forbids primitive or action
+//                    vocabulary` (3 pass, 1 fail); the unmodified suite answers 4 passing
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import test from "node:test";

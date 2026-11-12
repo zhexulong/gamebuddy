@@ -1,5 +1,9 @@
 #!/usr/bin/env node
 /**
+ * red-proof: inject  `player.health,` deleted from the field list of CreateBridgeSnapshot ->
+ *                    `publication_missing: health is marked observable but player.health is not in public
+ *                    BridgeSnapshot CreateBridgeSnapshot's body`, exit 1; unmodified prints `state_coverage: clean`
+ *
  * State-coverage gate: the states the ENGINE changes under the Mod's feet, and whether the
  * companion can see them.
  *

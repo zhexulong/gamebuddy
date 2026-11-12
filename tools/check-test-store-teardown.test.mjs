@@ -1,3 +1,6 @@
+// red-proof: inject  the assert.throws range filter replaced by `(offset) => true` in openingLines ->
+//                    `✖ does not count a construction whose throw is the assertion` (12 pass, 3 fail),
+//                    exit 1; the unmodified suite is green
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";

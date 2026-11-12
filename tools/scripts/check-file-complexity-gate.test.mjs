@@ -4,6 +4,9 @@
  * 这个门禁只有在两件事上都试红过才值得存在：一是"文件本来就大"和"你让它变大"分得清，二是它的样本来自扫描 -
  * 一个基准清单从没听说过的文件也必须被量到。纯判定用例覆盖分类本身，fixture 用例跑真实脚本确认失败码与退出码。
  */
+// red-proof: inject  `lines > ceiling` widened to `lines >= ceiling` in verdict -> a file exactly at its
+//                    extension's ceiling is reported over it and the suite answers `✖ verdict.2:` (11 pass,
+//                    1 fail), exit 1; the unmodified suite answers 12 passing
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";

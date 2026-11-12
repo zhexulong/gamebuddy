@@ -1,3 +1,6 @@
+// red-proof: inject  `if (FORBIDDEN.has(key))` guarded false in noProductTerms -> a universe carrying a forbidden
+//                    field is accepted and the suite answers `✖ forbids product vocabulary and non-neutral family
+//                    identities` (3 pass, 1 fail); the unmodified suite answers 4 passing
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import test from "node:test";

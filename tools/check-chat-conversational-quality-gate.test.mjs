@@ -1,3 +1,6 @@
+// red-proof: inject  `currentSha !== baselineSha` inverted to `===` in evaluatePrefixBitStability ->
+//                    `✖ Prefix Bit-Stability: passes when M0 is 100% byte-for-byte identical across all turns`
+//                    (19 pass, 4 fail), exit 1; the unmodified suite answers 23 passing
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";

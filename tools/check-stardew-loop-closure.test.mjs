@@ -1,5 +1,9 @@
 #!/usr/bin/env node
 /**
+ * red-proof: inject  the `hops.length === 0` throw in parseAnchor replaced by a Game1.cs:1 fallback hop ->
+ *                    `✖ an anchor with no File.cs:line hop is reported, not skipped` (7 pass, 1 fail),
+ *                    exit 1; the unmodified suite answers 8 passing against the decompile root
+ *
  * Tests for the loop-closure feasibility gate.
  *
  * The gate answers one question per candidate primitive: CAN this action close a

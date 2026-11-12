@@ -1,4 +1,8 @@
 /**
+ * red-proof: inject  a `number`-typed const assigned a string literal added under host/src/ and committed ->
+ *                    `head_typecheck_failed rev=659620fcd8bb errors=1` and `error TS2322: Type 'string' is not
+ *                    assignable to type 'number'`, exit 1; the same tree without the line answers `head_typecheck_ok`
+ *
  * Typecheck HEAD itself, not the working tree.
  *
  * A whole class of defect survives review in this repository: one lane commits half of a change,

@@ -1,6 +1,10 @@
 #!/usr/bin/env node
 // Stardew native-local runner contract audit.
 //
+// red-proof: inject  `const ACTION_POLICY_VERSION = config.ActionPolicyVersion;` added to the advance-day runner ->
+//                    `[conforming_regression] advance-day: retired-policy-shape — this runner conformed at baseline`,
+//                    `contract: 1 finding(s)`, exit 1; the unmodified tree prints `contract: ok`, exit 0
+//
 // The fixture writes a deny-by-exception policy (`DeniedActions` /
 // `ExperimentalActions`), so the live capability surface is the whole derived
 // published base rather than the one action under test. Two runner habits are

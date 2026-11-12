@@ -1,3 +1,6 @@
+// red-proof: inject  `const ownedPredicate = true;` replacing the goal test in inspectSource ->
+//                    `✖ mutation: handing the coordinate goal to the native pathfinder is rejected`
+//                    (3 pass, 1 fail), exit 1; the unmodified suite answers 4 passing
 import assert from "node:assert/strict";
 import test from "node:test";
 import { checkStardewNativePathfinderSource } from "./check-stardew-native-pathfinder-source.mjs";

@@ -1,3 +1,7 @@
+// red-proof: inject  the `if (!loadOk)` failure push deleted from the gate -> the negative fixture generation loads
+//                    with verdict `passed` and the suite answers `✖ negative: transitive module broken in the
+//                    loaded closure`; the unmodified pair runs 8 tests green
+//
 // Tests for tools/check-production-pack-load.mjs.
 //
 // The borrowed packed-install pattern (from magic-context-airp's

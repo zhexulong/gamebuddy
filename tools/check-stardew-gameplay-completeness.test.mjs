@@ -1,3 +1,6 @@
+// red-proof: inject  `if (bridgeEquivalenceGaps.length)` guarded to `if (0)` in the gate ->
+//                    `✖ source-derived bridge equivalence gaps fail the completeness gate` (9 pass, 1 fail),
+//                    exit 1; the unmodified pair answers 10 passing
 import assert from "node:assert/strict";
 import test from "node:test";
 import { validateDirectGameplaySurfaceReport } from "./check-stardew-gameplay-completeness.mjs";
