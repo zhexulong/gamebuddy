@@ -136,7 +136,7 @@ public sealed class FarmhandForEachReentryTests
         new("worked", FarmhandForEachComparison.Eq, new[] { FarmhandForEachValue.Of(false) });
 
     private static FarmhandForEachSource Area(int x, int y, int w, int h) =>
-        new(FarmhandForEachSource.AreaKind, x, y, w, h);
+        new(x, y, w, h);
 
     /// <summary>
     /// The farm as the pass reads it, and the world's own answer about working one row.

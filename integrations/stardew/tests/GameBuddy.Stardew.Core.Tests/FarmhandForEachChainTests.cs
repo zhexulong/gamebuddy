@@ -39,7 +39,7 @@ namespace GameBuddy.Stardew.Core.Tests;
 public sealed class FarmhandForEachChainTests
 {
     private static FarmhandForEachSource Strip(int x, int y, int width) =>
-        new(FarmhandForEachSource.AreaKind, x, y, width, 1);
+        new(x, y, width, 1);
 
     private static FarmhandForEachEffect Chain(params string[] actionIds) =>
         new(actionIds.Select(actionId => new FarmhandForEachStep(actionId)).ToArray());

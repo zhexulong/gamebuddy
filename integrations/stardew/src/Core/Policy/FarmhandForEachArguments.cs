@@ -73,6 +73,19 @@ public static class FarmhandForEachArguments
     /// </summary>
     public const string WhereUnrecognised = "for_each_where_unrecognised";
 
+    /// <summary>
+    /// The word every "this form has no such row source" refusal answers with.
+    ///
+    /// ONE WORD ON BOTH SIDES of the boundary: the compiler refuses the same declaration before submission
+    /// (<c>host/src/body-program-for-each.ts</c> <c>FOR_EACH_SOURCE_UNRECOGNISED</c>) and this reader refuses it on the game
+    /// thread, so a caller is never taught a code and then answered with another. The refusal is
+    /// <c>&lt;SourceUnrecognised&gt;:&lt;given&gt;;allowed=&lt;a&gt;</c>, generated from <see cref="FarmhandForEachSource.Kinds"/>.
+    ///
+    /// IT REPLACES <c>for_each_source_unavailable:&lt;kind&gt;</c>, which named a source the caller HAD written and said
+    /// nothing about what to write instead - for a document the Host's compiler and the wire had already accepted.
+    /// </summary>
+    public const string SourceUnrecognised = "for_each_source_unrecognised";
+
     private const string LoopFault = "for_each_invalid:loop";
 
     private const string SourceFault = "for_each_invalid:source";
@@ -231,29 +244,20 @@ public static class FarmhandForEachArguments
         source = null;
         reasonCode = SourceFault;
         if (!root.TryGetProperty("source", out JsonElement element) || element.ValueKind != JsonValueKind.Object) return false;
+        // A SOURCE WORD THIS FORM DOES NOT HAVE IS ANSWERED WITH THE WORDS IT DOES HAVE, read from the model's own list:
+        // `{ "family": ... }` is a caller that named a source, not one whose document is structurally broken.
         string? kind = null;
         foreach (JsonProperty property in element.EnumerateObject())
         {
-            if (property.Name is not (FarmhandForEachSource.AreaKind or FarmhandForEachSource.FamilyKind or FarmhandForEachSource.QueryKind))
-            {
-                reasonCode = $"for_each_unknown_key:{property.Name}";
-                return false;
-            }
+            if (Array.IndexOf(FarmhandForEachSource.Kinds, property.Name) < 0)
+                return UnrecognisedSource(property.Name, out reasonCode);
             // Exactly one source: two spellings of where the rows come from is a plan nobody wrote.
             if (kind is not null) return false;
             kind = property.Name;
         }
-        // THE TWO SOURCES WHOSE ROW SOURCING DOES NOT EXIST YET ARE REFUSED BY NAME. Narrowing them into the rectangle
-        // the caller did not write would answer "every dry crop" with "the tiles in some box", which is the measured
-        // defect this form exists to remove.
-        if (kind is FarmhandForEachSource.FamilyKind or FarmhandForEachSource.QueryKind)
-        {
-            reasonCode = $"for_each_source_unavailable:{kind}";
-            return false;
-        }
-        if (kind is not FarmhandForEachSource.AreaKind) return false;
+        if (kind is null) return UnrecognisedSource("empty", out reasonCode);
 
-        JsonElement area = element.GetProperty(FarmhandForEachSource.AreaKind);
+        JsonElement area = element.GetProperty(kind);
         if (area.ValueKind != JsonValueKind.Object) return false;
         int? x = null;
         int? y = null;
@@ -274,7 +278,7 @@ public static class FarmhandForEachArguments
             }
         }
         if (x is null || y is null || width is null || height is null) return false;
-        var candidate = new FarmhandForEachSource(FarmhandForEachSource.AreaKind, x.Value, y.Value, width.Value, height.Value);
+        var candidate = new FarmhandForEachSource(x.Value, y.Value, width.Value, height.Value);
         if (!candidate.IsValid) return false;
         source = candidate;
         reasonCode = "accepted";
@@ -425,6 +429,19 @@ public static class FarmhandForEachArguments
     private static bool Unrecognised(string given, IReadOnlyList<string> allowed, out string reasonCode)
     {
         reasonCode = string.Create(CultureInfo.InvariantCulture, $"{WhereUnrecognised}:{given};allowed={string.Join(",", allowed)}");
+        return false;
+    }
+
+    /// <summary>
+    /// The refusal for a source word this form does not have, in the same shape as <see cref="Unrecognised"/>.
+    ///
+    /// The word it replaces named a source the caller HAD written and told it nothing about what to write: `family` and
+    /// `query` validated on the Host and died here as <c>for_each_source_unavailable:family</c>. This one names the word
+    /// written AND the words that may be written instead, from <see cref="FarmhandForEachSource.Kinds"/>.
+    /// </summary>
+    private static bool UnrecognisedSource(string given, out string reasonCode)
+    {
+        reasonCode = string.Create(CultureInfo.InvariantCulture, $"{SourceUnrecognised}:{given};allowed={string.Join(",", FarmhandForEachSource.Kinds)}");
         return false;
     }
 

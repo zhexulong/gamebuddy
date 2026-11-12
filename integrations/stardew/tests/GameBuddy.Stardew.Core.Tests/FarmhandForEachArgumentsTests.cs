@@ -14,11 +14,11 @@ namespace GameBuddy.Stardew.Core.Tests;
 /// WHY THE MOD PARSES THIS ITSELF. The Host's compiler already writes the loop document, but a program node can also be
 /// authored directly through `stardew_submit_action_program`, so the document a `for_each` node carries is untrusted input
 /// by the time it reaches the game thread. A reader that only handled the compiler's own output would refuse nothing and
-/// execute anything — including the two sources whose row sourcing does not exist yet, which is why those are refused BY
-/// NAME here rather than silently narrowed into an area.
+/// execute anything - and a source word the form does not have is refused BY NAME with the words it DOES have, rather than
+/// silently narrowed into an area.
 /// </para>
 /// <para>
-/// EVERY BOUND AND EVERY SPELLING COMES FROM THE MODEL, never from this file: `FarmhandForEachSource.AreaKind`,
+/// EVERY BOUND AND EVERY SPELLING COMES FROM THE MODEL, never from this file: `FarmhandForEachSource.Kinds`,
 /// `FarmhandForEachStride.EveryOperator`, `FarmhandForEachStep.ByKindAction`, `FarmhandForEachLoop.MaximumRules`,
 /// `FarmhandForEachRule.MaximumPredicates`, `FarmhandForEachPredicate.MaximumValues`,
 /// `FarmhandForEachStep.MaximumArguments` and `FarmhandForEachEffect.MaximumSteps`. The bare numbers in this file's
@@ -58,8 +58,7 @@ public sealed class FarmhandForEachArgumentsTests
             .BeTrue(reasonCode);
 
         loop.Should().NotBeNull();
-        loop!.Source.Kind.Should().Be(FarmhandForEachSource.AreaKind);
-        loop.Source.X.Should().Be(60);
+        loop!.Source.X.Should().Be(60);
         loop.Source.Y.Should().Be(18);
         loop.Source.Width.Should().Be(20);
         loop.Source.Height.Should().Be(3);
@@ -122,14 +121,19 @@ public sealed class FarmhandForEachArgumentsTests
     }
 
     /// <summary>
-    /// THE TWO SOURCES WHOSE ROW SOURCING DOES NOT EXIST. Refused by name, never narrowed into the rectangle the caller
-    /// did not write: a loop quietly re-read as "the tiles I can see" is the measured defect this form exists to remove.
+    /// A SOURCE WORD THIS FORM DOES NOT HAVE IS ANSWERED WITH THE WORDS IT DOES HAVE.
+    ///
+    /// The two sources whose row sourcing was never written - `family` and `query` - were accepted by the Host's grammar
+    /// and refused HERE as `for_each_source_unavailable:<kind>`, a code naming a source the caller had written and
+    /// offering nothing to write instead. Both are gone from the grammar on both sides now, and the word a caller gets for
+    /// either is generated from <see cref="FarmhandForEachSource.Kinds"/>.
     /// </summary>
     [Theory]
-    [InlineData("{\"source\":{\"family\":\"cropTargets\"},\"do\":{\"action\":\"harvest_crop\"}}", "for_each_source_unavailable:family")]
-    [InlineData("{\"source\":{\"query\":{\"subject\":\"trees\"}},\"do\":{\"action\":\"chop_tree\"}}", "for_each_source_unavailable:query")]
-    public void AFamilyOrQuerySourceIsRefusedByName(string document, string expectedReasonCode) =>
-        Refused(document, expectedReasonCode);
+    [InlineData("{\"source\":{\"family\":\"cropTargets\"},\"do\":{\"action\":\"harvest_crop\"}}", "family")]
+    [InlineData("{\"source\":{\"query\":{\"subject\":\"trees\"}},\"do\":{\"action\":\"chop_tree\"}}", "query")]
+    [InlineData("{\"source\":{},\"do\":{\"action\":\"chop_tree\"}}", "empty")]
+    public void AnUnknownSourceWordIsRefusedWithTheWordsThatMayBeWritten(string document, string given) =>
+        Refused(document, $"for_each_source_unrecognised:{given};allowed={string.Join(",", FarmhandForEachSource.Kinds)}");
 
     /// <summary>A field the Mod would silently ignore is refused instead, so nothing can be smuggled past it.</summary>
     [Fact]

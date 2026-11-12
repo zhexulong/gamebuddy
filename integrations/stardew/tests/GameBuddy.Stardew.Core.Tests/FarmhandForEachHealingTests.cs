@@ -33,7 +33,7 @@ public sealed class FarmhandForEachHealingTests
         FarmhandForEachHealing.HealedToken(occupant, clearingAction);
 
     private static FarmhandForEachSource Strip(int x, int y, int width) =>
-        new(FarmhandForEachSource.AreaKind, x, y, width, 1);
+        new(x, y, width, 1);
 
     /// <summary>
     /// THE RED PROOF: a six-tile strip whose third tile carries a weed, requested `till_soil`.

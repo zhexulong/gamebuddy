@@ -169,7 +169,7 @@ public sealed class FarmhandForEachExpansionTests
         };
 
     private static FarmhandForEachSource Rect(int x, int y, int w, int h) =>
-        new(FarmhandForEachSource.AreaKind, x, y, w, h);
+        new(x, y, w, h);
 
     /// <summary>One live tile row, with the occupant the farm world publishes for it in the `Clears` vocabulary.</summary>
     private static FarmhandForEachRow Occupied(int x, int y, int localColumn, string occupant) =>

@@ -6,9 +6,9 @@ namespace GameBuddy.Stardew.Core.Policy;
 /// <summary>
 /// One scalar a live world row can be tested on.
 ///
-/// A row is what the `for_each` plan form loops over: a rectangle's tile, a published target family's entry, or a query
-/// result. Their fields disagree about type - `health` is a number, `readyForHarvest` a flag, `kind` a word - so the
-/// predicate has to compare typed values rather than strings, and this is that type.
+/// A row is what the `for_each` plan form loops over: one live map tile inside the loop's rectangle. The fields disagree
+/// about type - `health` is a number, `readyForHarvest` a flag, `kind` a word - so the predicate has to compare typed
+/// values rather than strings, and this is that type.
 /// </summary>
 public sealed record FarmhandForEachValue(string? Text = null, double? Number = null, bool? Flag = null)
 {
@@ -143,28 +143,35 @@ public sealed record FarmhandForEachPredicate(
 }
 
 /// <summary>
-/// Where a `for_each` loop reads its rows from.
+/// Where a `for_each` loop reads its rows from: a rectangle of live map tiles, and nothing else.
 ///
-/// Three sources, ONE loop semantic. An area is a rectangle of live map tiles, a family is one of the snapshot arrays the
-/// Mod already publishes, and a query is a subject the Mod classifies for itself. The area is a SOURCE and not a
-/// privileged form: "every dry crop on the farm" is a family source, "every tree with health left" is a family source
-/// with a field predicate, and neither of them is a rectangle.
+/// <para>
+/// ONE SOURCE, DECLARED IN <see cref="Kinds"/>. The form used to name three - an area, a published target family and a
+/// query subject - and the enumerator walked one: <c>FarmhandForEachArguments.TryReadSource</c> answered the other two with
+/// <c>for_each_source_unavailable:&lt;kind&gt;</c>, so a caller could write a loop the Host's compiler accepted, the
+/// preflight passed, and the game thread then refused for a source this Mod does not have. A family or query source would
+/// be a SECOND enumeration - its own scan, its own answer for what a row's local column and row mean when the rows are not
+/// a rectangle, and its own answer for a family whose rows are not tiles - so it is withdrawn rather than advertised.
+/// </para>
+/// <para>
+/// "EVERY DRY CROP IN THIS PATCH" IS NOT A LOST SPELLING: it is the field test on an area's rows
+/// (<c>{ field: "kind", eq: "crop" }</c>), which this form already reads live.
+/// </para>
 /// </summary>
-public sealed record FarmhandForEachSource(
-    string Kind,
-    int X = 0,
-    int Y = 0,
-    int Width = 0,
-    int Height = 0,
-    string? Family = null,
-    string? Subject = null,
-    string? Only = null)
+public sealed record FarmhandForEachSource(int X = 0, int Y = 0, int Width = 0, int Height = 0)
 {
+    /// <summary>The wire word of the one source kind: a rectangle of live map tiles.</summary>
     public const string AreaKind = "area";
 
-    public const string FamilyKind = "family";
-
-    public const string QueryKind = "query";
+    /// <summary>
+    /// The source kinds this reader accepts, declared ONCE.
+    ///
+    /// <see cref="FarmhandForEachArguments.TryReadSource"/> reads what this names and answers any other word with this
+    /// list, so a kind cannot be accepted in one place and missing from the other. The Host's `PLAN_FOR_EACH_SOURCES` is
+    /// asserted equal to this array by `body-program-for-each.test.ts`, which is what keeps the grammar and this reader
+    /// from drifting apart again - measured 2026-11-13, the grammar accepted three kinds and this reader one.
+    /// </summary>
+    public static readonly string[] Kinds = { AreaKind };
 
     /// <summary>
     /// How many rows one loop may address.
@@ -177,14 +184,8 @@ public sealed record FarmhandForEachSource(
 
     public int AreaRowCount => this.Width > 0 && this.Height > 0 ? checked(this.Width * this.Height) : 0;
 
-    public bool IsValid => this.Kind switch
-    {
-        AreaKind => this.X >= 0 && this.Y >= 0 && this.Width >= 1 && this.Height >= 1
-            && this.AreaRowCount is >= 1 and <= MaximumRows,
-        FamilyKind => this.Family is { Length: >= 1 and <= 64 },
-        QueryKind => this.Subject is { Length: >= 1 and <= 64 },
-        _ => false,
-    };
+    public bool IsValid => this.X >= 0 && this.Y >= 0 && this.Width >= 1 && this.Height >= 1
+        && this.AreaRowCount is >= 1 and <= MaximumRows;
 }
 
 /// <summary>One step of a row's chain: a published action with its own arguments.</summary>
@@ -435,16 +436,12 @@ public static class FarmhandForEachRules
     /// WHAT THE ORDER CANNOT MOVE. Each row keeps its own <c>LocalColumn</c>/<c>LocalRow</c>, which is what a position
     /// guard tests and what a row's dispatch identity is minted from; the tile set, the per-row decision and every reason
     /// code are the same in either order; and the answer's table is sorted by position before it is written
-    /// (<c>RouteReenteringBodyProgramExecutor.Aggregate</c>), so no caller reads the walk. The family and query sources are
-    /// untouched, and not because their order is semantic: the Mod's own wire reader refuses both by name
-    /// (<c>for_each_source_unavailable:&lt;kind&gt;</c>, <c>FarmhandForEachArguments.TryReadSource</c>), so the area is
-    /// the only source whose rows exist and the only walk there is to change.
+    /// (<c>RouteReenteringBodyProgramExecutor.Aggregate</c>), so no caller reads the walk.
     /// </para>
     /// </summary>
     public static IEnumerable<(int X, int Y, int LocalColumn, int LocalRow)> AreaRows(FarmhandForEachSource source)
     {
         ArgumentNullException.ThrowIfNull(source);
-        if (source.Kind != FarmhandForEachSource.AreaKind) yield break;
         for (int localRow = 0; localRow < source.Height; localRow++)
         for (int step = 0; step < source.Width; step++)
         {

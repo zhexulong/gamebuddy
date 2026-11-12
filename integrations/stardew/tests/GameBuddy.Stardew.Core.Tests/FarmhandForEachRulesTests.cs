@@ -8,15 +8,14 @@ using Xunit;
 namespace GameBuddy.Stardew.Core.Tests;
 
 /// <summary>
-/// The `for_each` loop authority: one loop semantic over any collection of live world rows, with a predicate and a
-/// dispatch.
+/// The `for_each` loop authority: one loop semantic over the live rows of one rectangle, with a predicate and a dispatch.
 ///
-/// WHY THE AREA IS NOT PRIVILEGED. The measured defect was a 3x20 "clear and plant" task that ran for 54 plan batches and
+/// WHY THE LOOP FORM EXISTS. The measured defect was a 3x20 "clear and plant" task that ran for 54 plan batches and
 /// produced `till_soil` on 22 distinct tiles inside a 10x8 box, `plant_seed` on 13 tiles inside 18x5, and no `water_crop`
-/// at all - because every plan node named one published target and published targets are bounded to Chebyshev 6. A
-/// rectangle is one way to ask for many rows; "every dry crop on the farm" and "every tree with health left" are others,
-/// and they are the shapes a caller reaches for when the thing it wants is not a rectangle. So the source is a SOURCE,
-/// and the predicate and the dispatch are the same for all of them.
+/// at all - because every plan node named one published target and published targets are bounded to Chebyshev 6. One
+/// loop over one rectangle is how a caller asks for a patch rather than for the tiles it happens to see; WHICH of those
+/// rows are its business is the predicate's question, so "every dry crop in this patch" is a field test on the same rows
+/// rather than a second source.
 ///
 /// WHY POSITION GUARDS EXIST AT ALL. Trellis crops (green bean, hops, grape) grow into impassable tiles, so a real farm
 /// leaves a walkable column between trellis columns and plants a filler crop between trellis rows - hops with coffee is a
@@ -47,7 +46,7 @@ public sealed class FarmhandForEachRulesTests
     }
 
     private static FarmhandForEachSource Rect(int x, int y, int w, int h) =>
-        new(FarmhandForEachSource.AreaKind, x, y, w, h);
+        new(x, y, w, h);
 
     /// <summary>Every tile of a rectangle, written as the rectangle and not as a second copy of the walk's order.</summary>
     private static IEnumerable<(int X, int Y)> EveryTile(int x, int y, int w, int h) =>
@@ -65,38 +64,12 @@ public sealed class FarmhandForEachRulesTests
     private static int Walked(IReadOnlyList<(int X, int Y, int LocalColumn, int LocalRow)> rows) =>
         rows.Zip(rows.Skip(1), (from, to) => Math.Abs(to.X - from.X) + Math.Abs(to.Y - from.Y)).Sum();
 
+    /// <summary>A field predicate selects rows inside the source, and the caller names no target id to do it.</summary>
     [Fact]
-    public void TheSameRuleSetHasTheSameMeaningOverAOneByOneAreaAndOverAFamily()
-    {
-        var predicate = Field("kind", FarmhandForEachComparison.In, "weed");
-        var effect = new FarmhandForEachEffect(new FarmhandForEachStep("cut_weeds"));
-        var overArea = new FarmhandForEachLoop(Rect(60, 18, 1, 1), new[] { predicate }, effect);
-        var overFamily = new FarmhandForEachLoop(
-            new FarmhandForEachSource(FarmhandForEachSource.FamilyKind, Family: "weedTargets"),
-            new[] { predicate },
-            effect);
-
-        overArea.IsValid.Should().BeTrue();
-        overFamily.IsValid.Should().BeTrue();
-
-        FarmhandForEachRowDecision fromArea = FarmhandForEachRules.Decide(overArea, 60, 18, 0, 0, Row("weed"));
-        FarmhandForEachRowDecision fromFamily = FarmhandForEachRules.Decide(overFamily, 60, 18, 0, 0, Row("weed"));
-
-        fromArea.Outcome.Should().Be(FarmhandForEachRowOutcome.Dispatched);
-        fromFamily.Outcome.Should().Be(fromArea.Outcome);
-        fromFamily.Effect!.Steps[0].Action.Should().Be(fromArea.Effect!.Steps[0].Action, "the source chooses the rows, never the dispatch");
-        fromArea.X.Should().Be(60);
-        fromFamily.X.Should().Be(60);
-    }
-
-    /// <summary>
-    /// A family source with a FIELD predicate: the caller never enumerates ids, and the loop never learns them either.
-    /// </summary>
-    [Fact]
-    public void AFamilySourceSelectsByFieldAndTheCallerNamesNoTarget()
+    public void ASourceSelectsByFieldAndTheCallerNamesNoTarget()
     {
         var loop = new FarmhandForEachLoop(
-            new FarmhandForEachSource(FarmhandForEachSource.FamilyKind, Family: "cropTargets"),
+            Rect(12, 4, 2, 1),
             new[] { Field("readyForHarvest", FarmhandForEachComparison.Eq, "true") },
             new FarmhandForEachEffect(new FarmhandForEachStep("harvest_crop")));
         loop.IsValid.Should().BeTrue();
@@ -243,8 +216,8 @@ public sealed class FarmhandForEachRulesTests
         Rect(0, 0, 8, 8).IsValid.Should().BeTrue("8x8 is exactly the bound");
         Rect(0, 0, 20, 20).IsValid.Should().BeFalse("400 rows is over the bound");
         Rect(0, 0, 0, 3).IsValid.Should().BeFalse("an empty extent addresses no row");
-        new FarmhandForEachSource("nonsense").IsValid.Should().BeFalse();
-        new FarmhandForEachSource(FarmhandForEachSource.QueryKind, Subject: "crops", Only: "dry").IsValid.Should().BeTrue();
+        FarmhandForEachSource.Kinds.Should().ContainSingle(
+            "one source is what the row enumerator walks; a second kind here would be a source a caller could write and nothing could expand, which is the drift the Host's `PLAN_FOR_EACH_SOURCES` is asserted equal to this array for");
     }
 
     /// <summary>A stride that can never claim an index is refused: a dead guard looks exactly like a forgotten row.</summary>
@@ -263,7 +236,7 @@ public sealed class FarmhandForEachRulesTests
     public void AnOrderedComparisonOverANonNumericFieldDoesNotMatch()
     {
         var loop = new FarmhandForEachLoop(
-            new FarmhandForEachSource(FarmhandForEachSource.FamilyKind, Family: "treeChopSourceTargets"),
+            Rect(3, 4, 1, 1),
             new[] { Number("health", FarmhandForEachComparison.Gt, 0) },
             new FarmhandForEachEffect(new FarmhandForEachStep("chop_tree")));
 
