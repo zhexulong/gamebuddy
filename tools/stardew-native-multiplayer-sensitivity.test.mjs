@@ -11,6 +11,10 @@ import {
   validateMultiplayerSensitivityRegister,
 } from "./lib/stardew-native-multiplayer-sensitivity.mjs";
 
+// red-proof: history  the `use_mine_ladder` register row that shipped claiming its native MineShaft seam
+//   mp-insensitive with a mode-neutral reason -> `✖ the committed register derives cleanly against the exact
+//   decompiled source`, code `mp_sensitivity_classification_drift`, exit 1
+
 // The committed register is only verifiable against the exact decompiled game
 // source. That tree is gitignored (`/ref/`), so a checkout does not create it;
 // skip that one test with a named reason instead of failing on a missing

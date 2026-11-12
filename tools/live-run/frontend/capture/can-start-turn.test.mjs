@@ -12,6 +12,10 @@
 // the no-model banner. Both are projections of one `ChatSendGate` value (`chat-ui-state.ts`), so the
 // test decomposes that union and proves the two projections cover every refusing member. A term the
 // driver does not read fails here instead of letting the gate go quietly permissive.
+//
+// red-proof: inject  `|| uiState.streaming` added to the send button's `disabled` terms in Composer.tsx ->
+//   `✖ the gate reads the composer's two Host-owned refusals, and the send button's terms are exactly those plus an
+//   empty field`, naming that term as a refusal the driver cannot see, exit 1
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";

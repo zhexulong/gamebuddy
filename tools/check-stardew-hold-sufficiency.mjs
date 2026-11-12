@@ -32,6 +32,10 @@
  *
  * WHAT IT REFUSES TO REPORT GREEN OVER: `examined: 0`. A search that scanned no file has not shown anything, so the
  * report says `blocked` and the exit code says so too.
+ *
+ * red-proof: inject  one `environmentReads` entry removed from the contract, so a hold loses the read that
+ *   establishes it -> report status failed with `residual_adjudicated` (18 orphans against 16 adjudicated rows) and
+ *   `adjudication_named` naming a `namedBy` that is not a declared fact, exit 1
  */
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join, relative } from "node:path";

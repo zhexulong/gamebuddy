@@ -425,6 +425,8 @@
     "refresh:dependency-advisories": "node tools/refresh-dependency-advisories.mjs"
   },
   "gateRedProofs": {
+    "check:dialogue-web-boundaries": "external depcruise --config .dependency-cruiser.dialogue-web.cjs dialogue-web/src — a residual module importing a surface is `error no-module-to-surface` naming that module and the surface it reaches, exit 1",
+    "check:host-module-graph": "external depcruise --config .dependency-cruiser.host-production.cjs host/src/main.ts host/src/stardew-attachment.ts host/src/farmhand-companion-preview.ts host/src/composition/desktop-host-composition.ts — a production module importing test-support is `error no-test-fixtures-in-production` naming both files, exit 1",
     "check:knip": "external pnpm knip && pnpm knip:production — an unused export in a workspace file makes knip name it under `Unused exports` and exit 1",
     "check:tools-boundaries": "external depcruise --config .dependency-cruiser.tools.cjs tools — a new tools/lib/*.mjs importing host/src/main.ts is `error tools-must-not-import-host-production-sources` naming that file, exit 39",
     "test:dialogue-web": "external pnpm --filter @gamebuddy/dialogue-web test:static — a hard-coded prose aria-label in a component is `✖ raw-text.2`, exit 1",

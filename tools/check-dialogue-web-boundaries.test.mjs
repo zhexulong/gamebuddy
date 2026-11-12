@@ -13,6 +13,10 @@
  * contract is named as claimed by two zones; deleting both chat declarations stops the run
  * with "no module declares a chat wire contract"; and the fixture below loses the cycle
  * injection and names the rule it could no longer fire.
+ *
+ * red-proof: inject  `import "./components/ChatSurface"` added to game-lifecycle-controls.ts ->
+ *   `✖ current cross-surface drift is exactly the documented ledger`, found `no-module-to-surface`
+ *   naming game-lifecycle-controls.ts and components/ChatSurface.tsx, exit 1
  */
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";

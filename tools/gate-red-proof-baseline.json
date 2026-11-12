@@ -3,24 +3,13 @@
   "note": "Gates measured with no red proof at this commit. A record of debt, not an acceptance of it: delete an entry by adding its proof, never by recording more gates.",
   "gates": [
     "audit:stardew-action-seam-terminals",
-    "check:architecture",
     "check:code-duplication",
-    "check:dialogue-web-boundaries",
-    "check:host-module-graph",
     "check:live-run-isolation",
-    "check:publint",
     "check:sandbox-acceptance",
-    "check:stardew-native-multiplayer-sensitivity",
-    "test:dialogue-web-boundaries",
     "test:format-ratchet",
-    "test:frontend-turn-gate",
-    "test:gameplay-capability-catalog",
     "test:sandbox-configs",
     "test:stardew-fixture-scenario-wiring",
-    "test:stardew-native-multiplayer-sensitivity",
     "test:stardew-soil-itm-canary",
-    "test:voice-protocol",
-    "tools/check-stardew-actor-admissibility.mjs",
-    "tools/check-stardew-hold-sufficiency.mjs"
+    "test:voice-protocol"
   ]
 }

@@ -16,6 +16,10 @@
  *
  * Without --report mismatches fail (exit 1). With --report they are listed and
  * the command still fails, so the gate cannot be used to silently pass.
+ *
+ * red-proof: history  the `use_mine_ladder` register row that shipped claiming its native MineShaft seam
+ *   mp-insensitive -> `mp_sensitivity_classification_drift: use_mine_ladder declares StardewValley.Locations/MineShaft.cs
+ *   mp-insensitive but the exact source reads the decisive token(s) IsLocalPlayer.`, exit 2
  */
 import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";

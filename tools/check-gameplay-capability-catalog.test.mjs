@@ -1,3 +1,6 @@
+// red-proof: inject  one published primitive action with no catalog row pushed into the generated action-surface
+//   artefact -> `✖ catalog seed covers every published registry action without claiming completeness` and
+//   `Published registry actions missing covered catalog rows: probe_uncovered_action.`, exit 1
 import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";

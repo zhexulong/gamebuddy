@@ -33,6 +33,10 @@
  * is no algebra to decide and the run reports `blocked` (exit 2) naming the path, rather than passing over nothing or
  * dying on an ENOENT that reads like a defect in this file. A run that examined nothing is `blocked` for the same
  * reason: `0 findings` means nothing without `examined N`.
+ *
+ * red-proof: inject  the Idle hold reason given a code the Mod never mints (`player_busy_probe`) ->
+ *   `FAIL  FACT-3 named`, report status failed at examined 15 with detail `Idle carries player_busy_probe; a body
+ *   that is not held must not carry a hold code`, exit 1
  */
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import {

@@ -1788,3 +1788,120 @@ derivation (`tools/lib/gate-population.mjs`, outside this unit's bounds), not to
 population earns. Two of the ten are red on this worktree for reasons older than the unit and outside it -
 `check:text-hygiene` (200 worktree line-ending violations) and `check:silent-failure` (2 undeclared sites, the first
 `host/src/companion-loop.ts:240:reportTurnDecision`) - and both now print how many objects produced those numbers.
+
+## The fifteenth batch: the eighteen owed rows, four verdicts, and the two the census could not place
+
+Measured against `2b8a81bb` — the revision every injection ran against, extracted with `git archive` to
+`E:/tmp/gateproof/b18` outside the repository, with `node_modules`, `host/node_modules`, `dialogue-web/node_modules`,
+`ref`, `vendor` and `design` junctioned in — and re-read on the worktree after the markers landed:
+
+```
+before  gates examined 357 · with a red proof 333 · external 4 · declared without 18 · undeclared 0 · zero-population-pass 0
+after   gates examined 357 · with a red proof 341 · external 7 · declared without  7 · undeclared 0 · zero-population-pass 0
+```
+
+Eleven of the eighteen left the debt set: eight carry a red proof now, two are `external` by label, and
+`check:architecture` is `external` by inheritance once its two unproven members were closed. Seven remain owed, and none
+is waiting on archaeology.
+
+### The verdicts for the eighteen
+
+| verdict | count | gates |
+| --- | --- | --- |
+| `provable-now` | 8 | `check:dialogue-web-boundaries`, `check:host-module-graph`, `test:frontend-turn-gate`, `test:gameplay-capability-catalog`, `check:stardew-native-multiplayer-sensitivity`, `test:stardew-native-multiplayer-sensitivity`, `tools/check-stardew-actor-admissibility.mjs`, `tools/check-stardew-hold-sufficiency.mjs` |
+| `already-proven` | 2 | `check:publint`, `test:dialogue-web-boundaries` |
+| `cannot-fire` | 5 | `audit:stardew-action-seam-terminals`, `check:live-run-isolation`, `check:sandbox-acceptance`, `test:stardew-soil-itm-canary`, `test:voice-protocol` |
+| `red at HEAD` | 2 | `test:sandbox-configs`, `test:stardew-fixture-scenario-wiring` |
+| `provable by derivation` | 1 | `check:architecture` |
+
+`8 + 2 + 5 + 2 + 1 = 18`. The fifth row is not a fifth kind of evidence: `check:architecture` is an aggregate whose rule
+is its members', and it left the debt set by inheritance rather than by a marker — recorded separately so the four
+verdicts keep their force. `test:dialogue-web-boundaries` is `already-proven` *and* its injection is the zone-drift one
+below; it is counted once, in the bucket that names the defect.
+
+### `already-proven`: the reader accepts one spelling, and the proof was written in another
+
+This is the bucket the ledger was asked to watch, and its mechanism is one function. `readRedProofMarkers` (`tools/audit-gate-red-proofs.mjs:149`)
+anchors only on a comment line matching `^red-proof:\s+<kind>\s`, and `classify` reads nothing else. Two owned files state
+their proofs in prose:
+
+| gate | the file | what it says today | what the reader saw |
+| --- | --- | --- | --- |
+| `check:publint` | `tools/check-publint.test.mjs:10-15` | "Measured red (inject): restoring the pre-fix tolerance branch …" and "Measured red (history): the default run on a machine with only npm's `bun` shims …" | no marker → the gate owes a proof |
+| `test:dialogue-web-boundaries` | `tools/check-dialogue-web-boundaries.test.mjs:10-15` | "The proofs behind it, each seen red on a copy of the tree outside the repository and green again once removed: …" | no marker → the gate owes a proof |
+
+Both claims are true on this tree and were re-derived before being re-spelled: the publint injection reproduces
+`'passed' !== 'failed'` and the zone injection reproduces `no-module-to-surface`. So the repair is the marker grammar,
+not a new proof — the fact existed the whole time in the file the gate owns, and only its spelling was wrong. A census
+that reports a written-down proof as owed is reading its own bookkeeping and calling it debt.
+
+**Two more of the same family, outside the eighteen, and they are the whole of the two-gate gap.** `check:code-duplication`
+carries five readable proofs and one marker whose kind reads `facades`; `test:format-ratchet` carries four and one claim
+naming `tools/legacy.mjs` and `tools/inflight.mjs`, files the suite plants in a temp copy and deliberately never commits.
+`assignStatus` puts `malformed` above everything and `pointer_missing` above `proven`, so both gates are reported as
+`unreadableClaims`, and `unreadableClaims` is **not a bucket on the census line** — which is why the line reads
+`341 + 7 + 7 = 355` of 357. The two unaccounted gates are exactly those two, they were unaccounted before this batch
+(`333 + 4 + 18 = 355`), and they are gates with proofs rather than gates without. Neither file is repaired here: both
+belong to lanes that own the ratchets, and the honest change is in the reader — a fourth bucket on the census line — not
+in a claim rewritten to satisfy a regex.
+
+### The proofs, each with the line that fired and the reading after the restore
+
+Every injection ran in the copy. Restored two ways for each: `git -C E:/tmp/gateproof/b18 hash-object <path>` equals
+`git -C <repo> rev-parse 2b8a81bb:<path>`, and `git status --porcelain -- <path>` is empty in the live worktree. No new
+`proven_but_nothing_runs` row appeared: the audit's `unexecutedProofs` list is the same 30 entries as before, so every
+pointer a marker names is a file a script or workflow runs.
+
+| gate | the violation | the line it printed | exit |
+| --- | --- | --- | --- |
+| `test:frontend-turn-gate` | `\|\| uiState.streaming` added to the send button's `disabled` in `Composer.tsx` | `✖ the gate reads the composer's two Host-owned refusals, and the send button's terms are exactly those plus an empty field` — "the send button refuses on sendRefused(uiState.send) \|\| !value.trim() \|\| uiState.streaming; … any other term is a refusal it cannot see" | 1 |
+| `check:publint` | the pre-fix tolerance branch restored (`blocked.length === 0 && activeGaps.length > 0`) | `✖ an unexplained non-zero exit is a failure, not a tolerated gap`, `'passed' !== 'failed'` | 1 |
+| `test:dialogue-web-boundaries` | `import "./components/ChatSurface"` added to `game-lifecycle-controls.ts` | `✖ current cross-surface drift is exactly the documented ledger`, `found: no-module-to-surface\|dialogue-web/src/game-lifecycle-controls.ts\|…ChatSurface.tsx` | 1 |
+| `check:dialogue-web-boundaries` | the same import, the cruiser itself | `error no-module-to-surface: dialogue-web/src/game-lifecycle-controls.ts → dialogue-web/src/components/ChatSurface.tsx`, `x 1 dependency violations` | 1 |
+| `check:host-module-graph` | `import "./test-support/canonical-test-root.test-support"` added to `host/src/main.ts` | `error no-test-fixtures-in-production: host/src/main.ts → host/src/test-support/canonical-test-root.test-support.ts`, `x 1 dependency violations` | 1 |
+| `test:gameplay-capability-catalog` | one published primitive action with no catalog row pushed into `action-surface.v1.json` | `✖ catalog seed covers every published registry action without claiming completeness`, `Published registry actions missing covered catalog rows: probe_uncovered_action.` | 1 |
+| `check:stardew-native-multiplayer-sensitivity` | `use_mine_ladder`'s native `MineShaft` seam declared `mp-insensitive` (the shipped row, replayed) | `mp_sensitivity_classification_drift: use_mine_ladder declares StardewValley.Locations/MineShaft.cs mp-insensitive but the exact source reads the decisive token(s) IsLocalPlayer.` | 2 |
+| `test:stardew-native-multiplayer-sensitivity` | the same register row | `✖ the committed register derives cleanly against the exact decompiled source`, `code: 'mp_sensitivity_classification_drift'` | 1 |
+| `tools/check-stardew-actor-admissibility.mjs` | the `Idle` hold reason given `player_busy_probe` | `FAIL  FACT-3 named`, status failed, `Idle carries player_busy_probe; a body that is not held must not carry a hold code` | 1 |
+| `tools/check-stardew-hold-sufficiency.mjs` | one `environmentReads` entry removed from the contract | status failed: `residual_adjudicated` (18 orphans against 16 rows) and `adjudication_named` naming a `namedBy` that is not a declared fact | 1 |
+
+Green after the restore, in the live worktree: `can-start-turn` 5/5, `check-publint.test` 11/11,
+`check-dialogue-web-boundaries.test` 4/4, `check-gameplay-capability-catalog.test` 6/6,
+`stardew-native-multiplayer-sensitivity.test` 18/18, the two `depcruise` configs `no dependency violations found`
+(238 and 80 modules), admissibility `examined 15` passed, hold sufficiency `examined 62` passed.
+
+Two of the ten are **history**, not injection: the `use_mine_ladder` row shipped and was repaired on this branch, and
+both mp-sensitivity gates were in the red-at-HEAD table of an earlier batch for exactly this finding. The register row
+was rebuilt from the shipped shape rather than invented, which is why the line it produced is the line the ledger
+already recorded, word for word.
+
+### `cannot-fire`: five rows, restated in today's terms
+
+| gate | why no input can turn it red | what would make it firable |
+| --- | --- | --- |
+| `audit:stardew-action-seam-terminals` | it is a report writer. `stardew-action-seam-terminals-audit.mjs` classifies every seam into `seam_ok` / `terminal_in_delegate` / `seam_not_terminal` / `seam_writes_but_no_terminal`, writes the artefact, and sets no exit code anywhere; `suspectSeamReferences` is printed, never turned into a status. Its declared command also exits 1 on a missing `--candidates`, which is indistinguishable from a violation. The precedent is `audit:stardew-admission-fork-delta`, deleted as a gate for the same reason | a verdict threshold (e.g. `--fail-on-suspect`) that turns a suspect row into exit 1, or the `audit:` script line removed so the tool is on-demand and no longer claims a gate |
+| `check:live-run-isolation` | it exits 1 from an absent `%LOCALAPPDATA%\GameBuddy\stardew-profiles\native-local-stable`, and today it does so by an uncaught `live_run_isolation_source_profile_config_missing` stack trace. Red-for-absence is not red-for-a-rule: it answers "is this machine set up" | the live profile mount, plus a report that separates a missing prerequisite (blocked, exit 2) from a measured violation (exit 1) |
+| `check:sandbox-acceptance` | `report.ok = summary.ok === true && !timedOut` over `sandbox-verify.cmd` under a 15-minute deadline, and no `GameBuddy.Setup.exe` exists in a checkout; the run stages its share on the real account | the machine that builds the installer, run once red and once green |
+| `test:stardew-soil-itm-canary` | two reasons, and the second is new. The witness root `.tmp-stardew-decompile/` is absent (the available decompile is a namespace-layout snapshot: 3 of the 6 witnesses do not exist at the paths the gate probes). And when the six are staged, the suite dies before measuring: `stardew-soil-itm-canary.test.mjs:43` calls `new URL(witness, root)` with `root` a native path from `fileURLToPath`, so it throws `ERR_INVALID_URL` on Windows **and** on POSIX — `new URL("a/b", "/tmp/x/")` throws too. The five cases have never run anywhere with the witnesses present | `pathToFileURL(root)` in that `fixture()`, plus a staged tree whose layout carries `StardewValley/Tools/Hoe.cs`; then a model row removed is the red |
+| `test:voice-protocol` | `pnpm --dir vendor/pi-koe run test:protocol` runs inside a git submodule: breaking it dirties another repository, and a marker cannot live there | a lane that may commit in `vendor/pi-koe` |
+
+### `red at HEAD`: two rows that are neither provable nor cannot-fire
+
+A red proof needs a green baseline to redden. These two are red on their own rule at `2b8a81bb`, so the honest record is
+the finding, not a marker.
+
+| gate | the reading | where the fix belongs |
+| --- | --- | --- |
+| `test:sandbox-configs` | `FAIL gamebuddy-sandbox.wsb: not valid XML: not well-formed (invalid token): line 1, column 1`, exit 1 — the file is a `#`-comment instructions document (`HOW TO RUN … only a human can do this step`) sitting inside the directory `validate-sandbox-configs.py` globs as `*.wsb`; red since `3f319596` landed it | the file: either a real `.wsb` or a name the glob does not claim |
+| `test:stardew-fixture-scenario-wiring` | `✖ the real repository wiring is consistent` and the two real-tree allowlist cases (`the real config gate accepts navigation_read_only_v1`), exit 1 | the fixture scenario wiring and allowlist the gate reads; the whole synthetic half of the suite is green, so the gate is doing its job and the tree is not |
+
+### What this batch did not do
+
+- It did not touch `check:code-duplication`'s `facades` marker or `test:format-ratchet`'s planted-path claim. Both are
+  proven gates misreported by the reader, not gates owing a proof, and both belong to the lanes that own the ratchets.
+  The repair is a bucket on the census line (`unreadableClaims`), which lives in `tools/lib/harness-conformance.mjs`.
+- It did not use `--update` on the baseline. The eleven stale entries were deleted one line each, by hand, and the file's
+  only other change is the comma the last remaining entry inherited. `node tools/audit-gate-red-proofs.mjs` now reports
+  zero `baseline_entry_stale` and zero `no_red_proof`.
+- It did not claim `check:architecture` for itself. That gate is a `pnpm ... && pnpm ...` chain with no rule of its own;
+  it left the debt set by inheritance, and the census prints the members it inherited from.
