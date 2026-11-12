@@ -64,7 +64,7 @@ async function canonicalTemporaryRoot(): Promise<string> {
  *
  * Every Game runtime that loads Magic Context also mounts that session's own archive readers, so a case about the
  * adapter's tools would otherwise have to restate them. Their reach is asserted where it belongs - by property, in
- * `tool-surface.test.ts` - so filtering them here keeps this file's lists about the adapter they describe.
+ * `tool-surface.private.test.ts` - so filtering them here keeps this file's lists about the adapter they describe.
  */
 function mountedGameToolNames(runtime: Awaited<ReturnType<typeof createCompanionRuntime>>): readonly string[] {
   return runtime.session.agent.state.tools
@@ -173,7 +173,7 @@ function fixtureSnapshot(overrides: Partial<Snapshot> = {}): Snapshot {
  * This harness stands up the narrow Mod side of the named pipe, drives the real
  * LocalStardewBridgeClient handshake, and mints the connection through the same
  * launch production runtime-core consumes (the pattern local-stardew-bridge-
- * attestation.test.ts and gameplay-task-subagent.test.ts use).
+ * attestation.test.ts and gameplay-task-subagent.private.test.ts use).
  */
 async function withAuthenticatedStardew(
   initial: StardewFixtureState,
@@ -1760,7 +1760,7 @@ test("runtime loads only Magic Context and preserves a session partition", async
     // The section itself is composed by the extension's `before_agent_start` hook, so it cannot be read off a
     // constructed session: the two lines this replaces asserted that `runtime.session.systemPrompt` did NOT contain
     // "## Magic Context" or "ctx_memory", which was true whether injection was on or off and so tested nothing.
-    // The assembled prompt is asserted after a real turn in `magic-context-companion-guidance.test.ts`; do not
+    // The assembled prompt is asserted after a real turn in `magic-context-companion-guidance.private.test.ts`; do not
     // reintroduce a construction-time content check here.
     assert.equal(config.memory.domain, MAGIC_CONTEXT_MEMORY_DOMAIN);
     assert.equal(config.memory.enabled, MAGIC_CONTEXT_MEMORY_ENABLED);

@@ -62,7 +62,7 @@ import { MAX_BODY_PROGRAM_REFUSAL_DETAIL_LENGTH, type Snapshot } from "./protoco
  * array rather than restating them: its paragraph is built from `FACT_BRIEF_BLOCKS.length` and a
  * `Record<FactBriefBlock, string>` of glosses, so a sixth block is a compile error there instead of a block the prompt
  * forgot. Between 2026-11-11 and the same day's later commit the floor said "four" while this set held five; that
- * window is why `fact-brief.test.ts` now asserts the stated count equals this array's length. The closed set is this
+ * window is why `fact-brief.private.test.ts` now asserts the stated count equals this array's length. The closed set is this
  * list.
  */
 export const FACT_BRIEF_BLOCKS = Object.freeze([
@@ -570,7 +570,7 @@ function evidenceDetail(payload: Readonly<Record<string, unknown>>): string {
  * A node hint's ceiling, which is the wire's own number: `protocol.ts:isBodyProgramNodeStatus` refuses a frame carrying a
  * longer one, so a hint that arrived through the bridge can never meet this ceiling, let alone a smaller one.
  *
- * `fact-brief.test.ts` reads that validator and asserts the two numbers are the same one, so this cannot drift from the
+ * `fact-brief.private.test.ts` reads that validator and asserts the two numbers are the same one, so this cannot drift from the
  * bound the Mod's journal enforces.
  */
 export const MAX_BODY_PROGRAM_NODE_HINT_CHARS = 256;

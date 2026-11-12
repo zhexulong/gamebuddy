@@ -37,7 +37,7 @@ const configured = (value: string): Readonly<Record<string, string | undefined>>
 test("the zero-configuration default is the address existing developer roots already carry", () => {
   // Spelled out rather than read from the constant it is meant to pin: a test that compares the default to itself
   // passes after any change. This is the value `pi-provider-store.test.ts` holds byte-for-byte in its golden document
-  // and the one `model-runtime.test.ts` matches on, so moving it is a visible product decision, not a tidy-up.
+  // and the one `model-runtime.private.test.ts` matches on, so moving it is a visible product decision, not a tidy-up.
   assert.equal(DEFAULT_OPERATOR_GATEWAY_BASE_URL, "http://127.0.0.1:8317/v1");
   assert.equal(resolveOperatorGatewayBaseUrl({}), "http://127.0.0.1:8317/v1");
   assert.equal(resolveOperatorGatewayBaseUrl(configured("")), "http://127.0.0.1:8317/v1");

@@ -251,7 +251,7 @@ test("a comment or a doc line that names the fact is documentation, not a declar
 });
 
 test("a regex assertion pinning a fact next to the model id is caught", async () => {
-  // The shape `model-runtime.test.ts` had: the only way to pin a serialized document.
+  // The shape `model-runtime.private.test.ts` had: the only way to pin a serialized document.
   const root = makeTree({
     "host/src/writer.test.ts": [
       'import { catalogModelById } from "./tavern/provider-catalog.js";',

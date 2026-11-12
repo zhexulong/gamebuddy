@@ -24,7 +24,7 @@
  * The two leaf facts are the input to the Host chain, and both are pinned by the
  * Host's own suite: an activated attempt holds an outstanding Player Host launch
  * reservation (`player_host_launch_pending` in
- * `stardew-private-bootstrap-composer.test.ts`), and a staged attempt's
+ * `stardew-private-bootstrap-composer.private.test.ts`), and a staged attempt's
  * launch-readiness reader says `{ status: "ready", generation: 1 }`
  * (`stardew-production-lifecycle-coordinator.internal.test.ts`).
  */

@@ -9,7 +9,7 @@
  *
  * This asserts the WIRING (env in, config out) and the boundaries that keep it from becoming an
  * operator surface: nothing is written when the channel is absent, and invalid values are ignored
- * rather than coerced. The fold itself is proved end to end by `pi-magic-context-chapter-fold.test.ts`.
+ * rather than coerced. The fold itself is proved end to end by `pi-magic-context-chapter-fold.private.test.ts`.
  */
 import assert from "node:assert/strict";
 import { mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync } from "node:fs";

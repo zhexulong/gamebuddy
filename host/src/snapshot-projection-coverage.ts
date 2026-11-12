@@ -75,7 +75,7 @@ const OBSERVED_FAMILY_REASON =
  * The array families read by no projection and delivered by a solicited observation.
  *
  * Derived from the wire schema's array properties (`type: "array"`) minus the families a projection reads - see
- * `snapshot-projection-coverage.test.ts`, which fails by naming any schema field missing from this list and this
+ * `snapshot-projection-coverage.private.test.ts`, which fails by naming any schema field missing from this list and this
  * map. Actor-state lists (`professions`, `pendingLevelUps`, `pendingLevelUpChoices`, `activeSpecialOrderKeys`,
  * `inventoryItemFacts`, `chests`) are here for the same reason: they arrive with the observation and change on
  * the game's own schedule, not every turn.

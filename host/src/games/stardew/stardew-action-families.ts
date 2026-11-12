@@ -7,7 +7,7 @@
  * entry names a family it does not define. A surface that offered a family of its
  * own invention would therefore not merely be wrong about one checkbox - it would
  * disable the player's entire action policy. So the set is derived from the Mod's
- * catalog, and `stardew-action-families.test.ts` re-derives it from that source
+ * catalog, and `stardew-action-families.private.test.ts` re-derives it from that source
  * and fails loudly when this list drifts from it.
  *
  * The order is the order a player reads: the everyday farm work first, then the

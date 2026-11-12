@@ -2173,7 +2173,7 @@ function inventoryRecordKeys(inventory, name) {
  *
  * This mirrors the Host's own `projectionReads` (`.key`, `"key"`, and a destructure binding), because a
  * `.mjs` tool cannot import it. The population it is applied to comes from the Host's tables, so the
- * two can only disagree about a spelling - which `snapshot-projection-coverage.test.ts` already gates
+ * two can only disagree about a spelling - which `snapshot-projection-coverage.private.test.ts` already gates
  * on its own side.
  */
 function projectionReads(source, key) {

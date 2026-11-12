@@ -113,7 +113,7 @@ test("test, fixture and fixture-worker sources are out of scope", () => {
 test("production-source filter mirrors the host production tsconfig", () => {
   assert.equal(isProductionSource("tavern/chat-thread-store.ts"), true);
   assert.equal(isProductionSource("runtime-core.internal.ts"), true);
-  assert.equal(isProductionSource("tavern/chat-thread-store.test.ts"), false);
+  assert.equal(isProductionSource("tavern/chat-thread-store.private.test.ts"), false);
   assert.equal(isProductionSource("tavern/loose.test-support.ts"), false);
   assert.equal(isProductionSource("tavern/loose.test-fixtures.ts"), false);
   assert.equal(isProductionSource("composition/drain-fixture-worker.ts"), false);

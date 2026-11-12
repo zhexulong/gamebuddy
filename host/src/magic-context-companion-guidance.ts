@@ -25,7 +25,7 @@
  * <p>
  * WHAT THIS PROSE ASSUMES, because the prose is the thing that becomes a lie when the mount changes: it is
  * written for the GAME surface, and it names the five Magic Context tools that surface mounts — `ctx_search`,
- * `ctx_expand`, `ctx_reduce`, `ctx_note` and `ctx_memory`. `tool-surface.test.ts` pins that mounted set against
+ * `ctx_expand`, `ctx_reduce`, `ctx_note` and `ctx_memory`. `tool-surface.private.test.ts` pins that mounted set against
  * the names this file states, so a mount change fails there and says which sentence to revisit. The Chat surface
  * mounts none of them and is skipped by the shared config instead (see `CHAT_SURFACE_SKIP_SIGNATURE`); it never
  * reads this file.

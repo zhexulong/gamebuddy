@@ -45,7 +45,7 @@ export type PresetTailBlockDecision =
  * actually stop a run, so it is the one a preset's entry is measured against - otherwise an entry between the two
  * imports cleanly and then takes the whole Game session down at publication, which is the layer where nobody can fix it.
  *
- * It is a copy of the vendor's number, and `prompt-field-delivery.test.ts` asserts it EQUALS the vendor's exported
+ * It is a copy of the vendor's number, and `prompt-field-delivery.private.test.ts` asserts it EQUALS the vendor's exported
  * constant, so a vendor bump turns that assertion red instead of silently drifting.
  */
 export const PRESET_TAIL_PUBLICATION_BYTE_BOUND = 4_096;

@@ -7,7 +7,7 @@
   },
   "include": [],
   "files": [
-    "src/tavern-management-dialogue-web.chat-select.test.ts",
+    "src/tavern-management-dialogue-web.chat-select.private.test.ts",
     "src/continuity-semantic-production-coordinator/continuity-semantic-chat-switch.test.ts",
     "src/continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.ts",
     "src/continuity-semantic-chat-runtime-binding/continuity-semantic-chat-runtime-binding.internal.ts",

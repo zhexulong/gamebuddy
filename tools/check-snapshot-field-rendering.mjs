@@ -7,7 +7,7 @@
  * every observation of that morning's run (`water 40, 40, 38, 36, 36` of `40`) - and `<world-state>` never printed it.
  * The companion therefore shook the can and narrated a gauge: `壶里这点底子够浇这两穴`, `壶底见底了`, `壶空了正好`, while
  * the wire said 36/40. Every layer that could have said so was green: `protocol.ts` admits the field,
- * `snapshot-projection-coverage.test.ts` lists it as observed-by-demand, `TARGET_FAMILY_LABELS` has a word for it. The
+ * `snapshot-projection-coverage.private.test.ts` lists it as observed-by-demand, `TARGET_FAMILY_LABELS` has a word for it. The
  * absent check is the class: NOTHING asked whether the field reaches the text the player's companion reads.
  *
  * THE POPULATION IS THE WIRE'S OWN KEY LIST - `SNAPSHOT_KEYS` in `host/src/protocol.ts`, read by name from the source

@@ -18,7 +18,7 @@
     "src/tavern/player-turn-acceptance.internal.ts",
     "src/tavern/provider-attempt-claim.ts",
     "src/tavern/provider-attempt-claim.internal.ts",
-    "src/tavern-management-dialogue-web.chat-select.test.ts",
+    "src/tavern-management-dialogue-web.chat-select.private.test.ts",
     "src/tavern-management-dialogue-web.ts",
     "src/tavern/browser-contract/index.ts",
     "src/composition/desktop-presentation-admission-owner.ts"

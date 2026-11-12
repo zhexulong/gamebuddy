@@ -1,6 +1,6 @@
 {
   "schema": "historian_prompt_ab/v1",
-  "purpose": "The two arms of the voice change (vendor 37bc69238), each an excerpt of a compartment the historian really wrote during a real provider fold of the same fixture (host/src/pi-magic-context-chapter-fold.test.ts). Recorded here so the comparison is reproducible by anyone instead of resting on a quotation in a design document.",
+  "purpose": "The two arms of the voice change (vendor 37bc69238), each an excerpt of a compartment the historian really wrote during a real provider fold of the same fixture (host/src/pi-magic-context-chapter-fold.private.test.ts). Recorded here so the comparison is reproducible by anyone instead of resting on a quotation in a design document.",
   "arms": [
     {
       "variant": "legacy-third-person",

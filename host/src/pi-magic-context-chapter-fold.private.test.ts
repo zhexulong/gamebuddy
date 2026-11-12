@@ -484,7 +484,7 @@ test(
       // Without this the run's handles keep the test process alive after the assertions. A cleanup
       // failure must not MASK the fold evidence though: on this machine (2026-10-08) releasing the
       // runtime's durable lock reports `durable_path_lock_release_failed:windows_reclaimer_unavailable`
-      // even with the reclaimer bound the same way `chat-transcript.test.ts` binds it, so failures are
+      // even with the reclaimer bound the same way `chat-transcript.private.test.ts` binds it, so failures are
       // collected and reported alongside the verdict instead of replacing it.
       const cleanupStartedAt = Date.now();
       const cleanupFailures: string[] = [];

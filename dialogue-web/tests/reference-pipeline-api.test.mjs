@@ -598,7 +598,7 @@ test("submit surfaces a validated problem on non-2xx", async () => {
 test("the Host's typed 413 payload_too_large surfaces as a problem, not as protocol corruption", async () => {
   // `8aa196ce` reclassified an over-ceiling request body from the generic 400
   // `invalid_request` to the typed 413 `payload_too_large`
-  // (`host/src/reference-pipeline-dialogue-web.test.ts:396-402`). The Host sends that code
+  // (`host/src/reference-pipeline-dialogue-web.private.test.ts:396-402`). The Host sends that code
   // outside its own schema check (`reference-pipeline-dialogue-web.ts:539`), so the mirror
   // is the only thing that can read it: before the fix this code was not in
   // `PROBLEM_CODES`, and a legitimate player-facing refusal became `TavernProtocolError`.

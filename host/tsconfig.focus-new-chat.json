@@ -7,7 +7,7 @@
   },
   "include": [],
   "files": [
-    "src/tavern-management-dialogue-web.new-chat.test.ts",
+    "src/tavern-management-dialogue-web.new-chat.private.test.ts",
     "src/tavern/browser-contract/index.private.test.ts",
     "src/composition/desktop-presentation-admission-owner.private.test.ts",
     "src/test-fixtures/desktop-presentation-admission-owner-worker.ts",

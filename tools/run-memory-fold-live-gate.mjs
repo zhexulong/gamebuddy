@@ -28,7 +28,7 @@ import { checkHistorianRubric, identifyHistorianPrompt, readCompartments } from 
 import { cleanOutputLines } from "./lib/subprocess-output.mjs";
 
 const repo = resolve(fileURLToPath(new URL(".", import.meta.url)), "..");
-const FIXTURE = "pi-magic-context-chapter-fold.test.ts";
+const FIXTURE = "pi-magic-context-chapter-fold.private.test.ts";
 const SCRATCH = join(repo, "host/.memory-fold-gate");
 const CONFIG = join(repo, "host/tsconfig.memory-fold-gate.json");
 // The fixture cannot fold a CI-sized conversation at Magic Context's production trigger, so it is given

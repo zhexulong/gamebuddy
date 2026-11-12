@@ -123,7 +123,7 @@ test("does not resolve a class whose message is a constructor argument", () => {
 
 test("production-source filter excludes committed tests and fixtures", () => {
   assert.equal(isProductionSource("tavern/chat-thread-store.ts"), true);
-  assert.equal(isProductionSource("tavern/chat-thread-store.test.ts"), false);
+  assert.equal(isProductionSource("tavern/chat-thread-store.private.test.ts"), false);
   assert.equal(isProductionSource("tavern/loose.test-support.ts"), false);
   assert.equal(isProductionSource("test-support/helper.ts"), false);
   assert.equal(isProductionSource("test-fixtures/worker.ts"), false);

@@ -7,7 +7,6 @@
     "host/src/continuity-semantic-store/continuity-semantic-production-store.ts": 5178,
     "host/src/games/stardew/lifecycle/stardew-private-bootstrap-composer.core.ts": 5349,
     "host/src/games/stardew/lifecycle/stardew-private-bootstrap-composer.private.test.ts": 5612,
-    "host/src/games/stardew/lifecycle/stardew-private-bootstrap-composer.test.ts": 5605,
     "host/src/protocol.ts": 5718,
     "host/src/tavern/chat-thread-store.ts": 6325,
     "integrations/stardew/action-development/src/analysis/stardew-action-inventory-reconciliation.mjs": 3409,

@@ -647,7 +647,7 @@ function hash(value: string): string {
  * low-priority tail block - taken on material this product can trace to a file
  * it ships, while the card's own `post_history_instructions` stays unpublished
  * on this surface. See `presetTailBlock` for the publication rules and
- * `prompt-field-delivery.test.ts` for the two assertions that hold them.
+ * `prompt-field-delivery.private.test.ts` for the two assertions that hold them.
  */
 /** The companion's own scenario as the Game catalog consumes it. */
 export type GameSurfaceScenarioSource = Readonly<{
@@ -796,7 +796,7 @@ export function buildGameSurfaceAuthoredCatalog(
   // the generation preset this runtime was provisioned with - because that is the half whose provenance this product
   // controls: the text came from a file under `assets/tavern/presets/**`, it is framing for how she talks, and it is
   // not a field of a card whose author this product never reviewed. The card's own `post_history_instructions`
-  // stays unpublished on this surface, and `prompt-field-delivery.test.ts` holds both halves at once - the pair is
+  // stays unpublished on this surface, and `prompt-field-delivery.private.test.ts` holds both halves at once - the pair is
   // the decision, not a coincidence.
   const tailBlock = presetTailBlock(presetPostHistory);
   return Object.freeze({

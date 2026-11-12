@@ -607,7 +607,7 @@ export function renderGameEnvironmentFactsObservation(
 /**
  * The Chinese noun for every coordinate family the wire publishes.
  *
- * THE POPULATION IS `SNAPSHOT_KEYS`, not this table: `fact-brief.test.ts` reads the wire's own key list and fails by
+ * THE POPULATION IS `SNAPSHOT_KEYS`, not this table: `fact-brief.private.test.ts` reads the wire's own key list and fails by
  * name when a family appears there with no label here and no entry in `NON_ROW_FAMILIES`. A hand-maintained list of
  * families to print would have gone stale silently the next time the Mod grew one.
  */

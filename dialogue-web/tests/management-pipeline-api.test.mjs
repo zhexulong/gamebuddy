@@ -770,7 +770,7 @@ export function flatteningCatchesIn(text, fileName) {
 
 test("the Host's typed 413 payload_too_large surfaces as a problem, not as protocol corruption", async () => {
   // The management dispatcher answers an over-ceiling body with the typed 413
-  // `payload_too_large` (`host/src/tavern-management-dialogue-web.test.ts:1410-1440`), and
+  // `payload_too_large` (`host/src/tavern-management-dialogue-web.private.test.ts:1410-1440`), and
   // that code is sent outside the Host's schema check, so the mirror is the only thing that
   // can read it: before the fix `PROBLEM_CODES` did not name it and the refusal arrived as
   // `TavernProtocolError`, which carries no code for `problemCodeFor` to name.

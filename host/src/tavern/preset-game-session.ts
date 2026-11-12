@@ -121,7 +121,7 @@ export function gameSessionPresetMacros(profile: IdentityProfile, locale?: strin
  *
  * No marker content is passed to the assembly. The two entries read here are the PRESET's own text (§2.5's slots are
  * filled from the assembly's sources; on this surface the preset is the source), and the Game surface publishes no
- * card override for either - see `prompt-field-delivery.test.ts`, where the card's closing direction is asserted
+ * card override for either - see `prompt-field-delivery.private.test.ts`, where the card's closing direction is asserted
  * absent and the preset's is asserted present.
  */
 export function gameSessionPreset(

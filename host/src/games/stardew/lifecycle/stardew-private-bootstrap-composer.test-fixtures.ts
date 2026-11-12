@@ -1,5 +1,5 @@
 /**
- * Shared fixture factories for stardew-private-bootstrap-composer.test.ts.
+ * Shared fixture factories for stardew-private-bootstrap-composer.private.test.ts.
  *
  * These helpers were extracted VERBATIM from the test file; the test file
  * imports them instead of re-defining the same boilerplate per test.

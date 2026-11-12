@@ -66,7 +66,7 @@ function runFixture() {
       {
         extends: "./tsconfig.json",
         include: [],
-        files: ["src/pi-magic-context-chapter-fold.test.ts"],
+        files: ["src/pi-magic-context-chapter-fold.private.test.ts"],
         compilerOptions: {
           noEmit: false,
           noEmitOnError: false,

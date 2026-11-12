@@ -533,7 +533,7 @@ export const StardewCabinConfirmResultV1Schema = strictObject({
  * `FarmhandActionCatalog` and the Mod refuses the WHOLE policy when one entry names
  * a family it does not declare, so this route can only ever offer ids from that
  * catalogue (`host/src/games/stardew/stardew-action-families.ts` derives it from
- * the Mod source, and `stardew-action-families.test.ts` holds the two equal).
+ * the Mod source, and `stardew-action-families.private.test.ts` holds the two equal).
  *
  * No count of the actions inside a family is published: the only source for one is
  * the Mod's live catalog, which is absent exactly when the player is most likely to
