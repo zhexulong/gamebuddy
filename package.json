@@ -147,7 +147,7 @@
     "lint:eslint": "eslint dialogue-web/src",
     "materialize:ci-snapshot": "node tools/materialize-ci-snapshot.mjs",
     "pre-commit": "node tools/scripts/pre-commit.mjs",
-    "quality:check": "pnpm format:check && pnpm lint && pnpm lint:eslint && pnpm lint:ast-grep && pnpm typecheck && pnpm check:host-production-import-boundary && pnpm check:text-hygiene && pnpm check:error-identity-classification && pnpm check:host-diagnostic-output && pnpm check:test-store-teardown && pnpm check:dialogue-web-boundaries && pnpm test:stardew:core && pnpm test:stardew:integration",
+    "quality:check": "pnpm format:check && pnpm lint && pnpm lint:eslint && pnpm lint:ast-grep && pnpm typecheck && pnpm check:host-production-import-boundary && pnpm check:text-hygiene && pnpm check:error-identity-classification && pnpm check:host-diagnostic-output && pnpm check:test-store-teardown && pnpm check:dialogue-web-boundaries && pnpm test:stardew:core && pnpm test:stardew:integration && pnpm check:dependency-risk && pnpm test:dependency-risk",
     "reconcile:stardew-action-inventory": "node integrations/stardew/action-development/src/analysis/stardew-action-inventory-reconciliation.mjs",
     "reconcile:stardew-reachable-exits": "node integrations/stardew/action-development/src/analysis/stardew-reachable-exit-reconciliation.mjs",
     "render:stardew-uncovered-exit-table": "node integrations/stardew/action-development/src/analysis/stardew-uncovered-exit-table.mjs",
