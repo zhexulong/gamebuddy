@@ -11,18 +11,19 @@ import {
   drainBindingMaterializations,
   mintBindingToken,
   mintGameRuntimeBindingFacts,
+  type OpaqueGameRuntimeBindingToken,
   revokeBindingToken,
   stopAcceptingBindingMaterialization,
-  type OpaqueGameRuntimeBindingToken,
 } from "../continuity-semantic-game-runtime-binding/continuity-semantic-game-runtime-binding.internal.js";
 import type { GameRuntimeBinding } from "../continuity-semantic-game-runtime-binding/continuity-semantic-game-runtime-binding.js";
 import { createTestGameRuntimeMaterializer } from "../continuity-semantic-game-runtime-materializer/continuity-semantic-game-runtime-materializer.test-support.js";
 import { createKnownSemanticGameProductionAuthorityFromDeploymentManifest } from "../continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.js";
 import { loadHostDeploymentManifest } from "../deployment-manifest.js";
+import type { GameConnection } from "../game-connection.js";
+import { createIntegrationActionCatalog, type GameIntegrationAdapter } from "../game-integration-adapter.js";
 import type { ConfigurableIntegrationLauncher } from "../integration-catalog.js";
 import { type IntegrationLaunchHandle, RECEIPT_BACKED_INTEGRATION_AUTHORITY } from "../integration-launcher.js";
-import { createIntegrationActionCatalog, type GameIntegrationAdapter } from "../game-integration-adapter.js";
-import type { GameConnection } from "../game-connection.js";
+import { readSourceShape } from "../test-support/source-shape.test-support.js";
 import {
   createUnmountedDialogueInitialChatResumeFacade,
   createUnmountedDialogueSemanticFacade,
@@ -513,14 +514,14 @@ test("P7 Task 5 characterization: initial-chat resume facade is saga/content-onl
       dirname(fileURLToPath(import.meta.url)),
       "../../src/continuity-semantic-deployment-composition",
     );
-    const compositionSource = readFileSync(join(folder, "continuity-semantic-deployment-composition.ts"), "utf8");
-    assert.equal(compositionSource.includes("resumeInitialChat(): Promise<ProductionSagaReadback | null>;"), true);
+    const { shape: compositionShape } = readSourceShape(join(folder, "continuity-semantic-deployment-composition.ts"));
+    assert.equal(compositionShape.includes("resumeInitialChat(): Promise<ProductionSagaReadback | null>;"), true);
     // The facade threads the manifest-derived content port through the saga lane.
     // The factory hands back `{ port, close }` so the store's release travels
     // beside the pinned port surface, so the call site reads `content.port`.
-    assert.equal(compositionSource.includes("resumeInitialChatWithContent(content.port)"), true);
-    assert.equal(compositionSource.includes("startMountedChatRuntime"), false);
-    assert.equal(compositionSource.includes("createFreshUnmountedChatSemanticFacade"), false);
+    assert.equal(compositionShape.includes("resumeInitialChatWithContent(content.port)"), true);
+    assert.equal(compositionShape.includes("startMountedChatRuntime"), false);
+    assert.equal(compositionShape.includes("createFreshUnmountedChatSemanticFacade"), false);
     // The runtime-mounting Chat constructor is not reachable from the public
     // deployment composition; no existing seam reopens a provisioned root.
     const publicModule = await import("./continuity-semantic-deployment-composition.js");

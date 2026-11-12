@@ -1,12 +1,13 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
-import { readFile, rm, writeFile } from "node:fs/promises";
+import { rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
-import { canonicalTestRoot } from "../../test-support/canonical-test-root.test-support.js";
 import type { MountedChatRuntimeLease } from "../../continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.js";
 import type { HostDeploymentManifest } from "../../deployment-manifest.js";
+import { canonicalTestRoot } from "../../test-support/canonical-test-root.test-support.js";
+import { readSourceShape } from "../../test-support/source-shape.test-support.js";
 import { composeTavernProfile } from "../browser-contract/index.js";
 import { createMemoryManagementService } from "./memory-management.js";
 
@@ -116,7 +117,7 @@ test("memory service rejects forged structural mounted leases and wrong profiles
 });
 
 test("memory service source keeps the store, lease and coordinator authority private", async () => {
-  const source = await readFile(new URL("./memory-management.js", import.meta.url), "utf8");
+  const { raw: source, shape: sourceShape } = readSourceShape(new URL("./memory-management.js", import.meta.url));
   // The service composes browser DTOs, the coordinator lease check, and the vendor read projection.
   // It owns no HTTP or direct SQLite access. It no longer resolves the extension ENTRY: the
   // context-engine decoupling moved that to the runtime, and the service imports the vendor's
@@ -125,14 +126,16 @@ test("memory service source keeps the store, lease and coordinator authority pri
   // It is loaded DYNAMICALLY (the service keeps the vendor extension out of its static import graph),
   // so this matches the specifier as the compiler emits it.
   assert.match(source, /["']@cortexkit\/pi-magic-context\/memory["']/);
-  assert.match(source, /from ["']\.\.\/browser-contract\/index\.js["']/);
-  assert.match(source, /from ["']\.\.\/\.\.\/runtime\.js["']/);
-  assert.match(source, /from ["']\.\.\/\.\.\/continuity-semantic-production/);
+  assert.match(sourceShape, /from ["']\.\.\/browser-contract\/index\.js["']/);
+  assert.match(sourceShape, /from ["']\.\.\/\.\.\/runtime\.js["']/);
+  assert.match(sourceShape, /from ["']\.\.\/\.\.\/continuity-semantic-production/);
   assert.doesNotMatch(
     source,
     /continuity-semantic-production-coordinator\.internal|transitionMountedProviderStart|transitionMountedPresentation/,
   );
-  assert.doesNotMatch(source, /from ["'][^"']*(node:http|express|router|fetch)[^"']*["']/);
+  assert.doesNotMatch(sourceShape, /from ["'][^"']*(node:http|express|router|fetch)[^"']*["']/);
+  // Read as the committed bytes, because this one scopes itself with `[^\n]`: on the normalised shape there are no line
+  // breaks left to bound it, so the same pattern would scan the whole file and report a match that is not there.
   const executableSource = source.replace(/\/\*[\s\S]*?\*\/|\/\/.*$/gm, "");
   assert.doesNotMatch(executableSource, /(?:from|import\s*\()[^\n]*sqlite|context\.db|openDatabase/);
 });

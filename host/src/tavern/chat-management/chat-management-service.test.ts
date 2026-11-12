@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
-import { readFile, rm } from "node:fs/promises";
+import { rm } from "node:fs/promises";
 import test from "node:test";
-import { canonicalTestRoot } from "../../test-support/canonical-test-root.test-support.js";
 import type { MountedChatRuntimeLease } from "../../continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.js";
 import type { HostDeploymentManifest } from "../../deployment-manifest.js";
+import { canonicalTestRoot } from "../../test-support/canonical-test-root.test-support.js";
+import { readSourceShape } from "../../test-support/source-shape.test-support.js";
 import { composeTavernProfile } from "../browser-contract/index.js";
 import { createChatManagementService } from "./chat-management-service.js";
 
@@ -84,7 +85,7 @@ test("management service rejects forged structural leases, non-composed profiles
 });
 
 test("management service source keeps the store, lease and coordinator authority private", async () => {
-  const source = await readFile(new URL("./chat-management-service.js", import.meta.url), "utf8");
+  const { shape: source } = readSourceShape(new URL("./chat-management-service.js", import.meta.url));
   // The service composes only the existing public title-management seam and
   // the browser contract; it never imports coordinator internal bridges or
   // P4/P5 transition authority.

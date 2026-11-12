@@ -4,11 +4,12 @@ import { once } from "node:events";
 
 if (process.platform !== "win32") throw new Error("durable acceptance requires real Windows production mounting");
 
-import { readFile, rm } from "node:fs/promises";
+import { rm } from "node:fs/promises";
 import test from "node:test";
-import { canonicalTestRoot } from "../test-support/canonical-test-root.test-support.js";
 import type { MountedChatRuntimeLease } from "../continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.js";
 import type { HostDeploymentManifest } from "../deployment-manifest.js";
+import { canonicalTestRoot } from "../test-support/canonical-test-root.test-support.js";
+import { readSourceShape } from "../test-support/source-shape.test-support.js";
 import { createChatThreadStore, createProfileAwareChatThreadCreationCapability } from "./chat-thread-store.js";
 import { createPlayerTurnAcceptor } from "./player-turn-acceptance.js";
 
@@ -76,7 +77,7 @@ test("player turn acceptor rejects forged mounted leases before access", () => {
 });
 
 test("public player turn acceptor calls only its private bridge, never raw store or coordinator internals", async () => {
-  const source = await readFile(new URL("./player-turn-acceptance.js", import.meta.url), "utf8");
+  const { shape: source } = readSourceShape(new URL("./player-turn-acceptance.js", import.meta.url));
   assert.match(source, /from "\.\/player-turn-acceptance\.internal\.js"/);
   assert.match(source, /acceptMountedDurableTurnFromFacade\(manifest, lease,/);
   assert.doesNotMatch(

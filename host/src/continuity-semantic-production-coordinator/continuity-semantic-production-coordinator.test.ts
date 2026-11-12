@@ -6,7 +6,6 @@ import { dirname, join } from "node:path";
 import { createInterface } from "node:readline";
 import test, { before } from "node:test";
 import { fileURLToPath } from "node:url";
-import { canonicalTestRootSync } from "../test-support/canonical-test-root.test-support.js";
 import { createUnmountedDialogueSemanticFacade } from "../continuity-semantic-deployment-composition/continuity-semantic-deployment-composition.js";
 import {
   createCanonicalProductionAuthorityAdmission,
@@ -15,19 +14,21 @@ import {
 import {
   mintGameSessionWorldBindingSlotLeaseVerdict,
   openProductionContinuityStore,
-  productionGameSessionWorldBindingSlotLeaseVerdict,
   type ProductionBootstrapInput,
   type ProductionChatRuntimeOwner,
   type ProductionChatRuntimeRequest,
   type ProductionGameSessionWorldBindingSlotReleaseInput,
   type ProductionGameSessionWorldBindingSlotReleaseProof,
+  productionGameSessionWorldBindingSlotLeaseVerdict,
   type TavernExactContentReceipt,
 } from "../continuity-semantic-store/continuity-semantic-production-store.js";
 import { loadHostDeploymentManifest } from "../deployment-manifest.js";
-import { createManifestDerivedInitialChatExactContentPort } from "../tavern/initial-chat-exact-content-port.js";
 import { bindWindowsStaleLockReclaimer } from "../path-lock.js";
-import { createBuildWindowsStaleLockReclaimer } from "../windows-stale-lock-reclaimer/index.js";
+import { createManifestDerivedInitialChatExactContentPort } from "../tavern/initial-chat-exact-content-port.js";
+import { canonicalTestRootSync } from "../test-support/canonical-test-root.test-support.js";
+import { readSourceShape } from "../test-support/source-shape.test-support.js";
 import { authorityRootMutexName } from "../windows-partition-mutex.js";
+import { createBuildWindowsStaleLockReclaimer } from "../windows-stale-lock-reclaimer/index.js";
 import * as internalCoordinator from "./continuity-semantic-production-coordinator.internal.js";
 import { createInitialChatResumeSemanticProductionAuthorityFromDeploymentManifest } from "./continuity-semantic-production-coordinator.internal.js";
 import * as publicCoordinator from "./continuity-semantic-production-coordinator.js";
@@ -1044,7 +1045,7 @@ test("production construction derives admission from the deployment manifest and
 });
 
 test("Game coordinator source constructs independent enter and close requests without Chat origin lookup", () => {
-  const source = readFileSync(
+  const { shape } = readSourceShape(
     join(
       dirname(fileURLToPath(import.meta.url)),
       "..",
@@ -1053,7 +1054,6 @@ test("Game coordinator source constructs independent enter and close requests wi
       "continuity-semantic-production-coordinator",
       "continuity-semantic-production-coordinator.internal.ts",
     ),
-    "utf8",
   );
   for (const forbidden of [
     "readExactSelectedGameOrigin",
@@ -1063,10 +1063,10 @@ test("Game coordinator source constructs independent enter and close requests wi
     "GameOrigin",
     "origin:",
   ])
-    assert.equal(source.includes(forbidden), false, `forbidden Game coordinator semantic: ${forbidden}`);
-  assert.match(source, /readGameAdmission\(\)/);
-  assert.match(source, /kind: "enter" as const/);
-  assert.match(source, /kind: "close" as const/);
+    assert.equal(shape.includes(forbidden), false, `forbidden Game coordinator semantic: ${forbidden}`);
+  assert.match(shape, /readGameAdmission\(\)/);
+  assert.match(shape, /kind: "enter" as const/);
+  assert.match(shape, /kind: "close" as const/);
 });
 
 test("provisioning wrapper exposes the world-slot read and release and reaches the real bound store", () => {

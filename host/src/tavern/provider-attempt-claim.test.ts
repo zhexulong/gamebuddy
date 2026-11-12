@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
-import { readFile, rm } from "node:fs/promises";
+import { rm } from "node:fs/promises";
 import test from "node:test";
 import { canonicalTestRoot } from "../test-support/canonical-test-root.test-support.js";
+import { readSourceShape } from "../test-support/source-shape.test-support.js";
 
 if (process.platform !== "win32")
   throw new Error("Provider attempt claim durable attempt claim requires real Windows production mounting");
@@ -62,7 +63,7 @@ const mountPreamble = `
 `;
 
 test("Provider attempt claim facade is limited to private bridge and never imports session/provider surfaces", async () => {
-  const source = await readFile(new URL("./provider-attempt-claim.js", import.meta.url), "utf8");
+  const { shape: source } = readSourceShape(new URL("./provider-attempt-claim.js", import.meta.url));
   assert.match(source, /from "\.\/provider-attempt-claim\.internal\.js"/);
   assert.doesNotMatch(
     source,

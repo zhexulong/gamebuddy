@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
-import { mkdir, readFile, rm } from "node:fs/promises";
+import { mkdir, rm } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { canonicalTestRoot } from "../test-support/canonical-test-root.test-support.js";
+import { readSourceShape } from "../test-support/source-shape.test-support.js";
 
 import {
   queryCurrentOwnerProof,
@@ -40,25 +41,22 @@ test("Chat binding construction has no path-based manifest loader and production
   // The normal test artifact mirrors `src` as `dist-test`; keep this source
   // seam check pinned to the production source rather than emitted output.
   const sourceRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../src");
-  const bindingSource = await readFile(
+  const { shape: bindingSource } = readSourceShape(
     join(
       sourceRoot,
       "continuity-semantic-chat-runtime-binding",
       "continuity-semantic-chat-runtime-binding.internal.ts",
     ),
-    "utf8",
   );
-  const publicSource = await readFile(
+  const { shape: publicSource } = readSourceShape(
     join(sourceRoot, "continuity-semantic-chat-runtime-binding", "continuity-semantic-chat-runtime-binding.ts"),
-    "utf8",
   );
-  const coordinatorSource = await readFile(
+  const { shape: coordinatorSource } = readSourceShape(
     join(
       sourceRoot,
       "continuity-semantic-production-coordinator",
       "continuity-semantic-production-coordinator.internal.ts",
     ),
-    "utf8",
   );
 
   assert.doesNotMatch(bindingSource, /loadHostDeploymentManifest|manifestPath/);

@@ -2,11 +2,12 @@ import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { once } from "node:events";
-import { readFile, rm } from "node:fs/promises";
+import { rm } from "node:fs/promises";
 import test from "node:test";
-import { canonicalTestRoot } from "../test-support/canonical-test-root.test-support.js";
 import type { MountedChatRuntimeLease } from "../continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.js";
 import type { HostDeploymentManifest } from "../deployment-manifest.js";
+import { canonicalTestRoot } from "../test-support/canonical-test-root.test-support.js";
+import { readSourceShape } from "../test-support/source-shape.test-support.js";
 import { composeTavernProfile, TavernBrowserValidatorsV1 } from "./browser-contract/index.js";
 import {
   assertChatPipelineServiceLeaseAfterDurableRead,
@@ -96,7 +97,7 @@ test("service post-read lease guard rejects when a controlled durable-read compl
 });
 
 test("service source keeps start/claim private and imports no HTTP/response surfaces", async () => {
-  const source = await readFile(new URL("./chat-pipeline-service.js", import.meta.url), "utf8");
+  const { shape: source } = readSourceShape(new URL("./chat-pipeline-service.js", import.meta.url));
   // The service composes durable acceptance/claim facades and one normal
   // mounted provider-start operation; no proof-only P4/P5 forwarding facade
   // remains on its production path.

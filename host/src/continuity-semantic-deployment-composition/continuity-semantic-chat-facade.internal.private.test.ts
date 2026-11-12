@@ -1,15 +1,15 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
+import { readSourceShape } from "../test-support/source-shape.test-support.js";
 import { createFreshUnmountedChatSemanticFacade } from "./continuity-semantic-chat-facade.internal.js";
 
 test("production Chat composition is internal and owns construction dependencies", async () => {
   const folder = resolve(dirname(fileURLToPath(import.meta.url)));
   const sourceFolder = join(folder, "../../src/continuity-semantic-deployment-composition");
-  const publicDeployment = await readFile(join(sourceFolder, "continuity-semantic-deployment-composition.ts"), "utf8");
-  const chatComposition = await readFile(join(sourceFolder, "continuity-semantic-chat-facade.internal.ts"), "utf8");
+  const publicDeployment = readSourceShape(join(sourceFolder, "continuity-semantic-deployment-composition.ts")).shape;
+  const chatComposition = readSourceShape(join(sourceFolder, "continuity-semantic-chat-facade.internal.ts")).shape;
   assert.equal(publicDeployment.includes("createFreshUnmountedChatSemanticFacade"), false);
   assert.equal(chatComposition.includes("materializer:"), false);
   assert.equal(chatComposition.includes("binding:"), false);
@@ -26,9 +26,8 @@ test("production Chat composition is internal and owns construction dependencies
 
 test("Chat facade preserves the exact manifest object and rejects adversarial manifest-path re-load after composition begins", async () => {
   const folder = resolve(dirname(fileURLToPath(import.meta.url)));
-  const source = await readFile(
+  const { shape: source } = readSourceShape(
     join(folder, "../../src/continuity-semantic-deployment-composition/continuity-semantic-chat-facade.internal.ts"),
-    "utf8",
   );
   assert.doesNotMatch(source, /manifestPath\s*:/);
   assert.doesNotMatch(source, /loadHostDeploymentManifest/);
