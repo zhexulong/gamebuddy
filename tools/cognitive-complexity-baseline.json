@@ -28,7 +28,8 @@
       "name": "BridgeProtocol.ExecutionArgumentProperties(string?)",
       "file": "integrations/stardew/src/Core/Protocol/BridgeProtocol.cs",
       "line": 2275,
-      "value": 60
+      "value": 63,
+      "reason": "recorded at 604844a6: 60 -> 63, and `line` -> 2275. Two commits touch this file in b047bb19..604844a6 (ecf18222, 5a068fa9) and both are wire work: the charged-use fields and sweep_scythe's arc fact each add a property arm to this projection. 63 is the ceiling now."
     },
     {
       "id": "cs:BridgeProtocol.TrySerialize(T,string,string)",
@@ -53,6 +54,15 @@
       "file": "integrations/stardew/tests/CompanionPresentationPolicyTests.cs",
       "line": 12,
       "value": 51
+    },
+    {
+      "id": "cs:DeclaredArgumentAcceptanceTests.BuildArgs(FarmhandActionDescriptor,IReadOnlyList<(string Name, string Value)>,string?,string?)",
+      "language": "cs",
+      "name": "DeclaredArgumentAcceptanceTests.BuildArgs(FarmhandActionDescriptor,IReadOnlyList<(string Name, string Value)>,string?,string?)",
+      "file": "integrations/stardew/tests/GameBuddy.Stardew.Integration.Tests/DeclaredArgumentAcceptanceTests.cs",
+      "line": 149,
+      "value": 31,
+      "reason": "recorded at 604844a6: 31, first record. 1 for the `foreach`, 1 for the `switch`, and one point per arm: the arms are the catalogue's argument names, and the docblock above the method states why they are a flat switch (\"the switch is explicit so a NEW argument name fails loudly here - the same place shop_purchase's quantity was silently missing\"). So the floor is the catalogue's argument count, and the alternative is not an extraction: a dispatch table would delete the loud failure the comment exists for. Recorded, not reduced."
     },
     {
       "id": "cs:DerivedDestinationSet.TryApplyNativeMetadata(List<NavigationDestination>)",
@@ -179,8 +189,9 @@
       "language": "cs",
       "name": "ExecutionManager.Update()",
       "file": "integrations/stardew/farmhandexecutioncontroller.cs",
-      "line": 1581,
-      "value": 97
+      "line": 1119,
+      "value": 107,
+      "reason": "recorded at 604844a6: 97 -> 107. The record was taken at b047bb19. Six commits touch `farmhandexecutioncontroller.cs` in that range (bae00966, ecf18222, af4ff94d, db37ba8b, f891b3ff, 5a068fa9) and the per-tick stage markers plus the pickup settle clock are the ones that reach `Update`; the ten points are accumulated over those, not one hunk. 107 is the ceiling now and it is still the worst cs function in the tree."
     },
     {
       "id": "cs:FarmhandBodyProgramController.AdvanceAwaitingNodes(string)",
@@ -195,8 +206,9 @@
       "language": "cs",
       "name": "FarmhandExecutionAcceptance.IsValidArgumentValue(FarmhandActionArgument,FarmhandExecutionAcceptanceFacts,BridgeExecutionArgs,Func<BridgeNavigationDestinationSelector?, bool>?)",
       "file": "integrations/stardew/src/Core/Policy/FarmhandExecutionAcceptance.cs",
-      "line": 111,
-      "value": 40
+      "line": 133,
+      "value": 42,
+      "reason": "recorded at 604844a6: 40 -> 42, and `line` -> 133. `ecf18222` is the only commit touching this file in b047bb19..604844a6; the two points are the charge/area argument checks it added to the shared admission validator. 42 is the ceiling now."
     },
     {
       "id": "cs:FarmhandForEachArguments.TryReadPredicate(JsonElement,FarmhandForEachPredicate?,string)",
@@ -244,7 +256,8 @@
       "name": "FarmingActionHandler.Execute(BridgeExecutionRequest,IExecutionLedger)",
       "file": "integrations/stardew/Handlers/FarmingActionHandler.cs",
       "line": 17,
-      "value": 54
+      "value": 56,
+      "reason": "recorded at 604844a6: 54 -> 56, and `line` -> 17. `ecf18222` (one charged tool use covers the engine's own footprint) is the only commit touching this file in b047bb19..604844a6, and the two points are the charged-use branches it added to the per-action dispatch. 56 is the ceiling now."
     },
     {
       "id": "cs:HostFarmhandProvisioner.HandleRequest(FarmhandAttachmentRequest?,long,string?)",
@@ -388,8 +401,8 @@
       "name": "ResourceToolActionHandler.Execute(BridgeExecutionRequest,IExecutionLedger)",
       "file": "integrations/stardew/Handlers/ResourceToolActionHandler.cs",
       "line": 37,
-      "value": 44,
-      "reason": "192 -> 44 in cd9af513: the family is a row per action, so 44 is 1 for the switch plus 43 for its arms (42 actions and the fail-closed default) - the floor for a closed 42-action dispatch in one method in C#. Going lower means moving the dispatch out of the method, a structural change to the family topology and not a refactor."
+      "value": 45,
+      "reason": "192 -> 44 in cd9af513, then 44 -> 45 by 604844a6. 44 was 1 for the switch plus 43 for its arms (42 actions and the fail-closed default); the 45th is the arm `5a068fa9` added (sweep_scythe) on the same flat dispatch, so 45 is still one point per action with nothing else in the method. Going below it means moving the dispatch out of the method, which is the family topology - the number is a ceiling that means \"exactly its arms and nothing else\"."
     },
     {
       "id": "cs:RouteReenteringBodyProgramExecutor.TryBuildExecutionRequest(IReadOnlyDictionary<string, BodyProgramCanonicalValue>,string,string,string,long,BridgeExecutionRequest?,string)",
@@ -397,7 +410,8 @@
       "name": "RouteReenteringBodyProgramExecutor.TryBuildExecutionRequest(IReadOnlyDictionary<string, BodyProgramCanonicalValue>,string,string,string,long,BridgeExecutionRequest?,string)",
       "file": "integrations/stardew/src/Core/BodyPrograms/RouteReenteringBodyProgramExecutor.cs",
       "line": 163,
-      "value": 41
+      "value": 43,
+      "reason": "recorded at 604844a6: 41 -> 43, and `line` -> 163. `ecf18222` is the only commit touching this file in b047bb19..604844a6; the two points are the charged-use request fields it builds. 43 is the ceiling now."
     },
     {
       "id": "cs:RouteReenteringBodyProgramExecutor.TryBuildRowArguments(IFarmhandForEachWorld,FarmhandForEachTarget,string,FarmhandActionDescriptor?,IReadOnlyDictionary<string, BodyProgramCanonicalValue>?,string)",
@@ -420,8 +434,9 @@
       "language": "cs",
       "name": "ScopeBoundActorAdmissionTests.Args(string)",
       "file": "integrations/stardew/tests/GameBuddy.Stardew.Integration.Tests/ScopeBoundActorAdmissionTests.cs",
-      "line": 367,
-      "value": 45
+      "line": 371,
+      "value": 46,
+      "reason": "recorded at 604844a6: 45 -> 46. The same test-side args builder as `WarpSourceAdmissionTests.Args`: one arm per argument the catalogue declares, and the catalogue gained one. 46 is the ceiling now."
     },
     {
       "id": "cs:StardewBodyController.AssessReachability(Point,Point,Func<Point, bool>,int,bool)",
@@ -461,7 +476,8 @@
       "name": "WarpSourceAdmissionTests.Args(FarmhandActionDescriptor,int,int)",
       "file": "integrations/stardew/tests/GameBuddy.Stardew.Core.Tests/WarpSourceAdmissionTests.cs",
       "line": 168,
-      "value": 38
+      "value": 39,
+      "reason": "recorded at 604844a6: 38 -> 39. This is the test-side args builder whose arms mirror the catalogue; the +1 is the argument the catalogue gained. 39 is the ceiling now."
     },
     {
       "id": "ts:host/src/body-program-for-each.ts#readPredicate",
@@ -470,6 +486,15 @@
       "file": "host/src/body-program-for-each.ts",
       "line": 411,
       "value": 34
+    },
+    {
+      "id": "ts:host/src/body-program-packing.ts#tileAtCharge",
+      "language": "ts",
+      "name": "host/src/body-program-packing.ts#tileAtCharge",
+      "file": "host/src/body-program-packing.ts",
+      "line": 233,
+      "value": 34,
+      "reason": "recorded at 604844a6: 34, first record, and it is a real over-bound reading in the shipped population - `host/src/body-program-packing.ts` is tracked at this commit (`git ls-files --error-unmatch` resolves it), so this is not another lane's untracked file. It is `5a068fa9`'s area packing resolver: the per-axis charge split and its remainder handling. RECORDED AS DEBT, not accepted as right: extraction into per-axis resolvers is the change that would take it under 30, and until then 34 is the ceiling."
     },
     {
       "id": "ts:host/src/companion-control-server.ts#handle",
@@ -926,8 +951,9 @@
       "language": "ts",
       "name": "host/src/tavern-management-dialogue-web.ts#problemFor",
       "file": "host/src/tavern-management-dialogue-web.ts",
-      "line": 3147,
-      "value": 81
+      "line": 3155,
+      "value": 82,
+      "reason": "recorded at 604844a6: 81 -> 82, and `line` 3147 -> 3155. The record was taken at b047bb19, 113 commits earlier, and three commits touch this file in that range (122c0be4, ba11fbc6, 0482b6e2), so the single branch is accumulated drift over that range rather than one attributed hunk - `git log -L` from 604844a6 names it. 82 is the ceiling now."
     },
     {
       "id": "ts:host/src/tavern/browser-contract/index.ts#composeTavernProfile",
@@ -1161,7 +1187,8 @@
       "parts": 1,
       "file": "integrations/stardew/src/Core/Protocol/BridgeProtocol.cs",
       "line": 13,
-      "value": 547
+      "value": 550,
+      "reason": "recorded at 604844a6: 547 -> 550, `lines` 2410 -> 2421 over the same 141 methods - the two wire commits (ecf18222, 5a068fa9) again, which is the same growth `ExecutionArgumentProperties` records at member level."
     },
     {
       "id": "cs:BridgeSession",
@@ -1185,7 +1212,8 @@
       "parts": 58,
       "file": "integrations/stardew/ModEntry.Fixtures.AcceptDailyQuest.cs",
       "line": 10,
-      "value": 2713
+      "value": 2718,
+      "reason": "recorded at 604844a6: 2713 -> 2718 over the same 58 parts. The record was taken at b047bb19, 113 commits earlier; the five points are fixture/admission branches accumulated across that range rather than one commit. Also re-taken in the same commit: `methods` 335 -> 339 and `lines` 15363 -> 15473."
     },
     {
       "id": "cs:OpenBodyProgramJournalAuthority",
@@ -1201,7 +1229,8 @@
       "parts": 1,
       "file": "integrations/stardew/src/Core/BodyPrograms/RouteReenteringBodyProgramExecutor.cs",
       "line": 41,
-      "value": 201
+      "value": 203,
+      "reason": "recorded at 604844a6: 201 -> 203, `lines` 1103 -> 1111 over the same 38 methods - `ecf18222`'s charged-use request fields, the same change that took `TryBuildExecutionRequest` 41 -> 43."
     },
     {
       "id": "cs:StardewBodyController",
@@ -1209,7 +1238,8 @@
       "parts": 1,
       "file": "integrations/stardew/StardewBodyController.cs",
       "line": 39,
-      "value": 418
+      "value": 420,
+      "reason": "recorded at 604844a6: 418 -> 420, with `lines` 2626 -> 2641 at the same 91 methods and 1 part. Two more branches in the body controller; 420 is the ceiling now."
     }
   ],
   "sizes": [
@@ -1260,8 +1290,9 @@
       "files": 1,
       "file": "integrations/stardew/src/Core/Protocol/BridgeProtocol.cs",
       "line": 13,
-      "lines": 2410,
-      "methods": 141
+      "lines": 2421,
+      "methods": 141,
+      "reason": "lines 2410 -> 2421 at 604844a6 over the same 141 methods and 1 part; the two wire commits, matching the 547 -> 550 class row."
     },
     {
       "id": "cs:BridgeProtocolSerializationTests",
@@ -1270,8 +1301,9 @@
       "files": 1,
       "file": "integrations/stardew/tests/GameBuddy.Stardew.Core.Tests/BridgeProtocolSerializationTests.cs",
       "line": 11,
-      "lines": 967,
-      "methods": 54
+      "lines": 968,
+      "methods": 54,
+      "reason": "lines 967 -> 968 at 604844a6 over the same 54 methods; one line of assertion, no structural change."
     },
     {
       "id": "cs:BridgeSession",
@@ -1290,9 +1322,9 @@
       "files": 46,
       "file": "integrations/stardew/farmhandexecutioncontroller.actorstateactions.cs",
       "line": 143,
-      "lines": 27239,
-      "methods": 804,
-      "reason": "27,825 -> 27,239 lines and 789 -> 792 -> 789 -> 804 methods over the same 47 parts, measured at each revision with this gate's own measureCSharp so the arithmetic is re-runnable. 889b9630, where this record was first taken: 27,825 lines / 789 methods. 053614d7 added FindVillagerByTargetId, the single reader of the identity-bound villager lookup four NPC actions each spelled (27,828 / 790). ef4f82ae added BeginLocalExecution and AdmitLocalExecution, the replay lookup, revision advance, execution identity and admission clock that 62 actions repeated (27,509 / 792, -319 lines). 3f365f73 then moved the receipt ledger out of the class into ExecutionReceiptStore.cs, 245 new lines in their own file: BindAction, TryBindDispatch, NewExecutionId, Remember, PublishIdleAfterRelease and DrainPendingIdleAfterRelease left ExecutionManager and two explicit IActiveBodyOwnership implementations joined it, leaving 27,374 lines / 789 declarations / complexity 4,683 (-135 lines, -3 declarations, -25 complexity). ae02fa38 moved the in-flight body state into ActiveBodySlots.cs and left read-only projections under the names every action family already reads: 16 slot fields in this class became expression-bodied properties over BodySlot<T>.Peek() (+16 members) while OwnerToken left for the new class (-1 member), so 27,374 -> 27,239 lines (-135) reads as 789 -> 804 methods (+15). The +15 is a field becoming an accessor, not growth: this gate counts a property_declaration as a member and a field_declaration as none, and no projection getter carries a branch. Net across the four commits: -586 lines, complexity 4,770 -> 4,648. Every step is a shrink or a seam; 27,239 / 804 is the frozen ceiling now. This supersedes the 4da075af note, whose 28,104 describes no field this record holds."
+      "lines": 27469,
+      "methods": 809,
+      "reason": "methods 804 -> 809 and lines 27239 -> 27469 at 604844a6, over the same 47 parts and 46 files. This is the seam work's residue and the gate's own `class_size_record_stale` reading: `ef4f82ae` (one admission for the identity preamble), `cd9af513` (a row per action for the resource/tool family) and `ecf18222` (charged tool use) landed after this record was taken, so five member declarations arrived and the class grew 230 lines while its COMPLEXITY FELL 4648 -> 4642. The three fields are re-taken from one measurement; the fall in complexity is what says the seam moved work out rather than in."
     },
     {
       "id": "cs:FarmhandActionCatalog",
@@ -1301,8 +1333,9 @@
       "files": 1,
       "file": "integrations/stardew/src/Core/Policy/FarmhandActionDefinitions.cs",
       "line": 301,
-      "lines": 1026,
-      "methods": 30
+      "lines": 1083,
+      "methods": 30,
+      "reason": "lines 1026 -> 1083 at 604844a6 over the same 30 methods and 1 part - `5a068fa9`'s sweep_scythe row plus the area packing resolver's declared facts, i.e. catalogue rows, not branches (this type's class complexity is 9, well under the bound)."
     },
     {
       "id": "cs:FarmhandCapabilityPublicationProjectionMetadata",
@@ -1315,15 +1348,26 @@
       "methods": 34
     },
     {
+      "id": "cs:MagnetPickupItemTests",
+      "name": "MagnetPickupItemTests",
+      "parts": 1,
+      "files": 1,
+      "file": "integrations/stardew/tests/GameBuddy.Stardew.Integration.Tests/MagnetPickupItemTests.cs",
+      "line": 51,
+      "lines": 1147,
+      "methods": 26,
+      "reason": "recorded at 604844a6: 1147 lines, first record, and it is over the 1000-line ceiling. This is a TEST type (`GameBuddy.Stardew.Integration.Tests/MagnetPickupItemTests.cs`) whose length is a table of pickup cases rather than a branched body - its class complexity is 13 against a bound of 200 - so the ceiling reading is the whole fact and 1147 is the ceiling now. RECORDED AS DEBT: splitting the case table into partials or a data source is what would take it under 1000, and nothing in this unit touched it."
+    },
+    {
       "id": "cs:ModEntry",
       "name": "ModEntry",
       "parts": 58,
       "files": 58,
       "file": "integrations/stardew/ModEntry.Fixtures.AcceptDailyQuest.cs",
       "line": 10,
-      "lines": 15363,
-      "methods": 335,
-      "reason": "15,363 is the measured truth, and this raise corrects a record that was wrong rather than loose. The recorded 15,356 (with 335 methods and 56 parts) predates the commit that inlined 68 fixture initialisers into the 2,893-line if chain: the parent of 21bd3a46 measures 15,502 lines with 267 methods, so the gate read 21bd3a46's 76-line shrink as growth (15,356 -> 15,426) because class_size_grew cannot tell a stale record from a grown class. 21bd3a46 removed 2,917 lines from ModEntry.Fixtures.cs and added 2,788 class-span lines across three new partials, net -76 (15,502 -> 15,426). The split's residue then went too: one 60-line blank run deleted and 19 documentation lines moved onto the declarations they describe, 63 more lines down to 15,363. The class is 139 lines smaller than at that parent while this number rises by 7; the rise is the correction, not an allowance."
+      "lines": 15473,
+      "methods": 339,
+      "reason": "methods 335 -> 339 and lines 15363 -> 15473 at 604844a6, over the same 58 parts. This is the gate's own `class_size_record_stale` reading, i.e. the record lied about the tree rather than the class having grown: the record's `parts` still matched but its `methods` did not, so the line count beside it described a shape the class no longer has. Four member declarations joined the class across b047bb19..604844a6 (+4) while its span grew 110 lines; the correction is the re-taking of all three fields from one measurement, not an allowance."
     },
     {
       "id": "cs:NavigationExecutionManagerTests",
@@ -1362,8 +1406,9 @@
       "files": 1,
       "file": "integrations/stardew/src/Core/BodyPrograms/RouteReenteringBodyProgramExecutor.cs",
       "line": 41,
-      "lines": 1103,
-      "methods": 38
+      "lines": 1111,
+      "methods": 38,
+      "reason": "lines 1103 -> 1111 at 604844a6 over the same 38 methods and 1 part; `ecf18222`'s charged-use request fields."
     },
     {
       "id": "cs:SleepAndAdvanceDayLifecycle",
@@ -1382,8 +1427,9 @@
       "files": 1,
       "file": "integrations/stardew/StardewBodyController.cs",
       "line": 39,
-      "lines": 2626,
-      "methods": 91
+      "lines": 2641,
+      "methods": 91,
+      "reason": "lines 2626 -> 2641 at 604844a6 over the same 91 methods and 1 part; the same branches the class-complexity row records as 418 -> 420."
     },
     {
       "id": "cs:TargetFamilyCompletenessTests",
@@ -1392,8 +1438,9 @@
       "files": 1,
       "file": "integrations/stardew/tests/GameBuddy.Stardew.Integration.Tests/TargetFamilyCompletenessTests.cs",
       "line": 34,
-      "lines": 1506,
-      "methods": 12
+      "lines": 1536,
+      "methods": 12,
+      "reason": "lines 1506 -> 1536 at 604844a6 over the same 12 methods; the enclosing test type grew with the nested `TargetFamilyWorld` row above it."
     },
     {
       "id": "cs:TargetFamilyCompletenessTests.TargetFamilyWorld",
@@ -1402,8 +1449,9 @@
       "files": 1,
       "file": "integrations/stardew/tests/GameBuddy.Stardew.Integration.Tests/TargetFamilyCompletenessTests.cs",
       "line": 352,
-      "lines": 1187,
-      "methods": 63
+      "lines": 1217,
+      "methods": 64,
+      "reason": "methods 63 -> 64 and lines 1187 -> 1217 at 604844a6. A nested test-world type whose record predates the seam work: one member declaration joined and the type grew 30 lines. Re-taken from one measurement."
     }
   ]
 }
