@@ -117,6 +117,19 @@ const TEST_PATH = new RegExp(`${TEST_FILE_PATH.source}|${TEST_SCAFFOLDING_PATH.s
  * declaring file and the symbol. It is a per-export claim: one plain test reaching the same export withholds it.
  */
 const PRIVATE_TEST_PATH = /\.private\.test\.(?:ts|tsx)$/u;
+
+/**
+ * A module whose own name says it is not a product surface: `*.internal.ts`, `*-internal.ts`.
+ *
+ * This is the second spelling of the same claim `*.private.test.ts` makes, and it is the one a test-support module
+ * relies on. `x.test-fixtures.ts` cannot rename itself to declare the internals it reaches - it is scaffolding, not a
+ * test - so the declaration has to come from the other side of the import: a module that calls itself `internal` has
+ * said, in its own name, that what it exports is not a product surface. Both halves are derived from the same spelling
+ * family as `TEST_SCAFFOLDING_PATH`'s `-internal` suffix, and a module that does NOT declare itself this way is not
+ * covered: `host/src/bridge.ts` exported an in-memory test double from a product module (`eded0bd4`) and that is still
+ * a finding, because nothing in that file's name says a test may reach into it.
+ */
+const INTERNAL_MODULE_PATH = /(?:[.-]internal)\.(?:ts|tsx)$/u;
 const SOURCE_FILE = /\.(?:ts|tsx)$/u;
 const SOURCE_EXT = /\.(?:ts|tsx)$/u;
 
@@ -2077,13 +2090,15 @@ function referencedInModule(sources, file, name, declaration) {
  * test-support module's import - withdraws the declaration, and scaffolding cannot be renamed to declare because it is
  * not a test. The reader of a finding needs the shape, so the message states it.
  */
-function undeclaredReading(root, undeclared, users) {
+function undeclaredReading(root, undeclared, users, file) {
   const names = undeclared.map((user) => relativeTo(root, user)).join(", ");
   const declarers = users.filter((user) => PRIVATE_TEST_PATH.test(user));
-  if (declarers.length === 0)
-    return undeclared.every((user) => TEST_SCAFFOLDING_PATH.test(user))
-      ? `nothing declares that it pins this internal; ${names} reach it and a test-support module cannot be renamed to declare, so the decision is the export or the scaffolding that reaches it`
-      : `nothing declares that it pins this internal, and ${names} reach it without naming themselves .private.test.ts`;
+  const module = relativeTo(root, file);
+  if (declarers.length === 0) {
+    if (!undeclared.every((user) => TEST_SCAFFOLDING_PATH.test(user)))
+      return `nothing declares that it pins this internal, and ${names} reach it without naming themselves .private.test.ts`;
+    return `a test-support module reaches this internal, and ${module} is not named internal, so nothing declares it`;
+  }
   return `a .private.test.ts declares that it pins this internal, and ${names} withdraws that declaration by reaching it without the same name`;
 }
 
@@ -2128,6 +2143,7 @@ function runHygiene(sources) {
   const harnessFiles = recordHarnessConsumers(sources, surfaces, consumers);
   let testOnly = 0;
   let declaredPrivate = 0;
+  let declaredScaffolding = 0;
   let harnessOnly = 0;
   let examinedExports = 0;
   for (const file of hostFiles) {
@@ -2147,12 +2163,21 @@ function runHygiene(sources) {
         declaredPrivate += 1;
         continue;
       }
+      // A test-support module reaches production internals on purpose and cannot rename itself to say so. The
+      // declaration therefore lives on the other side, in the reached module's own name - and only there, because a
+      // module that never said `internal` has not agreed that a test may reach into it. The consumer half is the same
+      // `TEST_SCAFFOLDING_PATH` the class already walks, so a fourth scaffolding spelling is picked up without an edit
+      // here; if the reach is by anything else, the finding stands.
+      if (undeclared.every((user) => TEST_SCAFFOLDING_PATH.test(user)) && INTERNAL_MODULE_PATH.test(file)) {
+        declaredScaffolding += 1;
+        continue;
+      }
       testOnly += 1;
       violations.push({
         rank: 4,
         kind: "test-only export",
         where: at(sources.root, declaration, sourceFile, file),
-        message: `${name} is exported and no production code names it; ${undeclaredReading(sources.root, undeclared, users)}`,
+        message: `${name} is exported and no production code names it; ${undeclaredReading(sources.root, undeclared, users, file)}`,
       });
     }
   }
@@ -2161,7 +2186,7 @@ function runHygiene(sources) {
     count: violations.filter((violation) => violation.kind === kind.id).length,
   }));
   notes.push(
-    `hygiene: ${violations.length} finding(s) in ${kinds.filter((kind) => kind.count > 0).length} kind(s) across ${hostFiles.length + webFiles.length} source file(s); ${examinedExports} imported export(s) examined, ${testOnly} reached only from tests, ${declaredPrivate} declared as pinned by a .private.test.ts, ${harnessOnly} reached only by an operator or build harness`,
+    `hygiene: ${violations.length} finding(s) in ${kinds.filter((kind) => kind.count > 0).length} kind(s) across ${hostFiles.length + webFiles.length} source file(s); ${examinedExports} imported export(s) examined, ${testOnly} reached only from tests, ${declaredPrivate} declared as pinned by a .private.test.ts, ${declaredScaffolding} declared by a test-support module reaching a module that names itself internal, ${harnessOnly} reached only by an operator or build harness`,
   );
   for (const kind of kinds) notes.push(`hygiene: ${kind.id} (${kind.count}) reads as a ${kind.readsAs}: ${kind.note}`);
   return { declared: hostFiles.length + webFiles.length, violations, notes };

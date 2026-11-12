@@ -758,6 +758,63 @@ test("hygiene: a .private.test.ts declares the internal it pins, and a plain tes
   }
 });
 
+test("hygiene: a test-support module declares an internal, but only in a module that names itself internal", (t) => {
+  const root = fixture();
+  const symbols = [
+    'import test from "node:test";',
+    'import { mintSession } from "./declared.internal.js";',
+    'import { mintDouble } from "./bridge.js";',
+    "void mintSession;",
+    "void mintDouble;",
+    "export function supportSession(): unknown {",
+    "  return mintSession();",
+    "}",
+    "export function supportDouble(): unknown {",
+    "  return mintDouble();",
+    "}",
+    'test("x", () => {});',
+    "",
+  ].join("\n");
+  const pinning = 'import test from "node:test";\nimport { modelPlan } from "./pinned-plan.private.js";\nvoid modelPlan;\ntest("x", () => {});\n';
+  try {
+    // The module that calls itself `internal` has said what its own name means: scaffolding may reach into it.
+    write(root, "host/src/declared.internal.ts", "export function mintSession(): unknown {\n  return 1;\n}\n");
+    // `bridge.ts` never said it, so a test-support module reaching it is the shape `eded0bd4` shipped: a test double
+    // exported from a product module, kept alive by scaffolding. That must stay a finding.
+    write(root, "host/src/bridge.ts", "export function mintDouble(): unknown {\n  return 2;\n}\n");
+    write(root, "host/src/plan.test-support.ts", symbols);
+
+    const reading = violationsOf(root, "hygiene");
+    assert.deepEqual(
+      reading.violations.map((violation) => violation.where),
+      ["host/src/bridge.ts:1"],
+      `the undeclared module keeps its finding and the declared one is settled:\n${reading.violations.map((v) => `${v.where} ${v.message}`).join("\n")}`,
+    );
+    assert.match(
+      reading.violations[0].message,
+      /test-support module reaches this internal, and host\/src\/bridge\.ts is not named internal/u,
+      "the finding says which kind of declaration is missing",
+    );
+    assert.match(
+      reading.notes.join("\n"),
+      /1 declared by a test-support module reaching a module that names itself internal/u,
+      "the settled export is counted beside the declaration that settled it",
+    );
+
+    // The declaration is per export and never per file: one plain test reaching the same export withdraws it.
+    write(root, "host/src/declared.test.ts", 'import test from "node:test";\nimport { mintSession } from "./declared.internal.js";\nvoid mintSession;\ntest("x", () => {});\n');
+    const witnessed = violationsOf(root, "hygiene");
+    assert.deepEqual(
+      witnessed.violations.map((violation) => violation.where).sort(),
+      ["host/src/bridge.ts:1", "host/src/declared.internal.ts:1"],
+      "a plain test withdraws the scaffolding declaration for that export",
+    );
+    t.diagnostic(witnessed.notes.join(" | "));
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("a hygiene site defect blocks while the test-only export reading does not", () => {
   const root = fixture();
   try {
