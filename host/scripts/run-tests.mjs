@@ -2,7 +2,7 @@ import { lstat, readdir } from "node:fs/promises";
 import { availableParallelism, cpus } from "node:os";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
-import { runBoundedChild } from "./child-process-tool.mjs";
+import { DEFAULT_HEARTBEAT_INTERVAL_MS, runBoundedChild } from "./child-process-tool.mjs";
 import { assertTestArtifactFreshness, assertTestArtifactInventory } from "./test-artifact-inventory.mjs";
 import { assertHostVerificationArtifactManifest } from "./verification-artifact-manifest.mjs";
 
@@ -45,15 +45,19 @@ export const EXCLUSIVE_FILE_GROUPS = Object.freeze([
     // and PASSING alone on the CI runner with a 60s per-test timeout, while the same file inside
     // a 2-way batch exceeded its 600s stall budget (heartbeats clean, no failing test). The
     // runner's own note above describes this exact signature, so it is the runner's job.
+    // The file may be renamed to `*.private.test.js` to declare the internals it pins, and the group's job is to
+    // serialize a heavy seam, not to forbid a suffix: the marker is tolerated here for the same reason it is
+    // honoured by the audit's test-only-export reading.
     name: "named-pipe-real-time-coordinator",
-    pattern: /gameplay-task-subagent\.test\.js$/u,
+    pattern: /gameplay-task-subagent(?:\.private)?\.test\.js$/u,
   }),
   Object.freeze({
     // The same signature, measured 2026-10-26 on CI: 117 tests pass alone in 34.5 s, and in a two-file batch the
     // file reported 21 tests and then went silent for 27 minutes with no heartbeat and no failing test. It drives
     // the real Player Host and a real named-pipe bridge, so its round trips degrade under company exactly as the
     // group above does. Grouped by the runner rather than slowed by a bigger budget, because the reading that
-    // distinguished the two - `silent_for_ms` - showed silence, not work.
+    // distinguished the two - a heartbeat age - measured the runner's own timer, not the child's work. See the
+    // silence threshold below for the reading that does distinguish them.
     //
     // The family, not one file: the measurement belongs to the seam every one of these files drives, so a group that
     // named a single file would leave the other groups it was split into in the parallel pool.
@@ -100,7 +104,7 @@ export function exclusiveGroupsFor(relativePath) {
  * Excess concurrency never reports itself as "the runner was too eager"; it reports itself as a
  * per-file stall-budget expiry or a loopback `ECONNRESET` on a file that is individually fine,
  * and both are then attributed to that file. Measured on the development machine: with ~60
- * unrelated node processes already running, `gameplay-task-subagent.test.js` exceeds a 180s
+ * unrelated node processes already running, `gameplay-task-subagent.private.test.js` exceeds a 180s
  * budget inside a batch although it takes 2s alone, and `tavern-management-dialogue-web.test.js`
  * returned `TypeError: fetch failed / read ECONNRESET` in a full run while passing 28/28 alone.
  *
@@ -120,10 +124,33 @@ const DEFAULT_TEST_CONCURRENCY = machineDefaultConcurrency();
  * Per-file budget: a STALL detector, not a speed bound. It exists so a file that never
  * resolves is named and bounded instead of consuming the run; the suite deadline owns the real
  * bound. Sized generously because a legitimately slow file under load is otherwise reported as a
- * hang: measured here, `gameplay-task-subagent.test.js` takes 2s alone and exceeded a 180s budget
+ * hang: measured here, `gameplay-task-subagent.private.test.js` takes 2s alone and exceeded a 180s budget
  * inside a 4-way batch on a machine already running ~60 other node processes.
  */
 export const DEFAULT_TEST_FILE_TIMEOUT_MS = 600_000;
+
+/**
+ * How long a live child may be silent before the runner names it, and why neither number here is invented.
+ *
+ * The runner observes silence two ways and only one of them used to exist: its own heartbeat (`onHeartbeat`,
+ * every `DEFAULT_HEARTBEAT_INTERVAL_MS`) fires whether or not the child printed anything, so it can only say
+ * "I am still supervising". The child's own output (`onOutput`) is the reading that separates a working file
+ * from a passed file whose process leaked a handle and stayed alive. Measured 2026-11-12: a lifecycle file's
+ * 17 tests all passed 43 ms into its life, the process then sat silent and was killed at its 600 s budget, and
+ * the failure said `silent_for_ms=31` - the age of a timer tick, which everyone read as "the file was working".
+ *
+ * The baseline is that poll interval: silence shorter than the gap between two heartbeats cannot be observed at
+ * all, and no passing file in an ordinary batch has ever been quiet for one poll, let alone `MARGIN` of them. A
+ * file that COMPLETED raises the baseline to `MARGIN` times its own largest observed gap, so a genuinely slow
+ * stretch is not named as a leak - a killed file's silence never raises it, because that silence is the defect
+ * rather than the norm. Both the observed maximum and the resulting threshold are printed in the population
+ * line, so this stays a reading an operator can revise instead of a constant to be taken on faith.
+ */
+const OUTPUT_SILENCE_GAP_MARGIN = 4;
+
+export function outputSilenceThresholdMs(observedMaxGapMs = 0) {
+  return OUTPUT_SILENCE_GAP_MARGIN * Math.max(DEFAULT_HEARTBEAT_INTERVAL_MS, observedMaxGapMs);
+}
 // Windows release CI runs each compiled file in an isolated Node coordinator.
 // The whole suite remains bounded, but 15 minutes cannot accommodate its
 // measured serialized Windows baseline and can shrink a final child below its
@@ -217,7 +244,7 @@ export async function discoverTestFiles(root = defaultTestRoot, extension = ".te
   return tests;
 }
 
-export async function runDiscoveredTests(paths, { node = process.execPath, runChild = runBoundedChild, timeoutMs = undefined, onHeartbeat = undefined } = {}) {
+export async function runDiscoveredTests(paths, { node = process.execPath, runChild = runBoundedChild, timeoutMs = undefined, onHeartbeat = undefined, onOutput = undefined } = {}) {
   if (!Array.isArray(paths) || paths.length === 0) throw runnerError("test_files_missing", defaultTestRoot);
   // The children run under `node`. A compiled test that must spawn its own Node child (node:test's
   // module mocks, a Node-only realpath) cannot trust its own `process.execPath`, because under
@@ -240,6 +267,7 @@ export async function runDiscoveredTests(paths, { node = process.execPath, runCh
     cwd: hostRoot,
     ...(timeoutMs === undefined ? {} : { timeoutMs }),
     ...(onHeartbeat === undefined ? {} : { onHeartbeat }),
+    ...(onOutput === undefined ? {} : { onOutput }),
   });
 }
 
@@ -267,25 +295,85 @@ export function chunkTestFiles(paths, batchSize = DEFAULT_TEST_BATCH_SIZE) {
  * child is awaited before this returns, so a batch cannot report success (or a
  * failure) while one of its children is still running.
  */
-  async function runBatchFiles({ batch, batchLabel, concurrency, deadlineMs, perFileMs, run, now, suite, keepGoing = false, retryEnvironmental = true }) {
+  async function runBatchFiles({ batch, batchLabel, concurrency, deadlineMs, perFileMs, run, now, suite, outputSilence, keepGoing = false, retryEnvironmental = true }) {
     /**
      * The failure to report for one child, with the runner's own budget kill relabelled to name the
      * file and the budget - and with the killed child's captured output kept. One spelling for both
      * the first attempt and the retry: a second budget kill must still read the same way.
      */
-    const describeRunFailure = (path, message, budgetMs, childOutput, silentForMs) =>
+    const describeRunFailure = (path, message, budgetMs, childOutput, moment) =>
       message.startsWith("test_supervisor_timeout:")
         ? runnerError(
             "test_file_timeout",
-            // `silent_for_ms` is the reading that distinguishes a stalled file from a slow one: an age close to
-            // the budget means nothing has been printed since the child started, and a small age means the child
-            // was still reporting when the budget ended. Without it the two read identically.
-            `${relativePath(path)}:budget_ms=${budgetMs}:silent_for_ms=${silentForMs ?? "unknown"}${childOutput}`,
+            // Two clocks, never one: `since_heartbeat_ms` is the supervisor's own timer and `idle_ms` is the
+            // child's silence. The timer says the runner still supervises, never that the child is working - the
+            // measured leak reported a heartbeat 5 s old beside output 35 s old, and the first number alone read
+            // as a slow file.
+            `${relativePath(path)}:budget_ms=${budgetMs}:since_heartbeat_ms=${moment?.sinceHeartbeatMs ?? "unknown"}:idle_ms=${moment?.idleMs ?? "unknown"}${childOutput}`,
           )
         : new Error(message);
     const failures = new Array(batch.length);
     let nextIndex = 0;
     let stopped = false;
+    /**
+     * One child, with both of its liveness readings.
+     *
+     * `onHeartbeat` is an interval timer in the supervisor: it fires whether or not the child has said anything, so
+     * a file whose tests all passed and then leaked a listening socket answers it exactly like a working one.
+     * `onOutput` is the child's own last word. A child that printed and then went quiet is a leaked handle; a child
+     * that never printed at all is usually a wrong entry point or a failed spawn, so the line names which one it is
+     * rather than making the next reader guess from one silence.
+     */
+    const runWatched = async (path, budgetMs) => {
+      const label = relativePath(path);
+      const startedAtMs = now();
+      const silence = { lastOutputAtMs: startedAtMs, lastHeartbeatAtMs: startedAtMs, sawOutput: false, named: false, maxGapMs: 0 };
+      const readings = () => ({
+        idleMs: Math.max(0, now() - silence.lastOutputAtMs),
+        sinceHeartbeatMs: Math.max(0, now() - silence.lastHeartbeatAtMs),
+      });
+      // `last_output_ms` is when the child last spoke, measured from the file's own start; `idle_ms` is how long it has
+      // been quiet since. Together they read as "spoke at 43 ms, quiet for 595 s" instead of one number whose clock the
+      // reader has to infer.
+      const nameSilence = (moment = readings()) => {
+        silence.named = true;
+        console.error(
+          `child_alive_after_output:${label}:kind=${silence.sawOutput ? "after_output" : "no_output"}:last_output_ms=${silence.sawOutput ? silence.lastOutputAtMs - startedAtMs : "none"}:idle_ms=${moment.idleMs}:since_heartbeat_ms=${moment.sinceHeartbeatMs}`,
+        );
+      };
+      const heartbeat = reportHeartbeat(`${batchLabel}:file=${label}`);
+      try {
+        await run([path], {
+          timeoutMs: budgetMs,
+          onHeartbeat: (beat) => {
+            const moment = readings();
+            silence.lastHeartbeatAtMs = now();
+            heartbeat(beat);
+            // The heartbeat is the runner's only periodic look at a child, so it is also where a leak is named
+            // before the budget runs out: nothing else in this process observes an alive child between outputs.
+            if (!silence.named && moment.idleMs >= outputSilenceThresholdMs(outputSilence.maxGapMs)) nameSilence(moment);
+          },
+          onOutput: () => {
+            const at = now();
+            silence.maxGapMs = Math.max(silence.maxGapMs, at - silence.lastOutputAtMs);
+            silence.lastOutputAtMs = at;
+            silence.sawOutput = true;
+          },
+        });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        const moment = readings();
+        // A deadline kill always says why the child was still alive, whether or not the threshold had tripped: the
+        // kill with no reason is what let a passed file be read as a slow one for a third of a suite's overshoot.
+        if (message.startsWith("test_supervisor_timeout:") && !silence.named) nameSilence(moment);
+        return { ok: false, message, moment };
+      }
+      // Only a COMPLETED file contributes to the baseline the threshold is measured against: a killed file's silence
+      // is the defect being measured, and letting it raise the threshold would teach the runner to ignore the next one.
+      silence.maxGapMs = Math.max(silence.maxGapMs, now() - silence.lastOutputAtMs);
+      outputSilence.maxGapMs = Math.max(outputSilence.maxGapMs, silence.maxGapMs);
+      return { ok: true };
+    };
   const runOne = async (index) => {
     const path = batch[index];
     const fileRemainingMs = deadlineMs - now();
@@ -301,40 +389,24 @@ export function chunkTestFiles(paths, batchSize = DEFAULT_TEST_BATCH_SIZE) {
     // between "this file hung" (named, bounded) and silence; it is deliberately far
     // above the slowest legitimate test (tens of seconds).
     const budgetMs = Math.min(fileRemainingMs, perFileMs);
-    // The child's own last sign of life. `reportHeartbeat` already prints it; keeping the timestamp is what lets the
-    // failure say how long the file had been silent for.
-    let lastHeartbeatAtMs = now();
-    const heartbeat = reportHeartbeat(`${batchLabel}:file=${relativePath(path)}`);
-    try {
-      await run([path], {
-        timeoutMs: budgetMs,
-        onHeartbeat: (beat) => {
-          lastHeartbeatAtMs = now();
-          heartbeat(beat);
-        },
-      });
-    } catch (error) {
-      // Only a child the supervisor had to KILL is a budget expiry. Anything else - a non-zero
-      // exit, a spawn error - is the child's own failure and must keep its own message, output
-      // and code: reporting a real failure as "the budget expired" hides the reason it failed,
-      // and the budget is not even what ended it (`budgetMs === perFileMs` only says the per-file
-      // bound was the smaller of the two).
-        const message = error instanceof Error ? error.message : String(error);
-        // Relabelling must not discard what the killed child had produced: the supervisor's own
-        // message carries its bounded output after the first newline, and without it a budget
-        // expiry is a name and a number with no clue what the file was doing when it was killed.
-        const childOutput = message.includes("\n") ? message.slice(message.indexOf("\n")) : "";
-        const silentForMs = Math.max(0, now() - lastHeartbeatAtMs);
-        failures[index] = {
-          path,
-          budgetMs,
-          error: describeRunFailure(path, message, budgetMs, childOutput, silentForMs),
-        };
-        // A batch stops at its first failure unless the caller asked to see everything. The
-        // remaining files in the batch are still run under `--keep-going`, which exists because
-        // this machine's environmental failures were costing whole batches of information.
-        if (!keepGoing) stopped = true;
-    }
+    const attempt = await runWatched(path, budgetMs);
+    if (attempt.ok) return;
+    // Only a child the supervisor had to KILL is a budget expiry. Anything else - a non-zero
+    // exit, a spawn error - is the child's own failure and must keep its own message, output
+    // and code: reporting a real failure as "the budget expired" hides the reason it failed,
+    // and the budget is not even what ended it (`budgetMs === perFileMs` only says the per-file
+    // bound was the smaller of the two). Relabelling must not discard what the killed child had
+    // produced: the supervisor's own message carries its bounded output after the first newline.
+    const childOutput = attempt.message.includes("\n") ? attempt.message.slice(attempt.message.indexOf("\n")) : "";
+    failures[index] = {
+      path,
+      budgetMs,
+      error: describeRunFailure(path, attempt.message, budgetMs, childOutput, attempt.moment),
+    };
+    // A batch stops at its first failure unless the caller asked to see everything. The
+    // remaining files in the batch are still run under `--keep-going`, which exists because
+    // this machine's environmental failures were costing whole batches of information.
+    if (!keepGoing) stopped = true;
   };
   // Files that contend on one machine-global resource run one at a time and only after the
   // concurrent pool has drained, so they can never overlap each other while everything else
@@ -377,19 +449,24 @@ export function chunkTestFiles(paths, batchSize = DEFAULT_TEST_BATCH_SIZE) {
           continue;
         }
         const retryBudgetMs = Math.min(retryRemainingMs, perFileMs);
-        try {
-          await run([path], { timeoutMs: retryBudgetMs });
+        // The retry is watched the same way as the first attempt: a second budget kill must say why that child was
+        // still alive too, and the retry is the run where "it passed alone" is told apart from "it passed and leaked".
+        const attempt = await runWatched(path, retryBudgetMs);
+        if (attempt.ok) {
           console.error(`host_test_suite_file_retry_outcome:suite=${batchLabel}:file=${label}:outcome=passed`);
           failures[index] = undefined;
-        } catch (error) {
-          // The second failure is what the run reports, and it keeps the child's own message: a
-          // retry that fails for a different reason is that reason - relabelled the same way the
-          // first attempt was, so a second budget kill still names the file and its budget.
-          const message = error instanceof Error ? error.message : String(error);
-          const childOutput = message.includes("\n") ? message.slice(message.indexOf("\n")) : "";
-          console.error(`host_test_suite_file_retry_outcome:suite=${batchLabel}:file=${label}:outcome=failed`);
-          failures[index] = { path, budgetMs: retryBudgetMs, error: describeRunFailure(path, message, retryBudgetMs, childOutput) };
+          continue;
         }
+        // The second failure is what the run reports, and it keeps the child's own message: a
+        // retry that fails for a different reason is that reason - relabelled the same way the
+        // first attempt was, so a second budget kill still names the file and its budget.
+        const childOutput = attempt.message.includes("\n") ? attempt.message.slice(attempt.message.indexOf("\n")) : "";
+        console.error(`host_test_suite_file_retry_outcome:suite=${batchLabel}:file=${label}:outcome=failed`);
+        failures[index] = {
+          path,
+          budgetMs: retryBudgetMs,
+          error: describeRunFailure(path, attempt.message, retryBudgetMs, childOutput, attempt.moment),
+        };
       }
     }
     // Report the earliest-launched failure so the batch stays deterministic
@@ -442,12 +519,18 @@ function singleLineMessage(message) {
  * a run that stopped at batch 6 printed the failing test's name and nothing that said 34 batches had
  * not run, so that run and a green suite were indistinguishable.
  */
-function suitePopulationLine({ suite, batchesTotal, notRun, failedBatches, files, wallMs }) {
+function suitePopulationLine({ suite, batchesTotal, notRun, failedBatches, files, wallMs, maxSilentGapMs = 0 }) {
   const remaining = notRun.length;
   const parts = [`host_test_suite_population:suite=${suite}`, `batches examined ${batchesTotal - remaining} of ${batchesTotal}`];
   // One number, two readings, derived here so they cannot disagree.
   if (remaining > 0) parts.push(`remaining ${remaining} not run`, `batches_not_run ${remaining}`);
   parts.push(`failed ${failedBatches}`, `files ${files}`, `wall_ms ${wallMs}`);
+  // The silence threshold is a reading, not a constant the next agent has to hunt for: the largest gap any COMPLETED
+  // file showed in this run, and the threshold those gaps produce. A run where the two have converged is the run
+  // where the threshold needs revisiting. Printed only when a file was actually examined - with no child run there is
+  // no gap to report, and `max_silent_gap_ms 0` would answer a question nobody asked.
+  if (files > 0)
+    parts.push(`max_silent_gap_ms ${maxSilentGapMs}`, `output_silence_threshold_ms ${outputSilenceThresholdMs(maxSilentGapMs)}`);
   // `0 of 0` is the one reading that cannot tell "nothing to run" from "nothing ran", so it says which.
   if (batchesTotal === 0) parts.push("zero_population_blocked");
   return parts.join(" · ");
@@ -525,6 +608,9 @@ export async function runTestBatches(paths, {
   const deadlineMs = startedAtMs + timeoutMs;
   const failures = [];
   const notRun = [];
+  // The run's one observation of how long a COMPLETED child has ever been quiet: the threshold that names a leak is
+  // derived from it, and its final value is published, so the two cannot drift apart.
+  const outputSilence = { maxGapMs: 0 };
   let failedBatches = 0;
   // Batches from `from` on are coverage this run does not have. Each keeps the reason the run ended,
   // because "remaining 34 not run" without a reason is the reading this change replaces.
@@ -542,7 +628,7 @@ export async function runTestBatches(paths, {
     console.error(`host_test_suite_batch_start:suite=${batchLabel}:files=${batch.length}:paths=${batchFilesForLog(batch)}:remaining_ms=${remainingMs}`);
     let batchFailures;
     try {
-      batchFailures = await runBatchFiles({ batch, batchLabel, concurrency, deadlineMs, perFileMs, run, now, suite, keepGoing, retryEnvironmental });
+      batchFailures = await runBatchFiles({ batch, batchLabel, concurrency, deadlineMs, perFileMs, run, now, suite, outputSilence, keepGoing, retryEnvironmental });
     } catch (error) {
       // A batch whose own run threw handed back no verdict for its files. That is missing coverage, and
       // recording it is what keeps the suite running instead of ending it here.
@@ -577,6 +663,7 @@ export async function runTestBatches(paths, {
     failedBatches,
     files: paths.length,
     wallMs: now() - startedAtMs,
+    maxSilentGapMs: outputSilence.maxGapMs,
   });
   for (const entry of notRun) console.error(notRunBatchLine(entry));
   console.error(population);

@@ -59,6 +59,29 @@ test("deadline races child close, not only exit", async () => {
   assert.equal(result.stdout, "ok");
 });
 
+/**
+ * The reading a caller cannot get any other way: output as it arrives from both streams. The captured text is only
+ * returned once the child is gone, so a supervisor that wants to say when a still-running child last spoke needs
+ * each chunk when it lands.
+ */
+test("reports each captured chunk from both streams while the child is still running", async () => {
+  const observed = [];
+  const result = await runBoundedChild({
+    command: nodeCommand,
+    args: childScript("process.stdout.write('out'); process.stderr.write('err'); setTimeout(() => {}, 100);"),
+    timeoutMs: 5000,
+    onOutput: ({ stream }) => observed.push(stream),
+  });
+  assert.equal(result.code, 0);
+  assert.deepEqual(observed.sort(), ["stderr", "stdout"]);
+  assert.equal(result.stdout, "out");
+  assert.equal(result.stderr, "err");
+  await assert.rejects(
+    runBoundedChild({ command: "never-spawned", onOutput: "not-a-function", spawnProcess: () => assert.fail("must not spawn") }),
+    /invalid_test_supervisor_output/,
+  );
+});
+
 test("bounds public output at 64 KiB without splitting UTF-8", async () => {
   const result = await runBoundedChild({
     command: nodeCommand,

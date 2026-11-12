@@ -10,6 +10,7 @@ import {
   exclusiveGroupsFor,
   isEnvironmentalFailure,
   machineDefaultConcurrency,
+  outputSilenceThresholdMs,
   preflightTestArtifact,
   runCompiledTests,
   runDiscoveredTests,
@@ -72,6 +73,16 @@ test("recursively discovers sorted nested regular test files and passes every pa
   const calls = [];
   await runDiscoveredTests(tests, { node: "node-under-test", runChild: async (options) => { calls.push(options); } });
   assert.deepEqual(calls, [{ command: "node-under-test", args: ["--import", pathToFileURL(resolve(import.meta.dirname, "compiled-test-bootstrap.mjs")).href, "--test", "--test-concurrency=1", ...tests], cwd: resolve(import.meta.dirname, "..") }]);
+  // The silence reading depends on both callbacks reaching the supervisor: an `onOutput` that stopped here would
+  // leave the runner with only the heartbeat, which is the clock this unit exists to stop trusting.
+  const forwarded = [];
+  await runDiscoveredTests(tests, {
+    node: "node-under-test",
+    runChild: async (options) => { forwarded.push([typeof options.onHeartbeat, typeof options.onOutput]); },
+    onHeartbeat: () => {},
+    onOutput: () => {},
+  });
+  assert.deepEqual(forwarded, [["function", "function"]]);
 }));
 
 test("discovers script-level ESM tests when explicitly requested", async () => withFixture(async (root) => {
@@ -222,6 +233,131 @@ test("runs sorted test files in bounded fresh-coordinator batches with one suite
     );
   });
 
+/**
+ * The distinction that existed nowhere: a child that is ALIVE and a child that is WORKING read identically, and the
+ * only thing in the report that separated them was the age of the supervisor's own 30 s timer. Replayed at the shape
+ * measured on 2026-11-12 - a lifecycle file's 17 tests all passed 43 ms into its life, the process then sat silent
+ * and was killed at its 600 s budget while the timer kept ticking, so the failure said `silent_for_ms=31`.
+ */
+test("names a child that printed and then went quiet by its own last output, not by the supervisor's clock", async () => {
+  const lines = [];
+  const originalError = console.error;
+  console.error = (line) => lines.push(line);
+  let clock = 1_000;
+  try {
+    await assert.rejects(
+      runTestBatches([staleFile], {
+        suite: "fixture",
+        perFileMs: 600_000,
+        timeoutMs: 900_000,
+        retryEnvironmental: false,
+        now: () => clock,
+        run: async (_batch, options) => {
+          clock += 43;
+          options.onOutput({ stream: "stdout" });
+          clock += 29_957;
+          options.onHeartbeat({ pid: 42, elapsedMs: 30_000 });
+          clock += 569_000;
+          throw new Error("test_supervisor_timeout:pid=42:timeout_ms=600000\n✔ 17 tests passed");
+        },
+      }),
+      (error) => {
+        // Both clocks, and neither presented as the other: the timer is 569 s old, the child's own last word
+        // 598.957 s old. The old spelling gave only the first and called it "silent".
+        assert.match(error.message, /budget_ms=600000:since_heartbeat_ms=569000:idle_ms=598957/u);
+        assert.doesNotMatch(error.message, /silent_for_ms/u);
+        return true;
+      },
+    );
+  } finally {
+    console.error = originalError;
+  }
+  assert.ok(
+    lines.includes(
+      "child_alive_after_output:dist-test/slow.test.js:kind=after_output:last_output_ms=43:idle_ms=598957:since_heartbeat_ms=569000",
+    ),
+    lines.join("\n"),
+  );
+});
+
+/** A child that never printed at all is a wrong entry point or a failed spawn, not a leaked handle: named apart. */
+test("names a child that never printed as no_output rather than as one that went quiet", async () => {
+  const lines = [];
+  const originalError = console.error;
+  console.error = (line) => lines.push(line);
+  let clock = 0;
+  try {
+    await assert.rejects(
+      runTestBatches([staleFile], {
+        suite: "fixture",
+        perFileMs: 600_000,
+        timeoutMs: 900_000,
+        retryEnvironmental: false,
+        now: () => clock,
+        run: async (_batch) => {
+          clock += 600_000;
+          throw new Error("test_supervisor_timeout:pid=7:timeout_ms=600000\n");
+        },
+      }),
+      /test_file_timeout/u,
+    );
+  } finally {
+    console.error = originalError;
+  }
+  assert.ok(
+    lines.includes(
+      "child_alive_after_output:dist-test/slow.test.js:kind=no_output:last_output_ms=none:idle_ms=600000:since_heartbeat_ms=600000",
+    ),
+    lines.join("\n"),
+  );
+});
+
+/**
+ * The threshold is derived from what this run has seen and published beside the gap that produced it, so a leak is
+ * named inside the first couple of minutes instead of at the budget, and the number stays revisable.
+ */
+test("names a silent live child before its budget ends, on a threshold derived from observed gaps", async () => {
+  // The floor is the poll interval times a margin, because silence shorter than the gap between two heartbeats
+  // cannot be observed at all; a completed file that was quietly busy for longer raises it.
+  assert.equal(outputSilenceThresholdMs(0), 120_000);
+  assert.equal(outputSilenceThresholdMs(45_000), 180_000);
+
+  const lines = [];
+  const originalError = console.error;
+  console.error = (line) => lines.push(line);
+  let clock = 0;
+  try {
+    await runTestBatches(["quiet.test.js"], {
+      suite: "fixture",
+      now: () => clock,
+      run: async (_batch, options) => {
+        clock += 43;
+        options.onOutput({ stream: "stdout" });
+        clock += 119_957;
+        options.onHeartbeat({ pid: 9, elapsedMs: 30_000 });
+        clock += 1_000;
+        options.onHeartbeat({ pid: 9, elapsedMs: 30_000 });
+        clock += 1_000;
+        options.onHeartbeat({ pid: 9, elapsedMs: 30_000 });
+      },
+    });
+  } finally {
+    console.error = originalError;
+  }
+  // 119.957 s of silence is under the threshold and says nothing; 120.957 s is over it and names the file once -
+  // the third heartbeat is silent because the leak has already been reported for this child.
+  assert.deepEqual(
+    lines.filter((line) => line.startsWith("child_alive_after_output:")),
+    ["child_alive_after_output:quiet.test.js:kind=after_output:last_output_ms=43:idle_ms=120957:since_heartbeat_ms=1000"],
+  );
+  assert.ok(
+    lines.includes(
+      "host_test_suite_population:suite=fixture · batches examined 1 of 1 · failed 0 · files 1 · wall_ms 122000 · max_silent_gap_ms 121957 · output_silence_threshold_ms 487828",
+    ),
+    lines.join("\n"),
+  );
+});
+
   test("keeps the files that contend on one machine-global build out of concurrent execution", async () => {
     // The four Stardew wire-parity files each spawn a real `dotnet test` against one shared
     // csproj; four simultaneous cold builds kill three of them. They must never overlap, while
@@ -243,6 +379,14 @@ test("runs sorted test files in bounded fresh-coordinator batches with one suite
       exclusiveGroupsFor("dist-test/gameplay-task-subagent.test.js").length,
       1,
       "the named-pipe coordinator must be declared exclusive",
+    );
+    // The same file once it declares the internals it pins. The group serializes a seam, so the declaration suffix is
+    // not a reason to drop out of it - and the runner refuses to start when a declared group matches no file, so the
+    // name the file actually has is the name the pattern has to reach.
+    assert.equal(
+      exclusiveGroupsFor("dist-test/gameplay-task-subagent.private.test.js").length,
+      1,
+      "the named-pipe coordinator must stay exclusive after it declares the internals it pins",
     );
 
     // And the Player Host lifecycle file, for the same reason measured again on 2026-10-26: 117 tests pass alone in
@@ -375,7 +519,7 @@ test("keeps the batch-start line and per-file heartbeat CI parses", async () => 
     "host_test_suite_heartbeat:suite=fixture:batch=1/1:file=a.test.js:pid=42:elapsed_ms=7",
     // The population line belongs to this contract for the same reason: CI parses these lines, and a run
     // that never printed how much it examined is the reading this suite could not produce before.
-    "host_test_suite_population:suite=fixture · batches examined 1 of 1 · failed 0 · files 1 · wall_ms 0",
+    "host_test_suite_population:suite=fixture · batches examined 1 of 1 · failed 0 · files 1 · wall_ms 0 · max_silent_gap_ms 0 · output_silence_threshold_ms 120000",
   ]);
 });
 
@@ -801,7 +945,7 @@ test("an early failing batch does not hide the batches after it", async () => {
   assert.deepEqual(failFast.calls, ["a.test.js"]);
   assert.ok(
     failFast.lines.includes(
-      "host_test_suite_population:suite=fixture · batches examined 1 of 3 · remaining 2 not run · batches_not_run 2 · failed 1 · files 3 · wall_ms 0",
+      "host_test_suite_population:suite=fixture · batches examined 1 of 3 · remaining 2 not run · batches_not_run 2 · failed 1 · files 3 · wall_ms 0 · max_silent_gap_ms 0 · output_silence_threshold_ms 120000",
     ),
     failFast.lines.join("\n"),
   );
@@ -811,7 +955,9 @@ test("an early failing batch does not hide the batches after it", async () => {
   const all = await runFixture({ keepGoing: true });
   assert.deepEqual(all.calls, ["a.test.js", "b.test.js", "c.test.js"], "the later batches ran");
   assert.ok(
-    all.lines.includes("host_test_suite_population:suite=fixture · batches examined 3 of 3 · failed 1 · files 3 · wall_ms 0"),
+    all.lines.includes(
+      "host_test_suite_population:suite=fixture · batches examined 3 of 3 · failed 1 · files 3 · wall_ms 0 · max_silent_gap_ms 0 · output_silence_threshold_ms 120000",
+    ),
     all.lines.join("\n"),
   );
   assert.match(all.rejection.message, /test_suite_failed:1 file\(s\): a\.test\.js/u);
@@ -862,7 +1008,7 @@ test("a batch the run never reached is published by name and fails the run", asy
   );
   assert.ok(
     lines.includes(
-      "host_test_suite_population:suite=fixture · batches examined 39 of 40 · remaining 1 not run · batches_not_run 1 · failed 0 · files 40 · wall_ms 39000",
+      "host_test_suite_population:suite=fixture · batches examined 39 of 40 · remaining 1 not run · batches_not_run 1 · failed 0 · files 40 · wall_ms 39000 · max_silent_gap_ms 1000 · output_silence_threshold_ms 120000",
     ),
     lines.join("\n"),
   );

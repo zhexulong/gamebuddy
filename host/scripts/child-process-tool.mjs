@@ -5,7 +5,12 @@ import { StringDecoder } from "node:string_decoder";
 export const DEFAULT_SUITE_TIMEOUT_MS = 15 * 60_000;
 export const CLEANUP_TIMEOUT_MS = 5_000;
 const MAX_CAPTURE_BYTES = 64 * 1024;
-const DEFAULT_HEARTBEAT_INTERVAL_MS = 30_000;
+/**
+ * How often the supervisor reports that it is still supervising. It is a timer, not an observation of the child:
+ * it fires whether or not the child has printed anything, so a child that finished its tests and then leaked a
+ * handle answers it exactly like one that is working. Callers that need the child's own liveness use `onOutput`.
+ */
+export const DEFAULT_HEARTBEAT_INTERVAL_MS = 30_000;
 const VALID_TERMINATION_POLICIES = new Set(["immediate", "term-then-kill"]);
 const WINDOWS_TASKKILL_COMMAND = "taskkill.exe";
 const WINDOWS_TASKKILL_OPTIONS = Object.freeze({ windowsHide: true, stdio: "ignore" });
@@ -146,12 +151,17 @@ function defaultKillTree(pid, { terminationPolicy, graceMs, signal }) {
   return Promise.resolve();
 }
 
-function captureStream(stream, state, key) {
+function captureStream(stream, state, key, onOutput) {
   if (!stream) return () => {};
   const decoder = new StringDecoder("utf8");
   const onData = (chunk) => {
     const decoded = decoder.write(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
     state[key] = appendUtf8Bounded(state[key], decoded);
+    try {
+      onOutput?.({ stream: key });
+    } catch {
+      // Output observations are diagnostic and cannot affect the child outcome.
+    }
   };
   const onEnd = () => {
     state[key] = appendUtf8Bounded(state[key], decoder.end());
@@ -720,6 +730,7 @@ export async function runBoundedChild({
   stdio = "pipe",
   spawnOptions = {},
   onHeartbeat,
+  onOutput,
   heartbeatIntervalMs = DEFAULT_HEARTBEAT_INTERVAL_MS,
   terminationPolicy = "immediate",
   graceMs = 250,
@@ -735,6 +746,9 @@ export async function runBoundedChild({
   }
   if (onHeartbeat !== undefined && typeof onHeartbeat !== "function") {
     throw validationError("invalid_test_supervisor_heartbeat");
+  }
+  if (onOutput !== undefined && typeof onOutput !== "function") {
+    throw validationError("invalid_test_supervisor_output");
   }
   validateOptions({ timeoutMs, cleanupTimeoutMs, heartbeatIntervalMs, terminationPolicy, graceMs });
   assertMandatorySpawnOptions(spawnOptions);
@@ -755,7 +769,7 @@ export async function runBoundedChild({
     throw validationError("invalid_test_supervisor_child");
   }
   const streamDisposers = stdio === "pipe"
-    ? [captureStream(child.stdout, state, "stdout"), captureStream(child.stderr, state, "stderr")]
+    ? [captureStream(child.stdout, state, "stdout", onOutput), captureStream(child.stderr, state, "stderr", onOutput)]
     : [];
   const completionObserver = observeChildCompletion(child);
   const completion = completionObserver.completion;
