@@ -248,16 +248,24 @@ test("a fresh observation is the end of the staleness, not a second warning abou
   await deliverTurn(pump, snapshotFact(352));
   for (let turn = 1; turn <= WORLD_STATE_STALE_TURNS + 1; turn++)
     await deliverTurn(pump, worldFact("time_milestone", "1200", turn));
-  // The world is observed again, and the observation reaches the model in the same batch as the clock fact that
-  // triggered the turn - a snapshot alone never starts a turn (`hasPendingDelivery`), so it has to travel with one.
+  // The world is observed again, and that observation is itself a member of the closed list: it opens the very turn
+  // that delivers it (`TURN_OPENING.observation`), so the age of the reading is measured from here.
   await deliverTurn(pump, snapshotFact(400, { ...STUCK_READING, revision: 400 } as Snapshot));
-  await deliverTurn(pump, worldFact("time_milestone", "1300", 99));
   const after: WorldFact[] = [];
   for (let turn = 1; turn <= WORLD_STATE_STALE_TURNS - 1; turn++) {
     const batch = await deliverTurn(pump, worldFact("time_milestone", "1300", 100 + turn));
     after.push(...staleFactsOf(batch));
   }
   assert.deepEqual(after, [], "the reading was one turn old again, so there is nothing stale to name");
+  // The observation re-armed the fact instead of silencing it: the turn after the last quiet one is the one that is due,
+  // which is the boundary those quiet turns stop exactly one short of.
+  const dueAgain = staleFactsOf(await deliverTurn(pump, worldFact("time_milestone", "1300", 199)));
+  assert.equal(
+    dueAgain.length,
+    1,
+    "a fresh observation resets the age, and the declared bound is due again from there",
+  );
+  assert.equal(Number(dueAgain[0]?.payload.turns), WORLD_STATE_STALE_TURNS);
 });
 
 test("the world saying it moved is the other half of the claim: a warp alone makes the reading stale", async () => {
