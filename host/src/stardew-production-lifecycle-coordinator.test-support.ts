@@ -133,6 +133,17 @@ const gameProfile = composeGameProfile({
   navigationItemIds: ["game"],
 });
 export const temporaryRoots: string[] = [];
+type AdmissionBroker = Awaited<ReturnType<typeof createAdmissionBroker>>;
+/**
+ * Every fixture owns a real loopback admission server, so a test that forgets
+ * `broker.close()` leaves a listening handle behind and the file's process never exits.
+ * Nothing then fails: Node prints all tests green and the runner kills the file at its
+ * budget - measured here, seventeen tests in five seconds and a `test_file_timeout` ten
+ * minutes later. The per-file hook drains what a test left open and names that test, so
+ * the omission fails the file it belongs to instead of costing the suite a stall.
+ */
+const openFixtureBrokers: Array<Readonly<{ test: string; broker: AdmissionBroker }>> = [];
+let currentTestName = "unknown";
 export function deferredVoid(): Readonly<{ promise: Promise<void>; resolve(): void }> {
   let resolve!: () => void;
   const promise = new Promise<void>((settle) => {
@@ -557,13 +568,17 @@ async function createAdmissionBroker(
     assert.notEqual(admission, null);
     return admission!;
   };
+  let closed = false;
   return {
     handler,
     origin,
     cookie,
     csrfToken: root.chat.csrfToken,
     issue,
+    isClosed: () => closed,
     async close() {
+      if (closed) return;
+      closed = true;
       const handlerDrain = handler.close();
       server.closeAllConnections();
       await closeServer(server);
@@ -818,6 +833,7 @@ export async function createFixture(
       }),
   });
   const broker = await createAdmissionBroker(coordinator, input.discoveryBrowserHandlers);
+  openFixtureBrokers.push(Object.freeze({ test: currentTestName, broker }));
   coordinator.activationOwner.bindBrowserAdmissionIssuer(broker.handler.lifecycleActivationIssuer);
   return {
     runtimeRoot,
@@ -1521,15 +1537,25 @@ export function containedGuardianSessionRecorder(sessionCalls: string[]): Deskto
   });
 }
 
-/** Installs the per-file hooks every group depends on: lock reclaimer, temporary roots. */
+/** Installs the per-file hooks every group depends on: lock reclaimer, temporary roots, fixture brokers. */
 export function installLifecycleTestHooks(): void {
+  test.beforeEach((context) => {
+    currentTestName = context.name;
+  });
+
   test.beforeEach(() => bindWindowsStaleLockReclaimer(createTestWindowsStaleLockReclaimer(simulatedLockHelper)));
 
   test.after(() => bindWindowsStaleLockReclaimer(undefined));
 
   test.after(async () => {
+    const leaked = openFixtureBrokers.splice(0).filter((entry) => !entry.broker.isClosed());
+    for (const entry of leaked) await entry.broker.close();
     for (const root of temporaryRoots.splice(0)) {
       await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
     }
+    if (leaked.length > 0)
+      throw new Error(
+        `fixture_broker_left_open:${leaked.map((entry) => entry.test).join(",")}:the test created a fixture and never closed its broker, so the file's process could not exit`,
+      );
   });
 }

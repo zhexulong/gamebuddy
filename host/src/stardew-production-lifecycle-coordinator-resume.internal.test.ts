@@ -168,6 +168,7 @@ test("resume resolves the exact session the command names, and another session's
     }
   } finally {
     await fixture.coordinator.close().catch(() => undefined);
+    await fixture.broker.close();
   }
 });
 
