@@ -4522,16 +4522,11 @@ export function createManagementPipelineApi(
         200,
         validateCompanionWorldBook,
         { "Content-Type": "application/json", "x-csrf-token": csrfToken },
-        {
-          apiVersion: TAVERN_BROWSER_API_VERSION,
-          expectedRevision: validated.expectedRevision,
-          entries: validated.entries.map((entry) => ({
-            title: entry.title,
-            keys: [...entry.keys],
-            constant: entry.constant,
-            content: entry.content,
-          })),
-        },
+        // The command the validator just accepted IS the body: `UpdateCompanionWorldBookCommandV1`
+        // and its reply share one entry shape, and re-spelling that entry here is how the entry's
+        // `enabled` switch stopped reaching the Host - every save of her own book was answered
+        // `invalid_request` by the command validator while the editor showed the switch as saved.
+        validated,
       );
       observe("companion.worldbook.update", "passed", String(result.revision));
       return result;
