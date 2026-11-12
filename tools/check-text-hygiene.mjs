@@ -72,6 +72,7 @@ export async function collectOwnedTextPaths({ root = REPOSITORY_ROOT, git = gitP
 export async function checkTextHygiene({ root = REPOSITORY_ROOT, git = gitPaths } = {}) {
   const normalizedRoot = await realpath(root);
   const violations = [];
+  let examined = 0;
   for (const relativePath of await collectOwnedTextPaths({ root: normalizedRoot, git })) {
     const absolutePath = resolveOwnedPath(normalizedRoot, relativePath);
     let fileStat;
@@ -83,10 +84,12 @@ export async function checkTextHygiene({ root = REPOSITORY_ROOT, git = gitPaths 
     }
     if (!fileStat.isFile() || fileStat.size > MAX_TEXT_BYTES || hasBinaryExtension(relativePath)) continue;
     const bytes = await readFile(absolutePath);
+    examined += 1;
     violations.push(...inspectText(relativePath, bytes));
   }
   return Object.freeze({
     verdict: violations.length === 0 ? "passed" : "blocked",
+    examined,
     checkedAt: new Date().toISOString(),
     violations: Object.freeze(violations),
   });
@@ -156,7 +159,35 @@ function isMissingPath(error) {
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  const result = await checkTextHygiene();
-  process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
-  process.exitCode = result.verdict === "passed" ? 0 : 1;
+  let result = null;
+  try {
+    result = await checkTextHygiene();
+  } catch (error) {
+    // The listing is the prerequisite: outside a git worktree there is no population at all, and `git ls-files`
+    // failing is not a tree with clean text.
+    process.stderr.write(
+      `text_hygiene_blocked:listing_unreadable: examined 0 files: ${error instanceof Error ? error.message : String(error)}\n`,
+    );
+  }
+  if (result === null) {
+    process.exitCode = 2;
+  } else {
+    // Nothing to read is not nothing to check: an empty listing means the derivation produced no owned text file,
+    // which is a fact about the listing and not a pass over the tree. The JSON says `not_measured` for the same
+    // reason, so a reader of the record alone cannot mistake it for a clean tree.
+    const notMeasured = result.examined === 0;
+    const record = notMeasured ? { ...result, verdict: "not_measured", reason: "no_text_file_examined" } : result;
+    process.stdout.write(
+      `text_hygiene: files examined ${String(result.examined)} · violations ${String(result.violations.length)} · ` +
+        `verdict ${record.verdict}\n`,
+    );
+    process.stdout.write(`${JSON.stringify(record, null, 2)}\n`);
+    if (notMeasured) {
+      process.stderr.write(
+        "text_hygiene_blocked:no_text_file_examined: examined 0 files, so no line ending, BOM, NUL or trailing " +
+          "whitespace was looked at\n",
+      );
+      process.exitCode = 2;
+    } else process.exitCode = result.verdict === "passed" ? 0 : 1;
+  }
 }

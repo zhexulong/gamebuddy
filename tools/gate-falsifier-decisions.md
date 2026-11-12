@@ -1732,3 +1732,59 @@ Measured on a worktree that also carried other lanes' untracked `tools/check-*.m
 proof 333 · external 4 · declared without 18 · undeclared 0 · zero-population-pass 0 · unlisted 1`. The delta this unit
 owns is one gate out of `declared without` and into `with a red proof`; the rest of that reading moved for reasons
 outside it.
+
+## The thirteenth batch: ten gates that can now say how much they measured
+
+`node tools/check-gate-populations.mjs` read `gates examined 346 · with a population line 288 · without 57 ·
+unreadable 1` before this unit and `298 · without 47` after it. A gate with no population line cannot tell "I measured
+nothing" from "I measured and found nothing", which is the shape behind three false greens in one day; the ten below
+were chosen by what the ladder already leans on, not by which were cheapest.
+
+**How the ten were ranked.** `tools/prelive.mjs`'s `PRELUDE_RUNGS` is the only list of gates whose verdict stops a
+live run, so its members come first. Next are gates another gate or runner spawns and whose exit code that caller
+reads. Then the gates a CI composite (`quality:check`) names, and last the single-file gates the CI `gates` job runs
+that were cheapest to give a real population. Every member's population is derived from the tree, not listed.
+
+| rank | gate | population line it now prints | zero handling |
+| --- | --- | --- | --- |
+| L0 rung | `check:catalog-fact-ownership` | `fields examined N · models M` | blocked, `owner_declares_no_fact` (exit 2) |
+| L0 rung | `check:stardew-task-action-coverage` | `actions examined N · covered C · excluded E · tasks T` | its dependency refuses first (below) |
+| L0 rung | `tools/check-live-run-verdict-guards.mjs` | `modules examined N` | blocked, `no_module_examined` (exit 2) |
+| spawned by `run-stardew-action-gates-batch.mjs` | `audit:stardew-native-local-runner-contract` | `runners examined N · conforming C · on the retired contract D` | blocked, `no_runner_examined` (exit 2) |
+| `quality:check` composite | `check:text-hygiene` | `files examined N · violations V` | blocked, `listing_unreadable` / `no_text_file_examined` (exit 2) |
+| `quality:check` composite | `check:error-identity-classification` | `files examined N` | blocked, `no_production_source` (exit 2) |
+| CI gates job | `check:silent-failure` | `sites examined N` | finding, `silent_site_population_empty` (exit 1) |
+| CI gates job | `check:duplicated-authority` | `authorities examined N` | blocked, `no_declared_authority` (exit 2) |
+| CI gates job | `check:stardew-mod-folder-name` | `files examined N` | blocked, `authority_unreadable` (exit 2) |
+| CI gates job | `test:stardew:all` | `projects examined N · passed P · failed F` | finding `no_project` (exit 1) / blocked `test_tree_unreadable` (exit 2) |
+
+**Twelve red proofs, each a copy outside the repository with that gate's population emptied.** Each row is the reading
+the copy produced, not a plan: `owner_declares_no_fact` (the owner's model list emptied, exit 2);
+`stardew_action_surface_has_no_execution_actions` (artifact emptied, exit 1 - see below); `no_module_examined`
+(`--root` on an empty directory, exit 2); `no_runner_examined` (a `tools/` with no runner smoke file, exit 2);
+`no_text_file_examined` (a `git init` tree whose `.gitignore` is `*`, exit 2) and `listing_unreadable` (no worktree at
+all, exit 2); `no_production_source` (a scope holding no `.ts`, exit 2); `silent_site_population_empty` (a tree where
+the scan matches no silent site, exit 1); `no_declared_authority` (the declaration table emptied, exit 2);
+`authority_unreadable` (the PowerShell seam absent, exit 2); `stardew_mod_tests_no_project` (a test tree with no
+`.csproj`, exit 1) and `test_tree_unreadable` (no test tree, exit 2).
+
+**The one gate whose zero its dependency owns.** `check:stardew-task-action-coverage` cannot print a blocked line of its
+own for an empty execution population, and that is the finding this batch records rather than hides: its task table
+reads the same artifact at import time and throws `stardew_action_surface_has_no_execution_actions` when the execution
+filter yields nothing (`tools/lib/multiday-daily-tasks.mjs`, `readExecutionPopulation`). Emptying the artifact therefore
+ends the run at exit 1 with that error before the gate's own reading exists - loud, and never green, but the reason is
+the dependency's and `allowEmpty` is not available to a gate that never reached its verdict. The population line is what
+makes its ordinary runs measurable; a guard restating the dependency's refusal inside the gate was written, seen
+unreachable, and removed instead of kept as a branch nothing can enter.
+
+**The census row it cannot read.** `unreadable 1` is `check:stardew-native-multiplayer-sensitivity`. Its command names
+`--register integrations/stardew/action-development/contracts/generated/native-multiplayer-sensitivity.v1.json`, and
+`tools/lib/gate-population.mjs`'s `COMMAND_PATH` alternation matches the `js` prefix of `.json` without anchoring the
+extension, so the entry file is recorded as `…-sensitivity.v1.js` - a path that does not exist. The census cannot read
+source it cannot find, so the row is counted apart from both buckets instead of being judged; the repair belongs to that
+derivation (`tools/lib/gate-population.mjs`, outside this unit's bounds), not to this gate.
+
+**What this unit did not touch.** No gate's rule changed: only the coverage each one reports and the verdict an empty
+population earns. Two of the ten are red on this worktree for reasons older than the unit and outside it -
+`check:text-hygiene` (200 worktree line-ending violations) and `check:silent-failure` (2 undeclared sites, the first
+`host/src/companion-loop.ts:240:reportTurnDecision`) - and both now print how many objects produced those numbers.

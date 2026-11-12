@@ -70,7 +70,27 @@ function summarize(output) {
 }
 
 const results = [];
-for (const project of testProjects()) {
+let projects;
+try {
+  projects = testProjects();
+} catch (error) {
+  // The prerequisite is the Mod test tree itself. A missing or unreadable one is not a set of projects that passed.
+  process.stderr.write(
+    `stardew_mod_tests_blocked:test_tree_unreadable: examined 0 projects under ` +
+      `integrations/stardew/tests: ${error instanceof Error ? error.message : String(error)}\n`,
+  );
+  process.exit(2);
+}
+if (projects.length === 0) {
+  // The walk is the population. Zero `.csproj` files found is the derivation producing nothing, which is not the same
+  // reading as "every project passed" - it is a tree nothing was run against.
+  process.stderr.write(
+    "stardew_mod_tests_no_project: examined 0 .csproj under integrations/stardew/tests, so no project's tests " +
+      "were run and no summary line was read\n",
+  );
+  process.exit(1);
+}
+for (const project of projects) {
   const name = project.slice(TESTS_ROOT.length + 1).replace(/\\/gu, "/");
   const args = ["test", project, "-c", "Release", "--nologo", "-v", "q", `-p:GamePath=${GAME_PATH}`];
   if (filter !== null) args.push("--filter", filter);
@@ -87,15 +107,20 @@ for (const project of testProjects()) {
 }
 
 const failed = results.filter((result) => result.status === "failed");
+const withoutTests = results.filter((result) => result.status === "no_test_project");
+process.stderr.write(
+  `stardew_mod_tests: projects examined ${String(results.length)} · passed ` +
+    `${String(results.length - failed.length - withoutTests.length)} · failed ${String(failed.length)} · ` +
+    `publication harnesses ${String(withoutTests.length)}\n`,
+);
 process.stdout.write(
   `${JSON.stringify(
     {
       gate: "stardew_mod_tests_all_projects/v1",
       status: failed.length === 0 ? "passed" : "failed",
+      examined: results.length,
       // Named so a reader knows the difference between "this project passed" and "this project has no tests".
-      projectsWithoutTests: results
-        .filter((result) => result.status === "no_test_project")
-        .map((result) => result.name),
+      projectsWithoutTests: withoutTests.map((result) => result.name),
       projects: results,
       failed: failed.map((result) => result.name),
     },

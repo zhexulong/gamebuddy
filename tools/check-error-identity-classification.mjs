@@ -126,10 +126,15 @@ export function collectErrorIdentities(root) {
 
 /**
  * Every place that classifies another module's typed failure by text, in either
- * the direct or the one-hop form.
+ * the direct or the one-hop form, with the number of files the reading covered.
  */
-export function findViolations({ root = DEFAULT_SCOPE } = {}) {
-  const { files, identityByLiteral, bareLiterals } = collectErrorIdentities(root);
+export function auditErrorIdentities({ root = DEFAULT_SCOPE } = {}) {
+  const collected = collectErrorIdentities(root);
+  return { examined: collected.files.length, findings: findInCollected(root, collected) };
+}
+
+/** The readings already taken by `collectErrorIdentities`, judged. Split out so one pass feeds both answers. */
+function findInCollected(root, { files, identityByLiteral, bareLiterals }) {
   const findings = [];
   for (const file of files) {
     const rel = relative(root, file).split(sep).join("/");
@@ -154,15 +159,34 @@ export function findViolations({ root = DEFAULT_SCOPE } = {}) {
   return findings;
 }
 
+/**
+ * Every place that classifies another module's typed failure by text, in either
+ * the direct or the one-hop form.
+ */
+export function findViolations({ root = DEFAULT_SCOPE } = {}) {
+  return auditErrorIdentities({ root }).findings;
+}
+
 export function main(argv = process.argv.slice(2)) {
   const scope = resolve(argv.find((argument) => !argument.startsWith("--")) ?? DEFAULT_SCOPE);
   const scopeLabel = relative(REPOSITORY_ROOT, scope).split(sep).join("/") || ".";
-  const findings = findViolations({ root: scope });
+  const { examined, findings } = auditErrorIdentities({ root: scope });
+  // The population is the production TypeScript the scope holds. Zero of it is not a scope with no message
+  // comparisons: it is a scope nothing was read from, and the same green line comes out either way.
+  if (examined === 0) {
+    process.stderr.write(
+      `error_identity_classification_blocked:no_production_source: examined 0 files under ${scopeLabel}, so no ` +
+        "error identity and no message comparison was read\n",
+    );
+    return 2;
+  }
   if (findings.length === 0) {
-    process.stdout.write(`error_identity_classification_ok scope=${scopeLabel}\n`);
+    process.stdout.write(`error_identity_classification_ok scope=${scopeLabel} files examined ${String(examined)}\n`);
     return 0;
   }
-  process.stdout.write(`error_identity_classification_failed findings=${findings.length}\n`);
+  process.stdout.write(
+    `error_identity_classification_failed findings=${String(findings.length)} files examined ${String(examined)}\n`,
+  );
   for (const finding of findings) {
     const subject =
       finding.form === "aliased-local" ? `the local "${finding.local}", a copy of a .message` : "error.message";

@@ -228,14 +228,26 @@ export function auditRunnerContracts({ toolsRoot = TOOLS, fixturePath } = {}) {
 
 function main() {
   const report = auditRunnerContracts();
+  // The population is the runner smoke files the directory scan found. Zero of them is not "every runner conforms":
+  // every rule below is then true of nothing, and the scan that matched nothing exits the same green as the scan that
+  // matched the whole set.
+  if (report.runnerCount === 0) {
+    process.stderr.write(
+      "native_local_runner_contract_blocked:no_runner_examined: examined 0 runners matching " +
+        "run-stardew-native-local-player-*-smoke.mjs under tools/, so no runner's contract shape was read\n",
+    );
+    return 2;
+  }
   if (process.argv.includes("--json")) {
-    process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
+    process.stdout.write(`${JSON.stringify({ examined: report.runnerCount, ...report }, null, 2)}\n`);
     return report.findings.length === 0 ? 0 : 1;
   }
 
-  console.log(`native-local runners: ${report.runnerCount} (new since baseline: ${report.newRunnerCount})`);
-  console.log(`  conforming to the current fixture contract: ${report.conformingCount}`);
-  console.log(`  still on the retired contract:              ${report.debt.length}`);
+  console.log(
+    `native_local_runner_contract: runners examined ${String(report.runnerCount)} · ` +
+      `conforming ${String(report.conformingCount)} · still on the retired contract ${String(report.debt.length)} · ` +
+      `new since baseline ${String(report.newRunnerCount)}`,
+  );
   if (process.argv.includes("--list-debt")) {
     for (const row of report.debt) console.log(`    ${row.id.padEnd(46)} ${row.reasons.join("+")}`);
   }

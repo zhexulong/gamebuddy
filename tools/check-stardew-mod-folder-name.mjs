@@ -65,7 +65,26 @@ const POWERSHELL_HELPER = join(ROOT, "tools", "lib", "stardew-mod-config.ps1");
 const findings = [];
 const report = (path, message) => findings.push({ path, message });
 
-const csproj = readFileSync(PROJECT, "utf8");
+/** The four named authorities, with the labels a finding quotes. */
+const NAMED_SOURCES = Object.freeze([
+  ["integrations/stardew/GameBuddy.Stardew.csproj", PROJECT],
+  ["tools/lib/stardew-fixture-profile.mjs", PROFILE],
+  ["tools/live-run/game/launch-ladder-live.mjs", LAUNCHER],
+  ["tools/lib/stardew-mod-config.ps1", POWERSHELL_HELPER],
+]);
+
+let named;
+try {
+  named = NAMED_SOURCES.map(([, path]) => readFileSync(path, "utf8"));
+} catch (error) {
+  // The prerequisite is the four named files. One of them missing is not a tree that agrees with itself.
+  process.stderr.write(
+    `stardew_mod_folder_blocked:authority_unreadable: examined 0 files: ${error instanceof Error ? error.message : String(error)}\n`,
+  );
+  process.exit(2);
+}
+const [csproj, profile, launcher, powershellHelper] = named;
+
 const declared = /<ModFolderName>\s*([^<]+?)\s*<\/ModFolderName>/u.exec(csproj);
 if (declared === null) {
   report(
@@ -79,11 +98,10 @@ if (declared === null) {
   );
 }
 
-for (const [label, path] of [
-  ["tools/lib/stardew-fixture-profile.mjs", PROFILE],
-  ["tools/live-run/game/launch-ladder-live.mjs", LAUNCHER],
+for (const [label, source] of [
+  ["tools/lib/stardew-fixture-profile.mjs", profile],
+  ["tools/live-run/game/launch-ladder-live.mjs", launcher],
 ]) {
-  const source = readFileSync(path, "utf8");
   if (!source.includes("STARDEW_MOD_FOLDER")) {
     report(label, "must build the Mod path from STARDEW_MOD_FOLDER rather than spelling the name");
   }
@@ -108,12 +126,22 @@ function powershellFiles(directory) {
 }
 
 const configPathHelper = "Get-GameBuddyStardewModConfigPath (tools/lib/stardew-mod-config.ps1)";
-if (!readFileSync(POWERSHELL_HELPER, "utf8").includes("function Get-GameBuddyStardewModConfigPath")) {
+if (!powershellHelper.includes("function Get-GameBuddyStardewModConfigPath")) {
   report("tools/lib/stardew-mod-config.ps1", "must define Get-GameBuddyStardewModConfigPath, the PowerShell seam");
 }
 
 const DISAGREEING_ALIASES = STARDEW_MOD_FOLDER_ALIASES.filter((alias) => alias !== STARDEW_MOD_FOLDER);
-for (const path of powershellFiles(join(ROOT, "tools"))) {
+const harnessFiles = powershellFiles(join(ROOT, "tools"));
+// The walk is a population of its own, and it is a directory: zero harnesses means the root is wrong, not that every
+// harness agrees. Saying so is the difference between a measured pass and a scan that read its own empty list.
+if (harnessFiles.length === 0) {
+  report(
+    "tools",
+    `examined 0 PowerShell harness(es) under tools/, so no harness's Mod path was read - the walk found nothing ` +
+      "to compare, which is not agreement",
+  );
+}
+for (const path of harnessFiles) {
   const label = relative(ROOT, path).replaceAll("\\", "/");
   const source = readFileSync(path, "utf8");
   for (const alias of DISAGREEING_ALIASES) {
@@ -125,12 +153,16 @@ for (const path of powershellFiles(join(ROOT, "tools"))) {
   }
 }
 
+const examined = NAMED_SOURCES.length + harnessFiles.length;
 if (findings.length === 0) {
+  console.log(`stardew_mod_folder: files examined ${String(examined)}`);
   console.log(
     `stardew_mod_folder: ${STARDEW_MOD_FOLDER} (csproj, fixture profile, launcher and every tools/ PowerShell harness agree)`,
   );
   process.exit(0);
 }
 for (const finding of findings) console.error(`stardew_mod_folder_mismatch:${finding.path}:${finding.message}`);
-console.error(`stardew_mod_folder_mismatch: ${findings.length} place(s) disagree with ${STARDEW_MOD_FOLDER}`);
+console.error(
+  `stardew_mod_folder_mismatch: ${findings.length} place(s) disagree with ${STARDEW_MOD_FOLDER} · files examined ${String(examined)}`,
+);
 process.exit(1);
