@@ -1246,14 +1246,15 @@ history one: at HEAD this gate printed the false pass above at exit 0, and on th
 
 | reading | before this batch | after |
 | --- | --- | --- |
-| `node tools/check-harness-conformance.mjs` | exit 0, `gates examined 351 · with a red proof 326 · external 4 · declared without 19 · undeclared 0 · zero-population-pass 0` | exit 0, the same line |
+| `node tools/check-harness-conformance.mjs` | exit 0 (measured as this batch's first reading); the population line the eleventh batch recorded, `gates examined 351 · with a red proof 326 · external 4 · declared without 19 · undeclared 0 · zero-population-pass 0` | exit 0, `gates examined 351 · with a red proof 326 · external 4 · declared without 19 · undeclared 0 · zero-population-pass 0` — the same numbers, now measured rather than inherited |
 | `gate_falsifiers` verdict | `passed` | `passed` |
 | the intermediate reading, with the canary's runner not yet in the index | `350 · 326 · 4 · 18 · 0 · 0 · untracked_not_counted 1: tools/stardew-soil-itm-canary-gate.mjs` and `gate_declaration_stale: test:stardew-soil-itm-canary` | gone once the file was staged — the population is the index, so a gate file no commit carries is inert and named, never silently counted |
 
 `326 + 4 + 19 = 349`, plus the two unreadable claims the header still names (`check:code-duplication`'s malformed
-marker and `test:format-ratchet`'s pointer to a planted file) is the 351 examined. Both gates of this batch stay in the
-recorded bucket for the reason given above, so this batch moves no census number: it moves two gates from *green having
-measured nothing* to *blocked with a reason*, which no column counts.
+marker and `test:format-ratchet`'s pointer to a planted file) is the 351 examined. Neither gate of this batch moves a
+census number — both stay in the recorded bucket for the reason given above — so the line this batch measured is the line
+the previous one recorded, which is the point: what changed is two gates going from *green having measured nothing* to
+*blocked with a reason*, and no column of this census counts that.
 
 ### What this batch did not do: the class gate
 
