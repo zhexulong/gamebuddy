@@ -1,3 +1,4 @@
+// @zone contract:platform
 /**
  * Browser-only strict DTO validators and fetch client for the
  * `tavern_browser_api/v1` tavern-management wire contract

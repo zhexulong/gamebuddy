@@ -1,3 +1,4 @@
+// @zone contract:chat
 /**
  * Pure, identity-bound browser session reducer for the frozen
  * `tavern_browser_api/v1` reference-pipeline snapshot/status DTO shapes.

@@ -43,7 +43,7 @@
     "check:dependency-risk": "node tools/check-dependency-risk.mjs",
     "check:dependency-audit": "node tools/check-dependency-audit.mjs",
     "check:draft-declaration-coverage": "node tools/check-draft-declaration-coverage.mjs",
-    "check:dialogue-web-boundaries": "depcruise --config .dependency-cruiser.dialogue-web.cjs dialogue-web/src/main.tsx",
+    "check:dialogue-web-boundaries": "depcruise --config .dependency-cruiser.dialogue-web.cjs dialogue-web/src",
     "check:diff": "node tools/check-diff.mjs",
     "check:error-identity-classification": "node tools/check-error-identity-classification.mjs",
     "check:evidence-bundle": "node tools/check-evidence-bundle.mjs",

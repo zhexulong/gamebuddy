@@ -19,9 +19,8 @@ export type ProblemViewAction = Readonly<{
  * sentence, and the control arrives only when the failure's step names it
  * (`problemStepLine`/`problemDrawsOwnRead` in `composed-problem-view.ts` own that decision, because
  * it is a fact about the refusal vocabulary). It draws one control and no other - the read taken
- * again - so the marker is written here as a literal: `PROBLEM_RETRY_READ` lives where the step
- * vocabulary lives, and a shared-UI primitive may not import surface support
- * (`no-shared-ui-imports-surfaces`). `tools/check-fail-closed-forward-path.mjs` holds the two
+ * again - so the marker is written here as a literal rather than imported: `PROBLEM_RETRY_READ`
+ * lives where the step vocabulary lives. `tools/check-fail-closed-forward-path.mjs` holds the two
  * spellings equal - it resolves the step's id in that module and fails when no element here carries
  * it - so a rename that misses one of them is caught, not silent.
  *

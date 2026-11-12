@@ -1,3 +1,4 @@
+// @zone contract:platform
 import { type TavernStateSnapshotV1, validateSnapshot } from "./reference-pipeline-api.js";
 
 /**

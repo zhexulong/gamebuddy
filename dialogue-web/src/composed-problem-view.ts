@@ -798,7 +798,7 @@ export function declaredProblemSentence(error: unknown, labels: Messages): strin
  * opaque `TavernProtocolError`).
  *
  * This lives here rather than in `management-pipeline-api.ts` because the wire contract must stay
- * dependency-free and React-free (`.dependency-cruiser.dialogue-web.cjs`, `no-contract-imports-ui`):
+ * dependency-free and React-free (`.dependency-cruiser.dialogue-web.cjs`, `no-contract-imports-components`):
  * a contract that imported a UI module would invert the layer the boundary exists to hold.
  *
  * The code itself is contract vocabulary and never part of the sentence: `(world_info_

@@ -143,7 +143,7 @@ const GAME_CLIENT = join(WEB, "composed-reference-game-browser-api.ts");
  * one that reads a `.code`.
  *
  * The mapper lives in the problem catalogue, not in the wire contract: a contract may not import a UI
- * module (`.dependency-cruiser.dialogue-web.cjs`, `no-contract-imports-ui`), so moving the wording here
+ * module (`.dependency-cruiser.dialogue-web.cjs`, `no-contract-imports-components`), so moving the wording here
  * was the fix. Both modules are scanned - the contract still carries `problemCodeFor`, and a second
  * mapper growing beside it would be the same defect.
  */

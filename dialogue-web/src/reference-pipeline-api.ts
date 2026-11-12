@@ -1,3 +1,4 @@
+// @zone contract:chat
 /**
  * Browser-only strict DTO validators and fetch client for the frozen
  * `tavern_browser_api/v1` reference-pipeline wire contract

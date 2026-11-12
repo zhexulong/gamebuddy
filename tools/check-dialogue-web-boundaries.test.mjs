@@ -1,9 +1,25 @@
+/**
+ * The dialogue-web layering, measured rather than listed.
+ *
+ * `.dependency-cruiser.dialogue-web.cjs` holds the boundary rules and
+ * `.dependency-cruiser.dialogue-web.zones.cjs` derives the zones they are built from - the
+ * assembler from the browser entry, the surfaces from the filename convention, the wire
+ * contracts from the modules that declare themselves one. This suite measures that
+ * population, proves every rule fires on a fixture, and holds the drift ledger.
+ *
+ * The proofs behind it, each seen red on a copy of the tree outside the repository and green
+ * again once removed: a new module importing a surface is named by `no-module-to-surface`
+ * (`zone-probe.ts -> components/ZoneProbeSurface.tsx`); a surface that declares a wire
+ * contract is named as claimed by two zones; deleting both chat declarations stops the run
+ * with "no module declares a chat wire contract"; and the fixture below loses the cycle
+ * injection and names the rule it could no longer fire.
+ */
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { createRequire } from "node:module";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join, relative, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
 
@@ -11,39 +27,26 @@ const require = createRequire(import.meta.url);
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const configPath = join(repoRoot, ".dependency-cruiser.dialogue-web.cjs");
 const config = require(configPath);
+const { SRC, ZONES, assembler, contracts, sourceModules } = require(
+  join(repoRoot, ".dependency-cruiser.dialogue-web.zones.cjs"),
+);
 
 /**
- * Golden zone manifest — path patterns, not a file list, and the single
- * authority for which layer a source file belongs to. The same patterns are
- * the zone constants in `.dependency-cruiser.dialogue-web.cjs`, and the first
- * test below fails if the two ever drift apart.
- *
- * Chat, Chats, Characters, Game, Settings, Memory and World Info are peer
- * surfaces, so every `components/*Surface.tsx` belongs to the `surface` layer
- * the moment it is added. A file that matches no pattern fails
- * `every dialogue-web/src file belongs to exactly one golden zone` — that is
- * the property that stops a new surface from escaping the boundary rules
- * silently.
+ * The zones a single module can be CLAIMED by. `components` is a target group rather than
+ * a classification, and `module` is the residual - every file is in it by subtraction - so
+ * neither can conflict with another.
  */
-const ZONES = {
-  chatContract: "^dialogue-web/src/reference-pipeline-(api|session)\\.ts$",
-  platformContract: "^dialogue-web/src/(management-pipeline-api|composed-reference-game-browser-api)\\.ts$",
-  composedRoot: "^dialogue-web/src/components/(ComposedReferenceGameApp\\.tsx|use-composed-bootstrap\\.ts)$",
-  surface: "^dialogue-web/src/components/[^/]*Surface\\.tsx$",
-  surfaceSupport:
-    "^dialogue-web/src/((game-(lifecycle-controls|presentation)|composed-problem-view|composed-surface-route|chat-model-route|pi-settings-model)\\.ts|components/(CharacterCardImport|CharactersPanel|CharactersSurfacePanel|CompanionInspectorDrawer|GameDiagnosticsDisclosure|GameStatePanel|StardewInstallationDiscovery|SurfaceModelSettings|composed-reference-game-view|management-panels|management-surface-panels|GamePlayerSettings|character-domain-labels|memory-notebook-labels|png-character-card|turn-failure-text)\\.tsx?)$",
-  sharedUi:
-    "^dialogue-web/src/components/(MessageBubble|Timeline|CompanionAvatar|ProblemView|SkipLink|Composer|MarkdownMessage|SurfaceView|AppBar|ContextDrawer|armed-confirmation|opening-variant-labels)\\.tsx?$",
-  shared: "^dialogue-web/src/i18n\\.ts$",
-};
+const MODULE_ZONES = ["assembler", "surface", "chatContract", "platformContract"];
 
 /**
- * Current drift ledger — must be empty. The surfaces are peers that own
- * independent lifecycles; shared access is limited to the wire contracts and
- * props-driven presentation primitives. Any new cross-surface edge, contract
- * impurity, or UI primitive depending on a surface fails this check.
+ * Current drift ledger - must be empty. The surfaces are peers that own independent
+ * lifecycles; the wire contracts and the assembler are the only modules that may be
+ * shared across them. Any new cross-surface edge, or a browser module reaching back
+ * across a contract, fails this check.
  */
 const DRIFT_LEDGER = [];
+
+const inZone = (zone, relativePath) => new RegExp(ZONES[zone]).test(`${SRC}/${relativePath}`);
 
 function depcruiseBin() {
   const pkgDir = join(repoRoot, "node_modules", "dependency-cruiser");
@@ -52,6 +55,11 @@ function depcruiseBin() {
   return join(pkgDir, bin);
 }
 
+/**
+ * The verdict comes from what the cruiser printed, not from its exit code: it exits
+ * non-zero while reporting violations, so an unparsed run is a BLOCKED reading and has to
+ * fail as one rather than pass as an empty violation list.
+ */
 function runDepcruise(cwd, configPathArg, input) {
   const result = spawnSync(
     process.execPath,
@@ -62,31 +70,18 @@ function runDepcruise(cwd, configPathArg, input) {
     },
   );
   assert.equal(result.error, undefined, `depcruise failed to start: ${result.error?.message ?? ""}`);
-  const parsed = JSON.parse(result.stdout || "{}");
+  let parsed;
+  try {
+    parsed = JSON.parse(result.stdout || "");
+  } catch {
+    assert.fail(`depcruise printed no cruise result: ${(result.stdout + result.stderr).trim().slice(0, 2000)}`);
+  }
+  assert.ok(parsed.summary, `depcruise reported no summary: ${(result.stdout + result.stderr).trim().slice(0, 2000)}`);
+  assert.ok(Array.isArray(parsed.modules), "depcruise reported no modules: nothing was cruised");
   return {
-    violations: (parsed.summary?.violations ?? []).map((v) => [v.rule?.name, v.from, v.to]),
-    exitCode: result.status,
+    violations: (parsed.summary.violations ?? []).map((v) => [v.rule?.name, v.from, v.to]),
+    modules: parsed.modules,
   };
-}
-
-function collectSourceFiles() {
-  const srcRoot = join(repoRoot, "dialogue-web", "src");
-  const files = [];
-  const walk = (dir) => {
-    for (const entry of readDirectory(dir)) {
-      const full = join(dir, entry.name);
-      if (entry.isDirectory()) walk(full);
-      else if (entry.name.endsWith(".ts") || entry.name.endsWith(".tsx"))
-        files.push(relative(srcRoot, full).replaceAll("\\", "/"));
-    }
-  };
-  walk(srcRoot);
-  return files;
-}
-
-function readDirectory(dir) {
-  const { readdirSync } = require("node:fs");
-  return readdirSync(dir, { withFileTypes: true });
 }
 
 function splitTopLevel(input, separator) {
@@ -126,52 +121,78 @@ function zoneAlternatives(rulePath) {
   return splitTopLevel(stripped, "|");
 }
 
-test("zone rules reference only known zones and every zone is guarded", () => {
+test("the boundary rules are built from the tree's own zones, and every zone is guarded", () => {
   const zoneStrings = Object.values(ZONES);
+  const referenced = new Set();
   for (const rule of config.forbidden) {
-    for (const side of [rule.from?.path, rule.to?.path]) {
-      assert.ok(side, `rule ${rule.name} has a missing from/to path`);
-      for (const alternative of zoneAlternatives(side)) {
-        assert.ok(zoneStrings.includes(alternative), `rule ${rule.name} references unknown zone ${alternative}`);
+    for (const side of [rule.from, rule.to]) {
+      for (const selector of [side?.path, side?.pathNot]) {
+        if (selector === undefined) continue;
+        for (const alternative of zoneAlternatives(selector)) referenced.add(alternative);
       }
     }
+    assert.ok(rule.from?.path, `rule ${rule.name} has a missing from path`);
+    assert.ok(rule.to?.path ?? rule.to?.circular === true, `rule ${rule.name} has a missing to path`);
   }
-  const referenced = new Set(config.forbidden.flatMap((rule) => [rule.from.path, rule.to.path]));
-  for (const zone of zoneStrings) {
-    assert.ok(
-      [...referenced].some((path) => path.includes(zone) || path === zone),
-      `zone ${zone} is not referenced by any rule`,
-    );
-  }
-  assert.equal(config.options.includeOnly, "^dialogue-web/src/");
+  for (const alternative of referenced)
+    assert.ok(zoneStrings.includes(alternative), `rule references a zone the tree does not derive: ${alternative}`);
+  for (const zone of zoneStrings) assert.ok(referenced.has(zone), `zone ${zone} is derived but guarded by no rule`);
+  assert.equal(
+    config.options.includeOnly,
+    ZONES.module,
+    "the cruiser must cruise exactly the modules the gate reports on",
+  );
 });
 
-test("every dialogue-web/src file belongs to exactly one golden zone", () => {
-  const allFiles = collectSourceFiles();
-  assert.ok(allFiles.includes("main.tsx"), "main.tsx shell must exist");
-  for (const file of allFiles) {
-    if (file === "main.tsx") continue; // shell assembler is intentionally unzoned
-    const matches = Object.entries(ZONES).filter(([, pattern]) => new RegExp(pattern).test(`dialogue-web/src/${file}`));
-    assert.equal(
-      matches.length,
-      1,
-      `file ${file} matches ${matches.length} zones: ${matches.map(([name]) => name).join(",")}`,
+test("every module lands in exactly one zone, and no declaration contradicts the structure", (t) => {
+  const modules = sourceModules();
+  assert.ok(modules.length > 0, `${SRC} holds no module: a gate whose population is empty agrees with itself`);
+  assert.ok(modules.includes(assembler), `the assembler ${assembler} is not a module under ${SRC}`);
+  for (const module of modules) {
+    const claimed = MODULE_ZONES.filter((zone) => inZone(zone, module));
+    assert.ok(
+      claimed.length <= 1,
+      `module ${module} is claimed by ${claimed.length} zones (${claimed.join(",")}): one module, one zone`,
     );
   }
+  // The assembler is the one module exempt from `no-module-to-surface`, so it must not itself
+  // be a surface - that would exempt a surface from the rule that composes it.
+  assert.ok(
+    !inZone("surface", assembler),
+    `the assembler ${assembler} is a surface: an exempt surface composes itself`,
+  );
+  // A contract that is a component IS the edge `no-contract-imports-components` forbids.
+  for (const [flavour, declared] of Object.entries(contracts))
+    for (const module of declared)
+      assert.ok(
+        !inZone("components", module),
+        `the ${flavour} wire contract ${module} is a component: a wire contract that renders is inside the boundary it defines`,
+      );
+  const surfaces = modules.filter((module) => inZone("surface", module));
+  const contractCount = contracts.chat.length + contracts.platform.length;
+  t.diagnostic(
+    `examined ${modules.length} modules under ${SRC}: ${surfaces.length} surface(s), 1 assembler (${assembler}), ` +
+      `${contractCount} declared wire contract(s), ${modules.length - surfaces.length - contractCount - 1} module(s) on the residual rules`,
+  );
 });
 
 test("current cross-surface drift is exactly the documented ledger", () => {
-  const { violations } = runDepcruise(repoRoot, configPath, "dialogue-web/src/main.tsx");
+  // The whole tree, not the entry: a cruiser started at `main.tsx` sees only what the entry
+  // reaches, so a module nothing imports yet would sit outside every rule - the escape hatch this
+  // gate exists to close, one import away from being a live cross-surface edge.
+  const { violations } = runDepcruise(repoRoot, configPath, SRC);
   const actual = violations.map(([rule, from, to]) => [rule, from, to].join("|")).sort();
   const expected = DRIFT_LEDGER.map(([rule, from, to]) => [rule, from, to].join("|")).sort();
   assert.deepEqual(
     actual,
     expected,
-    "cross-surface drift differs from the documented ledger — new violations must be fixed, ledger entries must only shrink via deliberate decoupling changes",
+    "cross-surface drift differs from the documented ledger — new violations must be fixed, ledger entries must only shrink via deliberate decoupling changes.\n" +
+      `  found:  ${actual.join("\n          ") || "(none)"}\n` +
+      `  ledger: ${expected.join("\n          ") || "(none)"}`,
   );
 });
 
-test("boundary rules actually fire on a fixture violating every direction", () => {
+test("every boundary rule fires on a fixture that violates it", () => {
   const fixture = mkdtempSync(join(tmpdir(), "gamebuddy-boundary-"));
   try {
     writeFileSync(
@@ -183,36 +204,34 @@ test("boundary rules actually fire on a fixture violating every direction", () =
       mkdirSync(dirname(full), { recursive: true });
       writeFileSync(full, content);
     };
-    // --- contracts ---
-    // chat contract must not import any surface or shared UI.
-    write("src/reference-pipeline-api.ts", 'import "./components/ChatSurface";\n');
-    // its own members must not import each other.
-    write("src/reference-pipeline-session.ts", 'import "./reference-pipeline-api";\n');
-    write("src/management-pipeline-api.ts", "");
-    write("src/composed-reference-game-browser-api.ts", "");
-    // --- composed root: the one assembler ---
-    write("src/components/ComposedReferenceGameApp.tsx", "");
-    // --- surfaces: peer body must not import another peer body ---
-    write("src/components/ChatSurface.tsx", 'import "./GameSurface";\n');
-    write("src/components/GameSurface.tsx", "");
-    // --- surface-support must not depend on a surface ---
-    write("src/components/management-panels.tsx", 'import "./ChatSurface";\n');
-    // --- shared-ui must not import a surface or its support ---
-    write("src/components/SurfaceView.tsx", 'import "./ChatSurface";\n');
-    // --- shared leaf must not import a surface either ---
-    write("src/i18n.ts", 'import "./components/ChatSurface";\n');
+    // The fixture is written at the paths the real zones name, so the rules that fire here are
+    // the rules the tree gets: the assembler, the surfaces and the contracts are the derived ones.
+    write(`src/${assembler}`, "");
+    const [chatContract, otherChatContract] = contracts.chat;
+    const [platformContract] = contracts.platform;
+    for (const contract of [...contracts.chat, ...contracts.platform]) write(`src/${contract}`, "");
+    // a module that is not the assembler importing a surface
+    write("src/leaf.ts", 'import "./components/ChatSurface";\n');
+    write("src/components/ChatSurface.tsx", "");
+    // the chat contract's own members importing each other
+    write(`src/${otherChatContract}`, `import "./${chatContract.replace(/\.ts$/, "")}";\n`);
+    // a contract reaching a component through an intermediate module: transitivity is the rule
+    write(`src/${platformContract}`, 'import "./intermediate";\n');
+    write("src/intermediate.ts", 'import "./components/Composer";\n');
+    write("src/components/Composer.tsx", "");
+    // a cycle between two ordinary modules
+    write("src/cycle-one.ts", 'import "./cycle-two";\n');
+    write("src/cycle-two.ts", 'import "./cycle-one";\n');
 
-    const rebased = {
-      ...structuredClone(config),
-      options: {
-        ...structuredClone(config.options),
-        includeOnly: "^src/",
-        tsConfig: { fileName: join(fixture, "tsconfig.json") },
-      },
-    };
+    const rebased = structuredClone(config);
+    rebased.options.includeOnly = "^src/";
+    rebased.options.tsConfig = { fileName: join(fixture, "tsconfig.json") };
     for (const rule of rebased.forbidden) {
-      rule.from.path = rule.from.path.replaceAll("^dialogue-web/src/", "^src/");
-      rule.to.path = rule.to.path.replaceAll("^dialogue-web/src/", "^src/");
+      for (const side of [rule.from, rule.to]) {
+        for (const key of ["path", "pathNot"]) {
+          if (typeof side[key] === "string") side[key] = side[key].replaceAll(`^${SRC}/`, "^src/");
+        }
+      }
     }
     const fixtureConfig = join(fixture, "depcruise.config.json");
     writeFileSync(fixtureConfig, JSON.stringify(rebased));
@@ -221,15 +240,8 @@ test("boundary rules actually fire on a fixture violating every direction", () =
     const rulesFired = new Set(violations.map(([rule]) => rule));
     assert.deepEqual(
       [...rulesFired].sort(),
-      [
-        "no-chat-contract-internal-dependency",
-        "no-contract-imports-ui",
-        "no-shared-imports-modules",
-        "no-shared-ui-imports-surfaces",
-        "no-surface-support-to-surface",
-        "no-surface-to-other-surface",
-      ].sort(),
-      `fixture must fire every boundary rule; fired: ${[...rulesFired].join(",")}`,
+      config.forbidden.map((rule) => rule.name).sort(),
+      `the fixture must fire every rule the config declares: it fired ${[...rulesFired].join(",") || "none"}`,
     );
   } finally {
     rmSync(fixture, { recursive: true, force: true });
