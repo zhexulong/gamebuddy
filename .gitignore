@@ -247,8 +247,10 @@ integrations/stardew/action-development/tests/.tmp-*
 # Release-owned scratch: the release pipeline re-creates it, so a checkout should not carry it.
 /host/.release-owned-scratch/
 
-# Crash and diagnostic reports the harness writes at the repo root (one per failed child, hundreds per day).
-/report.*.json
-# Node's crash reporter writes into the cwd of the child that died, so a crashed child whose cwd is dialogue-web/
-# leaves `report.<date>.<time>.<pid>.<n>.<n>.json` there; the entry above only covers the repository root.
-dialogue-web/report.*.json
+# Crash and diagnostic reports the harness writes at the repository root (one per failed child, hundreds per day).
+# No leading slash: `report.*.json` is a shape, so a report a crashed child leaves in ITS OWN cwd is ignored too.
+# The root-only entry this replaces (`/report.*.json`) left `dialogue-web/report.*.json` as a hand-added second
+# exception, and the next cwd a child died in was going to be a third. Measured 2026-11-12: 787 of these files in the
+# root and 238 of them carrying a plaintext credential. Ignoring them is not containment - a writer that keeps
+# producing them is what `tools/check-crash-report-containment.mjs` refuses.
+report.*.json
