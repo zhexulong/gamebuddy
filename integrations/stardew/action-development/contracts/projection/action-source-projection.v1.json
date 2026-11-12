@@ -3358,11 +3358,12 @@
           },
           "effect": "write",
           "postcondition": {
-            "name": "native_action_postcondition"
+            "name": "scythe_arc_occupancy_changed"
           },
           "approach": {
             "relation": "self_walked"
-          }
+          },
+          "nativeBinding": "MeleeWeapon.DoDamage"
         },
         "handlerGroup": null
       },
@@ -5464,6 +5465,7 @@
       "ship_item",
       "shop_purchase",
       "sleep",
+      "sweep_scythe",
       "tailor_clothing",
       "take_pedestal_item",
       "talk_to_npc",

@@ -7330,7 +7330,8 @@
             "open_geode",
             "name_entity",
             "redeem_prize_ticket",
-            "color_placed_object"
+            "color_placed_object",
+            "sweep_scythe"
           ]
         },
         "args": {

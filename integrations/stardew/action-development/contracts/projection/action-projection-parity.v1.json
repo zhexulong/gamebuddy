@@ -2607,8 +2607,9 @@
         },
         "effect": "write",
         "postcondition": {
-          "name": "native_action_postcondition"
-        }
+          "name": "scythe_arc_occupancy_changed"
+        },
+        "nativeBinding": "MeleeWeapon.DoDamage"
       },
       {
         "actionId": "harvest_bush",

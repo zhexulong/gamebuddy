@@ -730,7 +730,14 @@ E("enter_exit", "movement_navigation", FarmhandActionHandlerGroup.Movement, Tran
         // without the run would be the half-promotion the gate exists for. Experimental is where the other unrun actions
         // sit (`open_geode`, `break_resource_clump`, `place_item_on_pedestal`, ...); promotion to `LiveVerified` after the
         // live gate passes is a separate catalog edit, the way till_soil's was (`:504`).
-        E("sweep_scythe", "resource_gathering", FarmhandActionHandlerGroup.ResourceTools, SelfWalked(A(null, ToolResource("scythe", FarmhandResourceTemplateValue.AnyUpgrade), "native_action_postcondition", ("x", "integer"), ("y", "integer"))), FarmhandActionLifecycle.Experimental),
+        //
+        // THE POSTCONDITION NAMES WHAT THE HANDLER RE-READS: the arc's own occupant set, before the swing and after it
+        // (`MeleeSweepOccupancy.Read` over every sampled tile, then `Changes`/`Changed`). The generic
+        // `native_action_postcondition` would have said only "the native call did something" - and here the deciding
+        // comparison is the one that separates a swing that cut from a swing that reached nothing, which is why a
+        // no-change arc is `sweep_postcondition_unavailable` rather than a success. The native binding is the engine entry
+        // the swing is driven through (`MeleeWeapon.DoDamage`, one call per frame index).
+        E("sweep_scythe", "resource_gathering", FarmhandActionHandlerGroup.ResourceTools, SelfWalked(new FarmhandActionDescriptor(new[] { new FarmhandActionArgument("x", "integer"), new FarmhandActionArgument("y", "integer") }, new Dictionary<string, string>(), ToolResource("scythe", FarmhandResourceTemplateValue.AnyUpgrade), "write", "scythe_arc_occupancy_changed", "MeleeWeapon.DoDamage")), FarmhandActionLifecycle.Experimental),
         E("harvest_bush", "resource_gathering", FarmhandActionHandlerGroup.Farming, SelfWalked(Target()), FarmhandActionLifecycle.LiveVerified, "bushTargets"),
         E("harvest_fruit_tree", "resource_gathering", FarmhandActionHandlerGroup.Farming, SelfWalked(Target()), FarmhandActionLifecycle.LiveVerified, "fruitTreeTargets"),
         E("shake_tree", "resource_gathering", FarmhandActionHandlerGroup.Farming, SelfWalked(Target()), FarmhandActionLifecycle.LiveVerified, "shakeTreeTargets"),
