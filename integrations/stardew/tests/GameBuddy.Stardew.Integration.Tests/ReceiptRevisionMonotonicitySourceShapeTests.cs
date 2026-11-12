@@ -35,6 +35,18 @@ public sealed class ReceiptRevisionMonotonicitySourceShapeTests
         return File.ReadAllText(path);
     }
 
+    /// <summary>The store the funnel asks for both ends of the comparison: it holds the published revision per execution.</summary>
+    private static string ReadReceiptStore()
+    {
+        string path = Path.GetFullPath(Path.Combine(
+            AppContext.BaseDirectory,
+            RepositoryRelativeRoot,
+            "integrations",
+            "stardew",
+            "ExecutionReceiptStore.cs"));
+        return File.ReadAllText(path);
+    }
+
     private static string PublishFunnelBody()
     {
         string source = ReadExecutionController();
@@ -64,7 +76,7 @@ public sealed class ReceiptRevisionMonotonicitySourceShapeTests
     [Fact]
     public void TheDeliveryFunnelTracksWhatWasPublishedPerExecution()
     {
-        string source = ReadExecutionController();
+        string source = ReadReceiptStore();
         source.Should().Contain(
             "private readonly Dictionary<string, long> publishedReceiptRevisionByExecutionId",
             "the published revision per execution is the value the Host audits against");
@@ -93,7 +105,7 @@ public sealed class ReceiptRevisionMonotonicitySourceShapeTests
     {
         string body = PublishFunnelBody();
         // What is REMEMBERED must be what is PUBLISHED, or the next comparison reads a stale number.
-        body.Should().Contain("this.Remember(published);");
+        body.Should().Contain("this.ledger.Remember(published);");
         // And the emitted object is the adjusted one, not the minted one.
         body.Should().Contain("this.receiptPublished?.Invoke(published);");
         body.Should().NotContain("this.receiptPublished?.Invoke(receipt);");
@@ -111,6 +123,6 @@ public sealed class ReceiptRevisionMonotonicitySourceShapeTests
         // revision: rewriting it would make every receipt a bump and hide the real counter from a reader.
         string body = PublishFunnelBody();
         body.Should().Contain("publishedRevision != 0", "the guard is for a KNOWN earlier publication");
-        body.Should().Contain("TryGetValue(receipt.ExecutionId, out long publishedRevision)");
+        body.Should().Contain("this.ledger.TryGetPublishedRevision(receipt.ExecutionId, out long publishedRevision)");
     }
 }

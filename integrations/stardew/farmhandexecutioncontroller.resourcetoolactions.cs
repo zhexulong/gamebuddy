@@ -1700,9 +1700,9 @@ internal sealed partial class ExecutionManager
             this.revision++;
             LocalExecutionReceipt moved = new(specification.ExecutionId, specification.RequestId, ExecutionState.Rejected, "tool_approach_location_changed", this.revision,
                 $"target={specification.ExpectedTargetId};expected={specification.Location};actual={location?.NameOrUniqueName ?? "none"}");
-            this.Remember(moved);
+            this.ledger.Remember(moved);
             this.AddTrace(moved);
-            this.PublishIdleAfterRelease(specification.ExecutionId, specification.RequestId);
+            this.ledger.PublishIdleAfterRelease(specification.ExecutionId, specification.RequestId);
             return;
         }
 
@@ -1711,9 +1711,9 @@ internal sealed partial class ExecutionManager
             this.revision++;
             LocalExecutionReceipt short_ = new(specification.ExecutionId, specification.RequestId, ExecutionState.Rejected, "target_out_of_reach", this.revision,
                 $"target={specification.TargetX},{specification.TargetY};distance={ChebyshevDistance(Game1.player, specification.TargetX, specification.TargetY).ToString(CultureInfo.InvariantCulture)};reach=1;approach=did_not_arrive");
-            this.Remember(short_);
+            this.ledger.Remember(short_);
             this.AddTrace(short_);
-            this.PublishIdleAfterRelease(specification.ExecutionId, specification.RequestId);
+            this.ledger.PublishIdleAfterRelease(specification.ExecutionId, specification.RequestId);
             return;
         }
 
@@ -1726,9 +1726,9 @@ internal sealed partial class ExecutionManager
             this.revision++;
             LocalExecutionReceipt unmoved = new(specification.ExecutionId, specification.RequestId, ExecutionState.Rejected, "hollow_ring_step_out_failed", this.revision,
                 $"target={specification.TargetX},{specification.TargetY};tile={FormatTile(Game1.player.Tile)};reach=1;approach=did_not_arrive;hollow_ring=true;step_out=failed");
-            this.Remember(unmoved);
+            this.ledger.Remember(unmoved);
             this.AddTrace(unmoved);
-            this.PublishIdleAfterRelease(specification.ExecutionId, specification.RequestId);
+            this.ledger.PublishIdleAfterRelease(specification.ExecutionId, specification.RequestId);
             return;
         }
 

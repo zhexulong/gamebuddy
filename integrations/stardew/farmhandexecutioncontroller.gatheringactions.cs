@@ -32,7 +32,7 @@ internal sealed partial class ExecutionManager
             return existing;
 
         this.revision++;
-        string executionId = this.NewExecutionId(requestId);
+        string executionId = this.ledger.NewExecutionId(requestId);
         long nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
         // Scope-bound actor proof. Authorization precedes the world/location
         // readiness checks: a caller that is not the scope-bound actor is refused

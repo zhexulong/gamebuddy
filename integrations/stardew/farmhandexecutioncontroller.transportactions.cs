@@ -185,7 +185,7 @@ internal sealed partial class ExecutionManager
     {
         if (this.receiptsByRequestId.TryGetValue(requestId, out LocalExecutionReceipt? existing)) return existing;
         this.revision++;
-        string executionId = this.NewExecutionId(requestId);
+        string executionId = this.ledger.NewExecutionId(requestId);
         long nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
         if (this.AdmitExecution(requestId, executionId, requestedDeadlineMs, nowMs, AdmissionActionabilityProfile.Physical) is LocalExecutionReceipt rejection) return rejection;
         GameLocation location = Game1.player.currentLocation;
@@ -246,7 +246,7 @@ internal sealed partial class ExecutionManager
     {
         if (this.receiptsByRequestId.TryGetValue(requestId, out LocalExecutionReceipt? existing)) return existing;
         this.revision++;
-        string executionId = this.NewExecutionId(requestId);
+        string executionId = this.ledger.NewExecutionId(requestId);
         long nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
         if (this.AdmitExecution(requestId, executionId, requestedDeadlineMs, nowMs, AdmissionActionabilityProfile.Physical) is LocalExecutionReceipt rejection) return rejection;
         GameLocation location = Game1.player.currentLocation;
@@ -423,7 +423,7 @@ internal sealed partial class ExecutionManager
     {
         if (this.receiptsByRequestId.TryGetValue(requestId, out LocalExecutionReceipt? existing)) return existing;
         this.revision++;
-        string executionId = this.NewExecutionId(requestId);
+        string executionId = this.ledger.NewExecutionId(requestId);
         long nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
         if (this.AdmitExecution(requestId, executionId, requestedDeadlineMs, nowMs, AdmissionActionabilityProfile.Physical) is LocalExecutionReceipt rejection) return rejection;
 
@@ -617,7 +617,7 @@ internal sealed partial class ExecutionManager
             return existing;
 
         this.revision++;
-        string executionId = this.NewExecutionId(requestId);
+        string executionId = this.ledger.NewExecutionId(requestId);
         long nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
         if (this.AdmitExecution(requestId, executionId, requestedDeadlineMs, nowMs, AdmissionActionabilityProfile.Physical) is LocalExecutionReceipt admissionRejection)
             return admissionRejection;

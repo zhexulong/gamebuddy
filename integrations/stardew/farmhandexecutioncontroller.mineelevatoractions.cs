@@ -136,7 +136,7 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
         string executionId = ledger is IDispatchExecutionLedger dispatchLedger
             && dispatchLedger.TryGetBoundExecutionId(request.RequestId, out string boundExecutionId)
             ? boundExecutionId
-            : this.NewExecutionId(request.RequestId);
+            : this.ledger.NewExecutionId(request.RequestId);
 
         if (!this.TryGetBoundActor(out Farmer? actor, out string guardReason) || actor is null)
             // The guard reason NAMES the failure (no bound actor / wrong scope / world not ready). This body used

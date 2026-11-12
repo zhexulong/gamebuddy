@@ -191,7 +191,7 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
         string executionId = ledger is IDispatchExecutionLedger dispatchLedger
             && dispatchLedger.TryGetBoundExecutionId(request.RequestId, out string boundExecutionId)
             ? boundExecutionId
-            : this.NewExecutionId(request.RequestId);
+            : this.ledger.NewExecutionId(request.RequestId);
 
         this.revision++;
 
@@ -458,7 +458,7 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
         string executionId = ledger is IDispatchExecutionLedger dispatchLedger
             && dispatchLedger.TryGetBoundExecutionId(request.RequestId, out string boundExecutionId)
             ? boundExecutionId
-            : this.NewExecutionId(request.RequestId);
+            : this.ledger.NewExecutionId(request.RequestId);
 
         this.revision++;
 
@@ -686,7 +686,7 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
         string executionId = ledger is IDispatchExecutionLedger dispatchLedger
             && dispatchLedger.TryGetBoundExecutionId(request.RequestId, out string boundExecutionId)
             ? boundExecutionId
-            : this.NewExecutionId(request.RequestId);
+            : this.ledger.NewExecutionId(request.RequestId);
 
         this.revision++;
 

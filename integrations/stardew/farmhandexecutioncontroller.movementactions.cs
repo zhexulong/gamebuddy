@@ -1420,8 +1420,8 @@ internal sealed partial class ExecutionManager
             return existing;
 
         this.revision++;
-        string executionId = this.NewExecutionId(requestId);
-        this.navigationExecutionIds.Add(executionId);
+        string executionId = this.ledger.NewExecutionId(requestId);
+        this.ledger.MarkNavigationExecution(executionId);
         long nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
         if (deadlineMs <= nowMs || deadlineMs > nowMs + TimeSpan.FromMinutes(10).TotalMilliseconds)
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "invalid_deadline",
@@ -1549,7 +1549,7 @@ internal sealed partial class ExecutionManager
         string executionId = ledger is IDispatchExecutionLedger dispatchLedger
             && dispatchLedger.TryGetBoundExecutionId(request.RequestId, out string boundExecutionId)
             ? boundExecutionId
-            : this.NewExecutionId(request.RequestId);
+            : this.ledger.NewExecutionId(request.RequestId);
 
         this.revision++;
 

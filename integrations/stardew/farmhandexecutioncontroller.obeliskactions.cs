@@ -426,7 +426,7 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
         string executionId = ledger is IDispatchExecutionLedger dispatchLedger
             && dispatchLedger.TryGetBoundExecutionId(request.RequestId, out string boundExecutionId)
             ? boundExecutionId
-            : this.NewExecutionId(request.RequestId);
+            : this.ledger.NewExecutionId(request.RequestId);
 
         if (!this.TryGetBoundActor(out Farmer? actor, out string scopeReason) || actor is null)
             return this.RememberTerminal(request.RequestId, executionId, ExecutionState.Rejected, scopeReason, null);

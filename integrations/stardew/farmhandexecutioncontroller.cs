@@ -19,7 +19,7 @@ namespace GameBuddy.Stardew;
 /// native Game1.player and replays a request's current receipt on duplicates;
 /// it never starts a second body process for the same request.
 /// </summary>
-internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExecutionLedger
+internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExecutionLedger, IActiveBodyOwnership
 {
     private const int DefaultDeadlineTicks = 60 * 20;
     // The ACTING radius for every interaction stays Chebyshev-adjacent (1); this
@@ -31,29 +31,25 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
     // than adjacency (milk/shear reach). Named for what it gates: the execution
     // precondition, not the snapshot radius (which is TargetDiscoveryRadius).
     private const int AnimalProductActionRadius = 1;
-    private const int MaximumRememberedReceipts = 256;
     // A freshly warped player may report CanMove=false for a few transition
     // frames. The deferred warp replan waits this many ticks for the player to
     // become actionable again before failing closed as a locked destination.
     private const int NavigationWarpReplanGraceTicks = 60 * 3;
     private readonly IMonitor monitor;
-    private readonly Dictionary<string, LocalExecutionReceipt> receiptsByRequestId = new(StringComparer.Ordinal);
-    /** Same bounded lifetime as receipts; the action identity is ledger-owned, not bridge cache state. */
-    private readonly Dictionary<string, string> actionIdsByRequestId = new(StringComparer.Ordinal);
-    private readonly Dictionary<string, string> executionIdsByRequestId = new(StringComparer.Ordinal);
-    private readonly Queue<string> receiptOrder = new();
+    // The one writer of every receipt, request-bound identity and idle transition this Mod holds.
+    private readonly ExecutionReceiptStore ledger;
+    /// <summary>
+    /// The stored receipts as this class reads them - the ledger is their only writer. The request prologues read a
+    /// request's receipt here directly; moving those reads onto <see cref="IExecutionLedger.TryGetExistingReceipt"/> is
+    /// the admission seam's work, not this store's, and the read spelling is what
+    /// <c>tools/audit-stardew-action-admission-ledger.mjs</c> counts.
+    /// </summary>
+    private IReadOnlyDictionary<string, LocalExecutionReceipt> receiptsByRequestId => this.ledger.ByRequestId;
     private readonly List<ExecutionTrace> trace = new();
     // What the Mod published about each ground chunk, with the actor's own count of that item as of the last
     // publication that still saw the chunk on the ground. The magnet can deliver a drop before the request for it
     // arrives, and this is the only baseline that can prove the delivery was the actor's own (GroundItemPickups.cs).
     private readonly GroundItemPickupLedger groundItemTargets = new();
-    // An execution may have several native completion observations, but only
-    // the manager can publish its single post-release idle transition.
-    private readonly HashSet<string> idlePublishedExecutionIds = new(StringComparer.Ordinal);
-    private readonly Dictionary<string, string> pendingIdleByExecutionId = new(StringComparer.Ordinal);
-    // Navigation progress remains private until its single terminal receipt; it
-    // must not emit primitive route traces or duplicate public idle transitions.
-    private readonly HashSet<string> navigationExecutionIds = new(StringComparer.Ordinal);
     private readonly StardewBodyController controller;
     private readonly Func<FarmhandCapabilityPublication> capabilityPublicationProvider;
     private readonly Action<LocalExecutionReceipt>? receiptPublished;
@@ -61,13 +57,10 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
     private readonly FarmhandExecutionJournal? executionJournal;
     private readonly BridgeScope? executionScope;
     private readonly Dictionary<string, FarmhandExecutionAdmission> durableAdmissionsByRequestId = new(StringComparer.Ordinal);
-    private readonly HashSet<string> durabilityFailuresByRequestId = new(StringComparer.Ordinal);
     // Requests whose admission found the actor TRANSIENTLY held, parked so the body can free inside the Mod
     // instead of being refused back to the Agent for a model round-trip. Bounded by
     // WorldModel.TransientRetryWindowMs; keyed by requestId, holding the request as the admission saw it.
     private readonly Dictionary<string, HeldRequest> heldRequestsByRequestId = new(StringComparer.Ordinal);
-    // How long a held request waited, consumed by the first receipt its dispatch stores.
-    private readonly Dictionary<string, long> heldMsByRequestId = new(StringComparer.Ordinal);
     private HeldRequestResolver? heldRequestResolver;
     private LocalMoveSpec? active;
     private LocalTravelSpec? activeTravel;
@@ -99,13 +92,6 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
     private long artifactSpotResultRevision;
     private int artifactSpotResultDay;
     private long revision;
-    /// <summary>
-    /// The revision most recently PUBLISHED for each execution, which is what the Host's receipt-order audit
-    /// compares against. Kept beside the mint-time revision rather than derived from it: the mint sites read a
-    /// shared world counter, so two distinct transitions of one execution can legitimately mint the same number
-    /// (see the publish funnel).
-    /// </summary>
-    private readonly Dictionary<string, long> publishedReceiptRevisionByExecutionId = new(StringComparer.Ordinal);
     private int tick;
     private Func<NavigationRuntimeSnapshot?>? navigationRuntimeFactory;
     private LocalNavigateSpec? activeNavigate;
@@ -307,6 +293,11 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             throw new ArgumentException("Durable execution journal and scope must be supplied together.");
         this.executionJournal = executionJournal;
         this.executionScope = executionScope;
+        // The idle transition is the one ledger publication this class still writes: it carries this class's tick and
+        // revision and lands in the same bounded trace, so the store calls out for it instead of owning a second one.
+        this.ledger = new ExecutionReceiptStore(
+            this,
+            publishBodyIdleTrace: (executionId, requestId) => this.AddPublicTrace("body_idle", executionId, requestId));
         this.controller = new StardewBodyController(this.RecordControllerTransition, PublishedBlockerTargetId);
         // WIA §4.2 owner arbitration (review #3, 2026-10-02): the L0 binary
         // "is the current modal the current action's own modal" is answered by
@@ -335,8 +326,8 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
     }
 
     /// <summary>
-    /// Whether the named execution still holds work, asked of this class's own receipt record: <see cref="Remember"/> is
-    /// its only writer, so "the latest receipt is not terminal" is the one place that knows an execution ended. An
+    /// Whether the named execution still holds work, asked of the stored receipt record: <see cref="ExecutionReceiptStore.Remember"/>
+    /// is its only writer, so "the latest receipt is not terminal" is the one place that knows an execution ended. An
     /// execution that never reported - or that has already settled - answers false, which keeps its lease from
     /// suppressing a world interruption.
     /// </summary>
@@ -388,7 +379,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
 
     internal bool TryAdmitNavigation(BridgeExecutionRequest request, string executionId, out string reasonCode)
     {
-        if (this.durabilityFailuresByRequestId.Contains(request.RequestId))
+        if (this.ledger.HasDurabilityFailure(request.RequestId))
         {
             reasonCode = "execution_durability_quarantined";
             return false;
@@ -400,7 +391,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             return false;
         }
 
-        if (!this.TryBindDispatch(request.RequestId, request.Action, executionId, out reasonCode)
+        if (!this.ledger.TryBindDispatch(request.RequestId, request.Action, executionId, out reasonCode)
             && reasonCode != "execution_identity_already_bound")
         {
             return false;
@@ -419,7 +410,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         FarmhandExecutionJournalResult<FarmhandExecutionJournalRecord> result = this.executionJournal.TryRecordAdmission(admission);
         if (!result.IsSuccess)
         {
-            this.durabilityFailuresByRequestId.Add(request.RequestId);
+            this.ledger.MarkDurabilityFailure(request.RequestId);
             reasonCode = result.Code.ToString();
             return false;
         }
@@ -431,7 +422,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
 
     internal bool TryAdmitCandidate(BridgeExecutionRequest request, string executionId, out string reasonCode)
     {
-        if (this.durabilityFailuresByRequestId.Contains(request.RequestId))
+        if (this.ledger.HasDurabilityFailure(request.RequestId))
         {
             reasonCode = "execution_durability_quarantined";
             return false;
@@ -458,7 +449,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             return false;
         }
 
-        if (!this.TryBindDispatch(request.RequestId, request.Action, executionId, out reasonCode)
+        if (!this.ledger.TryBindDispatch(request.RequestId, request.Action, executionId, out reasonCode)
             && reasonCode != "execution_identity_already_bound")
         {
             return false;
@@ -476,7 +467,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         FarmhandExecutionJournalResult<FarmhandExecutionJournalRecord> result = this.executionJournal.TryRecordAdmission(admission);
         if (!result.IsSuccess)
         {
-            this.durabilityFailuresByRequestId.Add(request.RequestId);
+            this.ledger.MarkDurabilityFailure(request.RequestId);
             reasonCode = result.Code.ToString();
             return false;
         }
@@ -1206,7 +1197,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
     /// is the behaviour every caller had before this gate.
     /// </summary>
     private bool RequestHasEventPath(string requestId) =>
-        this.actionIdsByRequestId.TryGetValue(requestId, out string? boundActionId)
+        this.ledger.TryGetActionId(requestId, out string boundActionId)
         && FarmhandActionCatalog.IsEventActing(boundActionId);
 
     /// <summary>
@@ -1222,7 +1213,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         string holdCode,
         string holdEvidence)
     {
-        string actionId = this.actionIdsByRequestId.TryGetValue(requestId, out string? boundAction) ? boundAction : requestId;
+        string actionId = this.ledger.TryGetActionId(requestId, out string boundAction) ? boundAction : requestId;
         // The FIRST park owns the request's answer and its window: a caller that retries while the body is
         // still held does not buy itself a fresh window.
         if (!this.heldRequestsByRequestId.ContainsKey(requestId))
@@ -1299,7 +1290,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
     private LocalExecutionReceipt RefuseHeldRequest(string requestId, HeldRequest held, string reasonCode, string holdEvidence)
     {
         LocalExecutionReceipt receipt = new(held.ExecutionId, requestId, ExecutionState.Rejected, reasonCode, this.revision, holdEvidence, ActionId: held.ActionId);
-        this.Remember(receipt);
+        this.ledger.Remember(receipt);
         LocalExecutionReceipt published = this.AddTrace(receipt);
         return published;
     }
@@ -1334,7 +1325,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
     /// Records how long a request waited for the actor to become actionable, so the first receipt its
     /// dispatch stores carries <c>held_ms=&lt;n&gt;</c>: the trace then shows a hold rather than a mystery.
     /// </summary>
-    internal void RecordHoldWait(string requestId, long heldMs) => this.heldMsByRequestId[requestId] = heldMs;
+    internal void RecordHoldWait(string requestId, long heldMs) => this.ledger.RecordHoldWait(requestId, heldMs);
 
     /// <summary>
     /// Ends every parked wait at once, with the named refusal for the hold that is still in force. A
@@ -1452,7 +1443,34 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         return true;
     }
 
-    internal bool HasDurabilityFailure(string requestId) => this.durabilityFailuresByRequestId.Contains(requestId);
+    internal bool HasDurabilityFailure(string requestId) => this.ledger.HasDurabilityFailure(requestId);
+
+    void IExecutionLedger.BindAction(string requestId, string actionId) => this.ledger.BindAction(requestId, actionId);
+
+    bool IDispatchExecutionLedger.TryBindDispatch(string requestId, string actionId, string executionId, out string reasonCode) =>
+        this.ledger.TryBindDispatch(requestId, actionId, executionId, out reasonCode);
+
+    bool IDispatchExecutionLedger.TryGetBoundExecutionId(string requestId, out string executionId) =>
+        this.ledger.TryGetBoundExecutionId(requestId, out executionId);
+
+    // The stored instance is the published one: the funnel publishes what this hands back, so a copy taken here would
+    // differ from the stored record by construction.
+    LocalExecutionReceipt IExecutionLedger.Remember(LocalExecutionReceipt receipt) => this.ledger.Remember(receipt);
+
+    LocalExecutionReceipt IExecutionLedger.RememberTerminal(string requestId, string executionId, ExecutionState state, string reasonCode, string? evidence, BridgeLocalObservation? observation) =>
+        this.RememberTerminal(requestId, executionId, state, reasonCode, evidence, observation);
+
+    void IExecutionLedger.AddTrace(LocalExecutionReceipt receipt) => this.AddTrace(receipt);
+
+    bool IActiveBodyOwnership.HasOwnership(string executionId) => this.HasOwnership(executionId);
+
+    void IActiveBodyOwnership.ReleaseModalLease(string executionId) => this.ReleaseModalOwner(executionId);
+
+    /// <summary>Returns the latest authoritative receipt for idempotent bridge replay.</summary>
+    public bool TryGetReceipt(string requestId, out LocalExecutionReceipt receipt) => this.ledger.TryGetReceipt(requestId, out receipt);
+
+    /// <summary>Returns the action identity captured on the game-thread dispatch lineage.</summary>
+    public bool TryGetActionId(string requestId, out string actionId) => this.ledger.TryGetActionId(requestId, out actionId);
 
     public bool TryGetExistingReceipt(string requestId, out LocalExecutionReceipt receipt) => this.TryGetReceipt(requestId, out receipt);
 
@@ -1469,90 +1487,6 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         if (this.activePedestalTaking is not null)
             this.SettlePedestalTakingUncertain("pedestal_take_halted_after_native_start");
         this.activeToolApproach = null;
-    }
-
-    void IExecutionLedger.BindAction(string requestId, string actionId) => this.BindAction(requestId, actionId);
-
-    bool IDispatchExecutionLedger.TryBindDispatch(string requestId, string actionId, string executionId, out string reasonCode) =>
-        this.TryBindDispatch(requestId, actionId, executionId, out reasonCode);
-
-    bool IDispatchExecutionLedger.TryGetBoundExecutionId(string requestId, out string executionId) =>
-        this.executionIdsByRequestId.TryGetValue(requestId, out executionId!);
-
-    LocalExecutionReceipt IExecutionLedger.Remember(LocalExecutionReceipt receipt)
-    {
-        this.Remember(receipt);
-        return receipt;
-    }
-
-    LocalExecutionReceipt IExecutionLedger.RememberTerminal(string requestId, string executionId, ExecutionState state, string reasonCode, string? evidence, BridgeLocalObservation? observation) =>
-        this.RememberTerminal(requestId, executionId, state, reasonCode, evidence, observation);
-
-    void IExecutionLedger.AddTrace(LocalExecutionReceipt receipt) => this.AddTrace(receipt);
-
-    /// <summary>Returns the latest authoritative receipt for idempotent bridge replay.</summary>
-    public bool TryGetReceipt(string requestId, out LocalExecutionReceipt receipt) => this.receiptsByRequestId.TryGetValue(requestId, out receipt!);
-
-    /// <summary>Returns the action identity captured on the game-thread dispatch lineage.</summary>
-    public bool TryGetActionId(string requestId, out string actionId) => this.actionIdsByRequestId.TryGetValue(requestId, out actionId!);
-
-    private bool TryBindDispatch(string requestId, string actionId, string executionId, out string reasonCode)
-    {
-        reasonCode = string.Empty;
-        if (string.IsNullOrWhiteSpace(requestId)
-            || string.IsNullOrWhiteSpace(actionId)
-            || string.IsNullOrWhiteSpace(executionId))
-        {
-            reasonCode = "invalid_execution_identity";
-            return false;
-        }
-        if (this.receiptsByRequestId.ContainsKey(requestId))
-        {
-            reasonCode = "request_already_started";
-            return false;
-        }
-        if (this.actionIdsByRequestId.TryGetValue(requestId, out string? existingAction)
-            && !string.Equals(existingAction, actionId, StringComparison.Ordinal))
-        {
-            reasonCode = "request_action_conflict";
-            return false;
-        }
-        if (this.executionIdsByRequestId.TryGetValue(requestId, out string? existingExecution))
-        {
-            reasonCode = string.Equals(existingExecution, executionId, StringComparison.Ordinal)
-                ? "execution_identity_already_bound"
-                : "execution_identity_conflict";
-            return false;
-        }
-        if (this.executionIdsByRequestId.Values.Contains(executionId, StringComparer.Ordinal))
-        {
-            reasonCode = "execution_identity_reused";
-            return false;
-        }
-        this.actionIdsByRequestId[requestId] = actionId;
-        this.executionIdsByRequestId[requestId] = executionId;
-        reasonCode = "bound";
-        return true;
-    }
-
-    private string NewExecutionId(string requestId)
-    {
-        if (this.executionIdsByRequestId.TryGetValue(requestId, out string? bound))
-            return bound;
-        string executionId = Guid.NewGuid().ToString("N");
-        this.executionIdsByRequestId[requestId] = executionId;
-        return executionId;
-    }
-
-    private void BindAction(string requestId, string actionId)
-    {
-        if (string.IsNullOrWhiteSpace(requestId))
-            throw new ArgumentException("Request ID is required.", nameof(requestId));
-        if (string.IsNullOrWhiteSpace(actionId))
-            throw new ArgumentException("Action ID is required.", nameof(actionId));
-        if (this.actionIdsByRequestId.TryGetValue(requestId, out string? existing) && !string.Equals(existing, actionId, StringComparison.Ordinal))
-            throw new InvalidOperationException("Request action lineage conflict.");
-        this.actionIdsByRequestId[requestId] = actionId;
     }
 
     public LocalExecutionReceipt Cancel(string requestId, string executionId, string reasonCode)
@@ -1993,7 +1927,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             if (animationComplete || nowMs > specification.DeadlineMs)
             {
                 this.activeItemUse = null;
-                this.PublishIdleAfterRelease(specification.ExecutionId, specification.RequestId);
+                this.ledger.PublishIdleAfterRelease(specification.ExecutionId, specification.RequestId);
             }
         }
             else if (animationComplete && consumed)
@@ -2011,7 +1945,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
                 if (animationComplete)
                 {
                     this.activeItemUse = null;
-                    this.PublishIdleAfterRelease(specification.ExecutionId, specification.RequestId);
+                    this.ledger.PublishIdleAfterRelease(specification.ExecutionId, specification.RequestId);
                 }
                 else
                     this.activeItemUse = specification with { DeferredTerminalState = ExecutionState.Uncertain, DeferredTerminalReason = "item_use_postcondition_unavailable" };
@@ -2038,7 +1972,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             {
                 Game1.player.CurrentToolIndex = specification.PreviousSlot;
                 this.activeAnimalProduct = null;
-                this.PublishIdleAfterRelease(specification.ExecutionId, specification.RequestId);
+                this.ledger.PublishIdleAfterRelease(specification.ExecutionId, specification.RequestId);
             }
         }
             else if (animationComplete && produceCleared && inventoryGained)
@@ -2063,7 +1997,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
                 {
                     Game1.player.CurrentToolIndex = specification.PreviousSlot;
                     this.activeAnimalProduct = null;
-                    this.PublishIdleAfterRelease(specification.ExecutionId, specification.RequestId);
+                    this.ledger.PublishIdleAfterRelease(specification.ExecutionId, specification.RequestId);
                 }
                 else
                     this.activeAnimalProduct = specification with { DeferredTerminalState = ExecutionState.Uncertain, DeferredTerminalReason = "animal_product_postcondition_unavailable" };
@@ -2114,7 +2048,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         }
         // Controller success releases its native ownership only after its
         // transition callback returns; drain pending idle after that boundary.
-        this.DrainPendingIdleAfterRelease();
+        this.ledger.DrainPendingIdleAfterRelease();
 
         // WIA §4.1 top-level arbitration (review #2, 2026-10-02): movement
         // world-change interruptions are already arbitrated inside
@@ -2292,7 +2226,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
                 // captured its own tool reference.
                 Game1.player.CurrentToolIndex = specification.PreviousSlot;
                 this.activeAnimalProduct = null;
-                this.PublishIdleAfterRelease(specification.ExecutionId, specification.RequestId);
+                this.ledger.PublishIdleAfterRelease(specification.ExecutionId, specification.RequestId);
             }
         }
         // A second `activeMountTransport` settle stood here and published the same
@@ -2351,7 +2285,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
                 // Same immediate release as the animal-product slot: the interrupted eating
                 // animation is not a reason to keep owning the body.
                 this.activeItemUse = null;
-                this.PublishIdleAfterRelease(specification.ExecutionId, specification.RequestId);
+                this.ledger.PublishIdleAfterRelease(specification.ExecutionId, specification.RequestId);
             }
         }
     }
@@ -5883,9 +5817,9 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
                 ? this.TryCreatePiggybackedScene()
                 : null;
         LocalExecutionReceipt receipt = new(navigation.ExecutionId, navigation.RequestId, state, reasonCode, this.revision, evidence, PiggybackedScene: piggybackedScene);
-        this.Remember(receipt);
+        this.ledger.Remember(receipt);
         this.AddTrace(receipt);
-        this.PublishIdleAfterRelease(navigation.ExecutionId, navigation.RequestId);
+        this.ledger.PublishIdleAfterRelease(navigation.ExecutionId, navigation.RequestId);
     }
 
     internal void CompleteNavigationAfterWarp(bool isLocalPlayer, string? newLocation, int newTileX, int newTileY)
@@ -6125,9 +6059,9 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
 
     private LocalExecutionReceipt RememberTerminal(string requestId, string executionId, ExecutionState state, string reasonCode, string? evidence, BridgeLocalObservation? observation = null, string? hint = null)
     {
-        string? boundActionId = this.actionIdsByRequestId.TryGetValue(requestId, out string? action) ? action : null;
+        string? boundActionId = this.ledger.TryGetActionId(requestId, out string action) ? action : null;
         LocalExecutionReceipt receipt = new(executionId, requestId, state, reasonCode, this.revision, evidence, ActionId: boundActionId, Observation: observation, Hint: hint);
-        this.Remember(receipt);
+        this.ledger.Remember(receipt);
         LocalExecutionReceipt published = this.AddTrace(receipt);
         // Immediate native actions own no continuing controller/animation, so
         // their receipt is followed by the same centralized release check.
@@ -6142,61 +6076,18 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         // execution with no actor-free fact. Reading the declaration is what makes this match by construction rather
         // than by coincidence.
         if (state.IsTerminal())
-            this.PublishIdleAfterRelease(executionId, requestId);
+            this.ledger.PublishIdleAfterRelease(executionId, requestId);
         return published;
     }
 
-    private void Remember(LocalExecutionReceipt receipt)
-    {
-        if (!this.receiptsByRequestId.ContainsKey(receipt.RequestId))
-        {
-            this.receiptOrder.Enqueue(receipt.RequestId);
-            if (this.receiptOrder.Count > MaximumRememberedReceipts)
-            {
-                string evictedRequestId = this.receiptOrder.Dequeue();
-                if (this.receiptsByRequestId.TryGetValue(evictedRequestId, out LocalExecutionReceipt? evictedReceipt))
-                    this.navigationExecutionIds.Remove(evictedReceipt.ExecutionId);
-                this.receiptsByRequestId.Remove(evictedRequestId);
-                this.actionIdsByRequestId.Remove(evictedRequestId);
-                this.executionIdsByRequestId.Remove(evictedRequestId);
-            }
-        }
-
-        this.receiptsByRequestId[receipt.RequestId] = receipt;
-        // The ONE release of a modal owner lease. Every terminal of an execution passes through this map - rejection,
-        // invalidation, deadline expiry, cancellation, the native warp's own success - so releasing here cannot be
-        // forgotten by a new exit path, and nothing else in this class clears the lease. A lease that outlived its
-        // execution would suppress the next world interruption (WorldModel.OwnsCurrentModal re-checks activity as the
-        // second line of defence).
-        if (receipt.State.IsTerminal())
-            this.ReleaseModalOwner(receipt.ExecutionId);
-    }
-
     /// <summary>
-    /// Folds the native notices observed during a dispatch into that request's
-    /// stored receipt, through <see cref="Remember"/> so this class stays the only
-    /// writer of the receipt map. Returns the receipt the caller should publish.
-    ///
-    /// A receipt that is absent, or that already settled with notices, keeps
-    /// whatever it has: notices are evidence about one synchronous window, and a
-    /// replay must never rewrite a settled receipt's meaning.
+    /// Folds the native notices observed during a dispatch into that request's stored receipt. Notices are evidence
+    /// about one synchronous window, so a replay must never rewrite a settled receipt's meaning.
     /// </summary>
     internal LocalExecutionReceipt AttachNativeNotices(
         LocalExecutionReceipt receipt,
-        IReadOnlyList<string> nativeNotices)
-    {
-        // Notices annotate the receipt the dispatch just produced; they are not an
-        // outcome of their own. A receipt that cannot be matched (or that already
-        // carries notices, as a replay does) is returned untouched rather than
-        // replaced, so this can never manufacture a terminal state.
-        if (!this.receiptsByRequestId.TryGetValue(receipt.RequestId, out LocalExecutionReceipt? stored)
-            || stored.NativeNotices is not null)
-            return receipt;
-
-        LocalExecutionReceipt annotated = receipt with { NativeNotices = nativeNotices };
-        this.Remember(annotated);
-        return annotated;
-    }
+        IReadOnlyList<string> nativeNotices) =>
+        this.ledger.AttachNativeNotices(receipt, nativeNotices);
 
     private LocalExecutionReceipt AddTrace(LocalExecutionReceipt receipt)
     {
@@ -6212,7 +6103,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         // refused by BridgeSession.TryCreateReceiptEvent because the action identity could not
         // be resolved, and the refusal was logged as `closed/backpressured bridge` - which sent
         // the investigation to the pipe writer instead of to this projection.
-        if (receipt.ActionId is null && this.actionIdsByRequestId.TryGetValue(receipt.RequestId, out string? boundActionId))
+        if (receipt.ActionId is null && this.ledger.TryGetActionId(receipt.RequestId, out string boundActionId))
             receipt = receipt with { ActionId = boundActionId };
         string? category = receipt.State switch
         {
@@ -6246,14 +6137,14 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
                 // authoritative baseline and is already durable).
                 if (ModEntry.IsUnconfirmedTerminal(receipt.State))
                 {
-                    this.durabilityFailuresByRequestId.Add(receipt.RequestId);
+                    this.ledger.MarkDurabilityFailure(receipt.RequestId);
                     this.monitor.Log($"[receipt-durability-marker] request={receipt.RequestId};state={receipt.State};reason={receipt.ReasonCode};code={result.Code}", LogLevel.Trace);
                     return receipt;
                 }
                 this.monitor.Log($"[receipt-durability-marker] request={receipt.RequestId};state={receipt.State};reason={receipt.ReasonCode};code={result.Code};ignored=observational", LogLevel.Trace);
             }
         }
-        if (this.durabilityFailuresByRequestId.Contains(receipt.RequestId))
+        if (this.ledger.HasDurabilityFailure(receipt.RequestId))
             return receipt;
         // ONE delivery funnel, so the published revision is strictly monotonic PER EXECUTION.
         //
@@ -6277,7 +6168,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         // `;held_ms=<n>` at the SAME revision, which the Host refuses as `non_monotonic_revision` (named live on
         // 2026-10-21 by `firstDiffAt=390`, lengths [402, 390] - the twelve characters were the whole difference, and
         // the refusal closed the bridge at 747 s of a run that had already crossed its first night).
-        if (this.heldMsByRequestId.TryGetValue(receipt.RequestId, out long heldMs))
+        if (this.ledger.TryGetHeldMs(receipt.RequestId, out long heldMs))
             receipt = receipt with
             {
                 Evidence = string.IsNullOrEmpty(receipt.Evidence) ? $"held_ms={heldMs}" : $"{receipt.Evidence};held_ms={heldMs}",
@@ -6285,14 +6176,14 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         // Store the annotated copy even when the revision needs no bump: otherwise the store keeps whatever the caller
         // remembered before calling this funnel, and a later redelivery of that stored copy would differ from what
         // was published by exactly the annotation.
-        this.Remember(receipt);
+        this.ledger.Remember(receipt);
         LocalExecutionReceipt published = receipt;
-        this.publishedReceiptRevisionByExecutionId.TryGetValue(receipt.ExecutionId, out long publishedRevision);
+        this.ledger.TryGetPublishedRevision(receipt.ExecutionId, out long publishedRevision);
         if (publishedRevision != 0 && receipt.Revision <= publishedRevision)
         {
             this.revision = Math.Max(this.revision, publishedRevision + 1);
             published = receipt with { Revision = this.revision };
-            this.Remember(published);
+            this.ledger.Remember(published);
         }
         // A request that waited out a transient body hold says so on the first receipt it PUBLISHES. This is
         // the only place every receipt passes through on its way out, so the stored record, the fact the Host
@@ -6309,13 +6200,13 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         // again, so the entry can go.
         if (published.State is ExecutionState.Succeeded or ExecutionState.Failed or ExecutionState.Cancelled
             or ExecutionState.Rejected)
-            this.heldMsByRequestId.Remove(published.RequestId);
-        this.publishedReceiptRevisionByExecutionId[receipt.ExecutionId] = published.Revision;
+            this.ledger.ClearHeldMs(published.RequestId);
+        this.ledger.RecordPublishedRevision(receipt.ExecutionId, published.Revision);
         // The publish span and the marker line are the same fact: the span carries the identity the line reports,
         // so the trace and the grep log can never disagree about which request a revision was published for.
         Activity? publishSpan = ModTrace.StartReceiptPublish(published);
         this.monitor.Log(ModTrace.ReceiptPublishLogLine(published), LogLevel.Trace);
-        if (category is not null && !this.navigationExecutionIds.Contains(published.ExecutionId))
+        if (category is not null && !this.ledger.IsNavigationExecution(published.ExecutionId))
             this.AddPublicTrace(category, published.ExecutionId, published.RequestId);
         this.receiptPublished?.Invoke(published);
         publishSpan?.Dispose();
@@ -6324,32 +6215,6 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         // Host refuses as `non_monotonic_revision` - named live on 2026-10-21: same execution, same revision 266, same
         // state and reason, different evidence.
         return published;
-    }
-
-    /// <summary>
-    /// Publishes the one idle transition for an execution only after every
-    /// manager-owned representation of that execution has been released. This
-    /// deliberately is not part of generic terminal receipt tracing: native
-    /// animations may retain ownership after a terminal observation.
-    /// </summary>
-    private void PublishIdleAfterRelease(string executionId, string requestId)
-    {
-        if (this.idlePublishedExecutionIds.Contains(executionId))
-            return;
-        this.pendingIdleByExecutionId[executionId] = requestId;
-        this.DrainPendingIdleAfterRelease();
-    }
-
-    private void DrainPendingIdleAfterRelease()
-    {
-        foreach ((string executionId, string requestId) in this.pendingIdleByExecutionId.ToArray())
-        {
-            if (this.HasOwnership(executionId) || !this.idlePublishedExecutionIds.Add(executionId))
-                continue;
-            this.pendingIdleByExecutionId.Remove(executionId);
-            if (!this.navigationExecutionIds.Remove(executionId))
-                this.AddPublicTrace("body_idle", executionId, requestId);
-        }
     }
 
     private bool HasOwnership(string executionId) =>
@@ -6370,7 +6235,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         ExecutionTrace entry = new(category, executionId, requestId, this.tick, this.revision,
             player?.currentLocation?.NameOrUniqueName, player?.Tile);
         this.trace.Add(entry);
-        if (this.trace.Count > MaximumRememberedReceipts)
+        if (this.trace.Count > ExecutionReceiptStore.MaximumRememberedReceipts)
             this.trace.RemoveAt(0);
         this.monitor.Log($"GameBuddy body trace={category} execution={executionId} request={requestId} tick={this.tick} revision={this.revision}", LogLevel.Trace);
         this.tracePublished?.Invoke(entry);

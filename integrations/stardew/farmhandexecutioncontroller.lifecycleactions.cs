@@ -159,9 +159,9 @@ internal sealed partial class ExecutionManager
             active.Lifecycle.TerminalReasonCode,
             this.revision,
             active.Lifecycle.TerminalEvidence);
-        this.Remember(receipt);
+        this.ledger.Remember(receipt);
         this.AddTrace(receipt);
-        this.PublishIdleAfterRelease(active.ExecutionId, active.RequestId);
+        this.ledger.PublishIdleAfterRelease(active.ExecutionId, active.RequestId);
     }
 
     /// <summary>Native event edges forwarded to an owned night. No-ops when none is active.</summary>

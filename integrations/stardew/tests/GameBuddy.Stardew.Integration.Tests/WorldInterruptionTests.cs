@@ -322,6 +322,7 @@ public sealed class WorldInterruptionTests
     public void ArbitrationSkipsAnOwnedModalAndTheLeaseIsReleasedWhereAnExecutionEnds()
     {
         string source = File.ReadAllText(RepositorySourcePath(Path.Combine("integrations", "stardew", "farmhandexecutioncontroller.cs")));
+        string store = File.ReadAllText(RepositorySourcePath(Path.Combine("integrations", "stardew", "ExecutionReceiptStore.cs")));
 
         // The ruling: a modal interrupts only when it is NOT the owning execution's own.
         MethodBody(source, "private void ArbitrateWorldChangeInterruptions(")
@@ -329,17 +330,25 @@ public sealed class WorldInterruptionTests
                 "WIA §4.2: an actionOwned modal is closed by its own action, so it cannot interrupt that action");
 
         // The release lives in the receipt funnel every terminal passes through, keyed by the execution, and nowhere
-        // else: a second release site is a lifecycle that can disagree with this one.
-        MethodBody(source, "private void Remember(LocalExecutionReceipt receipt)")
-            .Should().Contain("this.ReleaseModalOwner(receipt.ExecutionId);");
-        int releaseCalls = 0;
+        // else: a second release site is a lifecycle that can disagree with this one. The funnel moved to the store; the
+        // controller keeps one forwarding implementation of the lease it owns.
+        MethodBody(store, "internal LocalExecutionReceipt Remember(LocalExecutionReceipt receipt)")
+            .Should().Contain("this.ownership.ReleaseModalLease(receipt.ExecutionId);");
+        CountReleaseCalls(store).Should().Be(1, "one owner, one release");
+        CountReleaseCalls(source).Should().Be(1, "the controller only forwards ReleaseModalLease to the owner lease it holds");
+    }
+
+    private static int CountReleaseCalls(string source)
+    {
+        int calls = 0;
         foreach (string line in source.Split('\n'))
         {
-            if (line.Contains("this.ReleaseModalOwner(", StringComparison.Ordinal))
-                releaseCalls++;
+            if (line.Contains("this.ownership.ReleaseModalLease(", StringComparison.Ordinal)
+                || line.Contains("this.ReleaseModalOwner(", StringComparison.Ordinal))
+                calls++;
         }
 
-        releaseCalls.Should().Be(1, "one owner, one release");
+        return calls;
     }
 
     [Fact]
