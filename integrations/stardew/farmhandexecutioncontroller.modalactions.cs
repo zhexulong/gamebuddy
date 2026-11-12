@@ -12,6 +12,29 @@ namespace GameBuddy.Stardew;
 
 internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExecutionLedger
 {
+    /// <summary>
+    /// The modal family's decisions, as one instance: which menus this channel may close, what the refusal says when it
+    /// may not, and the settlement commit it has already driven (<see cref="ModalFamily"/>).
+    /// </summary>
+    private readonly ModalFamily modalFamily = new();
+
+    /// <summary>
+    /// Whether a modal's runtime type name is an audited operation menu, asked of the family that declares the set
+    /// (<see cref="ModalFamily.IsDismissibleOperationMenu"/>). It stays on this class because two readers already spell
+    /// it here: <see cref="WorldModel.MountedModal"/> publishes the modal's KIND, and the dismiss suites pin the audit
+    /// itself.
+    /// </summary>
+    internal static bool IsDismissibleOperationModalType(string typeName) =>
+        ModalFamily.IsDismissibleOperationMenu(typeName);
+
+    /// <summary>
+    /// What the open box asks and which keys answer it, asked of the family that spells both
+    /// (<see cref="ModalFamily.OfferedResponseHint"/>). It stays on this class because the answer suite pins the hint's
+    /// bounds here, where the refusal that carries it is minted.
+    /// </summary>
+    internal static string OfferedResponseHint(Response[] offered, string? promptText) =>
+        ModalFamily.OfferedResponseHint(offered, promptText);
+
     /// WIA §4.2 modal-handling ship: dismiss an informational native dialogue.
     /// The Modal admission profile (AdmitExecution) already granted this
     /// execution while the world holds a modal (the modal IS its working
@@ -49,140 +72,6 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
     /// stays a decision the Agent makes and a receipt states, never a side
     /// effect of an unrelated request.
     /// </summary>
-    /// <summary>
-    /// Operation-shaped native menus whose CLOSE path is a pure cancel with no
-    /// world side effect. Audited against the target version: none of these classes
-    /// overrides exitThisMenu or cleanupBeforeExit (so closing runs the generic
-    /// teardown), and every side effect they own (purchase, craft, take, pick a
-    /// floor, the day-end save) lives on its own commit path, never on the close
-    /// path. Narrative modals (LetterViewerMenu, Billboard) stay out of this set on
-    /// purpose: they already applied their effect when they OPENED, and finishing
-    /// someone's reading progress is the player's call, not this action's.
-    ///
-    /// ShippingMenu is the morning-after-sleep summary a day rollover pushes onto
-    /// Game1.endOfNightMenus (Game1.cs:9121) and it holds the actor until it is
-    /// cleared, so a multi-day run needs it in this set. It satisfies the criterion:
-    /// it overrides neither exitThisMenu nor cleanupBeforeExit, sets no exit hook,
-    /// and its only click/hotkey action - okClicked (ShippingMenu.cs:690-696) - sets
-    /// display flags only. The day-end save it owns is driven by its own update
-    /// (ShippingMenu.cs:361-428), not by the close path.
-    ///
-    /// LevelUpMenu, the other menu the same rollover can push, is deliberately NOT
-    /// here: its close hook cleanupBeforeExit (LevelUpMenu.cs:629-635) calls
-    /// okButtonClicked (:637-643) -> getLevelPerk (:659-686, maxHealth / mail /
-    /// health / stamina) and RemoveLevelFromLevelList (:645-648), so a close writes
-    /// saved state. A pending profession choice is NOT silently picked - professions
-    /// are added only by the in-menu choice (:487/:500) and AddMissedProfessionChoices
-    /// (:334-348) re-offers a level whose profession is still -1 - but the level perk
-    /// is applied on close, which a dismiss channel never asked for.
-    /// </summary>
-    private static readonly HashSet<string> DismissibleOperationModalTypes = new(StringComparer.Ordinal)
-    {
-        "ShopMenu", "ItemGrabMenu", "GameMenu", "MineElevatorMenu",
-        "CraftingPage", "ForgeMenu", "MuseumMenu", "TailoringMenu",
-        "ShippingMenu",
-    };
-
-    /// <summary>
-    /// Whether a modal's runtime type name is an audited operation menu. Pure so the
-    /// whitelist itself is testable without constructing menus whose readyToClose
-    /// reads live state.
-    /// </summary>
-    internal static bool IsDismissibleOperationModalType(string typeName) =>
-        DismissibleOperationModalTypes.Contains(typeName);
-
-    /// <summary>
-    /// The box's text, bounded to what a receipt can carry.
-    ///
-    /// <para>
-    /// A native dialogue line is authored for a 1200px box and can be long; a receipt is read by a model alongside the rest
-    /// of the turn. The bound matches the one the environment fact line gives a single fact, so a long line costs the same
-    /// everywhere rather than inventing a second budget. Truncation is marked, because a silently shortened sentence is worse
-    /// than a marked one.
-    /// </para>
-    /// </summary>
-    internal static string BoundedModalText(string text)
-    {
-        const int Maximum = 256;
-        string single = text.Replace('\r', ' ').Replace('\n', ' ');
-        return single.Length <= Maximum ? single : single.Substring(0, Maximum) + "...";
-    }
-
-    /// <summary>
-    /// The keys a box offers, in the ENGINE's spelling, joined exactly as the receipts have always printed them.
-    ///
-    /// One reader for the evidence and the hint, because the two answer the same question to two different consumers:
-    /// a receipt's evidence is read on the Mod's own timeline, and the hint is the only field that survives into the
-    /// node status the companion sees (ADR-006 withholds a failed node's evidence).
-    /// </summary>
-    internal static string OfferedResponseKeys(IEnumerable<Response> offered) =>
-        string.Join(",", offered.Select(response => response.responseKey));
-
-    /// <summary>
-    /// What the open box asks and which keys answer it, as the bounded hint a failed node can still carry.
-    ///
-    /// <para>
-    /// This is the field that was missing, and its absence cost a live run 27 minutes (round41). The Mod's own timeline
-    /// recorded `modal_not_dismissible ... response_keys=Yes,No;text=今晚要睡了吗？`, while the companion received
-    /// `{"failureCode":"modal_not_dismissible","actionId":"dismiss_modal"}` - no keys, no prompt - and then guessed
-    /// `yes`, `是`, `next` and `1` before landing on `Yes` by luck. A required string argument whose accepted values
-    /// exist and are not published is an invitation to guess.
-    /// </para>
-    /// <para>
-    /// Bounded by <see cref="BodyProgramValidation.MaximumNodeHintLength"/>, the same ceiling the journal and the wire
-    /// enforce: a hint that overran it would make the whole node unreadable, which is worse than a truncated prompt. The
-    /// prompt is cut FIRST, so the keys - the part the caller must act on - always survive.
-    /// </para>
-    /// </summary>
-    internal static string OfferedResponseHint(Response[] offered, string? promptText)
-    {
-        const int Bound = BodyProgramValidation.MaximumNodeHintLength;
-        string keys = OfferedResponseKeys(offered);
-        string head = keys.Length == 0 ? "offered_keys=none" : "offered_keys=" + keys;
-        if (head.Length > Bound)
-            return head.Substring(0, Bound);
-        if (string.IsNullOrWhiteSpace(promptText))
-            return head;
-        int room = Bound - head.Length - ";text=".Length;
-        if (room <= 0)
-            return head;
-        string text = BoundedModalText(promptText!);
-        return head + ";text=" + (text.Length <= room ? text : text.Substring(0, room));
-    }
-
-    /// <summary>
-    /// The keys the box offers: its own `responses`, or `Game1.questionChoices` when the engine kept them there - the
-    /// same pair the native click path reads (DialogueBox.cs:296-340).
-    ///
-    /// ONE reader, because `dismiss_modal`'s refusal and `answer_dialogue`'s match must offer the caller the same list:
-    /// a caller told `Yes,No` and then refused for sending `Yes` would be the two-spellings defect in its cruellest form.
-    /// </summary>
-    internal static Response[] OfferedResponses(DialogueBox dialogue) =>
-        dialogue.responses is { Length: > 0 } responses
-            ? responses
-            : Game1.questionChoices?.ToArray() ?? Array.Empty<Response>();
-
-    /// <summary>
-    /// The shipping menu whose settlement commit this channel has ALREADY driven, while that same menu is still on
-    /// screen.
-    ///
-    /// <para>
-    /// `ShippingMenu.okClicked` (ShippingMenu.cs:690-696) ARMS the outro - `outro = true; outroFadeTimer = 800` - and
-    /// `update` then runs that fade down to the frame that creates `SaveGameMenu` (:380-428). It is not idempotent: a
-    /// second call re-arms `outroFadeTimer`, so the fade restarts from the top and the outro never reaches the save
-    /// that was the whole point of driving it. The engine's own guards belong to its INPUT paths (`!outro` at :677,
-    /// `(outro && !savedYet)` at :701) and this channel reaches the private method directly, so nothing but this field
-    /// stands between a second `dismiss_modal` and a re-driven commit.
-    /// </para>
-    /// <para>
-    /// Compared by REFERENCE, and released only where the menu actually unloads. The day's own menu leaves the screen
-    /// through `exitThisMenu` inside its update (:361-366), which this Mod does not drive, so the flag is dropped at
-    /// the first dismissal that finds a different menu mounted. Tomorrow's `ShippingMenu` is a different object and is
-    /// therefore never mistaken for the settled one.
-    /// </para>
-    /// </summary>
-    private ShippingMenu? shippingCommitMenu;
-
     public LocalExecutionReceipt RequestLocalDismissModal(BridgeExecutionRequest request, IExecutionLedger ledger)
     {
         if (ledger.TryGetExistingReceipt(request.RequestId, out LocalExecutionReceipt existing))
@@ -216,95 +105,29 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
             // the failure-mode collapse the review flagged.
             return this.RememberTerminal(request.RequestId, executionId, ExecutionState.Rejected, guardReason, null);
 
-        string modalType = modal.GetType().Name;
         // The settlement flag outlives the receipt, not the menu: the first dismissal that finds another menu mounted
         // is the observation that the one it recorded has unloaded (ShippingMenu.update -> exitThisMenu, :361-366).
-        if (this.shippingCommitMenu is not null && !ReferenceEquals(modal, this.shippingCommitMenu))
-            this.shippingCommitMenu = null;
+        this.modalFamily.ObserveMountedMenu(modal);
 
-        if (modal is ShopMenu)
+        // WHICH CLOSE THIS CHANNEL MAY PERFORM, as one verdict from the family. The ladder of booleans this replaced
+        // answered "may I close this" by POSITION - a shop passed the close-path audit and still had to be refused,
+        // because its counter belongs to `shop_purchase` - and a decision whose answer depends on where a caller stops
+        // reading is the shape a caller gets wrong at 3 a.m.
+        ModalFamily.Dismissal dismissal = ModalFamily.DecideDismissal(modal, actor);
+        if (dismissal is ModalFamily.Dismissal.Unavailable refusal)
         {
-            // A SHOP COUNTER IS AN ACTION'S OWN STATE, NOT A MODAL NOBODY OWNS - so this channel never closes one.
-            //
-            // `shop_purchase` opens the counter with `Utility.TryOpenShopMenu` (farmhandexecutioncontroller.shopactions.cs)
-            // and closes whatever is still mounted on its way out; its click loop stops the moment the mounted menu is
-            // no longer the exact one it opened (`ReferenceEquals(stillOpen, menu)`), and a purchase is several ticks
-            // long. `Game1.exitActiveMenu()` here therefore does not resolve a modal - it cancels a transaction that is
-            // standing in the counter, or destroys the counter a following step was meant to use, and the close path
-            // says nothing about it afterwards.
-            //
-            // The whitelist above stays what it is: an audit of the CLOSE PATH (`ShopMenu` overrides neither
-            // `exitThisMenu` nor `cleanupBeforeExit`, so its close is a pure cancel). That is a different question from
-            // "may THIS channel close it", and a shop is the one menu whose answer is no.
             return this.RememberTerminal(
                 request.RequestId,
                 executionId,
                 ExecutionState.Rejected,
-                "modal_not_dismissible",
-                $"modal_type={modalType};menu_is_a_shop=true;shop_purchase_opens_its_own=true",
-                hint: "menu_is_a_shop:shop_purchase_opens_its_own");
+                refusal.ReasonCode,
+                refusal.Evidence,
+                hint: refusal.Hint);
         }
 
-        if (modal is DialogueBox dialogue)
-        {
-            if (dialogue.isQuestion)
-            {
-                // The refusal must carry the QUESTION, not just the fact that one is being asked.
-                //
-                // `answer_dialogue` takes a `responseKey`, and the only way to choose one is to know what was asked and
-                // which keys are offered. The refusal used to say `question=true;require_answer_dialogue=true` and stop -
-                // which tells a caller to use another action without telling it anything it could use that action WITH.
-                //
-                // The same two facts ride the HINT as well, because the evidence never reaches the companion: a failed
-                // node carries no evidence (ADR-006) and only its bounded hint survives, so `response_keys` alone left
-                // the caller reading `{failureCode, actionId}` and guessing at the box (round41, 27 minutes).
-                Response[] offeredResponses = OfferedResponses(dialogue);
-                string? questionText = NpcDialoguePager.CurrentTextOrNull(dialogue);
-                return this.RememberTerminal(
-                    request.RequestId,
-                    executionId,
-                    ExecutionState.Rejected,
-                    "modal_not_dismissible",
-                    "modal_type=DialogueBox;question=true;answer_it=answer_dialogue"
-                        + ";response_keys=" + OfferedResponseKeys(offeredResponses)
-                        + (questionText is null or "" ? string.Empty : ";text=" + BoundedModalText(questionText)),
-                    hint: OfferedResponseHint(offeredResponses, questionText));
-            }
-        }
-        else if (!IsDismissibleOperationModalType(modalType))
-        {
-            // Anything unaudited stays refused rather than guessed at - and the refusal NAMES the menu's own
-            // content when it is the one menu a multi-day run is built to avoid.
-            //
-            // `LevelUpMenu` pushes one perk choice per entry in `player.newLevels` (Game1.cs:9130-9134) and is
-            // correctly not dismissible, so a run that meets one can only stop. Measured 2026-10-17 on run g9: the
-            // first night crossed (calendar day 5 -> 6), the new day opened with `menu=LevelUpMenu`, and every
-            // refusal said only `modal_type=LevelUpMenu;dismissible=false` - no skill, no level, no count, so there
-            // was no way to tell WHICH level-up had been missed.
-            //
-            // The menu's own skill/level fields are private and are not worth reaching for: `Farmer.newLevels` is
-            // public and still holds the entries the menu was pushed from (it is cleared when a perk is CHOSEN), so
-            // it names the same fact without touching a private field.
-            string levelUpDetail = modal is LevelUpMenu
-                ? $";pending_level_ups={actor.newLevels.Count}"
-                    + string.Concat(actor.newLevels.Select(entry => $";level_up={entry.X}@{entry.Y}"))
-                : string.Empty;
-            return this.RememberTerminal(
-                request.RequestId,
-                executionId,
-                ExecutionState.Rejected,
-                "modal_not_dismissible",
-                $"modal_type={modalType};dismissible=false{levelUpDetail}");
-        }
-        else if (!modal.readyToClose())
-        {
-            return this.RememberTerminal(
-                request.RequestId,
-                executionId,
-                ExecutionState.Rejected,
-                "modal_not_dismissible",
-                $"modal_type={modalType};ready_to_close=false");
-        }
+        ModalFamily.Dismissal.Closeable close = (ModalFamily.Dismissal.Closeable)dismissal;
+        string modalType = close.ModalType;
+        string closeEffect = ModalFamily.CloseEffect(close.Path);
 
         // What the close below itself changed. A whitelisted operation menu is a PURE CANCEL (no
         // exitThisMenu override; every effect it owns is on its own commit path), but a DialogueBox is not:
@@ -327,15 +150,18 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
         string? modalText = modal is DialogueBox textBox ? NpcDialoguePager.CurrentTextOrNull(textBox) : null;
         string modalTextDetail = modalText is null or ""
             ? string.Empty
-            : ";text=" + BoundedModalText(modalText);
+            : ";text=" + ModalFamily.BoundedModalText(modalText);
 
-        string closeEffect = modal is DialogueBox ? "native_dialogue_close" : "pure_cancel";
         try
         {
-            if (modal is DialogueBox dialogueBox)
-                dialogueBox.closeDialogue();
-            else if (modal is ShippingMenu shippingMenu)
+            if (close.Path is ModalFamily.ClosePath.Dialogue)
             {
+                DialogueBox dialogueBox = (DialogueBox)close.Menu;
+                dialogueBox.closeDialogue();
+            }
+            else if (close.Path is ModalFamily.ClosePath.EngineShippingCommit)
+            {
+                ShippingMenu shippingMenu = (ShippingMenu)close.Menu;
                 // The ONE menu whose close must go through the engine own commit.
                 //
                 // `ShippingMenu` overrides neither `exitThisMenu` nor `cleanupBeforeExit`, so a generic close is
@@ -346,7 +172,7 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
                 // every archived Mod log from the multi-day runs has `saveGameMenu=[]`, the night lifecycle then
                 // burns its save budget and moves to `AwaitingDayStart`, and the world is left with an advanced
                 // calendar, the actor still held as `body_owned_by_day_advance`, and every later request refused.
-                if (ReferenceEquals(this.shippingCommitMenu, shippingMenu))
+                if (this.modalFamily.SettlementCommitInProgress(shippingMenu))
                     // The commit is under way and this menu survives it for several frames, so the caller's second
                     // request asks for a state that already holds. Answering it from the engine again would re-arm
                     // the outro fade; answering it honestly costs no native call at all.
@@ -355,7 +181,7 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
                         executionId,
                         ExecutionState.Succeeded,
                         "settlement_commit_in_progress",
-                        $"modal_type={modalType};dismissed=false;cleared_modal={modalType};clearing=true;close_effect=engine_shipping_commit;commit_already_driven=true{modalTextDetail}",
+                        $"modal_type={modalType};dismissed=false;cleared_modal={modalType};clearing=true;close_effect={closeEffect};commit_already_driven=true{modalTextDetail}",
                         this.TryCreateLocalObservation(actor));
                 MethodInfo? commit = typeof(ShippingMenu).GetMethod(
                     "okClicked",
@@ -369,7 +195,7 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
                         $"modal_type={modalType};engine_method=okClicked;available=false");
                 // Latched BEFORE the native call, because the call is not atomic: `okClicked` has already armed the
                 // fade by the time anything after the two field writes can throw, and a second entry would re-arm it.
-                this.shippingCommitMenu = shippingMenu;
+                this.modalFamily.RecordSettlementCommit(shippingMenu);
                 commit.Invoke(shippingMenu, null);
                 // The engine completes the close in its own timeline (the outro), so the postcondition here is the
                 // commit having run - not the menu already being gone. Reporting the truth is what lets the night
@@ -379,7 +205,7 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
                     executionId,
                     ExecutionState.Succeeded,
                     "modal_dismissed",
-                    $"modal_type={modalType};dismissed=true;cleared_modal={modalType};clearing=true;close_effect=engine_shipping_commit{modalTextDetail}",
+                    $"modal_type={modalType};dismissed=true;cleared_modal={modalType};clearing=true;close_effect={closeEffect}{modalTextDetail}",
                     this.TryCreateLocalObservation(actor));
             }
             else
@@ -487,7 +313,7 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
             return this.RememberTerminal(request.RequestId, executionId, ExecutionState.Rejected, "invalid_response_key",
                 $"key_length={requestedKey?.Length ?? 0};blank={(string.IsNullOrWhiteSpace(requestedKey) ? "true" : "false")};max_length=128");
 
-        Response[] offeredResponses = OfferedResponses(dialogue);
+        Response[] offeredResponses = ModalFamily.OfferedResponses(dialogue);
         // THE ENGINE'S OWN SPELLING WINS. A caller that sends `yes` answers the box that offers `Yes`, because the key
         // names a line on screen rather than an entry in a dictionary, and a case-sensitive compare turned the one
         // obvious spelling into `response_key_not_offered` (round41: `yes`, then `是`, `next`, `1`, and `Yes` accepted
@@ -508,7 +334,7 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
                 ExecutionState.Rejected,
                 "response_key_not_offered",
                 $"modal_type=DialogueBox;question=true;response_key={requestedKey}"
-                    + $";offered_keys={OfferedResponseKeys(offeredResponses)}",
+                    + $";offered_keys={ModalFamily.OfferedResponseKeys(offeredResponses)}",
                 hint: OfferedResponseHint(offeredResponses, promptText));
         }
 

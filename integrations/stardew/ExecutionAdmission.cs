@@ -387,23 +387,6 @@ internal sealed class ExecutionAdmission
         ActorWorldFacts admissionFacts = WorldModel.ReadFacts(boundActor);
         ActorDisposition admissionDisposition = WorldModel.Classify(admissionFacts);
         LocalDispositionKind disposition = ExecutionManager.ProjectAdmissionDisposition(admissionDisposition, boundActor);
-        // The Modal profile decides whether the action may be ATTEMPTED; whether a modal is actually
-        // present is the handler business, because it names that far better (no_modal_present,
-        // modal_not_answerable, modal_not_dismissible). Refusing here on `disposition != Modal` made those
-        // codes unreachable and replaced them with the generic player_not_actionable - a diagnosis
-        // regression the modal tests caught.
-        //
-        // A cutscene is the one thing that outranks a mounted modal (WorldModel.Classify gives Modal
-        // precedence over PassOut and Transient), and the explicit eventUp clause keeps that true even if
-        // the precedence ever changes.
-        //
-        // ...but a cutscene is not one obstacle. Two of the modal family's three handlers act on the cutscene's OWN
-        // dialogue box - `dismiss_modal` closes it (the native close advances the event, DialogueBox.cs:230-235) and
-        // `answer_dialogue` answers a question raised inside it (`Event.answerDialogue`) - so refusing the family here
-        // refused the only actions that can end a cutscene, which is the deadlock a live run spent twenty minutes
-        // retrying (`cutscene_active` x4: "Persistent cutscene ... I just wait."). The ruling is therefore per ACTION,
-        // read from the identity the dispatch path bound to this request, and everything without an event path keeps
-        // the named hold it always had.
         bool eventRunning = disposition == LocalDispositionKind.Event || Game1.eventUp;
         bool actsOnRunningEvent = eventRunning && this.RequestHasEventPath(requestId);
         // The cross-day lifecycle is the ONE caller whose own prompt is its precondition: `advance_day` answers the
@@ -414,10 +397,11 @@ internal sealed class ExecutionAdmission
             && disposition is LocalDispositionKind.Modal
             && WorldModel.HasDialogueBox(admissionFacts)
             && NativeSleepPrompt.IsStanding(Game1.activeClickableMenu as DialogueBox);
-        bool notActionable = profile is AdmissionProfile.Modal
-            ? eventRunning && !actsOnRunningEvent
-            : disposition != LocalDispositionKind.Idle && !ownBedPrompt;
-        if (notActionable)
+        // THE RULING IS THE MODAL FAMILY'S (<see cref="ModalFamily.StandingOf"/>), because a mounted menu means the
+        // opposite thing to two profiles: the modal family's working PRECONDITION, and every other profile's hold. The
+        // facts stay here - the profile, the projected disposition, whether an event is running, whether THIS request's
+        // action acts on one, and whether the engine's own bed prompt is the box standing.
+        if (ModalFamily.StandingOf(profile, disposition, eventRunning, actsOnRunningEvent, ownBedPrompt) is ModalFamily.Standing.Obstructed)
         {
             // WIA 4.?? : the refusal NAMES the hold and carries the facts a countermeasure needs. A single
             // `player_not_actionable` for a menu, a cutscene, a faint, an eating animation and a tool swing

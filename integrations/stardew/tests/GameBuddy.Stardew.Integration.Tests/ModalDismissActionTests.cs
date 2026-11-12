@@ -73,8 +73,17 @@ public sealed class ModalDismissActionTests
             ";has_more_pages=true;next_modal_type=",
             "a continuation is named rather than reported as a failure");
         code.Should().Contain(
-            "string closeEffect = modal is DialogueBox ? \"native_dialogue_close\" : \"pure_cancel\";",
-            "the close's own effect is stated per native type, not as one blanket claim");
+            "string closeEffect = ModalFamily.CloseEffect(close.Path);",
+            "the receipt's close effect is the verdict's own close path, so the handler cannot claim an effect the path does not have");
+        ModalFamily.CloseEffect(ModalFamily.ClosePath.Dialogue).Should().Be(
+            "native_dialogue_close",
+            "a DialogueBox close also advances native dialogue state, and the receipt says which effect ran");
+        ModalFamily.CloseEffect(ModalFamily.ClosePath.PureCancel).Should().Be(
+            "pure_cancel",
+            "an audited operation menu overrides no exitThisMenu, so its close is the one blanket claim that IS true of it");
+        ModalFamily.CloseEffect(ModalFamily.ClosePath.EngineShippingCommit).Should().Be(
+            "engine_shipping_commit",
+            "the settlement sheet's close is the engine's own commit and must not be reported as a cancel");
         code.Should().NotContain(
             "side_effects=none",
             "a DialogueBox close does advance native dialogue state, so that blanket claim is false here");
