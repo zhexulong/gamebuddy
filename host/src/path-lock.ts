@@ -30,10 +30,20 @@ import {
  * helper through an opaque capability. This module never pathname-deletes a
  * lock file, never falls back to `rm`, and fails closed whenever the capability
  * is unavailable (including every non-Windows runtime).
+ *
+ * The release path requires that capability, so a test that exercises it must run under the suite bootstrap
+ * (`host/scripts/compiled-test-bootstrap.mjs`) or bind the capability itself: a bare
+ * `node --test dist-test/<file>` fails with `windows_reclaimer_unavailable`, and that is the invocation, not
+ * this module.
  */
 const tails = new Map<string, Promise<void>>();
 const LOCK_TIMEOUT_MS = 10_000;
 const LOCK_POLL_MS = 20;
+/**
+ * How much of the owning UUID a release failure names. Enough to match the stranded lock against its record, a
+ * log line or a process listing; never the whole token, because a failure message is durable text in someone's log.
+ */
+const OWNER_TOKEN_PREFIX_LENGTH = 8;
 /**
  * How old a record that identifies NOBODY must be before it is admitted to be residue.
  *
@@ -348,7 +358,11 @@ async function acquireFileLock(
         // only when the exact token is still proven there. There is no
         // token-read -> pathname rm path anywhere in this module.
         const release = await releaseOwnedPathLock(lockPath, owner.token);
-        if (release.outcome !== "released") throw new Error(`durable_path_lock_release_failed:${release.reason}`);
+        if (release.outcome !== "released")
+          throw new Error(
+            `durable_path_lock_release_failed:${release.reason}:${lockPath}:` +
+              owner.token.slice(0, OWNER_TOKEN_PREFIX_LENGTH),
+          );
       };
     } catch (error) {
       if (!isNodeError(error) || error.code !== "EEXIST") throw error;

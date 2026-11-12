@@ -781,17 +781,25 @@ test("path lock keeps a stale candidate and never deletes when the reclaimer cap
   }
 });
 
-test("normal owner release fails closed without a reclaimer capability", async () => {
+test("normal owner release fails closed and names the stranded lock and its owner prefix", async () => {
   bindWindowsStaleLockReclaimer(undefined);
   const directory = await mkdtemp(join(await canonicalTemporaryRoot(), "gamebuddy-path-lock-release-unavailable-"));
   const path = join(directory, "artifact.json");
+  const lockPath = pathLockPath(path);
   try {
-    await assert.rejects(
-      withPathLock(path, async () => "work-completed"),
-      /durable_path_lock_release_failed:windows_reclaimer_unavailable/,
+    // BEFORE: `durable_path_lock_release_failed:windows_reclaimer_unavailable` named neither the durable artifact
+    // left locked nor the record that owns it, so a reader had to rebuild both from a stack trace.
+    const message = await withPathLock(path, async () => "work-completed").then(
+      () => undefined,
+      (error: unknown) => (error as Error).message,
     );
-    const owner = await readFile(pathLockPath(path), "utf8");
-    assert.match(owner, /"token":"[0-9a-f-]{36}"/);
+    const owner = JSON.parse(await readFile(lockPath, "utf8")) as { token: string };
+    assert.match(owner.token, /^[0-9a-f-]{36}$/i);
+    // The prefix is derived from the record that is still on disk, not from a second copy of it here.
+    assert.equal(
+      message,
+      `durable_path_lock_release_failed:windows_reclaimer_unavailable:${lockPath}:${owner.token.slice(0, 8)}`,
+    );
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
@@ -808,19 +816,25 @@ test("normal withPathLock use fails closed at release on non-Windows without any
   bindWindowsStaleLockReclaimer(undefined);
   const directory = await mkdtemp(join(await canonicalTemporaryRoot(), "gamebuddy-path-lock-posix-default-"));
   const path = join(directory, "artifact.json");
+  const lockPath = pathLockPath(path);
   try {
     let workRan = false;
-    await assert.rejects(
-      withPathLock(path, async () => {
-        workRan = true;
-      }),
-      /durable_path_lock_release_failed:windows_reclaimer_unavailable/,
+    const message = await withPathLock(path, async () => {
+      workRan = true;
+    }).then(
+      () => undefined,
+      (error: unknown) => (error as Error).message,
     );
-    // The caller's work did run; only the handle-bound release is unavailable.
+    // The caller's work did run; only the handle-bound release is unavailable, and the failure names what stayed
+    // locked and which owner record to look for.
     assert.equal(workRan, true);
-    const lockPath = pathLockPath(path);
-    const owner = await readFile(lockPath, "utf8");
-    assert.match(owner, /"token":"[0-9a-f-]{36}"/);
+    const record = await readFile(lockPath, "utf8");
+    const owner = JSON.parse(record) as { token: string };
+    assert.match(owner.token, /^[0-9a-f-]{36}$/i);
+    assert.equal(
+      message,
+      `durable_path_lock_release_failed:windows_reclaimer_unavailable:${lockPath}:${owner.token.slice(0, 8)}`,
+    );
     // The owner lock is never deleted on non-Windows (no POSIX deletion
     // fallback exists) and therefore becomes the design-mandated stale-lock
     // barrier for every later acquisition.
@@ -828,7 +842,7 @@ test("normal withPathLock use fails closed at release on non-Windows without any
       withPathLock(path, async () => undefined, { timeoutMs: 25 }),
       { message: "durable_path_lock_timeout" },
     );
-    assert.equal(await readFile(lockPath, "utf8"), owner);
+    assert.equal(await readFile(lockPath, "utf8"), record);
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
