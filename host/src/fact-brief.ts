@@ -45,7 +45,6 @@ import type { PlayerInput, WorldFact } from "./event-pump.js";
 import {
   formatGameClock,
   formatGameEnvironmentFacts,
-  gameLocationName,
   MAX_COUNTED_FAMILIES_NAMED,
   MAX_TARGET_FAMILIES_SHOWN,
   nearbyTargetFamilies,
@@ -86,7 +85,7 @@ export type FactBriefBlock = (typeof FACT_BRIEF_BLOCKS)[number];
  * just happened" with the thirty newest ones and said nothing about the sixty it left out. So the line count is
  * bounded where the sentences are composed, and the remainder is named.
  */
-export const MAX_WORLD_FACT_LINES = 24;
+const MAX_WORLD_FACT_LINES = 24;
 
 /**
  * How many delivered turns a re-stated world reading may age before its age stops being a parenthetical and becomes a
@@ -115,7 +114,7 @@ export const WORLD_STATE_STALE_TURNS = 5;
  * One per turn would spend the run on one warning: fifty turns of a frozen reading is three facts (5, 20, 35), not
  * fifty, which keeps the fact alive without paying for it every turn.
  */
-export const WORLD_STATE_STALE_REARM_MULTIPLE = 4;
+const WORLD_STATE_STALE_REARM_MULTIPLE = 4;
 
 /** The turn age at which the `published`-th stale fact for one reading is due. */
 export function worldStateStaleThreshold(published: number): number {
@@ -293,7 +292,7 @@ export function unchangedWorldAnswer(revision: number): string {
 }
 
 /** How many item rows the pack names before it counts the rest. */
-export const MAX_CARRYING_ROWS = 8;
+const MAX_CARRYING_ROWS = 8;
 
 /**
  * What she is carrying that is not a tool.
@@ -435,7 +434,7 @@ const NOT_YET_TRUE = "上面这些只是派出去了：还没结算，就等于�
  * reading this block must never give - so a reading with no programme renders nothing at all.
  * </p>
  */
-export function composeInFlight(reading: InFlightProgrammeReading): string {
+function composeInFlight(reading: InFlightProgrammeReading): string {
   if (reading.programmes.length === 0) return "";
   const lines: string[] = [];
   for (const programme of reading.programmes) lines.push(...inFlightProgrammeLines(programme));
@@ -585,7 +584,7 @@ function evidenceDetail(payload: Readonly<Record<string, unknown>>): string {
  * `fact-brief.private.test.ts` reads that validator and asserts the two numbers are the same one, so this cannot drift from the
  * bound the Mod's journal enforces.
  */
-export const MAX_BODY_PROGRAM_NODE_HINT_CHARS = 256;
+const MAX_BODY_PROGRAM_NODE_HINT_CHARS = 256;
 
 /**
  * The ceiling every Mod-authored field this file prints is held to, and where each number comes from.
@@ -763,15 +762,29 @@ function failureWords(node: SettledNode): string {
 }
 
 /**
- * One Mod-authored field's share of a line, cut at its own ceiling - and the cut NAMED by the ceiling that made it.
+ * How a cut names what it withheld: how many whole fields a line did not show, and - when one field alone is over the
+ * ceiling - that field's own length against the ceiling it met. One spelling each, so a run audit greps one name.
+ */
+const FIELDS_NOT_SHOWN = "fields_not_shown";
+const FIELD_OVER_CEILING = "field_over_ceiling";
+
+/**
+ * One Mod-authored field's share of a line, cut at its own ceiling - on a FIELD boundary, never inside one.
  *
- * A bare ellipsis would leave her reading a partial coordinate list, or a partial ledger, as the whole one; the token says
- * how much of the Mod's text the line is not showing (`evidence_detail_over_ceiling:<length>:<ceiling>`, the same
- * bounded-token shape a node's own `reasonCode` has, so a run audit greps ONE name and reads the ceiling it met). An
- * absent or blank value is `undefined`, so a caller joins only the halves that exist.
+ * <p>
+ * A receipt's evidence is `k=v;k=v` (`ToolActionEvidence.Compose`), and slicing it at the character ceiling produced a
+ * token that looks like a fact and is not one: a 254-character proof cut at 160 ended mid-value (`stamina_bef`), and the
+ * only thing the line then added was `[evidence_detail_over_ceiling:254:160]` - the byte arithmetic of a budget, which
+ * tells a reader the budget was exceeded and nothing about what it lost. So every field is either printed WHOLE or not
+ * printed at all, and the line says how many whole fields it did not show.
+ * </p>
  *
- * At the ceiling it prints whole: the point of `MODEL_FIELD_CEILINGS` is that the node fields are then printed exactly as
- * the Mod wrote them, because the wire bound them first.
+ * <p>
+ * A single field that alone exceeds the ceiling cannot be shown at any prefix, so it is replaced by
+ * `[field_over_ceiling:<length>:<ceiling>]`: the field is named as withheld, and the two numbers are the ones that decide
+ * whether the frame should have arrived at all. At the ceiling the value prints exactly as the Mod wrote it, because the
+ * point of `MODEL_FIELD_CEILINGS` is that a field inside its producer's bound is printed whole.
+ * </p>
  */
 function boundedField(field: ModelVisibleField, value: unknown): string | undefined {
   if (typeof value !== "string") return undefined;
@@ -779,7 +792,21 @@ function boundedField(field: ModelVisibleField, value: unknown): string | undefi
   if (text === "") return undefined;
   const ceiling = MODEL_FIELD_CEILINGS[field];
   if (text.length <= ceiling) return text;
-  return `${text.slice(0, ceiling)}…[evidence_detail_over_ceiling:${String(text.length)}:${String(ceiling)}]`;
+  const fields = text.split(";");
+  const oversized = fields.find((entry) => entry.length > ceiling);
+  if (oversized !== undefined) return `[${FIELD_OVER_CEILING}:${String(oversized.length)}:${String(ceiling)}]`;
+  // The notice's own room is reserved before each field is tried, so the count never pushes the text past the ceiling.
+  const notice = (dropped: number): string => `…[${FIELDS_NOT_SHOWN}:${String(dropped)}]`;
+  const kept: string[] = [];
+  let length = 0;
+  for (const entry of fields) {
+    const grown = kept.length === 0 ? entry.length : length + 1 + entry.length;
+    if (grown + notice(fields.length - kept.length).length > ceiling) break;
+    kept.push(entry);
+    length = grown;
+  }
+  const dropped = fields.length - kept.length;
+  return kept.length === 0 ? notice(dropped) : `${kept.join(";")}${notice(dropped)}`;
 }
 
 /**
@@ -800,9 +827,4 @@ function clockOf(fact: WorldFact): string {
 /** One block, closed by its own name. */
 function block(name: FactBriefBlock, body: string): string {
   return `<${name}>\n${body}\n</${name}>`;
-}
-
-/** The location a fact happened in, for a caller that wants to name it in a diagnostic. */
-export function factLocationName(fact: WorldFact, zh: boolean): string {
-  return gameLocationName(typeof fact.payload.location === "string" ? fact.payload.location : undefined, zh);
 }

@@ -756,11 +756,21 @@ test("execution_result_evidence: every settled node's refusal detail reaches the
   );
   for (const node of withDetail) {
     const expected = node.reasonDetail.trim();
-    const shown = expected.slice(0, MODEL_FIELD_CEILINGS.reasonDetail);
-    assert.ok(
-      block.includes(shown),
+    const ceiling = MODEL_FIELD_CEILINGS.reasonDetail;
+    const message =
       `${node.nodeId}: its refusal detail ${JSON.stringify(expected)} never reaches the model; the line it should be ` +
-        `in says ${JSON.stringify(block)}`,
+      `in says ${JSON.stringify(block)}`;
+    if (expected.length <= ceiling) {
+      // Inside the producer's own bound, the detail IS the whole fact and prints as the Mod wrote it.
+      assert.ok(block.includes(expected), message);
+      continue;
+    }
+    // Past it, no prefix prints: a prefix of a value reads as a whole fact and is not one. The field is named instead,
+    // and the assertions after this loop read the name it is given.
+    assert.equal(
+      block.includes(expected.slice(0, 40)),
+      false,
+      `${node.nodeId}: no prefix of an over-ceiling detail prints`,
     );
   }
 
@@ -770,18 +780,15 @@ test("execution_result_evidence: every settled node's refusal detail reaches the
   // The cut is NAMED. A silent truncation would be the same defect one layer down: she would read a partial coordinate
   // list as the whole one.
   assert.ok(!block.includes(longDetail), "n05's detail is bounded, not printed whole");
+  // AND IT IS NOT A PREFIX OF THE VALUE: `far=far=far=…` cut at the ceiling is a token that looks like a fact and is not
+  // one, so a field that cannot fit whole is withheld by name and measured.
   assert.ok(
-    block.includes(`${longDetail.slice(0, MODEL_FIELD_CEILINGS.reasonDetail)}…`),
-    "n05's detail is printed up to the bound, and marked",
+    block.includes(`[field_over_ceiling:${String(longDetail.length)}:${String(MODEL_FIELD_CEILINGS.reasonDetail)}]`),
+    "n05's one over-long field is named as withheld, with the length the Mod wrote and the ceiling it met",
   );
-  // AND THE MARK IS THE CEILING'S OWN NAME, in the bounded-token shape a `reasonCode` has: the length the Mod wrote and
-  // the ceiling it met. The count used to be Chinese prose beside the ellipsis, which named the cut but not the ceiling -
-  // nothing reading this line could tell which limit had been met, or grep for it.
   assert.ok(
-    block.includes(
-      `evidence_detail_over_ceiling:${String(longDetail.length)}:${String(MODEL_FIELD_CEILINGS.reasonDetail)}`,
-    ),
-    "the cut names the ceiling and the measured length, not only that something was cut",
+    !block.includes(longDetail.slice(0, 40)),
+    "and none of its value is printed, because a 40-character prefix of it is the shape that reads as a whole fact",
   );
   // AND THE HALVES THAT ARE ALONE STAY: a detail without a hint, a hint without a detail, and a node with neither.
   assert.ok(block.includes("item=(O)388;stock=0"), "n02's detail is its whole account");
@@ -919,9 +926,15 @@ test("truncated_enumeration_is_silent: each field prints whole to its producer's
     const overCeiling = `${atCeiling}位`;
     const cut = composedField(field, overCeiling);
     assert.ok(
-      cut.includes(`${atCeiling}…[evidence_detail_over_ceiling:${String(overCeiling.length)}:${String(ceiling)}]`),
-      `${field}: one character over the ceiling must be printed up to the ceiling AND named - the length the Mod wrote ` +
-        `and the ceiling it met - so a partial enumeration never reads as the whole one; the text says ${JSON.stringify(cut)}`,
+      cut.includes(`[field_over_ceiling:${String(overCeiling.length)}:${String(ceiling)}]`),
+      `${field}: a value over the ceiling is withheld by name - the length the Mod wrote and the ceiling it met - so a ` +
+        `partial value never reads as the whole one; the text says ${JSON.stringify(cut)}`,
+    );
+    assert.equal(
+      cut.includes(atCeiling.slice(0, 8)),
+      false,
+      `${field}: and no prefix of the value is printed, because a prefix of a value is the shape that reads as a whole ` +
+        "fact and is not one (measured: a 254-character proof sliced at 160 ended mid-value)",
     );
 
     const wire = wireBounds[field];
@@ -938,6 +951,97 @@ test("truncated_enumeration_is_silent: each field prints whole to its producer's
     Object.keys(MODEL_FIELD_CEILINGS).length,
     bounded.size,
     `examined ${String(bounded.size)} model-visible fields; every one of them is asserted above`,
+  );
+});
+
+/**
+ * A CUT KEEPS WHOLE FIELDS, AND COUNTS WHAT IT DROPPED.
+ *
+ * <p>
+ * A receipt's evidence is `k=v;k=v` (`ToolActionEvidence.Compose`) - proof facts, each of which is either true as written
+ * or meaningless. Measured 2026-11-11: a 254-character proof was sliced at the 160-character ceiling, which ended mid-value
+ * (`stamina_bef`), and the only thing the line then added was the byte arithmetic of the budget. So the reader got a token
+ * that looks like a fact and is not one, and was told the length of what it lost rather than what it lost.
+ * </p>
+ *
+ * <p>
+ * PROPERTY, and it is the one that cannot be reintroduced by a later change to the cut: what a truncated line prints is
+ * the FIRST WHOLE FIELDS of the Mod's detail, byte for byte, and the marker's number is exactly how many whole fields it
+ * did not show. A field that alone exceeds the ceiling is withheld by name, never sliced - asserted over every declared
+ * field above.
+ * </p>
+ */
+test("truncated_evidence_keeps_whole_fields: a cut shows whole k=v fields and counts the rest", () => {
+  const fields = [
+    "location=Farm",
+    "target=58,9",
+    "before=none",
+    "after=HoeDirt",
+    "stamina_before=270",
+    "stamina_after=268.4",
+    "stamina_delta=1.6",
+    "expected_stamina_cost=2",
+    "tool=hoe",
+    "tool_power=0",
+    "charge=0",
+    "footprint=58,9|59,9",
+    "tilled=true",
+    "slot=0",
+    "category=hoe",
+    "tool_restored=true",
+    "revision=1205",
+    "observer=mod",
+  ];
+  const detail = fields.join(";");
+  assert.ok(
+    detail.length > MODEL_FIELD_CEILINGS.evidence,
+    `the fixture must be past the evidence ceiling (${String(detail.length)} against ` +
+      `${String(MODEL_FIELD_CEILINGS.evidence)}), or this gate examines no cut at all`,
+  );
+
+  const text = composedField("evidence", detail);
+  const rendered = text.slice(text.indexOf("（") + 1, text.lastIndexOf("）"));
+  const marker = "…[fields_not_shown:";
+  const markerAt = rendered.indexOf(marker);
+  assert.notEqual(
+    markerAt,
+    -1,
+    `a cut must say how many whole fields it did not show; the line says ${JSON.stringify(rendered)}`,
+  );
+
+  const shown = rendered.slice(0, markerAt).split(";");
+  assert.deepEqual(
+    shown,
+    fields.slice(0, shown.length),
+    "what a cut prints is the FIRST WHOLE FIELDS of the Mod's detail, byte for byte - not a prefix of the text",
+  );
+  assert.ok(
+    shown.length > 0 && shown.length < fields.length,
+    `the fixture must be cut some of the way (${String(shown.length)} of ${String(fields.length)} fields shown)`,
+  );
+  for (const field of shown)
+    assert.match(
+      field,
+      /^[a-z_]+=[^;]+$/u,
+      `every printed field is a whole k=v, never half of one: ${JSON.stringify(field)}`,
+    );
+  assert.equal(
+    rendered.slice(markerAt),
+    `${marker}${String(fields.length - shown.length)}]`,
+    "and the number is exactly the whole fields it did not show",
+  );
+  assert.ok(
+    rendered.length <= MODEL_FIELD_CEILINGS.evidence,
+    `the line stays inside its own ceiling, marker included (${String(rendered.length)} characters)`,
+  );
+
+  // NO FIELD IS EVER SLICED, ANYWHERE IN THE WRITER: the cut this test replaced was one `text.slice(0, ceiling)` inside the
+  // one function every Mod-authored field goes through, so a byte slice reappearing there would reintroduce the defect for
+  // all three fields at once. Read from the source, because the assertion is about the writer and not about one value.
+  assert.equal(
+    /text\.slice\(0, ceiling\)/u.test(hostSource("fact-brief.ts")),
+    false,
+    "no Mod-authored field is cut at a byte offset: a field is printed whole or withheld by name",
   );
 });
 
