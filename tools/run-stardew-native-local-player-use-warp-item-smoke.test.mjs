@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { runUseWarpItemSmoke } from "./run-stardew-native-local-player-use-warp-item-smoke.mjs";
+import { publishedActionRegistrations } from "./lib/stardew-native-smoke-harness-v1.mjs";
 
 const ACTION = "use_warp_item";
 const TOTEM = {
@@ -49,7 +50,7 @@ function successEvidence({ stackBefore, stackAfter, destination = TOTEM.destinat
 function makeClient({ totems = [TOTEM] } = {}) {
   const receipts = [];
   const client = {
-    state: { snapshot: snapshotWith({ revision: 1, totems }) },
+    state: { catalogRegistrations: publishedActionRegistrations(), snapshot: snapshotWith({ revision: 1, totems }) },
     observe: async () => client.state.snapshot,
     execute: async (request) => {
       const live = client.state.snapshot.warpItemTargets[0] ?? null;

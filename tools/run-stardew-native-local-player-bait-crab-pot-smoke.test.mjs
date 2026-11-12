@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { runBaitCrabPotSmoke } from "./run-stardew-native-local-player-bait-crab-pot-smoke.mjs";
+import { publishedActionRegistrations } from "./lib/stardew-native-smoke-harness-v1.mjs";
 
 const target = {
   targetId: "bait-target",
@@ -38,7 +39,7 @@ test("bait-crab-pot runner uses shared dispatch and fresh result reread", async 
     baitCrabPotResultTargets: [],
   };
   const client = {
-    state: { snapshot },
+    state: { catalogRegistrations: publishedActionRegistrations(), snapshot },
     observe: async () => snapshot,
     execute: async (request) => {
       assert.equal(request.action, "bait_crab_pot");

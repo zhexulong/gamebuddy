@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { runMoveSmoke } from "./run-stardew-native-local-player-move-smoke.mjs";
+import { publishedActionRegistrations } from "./lib/stardew-native-smoke-harness-v1.mjs";
 
 function snapshot(revision = 7, tile = { x: 2, y: 2 }) {
   return {
@@ -16,7 +17,7 @@ test("native-local move runner exercises deterministic mocked bridge contract", 
   let tile = { x: 2, y: 2 };
   const receipts = [];
   const client = {
-    state: { snapshot: snapshot() },
+    state: { catalogRegistrations: publishedActionRegistrations(), snapshot: snapshot() },
     observe: async () => ({ ...snapshot(revision, tile), activeExecution: null }),
     execute: async ({ requestId }) => {
       const executionId = "execution-1";
@@ -38,7 +39,7 @@ test("native-local move runner rejects a surface missing a required capability",
   // advertises the whole derived base. What must still fail closed is a surface
   // that omits a capability this run needs.
   const client = {
-    state: { snapshot: snapshot() },
+    state: { catalogRegistrations: publishedActionRegistrations(), snapshot: snapshot() },
     observe: async () => ({
       ...snapshot(),
       capabilities: ["inspect_self", "cancel_active_execution", "travel"],

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { runMachineLoadSmoke } from "./run-stardew-native-local-player-machine-load-smoke.mjs";
+import { publishedActionRegistrations } from "./lib/stardew-native-smoke-harness-v1.mjs";
 
 const capabilities = ["cancel_active_execution", "inspect_self", "machine_load"];
 const target = {
@@ -40,7 +41,7 @@ test("machine-load runner uses shared dispatch, terminal correlation, and fresh 
   };
   const receipts = [];
   const client = {
-    state: { snapshot },
+    state: { catalogRegistrations: publishedActionRegistrations(), snapshot },
     observe: async () => snapshot,
     execute: async (request) => {
       assert.equal(request.action, "machine_load");

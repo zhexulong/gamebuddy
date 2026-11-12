@@ -4,6 +4,7 @@ import {
   assertShopPurchasePostconditions,
   runShopPurchaseSmoke,
 } from "./run-stardew-native-local-player-shop-purchase-smoke.mjs";
+import { publishedActionRegistrations } from "./lib/stardew-native-smoke-harness-v1.mjs";
 
 const SCENARIO = "native_shop_purchase_v1";
 const CAPABILITIES = ["cancel_active_execution", "inspect_self", "shop_purchase"];
@@ -71,7 +72,7 @@ function snapshot(revision, location, shops = [SHOP]) {
 function makeClient({ evidence = purchaseEvidence(), shops = [SHOP], menuClosed = true } = {}) {
   let current = snapshot(3, "SeedShop", shops);
   const client = {
-    state: { snapshot: current },
+    state: { catalogRegistrations: publishedActionRegistrations(), snapshot: current },
     observe: async () => current,
     execute: async (request) => {
       assert.equal(request.action, "shop_purchase");
@@ -147,7 +148,7 @@ test("blocks when the menu was left open", async () => {
 
 test("blocks when no shop is advertised at all", async () => {
   const client = {
-    state: { snapshot: snapshot(3, "FarmHouse", []) },
+    state: { catalogRegistrations: publishedActionRegistrations(), snapshot: snapshot(3, "FarmHouse", []) },
     observe: async () => snapshot(3, "FarmHouse", []),
     execute: async () => {
       throw new Error("must not execute without an advertised shop");
@@ -164,7 +165,7 @@ test("blocks when the owner is advertised but out of reach", async () => {
   // refusal rather than reaching for the shop anyway.
   const far = [{ ...SHOP, ownerInReach: false, ownerTileX: 20, ownerTileY: 1 }];
   const client = {
-    state: { snapshot: snapshot(3, "SeedShop", far) },
+    state: { catalogRegistrations: publishedActionRegistrations(), snapshot: snapshot(3, "SeedShop", far) },
     observe: async () => snapshot(3, "SeedShop", far),
     execute: async () => {
       throw new Error("must not execute while the owner is out of reach");

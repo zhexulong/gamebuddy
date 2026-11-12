@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { runWiaToolApproachInterruptSmoke } from "./run-stardew-native-local-player-wia-tool-approach-smoke.mjs";
+import { publishedActionRegistrations } from "./lib/stardew-native-smoke-harness-v1.mjs";
 
 const SCENARIO = "native_wia_tool_approach_interrupt_v1";
 const CAPABILITIES = ["chop_tree", "dismiss_modal", "equip_tool"];
@@ -70,7 +71,7 @@ function makeClient({
   let chopCalls = 0;
   const receipts = [];
   const client = {
-    state: { snapshot: current, latestReceipt: null },
+    state: { catalogRegistrations: publishedActionRegistrations(), snapshot: current, latestReceipt: null },
     observe: async () => current,
     execute: async (request) => {
       if (request.action === "equip_tool") {

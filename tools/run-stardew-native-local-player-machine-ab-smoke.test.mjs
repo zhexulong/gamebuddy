@@ -6,6 +6,7 @@ import {
   runMachineABSmoke,
   waitForProgramTerminal,
 } from "./run-stardew-native-local-player-machine-ab-smoke.mjs";
+import { catalogRegistrationsFor } from "./lib/stardew-native-smoke-harness-v1.mjs";
 
 const capabilities = ["cancel_active_execution", "inspect_self", "machine_inspect", "machine_load", "move_to_tile"];
 const target = {
@@ -58,7 +59,7 @@ test("admission responder grants only visible actions and rejects stale catalog"
       sessionId: "session_1",
       catalogRevision: 7,
       policyIdentity: { value: "policy/1", capabilityRevision: 1 },
-      catalogRegistrations: [{ actionId: "machine_inspect" }, { actionId: "machine_load" }],
+      catalogRegistrations: catalogRegistrationsFor(["machine_inspect", "machine_load"]),
       enabledActionIds: ["move_to_tile", "machine_inspect", "machine_load"],
     },
   };

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { runMachineCollectOutputSmoke } from "./run-stardew-native-local-player-machine-collect-output-smoke.mjs";
+import { publishedActionRegistrations } from "./lib/stardew-native-smoke-harness-v1.mjs";
 
 const CAPABILITIES = ["cancel_active_execution", "inspect_self", "machine_load", "machine_collect_output"];
 
@@ -77,7 +78,7 @@ function createFake() {
     machineTargets: [liveTarget(phase)],
   });
   const client = {
-    state: { snapshot: snapshotOf() },
+    state: { catalogRegistrations: publishedActionRegistrations(), snapshot: snapshotOf() },
     observe: async () => {
       // Real game time advances the processing keg to ready after the
       // loaded postcondition is read.

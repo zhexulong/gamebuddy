@@ -5,6 +5,7 @@ import {
   parseStrictEvidence,
   runRideBusSmoke,
 } from "./run-stardew-native-local-player-ride-bus-smoke.mjs";
+import { publishedActionRegistrations } from "./lib/stardew-native-smoke-harness-v1.mjs";
 
 const SCENARIO = "native_ride_bus_v1";
 const CAPABILITIES = ["cancel_active_execution", "inspect_self", "ride_bus"];
@@ -54,7 +55,7 @@ function makeClient({ terminalReason = "bus_arrived", evidence = ARRIVED_EVIDENC
   let current = snapshot(5, "BusStop");
   const receipts = [];
   const client = {
-    state: { snapshot: current },
+    state: { catalogRegistrations: publishedActionRegistrations(), snapshot: current },
     observe: async () => current,
     execute: async (request) => {
       assert.equal(request.action, "ride_bus");

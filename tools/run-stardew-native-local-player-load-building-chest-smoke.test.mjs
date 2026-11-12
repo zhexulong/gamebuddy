@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { runLoadBuildingChestSmoke } from "./run-stardew-native-local-player-load-building-chest-smoke.mjs";
+import { publishedActionRegistrations } from "./lib/stardew-native-smoke-harness-v1.mjs";
 
 const ACTION = "load_building_chest";
 const REQUIRED_COUNT = 5;
@@ -45,7 +46,7 @@ function makeClient({ load = loadTarget(), collect = collectTarget() } = {}) {
   const receipts = [];
   let revision = 1;
   const client = {
-    state: { snapshot: null, latestReceipt: null },
+    state: { catalogRegistrations: publishedActionRegistrations(), snapshot: null, latestReceipt: null },
     async observe() {
       return snapshot();
     },

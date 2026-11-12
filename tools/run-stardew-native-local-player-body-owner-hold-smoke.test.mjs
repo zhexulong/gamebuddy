@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { runBodyOwnerHoldSmoke } from "./run-stardew-native-local-player-body-owner-hold-smoke.mjs";
+import { publishedActionRegistrations } from "./lib/stardew-native-smoke-harness-v1.mjs";
 
 /**
  * Offline guards for the body-owner live gate.
@@ -39,7 +40,7 @@ function makeClient({
   firstNeverTerminal = false,
 } = {}) {
   const state = { tile: { x: 20, y: 20 }, revision: 10, active: null };
-  const cache = { snapshot: { revision: 10 } };
+  const cache = { catalogRegistrations: publishedActionRegistrations(), snapshot: { revision: 10 } };
   const receipts = [];
   let moveCount = 0;
   const client = {

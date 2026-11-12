@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { runMoveStallProbe } from "./run-stardew-native-local-player-move-stall-probe-smoke.mjs";
+import { publishedActionRegistrations } from "./lib/stardew-native-smoke-harness-v1.mjs";
 
 // The pet scenario advertises `pet_animal` so the Pet projection is published
 // and the blocker position is observable; the runner never invokes it. The npc
@@ -67,7 +68,7 @@ function createFake({
     for (const listener of listeners) listener({ type: "execution_receipt", payload });
   };
   const client = {
-    state: { snapshot: snapshotOf() },
+    state: { catalogRegistrations: publishedActionRegistrations(), snapshot: snapshotOf() },
     observe: async () => {
       const snapshot = snapshotOf();
       client.state.snapshot = snapshot;

@@ -4,6 +4,7 @@ import {
   bodySlotForQualifiedItemId,
   runEquipWearableSmoke,
 } from "./run-stardew-native-local-player-equip-wearable-smoke.mjs";
+import { publishedActionRegistrations } from "./lib/stardew-native-smoke-harness-v1.mjs";
 
 const ACTION = "equip_wearable";
 const CAPABILITIES = ["cancel_active_execution", "inspect_self", ACTION];
@@ -117,7 +118,7 @@ function makeClient({ initialWorld = world(), hooks = {} } = {}) {
     // The world IS the client's cached snapshot, read through the client and never through a
     // closure: a test that rewrites the snapshot must change what the runner observes, or the
     // test silently pins nothing.
-    state: { snapshot: initialWorld },
+    state: { catalogRegistrations: publishedActionRegistrations(), snapshot: initialWorld },
     observe: async () => client.state.snapshot,
     execute: async (request) => {
       const current = client.state.snapshot;

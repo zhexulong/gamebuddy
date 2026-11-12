@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { runClearHoeDirtSmoke } from "./run-stardew-native-local-player-clear-hoedirt-smoke.mjs";
+import { publishedActionRegistrations } from "./lib/stardew-native-smoke-harness-v1.mjs";
 
 const CAPABILITIES = [
   "cancel_active_execution",
@@ -55,7 +56,7 @@ function createFake({ evidenceDetail = EVIDENCE } = {}) {
     clearHoeDirtTargets: cleared ? [] : [target],
   });
   const client = {
-    state: { snapshot: snapshotOf() },
+    state: { catalogRegistrations: publishedActionRegistrations(), snapshot: snapshotOf() },
     observe: async () => {
       const snapshot = snapshotOf();
       client.state.snapshot = snapshot;

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { runWaterSlimeHutchTroughSmoke } from "./run-stardew-native-local-player-water-slime-hutch-trough-smoke.mjs";
+import { publishedActionRegistrations } from "./lib/stardew-native-smoke-harness-v1.mjs";
 
 const TROUGH_TARGET = {
   targetId: "slime_hutch_trough_0000000000000001",
@@ -61,7 +62,7 @@ test("water-slime-hutch-trough runner requires the native waterSpots transition 
   let snapshot = baseSnapshot(5, { x: 17, y: 6 }, { slimeHutchTroughTargets: [{ ...TROUGH_TARGET }] });
   const calls = [];
   const client = {
-    state: { snapshot },
+    state: { catalogRegistrations: publishedActionRegistrations(), snapshot },
     observe: async () => snapshot,
     execute: async (request) => {
       calls.push(request.action);
@@ -102,7 +103,7 @@ test("water-slime-hutch-trough runner fails closed when the trough target is abs
   let snapshot = baseSnapshot(5, { x: 17, y: 6 }, { slimeHutchTroughTargets: [] });
   const submitted = [];
   const client = {
-    state: { snapshot },
+    state: { catalogRegistrations: publishedActionRegistrations(), snapshot },
     observe: async () => snapshot,
     execute: async (request) => {
       if (request.action === "water_slime_hutch_trough") {
@@ -132,7 +133,7 @@ test("water-slime-hutch-trough runner fails closed when the trough target is abs
 test("water-slime-hutch-trough runner does not claim success when the native postcondition is absent", async () => {
   let snapshot = baseSnapshot(5, { x: 17, y: 6 }, { slimeHutchTroughTargets: [{ ...TROUGH_TARGET }] });
   const client = {
-    state: { snapshot },
+    state: { catalogRegistrations: publishedActionRegistrations(), snapshot },
     observe: async () => snapshot,
     execute: async (request) => {
       if (request.action === "water_slime_hutch_trough") {
@@ -171,7 +172,7 @@ test("water-slime-hutch-trough runner refuses an uncertain terminal even when ev
   // one that would catch it.
   let snapshot = baseSnapshot(5, { x: 17, y: 6 }, { slimeHutchTroughTargets: [{ ...TROUGH_TARGET }] });
   const client = {
-    state: { snapshot },
+    state: { catalogRegistrations: publishedActionRegistrations(), snapshot },
     observe: async () => snapshot,
     execute: async (request) => {
       if (request.action === "water_slime_hutch_trough") {
@@ -211,7 +212,7 @@ test("water-slime-hutch-trough runner waters a reachable column tile without wal
   let snapshot = baseSnapshot(5, { x: 15, y: 6 }, { slimeHutchTroughTargets: column.map((entry) => ({ ...entry })) });
   const calls = [];
   const client = {
-    state: { snapshot },
+    state: { catalogRegistrations: publishedActionRegistrations(), snapshot },
     observe: async () => snapshot,
     execute: async (request) => {
       calls.push(request.action);
@@ -238,7 +239,10 @@ test("water-slime-hutch-trough runner waters a reachable column tile without wal
 });
 
 test("water-slime-hutch-trough runner rejects a scenario or action set it is not authorized for", async () => {
-  const client = { state: {}, observe: async () => baseSnapshot(1, { x: 17, y: 6 }, {}) };
+  const client = {
+    state: { catalogRegistrations: publishedActionRegistrations() },
+    observe: async () => baseSnapshot(1, { x: 17, y: 6 }, {}),
+  };
   const wrongScenario = {
     ...config,
     NativeLocalPlayerFixture: { ...config.NativeLocalPlayerFixture, FixtureScenario: "native_water_pet_bowl_v1" },

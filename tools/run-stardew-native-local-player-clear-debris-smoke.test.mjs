@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { runClearDebrisSmoke } from "./run-stardew-native-local-player-clear-debris-smoke.mjs";
+import { publishedActionRegistrations } from "./lib/stardew-native-smoke-harness-v1.mjs";
 
 const CAPABILITIES = [
   "cancel_active_execution",
@@ -53,7 +54,7 @@ function createFakeClient({ landingTile = FIRST_APPROACH, removeOnLastHit = true
     toolSlots: [PICKAXE],
   };
   const client = {
-    state: { snapshot },
+    state: { catalogRegistrations: publishedActionRegistrations(), snapshot },
     observe: async () => client.state.snapshot,
     execute: async (request) => {
       assert.equal(request.idempotencyKey, `${request.requestId}_idem`);

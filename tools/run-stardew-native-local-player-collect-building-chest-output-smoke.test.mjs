@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { runCollectBuildingChestOutputSmoke } from "./run-stardew-native-local-player-collect-building-chest-output-smoke.mjs";
+import { publishedActionRegistrations } from "./lib/stardew-native-smoke-harness-v1.mjs";
 
 const ACTION = "collect_building_chest_output";
 
@@ -37,7 +38,7 @@ function makeClient({ collect = collectTarget(), load = loadTarget() } = {}) {
   const receipts = [];
   let revision = 1;
   const client = {
-    state: { snapshot: null, latestReceipt: null },
+    state: { catalogRegistrations: publishedActionRegistrations(), snapshot: null, latestReceipt: null },
     async observe() {
       return snapshot();
     },

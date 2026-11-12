@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { runTillSoilSmoke } from "./run-stardew-native-local-player-till-soil-smoke.mjs";
+import { publishedActionRegistrations } from "./lib/stardew-native-smoke-harness-v1.mjs";
 
 const CAPABILITIES = ["cancel_active_execution", "equip_tool", "inspect_self", "move_to_tile", "travel", "till_soil"];
 
@@ -39,7 +40,7 @@ function createFake() {
     soilTiles: tilled ? [] : [{ x: 2, y: 1 }],
   });
   const client = {
-    state: { snapshot: snapshotOf() },
+    state: { catalogRegistrations: publishedActionRegistrations(), snapshot: snapshotOf() },
     observe: async () => {
       const snapshot = snapshotOf();
       client.state.snapshot = snapshot;

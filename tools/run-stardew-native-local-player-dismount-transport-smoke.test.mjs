@@ -4,6 +4,7 @@ import {
   parseEvidence,
   runDismountTransportSmoke,
 } from "./run-stardew-native-local-player-dismount-transport-smoke.mjs";
+import { publishedActionRegistrations } from "./lib/stardew-native-smoke-harness-v1.mjs";
 
 const ACTION = "dismount_transport";
 const CAPABILITIES = ["cancel_active_execution", "inspect_self", ACTION];
@@ -20,6 +21,7 @@ function makeClient({ hooks = {} } = {}) {
   const receipts = [];
   const client = {
     state: {
+      catalogRegistrations: publishedActionRegistrations(),
       snapshot: {
         revision: 1,
         location: "Farm",

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
-import { connectNativeLocalClient } from "./lib/stardew-native-smoke-harness-v1.mjs";
+import { connectNativeLocalClient, publishedActionRegistrations } from "./lib/stardew-native-smoke-harness-v1.mjs";
 import { enterExitMode, runEnterExitSmoke } from "./run-stardew-native-local-player-enter-exit-smoke.mjs";
 
 const CAPABILITIES = ["cancel_active_execution", "enter_exit", "inspect_self", "move_to_tile"];
@@ -64,7 +64,7 @@ function createFake({
     for (const listener of listeners) listener({ type: "execution_receipt", payload });
   };
   const client = {
-    state: { snapshot: snapshotOf() },
+    state: { catalogRegistrations: publishedActionRegistrations(), snapshot: snapshotOf() },
     observe: async () => {
       const snapshot = snapshotOf();
       client.state.snapshot = snapshot;
@@ -161,7 +161,7 @@ function createWarpFake({
     for (const listener of listeners) listener({ type: "execution_receipt", payload });
   };
   const client = {
-    state: { snapshot: snapshotWithDoors() },
+    state: { catalogRegistrations: publishedActionRegistrations(), snapshot: snapshotWithDoors() },
     observe: async () => {
       const snapshot = snapshotWithDoors();
       client.state.snapshot = snapshot;

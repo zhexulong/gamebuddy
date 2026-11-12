@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { runWiaModalDismissChain } from "./run-stardew-native-local-player-wia-modal-dismiss-chain-smoke.mjs";
+import { publishedActionRegistrations } from "./lib/stardew-native-smoke-harness-v1.mjs";
 
 const REAL_REMEDY = { action: "stardew_dismiss_modal", guidance: "Call 'stardew_dismiss_modal'" };
 /** A host-module loader whose gateway admits, so a guard test can move past phase 2a. */
@@ -52,7 +53,7 @@ function makeClient(overrides = {}) {
   let moveCalls = 0;
   let dismissCalls = 0;
   const client = {
-    state: { snapshot },
+    state: { catalogRegistrations: publishedActionRegistrations(), snapshot },
     observe: async () => snapshot,
     execute: async (request) => {
       if (request.action === "move_to_tile") {

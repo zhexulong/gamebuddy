@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { runPlaceOwnedObjectSmoke } from "./run-stardew-native-local-player-place-owned-object-smoke.mjs";
+import { publishedActionRegistrations } from "./lib/stardew-native-smoke-harness-v1.mjs";
 
 const ACTION = "place_owned_object";
 const ITEM = "(BC)105";
@@ -62,7 +63,7 @@ function snapshotWith({ revision, placed, slot = TAPPER_SLOT }) {
 function makeClient({ placed = false } = {}) {
   const receipts = [];
   const client = {
-    state: { snapshot: snapshotWith({ revision: 1, placed }) },
+    state: { catalogRegistrations: publishedActionRegistrations(), snapshot: snapshotWith({ revision: 1, placed }) },
     // Read through the client, not a closure: a test that rewrites state must change what
     // the runner observes, or it silently tests nothing.
     observe: async () => client.state.snapshot,

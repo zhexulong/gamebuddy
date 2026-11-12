@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { runClaimMailAttachmentSmoke } from "./run-stardew-native-local-player-claim-mail-attachment-smoke.mjs";
+import { publishedActionRegistrations } from "./lib/stardew-native-smoke-harness-v1.mjs";
 
 const ACTION = "claim_mail_attachment";
 const MAILBOX_TILE = { x: 68, y: 15 };
@@ -62,7 +63,10 @@ function claimEvidence({
 function makeClient({ pendingCount = 1 } = {}) {
   const receipts = [];
   const client = {
-    state: { snapshot: snapshotWith({ revision: 1, pendingCount }) },
+    state: {
+      catalogRegistrations: publishedActionRegistrations(),
+      snapshot: snapshotWith({ revision: 1, pendingCount }),
+    },
     observe: async () => client.state.snapshot,
     execute: async (request) => {
       const live = client.state.snapshot.mailboxTargets[0] ?? null;

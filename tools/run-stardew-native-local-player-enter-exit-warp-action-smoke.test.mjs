@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
-import { connectNativeLocalClient } from "./lib/stardew-native-smoke-harness-v1.mjs";
+import { connectNativeLocalClient, publishedActionRegistrations } from "./lib/stardew-native-smoke-harness-v1.mjs";
 import { runEnterExitWarpActionSmoke } from "./run-stardew-native-local-player-enter-exit-warp-action-smoke.mjs";
 
 const CAPABILITIES = ["cancel_active_execution", "enter_exit", "inspect_self", "move_to_tile"];
@@ -58,7 +58,10 @@ function createFake(options = {}) {
     for (const listener of listeners) listener({ type: "execution_receipt", payload });
   };
   const client = {
-    state: { snapshot: snapshotWith({ revision, tile, location }) },
+    state: {
+      catalogRegistrations: publishedActionRegistrations(),
+      snapshot: snapshotWith({ revision, tile, location }),
+    },
     observe: async () => {
       const snapshot = snapshotWith({ revision, tile, location });
       client.state.snapshot = snapshot;

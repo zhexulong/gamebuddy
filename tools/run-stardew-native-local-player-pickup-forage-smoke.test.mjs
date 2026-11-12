@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { runPickupForageSmoke } from "./run-stardew-native-local-player-pickup-forage-smoke.mjs";
+import { publishedActionRegistrations } from "./lib/stardew-native-smoke-harness-v1.mjs";
 
 const CAPABILITIES = [
   "cancel_active_execution",
@@ -52,7 +53,7 @@ function createFake({
   let targets = forageTargets.map((target) => ({ ...target }));
   let sceneObservationSequence = 0;
   let latestScene = null;
-  const state = { latestReceipt: null };
+  const state = { catalogRegistrations: publishedActionRegistrations(), latestReceipt: null };
   const snapshotOf = () => ({
     revision,
     location: currentLocation,

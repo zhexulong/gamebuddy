@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { runWiaModalInterruptSmoke } from "./run-stardew-native-local-player-wia-modal-interrupt-smoke.mjs";
+import { publishedActionRegistrations } from "./lib/stardew-native-smoke-harness-v1.mjs";
 
 const config = {
   SaveId: "save",
@@ -44,7 +45,7 @@ function makeClient(terminalState, terminalReason, evidence) {
   const receipts = [];
   let moveCalls = 0;
   const client = {
-    state: { snapshot },
+    state: { catalogRegistrations: publishedActionRegistrations(), snapshot },
     observe: async () => snapshot,
     execute: async (request) => {
       if (request.action === "move_to_tile") {

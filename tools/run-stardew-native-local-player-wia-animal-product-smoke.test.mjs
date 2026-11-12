@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { runWiaAnimalProductInterruptSmoke } from "./run-stardew-native-local-player-wia-animal-product-smoke.mjs";
+import { publishedActionRegistrations } from "./lib/stardew-native-smoke-harness-v1.mjs";
 
 const SCENARIO = "native_wia_animal_product_interrupt_v1";
 const CAPABILITIES = ["collect_animal_product", "dismiss_modal"];
@@ -80,7 +81,7 @@ function makeClient({
   let interruptRequestId = "";
   const receipts = [];
   const client = {
-    state: { snapshot: current },
+    state: { catalogRegistrations: publishedActionRegistrations(), snapshot: current },
     observe: async () => {
       if (pendingLateDuplicate) {
         pendingLateDuplicate = false;

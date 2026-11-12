@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { runRemovePlacedItemSmoke } from "./run-stardew-native-local-player-remove-placed-item-smoke.mjs";
+import { publishedActionRegistrations } from "./lib/stardew-native-smoke-harness-v1.mjs";
 
 const ACTION = "remove_placed_item";
 const PLACED_ITEM = "(BC)12";
@@ -70,7 +71,7 @@ function snapshotWith({ revision, kegPresent = true, twigPresent = true }) {
 function makeClient() {
   const receipts = [];
   const client = {
-    state: { snapshot: snapshotWith({ revision: 1 }) },
+    state: { catalogRegistrations: publishedActionRegistrations(), snapshot: snapshotWith({ revision: 1 }) },
     observe: async () => client.state.snapshot,
     execute: async (request) => {
       const state = client.state.snapshot;

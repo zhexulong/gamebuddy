@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { runChopTreeSourceSmoke } from "./run-stardew-native-local-player-chop-tree-source-smoke.mjs";
+import { publishedActionRegistrations } from "./lib/stardew-native-smoke-harness-v1.mjs";
 
 const CAPABILITIES = ["cancel_active_execution", "chop_tree", "equip_tool", "inspect_self", "move_to_tile", "travel"];
 
@@ -73,7 +74,7 @@ function createFake({ startAtFarmHouse = true } = {}) {
       : [],
   });
   const client = {
-    state: { snapshot: snapshotOf() },
+    state: { catalogRegistrations: publishedActionRegistrations(), snapshot: snapshotOf() },
     observe: async () => {
       const snapshot = snapshotOf();
       client.state.snapshot = snapshot;

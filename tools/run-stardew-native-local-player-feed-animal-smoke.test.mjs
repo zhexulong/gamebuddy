@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { runFeedAnimalSmoke } from "./run-stardew-native-local-player-feed-animal-smoke.mjs";
+import { publishedActionRegistrations } from "./lib/stardew-native-smoke-harness-v1.mjs";
 
 const BARN_LOCATION = "Barn3aaaaaaaa-0000-0000-0000-000000000000";
 const CAPABILITIES = ["cancel_active_execution", "inspect_self", "move_to_tile", "travel", "enter_exit", "feed_animal"];
@@ -64,7 +65,7 @@ function createFake({ startLocation = BARN_LOCATION, capabilities = CAPABILITIES
     for (const listener of listeners) listener({ type: "execution_receipt", payload });
   };
   const client = {
-    state: { snapshot: snapshotOf() },
+    state: { catalogRegistrations: publishedActionRegistrations(), snapshot: snapshotOf() },
     observe: async () => {
       const snapshot = snapshotOf();
       client.state.snapshot = snapshot;

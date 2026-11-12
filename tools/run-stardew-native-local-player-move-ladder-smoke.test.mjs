@@ -6,6 +6,7 @@ import {
   parseMoveFacts,
   runMoveLadderSmoke,
 } from "./run-stardew-native-local-player-move-ladder-smoke.mjs";
+import { publishedActionRegistrations } from "./lib/stardew-native-smoke-harness-v1.mjs";
 
 const CAPABILITIES = ["cancel_active_execution", "inspect_self", "move_to_tile"];
 
@@ -51,7 +52,7 @@ function createFake({ scenario = "native_move_ladder_v1", anchor = { x: 50, y: 2
     for (const listener of listeners) listener({ type: "execution_receipt", payload });
   };
   const client = {
-    state: { snapshot: snapshotOf() },
+    state: { catalogRegistrations: publishedActionRegistrations(), snapshot: snapshotOf() },
     observe: async () => {
       const snapshot = snapshotOf();
       client.state.snapshot = snapshot;

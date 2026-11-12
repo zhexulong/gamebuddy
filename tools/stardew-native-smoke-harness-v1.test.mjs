@@ -10,12 +10,14 @@ import {
   assertPostTerminalRevision,
   assertReceiptIdentity,
   assertRequiredCapabilities,
+  catalogRegistrationsFor,
   connectNativeLocalClient,
   createNativeScope,
   deadlineAfter,
   executeFresh,
   NativeSmokeHarnessError,
   observeFresh,
+  publishedActionWatchdogMs,
   readNativeClientConfig,
   requiredArg,
   summarizeReceipt,
@@ -759,4 +761,45 @@ test("waitForTerminal stops on a terminal state and ignores progress", async () 
     "terminal states are the closed set",
   );
   assert.ok(!TERMINAL_STATES.has("running"), "running is progress, never a terminal");
+});
+
+/**
+ * The smoke fakes are stand-ins for a live session, so the advertisement they carry has to be the one the Mod's own
+ * catalog makes: `hello_ack` names every action with its declared `WatchdogMs`, and a runner may not widen it.
+ */
+test("a fake publishes the window each action declares, and a runner still cannot widen it", () => {
+  const registrations = catalogRegistrationsFor(["till_soil", "navigate_to_destination"]);
+  assert.deepEqual(registrations, [
+    { actionId: "till_soil", descriptor: { watchdogMs: 60_000 } },
+    { actionId: "navigate_to_destination", descriptor: { watchdogMs: 600_000 } },
+  ]);
+  const client = { state: { catalogRegistrations: registrations } };
+  assert.equal(publishedActionWatchdogMs(client, "till_soil"), 60_000);
+  assert.equal(publishedActionWatchdogMs(client, "navigate_to_destination"), 600_000);
+});
+
+/**
+ * Red proof for `catalogRegistrationsFor`: the helper must not be satisfiable by publishing junk.
+ *
+ * A read-only registration is advertised by the Mod and carries no execution window, so the helper publishes it
+ * WITHOUT a `descriptor`. If it published a default instead - the "just for tests" shape this module exists to
+ * remove - the harness would hand a runner a window the Mod never declared, and the `fish_here` defect would be
+ * invisible again. With the helper as written, the harness refuses the action by name.
+ */
+test("an advertised action the catalog declares no window for is still refused by name", () => {
+  const registrations = catalogRegistrationsFor(["observe_scene"]);
+  assert.deepEqual(registrations, [{ actionId: "observe_scene" }]);
+  assert.throws(
+    () => publishedActionWatchdogMs({ state: { catalogRegistrations: registrations } }, "observe_scene"),
+    hasErrorCode("native_action_watchdog_unpublished:observe_scene"),
+  );
+});
+
+test("a fake that advertises nothing publishes no registrations at all", () => {
+  assert.throws(() => catalogRegistrationsFor([]), hasErrorCode("invalid_native_advertised_actions"));
+  assert.throws(() => catalogRegistrationsFor(undefined), hasErrorCode("invalid_native_advertised_actions"));
+  assert.throws(
+    () => catalogRegistrationsFor(["Not An Action"]),
+    (error) => String(error.code).startsWith("invalid_native_advertised_action"),
+  );
 });

@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { readFileSync } from "node:fs";
 import { runHarvestInventoryFullRecoveryChainSmoke } from "./run-stardew-native-local-player-harvest-inventory-full-recovery-chain-smoke.mjs";
+import { publishedActionRegistrations } from "./lib/stardew-native-smoke-harness-v1.mjs";
 
 const SCENARIO = "native_harvest_crop_inventory_full_recovery_v1";
 const CROP = {
@@ -82,7 +83,7 @@ test("container-full chain: reject inventory_full -> chest_store -> same-target 
   const mock = createMock({ revision: 5, cropPresent: true, chestStorePresent: true });
   const calls = [];
   const client = {
-    state: { snapshot: mock.snapshot() },
+    state: { catalogRegistrations: publishedActionRegistrations(), snapshot: mock.snapshot() },
     observe: async () => mock.snapshot(),
     execute: async (request) => {
       calls.push({ action: request.action, args: request.args });
@@ -157,7 +158,7 @@ test("container-full chain fails closed when the breakpoint never rejects", asyn
   // breakpoint, so the chain must not report a recovery.
   const mock = createMock({ revision: 5, cropPresent: true, chestStorePresent: true });
   const client = {
-    state: { snapshot: mock.snapshot() },
+    state: { catalogRegistrations: publishedActionRegistrations(), snapshot: mock.snapshot() },
     observe: async () => mock.snapshot(),
     execute: async (request) => {
       if (request.action === "harvest_crop") {
@@ -184,7 +185,7 @@ test("container-full chain fails closed when the breakpoint never rejects", asyn
 test("container-full chain does not claim success when the retry postcondition is absent", async () => {
   const mock = createMock({ revision: 5, cropPresent: true, chestStorePresent: true });
   const client = {
-    state: { snapshot: mock.snapshot() },
+    state: { catalogRegistrations: publishedActionRegistrations(), snapshot: mock.snapshot() },
     observe: async () => mock.snapshot(),
     execute: async (request) => {
       if (request.action === "harvest_crop") {
@@ -241,7 +242,7 @@ test("container-full chain keeps searching until BOTH the crop and the chest are
   const submitted = [];
   const receipts = [];
   const client = {
-    state: { snapshot: mock.snapshot() },
+    state: { catalogRegistrations: publishedActionRegistrations(), snapshot: mock.snapshot() },
     observe: async () => mock.snapshot(),
     execute: async (request) => {
       submitted.push({ action: request.action, args: request.args });
@@ -283,7 +284,10 @@ test("container-full chain keeps searching until BOTH the crop and the chest are
 
 test("container-full chain refuses a scenario it is not authorized for", async () => {
   const mock = createMock({ revision: 5, cropPresent: true, chestStorePresent: true });
-  const client = { state: { snapshot: mock.snapshot() }, observe: async () => mock.snapshot() };
+  const client = {
+    state: { catalogRegistrations: publishedActionRegistrations(), snapshot: mock.snapshot() },
+    observe: async () => mock.snapshot(),
+  };
   const wrongScenario = {
     ...config,
     NativeLocalPlayerFixture: { ...config.NativeLocalPlayerFixture, FixtureScenario: "native_harvest_crop_v1" },

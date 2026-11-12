@@ -4,10 +4,15 @@ import test from "node:test";
 import { runFertilizeTileSmoke } from "./run-stardew-native-local-player-fertilize-tile-smoke.mjs";
 import { runHarvestCropSmoke } from "./run-stardew-native-local-player-harvest-crop-smoke.mjs";
 import { runPlantSeedSmoke } from "./run-stardew-native-local-player-plant-seed-smoke.mjs";
+import { publishedActionRegistrations } from "./lib/stardew-native-smoke-harness-v1.mjs";
 
 function actionClient(initialSnapshot, transition) {
   const receipts = [];
-  const state = { snapshot: initialSnapshot, capabilities: initialSnapshot.capabilities };
+  const state = {
+    catalogRegistrations: publishedActionRegistrations(),
+    snapshot: initialSnapshot,
+    capabilities: initialSnapshot.capabilities,
+  };
   return {
     client: {
       state,

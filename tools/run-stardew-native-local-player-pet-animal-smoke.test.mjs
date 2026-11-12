@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { runPetAnimalSmoke } from "./run-stardew-native-local-player-pet-animal-smoke.mjs";
+import { publishedActionRegistrations } from "./lib/stardew-native-smoke-harness-v1.mjs";
 
 const target = {
   targetId: "pet_0123456789abcdef",
@@ -44,7 +45,7 @@ test("pet-animal runner uses shared dispatch, exact terminal correlation, and fr
   };
   const receipts = [];
   const client = {
-    state: { snapshot },
+    state: { catalogRegistrations: publishedActionRegistrations(), snapshot },
     observe: async () => snapshot,
     execute: async (request) => {
       assert.equal(request.action, "pet_animal");
@@ -87,7 +88,7 @@ test("pet-animal runner uses shared dispatch, exact terminal correlation, and fr
 // exact form asserted a property the environment never guaranteed; the code it reports is the subset helper's.
 test("pet-animal runner rejects a native-local surface missing a required capability", async () => {
   const client = {
-    state: { snapshot: null },
+    state: { catalogRegistrations: publishedActionRegistrations(), snapshot: null },
     observe: async () => ({
       revision: 1,
       location: "Farm",
@@ -130,7 +131,7 @@ test("pet-animal runner accepts the shared-world surface as a required subset", 
   };
   const receipts = [];
   const client = {
-    state: { snapshot },
+    state: { catalogRegistrations: publishedActionRegistrations(), snapshot },
     observe: async () => snapshot,
     execute: async (request) => {
       assert.equal(request.action, "pet_animal");

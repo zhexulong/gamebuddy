@@ -7,6 +7,7 @@ import {
   ensureAdjacentToFreshTarget,
   isAdjacent,
 } from "./lib/stardew-shared-world-navigation.mjs";
+import { publishedActionRegistrations } from "./lib/stardew-native-smoke-harness-v1.mjs";
 
 const CAPABILITIES = [
   "cancel_active_execution",
@@ -24,7 +25,7 @@ function createFake({ start, warps = [], onMove } = {}) {
   let location = start.location;
   let tile = { ...start.tile };
   const client = {
-    state: {},
+    state: { catalogRegistrations: publishedActionRegistrations() },
     observe: async () => {
       revision += 1;
       const value = snapshot();

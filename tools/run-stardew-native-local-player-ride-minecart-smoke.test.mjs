@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { runRideMinecartSmoke } from "./run-stardew-native-local-player-ride-minecart-smoke.mjs";
+import { publishedActionRegistrations } from "./lib/stardew-native-smoke-harness-v1.mjs";
 
 const CAPABILITIES = ["cancel_active_execution", "inspect_self", "move_to_tile", "ride_minecart"];
 
@@ -66,7 +67,7 @@ function createFake({
     for (const listener of listeners) listener({ type: "execution_receipt", payload });
   };
   const client = {
-    state: { snapshot: current() },
+    state: { catalogRegistrations: publishedActionRegistrations(), snapshot: current() },
     observe: async () => {
       const snapshot = current();
       if (frozenRemaining > 0) frozenRemaining -= 1;

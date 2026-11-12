@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { runExpressionSmoke } from "./run-stardew-native-local-player-expression-smoke.mjs";
+import { publishedActionRegistrations } from "./lib/stardew-native-smoke-harness-v1.mjs";
 
 const config = {
   NativeLocalPlayerFixture: { Enable: true },
@@ -34,7 +35,11 @@ function expressionClient({
 } = {}) {
   let revision = 10;
   const client = {
-    state: { snapshot: capabilitySnapshot(revision), latestReceipt: undefined },
+    state: {
+      catalogRegistrations: publishedActionRegistrations(),
+      snapshot: capabilitySnapshot(revision),
+      latestReceipt: undefined,
+    },
     observe: async () => client.state.snapshot,
     execute: async (request) => {
       revision += 1;

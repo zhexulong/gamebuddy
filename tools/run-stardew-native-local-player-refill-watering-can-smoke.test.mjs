@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { runRefillWateringCanSmoke } from "./run-stardew-native-local-player-refill-watering-can-smoke.mjs";
+import { publishedActionRegistrations } from "./lib/stardew-native-smoke-harness-v1.mjs";
 
 const CONFIG = {
   SaveId: "save_01",
@@ -54,7 +55,7 @@ function scriptedBridge({ postconditionRefilled = true, capabilities = EXPECTED_
     for (const listener of listeners) listener({ type: "execution_receipt", payload });
   };
   const client = {
-    state: { snapshot },
+    state: { catalogRegistrations: publishedActionRegistrations(), snapshot },
     observe: async () => snapshot,
     execute: async (request) => {
       calls.push(request);

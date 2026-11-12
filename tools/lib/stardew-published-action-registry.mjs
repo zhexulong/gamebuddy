@@ -168,6 +168,68 @@ export function readStardewActionFamilies({ registrationsPath = REGISTRATIONS_PA
 }
 
 /**
+ * The watchdog each registration declares, in milliseconds, read from the same registration table.
+ *
+ * The number is not a caller's opinion: `BridgeSession.IsFreshExecutionRequest` admits a deadline at most the
+ * descriptor's own `WatchdogMs`, and the Host sizes a dispatch from that same number. Measured 2026-11-10,
+ * `fish_here` publishes 60 s, its runner wrote 120 s, and the first live slice of that action came back
+ * `bridge_rejected:invalid_deadline` - after a game launch, with nothing comparing the two numbers. So the value a
+ * fake publishes has to be the one the catalog declares, and this is where it is read from.
+ *
+ * Only an ENFORCED row (`E` / `Registration`) publishes a window. A read-only row (`R`) is not dispatchable, so an
+ * absence here is deliberate: `publishedActionWatchdogMs` refuses such an action by name instead of handing back the
+ * ordinary default, which would let a runner dispatch something the Mod never bounds.
+ *
+ * SYNCHRONOUS for the same reason `readStardewActionFamilies` is: a smoke fake builds its client state at module load
+al
+ * inside a test body, and an async reader would force a top-level await into sixty suites to learn a fact already on
+ * disk.
+ *
+ * FAILS CLOSED. No default constant, no enforced row, or one action declaring two windows is a named refusal - never
+ * an empty or last-wins map, which would read as "every action has some window".
+ */
+export function readStardewActionWatchdogs({ definitionsPath = REGISTRATIONS_PATH } = {}) {
+  const source = readFileSync(definitionsPath, "utf8");
+  const constants = new Map(
+    [...source.matchAll(/\bpublic const long (\w+) = ([\d_]+);/gu)].map((match) => [
+      match[1],
+      Number(match[2].replaceAll("_", "")),
+    ]),
+  );
+  const defaultMs = constants.get("DefaultWatchdogMs");
+  if (!Number.isSafeInteger(defaultMs) || defaultMs <= 0) fail("no_default_watchdog");
+  const numberIn = (token) => {
+    if (/^\d/u.test(token)) return Number(token.replaceAll("_", ""));
+    return constants.get(token.split(".").pop());
+  };
+  // A descriptor FACTORY may declare the window itself (`Lifecycle()` ends in `with { WatchdogMs = ... }`), and the
+  // row then names the factory rather than a number, so the factories are resolved before any row is read.
+  const factoryMs = new Map();
+  for (const match of source.matchAll(/static FarmhandActionDescriptor (\w+)\(\)\s*=>([\s\S]*?);\n/gu)) {
+    const declared = /WatchdogMs\s*[:=]\s*([\w.]+)/u.exec(match[2]);
+    if (declared === null) continue;
+    const ms = numberIn(declared[1]);
+    if (Number.isSafeInteger(ms) && ms > 0) factoryMs.set(match[1], ms);
+  }
+  const watchdogOf = new Map();
+  for (const entry of registrationsBody(source).split(/(?=\b(?:E|R|Registration)\()/)) {
+    const row = entry.match(/\b(E|Registration|R)\(\s*"([a-z][a-z0-9_]{1,127})"/u);
+    if (row === null) continue;
+    const [, spelling, actionId] = row;
+    if (spelling === "R") continue;
+    const named = /WatchdogMs\s*[:=]\s*([\w.]+)/u.exec(entry);
+    const factory = [...factoryMs.keys()].find((name) => new RegExp(`\\b${name}\\(\\)`, "u").test(entry));
+    const ms = named === null ? (factory === undefined ? defaultMs : factoryMs.get(factory)) : numberIn(named[1]);
+    if (!Number.isSafeInteger(ms) || ms <= 0) fail(`unreadable_watchdog:${actionId}`);
+    const claimed = watchdogOf.get(actionId);
+    if (claimed !== undefined && claimed !== ms) fail(`action_declares_two_watchdogs:${actionId}:${claimed}:${ms}`);
+    watchdogOf.set(actionId, ms);
+  }
+  if (watchdogOf.size === 0) fail("registrations_declare_no_watchdog");
+  return watchdogOf;
+}
+
+/**
  * The Mod registrations whose lifecycle is exactly `Experimental`.
  *
  * This is the only thing a fixture may name in `ExperimentalActions`: a policy

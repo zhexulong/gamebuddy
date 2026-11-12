@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { runWiaItemPickupInterruptSmoke } from "./run-stardew-native-local-player-wia-item-pickup-smoke.mjs";
+import { publishedActionRegistrations } from "./lib/stardew-native-smoke-harness-v1.mjs";
 
 const SCENARIO = "native_wia_item_pickup_interrupt_v1";
 const TARGET = { x: 23, y: 20, targetId: "item_wia_pickup", qualifiedItemId: "(O)388", stack: 1 };
@@ -62,7 +63,7 @@ function makeClient({
   let dismissCalls = 0;
   const receipts = [];
   const client = {
-    state: { snapshot: current },
+    state: { catalogRegistrations: publishedActionRegistrations(), snapshot: current },
     observe: async () => current,
     execute: async (request) => {
       if (request.action === "pickup_item") {

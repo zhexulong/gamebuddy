@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { runCollectAnimalProductSmoke } from "./run-stardew-native-local-player-collect-animal-product-smoke.mjs";
+import { publishedActionRegistrations } from "./lib/stardew-native-smoke-harness-v1.mjs";
 
 const target = {
   targetId: "animal_target_1",
@@ -42,7 +43,7 @@ test("collect-animal-product runner uses shared dispatch, exact terminal correla
   };
   const receipts = [];
   const client = {
-    state: { snapshot },
+    state: { catalogRegistrations: publishedActionRegistrations(), snapshot },
     observe: async () => snapshot,
     execute: async (request) => {
       assert.equal(request.action, "collect_animal_product");
@@ -103,7 +104,7 @@ test("collect-animal-product runner blocks on mismatched evidence", async () => 
   };
   const receipts = [];
   const client = {
-    state: { snapshot },
+    state: { catalogRegistrations: publishedActionRegistrations(), snapshot },
     observe: async () => snapshot,
     execute: async (request) => {
       snapshot = {

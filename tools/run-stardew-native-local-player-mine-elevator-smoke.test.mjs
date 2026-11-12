@@ -4,6 +4,7 @@ import {
   assertMineElevatorPostconditions,
   runMineElevatorSmoke,
 } from "./run-stardew-native-local-player-mine-elevator-smoke.mjs";
+import { publishedActionRegistrations } from "./lib/stardew-native-smoke-harness-v1.mjs";
 
 const SCENARIO = "native_mine_elevator_v1";
 const CAPABILITIES = ["cancel_active_execution", "inspect_self", "select_mine_elevator_floor"];
@@ -65,7 +66,7 @@ function makeClient({ terminalEvidence = TERMINAL_EVIDENCE, arrival = null, afte
   let current = snapshot(4, "UndergroundMine5", { x: 8, y: 3 }, 5);
   const receipts = [];
   const client = {
-    state: { snapshot: current },
+    state: { catalogRegistrations: publishedActionRegistrations(), snapshot: current },
     observe: async () => current,
     execute: async (request) => {
       assert.equal(request.action, "select_mine_elevator_floor");
@@ -140,7 +141,10 @@ test("blocks when the floor bookkeeping did not follow the arrival", async () =>
 
 test("blocks when the elevator reports no floors at all", async () => {
   const client = {
-    state: { snapshot: snapshot(4, "FarmHouse", { x: 3, y: 12 }, 0) },
+    state: {
+      catalogRegistrations: publishedActionRegistrations(),
+      snapshot: snapshot(4, "FarmHouse", { x: 3, y: 12 }, 0),
+    },
     observe: async () => ({ ...snapshot(4, "FarmHouse", { x: 3, y: 12 }, 0), mineElevatorFloorTargets: [] }),
     execute: async () => {
       throw new Error("must not execute without an advertised floor");
@@ -161,7 +165,10 @@ test("blocks when every advertised floor is the entrance or the current one", as
     isMineEntrance: floor === 0,
   }));
   const client = {
-    state: { snapshot: snapshot(4, "UndergroundMine5", { x: 8, y: 3 }, 5) },
+    state: {
+      catalogRegistrations: publishedActionRegistrations(),
+      snapshot: snapshot(4, "UndergroundMine5", { x: 8, y: 3 }, 5),
+    },
     observe: async () => ({
       ...snapshot(4, "UndergroundMine5", { x: 8, y: 3 }, 5),
       mineElevatorFloorTargets: onlyEntrance,

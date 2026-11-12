@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { runWaterPetBowlSmoke } from "./run-stardew-native-local-player-water-pet-bowl-smoke.mjs";
+import { publishedActionRegistrations } from "./lib/stardew-native-smoke-harness-v1.mjs";
 
 const BOWL_TARGET = {
   targetId: "pet_bowl_0000000000000001",
@@ -59,7 +60,7 @@ test("water-pet-bowl runner requires the native watered transition and a fresh p
   let snapshot = baseSnapshot(5, { x: 53, y: 8 }, { petBowlTargets: [{ ...BOWL_TARGET }] });
   const calls = [];
   const client = {
-    state: { snapshot },
+    state: { catalogRegistrations: publishedActionRegistrations(), snapshot },
     observe: async () => snapshot,
     execute: async (request) => {
       calls.push(request.action);
@@ -96,7 +97,7 @@ test("water-pet-bowl runner fails closed when the bowl target is absent and unre
   let snapshot = baseSnapshot(5, { x: 53, y: 8 }, { petBowlTargets: [] });
   const submitted = [];
   const client = {
-    state: { snapshot },
+    state: { catalogRegistrations: publishedActionRegistrations(), snapshot },
     observe: async () => snapshot,
     execute: async (request) => {
       if (request.action === "water_pet_bowl") {
@@ -126,7 +127,7 @@ test("water-pet-bowl runner fails closed when the bowl target is absent and unre
 test("water-pet-bowl runner does not claim success when the native postcondition is absent", async () => {
   let snapshot = baseSnapshot(5, { x: 53, y: 8 }, { petBowlTargets: [{ ...BOWL_TARGET }] });
   const client = {
-    state: { snapshot },
+    state: { catalogRegistrations: publishedActionRegistrations(), snapshot },
     observe: async () => snapshot,
     execute: async (request) => {
       if (request.action === "water_pet_bowl") {
@@ -161,7 +162,7 @@ test("water-pet-bowl runner does not claim success when the native postcondition
 test("water-pet-bowl runner rejects a stale post-terminal revision", async () => {
   let snapshot = baseSnapshot(5, { x: 53, y: 8 }, { petBowlTargets: [{ ...BOWL_TARGET }] });
   const client = {
-    state: { snapshot },
+    state: { catalogRegistrations: publishedActionRegistrations(), snapshot },
     observe: async () => snapshot,
     execute: async (request) => {
       if (request.action === "water_pet_bowl") {
@@ -192,7 +193,11 @@ test("water-pet-bowl runner refuses a mismatched fixture scenario or action set"
     ...config,
     NativeLocalPlayerFixture: { ...config.NativeLocalPlayerFixture, FixtureScenario: "native_water_crop_v1" },
   };
-  const client = { state: {}, observe: async () => ({}), execute: async () => ({}) };
+  const client = {
+    state: { catalogRegistrations: publishedActionRegistrations() },
+    observe: async () => ({}),
+    execute: async () => ({}),
+  };
   // Config validation precedes the bridge session, so an invalid profile rejects
   // instead of returning a receipt-shaped result.
   await assert.rejects(

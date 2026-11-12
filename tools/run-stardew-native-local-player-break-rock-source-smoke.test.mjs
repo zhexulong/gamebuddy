@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { runBreakRockSourceSmoke } from "./run-stardew-native-local-player-break-rock-source-smoke.mjs";
+import { publishedActionRegistrations } from "./lib/stardew-native-smoke-harness-v1.mjs";
 
 const CAPABILITIES = ["cancel_active_execution", "inspect_self", "move_to_tile", "travel", "break_rock"];
 
@@ -54,7 +55,7 @@ function createFake({ capabilities = CAPABILITIES, removeRock = true } = {}) {
     rockSourceTargets: rockRemoved ? [] : [ROCK],
   });
   const client = {
-    state: { snapshot: snapshotOf() },
+    state: { catalogRegistrations: publishedActionRegistrations(), snapshot: snapshotOf() },
     observe: async () => {
       const snapshot = snapshotOf();
       client.state.snapshot = snapshot;

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { runWiaEatInterruptSmoke } from "./run-stardew-native-local-player-wia-eat-interrupt-smoke.mjs";
+import { publishedActionRegistrations } from "./lib/stardew-native-smoke-harness-v1.mjs";
 
 const SCENARIO = "native_wia_eat_interrupt_v1";
 const FOOD = { slot: 5, qualifiedItemId: "(O)216", edibility: 25, isDrink: false };
@@ -62,7 +63,7 @@ function makeClient({ interruptReason = "modal_interrupted", retryFailure = fals
   let dismissCalls = 0;
   const receipts = [];
   const client = {
-    state: { snapshot: current },
+    state: { catalogRegistrations: publishedActionRegistrations(), snapshot: current },
     observe: async () => current,
     execute: async (request) => {
       if (request.action === "use_item") {

@@ -10,6 +10,7 @@ import {
   readRolloverMenu,
   runMultiDaySmoke,
 } from "./run-stardew-native-local-player-multi-day-smoke.mjs";
+import { publishedActionRegistrations } from "./lib/stardew-native-smoke-harness-v1.mjs";
 
 const CAPABILITIES = ["sleep", "dismiss_modal"];
 
@@ -85,7 +86,7 @@ function createFake({ scenario = "native_multi_day_v1", plan = [] } = {}) {
     actorDispositionDetail: modal,
     actorDispositionActionOwned: false,
   });
-  const client = { state: { snapshot: snapshotOf() } };
+  const client = { state: { catalogRegistrations: publishedActionRegistrations(), snapshot: snapshotOf() } };
   const publish = (payload) => {
     for (const listener of listeners) listener({ type: "execution_receipt", payload });
   };

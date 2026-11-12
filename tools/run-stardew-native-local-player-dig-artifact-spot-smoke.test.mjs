@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { runDigArtifactSpotSmoke } from "./run-stardew-native-local-player-dig-artifact-spot-smoke.mjs";
+import { publishedActionRegistrations } from "./lib/stardew-native-smoke-harness-v1.mjs";
 
 const ARTIFACT_TARGET = {
   targetId: "artifact_0000000000000001",
@@ -67,7 +68,7 @@ test("dig-artifact-spot runner uses shared dispatch and exact terminal receipt",
   let snapshot = baseSnapshot(5);
   const calls = [];
   const client = {
-    state: { snapshot },
+    state: { catalogRegistrations: publishedActionRegistrations(), snapshot },
     observe: async () => snapshot,
     execute: async (request) => {
       calls.push(request.action);
@@ -128,7 +129,7 @@ test("dig-artifact-spot runner uses shared dispatch and exact terminal receipt",
 test("dig-artifact-spot runner fails closed when the fresh target changes after equip", async () => {
   let snapshot = baseSnapshot(5);
   const client = {
-    state: { snapshot },
+    state: { catalogRegistrations: publishedActionRegistrations(), snapshot },
     observe: async () => snapshot,
     execute: async (request) => {
       if (request.action === "equip_tool") {
@@ -156,7 +157,7 @@ test("dig-artifact-spot runner fails closed when the fresh target changes after 
 test("dig-artifact-spot runner fails closed on stamina evidence mismatch", async () => {
   let snapshot = baseSnapshot(5);
   const client = {
-    state: { snapshot },
+    state: { catalogRegistrations: publishedActionRegistrations(), snapshot },
     observe: async () => snapshot,
     execute: async (request) => {
       if (request.action === "equip_tool") {
@@ -212,7 +213,7 @@ test("dig-artifact-spot runner completes for the (O)SeedSpot variant", async () 
   let snapshot = baseSnapshot(5, { artifactSpotTargets: [seedSpotTarget] });
   let digArgs = null;
   const client = {
-    state: { snapshot },
+    state: { catalogRegistrations: publishedActionRegistrations(), snapshot },
     observe: async () => snapshot,
     execute: async (request) => {
       if (request.action === "equip_tool") {
@@ -269,7 +270,7 @@ test("dig-artifact-spot runner fails closed when the receipt reports another id"
   const seedSpotTarget = { ...ARTIFACT_TARGET, targetId: "artifact_seedspot0000002", qualifiedItemId: "(O)SeedSpot" };
   let snapshot = baseSnapshot(5, { artifactSpotTargets: [seedSpotTarget] });
   const client = {
-    state: { snapshot },
+    state: { catalogRegistrations: publishedActionRegistrations(), snapshot },
     observe: async () => snapshot,
     execute: async (request) => {
       if (request.action === "equip_tool") {

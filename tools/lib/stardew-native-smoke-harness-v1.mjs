@@ -4,6 +4,7 @@
 
 import { readFile } from "node:fs/promises";
 import { loadHostProductionModule } from "./host-production-module.mjs";
+import { readStardewActionWatchdogs } from "./stardew-published-action-registry.mjs";
 
 export const TERMINAL_STATES = new Set([
   "blocked",
@@ -77,8 +78,50 @@ export function publishedActionWatchdogMs(client, action) {
   return watchdogMs;
 }
 
-/** Observe once and reject malformed or stale local state before a request. */
-export async function observeFresh(client, { actionable = false } = {}) {
+/**
+ * The registrations a real session publishes on `hello_ack`: every action the Mod catalog enforces, each with the
+ * window that action declares. This is what a smoke fake stands in for.
+ *
+ * The list is the catalog's, not a caller's: the Mod publishes its whole registration surface, and the per-action
+ * GRANT is a separate fact (`snapshot.capabilities`). Deriving the advertisement from the capability list - which is
+ * what this helper did first - under-published, and a runner that equips a tool while performing `break_rock` was
+ * refused `native_action_watchdog_unpublished:equip_tool` for an action the Mod does publish.
+ */
+export function publishedActionRegistrations({ watchdogOf = readStardewActionWatchdogs } = {}) {
+  return [...watchdogOf().entries()].map(([actionId, watchdogMs]) => ({ actionId, descriptor: { watchdogMs } }));
+}
+
+/**
+ * The registrations a smoke client publishes for the actions its fixture advertises.
+ *
+ * A fake stands in for a real session, so the advertisement it carries has to be the one a real session carries:
+ * `hello_ack` names every action with its own declared `WatchdogMs`, and `publishedActionWatchdogMs` refuses a window
+ * this session did not publish. The number therefore comes from the catalog (`readStardewActionWatchdogs`), never from
+ * a caller and never from a constant here - a fake that advertised every action at 60 s would hide exactly the defect
+ * the harness exists for.
+ *
+ * An advertised action the catalog declares NO window for (a read-only row, an id that is not an action) is published
+ * WITHOUT a `descriptor`, so the harness refuses it by name (`native_action_watchdog_unpublished:<action>`) instead of
+ * receiving a default. Supplying one here is the shape this module spends its rules preventing.
+ */
+export function catalogRegistrationsFor(actions, { watchdogOf = readStardewActionWatchdogs } = {}) {
+  if (!Array.isArray(actions) || actions.length === 0)
+    throw new NativeSmokeHarnessError("invalid_native_advertised_actions");
+  const declared = watchdogOf();
+  return actions.map((action) => {
+    if (typeof action !== "string" || !/^[a-z][a-z0-9_]{0,63}$/u.test(action))
+      throw new NativeSmokeHarnessError(`invalid_native_advertised_action:${String(action)}`);
+    const watchdogMs = declared.get(action);
+    return Number.isSafeInteger(watchdogMs) && watchdogMs > 0
+      ? { actionId: action, descriptor: { watchdogMs } }
+      : { actionId: action };
+  });
+}
+
+/** Observe once and reject malformed or stale local state before a request. */ export async function observeFresh(
+  client,
+  { actionable = false } = {},
+) {
   if (!client || typeof client.observe !== "function") throw new NativeSmokeHarnessError("invalid_native_client");
   const snapshot = await client.observe();
   validateSnapshot(snapshot);

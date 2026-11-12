@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { runEquipToolSmoke } from "./run-stardew-native-local-player-equip-tool-smoke.mjs";
+import { publishedActionRegistrations } from "./lib/stardew-native-smoke-harness-v1.mjs";
 
 function fixture({ terminal = {}, evidence = {}, observations } = {}) {
   const receipts = [];
@@ -18,7 +19,7 @@ function fixture({ terminal = {}, evidence = {}, observations } = {}) {
   const after = { ...before, revision: 5, currentTool: "Hoe" };
   const reads = observations ? [...observations] : [before, after];
   const client = {
-    state: { snapshot: before },
+    state: { catalogRegistrations: publishedActionRegistrations(), snapshot: before },
     observe: async () => {
       const snapshot = reads.shift() ?? after;
       client.state.snapshot = snapshot;

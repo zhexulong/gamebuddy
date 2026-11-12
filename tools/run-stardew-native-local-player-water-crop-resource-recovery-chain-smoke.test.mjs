@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { runWaterCropResourceRecoveryChainSmoke } from "./run-stardew-native-local-player-water-crop-resource-recovery-chain-smoke.mjs";
+import { publishedActionRegistrations } from "./lib/stardew-native-smoke-harness-v1.mjs";
 
 const SCENARIO = "native_water_crop_empty_can_recovery_v1";
 const CAN = { slot: 3, label: "Watering Can", qualifiedItemId: "(T)WateringCan" };
@@ -93,7 +94,7 @@ test("resource-depletion chain: reject -> refill -> same-target retry succeeds",
   const mock = createMock({ revision: 5, water: 0, cropPresent: true });
   const calls = [];
   const client = {
-    state: { snapshot: mock.snapshot() },
+    state: { catalogRegistrations: publishedActionRegistrations(), snapshot: mock.snapshot() },
     observe: async () => mock.snapshot(),
     execute: async (request) => {
       calls.push({ action: request.action, args: request.args });
@@ -178,7 +179,7 @@ test("resource-depletion chain fails closed when the supplied can is not empty",
   const mock = createMock({ revision: 5, water: 40, cropPresent: true });
   const submitted = [];
   const client = {
-    state: { snapshot: mock.snapshot() },
+    state: { catalogRegistrations: publishedActionRegistrations(), snapshot: mock.snapshot() },
     observe: async () => mock.snapshot(),
     execute: async (request) => {
       submitted.push(request.action);
@@ -195,7 +196,7 @@ test("resource-depletion chain fails closed when the supplied can is not empty",
 test("resource-depletion chain does not claim success when the retry postcondition is absent", async () => {
   const mock = createMock({ revision: 5, water: 0, cropPresent: true });
   const client = {
-    state: { snapshot: mock.snapshot() },
+    state: { catalogRegistrations: publishedActionRegistrations(), snapshot: mock.snapshot() },
     observe: async () => mock.snapshot(),
     execute: async (request) => {
       if (request.action === "equip_tool") {
@@ -259,7 +260,7 @@ test("resource-depletion chain refuses a recovery that reports no refill", async
   // chain must not accept a recovery receipt whose own evidence contradicts it.
   const mock = createMock({ revision: 5, water: 0, cropPresent: true });
   const client = {
-    state: { snapshot: mock.snapshot() },
+    state: { catalogRegistrations: publishedActionRegistrations(), snapshot: mock.snapshot() },
     observe: async () => mock.snapshot(),
     execute: async (request) => {
       if (request.action === "equip_tool") {
@@ -310,7 +311,10 @@ test("resource-depletion chain refuses a recovery that reports no refill", async
 
 test("resource-depletion chain rejects a scenario it is not authorized for", async () => {
   const mock = createMock({ revision: 5, water: 0, cropPresent: true });
-  const client = { state: { snapshot: mock.snapshot() }, observe: async () => mock.snapshot() };
+  const client = {
+    state: { catalogRegistrations: publishedActionRegistrations(), snapshot: mock.snapshot() },
+    observe: async () => mock.snapshot(),
+  };
   const wrongScenario = {
     ...config,
     NativeLocalPlayerFixture: { ...config.NativeLocalPlayerFixture, FixtureScenario: "native_water_crop_v1" },
