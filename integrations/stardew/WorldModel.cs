@@ -13,12 +13,15 @@ namespace GameBuddy.Stardew;
 /// <item><c>Stuck</c> — specification-relative (needs a target to compute), so
 /// it belongs to the L2 executor watchdog
 /// (world-interruption-arbitration.md §1.2 注, §4.1 注).</item>
-/// <item><c>Warped</c> — event-relative, not a holding state: a location change
-/// does not lock the actor, and the warp lifecycle already belongs to
-/// navigation/travel (which observe the native Warped event). Reporting it here
-/// would make the normal walking/lifecycle traffic look like an interruption
-/// and force position reads (Game1.netWorldState) the arbitration does not
-/// need.</item>
+/// <item><c>Warped</c> — event-relative, not a holding state: the warp LIFECYCLE belongs to
+/// navigation/travel (which observe the native Warped event). Reporting it here would make the normal
+/// walking/lifecycle traffic look like an interruption and force position reads (Game1.netWorldState)
+/// the arbitration does not need. What a warp does to the BODY is a fact, because the engine holds the
+/// actor for it: <c>_isWarping = true; … fadeScreenToBlack();</c> (Game1.cs:10031-10033) and that fade
+/// writes <c>Game1.player.CanMove = false</c> (ScreenFade.cs:86-89) until the engine clears the flag
+/// itself (Game1.cs:6271). An earlier revision of this text claimed a location change "does not lock the
+/// actor"; the engine contradicts that, so the hold is read as <see cref="ActorWorldFacts.Warping"/> and
+/// only the lifecycle stays out.</item>
 /// </list></summary>
 public enum ActorDispositionKind
 {
@@ -50,7 +53,12 @@ internal readonly record struct ActorWorldFacts(
     // The engine's single-animation pause. Appended last so `default(ActorWorldFacts)` still means
     // "no hold". Between 400 ms and 2000 ms of body, entered by six native sites that write
     // `CanMove = false` and leave no other declared fact up (boundary: .tmp/boundary-self-animation.md).
-    bool SelfAnimation);
+    bool SelfAnimation,
+    // The engine's location transition. Appended after `SelfAnimation` for the same reason: `default`
+    // stays "no hold". ≈580 ms of body - the fade's own 1.1 alpha at 0.0019/ms (ScreenFade.cs:38, :70) -
+    // entered by the warp handler (`_isWarping = true`, Game1.cs:10031) and released only by the engine
+    // (`_isWarping = false`, Game1.cs:6271). Boundary: .tmp/boundary-warping.md.
+    bool Warping);
 
 /// <summary>
 /// Read-only per-tick disposition payload (readonly record struct on the game
@@ -267,9 +275,14 @@ internal static class WorldModel
         string? menuType = Game1.activeClickableMenu?.GetType().Name;
         bool dialogueUp = Game1.dialogueUp;
         int timeOfDay = Game1.timeOfDay;
+        // A Game1 static like `eventUp`, not an actor field: the engine's warp flag holds the body whoever reads it,
+        // so a null player still reports it. The flag itself (`Game1.cs:1324` → `_isWarping`, `:409`) is raised in
+        // `performWarpFarmer` (:10031) and lowered only in `onFadeToBlackComplete` (:6271), so the fact clears on the
+        // engine's tick rather than on a duration of ours.
+        bool warping = Game1.isWarping;
 
         if (player is null)
-            return new ActorWorldFacts(eventUp, menuType, dialogueUp, timeOfDay, 0f, false, false, false, false, false);
+            return new ActorWorldFacts(eventUp, menuType, dialogueUp, timeOfDay, 0f, false, false, false, false, false, warping);
 
         return new ActorWorldFacts(
             eventUp,
@@ -285,7 +298,8 @@ internal static class WorldModel
             // and lowers only in its own release writes (`doneWithAnimation` :792, `animateBackwardsOnce`
             // :1024), so the fact clears on the engine's tick rather than on a duration of ours. The
             // engine counts it as a hold of the actor in its own right (Farmer.cs:7964).
-            player.FarmerSprite.PauseForSingleAnimation);
+            player.FarmerSprite.PauseForSingleAnimation,
+            warping);
     }
 
     private static bool OwnedByAction() => ModalActionOwnedCheck?.Invoke() ?? false;

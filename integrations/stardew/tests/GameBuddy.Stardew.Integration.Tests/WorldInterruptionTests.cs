@@ -46,7 +46,8 @@ public sealed class WorldInterruptionTests
                 Eating: eating,
                 UsingTool: usingTool,
                 ToolCharged: false,
-                SelfAnimation: false)).Kind;
+                SelfAnimation: false,
+                Warping: false)).Kind;
     }
     // ---- disposition classification (WIA §4.1; ≈ Lane A ComputeDisposition) ----
 

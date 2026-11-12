@@ -32,7 +32,8 @@ public sealed class NavigationHoldEvidenceTests
         bool eating = false,
         bool usingTool = false,
         bool toolCharged = false,
-        bool selfAnimation = false) =>
+        bool selfAnimation = false,
+        bool warping = false) =>
         new(
             EventUp: eventUp,
             MenuType: menuType,
@@ -43,7 +44,8 @@ public sealed class NavigationHoldEvidenceTests
             Eating: eating,
             UsingTool: usingTool,
             ToolCharged: toolCharged,
-            SelfAnimation: selfAnimation);
+            SelfAnimation: selfAnimation,
+            Warping: warping);
 
     [Fact]
     public void ACutsceneHold_NamesTheCutsceneAndWhatEndsItsDialogueBox()

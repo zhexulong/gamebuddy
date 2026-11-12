@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using System.IO;
 using System.Linq;
 using System.Reflection;
 using FluentAssertions;
@@ -41,10 +40,7 @@ public sealed class SelfAnimationHoldTests
 {
     private const string Fact = "SelfAnimation";
 
-    /// <summary>The engine source root, relative to the repository root (the tree is gitignored, so it is found by walking up).</summary>
-    private const string DecompiledRelativeRoot = "ref/external/StardewValleyDecompiled/Stardew Valley/StardewValley";
-
-    private const string SpriteFile = "FarmerSprite.cs";
+    private const string SpriteFile = "StardewValley/FarmerSprite.cs";
 
     /// <summary>
     /// The six sites the boundary card names, each with the method that must still take the body by an animation.
@@ -53,12 +49,12 @@ public sealed class SelfAnimationHoldTests
     /// </summary>
     private static readonly (string Site, string File, int Line)[] Sites =
     {
-        ("Crop.cs:541", "Crop.cs", 541),
-        ("Crop.cs:629", "Crop.cs", 629),
-        ("Farmer.cs:6482", "Farmer.cs", 6482),
-        ("Farmer.cs:8448", "Farmer.cs", 8448),
-        ("Farmer.cs:9315", "Farmer.cs", 9315),
-        ("Object.cs:3312", "Object.cs", 3312),
+        ("Crop.cs:541", "StardewValley/Crop.cs", 541),
+        ("Crop.cs:629", "StardewValley/Crop.cs", 629),
+        ("Farmer.cs:6482", "StardewValley/Farmer.cs", 6482),
+        ("Farmer.cs:8448", "StardewValley/Farmer.cs", 8448),
+        ("Farmer.cs:9315", "StardewValley/Farmer.cs", 9315),
+        ("Object.cs:3312", "StardewValley/Object.cs", 3312),
     };
 
     /// <summary>
@@ -74,29 +70,28 @@ public sealed class SelfAnimationHoldTests
     [Fact]
     public void EverySiteThatTakesTheBodyByASingleAnimationHasAnEngineRelease()
     {
-        string root = DecompiledRoot();
         var findings = new List<string>();
 
         foreach ((string site, string file, int line) in Sites)
         {
-            string[] lines = File.ReadAllLines(Path.Combine(root, file));
+            string[] lines = DecompiledSource.Lines(file);
             if (line > lines.Length)
             {
                 findings.Add($"hold_entry_not_found:{site}:{Fact}");
                 continue;
             }
 
-            IReadOnlyList<string> body = Code(EnclosingMethod(lines, line - 1));
+            IReadOnlyList<string> body = DecompiledSource.Code(DecompiledSource.EnclosingMethod(lines, line - 1));
             bool holdsTheBody = body.Any(text => text.Contains("anMove = false", StringComparison.Ordinal));
             bool entersByAnAnimation = body.Any(text => text.Contains("animateOnce(", StringComparison.Ordinal));
             if (!holdsTheBody || !entersByAnAnimation)
                 findings.Add($"hold_entry_not_found:{site}:{Fact}");
         }
 
-        string[] sprite = File.ReadAllLines(Path.Combine(root, SpriteFile));
+        string[] sprite = DecompiledSource.Lines(SpriteFile);
         foreach (string method in ReleaseMethods)
         {
-            IReadOnlyList<string> body = Code(MethodBody(sprite, method));
+            IReadOnlyList<string> body = DecompiledSource.Code(DecompiledSource.MethodBody(sprite, method));
             // Both writes, in one body: clearing the flag alone leaves the body held (the six sites wrote CanMove
             // themselves), and giving CanMove back alone leaves the flag up for the next animation.
             bool released =
@@ -184,17 +179,24 @@ public sealed class SelfAnimationHoldTests
             .GetField(field, BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)!
             .SetValue(actor, value);
 
-    /// <summary>The Game1 statics <c>ReadFacts</c> reads, saved and restored around the probe (the suite convention).</summary>
+    /// <summary>
+    /// The Game1 statics <c>ReadFacts</c> reads, saved and restored around the probe (the suite convention) - including
+    /// the engine's warp flag, which another suite can leave raised and which would otherwise classify this body as held.
+    /// </summary>
     private static void RunWithGameState(Action action)
     {
-        System.Reflection.FieldInfo menuField = typeof(Game1).GetField(
+        FieldInfo menuField = typeof(Game1).GetField(
             "_activeClickableMenu",
-            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)!;        object? menuBefore = menuField.GetValue(null);
+            BindingFlags.NonPublic | BindingFlags.Static)!;
+        FieldInfo warpingField = typeof(Game1).GetField("_isWarping", BindingFlags.NonPublic | BindingFlags.Static)!;
+        object? menuBefore = menuField.GetValue(null);
+        object? warpingBefore = warpingField.GetValue(null);
         bool eventUpBefore = Game1.eventUp;
         int timeOfDayBefore = Game1.timeOfDay;
         try
         {
             menuField.SetValue(null, null);
+            warpingField.SetValue(null, false);
             Game1.eventUp = false;
             Game1.timeOfDay = 600;
             action();
@@ -202,99 +204,9 @@ public sealed class SelfAnimationHoldTests
         finally
         {
             menuField.SetValue(null, menuBefore);
+            warpingField.SetValue(null, warpingBefore);
             Game1.eventUp = eventUpBefore;
             Game1.timeOfDay = timeOfDayBefore;
         }
-    }
-
-    /// <summary>
-    /// The lines with their <c>//</c> comments removed, so a sentence ABOUT a write is never read as the write.
-    ///
-    /// This is not decoration: with the comment left in place, commenting <c>owner.CanMove = true;</c> out of
-    /// <c>doneWithAnimation</c> left this gate green, because the commented line still CONTAINS the text it looks for.
-    /// The engine writes no <c>/* */</c> block and no brace or <c>//</c> inside a string literal in either release, so
-    /// the bound is exact for them rather than approximate.
-    /// </summary>
-    private static IReadOnlyList<string> Code(IReadOnlyList<string> lines) =>
-        lines.Select(WithoutComment).ToList();
-
-    private static string WithoutComment(string line)
-    {
-        int at = line.IndexOf("//", StringComparison.Ordinal);
-        return at < 0 ? line : line[..at];
-    }
-
-    /// <summary>The body of the method declared by <paramref name="declaration"/>, or no lines when it is absent.</summary>
-    private static IReadOnlyList<string> MethodBody(string[] lines, string declaration)
-    {
-        int start = Array.FindIndex(lines, line => line.Contains(declaration, StringComparison.Ordinal));
-        return start < 0 ? Array.Empty<string>() : BraceBlock(lines, start);
-    }
-
-    /// <summary>
-    /// The body of the method that encloses <paramref name="index"/>: the nearest preceding declaration whose brace
-    /// block actually contains that line. Requiring containment is what keeps a site that lost its method - or moved
-    /// under a declaration this reader does not recognise - reported by name instead of silently attributed to the
-    /// method above it.
-    /// </summary>
-    private static IReadOnlyList<string> EnclosingMethod(string[] lines, int index)
-    {
-        for (int candidate = index; candidate >= 0; candidate--)
-        {
-            string text = lines[candidate].Trim();
-            if (!text.EndsWith(")", StringComparison.Ordinal))
-                continue;
-            if (!Declarations.Any(prefix => text.StartsWith(prefix, StringComparison.Ordinal)))
-                continue;
-            IReadOnlyList<string> body = BraceBlock(lines, candidate);
-            if (body.Count > index - candidate)
-                return body;
-        }
-
-        return Array.Empty<string>();
-    }
-
-    /// <summary>The access modifiers the decompiled methods are declared with, in this tree all on one line.</summary>
-    private static readonly string[] Declarations = { "public ", "private ", "protected ", "internal " };
-
-    /// <summary>From <paramref name="start"/> to the line closing its first brace block, inclusive.</summary>
-    private static IReadOnlyList<string> BraceBlock(string[] lines, int start)
-    {
-        var body = new List<string>();
-        int depth = 0;
-        bool opened = false;
-        for (int index = start; index < lines.Length; index++)
-        {
-            body.Add(lines[index]);
-            foreach (char character in lines[index])
-            {
-                if (character == '{')
-                {
-                    depth++;
-                    opened = true;
-                }
-                else if (character == '}')
-                {
-                    depth--;
-                }
-            }
-
-            if (opened && depth == 0)
-                return body;
-        }
-
-        return body;
-    }
-
-    private static string DecompiledRoot()
-    {
-        for (DirectoryInfo? directory = new(AppContext.BaseDirectory); directory is not null; directory = directory.Parent)
-        {
-            string candidate = Path.Combine(directory.FullName, DecompiledRelativeRoot);
-            if (Directory.Exists(candidate))
-                return candidate;
-        }
-
-        throw new DirectoryNotFoundException($"{DecompiledRelativeRoot} is not reachable from {AppContext.BaseDirectory}");
     }
 }
