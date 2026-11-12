@@ -26,7 +26,7 @@ if (mode === "holder") {
   try {
     await withTestArtifactLock(async () => {}, { lockPath });
   } catch (error) {
-    if (error?.message !== "host_test_artifact_already_in_use") throw error;
+    if (error?.message?.startsWith("host_test_artifact_already_in_use") !== true) throw error;
     process.exitCode = 0;
   }
 } else if (mode === "raced-contender") {

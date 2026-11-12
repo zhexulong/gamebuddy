@@ -12,6 +12,18 @@ function lockInUse(cause) {
   return new Error("host_test_artifact_already_in_use", { cause });
 }
 
+/**
+ * The refusal a contender sees when the record at `lockPath` is readable but its owner was not proven gone.
+ * The bare token could not be acted on: "another lane is building right now" (`owner_state=alive`) and
+ * "this owner exists but nothing can prove it gone" (`owner_state=unknown`) read identically, so a reader
+ * had to guess which of the two they were looking at - and a guessed diagnosis of "stranded lock" leads to
+ * deleting a file that a live owner is using. The path and the recorded pid are named so the reader can go
+ * and ask the owner the message is about.
+ */
+function lockInUseRefusal(lockPath, record, ownerState) {
+  return new Error(`host_test_artifact_already_in_use:${lockPath}:pid=${record.pid}:owner_state=${ownerState}`);
+}
+
 function lockMalformed(cause) {
   return new Error("host_test_artifact_lock_malformed", { cause });
 }
@@ -164,10 +176,17 @@ export async function cleanupTestArtifactLock(lockPath, expectedRecord, { rename
   return true;
 }
 
+/**
+ * Reclaims a lock only when the probe proves its recorded owner gone, and reports that probe's answer either
+ * way, because the answer is the difference between a refusal a reader can act on and one they must guess at.
+ * `vanished` is a lock that disappeared between reading its record and moving it aside: retried for the same
+ * reason a missing record is, not refused.
+ */
 async function reclaimDeadLock(lockPath, record, processProbe) {
-  const state = await processProbe(record);
-  if (state !== "dead") return false;
-  return await cleanupTestArtifactLock(lockPath, record, { processProbe });
+  const ownerState = await processProbe(record);
+  if (ownerState !== "dead") return { outcome: "kept", ownerState };
+  const reclaimed = await cleanupTestArtifactLock(lockPath, record, { processProbe });
+  return { outcome: reclaimed ? "reclaimed" : "vanished", ownerState };
 }
 
 /**
@@ -277,15 +296,17 @@ export async function withTestArtifactLock(run, {
         await unlinkFile(temporaryPath).catch(() => undefined);
         if (publishedAfterError) continue;
         let existing;
+        let ownerState;
         try {
           existing = await readTestArtifactLock(lockPath);
           if (existing === undefined) continue;
-          const reclaimed = await reclaimDeadLock(lockPath, existing, processProbe);
-          if (reclaimed) continue;
+          const reclaim = await reclaimDeadLock(lockPath, existing, processProbe);
+          ownerState = reclaim.ownerState;
+          if (reclaim.outcome !== "kept") continue;
         } catch (probeError) {
           throw lockInUse(probeError);
         }
-        throw lockInUse();
+        throw lockInUseRefusal(lockPath, existing, ownerState);
       }
     }
     return await run();
