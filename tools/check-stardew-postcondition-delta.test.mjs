@@ -272,6 +272,37 @@ test("the Host table is parsed per row, and a key named only in a comment does n
   assert.deepEqual(findings, []);
 });
 
+test("a predicate that names its key list as a module constant still resolves those keys", () => {
+  // The sweep's contract hands `SWEEP_SCYTHE_EVIDENCE_KEYS` to the shared reader instead of writing the array inline, and
+  // a reader that followed only the function body read ZERO keys - so a fully specified contract was reported as
+  // `postcondition_delta_absent`. The constant is resolved from the same file, and a name with no declaration still
+  // contributes nothing (the second half of this test), so the fix cannot turn an unreadable contract green.
+  const text = [
+    "export const STARDEW_COMPLETION_CONTRACTS = Object.freeze({",
+    "  sweep: (claim) => {",
+    "    return hasSweepCompletionEvidence(claim.detail);",
+    "  },",
+    '} satisfies Record<ExecutionRequest["action"], CompletionContract>);',
+    "const SWEEP_EVIDENCE_KEYS = Object.freeze([",
+    '  "target",',
+    '  "stamina_before",',
+    '  "stamina_after",',
+    "]);",
+    "function hasSweepCompletionEvidence(detail: string): boolean {",
+    "  return declaredCompletionEvidence(detail, SWEEP_EVIDENCE_KEYS, (evidence) => evidence);",
+    "}",
+  ].join("\n");
+  const resolved = readHostCompletionContracts(text);
+  assert.deepEqual(resolved.contracts.get("sweep").keys, ["stamina_after", "stamina_before", "target"]);
+  assert.deepEqual(hostContractReadings(resolved.contracts.get("sweep")).pairs, ["stamina"]);
+
+  // The DECLARATION renamed while the reference stays: the name the predicate hands over now has no declaration, so it
+  // contributes no key and the contract stays unreadable rather than silently agreeing.
+  const renamed = readHostCompletionContracts(text.replace("const SWEEP_EVIDENCE_KEYS", "const OTHER_EVIDENCE_KEYS"));
+  assert.deepEqual(renamed.contracts.get("sweep").keys, [], "an unresolvable constant contributes no key");
+  assert.deepEqual(hostContractReadings(renamed.contracts.get("sweep")).pairs, []);
+});
+
 test("a completion predicate nothing calls is a contract no execution path enforces", () => {
   const text = [
     "export const STARDEW_COMPLETION_CONTRACTS = Object.freeze({",

@@ -351,7 +351,19 @@ export function readHostCompletionContracts(text) {
       predicate = `has${named[1]}CompletionEvidence`;
       const body = functionBody(code, predicate);
       if (body === null) findings.push(`postcondition_delta_host_predicate_not_located:${actionId}:${predicate}`);
-      else collect(body);
+      else {
+        collect(body);
+        // A predicate that hands its key list to the shared reader as a MODULE CONSTANT
+        // (`declaredCompletionEvidence(detail, SWEEP_SCYTHE_EVIDENCE_KEYS, ...)`) names no array inline, so following
+        // the function alone read ZERO keys and reported a fully specified contract as `postcondition_delta_absent`.
+        // The constant is resolved from the same file, so the keys are still read out of source, one indirection
+        // further - exactly as the predicate itself is followed. A name with no such declaration contributes nothing
+        // and the action keeps its `absent` finding.
+        for (const reference of body.matchAll(/\b([A-Z][A-Z0-9_]+)\b/gu)) {
+          const keys = constantArrayBody(code, reference[1]);
+          if (keys !== null) collect(keys);
+        }
+      }
     }
     contracts.set(actionId, { actionId, predicate, keys: [...keys].sort() });
   }
@@ -374,6 +386,15 @@ const HOST_CONTRACT_ENTRY_POINTS = new Set(["hasStardewCompletionEvidence"]);
 /** The completion table's own delimiters, so the row population is read from the declaration, not from a list here. */
 const COMPLETION_TABLE_OPEN = "export const STARDEW_COMPLETION_CONTRACTS = Object.freeze({";
 const COMPLETION_TABLE_CLOSE = "\n} satisfies Record<";
+
+/** The body of a module-level `const NAME = Object.freeze([...])` key list, or null. */
+function constantArrayBody(text, name) {
+  const at = text.indexOf(`const ${name} = Object.freeze([`);
+  if (at < 0) return null;
+  const open = text.indexOf("[", at);
+  const end = matchingBracket(text, open);
+  return end < 0 ? null : text.slice(open, end + 1);
+}
 
 /** Line-leading `//` comments and `/* ... *\/` blocks removed; a key named only in prose is not a key. */
 function stripLineComments(text) {
