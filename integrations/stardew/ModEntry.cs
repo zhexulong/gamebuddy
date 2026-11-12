@@ -1329,30 +1329,29 @@ public sealed partial class ModEntry : Mod
         // excluding from the timeline.
         ModTrace.NoteTickGatePassed();
         this.LogStageOnce("capability_publication");
-        this.LogStageOnce("capability_publication");
         this.RefreshFarmhandCapabilityPublication(nativeLocalState, e.Ticks);
-        this.LogStageOnce("capability_publication_done", force: true);
+        this.LogStageOnce("capability_publication_done");
             this.LogStageOnce("observe_bridge_generation");
         this.ObserveBridgeGeneration(nativeLocalState);
-        this.LogStageOnce("observe_bridge_generation_done", force: true);
+        this.LogStageOnce("observe_bridge_generation_done");
             this.LogStageOnce("observe_chat_pipe");
         this.ObserveNativeChatPipeDeliveries(nativeLocalState);
-        this.LogStageOnce("observe_chat_pipe_done", force: true);
+        this.LogStageOnce("observe_chat_pipe_done");
             this.LogStageOnce("observe_navigation_pipe");
         this.ObserveNavigationPipeDeliveries(nativeLocalState);
-        this.LogStageOnce("observe_navigation_pipe_done", force: true);
+        this.LogStageOnce("observe_navigation_pipe_done");
             this.LogStageOnce("observe_execution_responses");
         this.ObserveExecutionResponsePipeDeliveries(nativeLocalState);
-        this.LogStageOnce("observe_execution_responses_done", force: true);
+        this.LogStageOnce("observe_execution_responses_done");
         this.LogStageOnce("observe_terminal_receipts");
             this.ObserveTerminalReceiptDeliveries(nativeLocalState);
-        this.LogStageOnce("observe_terminal_receipts_done", force: true);
+        this.LogStageOnce("observe_terminal_receipts_done");
             Volatile.Write(ref this.tickWatchdogPhase, "pipe_drain");
             this.LogStageOnce("bridge_drain");
         this.DrainLocalPipeBridge(nativeLocalState);
-        this.LogStageOnce("bridge_drain_done", force: true);
+        this.LogStageOnce("bridge_drain_done");
             this.LogNativeLocalPipelineHeartbeat();
-            this.LogStageOnce("executions_update", force: nativeLocalState.Executions?.IsBodyBusy == true);
+            this.LogStageOnce("executions_update");
             nativeLocalState.Executions?.Update();
             this.DeliverHeldExecutionResponses(nativeLocalState);
             this.LogStageOnce("executions_update_done");
@@ -1363,7 +1362,7 @@ public sealed partial class ModEntry : Mod
             // program stays pending on this fixture topology.
             // The program pump is the other half that runs on this lane, and one freeze followed a program submission:
         // its own markers make the difference visible.
-        this.LogStageOnce("program_pump", force: nativeLocalState.BodyProgramController is not null);
+        this.LogStageOnce("program_pump");
         nativeLocalState.BodyProgramController?.Update();
         this.LogStageOnce("program_pump_done");
             // Every Mod-side step of this lane now prints its own marker, so the LAST line of a frozen log names either the

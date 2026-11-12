@@ -120,43 +120,51 @@ public sealed partial class ModEntry : Mod
     }
 
     /// <summary>
-    /// Name the stage the tick is about to enter, and prove it was REACHED, on the last line the log keeps.
+    /// Samples the stage this tick has reached: the first sighting of every distinct stage, and afterwards at most ONE
+    /// line per <see cref="StageLogWindowMs"/> for the whole sequence.
     ///
-    /// The heartbeat alone cannot answer "where did it freeze": it is printed between the pipe drain and the
-    /// executions update, so its phase is always `pipe_drain` whatever happens afterwards. Measured 2026-10-18 (g46):
-    /// the run froze right after a navigation execution was queued, the last heartbeat read `phase=pipe_drain`, and
-    /// that says nothing about whether the tick died in the drain or in the body controller's update. Two markers per
-    /// tick - one on each side of the dangerous stage - make the last line decisive.
+    /// What a reader needs from this line is which stage the lane entered, that the lane is still moving, and whether
+    /// the line is a transition or a repeat - hence the tick and <c>gap</c>, the ticks since the previous stage line.
+    /// What it must not be is one line per stage per tick: measured 2026-11-12, one multiday run wrote 8 991 lines from
+    /// this family alone, and twice a diagnosis read the newest <c>capability_publication_done</c> as the run's "last
+    /// line" when nothing about the stages had changed. That line was the previous tick, not a boundary.
     ///
-    /// Throttled like the heartbeat (2 s), so a log is never flooded, and it never changes authority.
+    /// Every call site obeys the one law, because a per-tick bypass is the same defect wherever it is granted: the
+    /// in-flight markers used to be forced so the last line of a frozen log named the step immediately before the hung
+    /// engine call, and that property now lives in <see cref="recentStageSequence"/>, which the stall watchdog writes to
+    /// the log AND to <c>ErrorLogs/gamebuddy-stalled-ticks.txt</c> even when the logger itself is blocked - which is
+    /// exactly the freeze where a log line could never have been read.
     /// </summary>
-    private void LogStageOnce(string phase, bool force = false)
+    /// <returns>The line this sample should print, or null when the sample is not due.</returns>
+    internal string? StageLogLine(string phase, long nowUnixMs, long tick)
     {
         this.MarkTickPhase(phase);
-        long now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-        // The SEQUENCE is recorded BEFORE the throttle. The ring exists so a frozen tick can say which steps it entered,
-        // and with the write placed after the throttle only the first step of each 250 ms window was ever recorded - so
-        // the watchdog reported `capability_publication_done` while the hang was in one of the six steps after it
-        // (measured 2026-10-19). This is a memory write with no I/O, so recording every step costs nothing; the log LINE
-        // below stays throttled.
+        // The SEQUENCE is recorded BEFORE the throttle, and it is what lets the throttle be this coarse: a stalled tick
+        // reports the steps it entered, so no single log line has to name the step that hung. Recorded on 2026-10-19
+        // (g67gate): the log ended at `capability_publication_done` while the hang was in one of the six steps after it,
+        // none of which had printed. This is a memory write with no I/O, so recording every step costs nothing.
         this.recentStageSequence[this.recentStageCursor++ % this.recentStageSequence.Length] = phase;
-        // Throttled, EXCEPT when the caller says this line has to be there: an execution in flight is exactly the
-        // case where the last line of a frozen log must be the marker immediately before the engine call that hung,
-        // not a stale heartbeat. Four runs froze with `phase=pipe_drain` as their final word because of that throttle.
-        // Forced lines bypass the 2 s throttle but not a FLOOR of their own: without it a forced marker prints once
-        // per step per TICK, which is up to dozens of synchronous log writes a second - measured 2026-10-19: 51 668
-        // stage lines against 55 heartbeats, i.e. the instrument was writing far more than the thing it observes, and
-        // synchronous SMAPI writes at that rate can themselves cost frames in the very window being diagnosed. The floor
-        // keeps the property that matters (the last line of a frozen log names the step) while making the volume
-        // proportionate.
-        long floorMs = force ? 250L : 2_000L;
-        if (now - this.nativeLocalPlayerFixtureLastStageUnixMs < floorMs)
+        // The first sighting of a stage is always printed, so the lane's whole vocabulary is in every log even though
+        // the steady state keeps only a sample of it.
+        bool firstSighting = this.loggedStagePhases.Add(phase);
+        if (!firstSighting && nowUnixMs - this.nativeLocalPlayerFixtureLastStageUnixMs < StageLogWindowMs)
+            return null;
+        this.nativeLocalPlayerFixtureLastStageUnixMs = nowUnixMs;
+        long gap = tick - this.nativeLocalPlayerFixtureLastStageTick;
+        this.nativeLocalPlayerFixtureLastStageTick = tick;
+        return $"[DEBUG-native-local-stage] stage={phase};tick={tick};gap={gap}";
+    }
+
+    private void LogStageOnce(string phase)
+    {
+        string? line = this.StageLogLine(
+            phase,
+            DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+            Interlocked.Read(ref this.tickWatchdogTick));
+        if (line is null)
             return;
-        this.nativeLocalPlayerFixtureLastStageUnixMs = now;
-        this.Monitor.Log(
-            $"[DEBUG-native-local-stage] stage={phase};tick={Interlocked.Read(ref this.tickWatchdogTick)}",
-            // Info, not Trace: the liveness meter reads the lane's console capture, and Trace never reaches it.
-            LogLevel.Info);
+        // Info, not Trace: the liveness meter reads the lane's console capture, and Trace never reaches it.
+        this.Monitor.Log(line, LogLevel.Info);
     }
 
     /// <summary>
@@ -187,7 +195,14 @@ public sealed partial class ModEntry : Mod
     private bool sleepModalProbeRejected;
     private PathPredicateProbe? pathPredicateProbe;
 
+    /// <summary>The longest a stage line may take to appear again, in milliseconds: one sample per window, per lane.</summary>
+    private const long StageLogWindowMs = 2_000L;
+
     private long nativeLocalPlayerFixtureLastStageUnixMs;
+    /// <summary>The tick the previous stage line reported, so the next one can say how many ticks it skipped.</summary>
+    private long nativeLocalPlayerFixtureLastStageTick;
+    /// <summary>Stages already printed once this session; their first line is never throttled away.</summary>
+    private readonly HashSet<string> loggedStagePhases = new(StringComparer.Ordinal);
     private long nativeLocalPlayerFixtureLastReadinessLogUnixMs;
     /// <summary>The deepest stack this run has sampled, and whether it has already been reported.</summary>
     private int nativeLocalStackFrames;
