@@ -24,6 +24,7 @@
 // says plainly that the native dialog is out of its reach. 确认 registers an installation into this run's
 // durable state, which the task scopes this driver out of; it too is read, not clicked.
 const { connect, reporter, PAGE_HELPERS, activateSurface, shot, observe, observationStart } = require("./common.cjs");
+const { reconciliationVerdict } = require("./reconciliation-verdict.mjs");
 
 const WIDTHS = [
   { w: 1440, h: 900, tag: "1440x900" },
@@ -447,7 +448,7 @@ const scrollPanelIntoView = () => {
     );
   }
 
-  say(`RECONCILIATION: ${checks} assertion(s), ${failed} failed`);
+  say(reconciliationVerdict({ assertions: checks, failures: failed }));
   say(`observed data-states: ${JSON.stringify([...observed].sort())}`);
   await observe(page, say, "t", { sinceMs: observationFrom });
   flush();

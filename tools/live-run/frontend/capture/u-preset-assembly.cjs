@@ -43,6 +43,7 @@ const {
   observationStart,
   REPO_ROOT,
 } = require("./common.cjs");
+const { reconciliationVerdict } = require("./reconciliation-verdict.mjs");
 
 const WIDTHS = [
   { w: 1440, h: 900, tag: "1440x900" },
@@ -508,7 +509,7 @@ function documentSide(document, relativePath, tracked) {
       "this driver can read that a marker has no content source but not which caller decided it",
   );
 
-  say(`RECONCILIATION: ${checks} assertion(s), ${failed} failed, ${unobserved} unobserved`);
+  say(reconciliationVerdict({ assertions: checks, failures: failed, unobserved }));
   await observe(page, say, "u", { sinceMs: observationFrom });
   flush();
   await browser.close().catch(() => undefined);
