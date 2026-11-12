@@ -4,6 +4,7 @@ import test from "node:test";
 import { DEFAULT_ACTION_POLICY } from "./action-registry.js";
 import { createStardewActionTools, createStardewObservationTools, type MoveCapableIntegration } from "./game-tools.js";
 import type { ExecutionReceipt, ExecutionRequest, Scope } from "./protocol.js";
+import { EXECUTION_REQUEST_ARGUMENT_RULES } from "./protocol.js";
 import { STARDEW_GAME_INTEGRATION_ADAPTER } from "./stardew-game-integration-adapter.js";
 import { TEST_MOD_REGISTRATIONS } from "./stardew-test-fixtures.js";
 
@@ -344,13 +345,29 @@ test("every published Mod registration is mounted, and the catalog lists exactly
   assert.deepEqual(await catalogActionIds(integration), publishedActionIds);
 });
 
+/**
+ * The exact argument names the dispatch validator pins for one action.
+ *
+ * `EXECUTION_REQUEST_ARGUMENT_RULES` is the layer whose key-set row refuses a dispatch, and `protocol-catalog-agreement.test.ts`
+ * holds it equal to the Mod's published `argumentSchema`, so a fixture checked here is checked against the declaration the
+ * refusal itself reads.
+ */
+function wireArgumentNames(actionId: ExecutionRequest["action"]): readonly string[] {
+  const declared = EXECUTION_REQUEST_ARGUMENT_RULES[actionId].find(
+    (row) => row.argumentNames !== undefined,
+  )?.argumentNames;
+  if (declared === undefined) throw new Error(`${actionId} declares no exact argument set on the wire`);
+  return declared;
+}
+
 test("every materialized published Farmhand tool routes its exact action-specific fixture through executeAction", async () => {
   const fixtures: Readonly<Record<string, Readonly<Record<string, unknown>>>> = {
     move_to_tile: { x: 11, y: 12 },
     equip_tool: { tool: "axe" },
     travel: { x: 13, y: 14 },
     enter_exit: { x: 15, y: 16 },
-    till_soil: { x: 17, y: 18 },
+    // The wire pins the hoe as `{x, y, charge}`: no target id, and the protocol has no optional argument.
+    till_soil: { x: 17, y: 18, charge: 2 },
     pickup_forage: {
       x: 19,
       y: 20,
@@ -369,7 +386,7 @@ test("every materialized published Farmhand tool routes its exact action-specifi
       y: 24,
       expectedTargetId: "water_source_01",
     },
-    water_crop: { x: 25, y: 26, expectedTargetId: "crop_target_01" },
+    water_crop: { x: 25, y: 26, expectedTargetId: "crop_target_01", charge: 1 },
     plant_seed: {
       slot: 3,
       x: 27,
@@ -484,6 +501,16 @@ test("every materialized published Farmhand tool routes its exact action-specifi
   const expectedToolNames = TEST_MOD_REGISTRATIONS.map((entry) => `stardew_${entry.actionId}`).sort();
 
   assert.deepEqual(Object.keys(fixtures).sort(), TEST_MOD_REGISTRATIONS.map((entry) => entry.actionId).sort());
+  // The fixture IS the wire payload, so its key set has to be the action's own. An argument set spelled by hand beside
+  // the declaration that owns it drifts the moment an argument is added: `till_soil` and `water_crop` gained `charge`,
+  // and both fixtures here still dispatched the old set, which the adapter refused `invalid_args` before `execute` - so
+  // the loop below read the PREVIOUS action's request and reported a tool that routed nothing.
+  for (const [actionId, args] of Object.entries(fixtures))
+    assert.deepEqual(
+      Object.keys(args).sort(),
+      [...wireArgumentNames(actionId as ExecutionRequest["action"])].sort(),
+      `the ${actionId} fixture must be exactly the action's own wire argument set`,
+    );
   assert.deepEqual(
     [...tools.keys()].sort(),
     [...CONSTANT_MOUNTED_TOOL_NAMES].sort(),
