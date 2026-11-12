@@ -75,27 +75,84 @@ export function watchSurface(page: Page): SurfaceNoise {
   return { consoleErrors, pageErrors, serverErrors };
 }
 
+/** One rule the engine fired, named the way a report has to name it: `id`, `impact`, selectors. */
+export type AccessibilityFinding = Readonly<{
+  id: string;
+  impact: string | null;
+  /** The selectors the rule fired on, so a failure names the offending element. */
+  targets: readonly string[];
+}>;
+
+/**
+ * Everything the standard engine said about the page, in the rule set the baseline judges.
+ *
+ * The caller gets the whole reading - the rules that fired, the rules the engine could not settle,
+ * and how many passed - rather than a filtered verdict, because a caller that reports what it
+ * examined must not print a bare `0` it got from a filter it cannot see. `assertAccessibilityBaseline`
+ * is the one place that decides what actually blocks.
+ */
+export type AccessibilityObservation = Readonly<{
+  /** Fired rules at every impact. The blocking ones are decided by the baseline, not here. */
+  violations: readonly AccessibilityFinding[];
+  /** Rules axe could not decide (a colour it cannot resolve, an image it cannot read). Not a pass. */
+  incomplete: readonly AccessibilityFinding[];
+  /** Rules that passed, so a log can say how much was examined. */
+  passedRules: number;
+}>;
+
+/** The baseline's rule set: WCAG 2.0 and 2.1, level A and AA. */
+const BASELINE_TAGS = ["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"] as const;
+
+/** The shape of one axe `Result` field this module reads (`violations`, `incomplete`, `passes`). */
+type AxeRule = Readonly<{
+  id: string;
+  impact?: string | null;
+  nodes: readonly Readonly<{ target: readonly (string | readonly string[])[] }>[];
+}>;
+
+const targetsOf = (rules: readonly AxeRule[]): readonly AccessibilityFinding[] =>
+  rules.map((rule) => ({
+    id: rule.id,
+    impact: rule.impact ?? null,
+    targets: rule.nodes.map((node) => node.target.join(" ")),
+  }));
+
+/** Judge the page as it currently stands, without deciding what blocks: the reading, not the verdict. */
+export async function readAccessibility(page: Page): Promise<AccessibilityObservation> {
+  const result = await new AxeBuilder({ page }).withTags([...BASELINE_TAGS]).analyze();
+  return {
+    violations: targetsOf(result.violations),
+    incomplete: targetsOf(result.incomplete),
+    passedRules: result.passes.length,
+  };
+}
+
 /**
  * Obligation: no serious or critical accessibility violation on a rendered
  * surface, judged by the standard engine rather than by hand-rolled heuristics.
+ *
+ * Returns the whole observation so a caller judging several renderings of one surface can print
+ * what was examined in each, including the violations this baseline does not block on.
  */
-export async function assertAccessibilityBaseline(page: Page, surface: string): Promise<void> {
+export async function assertAccessibilityBaseline(
+  page: Page,
+  surface: string,
+): Promise<AccessibilityObservation> {
   executedObligations.add("frontend-accessibility-baseline");
-  const result = await new AxeBuilder({ page })
-    .withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"])
-    .analyze();
-  const blocking = result.violations.filter(
+  const observation = await readAccessibility(page);
+  const blocking = observation.violations.filter(
     (violation) => violation.impact === "serious" || violation.impact === "critical",
   );
   assert.deepEqual(
     blocking.map((violation) => ({
       id: violation.id,
       impact: violation.impact,
-      nodes: violation.nodes.slice(0, 3).map((node) => node.target.join(" ")),
+      nodes: violation.targets.slice(0, 3),
     })),
     [],
     `the ${surface} surface has no serious/critical accessibility violation`,
   );
+  return observation;
 }
 
 /**
