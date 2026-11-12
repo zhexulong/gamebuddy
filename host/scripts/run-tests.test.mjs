@@ -5,9 +5,14 @@ import { join, resolve } from "node:path";
 import { pathToFileURL, fileURLToPath } from "node:url";
 import test from "node:test";
 import {
+  BATCH_FAILURE_KINDS,
+  FAILURE_DETAIL_FILES_PER_BATCH,
+  FAILURE_DETAIL_LINE_BUDGET,
+  batchFailureKind,
   chunkTestFiles,
   discoverTestFiles,
   exclusiveGroupsFor,
+  firstFailingTest,
   isEnvironmentalFailure,
   machineDefaultConcurrency,
   outputSilenceThresholdMs,
@@ -310,6 +315,287 @@ test("names a child that never printed as no_output rather than as one that went
     ),
     lines.join("\n"),
   );
+});
+
+/**
+ * One failing test exactly as Node's spec reporter wrote it in the 2026-11-12 run - the ✔/✖ lines as they
+ * happened, then the diagnosis in a `✖ failing tests:` section at the END. The batch's own line shows the first
+ * 600 characters of a child's output, which is the part before the section: that run reported 21 failing
+ * batches with a file name, a test name and an exit code, and no assertion, no expected/actual and no location.
+ *
+ * The paths are built here rather than pasted, so the fixture carries no machine's absolute path.
+ */
+const reportedFile = resolve(import.meta.dirname, "../dist-test/player-preference.test.js");
+const reportedOutput = [
+  "✔ a stale expectedRevision is rejected across BOTH settings surfaces (604.1712ms)",
+  "ℹ tests 2",
+  "ℹ fail 1",
+  "",
+  "✖ failing tests:",
+  "",
+  "test at dist-test\\player-preference.test.js:183:1",
+  "✖ both settings surfaces read and write ONE record under ONE revision (52.3892ms)",
+  "  AssertionError [ERR_ASSERTION]: Expected values to be strictly deep-equal:",
+  "  + actual - expected",
+  "  ",
+  "    {",
+  "      revision: 0,",
+  "  -   paced: false,",
+  "    }",
+  "  ",
+  `      at ${pathToFileURL(reportedFile).href}:192:16`,
+  "      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)",
+  `      at async TestContext.<anonymous> (${pathToFileURL(resolve(import.meta.dirname, "../dist-test/other.test.js")).href}:184:5) {`,
+  "    generatedMessage: true,",
+  "    code: 'ERR_ASSERTION',",
+  "    actual: { revision: 0 },",
+  "    expected: { revision: 0, paced: false },",
+  "    operator: 'deepStrictEqual',",
+  "    diff: 'simple'",
+  "  }",
+].join("\n");
+
+/** The expected/actual/operator block of a report carrying a forty-line diff, for the line budget. */
+const wideDiffReport = reportedOutput.replace(
+  "  -   paced: false,",
+  Array.from({ length: 40 }, (_, index) => `  ${index % 2 === 0 ? "+" : "-"}   row${index}: ${index},`).join("\n"),
+);
+
+test("reads the failing assertion out of the child's own report", () => {
+  const detail = firstFailingTest(reportedOutput);
+  assert.ok(detail, "the section at the end of the report must be read");
+  assert.equal(detail.name, "both settings surfaces read and write ONE record under ONE revision");
+  assert.equal(detail.message, "AssertionError [ERR_ASSERTION]: Expected values to be strictly deep-equal:");
+  assert.deepEqual(detail.properties, {
+    expected: "{ revision: 0, paced: false }",
+    actual: "{ revision: 0 }",
+    operator: "'deepStrictEqual'",
+  });
+  // The first frame of the child's own code, not the second one and not a Node internal.
+  assert.equal(detail.at, "dist-test/player-preference.test.js:192:16");
+  assert.deepEqual(detail.diff, ["  -   paced: false,"]);
+});
+
+/** A test that threw rather than asserted has no expected/actual; its message and location still read. */
+test("reads a test that threw rather than asserted", () => {
+  const thrown = [
+    "✖ failing tests:",
+    "",
+    "test at dist-test\\boom.test.js:8:1",
+    "✖ plain throw (0.1337ms)",
+    "  Error: boom from the product",
+    `      at ${pathToFileURL(reportedFile).href}:9:9`,
+    "      at Test.run (node:internal/test_runner/test:1402:25)",
+  ].join("\n");
+  const detail = firstFailingTest(thrown);
+  assert.ok(detail, "a thrown error is still a failing test");
+  assert.equal(detail.name, "plain throw");
+  assert.equal(detail.message, "Error: boom from the product");
+  assert.deepEqual(detail.properties, {});
+  assert.deepEqual(detail.diff, []);
+  assert.equal(detail.at, "dist-test/player-preference.test.js:9:9");
+});
+
+/** The three kinds, declared once: a child that never spoke is not a test that failed, and neither is silence
+ * this runner merely failed to read. */
+test("tells the three failure kinds apart", () => {
+  assert.deepEqual(BATCH_FAILURE_KINDS, ["assertions", "no_output", "unparsed"]);
+  assert.equal(batchFailureKind({ sawOutput: false }, undefined), "no_output");
+  assert.equal(batchFailureKind({ sawOutput: true }, undefined), "unparsed");
+  assert.equal(batchFailureKind({ sawOutput: true }, { name: "a test" }), "assertions");
+  assert.equal(firstFailingTest(""), undefined);
+  // A module error is a child that spoke and still failed, with no failing test to point at.
+  assert.equal(firstFailingTest("Error [ERR_MODULE_NOT_FOUND]: Cannot find module 'x'\n"), undefined);
+});
+
+/**
+ * The instrument every other diagnosis depends on: the batch names the failing test AND the assertion, so a
+ * failing file does not have to be re-run by hand to find out what it asserted.
+ */
+test("prints the first failing assertion of a failing file, not only its name", async () => {
+  const lines = [];
+  const originalError = console.error;
+  console.error = (line) => lines.push(line);
+  try {
+    await assert.rejects(
+      runTestBatches([reportedFile], {
+        suite: "fixture",
+        timeoutMs: 10_000,
+        retryEnvironmental: false,
+        now: () => 0,
+        run: async (_batch, options) => {
+          options.onOutput({ stream: "stdout" });
+          throw new Error(`test_runner_failed:code=1:signal=none\n${reportedOutput}`);
+        },
+      }),
+      /test_runner_failed:code=1:signal=none/u,
+    );
+  } finally {
+    console.error = originalError;
+  }
+  assert.ok(
+    lines.includes(
+      "host_test_suite_batch_failed:suite=fixture:batch=1/1:files=dist-test/player-preference.test.js:batch_failure_kind=assertions:keeping_going=true",
+    ),
+    lines.join("\n"),
+  );
+  assert.ok(
+    lines.some((line) => line.startsWith("host_test_suite_batch_failure:file=dist-test/player-preference.test.js:kind=assertions\n")),
+    lines.join("\n"),
+  );
+  const header = lines.findIndex((line) => line.startsWith("host_test_suite_failure_detail:"));
+  assert.equal(
+    lines[header],
+    "host_test_suite_failure_detail:file=dist-test/player-preference.test.js:test=both settings surfaces read and write ONE record under ONE revision:message=AssertionError [ERR_ASSERTION]: Expected values to be strictly deep-equal:",
+    lines.join("\n"),
+  );
+  assert.deepEqual(lines.slice(header + 1, header + 7), [
+    "  expected: { revision: 0, paced: false }",
+    "  actual: { revision: 0 }",
+    "  operator: 'deepStrictEqual'",
+    "  diff:",
+    "  -   paced: false,",
+    "  at: dist-test/player-preference.test.js:192:16",
+  ]);
+});
+
+/** A batch whose child never spoke says `no_output`, which is the reading `child_alive_after_output` already
+ * publishes for that child - and it prints no assertion detail, because there is none. */
+test("names a silent child as no_output in the batch summary too", async () => {
+  const lines = [];
+  const originalError = console.error;
+  console.error = (line) => lines.push(line);
+  try {
+    await assert.rejects(
+      runTestBatches([staleFile], {
+        suite: "fixture",
+        timeoutMs: 10_000,
+        retryEnvironmental: false,
+        now: () => 0,
+        run: async () => {
+          throw new Error("test_runner_failed:code=1:signal=none\n");
+        },
+      }),
+      /test_runner_failed:code=1:signal=none/u,
+    );
+  } finally {
+    console.error = originalError;
+  }
+  assert.ok(
+    lines.includes(
+      "host_test_suite_batch_failed:suite=fixture:batch=1/1:files=dist-test/slow.test.js:batch_failure_kind=no_output:keeping_going=true",
+    ),
+    lines.join("\n"),
+  );
+  assert.ok(
+    lines.some((line) => line.startsWith("host_test_suite_batch_failure:file=dist-test/slow.test.js:kind=no_output\n")),
+    lines.join("\n"),
+  );
+  assert.deepEqual(
+    lines.filter((line) => line.startsWith("host_test_suite_failure_detail:")),
+    [],
+    "a child that never spoke has no assertion to print",
+  );
+});
+
+/** A child that spoke without failing a test is neither of those: it says so instead of being read as one. */
+test("names a child that spoke without a failing test as unparsed", async () => {
+  const lines = [];
+  const originalError = console.error;
+  console.error = (line) => lines.push(line);
+  try {
+    await assert.rejects(
+      runTestBatches([brokenFile], {
+        suite: "fixture",
+        timeoutMs: 10_000,
+        retryEnvironmental: false,
+        now: () => 0,
+        run: async (_batch, options) => {
+          options.onOutput({ stream: "stderr" });
+          throw new Error("test_runner_failed:code=1:signal=none\nError [ERR_MODULE_NOT_FOUND]: Cannot find module 'x'\n");
+        },
+      }),
+      /test_runner_failed:code=1:signal=none/u,
+    );
+  } finally {
+    console.error = originalError;
+  }
+  assert.ok(
+    lines.includes(
+      "host_test_suite_batch_failed:suite=fixture:batch=1/1:files=dist-test/broken.test.js:batch_failure_kind=unparsed:keeping_going=true",
+    ),
+    lines.join("\n"),
+  );
+  assert.deepEqual(
+    lines.filter((line) => line.startsWith("host_test_suite_failure_detail:")),
+    [],
+  );
+});
+
+/** A batch where every file failed must still fit on one screen: three details, the rest named by path. */
+test("details at most three files of one batch and names the rest", async () => {
+  const paths = ["a", "b", "c", "d", "e"].map((name) => resolve(import.meta.dirname, `../dist-test/${name}.test.js`));
+  const lines = [];
+  const originalError = console.error;
+  console.error = (line) => lines.push(line);
+  try {
+    await assert.rejects(
+      runTestBatches(paths, {
+        suite: "fixture",
+        batchSize: 5,
+        timeoutMs: 10_000,
+        retryEnvironmental: false,
+        now: () => 0,
+        run: async (_batch, options) => {
+          options.onOutput({ stream: "stdout" });
+          throw new Error(`test_runner_failed:code=1:signal=none\n${reportedOutput}`);
+        },
+      }),
+      /test_suite_failed:5 file\(s\)/u,
+    );
+  } finally {
+    console.error = originalError;
+  }
+  const details = lines.filter((line) => line.startsWith("host_test_suite_failure_detail:"));
+  assert.equal(details.length, FAILURE_DETAIL_FILES_PER_BATCH);
+  assert.ok(
+    lines.includes(
+      "host_test_suite_failure_detail_omitted:suite=fixture:batch=1/1:files=dist-test/d.test.js,dist-test/e.test.js · and 2 more files in this batch, run them individually for detail",
+    ),
+    lines.join("\n"),
+  );
+});
+
+/** The block is bounded, and the bound does not cost the location: a forty-line diff is cut, the frame is kept. */
+test("bounds a detail block to its line budget", async () => {
+  const lines = [];
+  const originalError = console.error;
+  console.error = (line) => lines.push(line);
+  try {
+    await assert.rejects(
+      runTestBatches([reportedFile], {
+        suite: "fixture",
+        timeoutMs: 10_000,
+        retryEnvironmental: false,
+        now: () => 0,
+        run: async (_batch, options) => {
+          options.onOutput({ stream: "stdout" });
+          throw new Error(`test_runner_failed:code=1:signal=none\n${wideDiffReport}`);
+        },
+      }),
+      /test_runner_failed/u,
+    );
+  } finally {
+    console.error = originalError;
+  }
+  const start = lines.findIndex((line) => line.startsWith("host_test_suite_failure_detail:"));
+  assert.ok(start >= 0, lines.join("\n"));
+  const end = lines.findIndex((line, index) => index > start && !line.startsWith("  "));
+  const block = lines.slice(start, end < 0 ? undefined : end);
+  assert.ok(block.length <= FAILURE_DETAIL_LINE_BUDGET, block.join("\n"));
+  assert.ok(block.some((line) => line.startsWith("  at: ")), "the location survives the bound");
+  assert.ok(block.some((line) => line.startsWith("  +") || line.startsWith("  -")), "the diff survives the bound");
+  assert.ok(!block.includes("  +   row38: 38,"), "the tail of a long diff is cut");
 });
 
 /**

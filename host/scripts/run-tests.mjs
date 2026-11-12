@@ -301,7 +301,7 @@ export function chunkTestFiles(paths, batchSize = DEFAULT_TEST_BATCH_SIZE) {
      * file and the budget - and with the killed child's captured output kept. One spelling for both
      * the first attempt and the retry: a second budget kill must still read the same way.
      */
-    const describeRunFailure = (path, message, budgetMs, childOutput, moment) =>
+    const describeRunFailure = (path, message, budgetMs, output, moment) =>
       message.startsWith("test_supervisor_timeout:")
         ? runnerError(
             "test_file_timeout",
@@ -309,7 +309,7 @@ export function chunkTestFiles(paths, batchSize = DEFAULT_TEST_BATCH_SIZE) {
             // child's silence. The timer says the runner still supervises, never that the child is working - the
             // measured leak reported a heartbeat 5 s old beside output 35 s old, and the first number alone read
             // as a slow file.
-            `${relativePath(path)}:budget_ms=${budgetMs}:since_heartbeat_ms=${moment?.sinceHeartbeatMs ?? "unknown"}:idle_ms=${moment?.idleMs ?? "unknown"}${childOutput}`,
+            `${relativePath(path)}:budget_ms=${budgetMs}:since_heartbeat_ms=${moment?.sinceHeartbeatMs ?? "unknown"}:idle_ms=${moment?.idleMs ?? "unknown"}${output === "" ? "" : `\n${output}`}`,
           )
         : new Error(message);
     const failures = new Array(batch.length);
@@ -366,7 +366,10 @@ export function chunkTestFiles(paths, batchSize = DEFAULT_TEST_BATCH_SIZE) {
         // A deadline kill always says why the child was still alive, whether or not the threshold had tripped: the
         // kill with no reason is what let a passed file be read as a slow one for a third of a suite's overshoot.
         if (message.startsWith("test_supervisor_timeout:") && !silence.named) nameSilence(moment);
-        return { ok: false, message, moment };
+        // `sawOutput` travels with the failure: it is the reading `child_alive_after_output:kind=` publishes, and
+        // the batch summary's `no_output` kind is derived from this same field rather than from a second opinion
+        // about the child's text.
+        return { ok: false, message, moment, sawOutput: silence.sawOutput };
       }
       // Only a COMPLETED file contributes to the baseline the threshold is measured against: a killed file's silence
       // is the defect being measured, and letting it raise the threshold would teach the runner to ignore the next one.
@@ -378,7 +381,9 @@ export function chunkTestFiles(paths, batchSize = DEFAULT_TEST_BATCH_SIZE) {
     const path = batch[index];
     const fileRemainingMs = deadlineMs - now();
     if (fileRemainingMs < 100) {
-        failures[index] = { path, error: runnerError("test_suite_timeout", suite) };
+        // A file the suite deadline stopped from starting produced no output itself, and says so in the same
+        // fields a run file does, so the batch summary never has to guess.
+        failures[index] = { path, error: runnerError("test_suite_timeout", suite), output: "", sawOutput: false };
         stopped = true;
         return;
     }
@@ -397,11 +402,13 @@ export function chunkTestFiles(paths, batchSize = DEFAULT_TEST_BATCH_SIZE) {
     // and the budget is not even what ended it (`budgetMs === perFileMs` only says the per-file
     // bound was the smaller of the two). Relabelling must not discard what the killed child had
     // produced: the supervisor's own message carries its bounded output after the first newline.
-    const childOutput = attempt.message.includes("\n") ? attempt.message.slice(attempt.message.indexOf("\n")) : "";
+    const output = childOutput(attempt.message);
     failures[index] = {
       path,
       budgetMs,
-      error: describeRunFailure(path, attempt.message, budgetMs, childOutput, attempt.moment),
+      output,
+      sawOutput: attempt.sawOutput,
+      error: describeRunFailure(path, attempt.message, budgetMs, output, attempt.moment),
     };
     // A batch stops at its first failure unless the caller asked to see everything. The
     // remaining files in the batch are still run under `--keep-going`, which exists because
@@ -460,12 +467,14 @@ export function chunkTestFiles(paths, batchSize = DEFAULT_TEST_BATCH_SIZE) {
         // The second failure is what the run reports, and it keeps the child's own message: a
         // retry that fails for a different reason is that reason - relabelled the same way the
         // first attempt was, so a second budget kill still names the file and its budget.
-        const childOutput = attempt.message.includes("\n") ? attempt.message.slice(attempt.message.indexOf("\n")) : "";
+        const output = childOutput(attempt.message);
         console.error(`host_test_suite_file_retry_outcome:suite=${batchLabel}:file=${label}:outcome=failed`);
         failures[index] = {
           path,
           budgetMs: retryBudgetMs,
-          error: describeRunFailure(path, attempt.message, retryBudgetMs, childOutput, attempt.moment),
+          output,
+          sawOutput: attempt.sawOutput,
+          error: describeRunFailure(path, attempt.message, retryBudgetMs, output, attempt.moment),
         };
       }
     }
@@ -510,6 +519,173 @@ function boundedMessage(error, limit = 600) {
 /** The same message as one field of a `key=value` line, so a newline cannot split a log record. */
 function singleLineMessage(message) {
   return message.replaceAll(/\s+/gu, " ").trim();
+}
+
+/**
+ * The child's own output as it sits inside the supervisor's message: the supervisor's own fields fill the first
+ * line, and everything after it is the child's. One helper, so a failure record's `output` and the relabelled
+ * timeout message carry the same text instead of two slices of it.
+ */
+function childOutput(message) {
+  const newline = message.indexOf("\n");
+  return newline < 0 ? "" : message.slice(newline + 1);
+}
+
+/**
+ * Which failures a batch summary has to tell apart.
+ *
+ * `assertions` is a test that failed, and the detail block carries its assertion. `no_output` is a child that
+ * never spoke - the SAME reading `child_alive_after_output:...:kind=no_output` publishes, taken from the
+ * supervisor's own output observation and carried on the failure, so the two lines cannot disagree.
+ * `unparsed` is the third state, and it exists because the only alternative is to report it as one of the first
+ * two: the child spoke, but its output holds no failing test this runner can read (a module resolution error,
+ * an uncaught throw outside a test, a child killed at its budget after printing only passing tests). A reading
+ * that cannot say "I could not read this" reports a passing diagnosis.
+ */
+export const BATCH_FAILURE_KINDS = Object.freeze(["assertions", "no_output", "unparsed"]);
+const [ASSERTION_FAILURE_KIND, NO_OUTPUT_FAILURE_KIND, UNREADABLE_FAILURE_KIND] = BATCH_FAILURE_KINDS;
+
+/**
+ * At most this many failing files per batch get a detail block, each bounded to FAILURE_DETAIL_LINE_BUDGET
+ * lines. A batch where every file failed must still fit on one screen; the files left out are named with the
+ * command that shows them, so the cap costs a second run rather than the information.
+ */
+export const FAILURE_DETAIL_FILES_PER_BATCH = 3;
+export const FAILURE_DETAIL_LINE_BUDGET = 12;
+
+const FAILING_TESTS_SECTION = /^✖ failing tests:\s*$/u;
+const TEST_CASE_ANCHOR = /^test at .+:\d+:\d+\s*$/u;
+const REPORTED_TEST = /^(\s*)✖ (.+?) \([\d.]+m?s\)\s*$/u;
+const ERROR_PROPERTY = /^\s{2,}(actual|expected|operator):\s?(.*)$/u;
+const DIFF_LINE = /^\s{0,2}[+-] /u;
+const DIFF_HEADER = /^\s*\+ actual - expected\s*$/u;
+/** An assertion's `actual` can be a whole record; one property value is one bounded line. */
+const PROPERTY_VALUE_LIMIT = 200;
+
+/** A stack frame's file, line and column - or nothing when the frame is not one of the child's own files. */
+function frameLocation(line) {
+  const trimmed = line.trim();
+  if (!trimmed.startsWith("at ")) return undefined;
+  const frame = trimmed.slice(3);
+  const parenthesized = /\(([^()]*)\)$/u.exec(frame);
+  const target = parenthesized === null ? frame : parenthesized[1];
+  const location = /^(.*):(\d+):(\d+)$/u.exec(target);
+  if (location === null) return undefined;
+  const [, path, lineNumber, column] = location;
+  if (path.startsWith("node:")) return undefined;
+  let file = path;
+  if (path.startsWith("file:")) {
+    try {
+      file = fileURLToPath(path);
+    } catch {
+      return undefined;
+    }
+  }
+  const shown = isAbsolute(file) ? relativePath(file) : file.replaceAll("\\", "/");
+  return `${shown}:${lineNumber}:${column}`;
+}
+
+/** The reporter's blocks inside its `✖ failing tests:` section, each starting at its own `test at` anchor. */
+function failingTestBlocks(lines) {
+  // The anchor is the separator when the reporter prints one; a reporter that prints only the `✖` line splits
+  // there instead, in which case an unindented `✖` - never the one the anchor already introduced - starts a block.
+  const anchored = lines.some((line) => TEST_CASE_ANCHOR.test(line));
+  const blocks = [];
+  let current;
+  for (const line of lines) {
+    const startsBlock = TEST_CASE_ANCHOR.test(line) || (!anchored && !/^\s/u.test(line) && REPORTED_TEST.test(line));
+    if (startsBlock) {
+      current = [line];
+      blocks.push(current);
+      continue;
+    }
+    current?.push(line);
+  }
+  return blocks;
+}
+
+/** One block's first failing test, field by field: name, message, expected/actual/operator, diff, first frame. */
+function readFailingTestBlock(block) {
+  const reported = [];
+  let messageIndex = -1;
+  for (const [index, line] of block.entries()) {
+    const test = REPORTED_TEST.exec(line);
+    if (test !== null) {
+      reported.push({ index, depth: test[1].length, name: test[2] });
+      continue;
+    }
+    if (messageIndex >= 0) continue;
+    const trimmed = line.trim();
+    // A nested subtest prints its own ✔/✖ line between its parent's name and the error that ended the run, and
+    // the block's own anchor line is a location rather than a message.
+    if (trimmed === "" || trimmed.startsWith("✔") || TEST_CASE_ANCHOR.test(line)) continue;
+    messageIndex = index;
+  }
+  if (reported.length === 0) return undefined;
+  // The innermost test that reported before the error: a nested subtest fails under its parent, and the
+  // parent's name alone would send the next reader to the wrong test.
+  const beforeError = reported.filter((entry) => messageIndex < 0 || entry.index < messageIndex);
+  const named = (beforeError.length > 0 ? beforeError : reported).reduce((deepest, entry) =>
+    entry.depth > deepest.depth ? entry : deepest,
+  );
+  const properties = {};
+  for (const line of block) {
+    const property = ERROR_PROPERTY.exec(line);
+    if (property === null || Object.hasOwn(properties, property[1])) continue;
+    const value = property[2].replace(/,$/u, "").trim();
+    properties[property[1]] = value.length > PROPERTY_VALUE_LIMIT ? `${value.slice(0, PROPERTY_VALUE_LIMIT)}…` : value;
+  }
+  const at = block.slice(Math.max(messageIndex, 0)).map(frameLocation).find((location) => location !== undefined);
+  const diff = block.filter((line) => !DIFF_HEADER.test(line) && DIFF_LINE.test(line));
+  return { name: named.name, message: messageIndex < 0 ? undefined : block[messageIndex].trim(), properties, at, diff };
+}
+
+/**
+ * The first failing test the child itself printed, read from its own output - or nothing when its output holds
+ * no readable failing test.
+ *
+ * The reporter prints a ✔/✖ line per test as it happens and writes the diagnosis in a `✖ failing tests:`
+ * section at the END of its output. A batch's own line shows the first 600 characters of a child's output, so
+ * for a Node test child that was the ✔/✖ lines and the reason appeared nowhere: measured 2026-11-12, a
+ * 27.5-minute run reported 21 failing batches with a file name, a test name, an exit code - and no assertion
+ * message, no expected/actual and no location, so every one of them had to be re-run by hand.
+ *
+ * The location is the emitted file's own, relative to the Host root: `dist-test` is compiled without source
+ * maps, so there is no mapping to apply and the frame is published as the child reported it.
+ */
+export function firstFailingTest(childOutputText) {
+  const lines = String(childOutputText ?? "")
+    .split("\n")
+    .map((line) => (line.endsWith("\r") ? line.slice(0, -1) : line));
+  const section = lines.findLastIndex((line) => FAILING_TESTS_SECTION.test(line));
+  if (section < 0) return undefined;
+  const [block] = failingTestBlocks(lines.slice(section + 1));
+  return block === undefined ? undefined : readFailingTestBlock(block);
+}
+
+/** Which of the declared kinds this file's failure was, from the two readings already taken for it. */
+export function batchFailureKind(failure, detail) {
+  if (detail !== undefined) return ASSERTION_FAILURE_KIND;
+  return failure.sawOutput === false ? NO_OUTPUT_FAILURE_KIND : UNREADABLE_FAILURE_KIND;
+}
+
+/**
+ * One failing file's detail block: the assertion's own message, its expected/actual/operator, the first frame
+ * outside Node, and the head of an actual-vs-expected diff - bounded, so a catastrophic batch stays readable.
+ */
+function failureDetailLines(detail, file) {
+  const lines = [
+    `host_test_suite_failure_detail:file=${file}:test=${singleLineMessage(detail.name)}:message=${singleLineMessage(detail.message ?? "none")}`,
+  ];
+  for (const key of ["expected", "actual", "operator"])
+    if (detail.properties[key] !== undefined) lines.push(`  ${key}: ${detail.properties[key]}`);
+  const room = FAILURE_DETAIL_LINE_BUDGET - lines.length - (detail.at === undefined ? 0 : 1);
+  if (detail.diff.length > 0 && room > 1) {
+    lines.push("  diff:");
+    lines.push(...detail.diff.slice(0, room - 1));
+  }
+  if (detail.at !== undefined) lines.push(`  at: ${detail.at}`);
+  return lines;
 }
 
 /**
@@ -642,13 +818,35 @@ export async function runTestBatches(paths, {
     if (batchFailures.length === 0) continue;
     failedBatches += 1;
     failures.push(...batchFailures);
+    // One reading per failing file, taken once: the detail block and the kind come from the same parse, and the
+    // batch's own line names the set of kinds it contains - a batch that mixes an assertion with a child that
+    // never spoke has to say both, because those two failures are not the same thing.
+    const readings = batchFailures.map((failure) => {
+      const detail = firstFailingTest(failure.output);
+      return { failure, detail, kind: batchFailureKind(failure, detail) };
+    });
     console.error(
-      `host_test_suite_batch_failed:suite=${batchLabel}:files=${batchFilesForLog(batchFailures.map((failure) => failure.path))}:keeping_going=${keepGoing}`,
+      `host_test_suite_batch_failed:suite=${batchLabel}:files=${batchFilesForLog(batchFailures.map((failure) => failure.path))}:batch_failure_kind=${[...new Set(readings.map((entry) => entry.kind))].join(",")}:keeping_going=${keepGoing}`,
     );
     // The child's own message: with every batch running, the aggregate error is a summary, so this is
     // where a failing file's own output stays readable.
-    for (const failure of batchFailures)
-      console.error(`host_test_suite_batch_failure:file=${relativePath(failure.path)}\n${boundedMessage(failure.error)}`);
+    let detailed = 0;
+    const undetailed = [];
+    for (const { failure, detail, kind } of readings) {
+      const file = relativePath(failure.path);
+      console.error(`host_test_suite_batch_failure:file=${file}:kind=${kind}\n${boundedMessage(failure.error)}`);
+      if (detail === undefined) continue;
+      if (detailed >= FAILURE_DETAIL_FILES_PER_BATCH) {
+        undetailed.push(file);
+        continue;
+      }
+      detailed += 1;
+      for (const line of failureDetailLines(detail, file)) console.error(line);
+    }
+    if (undetailed.length > 0)
+      console.error(
+        `host_test_suite_failure_detail_omitted:suite=${batchLabel}:files=${undetailed.join(",")} · and ${undetailed.length} more files in this batch, run them individually for detail`,
+      );
     // `--fail-fast` is the interactive mode: the first failing batch ends the run, and the batches it
     // never reached are published rather than dropped.
     if (!keepGoing) {
