@@ -6,6 +6,26 @@ import test from "node:test";
 const releaseEntry = fileURLToPath(new URL("./build-release-production-artifact.mjs", import.meta.url));
 const workflowPath = fileURLToPath(new URL("../../.github/workflows/release-windows.yml", import.meta.url));
 
+/**
+ * The one step a `- name:` marker introduces: its own lines, up to the first non-blank line indented no deeper
+ * than the marker. The cleanup assertions below are about THAT step, and reading from the marker to the end of
+ * the file meant they read every later job as well: the workflow grew a `publish-release` job after this step,
+ * and the `shell: pwsh` it uses there was reported as the cleanup step choosing a shell.
+ */
+function workflowStep(workflow, name) {
+  const lines = workflow.split("\n");
+  const marker = `- name: ${name}`;
+  const start = lines.findIndex((line) => line.trim() === marker);
+  assert.notEqual(start, -1, `the release workflow has no step named ${name}`);
+  const indent = lines[start].length - lines[start].trimStart().length;
+  const body = [lines[start]];
+  for (const line of lines.slice(start + 1)) {
+    if (line.trim() !== "" && line.length - line.trimStart().length <= indent) break;
+    body.push(line);
+  }
+  return body.join("\n");
+}
+
 test("release entry is a fixed no-argument composition and rejects caller-controlled release inputs by shape", async () => {
   const source = await readFile(releaseEntry, "utf8");
   assert.match(source, /export async function buildReleaseProductionArtifact\(\) \{ return publishFixedReleaseProductionArtifact\(\); \}/);
@@ -28,7 +48,7 @@ test("protected release gate remains fixed upstream of the no-argument entry", a
 
 test("release workflow delegates always cleanup to the no-input owned-root cleanup entry", async () => {
   const workflow = await readFile(workflowPath, "utf8");
-  const cleanup = workflow.match(/- name: Remove this release run's acquisition scratch\n([\s\S]*)$/)?.[0] ?? "";
+  const cleanup = workflowStep(workflow, "Remove this release run's acquisition scratch");
   assert.match(cleanup, /if: always\(\)/);
   assert.match(cleanup, /^\s*run: node host\/scripts\/release-owned-scratch-cleanup\.mjs$/m);
   assert.doesNotMatch(cleanup, /(?:shell:|pwsh|powershell|cmd|Get-ChildItem|Remove-Item|TEMP|Path utilities)/i);

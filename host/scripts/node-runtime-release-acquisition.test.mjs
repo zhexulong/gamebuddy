@@ -10,6 +10,7 @@ import test from "node:test";
 import { assertProtectedWindowsReleaseCiEnvironment, takeComposedFixedReleaseRuntimeForPublisher, withSyntheticVerifiedReleaseBundledRuntimeForTest, withSyntheticVerifiedReleaseBundledRuntimeFixedReleaseCompositionForTest } from "./node-runtime-release-acquisition.mjs";
 
 const hash = (bytes) => createHash("sha256").update(bytes).digest("hex");
+const hostRoot = fileURLToPath(new URL("..", import.meta.url));
 const bootstrapPairCaptures = new AsyncLocalStorage();
 const fsPromises = createRequire(import.meta.url)("node:fs/promises");
 const nativeMkdtemp = fsPromises.mkdtemp;
@@ -49,15 +50,25 @@ test("release workflow supplies only bounded identity facts and keeps acquisitio
   assert.match(workflow, /GAMEBUDDY_RELEASE_ENVIRONMENT: gamebuddy-production-release/);
   assert.match(workflow, /GAMEBUDDY_RELEASE_REF: \$\{\{ github\.ref \}\}/);
   assert.match(workflow, /pnpm --dir host build:release/);
-  assert.doesNotMatch(workflow, /(?:runtime-url|runtime-path|archiveSha256|sourceUrl|sign(?:tool|ing))/i);
-  // The lane may upload only its own named evidence: the acquired runtime and the
-  // built distribution are never published from this workflow.
-  assert.deepEqual(
-    [...workflow.matchAll(/uses: actions\/upload-artifact@v4\n\s+with:\n\s+name: ([a-z0-9-]+)/g)]
-      .map((match) => match[1])
-      .sort(),
-    ["tavern-browser-journey-failures", "tavern-release-live-evidence"],
-  );
+  // No runtime acquisition input is supplied here at all: the module owns the fixed URL, digest, archive root and
+  // scratch location, so any spelling of one in this file is a caller override. Signing is not that - the artifact
+  // is signed on this lane alone, from the protected environment's own certificate - which is why the term lives
+  // in the assertion below, on where a signing value may come from, rather than in this list of forbidden inputs.
+  assert.doesNotMatch(workflow, /(?:runtime-url|runtime-path|archiveSha256|nodeSha256|archiveRoot|sourceUrl)/iu);
+  const signingValues = [...workflow.matchAll(/^ +([A-Z0-9_]*SIGN[A-Z0-9_]*): (.+)$/gmu)];
+  assert.ok(signingValues.length > 0, "the signing lane's own declarations must be inside the population this reads");
+  for (const [, name, value] of signingValues)
+    assert.match(value, /^\$\{\{ secrets\.GAMEBUDDY_/u, `${name} must come from the protected environment's secrets, not from this workflow`);
+  // The lane may upload only its own named evidence and the assembled release it hands to the job that publishes
+  // (`b426fd2b`: assemble, bind and publish); the live-evidence upload left with the provider credentials this lane
+  // no longer needs (`d9749fa2`). What has to stay true is the closed loop, so it is asserted as one: the assembled
+  // release is the only artifact this workflow downloads, and exactly one job may write the repository - the one
+  // that publishes it. A second writer, or a distribution uploaded by a job nothing consumes, fails here.
+  const uploaded = [...workflow.matchAll(/uses: actions\/upload-artifact@v4\n\s+with:\n\s+name: ([a-z0-9-]+)/g)].map((match) => match[1]).sort();
+  const downloaded = [...workflow.matchAll(/uses: actions\/download-artifact@v4\n\s+with:\n\s+name: ([a-z0-9-]+)/g)].map((match) => match[1]);
+  assert.deepEqual(uploaded, ["gamebuddy-player-release", "tavern-browser-journey-failures", "tavern-frontend-conformance"]);
+  assert.deepEqual(downloaded, ["gamebuddy-player-release"], "the assembled release is consumed by the publishing job and by nothing else");
+  assert.equal([...workflow.matchAll(/^\s+contents: write$/gm)].length, 1, "exactly one job may write the repository: the one that publishes");
   assert.doesNotMatch(ordinaryCi, /build:release|node-runtime-release-acquisition|gamebuddy-production-release/i);
   assert.doesNotMatch(ordinaryCi, /^\s*- run: pnpm build\s*$/m);
   assert.match(ordinaryCi, /pnpm --filter @gamebuddy\/dialogue-web build/);
@@ -241,12 +252,22 @@ test("Windows release bootstrap scratch admits a fresh exact helper pair and rem
     import("./build-windows-reparse-inspector.mjs"),
   ]);
   const pairParent = join(projectRoot, ".release-bootstrap-inspector");
+  // The root this composition creates is the run's own `runId-attempt`, so a fixed identity collides with whatever
+  // an earlier run left behind: a crashed run left `.release-owned-scratch/123456-1` in this checkout, and every
+  // later run failed closed on `EEXIST` before it could admit anything. A per-process identity keeps the property -
+  // the root IS that identity's exact root, asserted below - while making the test independent of run history.
+  const env = { ...protectedReleaseEnvironment, GITHUB_RUN_ID: String(process.pid) };
   let scratch;
   let pairRoot;
   try {
-    const creation = captureFreshBootstrapPair(pairParent, () => createWindowsReleaseBootstrapScratch({ env: protectedReleaseEnvironment }));
+    const creation = captureFreshBootstrapPair(pairParent, () => createWindowsReleaseBootstrapScratch({ env }));
     scratch = await creation.operation;
     pairRoot = creation.pairRoot();
+    assert.equal(
+      scratch.root,
+      resolve(hostRoot, ".release-owned-scratch", `${env.GITHUB_RUN_ID}-${env.GITHUB_RUN_ATTEMPT}`),
+      "the scratch root is the run identity's exact root",
+    );
   } catch (error) {
     const blocked = new Set([
       "windows_reparse_dotnet_missing",

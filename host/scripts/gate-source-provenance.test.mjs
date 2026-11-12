@@ -24,6 +24,14 @@
  *    also gates a filesystem read on `existsSync` has the same fallback shape even when its name
  *    says nothing.
  *
+ * A comment that names the committed tree in order to DISCLAIM it is not a claim. The measured case
+ * (`tools/check-prelive-gate-registry.mjs`'s `readScripts`, whose whole subject is the worktree copy):
+ * "what this checkout has on disk, not what it has committed". Read as a claim, the gate demanded
+ * that a helper be renamed for describing itself accurately - the failure mode where a gate fires on
+ * the sentence that says it does not apply. The disclaimer is recognised only in the order
+ * `not ... committed` within one clause, so `committed, not the worktree` still claims and still
+ * fails; `uncommitted` was already not a claim.
+ *
  * What this gate is NOT, and deliberately does not pretend to be: the general shape "a helper
  * whose name promises source X but whose implementation reads Y" is not decidable from a name, so
  * no general rule is invented here. The commit-provenance spelling above is the shape that was
@@ -52,6 +60,7 @@ const SKIPPED_DIRECTORY = /^(node_modules|dist.*|\.tmp.*|scratch|vendor)$/u;
 
 const CLAIM_IN_NAME = /(?<!un)committed/iu;
 const CLAIM_IN_COMMENT = /(?<!un)committed|git show|HEAD:/iu;
+const DISCLAIMED_CLAIM = /\b(?:not|never)\b[^.\n]{0,40}\b(?:committed|git show|HEAD:)/giu;
 const FILESYSTEM_READ = new Set(["readFile", "readFileSync", "readJson", "readJsonSync", "readTextFile", "readTextFileSync"]);
 const GIT_COMMAND = /\b(show|cat-file|ls-tree)\b/u;
 
@@ -154,7 +163,7 @@ export function findingsForSource(relativePath, text) {
         return argumentText.includes("git") && GIT_COMMAND.test(argumentText);
       });
       const guards = calls.filter((call) => callName(call) === "existsSync");
-      const claims = CLAIM_IN_NAME.test(name) || CLAIM_IN_COMMENT.test(comment);
+      const claims = CLAIM_IN_NAME.test(name) || CLAIM_IN_COMMENT.test(comment.replaceAll(DISCLAIMED_CLAIM, ""));
       if (claims && reads.length > 0) {
         findings.push({
           rule: "provenance_claim_reads_filesystem",
@@ -277,6 +286,30 @@ test("rule.4: a filesystem-only helper with no provenance claim is not a finding
     `async function workingTreeAsset(name) {\n  return JSON.parse(await readFile(join(presetDirectory(), name), "utf8"));\n}\nfunction readNames() {\n  return readdirSync(dir);\n}`,
   );
   assert.deepEqual(findings, [], `reading the working tree is not the defect:\n${render(findings)}`);
+});
+
+test("rule.5: a doc comment that disclaims the committed tree is not a claim", () => {
+  const findings = findingsForSource(
+    "tools/planted-registry.mjs",
+    `/** The scripts the worktree's \`package.json\` declares: what this checkout has on disk, not what it has committed. */\nexport function readScripts({ root = ROOT } = {}) {\n  return JSON.parse(readFileSync(resolve(root, "package.json"), "utf8")).scripts ?? {};\n}`,
+  );
+  assert.deepEqual(
+    findings,
+    [],
+    `a comment whose subject is the worktree copy must not read as a claim for the committed one:\n${render(findings)}`,
+  );
+});
+
+test("rule.6: the same helper documented as reading the committed copy is still a finding", () => {
+  const findings = findingsForSource(
+    "tools/planted-registry.mjs",
+    `/** The committed \`package.json\` scripts. */\nexport function readScripts({ root = ROOT } = {}) {\n  return JSON.parse(readFileSync(resolve(root, "package.json"), "utf8")).scripts ?? {};\n}`,
+  );
+  assert.deepEqual(
+    findings.map((finding) => finding.rule),
+    ["provenance_claim_reads_filesystem"],
+    `the disclaimer must not excuse a comment that does claim the committed tree:\n${render(findings)}`,
+  );
 });
 
 test("live: every gate source in host/src, host/scripts and tools measures the source it claims", (t) => {
