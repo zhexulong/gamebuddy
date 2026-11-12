@@ -14,15 +14,7 @@ internal sealed partial class ExecutionManager
 {
     public LocalExecutionReceipt RequestLocalChopTreeSource(string requestId, int slot, int targetX, int targetY, string expectedTargetId, long requestedDeadlineMs)
     {
-        if (this.receiptsByRequestId.TryGetValue(requestId, out LocalExecutionReceipt? existing)) return existing;
-        this.revision++;
-        string executionId = Guid.NewGuid().ToString("N");
-        long nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-        // Shared mechanical admission (identity → actionability → deadline →
-        // body exclusivity), behavior-equivalent to the inline sequence it
-        // replaced: identical reasonCodes, identical order. Geometry, target
-        // identity and the postcondition stay action-specific.
-        if (this.AdmitExecution(requestId, executionId, requestedDeadlineMs, nowMs, AdmissionActionabilityProfile.General) is LocalExecutionReceipt admissionRejection)
+        if (this.AdmitLocalExecution(requestId, requestedDeadlineMs, AdmissionActionabilityProfile.General, out string executionId, out long nowMs) is LocalExecutionReceipt admissionRejection)
             return admissionRejection;
         // Ask before walking: a pack that cannot satisfy the action's own claim is refused now rather than after an
         // approach leg the action could never finish. The slot the caller named is recorded, never obeyed.
@@ -201,15 +193,7 @@ internal sealed partial class ExecutionManager
 
     public LocalExecutionReceipt RequestLocalBreakRockSource(string requestId, int slot, int targetX, int targetY, string expectedTargetId, long requestedDeadlineMs)
     {
-        if (this.receiptsByRequestId.TryGetValue(requestId, out LocalExecutionReceipt? existing)) return existing;
-        this.revision++;
-        string executionId = Guid.NewGuid().ToString("N");
-        long nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-        // Shared mechanical admission (identity → actionability → deadline →
-        // body exclusivity), behavior-equivalent to the inline sequence it
-        // replaced: identical reasonCodes, identical order. Geometry, target
-        // identity and the postcondition stay action-specific.
-        if (this.AdmitExecution(requestId, executionId, requestedDeadlineMs, nowMs, AdmissionActionabilityProfile.General) is LocalExecutionReceipt admissionRejection)
+        if (this.AdmitLocalExecution(requestId, requestedDeadlineMs, AdmissionActionabilityProfile.General, out string executionId, out long nowMs) is LocalExecutionReceipt admissionRejection)
             return admissionRejection;
         if (ResolveDeclaredTool(Game1.player.Items, "break_rock").RefusalCode is { } toolRefusal)
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, toolRefusal, $"slot={slot}");
@@ -407,15 +391,7 @@ internal sealed partial class ExecutionManager
 
     public LocalExecutionReceipt RequestLocalClearHoeDirt(string requestId, int slot, int targetX, int targetY, string expectedTargetId, long requestedDeadlineMs)
     {
-        if (this.receiptsByRequestId.TryGetValue(requestId, out LocalExecutionReceipt? existing)) return existing;
-        this.revision++;
-        string executionId = Guid.NewGuid().ToString("N");
-        long nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-        // Shared mechanical admission (identity → actionability → deadline →
-        // body exclusivity), behavior-equivalent to the inline sequence it
-        // replaced: identical reasonCodes, identical order. Geometry, target
-        // identity and the postcondition stay action-specific.
-        if (this.AdmitExecution(requestId, executionId, requestedDeadlineMs, nowMs, AdmissionActionabilityProfile.General) is LocalExecutionReceipt admissionRejection)
+        if (this.AdmitLocalExecution(requestId, requestedDeadlineMs, AdmissionActionabilityProfile.General, out string executionId, out long nowMs) is LocalExecutionReceipt admissionRejection)
             return admissionRejection;
         if (ResolveDeclaredTool(Game1.player.Items, "clear_hoedirt").RefusalCode is { } toolRefusal)
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, toolRefusal, DescribeDeclaredToolRefusal(Game1.player.Items, "clear_hoedirt", toolRefusal, slot));
@@ -485,12 +461,10 @@ internal sealed partial class ExecutionManager
 
     public LocalExecutionReceipt RequestLocalTillSoil(string requestId, int targetX, int targetY, long requestedDeadlineMs)
     {
-        if (this.receiptsByRequestId.TryGetValue(requestId, out LocalExecutionReceipt? existing))
-            return existing;
-
-        this.revision++;
-        string executionId = Guid.NewGuid().ToString("N");
-        long nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        if (this.BeginLocalExecution(requestId, out string executionId, out long nowMs) is LocalExecutionReceipt replay) return replay;
+        // Scope-bound actor proof. Authorization precedes the world/location
+        // readiness checks: a caller that is not the scope-bound actor is refused
+        // for that reason rather than for where it happens to be standing.
         // Scope-bound actor proof. Authorization precedes the world/location
         // readiness checks: a caller that is not the scope-bound actor is refused
         // for that reason rather than for where it happens to be standing.
@@ -630,12 +604,10 @@ internal sealed partial class ExecutionManager
     /// </summary>
     public LocalExecutionReceipt RequestLocalEquipTool(string requestId, string? requestedTool, long requestedDeadlineMs)
     {
-        if (this.receiptsByRequestId.TryGetValue(requestId, out LocalExecutionReceipt? existing))
-            return existing;
-
-        this.revision++;
-        string executionId = Guid.NewGuid().ToString("N");
-        long nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        if (this.BeginLocalExecution(requestId, out string executionId, out long nowMs) is LocalExecutionReceipt replay) return replay;
+        // Scope-bound actor proof. Authorization precedes the world/location
+        // readiness checks: a caller that is not the scope-bound actor is refused
+        // for that reason rather than for where it happens to be standing.
         // Scope-bound actor proof. Authorization precedes the world/location
         // readiness checks: a caller that is not the scope-bound actor is refused
         // for that reason rather than for where it happens to be standing.
@@ -1028,15 +1000,7 @@ internal sealed partial class ExecutionManager
     /// </summary>
     public LocalExecutionReceipt RequestLocalChopStump(string requestId, int slot, int targetX, int targetY, string expectedTargetId, long requestedDeadlineMs)
     {
-        if (this.receiptsByRequestId.TryGetValue(requestId, out LocalExecutionReceipt? existing)) return existing;
-        this.revision++;
-        string executionId = Guid.NewGuid().ToString("N");
-        long nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-        // Shared mechanical admission (identity → actionability → deadline →
-        // body exclusivity), behavior-equivalent to the inline sequence it
-        // replaced: identical reasonCodes, identical order. Geometry, target
-        // identity and the postcondition stay action-specific.
-        if (this.AdmitExecution(requestId, executionId, requestedDeadlineMs, nowMs, AdmissionActionabilityProfile.Physical) is LocalExecutionReceipt admissionRejection)
+        if (this.AdmitLocalExecution(requestId, requestedDeadlineMs, AdmissionActionabilityProfile.Physical, out string executionId, out long nowMs) is LocalExecutionReceipt admissionRejection)
             return admissionRejection;
         // Ask before walking: a pack that cannot satisfy the action's own claim is refused now rather than after an
         // approach leg the action could never finish. The slot the caller named is recorded, never obeyed.
@@ -1166,15 +1130,7 @@ internal sealed partial class ExecutionManager
     /// </summary>
     public LocalExecutionReceipt RequestLocalCutWeeds(string requestId, int slot, int targetX, int targetY, string expectedTargetId, long requestedDeadlineMs)
     {
-        if (this.receiptsByRequestId.TryGetValue(requestId, out LocalExecutionReceipt? existing)) return existing;
-        this.revision++;
-        string executionId = Guid.NewGuid().ToString("N");
-        long nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-        // Shared mechanical admission (identity → actionability → deadline →
-        // body exclusivity), behavior-equivalent to the inline sequence it
-        // replaced: identical reasonCodes, identical order. Geometry, target
-        // identity and the postcondition stay action-specific.
-        if (this.AdmitExecution(requestId, executionId, requestedDeadlineMs, nowMs, AdmissionActionabilityProfile.Physical) is LocalExecutionReceipt admissionRejection)
+        if (this.AdmitLocalExecution(requestId, requestedDeadlineMs, AdmissionActionabilityProfile.Physical, out string executionId, out long nowMs) is LocalExecutionReceipt admissionRejection)
             return admissionRejection;
         // Ask before walking: a pack that cannot satisfy the action's claim is refused now rather than after an approach
         // leg the action could never finish.
@@ -1219,11 +1175,7 @@ internal sealed partial class ExecutionManager
     /// </summary>
     public LocalExecutionReceipt RequestLocalCutGrass(string requestId, int slot, int targetX, int targetY, string expectedTargetId, long requestedDeadlineMs)
     {
-        if (this.receiptsByRequestId.TryGetValue(requestId, out LocalExecutionReceipt? existing)) return existing;
-        this.revision++;
-        string executionId = Guid.NewGuid().ToString("N");
-        long nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-        if (this.AdmitExecution(requestId, executionId, requestedDeadlineMs, nowMs, AdmissionActionabilityProfile.Physical) is LocalExecutionReceipt admissionRejection)
+        if (this.AdmitLocalExecution(requestId, requestedDeadlineMs, AdmissionActionabilityProfile.Physical, out string executionId, out long nowMs) is LocalExecutionReceipt admissionRejection)
             return admissionRejection;
         if (ResolveDeclaredTool(Game1.player.Items, "cut_grass").RefusalCode is { } toolRefusal)
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, toolRefusal, $"slot={slot}");

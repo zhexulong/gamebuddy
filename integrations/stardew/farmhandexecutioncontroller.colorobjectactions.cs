@@ -91,13 +91,9 @@ internal sealed partial class ExecutionManager
         int colorSelection,
         long requestedDeadlineMs)
     {
-        if (this.receiptsByRequestId.TryGetValue(requestId, out LocalExecutionReceipt? existing)) return existing;
-        this.revision++;
-        string executionId = Guid.NewGuid().ToString("N");
-        long nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
         // General, not Physical: the seam drives no tool and starts no swing - it is two public
         // statements on the chest, the same profile `clear_fish_pond` and `toggle_animal_door` admit under.
-        if (this.AdmitExecution(requestId, executionId, requestedDeadlineMs, nowMs, AdmissionActionabilityProfile.General) is LocalExecutionReceipt admissionRejection)
+        if (this.AdmitLocalExecution(requestId, requestedDeadlineMs, AdmissionActionabilityProfile.General, out string executionId, out long nowMs) is LocalExecutionReceipt admissionRejection)
             return admissionRejection;
 
         GameLocation location = Game1.player.currentLocation;

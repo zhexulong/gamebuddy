@@ -164,14 +164,10 @@ internal sealed partial class ExecutionManager
         string expectedTargetId,
         long requestedDeadlineMs)
     {
-        if (this.receiptsByRequestId.TryGetValue(requestId, out LocalExecutionReceipt? existing)) return existing;
-        this.revision++;
-        string executionId = Guid.NewGuid().ToString("N");
-        long nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
         // General, not Physical: the seam is one instantaneous native item build plus two stack
         // decrements — no tool lifecycle, no swing, no menu, the same profile `equip_wearable`
         // and `talk_to_npc` admit through.
-        if (this.AdmitExecution(requestId, executionId, requestedDeadlineMs, nowMs, AdmissionActionabilityProfile.General) is LocalExecutionReceipt admissionRejection)
+        if (this.AdmitLocalExecution(requestId, requestedDeadlineMs, AdmissionActionabilityProfile.General, out string executionId, out long nowMs) is LocalExecutionReceipt admissionRejection)
             return admissionRejection;
 
         Farmer player = Game1.player;
@@ -279,11 +275,7 @@ internal sealed partial class ExecutionManager
         string expectedTargetId,
         long requestedDeadlineMs)
     {
-        if (this.receiptsByRequestId.TryGetValue(requestId, out LocalExecutionReceipt? existing)) return existing;
-        this.revision++;
-        string executionId = Guid.NewGuid().ToString("N");
-        long nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-        if (this.AdmitExecution(requestId, executionId, requestedDeadlineMs, nowMs, AdmissionActionabilityProfile.General) is LocalExecutionReceipt admissionRejection)
+        if (this.AdmitLocalExecution(requestId, requestedDeadlineMs, AdmissionActionabilityProfile.General, out string executionId, out long nowMs) is LocalExecutionReceipt admissionRejection)
             return admissionRejection;
 
         Farmer player = Game1.player;

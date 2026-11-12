@@ -109,14 +109,10 @@ internal sealed partial class ExecutionManager
     /// </summary>
     public LocalExecutionReceipt RequestLocalNameEntity(string requestId, string name, long requestedDeadlineMs)
     {
-        if (this.receiptsByRequestId.TryGetValue(requestId, out LocalExecutionReceipt? existing)) return existing;
-        this.revision++;
-        string executionId = Guid.NewGuid().ToString("N");
-        long nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
         // General, not Physical: the seam drives no tool lifecycle and starts no swing - it is one
         // instantaneous name write, the same profile dismount_transport and equip_wearable admit
         // through.
-        if (this.AdmitExecution(requestId, executionId, requestedDeadlineMs, nowMs, AdmissionActionabilityProfile.General) is LocalExecutionReceipt admissionRejection)
+        if (this.AdmitLocalExecution(requestId, requestedDeadlineMs, AdmissionActionabilityProfile.General, out string executionId, out long nowMs) is LocalExecutionReceipt admissionRejection)
             return admissionRejection;
 
         Farmer actor = Game1.player;

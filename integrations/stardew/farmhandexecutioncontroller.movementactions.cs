@@ -816,12 +816,7 @@ internal sealed partial class ExecutionManager
     public LocalExecutionReceipt RequestLocalMinecartRide(
         string requestId, int sourceX, int sourceY, long requestedDeadlineMs, string expectedTargetId)
     {
-        if (this.receiptsByRequestId.TryGetValue(requestId, out LocalExecutionReceipt? existing))
-            return existing;
-
-        this.revision++;
-        string executionId = Guid.NewGuid().ToString("N");
-        long nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        if (this.BeginLocalExecution(requestId, out string executionId, out long nowMs) is LocalExecutionReceipt replay) return replay;
         if (!this.TryGetBoundActor(out Farmer? boundActor, out string scopeReason) || boundActor is null)
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, scopeReason, null);
 
@@ -904,12 +899,10 @@ internal sealed partial class ExecutionManager
 
     private LocalExecutionReceipt RequestLocalDoorTransition(string requestId, int sourceX, int sourceY, long requestedDeadlineMs, bool isDoor)
     {
-        if (this.receiptsByRequestId.TryGetValue(requestId, out LocalExecutionReceipt? existing))
-            return existing;
-
-        this.revision++;
-        string executionId = Guid.NewGuid().ToString("N");
-        long nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        if (this.BeginLocalExecution(requestId, out string executionId, out long nowMs) is LocalExecutionReceipt replay) return replay;
+        // Scope-bound actor proof. Authorization precedes the world/location
+        // readiness checks: a caller that is not the scope-bound actor is refused
+        // for that reason rather than for where it happens to be standing.
         // Scope-bound actor proof. Authorization precedes the world/location
         // readiness checks: a caller that is not the scope-bound actor is refused
         // for that reason rather than for where it happens to be standing.

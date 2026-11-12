@@ -41,11 +41,8 @@ internal sealed partial class ExecutionManager
     /// </summary>
     public LocalExecutionReceipt RequestLocalWithdrawSiloHay(string requestId, int targetX, int targetY, string expectedTargetId, long requestedDeadlineMs)
     {
-        if (this.receiptsByRequestId.TryGetValue(requestId, out LocalExecutionReceipt? existing)) return existing;
-        this.revision++;
-        string executionId = Guid.NewGuid().ToString("N");
-        long nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-        if (this.AdmitExecution(requestId, executionId, requestedDeadlineMs, nowMs, AdmissionActionabilityProfile.Physical) is LocalExecutionReceipt rejection) return rejection;
+        if (this.AdmitLocalExecution(requestId, requestedDeadlineMs, AdmissionActionabilityProfile.Physical, out string executionId, out long nowMs) is LocalExecutionReceipt rejection)
+            return rejection;
         if (Game1.player.currentLocation is not Farm farm || !TryResolveSilo(farm, targetX, targetY, expectedTargetId, out Building? silo))
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "silo_target_changed", $"target={targetX},{targetY}");
         if (!IsWithinBuildingContact(silo!, Game1.player))

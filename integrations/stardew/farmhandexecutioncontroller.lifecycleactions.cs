@@ -61,12 +61,10 @@ internal sealed partial class ExecutionManager
     /// </summary>
     public LocalExecutionReceipt RequestLocalAdvanceDay(string requestId, long requestedDeadlineMs)
     {
-        if (this.receiptsByRequestId.TryGetValue(requestId, out LocalExecutionReceipt? existing))
-            return existing;
-
-        this.revision++;
-        string executionId = Guid.NewGuid().ToString("N");
-        long nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        if (this.BeginLocalExecution(requestId, out string executionId, out long nowMs) is LocalExecutionReceipt replay) return replay;
+        // Scope-bound actor proof precedes readiness, exactly as the converged
+        // admission path does: a caller that is not the scoped actor must be
+        // refused for that reason, not for where it happens to be standing.
 
         // Scope-bound actor proof precedes readiness, exactly as the converged
         // admission path does: a caller that is not the scoped actor must be

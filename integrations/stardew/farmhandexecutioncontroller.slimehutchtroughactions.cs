@@ -49,16 +49,7 @@ internal sealed partial class ExecutionManager
     /// <summary>Water the built-in Slime Hutch trough through the native watering path.</summary>
     public LocalExecutionReceipt RequestLocalWaterSlimeHutchTrough(string requestId, int targetX, int targetY, string expectedTargetId, long requestedDeadlineMs)
     {
-        if (this.receiptsByRequestId.TryGetValue(requestId, out LocalExecutionReceipt? existing))
-            return existing;
-
-        this.revision++;
-        string executionId = Guid.NewGuid().ToString("N");
-        long nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-        // Shared mechanical admission (identity → actionability → deadline → body
-        // exclusivity): identical reasonCodes and order to its siblings. Geometry,
-        // target identity and the postcondition stay action-specific.
-        if (this.AdmitExecution(requestId, executionId, requestedDeadlineMs, nowMs, AdmissionActionabilityProfile.General) is LocalExecutionReceipt admissionRejection)
+        if (this.AdmitLocalExecution(requestId, requestedDeadlineMs, AdmissionActionabilityProfile.General, out string executionId, out long nowMs) is LocalExecutionReceipt admissionRejection)
             return admissionRejection;
         // Ask before walking: the can is the action's own declared tool, so a pack that cannot satisfy the
         // `tool:watering_can` claim is refused now rather than after an approach leg the action could never finish,

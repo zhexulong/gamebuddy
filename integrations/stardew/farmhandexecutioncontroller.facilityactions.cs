@@ -29,11 +29,7 @@ internal sealed partial class ExecutionManager
 {
     public LocalExecutionReceipt RequestLocalClearCask(string requestId, int slot, int targetX, int targetY, string expectedTargetId, long requestedDeadlineMs)
     {
-        if (this.receiptsByRequestId.TryGetValue(requestId, out LocalExecutionReceipt? existing)) return existing;
-        this.revision++;
-        string executionId = Guid.NewGuid().ToString("N");
-        long nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-        if (this.AdmitExecution(requestId, executionId, requestedDeadlineMs, nowMs, AdmissionActionabilityProfile.Physical) is LocalExecutionReceipt admissionRejection)
+        if (this.AdmitLocalExecution(requestId, requestedDeadlineMs, AdmissionActionabilityProfile.Physical, out string executionId, out long nowMs) is LocalExecutionReceipt admissionRejection)
             return admissionRejection;
         if (ResolveDeclaredTool(Game1.player.Items, "clear_cask").RefusalCode is { } toolRefusal)
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, toolRefusal, $"slot={slot}");
@@ -85,11 +81,8 @@ internal sealed partial class ExecutionManager
 
     public LocalExecutionReceipt RequestLocalDressMannequin(string requestId, int slot, int targetX, int targetY, string expectedTargetId, long requestedDeadlineMs)
     {
-        if (this.receiptsByRequestId.TryGetValue(requestId, out LocalExecutionReceipt? existing)) return existing;
-        this.revision++;
-        string executionId = Guid.NewGuid().ToString("N");
-        long nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-        if (this.AdmitExecution(requestId, executionId, requestedDeadlineMs, nowMs, AdmissionActionabilityProfile.Physical) is LocalExecutionReceipt rejection) return rejection;
+        if (this.AdmitLocalExecution(requestId, requestedDeadlineMs, AdmissionActionabilityProfile.Physical, out string executionId, out long nowMs) is LocalExecutionReceipt rejection)
+            return rejection;
         if (!TryGetHeldItem(slot, out Item? item) || item is not (Hat or Clothing or Boots))
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "clothing_not_held_in_requested_slot", $"slot={slot}");
         GameLocation location = Game1.player.currentLocation;
@@ -132,11 +125,8 @@ internal sealed partial class ExecutionManager
 
     public LocalExecutionReceipt RequestLocalSetSignDisplay(string requestId, int slot, int targetX, int targetY, string expectedTargetId, long requestedDeadlineMs)
     {
-        if (this.receiptsByRequestId.TryGetValue(requestId, out LocalExecutionReceipt? existing)) return existing;
-        this.revision++;
-        string executionId = Guid.NewGuid().ToString("N");
-        long nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-        if (this.AdmitExecution(requestId, executionId, requestedDeadlineMs, nowMs, AdmissionActionabilityProfile.Physical) is LocalExecutionReceipt rejection) return rejection;
+        if (this.AdmitLocalExecution(requestId, requestedDeadlineMs, AdmissionActionabilityProfile.Physical, out string executionId, out long nowMs) is LocalExecutionReceipt rejection)
+            return rejection;
         if (!TryGetHeldItem(slot, out _)) return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "item_not_held_in_requested_slot", $"slot={slot}");
         GameLocation location = Game1.player.currentLocation;
         Vector2 tile = new(targetX, targetY);
@@ -167,11 +157,8 @@ internal sealed partial class ExecutionManager
 
     public LocalExecutionReceipt RequestLocalDepositSiloHay(string requestId, int slot, int targetX, int targetY, string expectedTargetId, long requestedDeadlineMs)
     {
-        if (this.receiptsByRequestId.TryGetValue(requestId, out LocalExecutionReceipt? existing)) return existing;
-        this.revision++;
-        string executionId = Guid.NewGuid().ToString("N");
-        long nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-        if (this.AdmitExecution(requestId, executionId, requestedDeadlineMs, nowMs, AdmissionActionabilityProfile.Physical) is LocalExecutionReceipt rejection) return rejection;
+        if (this.AdmitLocalExecution(requestId, requestedDeadlineMs, AdmissionActionabilityProfile.Physical, out string executionId, out long nowMs) is LocalExecutionReceipt rejection)
+            return rejection;
         if (!TryGetHeldItem(slot, out Item? item) || item is not StardewValley.Object hay || hay.QualifiedItemId != "(O)178" || hay.Stack <= 0)
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "hay_not_held_in_requested_slot", $"slot={slot}");
         if (Game1.player.currentLocation is not Farm farm || !TryResolveSilo(farm, targetX, targetY, expectedTargetId, out Building? silo))
@@ -205,11 +192,8 @@ internal sealed partial class ExecutionManager
 
     public LocalExecutionReceipt RequestLocalToggleToolLight(string requestId, int slot, int x, int y, long requestedDeadlineMs)
     {
-        if (this.receiptsByRequestId.TryGetValue(requestId, out LocalExecutionReceipt? existing)) return existing;
-        this.revision++;
-        string executionId = Guid.NewGuid().ToString("N");
-        long nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-        if (this.AdmitExecution(requestId, executionId, requestedDeadlineMs, nowMs, AdmissionActionabilityProfile.Physical) is LocalExecutionReceipt rejection) return rejection;
+        if (this.AdmitLocalExecution(requestId, requestedDeadlineMs, AdmissionActionabilityProfile.Physical, out string executionId, out long nowMs) is LocalExecutionReceipt rejection)
+            return rejection;
         // The lantern is not the caller's to name: this action's own registration claims `tool:lantern`, so the handler
         // takes the actor's lantern out of the pack and puts back the index the actor held. `tool_not_owned:lantern` is
         // the refusal that survives, and it names the one fact the caller can act on - the pack has no lantern. The

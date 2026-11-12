@@ -55,15 +55,7 @@ internal sealed partial class ExecutionManager
     /// </summary>
     public LocalExecutionReceipt RequestLocalCraftItem(string requestId, string expectedRecipeId, long requestedDeadlineMs)
     {
-        if (this.receiptsByRequestId.TryGetValue(requestId, out LocalExecutionReceipt? existing)) return existing;
-        this.revision++;
-        string executionId = Guid.NewGuid().ToString("N");
-        long nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-        // Shared mechanical admission (identity → actionability → deadline →
-        // body exclusivity), behavior-equivalent to the inline sequence it
-        // replaced: identical reasonCodes, identical order. Geometry, target
-        // identity and the postcondition stay action-specific.
-        if (this.AdmitExecution(requestId, executionId, requestedDeadlineMs, nowMs, AdmissionActionabilityProfile.Physical) is LocalExecutionReceipt admissionRejection)
+        if (this.AdmitLocalExecution(requestId, requestedDeadlineMs, AdmissionActionabilityProfile.Physical, out string executionId, out long nowMs) is LocalExecutionReceipt admissionRejection)
             return admissionRejection;
 
         Dictionary<string, string>? craftingTable = CraftingRecipe.craftingRecipes;

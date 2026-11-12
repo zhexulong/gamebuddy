@@ -135,15 +135,9 @@ internal sealed partial class ExecutionManager
         string expectedQualifiedItemId,
         long requestedDeadlineMs)
     {
-        if (this.receiptsByRequestId.TryGetValue(requestId, out LocalExecutionReceipt? existing))
-            return existing;
-
-        this.revision++;
-        string executionId = Guid.NewGuid().ToString("N");
-        long nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
         // One synchronous store with no await, so there is no cancel window inside it: the seam drives
         // no tool lifecycle and starts no swing.
-        if (this.AdmitExecution(requestId, executionId, requestedDeadlineMs, nowMs, AdmissionActionabilityProfile.General) is LocalExecutionReceipt admissionRejection)
+        if (this.AdmitLocalExecution(requestId, requestedDeadlineMs, AdmissionActionabilityProfile.General, out string executionId, out long nowMs) is LocalExecutionReceipt admissionRejection)
             return admissionRejection;
 
         return this.ExecuteOpenGeode(executionId, requestId, slot, expectedQualifiedItemId ?? string.Empty);

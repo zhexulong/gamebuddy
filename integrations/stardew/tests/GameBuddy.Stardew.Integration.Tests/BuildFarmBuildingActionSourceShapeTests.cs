@@ -94,7 +94,7 @@ public sealed class BuildFarmBuildingActionSourceShapeTests
 
         // General, not Physical: the seam drives no tool lifecycle and starts no swing.
         request.Should().Contain("AdmissionActionabilityProfile.General");
-        request.Should().Contain("this.AdmitExecution(requestId, executionId, requestedDeadlineMs, nowMs, AdmissionActionabilityProfile.General)");
+        request.Should().Contain("this.AdmitLocalExecution(requestId, requestedDeadlineMs, AdmissionActionabilityProfile.General");
         request.Should().NotContain("AdmissionActionabilityProfile.Physical");
 
         // The seam takes no tool, no slot and no held item, so this action must not have grown any.

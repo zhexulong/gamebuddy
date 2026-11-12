@@ -48,15 +48,7 @@ internal sealed partial class ExecutionManager
 {
     public LocalExecutionReceipt RequestLocalChestStore(string requestId, string chestId, string expectedQualifiedItemId, long requestedDeadlineMs)
     {
-        if (this.receiptsByRequestId.TryGetValue(requestId, out LocalExecutionReceipt? existing)) return existing;
-        this.revision++;
-        string executionId = Guid.NewGuid().ToString("N");
-        long nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-        // Shared mechanical admission (identity → actionability → deadline →
-        // body exclusivity), behavior-equivalent to the inline sequence it
-        // replaced: identical reasonCodes, identical order. Geometry, target
-        // identity and the postcondition stay action-specific.
-        if (this.AdmitExecution(requestId, executionId, requestedDeadlineMs, nowMs, AdmissionActionabilityProfile.General) is LocalExecutionReceipt admissionRejection)
+        if (this.AdmitLocalExecution(requestId, requestedDeadlineMs, AdmissionActionabilityProfile.General, out string executionId, out long nowMs) is LocalExecutionReceipt admissionRejection)
             return admissionRejection;
         if (!TryFindCarriedStack(expectedQualifiedItemId, out _, out _))
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "item_not_owned_in_slot", $"item={expectedQualifiedItemId};carried=none");
@@ -138,15 +130,7 @@ internal sealed partial class ExecutionManager
 
     public LocalExecutionReceipt RequestLocalChestRetrieve(string requestId, string chestId, string expectedQualifiedItemId, long requestedDeadlineMs)
     {
-        if (this.receiptsByRequestId.TryGetValue(requestId, out LocalExecutionReceipt? existing)) return existing;
-        this.revision++;
-        string executionId = Guid.NewGuid().ToString("N");
-        long nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-        // Shared mechanical admission (identity → actionability → deadline →
-        // body exclusivity), behavior-equivalent to the inline sequence it
-        // replaced: identical reasonCodes, identical order. Geometry, target
-        // identity and the postcondition stay action-specific.
-        if (this.AdmitExecution(requestId, executionId, requestedDeadlineMs, nowMs, AdmissionActionabilityProfile.General) is LocalExecutionReceipt admissionRejection)
+        if (this.AdmitLocalExecution(requestId, requestedDeadlineMs, AdmissionActionabilityProfile.General, out string executionId, out long nowMs) is LocalExecutionReceipt admissionRejection)
             return admissionRejection;
 
         GameLocation location = Game1.player.currentLocation;

@@ -15,15 +15,7 @@ internal sealed partial class ExecutionManager
 {
     public LocalExecutionReceipt RequestLocalLoadMachineInput(string requestId, int slot, int targetX, int targetY, string expectedQualifiedItemId, string expectedTargetId, long requestedDeadlineMs)
     {
-        if (this.receiptsByRequestId.TryGetValue(requestId, out LocalExecutionReceipt? existing)) return existing;
-        this.revision++;
-        string executionId = Guid.NewGuid().ToString("N");
-        long nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-        // Shared mechanical admission (identity → actionability → deadline →
-        // body exclusivity), behavior-equivalent to the inline sequence it
-        // replaced: identical reasonCodes, identical order. Geometry, target
-        // identity and the postcondition stay action-specific.
-        if (this.AdmitExecution(requestId, executionId, requestedDeadlineMs, nowMs, AdmissionActionabilityProfile.Physical) is LocalExecutionReceipt admissionRejection)
+        if (this.AdmitLocalExecution(requestId, requestedDeadlineMs, AdmissionActionabilityProfile.Physical, out string executionId, out long nowMs) is LocalExecutionReceipt admissionRejection)
             return admissionRejection;
         if (ResolveLoadInput(slot, expectedQualifiedItemId) is not StardewValley.Object input)
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "machine_load_input_not_in_slot", $"slot={slot};expected={expectedQualifiedItemId}");
@@ -262,15 +254,7 @@ internal sealed partial class ExecutionManager
     /// </summary>
     public LocalExecutionReceipt RequestLocalCollectMachineOutput(string requestId, int targetX, int targetY, string expectedTargetId, long requestedDeadlineMs)
     {
-        if (this.receiptsByRequestId.TryGetValue(requestId, out LocalExecutionReceipt? existing)) return existing;
-        this.revision++;
-        string executionId = Guid.NewGuid().ToString("N");
-        long nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-        // Shared mechanical admission (identity → actionability → deadline →
-        // body exclusivity), behavior-equivalent to the inline sequence it
-        // replaced: identical reasonCodes, identical order. Geometry, target
-        // identity and the postcondition stay action-specific.
-        if (this.AdmitExecution(requestId, executionId, requestedDeadlineMs, nowMs, AdmissionActionabilityProfile.Physical) is LocalExecutionReceipt admissionRejection)
+        if (this.AdmitLocalExecution(requestId, requestedDeadlineMs, AdmissionActionabilityProfile.Physical, out string executionId, out long nowMs) is LocalExecutionReceipt admissionRejection)
             return admissionRejection;
         if (MachineCollectRefusal(targetX, targetY, expectedTargetId) is { } refusal)
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, refusal.ReasonCode, refusal.Detail);
@@ -354,12 +338,10 @@ internal sealed partial class ExecutionManager
     /// <summary>Published read-only machine inspection. It reads only the live machine object and never invokes the interaction menu or mutates machine state.</summary>
     public LocalExecutionReceipt RequestLocalInspectMachine(string requestId, int targetX, int targetY, string expectedTargetId, long requestedDeadlineMs)
     {
-        if (this.receiptsByRequestId.TryGetValue(requestId, out LocalExecutionReceipt? existing))
-            return existing;
-
-        this.revision++;
-        string executionId = Guid.NewGuid().ToString("N");
-        long nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        if (this.BeginLocalExecution(requestId, out string executionId, out long nowMs) is LocalExecutionReceipt replay) return replay;
+        // Scope-bound actor proof. Authorization precedes the world/location
+        // readiness checks: a caller that is not the scope-bound actor is refused
+        // for that reason rather than for where it happens to be standing.
         // Scope-bound actor proof. Authorization precedes the world/location
         // readiness checks: a caller that is not the scope-bound actor is refused
         // for that reason rather than for where it happens to be standing.
@@ -415,12 +397,10 @@ internal sealed partial class ExecutionManager
     /// <summary>Experimental native item consumption. The Farmer owns animation, stat/buff changes, and inventory decrement.</summary>
     public LocalExecutionReceipt RequestLocalUseItem(string requestId, int slot, string expectedQualifiedItemId, long requestedDeadlineMs)
     {
-        if (this.receiptsByRequestId.TryGetValue(requestId, out LocalExecutionReceipt? existing))
-            return existing;
-
-        this.revision++;
-        string executionId = Guid.NewGuid().ToString("N");
-        long nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        if (this.BeginLocalExecution(requestId, out string executionId, out long nowMs) is LocalExecutionReceipt replay) return replay;
+        // Scope-bound actor proof. Authorization precedes the world/location
+        // readiness checks: a caller that is not the scope-bound actor is refused
+        // for that reason rather than for where it happens to be standing.
         // Scope-bound actor proof. Authorization precedes the world/location
         // readiness checks: a caller that is not the scope-bound actor is refused
         // for that reason rather than for where it happens to be standing.
@@ -476,11 +456,10 @@ internal sealed partial class ExecutionManager
     /// </summary>
     public LocalExecutionReceipt RequestLocalFeedAnimal(string requestId, int slot, int targetX, int targetY, string expectedTargetId, long requestedDeadlineMs)
     {
-        if (this.receiptsByRequestId.TryGetValue(requestId, out LocalExecutionReceipt? existing)) return existing;
-
-        this.revision++;
-        string executionId = Guid.NewGuid().ToString("N");
-        long nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        if (this.BeginLocalExecution(requestId, out string executionId, out long nowMs) is LocalExecutionReceipt replay) return replay;
+        // Scope-bound actor proof. Authorization precedes the world/location
+        // readiness checks: a caller that is not the scope-bound actor is refused
+        // for that reason rather than for where it happens to be standing.
         // Scope-bound actor proof. Authorization precedes the world/location
         // readiness checks: a caller that is not the scope-bound actor is refused
         // for that reason rather than for where it happens to be standing.
@@ -551,11 +530,10 @@ internal sealed partial class ExecutionManager
     /// <summary>Experimental native animal-product collection. Only MilkPail/Shears can start their version-locked animation and completion lifecycle.</summary>
     public LocalExecutionReceipt RequestLocalCollectAnimalProduct(string requestId, int slot, int targetX, int targetY, string expectedTargetId, long requestedDeadlineMs)
     {
-        if (this.receiptsByRequestId.TryGetValue(requestId, out LocalExecutionReceipt? existing)) return existing;
-
-        this.revision++;
-        string executionId = Guid.NewGuid().ToString("N");
-        long nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        if (this.BeginLocalExecution(requestId, out string executionId, out long nowMs) is LocalExecutionReceipt replay) return replay;
+        // Scope-bound actor proof. Authorization precedes the world/location
+        // readiness checks: a caller that is not the scope-bound actor is refused
+        // for that reason rather than for where it happens to be standing.
         // Scope-bound actor proof. Authorization precedes the world/location
         // readiness checks: a caller that is not the scope-bound actor is refused
         // for that reason rather than for where it happens to be standing.
@@ -720,12 +698,10 @@ internal sealed partial class ExecutionManager
     /// <summary>Experimental native pet interaction. The native Pet.checkAction path owns daily petting and friendship mutation.</summary>
     public LocalExecutionReceipt RequestLocalPetAnimal(string requestId, int targetX, int targetY, string expectedTargetId, long requestedDeadlineMs)
     {
-        if (this.receiptsByRequestId.TryGetValue(requestId, out LocalExecutionReceipt? existing))
-            return existing;
-
-        this.revision++;
-        string executionId = Guid.NewGuid().ToString("N");
-        long nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        if (this.BeginLocalExecution(requestId, out string executionId, out long nowMs) is LocalExecutionReceipt replay) return replay;
+        // Scope-bound actor proof. Authorization precedes the world/location
+        // readiness checks: a caller that is not the scope-bound actor is refused
+        // for that reason rather than for where it happens to be standing.
         // Scope-bound actor proof. Authorization precedes the world/location
         // readiness checks: a caller that is not the scope-bound actor is refused
         // for that reason rather than for where it happens to be standing.
@@ -842,12 +818,9 @@ internal sealed partial class ExecutionManager
     /// </summary>
     public LocalExecutionReceipt RequestLocalPetFarmAnimal(string requestId, int targetX, int targetY, string expectedTargetId, long requestedDeadlineMs)
     {
-        if (this.receiptsByRequestId.TryGetValue(requestId, out LocalExecutionReceipt? existing))
-            return existing;
-
-        this.revision++;
-        string executionId = Guid.NewGuid().ToString("N");
-        long nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        if (this.BeginLocalExecution(requestId, out string executionId, out long nowMs) is LocalExecutionReceipt replay) return replay;
+        // Scope-bound actor proof. Authorization precedes the world/location readiness checks: a caller that is not the
+        // scope-bound actor is refused for that reason rather than for where it happens to be standing.
         // Scope-bound actor proof. Authorization precedes the world/location readiness checks: a caller that is not the
         // scope-bound actor is refused for that reason rather than for where it happens to be standing.
         if (!this.TryGetBoundActor(out Farmer? boundActor, out string scopeReason) || boundActor is null)
@@ -969,12 +942,10 @@ internal sealed partial class ExecutionManager
     /// <summary>Experimental read-only NPC relationship inspection. It never invokes NPC interaction or creates missing friendship records.</summary>
     public LocalExecutionReceipt RequestLocalInspectNpcRelationship(string requestId, int targetX, int targetY, string expectedTargetId, long requestedDeadlineMs)
     {
-        if (this.receiptsByRequestId.TryGetValue(requestId, out LocalExecutionReceipt? existing))
-            return existing;
-
-        this.revision++;
-        string executionId = Guid.NewGuid().ToString("N");
-        long nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        if (this.BeginLocalExecution(requestId, out string executionId, out long nowMs) is LocalExecutionReceipt replay) return replay;
+        // Scope-bound actor proof. Authorization precedes the world/location
+        // readiness checks: a caller that is not the scope-bound actor is refused
+        // for that reason rather than for where it happens to be standing.
         // Scope-bound actor proof. Authorization precedes the world/location
         // readiness checks: a caller that is not the scope-bound actor is refused
         // for that reason rather than for where it happens to be standing.
@@ -1070,12 +1041,10 @@ internal sealed partial class ExecutionManager
     /// </summary>
     public LocalExecutionReceipt RequestLocalInteractNpcWithItem(string requestId, int slot, int targetX, int targetY, string expectedQualifiedItemId, string expectedTargetId, long requestedDeadlineMs)
     {
-        if (this.receiptsByRequestId.TryGetValue(requestId, out LocalExecutionReceipt? existing))
-            return existing;
-
-        this.revision++;
-        string executionId = Guid.NewGuid().ToString("N");
-        long nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        if (this.BeginLocalExecution(requestId, out string executionId, out long nowMs) is LocalExecutionReceipt replay) return replay;
+        // Scope-bound actor proof. Authorization precedes the world/location
+        // readiness checks: a caller that is not the scope-bound actor is refused
+        // for that reason rather than for where it happens to be standing.
         // Scope-bound actor proof. Authorization precedes the world/location
         // readiness checks: a caller that is not the scope-bound actor is refused
         // for that reason rather than for where it happens to be standing.

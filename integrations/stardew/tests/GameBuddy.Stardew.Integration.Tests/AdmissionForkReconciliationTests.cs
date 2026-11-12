@@ -74,6 +74,8 @@ public sealed class AdmissionForkReconciliationTests
         ["farmhandexecutioncontroller.colorobjectactions.cs"] = 1,
         ["farmhandexecutioncontroller.geodeactions.cs"] = 1,
         ["farmhandexecutioncontroller.furnituredecorationactions.cs"] = 4,
+        // The identity preamble itself, which ends in the one admission on behalf of every action that uses it.
+        ["farmhandexecutioncontroller.cs"] = 1,
     };
 
     private static string RepositoryRoot()
@@ -121,10 +123,15 @@ public sealed class AdmissionForkReconciliationTests
         // The other direction, so convergence is progress that shows up here rather than a number nobody
         // maintains. A file may legitimately be in BOTH tables while it is partially converged - which is
         // exactly the state this test makes visible.
+        //
+        // Both spellings count, because both reach the one authority: `AdmitExecution` is the mechanical gate,
+        // `AdmitLocalExecution` is the identity preamble that ends in it. A file that bypasses BOTH is still
+        // read as unconverged, which is what this table makes visible.
         Dictionary<string, int> converged = new(StringComparer.Ordinal);
         foreach ((string fileName, string source) in HandlerSources())
         {
-            int count = CountOccurrences(source, "this.AdmitExecution(");
+            int count = CountOccurrences(source, "this.AdmitExecution(")
+                + CountOccurrences(source, "this.AdmitLocalExecution(");
             if (count > 0) converged[fileName] = count;
         }
         converged.Should().BeEquivalentTo(

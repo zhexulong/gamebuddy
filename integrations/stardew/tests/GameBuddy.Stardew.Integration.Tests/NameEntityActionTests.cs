@@ -80,7 +80,7 @@ public sealed class NameEntityActionTests
         // Design 5.2: a thin request path and ONE execution body. This action has no walk at all -
         // `Horse.nameHorse` reads no geometry - so there is no approach leg to reach a second copy of
         // the contract through, and the seam call appears exactly once in the whole file.
-        body.Should().Contain("this.AdmitExecution(requestId, executionId, requestedDeadlineMs, nowMs, AdmissionActionabilityProfile.General)");
+        body.Should().Contain("this.AdmitLocalExecution(requestId, requestedDeadlineMs, AdmissionActionabilityProfile.General");
         body.Should().Contain("this.RememberTerminal(");
         CountOccurrences(code, "nameHorse(").Should().Be(1, "the seam is driven from exactly one place");
 

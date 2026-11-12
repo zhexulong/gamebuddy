@@ -86,7 +86,7 @@ public sealed class AcceptDailyQuestActionTests
 
         // One thin request path (admission, target, then the shared body) and ONE execution body, so a
         // retry cannot run a second copy of the contract.
-        request.Should().Contain("this.AdmitExecution(");
+        request.Should().Contain("this.AdmitLocalExecution(");
         request.Should().Contain("AdmissionActionabilityProfile.General");
         request.Should().Contain("return this.ExecuteAcceptDailyQuest(executionId, requestId, expectedTargetId);");
         request.Should().NotContain("questLog");

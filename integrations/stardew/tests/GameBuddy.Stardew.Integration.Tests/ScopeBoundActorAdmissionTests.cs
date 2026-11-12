@@ -436,12 +436,15 @@ public sealed class ScopeBoundActorAdmissionTests
             {
                 // Two admissible forms during convergence. A body is guarded when it
                 // still carries the inline scope-bound actor proof, or when it delegates
-                // the whole mechanical admission to the shared AdmitExecution helper
-                // (which performs that same proof). Without the second form the
-                // derivation would report a converged family as unguarded and the
-                // completeness assertion below would silently shrink.
+                // the whole mechanical admission to a shared helper (which performs that
+                // same proof): `AdmitExecution` for a body that proves its scope first,
+                // `AdmitLocalExecution` for the identity-preamble form that admits at
+                // the top. Without those forms the derivation would report a converged
+                // family as unguarded and the completeness assertion below would silently
+                // shrink.
                 if (body.Contains("TryGetBoundActor(", StringComparison.Ordinal)
-                    || body.Contains("AdmitExecution(", StringComparison.Ordinal))
+                    || body.Contains("AdmitExecution(", StringComparison.Ordinal)
+                    || body.Contains("AdmitLocalExecution(", StringComparison.Ordinal))
                     guardedMethods.Add(method);
             }
 

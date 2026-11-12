@@ -1002,6 +1002,45 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
     }
 
     /// <summary>
+    /// <summary>
+    /// The identity half of an executing action: the replay lookup, the revision advance, the execution identity and the
+    /// admission clock, in that order.
+    ///
+    /// <para>
+    /// The receipt this answers is the one the ledger already holds for the request. A retry gets its first answer back
+    /// byte-identical, which is why the lookup precedes the revision advance; on that path <paramref name="executionId"/>
+    /// and <paramref name="nowMs"/> are never read, because the caller has already been answered.
+    /// </para>
+    /// </summary>
+    private LocalExecutionReceipt? BeginLocalExecution(string requestId, out string executionId, out long nowMs)
+    {
+        if (this.receiptsByRequestId.TryGetValue(requestId, out LocalExecutionReceipt? existing))
+        {
+            executionId = existing.ExecutionId;
+            nowMs = 0;
+            return existing;
+        }
+        this.revision++;
+        executionId = Guid.NewGuid().ToString("N");
+        nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        return null;
+    }
+
+    /// <summary>
+    /// <see cref="BeginLocalExecution"/> followed by <see cref="AdmitExecution"/>: the whole identity-and-admission
+    /// preamble for an action whose own checks come after admission. An action that must refuse a non-scope-bound caller
+    /// before it reads the world calls <see cref="BeginLocalExecution"/> and then <see cref="AdmitExecution"/> itself, in
+    /// that order, because those refusals are named for the reason the caller can act on.
+    /// </summary>
+    private LocalExecutionReceipt? AdmitLocalExecution(
+        string requestId,
+        long requestedDeadlineMs,
+        AdmissionActionabilityProfile profile,
+        out string executionId,
+        out long nowMs) =>
+        this.BeginLocalExecution(requestId, out executionId, out nowMs) is LocalExecutionReceipt existing
+            ? existing
+            : this.AdmitExecution(requestId, executionId, requestedDeadlineMs, nowMs, profile);
     /// The mechanical admission every executing action shares, in the single
     /// order invariant 1 fixes: identity → actionability → deadline → body
     /// exclusivity. Geometry, target identity and postconditions are
