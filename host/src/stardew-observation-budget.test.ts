@@ -157,8 +157,13 @@ test("an observation drops the coordinates and the redundant flag of villagers o
   assert.ok(marlon !== undefined, "an off-location villager must still be named");
   assert.equal(marlon.location, "AdventureGuild");
   // And the facts no action could use are gone. The tile is unreachable from here; the flag could only have
-  // said `false`, because this row is elided exactly when both signals already said "elsewhere".
-  assert.deepEqual(Object.keys(marlon).sort(), ["displayName", "location", "npcName"]);
+  // said `false`, because this row is elided exactly when both signals already said "elsewhere". `targetId`
+  // STAYS, and that is the row's one action-bearing field: it is what `talk_to_npc` is dispatched with, it is
+  // location-scoped, and it is the address a villager past the 6-tile discovery envelope has nowhere else -
+  // `npcRelationshipTargets` is bounded to that envelope (stardew-observation-budget.ts:140-145,
+  // `stardew-observation-budget-reachability.test.ts:579`). Dropping it here left a villager callable only
+  // after the actor happened to walk within six tiles of them.
+  assert.deepEqual(Object.keys(marlon).sort(), ["displayName", "location", "npcName", "targetId"]);
   assert.equal("x" in marlon, false, "an off-location tile is unreachable and must not be published");
   assert.equal("y" in marlon, false);
   assert.equal("inCurrentLocation" in marlon, false, "a `false` here restates the elision it was elided for");
