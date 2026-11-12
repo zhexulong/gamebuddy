@@ -70,12 +70,22 @@ export const EXCLUSIVE_FILE_GROUPS = Object.freeze([
  */
 export const PLAYER_HOST_LIFECYCLE_FAMILY = "stardew-production-lifecycle-coordinator";
 
+/**
+ * The family's population in one reading: every `dist-test`-relative file that names the family, and the members
+ * that belong to no exclusive group. The two counts come from one filter so a file that is ungrouped is also
+ * counted as matched - a reading whose numerator and denominator could disagree is the defect it exists for.
+ */
+export function playerHostLifecycleFamilyReading(relativePaths) {
+  const matched = relativePaths.filter((path) => {
+    const name = path.slice(path.lastIndexOf("/") + 1);
+    return name.startsWith(PLAYER_HOST_LIFECYCLE_FAMILY);
+  });
+  return { matched, ungrouped: matched.filter((path) => exclusiveGroupsFor(path).length === 0) };
+}
+
 /** The `dist-test`-relative files that name the family but belong to no exclusive group. */
 export function ungroupedPlayerHostLifecycleFiles(relativePaths) {
-  return relativePaths.filter((path) => {
-    const name = path.slice(path.lastIndexOf("/") + 1);
-    return name.startsWith(PLAYER_HOST_LIFECYCLE_FAMILY) && exclusiveGroupsFor(path).length === 0;
-  });
+  return playerHostLifecycleFamilyReading(relativePaths).ungrouped;
 }
 
 /** The declared exclusive groups a path belongs to, identified by its `dist-test`-relative shape. */
@@ -117,8 +127,16 @@ export const DEFAULT_TEST_FILE_TIMEOUT_MS = 600_000;
 // Windows release CI runs each compiled file in an isolated Node coordinator.
 // The whole suite remains bounded, but 15 minutes cannot accommodate its
 // measured serialized Windows baseline and can shrink a final child below its
-// own startup/cleanup minimum. Keep one shared 25-minute deadline.
-const DEFAULT_TEST_SUITE_TIMEOUT_MS = 25 * 60_000;
+// own startup/cleanup minimum.
+//
+// 45 minutes, not 25: the smaller bound was sized for a suite that stopped at its first failing
+// batch, which is a run that could always finish early. A suite that runs every batch cannot use
+// that number - measured 2026-11-12 on this machine, batches 1-36 consumed the whole 25 minutes
+// (one file alone spent its full 600 s budget) and batches 37-40 were reported
+// `not_run: reason=suite_deadline`. A 40-batch run needed ~28 minutes of batch time, plus the build
+// and the script phase. Overshooting 45 still says which batches did not run, by name, and exits
+// non-zero, so the bound is a stop, never a truncation that reads as success.
+const DEFAULT_TEST_SUITE_TIMEOUT_MS = 45 * 60_000;
 
 function configuredCount(value, defaultValue, code) {
   if (value === undefined) return defaultValue;
@@ -137,11 +155,19 @@ function configuredConcurrency(value, defaultValue = DEFAULT_TEST_CONCURRENCY) {
 }
 
 function batchFilesForLog(paths) {
-  return paths.map((path) => relative(hostRoot, path).replaceAll("\\", "/")).join(",");
+  return paths.map((path) => relativePath(path)).join(",");
 }
 
 function runnerError(code, path) {
   return new Error(`${code}:${path}`);
+}
+
+// One backslash, so a Windows path is normalized exactly once: the literal had been written with two,
+// which matches nothing, so every path this produces kept its backslashes (messages and heartbeat
+// labels alike). `exclusiveGroupsFor` always wrote it correctly, which is why the group matching worked
+// while the message spelling did not.
+function relativePath(path) {
+  return relative(hostRoot, path).replaceAll("\\", "/");
 }
 
 function assertContained(root, path) {
@@ -260,11 +286,6 @@ export function chunkTestFiles(paths, batchSize = DEFAULT_TEST_BATCH_SIZE) {
     const failures = new Array(batch.length);
     let nextIndex = 0;
     let stopped = false;
-  // One backslash, so a Windows path is normalized exactly once: the literal had been written
-  // with two, which matches nothing, so every path this produces kept its backslashes (messages
-  // and heartbeat labels alike). `exclusiveGroupsFor` always wrote it correctly, which is why the
-  // group matching worked while the message spelling did not.
-  const relativePath = (path) => relative(hostRoot, path).replaceAll("\\", "/");
   const runOne = async (index) => {
     const path = batch[index];
     const fileRemainingMs = deadlineMs - now();
@@ -403,21 +424,80 @@ export function isEnvironmentalFailure(error) {
   return !ASSERTION_FAILURE_CAUSES.test(text) && ENVIRONMENTAL_FAILURE_CAUSES.test(text);
 }
 
+/** One child's message, bounded: a single file's output must not bury the reading printed beside it. */
+function boundedMessage(error, limit = 600) {
+  const text = error instanceof Error ? error.message : String(error);
+  return text.length > limit ? `${text.slice(0, limit)}…` : text;
+}
+
+/** The same message as one field of a `key=value` line, so a newline cannot split a log record. */
+function singleLineMessage(message) {
+  return message.replaceAll(/\s+/gu, " ").trim();
+}
+
 /**
- * Run bounded, deterministic batches instead of giving every compiled test
- * file to one long-lived Node test coordinator. A test worker that fails to
- * release an inherited handle can then affect at most its own batch; the next
- * batch gets a fresh coordinator. The deadline belongs to the entire suite,
- * not to each batch.
+ * What this suite run covered, published on every exit path.
  *
- * Batches stay sequential - that barrier is the isolation property - but the
- * files inside one batch are separate children, so up to `concurrency` Node
- * startups overlap instead of paying the whole serialized cost.
+ * `batches examined M of N` is the reading that tells a complete run from a truncated one: without it,
+ * a run that stopped at batch 6 printed the failing test's name and nothing that said 34 batches had
+ * not run, so that run and a green suite were indistinguishable.
+ */
+function suitePopulationLine({ suite, batchesTotal, notRun, failedBatches, files, wallMs }) {
+  const remaining = notRun.length;
+  const parts = [`host_test_suite_population:suite=${suite}`, `batches examined ${batchesTotal - remaining} of ${batchesTotal}`];
+  // One number, two readings, derived here so they cannot disagree.
+  if (remaining > 0) parts.push(`remaining ${remaining} not run`, `batches_not_run ${remaining}`);
+  parts.push(`failed ${failedBatches}`, `files ${files}`, `wall_ms ${wallMs}`);
+  // `0 of 0` is the one reading that cannot tell "nothing to run" from "nothing ran", so it says which.
+  if (batchesTotal === 0) parts.push("zero_population_blocked");
+  return parts.join(" · ");
+}
+
+/** One batch the run did not examine, named with the files it would have run and why it did not. */
+function notRunBatchLine(entry) {
+  return `host_test_suite_batch_not_run:suite=${entry.label}:reason=${entry.reason}:files=${entry.files.length}:paths=${batchFilesForLog(entry.files)}`;
+}
+
+/**
+ * The one error a suite's coverage produces: the failing files by name, each one's own message (a
+ * reader needs the reason, not just the name), every batch that did not run, and the population reading
+ * itself - so the exit code and the message say the same thing.
+ */
+function suiteFailureMessage({ suite, failures, notRun, population }) {
+  const head =
+    failures.length > 0
+      ? `test_suite_failed:${failures.length} file(s): ${failures.map((failure) => relativePath(failure.path)).join(", ")}`
+      : notRun.some((entry) => entry.reason === "suite_deadline")
+        ? `test_suite_timeout:${suite}`
+        : `test_suite_batches_not_run:${suite}`;
+  return [
+    head,
+    ...failures.map((failure) => `${relativePath(failure.path)}: ${boundedMessage(failure.error)}`),
+    ...notRun.map(notRunBatchLine),
+    population,
+  ].join("\n");
+}
+
+/**
+ * Run bounded, deterministic batches instead of giving every compiled test file to one long-lived
+ * Node test coordinator. A test worker that fails to release an inherited handle can then affect at
+ * most its own batch; the next batch gets a fresh coordinator. The deadline belongs to the entire
+ * suite, not to each batch.
  *
- * Each file also gets its own budget (`perFileMs`). The suite deadline still bounds the
- * whole run; the per-file budget exists because a file that never resolves is a distinct
- * failure from a slow suite - without it, one hung test file consumes every remaining
- * minute, the run ends with no result at all, and the file that hung is never named.
+ * Every batch runs by default, and the run ends by publishing what it covered. Before this, a failing
+ * batch ended the run with its own child error and nothing said where the run had stopped: `batch
+ * 6/40 failed` and "the suite is green" carried the same exit code and neither named the 34 batches
+ * that never ran, so a truncated run was read as a passing suite. `--fail-fast` restores the old
+ * behaviour for interactive use; the ladder's `pnpm --dir host test` and CI run everything.
+ *
+ * Batches stay sequential - that barrier is the isolation property - but the files inside one batch
+ * are separate children, so up to `concurrency` Node startups overlap instead of paying the whole
+ * serialized cost.
+ *
+ * Each file also gets its own budget (`perFileMs`). The suite deadline still bounds the whole run;
+ * the per-file budget exists because a file that never resolves is a distinct failure from a slow
+ * suite - without it, one hung test file consumes every remaining minute, the run ends with no result
+ * at all, and the file that hung is never named.
  */
 export async function runTestBatches(paths, {
   suite,
@@ -425,7 +505,7 @@ export async function runTestBatches(paths, {
   concurrency = DEFAULT_TEST_CONCURRENCY,
   timeoutMs = DEFAULT_TEST_SUITE_TIMEOUT_MS,
   perFileMs = DEFAULT_TEST_FILE_TIMEOUT_MS,
-  keepGoing = false,
+  keepGoing = true,
   retryEnvironmental = true,
   run = runDiscoveredTests,
   now = Date.now,
@@ -434,53 +514,74 @@ export async function runTestBatches(paths, {
   if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 100) throw runnerError("invalid_test_suite_timeout", String(timeoutMs));
   if (!Number.isSafeInteger(concurrency) || concurrency < 1) throw runnerError("invalid_test_concurrency", String(concurrency));
   if (!Number.isSafeInteger(perFileMs) || perFileMs < 100) throw runnerError("invalid_test_file_timeout", String(perFileMs));
+  if (!Array.isArray(paths) || paths.length === 0) {
+    // A suite with no files is a blocked reading, not a green one: it publishes the population it has
+    // and then throws, so "nothing to run" still exits non-zero.
+    console.error(suitePopulationLine({ suite, batchesTotal: 0, notRun: [], failedBatches: 0, files: 0, wallMs: 0 }));
+    throw runnerError("test_files_missing", defaultTestRoot);
+  }
   const batches = chunkTestFiles(paths, batchSize);
-  const deadlineMs = now() + timeoutMs;
-  const allFailures = [];
+  const startedAtMs = now();
+  const deadlineMs = startedAtMs + timeoutMs;
+  const failures = [];
+  const notRun = [];
+  let failedBatches = 0;
+  // Batches from `from` on are coverage this run does not have. Each keeps the reason the run ended,
+  // because "remaining 34 not run" without a reason is the reading this change replaces.
+  const markNotRun = (from, reason) => {
+    for (let index = from; index < batches.length; index += 1)
+      notRun.push({ label: `${suite}:batch=${index + 1}/${batches.length}`, reason, files: batches[index] });
+  };
   for (const [index, batch] of batches.entries()) {
-    const remainingMs = deadlineMs - now();
-    if (remainingMs < 100) throw runnerError("test_suite_timeout", suite);
     const batchLabel = `${suite}:batch=${index + 1}/${batches.length}`;
+    const remainingMs = deadlineMs - now();
+    if (remainingMs < 100) {
+      markNotRun(index, "suite_deadline");
+      break;
+    }
     console.error(`host_test_suite_batch_start:suite=${batchLabel}:files=${batch.length}:paths=${batchFilesForLog(batch)}:remaining_ms=${remainingMs}`);
-    const failures = await runBatchFiles({
-      batch,
-      batchLabel,
-      concurrency,
-      deadlineMs,
-      perFileMs,
-      run,
-      now,
-      suite,
-      keepGoing,
-      retryEnvironmental,
-    });
-    if (failures.length === 0) continue;
-    allFailures.push(...failures);
-    // Without `--keep-going` the first failing batch still ends the run, and it ends it with the
-    // child's own error rather than a summary: the message a reader needs is the one the failing
-    // test produced, and that is what tonight's earlier fix to this function protects.
-    if (!keepGoing) throw failures[0].error;
+    let batchFailures;
+    try {
+      batchFailures = await runBatchFiles({ batch, batchLabel, concurrency, deadlineMs, perFileMs, run, now, suite, keepGoing, retryEnvironmental });
+    } catch (error) {
+      // A batch whose own run threw handed back no verdict for its files. That is missing coverage, and
+      // recording it is what keeps the suite running instead of ending it here.
+      notRun.push({ label: batchLabel, reason: `batch_error:${singleLineMessage(boundedMessage(error, 200))}`, files: batch });
+      if (!keepGoing) {
+        markNotRun(index + 1, "fail_fast");
+        break;
+      }
+      continue;
+    }
+    if (batchFailures.length === 0) continue;
+    failedBatches += 1;
+    failures.push(...batchFailures);
     console.error(
-      `host_test_suite_batch_failed:suite=${batchLabel}:files=${failures
-        .map((failure) => relative(hostRoot, failure.path).replaceAll("\\", "/"))
-        .join(",")}:keeping_going=true`,
+      `host_test_suite_batch_failed:suite=${batchLabel}:files=${batchFilesForLog(batchFailures.map((failure) => failure.path))}:keeping_going=${keepGoing}`,
     );
-    // The child's own message, for the same reason the single-failure path keeps it: with
-    // `--keep-going` the run deliberately continues, so this line is the ONLY place a reader learns
-    // why a file failed until the summary - and the summary would carry names but no reasons.
-    for (const failure of failures) {
-      const message = failure.error instanceof Error ? failure.error.message : String(failure.error);
-      const bounded = message.length > 600 ? `${message.slice(0, 600)}…` : message;
-      console.error(`host_test_suite_batch_failure:file=${relative(hostRoot, failure.path).replaceAll("\\", "/")}\n${bounded}`);
+    // The child's own message: with every batch running, the aggregate error is a summary, so this is
+    // where a failing file's own output stays readable.
+    for (const failure of batchFailures)
+      console.error(`host_test_suite_batch_failure:file=${relativePath(failure.path)}\n${boundedMessage(failure.error)}`);
+    // `--fail-fast` is the interactive mode: the first failing batch ends the run, and the batches it
+    // never reached are published rather than dropped.
+    if (!keepGoing) {
+      markNotRun(index + 1, "fail_fast");
+      break;
     }
   }
-  if (allFailures.length > 0)
-    throw runnerError(
-      "test_suite_failed",
-      `${allFailures.length} file(s): ${allFailures
-        .map((failure) => relative(hostRoot, failure.path).replaceAll("\\", "/"))
-        .join(", ")}`,
-    );
+  const population = suitePopulationLine({
+    suite,
+    batchesTotal: batches.length,
+    notRun,
+    failedBatches,
+    files: paths.length,
+    wallMs: now() - startedAtMs,
+  });
+  for (const entry of notRun) console.error(notRunBatchLine(entry));
+  console.error(population);
+  if (notRun.length === 0 && failures.length === 0) return;
+  throw new Error(suiteFailureMessage({ suite, failures, notRun, population }));
 }
 
 /**
@@ -521,9 +622,10 @@ export async function runCompiledTests({
     DEFAULT_TEST_FILE_TIMEOUT_MS,
     "invalid_test_file_timeout",
   ),
-  // `--keep-going` runs every batch and reports every failing file instead of stopping at the first
-  // failing batch. The default stays as it was: nothing here becomes lax by accident.
-  keepGoing = process.argv.includes("--keep-going"),
+  // Every batch runs by default; `--fail-fast` is the interactive mode and the exception. Before this
+  // flag existed the default was fail-fast, which is why a green reading could not be told from a suite
+  // that stopped at its first failing batch.
+  keepGoing = !process.argv.includes("--fail-fast"),
 } = {}) {
   if (!Number.isSafeInteger(batchSize) || batchSize < 1) throw runnerError("invalid_test_batch_size", String(batchSize));
   if (!Number.isSafeInteger(concurrency) || concurrency < 1) throw runnerError("invalid_test_concurrency", String(concurrency));
@@ -533,7 +635,7 @@ export async function runCompiledTests({
     throw runnerError("invalid_test_file_timeout", String(perFileMs));
   await preflightTestArtifact();
   const files = await discoverTestFiles(defaultTestRoot, ".test.js");
-  const relativeFiles = files.map((file) => relative(hostRoot, file).replaceAll("\\", "/"));
+  const relativeFiles = files.map((file) => relativePath(file));
   for (const group of EXCLUSIVE_FILE_GROUPS) {
     const matched = relativeFiles.filter((path) => group.pattern.test(path));
     // Self-invalidating: a group whose files are gone (renamed, deleted, folded into one
@@ -543,8 +645,13 @@ export async function runCompiledTests({
   // The other half of the same rule: a file that names the family but matched no group is a finding, not an ordinary
   // file. A pattern nobody re-checks would come back as a 27-minute silence under company, so the name is worth
   // nothing unless the runner refuses to run it ungrouped.
-  const ungrouped = ungroupedPlayerHostLifecycleFiles(relativeFiles);
-  if (ungrouped.length > 0) throw runnerError("ungrouped_heavy_suite", ungrouped.join(","));
+  const family = playerHostLifecycleFamilyReading(relativeFiles);
+  // The reading before the assertion: "ungrouped=0" means nothing without the population it examined, and a leak
+  // that renamed a file out of the family would otherwise print nothing at all.
+  console.error(
+    `host_test_exclusive_group_reading:family_pattern_matched=${family.matched.length}:grouped=${family.matched.length - family.ungrouped.length}:ungrouped=${family.ungrouped.length}`,
+  );
+  if (family.ungrouped.length > 0) throw runnerError("ungrouped_heavy_suite", family.ungrouped.join(","));
   return await runTestBatches(files, {
     suite: "compiled",
     batchSize,
@@ -555,10 +662,10 @@ export async function runCompiledTests({
 }
 
 export async function runScriptTests({
-  // Same knob as the compiled phase: `--keep-going` collects every failing script file instead of
-  // stopping at the first one. It was missing here, which is why the first run that ever reached this
-  // phase reported one file and abandoned the other three batches.
-  keepGoing = process.argv.includes("--keep-going"),
+  // Same knob as the compiled phase: every script batch runs by default, and `--fail-fast` stops at the
+  // first failing one. It was missing here once, which is why the first run that ever reached this phase
+  // reported one file and abandoned the other three batches.
+  keepGoing = !process.argv.includes("--fail-fast"),
 } = {}) {
   // Script tests run after the artifact lock is released. Some of them
   // intentionally invoke public package scripts to verify lock contention, and

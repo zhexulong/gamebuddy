@@ -373,6 +373,9 @@ test("keeps the batch-start line and per-file heartbeat CI parses", async () => 
   assert.deepEqual(lines, [
     "host_test_suite_batch_start:suite=fixture:batch=1/1:files=1:paths=a.test.js:remaining_ms=1000",
     "host_test_suite_heartbeat:suite=fixture:batch=1/1:file=a.test.js:pid=42:elapsed_ms=7",
+    // The population line belongs to this contract for the same reason: CI parses these lines, and a run
+    // that never printed how much it examined is the reading this suite could not produce before.
+    "host_test_suite_population:suite=fixture · batches examined 1 of 1 · failed 0 · files 1 · wall_ms 0",
   ]);
 });
 
@@ -448,7 +451,22 @@ test("bounds a batch's concurrent file children and still runs every file", asyn
     assert.equal(peak, expected);
   });
 
-  test("a failed file fails the run and still awaits its in-flight siblings", async () => {
+test("a failed file fails the run and still awaits its in-flight siblings", async () => {
+  // `--fail-fast` keeps the original property: the batch ends at its first failing file, "c" and "d"
+  // never start, and nothing reports success while a child is still alive.
+  const failFast = await runBatchWithFailingFirstFile({ keepGoing: false });
+  await assert.rejects(failFast.suite, /fixture_child_failed/);
+  assert.deepEqual(failFast.finished, ["b.test.js"]);
+
+  // The default reaches the files the fail-fast run never started - a suite that stopped early used to
+  // report that truncation as its result.
+  const all = await runBatchWithFailingFirstFile({ keepGoing: true });
+  await assert.rejects(all.suite, /fixture_child_failed/);
+  assert.deepEqual([...all.finished].sort(), ["b.test.js", "c.test.js", "d.test.js"]);
+});
+
+/** One batch of four files whose first child fails; `b` blocks until the caller releases it. */
+async function runBatchWithFailingFirstFile({ keepGoing }) {
   const paths = ["a", "b", "c", "d"].map((name) => `${name}.test.js`);
   const finished = [];
   let releaseSibling;
@@ -457,6 +475,7 @@ test("bounds a batch's concurrent file children and still runs every file", asyn
     batchSize: 4,
     concurrency: 2,
     timeoutMs: 60_000,
+    keepGoing,
     run: async (batch) => {
       if (batch[0] === "a.test.js") throw new Error("fixture_child_failed");
       if (batch[0] === "b.test.js") await new Promise((resolve) => { releaseSibling = resolve; });
@@ -464,13 +483,10 @@ test("bounds a batch's concurrent file children and still runs every file", asyn
     },
   });
   await nextTurn();
-  assert.equal(typeof releaseSibling, "function");
+  assert.equal(typeof releaseSibling, "function", "b must be in flight when a fails");
   releaseSibling();
-  await assert.rejects(suite, /fixture_child_failed/);
-  // "b" was already running when "a" failed, so it is awaited; "c" and "d"
-  // never started, and nothing reported success while a child was alive.
-  assert.deepEqual(finished, ["b.test.js"]);
-});
+  return { suite, finished };
+}
 
 test("fails closed at the shared suite deadline with concurrent file children", async () => {
   let clock = 0;
@@ -628,28 +644,33 @@ test("degrades honestly when an artifact predates the inventory", async () => wi
 }));
 
 /**
- * `--keep-going` and the one bounded retry, both because this machine's environmental failures were
- * costing whole batches of information: the suite stops at the first failing batch, and a file that
- * failed a batch with `read ECONNRESET` passed 10/10 on its own. The injected `run` is what makes
- * these deterministic - waiting for a real socket reset would be a flaky test of a flaky cause.
+ * Every batch runs by default; `--fail-fast` is the interactive exception. Before this the default was
+ * fail-fast, so the suite's exit code answered "did the first failing batch fail" and the batches it
+ * never reached were named nowhere.
  */
-test("keep-going reports every failing file instead of the first batch's", async () => {
+test("every batch runs by default, and each failing file keeps its own reason", async () => {
   const paths = ["a.test.js", "b.test.js", "c.test.js"];
-  const calls = [];
+  const failFastCalls = [];
   await assert.rejects(
     runTestBatches(paths, {
       suite: "fixture",
       batchSize: 1,
       timeoutMs: 10_000,
+      keepGoing: false,
       retryEnvironmental: false,
       run: async (batch) => {
-        calls.push(batch[0]);
+        failFastCalls.push(batch[0]);
         if (batch[0] !== "b.test.js") throw new Error(`test_runner_failed:code=1:signal=none\nAssertionError: ${batch[0]}`);
       },
     }),
-    /test_runner_failed/u,
+    (error) => {
+      assert.match(error.message, /test_suite_failed:1 file\(s\): a\.test\.js/u);
+      assert.match(error.message, /batches examined 1 of 3 · remaining 2 not run · batches_not_run 2/u);
+      assert.match(error.message, /host_test_suite_batch_not_run:suite=fixture:batch=2\/3:reason=fail_fast/u);
+      return true;
+    },
   );
-  assert.deepEqual(calls, ["a.test.js"], "without keep-going the run ends at the first failing batch");
+  assert.deepEqual(failFastCalls, ["a.test.js"], "fail-fast ends the run at the first failing batch");
 
   const keptCalls = [];
   await assert.rejects(
@@ -657,19 +678,16 @@ test("keep-going reports every failing file instead of the first batch's", async
       suite: "fixture",
       batchSize: 1,
       timeoutMs: 10_000,
-      keepGoing: true,
       retryEnvironmental: false,
       run: async (batch) => {
         keptCalls.push(batch[0]);
         if (batch[0] !== "b.test.js") throw new Error(`test_runner_failed:code=1:signal=none\nAssertionError: ${batch[0]}`);
       },
     }),
-    // The message spells each failing file relative to the host root, so a bare fixture name comes back as `../a.test.js`.
-    // The assertion names that spelling rather than the bare name: `relativePath` is what the operator reads, and pinning
-    // the bare form only held while the fixture happened to resolve from a different root.
-    /test_suite_failed:2 file\(s\): \.\.\/a\.test\.js, \.\.\/c\.test\.js/u,
+    // The message spells each failing file relative to the host root, so a bare fixture name stays bare.
+    /test_suite_failed:2 file\(s\): a\.test\.js, c\.test\.js/u,
   );
-  assert.deepEqual(keptCalls, ["a.test.js", "b.test.js", "c.test.js"], "keep-going runs the later batches too");
+  assert.deepEqual(keptCalls, ["a.test.js", "b.test.js", "c.test.js"], "the default runs the later batches too");
 });
 
 test("an environmental failure is retried once, alone, and a second failure still fails", async () => {
@@ -741,4 +759,125 @@ test("a child that asserted is never retried and never called environmental", as
     ),
     false,
   );
+});
+/**
+ * The reading this suite could not produce before: an early failing batch ended the run, so the output
+ * said "batch 1 failed" and nothing said batches 2 and 3 had not run. Both readings are asserted here -
+ * fail-fast names the truncation, and the default reports the whole population with the later batches'
+ * results still in it.
+ */
+test("an early failing batch does not hide the batches after it", async () => {
+  const runFixture = async ({ keepGoing }) => {
+    const calls = [];
+    const lines = [];
+    const originalError = console.error;
+    console.error = (line) => lines.push(line);
+    try {
+      const rejection = await runTestBatches(["a.test.js", "b.test.js", "c.test.js"], {
+        suite: "fixture",
+        batchSize: 1,
+        timeoutMs: 10_000,
+        keepGoing,
+        retryEnvironmental: false,
+        now: () => 0,
+        run: async (batch) => {
+          calls.push(batch[0]);
+          if (batch[0] === "a.test.js")
+            throw new Error("test_runner_failed:code=1:signal=none\nAssertionError: injected early failure");
+        },
+      }).then(
+        () => null,
+        (error) => error,
+      );
+      return { calls, lines, rejection };
+    } finally {
+      console.error = originalError;
+    }
+  };
+
+  // `--fail-fast`: one batch examined, and the two it never reached are named instead of vanishing.
+  const failFast = await runFixture({ keepGoing: false });
+  assert.ok(failFast.rejection, "a failing batch must not read as a passing suite");
+  assert.deepEqual(failFast.calls, ["a.test.js"]);
+  assert.ok(
+    failFast.lines.includes(
+      "host_test_suite_population:suite=fixture · batches examined 1 of 3 · remaining 2 not run · batches_not_run 2 · failed 1 · files 3 · wall_ms 0",
+    ),
+    failFast.lines.join("\n"),
+  );
+
+  // The default: every batch runs, the injected failure keeps its own message, and the later batches
+  // still run after it.
+  const all = await runFixture({ keepGoing: true });
+  assert.deepEqual(all.calls, ["a.test.js", "b.test.js", "c.test.js"], "the later batches ran");
+  assert.ok(
+    all.lines.includes("host_test_suite_population:suite=fixture · batches examined 3 of 3 · failed 1 · files 3 · wall_ms 0"),
+    all.lines.join("\n"),
+  );
+  assert.match(all.rejection.message, /test_suite_failed:1 file\(s\): a\.test\.js/u);
+  assert.match(all.rejection.message, /injected early failure/u, "the failing file keeps its own reason");
+  assert.match(
+    all.rejection.message,
+    /batches examined 3 of 3 · failed 1 · files 3/u,
+    "the error carries the population, so the exit code and the message agree",
+  );
+});
+
+/**
+ * A batch the run never reached is published by name with the reason, and it is never a passing run:
+ * `batches examined 39 of 40` with `batches_not_run 1` names batch 40 and exits non-zero. The injection
+ * is a clock, because the suite deadline is the one cause in this runner that stops a batch from starting.
+ */
+test("a batch the run never reached is published by name and fails the run", async () => {
+  const paths = Array.from({ length: 40 }, (_, index) => `batch-${index + 1}.test.js`);
+  const lines = [];
+  let clock = 0;
+  const originalError = console.error;
+  console.error = (line) => lines.push(line);
+  let rejection;
+  try {
+    rejection = await runTestBatches(paths, {
+      suite: "fixture",
+      batchSize: 1,
+      timeoutMs: 39_050,
+      retryEnvironmental: false,
+      now: () => clock,
+      run: async () => {
+        clock += 1_000;
+      },
+    }).then(
+      () => null,
+      (error) => error,
+    );
+  } finally {
+    console.error = originalError;
+  }
+  assert.ok(rejection, "a batch that did not run must not read as a passing suite");
+  assert.match(rejection.message, /test_suite_timeout:fixture/u);
+  assert.match(rejection.message, /batches examined 39 of 40 · remaining 1 not run · batches_not_run 1/u);
+  assert.match(
+    rejection.message,
+    /host_test_suite_batch_not_run:suite=fixture:batch=40\/40:reason=suite_deadline:files=1:paths=batch-40\.test\.js/u,
+    "the batch that did not run is named with the files it would have run",
+  );
+  assert.ok(
+    lines.includes(
+      "host_test_suite_population:suite=fixture · batches examined 39 of 40 · remaining 1 not run · batches_not_run 1 · failed 0 · files 40 · wall_ms 39000",
+    ),
+    lines.join("\n"),
+  );
+});
+
+test("a suite with no files publishes a blocked population instead of a green one", async () => {
+  const lines = [];
+  const originalError = console.error;
+  console.error = (line) => lines.push(line);
+  try {
+    await assert.rejects(runTestBatches([], { suite: "fixture" }), /test_files_missing/u);
+  } finally {
+    console.error = originalError;
+  }
+  assert.deepEqual(lines, [
+    "host_test_suite_population:suite=fixture · batches examined 0 of 0 · failed 0 · files 0 · wall_ms 0 · zero_population_blocked",
+  ]);
 });

@@ -5,7 +5,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
 
-import { testDependencyInvocations, vendorRebuildSkipReason, vendorRebuildSkipReport } from "./run-test-suite.mjs";
+import { main, runTestPhases, testDependencyInvocations, vendorRebuildSkipReason, vendorRebuildSkipReport } from "./run-test-suite.mjs";
 
 const hostRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const repositoryRoot = resolve(hostRoot, "..");
@@ -142,4 +142,94 @@ test("non-Windows dependency preparation retains direct fixed executable invocat
       { command: "bun", args: ["run", "--cwd", "../vendor/magic-context/packages/pi-plugin", "build"], cwd: hostRoot },
     ]);
   });
+});
+/** Run `body` with console.error captured, so a summary line can be asserted byte for byte. */
+async function withCapturedErrorLines(body) {
+  const lines = [];
+  const originalError = console.error;
+  console.error = (line) => lines.push(line);
+  try {
+    return { lines, outcome: await body().then(() => null, (error) => error) };
+  } finally {
+    console.error = originalError;
+  }
+}
+
+/** A phase that records nothing and either passes or throws its own named failure. */
+function fixturePhase(suite, { fails = false, ran } = {}) {
+  return {
+    suite,
+    run: async () => {
+      ran?.push(suite);
+      if (fails) throw new Error(`fixture_phase_failed:${suite}`);
+    },
+  };
+}
+
+test("every phase runs by default and the summary says so", async () => {
+  const { lines, outcome } = await withCapturedErrorLines(() => runTestPhases([fixturePhase("compiled"), fixturePhase("scripts")], { now: () => 0 }));
+  assert.equal(outcome, null);
+  assert.deepEqual(lines, [
+    "host_test_phase_ok:suite=compiled",
+    "host_test_phase_ok:suite=scripts",
+    "host_test_suite_phases:phases examined 2 of 2 · failed 0 · wall_ms 0",
+  ]);
+});
+
+test("a failing phase does not hide the phase after it", async () => {
+  const ran = [];
+  const { lines, outcome } = await withCapturedErrorLines(() =>
+    runTestPhases([fixturePhase("compiled", { fails: true, ran }), fixturePhase("scripts", { fails: true, ran })], { now: () => 0 }),
+  );
+  assert.deepEqual(ran, ["compiled", "scripts"], "the phase after a failing one still runs");
+  assert.match(outcome.message, /test_suite_failed:2 phase\(s\): compiled, scripts/u);
+  assert.match(outcome.message, /compiled: fixture_phase_failed:compiled/u);
+  assert.match(outcome.message, /scripts: fixture_phase_failed:scripts/u);
+  assert.match(outcome.message, /phases examined 2 of 2 · failed 2/u, "the error carries the summary too");
+  assert.deepEqual(lines, ["host_test_suite_phases:phases examined 2 of 2 · failed 2 · wall_ms 0"]);
+});
+
+test("a compiled failure still runs the script phase", async () => {
+  const ran = [];
+  const { lines, outcome } = await withCapturedErrorLines(() =>
+    runTestPhases([fixturePhase("compiled", { fails: true, ran }), fixturePhase("scripts", { ran })], { now: () => 0 }),
+  );
+  assert.deepEqual(ran, ["compiled", "scripts"]);
+  assert.match(outcome.message, /test_suite_failed:1 phase\(s\): compiled/u);
+  assert.deepEqual(lines, [
+    "host_test_phase_ok:suite=scripts",
+    "host_test_suite_phases:phases examined 2 of 2 · failed 1 · wall_ms 0",
+  ]);
+});
+
+test("--fail-fast ends at the first failing phase and names the phase it did not run", async () => {
+  const ran = [];
+  const { lines, outcome } = await withCapturedErrorLines(() =>
+    runTestPhases([fixturePhase("compiled", { fails: true, ran }), fixturePhase("scripts", { ran })], {
+      failFast: true,
+      now: () => 0,
+    }),
+  );
+  assert.deepEqual(ran, ["compiled"]);
+  assert.match(outcome.message, /host_test_suite_phase_not_run:suite=scripts:reason=fail_fast/u);
+  assert.deepEqual(lines, [
+    "host_test_suite_phase_not_run:suite=scripts:reason=fail_fast",
+    "host_test_suite_phases:phases examined 1 of 2 · remaining 1 not run · phases_not_run 1 · failed 1 · wall_ms 0",
+  ]);
+});
+
+test("a red preflight blocks every phase and keeps the preflight's own reason", async () => {
+  const ran = [];
+  const { lines, outcome } = await withCapturedErrorLines(() =>
+    main({
+      argv: [],
+      preflight: async () => {
+        throw new Error("host_windows_test_preflight:blocked");
+      },
+      phases: [fixturePhase("compiled", { ran }), fixturePhase("scripts", { ran })],
+    }),
+  );
+  assert.match(outcome.message, /host_windows_test_preflight:blocked/u, "the preflight's own reason survives");
+  assert.deepEqual(ran, [], "no phase runs behind a red preflight");
+  assert.deepEqual(lines, ["host_test_suite_phases:not_run: phases 0 of 2: preflight failed"]);
 });

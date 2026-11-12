@@ -2,10 +2,10 @@
 /**
  * Every compiled host test file, one bounded process each - the question the suite cannot answer.
  *
- * `run-test-suite.mjs` runs files in batches and **stops at the first failing batch**, so a single
- * failure hides every batch after it. On this machine that costs real information: the suite once
- * reported `[TypeError: fetch failed] { cause: ECONNRESET }` for a file that passes 10/10 on its own,
- * which stopped a run at batch 12 of 25 and said nothing about batches 13-25.
+ * `run-test-suite.mjs` runs files in batches: a failing file is now reported beside the batches before
+ * and after it, but it is still never given the machine to itself. On this machine that costs real
+ * information - the suite reports `[TypeError: fetch failed] { cause: ECONNRESET }` for a file that
+ * passes 10/10 alone.
  *
  * This asks the other question: **which files fail when they have the machine to themselves.** A file
  * that fails here is a file to fix; a file that only fails inside a batch is a machine to look at.
