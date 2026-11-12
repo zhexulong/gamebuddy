@@ -242,4 +242,109 @@ public sealed class WorldModelTests
     {
         WorldModel.Classify(Facts()).Should().Be(ActorDisposition.Idle);
     }
+
+    // ---- the four facts that close the residual, and where each one ranks -------
+
+    [Fact]
+    public void Transient_ScreenFade()
+    {
+        // The engine's global fade is the other half of its control-input gate (Game1.cs:4286) and clears itself inside
+        // the retry window - the caller's own `fadeSpeed` per frame (ScreenFade.cs:149), ~380-830 ms.
+        ActorDisposition disposition = WorldModel.Classify(Facts(screenFade: true));
+
+        disposition.Kind.Should().Be(ActorDispositionKind.Transient);
+        disposition.TransientKind.Should().Be("screenFade");
+        disposition.ModalType.Should().BeNull();
+        disposition.ModalActionOwned.Should().BeFalse();
+    }
+
+    [Fact]
+    public void Event_Minigame_DayTransition_And_ControlsFrozen()
+    {
+        // Three holds that no tool can shorten and that no transient window describes: a mounted minigame (11 100 ms on
+        // the fishing results screen, FishingGame.cs:169), the whole overnight sequence, and the bus ride's control
+        // freeze (`forceWarpTimer = 8000`, BusStop.cs:150, plus the drive). They publish the cutscene kind because the
+        // countermeasure is its countermeasure - no action can run, nothing to call, wait for the engine to end it - and
+        // the evidence names which cause it is (TheSceneHoldNamesItsDriver).
+        Kind(Facts(minigame: true)).Should().Be(ActorDispositionKind.Event);
+        Kind(Facts(dayTransition: true)).Should().Be(ActorDispositionKind.Event);
+        Kind(Facts(controlsFrozen: true)).Should().Be(ActorDispositionKind.Event);
+    }
+
+    [Fact]
+    public void TheSceneHoldNamesItsDriver()
+    {
+        // One kind, four engine causes, and the evidence has to say WHICH: `event_up=true` about a bus ride is a fact
+        // that is not true, and a reader cannot tell "cutscene" from "bus ride" from it.
+        (ActorWorldFacts Facts, string Driver, bool EventUp)[] causes =
+        {
+            (Facts(eventUp: true), "cutscene", true),
+            (Facts(minigame: true), "minigame", false),
+            (Facts(dayTransition: true), "day_transition", false),
+            (Facts(controlsFrozen: true), "controls_frozen", false),
+        };
+
+        foreach ((ActorWorldFacts facts, string driver, bool eventUp) in causes)
+        {
+            ActorDisposition disposition = WorldModel.Classify(facts);
+            disposition.Kind.Should().Be(ActorDispositionKind.Event, $"{driver} must be the Event kind for this table to mean anything");
+            string evidence = WorldModel.DescribeBodyHold(disposition, facts, canMove: false);
+            evidence.Should().Contain($"driver={driver}");
+            evidence.Should().Contain($"event_up={(eventUp ? "true" : "false")}");
+            WorldModel.HoldReasonCode(disposition.Kind).Should().Be(
+                "cutscene_active",
+                "the CODE is still the imprecise one every Event hold publishes: HoldReasonCode is a function of the kind");
+        }
+    }
+
+    [Fact]
+    public void AMountedMinigameOutranksTheMenuTheEngineChecksAfterIt()
+    {
+        // The engine's own hold list asks about the minigame first (Farmer.cs:7936, before activeClickableMenu at :7940).
+        Kind(Facts(minigame: true, menuType: "GameMenu")).Should().Be(ActorDispositionKind.Event);
+    }
+
+    [Fact]
+    public void AFarmEventLosesToTheMenuItOpens()
+    {
+        // The birth event's own box and its NAMING MENU are the one thing a caller can act on (BirthingEvent.cs:92).
+        Kind(Facts(dayTransition: true, menuType: "NamingMenu")).Should().Be(ActorDispositionKind.Modal);
+    }
+
+    [Fact]
+    public void AControlFreezeLosesToTheMenuThatIsStillActionable()
+    {
+        Kind(Facts(controlsFrozen: true, menuType: "GameMenu")).Should().Be(ActorDispositionKind.Modal);
+    }
+
+    [Fact]
+    public void TheDayTransitionOutranksTheControlFreezeItClearsFirst()
+    {
+        // The overnight coroutine clears the freeze (Game1.cs:8582) before it mounts the farm event (:8604), so the
+        // transition is the outer of the two.
+        ActorWorldFacts both = Facts(dayTransition: true, controlsFrozen: true);
+
+        WorldModel.Classify(both).Kind.Should().Be(ActorDispositionKind.Event);
+        WorldModel.DescribeBodyHold(WorldModel.Classify(both), both, canMove: false).Should().Contain("driver=day_transition");
+    }
+
+    [Fact]
+    public void ACutsceneOutranksTheMinigameItContains()
+    {
+        // An event can start a minigame (Event.cs:12861), and the cutscene is the outer scene of the two.
+        ActorWorldFacts both = Facts(eventUp: true, minigame: true);
+
+        WorldModel.Classify(both).Kind.Should().Be(ActorDispositionKind.Event);
+        WorldModel.DescribeBodyHold(WorldModel.Classify(both), both, canMove: false).Should().Contain("driver=cutscene");
+    }
+
+    [Fact]
+    public void TheControlFreezeOutranksTheWarpInsideIt()
+    {
+        // A bus ride warps at the end of the drive: the freeze is the whole ride, the warp is ~580 ms of it.
+        ActorWorldFacts both = Facts(controlsFrozen: true, warping: true);
+
+        WorldModel.Classify(both).Kind.Should().Be(ActorDispositionKind.Event);
+        WorldModel.DescribeBodyHold(WorldModel.Classify(both), both, canMove: false).Should().Contain("driver=controls_frozen");
+    }
 }

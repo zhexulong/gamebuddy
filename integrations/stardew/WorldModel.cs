@@ -93,7 +93,7 @@ public readonly record struct ActorDisposition(
     ActorDispositionKind Kind,
     string? ModalType,        // "DialogueBox" | "LetterViewer" | "ReadyCheck" | "GameMenu" | ...
     bool ModalActionOwned,    // L0 binary: actionOwned(newestExecutionId) vs worldOwned
-    string? TransientKind)    // "freezePause" | "eating" | "toolAnimation" | "selfAnimation" | "warping"
+    string? TransientKind)    // "freezePause" | "eating" | "toolAnimation" | "selfAnimation" | "warping" | "screenFade"
 {
     public static readonly ActorDisposition Idle = new(ActorDispositionKind.Idle, null, false, null);
 }
@@ -166,6 +166,16 @@ internal static class WorldModel
             return new ActorDisposition(ActorDispositionKind.Event, null, false, null);
         }
 
+        // Ahead of the modal, because the engine's own enumeration of "the player is engaged in an action and should not
+        // be interrupted" lists a mounted minigame FIRST - `Farmer.cs:7936`, before `activeClickableMenu` at `:7940` and
+        // everything else - and because `_update` ticks it in the `if` branch while a farm event waits in the `else if`
+        // (`Game1.cs:4165`, `:4187`). Same kind as a cutscene because the countermeasure is the same and no tool can
+        // shorten it; the evidence says which of the two it is (`driver=`).
+        if (facts.Minigame)
+        {
+            return new ActorDisposition(ActorDispositionKind.Event, null, false, null);
+        }
+
         if (HasMountedModal(facts))
         {
             if (facts.MenuType is { } menuType)
@@ -185,6 +195,26 @@ internal static class WorldModel
             return new ActorDisposition(ActorDispositionKind.PassOut, null, false, null);
         }
 
+        // After the modal, because a running farm event puts its own box on screen and (for a birth) opens a NAMING MENU
+        // (`BirthingEvent.cs:92`), and that box is the one thing a caller can act on; after the faint, because the night
+        // it ends is the night the faint started. Ahead of the control freeze, because the overnight coroutine clears
+        // the freeze (`Game1.cs:8582`) before it mounts the event (`:8604`) - the transition is the outer state of the
+        // two. Minutes, so `Transient` would promise a 2000 ms retry that is false (`WorldModel.TransientRetryWindowMs`).
+        if (facts.DayTransition)
+        {
+            return new ActorDisposition(ActorDispositionKind.Event, null, false, null);
+        }
+
+        // The other whole-ride state: while the engine's control freeze is up, `UpdateControlInput` is not called at all
+        // (`Game1.cs:4286`) and the clock stops (`:9295`). It sits above every transient because it outlives all of them
+        // - a bus ride holds it for the walk (`forceWarpTimer = 8000`, `BusStop.cs:150`), the door, the fade and the
+        // drive, and releases it only on arrival (`Farmer.forceCanMove`, `Farmer.cs:7096`) - and because the warp inside
+        // the ride is only ~580 ms of that window.
+        if (facts.ControlsFrozen)
+        {
+            return new ActorDisposition(ActorDispositionKind.Event, null, false, null);
+        }
+
         // First among the transients, because a warp is the engine's OUTER body state: the flag is raised in
         // `performWarpFarmer` (Game1.cs:10031) and lowered only when the fade reaches black (:6271), and the engine's own
         // guard lists it ahead of `UsingTool` (Farmer.cs:7944 before :7948) and of the animation pause (:7964) - which the
@@ -193,6 +223,15 @@ internal static class WorldModel
         if (facts.Warping)
         {
             return new ActorDisposition(ActorDispositionKind.Transient, null, false, "warping");
+        }
+
+        // The other fade, and the honest place to put it is right behind the warp's: the two flags are mutually exclusive
+        // by the fence's own writes (`FadeScreenToBlack` clears this one and raises `fadeToBlack`, ScreenFade.cs:82-83;
+        // `GlobalFadeToBlack` does the reverse, :106-107), so nothing but a warp can be reported here, and ~380-830 ms
+        // (the caller's `fadeSpeed`, :149) is inside `TransientRetryWindowMs`.
+        if (facts.ScreenFade)
+        {
+            return new ActorDisposition(ActorDispositionKind.Transient, null, false, "screenFade");
         }
 
         if (facts.FreezePaused)
@@ -425,7 +464,7 @@ internal static class WorldModel
                 + $";time_of_day={facts.TimeOfDay};can_move={canMoveText}",
             // `movement_lock` is the honest name for the one hold the facts cannot name further: the
             // disposition says Transient but no eating/tool/freeze/animation/warp fact produced it, so something
-            // else native (a knockback, a fade that is not a warp) took CanMove away.
+            // else native (a knockback, the `NetMutex`-deferred upgrade at ParrotUpgradePerch.cs:797) took CanMove away.
             ActorDispositionKind.Transient =>
                 $"transient_kind={disposition.TransientKind ?? "movement_lock"}"
                 + $";retry_window_ms={TransientRetryWindowMs};can_move={canMoveText}",
@@ -537,8 +576,12 @@ internal static class WorldModel
     private static string DescribeEventHold(in ActorWorldFacts facts, bool canMove, bool? modalIsQuestion)
     {
         string canMoveText = Bool(canMove);
+        // The DRIVER, not a constant: `Event` owns one countermeasure and four engine causes, and a sentence that said
+        // `event_up=true` about a bus ride was a fact that is not true. Read from the facts by the same ladder
+        // `Classify` walks (`EventHoldDriver`), so the word cannot describe a different cause than the one that matched.
+        string driver = $"driver={EventHoldDriver(facts)};event_up={Bool(facts.EventUp)}";
         if (!HasDialogueBox(facts))
-            return $"event_up=true;dialogue_box=false;admissible_actions=none"
+            return $"{driver};dialogue_box=false;admissible_actions=none"
                 + $";next_step=wait_for_event_to_advance;can_move={canMoveText}";
 
         string admissible = string.Join(
@@ -547,9 +590,26 @@ internal static class WorldModel
                 .Where(actionId => modalIsQuestion is not bool question
                     || (actionId == DialogueAnswerActionId) == question)
                 .OrderBy(actionId => actionId, StringComparer.Ordinal));
-        return $"event_up=true;dialogue_box=true;is_question={BoolOrUnknown(modalIsQuestion)}"
+        return $"{driver};dialogue_box=true;is_question={BoolOrUnknown(modalIsQuestion)}"
             + $";admissible_actions={admissible};can_move={canMoveText}";
     }
+
+    /// <summary>
+    /// WHICH engine cause produced the <see cref="ActorDispositionKind.Event"/> hold, in the order <see cref="Classify"/>
+    /// tests them. The four words are the four branches that return `Event`, and the only thing they decide is the word in
+    /// the evidence - the KIND is `Event` for all four, so this ladder can never contradict the ruling about what is held,
+    /// only about what to call it (`Classify_...` cases in `WorldModelTests` pin the two answer together for each fact).
+    ///
+    /// <para>
+    /// `ControlsFrozen` is the last resort on purpose: it is the one hold of the four whose flag can be up while the body is
+    /// still otherwise free (the pause's own freeze, `Game1.cs:3925-3933`), so every more specific cause is asked first.
+    /// </para>
+    /// </summary>
+    private static string EventHoldDriver(in ActorWorldFacts facts) =>
+        facts.EventUp ? "cutscene"
+        : facts.Minigame ? "minigame"
+        : facts.DayTransition ? "day_transition"
+        : "controls_frozen";
 
     private static string Bool(bool value) => value ? "true" : "false";
 

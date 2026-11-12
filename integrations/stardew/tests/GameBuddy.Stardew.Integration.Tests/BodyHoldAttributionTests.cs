@@ -239,7 +239,8 @@ public sealed class BodyHoldAttributionTests
     public void AMovementLockTheFactsCannotNameIsStillNamedHonestly()
     {
         // The one hold the facts cannot narrow down: the disposition says Transient but no eating/tool/freeze/animation
-        // fact produced it, so something else native (a knockback, a fade that is not a warp) took CanMove away. It
+        // fact produced it, so something else native (a knockback, the `NetMutex`-deferred upgrade at
+        // ParrotUpgradePerch.cs:797) took CanMove away. It
         // must read as a transient with an honest label, not as one of the holds it is not.
         ActorDisposition movementLock = WorldModel.Classify(Facts()) with { Kind = ActorDispositionKind.Transient };
         movementLock.TransientKind.Should().BeNull();
