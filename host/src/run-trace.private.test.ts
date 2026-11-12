@@ -103,18 +103,41 @@ test("a span tree yields the same per-action cadence totals the old action-trace
   });
 
   // The old aggregator is the authority for these numbers while both instruments exist: run it on the entries the
-  // pre-span harness built from the same moments, and require the span derivation to agree exactly.
+  // pre-span harness built from the same moments, and require the span derivation to agree on every member both
+  // compute.
+  //
+  // `flat` and `program` are the legacy function's CHANNEL accounting, and no span can supply them: that function
+  // joins two inputs from two clocks (the runner's own trace and the Mod's journal rows), while a recorder has one
+  // input on one clock. So they are named here, against the legacy answer, instead of being dropped from the
+  // comparison - an absence the expectation stops mentioning reads as agreement.
   const legacySpecifier = "../../tools/lib/action-cadence.mjs";
   const legacy = (await import(legacySpecifier)) as {
-    summarizeActionCadence: (entries: readonly unknown[]) => unknown;
+    summarizeActionCadence: (
+      entries: readonly unknown[],
+      programExecutions?: readonly unknown[],
+    ) => Record<string, unknown>;
   };
-  const legacyCadence = legacy.summarizeActionCadence([
+  const entries = [
     { dispatchedAtMs: 100, settledAtMs: 350 },
     { dispatchedAtMs: 1_000, settledAtMs: 1_000 },
     { dispatchedAtMs: 2_000 },
     { dispatchedAtMs: 4_000, settledAtMs: 4_100 },
-  ]);
-  assert.deepEqual(hostCadence, legacyCadence);
+  ];
+  const { flat, program, ...legacyTotals } = legacy.summarizeActionCadence(entries);
+  assert.deepEqual(
+    { flat, program },
+    { flat: 4, program: 0 },
+    "four flat dispatches, and no execution was handed over from the Mod's journal",
+  );
+  assert.deepEqual(hostCadence, legacyTotals);
+
+  // The channel the span derivation cannot see is real, not zero by accident: one journal execution moves the legacy
+  // counts to five actions of which four are measured, while the span answer stays where it was because no span
+  // carries that channel. If the two instruments are ever merged, this is the assertion that has to change.
+  const withProgram = legacy.summarizeActionCadence(entries, [{ atMs: 10_000, settledAtMs: 10_400 }]);
+  assert.equal(withProgram.program, 1);
+  assert.equal(withProgram.actions, hostCadence.actions + 1);
+  assert.equal(withProgram.measured, hostCadence.measured + 1);
 });
 
 const scope: Scope = {
