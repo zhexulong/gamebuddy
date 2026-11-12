@@ -11,8 +11,8 @@
  * TWO THINGS ARE UNIFIED HERE:
  *
  *   1. the LIVE-RUN NATIVE PACE - the game-side milliseconds one action takes, taken
- *      from the two timestamps the artifacts already carry (see `GAME_SIDE_INTERVAL`
- *      below), and
+ *      from the stamps the artifacts already carry (see `GAME_SIDE_INTERVAL` below),
+ *      and
  *   2. an ACTION-LEVEL FLOOR - `nativeFloorMs`, built from constants that each carry
  *      the `ref/**` line they come from.
  *
@@ -21,7 +21,7 @@
  * serialisation is visible, and that half is the actionable one.
  *
  * THE GAME-SIDE INTERVAL IS EXCLUDED BY CONSTRUCTION, NEVER BY SUBTRACTION.
- * `GAME_SIDE_INTERVAL` names the exact two stamps. Neither interval contains prompt
+ * `GAME_SIDE_INTERVAL` names the exact stamps. No channel contains prompt
  * assembly, provider latency or the agent's think time, because the agent's turn ends
  * before the dispatch stamp and starts after the settle stamp - there is no latency
  * left to subtract, and none is ever subtracted. `thinkMs`
@@ -52,19 +52,46 @@ import { readStardewActionFamilies } from "./stardew-published-action-registry.m
  *   Contains the Mod's work only. The action id is not on the row: it is joined from
  *   `programOutcomes[].nodeOutcomes[].actionId` by `nodeId`.
  *
- * THE TWO CHANNELS ARE TWO CLOCKS and are never mixed in one statistic. When an
- * action has rows on both, `program` is preferred: it is the Mod's own readings, so
- * the pipe is not in the number.
+ * `receipts`: `timeline.jsonl`, the Mod's own receipt chain for one execution - the
+ *   first event it wrote for it, and the terminal receipt that closed it. It is the
+ *   ONLY channel that records the route: one `tile_advanced` receipt per tile the
+ *   actor walked, inside the same chain as the duration. It is therefore the only
+ *   channel on which `nativeFloorMs` can be given the distance, and the one the
+ *   verdict reads.
+ *
+ * THE CHANNELS ARE DIFFERENT CLOCKS and are never mixed in one statistic. `program`
+ * brackets the Mod's durable journal writes; `receipts` brackets the action itself;
+ * `flat` brackets the pipe round trip. Each row prints every channel it has, and
+ * reads one of them: `CHANNEL_PREFERENCE`, deepest decomposition first.
+ *
+ * WHY THE WALK HAD TO BECOME A CHANNEL. An action that walks to its target first
+ * (`Approach = self_walked` in the Mod's catalogue) performs that walk INSIDE the
+ * interval every channel measures, so a floor of one swing accused `harvest_crop` of
+ * 135x the engine at a p50 of 2257 ms - which is 10 tiles of walking at the rate the
+ * route receipts record. `program` and `flat` cannot see the distance and charge zero;
+ * `receipts` counts the tiles, so the floor can charge them.
  */
 export const GAME_SIDE_INTERVAL = Object.freeze({
+  receipts: Object.freeze({
+    start: "timeline[].atMs of the execution's first receipt",
+    end: "timeline[].atMs of the execution's terminal receipt",
+    distance: "timeline[].reasonCode === 'tile_advanced' receipts: one per tile walked",
+  }),
   flat: Object.freeze({ start: "actionTrace[].dispatchedAtMs", end: "actionTrace[].settledAtMs" }),
   program: Object.freeze({
     start: "result.programOutcomes[].executions[].atMs",
     end: "result.programOutcomes[].executions[].settledAtMs",
     actionId: "result.programOutcomes[].nodeOutcomes[].actionId, joined by nodeId",
   }),
-  preferred: "program",
 });
+
+/**
+ * Which channel a row's verdict reads, deepest decomposition first: the receipt chain
+ * (duration AND distance from one execution), then the Mod's journal span, then the
+ * pipe round trip. An action is read from the first channel that measured it, so no
+ * action leaves the population because one artifact is absent from its bundle.
+ */
+export const CHANNEL_PREFERENCE = Object.freeze(["receipts", "program", "flat"]);
 
 /**
  * One engine constant, with the line it comes from.
@@ -97,6 +124,25 @@ const TICK_TO_MS_DIVISOR = Object.freeze({
     "integrations/stardew/farmhandexecutioncontroller.movementactions.cs",
     88,
     "requestedDeadlineMs ?? nowMs + DefaultDeadlineTicks * 1000L / 60L",
+  ),
+});
+
+/**
+ * The quantum of every stamp this module subtracts.
+ *
+ * `dispatchedAtMs` is `Date.now()` (`run-stardew-native-local-agent-ab-live.mjs:3811`)
+ * and the receipt chain's `atMs` is the same clock, so a duration is a whole number of
+ * milliseconds and an action that finishes inside one stamp reads 0. A RATCHET CANNOT
+ * BE TIGHTER THAN THE CHANNEL'S OWN QUANTUM: a 0 ms p50 records a ratio of 0, and
+ * 0 x (1 + tolerance) bounds nothing - the next run's 1 ms reading would be a
+ * regression the code did not commit.
+ */
+const PACE_RESOLUTION_MS = Object.freeze({
+  value: 1,
+  source: engine(
+    "tools/live-run/game/run-stardew-native-local-agent-ab-live.mjs",
+    3811,
+    "const dispatchedAtMs = Date.now();",
   ),
 });
 
@@ -168,6 +214,7 @@ export const DECLARED_CONSTANTS = Object.freeze({
   TILE_PX,
   TICK_MS,
   TICK_TO_MS_DIVISOR,
+  PACE_RESOLUTION_MS,
   ELAPSED_MS_PER_TICK,
   WALK_SPEED,
   MOVEMENT_MULTIPLIER,
@@ -264,13 +311,17 @@ const ACTION_ANIMATION_CLASS = Object.freeze({
  * Trace ids the bundles carry that are NOT catalogue actions, each with the reason and
  * the work it stands for.
  *
- * The trace's vocabulary is the runner's, and three of its names are not the Mod's:
- * a new one appearing is a fact a reader must see rather than a row that silently
- * vanishes from the population.
+ * The trace's vocabulary is the runner's and the catalogue reader's, and several of its
+ * names are not the Mod's: a new one appearing is a fact a reader must see rather than a
+ * row that silently vanishes from the population.
  */
 export const TRACE_ONLY_ACTIONS = Object.freeze({
   break_rock_source: Object.freeze({
     reason: "the flat channel's name for the native work `break_rock` performs",
+    class: "toolSwing",
+  }),
+  chop_tree_source: Object.freeze({
+    reason: "the axe swing at a standing tree; the catalogue reader lists no family for it",
     class: "toolSwing",
   }),
   advance_day: Object.freeze({
@@ -336,9 +387,11 @@ export function animationClassOf(actionId, classes = defaultClasses()) {
  *           is how the engine's own tool cycle is built (`Tool.endUsing` animates one
  *           tile's worth of swing).
  * `distance` the tiles walked, which the CALLER supplies and which defaults to 0 — the
- *           strict LOWER bound. A program node's approach leg is inside its duration and
- *           the artifacts do not separate it, so charging 0 walk keeps the floor honest
- *           in the only safe direction: it never flatters us.
+ *           strict LOWER bound. `distance` is charged only when the artifact RECORDED
+ *           it: `receipts` counts the `tile_advanced` receipts of the same execution
+ *           that produced the duration, and the other two channels sit outside the walk
+ *           and so charge nothing. Zero here is "this channel cannot see a walk", never
+ *           a guess about one.
  *
  * Returns `null` when the engine declares no constant for the action's work. `null` is
  * "not measured", never zero, and the caller must report it as such.
@@ -362,26 +415,29 @@ export function percentile(values, quantile) {
 
 const round = (value) => (value === null ? null : Math.round(value * 100) / 100);
 
-/** One bundle root's `actionTrace.jsonl` and `result.json` files. */
+/** One bundle root's `actionTrace.jsonl`, `timeline.jsonl` and `result.json` files. */
 function bundleFiles(root) {
   const actionTrace = [];
+  const timelines = [];
   const results = [];
   const walk = (directory) => {
     for (const entry of readdirSync(directory, { withFileTypes: true })) {
       const path = join(directory, entry.name);
       if (entry.isDirectory()) walk(path);
       else if (entry.name === "actionTrace.jsonl") actionTrace.push(path);
+      else if (entry.name === "timeline.jsonl") timelines.push(path);
       else if (entry.name === "result.json") results.push(path);
     }
   };
   walk(root);
-  return { actionTrace, results };
+  return { actionTrace, timelines, results };
 }
 
 /** The rows one `actionTrace.jsonl` contributes: the FLAT channel, on the Host's clock. */
 function flatRows(path) {
   const rows = [];
   let rejected = 0;
+  let unattributed = 0;
   for (const line of readFileSync(path, "utf8").split(/\r?\n/u)) {
     if (line.trim().length === 0) continue;
     let entry;
@@ -397,9 +453,17 @@ function flatRows(path) {
       rejected += 1;
       continue;
     }
+    if (entry.state === "accepted") {
+      // `accepted` is the Mod SAYING THE WORK CONTINUES: the row closes the dispatch
+      // handshake, and the walk or the use happens after it. Reading it as a duration
+      // made `move_to_tile` 25 ms and `break_rock_source` 35 ms - a pipe round trip
+      // priced as a swing. An open wait is not a duration, so it is counted apart.
+      unattributed += 1;
+      continue;
+    }
     rows.push({ action: entry.action, ms: entry.settledAtMs - entry.dispatchedAtMs });
   }
-  return { rows, rejected };
+  return { rows, rejected, unattributed };
 }
 
 /** The rows one `result.json` contributes: the PROGRAM channel, on the Mod's clock. */
@@ -432,12 +496,89 @@ function programRows(path) {
   return { rows, rejected, unattributed };
 }
 
+/** The states a receipt can close on: a terminal is a closed execution, and an unfinished one is not a duration. */
+const TERMINAL_RECEIPT_STATES = Object.freeze(new Set(["succeeded", "failed", "rejected", "uncertain"]));
+
+/** A refusal closes a wait rather than a piece of work, exactly as on the other two channels. */
+const REFUSED_RECEIPT_STATES = Object.freeze(new Set(["failed", "rejected"]));
+
+/**
+ * The rows one `timeline.jsonl` contributes: the RECEIPTS channel, the only one that
+ * records the walk beside the duration.
+ *
+ * One row per execution the timeline closed. The duration is the same execution's first
+ * stamp to its terminal receipt, and `tiles` is how many `tile_advanced` receipts that
+ * same execution filed in between - the Mod emits one per tile the actor crossed, so the
+ * distance is counted from the record rather than inferred from the geometry.
+ *
+ * An execution with no terminal receipt is not a duration, so it is `unattributed`
+ * rather than zero - the same distinction the other channels draw for a row they cannot
+ * attribute.
+ */
+function receiptRows(path) {
+  const byExecution = new Map();
+  for (const line of readFileSync(path, "utf8").split(/\r?\n/u)) {
+    if (line.trim().length === 0) continue;
+    let entry;
+    try {
+      entry = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    if (typeof entry?.atMs !== "number") continue;
+    const payload = entry?.worldFactPayload;
+    const executionId =
+      typeof entry?.executionId === "string"
+        ? entry.executionId
+        : typeof payload?.executionId === "string"
+          ? payload.executionId
+          : typeof payload?.bodyTrace?.executionId === "string"
+            ? payload.bodyTrace.executionId
+            : null;
+    if (executionId === null) continue;
+    const chain = byExecution.get(executionId);
+    if (chain === undefined) byExecution.set(executionId, [entry]);
+    else chain.push(entry);
+  }
+  const rows = [];
+  let rejected = 0;
+  let unattributed = 0;
+  for (const chain of byExecution.values()) {
+    chain.sort((left, right) => left.atMs - right.atMs);
+    let terminal;
+    for (let index = chain.length - 1; index >= 0; index -= 1) {
+      const entry = chain[index];
+      if (entry?.type !== "execution_receipt") continue;
+      if (!TERMINAL_RECEIPT_STATES.has(entry?.worldFactPayload?.state)) continue;
+      terminal = entry;
+      break;
+    }
+    if (terminal === undefined) {
+      unattributed += 1;
+      continue;
+    }
+    if (REFUSED_RECEIPT_STATES.has(terminal.worldFactPayload?.state)) {
+      rejected += 1;
+      continue;
+    }
+    const action = terminal.worldFactPayload?.actionId;
+    if (typeof action !== "string") {
+      unattributed += 1;
+      continue;
+    }
+    const tiles = chain.filter((entry) => entry?.reasonCode === "tile_advanced" && entry.atMs <= terminal.atMs).length;
+    rows.push({ action, ms: terminal.atMs - chain[0].atMs, tiles });
+  }
+  return { rows, rejected, unattributed };
+}
+
 /**
  * Measures every action the bundles carry, one row per action.
  *
- * SHAPE OF ONE ROW: the action's class, the floor `nativeFloorMs` gives for the same
- * unit of work, the p50/p95 the artifacts recorded on each channel, the channel the
- * verdict reads (`program` when it exists), and the ratio between them.
+ * SHAPE OF ONE ROW: the action's class, the walk the verdict's channel recorded for it,
+ * the floor `nativeFloorMs` gives for the same unit of work (one swing plus that walk),
+ * the p50/p95 the artifacts recorded on each channel, the channel the verdict reads
+ * (`CHANNEL_PREFERENCE`), and the ratio between them.
  */
 export function measureActionPace({ bundleRoot, classes = defaultClasses() } = {}) {
   const root = resolve(bundleRoot ?? "");
@@ -446,6 +587,7 @@ export function measureActionPace({ bundleRoot, classes = defaultClasses() } = {
       bundleRoot: root,
       status: "no_bundle_root",
       actionTraceFiles: 0,
+      timelineFiles: 0,
       resultFiles: 0,
       timedInstances: 0,
       examinedInstances: 0,
@@ -459,13 +601,20 @@ export function measureActionPace({ bundleRoot, classes = defaultClasses() } = {
   const record = (channel, rows) => {
     for (const row of rows) {
       const key = `${channel}:${row.action}`;
-      if (!byChannel.has(key)) byChannel.set(key, { channel, action: row.action, durations: [] });
-      byChannel.get(key).durations.push(row.ms);
+      if (!byChannel.has(key)) byChannel.set(key, { channel, action: row.action, instances: [] });
+      byChannel.get(key).instances.push({ ms: row.ms, tiles: row.tiles ?? 0 });
     }
   };
-  for (const path of files.actionTrace) {
-    const { rows, rejected } = flatRows(path);
+  for (const path of files.timelines) {
+    const { rows, rejected, unattributed } = receiptRows(path);
     rejectedInstances += rejected;
+    unattributedInstances += unattributed;
+    record("receipts", rows);
+  }
+  for (const path of files.actionTrace) {
+    const { rows, rejected, unattributed } = flatRows(path);
+    rejectedInstances += rejected;
+    unattributedInstances += unattributed;
     record("flat", rows);
   }
   for (const path of files.results) {
@@ -484,21 +633,33 @@ export function measureActionPace({ bundleRoot, classes = defaultClasses() } = {
   for (const [action, channels] of [...byAction.entries()].sort((left, right) =>
     left[0].localeCompare(right[0], "en"),
   )) {
-    const programs = channels.find((entry) => entry.channel === "program");
-    const chosen = GAME_SIDE_INTERVAL.preferred === "program" ? (programs ?? channels[0]) : channels[0];
+    const chosen =
+      CHANNEL_PREFERENCE.map((channel) => channels.find((entry) => entry.channel === channel)).find(
+        (entry) => entry !== undefined,
+      ) ?? channels[0];
     const className = animationClassOf(action, classes);
-    // One tile of work per action, and the walk charged only where the walk IS the work.
-    const floorMs = className === null ? null : nativeFloorMs({ action, tiles: 1, distance: 0, classes });
+    // The walk the artifacts recorded for the instances this row reads, and the floor that
+    // pays for it. A channel that cannot see the walk contributes zero, which is a stated
+    // lower bound rather than a guess about one.
+    const durations = chosen.instances.map((instance) => instance.ms);
+    const walkTiles = round(
+      percentile(
+        chosen.instances.map((instance) => instance.tiles),
+        0.5,
+      ),
+    );
+    const floorMs = className === null ? null : nativeFloorMs({ action, tiles: 1, distance: walkTiles, classes });
     rows.push(
       Object.freeze({
         action,
         animationClass: className,
         channel: chosen.channel,
-        instances: chosen.durations.length,
-        oursMs: round(percentile(chosen.durations, 0.5)),
-        oursP95Ms: round(percentile(chosen.durations, 0.95)),
+        instances: durations.length,
+        oursMs: round(percentile(durations, 0.5)),
+        oursP95Ms: round(percentile(durations, 0.95)),
+        walkTiles,
         floorMs: round(floorMs),
-        ratio: floorMs === null || floorMs === 0 ? null : round(percentile(chosen.durations, 0.5) / floorMs),
+        ratio: floorMs === null || floorMs === 0 ? null : round(percentile(durations, 0.5) / floorMs),
         channels: Object.freeze(
           channels
             .slice()
@@ -506,23 +667,34 @@ export function measureActionPace({ bundleRoot, classes = defaultClasses() } = {
             .map((entry) =>
               Object.freeze({
                 channel: entry.channel,
-                instances: entry.durations.length,
-                p50: round(percentile(entry.durations, 0.5)),
-                p95: round(percentile(entry.durations, 0.95)),
+                instances: entry.instances.length,
+                p50: round(
+                  percentile(
+                    entry.instances.map((instance) => instance.ms),
+                    0.5,
+                  ),
+                ),
+                p95: round(
+                  percentile(
+                    entry.instances.map((instance) => instance.ms),
+                    0.95,
+                  ),
+                ),
               }),
             ),
         ),
       }),
     );
   }
-  const timedInstances = [...byChannel.values()].reduce((total, entry) => total + entry.durations.length, 0);
-  // The instances the VERDICT reads: one channel per action, so an action timed on both channels is
-  // counted once. `timedInstances` above is everything the artifacts hold, both channels together.
+  const timedInstances = [...byChannel.values()].reduce((total, entry) => total + entry.instances.length, 0);
+  // The instances the VERDICT reads: one channel per action, so an action timed on several channels
+  // is counted once. `timedInstances` above is everything the artifacts hold, all channels together.
   const examinedInstances = rows.reduce((total, row) => total + row.instances, 0);
   return Object.freeze({
     bundleRoot: root,
     status: examinedInstances === 0 ? "no_durations" : "measured",
     actionTraceFiles: files.actionTrace.length,
+    timelineFiles: files.timelines.length,
     resultFiles: files.results.length,
     timedInstances,
     examinedInstances,
@@ -532,12 +704,21 @@ export function measureActionPace({ bundleRoot, classes = defaultClasses() } = {
   });
 }
 
-/** The line a reader compares across actions: what we spent, what the engine demands, and the ratio. */
+/**
+ * The line a reader compares across actions: what we spent, what the engine demands, and
+ * the ratio.
+ *
+ * The walk is named on the line whenever the row's channel recorded one, because it is
+ * the whole difference between the two shapes of the same number: `harvest_crop` read
+ * 2257 ms against a one-swing floor of 16.67 ms (135x) until the ten tiles it walked
+ * were on the floor, and the same reading then says 0.44.
+ */
 export function paceLine(row) {
   if (row.floorMs === null)
     return `action_pace_unpriced: ${row.action} (${row.animationClass}) tiles 1 · ours p50 ${row.oursMs}ms p95 ${row.oursP95Ms}ms · no engine constant exists for this work`;
+  const walked = row.walkTiles > 0 ? ` + walk ${row.walkTiles} tiles` : "";
   return (
-    `action_pace: ${row.action} · tiles 1 · ours p50 ${row.oursMs}ms p95 ${row.oursP95Ms}ms · ` +
+    `action_pace: ${row.action} · tiles 1${walked} · ours p50 ${row.oursMs}ms p95 ${row.oursP95Ms}ms · ` +
     `floor ${row.floorMs}ms (${row.animationClass}, n=${row.instances} on ${row.channel}) · ratio ${row.ratio}`
   );
 }
@@ -545,9 +726,13 @@ export function paceLine(row) {
 /** How much worse an action's ratio may read than the one recorded, before it is a regression. */
 export const ACTION_PACE_TOLERANCE = 0.5;
 
-/** The baseline's per-action bound: the recorded ratio plus the tolerance. */
+/** The baseline's per-action bound: the recorded ratio, one measurement quantum, and the tolerance. */
 export function paceBound(recorded, tolerance = ACTION_PACE_TOLERANCE) {
-  return recorded.ratio * (1 + tolerance);
+  // An entry recorded without a floor predates the walk term; it carries no quantum to
+  // add and its own ratio is the bound, exactly as before.
+  const quantum =
+    typeof recorded.floorMs === "number" && recorded.floorMs > 0 ? PACE_RESOLUTION_MS.value / recorded.floorMs : 0;
+  return (recorded.ratio + quantum) * (1 + tolerance);
 }
 
 /**
@@ -614,19 +799,30 @@ export function actionPaceRecord({ measurement, tolerance = ACTION_PACE_TOLERANC
   const actions = {};
   for (const row of measurement.rows) {
     if (row.floorMs === null) continue;
-    actions[row.action] = { ratio: row.ratio, oursMs: row.oursMs, floorMs: row.floorMs, instances: row.instances };
+    actions[row.action] = {
+      ratio: row.ratio,
+      oursMs: row.oursMs,
+      floorMs: row.floorMs,
+      walkTiles: row.walkTiles,
+      instances: row.instances,
+    };
   }
   return {
     note:
       "Per-action pace ratios recorded from the game-side durations in this checkout's own .live-runs bundles. " +
       "The ratio is the action's measured p50 game-side milliseconds over the engine floor tools/lib/action-pace.mjs " +
-      "derives from the decompiled tree (one tool swing, or one tile of walking). tools/check-perf-budget.mjs " +
-      "re-measures from whatever bundles exist and fails when an action's ratio grows past its recorded ratio plus " +
-      "tolerance; re-record deliberately, in its own commit, when a change makes an action faster. Actions whose work " +
-      "has no engine constant are absent here on purpose and are printed as `action_pace_unpriced` instead. The ratio " +
-      "is compared across revisions, not across machines: it is a property of the game-side path, not of the box.",
+      "derives from the decompiled tree: ONE SWING OF THE ACTION'S OWN ANIMATION, PLUS THE WALK THE ARTIFACT RECORDED " +
+      "FOR THAT ACTION (walkTiles x WALK_MS_PER_TILE, the route receipts of the same execution that produced the " +
+      "duration). Walk-dominated actions therefore read as engine-dominated rather than as slowness: harvest_crop " +
+      "recorded 10 tiles of walking inside its 2257 ms p50, so its floor is 16.67 + 10 x 505.05 = 5067 ms and its " +
+      "ratio is 0.44, not the 135x a one-swing floor reported. tools/check-perf-budget.mjs re-measures from whatever " +
+      "bundles exist and fails when an action's ratio grows past its recorded ratio plus tolerance; re-record " +
+      "deliberately, in its own commit, when a change makes an action faster. Actions whose work has no engine " +
+      "constant are absent here on purpose and are printed as `action_pace_unpriced` instead. The ratio is compared " +
+      "across revisions, not across machines: it is a property of the game-side path, not of the box.",
     recordedFrom: {
       actionTraceFiles: measurement.actionTraceFiles,
+      timelineFiles: measurement.timelineFiles,
       resultFiles: measurement.resultFiles,
       timedInstances: measurement.timedInstances,
       examinedInstances: measurement.examinedInstances,
@@ -649,7 +845,8 @@ export function renderActionPace({ measurement, verdict, bundleRoot }) {
   const lines = [];
   lines.push(
     `action_pace_population: bundleRoot=${bundleRoot} actionTraceFiles=${measurement.actionTraceFiles} ` +
-      `resultFiles=${measurement.resultFiles} timedInstances=${measurement.timedInstances} ` +
+      `timelineFiles=${measurement.timelineFiles} resultFiles=${measurement.resultFiles} ` +
+      `timedInstances=${measurement.timedInstances} ` +
       `examinedInstances=${measurement.examinedInstances} ` +
       `excludedRejected=${measurement.rejectedInstances} unattributed=${measurement.unattributedInstances} ` +
       `actions=${measurement.rows.length}`,
@@ -663,7 +860,7 @@ export function renderActionPace({ measurement, verdict, bundleRoot }) {
   if (measurement.status === "no_durations") {
     lines.push(
       `action_pace_blocked: runs_carry_no_action_durations actionTraceFiles=${measurement.actionTraceFiles} ` +
-        `resultFiles=${measurement.resultFiles} - the bundles exist and hold no timed action, which is a defect and not an empty tree`,
+        `timelineFiles=${measurement.timelineFiles} resultFiles=${measurement.resultFiles} - the bundles exist and hold no timed action, which is a defect and not an empty tree`,
     );
     return { lines, failed: true };
   }

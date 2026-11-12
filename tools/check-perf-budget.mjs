@@ -56,6 +56,11 @@
  * engine itself forces a player to spend on the same work. It reads run artifacts, not this box,
  * so it runs on a machine the microbenchmark baseline belongs to somebody else.
  *
+ * The floor is ONE SWING OF THE ACTION'S ANIMATION PLUS THE WALK THE ARTIFACT RECORDED for it:
+ * `harvest_crop` walked ten tiles inside its 2257 ms p50, so its floor is 5067 ms and its ratio
+ * 0.44, where a floor that forgot the walk read 135x. The distance comes from the receipt chain
+ * in `timeline.jsonl` (one `tile_advanced` receipt per tile), never from the geometry.
+ *
  *   node tools/check-perf-budget.mjs --action-pace-only       # just the pace verdict
  *   node tools/check-perf-budget.mjs --bundles <dir>           # pace population (default <root>/.live-runs)
  *   node tools/check-perf-budget.mjs --record-action-pace      # re-record the pace ratchet
@@ -342,7 +347,8 @@ function actionPaceSection({ root, argv }) {
     writeFileSync(baselinePath, `${JSON.stringify(record, null, 2)}\n`);
     process.stdout.write(
       `action_pace_recorded actions=${Object.keys(record.actions).length} examined=${measurement.timedInstances} ` +
-        `actionTraceFiles=${measurement.actionTraceFiles} resultFiles=${measurement.resultFiles}\n`,
+        `actionTraceFiles=${measurement.actionTraceFiles} timelineFiles=${measurement.timelineFiles} ` +
+        `resultFiles=${measurement.resultFiles}\n`,
     );
     return false;
   }
