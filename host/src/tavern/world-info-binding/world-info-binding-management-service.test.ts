@@ -13,9 +13,10 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
-import { readFile, rm } from "node:fs/promises";
+import { rm } from "node:fs/promises";
 import test from "node:test";
 import { canonicalTestRoot } from "../../test-support/canonical-test-root.test-support.js";
+import { readSourceShape } from "../../test-support/source-shape.test-support.js";
 import type { MountedChatRuntimeLease } from "../../continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.js";
 import type { HostDeploymentManifest } from "../../deployment-manifest.js";
 import {
@@ -564,7 +565,7 @@ test("the managed slot still refuses a mixed desired/applied source family", asy
 });
 
 test("binding service source keeps store, resolver, lease and coordinator authority private", async () => {
-  const source = await readFile(new URL("./world-info-binding-management-service.js", import.meta.url), "utf8");
+  const { shape: source } = readSourceShape(new URL("./world-info-binding-management-service.js", import.meta.url));
   assert.match(source, /from "\.\/managed-world-info-binding\.js"/);
   assert.match(source, /from "\.\.\/chat-thread-store\.js"/);
   assert.doesNotMatch(
