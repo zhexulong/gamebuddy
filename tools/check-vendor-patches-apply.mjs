@@ -42,6 +42,14 @@
  *      records, and every `MERGED_SEAMS` entry is read out of that pin's content - the file must exist in the pin
  *      and must contain each declared extension point. Only then is the run `passed`, and the report prints the
  *      reason, the pin and `present/declared` on every run.
+ *
+ *      In sealed mode the population is therefore `MERGED_SEAMS`, not a directory, and `examined` counts the
+ *      declared extension points read out of the pin while `extensionPoints` counts the ones declared. Reporting
+ *      `examined: 0` there - the PATCH count - was true of a directory nobody fills and false of the run:
+ *      `tools/lib/assert-non-vacuous.mjs` reads `examined`, so a sealed run that verified eight extension points
+ *      at a named pin was filed as `reported not measured` on every census, beside the two gates whose input does
+ *      not exist at all. A zero that stands for "no patch" is not a zero that stands for "nothing examined", and
+ *      the shared judge cannot tell them apart.
  *   2. each patch's own header declares `kind:`, `added-lines:`, `modified-lines:` and one
  *      `extension-point:` per name it introduces; `kind: invasive` additionally requires
  *      `why-not-insertion:` (design §3.2).
@@ -87,7 +95,10 @@
  *
  * Output: one JSON verdict
  * `{"gate":"vendor-patches-apply","examined":N,"files":N,"extensionPoints":N,"violations":[],"readings":[],
- * "checks":[],"status":...,"allowEmpty"?:"<reason>","pin"?:"<sha>"}` - `readings` is one entry per patch per
+ * "checks":[],"status":...,"allowEmpty"?:"<reason>","pin"?:"<sha>"}` - `examined` counts the members of the
+ * mode's population (patches in patch mode, declared extension points read at the pin in sealed mode), so the
+ * number the shared non-vacuity judge reads is always the number this run actually looked at - `readings` is one
+ * entry per patch per
  * reading (`{patch, reading, state, status, reason}`), so the report cannot say `passed` without saying which
  * state it read - and the line `vendor_patches: examined N patch(es), ... N reading(s) ...`. Sealed mode adds
  * `allowEmpty`, `pin` and the line `vendor_patches_allow_empty: <reason> (pin=<sha>, N merged seam file(s),
@@ -489,6 +500,10 @@ export function checkVendorPatchesApply({ root = REPOSITORY_ROOT } = {}) {
       return finish();
     }
     result.allowEmpty = MERGED_SEAM_REASON;
+    // The population this mode examines is the merged seam's own declaration, not a directory: every point
+    // `MERGED_SEAMS` names, read out of the pin. Stated before the pin is read, so a run that could not read it
+    // reports the population it owed and examined none of it.
+    result.extensionPoints = MERGED_SEAMS.reduce((total, seam) => total + seam.points.length, 0);
     const pin = readSubmodulePin(root, submoduleDirectory);
     rules.get("sealed").state = pin.sha === null ? "pin:unavailable" : `pin:${pin.sha}`;
     result.pin = pin.sha;
@@ -508,7 +523,7 @@ export function checkVendorPatchesApply({ root = REPOSITORY_ROOT } = {}) {
         continue;
       }
       for (const point of seam.points) {
-        result.extensionPoints += 1;
+        result.examined += 1;
         if (pinned.text.includes(point)) {
           measure("sealed");
           continue;
@@ -860,11 +875,23 @@ function report(result, out = process.stdout, err = process.stderr) {
       .map((check) => `${check.id} ${check.reason}`);
     out.write(`vendor_patches_skipped: ${reasons.join("; ")}\n`);
   }
+  // One line, one unit per mode: `examined` counts the patch directory in patch mode and the merged seam's own
+  // declaration in sealed mode, so the noun has to say which population it counted.
+  const sealedMode = result.allowEmpty !== null;
+  const population = sealedMode
+    ? [
+        `examined ${result.examined} of ${result.extensionPoints} extension point(s) at pin=${result.pin ?? "unreadable"}`,
+        `${result.files} merged seam file(s)`,
+      ]
+    : [
+        `examined ${result.examined} patch(es)`,
+        `${result.files} file(s)`,
+        `${result.extensionPoints} extension point(s)`,
+        `${result.readings.length} reading(s)`,
+      ];
   err.write(
-    `vendor_patches: examined ${result.examined} patch(es), ${result.files} file(s), ` +
-      `${result.extensionPoints} extension point(s), ${result.readings.length} reading(s), ` +
-      `${result.violations.length} violation(s)` +
-      `${result.allowEmpty === null ? "" : `, allow_empty=${result.allowEmpty} (pin=${result.pin ?? "unreadable"})`}` +
+    `vendor_patches: ${population.join(", ")}, ${result.violations.length} violation(s)` +
+      `${sealedMode ? `, allow_empty=${result.allowEmpty} (pin=${result.pin ?? "unreadable"})` : ""}` +
       ` [${result.status}]\n`,
   );
   out.write(`${JSON.stringify(result)}\n`);

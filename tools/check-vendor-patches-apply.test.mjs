@@ -13,6 +13,13 @@
  *            passed (state=pin:<sha>)`, status `failed`. Restoring the line turns both green. The mirror case -
  *            a pin that drifted away from a locally repaired working tree - is the same asymmetry inverted: the
  *            pinned reading is the only red one, and it is the verdict a clean checkout would get.
+ *
+ *            THE SEALED POPULATION: leave the sealed counter at the patch count (`result.examined` still 0 while
+ *            every declared extension point is verified at the pin) -> the shared judge answers
+ *            `gate_zero_population_allowed:vendor-patches-apply:examined` for a run that passed, and the case
+ *            "a pin carrying the seam is passed" fails on `assertNonVacuous(reported)?.status` expecting
+ *            `passed`. That is the census entry this file now refuses: a green sealed run is a measurement of
+ *            `MERGED_SEAMS`, not a zero with a reason attached.
  */
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
@@ -28,6 +35,7 @@ import {
   parseVendorPatchHeader,
 } from "./check-vendor-patches-apply.mjs";
 import { NOT_MEASURED_MARKER } from "./prelive.mjs";
+import { assertNonVacuous } from "./lib/assert-non-vacuous.mjs";
 
 const REPOSITORY_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const GATE = join(REPOSITORY_ROOT, "tools", "check-vendor-patches-apply.mjs");
@@ -92,6 +100,20 @@ function sealedTree({ patches = {}, pinned = {}, workingTree = pinned } = {}) {
   writeFiles(submodule, workingTree);
   recordGitlink(root, sha);
   return { root, sha };
+}
+
+/**
+ * Every declared seam file, as this checkout's submodule has it: the population `MERGED_SEAMS` names, read whole.
+ *
+ * A sealed fixture that pinned ONE of the four left the other three `vendor_seam_file_missing_from_pin`, which is
+ * a fixture defect that read exactly like the loss the gate exists to catch - and it made two cases red at HEAD.
+ */
+function seamFiles() {
+  const files = {};
+  for (const seam of MERGED_SEAMS) {
+    files[seam.file] = readFileSync(join(REPOSITORY_ROOT, "vendor", "magic-context", seam.file), "utf8");
+  }
+  return files;
 }
 
 /** The diff for `before -> after` in one file, produced by git rather than by hand. */
@@ -169,7 +191,12 @@ test("this checkout is sealed: the patch directory is empty and the report decla
 
   const result = checkVendorPatchesApply({ root: REPOSITORY_ROOT });
   assert.deepEqual(patchNames, [], "the seam ships by pin, so the directory holds no patch to apply or to excuse");
-  assert.equal(result.examined, 0);
+  assert.equal(result.examined, declaredPoints, "the sealed population is every declared extension point");
+  assert.equal(
+    assertNonVacuous(result)?.status,
+    "passed",
+    "a sealed run that read its whole population is a measurement, not a zero with a reason",
+  );
   assert.equal(result.allowEmpty, MERGED_SEAM_REASON, "the empty population is declared, never silent");
   assert.equal(result.pin, recordedPin, "the pin reported is the parent repository's own record");
   assert.equal(result.extensionPoints, declaredPoints, "every declared extension point was looked for at that pin");
@@ -222,8 +249,7 @@ test("a context line the submodule no longer has turns both apply readings red, 
 });
 
 test("a pin carrying the seam is passed, and the report prints the reason and the pin it verified", () => {
-  const seam = readFileSync(join(REPOSITORY_ROOT, "vendor", "magic-context", SEAM_FILE), "utf8");
-  const { root, sha } = sealedTree({ pinned: { [SEAM_FILE]: seam } });
+  const { root, sha } = sealedTree({ pinned: seamFiles() });
   try {
     const run = spawnSync(process.execPath, [GATE, "--root", root], { encoding: "utf8" });
     assert.equal(run.status, 0, run.stderr);
@@ -236,7 +262,12 @@ test("a pin carrying the seam is passed, and the report prints the reason and th
     assert.equal(reported.status, "passed");
     assert.equal(reported.allowEmpty, MERGED_SEAM_REASON, "the reason travels in the JSON, not only in the print");
     assert.equal(reported.pin, sha, "and so does the pin it was verified against");
-    assert.equal(reported.examined, 0);
+    assert.equal(reported.examined, points, "the population read is every declared extension point");
+    assert.equal(
+      assertNonVacuous(reported)?.status,
+      "passed",
+      "the shared judge reads this run as a measurement, so the census cannot file it as reported not measured",
+    );
     assert.deepEqual(reported.violations, []);
     assert.deepEqual(reported.checks, [
       { id: "merged_seam_present_at_pin", status: "passed", measured: points, failed: 0, state: `pin:${sha}` },
@@ -252,7 +283,7 @@ test("a pin that lost the seam is red and names the member, even though the patc
   const seam = readFileSync(join(REPOSITORY_ROOT, "vendor", "magic-context", SEAM_FILE), "utf8");
   const renamed = seam.replaceAll("assemblePresetSegments", "assembleSegmentsForPreset");
   assert.notEqual(renamed, seam, "the injection point must exist in the seam file");
-  const { root, sha } = sealedTree({ pinned: { [SEAM_FILE]: renamed } });
+  const { root, sha } = sealedTree({ pinned: { ...seamFiles(), [SEAM_FILE]: renamed } });
   try {
     const run = spawnSync(process.execPath, [GATE, "--root", root], { encoding: "utf8" });
     assert.equal(run.status, 1);
@@ -264,12 +295,19 @@ test("a pin that lost the seam is red and names the member, even though the patc
     );
     const reported = JSON.parse(run.stdout.split("\n").find((line) => line.startsWith("{")));
     assert.equal(reported.status, "failed");
+    assert.equal(
+      reported.examined,
+      MERGED_SEAMS.reduce((total, entry) => total + entry.points.length, 0),
+      "a red sealed run still examined its whole population, so it is not a zero-with-a-reason either",
+    );
     assert.deepEqual(
       reported.violations.map((violation) => violation.code),
       [`vendor_seam_absent_at_pin:${SEAM_FILE}:assemblePresetSegments`],
     );
     assert.deepEqual(reported.checks, [
-      { id: "merged_seam_present_at_pin", status: "failed", measured: 2, failed: 1, state: `pin:${sha}` },
+      // Seven of the eight declared points are present at this pin: the fixture carries every declared seam file, and
+      // the one renamed field is the single loss. `measured` was 2 while the fixture pinned one seam file of four.
+      { id: "merged_seam_present_at_pin", status: "failed", measured: 7, failed: 1, state: `pin:${sha}` },
     ]);
   } finally {
     rmSync(root, { recursive: true, force: true });
