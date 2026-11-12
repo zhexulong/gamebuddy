@@ -153,6 +153,29 @@ public sealed class WarpingHoldTests
         });
     }
 
+    [Fact]
+    public void TheHoldIsNamedWhileTheEngineWarpsTheBody()
+    {
+        Farmer actor = CreateActor(canMove: false);
+
+        RunWithGameState(() =>
+        {
+            SetWarping(true);
+            ActorDisposition held = WorldModel.Classify(WorldModel.ReadFacts(actor));
+            held.Kind.Should().Be(ActorDispositionKind.Transient);
+            held.TransientKind.Should().Be("warping",
+                "the hold must arrive with the word that tells the caller what holds the body, not as movement_lock");
+
+            // The refusal says WAIT, not retry: the same `transient_busy` vocabulary the animation fact publishes, with
+            // the window the engine's own fade actually takes.
+            (string reasonCode, string evidence) =
+                WorldModel.DescribeCurrentBodyHold(held, WorldModel.ReadFacts(actor), canMove: false);
+            reasonCode.Should().Be("transient_busy");
+            evidence.Should().Contain("transient_kind=warping");
+            evidence.Should().Contain($"retry_window_ms={WorldModel.TransientRetryWindowMs}");
+        });
+    }
+
     /// <summary>
     /// A probe farmer whose only hold is the one under test: no menu, no event, no eating, no tool. The sprite is
     /// seeded because <c>ReadFacts</c> dereferences it, and the NetFields are the ones it reads.

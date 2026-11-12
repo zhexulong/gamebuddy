@@ -71,7 +71,7 @@ public readonly record struct ActorDisposition(
     ActorDispositionKind Kind,
     string? ModalType,        // "DialogueBox" | "LetterViewer" | "ReadyCheck" | "GameMenu" | ...
     bool ModalActionOwned,    // L0 binary: actionOwned(newestExecutionId) vs worldOwned
-    string? TransientKind)    // "freezePause" | "eating" | "toolAnimation" | "selfAnimation"
+    string? TransientKind)    // "freezePause" | "eating" | "toolAnimation" | "selfAnimation" | "warping"
 {
     public static readonly ActorDisposition Idle = new(ActorDispositionKind.Idle, null, false, null);
 }
@@ -161,6 +161,16 @@ internal static class WorldModel
         if (facts.Stamina <= PassOutStaminaFloor || facts.TimeOfDay >= PassOutDayEndTime)
         {
             return new ActorDisposition(ActorDispositionKind.PassOut, null, false, null);
+        }
+
+        // First among the transients, because a warp is the engine's OUTER body state: the flag is raised in
+        // `performWarpFarmer` (Game1.cs:10031) and lowered only when the fade reaches black (:6271), and the engine's own
+        // guard lists it ahead of `UsingTool` (Farmer.cs:7944 before :7948) and of the animation pause (:7964) - which the
+        // warp's completion clears BEFORE it clears the warp (:6269, :6271). The body is held for the fade's own 1.1
+        // alpha at 0.0019/ms (ScreenFade.cs:38, :70), i.e. ~580 ms, and released by the engine rather than by us.
+        if (facts.Warping)
+        {
+            return new ActorDisposition(ActorDispositionKind.Transient, null, false, "warping");
         }
 
         if (facts.FreezePaused)
@@ -370,8 +380,8 @@ internal static class WorldModel
                 $"stamina={facts.Stamina.ToString(System.Globalization.CultureInfo.InvariantCulture)}"
                 + $";time_of_day={facts.TimeOfDay};can_move={canMoveText}",
             // `movement_lock` is the honest name for the one hold the facts cannot name further: the
-            // disposition says Transient but no eating/tool/freeze/animation fact produced it, so something else
-            // native (a knockback, a warp transition) took CanMove away.
+            // disposition says Transient but no eating/tool/freeze/animation/warp fact produced it, so something
+            // else native (a knockback, a fade that is not a warp) took CanMove away.
             ActorDispositionKind.Transient =>
                 $"transient_kind={disposition.TransientKind ?? "movement_lock"}"
                 + $";retry_window_ms={TransientRetryWindowMs};can_move={canMoveText}",

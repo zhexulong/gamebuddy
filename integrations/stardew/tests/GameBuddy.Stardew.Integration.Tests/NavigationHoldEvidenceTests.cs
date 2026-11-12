@@ -154,6 +154,26 @@ public sealed class NavigationHoldEvidenceTests
         outcome.Evidence.Should().Contain("held_by=transient_busy");
     }
 
+    /// <summary>
+    /// A body taken by a location transition says so, and says how long it lasts: the caller's one option is to wait the
+    /// engine's own fade out, not to re-issue the request.
+    /// </summary>
+    [Fact]
+    public void AWarpHoldSaysToWaitForTheWindowRatherThanToRetry()
+    {
+        string hold = WorldModel.DescribeNavigationHold(Facts(warping: true), canMove: false);
+
+        hold.Should().Contain("held_by=transient_busy");
+        hold.Should().Contain("transient_kind=warping");
+        hold.Should().Contain($"retry_window_ms={WorldModel.TransientRetryWindowMs}");
+        hold.Should().Contain("admissible_actions=none");
+        hold.Should().Contain("next_step=wait_for_retry_window");
+
+        NavigationOutcome outcome = Decide(hold);
+        outcome.TerminalReasonCode.Should().Be("destination_locked");
+        outcome.Evidence.Should().Contain("held_by=transient_busy");
+    }
+
     /// <summary>An actionable player is not locked: the new branch must not swallow the walk it guards.</summary>
     [Fact]
     public void AnActionablePlayerIsNotRefusedAsLocked()

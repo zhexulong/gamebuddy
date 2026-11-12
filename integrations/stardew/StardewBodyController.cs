@@ -737,7 +737,7 @@ internal sealed class StardewBodyController
         ActorDisposition movementDisposition = WorldModel.Classify(movementFacts);
         if (movementDisposition.Kind != ActorDispositionKind.Idle || !localPlayer.CanMove)
         {
-            // A movement lock the facts cannot name further (knockback, a warp transition) reads as Idle,
+            // A movement lock the facts cannot name further (knockback, a fade that is not a warp) reads as Idle,
             // so the `!CanMove` tail is what makes it a hold here - and it is reported as a transient, which
             // is exactly how the body loop treats it.
             ActorDisposition hold = movementDisposition.Kind == ActorDispositionKind.Idle

@@ -230,8 +230,8 @@ public sealed class BodyHoldAttributionTests
     [Fact]
     public void AMovementLockTheFactsCannotNameIsStillNamedHonestly()
     {
-        // The one hold the facts cannot narrow down: the disposition says Transient but no eating/tool/freeze
-        // fact produced it, so something else native (a knockback, a warp transition) took CanMove away. It
+        // The one hold the facts cannot narrow down: the disposition says Transient but no eating/tool/freeze/animation
+        // fact produced it, so something else native (a knockback, a fade that is not a warp) took CanMove away. It
         // must read as a transient with an honest label, not as one of the holds it is not.
         ActorDisposition movementLock = WorldModel.Classify(Facts()) with { Kind = ActorDispositionKind.Transient };
         movementLock.TransientKind.Should().BeNull();
@@ -255,6 +255,23 @@ public sealed class BodyHoldAttributionTests
 
         string evidence = WorldModel.DescribeBodyHold(disposition, facts, canMove: false);
         evidence.Should().Contain("transient_kind=selfAnimation");
+        evidence.Should().Contain($"retry_window_ms={WorldModel.TransientRetryWindowMs}");
+        evidence.Should().Contain("can_move=false");
+        WorldModel.HoldReasonCode(disposition.Kind).Should().Be("transient_busy");
+    }
+
+    [Fact]
+    public void AWarpIsNamedAsItsOwnTransientWithTheRealRetryWindow()
+    {
+        // The two sites that take the body for a location transition hold it for the fade's ~580 ms (ScreenFade.cs:38,
+        // :70) and leave no other declared fact up, so before this fact a refusal could only say `movement_lock`.
+        ActorWorldFacts facts = Facts(warping: true);
+        ActorDisposition disposition = WorldModel.Classify(facts);
+        disposition.Kind.Should().Be(ActorDispositionKind.Transient);
+        disposition.TransientKind.Should().Be("warping");
+
+        string evidence = WorldModel.DescribeBodyHold(disposition, facts, canMove: false);
+        evidence.Should().Contain("transient_kind=warping");
         evidence.Should().Contain($"retry_window_ms={WorldModel.TransientRetryWindowMs}");
         evidence.Should().Contain("can_move=false");
         WorldModel.HoldReasonCode(disposition.Kind).Should().Be("transient_busy");

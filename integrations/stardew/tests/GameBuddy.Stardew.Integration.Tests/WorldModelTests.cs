@@ -189,6 +189,27 @@ public sealed class WorldModelTests
         disposition.ModalActionOwned.Should().BeFalse();
     }
 
+    [Fact]
+    public void Transient_Warping()
+    {
+        // The engine's location transition (Game1.isWarping): two native sites take the body for the fade's ~580 ms and
+        // leave no other declared fact up.
+        ActorDisposition disposition = WorldModel.Classify(Facts(warping: true));
+
+        disposition.Kind.Should().Be(ActorDispositionKind.Transient);
+        disposition.TransientKind.Should().Be("warping");
+        disposition.ModalType.Should().BeNull();
+        disposition.ModalActionOwned.Should().BeFalse();
+    }
+
+    [Fact]
+    public void Transient_WarpingOutranksTheAnimationTheWarpItselfClears()
+    {
+        // The warp's completion clears `PauseForSingleAnimation` BEFORE it clears `_isWarping` (Game1.cs:6269, :6271), so
+        // the warp is the outer state: naming the animation there would report the inner lock for a body the warp holds.
+        WorldModel.Classify(Facts(warping: true, selfAnimation: true)).TransientKind.Should().Be("warping");
+    }
+
     // ---- Idle --------------------------------------------------------------
 
     [Fact]
