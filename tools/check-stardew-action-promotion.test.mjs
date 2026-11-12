@@ -136,9 +136,25 @@ test("promotion checker rejects a duplicate or missing source-owned projection",
 });
 
 test("promotion checker preserves transport, schema, and game-thread guard checks", () => {
+  // The envelope's action admission is a declaration now (777bc797): `value.action === "…"` comparisons no longer exist
+  // in `validateExecutionRequestEnvelope`, so a mutation of that spelling would apply to nothing and the assertion would
+  // pass for the wrong reason. Break the CONSTRUCTION instead - the set that is supposed to be the declaration's key set.
+  const emptyActionSet = sources.protocol.replace(
+    "const EXECUTION_ACTIONS: ReadonlySet<string> = new Set(Object.keys(EXECUTION_REQUEST_ARGUMENT_RULES));",
+    "const EXECUTION_ACTIONS: ReadonlySet<string> = new Set<string>([]);",
+  );
+  assert.notEqual(emptyActionSet, sources.protocol, "the mutation must actually apply");
   assert.ok(
-    failuresFor({ protocol: sources.protocol.replace('      value.action === "bait_crab_pot" ||\n', "") }).includes(
-      "missing_envelope_validator:bait_crab_pot",
+    failuresFor({ protocol: emptyActionSet }).includes("execution_request_envelope_action_set_not_declaration_derived"),
+  );
+  const unknownActionRefusalRemoved = sources.protocol.replace(
+    '  if (!isExecutionAction(value.action)) return "unknown_action";\n',
+    "",
+  );
+  assert.notEqual(unknownActionRefusalRemoved, sources.protocol, "the mutation must actually apply");
+  assert.ok(
+    failuresFor({ protocol: unknownActionRefusalRemoved }).includes(
+      "execution_request_envelope_not_declaration_derived",
     ),
   );
   assert.ok(
@@ -243,7 +259,7 @@ test("gate descriptors remain non-authoritative coverage metadata", () => {
     false,
   );
   assert.equal(
-    failures.some((failure) => failure.startsWith("missing_envelope_validator:")),
+    failures.some((failure) => failure.startsWith("execution_request_envelope")),
     false,
   );
   assert.equal(

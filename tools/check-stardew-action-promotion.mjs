@@ -331,7 +331,6 @@ export function validatePromotionSources({
   failures.push(...validateHostWrapperFactory(gameTools, routes));
   failures.push(...validateRouterBoundary(bridgeSession, farmhandActionRouter));
   const hostValidators = parseHostRequestValidators(protocol);
-  const envelopeValidators = parseEnvelopeValidators(protocol);
   const executionRequestUnion = parseExecutionRequestUnion(protocol);
   const hostMessageTypes = parseHostBridgeMessageTypes(protocol);
   const schemaMessageTypes = parseSchemaBridgeMessageTypes(schema);
@@ -350,6 +349,10 @@ export function validatePromotionSources({
   // action list and `hostValidators.actions` is the validator's row set; the compiler holds them equal
   // (`satisfies Record<ExecutionRequest["action"], …>`), but this gate reads SOURCE, so it must not assume the compiler
   // ran. A member either reading has and the other lacks is named rather than resolved by preferring one of them.
+  // The envelope admits an action iff the declaration carries a row for it (777bc797), so its reading is a SHAPE check
+  // rather than one finding per action. Said out loud so a green run cannot be read as "the envelope names every action".
+  const envelopeProblem = executionRequestEnvelopeProblem(protocol);
+  if (envelopeProblem !== null) failures.push(envelopeProblem);
   const hostDeclarationReadable = hostValidators.problem === undefined;
   const hostActionIds = hostValidators.actions;
   if (!hostDeclarationReadable) failures.push(hostValidators.problem);
@@ -401,8 +404,6 @@ export function validatePromotionSources({
     }
     if (hostDeclarationReadable && !hostActionIds.includes(definition.actionId))
       failures.push(`missing_host_request_validator:${definition.actionId}`);
-    if (!envelopeValidators.includes(definition.actionId))
-      failures.push(`missing_envelope_validator:${definition.actionId}`);
     if (!executionRequestUnion.includes(definition.actionId))
       failures.push(`missing_execution_request_union:${definition.actionId}`);
     if (!schemaActions.includes(definition.actionId))
@@ -411,9 +412,6 @@ export function validatePromotionSources({
   for (const actionId of hostActionIds)
     if (hostDeclarationReadable && !definitions.some((definition) => definition.actionId === actionId))
       failures.push(`host_request_validator_not_in_definition:${actionId}`);
-  for (const actionId of envelopeValidators)
-    if (!definitions.some((definition) => definition.actionId === actionId))
-      failures.push(`envelope_validator_not_in_definition:${actionId}`);
   for (const actionId of executionRequestUnion)
     if (!definitions.some((definition) => definition.actionId === actionId))
       failures.push(`execution_request_union_not_in_definition:${actionId}`);
@@ -603,9 +601,35 @@ function parseSchemaExecutionActions(source) {
   const schema = JSON.parse(source);
   return schema.$defs.executionRequest.properties.action.enum;
 }
-function parseEnvelopeValidators(source) {
-  const body = source.match(/function validateExecutionRequestEnvelope[\s\S]*?\n}\n/)?.[0] ?? "";
-  return [...new Set([...body.matchAll(/value\.action === "([a-z0-9_]+)"/g)].map((entry) => entry[1]))];
+/**
+ * THE ENVELOPE'S ACTION ADMISSION IS A DECLARATION NOW.
+ *
+ * red-proof: inject  replacing the declaration-derived action set with an empty one ->
+ *   `execution_request_envelope_action_set_not_declaration_derived`, and deleting the `unknown_action` refusal ->
+ *   `execution_request_envelope_not_declaration_derived` (tools/check-stardew-action-promotion.test.mjs)
+ *
+ * `validateExecutionRequestEnvelope` used to be a chain of `value.action === "<id>"` comparisons and this gate harvested
+ * the ids out of that text. Commit 777bc797 ("an execution envelope answers to one requirement set, whatever action it
+ * names") replaced the chain with one requirement list whose `unknown_action` row asks `isExecutionAction`, over a set
+ * built from the argument-rules declaration. The chain no longer exists to read, so the reader returned nothing and the
+ * gate reported `missing_envelope_validator` for all 103 actions - a loud report of the wrong fact, and one that buried
+ * the real findings behind it.
+ *
+ * What is measurable is the CONSTRUCTION: the envelope admits an id exactly when the Host's declaration carries a row for
+ * it, and refuses every other id with `unknown_action`. A break in either half is named once, and the per-action coverage
+ * of that declaration is checked by `missing_host_request_validator` - the same fact under one spelling instead of two.
+ */
+export function executionRequestEnvelopeProblem(source) {
+  const body = String(source).match(/function validateExecutionRequestEnvelope[\s\S]*?\n\}\n/u)?.[0] ?? "";
+  if (body.length === 0) return "execution_request_envelope_unreadable";
+  const derivedSet = new RegExp(
+    `const EXECUTION_ACTIONS\\b[^=\\n]*=\\s*new Set\\(Object\\.keys\\(${HOST_REQUEST_DECLARATION}\\)\\)`,
+    "u",
+  );
+  if (!derivedSet.test(source)) return "execution_request_envelope_action_set_not_declaration_derived";
+  if (!body.includes("isExecutionAction(value.action)") || !body.includes('return "unknown_action";'))
+    return "execution_request_envelope_not_declaration_derived";
+  return null;
 }
 function parseExplicitRoutes(gameTools) {
   // Constant mount (36608fa): every Game Action tool is mounted unconditionally
