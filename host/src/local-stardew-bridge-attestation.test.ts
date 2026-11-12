@@ -484,7 +484,7 @@ test("S4c body-program admission expires with its factory callback and rejects f
   });
 });
 
-test("actual attested pipe mounts only the program submit tool until a submission is recorded, and its copy example is an accepted-shape plan", async () => {
+test("actual attested pipe mounts only the program submit tool until a submission is recorded, and its description teaches the contract without a copyable program tree", async () => {
   const requests: BridgeMessage[] = [];
   await withHelloAck(
     "farmhand_client",
@@ -543,49 +543,20 @@ test("actual attested pipe mounts only the program submit tool until a submissio
           assert.ok(tool, `missing ${name}`);
           return await tool.execute("body-program-test", params, new AbortController().signal, () => undefined);
         };
-        // The copyable example is read off the mounted tool, so the description cannot drift from the accepted shape.
         const submit = tools.find((current) => current.name === "stardew_submit_action_program");
         assert.ok(submit);
-        const example = JSON.parse(submit.description.slice(submit.description.lastIndexOf('{"programId"')));
-        assert.equal(
-          validateBodyProgramCandidateRequest(example),
-          null,
-          "the example must be a plan the validator accepts",
+        // The description carries NO copyable program tree, and that is the decision rather than an omission:
+        // b01c91dd removed the three-node keg example (2,071 -> 911 bytes) because the example, not the capability,
+        // was what made this tool look like the one for a two-step errand - all 16 recorded `submit_action_program`
+        // calls were one to five nodes of `move_to_tile` then a travel, while `plan_work` was the cheaper tool for
+        // them. The example lives in `plan_work` alone. A quoted JSON key reappearing here is that regression, so
+        // this is the reading that keeps it out: prose names fields in single quotes, only an embedded tree quotes them.
+        assert.doesNotMatch(
+          submit.description,
+          /"programId"|"nodeId"/u,
+          "the submit description embeds a copyable program tree again: the example is what taught a two-step " +
+            "errand that this tool was its job, and `plan_work` is where the example belongs",
         );
-        type ExampleNode = {
-          nodeId: string;
-          actionId: string;
-          arguments: Record<string, Record<string, string>>;
-          dependsOn: readonly string[];
-          bindings: Record<string, Record<string, string>>;
-        };
-        const exampleNodes = example.nodes as readonly ExampleNode[];
-        assert.deepEqual(
-          exampleNodes.map((node) => node.actionId),
-          ["move_to_tile", "machine_inspect", "machine_load"],
-        );
-        assert.deepEqual(
-          exampleNodes.map((node) => Object.keys(node).sort()),
-          exampleNodes.map(() => ["actionId", "arguments", "bindings", "dependsOn", "nodeId"]),
-          "isBodyProgramNode names exactly these five fields on every node",
-        );
-        const [move, inspect, load] = exampleNodes;
-        assert.deepEqual(Object.keys(move!.arguments).sort(), ["x", "y"], "move_to_tile declares x and y");
-        for (const argument of Object.values(move!.arguments))
-          assert.deepEqual(
-            Object.keys(argument).sort(),
-            ["canonicalValue", "type"],
-            "a scalar argument is {type, canonicalValue}",
-          );
-        assert.deepEqual(
-          Object.keys(load!.arguments).sort(),
-          ["expectedQualifiedItemId", "expectedTargetId", "slot", "x", "y"],
-          "machine_load declares exactly these five arguments",
-        );
-        assert.deepEqual(load!.dependsOn, [inspect!.nodeId], "the load waits for the inspection it binds");
-        assert.deepEqual(load!.bindings, {
-          expectedTargetId: { nodeId: inspect!.nodeId, factName: "machine_target_id" },
-        });
         const candidate = Object.freeze({
           programId: "program_01",
           nodes: [
