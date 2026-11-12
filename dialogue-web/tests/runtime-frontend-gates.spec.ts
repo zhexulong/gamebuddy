@@ -94,6 +94,12 @@ type FixtureOptions = Readonly<{
   swipe?: boolean;
   /** Marks message zero as a greeting set's committed variant, still open for choice. */
   opening?: boolean;
+  /**
+   * The settled turn the surface reports, when a gate needs the notice line a terminal
+   * turn earns. `cancelled` is the one state whose sentence is a fixed string rather than
+   * a provider's own words, so a gate can read it without depending on a failure cause.
+   */
+  turn?: Readonly<{ handle: string; state: "cancelled"; projectionRevision: number; canCancel: boolean }>;
 }>;
 
 function handleFor(index: number): string {
@@ -143,7 +149,7 @@ function composedRoot(options: FixtureOptions = {}) {
             : {}),
         })),
         draft: { revision: 0, present: false },
-        turn: null,
+        turn: options.turn ?? null,
         worldInfo: null,
       },
       memory: { readAvailable: false, mutationAvailable: false, projectionRevision: null },
@@ -1447,6 +1453,224 @@ test("gate 15: the viewport meta resizes the visual viewport for the on-screen k
   );
 });
 
+/* ========================================================================== *
+ * The axes two roles can differ on, and the floors a difference must clear to
+ * count as one a reader sees.
+ *
+ * The vocabulary lives here rather than inside a gate because more than one gate
+ * asks it now: gates 16 and 17 both read two elements' computed style and count
+ * the channels between them, and two spellings of the size floor would be two
+ * verdicts waiting to disagree.
+ *
+ * The set was established by the beat incident (gate 16): `colour` carries an ink
+ * separation ratio, because two inks are not two tones unless the gap between
+ * them reads; `weight`, `style`, `tracking` and `size` are the four typographic
+ * axes a stylesheet can move. Two more are added here because a role in this
+ * product is drawn back by them and this inventory would otherwise call a
+ * visibly different control one channel:
+ *
+ *   * `opacity` - the element's own fill attenuation. `.send-button:disabled` is
+ *     drawn at 0.6 against 1, and that is a difference a reader sees.
+ *   * `edge` - the widest border side the element actually paints. A system
+ *     notice wears a 3 px accent bar; a bubble wears a 1 px hairline.
+ *
+ * NOT MEASURED, named so nobody assumes it was: position and width. A notice is
+ * a block above the composer rather than a bubble in the transcript, and that is
+ * a strong channel a per-element reading cannot see. A pair whose only remaining
+ * channel is where it sits is reported as needing a decision, never called
+ * distinguishable.
+ * ========================================================================== */
+
+/** An ink separation ratio under this reads as one tone at body sizes. */
+const ROLE_INK_SEPARATION = 3;
+/** 0.02em is about a quarter pixel at 14 px: the smallest tracking difference that reads as tracking. */
+const ROLE_TRACKING_STEP_EM = 0.02;
+/**
+ * A size step under 8% is under 1.2 px at the 14 px body size, which lands in the
+ * glyph raster's own rounding; the beat ships at 10% (`0.9em`).
+ */
+const ROLE_SIZE_STEP_RATIO = 0.08;
+/** One weight rung (400 -> 500) is the smallest step a text face renders as a different voice. */
+const ROLE_WEIGHT_STEP = 100;
+/** A fill attenuation a reader sees; the product's own disabled control ships at 0.6 against 1. */
+const ROLE_OPACITY_STEP = 0.15;
+/** A border step a reader sees: a notice's 3 px accent bar against a bubble's 1 px hairline. */
+const ROLE_EDGE_STEP_PX = 2;
+
+/** One element's visible appearance: the axes two roles can differ on. */
+type RoleReading = Readonly<{
+  fontStyle: string;
+  fontSizePx: number;
+  fontWeight: number;
+  /** Letter-spacing in em, so a reading does not depend on the body size. */
+  trackingEm: number;
+  color: string;
+  opacity: number;
+  /** The widest border side this element actually paints, in px. */
+  edgePx: number;
+}>;
+
+/**
+ * What one element's computed style says it looks like.
+ *
+ * Written as a page function with no free variables, because it is serialised
+ * into the browser: `roleReadingOf` is the ONE place these axes are read, and
+ * every gate that counts channels goes through it.
+ */
+function roleReadingOf(element: Element): RoleReading {
+  const style = getComputedStyle(element);
+  const size = Number.parseFloat(style.fontSize);
+  // A painted border side. Its computed width is 0 when the style is `none`, so the
+  // only thing that needs checking separately is a `solid` border at alpha 0.
+  const transparent = (colour: string): boolean => {
+    const alpha =
+      colour.match(/^rgba\([^,]+,[^,]+,[^,]+,\s*([\d.]+)\s*\)$/u)?.[1] ??
+      colour.match(/^color\(srgb[^/]*\/\s*([\d.]+)\s*\)$/u)?.[1];
+    return alpha !== undefined && Number.parseFloat(alpha) === 0;
+  };
+  const edgePx = (["top", "right", "bottom", "left"] as const).reduce((widest, side) => {
+    if (style.getPropertyValue(`border-${side}-style`) === "none") return widest;
+    if (transparent(style.getPropertyValue(`border-${side}-color`))) return widest;
+    return Math.max(widest, Number.parseFloat(style.getPropertyValue(`border-${side}-width`)) || 0);
+  }, 0);
+  return {
+    fontStyle: style.fontStyle,
+    fontSizePx: size,
+    fontWeight: Number.parseInt(style.fontWeight, 10),
+    trackingEm: (Number.parseFloat(style.letterSpacing) || 0) / size,
+    color: style.color,
+    opacity: Number.parseFloat(style.opacity),
+    edgePx,
+  };
+}
+
+/** The fill one element paints: the plate its own ink, and anything inside it, is drawn on. */
+function paintedBackgroundOf(element: Element): string {
+  return getComputedStyle(element).backgroundColor;
+}
+
+/** A painted colour as the browser computed it: 0..255 channels and a 0..1 alpha. */
+function parsePaintedInk(color: string): readonly [number, number, number, number] {
+  const rgb = color.match(/^rgba?\(([^)]+)\)$/u);
+  if (rgb !== null) {
+    const parts = rgb[1]!.split(",").map((part) => Number.parseFloat(part.trim()));
+    return [parts[0] ?? 0, parts[1] ?? 0, parts[2] ?? 0, parts[3] ?? 1];
+  }
+  // CSS Color 4, which a modern Chromium computes `color-mix()` to: channels are 0..1
+  // floats, so scaling by 255 is the same mapping `rgba()` uses, not another measurement.
+  const srgb = color.match(/^color\(srgb\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)(?:\s*\/\s*([\d.]+))?\s*\)$/u);
+  if (srgb !== null) {
+    return [
+      Math.round(Number.parseFloat(srgb[1]!) * 255),
+      Math.round(Number.parseFloat(srgb[2]!) * 255),
+      Math.round(Number.parseFloat(srgb[3]!) * 255),
+      srgb[4] === undefined ? 1 : Number.parseFloat(srgb[4]),
+    ];
+  }
+  // An unparsed colour is not black. Measuring one as black is how the surface contrast
+  // gate once reported a 6.51:1 badge as 1.32:1; throwing stops the reading instead.
+  throw new Error(`unparsed painted colour: ${color}`);
+}
+
+/** WCAG 2.1 relative luminance of a painted colour. */
+function paintedLuminance(color: string): number {
+  const [red = 0, green = 0, blue = 0] = parsePaintedInk(color)
+    .slice(0, 3)
+    .map((value) => {
+      const channel = value / 255;
+      return channel <= 0.03928 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4;
+    });
+  return 0.2126 * red + 0.7152 * green + 0.0722 * blue;
+}
+
+/** WCAG 2.1 contrast ratio between two painted colours. */
+function paintedContrast(foreground: string, background: string): number {
+  const lit = paintedLuminance(foreground);
+  const dark = paintedLuminance(background);
+  return (Math.max(lit, dark) + 0.05) / (Math.min(lit, dark) + 0.05);
+}
+
+/** The channels a reader can actually see between two roles, by name, at the floors above. */
+function distinguishingChannels(a: RoleReading, b: RoleReading): readonly string[] {
+  const channels: string[] = [];
+  if (paintedContrast(a.color, b.color) >= ROLE_INK_SEPARATION) channels.push("colour");
+  if (Math.abs(a.fontWeight - b.fontWeight) >= ROLE_WEIGHT_STEP) channels.push("weight");
+  if (a.fontStyle !== b.fontStyle) channels.push("style");
+  if (Math.abs(a.trackingEm - b.trackingEm) >= ROLE_TRACKING_STEP_EM) channels.push("tracking");
+  if (Math.abs(a.fontSizePx / b.fontSizePx - 1) >= ROLE_SIZE_STEP_RATIO) channels.push("size");
+  if (Math.abs(a.opacity - b.opacity) >= ROLE_OPACITY_STEP) channels.push("opacity");
+  if (Math.abs(a.edgePx - b.edgePx) >= ROLE_EDGE_STEP_PX) channels.push("edge");
+  return channels;
+}
+
+/**
+ * Measures the settled cascade rather than an animation frame.
+ *
+ * `.swipe-btn` transitions its colour over 150 ms, so a reading taken straight after a
+ * theme switch reports a value between the two themes - and a value between two themes
+ * is a value no reader ever sees. (Read live, this gate reported the light appearance's
+ * disabled arrow inside a dark cell.) A transition never changes where a value settles,
+ * only when, so retiring it for the duration of a reading is the same measurement taken
+ * once instead of mid-flight. One helper, so no two gates decide this differently.
+ */
+async function freezeTransitions(page: Page): Promise<void> {
+  await page.addStyleTag({ content: "* { transition: none !important; animation: none !important; }" });
+}
+
+/** One role reading, one string, so every row of every table reads alike. */
+function roleVoice(reading: RoleReading): string {
+  return (
+    `${reading.fontStyle} ${reading.fontSizePx.toFixed(2)}px ${reading.fontWeight} ` +
+    `tracking ${reading.trackingEm.toFixed(3)}em opacity ${reading.opacity} edge ${reading.edgePx}px ${reading.color}`
+  );
+}
+
+/** The three selectors that name one pair of roles inside one container. */
+type RoleSelectors = Readonly<{ scope: string; a: string; b: string }>;
+
+/** One container instance's two roles, read. */
+type RolePairRow = Readonly<{ instance: string; a: RoleReading; b: RoleReading }>;
+
+/** One cell's reading of one pair: the rows it produced, and why it produced none. */
+type RolePairReading = Readonly<{ rows: readonly RolePairRow[]; problems: readonly string[] }>;
+
+/**
+ * Reads a declared pair out of the mounted page, one row per instance of its scope.
+ *
+ * Both sides must resolve to EXACTLY one element inside their container. A side that
+ * resolves to none is the population zero this file treats as a failure; a side that
+ * resolves to many would silently compare the first of them, so it is refused too.
+ * Either way the complaint names the selector, because "expected true, got false"
+ * tells the next reader nothing about which declaration stopped matching.
+ */
+async function readRolePair(page: Page, pair: RoleSelectors): Promise<RolePairReading> {
+  const scope = page.locator(pair.scope);
+  const containers = await scope.count();
+  const rows: RolePairRow[] = [];
+  const problems: string[] = [];
+  if (containers === 0) problems.push(`the declared scope \`${pair.scope}\` resolved to no element`);
+  for (let index = 0; index < containers; index += 1) {
+    const container = scope.nth(index);
+    const instance = `${index} ${await container.evaluate(nameOfElement)}`;
+    const left = container.locator(pair.a);
+    const right = container.locator(pair.b);
+    const [leftCount, rightCount] = [await left.count(), await right.count()];
+    if (leftCount !== 1 || rightCount !== 1) {
+      problems.push(
+        `${instance}: expected exactly one \`${pair.a}\` and one \`${pair.b}\`, found ${leftCount} and ${rightCount}`,
+      );
+      continue;
+    }
+    rows.push({ instance, a: await left.evaluate(roleReadingOf), b: await right.evaluate(roleReadingOf) });
+  }
+  return { rows, problems };
+}
+
+/** Enough of an element to recognise it in a failure message. */
+function nameOfElement(element: Element): string {
+  const classes = element.getAttribute("class");
+  return `<${element.tagName.toLowerCase()}${classes === null ? "" : ` class="${classes}"`}>`;
+}
 
 /**
  * Gate 16: a beat and the speech beside it are two voices, in both appearances
@@ -1489,29 +1713,8 @@ test("gate 15: the viewport meta resizes the visual viewport for the on-screen k
  * floors below), so two inks one step apart are not two tones.
  */
 
-/**
- * Floors a channel must clear to count as a signal a reader can see.
- *
- * `BEAT_SIZE_RATIO`: a size step under 8% is under 1.2 px at the 14 px body size,
- * which lands in the glyph raster's own rounding; the beat ships at 10% (`0.9em`).
- */
-const BEAT_INK_STEP = 3;
-const BEAT_TRACKING_EM = 0.02;
-const BEAT_SIZE_RATIO = 0.08;
-const BEAT_WEIGHT_STEP = 100;
-
-/** What one element's typography computed to. */
-type BeatTypography = Readonly<{
-  fontStyle: string;
-  fontSizePx: number;
-  fontWeight: number;
-  /** Letter-spacing in em, so a reading does not depend on the body size. */
-  trackingEm: number;
-  color: string;
-}>;
-
 /** One bubble's pair: the beat, the speech block it stands ahead of, and the plate behind both. */
-type BeatReading = Readonly<{ beat: BeatTypography; speech: BeatTypography; bubble: string }>;
+type BeatReading = Readonly<{ beat: RoleReading; speech: RoleReading; bubble: string }>;
 
 /** Both sides of the conversation, because a beat is the same format on both. */
 type TranscriptReading = Readonly<{ companion: BeatReading | null; player: BeatReading | null }>;
@@ -1522,38 +1725,21 @@ type BlockGeometry = Readonly<{ height: number; lines: number }>;
 /**
  * Reads the rendered beat and the speech block beside it out of both bubbles.
  *
- * The speech is the bubble's last block whose text is not the beat - the reply
- * shape is one stage direction on its own line, then what she says - so the two
- * readings come from two elements rather than one element and its own text node.
+ * The two roles are two elements, not one element and its own text node: the
+ * reply shape is a stage direction in its own paragraph, then what she says, and
+ * `:not(:has(em.message-action))` names the second without depending on the
+ * wording of either. A bubble with no beat in it is not an instance at all.
  */
-async function readBeats(page: Page, beatWord: string): Promise<TranscriptReading> {
-  return page.evaluate((word): TranscriptReading => {
-    const typography = (element: Element): BeatTypography => {
-      const style = getComputedStyle(element);
-      const size = Number.parseFloat(style.fontSize);
-      return {
-        fontStyle: style.fontStyle,
-        fontSizePx: size,
-        fontWeight: Number.parseInt(style.fontWeight, 10),
-        trackingEm: (Number.parseFloat(style.letterSpacing) || 0) / size,
-        color: style.color,
-      };
-    };
-    const bubbleOf = (selector: string): BeatReading | null => {
-      const bubble = document.querySelector<HTMLElement>(selector);
-      if (bubble === null) return null;
-      const beat = bubble.querySelector<HTMLElement>("em.message-action");
-      if (beat === null) return null;
-      const blocks = [...bubble.querySelectorAll<HTMLElement>("p")];
-      const speech = blocks.filter((block) => !(block.textContent ?? "").includes(word)).at(-1);
-      if (speech === undefined) return null;
-      return { beat: typography(beat), speech: typography(speech), bubble: getComputedStyle(bubble).backgroundColor };
-    };
-    return {
-      companion: bubbleOf("li.message.companion .message-bubble"),
-      player: bubbleOf("li.message.player .message-bubble"),
-    };
-  }, beatWord);
+async function readBeats(page: Page): Promise<TranscriptReading> {
+  return { companion: await readBeatSide(page, BEAT_SIDES.companion), player: await readBeatSide(page, BEAT_SIDES.player) };
+}
+
+/** One side's beat, its speech, and the plate under both - or null when either role is absent. */
+async function readBeatSide(page: Page, scope: string): Promise<BeatReading | null> {
+  const reading = await readRolePair(page, { ...BEAT_PAIR, scope });
+  const [row] = reading.rows;
+  if (row === undefined || reading.problems.length > 0) return null;
+  return { beat: row.a, speech: row.b, bubble: await page.locator(scope).evaluate(paintedBackgroundOf) };
 }
 
 /**
@@ -1578,54 +1764,16 @@ async function readReflow(page: Page): Promise<readonly (readonly BlockGeometry[
   });
 }
 
-/** WCAG 2.1 relative luminance of a painted `rgb()`/`rgba()` colour. */
-function paintedLuminance(color: string): number {
-  const [r = 0, g = 0, b = 0] = (color.match(/[\d.]+/gu) ?? [])
-    .slice(0, 3)
-    .map(Number)
-    .map((value) => {
-      const channel = value / 255;
-      return channel <= 0.03928 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4;
-    });
-  return 0.2126 * r + 0.7152 * g + 0.0722 * b;
-}
-
-/** WCAG 2.1 contrast ratio between two painted colours. */
-function paintedContrast(foreground: string, background: string): number {
-  const lit = paintedLuminance(foreground);
-  const dark = paintedLuminance(background);
-  return (Math.max(lit, dark) + 0.05) / (Math.min(lit, dark) + 0.05);
-}
-
-/** The channels a reader can actually see between one beat and its speech, by name. */
-function visibleBeatChannels(reading: BeatReading): readonly string[] {
-  const channels: string[] = [];
-  if (paintedContrast(reading.beat.color, reading.speech.color) >= BEAT_INK_STEP) channels.push("colour");
-  if (Math.abs(reading.beat.trackingEm - reading.speech.trackingEm) >= BEAT_TRACKING_EM) channels.push("tracking");
-  if (Math.abs(reading.beat.fontWeight - reading.speech.fontWeight) >= BEAT_WEIGHT_STEP) channels.push("weight");
-  if (Math.abs(reading.beat.fontSizePx / reading.speech.fontSizePx - 1) >= BEAT_SIZE_RATIO) channels.push("size");
-  if (reading.beat.fontStyle !== reading.speech.fontStyle) channels.push("style");
-  return channels;
-}
-
-/** `beat` and `speech` typography, one string, so every row of the table reads alike. */
-function beatVoice(typography: BeatTypography): string {
-  return (
-    `${typography.fontStyle} ${typography.fontSizePx.toFixed(2)}px ${typography.fontWeight} ` +
-    `tracking ${typography.trackingEm.toFixed(3)}em ${typography.color}`
-  );
-}
-
 /** One line per combination and side, so a failure prints the whole table and not only its own row. */
 function beatTable(
   rows: readonly Readonly<{ appearance: string; locale: string; companion: BeatReading; player: BeatReading }>[],
 ): string {
   return rows
     .map(({ appearance, locale, companion, player }) => {
-      const channels = visibleBeatChannels(companion);
-      const playerChannels = visibleBeatChannels(player);
+      const channels = distinguishingChannels(companion.beat, companion.speech);
+      const playerChannels = distinguishingChannels(player.beat, player.speech);
       return (
-        `${appearance}/${locale}: beat{${beatVoice(companion.beat)}} speech{${beatVoice(companion.speech)}} ` +
+        `${appearance}/${locale}: beat{${roleVoice(companion.beat)}} speech{${roleVoice(companion.speech)}} ` +
         `card{${companion.bubble}} beat-on-card ${paintedContrast(companion.beat.color, companion.bubble).toFixed(2)}:1 ` +
         `plate{${player.bubble}} beat-on-plate ${paintedContrast(player.beat.color, player.bubble).toFixed(2)}:1 ` +
         `ink-separation ${paintedContrast(companion.beat.color, companion.speech.color).toFixed(2)}:1 ` +
@@ -1643,16 +1791,25 @@ function beatTable(
  * the line boxes of the two must be the same height and the same count.
  */
 const BEAT_REPLY = {
-  en: { beat: "nods slowly", withBeat: "*nods slowly*\n\nShe looks up.", plain: "nods slowly\n\nShe looks up." },
-  "zh-CN": { beat: "轻轻点头", withBeat: "*轻轻点头*\n\n她抬起头。", plain: "轻轻点头\n\n她抬起头。" },
+  en: { withBeat: "*nods slowly*\n\nShe looks up.", plain: "nods slowly\n\nShe looks up." },
+  "zh-CN": { withBeat: "*轻轻点头*\n\n她抬起头。", plain: "轻轻点头\n\n她抬起头。" },
+} as const;
+
+/** The two roles inside one bubble, named once for every gate that reads the beat. */
+const BEAT_PAIR = { a: "em.message-action", b: "p:not(:has(em.message-action))" } as const;
+
+/** The bubble each side of the conversation wears when it carries a beat; a beatless bubble is not an instance. */
+const BEAT_SIDES = {
+  companion: "li.message.companion .message-bubble:has(em.message-action)",
+  player: "li.message.player .message-bubble:has(em.message-action)",
 } as const;
 
 /**
- * The two appearances the stylesheet paints. A third token root joins this gate by
- * being written into `style.css`: the population is read off the sheet below, so a
- * new appearance fails loudly instead of going unmeasured.
+ * The two appearances the stylesheet paints. A third token root joins a gate by being
+ * written into `style.css`: the population is read off the sheet below, so a new
+ * appearance fails loudly instead of going unmeasured.
  */
-const BEAT_APPEARANCES = ["dark", "light"] as const;
+const PAINTED_APPEARANCES = ["dark", "light"] as const;
 
 for (const locale of ["en", "zh-CN"] as const) {
   test(`gate 16: a beat is told from its speech by more than one visible channel (${locale})`, async ({ page }) => {
@@ -1671,15 +1828,16 @@ for (const locale of ["en", "zh-CN"] as const) {
     // and the same words twice without a beat for the reflow control.
     await expect(page.locator("li.message.companion em.message-action")).toHaveCount(1);
     if (locale === "zh-CN") await expect(page.locator("html")).toHaveAttribute("lang", "zh-CN");
+    await freezeTransitions(page);
 
     const rows: { appearance: string; locale: string; companion: BeatReading; player: BeatReading }[] = [];
-    for (const appearance of BEAT_APPEARANCES) {
+    for (const appearance of PAINTED_APPEARANCES) {
       // The appearance is the attribute the stylesheet's second token root selects on:
       // `appearance.ts` writes exactly this, and the token roots are what decide every
       // colour below. Writing it here reads one mounted conversation in both
       // appearances; that the attribute lands is `appearance-theme.spec.ts`'s gate.
       await page.evaluate((value) => document.documentElement.setAttribute("data-theme", value), appearance);
-      const reading = await readBeats(page, reply.beat);
+      const reading = await readBeats(page);
       expect(reading.companion, `${appearance}/${locale}: the companion's beat and its speech both rendered`).not.toBeNull();
       expect(reading.player, `${appearance}/${locale}: the player's beat and its speech both rendered`).not.toBeNull();
       rows.push({ appearance, locale, companion: reading.companion!, player: reading.player! });
@@ -1694,7 +1852,7 @@ for (const locale of ["en", "zh-CN"] as const) {
     );
     const painted = [...new Set([...stylesheet.matchAll(/:root\[data-theme="([^"]+)"\]/gu)].map((match) => match[1]))];
     expect(painted.sort(), "this gate measures every appearance the stylesheet paints").toEqual(
-      [...BEAT_APPEARANCES].sort(),
+      [...PAINTED_APPEARANCES].sort(),
     );
 
     const table = beatTable(rows);
@@ -1725,7 +1883,7 @@ for (const locale of ["en", "zh-CN"] as const) {
         ["player", row.player],
       ] as const) {
         expect(
-          visibleBeatChannels(reading).length,
+          distinguishingChannels(reading.beat, reading.speech).length,
           `${row.appearance}/${row.locale}: the ${side} beat and its speech collapse into one visible channel\n${table}`,
         ).toBeGreaterThanOrEqual(2);
       }
@@ -1755,6 +1913,291 @@ for (const locale of ["en", "zh-CN"] as const) {
       expect(block.lines, `${locale}: block ${index} keeps its line count with a beat in it - ${geometry}`).toBe(
         plain![index]!.lines,
       );
+    }
+  });
+}
+
+/* ========================================================================== *
+ * Gate 17: two roles that must be told apart are told apart.
+ *
+ * WHY THIS GATE EXISTS, in the words of the report it answers: every other
+ * contrast gate in this repository asks "can you read this?" - an ink measured
+ * against the plate it is drawn on, held to WCAG AA. None asked "can you tell
+ * these two apart?". A beat and the speech after it sat 1.59:1 apart while each
+ * cleared AA on its own, and in `zh-CN` the product deliberately retires the
+ * slant, leaving tracking as the only channel between them. Gate 16 found that
+ * pair, but it found ONE pair, in four combinations, and only because a player
+ * reported it. A collapse survived every gate this project had because no gate
+ * ever measured a pair of ROLES, and none evaluated the combination
+ * `appearance x language` - each existing gate sampled one cell.
+ *
+ * This is the generalisation. The role pairs are DECLARED once, below, each with
+ * the reason it matters and the number of independent visible channels that must
+ * separate them, and the population of cells is the full cross-product of
+ * appearance, language and viewport. Nothing here is a list of cells somebody
+ * remembered to write down.
+ *
+ * Three things about the shape of it:
+ *
+ *   * A pair this surface does not have yet is declared ABSENT with the reason
+ *     and a witness, and the witness is scanned. An absence nobody wrote down is
+ *     what this gate exists to prevent, and an exemption nobody re-checks is how
+ *     a pair outlives the element it exempted: when the marker appears, the scan
+ *     reds and the pair has to be measured.
+ *   * Zero population is a failure that names the pair and the selector, never a
+ *     pass. A declared selector that resolves to nothing is the shape an
+ *     exemption takes when the element it exempted is deleted.
+ *   * The failure message is the whole table: every cell, both elements' computed
+ *     values, the channels they do and do not share, and which cells fell short.
+ *     "expected true, got false" would name nothing a reader could act on.
+ * ========================================================================== */
+
+/** A pair whose two roles both exist: read both, count the channels between them. */
+type MeasuredRolePair = Readonly<{
+  kind: "measured";
+  /** The pair's declared name. Every failure names it, because it is what a reader acts on. */
+  name: string;
+  /** Why the pair matters, in one sentence. */
+  reason: string;
+  /** Every instance of this container is one row of the table. */
+  scope: string;
+  a: string;
+  b: string;
+  /** How many independent visible channels the two roles must differ by, at the floors above. */
+  channels: number;
+}>;
+
+/** A pair this surface does not have, declared so the absence is measured rather than omitted. */
+type AbsentRolePair = Readonly<{
+  kind: "absent";
+  name: string;
+  reason: string;
+  /** What the pair would look like if it appeared; resolving to anything is a failure, not a pass. */
+  witness: readonly string[];
+}>;
+
+/**
+ * The role pairs this product has, and how each is read.
+ *
+ * The four are the ones the product actually carries, not an exhaustive census of
+ * every pair two elements could form. A pair is here when a player has to act on
+ * the difference: which words are hers, which line is the product's own, which
+ * control will work, and which conversation they have already read.
+ */
+const ROLE_PAIRS: readonly (MeasuredRolePair | AbsentRolePair)[] = [
+  {
+    kind: "measured",
+    name: "beat vs speech",
+    reason:
+      "a stage direction and the line of dialogue after it must read as two voices in every language, and in zh-CN the product retires the slant on purpose so this pair has one channel fewer than Latin has",
+    scope: "li.message .message-bubble:has(em.message-action)",
+    a: "em.message-action",
+    b: "p:not(:has(em.message-action))",
+    channels: 2,
+  },
+  {
+    kind: "measured",
+    name: "system notice vs player text",
+    reason:
+      "a sentence the product says about the turn must never read as something the player said in it",
+    scope: '[data-testid="chat-surface"]',
+    a: ".reference-turn-notice",
+    b: "li.message.player .message-bubble p:not(:has(em.message-action))",
+    channels: 2,
+  },
+  {
+    kind: "measured",
+    name: "disabled vs available control",
+    reason:
+      "a control the player cannot press must not look like one they can, and the pager's arrow with nowhere to go sits beside the one that goes somewhere",
+    scope: ".swipe-controls",
+    a: ".swipe-btn:disabled",
+    b: ".swipe-btn:not(:disabled)",
+    channels: 2,
+  },
+  {
+    kind: "absent",
+    name: "unread vs read indicator",
+    reason:
+      "a conversation the player has not read must not look like one they have, so the pair belongs on the Chats list - and it is not there at all: no row, badge or dot in this build carries an unread state",
+    witness: [
+      "[data-unread]",
+      '[data-testid*="unread"]',
+      '[aria-label*="unread" i]',
+      '[aria-label*="未读"]',
+      ".chat-item-unread",
+    ],
+  },
+];
+
+/**
+ * The languages every pair is measured in, and the two window sizes.
+ *
+ * The sizes are the narrowest and the widest member of `VIEWPORTS` above - the two
+ * ends where a channel is likeliest to disappear, one to the fold and one to the
+ * reading measure. The drift check below keeps them members instead of letting this
+ * list quietly describe a window the rest of the file stopped testing.
+ */
+const ROLE_LOCALES = ["en", "zh-CN"] as const;
+const ROLE_VIEWPORTS: readonly Readonly<{ width: number; height: number }>[] = [
+  { width: 400, height: 800 },
+  { width: 1440, height: 900 },
+];
+
+/**
+ * The reply this gate reads, per language: a beat and the speech after it on both
+ * sides of the conversation, in the shape a companion and a player actually write.
+ */
+const ROLE_REPLY = {
+  en: {
+    companion: "*nods slowly*\n\nShe looks up from the ledger.",
+    player: "*taps the map*\n\nLet us take the north road.",
+  },
+  "zh-CN": {
+    companion: "*轻轻点头*\n\n她从账本上抬起头。",
+    player: "*敲了敲地图*\n\n我们走北边那条路。",
+  },
+} as const;
+
+/** One cell's reading of one declared pair, as the table prints it. */
+type RoleTableEntry = Readonly<{ cell: string; pair: string; reading: RolePairReading }>;
+
+/** Every cell of one pair: both elements' own values, the channels between them, and why any are missing. */
+function roleTable(entries: readonly RoleTableEntry[]): string {
+  return entries
+    .flatMap(({ cell, reading }) => [
+      ...reading.problems.map((problem) => `${cell}: ${problem}`),
+      ...reading.rows.map((row) => {
+        const channels = distinguishingChannels(row.a, row.b);
+        return (
+          `${cell} ${row.instance}: a{${roleVoice(row.a)}} b{${roleVoice(row.b)}} ` +
+          `channels [${channels.join(", ") || "none"}] = ${channels.length}`
+        );
+      }),
+    ])
+    .join("\n");
+}
+
+/** What an absent pair's witness scan found: the declared shapes, the attribute sweep, and the population. */
+type UnreadWitnessScan = Readonly<{
+  examined: number;
+  selectors: readonly Readonly<{ selector: string; matches: number }>[];
+  attributes: readonly string[];
+}>;
+
+for (const locale of ROLE_LOCALES) {
+  test(`gate 17: every declared role pair is told apart in every appearance and size (${locale})`, async ({ page }) => {
+    const reply = ROLE_REPLY[locale];
+    if (locale === "zh-CN") await page.addInitScript(() => localStorage.setItem("gamebuddy.tavern.ui-locale", "zh-CN"));
+    await mountShell(page, {
+      root: composedRoot({
+        transcript: [
+          { role: "companion", text: reply.companion },
+          { role: "player", text: reply.player },
+        ],
+        // The greeting set is open on the first message, so its pager is a real control
+        // pair in one strip: the arrow with nowhere to go beside the one that goes
+        // somewhere. That is the product's own disabled state, not a styled div.
+        opening: true,
+        // A settled turn is what earns the surface's own notice line - the one sentence
+        // on this page that the product says rather than the player.
+        turn: { handle: handleFor(1), state: "cancelled", projectionRevision: 7, canCancel: false },
+      }),
+    });
+    if (locale === "zh-CN") await expect(page.locator("html")).toHaveAttribute("lang", "zh-CN");
+    await freezeTransitions(page);
+
+    // The three live witnesses have to be on the page before anything is measured. A
+    // fixture that lost one is the population zero below, named, not a silent exemption.
+    await expect(page.locator("li.message.companion em.message-action")).toHaveCount(1);
+    await expect(page.locator("li.message.player em.message-action")).toHaveCount(1);
+    await expect(page.locator(".reference-turn-notice")).toHaveCount(1);
+    await expect(page.locator(".swipe-controls")).toHaveCount(1);
+
+    const measured = ROLE_PAIRS.filter((pair): pair is MeasuredRolePair => pair.kind === "measured");
+    const entries: RoleTableEntry[] = [];
+    for (const viewport of ROLE_VIEWPORTS) {
+      await page.setViewportSize({ width: viewport.width, height: viewport.height });
+      for (const appearance of PAINTED_APPEARANCES) {
+        // The appearance is the attribute the stylesheet's second token root selects on;
+        // the token roots are what decide every colour and size below.
+        await page.evaluate((value) => document.documentElement.setAttribute("data-theme", value), appearance);
+        const cell = `${appearance}/${locale}/${viewport.width}x${viewport.height}`;
+        for (const pair of measured) entries.push({ cell, pair: pair.name, reading: await readRolePair(page, pair) });
+      }
+    }
+
+    // The window sizes are the file's own declared population, not a second one.
+    for (const viewport of ROLE_VIEWPORTS) {
+      expect(
+        VIEWPORTS.some((each) => each.width === viewport.width && each.height === viewport.height),
+        `${viewport.width}x${viewport.height} is one of the sizes this file tests`,
+      ).toBe(true);
+    }
+
+    // Every pair is read and printed before anything is asserted: one failing pair must
+    // not hide another's table, which is the whole point of printing them.
+    const failures: string[] = [];
+    const renderings: string[] = [];
+    for (const pair of measured) {
+      const cells = entries.filter((entry) => entry.pair === pair.name);
+      const rendering = roleTable(cells);
+      record(`gate-17 ${pair.name}`, `\n${rendering}`);
+      renderings.push(`${pair.name}: ${pair.channels} channel(s) required - ${pair.reason}\n${rendering}`);
+      for (const entry of cells) {
+        for (const problem of entry.reading.problems) failures.push(`${pair.name} ${entry.cell}: ${problem}`);
+        if (entry.reading.rows.length === 0) {
+          failures.push(
+            `${pair.name} ${entry.cell}: zero population - neither role was measured, so nothing about this pair is known here`,
+          );
+        }
+        for (const row of entry.reading.rows) {
+          const channels = distinguishingChannels(row.a, row.b);
+          if (channels.length < pair.channels) {
+            failures.push(
+              `${pair.name} ${entry.cell} ${row.instance}: ${channels.length} visible channel(s) ` +
+                `[${channels.join(", ") || "none"}], ${pair.channels} required`,
+            );
+          }
+        }
+      }
+    }
+    // Soft assertions, because a gate that must print every pair's table cannot let the
+    // first pair's failure swallow the other two: all three verdicts come out of one run.
+    expect
+      .soft(failures, `the declared role pairs are not all told apart\n\n${renderings.join("\n\n")}`)
+      .toEqual([]);
+
+    for (const pair of ROLE_PAIRS.filter((each): each is AbsentRolePair => each.kind === "absent")) {
+      const scan = await page.evaluate((witness): UnreadWitnessScan => {
+        const attributes: string[] = [];
+        const all = [...document.querySelectorAll("*")];
+        for (const element of all) {
+          for (const attribute of element.getAttributeNames()) {
+            if (/unread/iu.test(attribute)) attributes.push(`${element.tagName.toLowerCase()}[${attribute}]`);
+          }
+        }
+        return {
+          examined: all.length,
+          selectors: witness.map((selector) => ({ selector, matches: document.querySelectorAll(selector).length })),
+          attributes,
+        };
+      }, pair.witness);
+      const rendering =
+        `examined ${scan.examined} element(s); ` +
+        scan.selectors.map(({ selector, matches }) => `${selector} -> ${matches}`).join(", ") +
+        `; attributes naming unread -> ${scan.attributes.join(", ") || "none"}`;
+      record(`gate-17 ${pair.name}`, `absent (${pair.reason})\n${rendering}`);
+      // A scan that looked at nothing agrees with itself.
+      expect
+        .soft(scan.examined, `${pair.name}: the page was empty, so this absence was not measured\n${rendering}`)
+        .toBeGreaterThan(0);
+      expect
+        .soft(
+          [...scan.selectors.filter(({ matches }) => matches > 0), ...scan.attributes],
+          `${pair.name} is declared absent (${pair.reason}), and the witness now resolves - measure it instead\n${rendering}`,
+        )
+        .toEqual([]);
     }
   });
 }
