@@ -14,14 +14,21 @@ const PROTOCOL = "harvestTargets?: readonly Readonly<{ targetId: string }>[];";
 const TOOL_DESC_OK = `Copied from the ${FIELD} entries of the most recent observe.`;
 const TOOL_DESC_WRONG = "Copied from the recipeTargets entries of the most recent observe.";
 
-function surface() {
+function surface(overrides = {}) {
   return {
     actions: [
       {
         actionId: ACTION,
         lifecycle: "published",
         kind: "execution",
-        argumentSchema: { x: "integer", y: "integer", expectedTargetId: "string" },
+        // The artifact's own shape: each declared argument is an object carrying its `type`, which is what the plan
+        // builder filters on when it decides whether a builder method can exist for the action.
+        argumentSchema: {
+          x: { type: "integer" },
+          y: { type: "integer" },
+          expectedTargetId: { type: "string" },
+        },
+        ...overrides,
       },
     ],
   };
@@ -42,16 +49,46 @@ function tool(description) {
 function schemaWith(properties) {
   return { $defs: { snapshot: { properties } } };
 }
+/**
+ * An action whose subject is raw coordinates and no snapshot family, so the visibility rule can be tested alone: the
+ * target-description leg has nothing to say about it, and the lifecycle is the only thing that changes between cases.
+ */
+function coordinateSurface(lifecycle) {
+  return {
+    actions: [
+      {
+        actionId: "move_to_tile",
+        lifecycle,
+        kind: "execution",
+        argumentSchema: { x: { type: "integer" }, y: { type: "integer" } },
+      },
+    ],
+  };
+}
 
 test("the committed action surface has a complete discovery chain", () => {
   const report = auditDiscoveryChannels();
   assert.deepEqual(
     report.gaps.filter((gap) => gap.gap !== "tool_does_not_name_target_field"),
     [],
-    "every target-bearing action must have an Agent tool and a real Mod/Host/schema field",
+    "every target-bearing action must have an Agent surface and a real Mod/Host/schema field",
   );
   assert.ok(report.actionCount > 0);
   assert.ok(report.targetBearingCount > 0);
+  // The population, said out loud: a green run that examined no surface cannot be told from a reader that stopped.
+  assert.equal(report.agentSurface.measured, true);
+  assert.ok(report.agentSurface.flatMounts > 0);
+  assert.ok(report.agentSurface.planVocabulary > 0);
+  // Every action the product claims is usable is reachable through at least one surface; anything offered by neither is
+  // named with the lifecycle that decides whether that is the ladder's design or a hole, and the audit has no gap for it
+  // only when the lifecycle is one the builder deliberately skips.
+  for (const entry of report.agentSurface.unreachable) {
+    const [actionId, lifecycle] = entry.split(":");
+    assert.ok(
+      !report.agentSurface.eligibleLifecycles.includes(lifecycle),
+      `${actionId} is ${lifecycle} and no surface offers it`,
+    );
+  }
 });
 
 /**
@@ -207,15 +244,16 @@ test("the audit reports one hole per broken layer rather than passing silently",
     ["missing_mod_wire_field"],
   );
 
-  // 4. A missing Agent tool must be caught.
-  const noTool = auditDiscoveryChannels({
-    surface: surface(),
+  // 4. An action NO SURFACE offers must be caught. `object` is not an argument kind a Body Program node may carry, so
+  //    the plan builder generates no method for it; with no flat mount either, the Agent cannot reach the action at all.
+  const noSurface = auditDiscoveryChannels({
+    surface: surface({ argumentSchema: { x: { type: "object" } } }),
     models: MODEL,
     protocol: PROTOCOL,
     schema: schemaWith({ [FIELD]: {} }),
     gameTools: "// no makeGameActionTool mount at all",
   });
-  assert.ok(noTool.gaps.some((gap) => gap.gap === "no_agent_tool"));
+  assert.ok(noSurface.gaps.some((gap) => gap.gap === "no_agent_tool"));
 
   // 5. A fully wired action passes, so the audit is not vacuously failing.
   const wired = auditDiscoveryChannels({
@@ -226,6 +264,55 @@ test("the audit reports one hole per broken layer rather than passing silently",
     gameTools: tool(TOOL_DESC_OK),
   });
   assert.equal(wired.ok, true, JSON.stringify(wired.gaps));
+});
+
+/**
+ * HOP 1's surface is TWO surfaces: the flat mounts a composition may drop, and the plan vocabulary the Game composition
+ * actually hands the Agent. `runtime-core.internal.ts` drops every adapter action tool when `planActionSurface` is
+ * declared - the live Game materializer declares it - so a gate that demanded a flat mount would report an action the
+ * Agent can reach through `builder.<actionId>`, and would demand one of every experimental action, which by the ladder
+ * has no surface at all.
+ */
+test("an action the Agent reaches through the plan vocabulary is not reported as missing a tool", () => {
+  const viaBuilder = auditDiscoveryChannels({
+    surface: coordinateSurface("published"),
+    models: MODEL,
+    protocol: PROTOCOL,
+    schema: schemaWith({}),
+    gameTools: "// the Game composition mounts no per-action tool at all",
+  });
+  assert.deepEqual(viaBuilder.gaps, [], JSON.stringify(viaBuilder.gaps));
+  assert.equal(viaBuilder.rows[0].planVisible, true);
+  assert.equal(viaBuilder.rows[0].toolVisible, false);
+});
+
+test("an experimental action no surface offers is the ladder's own design, not a hole", () => {
+  const experimental = auditDiscoveryChannels({
+    surface: coordinateSurface("experimental"),
+    models: MODEL,
+    protocol: PROTOCOL,
+    schema: schemaWith({}),
+    gameTools: "// no makeGameActionTool mount at all",
+  });
+  assert.deepEqual(experimental.gaps, [], JSON.stringify(experimental.gaps));
+  assert.deepEqual(experimental.agentSurface.unreachable, ["move_to_tile:experimental"]);
+});
+
+test("a plan vocabulary that cannot be read is blocked by name, not read as an empty surface", () => {
+  const unreadable = auditDiscoveryChannels({
+    surface: surface({ lifecycle: "experimental" }),
+    models: MODEL,
+    protocol: PROTOCOL,
+    schema: schemaWith({ [FIELD]: {} }),
+    gameTools: "// no makeGameActionTool mount at all",
+    planScript: "// the builder's declarations were renamed",
+  });
+  assert.ok(
+    unreadable.gaps.some((gap) => gap.gap === "plan_vocabulary_declaration_unreadable"),
+    JSON.stringify(unreadable.gaps.map((gap) => gap.gap)),
+  );
+  assert.equal(unreadable.agentSurface.measured, false);
+  assert.deepEqual(unreadable.agentSurface.eligibleLifecycles, []);
 });
 
 /**

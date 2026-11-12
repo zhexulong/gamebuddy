@@ -46,6 +46,7 @@ const TOOLS = "host/src/game-tools.ts";
 const MOD_SOURCE_ROOT = "integrations/stardew";
 const CONTENT_QUERY_FILE = "ContentDataQuery.cs";
 const TILE_AREA_QUERY_FILE = "TileAreaQuery.cs";
+const PLAN_SCRIPT = "host/src/body-program-script.ts";
 
 /**
  * The snapshot field each action's opaque target is published under.
@@ -215,6 +216,36 @@ const NON_SNAPSHOT_TARGET_ACTIONS = Object.freeze([
   "face_direction",
   "advance_day", // no arguments at all: the actor's own bed is the target
 ]);
+
+/**
+ * The declaration that decides the plan vocabulary: which lifecycles a builder method is generated for, and which
+ * argument kinds a Body Program node may carry.
+ *
+ * <p>
+ * Read from the builder's own source rather than restated, because the two lists ARE the surface: `planActionsFromRegistrations`
+ * filters on them, so a gate that spelled them again could agree with itself while the builder disagreed with both.
+ * </p>
+ */
+export function planVocabularyDeclaration(source) {
+  const read = (name) => {
+    const match = String(source).match(new RegExp(`${name}[^=]*=\\s*Object\\.freeze\\(\\[([^\\]]*)\\]`, "u"));
+    if (match === null) return null;
+    const values = [...match[1].matchAll(/"([a-z_]+)"/gu)].map((entry) => entry[1]);
+    return values.length === 0 ? null : values;
+  };
+  const lifecycles = read("PLAN_ACTION_LIFECYCLES");
+  const argumentTypes = read("PLAN_ARGUMENT_TYPES");
+  if (lifecycles === null || argumentTypes === null) return null;
+  return Object.freeze({ lifecycles: Object.freeze(lifecycles), argumentTypes: Object.freeze(argumentTypes) });
+}
+
+/** Whether the plan builder generates a method for this action, by the same three tests the builder applies. */
+export function inPlanVocabulary(action, declaration) {
+  if (declaration === null || action.kind !== "execution") return false;
+  if (!declaration.lifecycles.includes(action.lifecycle)) return false;
+  const types = Object.values(action.argumentSchema ?? {}).map((argument) => argument?.type);
+  return types.every((type) => declaration.argumentTypes.includes(type));
+}
 
 function read(relative) {
   return readFileSync(path.join(ROOT, relative), "utf8");
@@ -462,6 +493,7 @@ export function auditDiscoveryChannels({
   schema = JSON.parse(read(SCHEMA)),
   schemaText = read(SCHEMA),
   gameTools = read(TOOLS),
+  planScript = read(PLAN_SCRIPT),
   // Null means "not measured". A caller injecting a synthetic action surface must not be handed gaps about the real
   // Mod's content tables; the CLI and the committed-tree test pass the real sources, which is where these hops live.
   modSources = null,
@@ -547,6 +579,21 @@ export function auditDiscoveryChannels({
   }
 
   const rows = [];
+  // THE AGENT'S REAL SURFACE IS TWO SURFACES, and only one of them is a tool.
+  //
+  // `runtime-core.internal.ts` drops every adapter action tool when a composition declares `planActionSurface`, which the
+  // live Game materializer does, so the companion reaches a Stardew action through `stardew_plan_work`'s builder methods
+  // (`planWorkDescription`, generated from the same registrations) rather than through a tool named after it. A gate that
+  // demanded a flat mount and nothing else would report an action the Agent can absolutely reach - and would demand one
+  // of every EXPERIMENTAL action, whose whole point is that no surface offers it yet.
+  //
+  // So visibility is the union, and the eligibility is the plan builder's own lifecycle declaration: an action the
+  // product claims is usable (`published` / `live_verified`) must be reachable through at least one of the two surfaces,
+  // and an experimental action is reported as not-yet-reachable rather than as a hole.
+  const planDeclaration = planVocabularyDeclaration(planScript);
+  const planVisible = new Set(
+    surface.actions.filter((action) => inPlanVocabulary(action, planDeclaration)).map((action) => action.actionId),
+  );
   for (const action of surface.actions) {
     const args = Object.keys(action.argumentSchema ?? {});
     const needsTarget = args.includes("expectedTargetId");
@@ -561,6 +608,7 @@ export function auditDiscoveryChannels({
       needsTarget,
       field,
       toolVisible: toolVisible.has(action.actionId),
+      planVisible: planVisible.has(action.actionId),
       inMod: field ? modFields.has(field.toLowerCase()) : null,
       inProtocol: field ? protocol.includes(lower(field)) || protocol.includes(field) : null,
       inSchema: field ? schemaProps.has(field.toLowerCase()) : null,
@@ -570,9 +618,18 @@ export function auditDiscoveryChannels({
   }
 
   const gaps = [];
+  // A declaration nobody could read is a blocked reading, never a smaller surface: without it the eligibility set is
+  // empty and every action would look experimental, which is a green result that measures nothing.
+  if (planDeclaration === null) gaps.push({ subject: PLAN_SCRIPT, gap: "plan_vocabulary_declaration_unreadable" });
   for (const row of rows) {
     if (row.kind === "read_only") continue;
-    if (!row.toolVisible) gaps.push({ ...row, gap: "no_agent_tool" });
+    if (
+      planDeclaration !== null &&
+      planDeclaration.lifecycles.includes(row.lifecycle) &&
+      !row.toolVisible &&
+      !row.planVisible
+    )
+      gaps.push({ ...row, gap: "no_agent_tool" });
     if (row.field === undefined) gaps.push({ ...row, gap: "undeclared_target_field" });
     else if (row.field) {
       if (!row.inMod) gaps.push({ ...row, gap: "missing_mod_wire_field" });
@@ -699,6 +756,16 @@ export function auditDiscoveryChannels({
     actionCount: rows.length,
     targetBearingCount: rows.filter((r) => r.needsTarget).length,
     rows,
+    agentSurface: Object.freeze({
+      measured: planDeclaration !== null,
+      flatMounts: rows.filter((row) => row.toolVisible).length,
+      planVocabulary: rows.filter((row) => row.planVisible).length,
+      // An action no surface offers, and the lifecycle that says whether that is a hole or the ladder's own design.
+      unreachable: rows
+        .filter((row) => row.kind !== "read_only" && !row.toolVisible && !row.planVisible)
+        .map((row) => `${row.actionId}:${row.lifecycle}`),
+      eligibleLifecycles: planDeclaration?.lifecycles ?? [],
+    }),
     contentTables: Object.freeze({
       measured: modSources !== null,
       examined: contentRows.length,
@@ -759,6 +826,12 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
   }
   process.stdout.write(
     `discovery channels: ${report.actionCount} actions, ${report.targetBearingCount} target-bearing\n`,
+  );
+  const agentSurface = report.agentSurface;
+  process.stdout.write(
+    `  agent surface       flat mounts ${agentSurface.flatMounts}, plan vocabulary ${agentSurface.planVocabulary}` +
+      ` (eligible lifecycles: ${agentSurface.eligibleLifecycles.join(", ") || "NOT MEASURED"})` +
+      `${agentSurface.unreachable.length === 0 ? "" : `, offered by neither: ${agentSurface.unreachable.join(", ")}`}\n`,
   );
   const tables = report.contentTables;
   process.stdout.write(
