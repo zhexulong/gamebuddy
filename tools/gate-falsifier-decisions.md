@@ -675,3 +675,115 @@ recorded for `check:stardew-native-mechanism-review-register`, now with two more
 `tools/README.md:162` documents `check:stardew-native-source-closure -- --certificate <certificate.json>` as the way to
 run that gate. The gate requires six flags and `args.length === 12`, so the documented command exits 2 with the usage
 line — which is how this gate was reachable only as an argument check until this batch gave it a real fixture set.
+
+## The three `reported not measured` gates: two keep-blocked, one measured
+
+`node tools/check-harness-conformance.mjs` named three gates under `reported not measured`. They were not one finding,
+and filing them as one is what kept the list unpaid: two read a document that has never existed, and the third reads a
+directory that is empty on purpose while its rule measures eight things.
+
+| gate | what it reads | what was measured | disposition |
+| --- | --- | --- | --- |
+| `tools/check-stardew-actor-admissibility.mjs` | `integrations/stardew/action-development/contracts/actor-admissibility/actor-admissibility.v1.json` | the file has never existed: `git log --all -- <path>` prints nothing, `git ls-files integrations/stardew/action-development/contracts/` lists twelve files and none under `actor-admissibility/`, and nothing in the tree writes that path | **keep-blocked** |
+| `tools/check-stardew-hold-sufficiency.mjs` | the same path | the same, and it is the tool that measures the row which blocks both gates | **keep-blocked** |
+| `tools/check-vendor-patches-apply.mjs` | `patches/vendor-magic-context/*.patch` | the directory holds no patch because the seams merged into the pin (`magic-context-airp`), and the sealed rule **did** measure: 4 seam files, 8 of 8 declared extension points present at pin `5c100922`, exit 0 | **measured** — the report said `examined: 0` |
+
+The reading before and after, from the same command in the same checkout:
+
+```
+before  gates examined 348 · with a red proof 308 · external 4 · declared without 34 · undeclared 0 · zero-population-pass 0
+        reported not measured 4  (check-preset-round-trip.mjs, check-stardew-actor-admissibility.mjs,
+                                  check-stardew-hold-sufficiency.mjs, check-vendor-patches-apply.mjs)
+after   gates examined 348 · with a red proof 308 · external 4 · declared without 34 · undeclared 0 · zero-population-pass 0
+        reported not measured 3  (check-preset-round-trip.mjs, check-stardew-actor-admissibility.mjs,
+                                  check-stardew-hold-sufficiency.mjs)
+```
+
+`308 + 4 + 34 = 346`, plus the two unreadable claims the header names, is the 348 examined — unchanged, because no gate
+entered or left the population. What moved is the third bucket: a gate whose report could not show what it measured now
+shows it, so the list is two blocked gates and one gate whose input is a build artifact
+(`check-preset-round-trip.mjs`: `host/dist-test/tavern/preset-store.js`, built by `pnpm --dir host build:test`).
+
+### Why the two stardew gates stay blocked, and who decides
+
+Both read ONE document, and only half of it is missing from it. Every algebra field has an authority that already owns
+it, and the two gate headers now name them with their lines so a producer has somewhere to read from instead of a place
+to copy into:
+
+| contract field | authority |
+| --- | --- |
+| `states` | `ActorDispositionKind` and `WorldModel.KindForWire` — `integrations/stardew/WorldModel.cs:23`, `:118` |
+| `causes` | `WorldModel.HoldReasonCode` — `:308` |
+| `environmentReads` | `WorldModel.ReadFacts` — `:251` (the facts the disposition is a pure function of) |
+| `actions[].admissibleIn` | `FarmhandActionCatalog.ModalResolvingActionIds` / `EventActingActionIds` / `ModalFamilyActionsWithoutAnEventPath` — `integrations/stardew/src/Core/Policy/FarmhandActionDefinitions.cs:895`, `:921`, `:936` — joined to the profile rule in `integrations/stardew/ExecutionAdmission.cs:353` |
+| `remedies` | `host/src/stardew-action-remedy.ts:49` |
+| `adjudication.decisionSites` | measured at 5 sites in 4 files; the verdicts are the design decision, not a scan result |
+| `orphanHoldResidual` | **nothing** — see below |
+
+Deriving the algebra and then asserting INV-1/INV-3/INV-4 over it would assert nothing about the Mod: totality,
+liveness and acyclicity are properties of a STATEMENT someone makes about the state space, and a producer that builds
+the statement from the code it describes makes all three true by construction. The gate exists for the gap between the
+statement and the code, so the statement has to be somebody's.
+
+The row that actually blocks it is the residual, and it is measured rather than assumed. With the companion set taken
+from `ReadFacts` (nine members) the search over `ref/external/StardewValleyDecompiled` reads:
+
+| reading | count |
+| --- | --- |
+| files scanned | 948 |
+| writes of `Farmer.canMove = false` | 58 |
+| accompanied by a declared read | 41 |
+| **orphans** | **17** |
+| unparsed (the brace walk's own bound) | 4 |
+
+Exactly one of the 17 releases the flag inside its own method (`ParrotUpgradePerch.cs:797`); the other sixteen are
+holds no declared read can name — `Crop.harvest` (two sites), `Farmer.animateOnce`, `Farmer.grabObject`,
+`Farmer.PerformKiss`, `Event.OnPlayerControlSequenceEnd`, `ScreenFade.FadeScreenToBlack`, `BusStop`,
+`Desert.playerReachedBusDoor`, `ManorHouse.performAction`, `MineShaft.enterMineShaft`,
+`VolcanoDungeon.UseVolcanoShortcut`, `FishingGame.gameDoneAfterFade`, `Object.rainTotem` and the two birthing events.
+Each needs one verdict — `missing_read` (our state space is incomplete), `deeper_accompaniment` (established in a callee
+the analysis cannot see) or `not_a_hold` (the write does not hold the actor) — and writing one from this ledger would be
+a claim about Stardew's source that only a read of that source can support. **Who decides:** the Mod owner, through the
+`game-action-boundary` → `game-action-implement` pipeline, because a `missing_read` verdict is a new fact in
+`ActorWorldFacts` plus a hold code in `WorldModel.HoldReasonCode`, which is the Mod's gameplay state. **What the gate
+checks then:** unchanged — every write of `Farmer.canMove = false` is accompanied by one of the declared reads or
+carries an adjudicated row, compared bidirectionally, plus the algebra invariants over the authored statement.
+
+The four `unparsed` rows (`GameLocation.cs:9287`, `:9297`, `:9321`, `:9345`) are this tool's own bound rather than a
+decision, and they block the CLI's green as well; they are named in the header instead of sitting inside a count.
+
+### What changed for `check-vendor-patches-apply`, and the proof
+
+The gate read the PATCH directory for its population and reported that count as `examined`. In sealed mode that
+directory has no member, so a run that verified eight declared extension points at a named pin printed `examined: 0` —
+true of the directory, false of the run — and `tools/lib/assert-non-vacuous.mjs` reads `examined`, so it filed the gate
+as `gate_zero_population_allowed:vendor-patches-apply:examined` on every census. `examined` now counts the mode's own
+population: patches in patch mode, and the declared extension points read out of the pin in sealed mode, with
+`extensionPoints` as the number declared. `allowEmpty` keeps its job — declaring why an empty patch directory is healthy
+— and stops being what the shared judge has to lean on. The summary line names the population it counted, so no reader
+has to infer the unit from the mode.
+
+The suite was also red at HEAD for a reason of its own, which this unit had to fix before any green could be claimed:
+two sealed fixtures pinned one of the four `MERGED_SEAMS` files, so the other three read
+`vendor_seam_file_missing_from_pin` — a fixture defect that looked exactly like the loss the gate exists to catch — and
+one expectation had `measured: 2` baked in from that smaller fixture. `seamFiles()` pins every declared seam from this
+checkout's submodule; 20 of 20 cases pass, where 18 of 20 passed before.
+
+| reading | value |
+| --- | --- |
+| the gate on the real tree | `vendor_patches: examined 8 of 8 extension point(s) at pin=5c100922…, 4 merged seam file(s), 0 violation(s) [passed]`, exit 0 |
+| the shared judge over that report | `passed (examined 8)` |
+| red proof (sealed counter reverted to the patch count) | judge answers `gate_zero_population_allowed:vendor-patches-apply:examined all seams merged upstream into magic-context-airp` for a run whose status is `passed`; the case "a pin carrying the seam is passed" fails `0 !== 8` on the population assertion |
+| restored | 20/20 green, gate exit 0, judge `passed (examined 8)` |
+
+The marker lives in `tools/check-vendor-patches-apply.test.mjs`, beside the patch-mode injection it already carried.
+The gate is in the `with a red proof` bucket and stays there; what moved is only that its green run is now a
+measurement of `MERGED_SEAMS` rather than a zero with a reason attached.
+
+### Owed by someone else, recorded here rather than repaired
+
+- `test:tool-corpus` is `gate_declaration_stale` in the census on this checkout — `tools/run-tool-test-corpus.test.mjs`
+  is another lane's in-flight file, so the baseline entry that owes a proof for it is now stale. `check-harness-conformance`
+  fails on that finding before and after this batch; it is not this batch's unit.
+- `check-preset-round-trip.mjs` reads `host/dist-test/tavern/preset-store.js`, which is a build artifact: the honest
+  reading there is "build the test tree", not a contract anyone can author.
