@@ -41,6 +41,24 @@ async function close(server: Server): Promise<void> {
   );
 }
 
+/**
+ * How long a fact the product owes may take before the test fails instead of waiting for the runner's budget.
+ *
+ * Every await in this file on a promise a bridge listener settles goes through this. Measured 2026-11-12: one such
+ * await - `onConnectionFact` for a duplicate-key frame the product had stopped refusing - hung alone at ~0% CPU until
+ * the suite's 600 s budget killed it, and reported nothing about which fact never arrived.
+ * `tools/check-test-await-deadlines.mjs` requires the race on this whole population.
+ */
+const FACT_DEADLINE_MS = 5_000;
+function factWithinDeadline<T>(pending: Promise<T>, factName: string): Promise<T> {
+  return Promise.race([
+    pending,
+    new Promise<never>((_resolvePromise, rejectPromise) => {
+      setTimeout(() => rejectPromise(new Error(`${factName}_timeout`)), FACT_DEADLINE_MS).unref();
+    }),
+  ]);
+}
+
 /** A validated world_fact frame for inbound fact-listener coverage. */
 function worldFactFrame(eventId: string): Buffer {
   return frame({
@@ -799,7 +817,7 @@ test("local Stardew bridge coalesces catalog refreshes and rejects stale authori
     );
     // Replaying the exact publication already accepted is stale authority.
     catalogUpdate("c".repeat(32), 3);
-    assert.deepEqual(await disconnected, {
+    assert.deepEqual(await factWithinDeadline(disconnected, "connection_fact"), {
       state: "disconnected",
       reasonCode: "invalid_catalog_update_authority",
     });
@@ -809,7 +827,19 @@ test("local Stardew bridge coalesces catalog refreshes and rejects stale authori
   }
 });
 
-test("local Stardew bridge rejects a duplicate-key raw named-pipe frame before JSON.parse can collapse it", async () => {
+/**
+ * A duplicate key used to close the bridge, and the frame it closed on is now admitted instead.
+ *
+ * The receive path parses with plain `JSON.parse` since 39588596: `parseStrictBridgeJson` decoded every inbound frame's
+ * bytes twice to refuse a repeated object key (measured on one frame: 0.0283 ms vs 0.0031 ms median, ~9x), and the Mod's
+ * own serializer - `BridgeProtocol.TrySerialize`, System.Text.Json over typed records - cannot emit one. The refusal
+ * still exists as a development-side check, in `host/src/strict-bridge-json.ts`: the wire-parity tools parse the frames
+ * the C# exporter actually emitted through it (`stardew-{snapshot,execution-receipt,navigation}-wire-parity.test.ts`,
+ * `integrations/stardew/action-development/src/wire-parity.mjs`) and `host/src/strict-bridge-json.test.ts` asserts it
+ * directly. Nothing on the wire closes with it, so what this test pins is the product's answer: the frame is ADMITTED,
+ * `JSON.parse` collapses the duplicate to its last value, and the lifecycle schema then judges that value.
+ */
+test("a duplicate-key inbound frame is admitted with its last value, not refused as malformed JSON", async () => {
   const pipeName = `gamebuddy_duplicate_key_${process.pid}_${Date.now()}`;
   let peer: Socket | undefined;
   let sendDuplicateInbound: (() => void) | undefined;
@@ -856,12 +886,24 @@ test("local Stardew bridge rejects a duplicate-key raw named-pipe frame before J
   );
   try {
     const client = await LocalStardewBridgeClient.connect(scope, pipeName, token, testAdapter);
-    const disconnected = new Promise<Readonly<{ state: string; reasonCode: string }>>((resolvePromise) =>
-      client.onConnectionFact(resolvePromise),
-    );
+    const admitted = new Promise<Extract<BridgeMessage, { type: "lifecycle" }>>((resolvePromise) => {
+      client.onFact((fact) => {
+        if (fact.type === "lifecycle") resolvePromise(fact);
+      });
+    });
+    const connectionFacts: Readonly<{ state: string; reasonCode: string }>[] = [];
+    client.onConnectionFact((fact) => connectionFacts.push(fact));
     assert.ok(sendDuplicateInbound !== undefined);
     sendDuplicateInbound();
-    assert.deepEqual(await disconnected, { state: "disconnected", reasonCode: "malformed_inbound_json" });
+    // `state` is written twice; the admitted fact carries the second one, because that is the value JSON.parse kept.
+    assert.deepEqual((await factWithinDeadline(admitted, "lifecycle_fact")).payload, {
+      state: "disconnected",
+      reasonCode: "duplicate_key",
+    });
+    // The consequence, observed rather than assumed: a refusal is a close, and no close happened. The reason code the
+    // bridge holds is the frame's own last value, not the `malformed_inbound_json` the old assertion pinned.
+    assert.deepEqual(connectionFacts, []);
+    assert.equal(client.state.latestReasonCode, "duplicate_key");
   } finally {
     peer?.destroy();
     await close(server);
@@ -971,7 +1013,7 @@ test("local Stardew bridge forwards a validated player_input semantic event", as
         },
       },
     });
-    const fact = await received;
+    const fact = await factWithinDeadline(received, "player_input_fact");
     assert.equal(fact.payload.kind, "player_input");
     assert.equal(fact.payload.playerControl?.sourceEventId, "source_01");
     assert.deepEqual(diagnostics, [
@@ -1095,7 +1137,7 @@ test("local Stardew bridge reports a fixed diagnostic then closes on rejected pl
       // to find the sender.
       { stage: "bridge_frame_refused", reasonCode: "bridge_frame_refused:semantic_event:invalid_semantic_event" },
     ]);
-    assert.equal((await disconnected).reasonCode, "invalid_semantic_event");
+    assert.equal((await factWithinDeadline(disconnected, "connection_fact")).reasonCode, "invalid_semantic_event");
     assert.equal(facts, 0);
   } finally {
     peer?.destroy();
@@ -1800,7 +1842,10 @@ test("local bridge rejects an inbound navigation_read_request", async () => {
           payload: { operation: "inspect_world_map", args: {} },
         }),
       );
-      assert.equal((await disconnected).reasonCode, "unexpected_inbound_request");
+      assert.equal(
+        (await factWithinDeadline(disconnected, "connection_fact")).reasonCode,
+        "unexpected_inbound_request",
+      );
     },
   );
 });
@@ -1887,7 +1932,7 @@ test("body program closes the named pipe for a structurally valid wrong correlat
         client.programEvents({ programId: "program_01", cursor: 0, pageSize: 1 }),
         /body_program_protocol_invalid/,
       );
-      const closed = await disconnected;
+      const closed = await factWithinDeadline(disconnected, "connection_fact");
       assert.equal(closed.state, "disconnected");
       // Three invariants can legitimately fire on this fixture (frame validation, the header/event rule, the cursor
       // rule); what the case is for is that the bridge closes AND says which one broke. Pinning one sentence made the
@@ -1939,7 +1984,7 @@ test("body program closes the named pipe for a wrong correlated programId", asyn
         client.programEvents({ programId: "program_01", cursor: 0, pageSize: 1 }),
         /body_program_protocol_invalid/,
       );
-      assert.deepEqual(await disconnected, {
+      assert.deepEqual(await factWithinDeadline(disconnected, "connection_fact"), {
         state: "disconnected",
         reasonCode:
           "body_program_protocol_invalid:program_events:expected=program_events_result;got=program_events_result;requested=program_01;returned=foreign_program",
@@ -1995,7 +2040,7 @@ test("body program closes the named pipe when events exceed the requested page s
         client.programEvents({ programId: "program_01", cursor: 0, pageSize: 1 }),
         /body_program_protocol_invalid/,
       );
-      const closed = await disconnected;
+      const closed = await factWithinDeadline(disconnected, "connection_fact");
       assert.equal(closed.state, "disconnected");
       // Three invariants can legitimately fire on this fixture (frame validation, the header/event rule, the cursor
       // rule); what the case is for is that the bridge closes AND says which one broke. Pinning one sentence made the
@@ -2075,7 +2120,7 @@ test("body program still closes for a non-empty page whose high-water is below t
         client.programEvents({ programId: "program_01", cursor: 100, pageSize: 1 }),
         /body_program_protocol_invalid/,
       );
-      const closed = await disconnected;
+      const closed = await factWithinDeadline(disconnected, "connection_fact");
       assert.equal(closed.state, "disconnected");
       // Three invariants can legitimately fire on this fixture (frame validation, the header/event rule, the cursor
       // rule); what the case is for is that the bridge closes AND says which one broke. Pinning one sentence made the
@@ -2353,7 +2398,10 @@ test("local Stardew bridge fails closed when a fact listener throws event_pump_e
     });
     assert.ok(sendInbound !== undefined);
     sendInbound();
-    assert.deepEqual(await disconnected, { state: "disconnected", reasonCode: "event_pump_event_overflow" });
+    assert.deepEqual(await factWithinDeadline(disconnected, "connection_fact"), {
+      state: "disconnected",
+      reasonCode: "event_pump_event_overflow",
+    });
     await new Promise<void>((resolvePromise) => setTimeout(resolvePromise, 10));
     assert.equal(listenerInvocations, 1);
     assert.equal(client.state.connected, false);
@@ -2514,7 +2562,10 @@ test("local Stardew bridge maps an arbitrary fact listener exception to fact_lis
     sendInbound();
     // The exception never escaped receive(): the run stays alive, the thrower
     // ran once, and dispatch aborted before the later listener saw the fact.
-    assert.deepEqual(await disconnected, { state: "disconnected", reasonCode: "fact_listener_failed" });
+    assert.deepEqual(await factWithinDeadline(disconnected, "connection_fact"), {
+      state: "disconnected",
+      reasonCode: "fact_listener_failed",
+    });
     await new Promise<void>((resolvePromise) => setTimeout(resolvePromise, 10));
     assert.equal(throwingInvocations, 1);
     assert.equal(laterListenerInvocations, 0);
@@ -2612,7 +2663,10 @@ test("a pending observe rejects through the normal close path when a fact listen
     // resolving it or leaking it to the bridge_response_timeout.
     const observe = client.observe();
     await assert.rejects(observe, /bridge_disconnected:fact_listener_failed/);
-    assert.deepEqual(await disconnected, { state: "disconnected", reasonCode: "fact_listener_failed" });
+    assert.deepEqual(await factWithinDeadline(disconnected, "connection_fact"), {
+      state: "disconnected",
+      reasonCode: "fact_listener_failed",
+    });
     assert.equal(client.state.connected, false);
     assert.equal(client.state.snapshot, null);
   } finally {

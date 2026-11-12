@@ -416,6 +416,16 @@ const GATES_WITH_FALSIFIER = Object.freeze([
   // announces the idle now is `stale_terminal_idle_exemption`, and a tree with no store-and-publish pair at all is
   // blocked rather than green. Its population is the sibling gate's pairs, so the two cannot disagree about a site.
   "check-terminal-idle-publication.mjs",
+  // Prints `awaits examined N · with a deadline M · without K` plus a four-entry `checks[]` verdict (the test files read,
+  // the listener awaits found in them, every one raced against a deadline, every file parsed), so its default run is the
+  // report this suite reads. Its falsifier is tools/check-test-await-deadlines.test.mjs: the bare `await disconnected`
+  // of the duplicate-key test as it stood at 39588596 is replayed from that revision and reads
+  // `await_without_deadline:host/src/local-stardew-bridge.test.ts:864:disconnected`, every sanctioned racing shape
+  // (`Promise.race` with a timer, a promise that sets its own timeout, a local timer factory, a local deadline wrapper,
+  // a `node:timers/promises` import) is clean, a race of two facts with no timer is still a finding, prose that spells
+  // the defect is not the await, an empty population blocks, and the CLI's 0/1/2 exit codes are asserted on throwaway
+  // roots.
+  "check-test-await-deadlines.mjs",
   // Its default run prints `{gate:"presentation-delivery-account", status, examined, checks[]}` and reads whatever
   // bundle it is pointed at, so the report is the gate's own verdict rather than prose. Its falsifier is
   // tools/lib/presentation-delivery-account.test.mjs: 59 pieces against an account of 46 parts is reconciled as 46 text
