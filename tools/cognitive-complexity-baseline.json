@@ -696,18 +696,18 @@
       "value": 33
     },
     {
-      "id": "ts:host/src/games/stardew/lifecycle/stardew-private-bootstrap-composer.core.ts#launchWithGeneration",
+      "id": "ts:host/src/games/stardew/lifecycle/stardew-private-bootstrap-composer.core.internal.ts#launchWithGeneration",
       "language": "ts",
-      "name": "host/src/games/stardew/lifecycle/stardew-private-bootstrap-composer.core.ts#launchWithGeneration",
-      "file": "host/src/games/stardew/lifecycle/stardew-private-bootstrap-composer.core.ts",
+      "name": "host/src/games/stardew/lifecycle/stardew-private-bootstrap-composer.core.internal.ts#launchWithGeneration",
+      "file": "host/src/games/stardew/lifecycle/stardew-private-bootstrap-composer.core.internal.ts",
       "line": 3525,
       "value": 31
     },
     {
-      "id": "ts:host/src/games/stardew/lifecycle/stardew-private-bootstrap-composer.core.ts#reserveOwnedPlayerHostBootstrap",
+      "id": "ts:host/src/games/stardew/lifecycle/stardew-private-bootstrap-composer.core.internal.ts#reserveOwnedPlayerHostBootstrap",
       "language": "ts",
-      "name": "host/src/games/stardew/lifecycle/stardew-private-bootstrap-composer.core.ts#reserveOwnedPlayerHostBootstrap",
-      "file": "host/src/games/stardew/lifecycle/stardew-private-bootstrap-composer.core.ts",
+      "name": "host/src/games/stardew/lifecycle/stardew-private-bootstrap-composer.core.internal.ts#reserveOwnedPlayerHostBootstrap",
+      "file": "host/src/games/stardew/lifecycle/stardew-private-bootstrap-composer.core.internal.ts",
       "line": 992,
       "value": 34
     },

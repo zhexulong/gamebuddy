@@ -28,7 +28,7 @@ import type { CreateWorldBindingSeam } from "./stardew-owned-farmhand-game-world
  * structural rather than re-proved here: a usable manifest source only exists
  * over the owner-bound attachment flow, which the composition mints from the
  * staged session material of the owner this lifecycle launched and attested
- * (`stardew-private-bootstrap-composer.core.ts:1896-1923`). The seam therefore
+ * (`stardew-private-bootstrap-composer.core.internal.ts:1896-1923`). The seam therefore
  * adds no second launch authority and no launch/world fact of its own.
  */
 

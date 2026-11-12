@@ -107,7 +107,7 @@ import {
 import {
   openRecoverableStardewBootstrapOwner,
   readRecoverableStardewBootstrapOwnerRecoveryBinding,
-} from "./games/stardew/lifecycle/stardew-private-bootstrap-composer.core.js";
+} from "./games/stardew/lifecycle/stardew-private-bootstrap-composer.core.internal.js";
 import type { StardewPrivateBootstrapCoreDependencies } from "./games/stardew/lifecycle/stardew-private-bootstrap-composer.test-support-internal.js";
 import { simulatedLockHelper } from "./games/stardew/lifecycle/stardew-private-bootstrap-composer.test-fixtures.js";
 import { createTestWindowsStaleLockReclaimer } from "./windows-stale-lock-reclaimer/index.test-support.js";

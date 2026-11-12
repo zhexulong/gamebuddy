@@ -13,7 +13,7 @@ import {
   createStardewProductionLifecycleCoordinator,
   type StardewProductionLifecycleCoordinator,
 } from "../../stardew-production-lifecycle-coordinator.internal.js";
-import type { StardewPlayerHostRuntimeLaunchCollaborator } from "./lifecycle/stardew-private-bootstrap-composer.core.js";
+import type { StardewPlayerHostRuntimeLaunchCollaborator } from "./lifecycle/stardew-private-bootstrap-composer.core.internal.js";
 
 /**
  * Opaque composition-injected picker capability.

@@ -23,7 +23,7 @@ import {
   consumeStardewBootstrapGuardianOwnerBinding,
   createStardewBootstrapGuardianOwnerBinding,
   type StardewPlayerHostRuntimeLaunchCollaborator,
-} from "../../games/stardew/lifecycle/stardew-private-bootstrap-composer.core.js";
+} from "../../games/stardew/lifecycle/stardew-private-bootstrap-composer.core.internal.js";
 import { bindWindowsStaleLockReclaimer } from "../../path-lock.js";
 import { createTestWindowsStaleLockReclaimer } from "../../windows-stale-lock-reclaimer/index.test-support.js";
 import {

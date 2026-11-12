@@ -326,7 +326,7 @@ test("neutral admission core is imported only by the public facade, the private 
   assert.deepEqual(
     coreImporters.sort(),
     [
-      "games/stardew/lifecycle/stardew-private-bootstrap-composer.core.ts",
+      "games/stardew/lifecycle/stardew-private-bootstrap-composer.core.internal.ts",
       thisTestLeaf,
       "stardew-installation-admission.ts",
     ].sort(),
@@ -337,7 +337,7 @@ test("neutral admission core is imported only by the public facade, the private 
   assert.deepEqual(
     controlledUseInFiles.sort(),
     [
-      "games/stardew/lifecycle/stardew-private-bootstrap-composer.core.ts",
+      "games/stardew/lifecycle/stardew-private-bootstrap-composer.core.internal.ts",
       "stardew-installation-admission.core.ts",
       thisTestLeaf,
     ].sort(),

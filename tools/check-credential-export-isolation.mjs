@@ -539,7 +539,8 @@ function assemblerReason(source, routeIds) {
  * that is a derivation that silently stopped working, and it must fail rather than pass quietly.
  */
 const CREDENTIAL_STORE_MODULE = "host/src/tavern/connection-store.ts";
-const CREDENTIAL_PAYLOAD_MODULE = "host/src/games/stardew/lifecycle/stardew-private-bootstrap-composer.core.ts";
+const CREDENTIAL_PAYLOAD_MODULE =
+  "host/src/games/stardew/lifecycle/stardew-private-bootstrap-composer.core.internal.ts";
 
 /** True when `path` exists as a file under `root`. */
 function present(root, path) {

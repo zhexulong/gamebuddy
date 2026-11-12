@@ -31,7 +31,7 @@ import {
   settleOwnedPlayerHostContainedRuntimeAttempt,
   type StardewBootstrapOwnerRecoveryDrive,
   type StardewPlayerHostRuntimeLaunchCollaborator,
-} from "../../games/stardew/lifecycle/stardew-private-bootstrap-composer.core.js";
+} from "../../games/stardew/lifecycle/stardew-private-bootstrap-composer.core.internal.js";
 import type { StardewOwnedPlayerHostBootstrap } from "../../games/stardew/lifecycle/stardew-private-bootstrap-composer.js";
 import { STARDEW_NATIVE_ROLE_ENVIRONMENT_KEYS } from "./stardew-native-role-launch-plan.private.js";
 import { createContainedGameRuntime } from "../../containment/runtime/core/contained-game-runtime.js";

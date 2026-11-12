@@ -215,7 +215,7 @@ test(
         GAMEBUDDY_STARDEW_LAUNCH_GENERATION: "launch-parity-generation",
       });
       // The typed launch facts the game layer hands the contained runtime
-      // (`stardew-private-bootstrap-composer.core.ts:2120`/`:2294`). They are the
+      // (`stardew-private-bootstrap-composer.core.internal.ts:2120`/`:2294`). They are the
       // LAUNCH authorization: only their `executable` reaches the arm body, as the
       // approved executable the native `ParseLaunch` later enforces the plan against.
       const productionFacts = (label: string): TypedPrivateGameFacts =>

@@ -4,7 +4,7 @@ import { createGameRuntimeBindingFromReceiptBackedLaunch } from "./continuity-se
 import { createHostGameRuntimeMaterializer } from "./continuity-semantic-game-runtime-materializer/continuity-semantic-game-runtime-materializer.js";
 import type { SemanticGameProductionAuthority } from "./continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.js";
 import type { HostDeploymentManifest } from "./deployment-manifest.js";
-import type { StardewPrivateFarmhandBridgeConnection } from "./games/stardew/lifecycle/stardew-private-bootstrap-composer.core.js";
+import type { StardewPrivateFarmhandBridgeConnection } from "./games/stardew/lifecycle/stardew-private-bootstrap-composer.core.internal.js";
 import { LocalStardewBridgeClient } from "./local-stardew-bridge.js";
 import {
   createStardewIntegrationLaunchHandleFromAuthenticatedBridge,

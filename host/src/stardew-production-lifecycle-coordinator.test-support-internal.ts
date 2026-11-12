@@ -22,7 +22,7 @@ import type { StopOwnedPlayerHostResult } from "./stardew-player-host-process-ow
 import type {
   StardewPrivateFarmhandBridgeConnection,
   StardewPlayerHostRuntimeLaunchCollaborator,
-} from "./games/stardew/lifecycle/stardew-private-bootstrap-composer.core.js";
+} from "./games/stardew/lifecycle/stardew-private-bootstrap-composer.core.internal.js";
 import type { WindowsReparseInspectorCapability } from "./windows-reparse-inspector/index.js";
 import { createTestWindowsStardewFolderPicker } from "./windows-stardew-folder-picker/index.test-support.js";
 import type { StardewFolderPickerResult } from "./windows-stardew-folder-picker/index.js";

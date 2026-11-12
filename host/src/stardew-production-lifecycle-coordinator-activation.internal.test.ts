@@ -35,7 +35,7 @@ import type {
   StardewContainedAiClientLaunchSeam,
   StardewContainedPlayerHostLaunchSeam,
   StardewPlayerHostRuntimeLaunchCollaborator,
-} from "./games/stardew/lifecycle/stardew-private-bootstrap-composer.core.js";
+} from "./games/stardew/lifecycle/stardew-private-bootstrap-composer.core.internal.js";
 import type { DesktopGuardianSession } from "./containment/auth/desktop-guardian-session.internal.js";
 import {
   createDesktopGuardianGameRuntimePlatform,

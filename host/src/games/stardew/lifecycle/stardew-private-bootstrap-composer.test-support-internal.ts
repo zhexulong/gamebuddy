@@ -7,16 +7,16 @@ import {
   type StardewOwnedPlayerHostStageCResult,
   type StardewPrivateFarmhandBridgeConnection,
   type StardewPrivateBootstrapCoreDependencies,
-} from "./stardew-private-bootstrap-composer.core.js";
+} from "./stardew-private-bootstrap-composer.core.internal.js";
 import {
   advanceOwnedPlayerHostToContainedAndMintProof,
   consumeStardewBootstrapGuardianOwnerBinding,
   createStardewBootstrapGuardianOwnerBinding,
   settleOwnedPlayerHostContainedRuntimeAttempt,
   settleOwnedPlayerHostRegistrationAttempt,
-} from "./stardew-private-bootstrap-composer.core.js";
+} from "./stardew-private-bootstrap-composer.core.internal.js";
 import type { AdmittedStardewInstallation } from "../../../stardew-installation-admission.js";
-import type { StardewManifestHandoffCoordinator } from "./stardew-private-bootstrap-composer.core.js";
+import type { StardewManifestHandoffCoordinator } from "./stardew-private-bootstrap-composer.core.internal.js";
 import type {
   StardewOwnedPlayerHostBootstrap,
   StardewPrivateBootstrapComposition as PublicStardewPrivateBootstrapComposition,
@@ -26,7 +26,7 @@ export type {
   StardewOwnedAiClientStageDResult,
   StardewOwnedPlayerHostStageCResult,
   StardewPrivateBootstrapCoreDependencies,
-} from "./stardew-private-bootstrap-composer.core.js";
+} from "./stardew-private-bootstrap-composer.core.internal.js";
 
 export type StardewOwnedPlayerHostPhaseATestView = StardewOwnedPlayerHostPhaseACoreTestView;
 
@@ -115,11 +115,11 @@ export type StardewPrivateBootstrapTestingComposition = Readonly<{
   settleOwnedPlayerHostToContainedForTesting(
     owner: StardewOwnedPlayerHostBootstrap,
     launchedRoles: readonly ("playerHost" | "aiClient")[],
-  ): Promise<import("./stardew-private-bootstrap-composer.core.js").StardewBootstrapGuardianSettlementProof>;
+  ): Promise<import("./stardew-private-bootstrap-composer.core.internal.js").StardewBootstrapGuardianSettlementProof>;
   /** Releases a bound pointer through an already-minted proof (production rule). */
   releaseOwnedPlayerHostRegistrationForTesting(
     owner: StardewOwnedPlayerHostBootstrap,
-    proof: import("./stardew-private-bootstrap-composer.core.js").StardewBootstrapGuardianSettlementProof,
+    proof: import("./stardew-private-bootstrap-composer.core.internal.js").StardewBootstrapGuardianSettlementProof,
   ): Promise<void>;
   createOwnerTransitionsForTesting: ReturnType<
     typeof createStardewPrivateBootstrapTestCore

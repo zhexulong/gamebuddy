@@ -86,7 +86,7 @@ test("blocks a game-layer import of the containment auth transport", async () =>
 test("allows Stardew installation registration mutation only from its lifecycle owner facade consumer", async () => {
   await withFixture(
     {
-      "host/src/games/stardew/lifecycle/stardew-private-bootstrap-composer.core.ts":
+      "host/src/games/stardew/lifecycle/stardew-private-bootstrap-composer.core.internal.ts":
         "import { withStardewLifecycleInstallationRegistrationOwner } from '../../../stardew-installation-registration.internal.js';\nexport const owner = withStardewLifecycleInstallationRegistrationOwner;\n",
       "host/src/stardew-installation-registration.internal.ts":
         "export function withStardewLifecycleInstallationRegistrationOwner() {}\n",

@@ -15,7 +15,7 @@ import {
   terminalizeOwnedPlayerHostBootstrap as terminalizeOwnedPlayerHostBootstrapCore,
   type StardewBootstrapGuardianSettlementProof,
   type StardewPrivateBootstrapInternalComposition,
-} from "./stardew-private-bootstrap-composer.core.js";
+} from "./stardew-private-bootstrap-composer.core.internal.js";
 
 /** Constructs the complete trusted production bootstrap composition. */
 export type StardewBootstrapGuardianOwnerFactory = Readonly<{

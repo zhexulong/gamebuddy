@@ -49,7 +49,7 @@ import {
 import { readIdentityProfile } from "./identity-profile.js";
 import { resolveRuntimePaths } from "./runtime-identity.js";
 import { createStardewPrivateBootstrapComposition } from "./games/stardew/lifecycle/stardew-private-bootstrap-composer.internal.js";
-import type { StardewPrivateBootstrapInternalComposition } from "./games/stardew/lifecycle/stardew-private-bootstrap-composer.core.js";
+import type { StardewPrivateBootstrapInternalComposition } from "./games/stardew/lifecycle/stardew-private-bootstrap-composer.core.internal.js";
 import type { StardewOwnedPlayerHostBootstrap } from "./games/stardew/lifecycle/stardew-private-bootstrap-composer.js";
 import {
   StardewPlayerSettingsStore,
@@ -73,7 +73,7 @@ import {
   STARDEW_BOOTSTRAP_OWNER_RECOVERY_TERMINAL_REFUSAL,
   type StardewManifestHandoffChoice,
   type StardewRecoverableBootstrapOwner,
-} from "./games/stardew/lifecycle/stardew-private-bootstrap-composer.core.js";
+} from "./games/stardew/lifecycle/stardew-private-bootstrap-composer.core.internal.js";
 import type {
   GameCreateCommandV1,
   GameCreateResultV1,
@@ -127,7 +127,7 @@ import type {
   StardewContainedPlayerHostLaunchSeam,
   StardewContainedAiClientLaunchSeam,
   StardewPlayerHostRuntimeLaunchCollaborator,
-} from "./games/stardew/lifecycle/stardew-private-bootstrap-composer.core.js";
+} from "./games/stardew/lifecycle/stardew-private-bootstrap-composer.core.internal.js";
 import {
   readStardewOwnerRecoveryDriver,
   type StardewOwnerRecoveryRequest,
@@ -1537,7 +1537,7 @@ function createCoordinator(
    * between the check and the read, and it refuses a marker or a malformed
    * record under its own bounded code instead of handing back a mid-transition
    * pointer. This path only reads: binding and releasing the pointer stay with
-   * the bootstrap owner (stardew-private-bootstrap-composer.core).
+   * the bootstrap owner (stardew-private-bootstrap-composer.core.internal).
    */
   const readWorldBindingHolderHandle = async (): Promise<string> => {
     const registration = await readStardewInstallationRegistration(runtimeRoot);

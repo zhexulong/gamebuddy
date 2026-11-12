@@ -23,7 +23,7 @@ import { readSourceShape } from "../../../test-support/source-shape.test-support
 import { createTestWindowsStaleLockReclaimer } from "../../../windows-stale-lock-reclaimer/index.test-support.js";
 import { projectStardewModActionPolicy } from "../stardew-mod-action-policy-projection.js";
 import { StardewPlayerSettingsStore } from "../stardew-player-settings.js";
-import * as productionCore from "./stardew-private-bootstrap-composer.core.js";
+import * as productionCore from "./stardew-private-bootstrap-composer.core.internal.js";
 import * as internalComposer from "./stardew-private-bootstrap-composer.internal.js";
 import { consumeOwnedPlayerHostBootstrap } from "./stardew-private-bootstrap-composer.internal.js";
 import type {
@@ -1863,7 +1863,9 @@ test("only the production internal and dedicated test-only adapter import the co
   const testInternalImporters: string[] = [];
   for (const leaf of leaves) {
     const source = await readFile(join(sourceRoot, leaf), "utf8");
-    if (/from\s+["'][^"']*stardew-private-bootstrap-composer\.core\.js["']/.test(source)) coreImporters.push(leaf);
+    if (/from\s+["'][^"']*stardew-private-bootstrap-composer\.core\.internal\.js["']/.test(source)) {
+      coreImporters.push(leaf);
+    }
     if (/from\s+["'][^"']*stardew-private-bootstrap-composer\.test-support-internal\.js["']/.test(source)) {
       testInternalImporters.push(leaf);
     }
@@ -1899,7 +1901,10 @@ test("only the production internal and dedicated test-only adapter import the co
       thisTestLeaf,
     ].sort(),
   );
-  const productionCoreSource = await readFile(join(sourceRoot, "stardew-private-bootstrap-composer.core.ts"), "utf8");
+  const productionCoreSource = await readFile(
+    join(sourceRoot, "stardew-private-bootstrap-composer.core.internal.ts"),
+    "utf8",
+  );
   const productionInternal = await readFile(join(sourceRoot, "stardew-private-bootstrap-composer.internal.ts"), "utf8");
   assert.doesNotMatch(productionCoreSource, /from\s+["'][^"']*stardew-bootstrap-guardian\.private\.js["']/);
   assert.doesNotMatch(

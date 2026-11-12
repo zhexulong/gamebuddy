@@ -403,8 +403,8 @@ test("population 2 is derived from the real composer, and covers both staged pro
   assert.deepEqual(
     writes.map((write) => `${write.file}: ${write.destination}`),
     [
-      "host/src/games/stardew/lifecycle/stardew-private-bootstrap-composer.core.ts: <transactionDirectory>/ai-client/Mods/GameBuddy/config.json",
-      "host/src/games/stardew/lifecycle/stardew-private-bootstrap-composer.core.ts: <transactionDirectory>/player-host/Mods/GameBuddy/config.json",
+      "host/src/games/stardew/lifecycle/stardew-private-bootstrap-composer.core.internal.ts: <transactionDirectory>/ai-client/Mods/GameBuddy/config.json",
+      "host/src/games/stardew/lifecycle/stardew-private-bootstrap-composer.core.internal.ts: <transactionDirectory>/player-host/Mods/GameBuddy/config.json",
     ],
   );
 });
@@ -419,7 +419,7 @@ test("an assembler that names a population-2 destination is the violation, with 
     };
     write("host/src/runtime-identity.ts", RUNTIME_IDENTITY);
     write("host/src/tavern/connection-store.ts", STORE);
-    write("host/src/games/stardew/lifecycle/stardew-private-bootstrap-composer.core.ts", COMPOSER);
+    write("host/src/games/stardew/lifecycle/stardew-private-bootstrap-composer.core.internal.ts", COMPOSER);
     write(
       "tools/diagnostic-bundle.mjs",
       `import { copyFile } from "node:fs/promises";\nimport { join } from "node:path";\nconst PROFILE_FILES = Object.freeze(["Mods/GameBuddy/config.json"]);\nexport async function bundle(attempt, out) {\n  for (const relative of PROFILE_FILES) await copyFile(join(attempt, relative), out);\n}\n`,
@@ -444,7 +444,7 @@ test("a bare config.json is NOT a population-2 violation, because four unrelated
     };
     write("host/src/runtime-identity.ts", RUNTIME_IDENTITY);
     write("host/src/tavern/connection-store.ts", STORE);
-    write("host/src/games/stardew/lifecycle/stardew-private-bootstrap-composer.core.ts", COMPOSER);
+    write("host/src/games/stardew/lifecycle/stardew-private-bootstrap-composer.core.internal.ts", COMPOSER);
     write(
       "tools/unrelated-copy.mjs",
       `import { copyFile } from "node:fs/promises";\nimport { join } from "node:path";\nexport async function copy(root, out) {\n  await copyFile(join(root, "config.json"), out);\n}\n`,
@@ -465,7 +465,10 @@ test("a root that has the composer but derives no payload write fails instead of
     };
     write("host/src/runtime-identity.ts", RUNTIME_IDENTITY);
     write("host/src/tavern/connection-store.ts", STORE);
-    write("host/src/games/stardew/lifecycle/stardew-private-bootstrap-composer.core.ts", "export const moved = 1;\n");
+    write(
+      "host/src/games/stardew/lifecycle/stardew-private-bootstrap-composer.core.internal.ts",
+      "export const moved = 1;\n",
+    );
     assert.deepEqual(
       evaluate({ root }).violations.map((violation) => violation.code),
       ["credential_payload_population_empty"],

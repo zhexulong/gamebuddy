@@ -20,7 +20,7 @@ import { ContainmentRoleAlreadyContainedError } from "../../containment/runtime/
 // The durable engine on the other side of this wire, imported so the tolerance
 // both share is proven against the refusal the engine actually throws instead of
 // against a copy of its message.
-import { openRecoverableStardewBootstrapOwner } from "../../games/stardew/lifecycle/stardew-private-bootstrap-composer.core.js";
+import { openRecoverableStardewBootstrapOwner } from "../../games/stardew/lifecycle/stardew-private-bootstrap-composer.core.internal.js";
 import { bindWindowsStaleLockReclaimer } from "../../path-lock.js";
 import { createTestWindowsStaleLockReclaimer } from "../../windows-stale-lock-reclaimer/index.test-support.js";
 import { assertStatementOrder, functionBody } from "../../test-support/function-body-order.test-support.js";
@@ -698,7 +698,7 @@ export async function inspectWindowsPathSecurity(capability, absolutePath) {
       "games",
       "stardew",
       "lifecycle",
-      "stardew-private-bootstrap-composer.core.js",
+      "stardew-private-bootstrap-composer.core.internal.js",
     );
     await mkdir(dirname(composerCorePath), { recursive: true });
     await writeFile(
@@ -1634,7 +1634,7 @@ test("recovery conversation writes the five Desktop frames in exact ordinal key 
 
 /**
  * The durable role CAS refusal that means "this record already holds this role as
- * contained" (`containRecoveringRole`, stardew-private-bootstrap-composer.core).
+ * contained" (`containRecoveringRole`, stardew-private-bootstrap-composer.core.internal).
  * A resumed recovery meets it for every role the crashed conversation had already
  * recorded before its CAS acknowledgement was written, and it reaches the wire as
  * the platform contract's typed identity rather than as this message: the message

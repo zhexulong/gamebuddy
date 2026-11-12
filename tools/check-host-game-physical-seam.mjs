@@ -46,7 +46,7 @@ const GAME_FREE_GENERIC_LAYERS = new Set(["bootstrap", "containment"]);
 const GAME_IMPORTABLE_GENERIC_PATH = "containment/runtime/contract/game-runtime";
 const STARDew_PROCESS_IMPLEMENTATIONS = "games/stardew/lifecycle/stardew-process-implementations";
 const STARDew_REGISTRATION = "stardew-installation-registration.internal";
-const STARDew_REGISTRATION_OWNER = "games/stardew/lifecycle/stardew-private-bootstrap-composer.core";
+const STARDew_REGISTRATION_OWNER = "games/stardew/lifecycle/stardew-private-bootstrap-composer.core.internal";
 const STARDew_REGISTRATION_OWNER_FACADE = "withStardewLifecycleInstallationRegistrationOwner";
 const ALLOWED_STARDew_GENERIC_IMPORTERS = new Map([
   [
