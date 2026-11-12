@@ -16,12 +16,7 @@ internal sealed class MachineAndAnimalActionHandler : IFarmhandActionHandler
     {
         return request.Action switch
         {
-            "machine_inspect" => this.executions.RequestLocalInspectMachine(
-                request.RequestId,
-                (int)(request.Args.X ?? 0),
-                (int)(request.Args.Y ?? 0),
-                request.Args.ExpectedTargetId ?? string.Empty,
-                request.DeadlineMs),
+            "machine_inspect" => this.executions.RequestLocalInspectMachine(request.RequestId, request.TargetX(), request.TargetY(), request.TargetId(), request.DeadlineMs),
 
             "machine_load" => this.executions.RequestLocalLoadMachineInput(
                 request.RequestId,
@@ -32,26 +27,11 @@ internal sealed class MachineAndAnimalActionHandler : IFarmhandActionHandler
                 request.Args.ExpectedTargetId ?? string.Empty,
                 request.DeadlineMs),
 
-            "machine_collect_output" => this.executions.RequestLocalCollectMachineOutput(
-                request.RequestId,
-                (int)(request.Args.X ?? 0),
-                (int)(request.Args.Y ?? 0),
-                request.Args.ExpectedTargetId ?? string.Empty,
-                request.DeadlineMs),
+            "machine_collect_output" => this.executions.RequestLocalCollectMachineOutput(request.RequestId, request.TargetX(), request.TargetY(), request.TargetId(), request.DeadlineMs),
 
-            "npc_relationship" => this.executions.RequestLocalInspectNpcRelationship(
-                request.RequestId,
-                (int)(request.Args.X ?? 0),
-                (int)(request.Args.Y ?? 0),
-                request.Args.ExpectedTargetId ?? string.Empty,
-                request.DeadlineMs),
+            "npc_relationship" => this.executions.RequestLocalInspectNpcRelationship(request.RequestId, request.TargetX(), request.TargetY(), request.TargetId(), request.DeadlineMs),
 
-            "talk_to_npc" => this.executions.RequestLocalTalkToNpc(
-                request.RequestId,
-                (int)(request.Args.X ?? 0),
-                (int)(request.Args.Y ?? 0),
-                request.Args.ExpectedTargetId ?? string.Empty,
-                request.DeadlineMs),
+            "talk_to_npc" => this.executions.RequestLocalTalkToNpc(request.RequestId, request.TargetX(), request.TargetY(), request.TargetId(), request.DeadlineMs),
 
             "interact_npc_with_item" => this.executions.RequestLocalInteractNpcWithItem(
                 request.RequestId,
@@ -62,19 +42,9 @@ internal sealed class MachineAndAnimalActionHandler : IFarmhandActionHandler
                 request.Args.ExpectedTargetId ?? string.Empty,
                 request.DeadlineMs),
 
-            "pet_animal" => this.executions.RequestLocalPetAnimal(
-                request.RequestId,
-                (int)(request.Args.X ?? 0),
-                (int)(request.Args.Y ?? 0),
-                request.Args.ExpectedTargetId ?? string.Empty,
-                request.DeadlineMs),
+            "pet_animal" => this.executions.RequestLocalPetAnimal(request.RequestId, request.TargetX(), request.TargetY(), request.TargetId(), request.DeadlineMs),
 
-            "pet_farm_animal" => this.executions.RequestLocalPetFarmAnimal(
-                request.RequestId,
-                (int)(request.Args.X ?? 0),
-                (int)(request.Args.Y ?? 0),
-                request.Args.ExpectedTargetId ?? string.Empty,
-                request.DeadlineMs),
+            "pet_farm_animal" => this.executions.RequestLocalPetFarmAnimal(request.RequestId, request.TargetX(), request.TargetY(), request.TargetId(), request.DeadlineMs),
 
             "collect_animal_product" => this.executions.RequestLocalCollectAnimalProduct(
                 request.RequestId,
@@ -110,12 +80,7 @@ internal sealed class MachineAndAnimalActionHandler : IFarmhandActionHandler
                 request.Args.ExpectedQualifiedItemId ?? string.Empty,
                 request.DeadlineMs),
 
-            "take_pedestal_item" => this.executions.RequestLocalTakePedestalItem(
-                request.RequestId,
-                (int)(request.Args.X ?? 0),
-                (int)(request.Args.Y ?? 0),
-                request.Args.ExpectedTargetId ?? string.Empty,
-                request.DeadlineMs),
+            "take_pedestal_item" => this.executions.RequestLocalTakePedestalItem(request.RequestId, request.TargetX(), request.TargetY(), request.TargetId(), request.DeadlineMs),
 
             // Loop-closure W0a routing. The four bodies live in the lane-owned
             // partials (farmhandexecutioncontroller.{crafting,cooking,crabpot,
@@ -132,26 +97,11 @@ internal sealed class MachineAndAnimalActionHandler : IFarmhandActionHandler
                 request.Args.ExpectedTargetId ?? string.Empty,
                 request.DeadlineMs),
 
-            "collect_crab_pot_output" => this.executions.RequestLocalCollectCrabPotOutput(
-                request.RequestId,
-                (int)(request.Args.X ?? 0),
-                (int)(request.Args.Y ?? 0),
-                request.Args.ExpectedTargetId ?? string.Empty,
-                request.DeadlineMs),
+            "collect_crab_pot_output" => this.executions.RequestLocalCollectCrabPotOutput(request.RequestId, request.TargetX(), request.TargetY(), request.TargetId(), request.DeadlineMs),
 
-            "water_pet_bowl" => this.executions.RequestLocalWaterPetBowl(
-                request.RequestId,
-                (int)(request.Args.X ?? 0),
-                (int)(request.Args.Y ?? 0),
-                request.Args.ExpectedTargetId ?? string.Empty,
-                request.DeadlineMs),
+            "water_pet_bowl" => this.executions.RequestLocalWaterPetBowl(request.RequestId, request.TargetX(), request.TargetY(), request.TargetId(), request.DeadlineMs),
 
-            "water_slime_hutch_trough" => this.executions.RequestLocalWaterSlimeHutchTrough(
-                request.RequestId,
-                (int)(request.Args.X ?? 0),
-                (int)(request.Args.Y ?? 0),
-                request.Args.ExpectedTargetId ?? string.Empty,
-                request.DeadlineMs),
+            "water_slime_hutch_trough" => this.executions.RequestLocalWaterSlimeHutchTrough(request.RequestId, request.TargetX(), request.TargetY(), request.TargetId(), request.DeadlineMs),
 
             // Buying has no coordinates on purpose: it buys from a shop the actor already
             // stands next to and refuses with shop_counter_out_of_reach otherwise, so a walk

@@ -24,13 +24,7 @@ internal sealed class FarmingActionHandler : IFarmhandActionHandler
                 request.Args.Charge ?? 0,
                 request.DeadlineMs),
 
-            "water_crop" => this.executions.RequestLocalWaterCrop(
-                request.RequestId,
-                (int)(request.Args.X ?? 0),
-                (int)(request.Args.Y ?? 0),
-                request.Args.ExpectedTargetId ?? string.Empty,
-                request.Args.Charge ?? 0,
-                request.DeadlineMs),
+            "water_crop" => this.executions.RequestLocalWaterCrop(request.RequestId, request.TargetX(), request.TargetY(), request.TargetId(), request.Charge(), request.DeadlineMs),
 
             "plant_seed" => this.executions.RequestLocalPlantSeed(
                 request.RequestId,
@@ -58,26 +52,11 @@ internal sealed class FarmingActionHandler : IFarmhandActionHandler
                 request.Args.ExpectedTargetId ?? string.Empty,
                 request.DeadlineMs),
 
-            "harvest_bush" => this.executions.RequestLocalHarvestBush(
-                request.RequestId,
-                (int)(request.Args.X ?? 0),
-                (int)(request.Args.Y ?? 0),
-                request.Args.ExpectedTargetId ?? string.Empty,
-                request.DeadlineMs),
+            "harvest_bush" => this.executions.RequestLocalHarvestBush(request.RequestId, request.TargetX(), request.TargetY(), request.TargetId(), request.DeadlineMs),
 
-            "harvest_fruit_tree" => this.executions.RequestLocalHarvestFruitTree(
-                request.RequestId,
-                (int)(request.Args.X ?? 0),
-                (int)(request.Args.Y ?? 0),
-                request.Args.ExpectedTargetId ?? string.Empty,
-                request.DeadlineMs),
+            "harvest_fruit_tree" => this.executions.RequestLocalHarvestFruitTree(request.RequestId, request.TargetX(), request.TargetY(), request.TargetId(), request.DeadlineMs),
 
-            "shake_tree" => this.executions.RequestLocalShakeTree(
-                request.RequestId,
-                (int)(request.Args.X ?? 0),
-                (int)(request.Args.Y ?? 0),
-                request.Args.ExpectedTargetId ?? string.Empty,
-                request.DeadlineMs),
+            "shake_tree" => this.executions.RequestLocalShakeTree(request.RequestId, request.TargetX(), request.TargetY(), request.TargetId(), request.DeadlineMs),
 
             "fertilize_tile" => this.executions.RequestLocalFertilizeTile(
                 request.RequestId,

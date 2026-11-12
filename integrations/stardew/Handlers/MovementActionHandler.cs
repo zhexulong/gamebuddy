@@ -39,29 +39,14 @@ internal sealed class MovementActionHandler : IFarmhandActionHandler
                 (int)(request.Args.Y ?? 0),
                 request.DeadlineMs),
 
-            "mount_transport" => this.executions.RequestLocalMountTransport(
-                request.RequestId,
-                (int)(request.Args.X ?? 0),
-                (int)(request.Args.Y ?? 0),
-                request.Args.ExpectedTargetId ?? string.Empty,
-                request.DeadlineMs),
+            "mount_transport" => this.executions.RequestLocalMountTransport(request.RequestId, request.TargetX(), request.TargetY(), request.TargetId(), request.DeadlineMs),
 
-            "enter_mine" => this.executions.RequestLocalEnterMine(
-                request.RequestId,
-                (int)(request.Args.X ?? 0),
-                (int)(request.Args.Y ?? 0),
-                request.Args.ExpectedTargetId ?? string.Empty,
-                request.DeadlineMs),
+            "enter_mine" => this.executions.RequestLocalEnterMine(request.RequestId, request.TargetX(), request.TargetY(), request.TargetId(), request.DeadlineMs),
 
             // use_mine_ladder leaves through the level's own exit ladder. It is its own action rather
             // than an `enter_mine` argument because the two ladder kinds have one owner each: a request
             // naming the other kind is refused by name with this action.
-            "use_mine_ladder" => this.executions.RequestLocalUseMineLadder(
-                request.RequestId,
-                (int)(request.Args.X ?? 0),
-                (int)(request.Args.Y ?? 0),
-                request.Args.ExpectedTargetId ?? string.Empty,
-                request.DeadlineMs),
+            "use_mine_ladder" => this.executions.RequestLocalUseMineLadder(request.RequestId, request.TargetX(), request.TargetY(), request.TargetId(), request.DeadlineMs),
 
             "ride_minecart" => this.executions.RequestLocalMinecartRide(
                 request.RequestId,
