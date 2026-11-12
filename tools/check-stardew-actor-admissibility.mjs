@@ -19,6 +19,31 @@
  * check has to say WHICH row failed. With no contract on disk there is no algebra to
  * decide and the run reports `blocked` (exit 2) naming the path, rather than passing
  * over nothing or dying on an ENOENT that reads like a defect in this file.
+ *
+ * WHY IT IS STILL BLOCKED, AND WHAT WOULD UNBLOCK IT (decided 2026-11-12):
+ *
+ *   The document is one file and only one of its halves is missing from it. The algebra half has authorities that
+ *   already own each part - `ActorDispositionKind` and `KindForWire` for the states, `WorldModel.HoldReasonCode` for
+ *   the causes, `WorldModel.ReadFacts` for `environmentReads`, `FarmhandActionCatalog.ModalResolvingActionIds` /
+ *   `EventActingActionIds` / `ModalFamilyActionsWithoutAnEventPath` joined to the profile rule in
+ *   `ExecutionAdmission.Admit` for `admissibleIn`, and `host/src/stardew-action-remedy.ts` for the remedies - and
+ *   `check-stardew-hold-sufficiency.mjs`'s header names them with their lines.
+ *
+ *   But deriving the algebra and then asserting INV-1/INV-3/INV-4 over it would assert nothing about the Mod: those
+ *   three invariants are properties of a STATEMENT someone makes about the state space, and a producer that builds
+ *   the statement from the code it describes makes every one of them true by construction. What this gate is for is
+ *   the gap between the statement and the code, so the statement has to be somebody's.
+ *
+ *   The row that blocks it today is `orphanHoldResidual`, which is not derivable at all: measured with the companion
+ *   set above against `ref/external/StardewValleyDecompiled` it holds 17 orphan holds and 4 unparsed sites, and 16 of
+ *   the 17 are holds no declared read can name. Each row is a verdict about the ENGINE (`missing_read` /
+ *   `deeper_accompaniment` / `not_a_hold`), and the `missing_read` ones are a change to the Mod's state space. The
+ *   measurement, the verdict vocabulary and the owner are stated once, in `check-stardew-hold-sufficiency.mjs`.
+ *
+ *   When the residual is adjudicated and the algebra authored, this gate checks what its invariants name and nothing
+ *   else: every blocked action is decided in every state, every cause has a remedy that restores the actions it
+ *   blocks, the remedy graph settles at idle, every decision site is adjudicated, no decision keys on a derived
+ *   boolean, and every declared read resolves in the decompiled tree.
  */
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import {
