@@ -100,13 +100,14 @@ const GAME_CONTRACT = ["host", "src", "game-browser-contract", "index.ts"];
  * Test-only source never produces, reads, or bounds a production fact.
  *
  * The suffixes are the ones this tree actually names its scaffolding with, not a guess: `x.test-fixtures.ts` and
- * `x.test-support-internal.ts` sit beside `stardew-private-bootstrap-composer.test.ts` in the Stardew lifecycle, and
+ * `x.test-support-internal.ts` sit beside `stardew-private-bootstrap-composer.private.test.ts` in the Stardew lifecycle, and
  * `stardew-test-fixtures.ts` beside the tests that load mod registrations from it. Misspelling the population here
  * does not hide a defect - it invents one, because a module named as scaffolding has no production surface to
  * report.
  */
-const TEST_PATH =
-  /(\.test\.(?:ts|tsx)$|[-.]test-(?:support|fixtures)(?:-internal)?\.ts$|[\\/](?:test-support|test-fixtures|__tests__)[\\/])/u;
+const TEST_FILE_PATH = /\.test\.(?:ts|tsx)$/u;
+const TEST_SCAFFOLDING_PATH = /[-.]test-(?:support|fixtures)(?:-internal)?\.ts$|[\\/](?:test-support|test-fixtures|__tests__)[\\/]/u;
+const TEST_PATH = new RegExp(`${TEST_FILE_PATH.source}|${TEST_SCAFFOLDING_PATH.source}`, "u");
 
 /**
  * A test that names itself `*.private.test.ts` declares that it pins a production module's internals on purpose.
@@ -2068,6 +2069,24 @@ function referencedInModule(sources, file, name, declaration) {
   return found;
 }
 
+/**
+ * What a `test-only export` finding says about its own case: whether a declaration exists and what withdrew it.
+ *
+ * There are three shapes and one message used to describe all of them as "none is named .private.test.ts", which was
+ * false for two: a sibling `.private.test.ts` can be pinning the export while a plain test beside it - or a
+ * test-support module's import - withdraws the declaration, and scaffolding cannot be renamed to declare because it is
+ * not a test. The reader of a finding needs the shape, so the message states it.
+ */
+function undeclaredReading(root, undeclared, users) {
+  const names = undeclared.map((user) => relativeTo(root, user)).join(", ");
+  const declarers = users.filter((user) => PRIVATE_TEST_PATH.test(user));
+  if (declarers.length === 0)
+    return undeclared.every((user) => TEST_SCAFFOLDING_PATH.test(user))
+      ? `nothing declares that it pins this internal; ${names} reach it and a test-support module cannot be renamed to declare, so the decision is the export or the scaffolding that reaches it`
+      : `nothing declares that it pins this internal, and ${names} reach it without naming themselves .private.test.ts`;
+  return `a .private.test.ts declares that it pins this internal, and ${names} withdraws that declaration by reaching it without the same name`;
+}
+
 function runHygiene(sources) {
   const violations = [];
   const notes = [];
@@ -2133,7 +2152,7 @@ function runHygiene(sources) {
         rank: 4,
         kind: "test-only export",
         where: at(sources.root, declaration, sourceFile, file),
-        message: `${name} is exported and no production code names it; only these tests reach it (${undeclared.map((user) => relativeTo(sources.root, user)).join(", ")}), and none is named .private.test.ts to declare that it pins this internal`,
+        message: `${name} is exported and no production code names it; ${undeclaredReading(sources.root, undeclared, users)}`,
       });
     }
   }
@@ -2576,25 +2595,27 @@ function runDelegated(sources, gate) {
  *
  * Membership is per READING, not per class, and that is the point: a class is a rule, but a reading inside it is a
  * defect or a decision, and the two deserve different answers. `hygiene` carries one of each - `test-only export` is
- * 160 findings of one pattern that one ruling settles, while `suppression directive` and `commented-out code` are site
+ * findings of one pattern that one ruling settles, while `suppression directive` and `commented-out code` are site
  * defects with none today, so those two block and cannot come back unnoticed.
  *
  * A reading belongs here for ONE reason: its findings are a ruling the owner has not taken, so a red from it would veto
  * an unmade decision rather than report a defect this repository already holds wrong. It is not a licence for a rule
  * that cannot read its own fixture - every rule here is proved clean-then-red-then-clean on the scratch tree.
  *
- * `test-only export` (139 today): three populations, and the reading now separates them. A module that exists so a
- * test can mock with it is scaffolding and belongs in a test-support module - `host/src/bridge.ts` was the member of
- * that class and it moved. A production module whose own algorithm a test pins at its boundary is legitimate white-box
- * testing, and the test says so by naming itself `*.private.test.ts`. A module an operator or build harness loads
- * (`tools/`, `host/scripts/`, `dialogue-web/scripts/`, whether it names the source or its build) is not a test-only
- * export either, and that count is printed beside this one. What remains is the export no product, harness or
- * declaring test names. That count only became a reading when the importer detection was resolved (`759b588a`): the
- * scan it replaced keyed importers by the bare name of an `import` declaration, so an export the declaring module
- * itself names was reported as a path with no consumer, and a renamed import cleared the wrong symbol. 286 of the 287
- * findings that fix removed were that shape; the rest moved to the declaration a re-export list aliases. The class now
- * resolves a relative specifier, treats a re-export barrel as transparent, and counts a module's own use of its
- * export, and the 160 that remain are real.
+ * `test-only export`: three populations, and the reading separates them. A module that exists so a test can mock
+ * with it is scaffolding and belongs in a test-support module - `host/src/bridge.ts` was the member of that class and
+ * it moved. A production module whose own algorithm a test pins at its boundary is legitimate white-box testing, and
+ * the test says so by naming itself `*.private.test.ts`. A module an operator or build harness loads (`tools/`,
+ * `host/scripts/`, `dialogue-web/scripts/`, whether it names the source or its build) is not a test-only export
+ * either, and that count is printed beside this one. What remains is the export no product, harness or declaring test
+ * names. That count only became a reading when the importer detection was resolved (`759b588a`): the scan it replaced
+ * keyed importers by the bare name of an `import` declaration, so an export the declaring module itself names was
+ * reported as a path with no consumer, and a renamed import cleared the wrong symbol. 286 of the 287 findings that fix
+ * removed were that shape; the rest moved to the declaration a re-export list aliases. The class now resolves a
+ * relative specifier, treats a re-export barrel as transparent, and counts a module's own use of its export, and what
+ * the run prints as `reached only from tests` is that population - the number is the reading's, on every run, so it is
+ * never restated here. The note line beside it carries the count, the population it examined and how many of the
+ * exports are declared as pinned.
  *
  * Nothing else is listed. `read-path` left this list when the rule learned the namespaced schema reference the product
  * writes (`e9efd15e`), and it reports `0 cap(s) that the projection can exceed`. `bounds`, `fields`, `routes`,
