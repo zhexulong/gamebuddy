@@ -110,6 +110,7 @@ import { fileURLToPath } from "node:url";
 import { actionPaceRecord, compareActionPace, measureActionPace, renderActionPace } from "./lib/action-pace.mjs";
 import { assessBenchmarkArtifact } from "./perf/artifact-readiness.mjs";
 import { benchFiles, caseResults, runSuite } from "./perf/run-benchmarks.mjs";
+import { runWhenEntry } from "./scripts/cli-entry.mjs";
 
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -522,11 +523,4 @@ async function checkMicrobenchmarks({ root, argv, paceFailed }) {
   return 1;
 }
 
-if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  try {
-    process.exitCode = await main(process.argv.slice(2));
-  } catch (error) {
-    process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
-    process.exitCode = 2;
-  }
-}
+await runWhenEntry(import.meta.url, main);

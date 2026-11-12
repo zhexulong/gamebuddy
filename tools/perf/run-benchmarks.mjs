@@ -17,6 +17,7 @@ import { mkdirSync, readdirSync, statSync } from "node:fs";
 import { basename, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { runWhenEntry } from "../scripts/cli-entry.mjs";
 import { PERF_RESULT_MARKER } from "./harness.mjs";
 
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
@@ -108,11 +109,4 @@ function main(argv) {
   return failed === 0 ? 0 : 1;
 }
 
-if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  try {
-    process.exitCode = main(process.argv.slice(2));
-  } catch (error) {
-    process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
-    process.exitCode = 2;
-  }
-}
+await runWhenEntry(import.meta.url, main);

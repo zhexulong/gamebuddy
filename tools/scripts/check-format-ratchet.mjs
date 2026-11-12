@@ -51,6 +51,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describeUntracked, untrackedSources } from "../lib/indexed-sources.mjs";
 import { cleanOutputLines } from "../lib/subprocess-output.mjs";
+import { runWhenEntry } from "./cli-entry.mjs";
 
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
 
@@ -247,11 +248,4 @@ function main(argv) {
   return 1;
 }
 
-if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  try {
-    process.exitCode = main(process.argv.slice(2));
-  } catch (error) {
-    process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
-    process.exitCode = 2;
-  }
-}
+await runWhenEntry(import.meta.url, main);

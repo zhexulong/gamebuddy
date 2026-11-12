@@ -42,6 +42,8 @@ import { readFileSync, statSync, writeFileSync } from "node:fs";
 import { dirname, extname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { runWhenEntry } from "./cli-entry.mjs";
+
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
 
 /** 单一文件的物理行数（含尾行）上限，每个扩展名一个，理由见文件头。 */
@@ -215,11 +217,4 @@ function main(argv) {
   return 0;
 }
 
-if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  try {
-    process.exitCode = main(process.argv.slice(2));
-  } catch (error) {
-    process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
-    process.exitCode = 2;
-  }
-}
+await runWhenEntry(import.meta.url, main);

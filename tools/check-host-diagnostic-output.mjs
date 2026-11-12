@@ -87,6 +87,7 @@ import { dirname, join, resolve } from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 import { isProductionSource, listSources, sourcePath } from "./lib/host-production-sources.mjs";
+import { runWhenEntry } from "./scripts/cli-entry.mjs";
 
 const REPOSITORY_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 export const HOST_SOURCE = join(REPOSITORY_ROOT, "host", "src");
@@ -273,11 +274,4 @@ function failMarkers(violations) {
   return 1;
 }
 
-if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  try {
-    process.exitCode = main(process.argv.slice(2));
-  } catch (error) {
-    process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
-    process.exitCode = 2;
-  }
-}
+await runWhenEntry(import.meta.url, main);
