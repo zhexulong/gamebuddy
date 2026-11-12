@@ -132,21 +132,22 @@ function harness() {
 const settle = () => new Promise<void>((resolve) => setTimeout(resolve, 25));
 
 /**
- * One pump-level delivered turn: the loop's production report, then a fact so `flush` has something to deliver.
+ * One pump-level delivered turn: the loop's production report, then the caller's own text so `flush` has something to
+ * deliver.
  *
- * A `lifecycle` fact and not a `time_milestone`: a milestone is a WORLD CHANGE, and five of them would make a stale
- * reading due and legitimately outrank the narration run this file is measuring.
+ * PLAYER INPUT, because that is what these turns were: every one of round45's 97 prompt turns was opened by the harness
+ * asking her to carry on, and `player_input` is the member of the closed list that says so. A FACT cannot stand in for it
+ * any more - a fact repeated verbatim is not a reason to open a turn (`TURN_OPENING`) - and inventing a distinct fact per
+ * turn would be measuring the fixture instead of the narration run.
  */
 async function deliverTurn(pump: CompanionEventPump, production: TurnProduction, index: number): Promise<void> {
   pump.turnProduction = production;
-  pump.enqueueFact({
-    source: "arcade_adapter",
-    kind: "lifecycle",
-    eventId: `lifecycle_${index}`,
-    occurredAtMs: Date.now(),
-    correlationId: `lifecycle_${index}`,
-    revision: index,
-    payload: { state: "connected" },
+  pump.enqueuePlayerInput({
+    source: "player_text",
+    inputId: `carry_on_${String(index)}`,
+    text: "接着做。",
+    locale: "zh-CN",
+    timestampMs: Date.now(),
   });
   await pump.flush({ deliver: async (): Promise<CompanionTurnOutcome> => "completed" });
 }
