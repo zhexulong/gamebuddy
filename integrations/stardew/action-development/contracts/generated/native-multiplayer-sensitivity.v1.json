@@ -78,9 +78,14 @@
     "bait_crab_pot",
     "place_owned_object",
     "remove_placed_item",
-    "break_container_source",
-    "chop_tree_source",
-    "break_rock_source",
+    "move_placed_furniture",
+    "break_container",
+    "rotate_furniture",
+    "remove_fence",
+    "put_item_in_fish_tank",
+    "place_item_on_pedestal",
+    "chop_tree",
+    "break_rock",
     "clear_hoedirt",
     "dig_artifact_spot",
     "refill_watering_can",
@@ -89,8 +94,11 @@
     "observe_scene",
     "navigate_to_destination",
     "clear_debris",
+    "break_resource_clump",
+    "fish_here",
     "npc_relationship",
     "pet_animal",
+    "pet_farm_animal",
     "water_pet_bowl",
     "water_slime_hutch_trough",
     "interact_npc_with_item",
@@ -117,6 +125,7 @@
     "load_building_chest",
     "collect_building_chest_output",
     "scythe_crop",
+    "sweep_scythe",
     "harvest_bush",
     "harvest_fruit_tree",
     "shake_tree",
@@ -133,7 +142,7 @@
     "dismiss_modal",
     "answer_dialogue",
     "respond_level_up",
-    "advance_day",
+    "sleep",
     "send_multiplayer_chat",
     "color_placed_object",
     "clear_fish_pond",
@@ -144,7 +153,8 @@
     "name_entity",
     "redeem_prize_ticket",
     "tailor_clothing",
-    "dye_clothing_with_item"
+    "dye_clothing_with_item",
+    "open_geode"
   ],
   "actions": [
     {
@@ -303,7 +313,7 @@
     },
     {
       "actionId": "use_mine_ladder",
-      "lifecycle": "experimental",
+      "lifecycle": "live_verified",
       "seams": [
         {
           "kind": "native",
@@ -649,7 +659,24 @@
       "requiredLiveTopology": "single_player_native_companion"
     },
     {
-      "actionId": "break_container_source",
+      "actionId": "move_placed_furniture",
+      "lifecycle": "live_verified",
+      "seams": [
+        {
+          "kind": "native",
+          "file": "StardewValley.Objects/Furniture.cs",
+          "signature": "public override void performRemoveAction()",
+          "sensitivity": "mp-insensitive",
+          "modeNeutralReason": "performRemoveAction reads no multiplayer token: it removes the piece's own lights, clears a fireplace's on-state, drops its own light glow and clears the sitting-farmer list the piece owns. The collection removal and the backpack write that complete the pickup are calls on the same piece, in the order the game's own protected removeQueuedFurniture performs them, so the piece leaves the room and lands in the pack identically in both world modes."
+        }
+      ],
+      "admission": {
+        "verdict": "admits_multiplayer"
+      },
+      "requiredLiveTopology": "single_player_native_companion"
+    },
+    {
+      "actionId": "break_container",
       "lifecycle": "live_verified",
       "seams": [
         {
@@ -666,7 +693,75 @@
       "requiredLiveTopology": "single_player_native_companion"
     },
     {
-      "actionId": "chop_tree_source",
+      "actionId": "rotate_furniture",
+      "lifecycle": "experimental",
+      "seams": [
+        {
+          "kind": "native",
+          "file": "StardewValley.Objects/Furniture.cs",
+          "signature": "public virtual void rotate()",
+          "sensitivity": "mp-insensitive",
+          "modeNeutralReason": "rotate steps the piece's own currentRotation by the cycle its own rotations field declares and then re-derives every derived field through updateRotation(); neither body reads a multiplayer token. The occupancy probe the handler gates the turn on (Furniture.canBePlacedHere) answers from the location's own furniture, objects and blocking layer, so a turn is refused for the same reason in both world modes."
+        }
+      ],
+      "admission": {
+        "verdict": "admits_multiplayer"
+      },
+      "requiredLiveTopology": "single_player_native_companion"
+    },
+    {
+      "actionId": "remove_fence",
+      "lifecycle": "experimental",
+      "seams": [
+        {
+          "kind": "native",
+          "file": "StardewValley.Tools/Pickaxe.cs",
+          "signature": "public override void DoFunction(GameLocation location, int x, int y, int power, Farmer who)",
+          "sensitivity": "mp-observational",
+          "observedEffect": "the fence is removed by Fence.performToolAction, reached from this swing or the Axe's. The token reads on the path are the collateral pair DoFunction[8b05472c5f84fb92] carries for its own break branch: Game1.multiplayer.broadcastSprites mirrors an already-applied sprite, and Game1.createObjectDebris(..., who.UniqueMultiplayerID, location) takes the id only as the debris origin. Fence.performToolAction reads the same pair for the same purpose (its chip spray and its debris origin), while the removal, the held-object drop and the objects.Remove are mode-independent."
+        }
+      ],
+      "admission": {
+        "verdict": "admits_multiplayer"
+      },
+      "requiredLiveTopology": "single_player_native_companion"
+    },
+    {
+      "actionId": "put_item_in_fish_tank",
+      "lifecycle": "experimental",
+      "seams": [
+        {
+          "kind": "native",
+          "file": "StardewValley.Objects/FishTankFurniture.cs",
+          "signature": "public override bool checkForAction(Farmer who, bool justCheckingForActivity = false)",
+          "sensitivity": "mp-insensitive",
+          "modeNeutralReason": "checkForAction consumes one of the acting farmer's stack into the tank's own heldItems under the tank's own NetMutex and updates the tank's own category capacity; no multiplayer token is read. The mutex is a NetMutex, which exists and is uncontended in single-player too, so the lock is a propagation detail rather than a fork in this method."
+        }
+      ],
+      "admission": {
+        "verdict": "admits_multiplayer"
+      },
+      "requiredLiveTopology": "single_player_native_companion"
+    },
+    {
+      "actionId": "place_item_on_pedestal",
+      "lifecycle": "experimental",
+      "seams": [
+        {
+          "kind": "native",
+          "file": "StardewValley.Objects/ItemPedestal.cs",
+          "signature": "public override bool performObjectDropInAction(Item dropInItem, bool probe, Farmer who, bool returnFalseIfItemConsumed = false)",
+          "sensitivity": "mp-insensitive",
+          "modeNeutralReason": "performObjectDropInAction reads no multiplayer token: it refuses a locked pedestal and an untrashable item, drops a held item through DropObject, and otherwise takes the item's copy into heldObject under the pedestal's own itemModifyMutex and re-derives the pedestal's match flag. That mutex exists in single-player too, so the lock is a propagation detail rather than a fork in this method."
+        }
+      ],
+      "admission": {
+        "verdict": "admits_multiplayer"
+      },
+      "requiredLiveTopology": "single_player_native_companion"
+    },
+    {
+      "actionId": "chop_tree",
       "lifecycle": "published",
       "seams": [
         {
@@ -682,7 +777,7 @@
       "requiredLiveTopology": "single_player_native_companion"
     },
     {
-      "actionId": "break_rock_source",
+      "actionId": "break_rock",
       "lifecycle": "published",
       "seams": [
         {
@@ -826,6 +921,40 @@
       "requiredLiveTopology": "single_player_native_companion"
     },
     {
+      "actionId": "break_resource_clump",
+      "lifecycle": "experimental",
+      "seams": [
+        {
+          "kind": "native",
+          "file": "StardewValley.Tools/Pickaxe.cs",
+          "signature": "public override void DoFunction(GameLocation location, int x, int y, int power, Farmer who)",
+          "sensitivity": "mp-observational",
+          "observedEffect": "the clump's health and its removal are ResourceClump.performToolAction's, and that body reads no multiplayer token. The token reads on the path are this seam's own break branch (DoFunction[8b05472c5f84fb92]): Game1.multiplayer.broadcastSprites mirrors an already-applied break sprite, and Game1.createObjectDebris(..., who.UniqueMultiplayerID, location) uses the id only as the debris origin, so the clump that dies is the same clump in both world modes."
+        }
+      ],
+      "admission": {
+        "verdict": "admits_multiplayer"
+      },
+      "requiredLiveTopology": "single_player_native_companion"
+    },
+    {
+      "actionId": "fish_here",
+      "lifecycle": "published",
+      "seams": [
+        {
+          "kind": "native",
+          "file": "StardewValley.Tools/FishingRod.cs",
+          "signature": "public override void DoFunction(GameLocation location, int x, int y, int power, Farmer who)",
+          "sensitivity": "mp-observational",
+          "observedEffect": "DoFunction opens with `who = who ?? lastUser; if (fishCaught || (!who.IsLocalPlayer && (isReeling || isFishing || pullingOutOfWater))) return;`, and this seam has one caller in the product: the Mod's own cast, which passes `Game1.player` (`farmhandexecutioncontroller.fishingactions.cs`, `ExecuteFishHere`, `rod.DoFunction(location, targetX, targetY, 1, Game1.player)`). `Game1.player` IS the local player on any client, so the guard is false on every dispatch this action makes and no branch can differ - the read observes which client is casting, it does not select an outcome. The stamina spend, the cast count and the bite delay the same body applies are mode-independent."
+        }
+      ],
+      "admission": {
+        "verdict": "admits_multiplayer"
+      },
+      "requiredLiveTopology": "single_player_native_companion"
+    },
+    {
       "actionId": "npc_relationship",
       "lifecycle": "live_verified",
       "seams": [
@@ -856,6 +985,23 @@
         "verdict": "admits_multiplayer"
       },
       "requiredLiveTopology": "shared_world_multiplayer"
+    },
+    {
+      "actionId": "pet_farm_animal",
+      "lifecycle": "live_verified",
+      "seams": [
+        {
+          "kind": "native",
+          "file": "StardewValley/FarmAnimal.cs",
+          "signature": "public void pet(Farmer who, bool is_auto_pet = false)",
+          "sensitivity": "mp-insensitive",
+          "modeNeutralReason": "pet reads no multiplayer token: it returns early for an animal whose own wasPet flag is already set, spends a held golden cracker through the acting farmer, and otherwise adds friendship and happiness to the animal's own fields. The day marker belongs to the animal rather than to a farmer, so no branch of this body asks which world mode it is running in; a second farmer's pet in the same day is refused by the handler's own admission, not silently zeroed here."
+        }
+      ],
+      "admission": {
+        "verdict": "admits_multiplayer"
+      },
+      "requiredLiveTopology": "single_player_native_companion"
     },
     {
       "actionId": "water_pet_bowl",
@@ -1293,6 +1439,23 @@
       "requiredLiveTopology": "single_player_native_companion"
     },
     {
+      "actionId": "sweep_scythe",
+      "lifecycle": "experimental",
+      "seams": [
+        {
+          "kind": "native",
+          "file": "StardewValley.Tools/MeleeWeapon.cs",
+          "signature": "public virtual void DoDamage(GameLocation location, int x, int y, int facingDirection, int power, Farmer who)",
+          "sensitivity": "mp-observational",
+          "observedEffect": "DoDamage opens with `if (!who.IsLocalPlayer) { return; }`, and this seam's only caller in the product passes `Game1.player` (the Mod's `UseNativeMeleeSweep`, farmhandexecutioncontroller.cs:4721-4732, called from `ExecuteSweepScythe` with `Game1.player`). `Game1.player` IS the local player on any client, so the guard is false on every dispatch this action makes and no branch can differ - the read observes which client is swinging, it does not select an outcome. The cut itself (damageMonster, the three performToolAction calls and the terrain/object removals they answer) is mode-independent."
+        }
+      ],
+      "admission": {
+        "verdict": "admits_multiplayer"
+      },
+      "requiredLiveTopology": "single_player_native_companion"
+    },
+    {
       "actionId": "harvest_bush",
       "lifecycle": "live_verified",
       "seams": [
@@ -1551,6 +1714,23 @@
       "requiredLiveTopology": "single_player_native_companion"
     },
     {
+      "actionId": "answer_dialogue",
+      "lifecycle": "live_verified",
+      "seams": [
+        {
+          "kind": "native",
+          "file": "StardewValley/GameLocation.cs",
+          "signature": "public virtual bool answerDialogue(Response answer)",
+          "sensitivity": "mp-insensitive",
+          "modeNeutralReason": "answerDialogue dispatches to afterQuestion/answerDialogueAction on the local location and starts the DialogueBox outro (beginOutro); the question modal and its responses are client-side UI state with no multiplayer read or write on the path, and the Mod never touches a net field for the receipt"
+        }
+      ],
+      "admission": {
+        "verdict": "admits_multiplayer"
+      },
+      "requiredLiveTopology": "single_player_native_companion"
+    },
+    {
       "actionId": "respond_level_up",
       "lifecycle": "live_verified",
       "seams": [
@@ -1575,24 +1755,7 @@
       "requiredLiveTopology": "single_player_native_companion"
     },
     {
-      "actionId": "answer_dialogue",
-      "lifecycle": "live_verified",
-      "seams": [
-        {
-          "kind": "native",
-          "file": "StardewValley/GameLocation.cs",
-          "signature": "public virtual bool answerDialogue(Response answer)",
-          "sensitivity": "mp-insensitive",
-          "modeNeutralReason": "answerDialogue dispatches to afterQuestion/answerDialogueAction on the local location and starts the DialogueBox outro (beginOutro); the question modal and its responses are client-side UI state with no multiplayer read or write on the path, and the Mod never touches a net field for the receipt"
-        }
-      ],
-      "admission": {
-        "verdict": "admits_multiplayer"
-      },
-      "requiredLiveTopology": "single_player_native_companion"
-    },
-    {
-      "actionId": "advance_day",
+      "actionId": "sleep",
       "lifecycle": "live_verified",
       "seams": [
         {
@@ -1630,11 +1793,9 @@
       "lifecycle": "live_verified",
       "seams": [
         {
-          "kind": "native",
-          "file": "StardewValley.Menus/DiscreteColorPicker.cs",
-          "signature": "public override void receiveLeftClick(int x, int y, bool playSound = true)",
-          "sensitivity": "mp-insensitive",
-          "modeNeutralReason": "the write is a public NetColor assignment on the chest plus the game's own lid refresh; its body reads no"
+          "kind": "mod_owned",
+          "authority": "Chest.playerChoiceColor",
+          "sensitivity": "mp-insensitive"
         }
       ],
       "admission": {
@@ -1748,11 +1909,9 @@
       "lifecycle": "live_verified",
       "seams": [
         {
-          "kind": "native",
-          "file": "StardewValley.Locations/LibraryMuseum.cs",
-          "signature": "public void OnRewardCollected(Item item, Farmer who)",
-          "sensitivity": "mp-insensitive",
-          "modeNeutralReason": "the redemption acts on the actor's own inventory and stats; no multiplayer-decisive token is read."
+          "kind": "mod_owned",
+          "authority": "Game1.stats.ticketPrizesClaimed",
+          "sensitivity": "mp-insensitive"
         }
       ],
       "admission": {
@@ -1787,6 +1946,30 @@
           "signature": "public bool DyeItems(Clothing clothing, Item dye_object, float dye_strength_override = -1f)",
           "sensitivity": "mp-insensitive",
           "modeNeutralReason": "the colour comes from the dye item's own context tags; no multiplayer-decisive token is read."
+        }
+      ],
+      "admission": {
+        "verdict": "admits_multiplayer"
+      },
+      "requiredLiveTopology": "single_player_native_companion"
+    },
+    {
+      "actionId": "open_geode",
+      "lifecycle": "experimental",
+      "seams": [
+        {
+          "kind": "native",
+          "file": "StardewValley.Menus/GeodeMenu.cs",
+          "signature": "public override void receiveLeftClick(int x, int y, bool playSound = true)",
+          "sensitivity": "mp-insensitive",
+          "modeNeutralReason": "the only shared reads on this path are the golden-coconut branch: Game1.netWorldState.Value.GoldenCoconutCracked and Game1.player.team.goldenCoconutMutex. Both exist in single-player too - a netWorldState and a FarmerTeam are populated there - so what they decide is a WORLD fact (whether this save's golden coconut is already spent), not a difference between the two world modes. The fee, the stack consumption and the animation this click starts are the local player's own."
+        },
+        {
+          "kind": "native",
+          "file": "StardewValley.Menus/GeodeMenu.cs",
+          "signature": "public override void update(GameTime time)",
+          "sensitivity": "mp-insensitive",
+          "modeNeutralReason": "the treasure is minted from the game's own table and delivered through Game1.player.addItemToInventoryBool; the one shared write is Game1.netWorldState.Value.GoldenCoconutCracked = true for the golden coconut, a world fact that exists in single-player too. Nothing in the body asks which world mode it is running in."
         }
       ],
       "admission": {

@@ -177,6 +177,27 @@ const TABLE = {
     "mp-observational",
     `Game1.multiplayer.broadcastSprites at ${cite("StardewValley.Tools/Pickaxe.cs", "DoFunction")} mirrors an already-applied break sprite, and Game1.createObjectDebris(..., who.UniqueMultiplayerID, location) in the same method uses the id only for getFarmer(id).getStandingPosition() as the debris origin (${cite("StardewValley/Game1.cs", "getFarmer")}) while still adding to location.debris; the stone removal in the same method is mode-independent`,
   ],
+  // A resource clump (stump/log at parentSheetIndex 600/602, boulder at 148/622) is
+  // destroyed inside `ResourceClump.performToolAction`, whose own body reads no
+  // multiplayer token and which refuses every tool but the one its own index names. The
+  // handler's swing is the tool's `DoFunction`, so the Pickaxe ingress below carries this
+  // action's only token reads and dominates - the same reading `remove_placed_item`
+  // records for the same pair.
+  break_resource_clump: [
+    "StardewValley.Tools/Pickaxe.cs",
+    "public override void DoFunction(GameLocation location, int x, int y, int power, Farmer who)",
+    "mp-observational",
+    `the clump's health and its removal are ResourceClump.performToolAction's, and that body reads no multiplayer token. The token reads on the path are this seam's own break branch (${cite("StardewValley.Tools/Pickaxe.cs", "DoFunction")}): Game1.multiplayer.broadcastSprites mirrors an already-applied break sprite, and Game1.createObjectDebris(..., who.UniqueMultiplayerID, location) uses the id only as the debris origin, so the clump that dies is the same clump in both world modes.`,
+  ],
+  // One cast: `beginUsing` records the facing and the last user, `DoFunction` spends the
+  // stamina, counts the cast and starts the rod's own state machine; the bite, the catch
+  // and the landing are the engine's tool tick from there on.
+  fish_here: [
+    "StardewValley.Tools/FishingRod.cs",
+    "public override void DoFunction(GameLocation location, int x, int y, int power, Farmer who)",
+    "mp-observational",
+    "DoFunction opens with `who = who ?? lastUser; if (fishCaught || (!who.IsLocalPlayer && (isReeling || isFishing || pullingOutOfWater))) return;`, and this seam has one caller in the product: the Mod's own cast, which passes `Game1.player` (`farmhandexecutioncontroller.fishingactions.cs`, `ExecuteFishHere`, `rod.DoFunction(location, targetX, targetY, 1, Game1.player)`). `Game1.player` IS the local player on any client, so the guard is false on every dispatch this action makes and no branch can differ - the read observes which client is casting, it does not select an outcome. The stamina spend, the cast count and the bite delay the same body applies are mode-independent.",
+  ],
   clear_hoedirt: [
     "StardewValley.Tools/Pickaxe.cs",
     "public override void DoFunction(GameLocation location, int x, int y, int power, Farmer who)",
@@ -210,6 +231,18 @@ const TABLE = {
     "public override bool checkAction",
     "mp-semantic",
     `lastPetDay is keyed by who.UniqueMultiplayerID, but the +12 friendship in the same method is gated on grantedFriendshipForPet, a single per-pet NetBool reset daily, and friendshipTowardFarmer is a single per-pet NetInt. If another farmer already petted that pet today, this action still returns handled and emotes but grants 0 friendship, so the friendship delta differs by world mode (${cite("StardewValley.Characters/Pet.cs", "checkAction")})`,
+  ],
+  // Barn/coop stock, not the household pet: `FarmAnimal.pet(who)` is the same native call
+  // the player's own click route makes. Its outcome marker (`wasPet`) and its friendship
+  // are the ANIMAL's own fields, not a farmer-keyed entry, so the manual branch it takes is
+  // decided by the animal's state in both world modes. That the marker is one daily flag per
+  // animal is why the handler refuses `farm_animal_already_petted_today` before calling it,
+  // instead of reporting a pet the seam would not apply.
+  pet_farm_animal: [
+    "StardewValley/FarmAnimal.cs",
+    "public void pet(Farmer who, bool is_auto_pet = false)",
+    "mp-insensitive",
+    "pet reads no multiplayer token: it returns early for an animal whose own wasPet flag is already set, spends a held golden cracker through the acting farmer, and otherwise adds friendship and happiness to the animal's own fields. The day marker belongs to the animal rather than to a farmer, so no branch of this body asks which world mode it is running in; a second farmer's pet in the same day is refused by the handler's own admission, not silently zeroed here.",
   ],
   pickup_forage: ["StardewValley/Game1.cs", "public static bool tryToCheckAt", "mp-insensitive"],
   enter_exit: ["StardewValley/Farmer.cs", "public void warpFarmer(", "mp-insensitive"],
@@ -304,6 +337,19 @@ const TABLE = {
     "mp-observational",
     `Game1.multiplayer.broadcastSprites at ${cite("StardewValley/Object.cs", "performToolAction")} mirrors the twig sprite; Game1.netWorldState.Value.TreasureTotemsUsed belongs to the artifact-spot branch of the same method and only seeds Utility.CreateDaySaveRandom, which is populated in single-player too`,
   ],
+  // The scythe sweep is `MeleeWeapon.DoDamage`, called once per sampled sweep index by the
+  // Mod's own `UseNativeMeleeSweep` (`farmhandexecutioncontroller.cs:4721-4732`). One entry
+  // covers the whole arc, because DoDamage is the one native method that reaches all three
+  // tile occupants the arc can cut - `Object.performToolAction` (weeds),
+  // `TerrainFeature.performToolAction` (grass, scythe crops) and
+  // `GameLocation.performToolAction` - so a per-occupant seam would be three partial
+  // answers instead of one true one.
+  sweep_scythe: [
+    "StardewValley.Tools/MeleeWeapon.cs",
+    "public virtual void DoDamage(GameLocation location, int x, int y, int facingDirection, int power, Farmer who)",
+    "mp-observational",
+    "DoDamage opens with `if (!who.IsLocalPlayer) { return; }`, and this seam's only caller in the product passes `Game1.player` (the Mod's `UseNativeMeleeSweep`, farmhandexecutioncontroller.cs:4721-4732, called from `ExecuteSweepScythe` with `Game1.player`). `Game1.player` IS the local player on any client, so the guard is false on every dispatch this action makes and no branch can differ - the read observes which client is swinging, it does not select an outcome. The cut itself (damageMonster, the three performToolAction calls and the terrain/object removals they answer) is mode-independent.",
+  ],
   use_item: [
     "StardewValley/Farmer.cs",
     "public void eatObject(",
@@ -346,6 +392,26 @@ const TABLE = {
       "public Item leftClick(int x, int y, Item toPlace, bool playSound = true)",
       "mp-insensitive",
       "Places the held item into the LOCAL player inventory slots.",
+    ],
+  ],
+  // The blacksmith's counter opens the game's own GeodeMenu through the engine's own action
+  // case, and the Mod then drives that menu: `receiveRightClick` moves the geode onto the
+  // cursor through the menu's own inventory, `receiveLeftClick` is the smash (the fee, the
+  // stack consumption and the animation start), and the menu's own `update` mints the
+  // treasure when Clint's animation reaches frame 11 and delivers it. Nothing here
+  // re-implements the fee, the drop table or the delivery.
+  open_geode: [
+    [
+      "StardewValley.Menus/GeodeMenu.cs",
+      "public override void receiveLeftClick(int x, int y, bool playSound = true)",
+      "mp-insensitive",
+      "the only shared reads on this path are the golden-coconut branch: Game1.netWorldState.Value.GoldenCoconutCracked and Game1.player.team.goldenCoconutMutex. Both exist in single-player too - a netWorldState and a FarmerTeam are populated there - so what they decide is a WORLD fact (whether this save's golden coconut is already spent), not a difference between the two world modes. The fee, the stack consumption and the animation this click starts are the local player's own.",
+    ],
+    [
+      "StardewValley.Menus/GeodeMenu.cs",
+      "public override void update(GameTime time)",
+      "mp-insensitive",
+      "the treasure is minted from the game's own table and delivered through Game1.player.addItemToInventoryBool; the one shared write is Game1.netWorldState.Value.GoldenCoconutCracked = true for the golden coconut, a world fact that exists in single-player too. Nothing in the body asks which world mode it is running in.",
     ],
   ],
   ride_bus: [
@@ -428,13 +494,15 @@ const TABLE = {
     "the reward set is derived from the player's own donation flags and the game's data table; the mail flags and",
     "recipes the grant writes are the same world facts in any session - no multiplayer-decisive token is read.",
   ],
-  // Prize-ticket redemption: the prize track head is the game's own ticketPrizesClaimed stat; the subject is the actor's own stack.
-  redeem_prize_ticket: [
-    "StardewValley.Locations/LibraryMuseum.cs",
-    "public void OnRewardCollected(Item item, Farmer who)",
-    "mp-insensitive",
-    "the redemption acts on the actor's own inventory and stats; no multiplayer-decisive token is read.",
-  ],
+  // Prize-ticket redemption has NO callable native settlement: the game's own path runs through
+  // `LibraryMuseum.OnRewardCollected` from the prize menu's callback, and this handler calls it
+  // nowhere (`git grep OnRewardCollected integrations/stardew` finds exactly one call site,
+  // `museumrewards.cs:139`, which belongs to `claim_museum_reward`). The Mod performs the whole
+  // mutation itself on public members: `addItemToInventoryBool(prize)`,
+  // `player.Items.ReduceId("(O)PrizeTicket", 1)` and
+  // `Game1.stats.Increment("ticketPrizesClaimed")`. So the seam is mod_owned, the same reading
+  // `npc_relationship` and `equip_tool` record for a mutation the Mod writes itself.
+  redeem_prize_ticket: ["mod_owned", "Game1.stats.ticketPrizesClaimed"],
   // Tailoring craft: the sewing machine's table drives it; a backpack-local exchange.
   tailor_clothing: [
     "StardewValley.Menus/TailoringMenu.cs",
@@ -449,15 +517,15 @@ const TABLE = {
     "mp-insensitive",
     "the colour comes from the dye item's own context tags; no multiplayer-decisive token is read.",
   ],
-  // The chest repaint: the game has no callable settlement, so the action reproduces the two public statements
-  // inside the picker's click handler against the chest the caller means.
-  color_placed_object: [
-    "StardewValley.Menus/DiscreteColorPicker.cs",
-    "public override void receiveLeftClick(int x, int y, bool playSound = true)",
-    "mp-insensitive",
-    "the write is a public NetColor assignment on the chest plus the game's own lid refresh; its body reads no",
-    "multiplayer-decisive token, and the palette comes from the game's own public map.",
-  ],
+  // The chest repaint has NO callable native settlement either: the palette lives in
+  // `DiscreteColorPicker.receiveLeftClick` (DiscreteColorPicker.cs:75-79), which this handler
+  // never calls (`git grep receiveLeftClick integrations/stardew` finds it only in
+  // `NpcDialoguePager.cs`, a different surface, and in this file's own header as a citation).
+  // The Mod writes the two statements that handler performs against the chest it means -
+  // `chest.playerChoiceColor.Value = <palette colour>` and `chest.resetLidFrame()` - and reads
+  // the palette through the public `DiscreteColorPicker.getColorFromSelection`. So the seam is
+  // mod_owned, the same reading `npc_relationship` and `equip_tool` record.
+  color_placed_object: ["mod_owned", "Chest.playerChoiceColor"],
   build_farm_building: [
     "StardewValley/GameLocation.cs",
     "public bool buildStructure(string typeId, BuildingData data, Vector2 tileLocation, Farmer who, out Building constructed, bool magicalConstruction = false, bool skipSafetyChecks = false)",
@@ -520,13 +588,13 @@ const TABLE = {
     "mp-observational",
     `Game1.multiplayer.broadcastSprites at ${cite("StardewValley.Tools/WateringCan.cs", "DoFunction")} mirrors an already-applied water sprite (Multiplayer.broadcastSprites adds to location.temporarySprites first, then returns when !Game1.IsMultiplayer); the trough write reached through SlimeHutch.performToolAction is mode-independent`,
   ],
-  // The cross-day lifecycle. The Mod answers the game-owned Sleep question
-  // (`GameLocation.answerDialogue`) exactly as the native input paths do; the
-  // outcome fork lives one step further in `startSleep`: single-player calls
-  // `doSleep()` directly, while a shared world sets the local native ready flag and
-  // installs a ReadyCheckDialog whose confirm callback is the only path to
-  // `doSleep()`. The day therefore advances on a different trigger.
-  advance_day: [
+  // The cross-day lifecycle, registered as `sleep`. The Mod answers the game-owned Sleep
+  // question (`GameLocation.answerDialogue`) exactly as the native input paths do; the
+  // outcome fork lives one step further in `startSleep`: single-player calls `doSleep()`
+  // directly, while a shared world sets the local native ready flag and installs a
+  // ReadyCheckDialog whose confirm callback is the only path to `doSleep()`. The day
+  // therefore advances on a different trigger.
+  sleep: [
     "StardewValley/GameLocation.cs",
     "private void startSleep()",
     "mp-semantic",
@@ -560,6 +628,24 @@ const TABLE = {
   // Loop-closure wave (2026-10-04): 14 actions integrated from the
   // plants/facility/transport lanes. Each seam mirrors the lane's native entry;
   // the classification follows the same rules as their existing families.
+  // The level-up card is the game's own modal and closing it is the settlement: an ordinary
+  // level through `okButtonClicked` (getLevelPerk then RemoveLevelFromLevelList), a
+  // profession through the sequence the menu's mouse handler performs. Both act on the
+  // LOCAL farmer's own stats and profession set.
+  respond_level_up: [
+    [
+      "StardewValley.Menus/LevelUpMenu.cs",
+      "public void okButtonClicked()",
+      "mp-insensitive",
+      "okButtonClicked settles the LOCAL player's own level: getLevelPerk writes that player's stats and mail, RemoveLevelFromLevelList drops the menu's own newLevels entry, and the two flags are client-side UI. No shared-world state is read or written.",
+    ],
+    [
+      "StardewValley.Menus/LevelUpMenu.cs",
+      "public void getImmediateProfessionPerk(int whichProfession)",
+      "mp-insensitive",
+      "getImmediateProfessionPerk adds the chosen profession id to the local player's own professions set and applies its immediate stat effects; the body forks on nothing world-mode related. THAT THE FIELD IS A SYNCED NetIntHashSet is a propagation question for a shared world, not a fork in this method, and this action's live evidence so far is single-player only - which `requiredLiveTopology` states.",
+    ],
+  ],
   harvest_bush: [
     "StardewValley.TerrainFeatures/Bush.cs",
     "public void shake(Vector2 tileLocation, bool doEvenIfStillShaking)",
@@ -641,6 +727,58 @@ const TABLE = {
     "Game1.multiplayer.broadcastSprites in the break branch mirrors chip sprites for a container the SAME method has already removed from location.objects, so the read is collateral; the removal and the releaseContents drop creation are mode-independent, and the method returns false in every path",
     "the handler calls the TOOL's DoFunction, which delegates: Axe.DoFunction reaches value2.performToolAction(this) then value2.performRemoveAction() (Axe.cs:88-94), and that is where the container is actually removed. The register cites the entry point the Mod calls; the delegation is recorded here so the terminal is still named.",
     "the body reads no multiplayer token, which is this checker's own test for mp-insensitive. The removal itself happens one level deeper: Axe.DoFunction reaches value2.performToolAction(this) and then value2.performRemoveAction() (Axe.cs:88-94), which is where the container leaves the map.",
+  ],
+  // The furniture-and-decoration lane: four actions on a piece that ALREADY stands in
+  // the room. `location.furniture` is a collection with no key, so a tile plus the opaque
+  // id selects the piece; each action then calls the piece's own native method.
+  //
+  // The game's own furniture pickup is `GameLocation.removeQueuedFurniture`
+  // (GameLocation.cs:8074-8101) - `protected`, and driven by the click queue - so the Mod
+  // performs the same three public steps on the same piece: the native
+  // `performRemoveAction`, the removal from `location.furniture`, then the backpack. The
+  // native removal is the seam cited; the other two are calls on that same piece.
+  move_placed_furniture: [
+    "StardewValley.Objects/Furniture.cs",
+    "public override void performRemoveAction()",
+    "mp-insensitive",
+    "performRemoveAction reads no multiplayer token: it removes the piece's own lights, clears a fireplace's on-state, drops its own light glow and clears the sitting-farmer list the piece owns. The collection removal and the backpack write that complete the pickup are calls on the same piece, in the order the game's own protected removeQueuedFurniture performs them, so the piece leaves the room and lands in the pack identically in both world modes.",
+  ],
+  // The turn is the piece's own `rotate()` (Furniture.cs:1153-1162) plus the bookkeeping
+  // half `updateRotation()`; the occupancy question is `Furniture.canBePlacedHere`, which
+  // the handler asks AFTER the turn and reverts on a refusal.
+  rotate_furniture: [
+    "StardewValley.Objects/Furniture.cs",
+    "public virtual void rotate()",
+    "mp-insensitive",
+    "rotate steps the piece's own currentRotation by the cycle its own rotations field declares and then re-derives every derived field through updateRotation(); neither body reads a multiplayer token. The occupancy probe the handler gates the turn on (Furniture.canBePlacedHere) answers from the location's own furniture, objects and blocking layer, so a turn is refused for the same reason in both world modes.",
+  ],
+  // A fence is taken down inside `Fence.performToolAction`, reached from the swinging
+  // tool's `DoFunction`; `Fence.IsValidRemovalTool` is the data-driven gate on which tool
+  // may swing, and a GATE is Axe-or-Pickaxe only (Fence.cs:447-454). The Pickaxe ingress
+  // carries this action's only token reads, so it dominates - the same reading
+  // `remove_placed_item` records for the same pair.
+  remove_fence: [
+    "StardewValley.Tools/Pickaxe.cs",
+    "public override void DoFunction(GameLocation location, int x, int y, int power, Farmer who)",
+    "mp-observational",
+    `the fence is removed by Fence.performToolAction, reached from this swing or the Axe's. The token reads on the path are the collateral pair ${cite("StardewValley.Tools/Pickaxe.cs", "DoFunction")} carries for its own break branch: Game1.multiplayer.broadcastSprites mirrors an already-applied sprite, and Game1.createObjectDebris(..., who.UniqueMultiplayerID, location) takes the id only as the debris origin. Fence.performToolAction reads the same pair for the same purpose (its chip spray and its debris origin), while the removal, the held-object drop and the objects.Remove are mode-independent.`,
+  ],
+  // The tank's own deposit path. `localDepositedItem` and the category capacity are the
+  // tank's own fields, and the deposit runs under the tank's own NetMutex.
+  put_item_in_fish_tank: [
+    "StardewValley.Objects/FishTankFurniture.cs",
+    "public override bool checkForAction(Farmer who, bool justCheckingForActivity = false)",
+    "mp-insensitive",
+    "checkForAction consumes one of the acting farmer's stack into the tank's own heldItems under the tank's own NetMutex and updates the tank's own category capacity; no multiplayer token is read. The mutex is a NetMutex, which exists and is uncontended in single-player too, so the lock is a propagation detail rather than a fork in this method.",
+  ],
+  // The pedestal's own drop-in, the same NetMutex shape as the fish tank: a locked
+  // pedestal and an untrashable item are refused, a held item is dropped through
+  // DropObject, and the copy otherwise lands in `heldObject`.
+  place_item_on_pedestal: [
+    "StardewValley.Objects/ItemPedestal.cs",
+    "public override bool performObjectDropInAction(Item dropInItem, bool probe, Farmer who, bool returnFalseIfItemConsumed = false)",
+    "mp-insensitive",
+    "performObjectDropInAction reads no multiplayer token: it refuses a locked pedestal and an untrashable item, drops a held item through DropObject, and otherwise takes the item's copy into heldObject under the pedestal's own itemModifyMutex and re-derives the pedestal's match flag. That mutex exists in single-player too, so the lock is a propagation detail rather than a fork in this method.",
   ],
   use_warp_item: [
     "StardewValley/Object.cs",
@@ -734,6 +872,24 @@ const TABLE = {
     "mp-insensitive",
     "warps the local player into the shared MineShaft; warping is per-actor and the body reads no multiplayer token",
   ],
+  // The ladder is the mine's own exit check, not a second warp: the whole switch sits
+  // inside `if (who.IsLocalPlayer)`, and the Mod's dispatch passes `Game1.player`, so the
+  // guard is true on every dispatch - see the observedEffect.
+  use_mine_ladder: [
+    [
+      "StardewValley.Locations/MineShaft.cs",
+      "public override bool checkAction(Location tileLocation, xTile.Dimensions.Rectangle viewport, Farmer who)",
+      "mp-observational",
+      "the whole switch sits inside `if (who.IsLocalPlayer)`, and this seam has one caller in the product: the Mod's own ladder dispatch, which passes `Game1.player` (`farmhandexecutioncontroller.transportactions.cs`, `ExecuteUseMineLadder`, `shaft.checkAction(ladder, Game1.viewport, Game1.player)`). `Game1.player` IS the local player on any client, so the guard is true on every dispatch this action makes and no branch can differ - the read observes which client is driving, it does not select an outcome.",
+    ],
+    [
+      "StardewValley/GameLocation.cs",
+      "public virtual bool answerDialogue(Response answer)",
+      "mp-insensitive",
+      "settles the very question this action opened, for the local player only",
+    ],
+  ],
+
   // The elevator's terminal is the same public seam as enter_mine: it sets the
   // per-actor Farmer.ridingMineElevator flag and then calls Game1.enterMine(floor).
   // Floor 0 diverges to Game1.warpFarmer("Mine", 17, 4) — also per-actor. The floor
