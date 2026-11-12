@@ -216,6 +216,11 @@ public sealed class ModEntryFixtureBoundaryTests
         "InitializeNativeLocalStaminaRecoveryFixture",
         "InitializeNativeLocalTakePedestalItemFixture",
         "InitializeNativeLocalTillSoilFixture",
+        // The gold-tools world: the same tillable soil with the four upgradeable tools raised to a tier the engine's
+        // charge ceiling can actually reach, plus the ONE level write both halves read (`Tool.UpgradeLevel`).
+        "InitializeNativeLocalGoldToolsFixture",
+        "RequireFixtureUpgradedTool",
+        "SetFixtureToolUpgradeLevel",
         "InitializeNativeLocalToggleFenceGateFixture",
         "InitializeNativeLocalToggleToolLightFixture",
         "InitializeNativeLocalUseItemFixture",

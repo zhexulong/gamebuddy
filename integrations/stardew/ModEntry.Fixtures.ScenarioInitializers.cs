@@ -123,6 +123,10 @@ public sealed partial class ModEntry
         }),
         NativeLocalFixtureScenarioRow.ActorPrepared("native_machine_navigate_ab_v1", static (mod, player, farm, _) => mod.InitializeNativeLocalMachineNavigateAbFixture(player, farm)),
         NativeLocalFixtureScenarioRow.ActorPrepared("native_till_soil_v1", static (mod, player, farm, _) => mod.InitializeNativeLocalTillSoilFixture(player, farm)),
+        // The same soil world with the four upgradeable tools at the GOLD tier, because the charge a charged tool use
+        // may ask for is refused above the held tool's own level: a level-0 tool can never charge, so the area
+        // capability these two actions shipped with could only be exercised on paper.
+        NativeLocalFixtureScenarioRow.ActorPrepared("native_gold_tools_v1", static (mod, player, farm, _) => mod.InitializeNativeLocalGoldToolsFixture(player, farm)),
         NativeLocalFixtureScenarioRow.ActorPrepared("native_stamina_recovery_v1", static (mod, player, farm, _) => mod.InitializeNativeLocalStaminaRecoveryFixture(player, farm)),
         NativeLocalFixtureScenarioRow.ActorPrepared("native_place_wood_fence_v1", static (mod, player, farm, _) => mod.InitializeNativeLocalPlaceWoodFenceFixture(player, farm)),
         NativeLocalFixtureScenarioRow.ActorPrepared("native_bait_crab_pot_v1", static (mod, player, farm, _) => mod.InitializeNativeLocalBaitCrabPotFixture(player, farm)),

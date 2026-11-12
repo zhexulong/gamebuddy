@@ -554,6 +554,36 @@ public sealed class TargetFamilyCompletenessTests
 
         internal void StandAt(int tileX, int tileY) => this.Actor.position.Set(new Vector2(tileX * 64 + 8, tileY * 64));
 
+        /// <summary>The map's one tile sheet, added the first time a tile is built because a `StaticTile` cannot exist without one.</summary>
+        private xTile.Tiles.TileSheet? farmTileSheet;
+
+        /// <summary>
+        /// One Back-layer farm tile carrying the map's own `Diggable` property - the single fact `Hoe.DoFunction` asks
+        /// before it tills (`doesTileHaveProperty(x, y, "Diggable", "Back")`, Hoe.cs:60) and the fact a real outdoor farm
+        /// map declares.
+        ///
+        /// <para>
+        /// The tile carries no `Passable` tile-index property, which is the engine's own answer for open ground:
+        /// `isTilePassable` refuses a Back tile that carries one (GameLocation.cs:2900-2904) and this one does not, so
+        /// the tilling branch is reachable for it. Nothing else about the tile is set, so the engine's predicates still
+        /// decide what the tile is.
+        /// </para>
+        /// </summary>
+        internal void MakeDiggable(int x, int y)
+        {
+            xTile.Layers.Layer back = this.Farm.map.GetLayer("Back")!;
+            if (this.farmTileSheet is null)
+            {
+                this.farmTileSheet = new xTile.Tiles.TileSheet(
+                    "spring", this.Farm.map, "Maps/spring_outdoorsTileSheet",
+                    new xTile.Dimensions.Size(64, 64), new xTile.Dimensions.Size(64, 64));
+                this.Farm.map.AddTileSheet(this.farmTileSheet);
+            }
+            xTile.Tiles.Tile tile = new xTile.Tiles.StaticTile(back, this.farmTileSheet, xTile.Tiles.BlendMode.Alpha, 0);
+            tile.Properties["Diggable"] = "T";
+            back.Tiles[x, y] = tile;
+        }
+
         internal void PutInPackSlot(int slot, string qualifiedItemId, int stack)
         {
             while (this.Actor.Items.Count <= slot) this.Actor.Items.Add(null!);

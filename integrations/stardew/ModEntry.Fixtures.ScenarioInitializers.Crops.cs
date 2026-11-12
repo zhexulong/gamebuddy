@@ -52,6 +52,98 @@ public sealed partial class ModEntry
         this.Monitor.Log("GameBuddy native-local-player initialized native till-soil fixture before bridge attachment: Hoe equipped candidate available; production alone creates HoeDirt and receipt.", LogLevel.Info);
     }
 
+    /// <summary>
+    /// The gold tier: `Tool.UpgradeLevel` 3, the fourth of the five tiers the engine defines for a farm tool.
+    ///
+    /// <para>
+    /// ONE number decides two facts. `Game1`'s hold raises `toolPower` only while
+    /// <c>CurrentTool.upgradeLevel + (Reaching ? 1 : 0) &gt; toolPower</c> (<c>Game1.cs:13032-13051</c>), so the held
+    /// tool's level is the CEILING a charge must not exceed; and <c>Tool.tilesAffected</c> turns that same number into
+    /// the rectangle one swing covers - 1 tile at 0, 1x3 at 1, 1x5 at 2, 3x3 at 3, 3x6 at 4. Gold is the highest tier
+    /// that is still a hand tool (iridium needs the mine's ore), so it is the tier that makes `charge: 3` - the 3x3,
+    /// nine-tile footprint - legal without reaching past what a played save can hold.
+    /// </para>
+    /// </summary>
+    private const int GoldToolUpgradeLevel = 3;
+
+    /// <summary>
+    /// The AREA half of `till_soil` and `water_crop`, which no recorded run could reach.
+    ///
+    /// <para>
+    /// Both actions take a `charge`, and the charge is refused above the HELD tool's own level
+    /// (`RefuseToolCharge` -> `charge_exceeds_tool_upgrade:<asked>:<ceiling>`). Every fixture in this file granted its
+    /// tools with `new Hoe()` / `new WateringCan()`, which pass `0` to `Tool(name, upgradeLevel, ...)`
+    /// (<c>Hoe.cs:11-13</c>), so every run held level 0: measured 2026-10-30, all 64 recorded bundles that carry
+    /// `toolSlots` report `upgradeLevel: 0`, `charge: 4` came back `charge_exceeds_tool_upgrade:4:0`, and one native
+    /// use could only ever cover one tile.
+    /// </para>
+    ///
+    /// <para>
+    /// The Given is the till-soil world (native diggable ground, no `HoeDirt`) plus all four UPGRADEABLE tools at the
+    /// gold tier. Hoe and WateringCan are the two actions that declare a charge, and Axe and Pickaxe carry the same
+    /// level into the per-swing durability arithmetic, so the ladder the tier enables is available to any of them.
+    /// Nothing here charges, swings or tills: production alone does, and the level it publishes is read back from the
+    /// tool the engine will read it from.
+    /// </para>
+    /// </summary>
+    private void InitializeNativeLocalGoldToolsFixture(Farmer player, Farm farm)
+    {
+        this.InitializeNativeLocalTillSoilFixture(player, farm);
+        Tool hoe = RequireFixtureUpgradedTool(player, tool => tool is Hoe, static () => new Hoe(), GoldToolUpgradeLevel);
+        Tool wateringCan = RequireFixtureUpgradedTool(player, tool => tool is WateringCan, static () => new WateringCan(), GoldToolUpgradeLevel);
+        Tool axe = RequireFixtureUpgradedTool(player, tool => tool is Axe, static () => new Axe(), GoldToolUpgradeLevel);
+        Tool pickaxe = RequireFixtureUpgradedTool(player, tool => tool is Pickaxe, static () => new Pickaxe(), GoldToolUpgradeLevel);
+        this.nativeLocalPlayerFixtureInitialized = true;
+        this.Monitor.Log($"GameBuddy native-local-player initialized gold-tools fixture before bridge attachment: hoe={hoe.UpgradeLevel}; watering_can={wateringCan.UpgradeLevel}; axe={axe.UpgradeLevel}; pickaxe={pickaxe.UpgradeLevel}; tillable_soil=true; production alone charges, swings and tills.", LogLevel.Info);
+    }
+
+    /// <summary>
+    /// The one way this fixture hands the actor a tool TIER: the tool it already carries (the highest one, so a save that
+    /// legitimately holds an iridium hoe is raised rather than downgraded) or a freshly granted one, then
+    /// <see cref="SetFixtureToolUpgradeLevel"/>.
+    ///
+    /// <para>
+    /// <paramref name="isWanted"/> and <paramref name="grant"/> are both the caller's, so the two can never name different
+    /// tools: a class of tool this fixture wants and the constructor that makes one are the same statement at the call site.
+    /// </para>
+    /// </summary>
+    private static Tool RequireFixtureUpgradedTool(Farmer player, Func<Tool, bool> isWanted, Func<Tool> grant, int upgradeLevel)
+    {
+        Tool? carried = player.Items.OfType<Tool>()
+            .Where(isWanted)
+            .OrderByDescending(candidate => candidate.UpgradeLevel)
+            .FirstOrDefault();
+        if (carried is null)
+        {
+            if (player.addItemToInventory(grant()) is not null)
+                throw new InvalidOperationException($"fixture_tool_inventory_full:{upgradeLevel}");
+            carried = player.Items.OfType<Tool>().FirstOrDefault(isWanted)
+                ?? throw new InvalidOperationException($"fixture_tool_missing_after_add:{upgradeLevel}");
+        }
+        return SetFixtureToolUpgradeLevel(carried, upgradeLevel);
+    }
+
+    /// <summary>
+    /// Writes a tool's upgrade tier through the ONE member the engine keeps it in and reads it straight back, so a
+    /// fixture cannot hand the actor a tool whose published level (`snapshot.toolSlots[].upgradeLevel`,
+    /// `DiscoverToolSlots`) and real level (`ToolChargeCeiling`, `Tool.tilesAffected`) disagree.
+    ///
+    /// <para>
+    /// This is the engine's own supported path, not a private mirror of it: <c>Tool.UpgradeLevel</c> is a public
+    /// property over the `upgradeLevel` `NetInt` (<c>Tool.cs:176-186</c>) and vanilla writes it in exactly this way - the
+    /// constructor passes a tier to it (<c>:252</c>), <c>GetOneCopyFrom</c> copies it (<c>:324</c>), and a save restores
+    /// it from the same field. Nothing is forged: the engine's hold, its footprint and its snapshot all read this one
+    /// value, so a tool that reports gold here IS a gold tool when it swings.
+    /// </para>
+    /// </summary>
+    private static Tool SetFixtureToolUpgradeLevel(Tool tool, int upgradeLevel)
+    {
+        tool.UpgradeLevel = upgradeLevel;
+        if (tool.UpgradeLevel != upgradeLevel)
+            throw new InvalidOperationException($"fixture_tool_upgrade_level_not_applied:{tool.QualifiedItemId}:{upgradeLevel}:{tool.UpgradeLevel}");
+        return tool;
+    }
+
     private void InitializeNativeLocalStaminaRecoveryFixture(Farmer player, Farm farm)
     {
         // Lane G low-stamina recovery precondition. Establishes only the
