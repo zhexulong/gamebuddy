@@ -5,6 +5,7 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 import {
+  FOR_EACH_SOURCE_UNRECOGNISED,
   FOR_EACH_WHERE_UNRECOGNISED,
   forEachRules,
   isForEachLoopDocument,
@@ -214,8 +215,6 @@ test("merge_rule_union: a merged pass carries every rule both loops wrote, or re
   // One source document per kind the model declares, checked against the declaration in BOTH directions below.
   const sourceDocuments: Readonly<Record<string, unknown>> = Object.freeze({
     area: { area: { x: 60, y: 18, w: 20, h: 3 } },
-    family: { family: "cropTargets" },
-    query: { query: { subject: "crop", only: "ready" } },
   });
   const undocumented = PLAN_FOR_EACH_SOURCES.filter((kind) => !(kind in sourceDocuments));
   assert.deepEqual(
@@ -312,10 +311,12 @@ test("a refused loop refuses the plan, and the answer names the loop and the ste
 /** `by_kind` is a reference to the Mod's own classifier, so it is accepted while naming no action of its own. */
 test("by_kind is accepted as a dispatch while an unpublished action id is not", () => {
   const byKind = compile(
-    `builder.for_each({ source: { family: "debrisTargets" }, where: [{ field: "kind", in: ["weed", "stone"] }], do: { action: "by_kind" } });`,
+    `builder.for_each({ source: { area: { x: 60, y: 18, w: 20, h: 3 } }, where: [{ field: "kind", in: ["weed", "stone"] }], do: { action: "by_kind" } });`,
   );
   assert.equal(byKind.ok, true);
-  const unknown = compile(`builder.for_each({ source: { family: "debrisTargets" }, do: { action: "obliterate" } });`);
+  const unknown = compile(
+    `builder.for_each({ source: { area: { x: 60, y: 18, w: 20, h: 3 } }, do: { action: "obliterate" } });`,
+  );
   assert.equal(unknown.ok ? "" : unknown.reasonCode, "plan_script_unknown_action:obliterate");
 });
 
@@ -352,9 +353,18 @@ test("a form the Mod now hosts is described by what it does, and an unpublished 
     "the description must say what now happens: the Mod expands the loop itself",
   );
   assert.ok(
-    description.includes("for_each_source_unavailable:family") &&
-      description.includes("for_each_source_unavailable:query"),
-    "the two sources whose row sourcing does not exist are refusals that DO reach the model, so they are named",
+    description.includes("for_each_source_unrecognised:<given>;allowed=area"),
+    "the ONE source the form has, and the refusal a caller meets for any other word, are both in the description",
+  );
+  assert.equal(
+    description.includes("for_each_source_unavailable"),
+    false,
+    "a source is refused by the grammar now, so no source can reach the game thread to be refused there - a description that teaches for_each_source_unavailable teaches a code nothing answers",
+  );
+  assert.equal(
+    /\{ family:|\{ query:/.test(description),
+    false,
+    "the withdrawn sources must not be taught anywhere: a caller taught `{ family: ... }` writes a loop the compiler refuses",
   );
   assert.ok(
     description.includes(String(MAX_FOR_EACH_LOOP_DOCUMENT_CHARS)),
@@ -489,7 +499,7 @@ test("the plan vocabulary keeps the plan form the Mod publishes, so a loop is su
 
 /** The composed pass reads its rules through ONE function, so a writer and a reader cannot enumerate them differently. */
 test("the rules of a pass are enumerated in the order they are decided, whatever the loop says", () => {
-  const loop: PlanForEachLoop = { source: { family: "cropTargets" }, do: null };
+  const loop: PlanForEachLoop = { source: { area: { x: 60, y: 18, w: 20, h: 3 } }, do: null };
   const second: PlanForEachRule = { where: [{ field: "readyForHarvest", eq: true }], do: [{ action: "harvest_crop" }] };
   const composed: PlanForEachLoop = { ...loop, then: [second] };
   assert.deepEqual(forEachRules(loop), [{ do: null }], "an absent predicate list means every row, not no rows");
@@ -808,6 +818,82 @@ test("where_spellings: every spelling the model declares is read by both readers
 });
 
 /**
+ * The row sources the Mod's reader accepts, read out of `FarmhandForEachSource.Kinds` rather than restated here: the
+ * constants are resolved through their own names, so the gate follows a rename instead of going quiet.
+ */
+function modLoopSourceKinds(): readonly string[] {
+  const source = readFileSync(MOD_RULES_PATH, "utf8");
+  const block = /Kinds\s*=\s*\{([^}]*)\}/u.exec(source);
+  assert.ok(block !== null, "the Mod's loop model must still declare Kinds; this gate reads it from there");
+  return block[1]!
+    .split(",")
+    .map((entry) => entry.trim())
+    .filter((entry) => entry.length > 0)
+    .map((name) => {
+      const declared = new RegExp(`${name}\\s*=\\s*"([a-z0-9_]+)"`, "u").exec(source);
+      assert.ok(declared !== null, `the Mod's Kinds names ${name}, which must still be declared in the same file`);
+      return declared[1]!;
+    });
+}
+
+/**
+ * THE ROW SOURCE SET IS ONE DECLARATION IN TWO LANGUAGES, AND THIS IS THE GATE FOR IT.
+ *
+ * POPULATION: the Mod's own `FarmhandForEachSource.Kinds` - the array its reader accepts against and its refusal prints -
+ * compared with `PLAN_FOR_EACH_SOURCES`, which the compiler, the wire reader and the description all read.
+ *
+ * THE DEFECT THIS CLOSES. This grammar accepted `family` and `query` and the Mod enumerated one: both validated here, both
+ * passed the preflight, and both died on the game thread as `for_each_source_unavailable:<kind>` - a code naming a source
+ * the caller had written. `sceneTarget`, `regrowDays: -1` and `seedSupplyTargets` were the same split: a key one side
+ * accepts and the other cannot answer. A source added to the grammar alone is red here, naming the side and the word.
+ */
+test("for_each_source_set_drift: the grammar accepts exactly the row sources the Mod's reader enumerates", () => {
+  const modKinds = modLoopSourceKinds();
+  assert.ok(
+    modKinds.length > 0,
+    "blocked: the Mod's loop model declares no source kind, so this gate examined nothing",
+  );
+  for (const kind of PLAN_FOR_EACH_SOURCES)
+    assert.ok(modKinds.includes(kind), `for_each_source_set_drift:host:${kind}`);
+  for (const kind of modKinds) assert.ok(PLAN_FOR_EACH_SOURCES.includes(kind), `for_each_source_set_drift:mod:${kind}`);
+  assert.deepEqual(
+    PLAN_FOR_EACH_SOURCES,
+    modKinds,
+    "one declaration, two languages: the words the refusal prints are the Mod's, in its order",
+  );
+
+  // THE OTHER HALF, driven through the readers: the word the Mod refuses is the word this grammar refuses, with the same
+  // alternatives - so a caller cannot be taught one answer and given another.
+  for (const withdrawn of ["family", "query"]) {
+    assert.equal(
+      PLAN_FOR_EACH_SOURCES.includes(withdrawn),
+      false,
+      `for_each_source_set_drift:host:${withdrawn} - the Mod enumerates no rows for this source, so the grammar must not accept it`,
+    );
+    const refused = readForEachLoop(
+      { source: { [withdrawn]: withdrawn === "family" ? "cropTargets" : { subject: "crop" } }, do: null },
+      null,
+    );
+    assert.equal(
+      refused.ok ? "" : refused.code,
+      FOR_EACH_SOURCE_UNRECOGNISED,
+      `${withdrawn} is not a source this form has`,
+    );
+    assert.equal(
+      refused.ok ? "" : refused.detail,
+      `${withdrawn};allowed=${modKinds.join(",")}`,
+      `the refusal names the word written and the words the Mod's own declaration allows`,
+    );
+  }
+  const empty = readForEachLoop({ source: {}, do: null }, null);
+  assert.equal(
+    empty.ok ? "" : empty.detail,
+    `empty;allowed=${modKinds.join(",")}`,
+    "a source with no word at all says so",
+  );
+});
+
+/**
  * `occupant` IS THE TILE'S OWN FACT, AND THE CALLER WRITES ONE WORD FOR IT.
  *
  * A mixed patch is the measured case: filtering by `kind` asks "whatever the Mod would clear with a scythe", which sent a
@@ -875,7 +961,9 @@ test("an occupant predicate is read, compiled, carried by the wire, and bounded 
  * </p>
  */
 test("a step that omits an argument only the caller can supply is refused at compile time", () => {
-  const missing = compile(`builder.for_each({ source: { area: { x: 60, y: 18, w: 3, h: 1 } }, do: { action: "till_soil" } });`);
+  const missing = compile(
+    `builder.for_each({ source: { area: { x: 60, y: 18, w: 3, h: 1 } }, do: { action: "till_soil" } });`,
+  );
   assert.equal(missing.ok, false, "a step the rows could never complete must not be accepted");
   assert.deepEqual(missing.ok ? [] : missing.rejected.map((entry) => entry.reasonCode), [
     "plan_script_loop_do_argument_missing:charge:declared=[x,y,charge]",
@@ -892,7 +980,9 @@ test("a step that omits an argument only the caller can supply is refused at com
 
   // And `by_kind` names no action of its own, so there is nothing for this check to compare against: the Mod's
   // classifier decides per row and its answers stay the row's.
-  const byKind = compile(`builder.for_each({ source: { area: { x: 60, y: 18, w: 3, h: 1 } }, do: { action: "by_kind" } });`);
+  const byKind = compile(
+    `builder.for_each({ source: { area: { x: 60, y: 18, w: 3, h: 1 } }, do: { action: "by_kind" } });`,
+  );
   assert.equal(byKind.ok, true);
 
   // The two names a step can still leave out are exactly the two the shipped examples omit, and no others: a third

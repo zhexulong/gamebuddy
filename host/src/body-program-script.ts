@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { createContext, runInContext } from "node:vm";
 import {
+  FOR_EACH_SOURCE_UNRECOGNISED,
   forEachDocumentLength,
   forEachRules,
   MAX_FOR_EACH_LOOP_DOCUMENT_CHARS,
@@ -909,29 +910,31 @@ export function planWorkDescription(actions: readonly PublishedPlanAction[]): st
     "for (const crop of snapshot.cropTargets) {\n" +
     "  builder.water_crop({ x: crop.x, y: crop.y, expectedTargetId: crop.targetId });\n" +
     "}\n" +
-    'builder.for_each({ source, where, do }) is ONE loop over a collection of live world rows, expanded by the Mod on the game thread: `source` is exactly one of { area: { x, y, w, h } }, { family: "cropTargets" } or { query: { subject } }; `where` is a list of tests on ONE row - a field test ({ field: "kind", in: ["weed"] }, { field: "health", gt: 0 }), what stands on the tile ({ occupant: "weed" }, in the engine\'s own words: weed, stone, crop, tree, tree_stump, grass, object, terrain, none), and/or a position guard ({ col: { every: 3, offset: 0 } }, { row: { every: 2, offset: 1 } }), one spelling per test - a word the grammar does not have is refused as for_each_where_unrecognised:<given>;allowed=<the words it does have>; `do` is an ORDERED CHAIN of steps worked on ONE tile - each step an action from the list above with its own arguments, at most ' +
+    'builder.for_each({ source, where, do }) is ONE loop over a collection of live world rows, expanded by the Mod on the game thread: `source` names the live tiles whose rows the pass reads; `where` is a list of tests on ONE row - a field test ({ field: "kind", in: ["weed"] }, { field: "health", gt: 0 }), what stands on the tile ({ occupant: "weed" }, in the engine\'s own words: weed, stone, crop, tree, tree_stump, grass, object, terrain, none), and/or a position guard ({ col: { every: 3, offset: 0 } }, { row: { every: 2, offset: 1 } }), one spelling per test - a word the grammar does not have is refused as for_each_where_unrecognised:<given>;allowed=<the words it does have>; `do` is an ORDERED CHAIN of steps worked on ONE tile - each step an action from the list above with its own arguments, at most ' +
     String(MAX_FOR_EACH_STEPS) +
     " of them, or a single action (the chain of length one), or null for a row left deliberately alone (a path). Several for_each calls over the SAME source are the rules of that one pass, decided per row by the first rule that claims it - which is how an intercropped patch is one intent. The caller needs no observation first - no target id, no per-tile coordinate - because the rows are read live. " +
     forEachRowIdentityText() +
     "A row no predicate claims is reported rather than skipped: ONE code for the whole patch when NO row matched it (no_row_matched_where:<field>_<test>_<value>:<the occupants the tiles carry>), and one per tile (no_rule_matched:<kind>@<x>,<y>) when some rows did. One loop addresses at most " +
     String(MAX_FOR_EACH_ROWS) +
-    " rows, and a loop inside a loop is refused by name. The Mod EXECUTES the loop: each row is decided against the world as it is at that moment and dispatched through the same action path a single step takes, so the node's answer carries `succeeded`/`failed`/`refused`/`left_alone`/`not_matched`/`deferred` counts and ONE ROW PER TILE with its own action, state and reasonCode - and a row worked as a chain also carries its `steps` in the order it took them, plus `stopped_at=<step>:<reasonCode>` when it stopped before its last step, so a tile that stopped half-done says where. A tile that is not on the farm (not_on_farm), a kind `by_kind` cannot resolve (no_action_for_kind:<kind>), an action the live policy disables (row_action_not_enabled:<actionId>) and an argument the action declares that the loop cannot supply (row_argument_missing:<name>) are each NAMED PER ROW rather than skipped - a skipped row reads as a cleared patch. THE ARGUMENTS A STEP MAY CARRY ARE THAT ACTION'S OWN (its `argumentSchema`): row_argument_missing:<name> means the action declares `name` and your step left it out, and a name the action does NOT declare is row_argument_unknown:<name> - `slot` belongs to `cut_weeds`, not to `till_soil`, so one action's argument list is never another's. A STEP THAT LEAVES OUT AN ARGUMENT ONLY THE CALLER CAN SUPPLY IS REFUSED AT COMPILE TIME (loop_do_argument_missing:<name>:declared=[<the action's arguments>]) rather than per row, so one wrong step costs one repair and not a whole pass: fresh ground is tilled with `{ action: \"till_soil\", charge: 0 }` - charge 0 is the one named tile, and a charge the held tool cannot reach is refused by name instead of being quietly reduced - while `by_kind` covers only the kinds whose work needs no per-action argument. Only { area } is expanded today: { family } and { query } are refused by name as " +
-    forEachSourcesUnavailableText() +
-    ", and one loop document may be at most " +
+    " rows, and a loop inside a loop is refused by name. The Mod EXECUTES the loop: each row is decided against the world as it is at that moment and dispatched through the same action path a single step takes, so the node's answer carries `succeeded`/`failed`/`refused`/`left_alone`/`not_matched`/`deferred` counts and ONE ROW PER TILE with its own action, state and reasonCode - and a row worked as a chain also carries its `steps` in the order it took them, plus `stopped_at=<step>:<reasonCode>` when it stopped before its last step, so a tile that stopped half-done says where. A tile that is not on the farm (not_on_farm), a kind `by_kind` cannot resolve (no_action_for_kind:<kind>), an action the live policy disables (row_action_not_enabled:<actionId>) and an argument the action declares that the loop cannot supply (row_argument_missing:<name>) are each NAMED PER ROW rather than skipped - a skipped row reads as a cleared patch. THE ARGUMENTS A STEP MAY CARRY ARE THAT ACTION'S OWN (its `argumentSchema`): row_argument_missing:<name> means the action declares `name` and your step left it out, and a name the action does NOT declare is row_argument_unknown:<name> - `slot` belongs to `cut_weeds`, not to `till_soil`, so one action's argument list is never another's. A STEP THAT LEAVES OUT AN ARGUMENT ONLY THE CALLER CAN SUPPLY IS REFUSED AT COMPILE TIME (loop_do_argument_missing:<name>:declared=[<the action's arguments>]) rather than per row, so one wrong step costs one repair and not a whole pass: fresh ground is tilled with `{ action: \"till_soil\", charge: 0 }` - charge 0 is the one named tile, and a charge the held tool cannot reach is refused by name instead of being quietly reduced - while `by_kind` covers only the kinds whose work needs no per-action argument. " +
+    forEachSourceText() +
+    " And one loop document may be at most " +
     String(MAX_FOR_EACH_LOOP_DOCUMENT_CHARS) +
     " characters - the wire's own bound on the string the loop travels in - so a longer one is refused by the compiler with its own count rather than by the bridge."
   );
 }
 
 /**
- * The two row sources this Mod cannot read yet, refused BY NAME and printed in the description.
+ * The one row source this form has, and the refusal a caller meets when it writes another, printed in the description.
  *
- * The words come from `PLAN_FOR_EACH_SOURCES`, so the description cannot list a source the grammar does not have (or
- * miss one it gains) - the reason code's spelling is the one `FarmhandForEachArguments` answers with.
+ * BOTH HALVES COME FROM `PLAN_FOR_EACH_SOURCES`, so the description cannot teach a source the grammar refuses (or leave
+ * out one it gains); the refusal's spelling is the one `FarmhandForEachArguments.SourceUnrecognised` answers with. That
+ * is what this sentence replaces: two source kinds were taught here, were accepted by the grammar and by the preflight,
+ * and were then refused on the game thread as `for_each_source_unavailable:<kind>`.
  */
-function forEachSourcesUnavailableText(): string {
-  const unavailable = PLAN_FOR_EACH_SOURCES.filter((source) => source !== "area");
-  return unavailable.map((source) => `for_each_source_unavailable:${source}`).join(", ");
+function forEachSourceText(): string {
+  const shapes = PLAN_FOR_EACH_SOURCES.map((source) => `{ ${source}: { x, y, w, h } }`).join(", ");
+  return `\`source\` is exactly one of ${shapes} - an existing rectangle of live map tiles whose rows the pass reads, so the shape of the work is a rectangle to read rather than a reason to observe again - and a source word the form does not have is refused as ${FOR_EACH_SOURCE_UNRECOGNISED}:<given>;allowed=${PLAN_FOR_EACH_SOURCES.join(",")}.`;
 }
 
 /**

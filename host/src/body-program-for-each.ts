@@ -18,8 +18,14 @@ import { hasOnlyKeys, isNonNegativeSafeInteger, isOpaqueId, isRecord } from "./p
  * not - a loop silently narrowed to the tiles in view is the defect the form was built to remove.
  * </p>
  * <p>
- * THE AREA IS A SOURCE, NOT A PRIVILEGED FORM. "Every dry crop on the farm" is a family source and "every tree with
- * health left" is a family source with a field predicate; neither is a rectangle. One loop semantic covers all three.
+ * THE ONLY SOURCE IS A RECTANGLE, AND THAT IS A MEASURED DECISION RATHER THAN A LEFTOVER. This grammar used to accept
+ * three source kinds - `area`, `family` and `query` - and the Mod enumerated one: `FarmhandForEachArguments.TryReadSource`
+ * refused the other two on the game thread as `for_each_source_unavailable:<kind>`, so a caller could write a loop this
+ * pipeline validated, that the preflight passed, and that then answered with a code naming a source the form does not
+ * have. "Every dry crop in this patch" is a field test on the area's rows (`{ field: "kind", eq: "crop" }`), which is
+ * implemented; a family or query source would be a new enumeration, so it is withdrawn here and finished in the Mod's
+ * reader at the same time - the accepted set and the enumerated set are one set, and
+ * `body-program-for-each.test.ts` reads the Mod's declaration to keep them one.
  * </p>
  */
 
@@ -58,11 +64,8 @@ type PlanForEachPredicate = Readonly<{
 
 type PlanForEachArea = Readonly<{ x: number; y: number; w: number; h: number }>;
 
-/** Where a loop reads its rows from: one rectangle, one published family, or one subject the Mod classifies. */
-type PlanForEachSource =
-  | Readonly<{ area: PlanForEachArea }>
-  | Readonly<{ family: string }>
-  | Readonly<{ query: Readonly<{ subject: string; only?: string }> }>;
+/** Where a loop reads its rows from: one rectangle of live map tiles, which is the one set of rows the Mod enumerates. */
+type PlanForEachSource = Readonly<{ area: PlanForEachArea }>;
 
 /**
  * One step of a row's chain: a published action with its own arguments.
@@ -107,8 +110,15 @@ export type PlanForEachLoop = Readonly<{
   then?: readonly PlanForEachRule[];
 }>;
 
-/** The three row sources. */
-export const PLAN_FOR_EACH_SOURCES: readonly string[] = Object.freeze(["area", "family", "query"]);
+/**
+ * The row sources this form has, declared ONCE.
+ *
+ * The declaration is read by the reader below, by the description the companion holds, and by the gate that compares it
+ * against the Mod's own `FarmhandForEachSource.Kinds` - because a source this side accepts and that side refuses is a
+ * trap: measured 2026-11-13, `family` and `query` were writable here and answered `for_each_source_unavailable:family`
+ * on the game thread, after the compiler and the preflight had both passed them.
+ */
+export const PLAN_FOR_EACH_SOURCES: readonly string[] = Object.freeze(["area"]);
 
 /** The two axes a repeating position guard claims. */
 const PLAN_FOR_EACH_AXES: readonly string[] = Object.freeze(["col", "row"]);
@@ -139,10 +149,26 @@ const PLAN_FOR_EACH_STRIDE_SPELLINGS: readonly string[] = Object.freeze(["every"
  */
 export const FOR_EACH_WHERE_UNRECOGNISED = "for_each_where_unrecognised";
 
-/** `<given>;allowed=<a>,<b>`, with the alternatives taken from the declaration that owns them. */
-function forEachWhereUnrecognised(given: string, allowed: readonly string[]): string {
+/**
+ * `<given>;allowed=<a>,<b>`, with the alternatives taken from the declaration that owns them.
+ *
+ * ONE SPELLING OF A REFUSAL, whatever the declaration is: the `where` grammar, a stride and the row sources all answer
+ * "a word you wrote, and the words you may write instead" the same way, so a caller meeting the second one is not
+ * learning a second shape.
+ */
+function forEachUnrecognised(given: string, allowed: readonly string[]): string {
   return `${given};allowed=${allowed.join(",")}`;
 }
+
+/**
+ * The word both sides answer when a declaration names a row source this form does not have.
+ *
+ * ONE WORD ON BOTH SIDES: the compiler refuses such a declaration before submission and the Mod refuses it again on the
+ * game thread (`FarmhandForEachArguments.SourceUnrecognised`), and the answer is `<this>:<given>;allowed=<a>,<b>` - the
+ * word that was written, then the words that may be written instead. It replaced `for_each_source_unavailable:<kind>`, a
+ * refusal that named a source the caller HAD written and told it nothing about what to write instead.
+ */
+export const FOR_EACH_SOURCE_UNRECOGNISED = "for_each_source_unrecognised";
 
 /** The comparisons a field predicate offers. `in` is the only one that takes a list. */
 const PLAN_FOR_EACH_COMPARISONS: readonly string[] = Object.freeze(["eq", "ne", "lt", "lte", "gt", "gte", "in"]);
@@ -332,20 +358,15 @@ function readSource(value: unknown): SourceReading {
   // a rectangle, and a plan that quietly ran over one tile while the caller meant a patch is the measured defect.
   if (value === undefined || value === null) return rejected("loop_source_invalid", "missing");
   if (!isRecord(value)) return rejected("loop_source_invalid", "not_an_object");
-  const kinds = PLAN_FOR_EACH_SOURCES.filter((kind) => Object.hasOwn(value, kind));
-  if (kinds.length === 0) return rejected("loop_source_invalid", "missing");
-  if (kinds.length > 1) return rejected("loop_source_invalid", `ambiguous:${kinds.join(",")}`);
-  const unknownKey = Object.keys(value).find((key) => !PLAN_FOR_EACH_SOURCES.includes(key));
-  if (unknownKey !== undefined) return rejected("loop_source_invalid", `unknown:${unknownKey}`);
-  const kind = kinds[0]!;
-  if (kind === "area") return readArea(value.area);
-  if (kind === "family") {
-    const family = value.family;
-    if (typeof family !== "string" || family.length < 1 || family.length > 64)
-      return rejected("loop_source_invalid", "family");
-    return Object.freeze({ ok: true as const, source: Object.freeze({ family }) });
-  }
-  return readQuery(value.query);
+  // A WORD THIS FORM DOES NOT HAVE IS ANSWERED WITH THE WORDS IT DOES HAVE, and it is answered BEFORE the shape is read:
+  // `{ family: "cropTargets" }` is a caller that named a source, not one that forgot `area`.
+  const unknown = Object.keys(value).filter((key) => !PLAN_FOR_EACH_SOURCES.includes(key));
+  if (unknown.length > 0)
+    return rejected(FOR_EACH_SOURCE_UNRECOGNISED, forEachUnrecognised(unknown.join(","), PLAN_FOR_EACH_SOURCES));
+  const kind = PLAN_FOR_EACH_SOURCES.find((source) => Object.hasOwn(value, source));
+  if (kind === undefined)
+    return rejected(FOR_EACH_SOURCE_UNRECOGNISED, forEachUnrecognised("empty", PLAN_FOR_EACH_SOURCES));
+  return readArea(value[kind]);
 }
 
 function readArea(value: unknown): SourceReading {
@@ -366,24 +387,6 @@ function readArea(value: unknown): SourceReading {
   return Object.freeze({
     ok: true as const,
     source: Object.freeze({ area: Object.freeze({ x, y, w, h }) }),
-  });
-}
-
-function readQuery(value: unknown): SourceReading {
-  if (!isRecord(value)) return rejected("loop_source_invalid", "query");
-  const subject = value.subject;
-  const only = value.only;
-  if (typeof subject !== "string" || subject.length < 1 || subject.length > 64)
-    return rejected("loop_source_invalid", "query");
-  if (only !== undefined && (typeof only !== "string" || only.length < 1 || only.length > 64))
-    return rejected("loop_source_invalid", "query");
-  if (!hasOnlyKeys(value, only === undefined ? ["subject"] : ["subject", "only"]))
-    return rejected("loop_source_invalid", "query");
-  return Object.freeze({
-    ok: true as const,
-    source: Object.freeze({
-      query: Object.freeze({ subject, ...(only === undefined ? {} : { only }) }),
-    }),
   });
 }
 
@@ -417,7 +420,7 @@ function readPredicate(value: unknown, at: string): PredicateReading {
     const given = spellings.length === 0 ? Object.keys(value).join(",") || "empty" : spellings.join(",");
     return rejected(
       FOR_EACH_WHERE_UNRECOGNISED,
-      forEachWhereUnrecognised(`${at}:${given}`, PLAN_FOR_EACH_PREDICATE_SPELLINGS),
+      forEachUnrecognised(`${at}:${given}`, PLAN_FOR_EACH_PREDICATE_SPELLINGS),
     );
   }
   const spelling = spellings[0]!;
@@ -428,7 +431,7 @@ function readPredicate(value: unknown, at: string): PredicateReading {
     if (others.length > 0)
       return rejected(
         FOR_EACH_WHERE_UNRECOGNISED,
-        forEachWhereUnrecognised(`${at}:${others[0]!}`, PLAN_FOR_EACH_PREDICATE_SPELLINGS),
+        forEachUnrecognised(`${at}:${others[0]!}`, PLAN_FOR_EACH_PREDICATE_SPELLINGS),
       );
     const stride = readStride(value[spelling], `${at}.${spelling}`);
     if (!stride.ok) return stride;
@@ -441,7 +444,7 @@ function readPredicate(value: unknown, at: string): PredicateReading {
     if (others.length > 0)
       return rejected(
         FOR_EACH_WHERE_UNRECOGNISED,
-        forEachWhereUnrecognised(`${at}:${others[0]!}`, PLAN_FOR_EACH_PREDICATE_SPELLINGS),
+        forEachUnrecognised(`${at}:${others[0]!}`, PLAN_FOR_EACH_PREDICATE_SPELLINGS),
       );
     const occupant = value.occupant;
     // THE WORD IS THE MOD'S TO KNOW: `weed`, `stone`, `crop` are the engine's own names for what stands on a tile, and a
@@ -458,10 +461,7 @@ function readPredicate(value: unknown, at: string): PredicateReading {
   // beside `field` says the caller spelled a comparison wrongly, not that a comparison is missing.
   const unknown = others.find((key) => !PLAN_FOR_EACH_COMPARISONS.includes(key));
   if (unknown !== undefined)
-    return rejected(
-      FOR_EACH_WHERE_UNRECOGNISED,
-      forEachWhereUnrecognised(`${at}:${unknown}`, PLAN_FOR_EACH_COMPARISONS),
-    );
+    return rejected(FOR_EACH_WHERE_UNRECOGNISED, forEachUnrecognised(`${at}:${unknown}`, PLAN_FOR_EACH_COMPARISONS));
   if (others.length !== 1)
     return rejected("loop_where_invalid", `${at}:${field}:one_of:${PLAN_FOR_EACH_COMPARISONS.join(",")}`);
   const comparison = others[0]!;
@@ -507,7 +507,7 @@ function readStride(value: unknown, at: string): StrideReading {
   if (unknownKey !== undefined)
     return rejected(
       FOR_EACH_WHERE_UNRECOGNISED,
-      forEachWhereUnrecognised(`${at}:${unknownKey}`, PLAN_FOR_EACH_STRIDE_SPELLINGS),
+      forEachUnrecognised(`${at}:${unknownKey}`, PLAN_FOR_EACH_STRIDE_SPELLINGS),
     );
   const every = value.every;
   const offset = value.offset;

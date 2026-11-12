@@ -167,33 +167,24 @@ test("no observation call is needed before the loop: the caller declares the loo
   assert.deepEqual(Object.keys(nodesOf(compile(script))[0]!.arguments), ["loop"]);
 });
 
-/** A FAMILY source with a FIELD predicate: the caller never enumerates ids, because it cannot see them either. */
-test("a published family is a source like any other, filtered by a field predicate", () => {
-  const loop = loopOf(
-    compile(`builder.for_each({
-       source: { family: "cropTargets" },
-       where: [{ field: "readyForHarvest", eq: true }],
-       do: { action: "harvest_crop" }
-     });`),
-  );
-  assert.deepEqual(loop.source, { family: "cropTargets" });
-  assert.deepEqual(loop.where, [{ field: "readyForHarvest", eq: true }]);
-});
-
-/** The same rule set over a 1x1 area and over a family is the same semantics: area is not privileged. */
-test("a 1x1 area and a family carry the same predicate and the same effect", () => {
-  const overArea = loopOf(
-    compile(
-      `builder.for_each({ source: { area: { x: 60, y: 18, w: 1, h: 1 } }, where: [{ field: "kind", in: ["weed"] }], do: { action: "cut_weeds" } });`,
-    ),
-  );
-  const overFamily = loopOf(
-    compile(
-      `builder.for_each({ source: { family: "weedTargets" }, where: [{ field: "kind", in: ["weed"] }], do: { action: "cut_weeds" } });`,
-    ),
-  );
-  assert.deepEqual(overFamily.where, overArea.where);
-  assert.deepEqual(overFamily.do, overArea.do);
+/**
+ * A SOURCE WORD THIS FORM DOES NOT HAVE IS REFUSED BY THE COMPILER, WITH THE WORDS IT HAS.
+ *
+ * `family` and `query` used to be accepted here and refused on the game thread as `for_each_source_unavailable:<kind>` -
+ * a loop the compiler passed, the preflight passed, and the Mod then answered with a code naming a source the caller had
+ * written. The refusal now names the word written and the one word that may be written instead.
+ */
+test("a source the form does not have is refused by name, with the source it does have", () => {
+  for (const withdrawn of ["family", "query"]) {
+    const result = compile(
+      `builder.for_each({ source: { ${withdrawn}: ${withdrawn === "family" ? `"cropTargets"` : `{ subject: "crop" }`} }, do: { action: "cut_weeds" } });`,
+    );
+    assert.equal(
+      refusalOf(result),
+      `plan_script_for_each_source_unrecognised:${withdrawn};allowed=area`,
+      "the refusal says which word was written and which one the form has",
+    );
+  }
 });
 
 /** A kind no loop claims is reported with its kind and its tile; the Mod half of this is its own gate. */
@@ -210,7 +201,7 @@ test("a missed row has a named reason code shape, and nothing_matched is not suc
 test("a nested loop is refused by name instead of silently flattened", () => {
   const result = compile(`builder.for_each({
        source: { area: ${PATCH} },
-       do: { for_each: { source: { family: "weedTargets" } } }
+       do: { for_each: { source: { area: { x: 60, y: 18, w: 1, h: 1 } } } }
      });`);
   assert.match(refusalOf(result), /^plan_script_nested_loop_unsupported$/u);
 });
