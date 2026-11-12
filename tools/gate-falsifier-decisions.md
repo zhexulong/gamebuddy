@@ -2,6 +2,11 @@
 
 `gates examined 348 · with a red proof 321 · external 4 · declared without 21 · undeclared 0 · zero-population-pass 0`
 
+**The eleventh batch measured `351 · 326 · 4 · 19 · 0 · 0`** and its own section at the end reconciles it
+(`326 + 4 + 21 = 351`, where the 21 owed are the 19 recorded rows plus the 2 unreadable claims). The reading quoted on
+this line is the ninth batch's, kept because the sections below are written against it; a reader who wants today's
+count should read the newest section's table, not this number.
+
 **The ninth batch moved that line from `307 · 4 · 35` to `321 · 4 · 21`** and the partition it states is now
 `321 + 4 + 23 = 348`, where the 23 owed are the 21 recorded rows plus the 2 unreadable claims. The paragraphs below keep
 the fifth-through-eighth-batch arithmetic they were written with, and each names the reading it was measured at;
@@ -1038,3 +1043,114 @@ remain are named, and nineteen of them are the ones the ninth batch left:
   HEAD and the reachability reading above depends on it, but its attribution is wrong and a whole-tree commit is how
   that happened. Nothing is repaired by rewriting history; it is recorded so the next reader of that commit's diff is
   not surprised by sixty suite names it does not explain.
+
+## The eleventh batch: the two `dotnet test` gates, and a reader that could not see a project runner
+
+Two of the twenty-one owed rows are gates whose whole rule is one command. `test:stardew:core` is
+`dotnet test integrations/stardew/tests/GameBuddy.Stardew.Core.Tests` and `test:stardew:integration` is the same
+command over `GameBuddy.Stardew.Integration.Tests`, so the only input that makes either exit non-zero is a **C# xunit
+fact that fails**. No JavaScript file can redden them, which is why the ninth batch's mechanism (a `package.json`
+`gateRedProofs` marker pointing at a suite) needed one more piece this batch supplied: a falsifier written in C#.
+
+### The triage of the twenty-one
+
+| class | count | members |
+| --- | --- | --- |
+| `csharp-falsifiable` | **2** | `test:stardew:core`, `test:stardew:integration` — **closed here** |
+| `needs-history` | **0** | none: every remaining row has a live violation to inject, or cannot fire at all |
+| `cannot-fire` | **10** | `audit:stardew-action-seam-terminals` (it prints its findings and exits 0; the only `process.exit(1)` is the argument parser, and the module is `integrations/stardew/action-development/src/**`), `check:live-run-isolation` (a machine preflight — it exits 1 from an absent profile root, and red-for-absence is not red-for-a-rule), `check:publint` (it `spawnSync`s `bun`, which this checkout does not have: the vendor `bun.ps1` is a shim Node does not resolve, so the run reads no publint message and prints a false pass), `check:sandbox-acceptance` (needs `GameBuddy.Setup.exe` and stages its share on a real account), `test:voice-protocol` (runs inside the `vendor/pi-koe` submodule), `test:stardew-soil-itm-canary` (all five cases skip where `.tmp-stardew-decompile/` is absent), `check:host-module-graph` and `check:dialogue-web-boundaries` (the rule lives in a root `.dependency-cruiser.*.cjs`), `tools/check-stardew-actor-admissibility.mjs` and `tools/check-stardew-hold-sufficiency.mjs` (the contract they read has never existed, and the missing half is a Mod-owner verdict over the 17 orphan holds the eighth batch counted) |
+| `reads-the-wrong-thing` | **2** | `check:architecture` (three of the five things its name covers are an `echo`), `test:stardew-native-local-runner-fixture-contract` (asserts a hand-built replica of the fixture's policy block rather than the writer) |
+| red at HEAD, so no green baseline to redden | **6** | `check:stardew-native-multiplayer-sensitivity` and `test:stardew-native-multiplayer-sensitivity` (`mp_sensitivity_classification_drift` on `use_mine_ladder`, measured at exit 2 and exit 1 again this batch), `test:gameplay-capability-catalog` (`Published registry actions missing covered catalog rows: fish_here.`), `test:frontend-turn-gate` (expects `sendUnavailable`, the product spells `sendRefused(uiState.send)`), `test:sandbox-configs` (`FAIL gamebuddy-sandbox.wsb: not valid XML`), `test:stardew-fixture-scenario-wiring` (`✖ the real config gate accepts navigation_read_only_v1`) |
+| provable, but not by a C# test | **1** | `test:dialogue-web-boundaries` — **measured green this batch** (4 pass, 0 fail), so it leaves the red-at-HEAD set; its falsifier is a file matching no zone in `dialogue-web/src/**`, which this lane may not write |
+
+`2 + 0 + 10 + 2 + 6 + 1 = 21`. The last two classes are not new reasons: they are the ledger's recorded ones,
+re-measured in this checkout rather than restated from the table above — and one of them has changed since it was
+written, which is why `test:dialogue-web-boundaries` is named with its measurement instead of its old disposition.
+
+### The falsifier: a project derived from the real one, never a copy of what it produces
+
+`integrations/stardew/tests/GameBuddy.Stardew.Integration.Tests/SuiteRedProofTests.cs` holds one fact per gate. Each
+reads the real `.csproj`, resolves its relative includes, adds one `Compile` glob over the real project's own source
+directory, and writes the derived project file into a temporary directory beside two injected facts:
+
+| the injected fact | why it is there |
+| --- | --- |
+| `InjectedFacts.AnInjectedFailingFact` | the violation: the thing the gate must report as a failed run |
+| `InjectedFacts.AnInjectedPassingFact` | the control: a configuration that reported *every* fact as failed would satisfy the exit code and the fact's name and not the summary line |
+
+Then it runs the gate's own command shape — `dotnet test <derived project> --filter FullyQualifiedName~<probe>` — with
+`DOTNET_CLI_UI_LANGUAGE=en` and `VSLANG=1033`, because the assertion is on the runner's summary line and this machine's
+runner prints Chinese without them, and asserts three things: a non-zero exit, the runner naming the failing fact, and
+the summary reading `Failed: 1, Passed: 1`.
+
+Nothing about the project is written by hand: the target framework, packages, analyzer and warning policy, the
+`ProjectReference` elements and every compiled source come from the real file and the real directory, so a file added
+to the suite, a reference added to its csproj, or a project that stops being a test project is inside the probe the day
+it lands. The failing fact lives in the temporary directory and the repository stays green, which is the same rule the
+seventh batch followed for `test:stardew:all` when it planted a fact in `GameBuddy.Stardew.Core.Tests` inside a copy.
+
+Each of the three assertions was seen red once, by injecting the defect it exists to catch into the copy at
+`E:/tmp/gateproof/b10` (the repository was never the injection site; the copy's own file was restored from `.orig`
+after each run):
+
+| injection | the line that fired |
+| --- | --- |
+| the failing fact made to pass | `Did not expect result.ExitCode to be 0 because the gate is \`dotnet test integrations/stardew/tests/GameBuddy.Stardew.Core.Tests\`, so a failing fact in it must exit non-zero` |
+| the failing fact renamed | `Expected result.Output … to contain "Failed GameBuddy.Stardew.SuiteRedProofProbe.InjectedFacts.AnInjectedFailingFact" because the runner must name the fact it reported as failed` |
+| the control fact made to fail too | `Expected result.Output to match regex "Failed!\s+-\s+Failed:\s+1,\s+Passed:\s+1,"` with `Failed: 2, Passed: 0` in the runner's output |
+
+**What the proof establishes:** the gate's runner reports a failing fact as a failure, names it, and exits non-zero,
+in the project the gate actually runs. **What it does not:** that the real suite's facts pass — that is the gate's own
+green reading and the run that contains this falsifier, and asserting it here would turn one failing fact anywhere in
+the suite into a red falsifier that names only the injected one. It also does not establish that a fact whose body was
+deleted is still discovered; only that a discovered fact that fails is reported and fails the gate.
+
+### The counts, measured before and after
+
+| project | reading |
+| --- | --- |
+| `GameBuddy.Stardew.Core.Tests` | 873 passed, 0 failed, 0 skipped (`dotnet test`, this checkout) |
+| `GameBuddy.Stardew.Integration.Tests`, before this batch's file | 2764 passed, **5 failed**, 2 skipped of 2771 — the five were another lane's uncommitted hold work (`NavigationHoldEvidenceTests.AWarpHoldSaysToWaitForTheWindowRatherThanToRetry` and four more, in `WorldModel.cs`, `StardewBodyController.cs` and that lane's own test files) |
+| `GameBuddy.Stardew.Integration.Tests`, after it | **2771 passed, 0 failed, 2 skipped** of 2773 (`SuiteRedProofTests` is the two new facts; the other side of the delta — 2764 → 2771 — is the other lane landing its work) |
+| `SuiteRedProofTests` alone | 2 passed, 0 failed — 28 s warm in the worktree, 15 s in the copy |
+
+The gate was green in this checkout both times it was measured with the new facts, so no claim here rests on a copy:
+the `E:/tmp/gateproof/b10` tree was used for the injections, not for the baseline.
+
+### The reader that could not see a project runner, repaired
+
+`tools/audit-gate-red-proofs.mjs` asked "does anything run this pointer" with `runnerText.includes(pointer)`, which is
+true only when a command names the **file**. `dotnet test <project directory>` names a directory and compiles every
+`.cs` beneath it, so both new markers read as `proven_but_nothing_runs` — a warning about the proof that was really
+about the reader. The derivation now also accepts a C# pointer beneath a project directory a `dotnet test`/`dotnet
+build` command names, and it is deliberately limited to that runner: a tool that merely parses a tree
+(`depcruise … tools`) is not what the claim "nothing runs this" is about, and the narrower rule moves exactly two
+existing rows, both of which are compiled by `dotnet build integrations/stardew/GameBuddy.Stardew.csproj`.
+
+| reading | before | after |
+| --- | --- | --- |
+| `proven_but_nothing_runs` rows | 33 | 31 |
+| the two that left | — | `audit:stardew-scene-kind-projection:integrations/stardew/navigation/scenecontracts.cs`, `check:terminal-idle-publication:integrations/stardew/farmhandexecutioncontroller.cs` |
+| `test:stardew:core`, `test:stardew:integration` | `proven_but_nothing_runs` for the falsifier's own file | absent from that list, which is the reading the markers claim |
+
+The suite case is `a proof's pointer is executed when a runner names the file or the project directory it sits in`, in
+`tools/audit-gate-red-proofs.test.mjs`, and it was seen red on the old reader before the fix was kept:
+
+```
+✖ a proof's pointer is executed when a runner names the file or the project directory it sits in
+  + [{ gate: 'check:a', pointer: 'integrations/stardew/tests/Project/InjectedTests.cs' }]
+  - []
+```
+
+### The census
+
+| reading | before | after |
+| --- | --- | --- |
+| `node tools/check-harness-conformance.mjs` | `351 · 324 · 4 · 21 · 0 · 0` | `351 · 326 · 4 · 19 · 0 · 0`, `gate_falsifiers: passed` |
+| `node tools/audit-gate-red-proofs.mjs --gaps` | 23 gaps (21 recorded + 2 unreadable) | 21 gaps (19 recorded + 2 unreadable) |
+| `tools/gate-red-proof-baseline.json` | 23 entries | 21 entries — exactly `test:stardew:core` and `test:stardew:integration` removed |
+
+`326 + 4 + 19 = 349`, plus the two unreadable claims the header still names (`check:code-duplication`'s malformed
+marker and `test:format-ratchet`'s pointer to a planted file that is not on disk), is the 351 examined. Both remain
+owed and neither is this batch's: they are gate files another lane owns, and rewriting a claim into a readable one
+without reproducing its red would be the silencer this ledger exists to prevent.
