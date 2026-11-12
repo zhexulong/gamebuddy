@@ -431,14 +431,19 @@ const GATES_WITH_FALSIFIER = Object.freeze([
   // answer that dropped a step is a dead end, a plan-level refusal with a workable remedy is repaired, a refusal naming
   // no remedy is a dead end even when one exists by hand, and an empty or unpublished population is `blocked`.
   "check-plan-legal-fixpoint.mjs",
-  // Prints `files examined N · clone groups M · new K · grown G · baselined B` and a one-entry `checks[]` verdict, so
-  // its default run is the report read here. Its falsifier is tools/check-code-duplication.test.mjs, which drives the
-  // gate's own reader over throwaway trees and jscpd's real report: three copies of the admission body are one group
-  // named with every site (`clone_group:...tokens:3sites:`), a fourth copy against a three-site baseline entry is
-  // `clone_group_grew`, two copies against a four-site entry are `stale_clone_baseline`, a config naming another
-  // population is `jscpd_config_disagrees:<field>` for path, format, ignore and both thresholds, a tree with no source
-  // file is blocked (`code_duplication_examined_no_files`) and a declared `typescript` format with no TypeScript file
-  // is blocked naming the format - the two ways the C# tree and the whole scan could read as measured when they are not.
+  // Prints `files examined N · clone groups M · of which facade-only F · duplication D · new K · grown G · baselined
+  // B` (plus one `facade-only:<hash>: ...` line per facade) and a one-entry `checks[]` verdict, so its default run is
+  // the report read here. Its falsifier is tools/check-code-duplication.test.mjs, which drives the gate's own reader
+  // over throwaway trees and jscpd's real report: three copies of the admission body are one group named with every
+  // site (`clone_group:...tokens:3sites:`), a fourth copy against a three-site baseline entry is `clone_group_grew`,
+  // two copies against a four-site entry are `stale_clone_baseline`, a config naming another population is
+  // `jscpd_config_disagrees:<field>` for path, format, ignore and both thresholds, a tree with no source file is
+  // blocked (`code_duplication_examined_no_files`) and a declared `typescript` format with no TypeScript file is
+  // blocked naming the format - the two ways the C# tree and the whole scan could read as measured when they are not.
+  // Both kinds of group are seen red: an envelope repeated at three sites (one method per action, one delegation) is
+  // `facade-only` and passes while `duplication 0`, the same three files with a lookup -> `revision++` -> `Guid` ->
+  // `nowMs` preamble are `clone_group` duplication beside it, and a baseline that records the envelope is
+  // `facade_only_clone_baselined` rather than `stale_clone_baseline`.
   "check-code-duplication.mjs",
   // Prints `observation tools examined N · named M · with a reason K`, one line per tool, and a `checks[]` verdict
   // enumerating its seven rules (the surface still mounts the class it reads, the population is non-empty, the guidance

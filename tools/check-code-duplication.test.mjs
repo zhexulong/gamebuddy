@@ -25,13 +25,16 @@ import { fileURLToPath } from "node:url";
 import {
   baselinePayload,
   baselineWriteRefusal,
+  censusLine,
   checkCodeDuplication,
   configDisagreements,
   evaluateGroups,
+  facadeLine,
   firstLineOf,
   groupClones,
   groupHash,
   IGNORES,
+  isFacadeOnly,
   MIN_LINES,
   MIN_TOKENS,
   normaliseSitePath,
@@ -83,6 +86,28 @@ const pipeline = (name, handler) =>
   ].join("\n");
 
 const copies = (names) => Object.fromEntries(names.map((name) => [`host/src/${name}.cs`, pipeline(name, "Execute")]));
+
+/**
+ * The other thing the controllers repeat once the eight-step body is folded behind a seam: one method per action
+ * sharing the catalogue's envelope, and the one delegation each of them performs. The parameters are one per line
+ * because that is how the real partials wrap them, and the method name differs per copy for the same reason the
+ * pipeline does - jscpd normalises it, and the envelope is the same envelope either way.
+ */
+const envelope = (name) =>
+  [
+    `    public LocalExecutionReceipt RequestLocal${name}(`,
+    "        string requestId,",
+    "        int slot,",
+    "        int targetX,",
+    "        int targetY,",
+    "        string expectedTargetId,",
+    "        long requestedDeadlineMs)",
+    "    {",
+    "        if (this.AdmitLocalExecution(requestId, requestedDeadlineMs, out string executionId, out long nowMs) is LocalExecutionReceipt admissionRejection) return admissionRejection;",
+    "    }",
+  ].join("\n");
+
+const envelopes = (names) => Object.fromEntries(names.map((name) => [`host/src/${name}.cs`, envelope(name)]));
 
 /** A pair reading in the shape jscpd writes: the same fragment at two sites. */
 const pair = ({ fragment, tokens = 50, first, second }) => ({
@@ -310,4 +335,126 @@ test("a declared format the tree has no files for is blocked, naming the format"
   const reading = checkCodeDuplication({ root, trees, formats: ["csharp", "typescript"], baseline: { groups: [] } });
   assert.equal(reading.status, "blocked");
   assert.equal(reading.reason, "format_examined_no_files:typescript");
+});
+test("the façade reader takes an envelope and its one delegation, and refuses a body with anything in it", () => {
+  assert.equal(isFacadeOnly(envelope("CollectBuildingChestOutput")), true);
+  assert.equal(isFacadeOnly(envelope("ClearCask")), true);
+  assert.equal(isFacadeOnly(pipeline("CollectCrate", "Execute")), false);
+});
+
+test("a head whose only statement is one admission guard reads as a façade, inline lookup or seam call alike", () => {
+  const head = (guard) =>
+    [
+      "    public LocalExecutionReceipt RequestLocalWaterCrop(string requestId, long requestedDeadlineMs)",
+      "    {",
+      guard,
+      "            return existing;",
+    ].join("\n");
+  // The rule cannot tell a guarded lookup from a guarded seam call, and this pins that known release: it is safe
+  // because the family the gate exists for is five statements (lookup, revision++, Guid, nowMs, guard), not one.
+  const lookup = head(
+    "        if (this.receiptsByRequestId.TryGetValue(requestId, out LocalExecutionReceipt? existing))",
+  );
+  assert.equal(isFacadeOnly(lookup), true);
+  assert.equal(
+    isFacadeOnly(
+      head(
+        "        if (this.AdmitLocalExecution(requestId, requestedDeadlineMs, out LocalExecutionReceipt? existing))",
+      ),
+    ),
+    true,
+  );
+  assert.equal(isFacadeOnly(`${lookup}\n        this.revision++;`), false);
+});
+
+test("a fragment that opens inside a body is never a façade, whatever it declares", () => {
+  assert.equal(
+    isFacadeOnly("if (this.AdmitLocalExecution(requestId) is LocalExecutionReceipt refusal) return refusal;"),
+    false,
+  );
+  assert.equal(
+    isFacadeOnly(
+      [
+        '        string executionId = Guid.NewGuid().ToString("N");',
+        "        long nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();",
+      ].join("\n"),
+    ),
+    false,
+  );
+});
+
+test("a declaration that names a value is a statement, so a repeated object literal stays duplication", () => {
+  const literal = (key) =>
+    [
+      "    {",
+      '      status: "running",',
+      `      ${key}: value.${key} as string,`,
+      "      ...variantFields,",
+      "      observation: common.observation,",
+    ].join("\n");
+  assert.equal(isFacadeOnly(literal("idempotencyKey")), false);
+});
+
+test("the façade case: one envelope at three sites passes, is counted, and is named by its hash", () => {
+  const { root, trees, formats } = workspace(envelopes(["Alpha", "Bravo", "Charlie"]));
+  const reading = checkCodeDuplication({ root, trees, formats, baseline: { groups: [] } });
+  assert.equal(reading.status, "passed");
+  assert.equal(reading.counted.length, 1);
+  assert.equal(reading.duplication.length, 0);
+  assert.equal(reading.facade.length, 1);
+  assert.deepEqual(reading.findings, []);
+  assert.match(
+    censusLine(reading),
+    /^files examined 3 · clone groups 1 · of which facade-only 1 · duplication 0 · new 0 · grown 0 · baselined 0$/,
+  );
+  assert.match(
+    facadeLine(reading.facade[0]),
+    /^ {2}facade-only:[0-9a-f]{12}: 3 sites at \d+ tokens :: host\/src\/Alpha\.cs:\d+, host\/src\/Bravo\.cs:\d+, host\/src\/Charlie\.cs:\d+ :: public LocalExecutionReceipt RequestLocal/,
+  );
+});
+
+test("the real case: a 45-token admission preamble beside the envelope is named as duplication, not façade", () => {
+  const mixed = (name) => `${envelope(name)}\n\n${pipeline(name, "Execute")}`;
+  const { root, trees, formats } = workspace(
+    Object.fromEntries(["Alpha", "Bravo", "Charlie"].map((name) => [`host/src/${name}.cs`, mixed(name)])),
+  );
+  const reading = checkCodeDuplication({ root, trees, formats, baseline: { groups: [] } });
+  assert.equal(reading.status, "failed");
+  assert.ok(reading.duplication.length >= 1, "the preamble is duplication");
+  assert.ok(reading.facade.length >= 1, "the envelope is still a façade beside it");
+  const preamble = reading.duplication.find((group) => group.fragment.includes("receiptsByRequestId.TryGetValue"));
+  assert.ok(preamble !== undefined, "the lookup is in the duplication population, not the façade one");
+  assert.ok(preamble.tokens >= 45);
+  assert.ok(!reading.facade.some((group) => group.hash === preamble.hash));
+  assert.match(
+    reading.findings.map((entry) => entry.detail).join("\n"),
+    /clone_group:\d+tokens:3sites: .*:: (if \(this\.receiptsByRequestId\.TryGetValue|public LocalExecutionReceipt)/,
+  );
+});
+
+test("a baseline that records a façade group is reclassified, not called stale", () => {
+  const { root, trees, formats } = workspace(envelopes(["Alpha", "Bravo", "Charlie"]));
+  const facade = checkCodeDuplication({ root, trees, formats, baseline: { groups: [] } }).facade;
+  const reading = checkCodeDuplication({ root, trees, formats, baseline: baselinePayload(facade) });
+  assert.equal(reading.status, "failed");
+  assert.equal(reading.reclassified, 1);
+  assert.equal(reading.stale, 0);
+  assert.deepEqual(
+    reading.findings.map((entry) => entry.code),
+    ["facade_only_clone_baselined"],
+  );
+  assert.match(reading.findings[0].detail, /^facade_only_clone_baselined:[0-9a-f]{12}: the baseline records 3 sites/);
+  assert.match(censusLine(reading), /reclassified 1$/);
+});
+
+test("--write-baseline records the duplication population, so a façade needs no entry and gets none", () => {
+  const mixed = (name) => `${envelope(name)}\n\n${pipeline(name, "Execute")}`;
+  const { root, trees, formats } = workspace(
+    Object.fromEntries(["Alpha", "Bravo", "Charlie"].map((name) => [`host/src/${name}.cs`, mixed(name)])),
+  );
+  const reading = checkCodeDuplication({ root, trees, formats, baseline: { groups: [] } });
+  const payload = baselinePayload(reading.duplication);
+  assert.equal(payload.groups.length, reading.duplication.length);
+  assert.ok(payload.groups.every((entry) => reading.duplication.some((group) => group.hash === entry.hash)));
+  assert.ok(payload.groups.every((entry) => !reading.facade.some((group) => group.hash === entry.hash)));
 });

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * Duplication is a gate, not a percentage: one block of >= 40 tokens appearing at >= 3 sites fails, whatever share
- * of the tree that is.
+ * of the tree that is - unless the block is a DECLARATION rather than an implementation (see FACADE below).
  *
  * WHY. `jscpd` has been a dependency with a `jscpd.json` config since the config was written and nothing ever
  * prevented anything: its `exitCode` was 0, its `format` was `javascript`/`typescript` so the C# Mod was never
@@ -13,20 +13,66 @@
  * tree, the duplicated lines are 7.7% of the total and the duplicated tokens 9.3%, and 9.3% is a number nobody fails a
  * build over - which is why the rule below has no percentage in it.
  *
+ * FACADE: TWO FACTS WORE ONE NAME. A group above the threshold is one of two different things, and counting them
+ * together is what made the honest fix unrecordable:
+ *
+ *   - DUPLICATION - the same implementation text at N sites. It is removable, and removing it must lower the count.
+ *   - FACADE - a declaration at N sites: the signature and parameter list of one method per catalogue entry, plus the
+ *     one delegation that head performs. `RequestLocalPlantSeed`, `RequestLocalClearCask`, `RequestLocalPickupForage`
+ *     ... are the same envelope because the game action catalogue gives them the same envelope; folding 46 actions
+ *     into one generic dispatcher would delete the product, not the repetition. Nothing here is copied logic.
+ *
+ * MEASURED, 2026-11-12, over the 46 `farmhandexecutioncontroller*.cs` partials at HEAD (7fe2d52e), at this file's
+ * thresholds: 39 groups. Folding the eight-step pipeline behind one admission seam at 57 sites gave 27 - but not as
+ * "twelve fewer": 24 groups disappeared and 12 appeared, of which 6 are
+ * `public LocalExecutionReceipt RequestLocal<Action>(...)` followed by `{` and the one `AdmitLocalExecution(...)`
+ * delegation. The duplication was removed and the count went the wrong way, because the window had shifted onto the
+ * signature. The same run is the falsifier for the alternatives:
+ *
+ *   - `--mode strict` (no identifier normalisation) reads 43 groups before the seam and 35 after - WORSE on the
+ *     facade, because the facade's identifiers are identical and survive normalisation either way; and it STOPS
+ *     catching 34 of the 39 groups that exist today, which is exactly the renamed-but-identical body this gate exists
+ *     for (the per-action handler call, the per-site `RememberTerminal`, the per-tool refusal). Strict mode answers
+ *     the opposite question to the one asked here.
+ *   - an ignore pattern cannot express it: jscpd's `--ignore-pattern` skips matching TOKENS, so it would have to name
+ *     the seam, the profile and every parameter - one spelling per call site, which is the drift this gate refuses.
+ *
+ * SO THE RULE IS `isFacadeOnly(fragment)`, evaluated on the text jscpd matched, and it fails CLOSED: a fragment is a
+ * facade only while EVERY non-blank, non-comment line of it is declaration text (a signature or a parameter, naming no
+ * value: no literal, no spread, no assignment), a brace, a delegation (`return <identifier>;` or
+ * `if (<condition>) return <identifier>;`) or a pass-through read (`Type name = a.b.c;`). One lookup, one minted
+ * receipt, one comparison, one second branch, one string - anything the rule does not positively recognise - keeps the
+ * group as duplication. The fragment must also contain at least one declaration line, so a window that begins inside a
+ * body is never a facade. What that releases today is measured, not asserted: on this tree it is exactly one group,
+ * `2a848276806f` at 3 sites / 71 tokens, the recursive parameter list of `ClearingPlanner`; on the pre-seam controllers
+ * it is none of the 39. What it would release and should not: a method head whose only statement is a single admission
+ * guard, even when that guard is an inline `receiptsByRequestId.TryGetValue` rather than a seam call - the rule cannot
+ * tell those two apart, and it is safe to be blind to them because the family the gate exists for is five statements
+ * of lookup, `revision++`, `Guid.NewGuid`, `nowMs` and the guard, not one.
+ *
  * WHAT IT ASSERTS, per clone group - the sites jscpd reports for one repeated text, grouped by that text:
  *
- *   1. a group with >= MIN_TOKENS tokens at >= MIN_SITES sites is a finding, named with EVERY site and the group's
- *      first line of code, so the reader recognises the block without opening the report;
+ *   1. a DUPLICATION group with >= MIN_TOKENS tokens at >= MIN_SITES sites is a finding, named with EVERY site and the
+ *      group's first line of code, so the reader recognises the block without opening the report;
  *   2. a group recorded in `tools/duplicate-code-baseline.json` at the same or a smaller size passes, because that
  *      duplication already existed when the baseline was written;
  *   3. a baselined group that gained sites or tokens is a finding (`clone_group_grew`), and one that lost them is a
  *      finding too (`stale_clone_baseline`): the baseline can only shrink, so a fix has to be recorded rather than
- *      silently leaving an entry behind.
+ *      silently leaving an entry behind;
+ *   4. a FACADE group is counted and printed (`facade-only:<hash>: ...`) and is not a finding, because there is no
+ *      change a reader could make in response; a baseline entry that records one is `facade_only_clone_baselined`,
+ *      which is a different fact from `stale_clone_baseline` and says so - an entry for a group the tree still has,
+ *      under a name that no longer claims it is duplication.
  *
- * THE BASELINE IS A RATCHET, NOT AN ACCEPT LIST. `--write-baseline` records today's groups when the file does not
- * exist yet, and after that REFUSES to write while any group is new or grew - a green run therefore never becomes the
- * way to accept new duplication, only the way to record a shrink. Line numbers in the baseline are documentation; the
- * comparisons are the site COUNT and the token count, because a line inserted above a site must not turn the gate red.
+ * THE POPULATION IS PRINTED BOTH WAYS, so neither fact can hide inside the other: `clone groups N · of which
+ * facade-only M · duplication K`. K is what the ratchet governs and what `--write-baseline` records; a new or grown
+ * duplication group still fails, which is the hard failure this file always had.
+ *
+ * THE BASELINE IS A RATCHET, NOT AN ACCEPT LIST. `--write-baseline` records today's duplication groups when the file
+ * does not exist yet, and after that REFUSES to write while any group is new or grew - a green run therefore never
+ * becomes the way to accept new duplication, only the way to record a shrink. Line numbers in the baseline are
+ * documentation; the comparisons are the site COUNT and the token count, because a line inserted above a site must not
+ * turn the gate red.
  *
  * THE POPULATION is this file's `SOURCE_TREES`, and `jscpd.json` must declare the same paths, formats, ignore list and
  * thresholds or `jscpd_config_disagrees:<field>` fails: two spellings of "what is examined" drift apart the first time
@@ -52,16 +98,25 @@
  *                    site; with today's baseline removed, the same group reads
  *                    `clone_group:64tokens:9sites: integrations/stardew/farmhandexecutioncontroller.<each partial>.cs`
  *                    beside `files examined 1270 · clone groups 354 · new 354`; an entry whose sites are gone ->
- *                    `stale_clone_baseline:<hash>`. Both directions on real jscpd output, in
- *                    tools/check-code-duplication.test.mjs, whose throwaway trees are copied from the real body.
+ *                    `stale_clone_baseline:<hash>`.
+ * red-proof: facades  three controller partials whose methods share an envelope and one `AdmitLocalExecution(...)`
+ *                    delegation, with no baseline -> `clone groups 1 · of which facade-only 1 · duplication 0`, status
+ *                    `passed`, and `facade-only:<hash>: 3 sites at <n> tokens :: public LocalExecutionReceipt
+ *                    RequestLocal<Action>(` printed; a genuine lookup -> `revision++` -> `Guid.NewGuid` -> `nowMs`
+ *                    preamble injected into the same three methods -> `clone_group:<n>tokens:3sites:` ... status
+ *                    `failed`, with `facade-only` unchanged; a baseline that records the facade group ->
+ *                    `facade_only_clone_baselined:<hash>`.
+ *
+ * Every direction above is red on jscpd's own report, in tools/check-code-duplication.test.mjs, whose throwaway trees
+ * are copied from the real body.
  */
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
+import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
 import process from "node:process";
-import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -119,6 +174,80 @@ export function groupHash(fragment) {
 
 const compareSites = (left, right) => left.file.localeCompare(right.file) || left.line - right.line;
 
+/** Statements and declarations, told apart by the only thing a token report cannot tell us: the source text. */
+const CONTROL_HEADS = /^(if|else|for|foreach|while|switch|using|lock|catch|try|finally|do|case|default)\b/u;
+const NAMES_NO_VALUE = /["'`]|\d|\s=\s|\s=/u;
+const isBrace = (line) => line === "{" || line === "}";
+const isDeclaration = (line) =>
+  !(/[;={}]/u.test(line) || NAMES_NO_VALUE.test(line) || line.includes("...") || CONTROL_HEADS.test(line)) &&
+  (line.includes("(") || /[),]$/u.test(line));
+
+/**
+ * A fragment is a sequence of units: declaration text, braces, and statements (a control head and its body joined to
+ * the line that closes it). Nothing here parses a language; it separates the two kinds of line a clone window can be
+ * made of, which is all the facade rule needs.
+ */
+export function fragmentUnits(fragment) {
+  const lines = fragment
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line !== "" && !line.startsWith("//"));
+  const units = [];
+  let pending = null;
+  for (const line of lines) {
+    if (pending === null && isBrace(line)) {
+      units.push({ kind: "brace", text: line });
+      continue;
+    }
+    if (pending === null && isDeclaration(line)) {
+      units.push({ kind: "declaration", text: line });
+      continue;
+    }
+    pending = pending === null ? line : `${pending} ${line}`;
+    if (/[;{]$/u.test(line)) {
+      units.push({ kind: "statement", text: pending });
+      pending = null;
+    }
+  }
+  if (pending !== null) units.push({ kind: "statement", text: pending });
+  return units;
+}
+
+const DECISION_OR_VALUE = /[&|?=<>[\]]|"|'|`|new\s|\+\+|--/u;
+const IDENTIFIER = /^[A-Za-z_][\w.]*$/u;
+
+/** `return <identifier>;`, or `if (<condition>) return <identifier>;` - a head handing its one job to somewhere else. */
+function isDelegation(text) {
+  const flat = text.replace(/\s+/gu, " ").trim();
+  const guarded = flat.match(/^if \((.*)\) return (.*);$/u);
+  const plain = flat.match(/^return (.*);$/u);
+  const expression = guarded === null ? plain?.[1] : guarded[2];
+  return expression !== undefined && IDENTIFIER.test(expression);
+}
+
+/** `Type name = a.b.c;` - reading a value through, with no call, no operator and nothing minted. */
+function isPassThroughRead(text) {
+  const match = text
+    .replace(/\s+/gu, " ")
+    .trim()
+    .match(/^[A-Za-z_][\w.<>?]* [A-Za-z_]\w* = ([^;]*);$/u);
+  return match !== null && !DECISION_OR_VALUE.test(match[1]) && !match[1].includes("(");
+}
+
+/**
+ * The rule that separates the two facts: a clone window that declares an ENVELOPE is not a copy of an implementation.
+ * It must declare something (a window that opens inside a body never qualifies), and every statement in it must be a
+ * delegation or a pass-through read - no lookup, no minted receipt, no branch, no literal, no arithmetic. Anything
+ * this function does not positively recognise leaves the group a duplication finding, which is the safe direction.
+ */
+export function isFacadeOnly(fragment) {
+  const units = fragmentUnits(fragment);
+  if (!units.some((unit) => unit.kind === "declaration")) return false;
+  return units
+    .filter((unit) => unit.kind === "statement")
+    .every((unit) => isDelegation(unit.text) || isPassThroughRead(unit.text));
+}
+
 /** The group's first line of code, which is what makes a hash recognisable to a reader. */
 export function firstLineOf(fragment) {
   const line = fragment.split("\n").find((entry) => entry.trim() !== "") ?? "";
@@ -127,7 +256,8 @@ export function firstLineOf(fragment) {
 
 /**
  * jscpd's pairwise report, folded into groups: one entry per repeated text, holding every site it was reported at.
- * A pair's two files are both sites, and a site reported by several pairs is counted once.
+ * A pair's two files are both sites, and a site reported by several pairs is counted once. Each group carries the kind
+ * of fact it is (`duplication` or `facade`), decided once from the text that is its identity.
  */
 export function groupClones(duplicates, root = REPO) {
   const groups = new Map();
@@ -135,7 +265,13 @@ export function groupClones(duplicates, root = REPO) {
     const hash = groupHash(duplicate.fragment);
     let group = groups.get(hash);
     if (group === undefined) {
-      group = { hash, tokens: duplicate.tokens, fragment: duplicate.fragment, sites: new Map() };
+      group = {
+        hash,
+        tokens: duplicate.tokens,
+        fragment: duplicate.fragment,
+        kind: isFacadeOnly(duplicate.fragment) ? "facade" : "duplication",
+        sites: new Map(),
+      };
       groups.set(hash, group);
     }
     group.tokens = Math.max(group.tokens, duplicate.tokens);
@@ -161,15 +297,18 @@ function violation(code, prefix, group) {
 }
 
 /**
- * The rule, as one reading of one report: which groups break it, which of those the baseline already recorded, and
- * whether the baseline still describes the tree. `groups` is `groupClones(...)`; `baseline.groups` is the file.
+ * The rule, as one reading of one report: which groups are duplication and break it, which of those the baseline
+ * already recorded, whether the baseline still describes the tree, and which groups the rule read as a facade instead.
+ * `groups` is `groupClones(...)`; `baseline.groups` is the file.
  */
 export function evaluateGroups({ groups, baseline, minTokens = MIN_TOKENS, minSites = MIN_SITES }) {
   const counted = groups.filter((group) => group.tokens >= minTokens && group.sites.length >= minSites);
+  const facade = counted.filter((group) => group.kind === "facade");
+  const duplication = counted.filter((group) => group.kind !== "facade");
   const recorded = new Map((baseline?.groups ?? []).map((entry) => [entry.hash, entry]));
   const findings = [];
   let baselined = 0;
-  for (const group of counted) {
+  for (const group of duplication) {
     const entry = recorded.get(group.hash);
     if (entry === undefined) {
       findings.push(violation("clone_group", `clone_group:${group.tokens}tokens:${group.sites.length}sites`, group));
@@ -199,9 +338,21 @@ export function evaluateGroups({ groups, baseline, minTokens = MIN_TOKENS, minSi
       );
     }
   }
-  const live = new Set(counted.map((group) => group.hash));
+  const live = new Set(duplication.map((group) => group.hash));
+  const facades = new Set(facade.map((group) => group.hash));
   for (const entry of recorded.values()) {
     if (live.has(entry.hash)) continue;
+    if (facades.has(entry.hash)) {
+      findings.push({
+        code: "facade_only_clone_baselined",
+        hash: entry.hash,
+        detail:
+          `facade_only_clone_baselined:${entry.hash}: the baseline records ${entry.sites.length} sites at ` +
+          `${entry.tokens} tokens (${entry.sites.join(", ")}), and this gate reads that group as a facade - a ` +
+          "declaration, not an implementation - so the entry claims duplication the tree does not have: delete it",
+      });
+      continue;
+    }
     findings.push({
       code: "stale_clone_baseline",
       hash: entry.hash,
@@ -213,10 +364,13 @@ export function evaluateGroups({ groups, baseline, minTokens = MIN_TOKENS, minSi
   return {
     examinedGroups: groups.length,
     counted,
+    facade,
+    duplication,
     baselined,
     newGroups: findings.filter((entry) => entry.code === "clone_group").length,
     grown: findings.filter((entry) => entry.code === "clone_group_grew").length,
     stale: findings.filter((entry) => entry.code === "stale_clone_baseline").length,
+    reclassified: findings.filter((entry) => entry.code === "facade_only_clone_baselined").length,
     findings,
   };
 }
@@ -399,17 +553,34 @@ function reportLine(reading) {
     status: reading.status,
     examined: reading.examined,
     ...(reading.reason === undefined ? {} : { reason: reading.reason }),
+    ...(reading.counted === undefined
+      ? {}
+      : {
+          cloneGroups: reading.counted.length,
+          facadeOnly: reading.facade.length,
+          duplication: reading.duplication.length,
+        }),
     checks,
   });
 }
 
-function censusLine(reading) {
+/** A facade group, named so the reader can see what the rule let through and disagree with it. */
+export function facadeLine(group) {
+  return (
+    `  facade-only:${group.hash}: ${group.sites.length} sites at ${group.tokens} tokens :: ${describeSites(group.sites)} ` +
+    `:: ${firstLineOf(group.fragment)}`
+  );
+}
+
+export function censusLine(reading) {
   if (reading.status === "blocked")
     return `files examined ${reading.examined} · clone groups 0 · BLOCKED ${reading.reason}`;
   return (
-    `files examined ${reading.examined} · clone groups ${reading.counted.length} · new ${reading.newGroups} · ` +
+    `files examined ${reading.examined} · clone groups ${reading.counted.length} · of which facade-only ` +
+    `${reading.facade.length} · duplication ${reading.duplication.length} · new ${reading.newGroups} · ` +
     `grown ${reading.grown} · baselined ${reading.baselined}` +
-    `${reading.stale === 0 ? "" : ` · stale ${reading.stale}`}`
+    `${reading.stale === 0 ? "" : ` · stale ${reading.stale}`}` +
+    `${reading.reclassified === 0 ? "" : ` · reclassified ${reading.reclassified}`}`
   );
 }
 
@@ -435,6 +606,7 @@ function main(argv) {
     return;
   }
   const lines = [censusLine(reading)];
+  for (const group of reading.facade ?? []) lines.push(facadeLine(group));
   for (const entry of reading.findings ?? []) lines.push(`  ${entry.detail}`);
   if (writeBaseline) {
     if (reading.counted === undefined) {
@@ -455,7 +627,7 @@ function main(argv) {
       process.exitCode = 1;
       return;
     }
-    const payload = baselinePayload(reading.counted);
+    const payload = baselinePayload(reading.duplication);
     fs.writeFileSync(path.join(REPO, BASELINE), serialiseBaseline(payload), "utf8");
     lines.push(
       `${creating ? "baseline_created" : "baseline_written"}: ${payload.groups.length} group(s) -> ${BASELINE}`,
