@@ -672,13 +672,10 @@ test("Chat surface never creates a gameplay subagent even when enabled with inte
       snapshot: fixtureSnapshot(),
     },
     async (mod) => {
-      // A Chat surface has no live world, so it does not carry a continuityId:
-      // the Magic Context runtime-environment-facts provider is process-global
-      // and may be registered only once, and the Game-surface case above already
-      // registers it. The "never creates a gameplay subagent" invariant needs
-      // only an integration, a model config, and an explicit chat surface.
+      // A Chat surface is a Tavern continuity like any other: the preset binding it composes at construction is
+      // player-scoped, and `resolveTavernPaths` refuses an identity with no `continuityId` rather than guessing one.
       const runtime = await createCompanionRuntime(
-        identity,
+        { ...identity, continuityId: "continuity_chat_subagent_01" },
         root,
         mod.connection,
         GAMEPLAY_SUBAGENT_MODEL_CONFIG,
@@ -1864,7 +1861,7 @@ test("concurrent runtime bootstraps retain separate Magic Context data roots", a
 test("internal Historian fixture override can disable automatic authoring without changing Memory gates", async () => {
   const root = await mkdtemp(join(await canonicalTemporaryRoot(), "gamebuddy-historian-off-fixture-"));
   const runtime = await createCompanionRuntime(
-    identity,
+    { ...identity, continuityId: "continuity_historian_off_01" },
     root,
     undefined,
     undefined,
