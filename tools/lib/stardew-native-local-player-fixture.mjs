@@ -1131,10 +1131,6 @@ async function readExperimentalActionIds(options) {
  */
 function applyDerivedPolicy(result, actions, experimentalActionIds) {
   const experimentalSet = new Set(experimentalActionIds);
-  // The fixture's action set is the scenarios's own declaration, and the Mod reads it from this field:
-  // without it the config kept whatever an earlier file said (a fresh install has no file at all), so the
-  // world armed for one scenario ran with another scenario's actions - or none.
-  result.EnabledActions = [...actions];
   result.DeniedActions = [];
   result.DeniedActionFamilies = [];
   result.ExperimentalActions = actions.filter((action) => experimentalSet.has(action));

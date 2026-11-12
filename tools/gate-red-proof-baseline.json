@@ -17,7 +17,6 @@
     "test:gameplay-capability-catalog",
     "test:sandbox-configs",
     "test:stardew-fixture-scenario-wiring",
-    "test:stardew-native-local-runner-fixture-contract",
     "test:stardew-native-multiplayer-sensitivity",
     "test:stardew-soil-itm-canary",
     "test:voice-protocol",

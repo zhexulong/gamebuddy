@@ -149,10 +149,12 @@ what was done with it). The two places history was genuinely the only honest pro
 
 ## Provable, not yet proven
 
-Fifteen gates, each with the violation to inject. Twenty-three rows left this table in the fifth batch, twenty
+Fourteen gates, each with the violation to inject. Twenty-three rows left this table in the fifth batch, twenty
 left it in the sixth (all proved there), eight left it in the seventh, three left it in the eighth (all proved there),
-and three moved down to the red-at-HEAD table
-(one in the sixth, `test:tool-corpus` and `test:dialogue-web-boundaries` in the seventh); none of them is repeated here.
+three moved down to the red-at-HEAD table
+(one in the sixth, `test:tool-corpus` and `test:dialogue-web-boundaries` in the seventh), and one left it in the twelfth
+(`test:stardew-native-local-runner-fixture-contract`, repaired to read the writer and proved there); none of them is
+repeated here.
 Where the target is the module the suite imports it is named; where the injection is a fixture, a config or an
 environment, the artefact is named instead. Rows marked `(attempted; did not fire)` are cases where a lane tried an
 injection that the suite did not catch — they are still provable, but the first guess is recorded so nobody repeats
@@ -166,7 +168,6 @@ it.
 | `test:stardew-branch-writeset` | inject into `../src/analysis/stardew-branch-writeset.mjs` |
 | `test:stardew-method-resolution` | inject into `../src/analysis/stardew-branch-writeset.mjs` |
 | `test:stardew-method-resolution-mutation` | a mutation the mutation runner must kill |
-| `test:stardew-native-local-runner-fixture-contract` | inject into `./lib/stardew-native-local-player-fixture.mjs` — **not attempted this batch**: its "fixture's own policy block" case asserts a hand-built replica rather than the writer (see the sixth-batch finding below), so the path that would turn it red is a change to the replica, which proves the assertion fires and not that the fixture is guarded |
 | `test:stardew-player-reachable-exits` | inject into `../src/stardew-source-analysis-vocabulary.mjs` |
 | `test:stardew-reachable-exits-reconciliation` | the artefact it reads |
 | `test:stardew-rejected-layer-verdicts-mutation` | a mutation the runner must kill |
@@ -1705,3 +1706,29 @@ prints a population line and findings rather than a `checks[]` report, so the ha
 The one `falsifier_entry_stale` that remains in `check-harness-conformance` is the one named in the previous section -
 `check-gate-populations.mjs`, another lane's untracked gate that the register already declares - not this unit's.
 
+
+## The twelfth batch: one gate that read its own replica
+
+`test:stardew-native-local-runner-fixture-contract` was the single row in the "asserts a replica" class, and it left the
+queue because the replica was deleted rather than because a proof was manufactured against it. Its fourth case compared
+a hand-built `fixturePolicyFor(actions)` against a literal, and the config it handed the runners was built the same way,
+so the writer could retire a field and both would stay green.
+
+- **The producer**: `configureNativeLocalPlayer` (`tools/lib/stardew-native-local-player-fixture.mjs:1240`) is what
+  `prepareNativeLocalPlayerFixture` calls to build the `config.json` a run ships. The gate now invokes it once per runner
+  and asserts against its output; the policy fields are read from `ModConfig`'s own `ActionPolicyOptions` mapping, and a
+  retired policy field is a list the record no longer declares.
+- **The historical red**: `a0d756df` added `result.EnabledActions` to that writer, on the belief that "the Mod reads the
+  enabled set from that field". `ModConfig` has never declared it since. At that commit the replica case passes
+  (`✔ the fixture's own policy block carries no retired field`); at `27a0bc83`, the last shipped revision carrying the
+  field, the old gate is 4/4 green while the repaired gate reds naming `EnabledActions`.
+- **Two gates green from one deletion**: the writer no longer emits the retired key, so
+  `tools/stardew-policy-isolation.test.mjs:138` — red at HEAD for that exact line — passes again beside this one.
+- **Behaviour-neutral, measured**: the writer emits 16 top-level config keys and `ModConfig` declares 15 of them; the
+  sixteenth is `Portfolio`, a retired topology block outside this gate's policy axis. With the retired key still written
+  the count was 17 emitted and 2 undeclared, and deserialisation dropped it, so the value never reached the game.
+
+Measured on a worktree that also carried other lanes' untracked `tools/check-*.mjs`: `gates examined 357 · with a red
+proof 333 · external 4 · declared without 18 · undeclared 0 · zero-population-pass 0 · unlisted 1`. The delta this unit
+owns is one gate out of `declared without` and into `with a red proof`; the rest of that reading moved for reasons
+outside it.
