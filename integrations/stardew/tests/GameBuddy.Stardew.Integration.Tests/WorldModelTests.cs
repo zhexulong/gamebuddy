@@ -175,6 +175,19 @@ public sealed class WorldModelTests
             .TransientKind.Should().Be("toolAnimation");
     }
 
+    [Fact]
+    public void Transient_SelfAnimation()
+    {
+        // The engine's single-animation pause (FarmerSprite.PauseForSingleAnimation): six native sites take the body
+        // for 400-2000 ms through it and leave no other declared fact up.
+        ActorDisposition disposition = WorldModel.Classify(Facts(selfAnimation: true));
+
+        disposition.Kind.Should().Be(ActorDispositionKind.Transient);
+        disposition.TransientKind.Should().Be("selfAnimation");
+        disposition.ModalType.Should().BeNull();
+        disposition.ModalActionOwned.Should().BeFalse();
+    }
+
     // ---- Idle --------------------------------------------------------------
 
     [Fact]

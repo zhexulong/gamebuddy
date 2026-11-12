@@ -12,8 +12,8 @@ namespace GameBuddy.Stardew.Integration.Tests;
 
 /// <summary>
 /// THE GATE FOR THE <c>SelfAnimation</c> FACT: the body's single-animation pause is a fact read from the engine's own
-/// flag and cleared by the engine's own release write, and a hold that is entered and never released is a defect rather
-/// than a state we tolerate.
+/// flag and cleared by the engine's own release write, the disposition names it while it is up, and a hold that is
+/// entered and never released is a defect rather than a state we tolerate.
 ///
 /// <para>
 /// WHY THIS FAMILY FIRST. Six native sites take the body for 400-2000 ms by writing <c>CanMove = false</c> beside an
@@ -132,6 +132,33 @@ public sealed class SelfAnimationHoldTests
             WorldModel.ReadFacts(actor).SelfAnimation.Should().BeFalse(
                 "the fact clears on the engine's own release, not on a duration of ours");
             WorldModel.Classify(WorldModel.ReadFacts(actor)).Kind.Should().Be(ActorDispositionKind.Idle);
+        });
+    }
+
+    [Fact]
+    public void TheHoldIsNamedWhileTheEnginePausesTheBody()
+    {
+        Farmer actor = CreateActor(selfAnimation: true, canMove: false);
+
+        RunWithGameState(() =>
+        {
+            ActorDisposition held = WorldModel.Classify(WorldModel.ReadFacts(actor));
+            held.Kind.Should().Be(ActorDispositionKind.Transient);
+            held.TransientKind.Should().Be("selfAnimation",
+                "the hold must arrive with the word that tells the caller what holds the body, not as movement_lock");
+        });
+    }
+
+    [Fact]
+    public void TheHoldDoesNotNeedCanMoveToBeTaken()
+    {
+        // Farmer.IsBusyDoingSomething() counts the pause in its own right (Farmer.cs:7964), beside `!CanMove` (:7960),
+        // so a body the engine calls busy must not read as free just because nothing has taken CanMove away yet.
+        Farmer actor = CreateActor(selfAnimation: true, canMove: true);
+
+        RunWithGameState(() =>
+        {
+            WorldModel.Classify(WorldModel.ReadFacts(actor)).TransientKind.Should().Be("selfAnimation");
         });
     }
 

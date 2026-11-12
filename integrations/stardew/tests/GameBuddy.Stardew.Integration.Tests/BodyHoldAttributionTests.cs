@@ -241,6 +241,32 @@ public sealed class BodyHoldAttributionTests
     }
 
     [Fact]
+    public void ASingleAnimationIsNamedAsItsOwnTransientWithTheRealRetryWindow()
+    {
+        // The six sites that take the body by one animation hold it for 400-2000 ms and leave no other declared fact
+        // up, so before this fact the only thing a refusal could say was the anonymous `movement_lock`. What the caller
+        // gets now is the word for what holds the body and the window the engine actually frees it in.
+        ActorWorldFacts facts = Facts(selfAnimation: true);
+        ActorDisposition disposition = WorldModel.Classify(facts);
+        disposition.Kind.Should().Be(ActorDispositionKind.Transient);
+        disposition.TransientKind.Should().Be("selfAnimation");
+
+        string evidence = WorldModel.DescribeBodyHold(disposition, facts, canMove: false);
+        evidence.Should().Contain("transient_kind=selfAnimation");
+        evidence.Should().Contain($"retry_window_ms={WorldModel.TransientRetryWindowMs}");
+        evidence.Should().Contain("can_move=false");
+        WorldModel.HoldReasonCode(disposition.Kind).Should().Be("transient_busy");
+    }
+
+    [Fact]
+    public void AToolSwingIsNamedAsAToolSwingRatherThanAsAnAnimation()
+    {
+        // A swing raises the same flag (FarmerSprite.animateOnce), and `toolAnimation` is the more specific word for
+        // it - the engine's own guard lists `UsingTool` before the flag for the same reason (Farmer.cs:7948, :7964).
+        WorldModel.Classify(Facts(usingTool: true, selfAnimation: true)).TransientKind.Should().Be("toolAnimation");
+    }
+
+    [Fact]
     public void ThePassOutEvidenceCarriesTheTwoFactsThatProducedIt()
     {
         ActorWorldFacts facts = Facts(timeOfDay: 2600, stamina: -16f);

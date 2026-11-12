@@ -132,6 +132,26 @@ public sealed class NavigationHoldEvidenceTests
         outcome.Evidence.Should().Contain("held_by=");
     }
 
+    /// <summary>
+    /// A body taken by its own animation says so, and says how long it lasts: the navigation refusal's countermeasure
+    /// (`next_step=wait_for_retry_window`) is the one thing the caller can act on, and it must not be a retry.
+    /// </summary>
+    [Fact]
+    public void ASingleAnimationHoldSaysToWaitForTheWindowRatherThanToRetry()
+    {
+        string hold = WorldModel.DescribeNavigationHold(Facts(selfAnimation: true), canMove: false);
+
+        hold.Should().Contain("held_by=transient_busy");
+        hold.Should().Contain("transient_kind=selfAnimation");
+        hold.Should().Contain($"retry_window_ms={WorldModel.TransientRetryWindowMs}");
+        hold.Should().Contain("admissible_actions=none");
+        hold.Should().Contain("next_step=wait_for_retry_window");
+
+        NavigationOutcome outcome = Decide(hold);
+        outcome.TerminalReasonCode.Should().Be("destination_locked");
+        outcome.Evidence.Should().Contain("held_by=transient_busy");
+    }
+
     /// <summary>An actionable player is not locked: the new branch must not swallow the walk it guards.</summary>
     [Fact]
     public void AnActionablePlayerIsNotRefusedAsLocked()

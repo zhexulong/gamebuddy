@@ -63,7 +63,7 @@ public readonly record struct ActorDisposition(
     ActorDispositionKind Kind,
     string? ModalType,        // "DialogueBox" | "LetterViewer" | "ReadyCheck" | "GameMenu" | ...
     bool ModalActionOwned,    // L0 binary: actionOwned(newestExecutionId) vs worldOwned
-    string? TransientKind)    // "freezePause" | "eating" | "toolAnimation"
+    string? TransientKind)    // "freezePause" | "eating" | "toolAnimation" | "selfAnimation"
 {
     public static readonly ActorDisposition Idle = new(ActorDispositionKind.Idle, null, false, null);
 }
@@ -168,6 +168,15 @@ internal static class WorldModel
         if (facts.UsingTool || facts.ToolCharged)
         {
             return new ActorDisposition(ActorDispositionKind.Transient, null, false, "toolAnimation");
+        }
+
+        // Last among the transients, because a tool swing raises the same flag: `UsingTool` is the more specific
+        // word for a swing, and the engine's own guard lists it first (Farmer.cs:7948 before :7964). What is left
+        // here is the actor's own animation - a harvest, a kiss, a grab, a totem - which no other fact names, and
+        // whose release is the engine's `CanMove = true` (FarmerSprite.cs:789), inside `TransientRetryWindowMs`.
+        if (facts.SelfAnimation)
+        {
+            return new ActorDisposition(ActorDispositionKind.Transient, null, false, "selfAnimation");
         }
 
         return ActorDisposition.Idle;
@@ -347,7 +356,7 @@ internal static class WorldModel
                 $"stamina={facts.Stamina.ToString(System.Globalization.CultureInfo.InvariantCulture)}"
                 + $";time_of_day={facts.TimeOfDay};can_move={canMoveText}",
             // `movement_lock` is the honest name for the one hold the facts cannot name further: the
-            // disposition says Transient but no eating/tool/freeze fact produced it, so something else
+            // disposition says Transient but no eating/tool/freeze/animation fact produced it, so something else
             // native (a knockback, a warp transition) took CanMove away.
             ActorDispositionKind.Transient =>
                 $"transient_kind={disposition.TransientKind ?? "movement_lock"}"
