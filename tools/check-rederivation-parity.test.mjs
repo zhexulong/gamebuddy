@@ -21,8 +21,8 @@ import {
   blankNonCode,
   checkRederivationParity,
   iterationVariables,
-  reachesIteration,
   REGISTRY_PATH,
+  reachesIteration,
 } from "./check-rederivation-parity.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");

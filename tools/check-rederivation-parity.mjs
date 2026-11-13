@@ -41,7 +41,7 @@
  *   node tools/check-rederivation-parity.mjs            # the gate; exit 1 on any finding
  *   node tools/check-rederivation-parity.mjs --json     # the same reading as one JSON report
  */
-import { existsSync, readFileSync, readdirSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -106,7 +106,7 @@ const lineOf = (source, offset) => source.slice(0, offset).split("\n").length;
 
 /** The `(` that opens the argument list of the invocation starting at `offset`, or -1. */
 function openParenAt(source, offset) {
-  let cursor = source.indexOf("(", offset);
+  const cursor = source.indexOf("(", offset);
   return cursor === -1 ? -1 : cursor;
 }
 
