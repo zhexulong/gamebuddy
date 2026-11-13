@@ -9,7 +9,9 @@ import {
   TOOL_FOOTPRINT_TILES_BY_CHARGE,
   footprintTiles,
   heldToolChargeCeiling,
+  packAreaSteps,
   packingKindOf,
+  toolChargeCeilingForClaim,
 } from "./body-program-packing.js";
 import { type CompiledPlan, compilePlanScript, planActionsFromRegistrations } from "./body-program-script.js";
 import { type ActionRegistration, type Snapshot } from "./protocol.js";
@@ -90,7 +92,11 @@ function snapshotWith(held: { upgradeLevel?: number } | null): Snapshot {
 }
 
 function compile(script: string, held: { upgradeLevel?: number } | null): CompiledPlan {
-  return compilePlanScript({ script }, { snapshot: snapshotWith(held), actions: ACTIONS });
+  return compileWithPack(script, snapshotWith(held));
+}
+
+function compileWithPack(script: string, snapshot: Snapshot): CompiledPlan {
+  return compilePlanScript({ script }, { snapshot, actions: ACTIONS });
 }
 
 function nodesOf(result: CompiledPlan): readonly (Record<string, unknown> & { arguments: Record<string, unknown> })[] {
@@ -352,3 +358,142 @@ test("a charge the held tool cannot reach is left to the Mod's per-row refusal, 
   assert.equal(nodes.length, 1);
   assert.equal(nodes[0]!.actionId, "for_each");
 });
+
+/**
+ * THE MEASUREMENT THE UNIT EXISTS FOR: a 3x20 patch, a level-0 hoe in her hand and a better hoe in the bag.
+ *
+ * <p>
+ * The rows are read back from the emitted NODES, which is what the Mod receives. BEFORE this unit the ceiling came from
+ * `currentToolSlot`, so every row below read `1_loop`: one `for_each` node that the Mod expands one target per tile
+ * (`FarmhandForEachExpansion.cs:373`, `RouteReenteringBodyProgramExecutor.cs:442`) - sixty stand-and-walk sequences and
+ * sixty single-tile uses - while the Mod's own resolver meanwhile switched to the gold hoe and would have swung nine tiles
+ * a use. AFTER, the packing is the best hoe's, and the only row still left as a loop is the one where the pack really
+ * does hold nothing better than level 0.
+ * </p>
+ * <p>
+ * THE MS COLUMN IS THE PLAN THE ROW EMITS, priced by the resolver the pure-packer table pins (`BODY_WALK_MS_PER_TILE`,
+ * 217 ms a tile - the pace the route receipts measured). At level 0 that is the sixty-row pass the loop expands; above it,
+ * it is the packed plan the compiler now emits, so `holds_0_owns_4=9/17162` says nine native uses and 17,162 ms for a
+ * patch the held tool alone would have priced at 49,849. A change to the walk constant moves the second column of every
+ * row together with that other table's, or one of the two has stopped reading the pace.
+ * </p>
+ */
+test("a 3x20 patch is packed for the hoe the Mod will swing, not the one in her hand", () => {
+  const rows = [0, 1, 2, 3, 4].map((bestLevel) => {
+    const nodes = nodesOf(compileWithPack(tillArea(0), snapshotHoldingBasicOwningBetter(bestLevel)));
+    const loop = nodes.length === 1 && nodes[0]!.actionId === "for_each";
+    const price = packAreaSteps({ area: PATCH, kind: "charged_rectangle", maximumCharge: bestLevel }).timeMs;
+    return `holds_0_owns_${String(bestLevel)}=${loop ? "1_loop" : String(nodes.length)}/${String(price)}`;
+  });
+  assert.deepEqual(rows, [
+    "holds_0_owns_0=1_loop/49849",
+    "holds_0_owns_1=24/43369",
+    "holds_0_owns_2=12/36869",
+    "holds_0_owns_3=12/22202",
+    "holds_0_owns_4=9/17162",
+  ]);
+  // AND THE CHARGE IS THE BETTER TOOL'S, measured where the Mod reads it: the gold hoe's own ceiling, from a hand that is
+  // holding the basic one.
+  const gold = nodesOf(compileWithPack(tillArea(0), snapshotHoldingBasicOwningBetter(3))).map(
+    (node) => tileOf(node).charge,
+  );
+  assert.equal(Math.max(...gold), 3, "the packed uses are the gold hoe's, not the level-0 tap in her hand");
+});
+
+/**
+ * THE GATE, NOT A CASE: for EVERY tool action the surface publishes, the ceiling this side packs for is the tool the Mod
+ * resolves for that same action from the same `toolSlots`.
+ *
+ * <p>
+ * The population is the PLAN VOCABULARY's tool actions (`ACTIONS`, the actions a script can name), with tool-ness read off
+ * each action's own declared claim - never a list kept here - so an action added to the surface joins the gate without
+ * anyone remembering to add it. An action the plan vocabulary does not publish (`sweep_scythe` is `experimental`) can never
+ * reach the packer at all, so it is not in this population. The Mod's side of each comparison is one line of the data plus
+ * the one rule the Mod declares: the highest `UpgradeLevel` among the tools whose category is the claim's wins
+ * (`resourcetoolactions.cs:857-887`; that ranking is pinned from the Mod's own side by
+ * `DeclaredToolSelectionTests.AnUpgradedPickaxeSatisfiesTheClaimAndIsPreferred`, which is why it is cited rather than
+ * declared in the Host). The pack below is the case the defect needed: a level-0 hoe in her hand beside a gold one in the
+ * bag, so an implementation that reads `currentToolSlot` disagrees by name instead of agreeing quietly.
+ * </p>
+ *
+ * <p>
+ * red-proof: make `toolChargeCeilingForClaim` answer `heldToolChargeCeiling` again -> `till_soil` reports
+ * `packing_footprint_disagrees_with_selected_tool:till_soil:0:4`, and the same for `dig_artifact_spot`, `break_rock` and
+ * `clear_hoedirt`.
+ * </p>
+ */
+test("every tool action packs for the tool the Mod's own resolver selects", () => {
+  const toolActions = ACTIONS.filter((action) => action.toolRequirement.declared);
+  assert.ok(toolActions.length > 0, "the population must come from the vocabulary's own claims, and it is empty");
+  const pack = snapshotWithPack();
+  const heldCharge = heldToolChargeCeiling(pack);
+  const failures: string[] = [];
+  const rows: string[] = [];
+  const differing: string[] = [];
+  for (const action of toolActions) {
+    const claim = action.toolRequirement;
+    if (!claim.declared) continue;
+    const hostCharge = toolChargeCeilingForClaim(pack, claim);
+    const modCharge = selectedLevelOf(pack, claim.category);
+    rows.push(`${action.actionId}=${String(hostCharge)}`);
+    if (modCharge !== heldCharge) differing.push(action.actionId);
+    if (hostCharge !== modCharge)
+      failures.push(
+        `packing_footprint_disagrees_with_selected_tool:${action.actionId}:${String(hostCharge)}:${String(modCharge)}`,
+      );
+  }
+  assert.deepEqual(failures, [], `examined ${String(rows.length)} tool actions: ${rows.join(" ")}`);
+  assert.ok(
+    differing.length > 0,
+    "the pack must hold a tool that is not the best one, or this gate compares the held reading with itself",
+  );
+});
+
+/**
+ * The level the Mod's resolver selects for one claimed category, in one line of the data plus the rule the Mod declares:
+ * the highest `UpgradeLevel` among the tools whose category is the claim's, and `undefined` when the pack carries none -
+ * or carries one whose level the wire omits, which is a tool that does not upgrade (`toolSlots[].upgradeLevel`'s own
+ * rule, `farmhandexecutioncontroller.cs:3833-3847`).
+ */
+function selectedLevelOf(pack: Snapshot, category: string | undefined): number | undefined {
+  if (category === undefined) return heldToolChargeCeiling(pack);
+  const levels = (pack.toolSlots ?? []).filter((row) => row.category === category).map((row) => row.upgradeLevel);
+  if (levels.length === 0) return undefined;
+  if (levels.some((level) => typeof level !== "number")) return undefined;
+  return Math.max(...(levels as number[]));
+}
+
+/**
+ * ONE REAL PACK where the hand is not the best: a level-0 hoe in slot 0 (the held one), a gold hoe in slot 7, and the
+ * tools the catalog's other `tool:` claims name. The scythe is the pack's one tool that does not upgrade, which is the
+ * row a level-less tool arrives on.
+ */
+function snapshotWithPack(): Snapshot {
+  return {
+    ...snapshotWith(null),
+    currentToolSlot: 0,
+    toolSlots: [
+      { slot: 0, label: "(T)Hoe", upgradeLevel: 0, category: "hoe" },
+      { slot: 7, label: "(T)Hoe", upgradeLevel: 4, category: "hoe" },
+      { slot: 2, label: "(T)Axe", upgradeLevel: 0, category: "axe" },
+      { slot: 3, label: "(T)Pickaxe", upgradeLevel: 3, category: "pickaxe" },
+      { slot: 4, label: "(T)WateringCan", upgradeLevel: 0, category: "watering_can" },
+      { slot: 5, label: "(T)FishingRod", upgradeLevel: 0, category: "fishing_rod" },
+      { slot: 6, label: "(T)Pan", upgradeLevel: 0, category: "pan" },
+      { slot: 8, label: "(T)Raft", upgradeLevel: 0, category: "raft" },
+      { slot: 9, label: "(T)Lantern", upgradeLevel: 0, category: "lantern" },
+      { slot: 10, label: "(W)47", category: "scythe" },
+    ],
+  } as Snapshot;
+}
+
+/** The same 3x20 case with a level-0 hoe in her hand and a `bestLevel` hoe in the bag. */
+function snapshotHoldingBasicOwningBetter(bestLevel: number): Snapshot {
+  return {
+    ...snapshotWith({ upgradeLevel: 0 }),
+    toolSlots: [
+      { slot: 0, label: "(T)Hoe", upgradeLevel: 0, category: "hoe" },
+      { slot: 5, label: "(T)Hoe", upgradeLevel: bestLevel, category: "hoe" },
+    ],
+  } as Snapshot;
+}

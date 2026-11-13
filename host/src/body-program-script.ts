@@ -16,7 +16,7 @@ import {
   sameForEachSource,
   withForEachRule,
 } from "./body-program-for-each.js";
-import { heldToolChargeCeiling, packAreaSteps, packingKindOf } from "./body-program-packing.js";
+import { packAreaSteps, packingKindOf, toolChargeCeilingForClaim } from "./body-program-packing.js";
 import {
   type ActionRegistration,
   type BodyProgramCandidateRequest,
@@ -1336,21 +1336,20 @@ function runPlanScriptWindows(
   actions: readonly PublishedPlanAction[],
 ): Readonly<{ state: PlanScriptState; attempt: PlanScriptAttempt }> {
   const frozenSnapshot = deepFreeze(structuredClone(snapshot));
-  let state = newPlanScriptState(snapshot, actions);
+  let state = newPlanScriptState(actions);
   let attempt = runPlanScriptAttempt(source, frozenSnapshot, actions, PLAN_SCRIPT_BUDGET_MS[0]!, state);
   for (let index = 1; index < PLAN_SCRIPT_BUDGET_MS.length && attempt.outcome === "expired"; index += 1) {
-    state = newPlanScriptState(snapshot, actions);
+    state = newPlanScriptState(actions);
     attempt = runPlanScriptAttempt(source, frozenSnapshot, actions, PLAN_SCRIPT_BUDGET_MS[index]!, state);
   }
   return { state, attempt };
 }
 
 /** The state one run of the script accumulates, empty: a re-measurement starts from here, not from the stopped run's. */
-function newPlanScriptState(snapshot: Snapshot, actions: readonly PublishedPlanAction[]): PlanScriptState {
+function newPlanScriptState(actions: readonly PublishedPlanAction[]): PlanScriptState {
   return {
     nodes: [],
     refusal: null,
-    heldToolCeiling: heldToolChargeCeiling(snapshot),
     calls: 0,
     builderCalls: 0,
     rejected: [],
@@ -1504,13 +1503,6 @@ function refused(
 type PlanScriptState = {
   nodes: PlanNode[];
   refusal: string | null;
-  /**
-   * The held tool's charge ceiling at compile time, or `undefined` when the snapshot could not answer.
-   *
-   * Read ONCE, from `heldToolChargeCeiling`, because it decides how an area is packed: a `undefined` here is the
-   * difference between "this tool covers nine tiles" and "the plan must fall back and say why".
-   */
-  heldToolCeiling: number | undefined;
   requirement?: PlanArgumentRequirement;
   missingArguments?: readonly string[];
   calls: number;
@@ -1608,7 +1600,7 @@ function createPlanBuilder(
         if (property === FOR_EACH_PLAN_ACTION_ID)
           return (arguments_: unknown) => {
             state.builderCalls += 1;
-            atPlanCall(state, FOR_EACH_PLAN_ACTION_ID, () => emitForEachNode(arguments_, actions, state));
+            atPlanCall(state, FOR_EACH_PLAN_ACTION_ID, () => emitForEachNode(arguments_, snapshot, actions, state));
           };
         const method = methods.get(property);
         if (method !== undefined) return method;
@@ -2331,12 +2323,13 @@ function transitionApproachNode(
  * to the tap: a 3x20 patch at gold compiled to one loop node, the Mod expanded sixty rows
  * (`RouteReenteringBodyProgramExecutor.cs:442`), and the walk the resolver exists to save was handed straight back - the one
  * shape this bypass was written for, produced by the tool's own teaching. The rectangle names the tiles; how many native
- * uses cover it is the held tool's answer.
+ * uses cover it is the answer of the tool the Mod will swing for THIS action - the best one the pack carries for the
+ * action's own `tool:<category>` claim, not the one in her hand (`toolChargeCeilingForClaim`).
  * </p>
  * <p>
- * A CHARGE THE HELD TOOL CANNOT REACH IS NOT RAISED OR LOWERED INTO ONE. That value is left to the loop, whose rows the Mod
- * refuses by name (`charge_exceeds_tool_upgrade:<requested>:<held>`), because silently packing at the ceiling would spend a
- * native use the caller asked for something else on.
+ * A CHARGE THE ACTION'S OWN TOOL CANNOT REACH IS NOT RAISED OR LOWERED INTO ONE. That value is left to the loop, whose rows
+ * the Mod refuses by name (`charge_exceeds_tool_upgrade:<requested>:<ceiling>`), because silently packing at the ceiling
+ * would spend a native use the caller asked for something else on.
  * </p>
  * <p>
  * A FILTERED LOOP IS NEVER PACKED. `where` decides a row against the live world, so a loop that carries one names a SUBSET
@@ -2347,14 +2340,15 @@ function transitionApproachNode(
  * per-row rules decide it live.
  * </p>
  * <p>
- * IT REFUSES TO GUESS, AND DOES NOT DRESS A FALLBACK AS A REFUSAL. An unreadable held tool leaves the loop exactly as
- * written rather than packing from a level-0 assumption - `plan_packing_footprint_unknown:held_tool` is the resolver's own
+ * IT REFUSES TO GUESS, AND DOES NOT DRESS A FALLBACK AS A REFUSAL. An unreadable tool reading leaves the loop exactly as
+ * written rather than packing from a level-0 assumption - `plan_packing_footprint_unknown:tool_claim` is the resolver's own
  * name for why it could not answer, and the loop is still a correct program, so the caller is handed no refusal to repair.
  * A packing that would not save a single step is left as the loop for the same reason: its rows are resolved live.
  * </p>
  */
 function tryEmitPackedArea(
   loop: PlanForEachLoop,
+  snapshot: Snapshot,
   actions: readonly PublishedPlanAction[],
   state: PlanScriptState,
 ): boolean {
@@ -2372,11 +2366,14 @@ function tryEmitPackedArea(
   if (packingKindOf(action.arguments.map((argument) => argument.name)) !== "charged_rectangle") return false;
   const written = step.charge;
   if (written !== undefined && (typeof written !== "number" || !Number.isInteger(written) || written < 0)) return false;
-  // NO READABLE CEILING, NO PACKING. The plan would then promise footprints the held tool may not reach, and the Mod would
-  // refuse them one by one after the walk. The loop is still a correct program, so it is left exactly as the caller wrote it.
-  const ceiling = state.heldToolCeiling;
+  // NO READABLE CEILING, NO PACKING. The plan would then promise footprints the action's own tool may not reach, and the
+  // Mod would refuse them one by one after the walk. The loop is still a correct program, so it is left exactly as the
+  // caller wrote it.
+  const requirement = action.toolRequirement;
+  const ceiling = toolChargeCeilingForClaim(snapshot, requirement.declared ? requirement : undefined);
   if (ceiling === undefined) return false;
-  // A CHARGE ABOVE THE HELD TOOL IS THE MOD'S REFUSAL TO MAKE, per row and by name, not a footprint this side invents.
+  // A CHARGE ABOVE THE ACTION'S OWN TOOL IS THE MOD'S REFUSAL TO MAKE, per row and by name, not a footprint this side
+  // invents.
   if (written !== undefined && written > ceiling) return false;
   const packing = packAreaSteps({
     area: loop.source.area,
@@ -2428,7 +2425,12 @@ function tryEmitPackedArea(
  * surface does not publish - so one bad loop is one named refusal beside the loops that did read, and the author corrects
  * that call rather than rewriting the script.
  */
-function emitForEachNode(value: unknown, actions: readonly PublishedPlanAction[], state: PlanScriptState): void {
+function emitForEachNode(
+  value: unknown,
+  snapshot: Snapshot,
+  actions: readonly PublishedPlanAction[],
+  state: PlanScriptState,
+): void {
   state.calls += 1;
   if (state.calls > MAX_PLAN_BUILDER_CALLS) refusePlan(`plan_script_call_cap:${String(state.calls)}`, state);
   if (state.nodes.length >= MAX_PLAN_NODES) refusePlan(`plan_cap_exceeded:${String(state.nodes.length + 1)}`, state);
@@ -2443,8 +2445,8 @@ function emitForEachNode(value: unknown, actions: readonly PublishedPlanAction[]
     );
   const loop: PlanForEachLoop = reading.loop;
   // PACKING IS DECIDED BEFORE THE LOOP IS EMITTED, and it is decided here rather than in the Mod because the Host is the
-  // layer that knows the surface's declarations and the snapshot's held tool. See tryEmitPackedArea.
-  if (tryEmitPackedArea(loop, actions, state)) return;
+  // layer that knows the surface's declarations and the snapshot's tools. See tryEmitPackedArea.
+  if (tryEmitPackedArea(loop, snapshot, actions, state)) return;
   // The step's own arguments are checked HERE as well as per row: an argument only the caller can supply, left out of a
   // step, is a fact the compiler knows - and learning it from a spent pass costs the whole patch.
   refuseMissingStepArguments(loop, actions, state);
