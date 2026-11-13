@@ -860,4 +860,147 @@ expect(reading.hasInstallCard, "the install card is not offered").toBe(false);
     await expect(panel(page)).toHaveAttribute("data-state", "confirmed", { timeout: 15_000 });
     await expect(panel(page).locator(".installation-state").first()).toHaveText(labels.gameInstallationConfirmed);
   });
+
+  /**
+   * The folder picker's wait, as the player reads it.
+   *
+   * The dialog opened by `Choose game folder` can land behind the browser, and the Host publishes
+   * nothing while the helper's dialog is alive (`host/src/windows-stardew-folder-picker/index.ts:198-213`),
+   * so the panel's only fact is that its own request is outstanding. Before this, that fact was
+   * rendered as nothing at all: the panel kept the scan's sentence, went quiet while the dialog was
+   * up, and a scan settling behind the dialog cleared the pending flag and re-enabled the button over
+   * a window the player had not closed.
+   *
+   * The gates, per viewport: the wait is stated in the catalogue's own words; the picker does not
+   * invite a second dialog (disabled, and exactly one request); the scan settling behind the dialog
+   * leaves both alone; the wait and the panel's actions stay inside the panel's own box and inside the
+   * window; and the wait ends with the request, leaving the scan's answer where it was.
+   *
+   * red-proof: run against the panel before this change (`git show HEAD:` of the component) ->
+   *   `400x800 folder picker pending: state=loading pickerDisabled=true waitLine=absent panel="Game
+   *    installation Looking for your Stardew Valley installation… Choose game folder Find again Cancel"`
+   *   and, once the scan settled behind the dialog,
+   *   `400x800 scan settled behind the dialog: state=no-candidates pickerDisabled=false waitLine=absent
+   *    requests=1` - the panel said nothing about the window and had already re-enabled the button over
+   *   it. Three failures per viewport, named above the assertion below.
+   */
+  test("the wait for the folder window is stated, cannot be clicked twice, and ends with the request", async ({
+    page,
+  }) => {
+    test.setTimeout(180_000);
+    const failures: string[] = [];
+    for (const viewport of [
+      { width: 400, height: 800 },
+      { width: 1440, height: 900 },
+    ]) {
+      const at = `${viewport.width}x${viewport.height}`;
+      // Both Host answers are held open, so the order the test needs is the order it gets: the picker
+      // is pressed while the scan is still out, and the scan then settles behind the dialog.
+      let settleScan!: () => void;
+      let closeDialog!: () => void;
+      const scanHeld = new Promise<void>((resolve) => (settleScan = resolve));
+      const dialogHeld = new Promise<void>((resolve) => (closeDialog = resolve));
+      const scenario = SCENARIOS.find((entry) => entry.state === "no-candidates")!;
+      const answers = answersFor(scenario);
+      const pickerRequests: string[] = [];
+      await mountRoutes(page, answers);
+      // Registered after `mountRoutes`, so these handlers own their routes: Playwright runs the most
+      // recently added handler first, and one that fulfils stops the chain.
+      await page.route(DISCOVERY_ROUTE, async (route) => {
+        await scanHeld;
+        await route
+          .fulfill(jsonOk({ apiVersion: 1, candidates: [], diagnostics: ["no-candidates"] }))
+          .catch(() => undefined);
+      });
+      await page.route(PICKER_ROUTE, async (route) => {
+        pickerRequests.push(route.request().url());
+        await dialogHeld;
+        await route.fulfill(jsonOk({ apiVersion: 1, status: "cancelled" })).catch(() => undefined);
+      });
+
+      await page.setViewportSize(viewport);
+      await page.goto(`http://127.0.0.1:4173/#profile=composed-reference-game&boot=${token}`);
+      await openGameSurface(page);
+      await expect(panel(page)).toBeVisible();
+
+      const picker = panel(page).getByRole("button", { name: labels.gameInstallationChooseFolder, exact: true });
+      await expect(picker, `${at}: the picker is offered while the scan is still out`).toBeEnabled();
+      await picker.click();
+
+      // 1. The wait is stated, in the catalogue's own words.
+      const waitLine = panel(page).getByTestId("game-installation-picker-wait");
+      const waitVisible = await waitLine
+        .waitFor({ state: "visible", timeout: 5_000 })
+        .then(() => true)
+        .catch(() => false);
+      const duringWait = await page.evaluate(() => {
+        const node = document.querySelector<HTMLElement>(".game-installation-panel");
+        const picker = [...(node?.querySelectorAll<HTMLButtonElement>("button") ?? [])].find(
+          (button) => button.textContent?.trim() === "Choose game folder",
+        );
+        return {
+          state: node?.getAttribute("data-state") ?? null,
+          text: (node?.innerText ?? "").replace(/\s+/gu, " ").trim(),
+          pickerDisabled: picker?.disabled ?? null,
+        };
+      });
+      record(
+        `${at} folder picker pending: state=${duringWait.state} pickerDisabled=${duringWait.pickerDisabled} ` +
+          `waitLine=${waitVisible ? "shown" : "absent"} panel=${JSON.stringify(duringWait.text)}`,
+      );
+      if (!waitVisible) failures.push(`${at}: nothing on the panel says the folder window is waiting to be closed`);
+      else
+        expect(await waitLine.innerText(), `${at}: the wait is the catalogue's sentence`).toBe(
+          labels.gameInstallationPickerWaiting,
+        );
+
+      // 2. A second press is not invited, and does not reach the Host twice.
+      expect(await picker.isDisabled(), `${at}: the picker invites a second dialog while one is open`).toBe(true);
+
+      // 3. The scan settling behind the dialog is a different fact: it must not clear the wait, and it
+      //    must not re-enable the button over a window the player has not closed.
+      settleScan();
+      await expect(panel(page), `${at}: the scan's own answer arrives behind the dialog`).toHaveAttribute(
+        "data-state",
+        "no-candidates",
+        { timeout: 15_000 },
+      );
+      await page.waitForTimeout(250);
+      const afterScan = await page.evaluate(() => {
+        const node = document.querySelector<HTMLElement>(".game-installation-panel");
+        const picker = [...(node?.querySelectorAll<HTMLButtonElement>("button") ?? [])].find(
+          (button) => button.textContent?.trim() === "Choose game folder",
+        );
+        return {
+          state: node?.getAttribute("data-state") ?? null,
+          waitShown: node?.querySelector('[data-testid="game-installation-picker-wait"]') !== null,
+          pickerDisabled: picker?.disabled ?? null,
+        };
+      });
+      record(
+        `${at} scan settled behind the dialog: state=${afterScan.state} pickerDisabled=${afterScan.pickerDisabled} ` +
+          `waitLine=${afterScan.waitShown ? "shown" : "absent"} requests=${pickerRequests.length}`,
+      );
+      if (!afterScan.waitShown)
+        failures.push(`${at}: the scan settling behind the dialog erased the wait for a window that is still open`);
+      if (afterScan.pickerDisabled !== true)
+        failures.push(`${at}: the scan settling re-enabled the picker over a dialog that is still open`);
+      expect(pickerRequests.length, `${at}: the picker reached the Host once, and only once`).toBe(1);
+
+      // 4. The wait and the panel's actions stay inside the panel's own box and inside the window.
+      failures.push(...judgeReading(scenario, at, await measurePanel(page)));
+
+      // 5. The wait ends with the request, and the sentence the panel had is the one it keeps: a
+      //    dismissed dialog is not an answer to a scan that had already answered.
+      closeDialog();
+      await expect(waitLine, `${at}: the wait ends when the request does`).toHaveCount(0, { timeout: 15_000 });
+      await expect(picker, `${at}: and the picker is offered again`).toBeEnabled();
+      await expect(panel(page), `${at}: a dismissed dialog leaves the scan's answer alone`).toHaveAttribute(
+        "data-state",
+        "no-candidates",
+      );
+      await expect(panel(page).locator(".installation-state").first()).toHaveText(labels.gameInstallationNoCandidates);
+    }
+    expect(failures, "the folder picker's wait is legible without claiming more than the panel knows").toEqual([]);
+  });
 });

@@ -78,6 +78,13 @@ type Props = {
  *    another picker) is outstanding, because two admissions must not run at once. A
  *    candidate this panel will not confirm is what used to leave a player with a found
  *    installation and no way to accept it.
+ *  - **A wait the panel cannot see is stated as the wait it is.** The folder picker's
+ *    dialog may open behind the browser, and the Host publishes no fact while it is up
+ *    (`host/src/windows-stardew-folder-picker/index.ts:198-213` - the helper writes
+ *    nothing to stdout until it closes), so the panel knows only that its own request is
+ *    outstanding. That is what it says: what it is waiting for, and where to look. It
+ *    does not say a window is open, which it cannot know; the sentence ends when the
+ *    request settles, because that is the moment the dialog is gone.
  */
 
 /**
@@ -88,8 +95,12 @@ type Props = {
  * must never be in flight together. The distinction is the whole point of the picker's
  * rule above: `busy` alone could not tell a scan apart from a confirmation, so a scan
  * gated the one control a player may need most.
+ *
+ * `picker` is an action of its own because it is the only one whose wait is invisible: the
+ * folder dialog can be on screen for minutes, and a scan settling behind it used to clear
+ * the pending flag and invite a second dialog over the first.
  */
-type Pending = "none" | "scan" | "action";
+type Pending = "none" | "scan" | "action" | "picker";
 
 /**
  * Which candidates the panel offers to confirm.
@@ -172,8 +183,11 @@ export function StardewInstallationDiscovery({ api, labels, onAdmitted }: Props)
       setState(installationDiscoveryFailureState(observedProblemCode(error)));
     } finally {
       // A read the panel has already retired (by a cancel, or by a picker outcome) must
-      // not clear the work that replaced it.
-      if (!internal && epoch === refreshEpoch.current) setPending("none");
+      // not clear the work that replaced it - and a scan settling behind an open folder
+      // dialog must not clear the dialog's own wait, which is what re-enabled the picker
+      // button over a window the player had not closed yet.
+      if (!internal && epoch === refreshEpoch.current)
+        setPending((current) => (current === "picker" ? current : "none"));
     }
   };
   useEffect(() => {
@@ -185,22 +199,26 @@ export function StardewInstallationDiscovery({ api, labels, onAdmitted }: Props)
     // retires the read it interrupts, so that read cannot answer over the cancel.
     if (kind === "cancel") {
       refreshEpoch.current += 1;
-      setPending("action");
+      // Abandoning the scan is not abandoning the dialog: a picker still outstanding keeps
+      // its own wait, or the panel would go back to saying nothing about a window it knows
+      // is still up.
+      setPending((current) => (current === "picker" ? current : "action"));
       try {
         await api.cancelStardewInstallationDiscovery();
         if (mounted.current) setState("cancelled");
       } catch (error) {
         if (mounted.current) setState(installationDiscoveryFailureState(observedProblemCode(error)));
       } finally {
-        setPending("none");
+        setPending((current) => (current === "picker" ? current : "none"));
       }
       return;
     }
     // A scan gates the controls that start another scan or a confirmation. It never gates
     // the folder picker (see the header): that is the other route to the same admission,
-    // and the player may already know where their game is.
-    if (kind === "picker" ? pending === "action" : busy) return;
-    setPending("action");
+    // and the player may already know where their game is. A picker already outstanding
+    // does gate it, and so does any other action.
+    if (kind === "picker" ? pending === "action" || pending === "picker" : busy) return;
+    setPending(kind === "picker" ? "picker" : "action");
     setState(kind === "confirm" ? "confirming" : kind === "retry" ? "retrying" : state);
     try {
       const result =
@@ -283,9 +301,11 @@ export function StardewInstallationDiscovery({ api, labels, onAdmitted }: Props)
     }
   };
   // A settled answer retires a scan still in flight (above), so this is only what the
-  // controls read: the picker is gated by actions alone.
+  // controls read: a scan gates every control, an outstanding action or picker gates the
+  // picker as well.
   const scannerDisabled = pending !== "none";
-  const pickerDisabled = pending === "action";
+  const pickerPending = pending === "picker";
+  const pickerDisabled = pending === "action" || pickerPending;
   // A confirmation is a Host operation with no cancel of its own, so it is the
   // one state in which abandoning the panel is not offered.
   const cancelDisabled = state === "confirming";
@@ -399,6 +419,17 @@ export function StardewInstallationDiscovery({ api, labels, onAdmitted }: Props)
           {companionMod === "not-reported"
             ? labels.gameCompanionModNotReported
             : companionModLabel(labels, companionMod)}
+        </p>
+      )}
+      {/*
+        The folder picker's wait. The dialog can open behind the browser, and the panel is told
+        nothing while it is up - so this says what the request is waiting for and where the window
+        may be, and stops the moment the request settles. A second line rather than the panel's own
+        status sentence: the scan's answer is a different fact, and it is still true during the wait.
+      */}
+      {pickerPending && (
+        <p className="game-subpanel-note" role="status" data-testid="game-installation-picker-wait">
+          {labels.gameInstallationPickerWaiting}
         </p>
       )}
       <div className="game-actions">

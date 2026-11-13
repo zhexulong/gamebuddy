@@ -977,6 +977,12 @@ const en = {
   gameInstallationCandidates: "We found possible installations. Choose one to connect.",
   gameInstallationConfirming: "Confirming the installation…",
   gameInstallationRetrying: "Searching again…",
+  // The folder picker's own wait. It says what the request is waiting for and where to look, and
+  // not "a window is open": the Host publishes nothing while the helper's dialog is alive
+  // (`host/src/windows-stardew-folder-picker/index.ts:198-213`), so a claim about the screen would
+  // be one the panel cannot support.
+  gameInstallationPickerWaiting:
+    "Waiting for the folder window to close. If you can't see it, it may have opened behind this window.",
   gameInstallationCancelled: "Search cancelled.",
   gameInstallationSourceUnavailable: "The installation search is unavailable right now.",
   gameInstallationNoCandidates: "No Stardew Valley installation was found.",
@@ -1974,6 +1980,7 @@ const zh: Messages = {
   gameInstallationCandidates: "已找到可能的安装位置，请选择一个进行连接。",
   gameInstallationConfirming: "正在确认安装位置…",
   gameInstallationRetrying: "正在重新搜索…",
+  gameInstallationPickerWaiting: "正在等待文件夹窗口关闭。如果没有看到它，它可能开在了这个窗口后面。",
   gameInstallationCancelled: "搜索已取消。",
   gameInstallationSourceUnavailable: "目前无法搜索游戏安装位置。",
   gameInstallationNoCandidates: "未找到《星露谷物语》安装位置。",
