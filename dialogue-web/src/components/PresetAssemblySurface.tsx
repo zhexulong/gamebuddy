@@ -43,6 +43,12 @@ type PresetAssemblyView =
   | Readonly<{ kind: "ready"; read: PresetAssemblyReadV1 }>;
 
 /**
+ * Which preset is in force, as this panel can know it: the contract's three states, plus `unreported` for a body that
+ * does not carry the fact (the contract marks it `Type.Optional`).
+ */
+type PresetBindingShown = PresetActiveBindingV1 | Readonly<{ state: "unreported" }>;
+
+/**
  * Which of the two failure states a read that produced no readout is.
  *
  * `PresetAssemblyProtocolError` is the mirror's one "the reply is not the published readout" fact: a 200 whose body
@@ -95,15 +101,7 @@ function PresetAssemblyPanel({ labels }: Readonly<{ labels: Messages }>): ReactE
           {labels.presetReplyUnreadable}
         </p>
       )}
-      {view.kind === "ready" && view.read.activePreset !== undefined && (
-        <p
-          className="management-settings-hint"
-          data-preset-active={view.read.activePreset.state}
-          data-preset-active-preset={"presetId" in view.read.activePreset ? view.read.activePreset.presetId : undefined}
-        >
-          {activePresetLine(view.read.activePreset, labels)}
-        </p>
-      )}
+      {view.kind === "ready" && <ActivePresetLine binding={view.read.activePreset} labels={labels} />}
       {view.kind === "ready" && view.read.presets.length === 0 && <p data-preset-none>{labels.presetEmpty}</p>}
       {view.kind === "ready" &&
         view.read.presets.map((preset) => <PresetAssemblyRow key={preset.presetId} preset={preset} labels={labels} />)}
@@ -112,16 +110,50 @@ function PresetAssemblyPanel({ labels }: Readonly<{ labels: Messages }>): ReactE
 }
 
 /**
+ * Which preset is in force, always drawn - the contract's three states plus the one only this panel can see.
+ *
+ * `unreported` is that fourth one, and it is not a state the contract has: `activePreset` is `Type.Optional` on the
+ * Host's body, so a Host that predates the fact still reads. Rendering nothing for the absent fact made "no preset is
+ * bound" (the contract's own `none`) and "this build was never told" indistinguishable, and both looked exactly like
+ * a panel that never loaded. One line, one attribute, one vocabulary: the state is the attribute's value, taken from
+ * the contract's union where the contract has the state and named `unreported` where it does not.
+ */
+function ActivePresetLine({
+  binding,
+  labels,
+}: Readonly<{ binding: PresetActiveBindingV1 | undefined; labels: Messages }>): ReactElement {
+  const shown: PresetBindingShown = binding ?? { state: "unreported" };
+  return (
+    <p
+      className="management-settings-hint"
+      data-preset-active={shown.state}
+      data-preset-active-preset={"presetId" in shown ? shown.presetId : undefined}
+    >
+      {activePresetLine(shown, labels)}
+    </p>
+  );
+}
+
+/**
  * Which preset is in force, in the surface's own words.
  *
- * All three states are rendered, because each one asks the player something different: `none` is a choice nobody made
- * yet, `bound` says which preset assembles the requests, and `missing` is a binding whose preset is gone - the one case
- * where doing nothing leaves the player with an assembly they did not choose.
+ * Every state is rendered, because each asks the player something different: `none` is a choice nobody made yet,
+ * `bound` says which preset assembles the requests, `missing` is a binding whose preset is gone - the one case where
+ * doing nothing leaves the player with an assembly they did not choose - and `unreported` is a Host that sent no
+ * binding fact at all, which is a fact about the panel and never a claim that nothing is bound. The switch is
+ * exhaustive over the union, so a state added later is a compile error rather than another silent "none".
  */
-function activePresetLine(binding: PresetActiveBindingV1, labels: Messages): string {
-  if (binding.state === "bound") return labels.presetActiveBound.replace("{{preset}}", binding.presetId);
-  if (binding.state === "missing") return labels.presetActiveMissing.replace("{{preset}}", binding.presetId);
-  return labels.presetActiveNone;
+function activePresetLine(binding: PresetBindingShown, labels: Messages): string {
+  switch (binding.state) {
+    case "bound":
+      return labels.presetActiveBound.replace("{{preset}}", binding.presetId);
+    case "missing":
+      return labels.presetActiveMissing.replace("{{preset}}", binding.presetId);
+    case "unreported":
+      return labels.presetActiveUnreported;
+    case "none":
+      return labels.presetActiveNone;
+  }
 }
 
 /** One imported preset, as the four facts plus the counts that frame them. */

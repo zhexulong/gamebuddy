@@ -29,7 +29,7 @@
  * `activePreset` is the fact this surface shows FIRST, because it is the one that decides whether any of the rest is
  * in force: three named states (`none` / `bound` / `missing`), never an absent key standing for "nothing bound". It
  * is OPTIONAL on the body exactly as the Host's contract marks it, so a Host without the addition still reads; a
- * body that omits it makes this surface claim nothing rather than claiming "no preset is in force".
+ * body that omits it makes the surface report that the fact was not sent, never that no preset is in force.
  */
 
 export type PresetAssemblyMacroV1 = Readonly<{

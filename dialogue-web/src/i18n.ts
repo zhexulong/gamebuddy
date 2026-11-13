@@ -886,6 +886,8 @@ const en = {
   presetActiveNone: "No preset is in force: nothing is bound, so no preset assembles this Chat's requests.",
   presetActiveBound: "In force: {{preset}} - its enabled entries assemble this Chat's requests.",
   presetActiveMissing: "{{preset}} is bound but is no longer imported: import it again, or bind another preset.",
+  presetActiveUnreported:
+    "The Host did not report which preset is in force, so this build cannot say whether a preset assembles these requests.",
   presetSamplingTitle: "Sampling in force",
   presetSamplingHint:
     "What each sampler key is actually sent as, and which layer decided it - a preset value can be overridden by the model or the thinking level, and unset means nothing is sent.",
@@ -1876,6 +1878,7 @@ const zh: Messages = {
   presetActiveNone: "当前没有生效的预设：没有任何绑定，因此这个 Chat 的请求不由预设装配。",
   presetActiveBound: "当前生效：{{preset}}——它启用的条目会装配这个 Chat 的请求。",
   presetActiveMissing: "绑定的 {{preset}} 已不在预设库里：请重新导入它，或改绑其他预设。",
+  presetActiveUnreported: "Host 没有报告哪个预设生效，因此这里无法说明这些请求是否由预设装配。",
   presetSamplingTitle: "实际生效的采样参数",
   presetSamplingHint:
     "每个采样键真正下发的值，以及是哪一层决定的——预设里的值可能被模型或思考等级覆盖；unset 表示不发这个键。",

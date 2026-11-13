@@ -614,55 +614,77 @@ test("the same five facts are named at 1440x900", async ({ page }) => {
 });
 
 /**
- * Which preset is in force is the FIRST fact, because it decides whether any row below describes the request the
- * player is about to send - and all three states ask something different of them. `none` is a choice nobody made,
- * `bound` names the assembling preset, `missing` is a binding whose preset is gone (the one state where doing nothing
- * leaves a player with an assembly they did not choose).
+ * The line the panel draws about which preset is in force: the state it names, and the sentence under it.
  *
- * The absent case is the contract's own: the fact is `Type.Optional` on the body, so a Host that predates it still
- * reads. It is a fourth state and says so - "this build did not report which preset is in force" - because a panel
- * that drew nothing at all read exactly like a panel that never loaded, and only one of those is the panel's fault.
+ * Both `null` is a reading - "the panel says nothing at all about the binding" - and deliberately not a throw: the
+ * absent case is the one this journey exists to rule out, so it has to be readable rather than be a failure of the
+ * reading itself.
  */
-test("which preset is in force is named in all three states, and absent makes no claim", async ({ page }) => {
+async function readBindingLine(page: Page): Promise<Readonly<{ state: string | null; sentence: string | null }>> {
+  return await page.evaluate(() => {
+    const surface = document.querySelector<HTMLElement>('[data-testid="presets-surface"]');
+    if (surface === null) throw new Error("the preset surface is not mounted");
+    const lines = [...surface.querySelectorAll<HTMLElement>("[data-preset-active]")];
+    if (lines.length > 1) throw new Error(`the panel draws ${lines.length} binding lines, not one`);
+    if (lines.length === 0) return { state: null, sentence: null };
+    const line = lines[0];
+    return { state: line.getAttribute("data-preset-active"), sentence: (line.textContent ?? "").trim() };
+  });
+}
+
+/**
+ * Which preset is in force is the FIRST fact, because it decides whether any row below describes the request the
+ * player is about to send - and every state asks something different of them. `none` is a choice nobody made,
+ * `bound` names the assembling preset, `missing` is a binding whose preset is gone (the one state where doing nothing
+ * leaves a player with an assembly they did not choose), and `unreported` is a body that did not carry the fact at
+ * all.
+ *
+ * `unreported` is the contract's own case, not an invention: `activePreset` is `Type.Optional` on the Host's body, so
+ * a Host that predates it still reads. It is NOT `none`: "nothing is bound" is a real binding the player answers by
+ * importing or binding, and "this build was not told" is a fact about the panel. Drawing nothing for it made the
+ * second read exactly like the first, and like a panel that never loaded at all.
+ */
+test("which preset is in force is named in every state, and an unreported binding says so", async ({ page }) => {
   const catalogue = messages("en");
-  const cases: readonly Readonly<{ what: string; activePreset: unknown; expected: string | null }>[] = [
-    { what: "nothing bound", activePreset: { state: "none" }, expected: catalogue.presetActiveNone },
+  const cases: readonly Readonly<{ what: string; activePreset: unknown; state: string; expected: string }>[] = [
+    { what: "nothing bound", activePreset: { state: "none" }, state: "none", expected: catalogue.presetActiveNone },
     {
       what: "a bound preset",
       activePreset: { state: "bound", presetId: SURFACE.presetId },
+      state: "bound",
       expected: catalogue.presetActiveBound.replace("{{preset}}", SURFACE.presetId),
     },
     {
       what: "a bound preset the store no longer holds",
       activePreset: { state: "missing", presetId: "deleted-elsewhere" },
+      state: "missing",
       expected: catalogue.presetActiveMissing.replace("{{preset}}", "deleted-elsewhere"),
     },
-    { what: "a body with no binding fact at all", activePreset: undefined, expected: null },
+    {
+      what: "a body with no binding fact at all",
+      activePreset: undefined,
+      state: "unreported",
+      expected: catalogue.presetActiveUnreported,
+    },
   ];
   await stubPresetSurface(page, [SURFACE]);
   await page.goto(`/#profile=composed-reference-game&boot=${token}&panel=presets`);
   const surface = page.getByTestId("presets-surface");
   await expect(surface).toBeVisible();
-  for (const { what, activePreset, expected } of cases) {
+  for (const { what, activePreset, state, expected } of cases) {
     await page.unroute("**/api/tavern/v1/presets");
     await stubPresetSurface(page, [SURFACE], activePreset);
     await page.reload();
-    const line = surface.locator("[data-preset-active]");
-    const unreported = surface.locator("[data-preset-active-unreported]");
-    if (expected === null) {
-      // A body that does not carry the fact is its own state with its own sentence: a panel that drew
-      // nothing here was indistinguishable from a panel that never loaded, and a player with no
-      // line could not tell "nothing is bound" from "this build did not say".
-      await expect(line, `${what}: no preset is claimed to be in force`).toHaveCount(0);
-      await expect(unreported, `${what}: the panel says the fact was not reported`).toHaveText(
-        catalogue.presetActiveUnreported,
-      );
-      continue;
-    }
-    await expect(line, `${what}: the state is named`).toHaveText(expected);
-    await expect(line).toHaveAttribute("data-preset-active", String((activePreset as { state: string }).state));
-    await expect(unreported, `${what}: a reported binding is not also drawn as an unreported one`).toHaveCount(0);
+    await expect(surface).toBeVisible();
+    const shown = await readBindingLine(page);
+    console.log(`[preset-binding/${what}] ${JSON.stringify(shown)}`);
+    expect(shown.state, `${what}: the panel names the state it read`).toBe(state);
+    expect(shown.sentence, `${what}: in that state's own words`).toBe(expected);
   }
+  expect(
+    catalogue.presetActiveUnreported,
+    "an unreported binding does not borrow the `none` sentence - the two ask the player different things",
+  ).not.toBe(catalogue.presetActiveNone);
 });
 
 /**
