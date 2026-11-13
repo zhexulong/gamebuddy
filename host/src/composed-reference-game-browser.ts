@@ -625,15 +625,27 @@ function stardewSettingsProblemCode(error: unknown): string {
  * to `state_unavailable` (which is what this branch did) leaves the panel able to say only "unavailable", so a
  * player reading it retries forever against a state that will never change on its own.
  *
+ * `stardew_player_host_exited` is the game process itself ending: the Guardian reported the native exit code it
+ * ended with, so the cabins this read asks for belong to a world that is no longer running. That is knowledge, not
+ * `state_unavailable` ("this Host does not know"), and a retry cannot change it - only the player starting the game
+ * again can. It is the same bounded code the coordinator refuses with because there is one fact here, not two: the
+ * projection renames nothing, and the exit code the OS reported is published in exactly one place, the state read's
+ * `game.instance.playerHostExitCode`.
+ *
  * Both `stardew_cabin_handoff_unavailable` and `stardew_cabin_handoff_revision_changed` keep `state_unavailable`:
  * the first means no Player Host instance is awaiting attestation (the panel has a separate sentence for that via
  * `awaitsSession`), and the second is a genuine retry - the world moved while the read was in flight.
  */
 function stardewCabinReadProblemCode(error: unknown): string {
   if (!(error instanceof Error)) return "state_unavailable";
-  return error.message === "stardew_player_host_cabin_unavailable"
-    ? "stardew_player_host_cabin_missing"
-    : "state_unavailable";
+  switch (error.message) {
+    case "stardew_player_host_cabin_unavailable":
+      return "stardew_player_host_cabin_missing";
+    case "stardew_player_host_exited":
+      return "stardew_player_host_exited";
+    default:
+      return "state_unavailable";
+  }
 }
 
 function stardewCabinProblemCode(error: unknown): string {

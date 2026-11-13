@@ -224,6 +224,12 @@ export function createStardewProductionLifecycleCoordinatorForTesting(
       (overrides.runtimeLaunchContained === undefined
         ? undefined
         : containedRuntimeTeardownFromCollaborator(overrides.runtimeLaunchContained)),
+    // Derived from the same collaborator the teardown above comes from, exactly as
+    // production derives it, so a test that injects a real Guardian-backed
+    // collaborator exercises the real exit path instead of a stand-in.
+    overrides.runtimeLaunchContained === undefined
+      ? undefined
+      : () => overrides.runtimeLaunchContained!.readPlayerHostRoleExit?.() ?? null,
     overrides.installationDiscoveryOverlay,
     overrides.hostArtifactRoot,
     overrides.companionModDeploy,

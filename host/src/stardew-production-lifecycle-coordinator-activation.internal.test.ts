@@ -433,6 +433,7 @@ test("a staged but not yet launched attempt projects nothing running instead of 
       assert.deepEqual(fixture.coordinator.launchReadinessReader.readLaunchReadinessView(), {
         generation: 1,
         status: "ready",
+        playerHostExitCode: null,
       });
       assert.deepEqual((await fixture.coordinator.lifecycleReader.readRoleLifecycleView()).playerHost, {
         state: "not_started",

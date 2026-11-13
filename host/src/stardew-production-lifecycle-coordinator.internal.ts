@@ -290,14 +290,47 @@ async function settleFailedCreateAttempt(
 }
 
 /**
+ * The Guardian's report that the Player Host role ended, as this lifecycle records it.
+ *
+ * `exitCode` is the native code the OS reported for the process that ended. `atMs` is when the
+ * Host OBSERVED the report - the Guardian's frame carries no timestamp, so this is deliberately
+ * not the instant the process ended and is never presented as one.
+ */
+export type StardewPlayerHostExitRecord = Readonly<{
+  role: "player_host";
+  exitCode: number;
+  atMs: number;
+}>;
+
+/**
+ * The one fact only the containment transport can know: whether the role Guardian
+ * reported the player's game process ending, and with what native exit code.
+ *
+ * It is injected by whoever holds the authenticated Guardian session, because the
+ * coordinator owns the lifecycle but never the session or the process. Null is
+ * "unknown" - a Host that observed no exit has said nothing about the process either
+ * way - and is never read as "still running".
+ */
+export type StardewPlayerHostRoleExitReader = Readonly<{
+  readPlayerHostRoleExit(): Readonly<{ role: "player_host" | "ai_client"; exitCode: number }> | null;
+}>;
+
+/**
  * Narrowest coordinator-owned launch-readiness fact: the exact expected Player
  * Host instance generation this lifecycle can launch. It is 0 until the
  * coordinator owns and stages the instance, and is never sourced from the UI,
  * a manifest default, or the attachment reader.
+ *
+ * `playerHostExitCode` is the exit the Guardian reported for this lifecycle's game
+ * process, or null while none was reported. It rides this view rather than a second
+ * channel because a failed launch and a game that ended are the same readiness answer
+ * (`failed`) and the same instance word (`crashed`); only the code distinguishes "it
+ * never started" from "it ended", and this is the one place the browser reads it.
  */
 export type StardewGameSurfaceLaunchReadinessView = Readonly<{
   generation: number;
   status: "none" | "ready" | "failed";
+  playerHostExitCode: number | null;
 }>;
 
 export type StardewGameSurfaceLaunchReadinessReader = Readonly<{
@@ -1132,6 +1165,14 @@ function createCoordinator(
   gameSessionCreationAuthority?: StardewGameSessionCreationAuthority,
   createWorldBindingSeam?: StardewWorldCreationSeamFactory,
   containedRuntimeTeardown?: StardewContainedRuntimeTeardown,
+  /**
+   * The Guardian's player-role exit reader for the SAME contained runtime the
+   * teardown above drives. It is a separate member rather than part of the teardown
+   * seam because it is a read of a fact, not a containment operation, and this
+   * lifecycle is the only layer that can turn that fact into an answer the player acts
+   * on. Absent, no exit is ever recorded and every answer keeps its previous shape.
+   */
+  readPlayerHostRoleExit?: () => Readonly<{ role: "player_host" | "ai_client"; exitCode: number }> | null,
   installationDiscovery?: StardewInstallationDiscoveryProvider,
   /**
    * The admitted generation root whose `native/smapi/` payload this lifecycle installs.
@@ -1178,6 +1219,45 @@ function createCoordinator(
   const installationDiscoveryProvider = installationDiscovery;
   let launchTerminal = false;
   let playerHostAttestationCorrelated = false;
+  /**
+   * The one durable home of "the game this lifecycle launched is gone".
+   *
+   * It is latched rather than sampled per reader so every answer this lifecycle gives
+   * about its own game - the cabin read, launch readiness, the role lifecycle view -
+   * names the SAME exit, with the same code and the same observation instant. The
+   * Guardian reports an exit once and the platform keeps the last one, so first
+   * sighting wins and a later frame can never rewrite what the player was told.
+   */
+  let playerHostExit: StardewPlayerHostExitRecord | null = null;
+  /**
+   * Reads the Guardian's exit report and latches it. Returns the latched record, or
+   * null while the transport whose process this is reported none.
+   *
+   * Recording it also marks this attempt's launch terminal: the process the attempt
+   * launched is gone, and relaunching it through the same owner/attempt would be a
+   * launch this lifecycle cannot attest. That is the same terminal a failed launch
+   * reaches, so later launch commands refuse with the same quarantined identity
+   * instead of a second vocabulary for the same dead end.
+   */
+  const recordPlayerHostExit = (): StardewPlayerHostExitRecord | null => {
+    if (playerHostExit !== null) return playerHostExit;
+    const reported = readPlayerHostRoleExit === undefined ? null : readPlayerHostRoleExit();
+    if (reported === null || reported.role !== "player_host") return null;
+    playerHostExit = Object.freeze({ role: "player_host" as const, exitCode: reported.exitCode, atMs: Date.now() });
+    launchTerminal = true;
+    return playerHostExit;
+  };
+  /**
+   * The refusal the cabin read answers with when the game it would read cabins from has
+   * ended, as this lifecycle's own bounded code.
+   *
+   * It is not `state_unavailable` ("this Host does not know") and not
+   * `stardew_cabin_handoff_unavailable` ("no launch is awaiting attestation"): both
+   * would send a player whose game just crashed back to a retry that cannot succeed.
+   * The code states the condition only - the exit code itself is published once, in the
+   * state read's `game.instance.playerHostExitCode`.
+   */
+  const PLAYER_HOST_EXITED_REFUSAL = "stardew_player_host_exited";
   /**
    * The player Mods the launched Player Host carried into its `--mods-path` root, as that
    * launch reported them. It is the workload reading every attach deadline in this lifecycle
@@ -1335,11 +1415,17 @@ function createCoordinator(
   });
   const launchReadinessReader: StardewGameSurfaceLaunchReadinessReader = Object.freeze({
     readLaunchReadinessView(): StardewGameSurfaceLaunchReadinessView {
-      if (launchTerminal) return Object.freeze({ generation: 0, status: "failed" });
+      const exit = recordPlayerHostExit();
+      if (exit !== null) return Object.freeze({ generation: 0, status: "failed", playerHostExitCode: exit.exitCode });
+      if (launchTerminal) return Object.freeze({ generation: 0, status: "failed", playerHostExitCode: null });
       if (exactOwner !== undefined && activationState === "staged") {
-        return Object.freeze({ generation: expectedPlayerHostInstanceGeneration, status: "ready" });
+        return Object.freeze({
+          generation: expectedPlayerHostInstanceGeneration,
+          status: "ready",
+          playerHostExitCode: null,
+        });
       }
-      return Object.freeze({ generation: 0, status: "none" });
+      return Object.freeze({ generation: 0, status: "none", playerHostExitCode: null });
     },
   });
   const installationReader: StardewGameSurfaceInstallationReader = Object.freeze({
@@ -1365,7 +1451,15 @@ function createCoordinator(
   // authoritative for idle/stopped/unavailable states.
   const lifecycleReader: StardewRoleLifecycleReader = Object.freeze({
     async readRoleLifecycleView() {
-      if (activationState === "awaiting_player_host_attestation" && !playerHostAttestationCorrelated)
+      // A game the Guardian reported ended is not waited on: correlating attestation
+      // for a process that is gone is a read of nothing, and its failure used to take
+      // the whole state read down to "unavailable" - the exact shape in which a dead
+      // game reads as a game that is still starting.
+      if (
+        activationState === "awaiting_player_host_attestation" &&
+        !playerHostAttestationCorrelated &&
+        recordPlayerHostExit() === null
+      )
         await correlatePlayerHostAttestation();
       return composeCoordinatorRoleLifecycleView(activationState, await facade.readRoleLifecycleView());
     },
@@ -1935,6 +2029,10 @@ function createCoordinator(
   ): Promise<StardewCabinChoicesV1> =>
     consumeBrowserAdmission(admission, "cabin_read", async (browserSessionId, sessionExpiry) => {
       const owner = exactOwner;
+      // The handoff needs the game this lifecycle launched. When the Guardian reported
+      // that process ended, no cabin read can succeed and no state the handoff passes
+      // through changes that - so the exit is answered first, by name.
+      if (recordPlayerHostExit() !== null) throw new Error(PLAYER_HOST_EXITED_REFUSAL);
       if (owner === undefined || activationState !== "awaiting_player_host_attestation")
         throw new Error("stardew_cabin_handoff_unavailable");
       const boundRevision = revision;
@@ -3568,6 +3666,7 @@ export function createStardewProductionLifecycleCoordinatorFromTestingCompositio
   gameSessionCreationAuthority?: StardewGameSessionCreationAuthority,
   createWorldBindingSeam?: StardewWorldCreationSeamFactory,
   containedRuntimeTeardown?: StardewContainedRuntimeTeardown,
+  readPlayerHostRoleExit?: StardewPlayerHostRoleExitReader["readPlayerHostRoleExit"],
   installationDiscoveryProvider?: StardewInstallationDiscoveryProvider,
   hostArtifactRoot?: string,
   /** Test-only companion-Mod deployment seam; production composition never supplies it. */
@@ -3588,6 +3687,7 @@ export function createStardewProductionLifecycleCoordinatorFromTestingCompositio
     gameSessionCreationAuthority,
     createWorldBindingSeam,
     containedRuntimeTeardown,
+    readPlayerHostRoleExit,
     installationDiscoveryProvider,
     hostArtifactRoot,
     companionModDeploy,
@@ -3643,6 +3743,13 @@ export function createStardewProductionLifecycleCoordinator(
     runtimeLaunchPlayerHost === undefined
       ? undefined
       : containedRuntimeTeardownFromCollaborator(runtimeLaunchPlayerHost);
+  // The same collaborator that owns the containment session owns the one report about the
+  // process it launched, so the exit reader is taken from it here and nowhere else: a
+  // second source could disagree with the Guardian that watched the process end.
+  const readPlayerHostRoleExit =
+    runtimeLaunchPlayerHost === undefined
+      ? undefined
+      : () => runtimeLaunchPlayerHost.readPlayerHostRoleExit?.() ?? null;
   /**
    * Loop 4 path B' world-creation seam, built per create from the one
    * production authority (owner ruling 2026-10-04):
@@ -3680,6 +3787,7 @@ export function createStardewProductionLifecycleCoordinator(
     game,
     createWorldBindingSeam,
     containedRuntimeTeardown,
+    readPlayerHostRoleExit,
     // Steam, GOG and the Microsoft Store are all mounted: a GOG or Game Pass player whose game no
     // Steam library holds would otherwise be told nothing was found on a machine where it is
     // installed. Whichever source produced a candidate, confirming it runs the same

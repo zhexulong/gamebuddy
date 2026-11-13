@@ -729,6 +729,7 @@ test("a cabin AI launch that claimed its reservation before failing leaves no st
     assert.deepEqual(fixture.coordinator.launchReadinessReader.readLaunchReadinessView(), {
       generation: 0,
       status: "failed",
+      playerHostExitCode: null,
     });
   } finally {
     await fixture.coordinator.close();
@@ -792,6 +793,7 @@ test("a headless AI launch that claimed its reservation before failing leaves no
     assert.deepEqual(fixture.coordinator.launchReadinessReader.readLaunchReadinessView(), {
       generation: 0,
       status: "failed",
+      playerHostExitCode: null,
     });
   } finally {
     await fixture.coordinator.close();

@@ -36,7 +36,7 @@ function fakeCoordinator(
   const launchReadinessReader = {
     readLaunchReadinessView: () => {
       calls.launchReadiness += 1;
-      return { generation: 0, status: "none" };
+      return { generation: 0, status: "none", playerHostExitCode: null };
     },
   } as unknown as StardewGameSurfaceLaunchReadinessReader;
   const installation = { registered: false };
@@ -280,7 +280,8 @@ test("the game surface's install state follows the Host registration in both dir
  * So the assertion is a subset check with a symmetric difference in the message: a member the contract does
  * not know is a call that will throw, and the reader is told which one instead of being handed a count.
  */
-test("every operation the stardew projection declares is one the contract knows", () => {  const { coordinator } = fakeCoordinator();
+test("every operation the stardew projection declares is one the contract knows", () => {
+  const { coordinator } = fakeCoordinator();
   const projection = createStardewGamePresentationProjection(coordinator);
   const known = new Set<string>(GAME_BROWSER_OPERATION_IDS_V1);
   const unknown = projection.gameProfile.operationIds.filter((id) => !known.has(id));

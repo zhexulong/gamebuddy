@@ -73,6 +73,18 @@ export const GAME_BROWSER_PROBLEM_CODES_V1 = Object.freeze([
   // The player's own Stardew settings: the record they edited moved under them. It is a
   // refusal, not a fault - nothing was written, and the fresh record is the thing to act on.
   "stardew_settings_revision_conflict",
+  // The player-host role exited: the Guardian that owns the game process reported the
+  // native exit code it ended with, so the cabin handoff cannot be read for a game that is
+  // no longer there. It is its own code because `state_unavailable` is the opposite claim -
+  // the Host does not know - and because the code states the CONDITION only: the exit fact
+  // itself (the code the OS gave) travels in exactly one field, `game.instance.playerHostExitCode`,
+  // and appears nowhere else.
+  "stardew_player_host_exited",
+  // The other named answer the cabin read gives, which it has produced since 2026-10-28 without
+  // this union declaring it: a live, generation-correlated host world that offers no cabin the
+  // companion may use. Its cure is the game's own - have Robin build one - so it must reach the
+  // player as that fact rather than as an internal error.
+  "stardew_player_host_cabin_missing",
 ] as const);
 
 const GameProblemCode = Type.Union([
@@ -102,6 +114,8 @@ const GameProblemCode = Type.Union([
   Type.Literal("state_unavailable"),
   Type.Literal("game_endgame_settlement_unavailable"),
   Type.Literal("stardew_settings_revision_conflict"),
+  Type.Literal("stardew_player_host_exited"),
+  Type.Literal("stardew_player_host_cabin_missing"),
 ]);
 
 // ─── Redacted read projections ──────────────────────────────────────────────
@@ -213,6 +227,18 @@ const GameInstanceV1Schema = strictObject({
   gameTitle: GameTitleLabel,
   /** Redacted launch-ready generation: 0 until the coordinator owns/stages the instance. */
   generation: NonNegativeGeneration,
+  /**
+   * The native exit code the game process ended with, when the Guardian that owns
+   * it reported an exit for this activation.
+   *
+   * It is optional because it is a fact only one producer has: an older Host that
+   * never receives a role exit omits the key, and this field is never defaulted to a
+   * number a Host invented. Its absence means "this Host did not observe an exit",
+   * not "the game is running" - `status` is the field that answers that question.
+   * The whole native uint32 range and nothing else: a value outside it is not
+   * something the OS reported.
+   */
+  playerHostExitCode: Type.Optional(Type.Integer({ minimum: 0, maximum: 4_294_967_295 })),
 });
 
 const GameCompatibilityV1Schema = strictObject({

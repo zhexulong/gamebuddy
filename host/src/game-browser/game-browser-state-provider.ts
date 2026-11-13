@@ -114,6 +114,12 @@ function projectGameBrowserState(
         // the projection naming a game it has just said it could not see.
         gameTitle: instanceStatus === "none" || instanceStatus === "unread" ? null : "Stardew Valley",
         generation: launchReadiness.generation,
+        // Published only when the Guardian actually reported an exit for this
+        // lifecycle's game: absent means "this Host observed no exit", which is a
+        // different claim from an exit code of 0 and must not be defaulted.
+        ...(launchReadiness.playerHostExitCode === null
+          ? {}
+          : { playerHostExitCode: launchReadiness.playerHostExitCode }),
       }),
       compatibility: Object.freeze(compatibility),
       attachment: Object.freeze({ status: attachment.status, generation: attachment.generation }),

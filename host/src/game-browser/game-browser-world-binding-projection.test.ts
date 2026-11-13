@@ -71,7 +71,10 @@ async function projectWorld(store: StoreView, activeGameSessionId: () => string 
       readAttachmentView: () =>
         Object.freeze({ status: "attached" as const, generation: 1, connectionStatus: "connected_idle" as const }),
     }),
-    Object.freeze({ readLaunchReadinessView: () => Object.freeze({ generation: 1, status: "ready" as const }) }),
+    Object.freeze({
+      readLaunchReadinessView: () =>
+        Object.freeze({ generation: 1, status: "ready" as const, playerHostExitCode: null }),
+    }),
     undefined,
     undefined,
     createStardewGameSurfaceWorldBindingReader(resolverOver(store), activeGameSessionId),

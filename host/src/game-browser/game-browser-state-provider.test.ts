@@ -33,7 +33,11 @@ function attachment(
 }
 
 function launchReadiness(
-  view: StardewGameSurfaceLaunchReadinessView = Object.freeze({ generation: 0, status: "none" }),
+  view: StardewGameSurfaceLaunchReadinessView = Object.freeze({
+    generation: 0,
+    status: "none",
+    playerHostExitCode: null,
+  }),
 ): StardewGameSurfaceLaunchReadinessReader {
   return Object.freeze({ readLaunchReadinessView: () => view });
 }
@@ -112,7 +116,7 @@ test("provider projects a failed launch terminality as latestOutcome failed", as
     profile(),
     lifecycle(notStartedView()),
     attachment(),
-    launchReadiness(Object.freeze({ generation: 0, status: "failed" })),
+    launchReadiness(Object.freeze({ generation: 0, status: "failed", playerHostExitCode: null })),
   ).readState(context);
   assert.equal(GameBrowserValidatorsV1.GameBrowserStateV1Schema.Check(state), true);
   assert.equal(state.game.instance.status, "crashed");
@@ -359,7 +363,7 @@ test("provider maps a launch in flight to launching and a launch-ready attempt t
     profile(),
     launchInFlightView,
     attachment(),
-    launchReadiness(Object.freeze({ generation: 1, status: "ready" })),
+    launchReadiness(Object.freeze({ generation: 1, status: "ready", playerHostExitCode: null })),
   ).readState(context);
   assert.equal(launching.game.instance.status, "launching");
   assert.equal(launching.game.instance.generation, 1);
@@ -391,7 +395,7 @@ test("provider maps a launch in flight to launching and a launch-ready attempt t
       }),
     ),
     attachment(),
-    launchReadiness(Object.freeze({ generation: 1, status: "ready" })),
+    launchReadiness(Object.freeze({ generation: 1, status: "ready", playerHostExitCode: null })),
   ).readState(context);
   assert.deepEqual(readyToLaunch.game.instance, { status: "none", gameTitle: null, generation: 1 });
   assert.equal(readyToLaunch.game.prerequisites.status, "met");
@@ -417,7 +421,7 @@ test("terminal launch failure remains met/crashed without a retry generation", a
     profile(),
     lifecycle(notStartedView()),
     attachment(),
-    launchReadiness(Object.freeze({ generation: 0, status: "failed" })),
+    launchReadiness(Object.freeze({ generation: 0, status: "failed", playerHostExitCode: null })),
   ).readState(context);
 
   assert.deepEqual(failed.game.prerequisites, {
