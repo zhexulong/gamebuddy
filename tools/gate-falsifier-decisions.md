@@ -138,6 +138,20 @@ beside this batch's finding, not to re-open any count.
 | `check:chat-card-voice` | `liveRunPersonaPaths()` | "the reviewed card's own prose" is whatever that resolver returns; a runtime root that provisions the card elsewhere changes the reading without changing a word of the gate |
 | `tools/check-stardew-actor-admissibility.mjs` | its own `notInAlgebra` / `staleInAlgebra` | advertised as "a QUERY, not a report to interpret", and exactly that: both are printed and never counted in `failed` (its disposition is `blocked` in the first table, for its absent population) |
 | `test:gate-red-proofs` | two guards over the marker reader | removing the comment-line guard left the suite green — its case "a marker on a code line is not a marker" cannot tell which of the two guards held it, so the assertion is true and narrower than its name |
+| `test:gate-red-proofs` | its own gate-file scan, re-spelled as `/^check-.*\.mjs$/` | the population it asserted over was a second copy of `gate-population.mjs`'s rule: in a tree whose population has widened to `audit-*` it reads 121 of the 139 gate files and passes saying nothing about the other 18 — the assertion was already narrower than its name, and only the widening made it visible |
+
+**A population widening is a unit with its own marker obligations.** Measured 2026-11-13 on one shared checkout: the same
+revision printed `population=357 … untracked_not_counted 0` from a clean worktree at HEAD and `population=371 · proven=347 ·
+unproven=11 · unassessed=6 · undeclared 10` from the main checkout, and `untracked_not_counted` was 0 in both. Copying
+**only** the three files that differed there without being committed — `tools/lib/gate-population.mjs` (GATE_FILE widened
+from `check-*` to `check-*|audit-*`, GATE_SCRIPT widened to `check-ci-coverage`'s namespace), `tools/check-ci-coverage.mjs`
+(the `GATE_NAME` export that widening imports) and `package.json` (new `test:` scripts and their `gateRedProofs`) — into
+the clean worktree reproduced the dirty reading bit for bit, which is what attributed the delta to a widening rather than
+to a lane's untracked file. The cost of that coupling is that a widening moves the census for every lane sharing the
+checkout until it is committed, so the widening and the markers for the gates it creates are one commit: the ten
+`no_red_proof` / `gate_unassessed` findings belong to that lane, not to the census, and baselining them here would have
+recorded debt nobody had accepted. What the census owes in exchange is a reading that says which of the two trees
+produced it — the summary line now prints `untracked_not_counted 0` at zero, and both lines name the files when it is not.
 
 ## Needs history
 

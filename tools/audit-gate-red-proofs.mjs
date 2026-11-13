@@ -435,8 +435,17 @@ function inheritedStatus(memberStatuses) {
 
 /**
  * The buckets that PARTITION `examined`: every gate is in exactly one of them, so their printed values must sum to the
- * population the same line prints. `zero-population-pass` is deliberately not one of them - a proven gate can also name
- * no population field - so it is printed beside the partition rather than inside it.
+ * population the same line prints - and `assertCensusReconciles` makes that identity the assertion rather than a habit.
+ *
+ * Three other numbers appear on the line and none of them is in the sum:
+ *
+ *   - `zero-population-pass` cuts across it INWARD: a gate can be proven and still print no population field;
+ *   - `unlisted` members are inside `examined` and also inside `undeclared`, so counting them adds a gate twice;
+ *   - `untracked_not_counted` members were removed from `examined` BEFORE it was computed (the population is the index),
+ *     so counting them reads a total larger than the population it describes.
+ *
+ * Adding any of the three to the sum would make a correct line look wrong, which is why they are printed beside the
+ * partition and named as such.
  */
 const CENSUS_PARTITION = Object.freeze([
   "with a red proof",
@@ -474,15 +483,27 @@ function assertCensusReconciles(line) {
 }
 
 /**
+ * The index restriction's complement as one term: `untracked_not_counted 0`, or `untracked_not_counted N: <paths>`.
+ *
+ * One spelling, because both lines that report a population say the same thing about the same set: a file the census
+ * could not see is either named here or it does not exist.
+ */
+function untrackedField(files) {
+  return `untracked_not_counted ${files.length === 0 ? 0 : describeUntracked(files)}`;
+}
+
+/**
  * The census line BOTH tools print, from the same reading: how many gates the population has, how many carry a red proof,
  * how many owe one with the debt recorded, how many carry a claim nobody can read, how many nobody has declared at all,
  * and how many print a report that cannot show whether it measured anything.
  *
  * It lives here rather than in each printer because these numbers are one reading of one population. Two printers writing
- * them out separately is how "we have N gates" acquired two answers in the first place. The two trailing buckets are the
- * ones a caller adds to the ledger's five: `unlisted` (a judged gate nobody declared) and `untracked_not_counted` (a gate
- * file the index does not carry, so it is nobody's yet). Both are named, not counted alone, and both vanish from the line
- * when they are empty.
+ * them out separately is how "we have N gates" acquired two answers in the first place. The two optional terms a caller
+ * adds are `unlisted` (a judged gate nobody declared) and `untracked_not_counted` (a gate file the index does not carry,
+ * so it is nobody's yet). Neither is a bucket of the partition - `CENSUS_PARTITION` says which numbers sum and which cut
+ * across it, and these cut across - so both are named rather than counted alone, and both vanish from this line when they
+ * are empty. The audit's summary line prints the untracked term even at zero, because that line is where the quoted
+ * `population=N` lives and it has to say whether N is the repository's.
  */
 export function describeGateCensus({
   examined,
@@ -500,7 +521,25 @@ export function describeGateCensus({
       `declared without ${recorded} · unreadable ${unreadable} · undeclared ${undeclared} · ` +
       `zero-population-pass ${zeroPopulationPass}` +
       (unlisted.length === 0 ? "" : ` · unlisted ${unlisted.length} (${unlisted.join(", ")})`) +
-      (untrackedNotCounted.length === 0 ? "" : ` · untracked_not_counted ${describeUntracked(untrackedNotCounted)}`),
+      (untrackedNotCounted.length === 0 ? "" : ` · ${untrackedField(untrackedNotCounted)}`),
+  );
+}
+
+/**
+ * The audit's own summary line: the population and its split, with the index restriction's complement ALWAYS printed.
+ *
+ * The complement is a field here rather than a suffix that disappears at zero, because this is the line an operator greps
+ * and quotes as "the repository has N gates". Measured 2026-11-13: the same revision printed `population=357` in a clean
+ * worktree and `population=371` in a checkout where a sibling lane had widened the population derivation without
+ * committing it, and nothing on either line said which reading the reader was holding. `untracked_not_counted 0` says the
+ * number beside it is the repository's; any other number names the files it is not counting.
+ */
+export function describePopulationLine({ population, proven, held, unproven, unassessed, unreadable }) {
+  return (
+    `gate_red_proofs population=${population.total} script_gates=${population.scripts} ` +
+    `gate_files=${population.gateFiles} unclaimed_by_any_script=${population.unclaimedByScript} ` +
+    `proven=${proven} held=${held} unproven=${unproven} unassessed=${unassessed} unreadable=${unreadable} ` +
+    untrackedField(population.untrackedNotCounted)
   );
 }
 
@@ -591,10 +630,14 @@ function report({ reading, held, gaps, undeclared = 0 }) {
   const { population } = reading;
   const byStatus = (status) => reading.records.filter((record) => record.status === status).length;
   process.stdout.write(
-    `gate_red_proofs population=${population.total} script_gates=${population.scripts} ` +
-      `gate_files=${population.gateFiles} unclaimed_by_any_script=${population.unclaimedByScript} ` +
-      `proven=${reading.proven.length} held=${held} unproven=${byStatus("unproven") + byStatus("unproven_via_members")} ` +
-      `unassessed=${byStatus("unassessed")} unreadable=${reading.unreadableClaims.length}\n`,
+    `${describePopulationLine({
+      population,
+      proven: reading.proven.length,
+      held,
+      unproven: byStatus("unproven") + byStatus("unproven_via_members"),
+      unassessed: byStatus("unassessed"),
+      unreadable: reading.unreadableClaims.length,
+    })}\n`,
   );
   for (const record of reading.proven) {
     const proof = record.proofs[0];

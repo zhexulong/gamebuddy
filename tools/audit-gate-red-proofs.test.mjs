@@ -11,8 +11,16 @@
  * audit under test, and a literal marker here would be read as one of the audit's own proofs.
  *
  * red-proof: inject  the anchor test removed from `readRedProofMarkers`, so a marker inside a string literal counts ->
- *                    `✖ a marker on a code line is not a marker, so a gate cannot satisfy itself` (with five more),
+ *                    `× a marker on a code line is not a marker, so a gate cannot satisfy itself` (with five more),
  *                    exit 1; the unmodified audit passes all ten cases, exit 0 (tools/audit-gate-red-proofs.test.mjs)
+ *
+ * red-proof: inject  this suite's gate-file scan re-spelled as `/^check-.*\.mjs$/` in a copy whose population is widened
+ *                    to `audit-*` and whose index drop is silenced -> the re-spelled scan passed while asking `isGateFile`
+ *                    named the planted untracked gate file it never looked at (tools/audit-gate-red-proofs.test.mjs)
+ *
+ * red-proof: inject  the untracked term made a suffix that disappears at zero, as this audit had it before -> "a zero
+ *                    complement is a reading that has to be printed, not an absence a reader fills in", actual
+ *                    `... unreadable=0 ` with no term at all (tools/audit-gate-red-proofs.test.mjs)
  */
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
@@ -22,8 +30,15 @@ import { join, resolve } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 
-import { auditGateRedProofs, evaluate, readRedProofMarkers } from "./audit-gate-red-proofs.mjs";
+import {
+  auditGateRedProofs,
+  describeGateCensus,
+  describePopulationLine,
+  evaluate,
+  readRedProofMarkers,
+} from "./audit-gate-red-proofs.mjs";
 import { POPULATION_FIELDS } from "./lib/assert-non-vacuous.mjs";
+import { isGateFile } from "./lib/gate-population.mjs";
 
 const REPOSITORY_ROOT = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const KEYWORD = ["red", "proof"].join("-");
@@ -397,8 +412,11 @@ test("an aggregate whose members are proven or external is external, and one wit
 test("the real tree: every gate file reaches a record or the published complement, and this audit shows its own red proof", () => {
   const reading = auditGateRedProofs({ root: REPOSITORY_ROOT });
   const claimed = new Set(reading.records.flatMap((record) => record.entryFiles));
+  // The rule for "this file is a gate" is the one `tools/lib/gate-population.mjs` owns, asked rather than re-spelled:
+  // this filter used to carry its own copy, `check-*`-only, and in a tree whose population is widened to `audit-*` as
+  // well it read 121 of 139 gate files and said nothing about the other 18.
   const onDisk = readdirSync(join(REPOSITORY_ROOT, "tools"))
-    .filter((name) => /^check-.*\.mjs$/u.test(name) && !/\.(?:test|mutation)\.mjs$/u.test(name))
+    .filter(isGateFile)
     .map((name) => `tools/${name}`);
   // A gate file is either judged or published as one the index does not carry - never silently absent from both.
   const untrackedNotCounted = new Set(reading.population.untrackedNotCounted);
@@ -424,5 +442,66 @@ test("the real tree: every gate file reaches a record or the published complemen
   assert.deepEqual(
     reading.zeroPopulationPass.invisible.filter((file) => !reading.zeroPopulationPass.reporting.includes(file)),
     [],
+  );
+});
+
+// Two lines print a population and both must say what the index removed from it. The first is the one an operator quotes,
+// so its complement is a field printed at zero rather than a suffix that disappears; the census line's partition stays a
+// partition, and the untracked term names gates that were removed from `examined` before it was computed, so it can never
+// be one of its buckets.
+test("both population lines name the complement the index removed, and it never enters the census partition", () => {
+  const population = {
+    total: 4,
+    scripts: 3,
+    gateFiles: 2,
+    unclaimedByScript: 1,
+    untrackedNotCounted: ["tools/check-planted.mjs", "tools/check-other.mjs"],
+  };
+  const fields = { proven: 1, held: 1, unproven: 1, unassessed: 1, unreadable: 0 };
+  const first = describePopulationLine({ population, ...fields });
+  assert.match(first, /population=4 /u);
+  assert.match(
+    first,
+    / untracked_not_counted 2: tools\/check-other\.mjs, tools\/check-planted\.mjs$/u,
+    "the summary line must name the files it is not counting",
+  );
+  assert.match(
+    describePopulationLine({ population: { ...population, untrackedNotCounted: [] }, ...fields }),
+    / untracked_not_counted 0$/u,
+    "a zero complement is a reading that has to be printed, not an absence a reader fills in",
+  );
+
+  const census = describeGateCensus({
+    examined: 4,
+    withRedProof: 1,
+    external: 1,
+    recorded: 1,
+    unreadable: 0,
+    undeclared: 1,
+    zeroPopulationPass: 0,
+    untrackedNotCounted: population.untrackedNotCounted,
+  });
+  const partitionSum = ["with a red proof", "external", "declared without", "unreadable", "undeclared"]
+    .map((label) => Number(new RegExp(`(?:^|· )${label} (\\d+)(?: ·|$)`, "u").exec(census)[1]))
+    .reduce((total, count) => total + count, 0);
+  assert.equal(partitionSum, 4, "the five buckets partition `examined`, complement and all");
+  assert.match(
+    census,
+    / · untracked_not_counted 2: tools\/check-other\.mjs, tools\/check-planted\.mjs$/u,
+    "the census line names the complement too",
+  );
+  // The sum is the assertion: a line whose five buckets do not add up is a throw, never a reading.
+  assert.throws(
+    () =>
+      describeGateCensus({
+        examined: 5,
+        withRedProof: 1,
+        external: 1,
+        recorded: 1,
+        unreadable: 0,
+        undeclared: 1,
+        zeroPopulationPass: 0,
+      }),
+    /census_does_not_reconcile:4:5/u,
   );
 });
