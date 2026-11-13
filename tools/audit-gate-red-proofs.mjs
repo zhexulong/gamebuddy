@@ -94,6 +94,10 @@
  * red-proof: inject  deleting a gate's marker in a synthetic tree -> `no_red_proof` names that gate, its
  *                    aggregate, and `baseline_entry_stale` for the entry the proof had closed
  *                    (tools/audit-gate-red-proofs.test.mjs)
+ *
+ * red-proof: inject  the `suite:` drop silenced in `tools/lib/gate-population.mjs`, so the prefix filters the member and
+ *                    prints nothing -> "both excluded members must be named, not counted out of the population in
+ *                    silence", with one fixture name where two were owed (tools/audit-gate-red-proofs.test.mjs)
  */
 import { spawnSync } from "node:child_process";
 import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -359,7 +363,7 @@ export function auditGateRedProofs({ root = REPOSITORY_ROOT } = {}) {
   // One derivation, shared with the conformance suite: `tools/lib/gate-population.mjs`, restricted to the index. A
   // `tools/check-*.mjs` a script runs is ONE gate there, and the script is its id - what an operator types and what
   // CI's derived job names - so the directory half contributes only the gates no script names at all.
-  const { gates, gateFiles: files, untrackedNotCounted } = indexedGatePopulation({ root });
+  const { gates, gateFiles: files, untrackedNotCounted, examined, dropped } = indexedGatePopulation({ root });
   const scripts = gates.filter((gate) => gate.kind === "script");
   const scriptNames = new Set(scripts.map((gate) => gate.id));
   const runnerText = declaredRunnerText(root);
@@ -377,6 +381,8 @@ export function auditGateRedProofs({ root = REPOSITORY_ROOT } = {}) {
       gateFiles: files.length,
       unclaimedByScript: gates.length - scripts.length,
       untrackedNotCounted,
+      examined,
+      dropped,
     },
     records: records.map((record) => ({ ...record, status: status.get(record.id) })),
     proven: records.filter((record) => status.get(record.id) === "proven"),
@@ -543,6 +549,29 @@ export function describePopulationLine({ population, proven, held, unproven, una
   );
 }
 
+/**
+ * The derivation's complement, printed member by member.
+ *
+ * `dropped N of M` comes first, so a run that dropped nothing says so beside the size of what it read instead of leaving
+ * the reader to infer an absence, and then one line per member - `dropped:<member> - <the rule that left it out>` - so an
+ * exclusion can be audited without reading the derivation's source.
+ *
+ * `gates + dropped + untracked = examined` is asserted here rather than trusted. A member that left the population and is
+ * named by neither list is exactly the reading this line exists to make impossible, and a line that cannot reconcile is a
+ * throw rather than a smaller number.
+ */
+export function describeDropped({ total, dropped = [], untrackedNotCounted = [], examined }) {
+  const sum = total + dropped.length + untrackedNotCounted.length;
+  if (sum !== examined)
+    throw new Error(
+      `population_does_not_reconcile:${total}+${dropped.length}+${untrackedNotCounted.length}:${examined}`,
+    );
+  return [
+    `gate_red_proofs dropped ${dropped.length} of ${examined}`,
+    ...dropped.map((entry) => `dropped:${entry.member} - ${entry.reason}`),
+  ];
+}
+
 /** One sentence naming what is wrong with a gate, for the operator who has to fix it. */
 function describeGap({ record, status }) {
   const verdict = status.get(record.id);
@@ -639,6 +668,7 @@ function report({ reading, held, gaps, undeclared = 0 }) {
       unreadable: reading.unreadableClaims.length,
     })}\n`,
   );
+  for (const line of describeDropped(population)) process.stdout.write(`  ${line}\n`);
   for (const record of reading.proven) {
     const proof = record.proofs[0];
     if (proof === undefined) {

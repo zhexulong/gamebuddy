@@ -32,6 +32,7 @@ import { fileURLToPath } from "node:url";
 
 import {
   auditGateRedProofs,
+  describeDropped,
   describeGateCensus,
   describePopulationLine,
   evaluate,
@@ -504,4 +505,49 @@ test("both population lines name the complement the index removed, and it never 
       }),
     /census_does_not_reconcile:4:5/u,
   );
+});
+
+// The defect this test exists for: a derivation that reads a member and then leaves it out without a word. Measured
+// 2026-11-13: `tools/run-tool-test-corpus.mjs` dropped 42 `test:`/`suite:` scripts while printing `notTaken 0`, and the
+// red-proof census dropped five `suite:` scripts and three gate-shaped files under `tools/` subdirectories while printing
+// a population that did not mention them. A filter may exclude a member; it may not exclude silently. So the census prints
+// every member it left out, by name and with the rule that left it out, and a run with nothing dropped prints that zero
+// beside the size of what it read.
+test("every member the derivation leaves out is named with its reason, and a zero is counted beside the population", () => {
+  const proof = marker("inject", "an omission -> the finding", "tools/check-a.test.mjs");
+  const scripts = { "check:a": "node tools/check-a.mjs", "suite:library": "node --test tools/check-a.test.mjs" };
+  const root = makeTree(
+    { "tools/check-a.mjs": gateSource(proof), "tools/nested/check-sub.mjs": gateSource("// no proof here") },
+    { scripts },
+  );
+  const clean = makeTree({ "tools/check-a.mjs": gateSource(proof) });
+  try {
+    const reading = auditGateRedProofs({ root });
+    assert.deepEqual(
+      reading.population.dropped.map((entry) => entry.member),
+      ["suite:library", "tools/nested/check-sub.mjs"],
+      "both excluded members must be named, not counted out of the population in silence",
+    );
+    assert.equal(reading.population.examined, 3, "two scripts and the one gate-shaped file no script claims");
+    assert.equal(reading.population.total, 1);
+    const [summary, ...members] = describeDropped(reading.population);
+    assert.equal(summary, "gate_red_proofs dropped 2 of 3");
+    assert.match(members[0], /^dropped:suite:library - .*`suite:` script/u);
+    assert.match(members[1], /^dropped:tools\/nested\/check-sub\.mjs - .*outside the gate directory/u);
+
+    // A tree that drops nothing still prints the zero, beside the number of members it read (`check:a` and the
+    // aggregate `check:aggregate`, which names no file of its own).
+    assert.deepEqual(describeDropped(auditGateRedProofs({ root: clean }).population), [
+      "gate_red_proofs dropped 0 of 2",
+    ]);
+
+    // A member that left the population and is named by neither list is a reading that does not reconcile, not a line.
+    assert.throws(
+      () => describeDropped({ ...reading.population, examined: 4 }),
+      /population_does_not_reconcile:1\+2\+0:4/u,
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+    rmSync(clean, { recursive: true, force: true });
+  }
 });

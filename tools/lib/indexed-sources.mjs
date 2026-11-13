@@ -91,5 +91,13 @@ export function indexedGatePopulation({ root }) {
   const untracked = untrackedSources({ root, roots: ["."] });
   const gates = indexOnlyMembers({ members: population.gates, untracked });
   const gateFiles = indexOnlyMembers({ members: population.gateFiles, untracked });
-  return { gates: gates.members, gateFiles: gateFiles.members, untrackedNotCounted: gates.untrackedNotCounted };
+  return {
+    gates: gates.members,
+    gateFiles: gateFiles.members,
+    untrackedNotCounted: gates.untrackedNotCounted,
+    // The derivation's own complement, carried through untouched: this layer decides which of those members the index
+    // carries, never which ones the derivation excluded, so the census can print both lists on separate terms.
+    examined: population.examined,
+    dropped: population.dropped,
+  };
 }
