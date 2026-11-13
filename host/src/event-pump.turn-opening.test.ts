@@ -83,7 +83,7 @@ function settlementFact(eventId: string, occurredAtMs: number): WorldFact {
   };
 }
 
-function readingFact(observedTick: number, revision = 14): WorldFact {
+function readingFact(observedTick: number, revision = 14, payload?: Readonly<Record<string, unknown>>): WorldFact {
   return {
     source: "stardew_mod",
     kind: "snapshot",
@@ -91,7 +91,7 @@ function readingFact(observedTick: number, revision = 14): WorldFact {
     observedTick,
     revision,
     occurredAtMs: WINDOW_AT_MS,
-    payload: { location: "Farm", gameTime: "0740" },
+    payload: payload ?? { location: "Farm", gameTime: "0740" },
   };
 }
 
@@ -389,12 +389,13 @@ test("the closed list is what opens turns: every member has a producer, and noth
   factPump.enqueueFact(milestoneFact(1200, WINDOW_AT_MS));
   await open(factPump, recorder.sink);
 
-  // observation: a revision that moved past the one she was DELIVERED.
+  // observation: a reading that says something the delivered one did not. The revision is not the authority - the reading
+  // is identified by its content (`readingContentIdentity`), so this fixture moves the world (the clock) and not the echo.
   const observationPump = new CompanionEventPump();
   observationPump.enqueueFact(readingFact(0, 14));
   observationPump.enqueueFact(milestoneFact(600, WINDOW_AT_MS));
   await open(observationPump, recorder.sink);
-  observationPump.enqueueFact(readingFact(1, 15));
+  observationPump.enqueueFact(readingFact(1, 15, { location: "Farm", gameTime: "0750" }));
   await open(observationPump, recorder.sink);
   assert.deepEqual(observationPump.turnAccount.lastDecision, {
     kind: "opened",
@@ -790,7 +791,7 @@ test("the account line this repo printed before the change is REFUSED by the rea
     "turns opened 55 · suppressed 0 {observation_restated: 0, world_fact_restated: 0, nothing_pending: 0} · flushes examined 55";
   assert.throws(
     () => readTurnAccountLine(measured),
-    /turns opened, suppressed, flushes examined, turn_closed_without_action, turn_settled_silent, aged turns, auto_observe_on_stale, auto_observe_unavailable/u,
+    /turns opened, suppressed, flushes examined, turn_closed_without_action, turn_settled_silent, aged readings, auto_observe_on_stale, auto_observe_unavailable/u,
     "a line that cannot say what opened its turns is not an account, and must not read as one",
   );
 });

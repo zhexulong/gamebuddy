@@ -31,7 +31,13 @@ import { worldStateStaleThreshold } from "./fact-brief.js";
 import type { GameConnection } from "./game-connection.js";
 import type { Snapshot } from "./protocol.js";
 
-/** The world as the Mod admitted it, at `revision`: one frozen reading is the population every crossing is crossed on. */
+/**
+ * The world as the Mod admitted it, at `revision`, with the clock following that number.
+ *
+ * The clock is not decoration: a reading is identified by its CONTENT (`readingContentIdentity`), and a revision is the
+ * Mod's action echo - so two readings that differ only in that number are ONE reading, and a crossing built on them would
+ * spend one budget while the test believed it had three. A later observation of a later world is a later clock.
+ */
 function reading(revision: number): Snapshot {
   return {
     revision,
@@ -45,7 +51,7 @@ function reading(revision: number): Snapshot {
     enabledActionIds: [],
     presentationLocale: "zh-CN",
     exhausted: false,
-    timeOfDay: 600,
+    timeOfDay: 600 + (revision % 600),
     dayOfMonth: 6,
     seasonIndex: 0,
     year: 1,
@@ -242,7 +248,7 @@ test("one crossed reading spends its bounded probes and is refused once; the nex
     loop.pump.worldStateRefresh.probes,
     readings.length * WORLD_STATE_REFRESH_ATTEMPTS,
     `each crossed reading spends its own ${String(WORLD_STATE_REFRESH_ATTEMPTS)} probes: the bound re-arms on the ` +
-      "revision, not on the turn",
+      "reading, not on the turn",
   );
   assert.equal(
     loop.pump.worldStateRefresh.refusals,

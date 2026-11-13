@@ -63,7 +63,13 @@ const THIS_UNIT_SYMBOL = "beginAgedReadingAsk";
 /** The world as the Mod admitted it: a free body standing on the Farm. */
 const FREE_BODY = Object.freeze({ location: "Farm", gameTime: "0740", actionable: true, revision: 352 });
 
-function snapshotFact(revision: number, observedTick: number): WorldFact {
+/**
+ * One reading, admitted the way the Mod admits one.
+ *
+ * `moved` is the difference between a reading and a RE-STATE of it: a reading is identified by its CONTENT
+ * (`readingContentIdentity`), so an answer carrying the same payload under a fresh revision is the reading she already had.
+ */
+function snapshotFact(revision: number, observedTick: number, moved = false): WorldFact {
   return Object.freeze({
     source: "stardew_mod",
     kind: "snapshot" as const,
@@ -71,7 +77,7 @@ function snapshotFact(revision: number, observedTick: number): WorldFact {
     observedTick,
     revision,
     occurredAtMs: 1_790_000_000_000 + observedTick,
-    payload: { ...FREE_BODY, revision },
+    payload: { ...FREE_BODY, revision, ...(moved ? { gameTime: "0750" } : {}) },
   });
 }
 
@@ -112,7 +118,9 @@ const AGED_MARKER = "轮之前看到的，世界已经不一样了";
  * `receive` ADMITS the solicited snapshot (`:1057`) and hands it to the fact listener (`:1090`) BEFORE the request
  * resolves, so by the time the pump's `await` returns, `enqueueFact` has already seen the new reading. A double that
  * resolved with a bare object would model a bridge that answers with nothing, which is the `refresh_refused` case, not
- * this one - so this one publishes through the pump's own admission, which is the route under test.
+ * this one - so this one publishes through the pump's own admission, which is the route under test. Its answer is a LATER
+ * WORLD (a moved clock under a new revision): a reading is identified by its content, so an answer that only bumped the
+ * counter would be the reading she already had, and the turn it opened would be the re-statement.
  * </p>
  */
 function servingPort(pump: CompanionEventPump, fromRevision: number): { port: WorldStateRefreshPort; asked: number[] } {
@@ -121,7 +129,7 @@ function servingPort(pump: CompanionEventPump, fromRevision: number): { port: Wo
     async observe(): Promise<unknown> {
       asked.push(asked.length + 1);
       const revision = fromRevision + asked.length;
-      pump.enqueueFact(snapshotFact(revision, 1_000 + asked.length));
+      pump.enqueueFact(snapshotFact(revision, 1_000 + asked.length, true));
       return Object.freeze({ revision });
     },
     publish: (fact: WorldFact) => pump.enqueueFact(fact),

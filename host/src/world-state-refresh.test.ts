@@ -165,9 +165,10 @@ test("stale_world_state_produces_no_refresh: every aged turn is answered by a re
     Object.freeze({
       async observe(): Promise<unknown> {
         asked.push(`observe_${String(asked.length + 1)}`);
-        // The answer arrives the way the integration's does: an ordinary snapshot fact admitted by the pump.
+        // The answer arrives the way the integration's does: an ordinary snapshot fact admitted by the pump - and it is a
+        // LATER WORLD, not the same one under a new counter, so the clock follows the revision.
         revision += 1;
-        pump.enqueueFact(snapshotFact(revision, { ...STUCK_READING, revision } as Snapshot));
+        pump.enqueueFact(snapshotFact(revision, { ...STUCK_READING, revision, timeOfDay: 600 + revision } as Snapshot));
         return Object.freeze({ revision });
       },
       publish: () => undefined,
@@ -261,9 +262,10 @@ test("a reading that actually moves re-arms the refresh, so one transient refusa
   assert.equal(pump.worldStateRefresh.refusals, 1, "and the refusal is said once for that reading");
 
   refuse = false;
-  // The world is observed again at a new revision: that is the answer the probe was after, and the episode it belonged to
-  // is over - so the next reading gets its own budget rather than inheriting a spent one.
-  await deliverTurn(pump, snapshotFact(400, { ...STUCK_READING, revision: 400 } as Snapshot));
+  // The world is observed again at a new reading: that is the answer the probe was after, and the episode it belonged to
+  // is over - so the next reading gets its own budget rather than inheriting a spent one. The reading moves its CLOCK,
+  // because that is what makes it a new reading: the revision alone is the Mod's action echo (`readingContentIdentity`).
+  await deliverTurn(pump, snapshotFact(400, { ...STUCK_READING, revision: 400, timeOfDay: 640 } as Snapshot));
   for (let turn = 1; turn <= WORLD_STATE_STALE_TURNS + 1; turn += 1)
     await deliverTurn(pump, worldFact("time_milestone", "1300", 100 + turn));
   assert.equal(
