@@ -9,9 +9,10 @@
  * red-proof markers turned into `×`, and `a1389e75` - the commit that restored them - came out EMPTY because the hook
  * formatted the restored blob back into the bytes its parent already held. The hook no longer does that, but the tree
  * carries the evidence of a second, earlier wave nobody has seen yet: 111 marker lines in 7 files, among them the
- * twelve `package.json` gate descriptions and the whole falsifier ledger. A file that says `× <what is wrong>` where
- * every gate prints `✖ <what is wrong>` is a transcript of a gate this tree does not have. (This file names both glyphs
- * in prose and never in a marker position, which is what the rule below makes possible.)
+ * twelve `package.json` gate descriptions and the whole falsifier ledger. A file that says "× <what is wrong>" where
+ * every gate prints `✖ <what is wrong>` is a transcript of a gate this tree does not have. This file names both glyphs
+ * in prose and never in a marker position - the rule below is what makes that possible, and the first draft of this
+ * header got it wrong and the gate reported itself (`check-red-proof-markers.mjs:12`).
  *
  * POPULATION, derived on every run (`examined NN` is printed): every tracked file whose text contains `✖` or `×`. The
  * pairing is the point - a file containing neither cannot hold a marker, and a file containing either is where a marker
