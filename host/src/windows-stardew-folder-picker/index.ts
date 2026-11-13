@@ -16,7 +16,14 @@ const pairDestination = "native/windows-stardew-folder-picker/win-x64";
 const inventorySchema = "gamebuddy-host-production-inventory/v4";
 const originKind = "verified_windows_stardew_folder_picker";
 const outputLimitBytes = 16 * 1024;
-const defaultTimeoutMs = 120_000;
+/**
+ * How long the player has to choose a folder before the helper is killed.
+ *
+ * A 120 s budget is a machine's patience: it killed dialogs that were open and in use - or open and hidden behind
+ * the browser - and the kill reports `windows_stardew_folder_picker_unavailable`, which a player cannot tell from a
+ * picker that never started.
+ */
+const defaultTimeoutMs = 300_000;
 
 export type { WindowsStardewFolderPickerCapability } from "./internal.js";
 export type StardewFolderPickerResult = Readonly<{ status: "cancelled" } | { status: "selected"; path: string }>;

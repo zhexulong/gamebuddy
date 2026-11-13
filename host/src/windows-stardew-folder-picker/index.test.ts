@@ -132,6 +132,32 @@ test("folder picker does not claim timeout cleanup before the helper closes", as
   assert.equal(observation, "pending");
 });
 
+test("folder picker budgets a player choosing a folder, not a machine answering", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const process = Object.assign(new EventEmitter(), {
+    stdin: new PassThrough(),
+    stdout: new PassThrough(),
+    stderr: new PassThrough(),
+    killCalls: 0,
+    kill() {
+      this.killCalls += 1;
+      return true;
+    },
+  });
+  const result = selectStardewFolder(createTestWindowsStardewFolderPicker(() => process as unknown as ChildProcess));
+  void result.catch(() => {});
+  t.mock.timers.tick(299_999);
+  assert.equal(
+    process.killCalls,
+    0,
+    "a dialog still open on the player's screen must not be killed before the human budget expires",
+  );
+  t.mock.timers.tick(1);
+  assert.equal(process.killCalls, 1, "the human budget must end the dialog instead of leaving the helper running");
+  process.emit("close", null, "SIGTERM");
+  await assert.rejects(result, /windows_stardew_folder_picker_unavailable/);
+});
+
 test("folder picker fails closed on spawn failure and forged capability without path disclosure", async () => {
   const capability = createTestWindowsStardewFolderPicker(() => {
     throw new Error("C:\\secret");

@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.Json;
@@ -16,7 +17,7 @@ internal static class Program
     private const int CancelledHresult = unchecked((int)0x800704C7);
 
     [STAThread]
-    private static int Main()
+    private static int Main(string[] args)
     {
         try
         {
@@ -27,7 +28,7 @@ internal static class Program
             {
                 dialog.GetOptions(out var options);
                 dialog.SetOptions(options | FosPickFolders | FosForceFileSystem | FosNoChangeDir | FosPathMustExist | FosNoDereferenceLinks);
-                var result = dialog.Show(IntPtr.Zero);
+                var result = dialog.Show(ResolveOwner(args));
                 if (result == CancelledHresult) { WriteCancelled(); return 0; }
                 Marshal.ThrowExceptionForHR(result);
                 dialog.GetResult(out var item);
@@ -55,6 +56,25 @@ internal static class Program
             return 1;
         }
     }
+
+    /// <summary>
+    /// The window that owns the dialog, which decides whether the player ever sees it.
+    ///
+    /// An ownerless dialog opened from this helper is unowned by construction: the parent spawns it as a
+    /// `windowsHide` console child with no foreground window of its own, so the desktop's foreground lock keeps the
+    /// dialog behind the browser (or blinking in the taskbar) until the parent's timeout reports a picker the player
+    /// never saw. The caller may name an owner; without one, the window the player last used is that owner.
+    /// </summary>
+    private static IntPtr ResolveOwner(string[] args)
+    {
+        if (args.Length == 0) return GetForegroundWindow();
+        if (args.Length != 1 || !ulong.TryParse(args[0], NumberStyles.None, CultureInfo.InvariantCulture, out ulong owner) || owner == 0 || owner > long.MaxValue)
+            throw new InvalidOperationException();
+        return new IntPtr((long)owner);
+    }
+
+    [DllImport("user32.dll")]
+    private static extern IntPtr GetForegroundWindow();
 
     private static void WriteCancelled() => Console.Out.Write("{\"schemaVersion\":1,\"status\":\"cancelled\"}\n");
     private static bool IsDriveRooted(string path) => path.Length >= 3 && char.IsAsciiLetter(path[0]) && path[1] == ':' && path[2] == '\\' && !path.Contains('/') && !path.Contains('\0');
