@@ -36,6 +36,7 @@ import {
 } from "./stardew-game-install/desktop-entry-mod-deployment.js";
 import { deployStardewCompanionMod, readStardewCompanionModPackage } from "./stardew-game-install/deployment.js";
 import { createPublishedWindowsReparseInspector } from "./windows-reparse-inspector/index.js";
+import { probeWindowsStardewGuardianObjects } from "./composition/stardew/stardew-guardian-object-presence.js";
 import type { WindowsReparseInspectorCapability } from "./windows-reparse-inspector/index.js";
 import {
   selectStardewFolder,
@@ -50,7 +51,10 @@ import {
 import { readIdentityProfile } from "./identity-profile.js";
 import { resolveRuntimePaths } from "./runtime-identity.js";
 import { createStardewPrivateBootstrapComposition } from "./games/stardew/lifecycle/stardew-private-bootstrap-composer.internal.js";
-import type { StardewPrivateBootstrapInternalComposition } from "./games/stardew/lifecycle/stardew-private-bootstrap-composer.core.internal.js";
+import type {
+  StardewBootstrapRegistrationReconcileReport,
+  StardewPrivateBootstrapInternalComposition,
+} from "./games/stardew/lifecycle/stardew-private-bootstrap-composer.core.internal.js";
 import type { StardewOwnedPlayerHostBootstrap } from "./games/stardew/lifecycle/stardew-private-bootstrap-composer.js";
 import {
   StardewPlayerSettingsStore,
@@ -604,6 +608,16 @@ export type StardewProductionLifecycleCoordinator = Readonly<{
   readonly worldBindingReader: StardewGameSurfaceWorldBindingReader;
   readonly activationOwner: StardewProductionLifecycleActivationOwner;
   readonly headlessOperationalGame: HeadlessOperationalGame;
+  /**
+   * Host-boot reconcile of the one durable bootstrap attempt pointer.
+   *
+   * Every ordinary close and every crash leaves that pointer bound, so the next
+   * launch is refused until something releases it. It is released here only when
+   * the OS proves the attempt's Guardian-owned lease and player Job are gone, and
+   * only for an attempt whose owner record is already terminal. The pass is
+   * bookkeeping: it claims no containment.
+   */
+  reconcileHeldBootstrapRegistration(): Promise<StardewBootstrapRegistrationReconcileReport>;
   close(): Promise<void>;
 }>;
 
@@ -3642,6 +3656,8 @@ function createCoordinator(
     worldBindingReader: createStardewGameSurfaceWorldBindingReader(worldBindingResolver, () => resumedGameSessionId),
     activationOwner,
     headlessOperationalGame,
+    reconcileHeldBootstrapRegistration: () =>
+      internal.reconcileHeldBootstrapRegistration(runtimeRoot, probeWindowsStardewGuardianObjects),
     close,
   });
 }
@@ -3692,6 +3708,20 @@ export function createStardewProductionLifecycleCoordinatorFromTestingCompositio
     hostArtifactRoot,
     companionModDeploy,
   );
+}
+
+/**
+ * One bounded operator line for a boot reconcile: the counts, then one
+ * `correlation:outcome` pair per record the pass examined.
+ *
+ * A pass that examined nothing prints `examined 0` and an empty list, because a
+ * counted zero must not read like a pass that found nothing wrong.
+ */
+export function formatStardewBootstrapRegistrationReconcile(
+  report: StardewBootstrapRegistrationReconcileReport,
+): string {
+  const records = report.records.map((record) => `${record.bootstrapCorrelation}:${record.outcome}`).join(",");
+  return `GameBuddy Stardew bootstrap registration reconcile: examined ${report.examined}, released ${report.released}${records.length === 0 ? "" : ` [${records}]`}`;
 }
 
 /** Constructs the coordinator exclusively from the closed first-party composition. */

@@ -11,6 +11,7 @@ import { createGameBrowserStateProvider } from "../../game-browser/game-browser-
 import type { GameIntegrationProvider, GamePresentationProjection } from "../../integration-catalog.js";
 import {
   createStardewProductionLifecycleCoordinator,
+  formatStardewBootstrapRegistrationReconcile,
   type StardewProductionLifecycleCoordinator,
 } from "../../stardew-production-lifecycle-coordinator.internal.js";
 import type { StardewPlayerHostRuntimeLaunchCollaborator } from "./lifecycle/stardew-private-bootstrap-composer.core.internal.js";
@@ -202,6 +203,11 @@ export function createStardewGameIntegrationProvider(): GameIntegrationProvider 
         input.folderPicker,
         input.game,
         input.runtimeCollaborator,
+      );
+      // Host boot: a pointer left bound by an ordinary close or a crash is released
+      // here, and only when the OS proves the attempt's Guardian-owned objects gone.
+      console.error(
+        formatStardewBootstrapRegistrationReconcile(await coordinator.reconcileHeldBootstrapRegistration()),
       );
       return Object.freeze({
         close: () => coordinator.close(),

@@ -29,6 +29,7 @@ import {
   containedAiClientLaunchDecision,
   containedPlayerHostLaunchDecision,
   containedRuntimeTeardownFromCollaborator,
+  formatStardewBootstrapRegistrationReconcile,
 } from "./stardew-production-lifecycle-coordinator.internal.js";
 import type { StardewOwnedPlayerHostBootstrap } from "./games/stardew/lifecycle/stardew-private-bootstrap-composer.js";
 import type {
@@ -1196,4 +1197,51 @@ test("contained runtime adapters surface every refusal as a rejection rather tha
     assert.ok(refusal instanceof Error, `${call.member} must reject, got ${String(refusal)}`);
     assert.equal(refusal.message, call.refusal, `${call.member} must reject with its own refusal`);
   }
+});
+
+/**
+ * The boot reconcile has to be reachable from every boot and has to say what it
+ * did, including when it examined nothing: a pass that found no records must not
+ * read like a pass that found nothing wrong.
+ */
+test("the boot reconcile line counts what it examined and prints a counted zero", () => {
+  assert.equal(
+    formatStardewBootstrapRegistrationReconcile({ examined: 0, released: 0, records: [] }),
+    "GameBuddy Stardew bootstrap registration reconcile: examined 0, released 0",
+  );
+  assert.equal(
+    formatStardewBootstrapRegistrationReconcile({
+      examined: 2,
+      released: 1,
+      records: [
+        { bootstrapCorrelation: "bootstrap-1", outcome: "released" },
+        { bootstrapCorrelation: "bootstrap-2", outcome: "kept_objects_present" },
+      ],
+    }),
+    "GameBuddy Stardew bootstrap registration reconcile: examined 2, released 1 [bootstrap-1:released,bootstrap-2:kept_objects_present]",
+  );
+});
+
+test("the coordinator binds the boot reconcile to the production OS probe, and both boots run it before they serve", async () => {
+  const moduleRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..", "src");
+  const coordinatorSource = await readFile(
+    join(moduleRoot, "stardew-production-lifecycle-coordinator.internal.ts"),
+    "utf8",
+  );
+  // The production probe is bound here, once: a boot that could not ask the OS
+  // would leave every held pointer exactly where it is.
+  assert.match(
+    coordinatorSource,
+    /reconcileHeldBootstrapRegistration: \(\) =>\s*\n\s*internal\.reconcileHeldBootstrapRegistration\(runtimeRoot, probeWindowsStardewGuardianObjects\)/u,
+  );
+  const providerSource = await readFile(join(moduleRoot, "games", "stardew", "provider.ts"), "utf8");
+  const boot = providerSource.slice(providerSource.indexOf("async createLifecycleCoordinator"));
+  const reconcileCall = boot.indexOf("await coordinator.reconcileHeldBootstrapRegistration()");
+  assert.notEqual(reconcileCall, -1, "the desktop boot runs the reconcile");
+  assert.ok(
+    reconcileCall < boot.indexOf("return Object.freeze({"),
+    "the reconcile runs before the lifecycle capability is published",
+  );
+  const mainSource = await readFile(join(moduleRoot, "main.ts"), "utf8");
+  assert.match(mainSource, /await coordinator\.reconcileHeldBootstrapRegistration\(\)/u);
 });

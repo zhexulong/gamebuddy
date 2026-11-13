@@ -12,6 +12,7 @@ import { createProductionGameTaskIngressController } from "./production-game-tas
 import { parseSemanticMainCommand } from "./semantic-main-config.js";
 import {
   createStardewProductionLifecycleCoordinator,
+  formatStardewBootstrapRegistrationReconcile,
   type HeadlessOperationalGameLease,
 } from "./stardew-production-lifecycle-coordinator.internal.js";
 import { createPublishedWindowsStardewFolderPicker } from "./windows-stardew-folder-picker/index.js";
@@ -80,6 +81,11 @@ async function runOperationalGate(deploymentManifestRef: string, operationalNonc
   const folderPicker = await createPublishedWindowsStardewFolderPicker(artifactRoot);
   const game = await createKnownSemanticGameProductionAuthorityFromDeploymentManifest(manifest);
   const coordinator = createStardewProductionLifecycleCoordinator(manifest, folderPicker, game);
+  // Host boot: release a pointer an earlier ordinary close or crash left bound, and
+  // only when the OS proves the attempt's Guardian-owned objects gone.
+  process.stdout.write(
+    `${formatStardewBootstrapRegistrationReconcile(await coordinator.reconcileHeldBootstrapRegistration())}\n`,
+  );
 
   let lease: HeadlessOperationalGameLease;
   try {
