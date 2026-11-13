@@ -32,6 +32,33 @@
  *   node tools/check-derived-population.mjs --json      # the reading, machine-readable
  *   node tools/check-derived-population.mjs --root <dir>  # the gate's own fixture
  *
+ * WHY IT IS NOT SCHEDULED, measured 2026-11-13: `examined 980, violations 1222, unread 0`. The class is ONE shape and
+ * the literal's value is what splits it:
+ *
+ *   645 `=== 1`   291 `=== 0`   137 `=== 2`   61 `=== 3-4`   36 `=== 5-9`   51 `=== 10+`   1 non-numeric
+ *   by root: host 641 · tools 488 · integrations 49 · dialogue-web 44
+ *
+ * 1073 of the 1222 (88%) are a literal 0, 1 or 2, and a boundary about a scenario the test itself builds is not the
+ * defect this file was written for: `list.length === 0` after a removal, `=== 1` for the one reply that came back, or
+ * `=== 2` for a pair are assertions whose authority is the fixture declared three lines above them. This file reads
+ * syntax, so it cannot tell that fixture from a product-owned population - which is why the count is 1222 and not the
+ * handful that will actually drift.
+ *
+ * The 148 in the 3-and-up band are where the defect lives, and inside `tools/` there are 62 of them in 40 files. The
+ * ones inspected split the same way: most are fixture counts too (`page.asked === 5`, `merged.rows === 4`, a capture
+ * fixture's 11082 bytes, `published.turns === 46`), and the genuine freezes have no derived side in the file that
+ * holds them - `tools/check-refusal-informativeness.test.mjs`'s `actions.length === 95` and its 70 target-bound
+ * actions are the published surface's size, and `tools/check-stardew-tool-family-stamina-evidence.test.mjs`'s
+ * `Object.keys(STARDEW_TOOL_FAMILY).length === 12` is that table's size; clearing either means deriving the member set
+ * (from the generator of `action-surface.v1.json`, and from the Mod's `DoFunction`-driving handlers), which is a gate to
+ * write rather than an assertion to edit. Replacing them with a hand-written list of the expected members would be the
+ * same defect with more text in it.
+ *
+ * So the gate stays OFF, and the reason is this reading rather than a promise: it becomes schedulable when the 3-and-up
+ * band reaches zero, or when the file learns the discrimination it is missing - a count whose authority is declared in
+ * the same file it is asserted in, or whose receiver is a literal the test built, is not a frozen population. Until one
+ * of those is true, switching it on would red the tree for 1222 assertions and teach its readers to ignore it.
+ *
  * red-proof: inject  `assert.equal(list.length, 15)` in a test file ->
  *            `literal_population_assertion:<file>:<line>:15 - use list.length or assert.deepEqual(...)`, green
  *            for `assert.equal(list.length, AUTHORITY.length)` (tools/check-derived-population.test.mjs)
