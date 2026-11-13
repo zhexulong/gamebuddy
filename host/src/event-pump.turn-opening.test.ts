@@ -7,6 +7,7 @@ import test from "node:test";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import ts from "typescript";
 import {
+  AUTO_OBSERVE_AGED_TURNS,
   AUTO_OBSERVE_ON_STALE,
   AUTO_OBSERVE_UNAVAILABLE,
   AUTO_OBSERVE_UNAVAILABLE_REASONS,
@@ -592,6 +593,7 @@ function readTurnAccountLine(line: string): Readonly<{
   emptyTurns: Readonly<{ total: number; counts: Record<string, number> }>;
   silentSettled: Readonly<{ total: number; counts: Record<string, number> }>;
   autoObserve: Readonly<{
+    agedTurns: number;
     refreshed: Readonly<{ total: number; counts: Record<string, number> }>;
     unavailable: Readonly<{ total: number; counts: Record<string, number> }>;
   }>;
@@ -603,6 +605,7 @@ function readTurnAccountLine(line: string): Readonly<{
     "flushes examined",
     TURN_WITHOUT_ACTION,
     TURN_SETTLED_SILENT,
+    AUTO_OBSERVE_AGED_TURNS,
     AUTO_OBSERVE_ON_STALE,
     AUTO_OBSERVE_UNAVAILABLE_TOKEN,
   ];
@@ -617,9 +620,11 @@ function readTurnAccountLine(line: string): Readonly<{
     examinedSegment,
     emptySegment,
     silentSegment,
+    agedSegment,
     observedSegment,
     declinedSegment,
   ] = segments as [
+    ReturnType<typeof parseSegment>,
     ReturnType<typeof parseSegment>,
     ReturnType<typeof parseSegment>,
     ReturnType<typeof parseSegment>,
@@ -636,6 +641,7 @@ function readTurnAccountLine(line: string): Readonly<{
     emptyTurns: Object.freeze({ total: emptySegment.total, counts: emptySegment.counts }),
     silentSettled: Object.freeze({ total: silentSegment.total, counts: silentSegment.counts }),
     autoObserve: Object.freeze({
+      agedTurns: agedSegment.total,
       refreshed: Object.freeze({ total: observedSegment.total, counts: observedSegment.counts }),
       unavailable: Object.freeze({ total: declinedSegment.total, counts: declinedSegment.counts }),
     }),
@@ -658,12 +664,16 @@ function emptyTurnShapeCounts(overrides: Readonly<Record<string, number>>): Reco
 
 /** The stale path's own account, with every declared unavailability reason printed even at zero. */
 function autoObserveAccount(
-  refreshed: Readonly<{ refreshed: number; lastAgeTurns: number | undefined }>,
+  refreshed: Readonly<{ refreshed: number; lastAgeTurns: number | undefined; agedTurns?: number }>,
   unavailable: Readonly<Record<string, number>> = {},
 ): TurnAccount["autoObserve"] {
   const byReason: Record<string, number> = {};
   for (const reason of AUTO_OBSERVE_UNAVAILABLE_REASONS) byReason[reason] = unavailable[reason] ?? 0;
+  const declined = AUTO_OBSERVE_UNAVAILABLE_REASONS.reduce((total, reason) => total + (byReason[reason] ?? 0), 0);
   return Object.freeze({
+    // The population is the sum by construction here: an account that named aged turns and then neither refreshed nor
+    // declined them is the arithmetic break `event-pump.stale-observation.test.ts` reds by name.
+    agedTurns: refreshed.agedTurns ?? refreshed.refreshed + declined,
     refreshed: refreshed.refreshed,
     lastAgeTurns: refreshed.lastAgeTurns,
     unavailable: Object.freeze(byReason),
@@ -721,6 +731,13 @@ test("the account line reads back into the account it names", () => {
     Object.values(parsed.silentSettled.counts).reduce((total, count) => total + count, 0),
     "and the silent total is the sum of its openers, for the same reason",
   );
+  assert.equal(parsed.autoObserve.agedTurns, account.autoObserve.agedTurns);
+  assert.equal(
+    parsed.autoObserve.agedTurns,
+    parsed.autoObserve.refreshed.total +
+      Object.values(parsed.autoObserve.unavailable.counts).reduce((total, count) => total + count, 0),
+    "every aged turn is printed as refreshed or as a named reason, so a turn cannot be aged and then unaccounted for",
+  );
 });
 
 test("the account line names a member that never fired, in both histograms", () => {
@@ -773,8 +790,27 @@ test("the account line this repo printed before the change is REFUSED by the rea
     "turns opened 55 · suppressed 0 {observation_restated: 0, world_fact_restated: 0, nothing_pending: 0} · flushes examined 55";
   assert.throws(
     () => readTurnAccountLine(measured),
-    /turns opened, suppressed, flushes examined, turn_closed_without_action, turn_settled_silent, auto_observe_on_stale, auto_observe_unavailable/u,
+    /turns opened, suppressed, flushes examined, turn_closed_without_action, turn_settled_silent, aged turns, auto_observe_on_stale, auto_observe_unavailable/u,
     "a line that cannot say what opened its turns is not an account, and must not read as one",
+  );
+});
+
+test("the account line that counts its turns but not the reading it aged is REFUSED: a diagnosis needs its numerator", () => {
+  // THE FALSIFIER for the segment this unit adds, and the exact line `round50b` printed: every turn, every shape, and a
+  // refresh pair that said `0` twice. Both zeros were true and the line could not distinguish "the cure never fired" from
+  // "no turn was aged" - which is why the population is printed before the counters rather than instead of them.
+  const measured =
+    "turns opened 2 {player_input: 1, world_fact: 1, observation: 0, due: 0} · suppressed 0 {observation_restated: 0, " +
+    "world_fact_restated: 0, nothing_pending: 0} · flushes examined 2 · turn_closed_without_action 2 " +
+    "{player_input:world_stale: 1, player_input:body_held: 0, player_input:nothing_pending: 0, world_fact:world_stale: 0, " +
+    "world_fact:body_held: 0, world_fact:nothing_pending: 1, observation:world_stale: 0, observation:body_held: 0, " +
+    "observation:nothing_pending: 0, due:world_stale: 0, due:body_held: 0, due:nothing_pending: 0} · turn_settled_silent 0 " +
+    "{world_fact: 0, observation: 0, due: 0} · auto_observe_on_stale 0 · auto_observe_unavailable 0 {no_bridge: 0, " +
+    "refresh_attempts_spent: 0, refresh_refused: 0}";
+  assert.throws(
+    () => readTurnAccountLine(measured),
+    new RegExp(`turn_settled_silent, ${AUTO_OBSERVE_AGED_TURNS}, auto_observe_on_stale`, "u"),
+    "a run whose one aged turn is not printed cannot say whether the world was ever asked about it",
   );
 });
 
@@ -791,7 +827,7 @@ test("the account line that named its turns but not its refreshes is REFUSED: a 
     "observation:nothing_pending: 0, due:world_stale: 0, due:body_held: 0, due:nothing_pending: 0}";
   assert.throws(
     () => readTurnAccountLine(previous),
-    /turn_settled_silent, auto_observe_on_stale, auto_observe_unavailable/u,
+    new RegExp(`turn_settled_silent, ${AUTO_OBSERVE_AGED_TURNS}, auto_observe_on_stale`, "u"),
     "a turn the refresh removed leaves no trace in that line, which is why the removal was uncountable",
   );
 });
@@ -1144,7 +1180,7 @@ test("turn_settled_silent: the account line this tree printed before this unit c
     "refresh_refused: 0}";
   assert.throws(
     () => readTurnAccountLine(before),
-    new RegExp(`${TURN_SETTLED_SILENT}, auto_observe_on_stale`, "u"),
+    new RegExp(`${TURN_SETTLED_SILENT}, ${AUTO_OBSERVE_AGED_TURNS}, auto_observe_on_stale`, "u"),
     "a line that cannot say a turn settled with nothing said is refused rather than read as an account",
   );
 });

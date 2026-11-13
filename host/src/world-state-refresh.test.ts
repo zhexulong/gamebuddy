@@ -24,7 +24,6 @@ import test from "node:test";
 import { CompanionLoop } from "./companion-loop.js";
 import {
   AUTO_OBSERVE_UNAVAILABLE,
-  AUTO_OBSERVE_UNAVAILABLE_REASONS,
   CompanionEventPump,
   type PendingBatch,
   WORLD_STATE_REFRESH_ATTEMPTS,
@@ -135,10 +134,11 @@ async function replayFrozenWindow(pump: CompanionEventPump): Promise<readonly Wo
   return stale;
 }
 
-test("stale_world_state_produces_no_refresh: a crossed reading is answered by a request, and a served request replaces the fact", async () => {
+test("stale_world_state_produces_no_refresh: every aged turn is answered by a request, and a served request replaces the notice", async () => {
   // THE RED READING, kept as the fixture. A pump nobody wired is what every composition shipped at HEAD: the frozen
-  // window produces stale facts and answers them with no request at all - the 601 s of silence, reproduced from the
-  // bundle's own facts rather than described.
+  // window would produce stale facts and answer them with no request at all - the 601 s of silence, reproduced from the
+  // bundle's own facts rather than described. What is asserted now is the arithmetic the account prints: every turn
+  // composed from an aged reading is one of "the world was asked" or "it could not be asked, for this reason".
   const unattached = new CompanionEventPump();
   const unattachedStale = await replayFrozenWindow(unattached);
   assert.ok(unattachedStale.length > 0, "the window must produce stale facts, or this gate has nothing to read");
@@ -148,23 +148,27 @@ test("stale_world_state_produces_no_refresh: a crossed reading is answered by a 
     "a pump nobody wired cannot refresh, and that condition must be readable rather than silent",
   );
   assert.equal(unattached.worldStateRefresh.probes, 0, "the defect this gate names: stale, and nothing asks");
+  assert.ok(unattached.turnAccount.autoObserve.agedTurns > 0, "the window ages readings, or there is nothing to cure");
   assert.equal(
     unattached.turnAccount.autoObserve.unavailable[AUTO_OBSERVE_UNAVAILABLE.noBridge],
-    unattachedStale.length,
-    "and every one of those stale facts says WHY nobody asked, instead of leaving it to be inferred from a silence",
+    unattached.turnAccount.autoObserve.agedTurns,
+    "and every one of those aged turns says WHY nobody asked, instead of leaving it to be inferred from a silence",
   );
 
-  // THE PROPERTY: a crossed reading is answered by one request, in the same admission that would have published the fact
-  // - and a request that is served REPLACES the fact, so the reading she is handed next is one she was not told to go and
-  // fetch herself. The two counts come from the account, so the arithmetic is the pump's own statement rather than a
-  // second tally here.
+  // THE PROPERTY: an aged reading is answered by a request for a fresh observation, and a request that is SERVED replaces
+  // the reading - so the turn carries the answer instead of a notice telling her to go and fetch it herself. The counts
+  // come from the account, so the arithmetic is the pump's own statement rather than a second tally here.
   const pump = new CompanionEventPump();
   const asked: string[] = [];
+  let revision = 352;
   pump.attachWorldStateRefresh(
     Object.freeze({
       async observe(): Promise<unknown> {
         asked.push(`observe_${String(asked.length + 1)}`);
-        return Object.freeze({});
+        // The answer arrives the way the integration's does: an ordinary snapshot fact admitted by the pump.
+        revision += 1;
+        pump.enqueueFact(snapshotFact(revision, { ...STUCK_READING, revision } as Snapshot));
+        return Object.freeze({ revision });
       },
       publish: () => undefined,
     }),
@@ -172,22 +176,18 @@ test("stale_world_state_produces_no_refresh: a crossed reading is answered by a 
   const stale = await replayFrozenWindow(pump);
   assert.equal(pump.worldStateRefresh.attached, true);
   const staleAccount = pump.turnAccount.autoObserve;
-  const declined = AUTO_OBSERVE_UNAVAILABLE_REASONS.reduce(
-    (total, reason) => total + staleAccount.unavailable[reason],
-    0,
-  );
-  assert.ok(staleAccount.refreshed >= 1, "the window reaches at least one crossing, or this gate has nothing to read");
+  assert.ok(staleAccount.agedTurns > 0, "the window reaches at least one aged turn, or this gate has nothing to read");
   assert.equal(
     asked.length,
-    staleAccount.refreshed,
-    `each of the ${String(staleAccount.refreshed)} refreshes the account claims must be one request (measured ${String(asked.length)})`,
+    pump.worldStateRefresh.probes,
+    `each of the ${String(pump.worldStateRefresh.probes)} requests the pump counts must be one call (measured ${String(asked.length)})`,
   );
   assert.equal(
-    stale.length,
-    declined,
-    `a stale fact is published exactly when the world could not be asked: ${String(stale.length)} fact(s), ` +
-      `${String(declined)} declined crossing(s)`,
+    staleAccount.refreshed,
+    staleAccount.agedTurns,
+    `every aged turn was answered by the world: ${String(staleAccount.refreshed)} of ${String(staleAccount.agedTurns)}`,
   );
+  assert.deepEqual(stale, [], "so not one turn was handed a notice about a reading that had already been replaced");
 });
 
 test("refresh_loop_without_progress: a frozen reading is asked about at most WORLD_STATE_REFRESH_ATTEMPTS times", async () => {
@@ -234,8 +234,9 @@ test("refresh_loop_without_progress: a frozen reading is asked about at most WOR
 });
 
 test("a reading that actually moves re-arms the refresh, so one transient refusal cannot silence the run", async () => {
-  // The bound stops a spin; it must not spend a run's only chance on a bridge that hiccuped. The next CROSSING - a
-  // reading that outlived its bound again - asks again, and the revision that was refused is never asked about again.
+  // The bound stops a spin; it must not spend a run's only chance on a bridge that hiccuped. The budget is per REVISION, so
+  // the next reading - a revision that actually moved - asks again from a full budget, and is refused once (the statement
+  // is per reading; the requests are per aged turn).
   const pump = new CompanionEventPump();
   let refuse = true;
   let probes = 0;
@@ -252,15 +253,34 @@ test("a reading that actually moves re-arms the refresh, so one transient refusa
   await deliverTurn(pump, snapshotFact(352));
   for (let turn = 1; turn <= WORLD_STATE_STALE_TURNS + 1; turn += 1)
     await deliverTurn(pump, worldFact("time_milestone", "1200", turn));
-  assert.equal(probes, 1, "the first crossing asks once");
+  assert.equal(
+    probes,
+    WORLD_STATE_REFRESH_ATTEMPTS,
+    "the aged turns of the first reading spend its budget, and no more",
+  );
+  assert.equal(pump.worldStateRefresh.refusals, 1, "and the refusal is said once for that reading");
 
   refuse = false;
-  // The world is observed again at a new revision: that is the answer the probe was after, and the crossing it belonged
-  // to is over.
+  // The world is observed again at a new revision: that is the answer the probe was after, and the episode it belonged to
+  // is over - so the next reading gets its own budget rather than inheriting a spent one.
   await deliverTurn(pump, snapshotFact(400, { ...STUCK_READING, revision: 400 } as Snapshot));
   for (let turn = 1; turn <= WORLD_STATE_STALE_TURNS + 1; turn += 1)
     await deliverTurn(pump, worldFact("time_milestone", "1300", 100 + turn));
-  assert.equal(probes, 2, "a new crossed reading is a new question");
+  assert.equal(
+    probes,
+    2 * WORLD_STATE_REFRESH_ATTEMPTS,
+    "a new crossed reading is a new question, asked from a full budget of its own",
+  );
+  assert.equal(
+    pump.worldStateRefresh.refusals,
+    1,
+    "the refusal is the one reading that was refused; a second one could not be asked about again is not a second one stated",
+  );
+  assert.equal(
+    pump.turnAccount.autoObserve.refreshed,
+    WORLD_STATE_REFRESH_ATTEMPTS,
+    "and the reading that MOVED was answered every time it was asked about: one transient refusal did not silence the run",
+  );
 });
 
 test("a port is attached once per pump: a second attach is a wiring bug, not a policy", () => {
@@ -360,7 +380,11 @@ test("a refused refresh reaches a turn on the Host's own Host-minted-fact route"
       "the model must be handed the refusal in words, or a dead bridge reads as a world that did not move",
     );
     assert.match(said, /world_state_stale:/u, "and the stale reading itself is still stated exactly as it was");
-    assert.equal(loop.pump.worldStateRefresh.probes, 1, "one crossing, one question");
+    assert.equal(
+      loop.pump.worldStateRefresh.probes,
+      WORLD_STATE_REFRESH_ATTEMPTS,
+      "one aged reading, asked about as many times as its budget allows and no more",
+    );
   } finally {
     host.close();
   }

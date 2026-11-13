@@ -227,15 +227,18 @@ export type TurnAccount = Readonly<{
  *
  * `turns opened N · by reason {opener: count} · suppressed M {reason: count} · flushes examined F` (F derived, so the
  * arithmetic closes) `· turn_closed_without_action E {opener:reason: count}` `· turn_settled_silent S {opener: count}` `·
- * auto_observe_on_stale R {ageTurns}` `· auto_observe_unavailable U {reason: count}`. A reason that has never fired is
- * still printed as `0`: it is a declared member of a closed list, and a reader must be able to see that it exists and
- * never happened rather than guess from its absence. The opener histogram is printed for the same reason at the level above: `opened 55` said a number and nothing
+ * aged turns A · auto_observe_on_stale R {ageTurns}` `· auto_observe_unavailable U {reason: count}`. A reason that has
+ * never fired is still printed as `0`: it is a declared member of a closed list, and a reader must be able to see that it
+ * exists and never happened rather than guess from its absence. The opener histogram is printed for the same reason at the level above: `opened 55` said a number and nothing
  * about what opened them, so "she was woken by the clock fifty times" and "the person spoke fifty times" were the same
  * line.
  *
- * The two stale segments are what makes a REMOVED turn countable. A refresh costs no turn, so without them "the stale
- * notices stopped opening turns" and "the stale notices stopped happening" would print the same line; with them, `R` is
- * how many turns the refresh replaced and `U` is how many stale notices still had to open one, split by why.
+ * The three stale segments are what makes a REMOVED turn countable AND a turn that was NOT removed explainable. A refresh
+ * costs no turn, so without them "the stale notices stopped opening turns" and "the stale notices stopped happening"
+ * would print the same line; with them, `A` is how many turns were composed from a reading the batch did not bring, `R`
+ * is how many of those the world answered, and `U` is how many it could not be asked about, split by why. `A` is printed
+ * first because it is the population the other two partition: an aged turn with `R + U` short of it is a turn nobody
+ * has accounted for.
  */
 export function turnAccountLine(account: TurnAccount): string {
   const opened = TURN_OPENINGS.map((reason) => `${reason}: ${String(account.byReason[reason])}`).join(", ");
@@ -259,7 +262,7 @@ export function turnAccountLine(account: TurnAccount): string {
     (total, reason) => total + account.autoObserve.unavailable[reason],
     0,
   );
-  return `turns opened ${String(account.opened)} {${opened}} · suppressed ${String(suppressedTotal(account))} {${suppressed}} · flushes examined ${String(account.examined)} · ${TURN_WITHOUT_ACTION} ${String(account.emptyTurns.total)} {${empty}} · ${TURN_SETTLED_SILENT} ${String(account.silentSettled.total)} {${silent}} · ${refreshed} · ${AUTO_OBSERVE_UNAVAILABLE_TOKEN} ${String(declined)} {${unavailable}}`;
+  return `turns opened ${String(account.opened)} {${opened}} · suppressed ${String(suppressedTotal(account))} {${suppressed}} · flushes examined ${String(account.examined)} · ${TURN_WITHOUT_ACTION} ${String(account.emptyTurns.total)} {${empty}} · ${TURN_SETTLED_SILENT} ${String(account.silentSettled.total)} {${silent}} · ${AUTO_OBSERVE_AGED_TURNS} ${String(account.autoObserve.agedTurns)} · ${refreshed} · ${AUTO_OBSERVE_UNAVAILABLE_TOKEN} ${String(declined)} {${unavailable}}`;
 }
 
 /**
@@ -483,32 +486,39 @@ export const WORLD_STATE_STALE_SEMANTIC_KIND = "world_state_stale";
 export const WORLD_STATE_REFRESH_REFUSED_SEMANTIC_KIND = "world_state_refresh_refused";
 
 /**
- * Fresh observations one CROSSED reading may be asked for, and why three.
+ * Fresh observations one AGED reading may be asked for, and why three.
  *
  * <p>
- * A crossing is one reading revision that outlived `WORLD_STATE_STALE_TURNS` while the world said it moved. The probe is
- * re-armed when the REVISION MOVES, never per turn, so a frozen world cannot become a spin: the same revision is never
- * asked about more than this many times, however many turns it lasts.
+ * The unit is one reading revision that outlived the batch which would have carried it: every turn composed without a new
+ * observation is composed from the same revision, so the budget is re-armed when the REVISION MOVES and never per turn.
+ * A frozen world therefore cannot become a spin: the same revision is never asked about more than this many times,
+ * however many turns it lasts.
  * </p>
  *
  * <p>
  * One would cover the ordinary case - the bridge is up and the answer moves the reading. The other two exist because the
  * first can land on a transient (a `bridge_response_timeout` at the exact moment the world crossed), and the cost of not
- * asking again is the whole defect this exists for: fifty turns on a picture the Host already knows is wrong. Three and
- * not more, because the probes are spent one per stale fact and `worldStateStaleThreshold` spaces those fifteen turns
- * apart (5, 20, 35, 50), so three probes span most of an hour of a frozen world. A run that spends all three has a
- * bridge that is not answering, which is then SAID (`world_state_refresh_refused:<reason>`) rather than retried.
+ * asking again is the whole defect this exists for: fifty turns on a picture the Host already knows is wrong.
+ * </p>
+ *
+ * <p>
+ * MEASURED 2026-11-13 (`round50b`): two turns in, three asks were still unspent and the reading was already aged - the
+ * filter that had to pass first (a flush opened by nothing but a stale notice) was not the condition the diagnosis was
+ * made on, so `world_stale` was classified and nothing asked. The budget is now spent by the turns that carry the aged
+ * reading, which is why three turns is also the longest a frozen reading goes quiet: past the third ask the world is not
+ * answering, and that is SAID (`world_state_stale`, then `auto_observe_unavailable:refresh_attempts_spent`) rather than
+ * retried.
  * </p>
  */
 export const WORLD_STATE_REFRESH_ATTEMPTS = 3;
 
 /**
- * Why a crossed reading could not be refreshed right now, in the conditions this pump can tell apart.
+ * Why a turn composed from an aged reading could not be cured, in the conditions this pump can tell apart.
  *
  * <p>
- * Each of them means the same thing for the turn: the refresh did not happen, so the stale fact IS published and the
- * turn opens as it always has - and the account says which condition it was, because "nobody asked" and "the bridge
- * refused" are different readings of a frozen world.
+ * Each of them means the same thing for the turn: the refresh did not happen, so the turn is composed from the aged
+ * reading and (past its own threshold) still carries the stale notice - and the account says which condition it was,
+ * because "nobody asked", "the budget is spent" and "the bridge refused" are different readings of one frozen world.
  * </p>
  */
 export const AUTO_OBSERVE_UNAVAILABLE = Object.freeze({
@@ -538,24 +548,39 @@ export function autoObserveUnavailableToken(reason: AutoObserveUnavailableReason
   return `${AUTO_OBSERVE_UNAVAILABLE_TOKEN}:${reason}`;
 }
 
+/** The printed name of the population the refresh serves: `aged turns N`, one per turn composed from an old reading. */
+export const AUTO_OBSERVE_AGED_TURNS = "aged turns";
+
 /**
- * What the stale path did INSTEAD of opening a turn: one refresh, or one named reason it could not ask.
+ * What the pump did about the turns it was about to compose from a reading the world had already moved past.
  *
  * <p>
  * MEASURED 2026-11-13 (`round47`): 22 of the 41 talk-only turns were handed `world_state_stale:...`. The Host opened a
  * turn to tell her that the world she could not see was out of date, and the cheapest thing she could do with that turn
- * was describe it - the same observation the Host could have fetched for free. So a stale notice is answered by ASKING,
+ * was describe it - the same observation the Host could have fetched for free. So a stale reading is answered by ASKING,
  * and the turn that would have been spent narrating the notice does not open.
  * </p>
  *
  * <p>
- * `refreshed` is one per `auto_observe_on_stale:<ageTurns>`; `lastAgeTurns` is the age the most recent refresh was
- * asked at, and `undefined` before any - so the count and the number it was counted at cannot be confused with a zero.
- * `unavailable` is one per crossing the world could not be asked about, keyed by the closed list above; its sum with
- * `refreshed` is every crossed reading this pump examined.
+ * THE THREE NUMBERS ADD UP, and that is what makes them a reading rather than three counters: `agedTurns` is every turn
+ * that reached composition with a reading she already had, and each of those is exactly one of `refreshed` (the world was
+ * asked and answered, so the turn states the answer) or `unavailable` (it could not be asked, by reason). `refreshed` is
+ * therefore one per `auto_observe_on_stale:<ageTurns>` and NOT one per request: an ask the route refused is counted in
+ * `unavailable[refresh_refused]`, and `worldStateRefresh.probes` remains the count of requests made.
+ * `lastAgeTurns` is the age the most recent refresh was applied at, and `undefined` before any - so the count and the
+ * number it was counted at cannot be confused with a zero.
+ * </p>
+ *
+ * <p>
+ * MEASURED 2026-11-13 (`round50b`), which is why `agedTurns` is printed at all: the account said
+ * `auto_observe_on_stale 0 · auto_observe_unavailable 0 {...}` for a run whose only two turns were `world_stale` and
+ * `nothing_pending`. Both counters were truthful and the account could not say that anything had been aged, so "the cure
+ * never fired" and "no turn was aged" read as the same line.
  * </p>
  */
 export type AutoObserveAccount = Readonly<{
+  /** Turns composed from a reading the batch did not bring: the population every other field here partitions. */
+  agedTurns: number;
   refreshed: number;
   lastAgeTurns: number | undefined;
   unavailable: Readonly<Record<AutoObserveUnavailableReason, number>>;
@@ -592,6 +617,25 @@ export type WorldStateRefreshReading = Readonly<{
   /** `world_state_refresh_refused` facts published over this pump's life. */
   refusals: number;
 }>;
+
+/**
+ * One request for a fresh observation, taken as far as it can go synchronously.
+ *
+ * <p>
+ * The two arms are two different things for the caller to do, and they are one type because they are one decision: a
+ * `declined` ask means no request is possible, so there is nothing to wait for and the turn is composed from the reading
+ * it has (the account records why); an `inFlight` ask is the request itself, which the turn that is about to be composed
+ * WAITS for. Collapsing the two into "a promise that may reject" would make "nobody asked" indistinguishable from "the
+ * bridge refused", which is the distinction the whole block exists for.
+ * </p>
+ *
+ * <p>
+ * The return is synchronous for a reason a test found: a pump with no port, or a revision whose attempts are spent, must
+ * decide before the batch is composed rather than a microtask later - `flush` composes nothing it did not decide, and a
+ * pump that cannot ask must compose exactly what it did before this existed.
+ * </p>
+ */
+type FreshObservationAsk = Readonly<{ declined: AutoObserveUnavailableReason } | { inFlight: Promise<void> }>;
 
 /**
  * The semantic kind of the fact the Host mints when an awake companion has spoken without acting for a while.
@@ -919,7 +963,14 @@ export class CompanionEventPump {
   #worldStateRefreshFor: { revision: number; probes: number; refusalPublished: boolean } | undefined;
   #worldStateRefreshProbes = 0;
   #worldStateRefreshRefusals = 0;
-  /** Fresh observations this pump asked for INSTEAD of opening a turn, and the age it asked at (see `AutoObserveAccount`). */
+  /**
+   * Turns composed from an aged reading, and how many of those the world answered (see `AutoObserveAccount`).
+   *
+   * `#autoObserveAgedTurns` is the population: `#autoObserveRefreshed + every #autoObserveUnavailable member` is its
+   * partition, so a turn counted as aged and then neither asked about nor declined is an arithmetic break rather than a
+   * quiet omission.
+   */
+  #autoObserveAgedTurns = 0;
   #autoObserveRefreshed = 0;
   #autoObserveLastAgeTurns: number | undefined;
   /** Crossings the world could not be asked about, one count per `AUTO_OBSERVE_UNAVAILABLE_REASONS` member. */
@@ -1207,6 +1258,7 @@ export class CompanionEventPump {
     this.#worldStateRefreshFor = undefined;
     this.#worldStateRefreshProbes = 0;
     this.#worldStateRefreshRefusals = 0;
+    this.#autoObserveAgedTurns = 0;
     this.#autoObserveRefreshed = 0;
     this.#autoObserveLastAgeTurns = undefined;
     for (const reason of AUTO_OBSERVE_UNAVAILABLE_REASONS) this.#autoObserveUnavailable[reason] = 0;
@@ -1274,6 +1326,7 @@ export class CompanionEventPump {
         byOpener: Object.freeze({ ...this.#silentSettledByOpener }),
       }),
       autoObserve: Object.freeze({
+        agedTurns: this.#autoObserveAgedTurns,
         refreshed: this.#autoObserveRefreshed,
         lastAgeTurns: this.#autoObserveLastAgeTurns,
         unavailable: Object.freeze({ ...this.#autoObserveUnavailable }),
@@ -1629,12 +1682,35 @@ export class CompanionEventPump {
     }
     this.#delivering = true;
     const generation = this.#generation;
-    const pending = retry?.batch ?? this.takeBatch();
-    this.#retry = undefined;
-    this.#openedTurns += 1;
-    this.#openedByReason[opening] += 1;
-    this.#lastTurnDecision = Object.freeze({ kind: "opened", index: this.#openedTurns, reason: opening });
+    // THE DIAGNOSIS TRIGGERS THE CURE. A batch about to state a reading it did not bring is the same condition that
+    // makes an empty turn `world_stale` (`#readingIsAged`), and it is where the reading can still be replaced: ask the
+    // integration first, then compose from whatever the answer made current. Asked BEFORE the batch is taken, because
+    // `takeBatch` consumes the snapshot slot - and asked here rather than in `takeWorldStateStaleFact`, because a turn
+    // opened by the person or by a fact is exactly the turn that used to be composed from an aged reading for free
+    // (measured `round50b`: two turns, one handed a reading one turn old, three probes unspent).
+    //
+    // A retry does not ask again: it must send the exact text the sink rejected, which was composed from the reading of
+    // that moment, and asking for a new one would put a second, unreviewed composition behind one turn.
+    let pending: PendingBatch | undefined;
     try {
+      const aged = retry === undefined ? this.#beginAgedReadingAsk() : undefined;
+      if (aged !== undefined) {
+        if ("declined" in aged) this.#autoObserveUnavailable[aged.declined] += 1;
+        else {
+          await aged.inFlight;
+          // A clear() while the observation was in flight revokes this turn: the pump belongs to no run, and a turn
+          // opened on the other side of a teardown is a delivery nobody asked for.
+          if (this.#generation !== generation) {
+            this.#lastTurnDecision = undefined;
+            return undefined;
+          }
+        }
+      }
+      pending = retry?.batch ?? this.takeBatch();
+      this.#retry = undefined;
+      this.#openedTurns += 1;
+      this.#openedByReason[opening] += 1;
+      this.#lastTurnDecision = Object.freeze({ kind: "opened", index: this.#openedTurns, reason: opening });
       const outcome = (await sink.deliver(pending)) ?? undefined;
       this.#deliveredBatches += 1;
       this.#observeTurnProduction(outcome, opening, pending.broughtObservation);
@@ -1642,7 +1718,8 @@ export class CompanionEventPump {
     } catch (error) {
       // Do not revive a batch cleared while its asynchronous delivery was in
       // flight. Facts admitted after clear belong to the current generation.
-      if (this.#generation === generation) this.#retry = Object.freeze({ batch: pending, opening });
+      if (pending !== undefined && this.#generation === generation)
+        this.#retry = Object.freeze({ batch: pending, opening });
       throw error;
     } finally {
       this.#delivering = false;
@@ -1863,6 +1940,7 @@ export class CompanionEventPump {
   private takeBatch(): PendingBatch {
     const inputs = this.#inputs.splice(0);
     const snapshot = this.#snapshot;
+    const broughtObservation = this.#snapshotBringsObservation();
     this.#snapshot = undefined;
     const receipts = [...this.#receipts.values()];
     this.#receipts.clear();
@@ -1894,9 +1972,6 @@ export class CompanionEventPump {
     // Host re-states the last snapshot before every turn (`CompanionHostService.#restateWorldSnapshot`), so a batch
     // almost always carries one - and a block that called every re-statement `刚刚更新` would be claiming a freshness
     // nothing observed.
-    const broughtObservation =
-      snapshot !== undefined &&
-      (this.#lastSnapshotDeliveredRevision === undefined || snapshot.revision > this.#lastSnapshotDeliveredRevision);
     const worldState = this.#worldStateReading(broughtObservation);
     const locale = batchInputs.at(-1)?.locale ?? DEFAULT_BRIEF_LOCALE;
     // Read ONCE for this batch, outside the byte-bound loop below: every pass states the same programme in the same
@@ -2016,6 +2091,70 @@ export class CompanionEventPump {
   }
 
   /**
+   * Whether the snapshot slot holds a revision she has not been shown: the freshness half of `#readingIsAged`.
+   *
+   * The batch's own `broughtObservation`, and the only expression that decides it - `takeBatch` reads it, so the flag the
+   * model was told `刚刚更新` by and the flag the cure is keyed on are one derivation rather than two that can disagree.
+   */
+  #snapshotBringsObservation(): boolean {
+    const snapshot = this.#snapshot;
+    return (
+      snapshot !== undefined &&
+      (this.#lastSnapshotDeliveredRevision === undefined || snapshot.revision > this.#lastSnapshotDeliveredRevision)
+    );
+  }
+
+  /**
+   * THE ONE STALENESS CONDITION: whether the reading a turn states is one she already had.
+   *
+   * <p>
+   * Two questions ask it and neither may grow a test of its own, because they were the defect: the settlement asks it to
+   * NAME an empty turn (`#emptyTurnReason`), and the composition asks it to CURE the reading before the turn is built
+   * (`#agedReadingBeforeComposition`). Measured 2026-11-13 (`round50b`): the name was computed from this condition while
+   * the cure was computed from `worldStateStaleThreshold` (five turns, re-armed 5/20/35) AND from `worldChangesSinceReading`
+   * - so a turn two batches into a run was named `world_stale` while every probe the Host owns was still unspent, and she
+   * was handed `（这是 1 轮之前看到的，世界已经不一样了）` with nothing asked.
+   * </p>
+   *
+   * <p>
+   * WHICH BOUND WINS, and why. For the CURE it is this one - "the batch did not bring the observation" - which is age 1.
+   * For the NOTICE it stays `worldStateStaleThreshold`, which is age 5 and re-arms outwards. The two answer different
+   * questions and the difference is not a matter of taste: a refresh costs one pipe round-trip, replaces the reading in a
+   * turn that was being opened anyway, and is bounded per REVISION (`WORLD_STATE_REFRESH_ATTEMPTS`), while a notice costs
+   * a turn - it is a statement to the model - so it has to be spaced out. Waiting for the notice's bound before asking is
+   * how fifty turns were spent on one picture nobody refreshed.
+   * </p>
+   */
+  #readingIsAged(broughtObservation: boolean): boolean {
+    return this.#lastSnapshot !== undefined && !broughtObservation;
+  }
+
+  /**
+   * The aged reading this turn is about to be composed from, or `undefined` when there is nothing to cure.
+   *
+   * `undefined` has two causes and neither is a staleness statement: the batch brings an observation, or no reading has
+   * ever arrived (a session's first turns). Both compose exactly as they did before this method existed.
+   */
+  #agedReadingBeforeComposition(): WorldStateReading | undefined {
+    if (!this.#readingIsAged(this.#snapshotBringsObservation())) return undefined;
+    return this.#worldStateReading(false);
+  }
+
+  /**
+   * Take the remedy for the reading this turn is about to be handed, and say what it will cost to wait for.
+   *
+   * `undefined` is a turn with nothing to cure. Otherwise the ask is taken as far as it can go synchronously - a pump
+   * with no port, or a revision whose attempts are spent, answers now and the caller names the reason - so the only
+   * caller that waits on the world is the one holding a request that is actually out.
+   */
+  #beginAgedReadingAsk(): FreshObservationAsk | undefined {
+    const reading = this.#agedReadingBeforeComposition();
+    if (reading === undefined) return undefined;
+    this.#autoObserveAgedTurns += 1;
+    return this.#askForFreshObservation(reading.revision, reading.ageTurns);
+  }
+
+  /**
    * The fact that says the world reading this pump re-states has outlived its bound, or `undefined` when none is due.
    *
    * <p>
@@ -2040,13 +2179,15 @@ export class CompanionEventPump {
    * </p>
    *
    * <p>
-   * ASKING REPLACES THE TURN. A stale notice is not news - it says the world she cannot see is out of date, which is a
-   * thing this Host can fetch itself through the route the model's own `stardew_observe` uses
-   * (`StardewBridgeConnection.observe`, `local-stardew-bridge.ts:366`, the only producer of an `observe_request` besides
-   * the execute path's `stale_snapshot` re-take). So when the world CAN be asked, the refresh is performed here and this
-   * method returns `undefined`: nothing is minted, nothing is enqueued, and no turn opens for a notice whose only content
-   * is "look again". The answer arrives as an ordinary snapshot fact and opens a turn only if it is itself news - a
-   * revision past the one she was delivered (`#snapshotAdvanced`) - so a world that did not move costs nothing at all.
+   * NOTHING IS ASKED HERE ANY MORE, and that is the unit's whole point. The ask lives where the reading is about to be
+   * composed into a turn (`#beginAgedReadingAsk`, called by `flush`), keyed on the SAME condition that names an empty
+   * turn `world_stale` rather than on this notice's own threshold. Measured 2026-11-13 (`round50b`): the notice's
+   * threshold was five turns and its re-arm 5/20/35, while the classification called a one-turn-old reading
+   * `world_stale` - so this method's ask fired on a trigger almost no turn took, and two turns of the run were composed
+   * from an aged reading with all three probes unspent. What is left here is the NOTICE, and it now means something
+   * sharper than it did: it is due only for a reading that outlived `WORLD_STATE_STALE_TURNS` in a world that said it
+   * moved, and every one of those turns was already offered to the world and could not be cured - so `world_state_stale`
+   * is what the Host says when the refresh did not work, not what it says instead of refreshing.
    * </p>
    *
    * <p>
@@ -2060,20 +2201,15 @@ export class CompanionEventPump {
    * </p>
    *
    * <p>
-   * WHEN IT CANNOT ASK the fact IS minted, exactly as before, so the stale notice still reaches her and the turn still
-   * opens; the account says which condition it was (`autoObserve.unavailable`, one member of
+   * WHEN THE CURE COULD NOT FIRE the fact IS minted, so the stale notice still reaches her and the turn still opens; the
+   * account says which condition it was (`autoObserve.unavailable`, one member of
    * `AUTO_OBSERVE_UNAVAILABLE_REASONS`). A refresh is never silent and never assumed.
    * </p>
    */
   public takeWorldStateStaleFact(): WorldFact | undefined {
     const reading = this.#worldStateReading(false);
     if (reading === undefined || !this.#worldStateStaleDue(reading)) return undefined;
-    // The re-arm is taken on BOTH arms: a crossing that was answered by an observation is still a crossing, so the next
-    // notice belongs `worldStateStaleThreshold` turns later rather than on the very next turn.
     this.#worldStateStalePublished += 1;
-    const declined = this.#askForFreshObservation(reading.revision, reading.ageTurns);
-    if (declined === undefined) return undefined;
-    this.#autoObserveUnavailable[declined] += 1;
     const code = worldStateStaleCode(reading);
     const eventId = `${WORLD_STATE_STALE_SEMANTIC_KIND}_${String(reading.revision)}_${String(this.#worldStateStalePublished)}`;
     const fact = Object.freeze({
@@ -2118,64 +2254,69 @@ export class CompanionEventPump {
   }
 
   /**
-   * Ask the integration for a fresh observation of the crossed reading, or say why the world cannot be asked.
-   *
-   * <p>
-   * `undefined` means the ask was made, and the caller must mint NOTHING: the answer arrives as an ordinary snapshot
-   * fact and the Host admits it on its own path, so a turn opens only when that answer is itself news. A reason from
-   * `AUTO_OBSERVE_UNAVAILABLE_REASONS` means no ask happened, so the stale fact is still owed and the caller mints it.
-   * </p>
+   * Ask the integration for a fresh observation of the aged reading, or say why the world cannot be asked.
    *
    * <p>
    * THE THREE BOUNDS that keep this from becoming a poll, because a failed refresh must not retry by itself:
    * </p>
    * <ol>
-   *   <li>`#worldStateStalePublished` is taken by the caller on BOTH arms, so the next crossing is
-   *     `worldStateStaleThreshold(published)` turns away (5, 20, 35, 50) - the ask is per CROSSING, never per turn.</li>
    *   <li>`WORLD_STATE_REFRESH_ATTEMPTS` per revision: one frozen revision is asked about three times and then declined
-   *     with `refresh_attempts_spent`.</li>
-   *   <li>The episode is re-armed by the REVISION moving, not by time, and a refusal is published once per crossing
+   *     with `refresh_attempts_spent`. The re-arm key is the REVISION, not the turn, so a world that never moves cannot
+   *     turn the turn cadence into a probe cadence.</li>
+   *   <li>An ask is made only for a turn that is about to be COMPOSED (`flush` -> `#beginAgedReadingAsk`), never from a
+   *     timer or a publication: there is one trigger and it is the staleness condition itself.</li>
+   *   <li>The episode is re-armed by the REVISION moving, not by time, and a refusal is published once per reading
    *     (`#refuseWorldStateRefresh`) - so a bridge that never answers produces one statement, not a stream.</li>
    * </ol>
+   *
    * <p>
-   * Fire and forget on purpose: nothing in the turn path waits on a network round-trip. What the pump owes the caller is
-   * the FAILURE, which is minted as a fact (`#refuseWorldStateRefresh`) rather than swallowed - a probe the integration
-   * would not serve must be as visible as the stale reading it could not replace.
+   * THE ANSWER IS WAITED FOR when a caller can wait: the request travels the integration's own observation route
+   * (`StardewBridgeConnection.observe`) and its answer arrives as an ordinary snapshot fact through `enqueueFact`, so what
+   * the caller reads after the wait is the same state every other fact writes - not a second copy of the world held here.
+   * What this method owes the caller either way is the FAILURE: a rejection is published as a fact
+   * (`#refuseWorldStateRefresh`) rather than swallowed, because a probe the integration would not serve must be as
+   * visible as the stale reading it could not replace.
    * </p>
    */
-  #askForFreshObservation(revision: number, ageTurns: number): AutoObserveUnavailableReason | undefined {
+  #askForFreshObservation(revision: number, ageTurns: number): FreshObservationAsk {
     const port = this.#worldStateRefreshPort;
-    if (port === undefined) return AUTO_OBSERVE_UNAVAILABLE.noBridge;
+    if (port === undefined) return Object.freeze({ declined: AUTO_OBSERVE_UNAVAILABLE.noBridge });
     const episode = this.#worldStateRefreshFor;
     const same = episode !== undefined && episode.revision === revision;
     const probes = same ? episode.probes : 0;
-    if (probes >= WORLD_STATE_REFRESH_ATTEMPTS) return AUTO_OBSERVE_UNAVAILABLE.attemptsSpent;
+    if (probes >= WORLD_STATE_REFRESH_ATTEMPTS)
+      return Object.freeze({ declined: AUTO_OBSERVE_UNAVAILABLE.attemptsSpent });
     this.#worldStateRefreshFor = {
       revision,
       probes: probes + 1,
       refusalPublished: same ? episode.refusalPublished : false,
     };
     this.#worldStateRefreshProbes += 1;
-    this.#autoObserveRefreshed += 1;
-    this.#autoObserveLastAgeTurns = ageTurns;
-    void (async () => {
+    const inFlight = (async (): Promise<void> => {
       try {
         await port.observe();
       } catch (error: unknown) {
+        // Counted per ASK, not per reading: every aged turn the route refused is a turn composed from an old reading,
+        // which is what makes `agedTurns = refreshed + every unavailable reason` hold. The FACT the refusal publishes is
+        // still said once per reading (`#refuseWorldStateRefresh`) - a condition and a statement are different sums.
+        this.#autoObserveUnavailable[AUTO_OBSERVE_UNAVAILABLE.refused] += 1;
         this.#refuseWorldStateRefresh(revision, error);
+        return;
       }
+      // Counted where the answer arrives rather than where the request left: an ask the route refused is not a refresh,
+      // and `worldStateRefresh.probes` is already the count of requests made.
+      this.#autoObserveRefreshed += 1;
+      this.#autoObserveLastAgeTurns = ageTurns;
     })();
-    return undefined;
+    return Object.freeze({ inFlight });
   }
 
   /**
-   * Say that the probe for `revision` came back refused, once per crossed reading.
+   * Say that the probe for `revision` came back refused, once per reading.
    *
    * Once, not once per probe: the reason is the same statement until the reading moves, and three copies of "the bridge
    * is not answering" would be three turns spent re-reading one condition. `publish` is the Host's Host-minted-fact
-   * route, so this fact wakes a turn exactly where the stale fact did and nowhere else - which is also why the refusal is
-   * counted in `autoObserve.unavailable[refused]`: the turn that opened for it opened because the world could not be
-   * asked.
+   * route, so this fact wakes a turn exactly where the stale fact did and nowhere else.
    */
   #refuseWorldStateRefresh(revision: number, error: unknown): void {
     const port = this.#worldStateRefreshPort;
@@ -2192,7 +2333,6 @@ export class CompanionEventPump {
       return;
     }
     this.#worldStateRefreshRefusals += 1;
-    this.#autoObserveUnavailable[AUTO_OBSERVE_UNAVAILABLE.refused] += 1;
   }
 
   /** The one spelling of the refusal fact: `world_state_refresh_refused:<reason>`. */
@@ -2361,7 +2501,7 @@ export class CompanionEventPump {
    * the world-state block's `尚未收到观察`.
    */
   #emptyTurnReason(broughtObservation: boolean): TurnWithoutActionReason {
-    if (this.#lastSnapshot !== undefined && !broughtObservation) return TURN_WITHOUT_ACTION_REASON.worldStale;
+    if (this.#readingIsAged(broughtObservation)) return TURN_WITHOUT_ACTION_REASON.worldStale;
     if (this.#bodyHeld()) return TURN_WITHOUT_ACTION_REASON.bodyHeld;
     return TURN_WITHOUT_ACTION_REASON.nothingPending;
   }

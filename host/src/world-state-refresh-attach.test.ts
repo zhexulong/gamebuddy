@@ -87,9 +87,23 @@ function movedFact(revision: number, index: number): WorldFact {
   });
 }
 
-/** One delivered turn: the fact, then whatever the pump minted for it, in the batch the delivery carries. */
-async function deliverTurn(pump: CompanionEventPump, fact: WorldFact): Promise<void> {
+/**
+ * One delivered turn, admitted the way the Host admits it: the fact, then whatever the pump minted for it.
+ *
+ * `say` is the person's own words, and it is what makes the first turn DELIVER: a snapshot alone opens nothing
+ * (`#snapshotAdvanced` has no delivered predecessor at attach), so a fixture that never speaks ages nothing and would
+ * prove nothing about the cure.
+ */
+async function deliverTurn(pump: CompanionEventPump, fact: WorldFact, say = false): Promise<void> {
   pump.enqueueFact(fact);
+  if (say)
+    pump.enqueuePlayerInput({
+      source: "player_text",
+      inputId: `player_input_attach_${String(fact.revision)}`,
+      text: "我到了。",
+      locale: "zh-CN",
+      timestampMs: 1_790_000_000_000,
+    });
   const stale = pump.takeWorldStateStaleFact();
   if (stale !== undefined) pump.enqueueFact(stale);
   await pump.flush({
@@ -100,8 +114,8 @@ async function deliverTurn(pump: CompanionEventPump, fact: WorldFact): Promise<v
 }
 
 /**
- * The turn on which a held reading first outlives its bound, and the turn that reaches the last of the
- * `WORLD_STATE_REFRESH_ATTEMPTS` thresholds.
+ * How many turns of one held reading the fixtures drive: enough to reach its first stale notice, and enough to reach the
+ * last of the `WORLD_STATE_REFRESH_ATTEMPTS` budgets.
  *
  * Both derived from the thresholds the block itself uses (`worldStateStaleThreshold`), so a bound that gains or loses a
  * probe does not have to be found here. The `+ 1` is the turn in which the age is read: a delivery's `ageTurns` counts the
@@ -138,15 +152,20 @@ test("the pump the composition builds reports its stale-refresh port attached, a
   assert.equal(
     loop.pump.worldStateRefresh.probes,
     0,
-    "attaching asks nothing: the first question belongs to a reading that outlived its bound",
+    "attaching asks nothing: the first question belongs to a turn about to be composed from an aged reading",
   );
 
-  // One crossed reading, read at its first stale turn: the held observation, then the clock walking past its bound.
-  await deliverTurn(loop.pump, snapshotFact(352));
+  // One aged reading, read from its first aged turn: the held observation, then the clock walking past its bound.
+  await deliverTurn(loop.pump, snapshotFact(352), true);
   for (let turn = 1; turn <= FIRST_STALE_TURN; turn += 1) await deliverTurn(loop.pump, movedFact(352, turn));
   await drained();
 
-  assert.equal(asked.length, 1, "one crossing is one question, however many turns it lasts");
+  assert.equal(
+    asked.length,
+    WORLD_STATE_REFRESH_ATTEMPTS,
+    `the aged turns of one reading ask the integration, at most ${String(WORLD_STATE_REFRESH_ATTEMPTS)} times: ` +
+      `${String(asked.length)} call(s) observed`,
+  );
   assert.equal(
     asked[0],
     connection,
@@ -166,7 +185,7 @@ test("a connection with no observation route is refused by name rather than answ
       published.push(fact);
     },
   });
-  await deliverTurn(loop.pump, snapshotFact(352));
+  await deliverTurn(loop.pump, snapshotFact(352), true);
   for (let turn = 1; turn <= LAST_PROBE_TURN; turn += 1) await deliverTurn(loop.pump, movedFact(352, turn));
   await drained();
 
@@ -197,7 +216,7 @@ test("one crossed reading spends its bounded probes and is refused once; the nex
   });
   const readings = [352, 400, 448];
   for (const [index, revision] of readings.entries()) {
-    await deliverTurn(loop.pump, snapshotFact(revision));
+    await deliverTurn(loop.pump, snapshotFact(revision), index === 0);
     for (let turn = 1; turn <= LAST_PROBE_TURN; turn += 1)
       await deliverTurn(loop.pump, movedFact(revision, index * 100 + turn));
     await drained();
