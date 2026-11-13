@@ -3,7 +3,7 @@ import { readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
 
-import { STARDEW_ACTION_TOOL_NAMES } from "./action-registry.js";
+import { EXPRESSION_ONLY_ACTION_IDS, STARDEW_ACTION_TOOL_NAMES } from "./action-registry.js";
 import { GAME_DELIVERY_PACING } from "./companion-delivery-pacing.js";
 import { buildGameCompanionSystemPrompt } from "./game-surface-prompt-floor.js";
 import { MOUNTED_GAME_SURFACE_TOOL_NAMES } from "./game-surface-prompt-floor.test-support.js";
@@ -101,16 +101,16 @@ test("the Game conduct permits company while working but still forbids step repo
   // the bound on how MUCH she says, not licence to say nothing for a whole batch.
   assert.match(gamePrompt, /A brief remark goes a long way/);
   assert.doesNotMatch(gamePrompt, /silence while thinking is fine/);
-  // Body language is routed to a channel the Agent can actually call. Two pins went stale here in a row: the
-  // conduct once named `express_emote` / `face_direction` (the Mod's bare ids), then `stardew_express_emote` /
-  // `stardew_face_direction` (per-action tools a plan surface never mounts). Both times the pin asserted a
-  // literal that was true of some other surface. What it asserts now is the channel itself - the plan tool the
-  // live surface mounts, and the two action ids its builder takes - and the population gate above is what holds
-  // the names honest.
-  assert.match(gamePrompt, /Body language is an action in the plan you submit with stardew_plan_work/);
-  assert.match(gamePrompt, /express_emote raises an overhead emote balloon/);
-  assert.match(gamePrompt, /face_direction turns you to a cardinal direction/);
-  assert.doesNotMatch(gamePrompt, /stardew_express_emote|stardew_face_direction/);
+  // Body language is routed to a channel the Agent can actually call. Three pins went stale here in a row, one per
+  // attempt: the conduct first named `express_emote` / `face_direction` (the Mod's bare ids, which are not tools), then
+  // `stardew_express_emote` / `stardew_face_direction` while a plan surface dropped them, then the plan step while
+  // expression stayed a work-shaped route. Each pin asserted a literal that was true of some other surface. What it
+  // asserts now is the channel the mounted set really carries - the two tools the registry declares expression-only -
+  // and the route that is gone; `action-route-gate.test.ts` holds the population.
+  assert.match(gamePrompt, /Body language has its own tool/);
+  assert.match(gamePrompt, /stardew_express_emote` raises an overhead emote balloon/);
+  assert.match(gamePrompt, /stardew_face_direction` turns you to a cardinal direction/);
+  assert.doesNotMatch(gamePrompt, /Body language is an action in the plan you submit|never a tool of its own/);
   // And the parenthesis rule is the surface's own fact, stated as what it does:
   // a bracket tag is audio the voice channel performs, so a body action written
   // there is never performed and only reaches the player as prose.
@@ -248,13 +248,19 @@ test("every tool name the prompt tells the companion to call is a mounted tool n
   // publishes as an action, so `stardew_express_emote` is a name the Agent is never handed. Resolving the prompt
   // against the projection therefore agreed with the prompt while the request carried neither tool: measured
   // 2026-11-11 (`round46b`), 68 tool calls, no emote, and the model never even named one in its thinking. The
-  // population below is the recorded mounted set; the projection is asserted only to be non-empty, because a
-  // surface that mounted nothing would make every name here pass for the wrong reason.
+  // population below is the recorded mounted set, plus the actions the registry declares expression-only: those keep
+  // their own tool on a plan surface (`EXPRESSION_ONLY_ACTION_IDS`), so they are mounted names rather than dropped ones.
+  // The projection is asserted only to be non-empty, because a surface that mounted nothing would make every name here
+  // pass for the wrong reason.
   const perActionNames = new Set<string>(Object.values(STARDEW_ACTION_TOOL_NAMES));
   assert.ok(
     perActionNames.size > 0,
     "the per-action tool projection must exist for the negative below to mean anything",
   );
+  const expressionOnlyNames = new Set<string>(
+    EXPRESSION_ONLY_ACTION_IDS.map((actionId) => STARDEW_ACTION_TOOL_NAMES[actionId]),
+  );
+  const droppedPerActionNames = new Set<string>([...perActionNames].filter((name) => !expressionOnlyNames.has(name)));
   const mounted = new Set<string>(MOUNTED_GAME_SURFACE_TOOL_NAMES);
   assert.ok(
     mounted.size > 0,
@@ -266,9 +272,9 @@ test("every tool name the prompt tells the companion to call is a mounted tool n
   assert.ok(gameNamed.length > 0, "the Game conduct names no tool at all, so there is no channel to check");
   for (const name of gameNamed) {
     assert.ok(
-      !perActionNames.has(name),
+      !droppedPerActionNames.has(name),
       `the Game prompt names ${name}, a per-action tool the plan surface drops: the Agent is handed ` +
-        `${MOUNTED_GAME_SURFACE_TOOL_NAMES.join(", ")} instead, and body language is a step in the plan those tools submit`,
+        `${MOUNTED_GAME_SURFACE_TOOL_NAMES.join(", ")} instead, and body language is a mounted tool of its own`,
     );
     assert.ok(mounted.has(name), `the Game prompt names a tool the live Game surface does not mount: ${name}`);
   }
@@ -380,7 +386,7 @@ test("the Game conduct turns an obstacle and a service register into a person", 
   // The two correctness lines this block already carried stay untouched: an
   // unobserved NPC reaction and the emote channel are contract, not style.
   assert.match(game, /never claim an NPC smiled, beamed, was delighted, or said something on your account/);
-  assert.match(game, /Body language is an action in the plan you submit with stardew_plan_work/);
+  assert.match(game, /Body language has its own tool/);
 });
 
 test("the Game conduct anchors the player's turn and forbids walkie-talkie telemetry (MaiBot & QQ bot simulation protocol)", () => {
@@ -671,7 +677,7 @@ test("the player's addition renders as its own labelled section AFTER the whole 
   // a text generator, so an editable field may add to them and never replace them.
   for (const floor of [
     "Only state what you actually observed",
-    "Body language is an action in the plan you submit with stardew_plan_work",
+    "Body language has its own tool",
     "Consistently think, reason, and converse in Chinese (Simplified)",
     "never claim an NPC smiled, beamed, was delighted, or said something on your account",
   ]) {

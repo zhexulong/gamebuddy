@@ -3,6 +3,7 @@ import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
+import { EXPRESSION_ONLY_ACTION_IDS, STARDEW_ACTION_TOOL_NAMES } from "./action-registry.js";
 import { PLAN_ACTION_LIFECYCLES, planActionsFromRegistrations, planWorkDescription } from "./body-program-script.js";
 import { buildGameCompanionSystemPrompt } from "./game-surface-prompt-floor.js";
 import {
@@ -147,7 +148,9 @@ test("the reading's premise about the plan builder still holds: the flat per-act
   // The question "are the per-action schemas in the request?" is architectural, not numeric: the live Game
   // materializer declares `planActionSurface`, and `runtime-core.internal.ts` then drops every tool the adapter
   // publishes as an action. Both halves are asserted, so the reading's `flatPerActionToolsMounted: false`
-  // cannot quietly become false while its token totals stay plausible.
+  // cannot quietly become false while its token totals stay plausible. The single exception is also structural: the
+  // filter keeps the tools of the actions the registry declares expression-only, so the drop rule cannot grow a second
+  // escape hatch without failing here. `action-route-gate.test.ts` holds the same property from the assembled set.
   assert.equal(READING.planBuilder.flatPerActionToolsMounted, false);
 
   const { shape: materializerShape } = readSourceShape(
@@ -166,8 +169,8 @@ test("the reading's premise about the plan builder still holds: the flat per-act
   const { shape: runtimeShape } = readSourceShape(join(HOST_SOURCE, "runtime-core.internal.ts"));
   assert.match(
     runtimeShape,
-    /planActionSurface\s*\n?\s*\?[\s\S]{0,200}?actionIdForToolName\(tool\.name\) === null/u,
-    "runtime-core no longer filters adapter action tools out of a plan-builder surface, so the flat per-action tools are back in the request",
+    /planActionSurface\s*\n?\s*\?[\s\S]{0,400}?actionIdForToolName\(tool\.name\)[\s\S]{0,200}?isExpressionOnlyAction/u,
+    "runtime-core no longer filters adapter action tools out of a plan-builder surface, or it keeps more than the declared expression exception",
   );
 });
 
@@ -191,13 +194,17 @@ test("every action the surface admits to a plan is a builder method the prompt n
       `for them, so the model cannot call them: ${unnamed.join(", ")}`,
   );
   // The other side of the same property: a surface action the plan form does not admit is a capability with no route
-  // left at all once the flat tools are dropped. The one stated reason is the `experimental` lifecycle, which the plan
-  // form does not publish; anything else is named, so a widened argument-type filter cannot silently withdraw an action.
+  // left at all once the flat tools are dropped. Two stated reasons exist and they are different questions - the
+  // `experimental` lifecycle, which the plan form does not publish, and the expression declaration, whose actions reach
+  // the actor through their own mounted tool instead. Anything else is named, so a widened argument-type filter cannot
+  // silently withdraw an action.
   const plannableLifecycles = new Set(PLAN_ACTION_LIFECYCLES);
+  const expressionOnly = new Set<string>(EXPRESSION_ONLY_ACTION_IDS);
   const wrongfullyExcluded = SURFACE.filter(
     (action) =>
       action.kind === "execution" &&
       plannableLifecycles.has(action.lifecycle) &&
+      !expressionOnly.has(action.actionId) &&
       !BUILDER_METHODS.includes(action.actionId),
   ).map((action) => `${action.actionId} (${action.lifecycle})`);
   assert.deepEqual(
@@ -205,6 +212,15 @@ test("every action the surface admits to a plan is a builder method the prompt n
     [],
     `the Mod publishes these actions as playable steps but the plan builder exposes no method for them, so on a plan ` +
       `surface they are unreachable: ${wrongfullyExcluded.join(", ")}`,
+  );
+  // And the declaration is not a licence to hide a plan step: an action declared expression-only must really be absent
+  // from the builder, or the model would be handed two spellings of the same gesture.
+  assert.deepEqual(
+    SURFACE.filter((action) => expressionOnly.has(action.actionId) && BUILDER_METHODS.includes(action.actionId)).map(
+      (action) => `expression_action_is_a_plan_step:${action.actionId}`,
+    ),
+    [],
+    "an action the registry declares expression-only is still a builder method, so it has two routes",
   );
 });
 
@@ -249,15 +265,16 @@ test("the recorded denominator is the geometry function's own arithmetic, not a 
 });
 
 /**
- * The body-language rule names the route the surface really has, and the argument that route requires.
+ * The body-language rule names the route the surface really mounts, the argument that route takes, and the route it
+ * must NOT teach.
  *
  * <p>
- * Two measured defects sit behind this, one turn each. `round46b` (2026-11-11): the rule sent body language to
- * `stardew_express_emote`, a per-action tool a plan surface drops, so it named a route the Agent was never handed -
+ * Three measured defects sit behind this, one turn each. `round46b` (2026-11-11): the rule sent body language to
+ * `stardew_express_emote`, a per-action tool a plan surface dropped, so it named a route the Agent was never handed -
  * `action-registry-consistency.test.ts` holds that half against the mounted set. `round47` (2026-11-12, 64 assistant
- * turns): the rule named the plan step and the run still submitted zero emotes out of 188 planned nodes, because the
- * plan vocabulary lists the action id and says nothing about the one `emote` word it takes - the one part of the call a
- * caller cannot infer.
+ * turns): the rule named a plan step instead and the run still submitted zero emotes out of 188 planned nodes, because a
+ * gesture is one step by nature and the plan is where work goes. The surface now mounts the two expression tools
+ * (`EXPRESSION_ONLY_ACTION_IDS`) and the plan no longer admits them.
  * </p>
  *
  * <p>
@@ -267,22 +284,42 @@ test("the recorded denominator is the geometry function's own arithmetic, not a 
  * because nothing guarantees an emote and no run is failed for not using one.
  * </p>
  */
-test("the body-language rule names the plan route and the argument that route declares", () => {
+test("the body-language rule names the mounted tools and the argument each declares, and no longer teaches a plan step", () => {
   const rule = conductBlock(GAME_PROMPT)
     .split("\n")
-    .find((line) => line.includes("Body language is an action in the plan"));
+    .find((line) => line.includes("Body language has its own tool"));
   assert.ok(rule !== undefined, "the Game prompt must still carry a body-language rule to hold");
-  assert.ok(
-    rule.includes("stardew_plan_work"),
-    "the rule must name the plan builder, which is the route the live Game surface mounts",
+  assert.doesNotMatch(
+    rule,
+    /Body language is an action in the plan|express_emote raises|never a tool of its own/u,
+    "the rule still teaches the old plan-step route for a gesture",
   );
-  const emote = SURFACE.find((action) => action.actionId === "express_emote");
-  assert.ok(emote !== undefined, "express_emote is published, or the rule names an action the surface does not have");
-  const declared = Object.keys(emote.argumentSchema ?? {});
-  assert.ok(declared.length > 0, "blocked: express_emote declares no argument, so this gate examines nothing");
-  for (const argument of declared)
+  for (const actionId of EXPRESSION_ONLY_ACTION_IDS) {
+    const toolName = STARDEW_ACTION_TOOL_NAMES[actionId];
     assert.ok(
-      rule.includes(`\`${argument}\``),
-      `the rule teaches express_emote without naming its \`${argument}\` argument, so the one call it shows is refused as loop_do_argument_missing:${argument}`,
+      rule.includes(toolName),
+      `the rule must name ${toolName}, the tool a Game session mounts for this action`,
+    );
+    const action = SURFACE.find((candidate) => candidate.actionId === actionId);
+    assert.ok(action !== undefined, `the Mod publishes ${actionId}, or the declaration exempts nothing`);
+    const declared = Object.keys(action.argumentSchema ?? {});
+    assert.ok(declared.length > 0, `blocked: ${action.actionId} declares no argument, so this gate examines nothing`);
+    for (const argument of declared)
+      assert.ok(
+        rule.includes(`\`${argument}\``),
+        `the rule teaches ${action.actionId} without naming its \`${argument}\` argument, so the one call it shows is refused as invalid_args`,
+      );
+  }
+  // The route NOT to teach, and the reason this test exists: the plan builder is named nowhere near body language, and
+  // the action ids are not printed as builder methods either.
+  assert.doesNotMatch(
+    rule,
+    /stardew_plan_shape/u,
+    "the plan form does not admit these two actions, so it cannot be where their words are read",
+  );
+  for (const actionId of EXPRESSION_ONLY_ACTION_IDS)
+    assert.ok(
+      !new RegExp(`builder\\.${actionId}\\(`, "u").test(rule),
+      `the rule still shows builder.${actionId}(...), a call the compiler now refuses as plan_script_unknown_action`,
     );
 });

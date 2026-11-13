@@ -259,10 +259,16 @@ test("the game's body channel stays on the Game surface, out of the Chat prompt 
   const game = buildGameCompanionSystemPrompt(profile, "zh-CN");
   const EMOTE_TOOLS = /stardew_express_emote|stardew_face_direction/u;
   assert.doesNotMatch(chat, EMOTE_TOOLS, "the Chat prompt tells her to move a body this surface does not mount");
-  // The Game body channel is a PLAN STEP, and the conduct names it that way: the two actions are
-  // not tools on that surface, so the positive is the sentence that says where they do go.
-  const BODY_IS_A_PLAN_STEP = /Body language is an action in the plan you submit with stardew_plan_work/u;
-  assert.match(game, BODY_IS_A_PLAN_STEP, "the Game prompt must keep the body channel it really has");
+  // The Game body channel is two MOUNTED tools, and the conduct names them: the registry declares these two actions
+  // expression-only, so a plan surface keeps their tools and drops their plan steps instead.
+  const BODY_IS_A_MOUNTED_TOOL = /Body language has its own tool/u;
+  assert.match(game, BODY_IS_A_MOUNTED_TOOL, "the Game prompt must keep the body channel it really has");
+  assert.match(game, EMOTE_TOOLS, "the Game prompt must name the tools a Game session mounts for the body");
+  assert.doesNotMatch(
+    game,
+    /Body language is an action in the plan you submit/u,
+    "a gesture is one step by nature, so the plan is not where the prompt sends it",
+  );
   // The Game conduct is Host-owned, so removing the card's duplicate cannot have emptied it.
   assert.match(game, /Write no bracketed stage direction at all/u);
 });

@@ -5,6 +5,7 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 import {
+  EXPRESSION_ONLY_ACTION_IDS,
   MOD_DESCRIPTOR_REQUIREMENTS,
   STARDEW_ACTION_ADAPTERS,
   STARDEW_ACTION_TOOL_NAMES,
@@ -482,8 +483,15 @@ test("every tool the Game prompt floor names is a tool a Game session mounts", (
     `the prompt tells the companion to use a tool no Game session mounts: ${named.join(", ")}`,
   );
   // The surface's own rule, DERIVED rather than recorded: a plan surface drops every tool `createStardewActionTools`
-  // returns, so none of those names can appear in the floor however the recorded set changes.
-  const perAction = new Set(mountedToolNames(loadActionSurface()));
+  // returns, EXCEPT the actions the registry declares expression-only - those keep their tool and lose their plan step
+  // instead (`action-route-gate.test.ts` holds both directions). So neither the per-action projection nor a plan step may
+  // be the only thing the floor names for an action.
+  const expressionOnlyNames = new Set<string>(
+    EXPRESSION_ONLY_ACTION_IDS.map((actionId) => STARDEW_ACTION_TOOL_NAMES[actionId]),
+  );
+  const perAction = new Set<string>(
+    mountedToolNames(loadActionSurface()).filter((name) => !expressionOnlyNames.has(name)),
+  );
   assert.ok(
     perAction.size > 0,
     "blocked: the adapter mounts no per-action tool, so the negative below examines nothing",

@@ -20,6 +20,7 @@ import {
   type ActionExecutionCoordinator,
   createActionExecutionCoordinator,
 } from "./action-execution-coordinator.internal.js";
+import { isExpressionOnlyAction } from "./action-registry.js";
 import type { CompanionInterruption } from "./companion-interruption.js";
 import type { ChatRuntimeBindingExecution } from "./continuity-semantic-chat-runtime-binding/continuity-semantic-chat-runtime-binding.internal.js";
 import { prepareExactChatRuntimeConstruction } from "./continuity-semantic-chat-runtime-construction/continuity-semantic-chat-runtime-construction.internal.js";
@@ -1497,11 +1498,20 @@ export async function createRuntimeWithFixedToolsCore(
   // vocabulary, never hand-written per action), so a one-step tool mounted beside it only invites one-step runs. A
   // tool the adapter does not publish as an action stays mounted - `stardew_stop_action` is deliberately not an
   // action. The decision is the composition's to declare, not a Stardew tool name's to imply here.
+  //
+  // EXPRESSION IS NOT WORK, and that is the one exception the action registry declares (`EXPRESSION_ONLY_ACTION_IDS`):
+  // an emote or a turn of the head is one step by nature, so dropping its tool does not avoid a one-step run of work -
+  // it forces the gesture into the plan, where it queues behind the work steps in front of it and settles with them.
+  // Measured `round47` (2026-11-12, 188 planned nodes, zero emotes). The plan vocabulary excludes exactly that same
+  // declaration, so each action keeps one route and this file keeps no list of its own.
   const actionToolsToMount =
     integrationToolSet === undefined
       ? []
       : planActionSurface
-        ? integrationToolSet.actions.filter((tool) => integrationModule?.actionIdForToolName(tool.name) === null)
+        ? integrationToolSet.actions.filter((tool) => {
+            const actionId = integrationModule?.actionIdForToolName(tool.name) ?? null;
+            return actionId === null || isExpressionOnlyAction(actionId);
+          })
         : integrationToolSet.actions;
   // Tool definitions remain mounted for the lifetime of a Pi session. Every adapter tool therefore receives a
   // Host-owned execution fence so a later lifecycle loss revokes stale closures rather than trusting the adapter

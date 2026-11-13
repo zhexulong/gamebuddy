@@ -21,6 +21,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { EXPRESSION_ONLY_ACTION_IDS, STARDEW_ACTION_TOOL_NAMES } from "./action-registry.js";
 import { planActionsFromRegistrations } from "./body-program-script.js";
 import type { ActionRegistration } from "./protocol.js";
 
@@ -80,7 +81,7 @@ export type PromptFloorReading = Readonly<{
       /**
        * The per-action tools the adapter publishes - the surface's executable actions, which
        * `action-registry-consistency.test.ts` holds set-equal to this file's mount blocks. `runtime-core.internal.ts`
-       * drops every one of them from a plan surface.
+       * drops every one of them from a plan surface except the actions the registry declares expression-only.
        */
       flatPerActionTools: number;
       /** The subset `stardew_plan_work` exposes as builder methods, by the product's own plan admission. */
@@ -189,28 +190,34 @@ export const GAME_SURFACE_PROMPT_FLOOR: PromptFloorReading = Object.freeze({
       "The body-language rule gained the argument its route requires, so every column that counts it moved again. `systemChars` 11032 and the conduct slice 7200 - both +203, and the two deltas AGREE here because the edit is inside the one rule and nowhere else (the rule grew by exactly that much, ASCII, so the JSON-escaped delta and the UTF-8 byte delta are both 203). The share is re-derived as 7200 / 11032 = 0.6526. `envelopeChars`/`envelopeBytes` follow the system string by its own delta (+203: 26125 -> 26328, 35434 -> 35637) and were NOT re-measured, because that needs the whole materialized-session instrumentation; the recorded -1 from `remeasured_2026_11_12` is inherited unchanged. The added text is what the plan description cannot state - the closed-set argument `express_emote` takes and where its words are printed - and it carries no frequency: nothing in the floor makes an emote owed. The TOKEN columns are again carried unchanged and remain the under-count `remeasured_2026_11_05` describes.",
     remeasured_2026_11_11_b:
       "The Game prompt SHRANK by exactly one conduct rule (-437 chars, 11,101 to 10,664): the rule that ordered a spoken remark to the partner before every action or planning tool (`Speak before you act ... Never run tools in total silence ...`). It was FORM by the doctrine this floor's own module states - how long a turn is and how many beats it carries - and the shipped card already governs that (`default-companion/card.json`: 「说话紧扣当下真实生活体验，收放自如，不啰嗦不客套」), so an unconditional 'always deliver a spoken remark first' overrode 收放自如 with its opposite. Measured consequence (round46b, 36 minutes over 2 in-game days): 93 prompt turns, 159 assistant messages, 132 bubbles, of which 90 were standalone speech with no tool call in the same message - one bubble every 16 seconds, 1.42 per turn, 1.91 per tool call. The CHARACTER columns are re-derived from the product's builder exactly: `systemChars` 10,664 and the conduct slice 6,831 (7,268 - 437), so its share is 6,831 / 10,664 = 0.6406, recorded as 0.641. The two deltas agree (-437 both) because the deleted text was inside the floor and nowhere else. `envelopeChars`/`envelopeBytes` follow the system string by its own delta (-437: the rule is ASCII, so JSON-escaped characters and UTF-8 bytes move together) with `tools` and `messages` unchanged, which is what makes that the whole envelope's delta. The TOKEN columns were NOT re-measured in this commit and are now stale by 437 characters as well as by everything `remeasured_2026_11_05` describes.",
+    remeasured_2026_11_13:
+      "The body-language conduct rule was rewritten to name the two MOUNTED tools instead of a plan step, so every column that counts it moved. `systemChars` 11096 and the conduct slice 7264 (+64 both, and the two deltas AGREE because the edit is inside the one rule and nowhere else; the added and removed text is ASCII, so the JSON-escaped delta and the UTF-8 byte delta are both 64). The share is re-derived as 7264 / 11096 = 0.6546. `envelopeChars`/`envelopeBytes` follow the system string by its own delta (+64: 26328 -> 26392, 35637 -> 35701) and were NOT re-measured, because that needs the whole materialized-session instrumentation; the recorded -1 from `remeasured_2026_11_12` is inherited unchanged. THE TOOL COLUMNS ARE NOW AN UNDER-COUNT BY TWO TOOLS: the same change mounts `stardew_express_emote` and `stardew_face_direction` beside the plan builder (`EXPRESSION_ONLY_ACTION_IDS`), so the measured surface carries 16 tools where `toolCount`/`rows` record the 14 a plan-builder-only session carried - `14 -> 16`, and the two added definitions' tokens and characters are not in `toolsTokens` or the envelope columns. `action-route-gate.test.ts` reads the assembled set and proves the two are mounted; re-measuring this reading is a separate commit with the materialized-session instrumentation. The TOKEN columns are again carried unchanged and remain the under-count `remeasured_2026_11_05` describes.",
   }),
   floor: Object.freeze({
+    // The plan-builder-only measurement: 14 tools. The surface a Game session is handed now carries 16, because the two
+    // actions the registry declares expression-only keep their own tools beside the plan builder - see
+    // `remeasured_2026_11_13`, which records that this column is an under-count of the surface rather than a second
+    // reading of it.
     toolCount: 14,
-    // Re-derived from the product's builder by the test itself: 11,032 at `remeasured_2026_11_12_b` (10,829 plus the
-    // 203 chars naming `express_emote`'s argument in the body-language rule). The token column below is the 2026-11-05
-    // MEASUREMENT, an under-count of a shorter prompt that is no longer this one.
-    systemChars: 11032,
+    // Re-derived from the product's builder by the test itself: 11,096 at `remeasured_2026_11_13` (11,032 plus the 64
+    // chars the rewritten body-language rule added). The token column below is the 2026-11-05 MEASUREMENT, an
+    // under-count of a shorter prompt that is no longer this one.
+    systemChars: 11096,
     systemTokens: 5119,
     toolsTokens: 3552,
-    // The recorded envelope plus this change's own JSON-escaped delta (+203): the tool array and the empty message list
-    // are unchanged, so the system string is the whole of it. Not re-measured - see `remeasured_2026_11_12_b`.
-    envelopeChars: 26328,
-    // The same +203 in UTF-8 bytes: the added clause is ASCII.
-    envelopeBytes: 35637,
+    // The recorded envelope plus this change's own JSON-escaped delta (+64): the tool array and the empty message list
+    // are unchanged, so the system string is the whole of it. Not re-measured - see `remeasured_2026_11_13`.
+    envelopeChars: 26392,
+    // The same +64 in UTF-8 bytes: the added clause is ASCII.
+    envelopeBytes: 35701,
     envelopeTokens: 8787,
   }),
   conductBlock: Object.freeze({
-    chars: 7200,
+    chars: 7264,
     tokens: 1227,
-    // The measured slice over the measured prompt: 7,200 / 11,032. Recorded as the quotient, not as a share typed
-    // separately from the two numbers it divides - the previous recording carried 0.655 against 7,268/11,101.
-    charShareOfSystemPrompt: 0.6526,
+    // The measured slice over the measured prompt: 7,264 / 11,096. Recorded as the quotient, not as a share typed
+    // separately from the two numbers it divides - an earlier recording carried 0.655 against 7,268/11,101.
+    charShareOfSystemPrompt: 0.6546,
     tokenShareOfSystemPrompt: 0.24,
   }),
   denominator: Object.freeze([
@@ -345,28 +352,30 @@ export const GAME_SURFACE_PROMPT_FLOOR: PromptFloorReading = Object.freeze({
       flatPerActionTools: FLAT_TOOLS.length,
       plannableBuilderMethods: BUILDER_METHODS.length,
     }),
-    note: "The flat per-action tools are NOT in the request: runtime-core.internal.ts drops every adapter action tool when planActionSurface is declared, and the live Game materializer declares it. The 14-tool set above is the measurement of that, not an assumption - stardew_plan_work's description carries the builder method names instead.",
+    note: "The flat per-action tools are NOT in the request, with one derived exception: the actions `action-registry.ts` declares expression-only (`EXPRESSION_ONLY_ACTION_IDS`) keep their own tool, because a gesture is one step by nature and a plan step would queue it behind work. The 14-tool set above is the measurement of the plan-builder-only surface, not an assumption - `stardew_plan_work`'s description carries the builder method names instead, and `MOUNTED_GAME_SURFACE_TOOL_NAMES` below adds the expression tools from that declaration.",
   }),
 });
 
 /**
- * The tool names the live Game surface MOUNTS: the recorded rows' own population.
+ * The tool names the live Game surface MOUNTS: the recorded rows' own population plus the expression exception.
  *
  * <p>
- * This is the set a Game prompt may name, and it is not `STARDEW_ACTION_TOOL_NAMES`: a plan surface drops every tool
- * the adapter publishes as an action (`runtime-core.internal.ts`, asserted structurally by
- * `game-surface-prompt-floor.test.ts`), so the per-action projection is a list of names the Agent is never handed.
- * Two gates resolved the prompt against that projection and stayed green while the conduct sent body language to
- * `stardew_express_emote`, which was not in the request at all (measured 2026-11-11, `round46b`).
+ * The recorded rows are the plan-builder surface a measured production session carried, and they are not
+ * `STARDEW_ACTION_TOOL_NAMES`: a plan surface drops every tool the adapter publishes as an action
+ * (`runtime-core.internal.ts`, asserted structurally by `game-surface-prompt-floor.test.ts`), so that projection is a list
+ * of names the Agent is never handed. Two gates resolved the prompt against the projection and stayed green while the
+ * conduct sent body language to `stardew_express_emote`, which was not in the request at all (measured 2026-11-11,
+ * `round46b`).
  * </p>
  *
  * <p>
- * The population is the reading's rows because that is where the mounted set is recorded - measured off a real
- * materialized production session's own `agent.state.tools`, with the reading's freshness held by the floor test
- * (its `systemChars`, `toolCount` and the `planActionSurface` premise). A tool mounted later reaches these gates only
- * by being re-measured into the reading, which is the same rule every other column in that file follows.
+ * THE EXCEPTION IS DERIVED, not recorded: the actions `action-registry.ts` declares expression-only mount their own tool
+ * on that same surface (`EXPRESSION_ONLY_ACTION_IDS` is the one declaration both the mount filter and the plan vocabulary
+ * read), so their names join the mounted set from that declaration and from `STARDEW_ACTION_TOOL_NAMES`. A third one
+ * declared tomorrow reaches every gate here without an edit to this file.
  * </p>
  */
-export const MOUNTED_GAME_SURFACE_TOOL_NAMES: readonly string[] = Object.freeze(
-  GAME_SURFACE_PROMPT_FLOOR.rows.map((row) => row.name),
-);
+export const MOUNTED_GAME_SURFACE_TOOL_NAMES: readonly string[] = Object.freeze([
+  ...GAME_SURFACE_PROMPT_FLOOR.rows.map((row) => row.name),
+  ...EXPRESSION_ONLY_ACTION_IDS.map((actionId) => STARDEW_ACTION_TOOL_NAMES[actionId]),
+]);

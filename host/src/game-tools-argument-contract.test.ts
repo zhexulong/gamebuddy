@@ -4,7 +4,7 @@ import { resolve } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
-import { STARDEW_ACTION_TOOL_NAMES } from "./action-registry.js";
+import { EXPRESSION_ONLY_ACTION_IDS, STARDEW_ACTION_TOOL_NAMES } from "./action-registry.js";
 import {
   ROW_DERIVED_STEP_ARGUMENTS,
   STEP_ARGUMENTS_STILL_OMISSIBLE,
@@ -12,7 +12,7 @@ import {
   planActionsFromRegistrations,
 } from "./body-program-script.js";
 import { ExecutionCorrelationLedger } from "./execution-correlation-ledger.js";
-import { createStardewActionTools, type MoveCapableIntegration } from "./game-tools.js";
+import { buildCandidateToolSchema, createStardewActionTools, type MoveCapableIntegration } from "./game-tools.js";
 import {
   type ActionRegistration,
   type ActionRegistrationDescriptor,
@@ -702,54 +702,70 @@ test("every plan example carries the arguments the wire requires of it", () => {
 });
 
 /**
- * A plan example that states a value the surface's own declaration does not admit.
+ * The words a MOUNTED TOOL admits for one closed-set argument, read out of the schema the mount builds.
  *
- * The sibling of `plan_example_omits_argument`, on the other half of the same fact: an argument can be PRESENT and the
- * call still be one the Mod refuses, because a closed-set argument is validated by its VALUE. `express_emote`'s `emote`
- * is such a set (`FarmhandActionArgument("emote", "string", EmoteEnum)`, refused by `FarmhandExecutionAcceptance` for
- * any word outside it), and an example that prints a word the surface does not declare is a call a caller copies and the
- * game then rejects - the same defect as an omitted argument, one layer along.
- *
- * The population is every closed-set argument of every action an example names, taken from the published surface, so an
- * action that gains an enum is covered without an edit here. `plan_example_uses_an_undeclared_value:<action>.<argument>
- * =<value>;declared=[...]` names both halves, so the fix is the word and not a hunt.
- *
- * red-proof: write a value into the emote example that the enum does not carry ->
- *   `plan_example_uses_an_undeclared_value:express_emote.emote=happyyy;declared=[happy,sad,...]`;
- *   drop the `emote` clause from that example -> `plan_example_omits_argument:express_emote:emote`;
- *   render no emote example at all -> blocked, `no rendered example states a value for express_emote's closed-set
- *   `emote``.
+ * `buildCandidateToolSchema` renders a closed set as a union of literals (`anyOf: [{ const: ... }]`), which is what the
+ * model is shown, so this reads the surface the caller actually copies rather than a second description of it.
  */
-test("every closed-set value a plan example states is one the surface declares", () => {
-  const actions = planActionsFromRegistrations(publishedSurface().map(registrationFor));
-  const examples = planExamples(planWorkDescription(actions));
-  const findings: string[] = [];
-  const examined: string[] = [];
+function closedSetOf(schema: unknown): readonly string[] {
+  if (typeof schema !== "object" || schema === null) return [];
+  const record = schema as Readonly<{ anyOf?: readonly Readonly<{ const?: unknown }>[]; const?: unknown }>;
+  const members = record.anyOf ?? (record.const === undefined ? [] : [{ const: record.const }]);
+  return members.map((member) => member.const).filter((value): value is string => typeof value === "string");
+}
 
-  for (const example of examples) {
-    const action = actions.find((candidate) => candidate.actionId === example.action);
-    if (action === undefined) continue;
-    for (const argument of action.arguments) {
-      if (argument.enum === undefined || argument.enum.length === 0) continue;
-      const stated = example.strings.find(([name]) => name === argument.name)?.[1];
-      // An argument the example leaves out is the neighbour test's finding: this one speaks about values that are there.
-      if (stated === undefined) continue;
-      examined.push(`${example.action}.${argument.name}=${stated}`);
-      if (!argument.enum.includes(stated))
-        findings.push(
-          `plan_example_uses_an_undeclared_value:${example.action}.${argument.name}=${stated};declared=[${argument.enum.join(",")}]`,
-        );
+/**
+ * The closed-set words a gesture takes are on its MOUNTED TOOL, and the plan no longer teaches a row for it.
+ *
+ * <p>
+ * This test used to assert the other way round: `express_emote` was a plan example (`c63a5763`), and the gate read that
+ * example's `emote: "<word>"` against the Mod's declared enum. The registry now declares that action - and
+ * `face_direction` - expression-only, so the plan builder generates no method for either and the example row is gone. A
+ * gate left reading that row would be a test of a section that no longer exists, so it asserts the two facts that
+ * replaced it: NO example teaches an expression route, and the closed set is carried by the tool a Game session mounts.
+ * </p>
+ *
+ * <p>
+ * The population is every closed-set argument of every action the registry declares expression-only, taken from the
+ * Mod's published surface, so an action that gains a second argument joins this gate without an edit - and a word the
+ * mount stops publishing fails here by name rather than in a live run.
+ * </p>
+ */
+test("an expression action is no longer a plan example, and its closed set is on the tool a Game session mounts", () => {
+  const actions = planActionsFromRegistrations(publishedSurface().map(registrationFor));
+  const description = planWorkDescription(actions);
+  const expressionOnly = new Set<string>(EXPRESSION_ONLY_ACTION_IDS);
+  assert.deepEqual(
+    planExamples(description)
+      .filter((example) => expressionOnly.has(example.action))
+      .map((example) => `plan_example_teaches_an_expression_route:${example.action}`),
+    [],
+    "a gesture is one step by nature; an example here is a call the compiler now refuses as plan_script_unknown_action",
+  );
+
+  const byId = new Map(publishedSurface().map((action) => [action.actionId, action] as const));
+  const examined: string[] = [];
+  for (const actionId of EXPRESSION_ONLY_ACTION_IDS) {
+    const action = byId.get(actionId);
+    assert.ok(action !== undefined, `${actionId} is declared expression-only but the Mod publishes no such action`);
+    const closed = Object.entries(action.argumentSchema ?? {}).filter(([, schema]) => schema.enum !== undefined);
+    assert.ok(closed.length > 0, `blocked: ${actionId} declares no closed-set argument, so this gate examines nothing`);
+    const registration = registrationFor(action);
+    assert.ok(registration.descriptor !== undefined, `${actionId} publishes no descriptor for its mount arm to read`);
+    const schema = buildCandidateToolSchema(actionId, registration.descriptor) as unknown as Readonly<{
+      properties?: Readonly<Record<string, unknown>>;
+    }>;
+    for (const [name, declared] of closed) {
+      const values = closedSetOf(schema.properties?.[name]);
+      assert.deepEqual(
+        values,
+        [...(declared.enum ?? [])],
+        `${actionId}.${name}: the mounted tool's closed set must be the one the Mod declares, in its own order`,
+      );
+      examined.push(`${actionId}.${name}=${String(values.length)}`);
     }
   }
-
-  // Zero population is BLOCKED, never green: an example the parser no longer reads, or a description that stopped printing
-  // the closed-set row, must fail here rather than agree with itself. `emote` is named for the same reason `charge` is
-  // named one test above - it is the value this gate was written for.
-  assert.ok(
-    examined.some((entry) => entry.startsWith("express_emote.emote=")),
-    `blocked: no rendered example states a value for express_emote's closed-set emote, so the gate examines nothing (examined ${examined.join(", ") || "nothing"})`,
-  );
-  assert.deepEqual(findings, [], "an example a caller copies must state a value the surface admits");
+  assert.ok(examined.length > 0, "blocked: no expression action's closed set was read, so this gate examines nothing");
 });
 
 /**

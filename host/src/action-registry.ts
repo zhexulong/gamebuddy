@@ -616,6 +616,36 @@ export const STARDEW_ACTION_ADAPTERS = Object.freeze([
 
 export type StardewActionId = (typeof STARDEW_ACTION_ADAPTERS)[number]["actionId"];
 
+/**
+ * The actions that are EXPRESSION rather than work - and therefore the one exception to a plan surface's mount rule.
+ *
+ * <p>
+ * A surface that carries the plan builder drops every per-action tool this Host publishes as an action, because a
+ * one-step tool beside the builder only invites one-step runs of work. That reason says nothing about an emote or a turn
+ * of the head: expression is ONE STEP BY NATURE, so forcing it into the plan makes a gesture queue behind the work
+ * steps in front of it and settle with them. Measured `round47` (2026-11-12, 64 assistant turns, 188 planned nodes,
+ * zero emotes): the only route the surface mounted for body language was a plan step, beside a builder whose own
+ * examples never showed one.
+ * </p>
+ *
+ * <p>
+ * So this is a DECLARATION, not a second list: it is typed against `StardewActionId`, the mount reads it through
+ * `isExpressionOnlyAction`, and the plan vocabulary excludes exactly it in the generator. One declaration, one route per
+ * action - `action-route-gate.test.ts` fails by name when an action has two or none.
+ * </p>
+ */
+export const EXPRESSION_ONLY_ACTION_IDS = Object.freeze([
+  "express_emote",
+  "face_direction",
+] as const satisfies readonly StardewActionId[]);
+
+const EXPRESSION_ONLY_ACTION_ID_SET: ReadonlySet<string> = new Set<string>(EXPRESSION_ONLY_ACTION_IDS);
+
+/** The one way either side of the mount asks whether an action is expression rather than a unit of work. */
+export function isExpressionOnlyAction(actionId: string | null | undefined): boolean {
+  return actionId !== null && actionId !== undefined && EXPRESSION_ONLY_ACTION_ID_SET.has(actionId);
+}
+
 /** A current restrictive projection: registration facts remain Mod-owned. */
 export type VisibleStardewAction = StardewActionAdapter & ActionRegistration;
 

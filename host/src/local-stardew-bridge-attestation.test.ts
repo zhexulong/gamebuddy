@@ -8,6 +8,7 @@ import test from "node:test";
 import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 
+import { EXPRESSION_ONLY_ACTION_IDS } from "./action-registry.js";
 import {
   createGameRuntimeBindingFromReceiptBackedLaunch,
   type GameRuntimeBinding,
@@ -87,11 +88,16 @@ const DEFAULT_HELLO_REGISTRATIONS: readonly unknown[] = Object.freeze([
 /** One action as the Mod's own published surface artifact declares it. */
 type PublishedSurfaceAction = Readonly<{
   actionId: string;
+  identityVersion: number;
   lifecycle: string;
   kind: string;
   argumentSchema?: Readonly<Record<string, { type: string; enum?: readonly string[] }>>;
   outputFacts?: Readonly<Record<string, string>>;
   resourceTemplate?: Readonly<{ claims: readonly Readonly<{ key: string; value: string }>[] }>;
+  effect?: "read" | "write";
+  postcondition?: Readonly<{ name?: string }>;
+  /** The engine member an action drives. Its own mount arm requires it, so a fixture that omits it shuts that arm. */
+  nativeBinding?: string;
 }>;
 
 /**
@@ -127,6 +133,16 @@ function publishedSurfaceRegistrations(): readonly ActionRegistration[] {
                 argumentSchema: action.argumentSchema,
                 outputFacts: action.outputFacts ?? {},
                 ...(action.resourceTemplate === undefined ? {} : { resourceTemplate: action.resourceTemplate }),
+                // Every other field the artifact publishes is carried too: an arm reads the descriptor it is handed, so a
+                // fixture that drops `nativeBinding`/`postcondition`/`effect` shuts that arm and the "published catalog"
+                // this file claims to exercise is a smaller one. Measured 2026-11-13: without these two actions'
+                // `nativeBinding` their mount arms were shut here while the artifact published it, so the surface this
+                // fixture assembled was not the surface the Mod advertises.
+                ...(action.effect === undefined ? {} : { effect: action.effect }),
+                ...(action.postcondition?.name === undefined
+                  ? {}
+                  : { postcondition: { name: action.postcondition.name } }),
+                ...(action.nativeBinding === undefined ? {} : { nativeBinding: action.nativeBinding }),
               },
             }),
       }),
@@ -1301,7 +1317,7 @@ test("the Game surface offers one plan tool instead of the flat per-action tools
  * action has a per-action tool on the mounted surface, the read-only navigation tools stay as observation, and the
  * plan builder still carries every executable action.
  */
-test("over the published catalog the mounted Game surface carries no per-action tool, and the plan builder carries every executable action", async () => {
+test("over the published catalog the mounted Game surface carries no per-action tool except the declared expression ones, and the plan builder carries every other executable action", async (t) => {
   const registrations = publishedSurfaceRegistrations();
   // "Executable" is the plan vocabulary's own lifecycle list, not "every execution-kind row": an action that ships
   // experimental is not a builder method until its rung is earned, so a second definition here would count it as one.
@@ -1351,10 +1367,22 @@ test("over the published catalog the mounted Game surface carries no per-action 
         const mounted = observeMaterializedProductionRuntimeForTest(materialized).session.agent.state.tools.map(
           (tool) => tool.name,
         );
+        const expressionOnly = new Set<string>(EXPRESSION_ONLY_ACTION_IDS);
         const perActionTools = mounted.filter((name) =>
           executableActionIds.some((actionId) => `stardew_${actionId}` === name),
         );
-        assert.deepEqual(perActionTools, [], "no executable action has a per-action tool on the mounted surface");
+        // The only per-action tools a plan surface keeps are the ones the registry declares expression-only: a gesture is
+        // one step by nature, so it reaches the actor through its own tool instead of queuing as a plan step
+        // (`action-route-gate.test.ts` holds the same property against this surface's own assembled set).
+        assert.deepEqual(
+          perActionTools.sort(),
+          [...expressionOnly].map((actionId) => `stardew_${actionId}`).sort(),
+          "the mounted per-action tools are exactly the declared expression exception, and nothing else",
+        );
+        t.diagnostic(
+          `assembled Game surface: ${String(mounted.length)} mounted tools · ${String(perActionTools.length)} per-action ` +
+            `(${perActionTools.join(", ")}) · ${String(executableActionIds.length - expressionOnly.size)} plan steps`,
+        );
         assert.ok(mounted.includes("stardew_plan_work"), "the plan tool is mounted");
         assert.ok(mounted.includes("stardew_observe"), "observation is mounted");
         assert.ok(mounted.includes("stardew_stop_action"), "the stop tool is mounted and is not an action");
@@ -1362,14 +1390,14 @@ test("over the published catalog the mounted Game surface carries no per-action 
         // what the companion reads the world map with.
         for (const name of ["stardew_inspect_world_map", "stardew_find_destination"])
           assert.ok(mounted.includes(name), `${name} stays as observation`);
-        // The capability did not leave with the flat tools: every executable action the Mod publishes is a builder
-        // method, so the plan tool is the whole action surface rather than one entry point beside it.
+        // The capability did not leave with the flat tools: every executable action the Mod publishes is either a builder
+        // method or a mounted expression tool, so the surface is whole rather than one entry point beside it.
         assert.deepEqual(
           planActionsFromRegistrations(registrations)
             .map((action) => action.actionId)
             .sort(),
-          [...executableActionIds].sort(),
-          "the plan builder carries every executable published action",
+          executableActionIds.filter((actionId) => !expressionOnly.has(actionId)).sort(),
+          "the plan builder carries every executable published action except the declared expression exception",
         );
       } finally {
         await materialized?.close();

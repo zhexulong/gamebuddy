@@ -4,6 +4,7 @@ import { resolve } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
+import { EXPRESSION_ONLY_ACTION_IDS } from "./action-registry.js";
 import {
   BODY_YIELDING_PLAN_ACTION_IDS,
   type CompiledPlan,
@@ -1485,8 +1486,21 @@ test("a builder method is generated for exactly the lifecycles the Mod's Body Pr
   // `live_verified` is an admission, not a draft: the action really ran on the target game version and produced a
   // native receipt, so the Mod accepts it as a node. A Host gate that dropped it refused plans the Mod accepts, and
   // the companion then had no way to name those actions except one flat tool call per step.
-  for (const actionId of ["clear_debris", "cut_weeds", "talk_to_npc", "express_emote"])
+  for (const actionId of ["clear_debris", "cut_weeds", "talk_to_npc"])
     assert.ok(generated.includes(actionId), `${actionId} is live-verified and must be callable from a plan`);
+  // The one lifecycle-admitted action that is NOT here, and the reason is its kind rather than its rung: the registry
+  // declares `express_emote` (and `face_direction`) expression-only, so a gesture reaches the actor through its own
+  // mounted tool and this vocabulary excludes it - one route per action, never two (`action-route-gate.test.ts`).
+  for (const actionId of EXPRESSION_ONLY_ACTION_IDS) {
+    assert.ok(
+      !generated.includes(actionId),
+      `${actionId} is declared expression-only, so it must not also be a plan step the model can write`,
+    );
+    assert.ok(
+      SURFACE.some((action) => action.actionId === actionId),
+      `${actionId} is declared expression-only but the Mod publishes no such action, so the exception exempts nothing`,
+    );
+  }
   // Every generated method's argument list is the surface's own declaration, name for name.
   const declared = new Map(
     SURFACE.map((action) => [action.actionId, Object.keys(action.argumentSchema ?? {})] as const),
