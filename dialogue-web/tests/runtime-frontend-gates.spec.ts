@@ -37,6 +37,7 @@
  */
 import { readFileSync } from "node:fs";
 import { expect, test, type Page } from "./frontend-coverage";
+import { messages } from "../src/i18n";
 import { LAYOUT_PAIR, VIEWPORT_SIZES } from "./viewport-policy";
 
 const token = "A".repeat(43);
@@ -2265,6 +2266,22 @@ const ROLE_PAIRS: readonly (MeasuredRolePair | AbsentRolePair)[] = [
 ];
 
 /**
+ * What puts one member's own fact on the page.
+ *
+ * Per member rather than per group, because a group's members are failures that need different
+ * loads to exist at all: the whole-window card is drawn from the composed boundary refusing the
+ * read that opens the shell, and her own world book's two read failures are drawn inside the
+ * Characters surface, which needs the shell to open first. A group that could only mount one way
+ * would have to leave the other kind of fact out of the population.
+ */
+type GroupMemberMount =
+  | Readonly<{
+      kind: "composed-read-refusal";
+      refusal: Readonly<{ status: number; body: string }>;
+    }>
+  | Readonly<{ kind: "companion-world-book-read"; failure: "refused" | "unreadable" }>;
+
+/**
  * A set of roles that must be told apart from EACH OTHER.
  *
  * "Three distinct problems must not share one heading" is not expressible as one pair: it is
@@ -2275,14 +2292,10 @@ type RoleGroup = Readonly<{
   kind: "group";
   name: string;
   reason: string;
-  /**
-   * Every member, and what puts it on the page: the composed boundary's answer to the
-   * bootstrap read, which is the one failure the whole-window card is drawn for.
-   */
+  /** Every member, what puts it on the page, and the element its own fact is drawn in. */
   members: readonly Readonly<{
     name: string;
-    refusal: Readonly<{ status: number; body: string }>;
-    /** The element the member's own fact is drawn in. */
+    mount: GroupMemberMount;
     role: string;
   }>[];
   /** Channels any two members must differ by. */
@@ -2292,7 +2305,7 @@ type RoleGroup = Readonly<{
 /**
  * The role groups this product has.
  *
- * One, and it is the problem card. `i18n.ts` says it in the catalogue's own words: three
+ * The problem card. `i18n.ts` says it in the catalogue's own words: three
  * faults a player meets while a chat cannot be read, and three headings, because "the card's
  * `<h1>` is what a player reads first and compares between two failures, so a heading it shares
  * with another fault is the card saying nothing where it must say what". The three are the
@@ -2302,6 +2315,12 @@ type RoleGroup = Readonly<{
  * Rendered, all three go through `ProblemView`'s `<h1>`, so the ONLY channel between them is the
  * words. That is what `text` is for, and it is why the gate compares the heading each one draws
  * rather than assuming the catalogue still says three different things.
+ *
+ * And her own world book, whose two failure states are one shell with two `data-` attributes and
+ * (until this group existed) one swapped sentence: measured in the browser, the ink, weight, size,
+ * tracking, edge, icons and the control beneath them were the same in both, so a player had one
+ * sentence to go on and the same `Read it again` button for two conditions that answer it
+ * differently.
  */
 const ROLE_GROUPS: readonly RoleGroup[] = [
   {
@@ -2313,23 +2332,54 @@ const ROLE_GROUPS: readonly RoleGroup[] = [
       {
         // The Host refused with a code it declares: the reconciliation fact.
         name: "the chat could not be reconciled",
-        refusal: { status: 503, body: JSON.stringify({ code: "state_reconciliation_required" }) },
+        mount: {
+          kind: "composed-read-refusal",
+          refusal: { status: 503, body: JSON.stringify({ code: "state_reconciliation_required" }) },
+        },
         role: ".problem-card h1",
       },
       {
         // A refusal the client can retry but cannot name: it clears itself.
         name: "the read can be taken again",
-        refusal: { status: 503, body: JSON.stringify({ code: "gate_not_a_declared_code" }) },
+        mount: {
+          kind: "composed-read-refusal",
+          refusal: { status: 503, body: JSON.stringify({ code: "gate_not_a_declared_code" }) },
+        },
         role: ".problem-card h1",
       },
       {
         // A body the client mirror refuses: this build's own fault, with a code in the detail.
         name: "this build could not read the Host",
-        refusal: { status: 200, body: "not a composed state document" },
+        mount: { kind: "composed-read-refusal", refusal: { status: 200, body: "not a composed state document" } },
         role: ".problem-card h1",
       },
     ],
     channels: { atLeast: 1, of: ["text"] },
+  },
+  {
+    kind: "group",
+    name: "her book the Host refused vs the reply this build cannot read",
+    reason:
+      "the Host answering no is answered by reading again, and a reply this build does not understand is answered by neither the button beneath it nor patience - two conditions, two sentences, and the player has to know which one she is in before she presses anything",
+    members: [
+      {
+        // The Host answered and said no: the retry under the sentence is the next action.
+        name: "the Host refused the read",
+        mount: { kind: "companion-world-book-read", failure: "refused" },
+        role: "[data-companion-world-book-failed] > p:not(.management-settings-hint)",
+      },
+      {
+        // The Host answered and the answer is not this build's contract: no press clears it.
+        name: "the reply is not this build's contract",
+        mount: { kind: "companion-world-book-read", failure: "unreadable" },
+        role: "[data-companion-world-book-unreadable] > p:not(.management-settings-hint)",
+      },
+    ],
+    // Measured in the mounted shell: `text` (each sentence names its own next action) and
+    // `weight` (the sentence no press clears is said in the louder face). The ink, size,
+    // tracking, opacity, edge and cursor are the same on both sides, and the control beneath
+    // them is the same `Read it again`, which is why two channels are required and not one.
+    channels: { atLeast: 2, of: ["text", "weight", "colour", "size", "style", "tracking", "opacity", "edge"] },
   },
 ];
 
@@ -2642,6 +2692,87 @@ for (const locale of ROLE_LOCALES) {
  * false pass as a pair that measured neither), and two members the declared channels
  * cannot separate are the collapse, reported with the words both of them said.
  * ========================================================================== */
+/** The book the Host serves when it did not refuse: one entry, every key the contract requires. */
+const GROUP_WORLD_BOOK = {
+  apiVersion: 1,
+  present: true,
+  revision: 3,
+  entries: [{ title: "Greenhouse", keys: ["greenhouse"], constant: false, enabled: true, content: "Her greenhouse." }],
+};
+
+/**
+ * The same book with the entry's `enabled` key dropped.
+ *
+ * The published contract makes an entry's `enabled` required, so the browser's own mirror refuses
+ * this reply whole - the one shape here that lands in `unreadable` rather than `failed`. It is the
+ * book above with one key removed rather than a second book written out, so the two members differ
+ * in exactly the thing under test.
+ */
+const GROUP_WORLD_BOOK_UNREADABLE = {
+  ...GROUP_WORLD_BOOK,
+  entries: GROUP_WORLD_BOOK.entries.map(({ enabled: _dropped, ...entry }) => entry),
+};
+
+/**
+ * Puts one group member's own fact on the page, by the load that member needs.
+ *
+ * A real load per member: a same-document hash change would keep the first member's failure on
+ * screen and make every member after it read alike, which is the false collapse this gate must not
+ * report.
+ */
+async function mountGroupMember(
+  page: Page,
+  mount: GroupMemberMount,
+  locale: (typeof ROLE_LOCALES)[number],
+): Promise<void> {
+  await page.goto("about:blank");
+  switch (mount.kind) {
+    case "composed-read-refusal":
+      // The failure that draws the whole-window card is the composed boundary's answer to the read
+      // that opens the shell. The later handler wins, so each member re-answers the same route.
+      await page.route("**/api/composed-reference-game/v1/bootstrap", (route) =>
+        route.fulfill({ status: mount.refusal.status, contentType: "application/json", body: mount.refusal.body }),
+      );
+      await page.goto(`/#profile=composed-reference-game&boot=${token}`);
+      await expect(page.locator(".problem-card")).toBeVisible();
+      return;
+    case "companion-world-book-read":
+      // Her own book is read by the Characters surface, so the shell opens on its own union of
+      // stubbed routes first and this one route is answered for the read that surface then makes.
+      await mountShell(page);
+      await page.route(`**/api/tavern/v1/companions/${handleFor(0)}/worldbook`, (route) =>
+        route.fulfill(
+          mount.failure === "refused"
+            ? {
+                status: 503,
+                contentType: "application/problem+json",
+                body: JSON.stringify({
+                  type: "about:blank",
+                  title: "runtime_unavailable",
+                  status: 503,
+                  code: "runtime_unavailable",
+                  requestId: csrfToken,
+                  retryable: true,
+                }),
+              }
+            : jsonOk(GROUP_WORLD_BOOK_UNREADABLE),
+        ),
+      );
+      // The surface's own name, from the catalogue: a hard-coded English label would open nothing
+      // in the zh-CN cell and report the absence as a pair that is not told apart.
+      await openSurface(page, { label: messages(locale).characters, testId: "characters-surface" });
+      // The read is asynchronous, so the mount waits for the state itself and not for the member's
+      // own role: a role that is broken must still be counted and named by the gate below, not
+      // reported as a locator that timed out.
+      await expect(
+        page.locator(
+          mount.failure === "refused" ? "[data-companion-world-book-failed]" : "[data-companion-world-book-unreadable]",
+        ),
+      ).toBeVisible();
+      return;
+  }
+}
+
 for (const locale of ROLE_LOCALES) {
   test(`gate 18: every declared role group is told apart member by member (${locale})`, async ({ page }) => {
     if (locale === "zh-CN") await page.addInitScript(() => localStorage.setItem("gamebuddy.tavern.ui-locale", "zh-CN"));
@@ -2663,18 +2794,7 @@ for (const locale of ROLE_LOCALES) {
       }
       const readings: { member: string; reading: RoleReading }[] = [];
       for (const member of group.members) {
-        // The failure that puts this member's own fact on the page: the composed
-        // boundary's answer to the read that opens the shell. The later handler wins,
-        // so each member re-answers the same route.
-        await page.route("**/api/composed-reference-game/v1/bootstrap", (route) =>
-          route.fulfill({ status: member.refusal.status, contentType: "application/json", body: member.refusal.body }),
-        );
-        // A real load per member: a same-document hash change would keep the first
-        // member's failure on screen and make all three read alike, which is exactly the
-        // false collapse this gate must not report.
-        await page.goto("about:blank");
-        await page.goto(`/#profile=composed-reference-game&boot=${token}`);
-        await expect(page.locator(".problem-card")).toBeVisible();
+        await mountGroupMember(page, member.mount, locale);
         await freezeTransitions(page);
         // Exactly one element, named: a member whose role resolves to nothing is otherwise
         // a Playwright timeout about a locator, which names neither the group nor the member.
