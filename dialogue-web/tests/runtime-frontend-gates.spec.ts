@@ -1473,12 +1473,23 @@ test("gate 15: the viewport meta resizes the visual viewport for the on-screen k
  *     drawn at 0.6 against 1, and that is a difference a reader sees.
  *   * `edge` - the widest border side the element actually paints. A system
  *     notice wears a 3 px accent bar; a bubble wears a 1 px hairline.
+ *   * `text` - the words themselves, whitespace-normalised. Two problems drawn on
+ *     one card, or a notice beside the player's own line, are told apart by their
+ *     copy when nothing else moves; an element that differs only in an attribute
+ *     or an id is NOT told apart, which is why a `data-` value is not a channel.
+ *   * `cursor` - the pointer the browser draws over the element. `not-allowed`
+ *     against `pointer` is the only channel an inert control carries that its own
+ *     fill does not, and a reader who points at it sees it.
  *
- * NOT MEASURED, named so nobody assumes it was: position and width. A notice is
- * a block above the composer rather than a bubble in the transcript, and that is
- * a strong channel a per-element reading cannot see. A pair whose only remaining
- * channel is where it sits is reported as needing a decision, never called
- * distinguishable.
+ * NOT MEASURED, named so nobody assumes it was: position and width, and any state a
+ * resting page is not in (a `:hover` plate, focus, an in-flight animation). A notice is
+ * a block outside the transcript rather than a bubble in it, and that is a strong
+ * channel a per-element reading cannot see; so is the plate a live control draws only
+ * under the pointer. A pair whose second channel is one of those is declared as a pair
+ * with a `beyond` channel: the channel is NAMED, and the page or stylesheet fact it rests
+ * on is ASSERTED, so the declaration expires when the thing doing the work goes away.
+ * It is never quietly counted as a measured channel, and never declared with a lower
+ * number instead.
  * ========================================================================== */
 
 /** An ink separation ratio under this reads as one tone at body sizes. */
@@ -1497,6 +1508,38 @@ const ROLE_OPACITY_STEP = 0.15;
 /** A border step a reader sees: a notice's 3 px accent bar against a bubble's 1 px hairline. */
 const ROLE_EDGE_STEP_PX = 2;
 
+/**
+ * Every axis a pair of roles can be told apart on.
+ *
+ * The two that are not typographic are here because a role in this product is drawn
+ * apart by them: `text` is the words themselves, which is what separates two different
+ * problems that share one card, and `cursor` is the pointer the browser draws for the
+ * element - `not-allowed` against `pointer` is the only channel an inert control carries
+ * that its fill does not.
+ */
+const ROLE_CHANNELS = ["text", "colour", "weight", "style", "tracking", "size", "opacity", "edge", "cursor"] as const;
+
+type RoleChannel = (typeof ROLE_CHANNELS)[number];
+
+/**
+ * The channels gate 16 may count between a beat and its speech.
+ *
+ * Not every axis: the two roles always say different words and the beat is not the speech's
+ * own pointer target, so `text` and `cursor` are excluded - the pair's protection is
+ * typographic, and counting copy would have hidden the collapse the gate was written for.
+ */
+const BEAT_CHANNELS: readonly RoleChannel[] = ["colour", "weight", "style", "tracking", "size", "opacity", "edge"];
+
+/**
+ * How many of which channels must separate a declared pair.
+ *
+ * `of` is not decoration. The words two roles carry are almost always different, so a
+ * pair whose protection is typographic has to exclude `text`: the beat incident gate 16
+ * was written for (`1.59:1` of ink, tracking alone in Chinese) would have been green on
+ * the words alone, and the collapse would have shipped again behind a passing gate.
+ */
+type ChannelFloor = Readonly<{ atLeast: number; of: readonly RoleChannel[] }>;
+
 /** One element's visible appearance: the axes two roles can differ on. */
 type RoleReading = Readonly<{
   fontStyle: string;
@@ -1508,6 +1551,10 @@ type RoleReading = Readonly<{
   opacity: number;
   /** The widest border side this element actually paints, in px. */
   edgePx: number;
+  /** The element's own words, whitespace-normalised: the same string is one channel fewer. */
+  text: string;
+  /** The pointer the browser is asked to draw over this element. */
+  cursor: string;
 }>;
 
 /**
@@ -1541,6 +1588,8 @@ function roleReadingOf(element: Element): RoleReading {
     color: style.color,
     opacity: Number.parseFloat(style.opacity),
     edgePx,
+    text: (element.textContent ?? "").replace(/\s+/gu, " ").trim(),
+    cursor: style.cursor,
   };
 }
 
@@ -1590,17 +1639,29 @@ function paintedContrast(foreground: string, background: string): number {
   return (Math.max(lit, dark) + 0.05) / (Math.min(lit, dark) + 0.05);
 }
 
-/** The channels a reader can actually see between two roles, by name, at the floors above. */
-function distinguishingChannels(a: RoleReading, b: RoleReading): readonly string[] {
-  const channels: string[] = [];
-  if (paintedContrast(a.color, b.color) >= ROLE_INK_SEPARATION) channels.push("colour");
-  if (Math.abs(a.fontWeight - b.fontWeight) >= ROLE_WEIGHT_STEP) channels.push("weight");
-  if (a.fontStyle !== b.fontStyle) channels.push("style");
-  if (Math.abs(a.trackingEm - b.trackingEm) >= ROLE_TRACKING_STEP_EM) channels.push("tracking");
-  if (Math.abs(a.fontSizePx / b.fontSizePx - 1) >= ROLE_SIZE_STEP_RATIO) channels.push("size");
-  if (Math.abs(a.opacity - b.opacity) >= ROLE_OPACITY_STEP) channels.push("opacity");
-  if (Math.abs(a.edgePx - b.edgePx) >= ROLE_EDGE_STEP_PX) channels.push("edge");
-  return channels;
+/**
+ * The channels a reader can actually see between two roles, by name, at the floors above.
+ *
+ * `of` is the pair's own declaration of which channels its separation may rest on; a
+ * channel it did not name cannot make an undeclared pair pass.
+ */
+function distinguishingChannels(
+  a: RoleReading,
+  b: RoleReading,
+  of: readonly RoleChannel[],
+): readonly RoleChannel[] {
+  const differing: Record<RoleChannel, boolean> = {
+    text: a.text !== b.text,
+    colour: paintedContrast(a.color, b.color) >= ROLE_INK_SEPARATION,
+    weight: Math.abs(a.fontWeight - b.fontWeight) >= ROLE_WEIGHT_STEP,
+    style: a.fontStyle !== b.fontStyle,
+    tracking: Math.abs(a.trackingEm - b.trackingEm) >= ROLE_TRACKING_STEP_EM,
+    size: Math.abs(a.fontSizePx / b.fontSizePx - 1) >= ROLE_SIZE_STEP_RATIO,
+    opacity: Math.abs(a.opacity - b.opacity) >= ROLE_OPACITY_STEP,
+    edge: Math.abs(a.edgePx - b.edgePx) >= ROLE_EDGE_STEP_PX,
+    cursor: a.cursor !== b.cursor,
+  };
+  return of.filter((channel) => differing[channel]);
 }
 
 /**
@@ -1621,7 +1682,8 @@ async function freezeTransitions(page: Page): Promise<void> {
 function roleVoice(reading: RoleReading): string {
   return (
     `${reading.fontStyle} ${reading.fontSizePx.toFixed(2)}px ${reading.fontWeight} ` +
-    `tracking ${reading.trackingEm.toFixed(3)}em opacity ${reading.opacity} edge ${reading.edgePx}px ${reading.color}`
+    `tracking ${reading.trackingEm.toFixed(3)}em opacity ${reading.opacity} edge ${reading.edgePx}px ${reading.color} ` +
+    `cursor ${reading.cursor} "${reading.text}"`
   );
 }
 
@@ -1770,8 +1832,8 @@ function beatTable(
 ): string {
   return rows
     .map(({ appearance, locale, companion, player }) => {
-      const channels = distinguishingChannels(companion.beat, companion.speech);
-      const playerChannels = distinguishingChannels(player.beat, player.speech);
+      const channels = distinguishingChannels(companion.beat, companion.speech, BEAT_CHANNELS);
+      const playerChannels = distinguishingChannels(player.beat, player.speech, BEAT_CHANNELS);
       return (
         `${appearance}/${locale}: beat{${roleVoice(companion.beat)}} speech{${roleVoice(companion.speech)}} ` +
         `card{${companion.bubble}} beat-on-card ${paintedContrast(companion.beat.color, companion.bubble).toFixed(2)}:1 ` +
@@ -1883,7 +1945,7 @@ for (const locale of ["en", "zh-CN"] as const) {
         ["player", row.player],
       ] as const) {
         expect(
-          distinguishingChannels(reading.beat, reading.speech).length,
+          distinguishingChannels(reading.beat, reading.speech, BEAT_CHANNELS).length,
           `${row.appearance}/${row.locale}: the ${side} beat and its speech collapse into one visible channel\n${table}`,
         ).toBeGreaterThanOrEqual(2);
       }
@@ -1952,6 +2014,32 @@ for (const locale of ["en", "zh-CN"] as const) {
  *     "expected true, got false" would name nothing a reader could act on.
  * ========================================================================== */
 
+/**
+ * A separation this gate cannot read from the two elements' own resting styles.
+ *
+ * It is a DECLARATION, not an exemption: the channel is named, the reason it is out of a
+ * per-element reading's reach is stated, and the page or stylesheet fact it rests on is
+ * asserted by the gate. When that fact goes away the pair reds, so the declaration cannot
+ * outlive the thing doing the work.
+ */
+type BeyondChannel = Readonly<{
+  /** The channel, as the table prints it: `layout`, `pointer state`. */
+  channel: string;
+  /** What it is, and why the reading below cannot see it. */
+  why: string;
+  /**
+   * The fact the separation rests on.
+   *
+   * `ownership` - `a` sits outside every `inside` and `b` inside one: the notice is not a
+   * message and the player's words are, so position and ownership separate them.
+   * `pointer` - `live` draws a brighter ink while pointed at and `still` never changes:
+   * the plate the live control wears exists only in a state this page is not resting in.
+   */
+  witness:
+    | Readonly<{ kind: "ownership"; inside: string }>
+    | Readonly<{ kind: "pointer"; live: string; still: string }>;
+}>;
+
 /** A pair whose two roles both exist: read both, count the channels between them. */
 type MeasuredRolePair = Readonly<{
   kind: "measured";
@@ -1963,8 +2051,10 @@ type MeasuredRolePair = Readonly<{
   scope: string;
   a: string;
   b: string;
-  /** How many independent visible channels the two roles must differ by, at the floors above. */
-  channels: number;
+  /** How many of which visible channels the two roles must differ by, at the floors above. */
+  channels: ChannelFloor;
+  /** What separates them that a resting reading cannot see. Never a substitute for `channels`. */
+  beyond?: readonly BeyondChannel[];
 }>;
 
 /** A pair this surface does not have, declared so the absence is measured rather than omitted. */
@@ -1974,6 +2064,8 @@ type AbsentRolePair = Readonly<{
   reason: string;
   /** What the pair would look like if it appeared; resolving to anything is a failure, not a pass. */
   witness: readonly string[];
+  /** Attribute names that would carry the state if it appeared; the page is swept for them. */
+  attributes: readonly RegExp[];
 }>;
 
 /**
@@ -1983,6 +2075,11 @@ type AbsentRolePair = Readonly<{
  * every pair two elements could form. A pair is here when a player has to act on
  * the difference: which words are hers, which line is the product's own, which
  * control will work, and which conversation they have already read.
+ *
+ * NO PAIR IS DECLARED WITH FEWER THAN TWO SEPARATIONS. `channels.atLeast` counts what
+ * the resting readings show and `beyond` counts what they cannot; the gate adds them and
+ * refuses a pair that declares one, because a pair separated by one channel is the class
+ * this file exists to catch.
  */
 const ROLE_PAIRS: readonly (MeasuredRolePair | AbsentRolePair)[] = [
   {
@@ -1993,7 +2090,10 @@ const ROLE_PAIRS: readonly (MeasuredRolePair | AbsentRolePair)[] = [
     scope: "li.message .message-bubble:has(em.message-action)",
     a: "em.message-action",
     b: "p:not(:has(em.message-action))",
-    channels: 2,
+    // The words are the control this pair is measured against, not a channel: a beat and
+    // the speech after it always say different things, so counting `text` would let the
+    // 1.59:1 collapse gate 16 was written for pass on its own copy.
+    channels: { atLeast: 2, of: ["colour", "weight", "style", "tracking", "size", "opacity", "edge"] },
   },
   {
     kind: "measured",
@@ -2001,9 +2101,22 @@ const ROLE_PAIRS: readonly (MeasuredRolePair | AbsentRolePair)[] = [
     reason:
       "a sentence the product says about the turn must never read as something the player said in it",
     scope: '[data-testid="chat-surface"]',
-    a: ".reference-turn-notice",
+    a: "p.reference-turn-notice:not([data-testid])",
     b: "li.message.player .message-bubble p:not(:has(em.message-action))",
-    channels: 2,
+    // Measured today: `text` (the notice's own sentence against the player's) and `edge`
+    // (the 3 px accent bar the notice wears, the bubble's 0). The ink is 200,192,182 against
+    // 245,240,232 in the dark appearance and 69,61,55 against 26,22,19 in the light - both
+    // under the 3:1 floor, so it is not a second tone; the size step is 13 px against 14 =
+    // 7.1%, under the 8% floor. The second channel a reader uses is where the two sit.
+    channels: { atLeast: 2, of: ["text", "edge", "colour", "size", "weight", "tracking", "opacity"] },
+    beyond: [
+      {
+        channel: "layout",
+        why:
+          "the notice is a strip outside the transcript, above the composer; the player's words are a bubble inside a message row - a channel no per-element computed style carries",
+        witness: { kind: "ownership", inside: "li.message" },
+      },
+    ],
   },
   {
     kind: "measured",
@@ -2013,7 +2126,25 @@ const ROLE_PAIRS: readonly (MeasuredRolePair | AbsentRolePair)[] = [
     scope: ".swipe-controls",
     a: ".swipe-btn:disabled",
     b: ".swipe-btn:not(:disabled)",
-    channels: 2,
+    // At rest this pair has ONE readable channel: the pointer. The dead arrow asks the
+    // browser for `not-allowed` and the live one for `pointer`. Its ink is 144,135,126
+    // against 200,192,182 in the dark appearance (1.96:1) and 102,93,84 against 69,61,55
+    // in the light (1.65:1) - a tone step under the 3:1 floor, and the sheet says so on
+    // purpose: `.swipe-btn:disabled` records that giving the unusable arrow a plate of its
+    // own was the shipped defect (`the box appeared exactly when the control became
+    // unusable`), and that the two states `differ by tone alone`. So the second channel is
+    // the plate the LIVE arrow wears under the pointer, declared below and asserted.
+    // The order - the unusable one is never the louder - is
+    // `disabled-controls-are-quieter.spec.ts`'s fact, not a second copy of it here.
+    channels: { atLeast: 1, of: ["cursor", "colour", "opacity", "weight", "edge"] },
+    beyond: [
+      {
+        channel: "pointer state",
+        why:
+          "`.swipe-btn:hover:not(:disabled)` brightens the live arrow's ink to --text-primary (a 1.65:1 step in the light appearance, 3.11:1 against the dead arrow's tone) and gives it a --surface-panel plate; the arrow that cannot be pressed never enters that state. A resting page is in neither state, so a computed-style reading at rest cannot see it. The channel is the state change, not a tone: its ink step alone is under this file's 3:1 floor in the light appearance, which is why the plate is printed beside it",
+        witness: { kind: "pointer", live: ".swipe-btn:not(:disabled)", still: ".swipe-btn:disabled" },
+      },
+    ],
   },
   {
     kind: "absent",
@@ -2027,6 +2158,7 @@ const ROLE_PAIRS: readonly (MeasuredRolePair | AbsentRolePair)[] = [
       '[aria-label*="未读"]',
       ".chat-item-unread",
     ],
+    attributes: [/unread/iu],
   },
 ];
 
@@ -2060,20 +2192,34 @@ const ROLE_REPLY = {
 } as const;
 
 /** One cell's reading of one declared pair, as the table prints it. */
-type RoleTableEntry = Readonly<{ cell: string; pair: string; reading: RolePairReading }>;
+type RoleTableEntry = Readonly<{
+  cell: string;
+  pair: string;
+  reading: RolePairReading;
+  beyond: readonly BeyondReading[];
+}>;
+
+/**
+ * What a `beyond` channel's witness found.
+ *
+ * `rendering` is what the table prints, so the declared channel is visible in every cell and
+ * not only in the file; `failures` is what went away.
+ */
+type BeyondReading = Readonly<{ rendering: string; failures: readonly string[] }>;
 
 /** Every cell of one pair: both elements' own values, the channels between them, and why any are missing. */
-function roleTable(entries: readonly RoleTableEntry[]): string {
+function roleTable(entries: readonly RoleTableEntry[], of: readonly RoleChannel[]): string {
   return entries
-    .flatMap(({ cell, reading }) => [
+    .flatMap(({ cell, reading, beyond }) => [
       ...reading.problems.map((problem) => `${cell}: ${problem}`),
       ...reading.rows.map((row) => {
-        const channels = distinguishingChannels(row.a, row.b);
+        const channels = distinguishingChannels(row.a, row.b, of);
         return (
           `${cell} ${row.instance}: a{${roleVoice(row.a)}} b{${roleVoice(row.b)}} ` +
           `channels [${channels.join(", ") || "none"}] = ${channels.length}`
         );
       }),
+      ...beyond.map((one) => `${cell} beyond ${one.rendering}`),
     ])
     .join("\n");
 }
@@ -2084,6 +2230,85 @@ type UnreadWitnessScan = Readonly<{
   selectors: readonly Readonly<{ selector: string; matches: number }>[];
   attributes: readonly string[];
 }>;
+
+/**
+ * Asserts the page fact a declared `beyond` channel rests on, and says what it found.
+ *
+ * The witness is the whole point of the declaration: a channel named in a comment is a
+ * sentence, a channel whose fact is read back from the page is a gate. Both shapes are
+ * measured on the real page - ownership by asking which element contains each role, the
+ * pointer state by pointing at the live control and re-reading it.
+ */
+async function readBeyond(page: Page, pair: MeasuredRolePair): Promise<readonly BeyondReading[]> {
+  const readings: BeyondReading[] = [];
+  for (const beyond of pair.beyond ?? []) {
+    if (beyond.witness.kind === "ownership") {
+      const { inside } = beyond.witness;
+      const found = await page.locator(pair.scope).first().evaluate(
+        (container, selectors) => {
+          const left = container.querySelector(selectors.a);
+          const right = container.querySelector(selectors.b);
+          return {
+            aOutside: left !== null && left.closest(selectors.inside) === null,
+            bInside: right !== null && right.closest(selectors.inside) !== null,
+          };
+        },
+        { a: pair.a, b: pair.b, inside },
+      );
+      readings.push({
+        rendering: `${beyond.channel}: a outside \`${inside}\` -> ${found.aOutside}, b inside -> ${found.bInside}`,
+        failures: [
+          ...(found.aOutside
+            ? []
+            : [`${beyond.channel}: a \`${pair.a}\` now sits inside \`${inside}\`, so the declared separation is gone`]),
+          ...(found.bInside ? [] : [`${beyond.channel}: b \`${pair.b}\` no longer sits inside \`${inside}\``]),
+        ],
+      });
+      continue;
+    }
+    const scope = page.locator(pair.scope).first();
+    const live = scope.locator(beyond.witness.live);
+    const still = scope.locator(beyond.witness.still);
+    // The ink and the plate, because a hover in this product is both: the live arrow
+    // brightens to `--text-primary` AND gains a `--surface-panel` plate.
+    const paintOf = (element: Element): Readonly<{ ink: string; plate: string }> => ({
+      ink: getComputedStyle(element).color,
+      plate: getComputedStyle(element).backgroundColor,
+    });
+    const restingLive = await live.evaluate(paintOf);
+    const restingStill = await still.evaluate(paintOf);
+    await live.hover();
+    const pointedLive = await live.evaluate(paintOf);
+    const pointedStill = await still.evaluate(paintOf);
+    await still.hover();
+    const hoveredStill = await still.evaluate(paintOf);
+    // Put the pointer back off both controls, so the next cell is read at rest.
+    await page.mouse.move(0, 0);
+    const separation = paintedContrast(pointedLive.ink, pointedStill.ink);
+    // The channel is the STATE CHANGE, not a tone: pointing at the live control changes its
+    // picture and pointing at the inert one changes nothing. The separation is printed
+    // because it is the strength of that change, and in the light appearance it is under
+    // the tone floor this file uses elsewhere - the plate is what a reader actually sees.
+    const liveAnswers = pointedLive.ink !== restingLive.ink || pointedLive.plate !== restingLive.plate;
+    const stillIgnores =
+      hoveredStill.ink === restingStill.ink && hoveredStill.plate === restingStill.plate;
+    readings.push({
+      rendering:
+        `${beyond.channel}: live ${restingLive.ink} on ${restingLive.plate} -> pointed ${pointedLive.ink} on ${pointedLive.plate}; ` +
+        `dead ${restingStill.ink} -> pointed ${hoveredStill.ink} (${stillIgnores ? "unchanged" : "answers"}); ` +
+        `live-vs-dead while pointed ${separation.toFixed(2)}:1`,
+      failures: [
+        ...(liveAnswers
+          ? []
+          : [`${beyond.channel}: pointing at \`${beyond.witness.live}\` changes nothing, so the state only this role enters is gone`]),
+        ...(stillIgnores
+          ? []
+          : [`${beyond.channel}: \`${beyond.witness.still}\` answers the pointer now, so it is no longer the inert role`]),
+      ],
+    });
+  }
+  return readings;
+}
 
 for (const locale of ROLE_LOCALES) {
   test(`gate 17: every declared role pair is told apart in every appearance and size (${locale})`, async ({ page }) => {
@@ -2111,7 +2336,7 @@ for (const locale of ROLE_LOCALES) {
     // fixture that lost one is the population zero below, named, not a silent exemption.
     await expect(page.locator("li.message.companion em.message-action")).toHaveCount(1);
     await expect(page.locator("li.message.player em.message-action")).toHaveCount(1);
-    await expect(page.locator(".reference-turn-notice")).toHaveCount(1);
+    await expect(page.locator("p.reference-turn-notice:not([data-testid])")).toHaveCount(1);
     await expect(page.locator(".swipe-controls")).toHaveCount(1);
 
     const measured = ROLE_PAIRS.filter((pair): pair is MeasuredRolePair => pair.kind === "measured");
@@ -2123,7 +2348,12 @@ for (const locale of ROLE_LOCALES) {
         // the token roots are what decide every colour and size below.
         await page.evaluate((value) => document.documentElement.setAttribute("data-theme", value), appearance);
         const cell = `${appearance}/${locale}/${viewport.width}x${viewport.height}`;
-        for (const pair of measured) entries.push({ cell, pair: pair.name, reading: await readRolePair(page, pair) });
+        for (const pair of measured) {
+          // The resting reading first, then the witnesses: a hover would move the ink the
+          // resting reading is about.
+          const reading = await readRolePair(page, pair);
+          entries.push({ cell, pair: pair.name, reading, beyond: await readBeyond(page, pair) });
+        }
       }
     }
 
@@ -2141,22 +2371,32 @@ for (const locale of ROLE_LOCALES) {
     const renderings: string[] = [];
     for (const pair of measured) {
       const cells = entries.filter((entry) => entry.pair === pair.name);
-      const rendering = roleTable(cells);
+      const rendering = roleTable(cells, pair.channels.of);
       record(`gate-17 ${pair.name}`, `\n${rendering}`);
-      renderings.push(`${pair.name}: ${pair.channels} channel(s) required - ${pair.reason}\n${rendering}`);
+      const beyond = pair.beyond ?? [];
+      const required = `${pair.channels.atLeast} of [${pair.channels.of.join(", ")}] + beyond [${beyond.map((one) => one.channel).join(", ") || "none"}]`;
+      renderings.push(`${pair.name}: ${required} - ${pair.reason}\n${rendering}`);
+      // A pair separated by one channel in total is the class this file exists to catch:
+      // the declared channels and the declared `beyond` channels have to reach two.
+      if (pair.channels.atLeast + beyond.length < 2) {
+        failures.push(`${pair.name}: declared with ${pair.channels.atLeast + beyond.length} separation(s), and a pair needs two`);
+      }
       for (const entry of cells) {
         for (const problem of entry.reading.problems) failures.push(`${pair.name} ${entry.cell}: ${problem}`);
+        for (const one of entry.beyond) {
+          for (const problem of one.failures) failures.push(`${pair.name} ${entry.cell}: ${problem}`);
+        }
         if (entry.reading.rows.length === 0) {
           failures.push(
-            `${pair.name} ${entry.cell}: zero population - neither role was measured, so nothing about this pair is known here`,
+            `${pair.name} ${entry.cell}: zero population - \`${pair.a}\` / \`${pair.b}\` under \`${pair.scope}\` measured nothing, so nothing about this pair is known here`,
           );
         }
         for (const row of entry.reading.rows) {
-          const channels = distinguishingChannels(row.a, row.b);
-          if (channels.length < pair.channels) {
+          const channels = distinguishingChannels(row.a, row.b, pair.channels.of);
+          if (channels.length < pair.channels.atLeast) {
             failures.push(
               `${pair.name} ${entry.cell} ${row.instance}: ${channels.length} visible channel(s) ` +
-                `[${channels.join(", ") || "none"}], ${pair.channels} required`,
+                `[${channels.join(", ") || "none"}] of [${pair.channels.of.join(", ")}], ${pair.channels.atLeast} required`,
             );
           }
         }
@@ -2169,24 +2409,28 @@ for (const locale of ROLE_LOCALES) {
       .toEqual([]);
 
     for (const pair of ROLE_PAIRS.filter((each): each is AbsentRolePair => each.kind === "absent")) {
-      const scan = await page.evaluate((witness): UnreadWitnessScan => {
-        const attributes: string[] = [];
-        const all = [...document.querySelectorAll("*")];
-        for (const element of all) {
-          for (const attribute of element.getAttributeNames()) {
-            if (/unread/iu.test(attribute)) attributes.push(`${element.tagName.toLowerCase()}[${attribute}]`);
+      const scan = await page.evaluate(
+        (declared): UnreadWitnessScan => {
+          const attributes: string[] = [];
+          const all = [...document.querySelectorAll("*")];
+          const names = declared.attributes.map((source) => new RegExp(source, "iu"));
+          for (const element of all) {
+            for (const attribute of element.getAttributeNames()) {
+              if (names.some((each) => each.test(attribute))) attributes.push(`${element.tagName.toLowerCase()}[${attribute}]`);
+            }
           }
-        }
-        return {
-          examined: all.length,
-          selectors: witness.map((selector) => ({ selector, matches: document.querySelectorAll(selector).length })),
-          attributes,
-        };
-      }, pair.witness);
+          return {
+            examined: all.length,
+            selectors: declared.witness.map((selector) => ({ selector, matches: document.querySelectorAll(selector).length })),
+            attributes,
+          };
+        },
+        { witness: pair.witness, attributes: pair.attributes.map((each) => each.source) },
+      );
       const rendering =
         `examined ${scan.examined} element(s); ` +
         scan.selectors.map(({ selector, matches }) => `${selector} -> ${matches}`).join(", ") +
-        `; attributes naming unread -> ${scan.attributes.join(", ") || "none"}`;
+        `; attributes naming the state -> ${scan.attributes.join(", ") || "none"}`;
       record(`gate-17 ${pair.name}`, `absent (${pair.reason})\n${rendering}`);
       // A scan that looked at nothing agrees with itself.
       expect
