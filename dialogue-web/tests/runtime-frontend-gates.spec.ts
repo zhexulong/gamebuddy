@@ -37,6 +37,7 @@
  */
 import { readFileSync } from "node:fs";
 import { expect, test, type Page } from "./frontend-coverage";
+import { LAYOUT_PAIR, VIEWPORT_SIZES } from "./viewport-policy";
 
 const token = "A".repeat(43);
 const handle = "B".repeat(42) + "A";
@@ -44,17 +45,6 @@ const csrfToken = "C".repeat(42) + "A";
 const expiresAtMs = 1_900_000_000_000;
 const worldBookRevision = "W".repeat(42) + "A";
 const projectionRevision = "P".repeat(42) + "A";
-
-/** The seven sizes the owner's report names: desktop, laptop, the 816px strip, and the phone strips. */
-const VIEWPORTS: readonly Readonly<{ width: number; height: number }>[] = [
-  { width: 1440, height: 900 },
-  { width: 1280, height: 800 },
-  { width: 1024, height: 768 },
-  { width: 900, height: 700 },
-  { width: 816, height: 767 },
-  { width: 480, height: 900 },
-  { width: 400, height: 800 },
-];
 
 /** The shell's peer surfaces, in AppBar order. */
 const SURFACES: readonly Readonly<{ label: string; testId: string }>[] = [
@@ -376,11 +366,11 @@ function viewportFailures(at: string, measured: ViewportMeasurement): string[] {
  * a short box in a tall window (the "half the screen" report), or one that grows
  * past the window and clips the composer band ("bigger than the browser").
  */
-test("gate 1: the shell is anchored to the viewport at seven sizes on every surface", async ({ page }) => {
+test("gate 1: the shell is anchored to the viewport at every declared size on every surface", async ({ page }) => {
   await mountShell(page);
   const failures: string[] = [];
   let checked = 0;
-  for (const viewport of VIEWPORTS) {
+  for (const viewport of VIEWPORT_SIZES) {
     await page.setViewportSize(viewport);
     for (const surface of SURFACES) {
       await openSurface(page, surface);
@@ -414,7 +404,7 @@ test("gate 2: long unbroken content never pushes the page", async ({ page }) => 
   await mountShell(page, { root });
 
   const failures: string[] = [];
-  for (const viewport of [{ width: 1440, height: 900 }, { width: 400, height: 800 }]) {
+  for (const viewport of LAYOUT_PAIR) {
     await page.setViewportSize(viewport);
     const at = `${viewport.width}x${viewport.height}`;
     failures.push(...viewportFailures(at, await page.evaluate(measureViewport)));
@@ -517,16 +507,11 @@ test("gate 2: the transcript author line wraps a long companion name", async ({ 
 });
 
 /**
- * The two window sizes gate 3 measures: the narrowest and the widest member of
- * `VIEWPORTS` above - the two ends where a tone is likeliest to disappear, one to
- * the fold and one to the reading measure. The drift check inside the gate keeps
- * them members instead of letting this list quietly describe a window the rest of
- * the file stopped testing.
+ * The two handles gate 3 measures - the narrowest and the widest cell - from the policy's pair: the two
+ * ends where a tone is likeliest to disappear, one to the fold and one to the reading measure. The drift
+ * check inside the gate keeps them members of the declared population instead of letting a second list
+ * quietly describe a window the rest of the file stopped testing.
  */
-const CONTRAST_VIEWPORTS: readonly Readonly<{ width: number; height: number }>[] = [
-  { width: 400, height: 800 },
-  { width: 1440, height: 900 },
-];
 
 /**
  * The appearances this file measures. A third token root joins a gate by being written into
@@ -683,7 +668,7 @@ test("gate 3: every text tone clears WCAG AA on its effective background, in eve
   const failures: string[] = [];
   const table: string[] = [];
 
-  for (const viewport of CONTRAST_VIEWPORTS) {
+  for (const viewport of LAYOUT_PAIR) {
     await page.setViewportSize({ width: viewport.width, height: viewport.height });
     for (const appearance of PAINTED_APPEARANCES) {
       // The attribute the stylesheet's token root selects on: `appearance.ts` writes exactly this,
@@ -737,9 +722,9 @@ test("gate 3: every text tone clears WCAG AA on its effective background, in eve
 
   // The sizes and appearances are the file's own declared population, held to the authorities
   // that declare them rather than to a second copy written for this gate.
-  for (const viewport of CONTRAST_VIEWPORTS)
+  for (const viewport of LAYOUT_PAIR)
     expect(
-      VIEWPORTS.some((each) => each.width === viewport.width && each.height === viewport.height),
+      VIEWPORT_SIZES.some((each) => each.width === viewport.width && each.height === viewport.height),
       `${viewport.width}x${viewport.height} is one of the sizes this file tests`,
     ).toBe(true);
   expect(paintedAppearances().sort(), "this gate measures every appearance the stylesheet paints").toEqual(
@@ -2349,18 +2334,13 @@ const ROLE_GROUPS: readonly RoleGroup[] = [
 ];
 
 /**
- * The languages every pair is measured in, and the two window sizes.
+ * The languages every pair is measured in, and the pair's two cells.
  *
- * The sizes are the narrowest and the widest member of `VIEWPORTS` above - the two
- * ends where a channel is likeliest to disappear, one to the fold and one to the
- * reading measure. The drift check below keeps them members instead of letting this
- * list quietly describe a window the rest of the file stopped testing.
+ * The cells are the policy's narrowest and widest - the two ends where a role channel is likeliest to
+ * disappear, one to the fold and one to the reading measure. The drift check below keeps them members of
+ * the declared population instead of letting a second list describe a window this file stopped testing.
  */
 const ROLE_LOCALES = ["en", "zh-CN"] as const;
-const ROLE_VIEWPORTS: readonly Readonly<{ width: number; height: number }>[] = [
-  { width: 400, height: 800 },
-  { width: 1440, height: 900 },
-];
 
 /**
  * The reply this gate reads, per language: a beat and the speech after it on both
@@ -2543,7 +2523,7 @@ for (const locale of ROLE_LOCALES) {
 
     const measured = ROLE_PAIRS.filter((pair): pair is MeasuredRolePair => pair.kind === "measured");
     const entries: RoleTableEntry[] = [];
-    for (const viewport of ROLE_VIEWPORTS) {
+    for (const viewport of LAYOUT_PAIR) {
       await page.setViewportSize({ width: viewport.width, height: viewport.height });
       for (const appearance of PAINTED_APPEARANCES) {
         // The appearance is the attribute the stylesheet's second token root selects on;
@@ -2560,9 +2540,9 @@ for (const locale of ROLE_LOCALES) {
     }
 
     // The window sizes are the file's own declared population, not a second one.
-    for (const viewport of ROLE_VIEWPORTS) {
+    for (const viewport of LAYOUT_PAIR) {
       expect(
-        VIEWPORTS.some((each) => each.width === viewport.width && each.height === viewport.height),
+        VIEWPORT_SIZES.some((each) => each.width === viewport.width && each.height === viewport.height),
         `${viewport.width}x${viewport.height} is one of the sizes this file tests`,
       ).toBe(true);
     }

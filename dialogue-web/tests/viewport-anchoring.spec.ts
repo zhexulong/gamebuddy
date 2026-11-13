@@ -32,21 +32,12 @@
  * though the page itself cannot be scrolled.
  */
 import { expect, test, type Page } from "./frontend-coverage";
+import { VIEWPORT_SIZES } from "./viewport-policy";
 
 const token = "A".repeat(43);
 const handle = "B".repeat(42) + "A";
 const csrfToken = "C".repeat(42) + "A";
 const expiresAtMs = 1_900_000_000_000;
-
-/** The six sizes the owner's report names: desktop, laptop, the 816px strip, and the phone-strip widths. */
-const VIEWPORTS: readonly Readonly<{ width: number; height: number }>[] = [
-  { width: 1440, height: 900 },
-  { width: 1280, height: 800 },
-  { width: 900, height: 700 },
-  { width: 816, height: 767 },
-  { width: 480, height: 900 },
-  { width: 400, height: 800 },
-];
 
 const MESSAGE_COUNT = 12;
 
@@ -254,7 +245,7 @@ function chainFailures(at: string, viewport: Readonly<{ width: number; height: n
 test("the shipped shell fills the viewport in both axes, at every size", async ({ page }) => {
   await mountComposedShell(page);
   const failures: string[] = [];
-  for (const viewport of VIEWPORTS) {
+  for (const viewport of VIEWPORT_SIZES) {
     await page.setViewportSize(viewport);
     const measured = await page.evaluate(measureChain);
     const at = `${viewport.width}x${viewport.height}`;
@@ -268,7 +259,7 @@ test("the shipped shell fills the viewport in both axes, at every size", async (
 });
 
 test("a page that mounts the chat surface without the shell anchors it too", async ({ page }) => {
-  await page.setViewportSize(VIEWPORTS[0]);
+  await page.setViewportSize(VIEWPORT_SIZES[0]);
   await page.goto("/tests/chat-surface-probe.html");
   await expect(page.locator(".timeline")).toBeVisible();
   // The probe is the real Timeline and Composer with the real stylesheet, driven
@@ -281,7 +272,7 @@ test("a page that mounts the chat surface without the shell anchors it too", asy
   await expect(page.locator(".message-list li").first()).toBeVisible();
 
   const failures: string[] = [];
-  for (const viewport of VIEWPORTS) {
+  for (const viewport of VIEWPORT_SIZES) {
     await page.setViewportSize(viewport);
     const measured = await page.evaluate(measureChain);
     const at = `${viewport.width}x${viewport.height}`;

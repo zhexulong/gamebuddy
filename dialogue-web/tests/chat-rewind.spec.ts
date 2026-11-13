@@ -1,4 +1,5 @@
 import { expect, test, type Page } from "./frontend-coverage";
+import { LAYOUT_PAIR } from "./viewport-policy";
 
 /**
  * The message-level rewind, mounted, with its own measurements.
@@ -77,11 +78,8 @@ async function openConversation(page: Page): Promise<void> {
   await page.evaluate((entries) => window.chatProbe.setConversation(entries), CONVERSATION);
 }
 
-/** The two widths every message-row journey is measured at. */
-const VIEWPORTS = [
-  { width: 1440, height: 900 },
-  { width: 400, height: 800 },
-] as const;
+/** The two layouts every message-row journey is measured at, from the policy: the wide cell and the phone. */
+const VIEWPORTS = LAYOUT_PAIR;
 
 /** The touch minimum the rest of the strip uses, plus the sub-pixel the measured box may round to. */
 const TOUCH_MINIMUM = 44;

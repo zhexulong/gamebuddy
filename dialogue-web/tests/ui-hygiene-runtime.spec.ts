@@ -17,6 +17,7 @@
  * trigger).
  */
 import { expect, test, type Locator, type Page } from "./frontend-coverage";
+import { LAYOUT_PAIR } from "./viewport-policy";
 
 const token = "A".repeat(43);
 const handle = "B".repeat(42) + "A";
@@ -474,11 +475,8 @@ async function wrappedLabels(
     });
 }
 
-/** The two widths a label has to hold at: the wide layout and the phone strip. */
-const LABEL_WIDTHS = [
-  { width: 1440, height: 900 },
-  { width: 400, height: 800 },
-] as const;
+/** The two layouts a label has to hold in, from the policy: the wide cell and the phone baseline. */
+const LABEL_WIDTHS = LAYOUT_PAIR;
 
 test("gate 3 (label wrap): no interactive control's label wraps on any peer surface", async ({ page }) => {
   await mountPeerSurfaces(page);

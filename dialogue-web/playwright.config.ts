@@ -1,4 +1,5 @@
 import { defineConfig, devices } from "@playwright/test";
+import { DEFAULT_VIEWPORT } from "./tests/viewport-policy";
 
 /**
  * The three zones the journeys run in, and the coverage boundary around them.
@@ -28,7 +29,15 @@ export default defineConfig({
     screenshot: "only-on-failure",
     video: "off",
   },
-  projects: [{ name: "chromium", use: { ...devices["Desktop Chrome"] } }],
+  projects: [
+    {
+      name: "chromium",
+      // `Desktop Chrome` supplies 1280x720, which is now the policy's small-laptop cell instead of an undeclared
+      // device constant: the specs that set no viewport are still measured at the same size, and the cell they are
+      // measured in is one the population declares (and the matrix specs now evaluate too).
+      use: { ...devices["Desktop Chrome"], viewport: DEFAULT_VIEWPORT },
+    },
+  ],
   webServer: {
     // --strictPort fails the browser launch instead of silently grabbing
     // another port, so the tests always exercise the 4173 origin the

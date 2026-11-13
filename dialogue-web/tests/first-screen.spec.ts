@@ -19,6 +19,7 @@
  */
 import { type Page, expect, test } from "./frontend-coverage";
 import { messages } from "../src/i18n";
+import { SMALL_LAPTOP } from "./viewport-policy";
 
 const token = "A".repeat(43);
 const csrfToken = `${"C".repeat(42)}A`;
@@ -386,7 +387,8 @@ async function settingsGroupTop(page: Page, selector: string): Promise<number> {
   return box.y;
 }
 
-const VIEWPORT = { width: 1280, height: 720 };
+/** The first-screen budget, from the policy: the shortest laptop window these screens are held to. */
+const VIEWPORT = SMALL_LAPTOP;
 
 test.describe("B: the connection section is the first thing in Settings", () => {
   test("the model connection comes before language and voice, inside the first screen", async ({ page }) => {
