@@ -261,6 +261,17 @@ let environmentFactsCache = null;
 // Declared before the failure dump reads it: a refusal has to publish WHY it never reached a turn, and null is the
 // fact that says "never checked" instead of "ready".
 let providerReadiness = null;
+// Every submission, kept as its own record: a program id alone says a program EXISTS, not that anything ran
+// through it. Measured 2026-10-20 by an audit of the Pi session logs: one run submitted ten programs and executed
+// zero actions through them while still making 883 individual tool calls - and the run's own result could not say
+// so, because a submission left no trace in it. A path that ships and does nothing is worse than an absent one.
+//
+// Declared HERE rather than beside the rest of the run's record further down, because the run's first phase IS module
+// evaluation and that phase throws: the exit hook assembles the dump out of this container, so a read that executes
+// before this declaration initialises replaces the whole result with `Cannot access 'programSubmissions' before
+// initialization`. Measured 2026-11-13 on `head-ladder`: the module died at the stale-lock pair check, the dump then
+// reached `sampleProgramOutcomes`, and the run published no result at all - not even the failure that stopped it.
+const programSubmissions = [];
 
 // Measured ONCE, at start: the bundle needs the adapter and the display, and asking PowerShell for them at the end of a
 // run kept returning nothing - the measurement was being taken while a frozen game was eating the machine, and a failed
@@ -3726,11 +3737,6 @@ function findProtectedCovenantShipment(receipts, protectedItemId) {
 // otherwise the run's own health report sees zero rejections while the session
 // shows real ones.
 const actionTrace = [];
-// Every submission, kept as its own record: a program id alone says a program EXISTS, not that anything ran
-// through it. Measured 2026-10-20 by an audit of the Pi session logs: one run submitted ten programs and executed
-// zero actions through them while still making 883 individual tool calls - and the run's own result could not say
-// so, because a submission left no trace in it. A path that ships and does nothing is worse than an absent one.
-const programSubmissions = [];
 /** The per-program execution records, filled at assembly time so every result path publishes the same answer. */
 let programOutcomes = Object.freeze([]);
 // Filled before teardown, so the builder publishes what the programs did rather than when the harness asked.
