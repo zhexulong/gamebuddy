@@ -94,6 +94,26 @@ public sealed class ExecutionIdentityLineageTests
     }
 
     /// <summary>
+    /// The preamble's replay branch, which is the one the shared seam owns now: a second call for a request that was
+    /// already answered returns the receipt the store holds and does none of the work a first call does - no second
+    /// execution identity, no second revision. Called directly, so this is the entry point's own lookup and not the
+    /// router's replay in front of it.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(Actions))]
+    public void ARepeatedRequestIsAnsweredWithTheReceiptTheFirstCallStored(string actionId)
+    {
+        var harness = new Harness(actionId, "replay");
+
+        LocalExecutionReceipt first = harness.RequestDirectly();
+        long revisionAfterFirst = harness.Executions.CurrentRevision;
+        LocalExecutionReceipt repeated = harness.RequestDirectly();
+
+        repeated.Should().Be(first, "a request that was already answered is answered again with the receipt it has");
+        harness.Executions.CurrentRevision.Should().Be(revisionAfterFirst, "a replay is the same execution, so it advances nothing");
+    }
+
+    /// <summary>
     /// A real manager with a real router over the action's own catalog registration. The handler is the action's real
     /// request method; no actor is resolvable, so every row stops at the shared admission's <c>world_not_ready</c> -
     /// after the identity was minted, which is the fact under test.
@@ -128,6 +148,9 @@ public sealed class ExecutionIdentityLineageTests
         internal FarmhandActionRouter Router { get; }
 
         internal BridgeExecutionRequest Request { get; }
+
+        /// <summary>The entry point's own answer, bypassing the router's replay in front of it.</summary>
+        internal LocalExecutionReceipt RequestDirectly() => new ProbeHandler(this.Executions, this.Request.Action).Execute(this.Request, this.Executions);
     }
 
     /// <summary>The native seam is the boundary this suite does not own; each entry point is the real one.</summary>

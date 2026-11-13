@@ -183,11 +183,8 @@ internal sealed partial class ExecutionManager
 
     public LocalExecutionReceipt RequestLocalMountTransport(string requestId, int targetX, int targetY, string expectedTargetId, long requestedDeadlineMs)
     {
-        if (this.receiptsByRequestId.TryGetValue(requestId, out LocalExecutionReceipt? existing)) return existing;
-        this.revision++;
-        string executionId = this.ledger.NewExecutionId(requestId);
-        long nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-        if (this.AdmitExecution(requestId, executionId, requestedDeadlineMs, nowMs, AdmissionActionabilityProfile.Physical) is LocalExecutionReceipt rejection) return rejection;
+        if (this.AdmitLocalExecution(requestId, requestedDeadlineMs, AdmissionActionabilityProfile.Physical, out string executionId, out long nowMs) is LocalExecutionReceipt admissionRejection)
+            return admissionRejection;
         GameLocation location = Game1.player.currentLocation;
         // The horse is a moving subject, so the request binds the SUBJECT (`location + HorseId`) rather than the tile
         // the snapshot happened to publish. Comparing the live tile against the published one refused
@@ -244,11 +241,8 @@ internal sealed partial class ExecutionManager
 
     public LocalExecutionReceipt RequestLocalEnterMine(string requestId, int targetX, int targetY, string expectedTargetId, long requestedDeadlineMs)
     {
-        if (this.receiptsByRequestId.TryGetValue(requestId, out LocalExecutionReceipt? existing)) return existing;
-        this.revision++;
-        string executionId = this.ledger.NewExecutionId(requestId);
-        long nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-        if (this.AdmitExecution(requestId, executionId, requestedDeadlineMs, nowMs, AdmissionActionabilityProfile.Physical) is LocalExecutionReceipt rejection) return rejection;
+        if (this.AdmitLocalExecution(requestId, requestedDeadlineMs, AdmissionActionabilityProfile.Physical, out string executionId, out long nowMs) is LocalExecutionReceipt admissionRejection)
+            return admissionRejection;
         GameLocation location = Game1.player.currentLocation;
 
         // Inside a mine the way down is that level's own ladder tile, not the
@@ -421,11 +415,8 @@ internal sealed partial class ExecutionManager
     /// </summary>
     public LocalExecutionReceipt RequestLocalUseMineLadder(string requestId, int targetX, int targetY, string expectedTargetId, long requestedDeadlineMs)
     {
-        if (this.receiptsByRequestId.TryGetValue(requestId, out LocalExecutionReceipt? existing)) return existing;
-        this.revision++;
-        string executionId = this.ledger.NewExecutionId(requestId);
-        long nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-        if (this.AdmitExecution(requestId, executionId, requestedDeadlineMs, nowMs, AdmissionActionabilityProfile.Physical) is LocalExecutionReceipt rejection) return rejection;
+        if (this.AdmitLocalExecution(requestId, requestedDeadlineMs, AdmissionActionabilityProfile.Physical, out string executionId, out long nowMs) is LocalExecutionReceipt admissionRejection)
+            return admissionRejection;
 
         GameLocation location = Game1.player.currentLocation;
         MineLadderTargetResolution exit = ResolveMineLadderTarget(location, targetX, targetY, expectedTargetId, MineLadderKind.Exit);
@@ -613,13 +604,7 @@ internal sealed partial class ExecutionManager
 
     public LocalExecutionReceipt RequestLocalUseRaft(string requestId, int slot, int targetX, int targetY, long requestedDeadlineMs)
     {
-        if (this.receiptsByRequestId.TryGetValue(requestId, out LocalExecutionReceipt? existing))
-            return existing;
-
-        this.revision++;
-        string executionId = this.ledger.NewExecutionId(requestId);
-        long nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-        if (this.AdmitExecution(requestId, executionId, requestedDeadlineMs, nowMs, AdmissionActionabilityProfile.Physical) is LocalExecutionReceipt admissionRejection)
+        if (this.AdmitLocalExecution(requestId, requestedDeadlineMs, AdmissionActionabilityProfile.Physical, out string executionId, out long nowMs) is LocalExecutionReceipt admissionRejection)
             return admissionRejection;
 
         Farmer player = Game1.player;
