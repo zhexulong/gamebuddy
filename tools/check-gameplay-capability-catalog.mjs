@@ -10,6 +10,12 @@
  * red-proof: history the tree at HEAD, where the Mod surface publishes `fish_here` and no covered catalog row ->
  * *                    `gameplay_capability_catalog_invalid: Published registry actions missing covered catalog rows:
  * *                    fish_here.`, exit 1 (tools/check-gameplay-capability-catalog.mjs)
+ * red-proof: history the tree at HEAD, where the Host retired-label table writes `end_day: [sleep_ready,
+ * *                    sleep_after_ready]` and no declaration in this repository or the design mount owns
+ * *                    `sleep_after_ready` -> `capability_term_undeclared:sleep_after_ready:end_day` and
+ * *                    `capability_term_unnamed:advance_day_after_ready:end_day`,
+ * *                    `families examined 19 · replacement ids checked 41 · declared terms checked 235 ·
+ * *                    coordination contracts checked 14`, exit 1 (tools/check-gameplay-capability-catalog.mjs)
  */
 import { readFile } from "node:fs/promises";
 import path from "node:path";
@@ -34,6 +40,11 @@ const actionSurfaceArtifactPath = path.join(
   "action-surface.v1.json",
 );
 const basisSourcePath = path.join(root, "design", "legacy", "12_STARDEW_PRIMITIVE_ACTION_BASIS.md");
+/** The Host's retired-label table is the only declaration that says which current or planned
+ * capabilities replace a label the product no longer publishes. It is read from its own source
+ * so this gate never restates the table: `host/src/action-registry.ts` owns it, and a second
+ * hand-written copy here would be a disagreement scheduled for later. */
+const hostRegistryPath = path.join(root, "host", "src", "action-registry.ts");
 
 const requiredRecordFields = Object.freeze([
   "intentVariantId",
@@ -81,11 +92,7 @@ function enumHas(catalog, name, value) {
   return Array.isArray(catalog.enums?.[name]) && catalog.enums[name].includes(value);
 }
 
-/** Parse the Mod-owned published action surface. This artifact is the
- * generator's tracked output and the only place that carries the Mod's
- * lifecycle fact (adapter membership is a separate, restrictive Host
- * projection). Test expectations are intentionally not a source of truth. */
-export function publishedRegistryEntries(artifactSource) {
+function parseSurfaceArtifact(artifactSource) {
   let surface;
   try {
     surface = JSON.parse(artifactSource);
@@ -95,6 +102,26 @@ export function publishedRegistryEntries(artifactSource) {
   if (!Array.isArray(surface?.actions)) {
     throw new Error("Mod action-surface artifact has no actions array.");
   }
+  return surface;
+}
+
+/** Every action id the Mod's generated surface declares, at any lifecycle. The retired-label check
+ * asks whether the product owns a name at all, so a `live_verified` or `experimental` action is as
+ * much a declaration as a published one - only the coverage check below narrows to `published`. */
+export function declaredSurfaceActionIds(artifactSource) {
+  return new Set(
+    parseSurfaceArtifact(artifactSource)
+      .actions.map((action) => action?.actionId)
+      .filter((actionId) => typeof actionId === "string" && actionId.length > 0),
+  );
+}
+
+/** Parse the Mod-owned published action surface. This artifact is the
+ * generator's tracked output and the only place that carries the Mod's
+ * lifecycle fact (adapter membership is a separate, restrictive Host
+ * projection). Test expectations are intentionally not a source of truth. */
+export function publishedRegistryEntries(artifactSource) {
+  const surface = parseSurfaceArtifact(artifactSource);
   const entries = [];
   for (const action of surface.actions) {
     if (action?.lifecycle !== "published") continue;
@@ -119,6 +146,125 @@ export function publishedRegistryEntries(artifactSource) {
 
 function nonEmptyString(value) {
   return typeof value === "string" && value.trim().length > 0;
+}
+
+/**
+ * Every family the Host's retired-label table declares, with the replacement ids it writes.
+ *
+ * The table is a retired-label -> replacement-ids map, not an action list: its keys are labels the
+ * product once planned and no longer publishes, and its values name the capabilities that replace
+ * them. Both halves of that relation are checked against the declarations that own the names - the
+ * Mod's published surface, the semantic catalog's `basisPrimitiveIds`/`implementationActionIds`, and
+ * the catalog's coordination contracts - because the values may legitimately name a capability whose
+ * implementation does not exist yet, but they may not name a capability nothing declares at all.
+ */
+export function retiredMigrationFamiliesFromSource(registrySource) {
+  const marker = "export const RETIRED_ACTION_POLICY_MIGRATIONS = Object.freeze({";
+  const start = registrySource.indexOf(marker);
+  if (start < 0) {
+    throw new Error("host/src/action-registry.ts no longer declares RETIRED_ACTION_POLICY_MIGRATIONS.");
+  }
+  const bodyStart = start + marker.length;
+  const bodyEnd = registrySource.indexOf("\n});", bodyStart);
+  if (bodyEnd < 0) {
+    throw new Error("RETIRED_ACTION_POLICY_MIGRATIONS has no closing brace in host/src/action-registry.ts.");
+  }
+  const families = new Map();
+  for (const match of registrySource
+    .slice(bodyStart, bodyEnd)
+    .matchAll(/^ {2}([a-z][a-z0-9_]*): Object\.freeze\(\[([\s\S]*?)\]\)/gmu)) {
+    const family = match[1];
+    if (families.has(family)) throw new Error(`RETIRED_ACTION_POLICY_MIGRATIONS declares ${family} twice.`);
+    families.set(family, Object.freeze([...match[2].matchAll(/"([a-z][a-z0-9_]*)"/gu)].map((term) => term[1])));
+  }
+  if (families.size === 0) {
+    throw new Error("RETIRED_ACTION_POLICY_MIGRATIONS declares no families; the reader is blocked, not passing.");
+  }
+  return families;
+}
+
+/**
+ * Both directions of one relation, over the declarations that own the names.
+ *
+ * `capability_term_undeclared:<id>:<family>` - the table writes a replacement id that the published
+ * surface, the catalog's basis primitives, and the catalog's implementation actions all fail to own.
+ * An operator migrating off a retired label would be pointed at nothing.
+ *
+ * `capability_term_unnamed:<id>:<family>` - the reverse, and the one a subset check cannot see: the
+ * catalog declares a coordination contract as a step of a composite capability that this family
+ * already names, and the family never names that step. Dropping a term from the table, or renaming
+ * one, stays green under a subset check; here the declared step goes unnamed and the family is named
+ * as the drifting member. The population is the catalog's own coordination contracts, so no list is
+ * maintained by hand.
+ *
+ * `family_without_actions:<family>` - a family whose replacement list is empty says a label was
+ * retired and nothing replaced it, which is the shape a half-finished edit leaves behind.
+ */
+export function validateRetiredMigrationTerms({
+  families,
+  surfaceActionIds,
+  catalogTerms,
+  coordinationContracts,
+  compositeGraphs,
+}) {
+  const graphContractSteps = coordinationStepsByGraph(compositeGraphs);
+  const ownsTerm = (term) => surfaceActionIds.has(term) || catalogTerms.has(term);
+  const errors = [];
+  let replacementIdCount = 0;
+  for (const [family, terms] of families) {
+    if (terms.length === 0) {
+      errors.push(`family_without_actions:${family}`);
+      continue;
+    }
+    replacementIdCount += terms.length;
+    for (const term of terms) {
+      if (!ownsTerm(term)) errors.push(`capability_term_undeclared:${term}:${family}`);
+    }
+    for (const { sibling, graphId } of unnamedCoordinationSiblings(terms, coordinationContracts, graphContractSteps)) {
+      errors.push(`capability_term_unnamed:${sibling}:${family} (composite ${graphId})`);
+    }
+  }
+  return Object.freeze({
+    errors,
+    census: Object.freeze({
+      familiesExamined: families.size,
+      replacementIdsChecked: replacementIdCount,
+      catalogTermsChecked: surfaceActionIds.size + catalogTerms.size,
+      coordinationContractsChecked: coordinationContracts.size,
+    }),
+  });
+}
+
+/** The coordination steps each composite graph declares, so a family that names one step of a
+ * coordinated capability can be asked for the others. A graph with no coordination step is absent. */
+function coordinationStepsByGraph(compositeGraphs) {
+  const steps = new Map();
+  for (const graph of compositeGraphs) {
+    const stepped = new Set(
+      (graph.steps || [])
+        .filter((step) => step?.kind === "coordination" && typeof step.coordinationContractId === "string")
+        .map((step) => step.coordinationContractId),
+    );
+    if (stepped.size > 0) steps.set(graph?.id || "<missing graph id>", stepped);
+  }
+  return steps;
+}
+
+/** The reverse of "is this term declared": a coordination step the catalog declares alongside a
+ * term this family already names, and that the family leaves unnamed. */
+function unnamedCoordinationSiblings(terms, coordinationContracts, graphContractSteps) {
+  const named = new Set(terms);
+  const unnamed = [];
+  for (const term of terms) {
+    if (!coordinationContracts.has(term)) continue;
+    for (const [graphId, stepped] of graphContractSteps) {
+      if (!stepped.has(term)) continue;
+      for (const sibling of stepped) {
+        if (!named.has(sibling)) unnamed.push({ sibling, graphId });
+      }
+    }
+  }
+  return unnamed;
 }
 
 export function basisPrimitiveIdsFromSource(basisSource) {
@@ -328,14 +474,32 @@ export function validateGameplayCapabilityCatalog(catalog, publishedEntries, bas
   return errors;
 }
 
+/** A prerequisite this repository does not carry is not a pass: the design mount is a separate
+ * checkout, so its absence is reported by name with a non-zero exit instead of a silent skip. */
+async function readDesignSource(file, what) {
+  try {
+    return await readFile(file, "utf8");
+  } catch (error) {
+    if (error.code !== "ENOENT") throw error;
+    const blocked = new Error(
+      `design mount not present: ${what} (${path.relative(root, file)}) - the retired-label term check was not measured`,
+    );
+    blocked.code = "not_measured";
+    throw blocked;
+  }
+}
+
 export async function checkGameplayCapabilityCatalog({
   catalogFile = catalogPath,
   artifactFile = actionSurfaceArtifactPath,
+  basisFile = basisSourcePath,
+  registryFile = hostRegistryPath,
 } = {}) {
-  const [catalogSource, artifactSource, basisSource] = await Promise.all([
-    readFile(catalogFile, "utf8"),
+  const [catalogSource, artifactSource, basisSource, registrySource] = await Promise.all([
+    readDesignSource(catalogFile, "the gameplay-semantic catalog"),
     readFile(artifactFile, "utf8"),
-    readFile(basisSourcePath, "utf8"),
+    readDesignSource(basisFile, "the primitive action basis"),
+    readFile(registryFile, "utf8"),
   ]);
   let catalog;
   try {
@@ -346,7 +510,25 @@ export async function checkGameplayCapabilityCatalog({
   const entries = publishedRegistryEntries(artifactSource);
   const basisIds = basisPrimitiveIdsFromSource(basisSource);
   const errors = validateGameplayCapabilityCatalog(catalog, entries, basisIds);
-  if (errors.length) fail(errors);
+  const migration = validateRetiredMigrationTerms({
+    families: retiredMigrationFamiliesFromSource(registrySource),
+    surfaceActionIds: declaredSurfaceActionIds(artifactSource),
+    catalogTerms: new Set(
+      catalog.records.flatMap((record) => [
+        ...(record.basisPrimitiveIds || []),
+        ...(record.implementationActionIds || []),
+      ]),
+    ),
+    coordinationContracts: new Set(
+      (catalog.coordinationContracts || []).map((contract) => contract?.coordinationContractId),
+    ),
+    compositeGraphs: catalog.compositeGraphs,
+  });
+  errors.push(...migration.errors);
+  const census =
+    `families examined ${migration.census.familiesExamined} · replacement ids checked ${migration.census.replacementIdsChecked} · ` +
+    `declared terms checked ${migration.census.catalogTermsChecked} · coordination contracts checked ${migration.census.coordinationContractsChecked}`;
+  if (errors.length) fail([...errors, census]);
   return Object.freeze({
     state: "passed",
     catalogKind: catalog.catalogKind,
@@ -354,6 +536,8 @@ export async function checkGameplayCapabilityCatalog({
     coveredPublishedActionCount: entries.length,
     semanticCompleteness: catalog.semanticCompleteness,
     basisPrimitiveCount: basisIds.length,
+    census,
+    migrationCensus: migration.census,
   });
 }
 

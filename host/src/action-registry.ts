@@ -792,7 +792,10 @@ export const RETIRED_ACTION_POLICY_MIGRATIONS = Object.freeze({
     "claim_minigame_or_festival_reward",
   ]),
   minigame_play: Object.freeze(["start_minigame_phase", "control_minigame_phase", "claim_minigame_or_festival_reward"]),
-  end_day: Object.freeze(["sleep_ready", "sleep_after_ready"]),
+  // The two coordination steps of `end_day_multiplayer_v1`. The day-progression term keeps its own name
+  // after the `advance_day -> sleep` action rename (b4c44ea8): these values name capabilities, and the
+  // capability is `advance_day_after_ready` even though the action a player issues is `sleep`.
+  end_day: Object.freeze(["sleep_ready", "advance_day_after_ready"]),
   milk_animal: Object.freeze(["collect_animal_product"]),
   shear_animal: Object.freeze(["collect_animal_product"]),
   tool_upgrade: Object.freeze(["request_tool_upgrade", "claim_tool_upgrade"]),
