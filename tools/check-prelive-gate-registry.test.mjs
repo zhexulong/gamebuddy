@@ -302,17 +302,19 @@ test("verifyRunsIn reads on-demand as a claim with no scheduled home, not as a p
   });
 });
 
-test("the derivation excludes a gate's falsifier suite and includes the tree-guarding stardew tests", () => {
+test("the derivation excludes both kinds of falsifier and includes the tree-guarding stardew tests", () => {
   const population = derivePopulation({
     list: (dir) =>
       dir === "tools"
         ? ["check-a.mjs", "check-a.test.mjs", "audit-b.mjs", "audit-b.test.mjs", "check-c.mutation.mjs", "read-x.mjs"]
         : ["action-source-projection-drift.test.mjs", "static-verifier-contract.test.mjs", "portfolio.test.mjs"],
   });
+  // A `.mutation.mjs` is a falsifier like a `.test.mjs`: the tree carried one (`check-stardew-loop-closure.mutation.mjs`)
+  // with an exemption whose own reason read "a mutation driver, not a gate", and `tools/check-gate-population-agreement.mjs`
+  // is what now holds this scan to the census's `isGateFile` rule.
   assert.deepEqual(population, [
     "tools/audit-b.mjs",
     "tools/check-a.mjs",
-    "tools/check-c.mutation.mjs",
     "integrations/stardew/action-development/tests/action-source-projection-drift.test.mjs",
   ]);
 });

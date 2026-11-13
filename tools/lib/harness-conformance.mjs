@@ -552,6 +552,14 @@ const GATES_WITH_FALSIFIER = Object.freeze([
   // read (`not_measured`, never passed), a declared extension point its diff never adds, an extension point the
   // submodule already has, and a patch that only parses until it is applied.
   "check-vendor-patches-apply.mjs",
+  // Prints `gate populations: invoked N · ci-coverage scripts N · corpus names N · census scripts N · gate files N ·
+  // prelive members N · census gates N · register members N` and a one-line `{"gate":"gate_population_agreement/v1",
+  // "population":N,"checks":[...]}` report whose four entries are the four ways a member can fail to be accounted for,
+  // so its default run is the report this suite reads. Its falsifier is tools/check-gate-population-agreement.test.mjs:
+  // a falsifier inside a consumer's population, a gate file no consumer reads, an invoked script no consumer reads, a
+  // register naming a member that is not a gate, an untracked gate published rather than named, and the real tree
+  // agreeing - and its own red proof is the reading that preceded its fix (one mutation driver in prelive's 143).
+  "check-gate-population-agreement.mjs",
   // Prints `{"gate":"stardew_receipt_transition_field_provenance/v1","status":"passed","population":443,...}` and
   // the same object as a `receipt_transition_fields examined=443 files=47 ...` line, blocking on
   // `gate_measured_nothing` when it finds no receipt builder or no transition field, so its default run is the report

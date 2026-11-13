@@ -81,7 +81,10 @@ export const POPULATION_SCAN = Object.freeze([
   {
     dir: "tools",
     include: /^(?:check|audit)-.*\.mjs$/u,
-    exclude: [/\.test\.mjs$/u],
+    // A `.test.mjs` and a `.mutation.mjs` are the gate's falsifiers, not gates: counting them asks the red-proof census
+    // for a proof of the proof. The census's own rule is `tools/lib/gate-population.mjs`'s `isGateFile`, which excludes
+    // both; `tools/check-gate-population-agreement.mjs` is what holds the two spellings to one set.
+    exclude: [/\.test\.mjs$/u, /\.mutation\.mjs$/u],
   },
   {
     dir: STARDEW_TESTS,
@@ -370,6 +373,14 @@ export const EXEMPTIONS = Object.freeze([
     runsIn: "on-demand",
   },
   {
+    path: "tools/check-gate-population-agreement.mjs",
+    reason:
+      "elsewhere: reads the four gate populations (check-ci-coverage, check-prelive-gate-registry, the red-proof census " +
+      "and the tool-test corpus) plus the workflows and the registers, and needs no game or network, so it runs on every " +
+      "push in the CI gates job rather than duplicating a full run inside the ladder",
+    runsIn: "pnpm check:gate-population-agreement",
+  },
+  {
     path: "tools/check-head-self-contained.mjs",
     reason:
       "elsewhere: reads the commit's own module graph (`git ls-tree HEAD`, not the index), runs on every push in " +
@@ -641,13 +652,6 @@ export const EXEMPTIONS = Object.freeze([
     reason:
       "environment: measured stardew_decompile_root_missing; it counts call sites in ref/external/StardewValleyDecompiled",
     runsIn: "pnpm check:stardew-loop-closure",
-  },
-  {
-    path: "tools/check-stardew-loop-closure.mutation.mjs",
-    reason:
-      "suite: a mutation driver, not a gate - `suite:test:stardew-loop-closure-mutation` plants the defect and " +
-      "expects the closure gate to go red",
-    runsIn: "suite:test:stardew-loop-closure-mutation",
   },
   {
     path: "tools/check-stardew-mod-folder-name.mjs",
