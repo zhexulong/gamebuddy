@@ -465,6 +465,14 @@ export const EXEMPTIONS = Object.freeze([
     runsIn: "pnpm check:gameplay-capability-catalog",
   },
   {
+    path: "tools/check-gate-premises.mjs",
+    reason:
+      "elsewhere: static gate over the inputs each source gate DECLARES - it reads the gate files, the modules they " +
+      "spawn or import, and a stat of every derived path, so it runs in the derived CI gates job on every push; its " +
+      "own suite replays the deletion commit (`213cde50`) that left two gates red on a file that was already gone",
+    runsIn: "pnpm check:gate-premises",
+  },
+  {
     path: "tools/check-head-typecheck.mjs",
     reason: "elsewhere: typechecks HEAD through the installed workspace, runs on every push as its own step",
     runsIn: "pnpm check:head-typecheck",

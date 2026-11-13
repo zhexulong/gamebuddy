@@ -431,7 +431,9 @@
     "test:generated-artifact-reproducibility": "node --test tools/check-generated-artifact-reproducibility.test.mjs",
     "test:gate-populations": "node --test tools/check-gate-populations.test.mjs",
     "test:action-surface-parity": "node --test tools/check-action-surface-parity.test.mjs",
-    "check:gate-population-agreement": "node tools/check-gate-population-agreement.mjs"
+    "check:gate-population-agreement": "node tools/check-gate-population-agreement.mjs",
+    "check:gate-premises": "node tools/check-gate-premises.mjs",
+    "test:gate-premises": "node --test tools/check-gate-premises.test.mjs"
   },
   "gateRedProofs": {
     "check:dialogue-web-boundaries": "external depcruise --config .dependency-cruiser.dialogue-web.cjs dialogue-web/src — a residual module importing a surface is `error no-module-to-surface` naming that module and the surface it reaches, exit 1",
