@@ -3286,9 +3286,31 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         return result;
     }
 
+    /// <summary>
+    /// The identity of one grass tuft. It names the TILE and the SPECIES, never the count.
+    /// </summary>
+    /// <remarks>
+    /// The count is deliberately absent. It used to be part of the hash, which made an approved target id expire the
+    /// moment the tuft was cut: `Grass.performToolAction` deducts 1 (basic scythe), 2 (`(W)53`) or 4 (`(W)66`) from
+    /// `numberOfWeeds` per swing and returns "cut" only when the count reaches zero (`Grass.cs:380-395`,
+    /// `numberOfWeeds.Value -= num` at `:393`; the death test is `numberOfWeeds.Value <= 0` at `:256`), so a thinned tuft
+    /// is the SAME tuft still standing. It also grows back to 4 by itself every morning (`Grass.cs:319-321`), which is a
+    /// second way an identity keyed on it moves without the target moving. The product records the same reading twice - the
+    /// swing loop in `ExecuteCutGrass` (`farmhandexecutioncontroller.resourcetoolactions.cs:1271-1276`) and
+    /// `MeleeSweepOccupancy.Changed` (`:6194-6199`), which calls a tuft that kept its word but lost a point `changed`.
+    ///
+    /// So a `cut_grass` carrying the id from the observation was refused `grass_target_changed` on the target a
+    /// `sweep_scythe` had just thinned - the identical defect `BuildRockSourceTargetId` (:3597-3602) and
+    /// `BuildTreeChopSourceTargetId` (:3022-3032) already record.
+    ///
+    /// The count moved to the two places it belongs: the row publishes it (`BridgeGrassTarget.NumberOfWeeds`, set from
+    /// this same field at :3283, exactly as `BridgeRockSourceTarget.Health` publishes a rock's durability), and the
+    /// precondition reads it - `ExecuteCutGrass` records `weeds_before`/`weeds_after` around each swing and keeps
+    /// swinging until the tuft is gone.
+    /// </remarks>
     internal static string BuildGrassTargetId(StardewValley.GameLocation location, int x, int y, StardewValley.TerrainFeatures.Grass grass)
     {
-        string raw = $"{location.NameOrUniqueName}:{x},{y}:grass:{grass.grassType.Value}:{grass.numberOfWeeds.Value}";
+        string raw = $"{location.NameOrUniqueName}:{x},{y}:grass:{grass.grassType.Value}";
         return $"grass_{Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(raw))).ToLowerInvariant()[..16]}";
     }
 
@@ -3344,9 +3366,20 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
 
     private static bool IsScytheTargetInRange(Farmer player, int x, int y) => IsTileWithinChebyshevRadius(player, x, y, 1);
 
+    /// <summary>
+    /// The identity of one weed. It names the TILE and the ITEM, never the health.
+    /// </summary>
+    /// <remarks>
+    /// The health is deliberately absent, for the reason <see cref="BuildGrassTargetId"/> gives at length:
+    /// `Object.performToolAction`'s weeds branch subtracts 1 from `minutesUntilReady` per swing and cuts the weed only
+    /// when the result reaches zero (`Object.cs:1150-1162`, `minutesUntilReady.Value -= num2` at `:1159`, the cut test at
+    /// `:1161`), so a common weed (`(O)313`) at 1 health is the weed the caller named at 2 - and hashing it refused the
+    /// second swing with `weed_target_changed`. The health moved to the row (`BridgeWeedTarget.Health`, set from this same
+    /// field at :3195) and to the precondition, which reads it before and after every swing.
+    /// </remarks>
     internal static string BuildWeedTargetId(StardewValley.GameLocation location, int x, int y, StardewValley.Object weed)
     {
-        string raw = $"{location.NameOrUniqueName}:{x},{y}:weed:{weed.QualifiedItemId}:{weed.MinutesUntilReady}";
+        string raw = $"{location.NameOrUniqueName}:{x},{y}:weed:{weed.QualifiedItemId}";
         return $"weed_{Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(raw))).ToLowerInvariant()[..16]}";
     }
 

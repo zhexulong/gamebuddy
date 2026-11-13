@@ -352,7 +352,7 @@
         "grassType": 1,
         "location": "ProbeFarm",
         "numberOfWeeds": 4,
-        "targetId": "grass_dda24dda77eaf64e",
+        "targetId": "grass_f294e336a173185f",
         "x": 4,
         "y": 3
       }
@@ -423,7 +423,7 @@
         "health": 1,
         "isWeeds": true,
         "location": "ProbeFarm",
-        "targetId": "weed_73c94f7afaf996a4",
+        "targetId": "weed_84be135c2673ee17",
         "x": 2,
         "y": 3
       }
