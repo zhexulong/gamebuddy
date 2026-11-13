@@ -22,7 +22,7 @@ import {
   parseReceiptEvidence,
   worldNightEndingsFromFacts,
 } from "../../lib/multiday-baseline.mjs";
-import { decideDayWake, QUIET_BOUND_MS, WAKE_REASON, WAKE_REASONS, watchRollover } from "../../lib/multiday-loop.mjs";
+import { decideDayWake, WAKE_REASON, WAKE_REASONS, watchRollover } from "../../lib/multiday-loop.mjs";
 import { buildFailureSnapshot, classifyFailure } from "../../lib/failure-dump.mjs";
 import { killedReasonCode, reclamationRecord } from "../../lib/live-run-teardown.mjs";
 import { appendTurnMemory, summarizeHostMemory, turnMemoryPoint } from "../../lib/live-run-memory.mjs";
@@ -1977,7 +1977,7 @@ test("a second turn does not answer with the first turn's program", async () => 
     heartbeatSilentMs = declaredStallMs + 30_000;
     statusQueries.length = 0;
     const samplesBefore = heartbeatSamples;
-    const secondTurn = await runAgentTurn("second turn", {}, { reason: WAKE_REASON.continuation });
+    const secondTurn = await runAgentTurn("second turn", {}, { reason: WAKE_REASON.playerInput });
 
     assert.match(
       String(stall()),
@@ -4473,7 +4473,7 @@ test("the day's shortage fact is composed once, on the first turn, and published
     "the fact is computed on the day's first turn and on no other turn",
   );
   assert.match(RUNNER_SOURCE, /taskId: taskForDay\(day\),\s*snapshot: client\.state\?\.snapshot \?\? null,/);
-  // And the first-turn prompt is the one that carries it: a fact appended to a continuation turn would repeat.
+  // And the first-turn prompt is the one that carries it: a fact appended to a later turn would repeat.
   assert.match(RUNNER_SOURCE, /turns === 1\s*\?\s*withDayFact\(promptForDay\(day\), dayFact\)/);
   // Published, so "she was handed the supply and did not go" is distinguishable from "nothing ever told her".
   assert.match(RUNNER_SOURCE, /const seedFacts = \[\];/);
@@ -4620,8 +4620,16 @@ test("the day loop asks the wake decision before it prompts, so a settlement alo
     "a suppressed wake must wait for the next poll, not fall through to the prompt",
   );
   assert.ok(
-    loop.indexOf("promptForDayContinuation(") > gateAt,
-    "the carry-on prompt must be reachable only through the wake decision",
+    loop.indexOf("promptForStall(") > gateAt && loop.indexOf("promptForStaleWorld(") > gateAt,
+    "the two fact-answered prompts must be reachable only through the wake decision",
+  );
+  // AND THERE IS NO GENERIC CARRY-ON PROMPT LEFT. Measured 2026-11-13 (`round47`): 16 of the 30 idle gaps after turn 34 sat
+  // in a 19-22 s band, and every one of them ended in a prompt that asked her to carry on with a world that had published
+  // nothing. A turn that opens now answers a question the world asked, so the template that said "carry on" is gone and a
+  // test that let it come back by another name would be no guard at all.
+  assert.ok(
+    !loop.includes("promptForDayContinuation"),
+    "a generic carry-on prompt is the clock's arm still wearing a prompt's name",
   );
   assert.match(loop, /reason: wake\.reason/u, "the prompt must carry the decision's own reason");
 });
@@ -4632,7 +4640,6 @@ const IDLE_DAY = Object.freeze({
   objectiveMet: false,
   programRunning: false,
   admissionPending: false,
-  quietMs: QUIET_BOUND_MS * 2,
   lateDay: false,
   dayEndOffered: false,
   stalled: false,
@@ -4641,7 +4648,6 @@ const IDLE_DAY = Object.freeze({
 
 const WAKE_PRODUCERS = Object.freeze({
   day_start: () => decideDayWake({ ...IDLE_DAY, turnIndex: 0 }).reason,
-  continuation: () => decideDayWake(IDLE_DAY).reason,
   stall_wake: () => decideDayWake({ ...IDLE_DAY, stalled: true }).reason,
   stale_world: () => decideDayWake({ ...IDLE_DAY, worldStateStale: true }).reason,
   day_end_offer: () => decideDayWake({ ...IDLE_DAY, objectiveMet: true, lateDay: true }).reason,
@@ -4652,8 +4658,8 @@ const WAKE_PRODUCERS = Object.freeze({
     decideDayWake({
       ...IDLE_DAY,
       lateDay: true,
-      objectiveProgressSinceMs: QUIET_BOUND_MS * 2,
-      objectiveSpanMs: QUIET_BOUND_MS,
+      objectiveProgressSinceMs: 80_000,
+      objectiveSpanMs: 40_000,
     }).reason,
   // A session goal is a PLAYER turn, so its reason is declared at its own call site: this reads that site rather than
   // restating it, which is what makes "reachable" a fact about the runner instead of about this table.
@@ -4760,12 +4766,19 @@ test("the day's offer is closed by BOTH reasons that make it, and asked as the l
 });
 
 test("the multi-day result publishes the wake account the verdict reads", () => {
-  // The three readings cannot be reconstructed from the session alone - a prompt that was never issued leaves no
-  // record there - so the runner has to publish them by name.
-  assert.match(RUNNER_SOURCE, /continuationPromptsIssued:/u);
-  assert.match(RUNNER_SOURCE, /continuationPromptsSuppressed:/u);
+  // The account cannot be reconstructed from the session alone - a prompt that was never issued leaves no record there -
+  // so the runner has to publish it by name.
+  assert.match(RUNNER_SOURCE, /dayEndOffers:/u);
+  assert.match(RUNNER_SOURCE, /stallWakes:/u);
   assert.match(RUNNER_SOURCE, /suppressedByReason:/u);
-  assert.match(RUNNER_SOURCE, /quietBoundMs: QUIET_BOUND_MS/u);
+  assert.match(RUNNER_SOURCE, /suppressed: wakesSuppressed/u);
+  // THE SILENCE, PUBLISHED. A quiet bound no longer guarantees a prompt, so the run has to say how long nothing asked
+  // her anything and which decision did the leaving; without it a companion left alone for ten minutes is
+  // indistinguishable from one that was busy.
+  assert.match(RUNNER_SOURCE, /noWakeForMs: noWake\.forMs/u);
+  assert.match(RUNNER_SOURCE, /noWakeLastReason: noWake\.lastReason/u);
+  assert.match(RUNNER_SOURCE, /"MULTIDAY_NO_WAKE"/u);
+  assert.match(RUNNER_SOURCE, /no_wake_for_ms:\$\{String\(noWake\.forMs\)\}:\$\{String\(noWake\.lastReason/u);
   // The span the objective branch read travels with them: a run that published `objective_unreachable_for_today: 1`
   // must be readable against the number that licensed it, and that number exists nowhere else.
   assert.match(RUNNER_SOURCE, /objectiveSpanMs/u);

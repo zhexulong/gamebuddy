@@ -663,8 +663,9 @@ test("the verdict prices the wakes: how many per objective, and the model's shar
       multiday: {
         wakes: {
           total: 6,
-          continuationPromptsIssued: 2,
-          continuationPromptsSuppressed: 3,
+          suppressed: 3,
+          noWakeForMs: 92_000,
+          noWakeLastReason: "waiting_for_the_world",
           suppressedByReason: { body_still_working: 2, objective_met: 1 },
           byReason: { day_start: 1, continuation: 2, stall_wake: 0, day_end_offer: 1, player_input: 0 },
         },
@@ -677,9 +678,11 @@ test("the verdict prices the wakes: how many per objective, and the model's shar
       assert.match(block, /wakes_per_objective\s+3\.0 = 6 prompt turns \/ 2 objectives/u);
       // The model's own seconds against the measured wall, not against the buckets' own sum.
       assert.match(block, /wall_ms_in_model\s+[1-9]\d?\.\d% = 6\.0s model \/ \d+\.\ds wall/u);
-      assert.match(block, /continuation_prompts_issued\s+2 of 6 prompt turns/u);
+      assert.match(block, /prompt_turns_by_reason\s+6 prompt turns/u);
       assert.match(block, /day_start 1, continuation 2, stall_wake 0, day_end_offer 1, player_input 0/u);
-      assert.match(block, /continuation_prompts_suppressed\s+3: body_still_working 2, objective_met 1/u);
+      assert.match(block, /suppressions_by_reason\s+3: body_still_working 2, objective_met 1/u);
+      // THE SILENCE, IN THE FORM THE RUNNER PUBLISHES IT: how long she was left alone, and which decision did the leaving.
+      assert.match(block, /no_wake_for_ms\s+no_wake_for_ms:92000:waiting_for_the_world/u);
     },
   ));
 
@@ -691,7 +694,7 @@ test("a run that published no wake account says so by field name, never as a zer
       assert.match(block, /wakes_per_objective\s+3\.0 = 6 prompt turns \/ 2 objectives/u);
       assert.match(
         block,
-        /continuation_prompts_issued\s+not_measured \(result\.json multiday\.wakes was not published by this run\)/u,
+        /prompt_turns_by_reason\s+not_measured \(result\.json multiday\.wakes was not published by this run\)/u,
         "an absent account is not an account of zero suppressions",
       );
     },

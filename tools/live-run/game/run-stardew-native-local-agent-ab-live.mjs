@@ -32,7 +32,6 @@ import { createHash } from "node:crypto";
 import {
   decideDayWake,
   objectiveProgressKey,
-  QUIET_BOUND_MS,
   runMultiDayLoop,
   WAKE_REASON,
   WAKE_REASONS,
@@ -864,6 +863,14 @@ const recordWake = (reason) => {
 const recordWakeSuppression = (reason) => {
   wakeAccount.suppressed[reason] = (wakeAccount.suppressed[reason] ?? 0) + 1;
 };
+// HOW LONG THE COMPANION WAS LEFT ALONE, AND BY WHICH ANSWER.
+//
+// A quiet bound used to guarantee she was asked again every twenty seconds. Nothing does that now, so a long stretch with
+// no turn opened is a READING rather than an absence - `no_wake_for_ms:<ms>:<reason>` - because a silence the harness chose
+// (`waiting_for_the_world`) and a silence it could not end (a stall nobody published) must not read alike in the account.
+// `forMs` is the longest such stretch of the whole run, and `lastReason` is the decision that was in force when it
+// reached that length. Reset, not accumulated, the moment a turn opens.
+const noWake = { sinceMs: null, forMs: 0, lastReason: null };
 // What the companion could actually see during the session. Sampled WHILE the
 // session runs (the surface a turn can rely on), never read after teardown: the
 // post-run snapshot is empty in practice, which silently emptied the audit's
@@ -1745,28 +1752,6 @@ function terminalReceiptFor(facts, requestId) {
 }
 
 /**
- * How long the world has published nothing that means it moved.
- *
- * `null` is "cannot be read" and never zero: a quiet nobody measured must not license a wake. The sources are the ones
- * `waitForSessionQuiet` already watches - a receipt, lifecycle or error fact, and a flat dispatch's own settlement -
- * plus the moment the last turn began, because a turn during which the world published nothing at all is a measured
- * quiet rather than an unmeasured one. Without that third source a run whose first turns produced no receipts would
- * suppress its own day forever, which is the failure this bound exists to avoid in the other direction.
- */
-function quietMsNow() {
-  let lastFactAtMs = null;
-  for (let at = factLog.length - 1; at >= 0; at -= 1) {
-    if (!meaningfulFact(factLog[at])) continue;
-    lastFactAtMs = factLog[at].atMs ?? null;
-    break;
-  }
-  const lastDispatchAtMs = actionTrace.at(-1)?.settledAtMs ?? null;
-  const readable = [lastFactAtMs, lastDispatchAtMs, turnStartedAtMs].filter((value) => Number.isFinite(value));
-  if (readable.length === 0) return null;
-  return Date.now() - Math.max(...readable);
-}
-
-/**
  * Whether the Mod holds a pass it can still continue.
  *
  * Two facts, and the second is the one a turn boundary hides: a dispatch answers `accepted` while its terminal arrives
@@ -2048,10 +2033,23 @@ function deriveRungVerdict(clauses) {
 const meaningfulFact = (entry) =>
   entry?.type === "execution_receipt" || entry?.type === "lifecycle" || entry?.type === "error";
 
-async function waitForSessionQuiet(turn, { dispatchesBeforeTurn, quietMs = QUIET_BOUND_MS, timeoutMs = 300_000 } = {}) {
-  // Quiet = no NEW dispatch and no NEW meaningful fact for a sustained window. The window itself is `QUIET_BOUND_MS`,
-  // which is also what the day loop's wake decision reads, so a wake and the turn it starts cannot disagree about what
-  // "quiet" means. The previous version had a real bug: it sliced by a TIMESTAMP (factLog.slice(lastFactAt), where
+/**
+ * How long a turn's own session may publish nothing before the harness calls the turn quiet.
+ *
+ * THIS IS NOT A WAKE BOUND. It decides when ONE turn's stream has stopped moving so the harness can stop waiting on it;
+ * whether another turn should open is `decideDayWake`'s question, and that question no longer has a clock in it at all
+ * (see `WAKE_REASON`). The two used to share one constant, which is how a twenty-second bound for a turn leaked into a
+ * bound for the run.
+ */
+const SESSION_QUIET_BOUND_MS = 20_000;
+
+async function waitForSessionQuiet(
+  turn,
+  { dispatchesBeforeTurn, quietMs = SESSION_QUIET_BOUND_MS, timeoutMs = 300_000 } = {},
+) {
+  // Quiet = no NEW dispatch and no NEW meaningful fact for a sustained window. The window itself is
+  // `SESSION_QUIET_BOUND_MS`: this function asks when THIS turn has stopped producing, never when the next turn should
+  // begin. The previous version had a real bug: it sliced by a TIMESTAMP (factLog.slice(lastFactAt), where
   // lastFactAt was ms) and checked the WHOLE slice since the turn for any meaningful fact, so quiet was unreachable
   // whenever a meaningful fact had EVER arrived. Track the last-observed INDEX and check only the newly-appended facts.
   let lastSeenDispatch = dispatchesBeforeTurn;
@@ -4476,13 +4474,6 @@ try {
     return entry(day, taskForDay(day));
   };
 
-  // What the harness says when it offers the same day again. Deliberately carries no instruction: anything
-  // stronger ("do not stop until you sleep") would ask the model to opt into a structural guarantee, which is the
-  // mistake this change undoes.
-  const promptForDayContinuation = (day) =>
-    localeKey === "zh"
-      ? `（第 ${String(day)} 天还在继续。接着做。）`
-      : `(Day ${String(day)} is still going. Carry on.)`;
   // Offered when the world clock says this day's work hours are over but the night has NOT been crossed.
   // Measured 2026-10-26: a turn ended at 22:00 with the companion saying "Time to sleep ... let me observe first
   // then sleep"; the next turn it was given was the generic "carry on", which reads as "keep farming".
@@ -4651,19 +4642,28 @@ try {
               objectiveSpanMs: medianPromptTurnIntervalMs(promptTurnStarts),
               programRunning: body.programRunning,
               admissionPending: body.admissionPending,
-              quietMs: quietMsNow(),
               lateDay: clock.unknown === false && clock.minutes !== null && clock.minutes >= LATE_DAY_MINUTES,
               dayEndOffered,
               stalled: stallFacts.length > 0,
             });
             if (wake.wake !== true) {
-              // The Mod's own pass continues, or nothing has moved for long enough to call it stopped. Either way the
-              // next move is not hers yet, so the harness waits and asks again rather than paying a model turn to find
-              // out that it had nothing to say.
+              // The Mod's own pass continues, the day's question has been asked and not answered, or nothing has happened
+              // at all. Either way the next move is not hers yet, so the harness waits and asks again rather than paying a
+              // model turn to find out that it had nothing to say.
               recordWakeSuppression(wake.reason);
+              // AND THE WAIT IS MEASURED, so a companion left alone for a long stretch says so instead of looking exactly
+              // like a run whose turns were all paid for.
+              noWake.sinceMs ??= Date.now();
+              const aloneForMs = Date.now() - noWake.sinceMs;
+              if (aloneForMs > noWake.forMs) {
+                noWake.forMs = aloneForMs;
+                noWake.lastReason = wake.reason;
+              }
               await new Promise((resolve) => setTimeout(resolve, WAKE_POLL_MS));
               continue;
             }
+            // A turn is opening: the stretch with nobody asking her anything is over.
+            noWake.sinceMs = null;
             turns += 1;
             recordWake(wake.reason);
             if (wake.reason === WAKE_REASON.dayEndOffer || wake.reason === WAKE_REASON.objectiveUnreachableForToday)
@@ -4680,6 +4680,9 @@ try {
                   })
                 : null;
             if (dayFact !== null) seedFacts.push(Object.freeze({ day, ...dayFact }));
+            // WHAT SHE IS ASKED, from the reason that opened the turn and nothing else. Every wake this loop can issue
+            // after the day's first turn is one of these four questions, and each is named: there is no generic "carry on"
+            // left to fall through to, and no clock left to choose a prompt by.
             const prompt =
               turns === 1
                 ? withDayFact(promptForDay(day), dayFact)
@@ -4687,11 +4690,7 @@ try {
                   ? promptForLateDay(day)
                   : wake.reason === WAKE_REASON.stallWake
                     ? promptForStall(stallFacts.at(-1) ?? null)
-                    : wake.reason === WAKE_REASON.staleWorld
-                      ? promptForStaleWorld(staleFacts.at(-1) ?? null)
-                      : clock.unknown === false && clock.minutes !== null && clock.minutes >= LATE_DAY_MINUTES
-                        ? promptForLateDay(day)
-                        : promptForDayContinuation(day);
+                    : promptForStaleWorld(staleFacts.at(-1) ?? null);
             const spokenBefore = presentationPieces.length;
             const dispatchBefore = dispatchMarkers(actionTrace, programSubmissions);
             promptTurnStarts.push(Date.now());
@@ -4854,10 +4853,15 @@ try {
         byReason: wakeByReason,
         suppressed: wakesSuppressed,
         suppressedByReason: wakeSuppressedByReason,
-        quietBoundMs: QUIET_BOUND_MS,
+        noWakeForMs: noWake.forMs,
+        noWakeLastReason: noWake.lastReason,
         objectiveSpanMs,
       }),
     );
+    // THE LONGEST STRETCH NOTHING ASKED HER ANYTHING, in one line. `no_wake_for_ms:<ms>:<reason>` says how long she was
+    // left alone and which decision did the leaving - `waiting_for_the_world` is a choice the harness made, and it must
+    // not read like a stall nobody could end.
+    console.error("MULTIDAY_NO_WAKE", `no_wake_for_ms:${String(noWake.forMs)}:${String(noWake.lastReason ?? "none")}`);
     // WHETHER SHE SAID SHE WAS GOING TO BED AND DID NOT, read from the turn stream before the night is judged.
     //
     // Measured 2026-11-13 (`round47`): the farmhouse was entered at 22:00, she said 「就睡」 and 「这就躺平」 and 「这觉才算
@@ -4908,20 +4912,20 @@ try {
       crossingSummary,
       tasks: taskDelivery,
       // Why the model was woken at all, by reason, and every settlement that deliberately did not become a prompt. The
-      // verdict reads this for `continuation_prompts_issued`/`_suppressed`; neither can be reconstructed from a session,
-      // because a prompt that was never issued leaves no record there.
+      // verdict reads this for `prompt_turns_by_reason`/`suppressions_by_reason`; neither can be reconstructed from a
+      // session, because a prompt that was never issued leaves no record there.
       wakes: Object.freeze({
         total: wakesIssued,
         byReason: Object.freeze(wakeByReason),
-        continuationPromptsIssued: wakeByReason[WAKE_REASON.continuation] ?? 0,
         dayEndOffers: wakeByReason[WAKE_REASON.dayEndOffer] ?? 0,
         stallWakes: wakeByReason[WAKE_REASON.stallWake] ?? 0,
         staleWorldWakes: wakeByReason[WAKE_REASON.staleWorld] ?? 0,
-        continuationPromptsSuppressed: wakesSuppressed,
+        suppressed: wakesSuppressed,
         suppressedByReason: Object.freeze(wakeSuppressedByReason),
-        // The bound the decision waited out, published so a reader can tell "nothing moved" from "nothing moved for
-        // long enough": the same number `waitForSessionQuiet` uses, stated once.
-        quietBoundMs: QUIET_BOUND_MS,
+        // THE SILENCE, NAMED. The quiet bound that used to guarantee a prompt every twenty seconds is gone, so the
+        // longest stretch with no turn is a reading of THIS run: `0` with no reason is a run that was never left waiting.
+        noWakeForMs: noWake.forMs,
+        noWakeLastReason: noWake.lastReason,
         // The run's own prompt-turn cadence, which is the span the objective branch read: `null` when the run issued
         // fewer than two prompt turns, and then no stall could be stated from it.
         objectiveSpanMs,
