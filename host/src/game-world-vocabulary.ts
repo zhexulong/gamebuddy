@@ -480,25 +480,113 @@ export function formatRipeCrops(
 }
 
 /**
- * Whether the body can take a new command, and what holds it when it cannot.
+ * What a held body asks of the next turn, in the answers the wire's own facts can support.
+ *
+ * `await_settlement` is an execution of ours holding the actor (the modal it opened is closing it), `retry_now` is a
+ * hold the Mod itself promises to release inside its own retry window, `next_turn` is a hold nothing short of the engine
+ * ending it can lift (a cutscene, a day transition, a faint), and `unknown` is the honest answer when the snapshot
+ * publishes no holder.
+ */
+export type BodyWayForward = "await_settlement" | "retry_now" | "next_turn" | "unknown";
+
+/** One hold as the line renders it: what the wire names, whether a command can take the body, and what to do next. */
+type BodyHold = Readonly<{ takeover: boolean | undefined; next: BodyWayForward }>;
+
+/**
+ * The way out of each hold, keyed on the wire's closed `actorDispositionKind` set (`WorldModel.KindForWire`).
+ *
+ * THE SAME DECISION TABLE AS THE MOD'S OWN ADMISSION, stated where the model reads it. `WorldModel.HoldReasonCode` and
+ * `ExecutionAdmission` already answer "may this command run" from these five kinds, and until now the per-turn line
+ * answered it with `身体: 忙（modal）` - the holder and nothing else. Measured 2026-11-13 (`round47`, her own account):
+ * "entering the farmhouse the state became 身体: 忙（不可行动）, I read 'body busy' as 'nothing may be submitted this
+ * turn', and so I stopped submitting anything. That was my mistake: body busy means the engine is holding the actor;
+ * what I should have done is look at the state, wait for the settlement, and see when it releases - not give up by
+ * default." A label that names no way out reads as a prohibition, and she read it as one.
+ *
+ * `modal` is the only kind split by another field: `actorDispositionActionOwned` is the Mod's own statement that the
+ * mounted modal belongs to an execution we started (it is closing it, so the release is that execution's settlement),
+ * and a modal nobody owns has to be answered or closed by the world before the body is free again.
+ */
+const BODY_HOLDS: Readonly<Record<string, BodyHold>> = Object.freeze({
+  modal: Object.freeze({ takeover: false, next: "next_turn" }),
+  event: Object.freeze({ takeover: false, next: "next_turn" }),
+  pass_out: Object.freeze({ takeover: false, next: "next_turn" }),
+  transient: Object.freeze({ takeover: true, next: "retry_now" }),
+});
+
+/** The modal an execution of ours opened: it is being closed by that execution, so waiting is the way forward. */
+const MODAL_OWNED_BY_ACTION: BodyHold = Object.freeze({ takeover: false, next: "await_settlement" });
+
+/** The hold nothing names: the snapshot says the body is not actionable and does not say what holds it. */
+const BODY_HOLD_UNKNOWN: BodyHold = Object.freeze({ takeover: undefined, next: "unknown" });
+
+export const BODY_WAY_FORWARD_ZH: Readonly<Record<BodyWayForward, string>> = Object.freeze({
+  await_settlement: "等结算",
+  retry_now: "重试可行",
+  next_turn: "下一回合",
+  unknown: "未知",
+});
+
+export const BODY_WAY_FORWARD_EN: Readonly<Record<BodyWayForward, string>> = Object.freeze({
+  await_settlement: "await settlement",
+  retry_now: "retry now",
+  next_turn: "later turn",
+  unknown: "unknown",
+});
+
+/**
+ * The body as one line: what holds it, whether a command can take it, and what to do next.
  *
  * Deliberately not `activeExecution`: that key is withheld from the always-on block by name ("the Host already owns
  * execution state from action receipts"), and an action id here would read as an instruction to repeat the previous
  * turn rather than as a description of the body. `actionable` plus the disposition answer the question from facts that
  * are already projected every turn.
  *
- * Absent means the Mod did not project the body yet - the line then says nothing, rather than claiming "free".
+ * ABSENT MEANS THE MOD DID NOT PROJECT THE BODY: with no `actionable` and no disposition the line says nothing, rather
+ * than claiming "free". A read that is PRESENT but unexplained says `未知` for the half it cannot answer - a body whose
+ * `actionable` is false while no disposition names the holder prints `持有: 未知 · 下一步: 未知`, because "cannot act"
+ * without a holder or a way out is the reading that made her stop submitting. The wire's five kinds are the population;
+ * a kind this table has not met renders its own name and `未知` rather than a guessed hold, so a Mod that adds one is
+ * visible in the line instead of silently mistranslated.
  */
 export function formatBodyState(
-  source: Partial<Pick<Snapshot, "actionable" | "actorDispositionKind">>,
+  source: Partial<
+    Pick<Snapshot, "actionable" | "actorDispositionKind" | "actorDispositionDetail" | "actorDispositionActionOwned">
+  >,
   zh: boolean,
 ): string {
   const disposition = source.actorDispositionKind;
-  if (disposition !== undefined && disposition !== "idle")
-    return zh ? `身体: 忙（${disposition}）` : `body: busy (${disposition})`;
-  if (source.actionable === undefined) return "";
-  const free = source.actionable;
-  return zh ? `身体: ${free ? "空闲" : "忙（不可行动）"}` : `body: ${free ? "free" : "busy (not actionable)"}`;
+  const named = disposition !== undefined && disposition !== "idle" ? disposition : undefined;
+  if (named === undefined) {
+    if (source.actionable === undefined) return "";
+    if (source.actionable) return zh ? "身体: 空闲" : "body: free";
+    return bodyHoldLine(BODY_HOLD_UNKNOWN, zh ? BODY_WAY_FORWARD_ZH.unknown : BODY_WAY_FORWARD_EN.unknown, zh);
+  }
+  const hold =
+    named === "modal" && source.actorDispositionActionOwned === true ? MODAL_OWNED_BY_ACTION : BODY_HOLDS[named];
+  const detail = source.actorDispositionDetail;
+  const holder = typeof detail === "string" && detail.length > 0 ? `${named}/${detail}` : named;
+  return bodyHoldLine(hold ?? BODY_HOLD_UNKNOWN, holder, zh);
+}
+
+/** The line a hold renders as, so each of its three halves is spelled once. */
+function bodyHoldLine(hold: BodyHold, holder: string, zh: boolean): string {
+  const takeover =
+    hold.takeover === undefined
+      ? zh
+        ? BODY_WAY_FORWARD_ZH.unknown
+        : BODY_WAY_FORWARD_EN.unknown
+      : hold.takeover
+        ? zh
+          ? "是"
+          : "yes"
+        : zh
+          ? "否"
+          : "no";
+  const next = (zh ? BODY_WAY_FORWARD_ZH : BODY_WAY_FORWARD_EN)[hold.next];
+  return zh
+    ? `身体: 忙 · 持有: ${holder} · 可由指令接管: ${takeover} · 下一步: ${next}`
+    : `body: busy · held by: ${holder} · command can take over: ${takeover} · next: ${next}`;
 }
 
 /**
