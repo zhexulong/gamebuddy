@@ -57,10 +57,19 @@ const git = (args, options = {}) =>
 
 // NUL-separated, because a path with a quote or a non-ASCII byte is otherwise printed by git in its escaped form and
 // every later `git` call in this file would then name a path that does not exist.
-const staged = execFileSync("git", ["diff", "--cached", "--name-only", "-z", "--diff-filter=ACMR"], {
-  encoding: "utf8",
-  maxBuffer: 1 << 26,
-})
+const staged = execFileSync(
+  "git",
+  // `--ignore-submodules=all` because this checkout carries junctioned submodules whose `gitfile` can be unreadable
+  // (`vendor/magic-context/.git`), and git then refuses the whole diff with `fatal: gitfile does not point to a valid
+  // repository`. That made every commit in the tree print "this commit does not compile" while nothing was wrong with
+  // the code - measured 2026-11-13, three separate lanes blocked by it in one day. A hook that cannot read its input
+  // must say so (see the refusal below), not accuse the source.
+  ["diff", "--cached", "--name-only", "-z", "--diff-filter=ACMR", "--ignore-submodules=all"],
+  {
+    encoding: "utf8",
+    maxBuffer: 1 << 26,
+  },
+)
   .split("\0")
   .filter((path) => path.length > 0);
 
