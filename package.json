@@ -336,6 +336,7 @@
     "test:tavern-release-prerequisites": "node --test tools/check-tavern-release-prerequisites.test.mjs",
     "test:test-store-teardown": "node --test tools/check-test-store-teardown.test.mjs",
     "test:tool-corpus": "node tools/run-tool-test-corpus.mjs",
+    "test:tool-corpus-derivation": "node --test tools/run-tool-test-corpus.test.mjs",
     "test:voice-protocol": "pnpm --dir vendor/pi-koe run test:protocol",
     "test:windows-process-tree": "node --test tools/lib/windows-process-tree.test.mjs",
     "typecheck": "pnpm --dir vendor/pi-koe run typecheck:all && pnpm --filter @gamebuddy/companion-host typecheck && pnpm --filter @gamebuddy/dialogue-web typecheck",
