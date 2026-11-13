@@ -207,6 +207,40 @@ public sealed record FarmhandClearingCost(string Tool, int Turns)
 /// </param>
 public sealed record FarmhandClearingDeclaration(IReadOnlyList<string> Occupants, FarmhandClearingCost Cost, bool Destructive, string? RefusalDetail = null);
 
+/// <summary>
+/// What ONE charged tool use is declared to do to the tiles the engine's rectangle reaches, and why that is safe.
+///
+/// <para>
+/// THE FACT THIS EXISTS FOR. <c>Tool.tilesAffected</c> is not centred on the named tile: a 3x3 covers one row either side
+/// of it and a 3x6 the same (<c>Tool.cs:972-989</c>), so ONE packed row also reaches rows the plan never named. A
+/// <c>charge</c> argument is therefore a claim about a whole rectangle, and the rectangle has to be answered for - either
+/// the handler walks it before the swing (<see cref="Prechecked"/>) or the row states, with an engine citation, that
+/// walking it would find nothing (<see cref="Reason"/>).
+/// </para>
+/// <para>
+/// A DECLARATION IS NOT A PREFERENCE, and <c>ChargedFootprintDeclarationTests</c> is what makes that true: its population
+/// is this catalogue's own registrations, so an action that starts accepting <c>charge</c> without an answer fails by name
+/// as <c>charged_footprint_unchecked:&lt;action&gt;</c>.
+/// </para>
+/// </summary>
+/// <param name="Prechecked">
+/// The handler reads the engine's own rectangle before the native swing and refuses with
+/// <c>charged_use_would_destroy:&lt;occupant&gt;:&lt;x&gt;:&lt;y&gt;</c> when it holds anything the request did not name.
+/// </param>
+/// <param name="Reason">
+/// Why a footprint that is not pre-checked loses nothing, or null when it is pre-checked. One word rather than a sentence,
+/// because the reason is a claim the gate compares, not prose.
+/// </param>
+public sealed record FarmhandChargedFootprintDeclaration(bool Prechecked, string? Reason = null)
+{
+    /// <summary>
+    /// A charged use removes nothing outside the named tile: the only engine path that takes a tile's occupant needs a
+    /// heavy hitter (<c>Object.cs:1350</c>), and <c>Tool.isHeavyHitter</c> is false for a <c>WateringCan</c>
+    /// (<c>Tool.cs:427-434</c>), so the can's swing can only set <c>HoeDirt.state</c> on the dirt its rectangle covers.
+    /// </summary>
+    public const string NonDestructive = "non_destructive_footprint";
+}
+
 /// <summary>Versioned descriptor contract owned exclusively by Mod registration.</summary>
 /// <remarks><see cref="WatchdogMs"/> is the descriptor-owned static execution
 /// budget for Body Program nodes of this action (default 60s). It is a Mod
@@ -278,7 +312,14 @@ public sealed record FarmhandClearingDeclaration(IReadOnlyList<string> Occupants
 /// counter without saying so fails there by name.
 /// </para>
 /// </param>
-public sealed record FarmhandActionDescriptor(IReadOnlyList<FarmhandActionArgument> Arguments, IReadOnlyDictionary<string, string> OutputFacts, IReadOnlyList<FarmhandActionResourceTemplateClaim> ResourceTemplate, string Effect, string Postcondition, string? NativeBinding = null, FarmhandActionObservationBindingDescriptor? SceneTarget = null, FarmhandExecutionAcceptanceFacts? Acceptance = null, FarmhandActionApproachRequirement? Approach = null, long WatchdogMs = FarmhandActionCatalog.DefaultWatchdogMs, string? TargetFamily = null, FarmhandClearingDeclaration? Clears = null, bool Synthetic = false);
+/// <param name="ChargedFootprint">
+/// What the rectangles ONE charged use covers do to the tiles the request did not name, or null for an action that takes no
+/// <c>charge</c>. Declared because a <c>charge</c> argument is a claim about a rectangle no request names a tile of, so the
+/// handler either walks that rectangle before the swing (<see cref="FarmhandChargedFootprintDeclaration.Prechecked"/>) or
+/// states why nothing can be lost there - and a missing declaration is named
+/// <c>charged_footprint_unchecked:&lt;action&gt;</c> by `ChargedFootprintDeclarationTests` rather than passing silently.
+/// </param>
+public sealed record FarmhandActionDescriptor(IReadOnlyList<FarmhandActionArgument> Arguments, IReadOnlyDictionary<string, string> OutputFacts, IReadOnlyList<FarmhandActionResourceTemplateClaim> ResourceTemplate, string Effect, string Postcondition, string? NativeBinding = null, FarmhandActionObservationBindingDescriptor? SceneTarget = null, FarmhandExecutionAcceptanceFacts? Acceptance = null, FarmhandActionApproachRequirement? Approach = null, long WatchdogMs = FarmhandActionCatalog.DefaultWatchdogMs, string? TargetFamily = null, FarmhandClearingDeclaration? Clears = null, bool Synthetic = false, FarmhandChargedFootprintDeclaration? ChargedFootprint = null);
 /// <summary>The only ordinary-Farmhand operation membership and descriptor source.</summary>
 public sealed record FarmhandActionRegistration(string ActionId, string FamilyId, int IdentityVersion, FarmhandActionLifecycle Lifecycle, FarmhandOperationKind Kind, FarmhandActionHandlerGroup? HandlerGroup, FarmhandActionDescriptor? Descriptor = null);
 public enum FarmhandActionHandlerGroup { Movement, Farming, Gathering, MachinesAndAnimals, ResourceTools, Expression, WorldLifecycle, Modal }
@@ -527,14 +568,14 @@ E("enter_exit", "movement_navigation", FarmhandActionHandlerGroup.Movement, Tran
         // Mod derives the target identity it uses for the approach leg itself (`till_soil_x_y`), so there is no id for
         // the caller to copy, and `charge` is how far the actor charges the hoe before ONE native use - `0` covers
         // exactly the named tile, 1..5 the engine's own rectangle up to the held hoe's ceiling.
-        E("till_soil", "farming_crops", FarmhandActionHandlerGroup.Farming, SelfWalked(A(null, ToolResource("hoe", FarmhandResourceTemplateValue.AnyUpgrade), "native_action_postcondition", ("x","integer"),("y","integer"),("charge","integer"))), FarmhandActionLifecycle.Published, "soilTiles"),
+        E("till_soil", "farming_crops", FarmhandActionHandlerGroup.Farming, Charged(SelfWalked(A(null, ToolResource("hoe", FarmhandResourceTemplateValue.AnyUpgrade), "native_action_postcondition", ("x","integer"),("y","integer"),("charge","integer")))), FarmhandActionLifecycle.Published, "soilTiles"),
         E("pickup_forage", "resource_gathering", FarmhandActionHandlerGroup.Gathering, PickupForage() with { Approach = FarmhandActionApproachRequirement.Adjacent }, FarmhandActionLifecycle.Published, "forageTargets"), E("pickup_item", "inventory_items", FarmhandActionHandlerGroup.Gathering, SelfWalked(TargetItem()), FarmhandActionLifecycle.Published, "itemTargets"),
         // water_crop drives the actor's own WateringCan: the handler selects the can its claim names before watering
         // (`tool_not_owned:watering_can` when the pack holds none), so the can is an unconditional requirement.
         // Which can is NOT declared: the handler accepts any upgrade level (its `watering_can_empty` refusal is about
         // the can's water, runtime state a planner cannot read from the surface). Its `charge` is till_soil's argument
         // for the same reason: one native use covers the engine's charged footprint, and `0` keeps the single tile.
-        E("water_crop", "farming_crops", FarmhandActionHandlerGroup.Farming, SelfWalked(A(null, ToolResource("watering_can", FarmhandResourceTemplateValue.AnyUpgrade), "native_action_postcondition", ("x","integer"),("y","integer"),("expectedTargetId","string"),("charge","integer"))), FarmhandActionLifecycle.Published, "cropTargets"), E("plant_seed", "farming_crops", FarmhandActionHandlerGroup.Farming, SelfWalked(SlotItemTarget()), FarmhandActionLifecycle.Published, "seedTargets"), E("fertilize_tile", "farming_crops", FarmhandActionHandlerGroup.Farming, SelfWalked(SlotItemTarget()), FarmhandActionLifecycle.Published, "fertilizerTargets"),
+        E("water_crop", "farming_crops", FarmhandActionHandlerGroup.Farming, Charged(SelfWalked(A(null, ToolResource("watering_can", FarmhandResourceTemplateValue.AnyUpgrade), "native_action_postcondition", ("x","integer"),("y","integer"),("expectedTargetId","string"),("charge","integer"))), FarmhandChargedFootprintDeclaration.NonDestructive), FarmhandActionLifecycle.Published, "cropTargets"), E("plant_seed", "farming_crops", FarmhandActionHandlerGroup.Farming, SelfWalked(SlotItemTarget()), FarmhandActionLifecycle.Published, "seedTargets"), E("fertilize_tile", "farming_crops", FarmhandActionHandlerGroup.Farming, SelfWalked(SlotItemTarget()), FarmhandActionLifecycle.Published, "fertilizerTargets"),
         E("machine_inspect", "machines_processing", FarmhandActionHandlerGroup.MachinesAndAnimals, SelfWalked(MachineInspect()), FarmhandActionLifecycle.Published, "machineTargets"), E("machine_load", "machines_processing", FarmhandActionHandlerGroup.MachinesAndAnimals, SelfWalked(MachineLoad()), FarmhandActionLifecycle.Published, "machineTargets"), E("machine_collect_output", "machines_processing", FarmhandActionHandlerGroup.MachinesAndAnimals, SelfWalked(Target()), FarmhandActionLifecycle.Published, "machineTargets"),
         E("collect_animal_product", "animals_pets", FarmhandActionHandlerGroup.MachinesAndAnimals, SelfWalked(SlotTarget(ItemSlotMeaning)), FarmhandActionLifecycle.Published, "animalProductTargets"), E("feed_animal", "animals_pets", FarmhandActionHandlerGroup.MachinesAndAnimals, SelfWalked(SlotTarget(ItemSlotMeaning)), FarmhandActionLifecycle.Published, "feedTroughTargets"), E("use_item", "inventory_items", FarmhandActionHandlerGroup.MachinesAndAnimals, Described(new[] { new FarmhandActionArgument("slot", "integer", null, ItemSlotMeaning), new FarmhandActionArgument("expectedQualifiedItemId", "string") }), FarmhandActionLifecycle.Published, "foodTargets"),
         E("harvest_crop", "farming_crops", FarmhandActionHandlerGroup.Farming, SelfWalked(TargetItem()), FarmhandActionLifecycle.Published, "harvestTargets"), E("place_wood_fence", "buildings_farm_management", FarmhandActionHandlerGroup.ResourceTools, SelfWalked(SlotItemTarget("(O)322")), FarmhandActionLifecycle.Published, "woodFenceTargets"), E("place_crab_pot", "buildings_farm_management", FarmhandActionHandlerGroup.ResourceTools, SelfWalked(SlotItemTarget("(O)710")), FarmhandActionLifecycle.Published, "crabPotTargets"), E("bait_crab_pot", "buildings_farm_management", FarmhandActionHandlerGroup.ResourceTools, SelfWalked(SlotItemTarget("(O)685")), FarmhandActionLifecycle.Published, "baitCrabPotTargets"),
@@ -654,7 +695,7 @@ E("enter_exit", "movement_navigation", FarmhandActionHandlerGroup.Movement, Tran
         // missing half is the Host's, and it is the promotion gate that names it field by field; `LiveVerified` stays
         // for the run that proves the catch is credited by the engine.
         //
-        // `requested_fish` IS REQUIRED WITH `""` MEANING ANY FISH, for the same reason `till_soil`'s `charge` is
+        // `requestedFish` IS REQUIRED WITH `""` MEANING ANY FISH, for the same reason `till_soil`'s `charge` is
         // required with `0` meaning the single named tile: an optional argument is not expressible here. Four layers
         // enforce that, each for a reason of its own - the Host's `exactArgs`/`hasExactKeys`, the Mod's
         // `HasExactProperties` frame reader, `BodyProgramVerifier.ArgumentsMatch` (a node's canonical argument count must
@@ -664,7 +705,7 @@ E("enter_exit", "movement_navigation", FarmhandActionHandlerGroup.Movement, Tran
         // consumes the RNG, so publishing "what is here" would change what she catches), so the only verifiable form of
         // "land a named fish" is the comparison made AFTER the catch, against the engine's own `Farmer.fishCaught`
         // record - which is what `fish_species_mismatch:<requested>:<caught>` reports.
-        E("fish_here", "resource_gathering", FarmhandActionHandlerGroup.ResourceTools, SelfWalked(new FarmhandActionDescriptor(new[] { new FarmhandActionArgument("x", "integer"), new FarmhandActionArgument("y", "integer"), new FarmhandActionArgument("expectedTargetId", "string"), new FarmhandActionArgument("requested_fish", "string", null, FishSpeciesMeaning) }, new Dictionary<string, string>(), ToolResource("fishing_rod", FarmhandResourceTemplateValue.AnyUpgrade), "write", "fish_caught")), FarmhandActionLifecycle.Published, "waterTargets"),
+        E("fish_here", "resource_gathering", FarmhandActionHandlerGroup.ResourceTools, SelfWalked(new FarmhandActionDescriptor(new[] { new FarmhandActionArgument("x", "integer"), new FarmhandActionArgument("y", "integer"), new FarmhandActionArgument("expectedTargetId", "string"), new FarmhandActionArgument("requestedFish", "string", null, FishSpeciesMeaning) }, new Dictionary<string, string>(), ToolResource("fishing_rod", FarmhandResourceTemplateValue.AnyUpgrade), "write", "fish_caught")), FarmhandActionLifecycle.Published, "waterTargets"),
         E("npc_relationship", "npc_social", FarmhandActionHandlerGroup.MachinesAndAnimals, SelfWalked(Target()), FarmhandActionLifecycle.LiveVerified, "npcRelationshipTargets"),
         E("pet_animal", "animals_pets", FarmhandActionHandlerGroup.MachinesAndAnimals, SelfWalked(Target()), FarmhandActionLifecycle.LiveVerified, "petTargets"),
         E("pet_farm_animal", "animals_pets", FarmhandActionHandlerGroup.MachinesAndAnimals, SelfWalked(Target()), FarmhandActionLifecycle.LiveVerified, "farmAnimalPetTargets"),
@@ -1039,6 +1080,22 @@ E("enter_exit", "movement_navigation", FarmhandActionHandlerGroup.Movement, Tran
     private static FarmhandActionDescriptor Clears(FarmhandActionDescriptor descriptor, string tool, bool destructive, string? refusalDetail, params string[] occupants) =>
         descriptor with { Clears = new FarmhandClearingDeclaration(Array.AsReadOnly(occupants), new FarmhandClearingCost(tool, 1), destructive, refusalDetail) };
 
+    /// <summary>
+    /// One area action's answer for the rectangle its charge reaches, written where its other claims are.
+    ///
+    /// <para>
+    /// <paramref name="reason"/> DEFAULTS TO NOTHING RATHER THAN TO AN EXEMPTION: a row that says nothing is pre-checked, so a
+    /// new charged action is safe by default and an exemption is the conscious act.
+    /// </para>
+    /// <para>
+    /// <c>prechecked</c> is DERIVED from the reason instead of being a second argument, because the two cannot disagree:
+    /// a row that named a reason AND claimed a pre-check would be saying two things at once, and
+    /// <c>ChargedFootprintDeclarationTests</c> refuses that pair by name.
+    /// </para>
+    /// </summary>
+    private static FarmhandActionDescriptor Charged(FarmhandActionDescriptor descriptor, string? reason = null) =>
+        descriptor with { ChargedFootprint = new FarmhandChargedFootprintDeclaration(reason is null, reason) };
+
     private static FarmhandActionRegistration R(string id, string family) => new(id, family, 1, FarmhandActionLifecycle.Published, FarmhandOperationKind.ReadOnly, null, A(null, Array.Empty<FarmhandActionResourceTemplateClaim>(), "observation_complete"));
     private static FarmhandActionDescriptor A(IReadOnlyDictionary<string,string>? facts = null, IReadOnlyList<FarmhandActionResourceTemplateClaim>? resources = null, string postcondition = "native_action_postcondition", params (string,string)[] args) => new(args.Select(x => new FarmhandActionArgument(x.Item1,x.Item2)).ToArray(), facts ?? new Dictionary<string,string>(), resources ?? EmbodiedActorResource, resources is { Count: 0 } ? "read" : "write", postcondition);
 
@@ -1100,7 +1157,7 @@ E("enter_exit", "movement_navigation", FarmhandActionHandlerGroup.Movement, Tran
     private const string CarriedToolSlotMeaning = "The TOOL's backpack slot, copied from `snapshot.toolSlots`. The slot must hold a tool this action can use, but it need not be `snapshot.currentToolSlot`: the handler takes the tool from the named slot directly.";
 
     /// <summary>
-    /// What `requested_fish` means: the qualified item id of the fish the caller wants, or `""` for any fish.
+    /// What `requestedFish` means: the qualified item id of the fish the caller wants, or `""` for any fish.
     ///
     /// <para>
     /// The empty string is not a default a reader has to know from elsewhere - it is the required spelling, because the
