@@ -34,6 +34,7 @@ function resolverInput(
   return Object.freeze({
     steamInstallRoots: [],
     gogInstallRoots: [],
+    microsoftStoreInstallRoots: [],
     sourceDiagnostics: [],
     ...overrides,
   });
@@ -54,11 +55,17 @@ test("one installed game resolves without asking the player", async () => {
   });
 });
 
-test("several installed games require an explicit choice, in steam-then-gog order", async () => {
+test("several installed games require an explicit choice, in channel order", async () => {
   const steam = "C:\\Steam\\Stardew Valley";
   const gog = "D:\\GOG Games\\Stardew Valley";
+  const store = "E:\\Program Files\\ModifiableWindowsApps\\Stardew Valley";
   const resolution = await resolveStardewGameInstallation(
-    resolverInput({ steamInstallRoots: [steam], gogInstallRoots: [gog], probe: probeFrom([steam, gog]) }),
+    resolverInput({
+      steamInstallRoots: [steam],
+      gogInstallRoots: [gog],
+      microsoftStoreInstallRoots: [store],
+      probe: probeFrom([steam, gog, store]),
+    }),
   );
   assert.equal(resolution.kind, "choice_required");
   if (resolution.kind !== "choice_required") return;
@@ -67,8 +74,33 @@ test("several installed games require an explicit choice, in steam-then-gog orde
     [
       ["steam", steam],
       ["gog", gog],
+      ["microsoft-store", store],
     ],
   );
+});
+
+/**
+ * The channel the reported gap was about. A Stardew Valley bought on PC Game Pass sits in the Xbox
+ * app's own folder, which no Steam library and no GOG registry record names, so before this channel
+ * existed the launch-time entry resolved nothing on a machine where the game is installed. The
+ * copy in the layout no mod loader can run in reaches the reply as the source's named finding, not
+ * as a game that is not there.
+ */
+test("a Microsoft Store installation resolves from its own channel", async () => {
+  const store = "C:\\Program Files\\ModifiableWindowsApps\\Stardew Valley";
+  const resolution = await resolveStardewGameInstallation(
+    resolverInput({
+      microsoftStoreInstallRoots: [store],
+      sourceDiagnostics: ["microsoft-store-install-not-mod-enabled"],
+      probe: probeFrom([store], []),
+    }),
+  );
+  assert.equal(resolution.kind, "resolved");
+  if (resolution.kind !== "resolved") return;
+  assert.equal(resolution.installation.source, "microsoft-store");
+  assert.equal(resolution.installation.installRoot, store);
+  assert.equal(resolution.installation.smapiExecutable, null);
+  assert.deepEqual(resolution.diagnostics, ["microsoft-store-install-not-mod-enabled"]);
 });
 
 test("no installed game is a named not-found result, and a non-game root is named", async () => {

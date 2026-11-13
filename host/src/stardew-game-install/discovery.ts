@@ -5,6 +5,10 @@ import { createStardewInstallationDiscoveryProvider } from "../windows-stardew-i
 import { createWindowsSteamInstallationSource } from "../windows-stardew-installation-discovery/index.js";
 import { normalizeWindowsPath } from "../windows-stardew-installation-discovery/internal.js";
 import { createWindowsGogInstallationSource } from "./gog-source.js";
+import {
+  createWindowsMicrosoftStoreInstallationSource,
+  type StardewMicrosoftStoreSource,
+} from "./microsoft-store-source.js";
 
 export const STARDEW_GAME_EXECUTABLE_FILE = "Stardew Valley.exe";
 export const STARDEW_SMAPI_EXECUTABLE_FILE = "StardewModdingAPI.exe";
@@ -22,7 +26,7 @@ export const STARDEW_MOD_LOADER_MISSING = "stardew_mod_loader_missing";
  */
 export const STARDEW_NOT_A_STARDEW_INSTALL = "stardew_not_a_stardew_install";
 
-type StardewGameInstallSource = "steam" | "gog" | "chosen";
+type StardewGameInstallSource = "steam" | "gog" | "microsoft-store" | "chosen";
 
 export type StardewGameRootProbe = Readonly<{
   /**
@@ -47,6 +51,9 @@ type StardewGameDiscoveryDiagnostic =
   | "gog-unavailable"
   | "gog-metadata-unreadable"
   | "gog-metadata-malformed"
+  | "microsoft-store-unavailable"
+  | "microsoft-store-root-unreadable"
+  | "microsoft-store-install-not-mod-enabled"
   | "chosen-root-invalid"
   | "chosen-root-not-a-stardew-install"
   | "candidate-not-a-stardew-install";
@@ -67,6 +74,7 @@ export type StardewGameInstallationResolution =
 export type StardewGameInstallationResolverInput = Readonly<{
   steamInstallRoots: readonly string[];
   gogInstallRoots: readonly string[];
+  microsoftStoreInstallRoots: readonly string[];
   sourceDiagnostics: readonly StardewGameDiscoveryDiagnostic[];
   probe: (installRoot: string) => Promise<StardewGameRootProbe>;
   chosenInstallRoot?: string;
@@ -127,6 +135,19 @@ export function createWindowsGogDiscoveryProposal(): Readonly<{
     read: createWindowsGogInstallationSource().read,
     probe: probeStardewGameRoot,
   });
+}
+
+/**
+ * The Microsoft Store proposal the setup-time discovery panel and this module's own entry read,
+ * wired to this module's probe.
+ *
+ * The pairing is the point, as it is for GOG: the channel derives its folders from a drive sweep
+ * and two fixed layouts, so nothing it proposes is evidence on its own - only a folder the probe
+ * really found the game in becomes a candidate. A caller that wired a different read here could
+ * offer a Game Pass player a folder that holds no game.
+ */
+export function createWindowsMicrosoftStoreDiscoveryProposal(): StardewMicrosoftStoreSource {
+  return createWindowsMicrosoftStoreInstallationSource({ probe: probeStardewGameRoot });
 }
 
 /**
@@ -221,6 +242,7 @@ export async function resolveStardewGameInstallation(
   for (const [source, roots] of [
     ["steam", input.steamInstallRoots],
     ["gog", input.gogInstallRoots],
+    ["microsoft-store", input.microsoftStoreInstallRoots],
   ] as const) {
     for (const root of roots) {
       const normalized = normalizeWindowsPath(root);
@@ -254,9 +276,9 @@ export async function resolveStardewGameInstallation(
 
 /**
  * Host-owned discovery entry: Steam is read through the existing
- * registry/library/appmanifest provider, GOG through the GOG proposal source,
- * and an optional one-time player choice wins over both. Failures in one source
- * are named and never abort the other.
+ * registry/library/appmanifest provider, GOG through the GOG proposal source, the Microsoft Store
+ * through its own channel, and an optional one-time player choice wins over all three. Failures in
+ * one source are named and never abort another.
  */
 export async function discoverStardewGameInstallation(
   input: Readonly<{ chosenInstallRoot?: string }> = {},
@@ -292,9 +314,22 @@ export async function discoverStardewGameInstallation(
     sourceDiagnostics.push("gog-unavailable");
   }
 
+  // The Microsoft Store source probes each drive's two layouts itself, so what it returns are
+  // install roots the game was really found in - never 26 drives' worth of guesses, which would
+  // otherwise reach the resolver as dozens of `candidate-not-a-stardew-install` facts.
+  let microsoftStoreRoots: readonly string[] = [];
+  try {
+    const facts = await createWindowsMicrosoftStoreDiscoveryProposal().read();
+    microsoftStoreRoots = facts.roots;
+    for (const diagnostic of facts.diagnostics) sourceDiagnostics.push(diagnostic);
+  } catch {
+    sourceDiagnostics.push("microsoft-store-unavailable");
+  }
+
   return await resolveStardewGameInstallation({
     steamInstallRoots,
     gogInstallRoots: gogRoots,
+    microsoftStoreInstallRoots: microsoftStoreRoots,
     sourceDiagnostics,
     probe: probeStardewGameRoot,
     ...(input.chosenInstallRoot === undefined ? {} : { chosenInstallRoot: input.chosenInstallRoot }),
