@@ -215,6 +215,8 @@ export type TurnAccount = Readonly<{
   suppressed: Readonly<Record<TurnSuppression, number>>;
   examined: number;
   emptyTurns: TurnWithoutActionResult;
+  /** The turns a stale reading did NOT open, and why - see `AutoObserveAccount`. */
+  autoObserve: AutoObserveAccount;
   lastDecision: TurnDecision | undefined;
 }>;
 
@@ -222,11 +224,16 @@ export type TurnAccount = Readonly<{
  * The account as the one line a run's log carries, in the shape the invariant is read back in.
  *
  * `turns opened N · by reason {opener: count} · suppressed M {reason: count} · flushes examined F` (F derived, so the
- * arithmetic closes) `· turn_closed_without_action E {opener:reason: count}`. A reason that has never fired is still
- * printed as `0`: it is a declared member of a closed list, and a reader must be able to see that it exists and never
- * happened rather than guess from its absence. The opener histogram is printed for the same reason at the level above:
- * `opened 55` said a number and nothing about what opened them, so "she was woken by the clock fifty times" and "the
- * person spoke fifty times" were the same line.
+ * arithmetic closes) `· turn_closed_without_action E {opener:reason: count}` `· auto_observe_on_stale R {ageTurns}` `·
+ * auto_observe_unavailable U {reason: count}`. A reason that has never fired is still printed as `0`: it is a declared
+ * member of a closed list, and a reader must be able to see that it exists and never happened rather than guess from its
+ * absence. The opener histogram is printed for the same reason at the level above: `opened 55` said a number and nothing
+ * about what opened them, so "she was woken by the clock fifty times" and "the person spoke fifty times" were the same
+ * line.
+ *
+ * The two stale segments are what makes a REMOVED turn countable. A refresh costs no turn, so without them "the stale
+ * notices stopped opening turns" and "the stale notices stopped happening" would print the same line; with them, `R` is
+ * how many turns the refresh replaced and `U` is how many stale notices still had to open one, split by why.
  */
 export function turnAccountLine(account: TurnAccount): string {
   const opened = TURN_OPENINGS.map((reason) => `${reason}: ${String(account.byReason[reason])}`).join(", ");
@@ -234,7 +241,20 @@ export function turnAccountLine(account: TurnAccount): string {
   const empty = emptyTurnShapes()
     .map((shape) => `${shape}: ${String(account.emptyTurns.byShape[shape])}`)
     .join(", ");
-  return `turns opened ${String(account.opened)} {${opened}} · suppressed ${String(suppressedTotal(account))} {${suppressed}} · flushes examined ${String(account.examined)} · ${TURN_WITHOUT_ACTION} ${String(account.emptyTurns.total)} {${empty}}`;
+  const unavailable = AUTO_OBSERVE_UNAVAILABLE_REASONS.map(
+    (reason) => `${reason}: ${String(account.autoObserve.unavailable[reason])}`,
+  ).join(", ");
+  // The age is printed only where a refresh happened: `0` is a real age (a reading asked about on the turn it moved),
+  // so a zero printed for "no refresh yet" would be the one number a reader could not tell apart from a measurement.
+  const refreshed =
+    account.autoObserve.refreshed === 0 || account.autoObserve.lastAgeTurns === undefined
+      ? `${AUTO_OBSERVE_ON_STALE} 0`
+      : `${AUTO_OBSERVE_ON_STALE} ${String(account.autoObserve.refreshed)} {ageTurns: ${String(account.autoObserve.lastAgeTurns)}}`;
+  const declined = AUTO_OBSERVE_UNAVAILABLE_REASONS.reduce(
+    (total, reason) => total + account.autoObserve.unavailable[reason],
+    0,
+  );
+  return `turns opened ${String(account.opened)} {${opened}} · suppressed ${String(suppressedTotal(account))} {${suppressed}} · flushes examined ${String(account.examined)} · ${TURN_WITHOUT_ACTION} ${String(account.emptyTurns.total)} {${empty}} · ${refreshed} · ${AUTO_OBSERVE_UNAVAILABLE_TOKEN} ${String(declined)} {${unavailable}}`;
 }
 
 /**
@@ -411,6 +431,65 @@ export const WORLD_STATE_REFRESH_REFUSED_SEMANTIC_KIND = "world_state_refresh_re
  * </p>
  */
 export const WORLD_STATE_REFRESH_ATTEMPTS = 3;
+
+/**
+ * Why a crossed reading could not be refreshed right now, in the conditions this pump can tell apart.
+ *
+ * <p>
+ * Each of them means the same thing for the turn: the refresh did not happen, so the stale fact IS published and the
+ * turn opens as it always has - and the account says which condition it was, because "nobody asked" and "the bridge
+ * refused" are different readings of a frozen world.
+ * </p>
+ */
+export const AUTO_OBSERVE_UNAVAILABLE = Object.freeze({
+  /** No port is attached: this pump structurally cannot ask (a reduced composition, or a wiring bug). */
+  noBridge: "no_bridge",
+  /** This revision has already spent `WORLD_STATE_REFRESH_ATTEMPTS`; asking again asks the same question. */
+  attemptsSpent: "refresh_attempts_spent",
+  /** The route was asked and refused - `world_state_refresh_refused` carries the route's own words. */
+  refused: "refresh_refused",
+});
+
+export const AUTO_OBSERVE_UNAVAILABLE_REASONS = Object.freeze(Object.values(AUTO_OBSERVE_UNAVAILABLE));
+
+export type AutoObserveUnavailableReason = (typeof AUTO_OBSERVE_UNAVAILABLE_REASONS)[number];
+
+/** The emitted name of one refresh: `auto_observe_on_stale:<ageTurns>`, one per refresh. */
+export const AUTO_OBSERVE_ON_STALE = "auto_observe_on_stale";
+
+export function autoObserveOnStaleToken(ageTurns: number): string {
+  return `${AUTO_OBSERVE_ON_STALE}:${String(ageTurns)}`;
+}
+
+/** The emitted name of one crossing the world could not be asked about: `auto_observe_unavailable:<reason>`. */
+export const AUTO_OBSERVE_UNAVAILABLE_TOKEN = "auto_observe_unavailable";
+
+export function autoObserveUnavailableToken(reason: AutoObserveUnavailableReason): string {
+  return `${AUTO_OBSERVE_UNAVAILABLE_TOKEN}:${reason}`;
+}
+
+/**
+ * What the stale path did INSTEAD of opening a turn: one refresh, or one named reason it could not ask.
+ *
+ * <p>
+ * MEASURED 2026-11-13 (`round47`): 22 of the 41 talk-only turns were handed `world_state_stale:...`. The Host opened a
+ * turn to tell her that the world she could not see was out of date, and the cheapest thing she could do with that turn
+ * was describe it - the same observation the Host could have fetched for free. So a stale notice is answered by ASKING,
+ * and the turn that would have been spent narrating the notice does not open.
+ * </p>
+ *
+ * <p>
+ * `refreshed` is one per `auto_observe_on_stale:<ageTurns>`; `lastAgeTurns` is the age the most recent refresh was
+ * asked at, and `undefined` before any - so the count and the number it was counted at cannot be confused with a zero.
+ * `unavailable` is one per crossing the world could not be asked about, keyed by the closed list above; its sum with
+ * `refreshed` is every crossed reading this pump examined.
+ * </p>
+ */
+export type AutoObserveAccount = Readonly<{
+  refreshed: number;
+  lastAgeTurns: number | undefined;
+  unavailable: Readonly<Record<AutoObserveUnavailableReason, number>>;
+}>;
 
 /**
  * Where a stale reading is acted on: the integration's own fresh observation, and the one route a Host-minted fact is
@@ -770,6 +849,15 @@ export class CompanionEventPump {
   #worldStateRefreshFor: { revision: number; probes: number; refusalPublished: boolean } | undefined;
   #worldStateRefreshProbes = 0;
   #worldStateRefreshRefusals = 0;
+  /** Fresh observations this pump asked for INSTEAD of opening a turn, and the age it asked at (see `AutoObserveAccount`). */
+  #autoObserveRefreshed = 0;
+  #autoObserveLastAgeTurns: number | undefined;
+  /** Crossings the world could not be asked about, one count per `AUTO_OBSERVE_UNAVAILABLE_REASONS` member. */
+  readonly #autoObserveUnavailable: Record<AutoObserveUnavailableReason, number> = {
+    [AUTO_OBSERVE_UNAVAILABLE.noBridge]: 0,
+    [AUTO_OBSERVE_UNAVAILABLE.attemptsSpent]: 0,
+    [AUTO_OBSERVE_UNAVAILABLE.refused]: 0,
+  };
   /**
    * Facts since the current reading that say the WORLD moved: the clock, the day, a pass-out, a warp, or a body that is
    * standing somewhere else.
@@ -1041,6 +1129,9 @@ export class CompanionEventPump {
     this.#worldStateRefreshFor = undefined;
     this.#worldStateRefreshProbes = 0;
     this.#worldStateRefreshRefusals = 0;
+    this.#autoObserveRefreshed = 0;
+    this.#autoObserveLastAgeTurns = undefined;
+    for (const reason of AUTO_OBSERVE_UNAVAILABLE_REASONS) this.#autoObserveUnavailable[reason] = 0;
     this.#worldChangesSinceReading = 0;
     this.#lastWorldChange = undefined;
     this.#receipts.clear();
@@ -1098,6 +1189,11 @@ export class CompanionEventPump {
       suppressed: Object.freeze({ ...this.#suppressedByReason }),
       examined: this.#openedTurns + suppressed,
       emptyTurns: Object.freeze({ total: this.#emptyTurns, byShape: Object.freeze({ ...this.#emptyTurnsByShape }) }),
+      autoObserve: Object.freeze({
+        refreshed: this.#autoObserveRefreshed,
+        lastAgeTurns: this.#autoObserveLastAgeTurns,
+        unavailable: Object.freeze({ ...this.#autoObserveUnavailable }),
+      }),
       lastDecision: this.#lastTurnDecision,
     });
   }
@@ -1860,16 +1956,40 @@ export class CompanionEventPump {
    * </p>
    *
    * <p>
-   * TAKING IT ASKS. The fact tells her the picture is old; on the same call this asks the integration for a fresh
-   * observation (`#requestWorldStateRefresh`), because in a narration loop being told is exactly what she does not act
-   * on - measured `round45`: fifty turns on one frozen revision, 601 s of silence, two 02:00 pass-outs. The fact itself
-   * is unchanged, so she is still told the world is old even when the probe is refused.
+   * ASKING REPLACES THE TURN. A stale notice is not news - it says the world she cannot see is out of date, which is a
+   * thing this Host can fetch itself through the route the model's own `stardew_observe` uses
+   * (`StardewBridgeConnection.observe`, `local-stardew-bridge.ts:366`, the only producer of an `observe_request` besides
+   * the execute path's `stale_snapshot` re-take). So when the world CAN be asked, the refresh is performed here and this
+   * method returns `undefined`: nothing is minted, nothing is enqueued, and no turn opens for a notice whose only content
+   * is "look again". The answer arrives as an ordinary snapshot fact and opens a turn only if it is itself news - a
+   * revision past the one she was delivered (`#snapshotAdvanced`) - so a world that did not move costs nothing at all.
+   * </p>
+   *
+   * <p>
+   * MEASURED 2026-11-13 (`round47`): 22 of 41 talk-only turns were handed `world_state_stale:...`, and the cheapest thing
+   * she could do with such a turn was describe the world she had been told she could not see. The refresh was already
+   * installed and already fired; what it could not do was replace the turn it was meant to save. Her own debrief says
+   * why being TOLD was not enough: she read the in-flight block's 「还没结算，就等于一步都还没做成」 as "no action is
+   * issuable", and the one fact that names "narrated but did not work" (`narration_without_work`) reached her once in 64
+   * turns and read as a reminder rather than a verdict. A stale world must therefore not have to be narrated at all:
+   * the Host fetches it and says nothing. (The in-flight sentence is a separate defect and is not fixed here.)
+   * </p>
+   *
+   * <p>
+   * WHEN IT CANNOT ASK the fact IS minted, exactly as before, so the stale notice still reaches her and the turn still
+   * opens; the account says which condition it was (`autoObserve.unavailable`, one member of
+   * `AUTO_OBSERVE_UNAVAILABLE_REASONS`). A refresh is never silent and never assumed.
    * </p>
    */
   public takeWorldStateStaleFact(): WorldFact | undefined {
     const reading = this.#worldStateReading(false);
     if (reading === undefined || !this.#worldStateStaleDue(reading)) return undefined;
+    // The re-arm is taken on BOTH arms: a crossing that was answered by an observation is still a crossing, so the next
+    // notice belongs `worldStateStaleThreshold` turns later rather than on the very next turn.
     this.#worldStateStalePublished += 1;
+    const declined = this.#askForFreshObservation(reading.revision, reading.ageTurns);
+    if (declined === undefined) return undefined;
+    this.#autoObserveUnavailable[declined] += 1;
     const code = worldStateStaleCode(reading);
     const eventId = `${WORLD_STATE_STALE_SEMANTIC_KIND}_${String(reading.revision)}_${String(this.#worldStateStalePublished)}`;
     const fact = Object.freeze({
@@ -1892,9 +2012,6 @@ export class CompanionEventPump {
         staleFactsSoFar: this.#worldStateStalePublished,
       }),
     });
-    // The fact says the reading is old; this makes something ACT on it. Ordered after the mint so the statement cannot
-    // be lost to a probe that throws, and bounded by the same revision key (see `#requestWorldStateRefresh`).
-    this.#requestWorldStateRefresh(reading.revision);
     return fact;
   }
 
@@ -1917,27 +2034,46 @@ export class CompanionEventPump {
   }
 
   /**
-   * Ask the integration for a fresh observation of the crossed reading, once per revision, `WORLD_STATE_REFRESH_ATTEMPTS`
-   * times at most.
+   * Ask the integration for a fresh observation of the crossed reading, or say why the world cannot be asked.
    *
-   * Fire and forget on purpose: the answer arrives as an ordinary snapshot fact and the Host admits it on its own path,
-   * so nothing waits on this and no turn is opened by it. What the pump does owe the caller is the FAILURE, which is
-   * minted as a fact (`#refuseWorldStateRefresh`) rather than swallowed - a probe the integration would not serve must
-   * be as visible as the stale reading it could not replace.
+   * <p>
+   * `undefined` means the ask was made, and the caller must mint NOTHING: the answer arrives as an ordinary snapshot
+   * fact and the Host admits it on its own path, so a turn opens only when that answer is itself news. A reason from
+   * `AUTO_OBSERVE_UNAVAILABLE_REASONS` means no ask happened, so the stale fact is still owed and the caller mints it.
+   * </p>
+   *
+   * <p>
+   * THE THREE BOUNDS that keep this from becoming a poll, because a failed refresh must not retry by itself:
+   * </p>
+   * <ol>
+   *   <li>`#worldStateStalePublished` is taken by the caller on BOTH arms, so the next crossing is
+   *     `worldStateStaleThreshold(published)` turns away (5, 20, 35, 50) - the ask is per CROSSING, never per turn.</li>
+   *   <li>`WORLD_STATE_REFRESH_ATTEMPTS` per revision: one frozen revision is asked about three times and then declined
+   *     with `refresh_attempts_spent`.</li>
+   *   <li>The episode is re-armed by the REVISION moving, not by time, and a refusal is published once per crossing
+   *     (`#refuseWorldStateRefresh`) - so a bridge that never answers produces one statement, not a stream.</li>
+   * </ol>
+   * <p>
+   * Fire and forget on purpose: nothing in the turn path waits on a network round-trip. What the pump owes the caller is
+   * the FAILURE, which is minted as a fact (`#refuseWorldStateRefresh`) rather than swallowed - a probe the integration
+   * would not serve must be as visible as the stale reading it could not replace.
+   * </p>
    */
-  #requestWorldStateRefresh(revision: number): void {
+  #askForFreshObservation(revision: number, ageTurns: number): AutoObserveUnavailableReason | undefined {
     const port = this.#worldStateRefreshPort;
-    if (port === undefined) return;
+    if (port === undefined) return AUTO_OBSERVE_UNAVAILABLE.noBridge;
     const episode = this.#worldStateRefreshFor;
     const same = episode !== undefined && episode.revision === revision;
     const probes = same ? episode.probes : 0;
-    if (probes >= WORLD_STATE_REFRESH_ATTEMPTS) return;
+    if (probes >= WORLD_STATE_REFRESH_ATTEMPTS) return AUTO_OBSERVE_UNAVAILABLE.attemptsSpent;
     this.#worldStateRefreshFor = {
       revision,
       probes: probes + 1,
       refusalPublished: same ? episode.refusalPublished : false,
     };
     this.#worldStateRefreshProbes += 1;
+    this.#autoObserveRefreshed += 1;
+    this.#autoObserveLastAgeTurns = ageTurns;
     void (async () => {
       try {
         await port.observe();
@@ -1945,6 +2081,7 @@ export class CompanionEventPump {
         this.#refuseWorldStateRefresh(revision, error);
       }
     })();
+    return undefined;
   }
 
   /**
@@ -1952,7 +2089,9 @@ export class CompanionEventPump {
    *
    * Once, not once per probe: the reason is the same statement until the reading moves, and three copies of "the bridge
    * is not answering" would be three turns spent re-reading one condition. `publish` is the Host's Host-minted-fact
-   * route, so this fact wakes a turn exactly where the stale fact did and nowhere else.
+   * route, so this fact wakes a turn exactly where the stale fact did and nowhere else - which is also why the refusal is
+   * counted in `autoObserve.unavailable[refused]`: the turn that opened for it opened because the world could not be
+   * asked.
    */
   #refuseWorldStateRefresh(revision: number, error: unknown): void {
     const port = this.#worldStateRefreshPort;
@@ -1969,6 +2108,7 @@ export class CompanionEventPump {
       return;
     }
     this.#worldStateRefreshRefusals += 1;
+    this.#autoObserveUnavailable[AUTO_OBSERVE_UNAVAILABLE.refused] += 1;
   }
 
   /** The one spelling of the refusal fact: `world_state_refresh_refused:<reason>`. */

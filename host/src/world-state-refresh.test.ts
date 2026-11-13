@@ -23,6 +23,8 @@ import test from "node:test";
 
 import { CompanionLoop } from "./companion-loop.js";
 import {
+  AUTO_OBSERVE_UNAVAILABLE,
+  AUTO_OBSERVE_UNAVAILABLE_REASONS,
   CompanionEventPump,
   type PendingBatch,
   WORLD_STATE_REFRESH_ATTEMPTS,
@@ -133,7 +135,7 @@ async function replayFrozenWindow(pump: CompanionEventPump): Promise<readonly Wo
   return stale;
 }
 
-test("stale_world_state_produces_no_refresh: every stale fact is followed by a request or a named refusal", async () => {
+test("stale_world_state_produces_no_refresh: a crossed reading is answered by a request, and a served request replaces the fact", async () => {
   // THE RED READING, kept as the fixture. A pump nobody wired is what every composition shipped at HEAD: the frozen
   // window produces stale facts and answers them with no request at all - the 601 s of silence, reproduced from the
   // bundle's own facts rather than described.
@@ -146,9 +148,16 @@ test("stale_world_state_produces_no_refresh: every stale fact is followed by a r
     "a pump nobody wired cannot refresh, and that condition must be readable rather than silent",
   );
   assert.equal(unattached.worldStateRefresh.probes, 0, "the defect this gate names: stale, and nothing asks");
+  assert.equal(
+    unattached.turnAccount.autoObserve.unavailable[AUTO_OBSERVE_UNAVAILABLE.noBridge],
+    unattachedStale.length,
+    "and every one of those stale facts says WHY nobody asked, instead of leaving it to be inferred from a silence",
+  );
 
-  // THE PROPERTY: each stale fact is answered by one request, in the same admission that publishes it, so the reading she
-  // is handed next is one she was not asked to go and fetch herself.
+  // THE PROPERTY: a crossed reading is answered by one request, in the same admission that would have published the fact
+  // - and a request that is served REPLACES the fact, so the reading she is handed next is one she was not told to go and
+  // fetch herself. The two counts come from the account, so the arithmetic is the pump's own statement rather than a
+  // second tally here.
   const pump = new CompanionEventPump();
   const asked: string[] = [];
   pump.attachWorldStateRefresh(
@@ -162,11 +171,22 @@ test("stale_world_state_produces_no_refresh: every stale fact is followed by a r
   );
   const stale = await replayFrozenWindow(pump);
   assert.equal(pump.worldStateRefresh.attached, true);
+  const staleAccount = pump.turnAccount.autoObserve;
+  const declined = AUTO_OBSERVE_UNAVAILABLE_REASONS.reduce(
+    (total, reason) => total + staleAccount.unavailable[reason],
+    0,
+  );
+  assert.ok(staleAccount.refreshed >= 1, "the window reaches at least one crossing, or this gate has nothing to read");
   assert.equal(
     asked.length,
+    staleAccount.refreshed,
+    `each of the ${String(staleAccount.refreshed)} refreshes the account claims must be one request (measured ${String(asked.length)})`,
+  );
+  assert.equal(
     stale.length,
-    `each of the ${String(stale.length)} stale facts must be answered by one request, never by prose alone ` +
-      `(measured ${String(asked.length)})`,
+    declined,
+    `a stale fact is published exactly when the world could not be asked: ${String(stale.length)} fact(s), ` +
+      `${String(declined)} declined crossing(s)`,
   );
 });
 

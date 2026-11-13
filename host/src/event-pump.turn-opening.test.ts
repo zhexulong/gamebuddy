@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  AUTO_OBSERVE_ON_STALE,
+  AUTO_OBSERVE_UNAVAILABLE,
+  AUTO_OBSERVE_UNAVAILABLE_REASONS,
+  AUTO_OBSERVE_UNAVAILABLE_TOKEN,
   CompanionEventPump,
   EXECUTION_STALL_SEMANTIC_KIND,
   HOST_MINTED_FACT_SOURCE,
@@ -576,26 +580,44 @@ function readTurnAccountLine(line: string): Readonly<{
   suppressed: Readonly<{ total: number; counts: Record<string, number> }>;
   examined: number;
   emptyTurns: Readonly<{ total: number; counts: Record<string, number> }>;
+  autoObserve: Readonly<{
+    refreshed: Readonly<{ total: number; counts: Record<string, number> }>;
+    unavailable: Readonly<{ total: number; counts: Record<string, number> }>;
+  }>;
 }> {
   const segments = line.split(SEGMENT_SEPARATOR).map(parseSegment);
-  const labels = ["turns opened", "suppressed", "flushes examined", TURN_WITHOUT_ACTION];
+  const labels = [
+    "turns opened",
+    "suppressed",
+    "flushes examined",
+    TURN_WITHOUT_ACTION,
+    AUTO_OBSERVE_ON_STALE,
+    AUTO_OBSERVE_UNAVAILABLE_TOKEN,
+  ];
   assert.deepEqual(
     segments.map((segment) => segment.label),
     labels,
     `the account line's segments are ${labels.join(", ")}: a missing one is a reading nobody can recover`,
   );
-  const [openedSegment, suppressedSegment, examinedSegment, emptySegment] = segments as [
-    ReturnType<typeof parseSegment>,
-    ReturnType<typeof parseSegment>,
-    ReturnType<typeof parseSegment>,
-    ReturnType<typeof parseSegment>,
-  ];
+  const [openedSegment, suppressedSegment, examinedSegment, emptySegment, observedSegment, declinedSegment] =
+    segments as [
+      ReturnType<typeof parseSegment>,
+      ReturnType<typeof parseSegment>,
+      ReturnType<typeof parseSegment>,
+      ReturnType<typeof parseSegment>,
+      ReturnType<typeof parseSegment>,
+      ReturnType<typeof parseSegment>,
+    ];
   return Object.freeze({
     opened: openedSegment.total,
     byReason: openedSegment.counts,
     suppressed: Object.freeze({ total: suppressedSegment.total, counts: suppressedSegment.counts }),
     examined: examinedSegment.total,
     emptyTurns: Object.freeze({ total: emptySegment.total, counts: emptySegment.counts }),
+    autoObserve: Object.freeze({
+      refreshed: Object.freeze({ total: observedSegment.total, counts: observedSegment.counts }),
+      unavailable: Object.freeze({ total: declinedSegment.total, counts: declinedSegment.counts }),
+    }),
   });
 }
 
@@ -604,6 +626,20 @@ function emptyTurnShapeCounts(overrides: Readonly<Record<string, number>>): Reco
   const counts: Record<string, number> = {};
   for (const shape of emptyTurnShapes()) counts[shape] = overrides[shape] ?? 0;
   return counts;
+}
+
+/** The stale path's own account, with every declared unavailability reason printed even at zero. */
+function autoObserveAccount(
+  refreshed: Readonly<{ refreshed: number; lastAgeTurns: number | undefined }>,
+  unavailable: Readonly<Record<string, number>> = {},
+): TurnAccount["autoObserve"] {
+  const byReason: Record<string, number> = {};
+  for (const reason of AUTO_OBSERVE_UNAVAILABLE_REASONS) byReason[reason] = unavailable[reason] ?? 0;
+  return Object.freeze({
+    refreshed: refreshed.refreshed,
+    lastAgeTurns: refreshed.lastAgeTurns,
+    unavailable: Object.freeze(byReason),
+  });
 }
 
 test("the account line reads back into the account it names", () => {
@@ -629,6 +665,7 @@ test("the account line reads back into the account it names", () => {
         }),
       ),
     }),
+    autoObserve: autoObserveAccount({ refreshed: 4, lastAgeTurns: 20 }, { [AUTO_OBSERVE_UNAVAILABLE.refused]: 1 }),
     lastDecision: undefined,
   });
   const parsed = readTurnAccountLine(turnAccountLine(account));
@@ -665,6 +702,7 @@ test("the account line names a member that never fired, in both histograms", () 
     }),
     examined: 1,
     emptyTurns: Object.freeze({ total: 0, byShape: Object.freeze(emptyTurnShapeCounts({})) }),
+    autoObserve: autoObserveAccount({ refreshed: 0, lastAgeTurns: undefined }),
     lastDecision: undefined,
   });
   const parsed = readTurnAccountLine(turnAccountLine(account));
@@ -676,6 +714,11 @@ test("the account line names a member that never fired, in both histograms", () 
   );
   assert.deepEqual(Object.keys(parsed.emptyTurns.counts), [...emptyTurnShapes()]);
   assert.deepEqual(Object.keys(parsed.suppressed.counts), [...TURN_SUPPRESSIONS]);
+  assert.deepEqual(
+    Object.keys(parsed.autoObserve.unavailable.counts),
+    [...AUTO_OBSERVE_UNAVAILABLE_REASONS],
+    "and the reasons a refresh could not be asked are all printed, so `nobody asked` is a stated zero",
+  );
 });
 
 test("the account line this repo printed before the change is REFUSED by the reader", () => {
@@ -685,8 +728,26 @@ test("the account line this repo printed before the change is REFUSED by the rea
     "turns opened 55 · suppressed 0 {observation_restated: 0, world_fact_restated: 0, nothing_pending: 0} · flushes examined 55";
   assert.throws(
     () => readTurnAccountLine(measured),
-    /turns opened, suppressed, flushes examined, turn_closed_without_action/u,
+    /turns opened, suppressed, flushes examined, turn_closed_without_action, auto_observe_on_stale, auto_observe_unavailable/u,
     "a line that cannot say what opened its turns is not an account, and must not read as one",
+  );
+});
+
+test("the account line that named its turns but not its refreshes is REFUSED: a removed turn must be countable", () => {
+  // THE FALSIFIER for the two segments, and the exact line this repo printed for `round47` after `04301c28`: every
+  // opener, every suppression, every empty-turn shape - and not one word about a stale notice. A refresh costs no turn,
+  // so a line without these two segments cannot tell "the stale notices stopped opening turns" from "the stale notices
+  // stopped happening".
+  const previous =
+    "turns opened 64 {player_input: 1, world_fact: 55, observation: 6, due: 2} · suppressed 12 {observation_restated: 6, " +
+    "world_fact_restated: 3, nothing_pending: 3} · flushes examined 76 · turn_closed_without_action 41 " +
+    "{player_input:world_stale: 0, player_input:body_held: 0, player_input:nothing_pending: 0, world_fact:world_stale: 11, " +
+    "world_fact:body_held: 9, world_fact:nothing_pending: 21, observation:world_stale: 0, observation:body_held: 0, " +
+    "observation:nothing_pending: 0, due:world_stale: 0, due:body_held: 0, due:nothing_pending: 0}";
+  assert.throws(
+    () => readTurnAccountLine(previous),
+    /auto_observe_on_stale, auto_observe_unavailable/u,
+    "a turn the refresh removed leaves no trace in that line, which is why the removal was uncountable",
   );
 });
 
