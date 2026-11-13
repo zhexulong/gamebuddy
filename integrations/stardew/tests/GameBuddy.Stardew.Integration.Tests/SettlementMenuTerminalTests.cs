@@ -102,11 +102,35 @@ public sealed class SettlementMenuTerminalTests
         // ShippingMenu overrides neither `exitThisMenu` nor `cleanupBeforeExit`, so a generic close is a pure cancel
         // that discards the settlement. `okClicked` (ShippingMenu.cs:690-696) is the engine's own commit.
         //
-        // The check reads CODE with its comments stripped first: `exitThisMenu` legitimately appears in the two comments
-        // that explain why it is not used, and a whole-file search cannot tell an explanation from a call.
+        // The check reads CODE with its comments stripped first: `exitThisMenu` legitimately appears in the comments that
+        // explain why it is not used for the settlement, and a whole-file search cannot tell an explanation from a call.
         string code = StripComments(ReadLifecycleSource());
         code.Should().Contain("okClicked", "the engine's own commit");
-        code.Should().NotContain("exitThisMenu", "a generic exit would discard the settlement");
+
+        // THE BAN IS ON THE COMMIT PATH, NOT ON THE FILE. The file now owns a second, unrelated close: a menu nothing
+        // here raised is released through the engine's own cancel (`ReleaseUnrecognisedOvernightMenu`), and a whole-file
+        // ban made that legitimate route indistinguishable from a summary closed the wrong way. What must stay
+        // impossible is the settlement itself reaching a generic exit, so every body that commits it is asserted.
+        foreach (string commitPath in new[]
+        {
+            "private SettlementMenuOutcome CommitShippingSummary(",
+            "internal SettlementMenuOutcome SettleStandingSettlementMenu()",
+            "internal static SettlementMenuOutcome SettleStandingSettlementMenuWithoutLifecycle(",
+            "private static bool EngineShippingCommit(",
+        })
+        {
+            MethodBody(code, commitPath).Should().NotContain(
+                "exitThisMenu",
+                $"{commitPath} commits the settlement, and a generic exit there would cancel it");
+        }
+
+        // Exactly one generic exit in the file, and it is behind the decision that keeps every declared menu out of it: a
+        // `ShippingMenu` is a declared member, so it can never answer `NotRecognised` and can never be released this way.
+        code.Split("exitThisMenu").Should().HaveCount(2, "the only generic exit in this file is the unrecognised release's");
+        string release = MethodBody(code, "private bool ReleaseUnrecognisedOvernightMenu(");
+        release.Should().Contain("DecideOvernightMenuStep(");
+        release.Should().Contain("OvernightMenuStep.NotRecognised");
+        MethodBody(code, "private OvernightMenuRelease ReleaseOvernightMenu(").Should().Contain("exitThisMenu");
     }
 
     /// <summary>Removes `//` line comments and `/* */` blocks so an assertion reads CALLS, not prose about them.</summary>
