@@ -254,9 +254,9 @@ public sealed class RouteReenteringBodyProgramExecutor : IBodyProgramNodeExecuto
                     expectedTargetId = value.CanonicalValue;
                     break;
                 // The species `fish_here` was asked for. Without this case a node carrying the descriptor's required
-                // `requested_fish` reached the handler as null, so a plan that named a fish would have been checked
+                // `requestedFish` reached the handler as null, so a plan that named a fish would have been checked
                 // against nothing and reported as the fish it asked for.
-                case "requested_fish" when value.Kind == BodyProgramArgumentKind.String:
+                case "requestedFish" when value.Kind == BodyProgramArgumentKind.String:
                     requestedFish = value.CanonicalValue;
                     break;
                 // The container pair names its container through `chestId`, which IS the address: it binds

@@ -5,6 +5,7 @@
     "gate_skip_can_pass test:action-surface-parity",
     "gate_skip_can_pass test:await-deadlines",
     "gate_skip_can_pass test:ci-snapshot",
+    "gate_skip_can_pass test:engine-affordance-census",
     "gate_skip_can_pass test:gameplay-capability-catalog",
     "gate_skip_can_pass test:plan-legal-fixpoint",
     "gate_skip_can_pass test:preset-round-trip",

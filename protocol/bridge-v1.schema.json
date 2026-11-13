@@ -5195,7 +5195,7 @@
         "x",
         "y",
         "expectedTargetId",
-        "requested_fish"
+        "requestedFish"
       ],
       "properties": {
         "x": {
@@ -5207,7 +5207,7 @@
         "expectedTargetId": {
           "$ref": "#/$defs/opaqueId"
         },
-        "requested_fish": {
+        "requestedFish": {
           "type": "string",
           "maxLength": 128
         }

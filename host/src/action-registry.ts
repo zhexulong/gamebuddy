@@ -1110,7 +1110,7 @@ export const TILE_TARGET_ARGUMENTS = Object.freeze(["x", "y", "expectedTargetId"
  * meaning any fish - the same spelling `till_soil`'s `charge` uses for "this tile only" (`0`), because an optional
  * argument is not expressible in this stack.
  */
-export const WATER_TARGET_ARGUMENTS = Object.freeze(["x", "y", "expectedTargetId", "requested_fish"] as const);
+export const WATER_TARGET_ARGUMENTS = Object.freeze(["x", "y", "expectedTargetId", "requestedFish"] as const);
 const NO_ARGUMENTS = publishesArguments();
 const TILE_AND_TARGET = publishesArguments(...TILE_TARGET_ARGUMENTS);
 const TILE_SLOT_AND_TARGET = publishesArguments("x", "y", "slot", "expectedTargetId");
