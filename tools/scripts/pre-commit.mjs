@@ -1,4 +1,8 @@
 import { execFileSync } from "node:child_process";
+import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
+
 import { cleanOutputLines } from "../lib/subprocess-output.mjs";
 
 /**
@@ -22,9 +26,22 @@ import { cleanOutputLines } from "../lib/subprocess-output.mjs";
  * formatter change something on disk" - a question about the checkout, in a repository where the checkout is
  * several lanes' work in flight at once.
  *
- * Formatting the blob instead of the file is also the more accurate reading: `--stdin-file-path=<path>` gives the
- * formatter the real path for its configuration and language, and the bytes it sees are the bytes the commit will
- * carry (LF, as `.gitattributes` normalises), not whatever line endings the checkout happens to hold.
+ * Formatting the blob instead of the file is also the more accurate reading: the bytes the formatter sees are the
+ * bytes the commit will carry (LF, as `.gitattributes` normalises), not whatever line endings the checkout holds.
+ *
+ * WHAT IT MUST NOT DO: CHANGE A CHARACTER. Measured on biome 2.2.4 over every non-ASCII codepoint this tree contains
+ * (2010 of them, 2610 tracked formattable files): its stdin mode rewrites exactly five, and one of them is the marker
+ * every gate in this tree prints - `✖` (U+2716) becomes `×` (U+00D7), `✔` becomes `√`, `ℹ` becomes `e`, `⚠` becomes
+ * `!`, and U+FE0F is dropped. The same blob formatted as a FILE comes back byte-identical. So the hook formats a copy
+ * of the staged blob in a scratch root that carries this checkout's own `biome.json`, never the stdin mode - the same
+ * shape this file had at `e8f9c02d`, which a later commit carrying a stale base overwrote with the stdin one, and the
+ * damage landed twice: `0100ae9a` committed `tools/check-gameplay-capability-catalog.test.mjs` with `✖`=0/`×`=2, and
+ * `a1389e75` - the commit that restored them - came out EMPTY, because the hook formatted the restored blob back into
+ * the bytes its parent already had.
+ *
+ * AND IT REFUSES TO TRUST THE RESULT: whatever the formatter's mode, the non-ASCII characters of the staged bytes must
+ * survive it unchanged, or the staged blob is committed as the author wrote it and the reason is printed. A formatter
+ * may reformat; it may not rewrite what a gate prints.
  *
  * Scope is deliberately narrow, and deliberately NOT tree-wide:
  *   - It formats the STAGED files, in the index. That removes the cause of the recurring red.
@@ -113,39 +130,90 @@ const indexEntries = (paths) => {
     });
 };
 
-/** The formatter's stdin mode: the text it reads is formatted, the formatted text is what it prints. */
-const formatText = (text, path) =>
-  execFileSync("node", [BIOME, "format", `--stdin-file-path=${path}`, "--max-diagnostics=none"], {
-    input: text,
-    encoding: "utf8",
-    stdio: ["pipe", "pipe", "pipe"],
-  });
+/**
+ * One non-ASCII character changed by a formatter, as `<the character it was> -> <the character it became>`.
+ *
+ * The whole non-ASCII sequence is compared rather than a count, because `✖` -> `×` and `×` -> `✖` are both one
+ * character and only one of them is damage. Null when the sequences are equal.
+ */
+const changedCharacter = (before, after) => {
+  const from = [...before].filter((character) => character.codePointAt(0) > 0x7f);
+  const to = [...after].filter((character) => character.codePointAt(0) > 0x7f);
+  for (let index = 0; index < Math.max(from.length, to.length); index += 1) {
+    if (from[index] === to[index]) continue;
+    const describe = (character) =>
+      character === undefined
+        ? "nothing"
+        : `U+${character.codePointAt(0).toString(16).toUpperCase().padStart(4, "0")} (${character})`;
+    return `${describe(from[index])} -> ${describe(to[index])}`;
+  }
+  return null;
+};
+
+/**
+ * The staged blob of one entry, formatted as a FILE at its own repository-relative path in a scratch root.
+ *
+ * The mirror is what makes the formatter read this checkout's configuration the way it reads the real tree: the
+ * configuration is copied to the scratch root, so `files.includes` selects exactly what it selects here and a
+ * directory the project excludes stays excluded. Returns null when the filter does not select the path - not a
+ * failure: `biome format --write <path>` over this checkout would also have processed nothing.
+ *
+ * Never the stdin mode: see the header (U+2716 -> U+00D7 and four more).
+ */
+const formatStagedBlob = (staged, path, scratch) => {
+  const mirrored = join(scratch, path);
+  mkdirSync(dirname(mirrored), { recursive: true });
+  writeFileSync(mirrored, staged);
+  try {
+    execFileSync(
+      "node",
+      [BIOME, "format", "--write", "--max-diagnostics=none", `--config-path=${join(scratch, "biome.json")}`, mirrored],
+      { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
+    );
+  } catch (error) {
+    const detail = `${error.stdout ?? ""}${error.stderr ?? ""}`;
+    // Biome exits 1 when every given path is one its configuration ignores (for example `fixtures/**`). That is not a
+    // formatting failure, and blocking a commit on it would stop anyone from committing under an excluded directory.
+    if (/were provided but ignored|No files were processed/i.test(detail)) return null;
+    console.error(`pre-commit: the formatter failed on ${path}\n${detail}`);
+    process.exit(1);
+  }
+  return readFileSync(mirrored);
+};
 
 const rewriteFormattedBlobs = (entries) => {
+  const scratch = mkdtempSync(join(tmpdir(), "pre-commit-format-"));
+  copyFileSync("biome.json", join(scratch, "biome.json"));
   const rewritten = [];
+  const excluded = [];
+  const preserved = [];
   for (const entry of entries) {
     if (!REGULAR_FILE_MODES.has(entry.mode)) continue;
     const stagedBytes = execFileSync("git", ["cat-file", "blob", entry.blob], { maxBuffer: 1 << 26 });
     const text = stagedBytes.toString("utf8");
     // A blob that does not survive a UTF-8 round trip is not text, and a formatter can only corrupt it.
     if (!Buffer.from(text, "utf8").equals(stagedBytes)) continue;
-    let formatted;
-    try {
-      formatted = formatText(text, entry.path);
-    } catch (error) {
-      console.error(`pre-commit: the formatter failed on ${entry.path}\n${error.stdout ?? ""}${error.stderr ?? ""}`);
-      process.exit(1);
+    const formatted = formatStagedBlob(stagedBytes, entry.path, scratch);
+    if (formatted === null) {
+      excluded.push(entry.path);
+      continue;
     }
-    if (formatted === text) continue;
-    const blob = execFileSync("git", ["hash-object", "-w", "--stdin"], {
-      input: Buffer.from(formatted, "utf8"),
-    })
-      .toString("utf8")
-      .trim();
+    if (formatted.equals(stagedBytes)) continue;
+    // THE INVARIANT, checked on the bytes rather than trusted from the formatter's mode: a character the author wrote
+    // is not formatting. When one moved, the staged blob wins - the author's bytes are committed, unformatted, and the
+    // next line says so - because a commit that quietly carries a character nobody typed is the defect this hook was
+    // fixed for twice.
+    const changed = changedCharacter(text, formatted.toString("utf8"));
+    if (changed !== null) {
+      preserved.push(`${entry.path} (${changed})`);
+      continue;
+    }
+    const blob = execFileSync("git", ["hash-object", "-w", "--stdin"], { input: formatted }).toString("utf8").trim();
     git(["update-index", "--cacheinfo", entry.mode, blob, entry.path]);
     rewritten.push(entry.path);
   }
-  return rewritten;
+  rmSync(scratch, { recursive: true, force: true });
+  return { rewritten, excluded, preserved };
 };
 
 // AN EMPTY LIST IS A SKIP, NEVER AN INSTRUCTION TO FORMAT THE PROJECT. `biome format --write` with no paths formats
@@ -159,13 +227,23 @@ const rewriteFormattedBlobs = (entries) => {
 if (targets.length === 0) {
   console.log("pre-commit: nothing formattable staged");
 } else {
-  const rewritten = rewriteFormattedBlobs(indexEntries(targets));
+  const { rewritten, excluded, preserved } = rewriteFormattedBlobs(indexEntries(targets));
   if (rewritten.length === 0) {
-    console.log(`pre-commit: the ${targets.length} staged file(s) are already formatted`);
+    console.log(`pre-commit: the staged content of ${targets.length - excluded.length} file(s) is already formatted`);
   } else {
     console.log(`pre-commit: formatted ${rewritten.length} staged file(s) in the index: ${rewritten.join(", ")}`);
     console.log(
       "pre-commit: the worktree copy is untouched - run `node node_modules/@biomejs/biome/bin/biome format --write <paths>` if you want it to match what was committed",
+    );
+  }
+  for (const site of preserved) {
+    console.log(
+      `pre-commit: NOT reformatting ${site}: the formatter changed a character this file contains, so the staged bytes are committed as written`,
+    );
+  }
+  if (excluded.length > 0) {
+    console.log(
+      `pre-commit: biome.json's files.includes does not select ${excluded.join(", ")} - there is nothing to format there`,
     );
   }
 }
