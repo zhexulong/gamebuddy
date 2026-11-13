@@ -177,8 +177,9 @@ import {
 import { programNodeOutcomes } from "./program-node-outcomes.mjs";
 import { shouldAbandonTurnForTransport } from "./transport-loss.mjs";
 // Whether the WORLD moved while this run watched it: the clock every snapshot carries, read at least twice, so a paused
-// world cannot be reported as a companion that stopped (see the module's header for the measurement it answers).
-import { assessPauseOnUnfocus, createGameClock } from "./game-clock.mjs";
+// world cannot be reported as a companion that stopped. It prints every read and beats once per bound of silence, because
+// a reading that only exists at the END cannot describe the stalls these runs are stopped for (`round50b`, `round51`).
+import { GAME_CLOCK_HEARTBEAT_MS, assessPauseOnUnfocus, createGameClock } from "./game-clock.mjs";
 // The Mod's own durable Body Program journal: the fallback that answers when the game - and with it the bridge - dies
 // mid-run, which is exactly when a program's evidence matters most.
 import {
@@ -616,7 +617,11 @@ const factLog = [];
  * assembles a run whose module evaluation died. Feeding it costs nothing: `observe` is a function call on a snapshot the
  * run already holds, and one solicited `observe` before the verdict is the only bridge request it adds.
  */
-const gameClock = createGameClock();
+const gameClock = createGameClock({
+  // The beat carries the run's OWN answer to "who cleared pause-when-out-of-focus" (`assessPauseOnUnfocus`), read
+  // lazily: `readModLogText` is declared further down, and the probe only runs once a heartbeat fires.
+  pauseOnUnfocus: () => assessPauseOnUnfocus({ modLog: readModLogText() }),
+});
 // The LAST world snapshot and the LAST actor pose this run actually observed.
 //
 // Reading `client.state.snapshot` when the bundle is assembled is too late: by then the session has finished and
@@ -3136,6 +3141,17 @@ const MOD_LOG_PATHS = () => {
   }
   return paths;
 };
+//
+// ONE BEAT PER BOUND OF SILENCE, on its own timer: a stall is not a code path, so nothing in a waiting loop can be relied on
+// to report one. While the clock is being read the beat prints nothing - the read lines are that interval's record - so this
+// adds one line per 30 s only while the run is NOT reading the world, which is exactly the shape `round51` left blank.
+//
+// It sits here, after the two log readers rather than with the other timers, because each beat carries this run's own
+// pause-on-unfocus reading: creating the timer before the values it reads would let a 30 s beat fire during a module
+// evaluation parked on an await, and a diagnostic that throws there kills the run it is describing.
+//
+const gameClockHeartbeat = setInterval(() => gameClock.heartbeat(), GAME_CLOCK_HEARTBEAT_MS);
+gameClockHeartbeat.unref?.();
 const MOD_HEARTBEAT_MARKER = "DEBUG-native-local-heartbeat";
 let modHeartbeatSample = { count: -1, sinceMs: Date.now(), line: "" };
 

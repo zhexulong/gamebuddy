@@ -1,20 +1,40 @@
 // red-proof: inject  in game-clock.mjs making the `spanMinutes === 0` arm report `advanced` -> the paused-world test
 //   fails with `world_clock_never_advanced:600:600:0` expected and `advanced` published; making `read()` count every
 //   `observe` call as a reading (dropping the admitted-snapshot identity) -> the one-snapshot test reports two readings
-//   and the run stops saying `not_measured:game_clock_read_once`
+//   and the run stops saying `not_measured:game_clock_read_once`; deriving `minutesSinceFirst` from the WALL clock instead
+//   of the game's own values -> the three-read test publishes 0/0/0 where the world moved 5 and 10 game minutes;
+//   printing `GAME_CLOCK_READ` only for the first read (or deduping by clock VALUE instead of snapshot identity) -> the
+//   line count and the same-clock reading fail; firing the heartbeat on every call rather than past the bound -> the
+//   inside-the-bound assertion fails with a line it must not print; returning no line when nothing was ever read -> the
+//   never-read test loses `lastReading: null` and the note naming the snapshot
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
-import { assessPauseOnUnfocus, createGameClock, readSnapshotClock } from "./game-clock.mjs";
+import { GAME_CLOCK_HEARTBEAT_MS, assessPauseOnUnfocus, createGameClock, readSnapshotClock } from "./game-clock.mjs";
 
 /** One admitted snapshot, as the bridge freezes it: a NEW object per read, which is what makes it one reading. */
 const snapshotAt = (timeOfDay, { day = 1, season = 0, year = 1, revision = 1 } = {}) =>
   Object.freeze({ timeOfDay, dayOfMonth: day, seasonIndex: season, year, revision });
 
 const clockWith = (...snapshots) => {
-  const clock = createGameClock({ now: () => 1_000 });
+  const clock = createGameClock({ now: () => 1_000, print: () => {} });
   for (const snapshot of snapshots) clock.observe(snapshot);
   return clock;
 };
+
+/**
+ * A periodic line split into its code and its payload.
+ *
+ * The lines are read the way a person reads the tail of a run log: scroll to the code, then read the JSON beside it.
+ * `indexOf(" ")` rather than `split(" ")` because the payload itself may hold spaces.
+ */
+const splitLine = (line) => {
+  const space = line.indexOf(" ");
+  assert.ok(space > 0, `a periodic clock line starts with a code and a payload, not this: ${line}`);
+  return { code: line.slice(0, space), payload: JSON.parse(line.slice(space + 1)) };
+};
+const payloadsOf = (printed, code) =>
+  printed.filter((line) => line.startsWith(`${code} `)).map((line) => splitLine(line).payload);
 
 test("a snapshot's clock is read from the Mod's own fields, and the world-not-ready zero is not a reading", () => {
   // `protocol.ts` publishes `timeOfDay`/`dayOfMonth`/`seasonIndex`/`year` on every Mod snapshot and says the value is
@@ -83,7 +103,7 @@ test("sampling one admitted snapshot twice is one reading of the world", () => {
   // solicited observe, and the run samples the admitted projection repeatedly while it waits. Counting those samples as
   // readings would let a run that never re-read the world claim it had seen it move - or fail to.
   const only = snapshotAt(600);
-  const clock = createGameClock({ now: () => 1_000 });
+  const clock = createGameClock({ now: () => 1_000, print: () => {} });
   clock.observe(only);
   clock.observe(only);
   clock.observe(only);
@@ -138,7 +158,7 @@ test("zero facts over a span the clock measured is its own finding, not a still 
 });
 
 test("an unreadable read is counted, and it never becomes a reading", () => {
-  const clock = createGameClock({ now: () => 1_000 });
+  const clock = createGameClock({ now: () => 1_000, print: () => {} });
   clock.observe(snapshotAt(600));
   clock.observe(null);
   clock.observeUnreadable({ source: "final_read", reason: "bridge_not_authenticated" });
@@ -185,4 +205,190 @@ test("pause-on-unfocus: where it is decided, and whether this run's own log says
   assert.equal(silent.reason, "mod_window_mode_line_absent");
   assert.equal(silent.windowMode, null);
   assert.deepEqual(assessPauseOnUnfocus({}).state, "not_established");
+});
+
+test("every read prints itself, with the GAME minutes since the first read - not the wall ones", () => {
+  // An end-of-run-only instrument cannot describe a run whose END is the thing under investigation (`round50b`: two
+  // turns, then ten minutes of nothing, and the reading never printed). So each read prints as it happens.
+  const printed = [];
+  let nowMs = 5_000;
+  const clock = createGameClock({ now: () => nowMs, print: (line) => printed.push(line) });
+  // Three admitted snapshots five GAME minutes apart, one millisecond of wall clock apart: the number a reader needs is
+  // the world's. A wall-derived one publishes 0 three times on a world that moved ten minutes.
+  const reads = [snapshotAt(600, { revision: 1 }), snapshotAt(605, { revision: 2 }), snapshotAt(610, { revision: 3 })];
+  for (const snapshot of reads) {
+    clock.observe(snapshot);
+    nowMs += 1;
+  }
+  const lines = payloadsOf(printed, "GAME_CLOCK_READ");
+  assert.equal(lines.length, 3, `one line per read of the world, got ${JSON.stringify(printed)}`);
+  assert.deepEqual(
+    lines.map((payload) => payload.minutesSinceFirst),
+    [0, 5, 10],
+  );
+  assert.deepEqual(
+    lines.map((payload) => payload.timeOfDay),
+    [600, 605, 610],
+  );
+  // The four fields `protocol.ts` publishes on every snapshot, so the log alone says which day of which season the
+  // world was on when it went quiet.
+  assert.deepEqual(
+    lines.map(({ day, season, year }) => [day, season, year]),
+    [
+      [1, 0, 1],
+      [1, 0, 1],
+      [1, 0, 1],
+    ],
+  );
+  // The wall moment of the read itself, not the moment the line is read back.
+  assert.deepEqual(
+    lines.map((payload) => payload.atMs),
+    [5_000, 5_001, 5_002],
+  );
+
+  // BOUNDED: looking again at a reading the run already holds is not a read, and printing it would make the log one
+  // line per poll instead of one line per observe.
+  const before = printed.length;
+  clock.observe(reads.at(-1));
+  assert.equal(printed.length, before, "resampling the admitted snapshot is not a read and must print nothing");
+
+  // A NEW admitted snapshot carrying the SAME clock is still a read: "the Mod answered again at 10:10" is exactly the
+  // fact that separates a paused world from a silent Mod, so a dedupe on the clock's VALUE would swallow it. The line
+  // count and the read's own `atMs` are what say a line was PRINTED, not merely that the value ended up in the log.
+  const beforeSameClock = payloadsOf(printed, "GAME_CLOCK_READ").length;
+  clock.observe(snapshotAt(610, { revision: 4 }));
+  const afterSameClock = payloadsOf(printed, "GAME_CLOCK_READ");
+  assert.equal(
+    afterSameClock.length,
+    beforeSameClock + 1,
+    "a new snapshot on an unchanged clock is a read and must print its own line",
+  );
+  const sameClock = afterSameClock.at(-1);
+  assert.equal(sameClock.atMs, 5_003, "the line is printed at the new read's own moment");
+  assert.equal(sameClock.timeOfDay, 610);
+  assert.equal(sameClock.minutesSinceFirst, 10, "a second read of one clock value is still a second read of the world");
+});
+
+test("a run that stops reading says so as it stops, and the verdict it still writes is `read_once`", () => {
+  const printed = [];
+  let nowMs = 10_000;
+  const clock = createGameClock({
+    now: () => nowMs,
+    print: (line) => printed.push(line),
+    // The run's own answer to "who cleared pause-when-out-of-focus", bound here as the runner binds it.
+    pauseOnUnfocus: () =>
+      assessPauseOnUnfocus({ modLog: "GameBuddy applying hidden window mode (silent, 60Hz background loop)." }),
+  });
+  clock.observe(snapshotAt(600, { revision: 1 }));
+  // Inside the bound the read line is already that interval's record, so the beat prints nothing: one line per read
+  // plus one line per bound of silence, never one per tick.
+  nowMs += GAME_CLOCK_HEARTBEAT_MS - 1_000;
+  assert.equal(clock.heartbeat().line, null, "a beat inside the bound must not print");
+  // Past it: one line, and the silence it measures is the distance from the last READ.
+  nowMs += 2_000;
+  const first = clock.heartbeat();
+  assert.ok(first.stalled, "past the bound the sampler is stalled");
+  const firstLine = splitLine(first.line);
+  assert.equal(firstLine.code, "GAME_CLOCK_STALLED");
+  assert.equal(firstLine.payload.sinceLastReadMs, nowMs - 10_000, "the gap is now minus the reading's own atMs");
+  assert.deepEqual(firstLine.payload.lastReading, {
+    atMs: 10_000,
+    timeOfDay: 600,
+    day: 1,
+    season: 0,
+    year: 1,
+  });
+  assert.equal(
+    firstLine.payload.pausedOnUnfocus,
+    "disabled_by_the_mod:hidden",
+    "the beat carries the run's own pause reading, so a frozen clock arrives with its first suspect named",
+  );
+  // The number grows with the silence - the reading a stalled run's tail has to show.
+  nowMs += 60_000;
+  const secondBeat = clock.heartbeat();
+  assert.ok(secondBeat.line, "the second beat of a silent sampler must print too");
+  const second = splitLine(secondBeat.line).payload;
+  assert.ok(
+    second.sinceLastReadMs > firstLine.payload.sinceLastReadMs,
+    `the gap did not grow: ${String(second.sinceLastReadMs)} then ${String(firstLine.payload.sinceLastReadMs)}`,
+  );
+  assert.equal(second.sinceLastReadMs, nowMs - 10_000);
+  assert.equal(second.lastReading.timeOfDay, 600, "the last reading before the silence is still visible in it");
+
+  // AND THE VERDICT IS UNCHANGED: one reading is a run that looked once, never a run that saw a still world.
+  const reading = clock.read({ facts: 0 });
+  assert.equal(reading.state, "not_measured");
+  assert.equal(reading.verdict, "read_once");
+  assert.equal(reading.reasonCode, "not_measured:game_clock_read_once");
+  assert.equal(reading.snapshotsSeen, 1, "the beats are not readings of the world");
+});
+
+test("a sampler that never read the clock heartbeats the reason instead of printing nothing", () => {
+  // `round50b`'s other shape: the sampler may be unable to read at all - the clock is only readable from an admitted
+  // snapshot and the bridge may never hand one over. Silence there is a fact, and the line has to name it rather than
+  // leave a gap a reader cannot interpret.
+  const printed = [];
+  let nowMs = 0;
+  const clock = createGameClock({ now: () => nowMs, print: (line) => printed.push(line) });
+  assert.deepEqual(payloadsOf(printed, "GAME_CLOCK_READ"), [], "nothing has been read yet");
+  nowMs = GAME_CLOCK_HEARTBEAT_MS + 5_000;
+  const beat = clock.heartbeat();
+  assert.ok(beat.line, "a sampler that never read must say so, not print nothing");
+  const payload = splitLine(beat.line).payload;
+  assert.equal(payload.lastReading, null);
+  assert.equal(
+    payload.sinceLastReadMs,
+    GAME_CLOCK_HEARTBEAT_MS + 5_000,
+    "with no reading the gap is measured from the sampler's creation",
+  );
+  assert.match(payload.note, /snapshot/u, "the line must say the clock is only readable from an admitted snapshot");
+  assert.equal(payload.pausedOnUnfocus, "not_probed", "an unbound probe says so rather than inventing a verdict");
+
+  // A bound probe that found nothing in the Mod log is a DIFFERENT reading, and the falsifier for the default above.
+  const quiet = createGameClock({
+    now: () => nowMs,
+    print: () => {},
+    pauseOnUnfocus: () => assessPauseOnUnfocus({ modLog: "GameBuddy bridge ready." }),
+  });
+  nowMs += GAME_CLOCK_HEARTBEAT_MS;
+  const quietBeat = quiet.heartbeat();
+  assert.ok(quietBeat.line, "the second sampler must beat too");
+  assert.equal(splitLine(quietBeat.line).payload.pausedOnUnfocus, "not_established:mod_window_mode_line_absent");
+});
+
+test("the run is actually wired to print both: every read, and a beat per bound of silence", () => {
+  // A module nobody calls prints nothing, which is indistinguishable from the instrument that only spoke at the end.
+  // So the call sites are read out of the runner itself, at the three points that make the lines exist at all.
+  const runner = readFileSync(new URL("./run-stardew-native-local-agent-ab-live.mjs", import.meta.url), "utf8");
+  const beat = runner.indexOf("setInterval(() => gameClock.heartbeat(), GAME_CLOCK_HEARTBEAT_MS)");
+  assert.ok(beat > 0, "the runner must beat the clock on a timer: no waiting loop can be trusted to report a stall");
+  assert.match(
+    runner,
+    /gameClockHeartbeat\.unref\?\.\(\);/u,
+    "the beat must not hold the process open after the run's own work is done",
+  );
+  // One spelling of the bound: the runner reads the interval from the module, so the two cannot drift.
+  assert.match(
+    runner,
+    /import \{[^}]*GAME_CLOCK_HEARTBEAT_MS[^}]*\} from "\.\/game-clock\.mjs";/u,
+    "the interval has to come from the module that documents it, not be respelled at the call site",
+  );
+  assert.doesNotMatch(runner, /game-clock\.mjs[\s\S]{0,80}30_000/u, "a second copy of the bound is a second answer");
+  // The beat carries this run's own pause-on-unfocus probe, and the timer is created only after the log readers it calls:
+  // a beat that fires while those are still in their temporal dead zone is a diagnostic that kills the run.
+  assert.match(
+    runner,
+    /const gameClock = createGameClock\(\{[\s\S]{0,400}?pauseOnUnfocus: \(\) => assessPauseOnUnfocus\(\{ modLog: readModLogText\(\) \}\)/u,
+    "the beat has to publish the run's own pause-on-unfocus reading",
+  );
+  assert.ok(
+    beat > runner.indexOf("const readModLogText") && beat > runner.indexOf("const MOD_LOG_PATHS"),
+    "the beat is created before the log readers it calls, so a beat during module evaluation would throw",
+  );
+  // And the per-read line comes from the sampler every world read already goes through.
+  assert.match(
+    runner,
+    /function rememberObservation\(\)[\s\S]{0,600}?gameClock\.observe\(snapshot, \{ source: "snapshot" \}\)/u,
+    "every world read must reach the sampler that prints it",
+  );
 });

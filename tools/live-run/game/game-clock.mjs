@@ -38,7 +38,31 @@
  * A reading whose clock went BACKWARDS is neither: two different worlds were read (a reload, a second save), so the
  * span is not a measurement of one world and the answer says so rather than reporting the negative as an advance.
  * </p>
+ *
+ * <h2>Why the reading is also printed as it happens</h2>
+ * <p>
+ * MEASURED 2026-11-19 (`round51`, and `round50b` before it): two turns, then ten minutes in which nothing was read -
+ * and the run was stopped while it was stalled. The reading above is published by `buildRunResult`, i.e. only when the
+ * run ENDS, so the two runs whose end was the thing under investigation published neither number. An instrument that
+ * reports only at the end cannot describe a run that stalls, so this module prints as it samples:
+ * </p>
+ * <ul>
+ *   <li>{@link GAME_CLOCK_READ}, at every read, with `atMs`, the game's four clock fields, and the GAME minutes since the
+ *       first read - the log itself then shows whether the world was moving, and how far it had got at the last read
+ *       before the silence;</li>
+ *   <li>`GAME_CLOCK_STALLED`, from {@link createGameClock}.heartbeat, once per `heartbeatMs` of silence, so a quiet log
+ *       says whether the sampler has stopped reading and what the last clock it saw was. A sampler that never read at all
+ *       says so in the line: the clock is only readable from an admitted snapshot, and `lastReading: null` is that fact,
+ *       not an omission.</li>
+ * </ul>
+ * <p>
+ * Both are bounded into the traffic that already exists: one line per admitted snapshot (never per poll - a second look at
+ * a held snapshot is not a read) and one line per bound of silence. The END-OF-RUN VERDICT IS UNCHANGED by them.
+ * </p>
  */
+
+/** How long a silence the run tolerates before it prints a heartbeat saying so. */
+export const GAME_CLOCK_HEARTBEAT_MS = 30_000;
 
 /**
  * One in-game day on this module's own minute axis.
@@ -85,14 +109,24 @@ export function readSnapshotClock(snapshot) {
 }
 
 /**
- * The run's sampler: feed it every snapshot the run reads, ask it once at the end.
+ * The run's sampler: feed it every snapshot the run reads, ask it once at the end, and beat it while you wait.
  *
  * `observe` is called wherever the runner already samples the world, so it costs no bridge traffic. Two samples of the
  * SAME admitted snapshot are ONE reading taken twice - the bridge admits a snapshot only in answer to a solicited
  * observe, so the object's identity is what distinguishes "the world was read again" from "the same read was looked at
  * again", and counting the second as a reading would let a run claim it had seen the world twice.
+ *
+ * `print` is where the live lines go (the run's stderr); `heartbeatMs` is the silence that earns one; and
+ * `pauseOnUnfocus` is the run's own probe for who cleared the engine's pause-when-out-of-focus, read lazily so a
+ * heartbeat carries it (`assessPauseOnUnfocus`) instead of the reader having to assume it.
  */
-export function createGameClock({ now = () => Date.now() } = {}) {
+export function createGameClock({
+  now = () => Date.now(),
+  print = (line) => console.error(line),
+  heartbeatMs = GAME_CLOCK_HEARTBEAT_MS,
+  pauseOnUnfocus = null,
+} = {}) {
+  const startedAtMs = now();
   const readings = [];
   const misses = [];
   let samples = 0;
@@ -109,6 +143,7 @@ export function createGameClock({ now = () => Date.now() } = {}) {
     samples += 1;
     const reading = Object.freeze({ ...clock, source, atMs: now() });
     readings.push(reading);
+    print(describeRead({ reading, first: readings[0] }));
     return reading;
   };
 
@@ -182,7 +217,25 @@ export function createGameClock({ now = () => Date.now() } = {}) {
     });
   };
 
-  return Object.freeze({ observe, observeUnreadable, read });
+  /**
+   * A beat of the live instrument: the silence since the last read, or `line: null` while the silence is still inside
+   * the bound (the read lines are already that interval's record, and a beat per tick would bury them).
+   *
+   * It never manufactures a reading: with no snapshot in hand there is no clock to read, and the line says exactly that
+   * with `lastReading: null` instead of leaving a gap in the log.
+   */
+  const heartbeat = ({ atMs = now() } = {}) => {
+    const last = readings.at(-1) ?? null;
+    const sinceLastReadMs = atMs - (last?.atMs ?? startedAtMs);
+    const stalled = sinceLastReadMs >= heartbeatMs;
+    const line = stalled
+      ? describeStall({ atMs, sinceLastReadMs, last, heartbeatMs, readingsSeen: readings.length, pauseOnUnfocus })
+      : null;
+    if (line !== null) print(line);
+    return Object.freeze({ stalled, sinceLastReadMs, line });
+  };
+
+  return Object.freeze({ observe, observeUnreadable, heartbeat, read });
 }
 
 /** The span between the first and the last reading, on the sampler's own axis.
@@ -251,6 +304,67 @@ function describeClock({ readings, first, last, spanMinutes, verdict, reasonCode
   const missed = unreadable === 0 ? "" : ` · ${unreadable} unreadable`;
   const answer = verdict === "advanced" ? "the world moved" : (reasonCode ?? verdict);
   return `game_clock ${clock}${span} · ${looksText}${missed} · ${answer} · ${factsReading}`;
+}
+
+/**
+ * `GAME_CLOCK_READ {atMs, timeOfDay, day, season, year, minutesSinceFirst, source}` - one read of the world, printed
+ * as it happens.
+ *
+ * `minutesSinceFirst` is a GAME span on the same axis `spanOf` lays readings on, so a log tail shows the clock moving in
+ * the game's own unit (and a night it crossed correctly) rather than in wall minutes the world does not experience.
+ */
+function describeRead({ reading, first }) {
+  return `GAME_CLOCK_READ ${JSON.stringify({
+    atMs: reading.atMs,
+    timeOfDay: reading.timeOfDay,
+    day: reading.day,
+    season: reading.season,
+    year: reading.year,
+    minutesSinceFirst: spanOf([first, reading]),
+    source: reading.source,
+  })}`;
+}
+
+/**
+ * `GAME_CLOCK_STALLED {...}` - the silence itself, with the last clock the run saw.
+ *
+ * `note` tells the three silences apart rather than leaving a `null` to interpret: nothing has ever been read (the clock
+ * is only readable from an admitted snapshot, and none was admitted), or a reading exists and nothing has arrived since.
+ */
+function describeStall({ atMs, sinceLastReadMs, last, heartbeatMs, readingsSeen, pauseOnUnfocus }) {
+  return `GAME_CLOCK_STALLED ${JSON.stringify({
+    atMs,
+    sinceLastReadMs,
+    heartbeatMs,
+    readingsSeen,
+    lastReading:
+      last === null
+        ? null
+        : {
+            atMs: last.atMs,
+            timeOfDay: last.timeOfDay,
+            day: last.day,
+            season: last.season,
+            year: last.year,
+          },
+    pausedOnUnfocus: describePauseOnUnfocus(pauseOnUnfocus),
+    note:
+      last === null
+        ? "no_snapshot_admitted:this_sampler_reads_the_clock_from_an_admitted_snapshot_only"
+        : "no_snapshot_since_that_read",
+  })}`;
+}
+
+/**
+ * The pause-on-unfocus reading as one token a log tail can carry: the probe's own `state`, with the window mode it
+ * settled or the reason it could not. `not_probed` and `not_established` are different statements - the first says nobody
+ * asked, the second says the run asked and its own Mod log did not answer.
+ */
+function describePauseOnUnfocus(pauseOnUnfocus) {
+  if (pauseOnUnfocus === null) return "not_probed";
+  const assessment = pauseOnUnfocus();
+  const detail = assessment.reason ?? assessment.windowMode ?? null;
+  return detail === null ? assessment.state : `${assessment.state}:${detail}`;
 }
 
 /** Two decimal places, because a rate printed to seventeen digits reads as precision nobody measured. */
