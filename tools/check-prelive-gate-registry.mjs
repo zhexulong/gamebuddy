@@ -562,12 +562,13 @@ export const EXEMPTIONS = Object.freeze([
   {
     path: "tools/check-rederivation-parity.mjs",
     reason:
-      "debt: it is red at HEAD on the three declared re-derivations whose parity test does not exist (the fifth " +
-      "`SpawnFishData.GetChance` argument, `MeleeWeapon.getAreaOfEffect`'s arc, `GameLocation.getFishFromLocationData`'s " +
-      "row filter), and a rung that ran it would stop a prelive run on exactly the state this register exists to report; " +
-      "its falsifier suite does run in the derived corpus, green, through `test:rederivation-parity`. What would make it " +
-      "schedulable is the parity tests, not the wiring · measured rederivations examined 4 · with a parity test 1 · " +
-      "engine members 4 · without parity 3 · call sites examined 1 at e882b765",
+      "debt: it is red at HEAD on the two declared re-derivations whose parity test does not exist " +
+      "(`MeleeWeapon.getAreaOfEffect`'s arc, whose 4096-position claim is prose, and " +
+      "`GameLocation.getFishFromLocationData`'s row filter, whose parity is a live-run claim), and a rung that ran it " +
+      "would stop a prelive run on exactly the state this register exists to report; its falsifier suite does run in " +
+      "the derived corpus, green, through `test:rederivation-parity`. What would make it schedulable is the two parity " +
+      "tests, not the wiring · measured rederivations examined 4 · with a parity test 2 · engine members 4 · " +
+      "without parity 2 · call sites examined 1 at 1b906910",
     runsIn: "on-demand",
   },
   {
