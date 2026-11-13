@@ -39,6 +39,7 @@
     "gate_without_population check:stub-subject-collision",
     "gate_without_population check:surface-journeys",
     "gate_without_population check:workspace-debris",
+    "gate_without_population report:stardew-remaining-actions",
     "gate_without_population test:stardew-loop-closure-mutation",
     "gate_without_population test:stardew-method-resolution-mutation",
     "gate_without_population test:stardew-rejected-layer-verdicts-mutation",

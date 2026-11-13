@@ -48,6 +48,9 @@
  *   A name no entry carries is printed as `not_declared:`, kept out of the ranked population's judgements: it is a
  *   spelling the product would report as `macro_unknown`, not a macro this census can call on the table's behalf.
  *
+ * red-proof: fixture  `--root tools/fixtures` (88 JSON documents read, 86 rejected by the shape and none carrying a
+ *   top-level `prompts` array) -> `preset_macro_frequency_no_presets` and `preset_macro_frequency: blocked`, exit 1
+ *
  * VERDICT
  *
  *   A census reports; it does not pass a policy. So the only failing verdict is the one that would agree with itself:

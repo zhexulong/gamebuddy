@@ -59,6 +59,7 @@ const WORKFLOW_DIR = ".github/workflows";
 const GATE_TIMEOUT_MS = 10 * 60_000;
 
 const GATE_NAME = /^(?:check[:-]|audit:|report:|format:check$|dependency-audit$|lint(?::|$)|typecheck(?::|$))/u;
+export { GATE_NAME };
 const SCRIPT_PATH = /[\w.-]+(?:\/[\w.-]+)+\.(?:mjs|cjs|js|ts|ps1)/gu;
 
 /**

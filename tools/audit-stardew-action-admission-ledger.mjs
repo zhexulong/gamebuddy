@@ -13,6 +13,10 @@
  * `--check` compares the derived values against the table embedded below and
  * exits non-zero on drift, so the document's numbers can be asserted in CI
  * rather than trusted.
+ *
+ * red-proof: history  `--rev HEAD~40 --check` -> the ledger derived from that revision disagrees with the table this
+ *   document states (`idempotentLookup: document says 39, source has 9`, `executionIds: document says 45, source has
+ *   10`, `bodyOwned: document says 24, source has 1`, and seven more), exit 1
  */
 import { execFileSync } from "node:child_process";
 
@@ -149,6 +153,9 @@ const expressiveSites = [...sources]
 const report = {
   rev: options.rev,
   fileCount: sources.size,
+  // How many ledger values were derived: the population `--check` compares, so a run over an empty map cannot print
+  // the same report as a run over thirteen.
+  examined: Object.keys(derived).length,
   ledgerRows: derived,
   actionableGuardProfiles: {
     physical: guards.physical.length + derived.sharedAdmissionPhysical,

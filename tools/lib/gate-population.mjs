@@ -26,10 +26,26 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
-/** A `package.json` script named like a gate. */
-const GATE_SCRIPT = /^(?:audit|check|test):/u;
-/** A gate file: `tools/check-*.mjs`, minus its own falsifiers, which are not gates. */
-const GATE_FILE = /^check-.*\.mjs$/u;
+import { GATE_NAME as CI_COVERAGE_NAMESPACE } from "../check-ci-coverage.mjs";
+
+/**
+ * A `package.json` script named like a gate: the union of the two namespaces that name gates.
+ *
+ * `check-ci-coverage`'s is imported rather than restated, because it is the namespace that decides what runs in the CI
+ * `gates` job - and two spellings of it disagreed the first time measured: 9 scripts it covers (`lint`, `lint:eslint`,
+ * `lint:ast-grep`, `typecheck`, `typecheck:voice-protocol`, `format:check`, `dependency-audit`, `report:clones`,
+ * `report:stardew-remaining-actions`) are gates by its own contract and were outside the population this file derived,
+ * so the red-proof census could not see them.
+ */
+const GATE_SCRIPT = CI_COVERAGE_NAMESPACE;
+/**
+ * The half `check-ci-coverage` leaves to `tools/run-tool-test-corpus.mjs`: a `test:` script runs a gate's own suite.
+ * `suite:` is deliberately absent - that prefix names a library's tests, and `tools/run-tool-test-corpus.mjs` says so
+ * beside the two: only `test:` carries the meta-gate's obligation to state a falsifier.
+ */
+const TEST_SCRIPT = /^test:/u;
+/** A gate file: `tools/check-*.mjs` or `tools/audit-*.mjs`, minus its own falsifiers, which are not gates. */
+const GATE_FILE = /^(?:check|audit)-.*\.mjs$/u;
 /** A falsifier that lives beside its gate: the project rule is "the falsifier is part of the gate's own test". */
 const SIBLING_FALSIFIER = /\.(?:test\.mjs|test\.ts|mutation\.mjs)$/u;
 /** A path a command runs: that gate's entry points. Longest extension first, or `main.tsx` resolves to `main.ts`. */
@@ -51,7 +67,7 @@ function declaredGateScripts(root) {
   if (parsed === null) throw new Error("gate_red_proofs_package_json_missing");
   const scripts = JSON.parse(parsed).scripts ?? {};
   return Object.keys(scripts)
-    .filter((name) => GATE_SCRIPT.test(name))
+    .filter((name) => GATE_SCRIPT.test(name) || TEST_SCRIPT.test(name))
     .sort()
     .map((name) => {
       const command = scripts[name];

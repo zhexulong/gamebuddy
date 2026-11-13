@@ -5,9 +5,11 @@
     "audit:stardew-action-seam-terminals",
     "check:live-run-isolation",
     "check:sandbox-acceptance",
+    "report:clones",
     "test:sandbox-configs",
     "test:stardew-fixture-scenario-wiring",
     "test:stardew-soil-itm-canary",
-    "test:voice-protocol"
+    "test:voice-protocol",
+    "tools/audit-stardew-handler-actor-guard.mjs"
   ]
 }

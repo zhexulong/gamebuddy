@@ -552,6 +552,11 @@ const GATES_WITH_FALSIFIER = Object.freeze([
   // read (`not_measured`, never passed), a declared extension point its diff never adds, an extension point the
   // submodule already has, and a patch that only parses until it is applied.
   "check-vendor-patches-apply.mjs",
+  // Prints `{"gate":"stardew_receipt_transition_field_provenance/v1","status":"passed","population":443,...}` and
+  // the same object as a `receipt_transition_fields examined=443 files=47 ...` line, blocking on
+  // `gate_measured_nothing` when it finds no receipt builder or no transition field, so its default run is the report
+  // this suite reads. It joined the judged set on 2026-11-13 with the `(check|audit)-*.mjs` widening.
+  "audit-stardew-receipt-transition-fields.mjs",
 ]);
 
 /** How long a gate's default run may take before it is reported as having printed nothing. */
@@ -619,6 +624,37 @@ function describeRun(result) {
   const how = result.timedOut ? "timed out" : `exit ${String(result.status)}`;
   return cause === undefined ? how : `${how}: ${cause.trim().slice(0, 200)}`;
 }
+
+/**
+ * The sixteen `tools/audit-*.mjs` gates half B began scanning on 2026-11-13, when `tools/lib/gate-population.mjs`'s
+ * gate-file rule became `(check|audit)-*.mjs` - the rule `tools/check-prelive-gate-registry.mjs` already used, so the 17
+ * `audit-*.mjs` gates that were in nobody's census became members of this one. Each prints what it found as lines, not as
+ * the `{gate, checks[]}` report `checkGateFalsifiers` reads, so each is declared with one reason rather than run.
+ * `audit-stardew-receipt-transition-fields.mjs` is the exception and lives in `GATES_WITH_FALSIFIER`: its default run
+ * prints `{"gate":"stardew_receipt_transition_field_provenance/v1","population":443,...}`.
+ */
+const AUDIT_WITHOUT_SELF_REPORT = Object.freeze([
+  "audit-chat-live-run.mjs",
+  "audit-gate-red-proofs.mjs",
+  "audit-preset-macro-frequency.mjs",
+  "audit-run-reading-shape.mjs",
+  "audit-stardew-action-admission-ledger.mjs",
+  "audit-stardew-admission-fork-delta.mjs",
+  "audit-stardew-decision-closure.mjs",
+  "audit-stardew-discovery-channels.mjs",
+  "audit-stardew-handler-actor-guard.mjs",
+  "audit-stardew-native-local-runner-contract.mjs",
+  "audit-stardew-nogame-subset.mjs",
+  "audit-stardew-open-ground-claims.mjs",
+  "audit-stardew-scene-kind-projection.mjs",
+  "audit-stardew-state-coverage.mjs",
+  "audit-stardew-test-shape.mjs",
+  "audit-totality.mjs",
+]);
+const AUDIT_WITHOUT_SELF_REPORT_REASON =
+  "an audit: its default run prints what it found as lines rather than a `{gate, checks[]}` self-verification report, " +
+  "so this suite does not execute it; its falsifier is the `red-proof:` marker the gate's own file carries, which " +
+  "tools/audit-gate-red-proofs.mjs reads and counts as proven (and fails on when it is unreadable)";
 
 /**
  * Gates that do NOT print a self-verification report in their default run. Each names why; a gate whose falsifier
@@ -957,6 +993,14 @@ const GATES_WITHOUT_FALSIFIER = Object.freeze([
       "prints a population line and findings, not a `checks[]` report, so it is declared here rather than read by " +
       "checkGateFalsifiers",
   },
+  // The sixteen audits half B began scanning on 2026-11-13, when `tools/lib/gate-population.mjs`'s gate-file rule became
+  // `(check|audit)-*.mjs` - the rule `tools/check-prelive-gate-registry.mjs` already used, so 17 `tools/audit-*.mjs`
+  // gates that were in nobody's census became members of this one. Each prints what it found as lines, not as a
+  // `{gate, checks[]}` report this suite can read, so each is declared with the same reason rather than run; the
+  // falsifier is the `red-proof:` marker in the gate's own file, which `tools/audit-gate-red-proofs.mjs` reads and
+  // reports as proven. `tools/audit-stardew-receipt-transition-fields.mjs` is the exception and lives in
+  // `GATES_WITH_FALSIFIER` instead: its default run prints `{gate, population: 443, status}`.
+  ...AUDIT_WITHOUT_SELF_REPORT.map((gate) => ({ gate, reason: AUDIT_WITHOUT_SELF_REPORT_REASON })),
 ]);
 
 /** Every gate file this suite enumerates: the `tools/check-*.mjs` members the index carries, by file name. */

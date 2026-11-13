@@ -34,6 +34,12 @@
  *   node tools/audit-stardew-nogame-subset.mjs            # gate; exits 1 on drift
  *   node tools/audit-stardew-nogame-subset.mjs --list     # print the derived set
  *   node tools/audit-stardew-nogame-subset.mjs --json     # machine-readable report
+ *
+ * red-proof: fixture  a suite file the compiler accepts against GameBuddy.Stardew.Core alone while the project's
+ *   <Compile Include> list omits it (measured 2026-11-13: BodyProgramJournalSchemaTests.cs,
+ *   SeedSupplyAddressSourceShapeTests.cs, SuiteRedProofTests.cs, TileTargetRequestSeamTests.cs) ->
+ *   `stardew_nogame_subset: headless_file_not_included: <file>` per file, `4 file(s) disagree with the measurements`,
+ *   exit 1
  */
 import { execFileSync } from "node:child_process";
 import { mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
