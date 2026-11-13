@@ -135,8 +135,8 @@ public sealed class ItemDisplayNameTests
     /// <summary>
     /// Defect B at its call site. `ShopItemData.ItemId` is the same `ISpawnItemData.ItemId`, so the shop's item name comes
     /// from the same engine reader. The retired code sliced the value after its type tag and looked the remainder up in
-    /// `DataLoader.Objects`, where `(W)1` and `(O)1` share the number 1 - a weapon or a big craftable was named with the
-    /// object that owns the same number, or dropped.
+    /// `DataLoader.Objects`, where a `(W)`, `(F)` or `(BC)` row shares nothing with an object but its NUMBER: the row was
+    /// either named as an item of an entirely different kind or dropped.
     /// </summary>
     [Fact]
     public void TheShopItemNameComesFromTheEngineReaderNotTheObjectTable()

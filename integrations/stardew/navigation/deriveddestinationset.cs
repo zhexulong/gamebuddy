@@ -338,9 +338,9 @@ internal sealed class DerivedDestinationSet
     ///
     /// <para>
     /// WHY NOT THE OBJECT TABLE. The retired code sliced the value after its type tag and looked the remainder up in
-    /// `DataLoader.Objects`: `(W)1` and `(O)1` share the number 1, so a weapon, a piece of furniture or a big craftable was
-    /// either named with the OBJECT that owns the same number - `(O)1` is Weeds - or dropped when no object owned it. The
-    /// field is `ISpawnItemData.ItemId`, "either a qualified item ID, or an item query like ALL_ITEMS"
+    /// `DataLoader.Objects`: a `(W)`, `(F)` or `(BC)` row shares nothing with an object but its NUMBER, so the lookup
+    /// either answered with an item of an entirely different kind or missed and dropped the row. The field is
+    /// `ISpawnItemData.ItemId`, "either a qualified item ID, or an item query like ALL_ITEMS"
     /// (`StardewValley.GameData.xml:1863-1865`), and `ItemRegistry.GetData` reads both id forms and every item type
     /// (`ItemRegistry.cs:316-323`).
     /// </para>
