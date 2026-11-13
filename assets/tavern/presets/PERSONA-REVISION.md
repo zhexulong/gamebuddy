@@ -23,4 +23,5 @@ One line per deliberate change:
 | 2026-11-11 | pending | card.json, worldbook.json, presets | purge preachy elderly moralizing ('比工位上的报表实在'), enforce 24yo peer trauma resonance and banter | user |
 | 2026-11-12 | pending | card.json (system_prompt, mes_example) | restore the four clauses a card replacement dropped (person-first, 对讲机/拒绝报备, 去班味冷幽默) and strip the `*…*` beats + third sentence from the examples, so the shipped samples are spoken turns again | user |
 | 2026-11-12 | pending | worldbook.json (entries.6.keys) | drop the single-character 锅 keyword, which fired on the very sentence the always-on premise guard measures | user |
-| 2026-11-13 | pending | amber-game.json (main, jailbreak) | replace broken positive declarations forcing chatter with action-with-spoken-intent and emote awareness | user |
+| 2026-11-13 | 4210d14e | amber-game.json (main, jailbreak) | replace broken positive declarations forcing chatter with action-with-spoken-intent and emote awareness | user |
+| 2026-11-13 | pending | amber-game.json (main, jailbreak) | resolve prompt floor overlap by removing duplicate surface rules and trimming jailbreak | user |
