@@ -44,10 +44,15 @@ import {
   withPathLock,
 } from "../../../path-lock.js";
 import {
+  readStardewInstallationRegistration,
   withStardewLifecycleInstallationRegistrationOwner,
   type StardewInstallationRegistrationOwnerTransactionMarker,
 } from "../../../stardew-installation-registration.internal.js";
 import { readStrictJsonFile } from "../../../strict-json-reader.js";
+import {
+  probeStardewGuardianObjects,
+  type StardewGuardianNamedObjectProbe,
+} from "./stardew-guardian-object-presence.js";
 import { readStardewPlayerSettings } from "../stardew-player-settings.js";
 import {
   projectStardewModActionPolicy,
@@ -553,6 +558,21 @@ export type StardewPrivateBootstrapInternalComposition = Readonly<{
     owner: StardewOwnedPlayerHostBootstrap,
     policy: StardewModActionPolicyProjection,
   ): Promise<{ written: boolean }>;
+  /**
+   * Host-boot reconcile of the one durable installation-registration pointer.
+   *
+   * Every ordinary close and every crash quarantines the owner record and leaves
+   * the registration's `activeAttempt` bound, so the next launch is refused with
+   * `stardew_bootstrap_registration_unavailable`. This pass releases that pointer
+   * for an attempt whose owner record is terminal AND whose Guardian-owned
+   * objects the OS proves gone. It is bookkeeping only: it never claims
+   * containment, never touches `containedRuntimeTeardown.settle`, and never
+   * widens what the Guardian's own settlement proof is allowed to say.
+   */
+  reconcileHeldBootstrapRegistration(
+    runtimeRoot: string,
+    probe: StardewGuardianNamedObjectProbe,
+  ): Promise<StardewBootstrapRegistrationReconcileReport>;
 }>;
 
 export function createStardewPrivateBootstrapProductionCore(
@@ -603,6 +623,7 @@ export function createStardewPrivateBootstrapProductionCore(
     terminalizeOwnedPlayerHostOwner: closed.terminalizeOwnedPlayerHostOwner,
     quarantineOwnedPlayerHostOwner: closed.quarantineOwnedPlayerHostOwner,
     projectPlayerActionPolicyIntoOwnedAttempt: closed.projectPlayerActionPolicyIntoOwnedAttempt,
+    reconcileHeldBootstrapRegistration: closed.reconcileHeldBootstrapRegistration,
   });
 }
 
@@ -725,6 +746,10 @@ export function createStardewPrivateBootstrapTestCore(dependencies: StardewPriva
     policy: StardewModActionPolicyProjection,
   ): Promise<{ written: boolean }>;
   bindOwnedPlayerHostPhaseAOwner(owner: StardewOwnedPlayerHostBootstrap): StardewOwnedPlayerHostPhaseACoreTestView;
+  reconcileHeldBootstrapRegistration(
+    runtimeRoot: string,
+    probe: StardewGuardianNamedObjectProbe,
+  ): Promise<StardewBootstrapRegistrationReconcileReport>;
   createOwnerTransitionsForTesting(
     input: Readonly<{
       ownerPath: string;
@@ -809,6 +834,9 @@ export function createStardewPrivateBootstrapTestCore(dependencies: StardewPriva
     },
     projectPlayerActionPolicyIntoOwnedAttempt(owner, policy) {
       return base.projectPlayerActionPolicyIntoOwnedAttempt(owner, policy);
+    },
+    reconcileHeldBootstrapRegistration(runtimeRoot, probe) {
+      return base.reconcileHeldBootstrapRegistration(runtimeRoot, probe);
     },
     bindOwnedPlayerHostPhaseAOwner(owner) {
       const facts = requireOwnedPlayerHostBootstrapFacts(owner);
@@ -911,6 +939,10 @@ type ClosedBootstrapCore = Readonly<{
     owner: StardewOwnedPlayerHostBootstrap,
     policy: StardewModActionPolicyProjection,
   ): Promise<{ written: boolean }>;
+  reconcileHeldBootstrapRegistration(
+    runtimeRoot: string,
+    probe: StardewGuardianNamedObjectProbe,
+  ): Promise<StardewBootstrapRegistrationReconcileReport>;
 }>;
 
 function createClosedComposition(dependencies: StardewPrivateBootstrapCoreDependencies): ClosedBootstrapCore {
@@ -1293,6 +1325,7 @@ function createClosedComposition(dependencies: StardewPrivateBootstrapCoreDepend
       const facts = requireOwnedPlayerHostBootstrapFacts(owner, compositionIdentity);
       return facts.quarantineOwner();
     },
+    reconcileHeldBootstrapRegistration,
   });
 }
 
@@ -1438,6 +1471,68 @@ async function prepareAndBindOwnedRegistrationAttempt(
   }
 }
 
+/** The live registration owner seam, live only inside its callback. */
+type RegistrationOwnerSeam = Parameters<Parameters<typeof withStardewLifecycleInstallationRegistrationOwner>[1]>[0];
+
+/**
+ * The ONE release of a held registration pointer.
+ *
+ * Two callers reach it and neither owns a second implementation: the Guardian's
+ * explicit settlement (with its proof reservation already held) and the Host-boot
+ * reconcile (after the OS proved the attempt's objects gone). It re-reads the
+ * terminal owner record under the path lock, re-checks the caller's immutable
+ * fence and exact revision, writes the settlement marker, releases the pointer
+ * through the registration's own CAS, verifies the released revision, and clears
+ * the marker. A record that changed under the caller, or a pointer that no longer
+ * names this attempt, refuses before anything is written.
+ */
+async function releaseSettledPlayerHostRegistrationAttempt(
+  runtimeRoot: string,
+  bootstrapCorrelation: string,
+  immutableFence: StardewOwnerImmutableFence,
+  expectedTerminalOwnerRecordRevision: number,
+  registration: RegistrationOwnerSeam,
+): Promise<void> {
+  const ownerPath = join(runtimeRoot, "stardew-private-bootstrap", bootstrapCorrelation, OWNER_FILE);
+  const terminal = await withPathLock(ownerPath, () => readAndValidateOwner(ownerPath, runtimeRoot), {
+    containmentRoot: runtimeRoot,
+  });
+  if (
+    !sameImmutableFence(terminal, immutableFence) ||
+    terminal.ownerRecordRevision !== expectedTerminalOwnerRecordRevision ||
+    terminal.bootstrapId !== bootstrapCorrelation ||
+    !isTerminalOwnerState(terminal.state)
+  ) {
+    throw new Error("stardew_bootstrap_registration_unavailable");
+  }
+  const current = await registration.readRegistration();
+  if (
+    current === null ||
+    current.state !== "ready" ||
+    current.activeAttempt?.bootstrapCorrelation !== bootstrapCorrelation
+  ) {
+    throw new Error("stardew_bootstrap_registration_unavailable");
+  }
+  const existingMarker = await registration.readMarker();
+  if (existingMarker !== null) {
+    await reconcileSettledRegistrationMarker(runtimeRoot, terminal, immutableFence, registration, existingMarker);
+    return;
+  }
+  const marker: StardewInstallationRegistrationOwnerTransactionMarker = Object.freeze({
+    schema: "gamebuddy-stardew-installation-owner-transaction/v1",
+    operation: "settlement_release",
+    bootstrapCorrelation,
+    registrationRevision: current.revision + 1,
+    ownerRecordRevision: terminal.ownerRecordRevision,
+  });
+  await registration.writeMarker(marker);
+  const released = await registration.releaseSettledPointer(current.revision, marker);
+  if (released.activeAttempt !== null || released.revision !== marker.registrationRevision) {
+    throw new Error("stardew_bootstrap_registration_unavailable");
+  }
+  await registration.clearMarker(marker);
+}
+
 /**
  * Private owner/Guardian completion seam. It is intentionally not part of the
  * production composition or public registration API; the Guardian's exact
@@ -1451,52 +1546,14 @@ export async function settleOwnedPlayerHostRegistrationAttempt(
   const proofReservation = reserveStardewBootstrapGuardianSettlementProof(owner, proof);
   try {
     const runtimeRoot = dirname(dirname(facts.durableOwner.transactionDirectory));
-    const bootstrapCorrelation = facts.durableOwner.record.bootstrapId;
     await withStardewLifecycleInstallationRegistrationOwner(runtimeRoot, async (registration) => {
-      const ownerPath = join(runtimeRoot, "stardew-private-bootstrap", bootstrapCorrelation, OWNER_FILE);
-      const terminal = await withPathLock(ownerPath, () => readAndValidateOwner(ownerPath, runtimeRoot), {
-        containmentRoot: runtimeRoot,
-      });
-      if (
-        !sameImmutableFence(terminal, facts.immutableFence) ||
-        terminal.ownerRecordRevision !== proofReservation.expectedTerminalOwnerRecordRevision ||
-        terminal.bootstrapId !== bootstrapCorrelation ||
-        !isTerminalOwnerState(terminal.state)
-      ) {
-        throw new Error("stardew_bootstrap_registration_unavailable");
-      }
-      const current = await registration.readRegistration();
-      if (
-        current === null ||
-        current.state !== "ready" ||
-        current.activeAttempt?.bootstrapCorrelation !== bootstrapCorrelation
-      ) {
-        throw new Error("stardew_bootstrap_registration_unavailable");
-      }
-      const existingMarker = await registration.readMarker();
-      if (existingMarker !== null) {
-        await reconcileSettledRegistrationMarker(
-          runtimeRoot,
-          terminal,
-          facts.immutableFence,
-          registration,
-          existingMarker,
-        );
-        return;
-      }
-      const marker: StardewInstallationRegistrationOwnerTransactionMarker = Object.freeze({
-        schema: "gamebuddy-stardew-installation-owner-transaction/v1",
-        operation: "settlement_release",
-        bootstrapCorrelation,
-        registrationRevision: current.revision + 1,
-        ownerRecordRevision: terminal.ownerRecordRevision,
-      });
-      await registration.writeMarker(marker);
-      const released = await registration.releaseSettledPointer(current.revision, marker);
-      if (released.activeAttempt !== null || released.revision !== marker.registrationRevision) {
-        throw new Error("stardew_bootstrap_registration_unavailable");
-      }
-      await registration.clearMarker(marker);
+      await releaseSettledPlayerHostRegistrationAttempt(
+        runtimeRoot,
+        facts.durableOwner.record.bootstrapId,
+        facts.immutableFence,
+        proofReservation.expectedTerminalOwnerRecordRevision,
+        registration,
+      );
     });
     proofReservation.commit();
   } catch (error) {
@@ -1506,6 +1563,144 @@ export async function settleOwnedPlayerHostRegistrationAttempt(
     }
     throw error;
   }
+}
+
+/**
+ * One named outcome per attempt record the reconcile examined. Every one of them
+ * is a fact an operator can act on, and only `released` changed durable state.
+ */
+export type StardewBootstrapRegistrationReconcileOutcome =
+  /** The OS proved both Guardian-owned objects gone and the pointer was released. */
+  | "released"
+  /** The owner record is not terminal: the attempt is still held, and was not probed. */
+  | "kept_attempt_open"
+  /** Both objects opened: the attempt still owns them. */
+  | "kept_objects_present"
+  /** One object missing, or any answer that was not a measurement. */
+  | "kept_presence_unverifiable"
+  /** The registration does not name this attempt, or could not be read at all. */
+  | "kept_not_bound"
+  /** The owner record could not be read or validated. */
+  | "kept_unreadable"
+  /** Absence was proven, but the release itself refused (record or pointer changed under it). */
+  | "kept_release_refused";
+
+export type StardewBootstrapRegistrationReconcileRecord = Readonly<{
+  bootstrapCorrelation: string;
+  outcome: StardewBootstrapRegistrationReconcileOutcome;
+}>;
+
+export type StardewBootstrapRegistrationReconcileReport = Readonly<{
+  /** How many attempt records were read. Zero is a counted zero, not an absent report. */
+  examined: number;
+  released: number;
+  records: readonly StardewBootstrapRegistrationReconcileRecord[];
+}>;
+
+/**
+ * Host-boot reconcile over `stardew-private-bootstrap` records.
+ *
+ * It releases the registration's bound attempt pointer for a terminal attempt
+ * whose two Guardian-owned OS objects the OS proves gone, so the next launch is
+ * admitted instead of being refused with
+ * `stardew_bootstrap_registration_unavailable` forever after one ordinary close.
+ *
+ * Its authority stops there. This pass releases BOOKKEEPING: it never claims
+ * containment, never finalizes a role, and never stands in for
+ * `containedRuntimeTeardown.settle`, which remains the only path allowed to say a
+ * runtime was contained. A record that is not terminal is not even probed, and any
+ * answer other than "both objects gone" leaves the pointer exactly as it was.
+ *
+ * Idempotent: a released pointer is no longer the active attempt, so a second pass
+ * reports `kept_not_bound` for the same record and releases nothing again.
+ */
+export async function reconcileHeldBootstrapRegistration(
+  runtimeRoot: string,
+  probe: StardewGuardianNamedObjectProbe,
+): Promise<StardewBootstrapRegistrationReconcileReport> {
+  const root = resolve(runtimeRoot);
+  const correlations = await attemptRecordCorrelations(root);
+  const bound = await boundBootstrapCorrelation(root);
+  const records: StardewBootstrapRegistrationReconcileRecord[] = [];
+  let released = 0;
+  for (const bootstrapCorrelation of correlations) {
+    const outcome =
+      bound !== bootstrapCorrelation
+        ? ("kept_not_bound" as const)
+        : await reconcileHeldBootstrapAttempt(root, bootstrapCorrelation, probe);
+    if (outcome === "released") released += 1;
+    records.push(Object.freeze({ bootstrapCorrelation, outcome }));
+  }
+  return Object.freeze({ examined: correlations.length, released, records: Object.freeze(records) });
+}
+
+/** The attempt correlation the registration currently binds, or null when it binds none. */
+async function boundBootstrapCorrelation(root: string): Promise<string | null> {
+  try {
+    const registration = await readStardewInstallationRegistration(root);
+    return registration !== null && registration.state === "ready"
+      ? (registration.activeAttempt?.bootstrapCorrelation ?? null)
+      : null;
+  } catch {
+    // Another writer holds an owner transaction (or the record is unreadable).
+    // That is not a reading of "no attempt is bound", so nothing may be released.
+    return null;
+  }
+}
+
+/** Attempt records are the directories under the transaction root that carry an owner record. */
+async function attemptRecordCorrelations(root: string): Promise<readonly string[]> {
+  const transactionsRoot = join(root, "stardew-private-bootstrap");
+  const entries = await readDirectoryIfPresent(transactionsRoot, root);
+  const correlations: string[] = [];
+  for (const entry of entries) {
+    if (!isOpaque(entry)) continue;
+    let leaves: readonly string[];
+    try {
+      leaves = await readDirectoryIfPresent(join(transactionsRoot, entry), root);
+    } catch {
+      continue;
+    }
+    if (leaves.includes(OWNER_FILE)) correlations.push(entry);
+  }
+  return Object.freeze(correlations.sort());
+}
+
+async function reconcileHeldBootstrapAttempt(
+  root: string,
+  bootstrapCorrelation: string,
+  probe: StardewGuardianNamedObjectProbe,
+): Promise<StardewBootstrapRegistrationReconcileOutcome> {
+  const ownerPath = join(root, "stardew-private-bootstrap", bootstrapCorrelation, OWNER_FILE);
+  let terminal: StardewPrivateBootstrapOwnerRecord;
+  try {
+    terminal = await withPathLock(ownerPath, () => readAndValidateOwner(ownerPath, root), { containmentRoot: root });
+  } catch {
+    return "kept_unreadable";
+  }
+  if (terminal.bootstrapId !== bootstrapCorrelation) return "kept_unreadable";
+  if (!isTerminalOwnerState(terminal.state)) return "kept_attempt_open";
+  const verdict = await probeStardewGuardianObjects(probe, {
+    playerJobName: terminal.guardian.playerJobName,
+    leaseName: terminal.guardian.leaseName,
+  });
+  if (verdict.presence === "present") return "kept_objects_present";
+  if (verdict.presence === "unverifiable") return "kept_presence_unverifiable";
+  const immutableFence = immutableFenceFor(terminal);
+  try {
+    await withStardewLifecycleInstallationRegistrationOwner(root, async (registration) => {
+      await releaseSettledPlayerHostRegistrationAttempt(
+        root,
+        bootstrapCorrelation,
+        immutableFence,
+        terminal.ownerRecordRevision,
+        registration,
+      );
+    });
+  } catch {
+    return "kept_release_refused";
+  }
+  return "released";
 }
 
 function persistPrivateBootstrapOwner(

@@ -97,6 +97,13 @@ export type StardewPrivateBootstrapTestingComposition = Readonly<{
     owner: StardewOwnedPlayerHostBootstrap,
     policy: import("../stardew-mod-action-policy-projection.js").StardewModActionPolicyProjection,
   ): Promise<{ written: boolean }>;
+  /** The production boot reconcile, driven with a test-injected OS probe. */
+  reconcileHeldBootstrapRegistration(
+    runtimeRoot: string,
+    probe: import("./stardew-guardian-object-presence.js").StardewGuardianNamedObjectProbe,
+  ): Promise<
+    import("./stardew-private-bootstrap-composer.core.internal.js").StardewBootstrapRegistrationReconcileReport
+  >;
   /**
    * Test-only access to the production settlement seam, so a test can drive the
    * durable attempt to `contained` and release the registration pointer through

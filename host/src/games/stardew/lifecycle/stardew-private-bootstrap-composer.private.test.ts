@@ -74,6 +74,10 @@ import {
   waitForPublishedAttachmentRequest,
   writeRegistrationAttemptFixture,
 } from "./stardew-private-bootstrap-composer.test-fixtures.js";
+import type {
+  StardewGuardianNamedObjectAnswer,
+  StardewGuardianNamedObjectProbe,
+} from "./stardew-guardian-object-presence.js";
 import * as composerTestSupport from "./stardew-private-bootstrap-composer.test-support.js";
 import {
   bindStardewPrivateBootstrapOwnerTestSupport,
@@ -122,6 +126,7 @@ export type _ProductionInternalCompositionHasExactKeys = Assert<
     | "terminalizeOwnedPlayerHostOwner"
     | "quarantineOwnedPlayerHostOwner"
     | "projectPlayerActionPolicyIntoOwnedAttempt"
+    | "reconcileHeldBootstrapRegistration"
     | "settleOwnedPlayerHostContainedRuntimeAttempt"
   >
 >;
@@ -1959,6 +1964,7 @@ test("production internal composition exposes only the private C1 materializer w
       "projectPlayerActionPolicyIntoOwnedAttempt",
       "quarantineOwnedPlayerHostOwner",
       "readAndCorrelateOwnedPlayerHostSession",
+      "reconcileHeldBootstrapRegistration",
       "replaceStagedInstallationLocator",
       "reserveOwnedPlayerHostBootstrapForActivation",
       "settleOwnedPlayerHostContainedRuntimeAttempt",
@@ -5663,4 +5669,183 @@ test("connected no-live C1 composition privately provisions Bridge scope before 
   assert.equal(hostConfig.includes("BridgeToken"), false);
   assert.equal(hostConfig.includes("PipeName"), false);
   assert.equal(hostConfig.includes("EnableLocalBridge"), false);
+});
+
+/**
+ * One stub of the OS boundary: the reconcile only ever learns about the Guardian's
+ * objects through the injected probe, so a test states the OS answer it wants and
+ * nothing about the reconcile changes.
+ */
+function guardianObjectProbe(
+  playerJob: StardewGuardianNamedObjectAnswer,
+  lease: StardewGuardianNamedObjectAnswer,
+): StardewGuardianNamedObjectProbe {
+  return async () => ({ playerJob, lease });
+}
+
+/** One ready registration in a fresh root, with no attempt bound yet. */
+async function publishReadyRegistration(root: string): Promise<void> {
+  await publishStardewInstallationRegistration(root, null, {
+    schema: "gamebuddy-stardew-installation-registration/v1",
+    binding: { rootLayoutVersion: 1 },
+    revision: 1,
+    state: "ready",
+    locator: "C:\\Games\\Stardew Valley",
+    activeAttempt: null,
+  });
+}
+
+/** One bounded activation reservation: the production prepare-and-bind seam. */
+function activationClaim(harness: ReturnType<typeof createHarness>, browserSessionId: string) {
+  return harness.composition.broker
+    .confirm({ playerId: "player-1", companionId: "companion-1", browserSessionId, expiresAtMs: 5_000 })
+    .consume(browserSessionId);
+}
+
+/**
+ * The state every ordinary close and every crash leaves behind: an attempt whose
+ * owner record reached a terminal state while the registration's pointer stayed
+ * bound, because only the explicit endgame's Guardian settlement releases it.
+ */
+async function heldTerminalAttempt(
+  harness: ReturnType<typeof createHarness>,
+  root: string,
+): Promise<Readonly<{ bootstrapCorrelation: string }>> {
+  await publishReadyRegistration(root);
+  const owner = await harness.testCore.reserveOwnedPlayerHostBootstrapForActivation(
+    root,
+    activationClaim(harness, "browser-held"),
+  );
+  const bound = (await readStardewInstallationRegistration(root))?.activeAttempt?.bootstrapCorrelation;
+  assert.equal(typeof bound, "string", "the activation reservation binds the pointer to this attempt");
+  const bootstrapCorrelation = bound as string;
+  await harness.testCore.settleOwnedPlayerHostToContainedForTesting(owner, ["playerHost", "aiClient"]);
+  assert.equal(
+    (await readStardewInstallationRegistration(root))?.activeAttempt?.bootstrapCorrelation,
+    bootstrapCorrelation,
+    "the settlement proof is minted but NOT consumed: the pointer stays bound",
+  );
+  return { bootstrapCorrelation };
+}
+
+/**
+ * The next Host boot: a fresh composition over the same durable root. A real
+ * second launch is a new process, so it owns fresh role reservations; reusing the
+ * first harness would refuse on its own in-process reservation before the
+ * registration is ever read.
+ */
+async function nextLaunch(root: string): Promise<unknown> {
+  const next = createHarness({ bootstrapIds: ["bootstrap-2"] });
+  return await next.testCore.reserveOwnedPlayerHostBootstrapForActivation(root, activationClaim(next, "browser-next"));
+}
+
+test("a held pointer stays bound while the Guardian-owned objects exist, and the next launch is refused by name", async () => {
+  const harness = createHarness();
+  const root = await createRoot();
+  const held = await heldTerminalAttempt(harness, root);
+
+  const report = await harness.testCore.reconcileHeldBootstrapRegistration(
+    root,
+    guardianObjectProbe("opened", "opened"),
+  );
+
+  assert.deepEqual(report, {
+    examined: 1,
+    released: 0,
+    records: [{ bootstrapCorrelation: held.bootstrapCorrelation, outcome: "kept_objects_present" }],
+  });
+  assert.deepEqual((await readStardewInstallationRegistration(root))?.activeAttempt, {
+    bootstrapCorrelation: held.bootstrapCorrelation,
+  });
+  await assert.rejects(nextLaunch(root), /stardew_bootstrap_registration_held/u);
+});
+test("a held pointer is released once the OS proves both Guardian-owned objects gone, and the next launch is admitted", async () => {
+  const harness = createHarness();
+  const root = await createRoot();
+  const held = await heldTerminalAttempt(harness, root);
+
+  const report = await harness.testCore.reconcileHeldBootstrapRegistration(
+    root,
+    guardianObjectProbe("not_found", "not_found"),
+  );
+
+  assert.deepEqual(report, {
+    examined: 1,
+    released: 1,
+    records: [{ bootstrapCorrelation: held.bootstrapCorrelation, outcome: "released" }],
+  });
+  const released = await readStardewInstallationRegistration(root);
+  assert.equal(released?.activeAttempt, null);
+  assert.equal(released?.revision, 3);
+
+  // The point of the release: the next ordinary launch is admitted instead of
+  // being refused forever after one close.
+  await nextLaunch(root);
+  const admitted = (await readStardewInstallationRegistration(root))?.activeAttempt?.bootstrapCorrelation;
+  assert.equal(typeof admitted, "string", "the next launch bound its own attempt");
+  assert.notEqual(admitted, held.bootstrapCorrelation);
+
+  // Idempotent: the pointer no longer names the old attempt, so a second pass
+  // releases nothing and reports the record it kept.
+  const again = await harness.testCore.reconcileHeldBootstrapRegistration(
+    root,
+    guardianObjectProbe("not_found", "not_found"),
+  );
+  assert.equal(again.released, 0);
+  assert.equal((await readStardewInstallationRegistration(root))?.activeAttempt?.bootstrapCorrelation, admitted);
+});
+
+test("a Guardian object that exists but cannot be opened releases nothing and is named", async () => {
+  const harness = createHarness();
+  const root = await createRoot();
+  const held = await heldTerminalAttempt(harness, root);
+
+  // ACCESS_DENIED on the Job and a genuinely absent lease: the Job may still own
+  // the player's world, so one absent object proves nothing.
+  const report = await harness.testCore.reconcileHeldBootstrapRegistration(
+    root,
+    guardianObjectProbe("unclassified", "not_found"),
+  );
+
+  assert.deepEqual(report.records, [
+    { bootstrapCorrelation: held.bootstrapCorrelation, outcome: "kept_presence_unverifiable" },
+  ]);
+  assert.equal(report.released, 0);
+  assert.deepEqual((await readStardewInstallationRegistration(root))?.activeAttempt, {
+    bootstrapCorrelation: held.bootstrapCorrelation,
+  });
+  await assert.rejects(nextLaunch(root), /stardew_bootstrap_registration_held/u);
+});
+
+test("a live attempt is never probed, and an empty root reports a counted zero", async () => {
+  const harness = createHarness();
+  const root = await createRoot();
+  await publishReadyRegistration(root);
+  await harness.testCore.reserveOwnedPlayerHostBootstrapForActivation(root, activationClaim(harness, "browser-open"));
+  const bootstrapCorrelation = (await readStardewInstallationRegistration(root))?.activeAttempt?.bootstrapCorrelation;
+  assert.equal(typeof bootstrapCorrelation, "string");
+  let probed = 0;
+  const report = await harness.testCore.reconcileHeldBootstrapRegistration(root, async () => {
+    probed += 1;
+    return { playerJob: "not_found", lease: "not_found" };
+  });
+  assert.deepEqual(report, {
+    examined: 1,
+    released: 0,
+    records: [{ bootstrapCorrelation, outcome: "kept_attempt_open" }],
+  });
+  assert.equal(probed, 0, "a record that is not terminal has nothing to prove");
+  assert.deepEqual((await readStardewInstallationRegistration(root))?.activeAttempt, { bootstrapCorrelation });
+
+  assert.deepEqual(
+    await harness.testCore.reconcileHeldBootstrapRegistration(
+      await createRoot(),
+      guardianObjectProbe("not_found", "not_found"),
+    ),
+    {
+      examined: 0,
+      released: 0,
+      records: [],
+    },
+  );
 });
