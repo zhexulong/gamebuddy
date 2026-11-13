@@ -8,11 +8,15 @@ internal sealed partial class ExecutionManager
 {
     public LocalExecutionReceipt RequestLocalTakePedestalItem(string requestId, int targetX, int targetY, string expectedTargetId, long requestedDeadlineMs)
     {
-        return this.RequestLocalTileTarget("take_pedestal_item", requestId, targetX, targetY, expectedTargetId, requestedDeadlineMs,
-            location => TryGetPedestalTarget(location, targetX, targetY, expectedTargetId, out _, out _)
+        return this.RequestLocalTileTarget(
+            "take_pedestal_item", requestId, targetX, targetY, expectedTargetId, requestedDeadlineMs,
+            AdmissionActionabilityProfile.General,
+            authorize: null,
+            gate: location => TryGetPedestalTarget(location, targetX, targetY, expectedTargetId, out _, out _)
                 ? null
                 : new TileTargetRefusal("pedestal_target_changed", $"target={targetX},{targetY}"),
-            (executionId, admittedRequestId) => this.ExecuteTakePedestalItem(executionId, admittedRequestId, targetX, targetY, expectedTargetId, requestedDeadlineMs));
+            inReach: IsTileWithinNativeReach,
+            execute: (executionId, admittedRequestId) => this.ExecuteTakePedestalItem(executionId, admittedRequestId, targetX, targetY, expectedTargetId, requestedDeadlineMs));
     }
 
     private LocalExecutionReceipt ExecuteTakePedestalItem(string executionId, string requestId, int targetX, int targetY, string expectedTargetId, long deadlineMs)
@@ -91,11 +95,15 @@ internal sealed partial class ExecutionManager
 
     public LocalExecutionReceipt RequestLocalToggleFenceGate(string requestId, int targetX, int targetY, string expectedTargetId, long requestedDeadlineMs)
     {
-        return this.RequestLocalTileTarget("toggle_fence_gate", requestId, targetX, targetY, expectedTargetId, requestedDeadlineMs,
-            location => TryGetFenceGate(location, targetX, targetY, expectedTargetId, out _)
+        return this.RequestLocalTileTarget(
+            "toggle_fence_gate", requestId, targetX, targetY, expectedTargetId, requestedDeadlineMs,
+            AdmissionActionabilityProfile.General,
+            authorize: null,
+            gate: location => TryGetFenceGate(location, targetX, targetY, expectedTargetId, out _)
                 ? null
                 : new TileTargetRefusal("fence_gate_target_changed", $"target={targetX},{targetY}"),
-            (executionId, admittedRequestId) => this.ExecuteToggleFenceGate(executionId, admittedRequestId, targetX, targetY, expectedTargetId));
+            inReach: IsTileWithinNativeReach,
+            execute: (executionId, admittedRequestId) => this.ExecuteToggleFenceGate(executionId, admittedRequestId, targetX, targetY, expectedTargetId));
     }
 
     private LocalExecutionReceipt ExecuteToggleFenceGate(string executionId, string requestId, int targetX, int targetY, string expectedTargetId)

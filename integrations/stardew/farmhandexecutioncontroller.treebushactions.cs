@@ -9,8 +9,11 @@ internal sealed partial class ExecutionManager
 {
     public LocalExecutionReceipt RequestLocalHarvestBush(string requestId, int targetX, int targetY, string expectedTargetId, long requestedDeadlineMs)
     {
-        return this.RequestLocalTileTarget("harvest_bush", requestId, targetX, targetY, expectedTargetId, requestedDeadlineMs,
-            location =>
+        return this.RequestLocalTileTarget(
+            "harvest_bush", requestId, targetX, targetY, expectedTargetId, requestedDeadlineMs,
+            AdmissionActionabilityProfile.General,
+            authorize: null,
+            gate: location =>
             {
                 if (!TryGetHarvestableBush(location, targetX, targetY, expectedTargetId, out StardewValley.TerrainFeatures.Bush? bush))
                     return new TileTargetRefusal("bush_target_changed", $"target={targetX},{targetY}");
@@ -28,7 +31,8 @@ internal sealed partial class ExecutionManager
                     return new TileTargetRefusal("bush_still_settling", $"target={targetX},{targetY};shake_timer={bush.shakeTimer.ToString("0.##", CultureInfo.InvariantCulture)}");
                 return null;
             },
-            (executionId, admittedRequestId) => this.ExecuteHarvestBush(executionId, admittedRequestId, targetX, targetY, expectedTargetId));
+            inReach: IsTileWithinNativeReach,
+            execute: (executionId, admittedRequestId) => this.ExecuteHarvestBush(executionId, admittedRequestId, targetX, targetY, expectedTargetId));
     }
 
     private LocalExecutionReceipt ExecuteHarvestBush(string executionId, string requestId, int targetX, int targetY, string expectedTargetId)
@@ -111,11 +115,15 @@ internal sealed partial class ExecutionManager
 
     public LocalExecutionReceipt RequestLocalHarvestFruitTree(string requestId, int targetX, int targetY, string expectedTargetId, long requestedDeadlineMs)
     {
-        return this.RequestLocalTileTarget("harvest_fruit_tree", requestId, targetX, targetY, expectedTargetId, requestedDeadlineMs,
-            location => TryGetHarvestableFruitTree(location, targetX, targetY, expectedTargetId, out _)
+        return this.RequestLocalTileTarget(
+            "harvest_fruit_tree", requestId, targetX, targetY, expectedTargetId, requestedDeadlineMs,
+            AdmissionActionabilityProfile.General,
+            authorize: null,
+            gate: location => TryGetHarvestableFruitTree(location, targetX, targetY, expectedTargetId, out _)
                 ? null
                 : new TileTargetRefusal("fruit_tree_target_changed", $"target={targetX},{targetY}"),
-            (executionId, admittedRequestId) => this.ExecuteHarvestFruitTree(executionId, admittedRequestId, targetX, targetY, expectedTargetId));
+            inReach: IsTileWithinNativeReach,
+            execute: (executionId, admittedRequestId) => this.ExecuteHarvestFruitTree(executionId, admittedRequestId, targetX, targetY, expectedTargetId));
     }
 
     private LocalExecutionReceipt ExecuteHarvestFruitTree(string executionId, string requestId, int targetX, int targetY, string expectedTargetId)
@@ -170,11 +178,15 @@ internal sealed partial class ExecutionManager
 
     public LocalExecutionReceipt RequestLocalShakeTree(string requestId, int targetX, int targetY, string expectedTargetId, long requestedDeadlineMs)
     {
-        return this.RequestLocalTileTarget("shake_tree", requestId, targetX, targetY, expectedTargetId, requestedDeadlineMs,
-            location => TryGetShakeableTree(location, targetX, targetY, expectedTargetId, out _)
+        return this.RequestLocalTileTarget(
+            "shake_tree", requestId, targetX, targetY, expectedTargetId, requestedDeadlineMs,
+            AdmissionActionabilityProfile.General,
+            authorize: null,
+            gate: location => TryGetShakeableTree(location, targetX, targetY, expectedTargetId, out _)
                 ? null
                 : new TileTargetRefusal("shake_tree_target_changed", $"target={targetX},{targetY}"),
-            (executionId, admittedRequestId) => this.ExecuteShakeTree(executionId, admittedRequestId, targetX, targetY, expectedTargetId));
+            inReach: IsTileWithinNativeReach,
+            execute: (executionId, admittedRequestId) => this.ExecuteShakeTree(executionId, admittedRequestId, targetX, targetY, expectedTargetId));
     }
 
     private LocalExecutionReceipt ExecuteShakeTree(string executionId, string requestId, int targetX, int targetY, string expectedTargetId)

@@ -45,27 +45,26 @@ public sealed class MovingTargetApproachTests
     {
         string body = MethodBody(Read(AnimalsFile), "public LocalExecutionReceipt RequestLocalPetAnimal(");
 
-        // The pet is resolved by identity first, so the walk is only started for a
-        // pet that could actually be petted on arrival.
+        // The pet is resolved by identity, and its held-item branches are decided, before the gate answers the tile the
+        // walk aims at - so the walk is only started for a pet that could actually be petted on arrival. The geometry
+        // decision and the walk itself are the seam's now, and it measures reach against the tile this gate answers.
         body.Should().Contain("ResolvePetTarget(location, expectedTargetId)");
         int resolve = body.IndexOf("ResolvePetTarget(location, expectedTargetId)", StringComparison.Ordinal);
         int hands = body.IndexOf("PetHeldItemRefusal(Game1.player, expectedTargetId)", StringComparison.Ordinal);
-        int geometry = body.IndexOf("IsTileWithinChebyshevRadius", StringComparison.Ordinal);
-        int approach = body.IndexOf("TryBeginToolApproach", StringComparison.Ordinal);
-        resolve.Should().BeLessThan(geometry, "the pet must resolve before the geometry decision");
+        int answersTile = body.IndexOf("TileTargetGate.Resolved(", StringComparison.Ordinal);
+        resolve.Should().BeLessThan(answersTile, "the pet must resolve before the tile the walk aims at is answered");
         hands.Should().BeGreaterThanOrEqualTo(
             0,
             "the two held-item branches `Pet.checkAction` really has are decided before the walk is committed");
-        hands.Should().BeLessThan(geometry, "the preconditions must hold before deciding to walk");
-        geometry.Should().BeLessThan(approach, "the approach is the out-of-range branch");
+        hands.Should().BeLessThan(answersTile, "the preconditions must hold before the tile is answered");
+        body.Should().Contain("this.RequestLocalTileTarget(", "the reach test and the walk are the seam's");
+        body.Should().NotContain("TryBeginToolApproach", "the request half no longer dispatches the walk itself");
 
         body.Should().NotContain("\"target_out_of_range\"",
             "pet_animal no longer refuses a published target for being two tiles away; it walks");
-        // The arrival is not the terminal: the closure hands off to the one execution body
-        // the in-range path also uses, and the approach carries the real action id so a
-        // snapshot names `pet_animal` rather than an internal approach phase.
-        body.Should().Contain("this.ExecutePetAnimal(arrivalExecutionId, arrivalRequestId");
-        body.Should().Contain("return this.ExecutePetAnimal(executionId, requestId");
+        // The arrival is not the terminal: one delegate is handed to the seam for BOTH the in-range path and the arrival,
+        // and it carries the real action id so a snapshot names `pet_animal` rather than an internal approach phase.
+        body.Should().Contain("this.ExecutePetAnimal(executionId, admittedRequestId");
         body.Should().Contain("\"pet_animal\"");
     }
 
@@ -74,20 +73,20 @@ public sealed class MovingTargetApproachTests
     {
         string body = MethodBody(Read(AnimalsFile), "public LocalExecutionReceipt RequestLocalCollectAnimalProduct(");
 
-        // Position-independent preconditions come first, so the actor is not sent
-        // walking for an animal it could not milk on arrival.
+        // Position-independent preconditions come first, so the actor is not sent walking for an animal it could not milk
+        // on arrival. They now precede the tile the gate answers rather than the inline geometry test.
         int targetChanged = body.IndexOf("\"animal_product_target_changed\"", StringComparison.Ordinal);
         int inventoryFull = body.IndexOf("\"inventory_full\"", StringComparison.Ordinal);
-        int geometry = body.IndexOf("IsAnimalProductTargetInRange", StringComparison.Ordinal);
-        int approach = body.IndexOf("TryBeginToolApproach", StringComparison.Ordinal);
-        targetChanged.Should().BeLessThan(geometry, "the produce/adult/tool state must be validated before walking");
-        inventoryFull.Should().BeLessThan(geometry, "capacity must be validated before walking");
-        geometry.Should().BeLessThan(approach, "the approach is the out-of-range branch");
+        int answersTile = body.IndexOf("TileTargetGate.Resolved(", StringComparison.Ordinal);
+        targetChanged.Should().BeLessThan(answersTile, "the produce/adult/tool state must be validated before walking");
+        inventoryFull.Should().BeLessThan(answersTile, "capacity must be validated before walking");
+        body.Should().Contain("TileTargetGate.Resolved((int)animal.Tile.X, (int)animal.Tile.Y)",
+            "the walk aims at the animal's LIVE tile, which only its lookup knows");
+        body.Should().NotContain("TryBeginToolApproach", "the reach test and the walk are the seam's now");
 
         body.Should().NotContain("\"target_out_of_range\"",
             "collect_animal_product no longer refuses a published animal for being two tiles away; it walks");
-        body.Should().Contain("this.ExecuteCollectAnimalProduct(arrivalExecutionId, arrivalRequestId");
-        body.Should().Contain("return this.ExecuteCollectAnimalProduct(executionId, requestId");
+        body.Should().Contain("this.ExecuteCollectAnimalProduct(executionId, admittedRequestId");
         body.Should().Contain("\"collect_animal_product\"");
     }
 

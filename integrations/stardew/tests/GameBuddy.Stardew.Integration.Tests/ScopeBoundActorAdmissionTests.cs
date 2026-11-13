@@ -245,6 +245,41 @@ public sealed class ScopeBoundActorAdmissionTests
     }
 
     /// <summary>
+    /// The seam's authorization members ARE the proof the derivation follows. Each proves the scope-bound actor before
+    /// it reads the world, and each names the readiness its callers are expected to observe - so the seven request
+    /// halves that delegate to them cannot lose the guard without a line of their own changing.
+    /// </summary>
+    [Fact]
+    public void TheTileTargetSeamAuthorizesTheActorBeforeItReadsTheWorld()
+    {
+        string seam = File.ReadAllText(ControllerRelative("farmhandexecutioncontroller.tiletargetrequest.cs"));
+
+        foreach ((string declaration, string readiness) in new[]
+                 {
+                     ("private TileTargetRefusal? AuthorizeActorOnReadyWorld()", "\"world_not_ready\""),
+                     ("private TileTargetRefusal? AuthorizeActorOnFarmstead()", "\"farm_required\""),
+                 })
+        {
+            string body = MemberBody(seam, declaration);
+            int proof = body.IndexOf("this.TryGetBoundActor(", StringComparison.Ordinal);
+            int world = body.IndexOf(readiness, StringComparison.Ordinal);
+
+            proof.Should().BeGreaterThanOrEqualTo(0, $"{declaration} must prove the scope-bound actor");
+            world.Should().BeGreaterThanOrEqualTo(0, $"{declaration} must name the readiness it refuses for");
+            proof.Should().BeLessThan(
+                world,
+                "authorization precedes the world read: a caller outside the execution scope is refused for that reason, "
+                    + "not for where it happens to be standing");
+            body.Should().Contain(
+                "new TileTargetRefusal(",
+                $"{declaration} answers a refusal value, so the terminal stays the seam's to publish");
+            body.Should().NotContain(
+                "RememberTerminal(",
+                $"{declaration} must not publish a terminal of its own: one seam owns that step for every caller");
+        }
+    }
+
+    /// <summary>
     /// The parameterised actions are exactly the actions whose handler dispatch
     /// reaches a <c>RequestLocal*</c> body that proves the scope-bound actor. Both
     /// sides are derived from source (and from the theory attributes themselves), so a
@@ -451,7 +486,14 @@ public sealed class ScopeBoundActorAdmissionTests
                 // shrink.
                 if (body.Contains("TryGetBoundActor(", StringComparison.Ordinal)
                     || body.Contains("AdmitExecution(", StringComparison.Ordinal)
-                    || body.Contains("AdmitLocalExecution(", StringComparison.Ordinal))
+                    || body.Contains("AdmitLocalExecution(", StringComparison.Ordinal)
+                    || TileTargetSeamAuthorization.IsMatch(body)
+                    // The walking-subject form does not name its authorization: handing the seam a gate that answers a
+                    // LIVE tile is that shape, and the proof comes with it (the seam's 7-argument overload supplies
+                    // `AuthorizeActorOnReadyWorld`, which
+                    // TheTileTargetSeamAuthorizesTheActorBeforeItReadsTheWorld holds to the actor proof).
+                    || (body.Contains("this.RequestLocalTileTarget(", StringComparison.Ordinal)
+                        && body.Contains("TileTargetGate.", StringComparison.Ordinal)))
                     guardedMethods.Add(method);
             }
 
@@ -495,6 +537,22 @@ public sealed class ScopeBoundActorAdmissionTests
         }
 
         return actions;
+    }
+
+    /// <summary>The brace-balanced body of one member, found by its exact declaration text.</summary>
+    private static string MemberBody(string source, string declaration)
+    {
+        int start = source.IndexOf(declaration, StringComparison.Ordinal);
+        start.Should().BeGreaterThanOrEqualTo(0, $"{declaration} must exist");
+        int opening = source.IndexOf('{', start);
+        int depth = 0;
+        for (int cursor = opening; cursor < source.Length; cursor++)
+        {
+            if (source[cursor] == '{') depth++;
+            else if (source[cursor] == '}' && --depth == 0) return source[opening..(cursor + 1)];
+        }
+
+        throw new InvalidOperationException($"{declaration} has unbalanced braces");
     }
 
     /// <summary>Splits a controller partial into its indent-4 members and keeps the ones declaring a <c>RequestLocal*</c> method.</summary>
@@ -582,6 +640,16 @@ public sealed class ScopeBoundActorAdmissionTests
         "face_direction",
         "express_emote",
     };
+
+    /// <summary>
+    /// The tile-target seam's authorization argument. A request half that hands the seam one of these has not given up
+    /// the scope-bound actor proof - it has moved it one hop away, into the seam - so the derivation follows the
+    /// delegate the same way it follows a wrapper, and <see cref="TheTileTargetSeamAuthorizesTheActorBeforeItReadsTheWorld"/>
+    /// holds the members themselves to the proof.
+    /// </summary>
+    private static readonly Regex TileTargetSeamAuthorization = new(
+        @"this[.]RequestLocalTileTarget((?s:.*?))authorize:\s*this[.](AuthorizeActorOn\w+)",
+        RegexOptions.CultureInvariant);
 
     /// <summary>A delegation to another <c>Request*</c> admission site.</summary>
     private static readonly Regex DelegatedRequestCall = new(

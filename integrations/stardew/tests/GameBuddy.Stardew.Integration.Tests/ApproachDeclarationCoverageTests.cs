@@ -280,24 +280,74 @@ public sealed class ApproachDeclarationCoverageTests
         return sources;
     }
 
-    /// <summary>Extracts a brace-balanced body of the first <c>LocalExecutionReceipt &lt;name&gt;(</c> in any partial.</summary>
+    /// <summary>
+    /// The body of the first <c>LocalExecutionReceipt &lt;name&gt;(</c> in any partial, whole: a statement body is a
+    /// brace-balanced block and an EXPRESSION body runs to its own semicolon. The parameter list is skipped by its own
+    /// parentheses first, because an expression-bodied request half has no brace of its own while the lambdas it hands
+    /// the seam do - reading from the first <c>{</c> would return a lambda's block instead of the handler.
+    /// </summary>
     private static string? MethodBody(IReadOnlyDictionary<string, string> sources, string method)
     {
         foreach (string source in sources.Values)
         {
             int signature = source.IndexOf($"LocalExecutionReceipt {method}(", StringComparison.Ordinal);
-            if (signature < 0)
-                continue;
-            int opening = source.IndexOf('{', signature);
-            if (opening < 0)
-                continue;
-            int depth = 0;
-            for (int cursor = opening; cursor < source.Length; cursor++)
+            if (signature >= 0)
+                return BodyOf(source, signature);
+        }
+
+        return null;
+    }
+
+    private static string? BodyOf(string source, int declaration)
+    {
+        int opening = source.IndexOf('(', declaration);
+        int cursor = AfterBalanced(source, opening);
+        while (cursor < source.Length && source[cursor] is ' ' or '\n' or '\r' or '\t') cursor++;
+        if (cursor >= source.Length) return null;
+        return source[cursor] == '{'
+            ? source[cursor..AfterBraced(source, cursor)]
+            : ExpressionBody(source, cursor);
+    }
+
+    /// <summary>The index just past the construct whose opening parenthesis is at <paramref name="open"/>.</summary>
+    private static int AfterBalanced(string source, int open)
+    {
+        int depth = 0;
+        for (int index = open; index < source.Length; index++)
+        {
+            if (source[index] == '(') depth++;
+            else if (source[index] == ')' && --depth == 0) return index + 1;
+        }
+
+        return source.Length;
+    }
+
+    /// <summary>The index just past the block whose opening brace is at <paramref name="open"/>.</summary>
+    private static int AfterBraced(string source, int open)
+    {
+        int depth = 0;
+        for (int index = open; index < source.Length; index++)
+        {
+            if (source[index] == '{') depth++;
+            else if (source[index] == '}' && --depth == 0) return index + 1;
+        }
+
+        return source.Length;
+    }
+
+    private static string? ExpressionBody(string source, int start)
+    {
+        int parentheses = 0;
+        int braces = 0;
+        for (int index = start; index < source.Length; index++)
+        {
+            switch (source[index])
             {
-                if (source[cursor] == '{')
-                    depth++;
-                else if (source[cursor] == '}' && --depth == 0)
-                    return source[opening..(cursor + 1)];
+                case '(': parentheses++; break;
+                case ')': parentheses--; break;
+                case '{': braces++; break;
+                case '}': braces--; break;
+                case ';' when parentheses == 0 && braces == 0: return source[start..(index + 1)];
             }
         }
 

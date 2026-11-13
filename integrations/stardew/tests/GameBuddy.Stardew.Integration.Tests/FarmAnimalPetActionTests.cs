@@ -66,13 +66,16 @@ public sealed class FarmAnimalPetActionTests
         string arrived = MethodBody(Read(AnimalsFile), "private LocalExecutionReceipt ExecutePetFarmAnimal(");
 
         int admittedRule = admitted.IndexOf("FarmAnimalPetRefusal(Game1.player, animal)", System.StringComparison.Ordinal);
-        int admittedGeometry = admitted.IndexOf("IsTileWithinChebyshevRadius", System.StringComparison.Ordinal);
-        int admittedApproach = admitted.IndexOf("TryBeginToolApproach", System.StringComparison.Ordinal);
+        int admittedTile = admitted.IndexOf("TileTargetGate.Resolved(", System.StringComparison.Ordinal);
         admittedRule.Should().BeGreaterThanOrEqualTo(0);
         admittedRule.Should().BeLessThan(
-            admittedGeometry,
+            admittedTile,
             "an animal that cannot be petted must be refused before the actor is sent walking to it");
-        admittedGeometry.Should().BeLessThan(admittedApproach, "the approach is the out-of-range branch");
+        admitted.Should().Contain("ResolveFarmAnimalPetTarget(location, expectedTargetId)");
+        admitted.IndexOf("ResolveFarmAnimalPetTarget(", System.StringComparison.Ordinal).Should().BeLessThan(
+            admittedRule,
+            "the rule answers about one animal, so the animal is resolved by identity first");
+        admitted.Should().NotContain("TryBeginToolApproach", "the walk is the seam's, not this request half's");
 
         int arrivedRule = arrived.IndexOf("FarmAnimalPetRefusal(Game1.player, animal)", System.StringComparison.Ordinal);
         int arrivedNative = arrived.IndexOf("animal.pet(Game1.player)", System.StringComparison.Ordinal);
@@ -82,11 +85,11 @@ public sealed class FarmAnimalPetActionTests
             "the walk takes ticks, so the day marker, the held item and the clock are re-read before the call");
 
         // Admission owns the actor-side early return (`who.FarmerSprite.PauseForSingleAnimation`, :697): a paused,
-        // eating or menu-held farmer is refused or parked there, and the shared profile is the one admission gate.
-        admitted.Should().Contain("AdmitExecution(requestId, executionId, requestedDeadlineMs, nowMs, AdmissionActionabilityProfile.General)");
-        int admission = admitted.IndexOf("AdmitExecution(", System.StringComparison.Ordinal);
-        int resolve = admitted.IndexOf("ResolveFarmAnimalPetTarget(", System.StringComparison.Ordinal);
-        admission.Should().BeLessThan(resolve, "identity, actionability and deadline precede every world read");
+        // eating or menu-held farmer is refused or parked there, and the shared profile is the one admission gate. It now
+        // runs inside the seam, before the gate this request half hands over - which is why the request half carries no
+        // admission of its own.
+        admitted.Should().Contain("AdmissionActionabilityProfile.General");
+        admitted.Should().Contain("this.RequestLocalTileTarget(");
     }
 
     // ---- the seam, and only the seam ----------------------------------------

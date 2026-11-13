@@ -41,7 +41,7 @@ public sealed class AdmissionForkReconciliationTests
         ["farmhandexecutioncontroller.crabpotactions.cs"] = 1,
         ["farmhandexecutioncontroller.craftingactions.cs"] = 1,
         ["farmhandexecutioncontroller.facilityactions.cs"] = 5,
-        ["farmhandexecutioncontroller.farmingconstructionactions.cs"] = 12,
+        ["farmhandexecutioncontroller.farmingconstructionactions.cs"] = 5,
         ["farmhandexecutioncontroller.fishingactions.cs"] = 1,
         ["farmhandexecutioncontroller.gatheringactions.cs"] = 2,
         ["farmhandexecutioncontroller.itemtileactions.cs"] = 3,
@@ -50,7 +50,7 @@ public sealed class AdmissionForkReconciliationTests
         ["farmhandexecutioncontroller.chatactions.cs"] = 1,
         ["farmhandexecutioncontroller.questactions.cs"] = 1,
         ["farmhandexecutioncontroller.pondactions.cs"] = 1,
-        ["farmhandexecutioncontroller.machinesanimalsitemsactions.cs"] = 10,
+        ["farmhandexecutioncontroller.machinesanimalsitemsactions.cs"] = 5,
         ["farmhandexecutioncontroller.modalactions.cs"] = 3,
         ["farmhandexecutioncontroller.movementactions.cs"] = 2,
         ["farmhandexecutioncontroller.npcactions.cs"] = 1,
@@ -72,8 +72,8 @@ public sealed class AdmissionForkReconciliationTests
         ["farmhandexecutioncontroller.colorobjectactions.cs"] = 1,
         ["farmhandexecutioncontroller.geodeactions.cs"] = 1,
         ["farmhandexecutioncontroller.furnituredecorationactions.cs"] = 4,
-        // The one seam the pedestal, fence-gate, bush, fruit-tree and tree actions admit through, so their partials reach
-        // the shared admission once instead of five times.
+        // The one seam the pedestal, fence-gate, bush, fruit-tree, tree and the authorized farming requests admit
+        // through, so their partials reach the shared admission once instead of twelve times.
         ["farmhandexecutioncontroller.tiletargetrequest.cs"] = 1,
         // The identity preamble itself, which ends in the one admission on behalf of every action that uses it.
         ["farmhandexecutioncontroller.cs"] = 1,

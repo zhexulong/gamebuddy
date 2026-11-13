@@ -95,46 +95,14 @@ internal sealed partial class ExecutionManager
         return this.RememberTerminal(requestId, executionId, state, reasonCode, evidence);
     }
 
-    public LocalExecutionReceipt RequestLocalWaterCrop(string requestId, int targetX, int targetY, string expectedTargetId, int charge, long requestedDeadlineMs)
-    {
-        if (this.BeginLocalExecution(requestId, out string executionId, out long nowMs) is LocalExecutionReceipt replay) return replay;
-        // Scope-bound actor proof. Authorization precedes the world/location
-        // readiness checks: a caller that is not the scope-bound actor is refused
-        // for that reason rather than for where it happens to be standing.
-        // Scope-bound actor proof. Authorization precedes the world/location
-        // readiness checks: a caller that is not the scope-bound actor is refused
-        // for that reason rather than for where it happens to be standing.
-        if (!this.TryGetBoundActor(out Farmer? boundActor, out string scopeReason) || boundActor is null)
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, scopeReason, null);
-
-        if (!Context.IsWorldReady || Game1.player is null || Game1.player.currentLocation is null)
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "world_not_ready", null);
-        // Shared mechanical admission (identity → actionability → deadline →
-        // body exclusivity), behavior-equivalent to the inline sequence it
-        // replaced: identical reasonCodes, identical order. Geometry, target
-        // identity and the postcondition stay action-specific.
-        if (this.AdmitExecution(requestId, executionId, requestedDeadlineMs, nowMs, AdmissionActionabilityProfile.Physical) is LocalExecutionReceipt admissionRejection)
-            return admissionRejection;
-        if (!IsCropTargetInRange(Game1.player, targetX, targetY))
-        {
-            // Out of the native interaction radius: walk in and then water, exactly like
-            // `harvest_crop` in this same file already does. Refusing here taught a live Agent
-            // nothing - its only evidence was `target=x,y` - so it retried the same request.
-            return this.TryBeginToolApproach(
-                requestId,
-                executionId,
-                "water_crop",
-                Game1.player.currentLocation,
-                targetX,
-                targetY,
-                expectedTargetId,
-                (arrivalExecutionId, arrivalRequestId) => this.ExecuteWaterCrop(arrivalExecutionId, arrivalRequestId, targetX, targetY, expectedTargetId, charge, requestedDeadlineMs),
-                nowMs,
-                requestedDeadlineMs);
-        }
-
-        return this.ExecuteWaterCrop(executionId, requestId, targetX, targetY, expectedTargetId, charge, requestedDeadlineMs);
-    }
+    public LocalExecutionReceipt RequestLocalWaterCrop(string requestId, int targetX, int targetY, string expectedTargetId, int charge, long requestedDeadlineMs) =>
+        this.RequestLocalTileTarget(
+            "water_crop", requestId, targetX, targetY, expectedTargetId, requestedDeadlineMs,
+            AdmissionActionabilityProfile.Physical,
+            authorize: this.AuthorizeActorOnReadyWorld,
+            gate: null,
+            inReach: IsCropTargetInRange,
+            execute: (executionId, admittedRequestId) => this.ExecuteWaterCrop(executionId, admittedRequestId, targetX, targetY, expectedTargetId, charge, requestedDeadlineMs));
 
     private LocalExecutionReceipt ExecuteWaterCrop(string executionId, string requestId, int targetX, int targetY, string expectedTargetId, int charge, long requestedDeadlineMs)
     {
@@ -217,46 +185,14 @@ internal sealed partial class ExecutionManager
     }
 
     /// <summary>Native crop harvest limited to ready, ordinary Grab crops.</summary>
-    public LocalExecutionReceipt RequestLocalHarvestCrop(string requestId, int targetX, int targetY, string expectedQualifiedHarvestItemId, string expectedTargetId, long requestedDeadlineMs)
-    {
-        if (this.BeginLocalExecution(requestId, out string executionId, out long nowMs) is LocalExecutionReceipt replay) return replay;
-        // Scope-bound actor proof. Authorization precedes the world/location
-        // readiness checks: a caller that is not the scope-bound actor is refused
-        // for that reason rather than for where it happens to be standing.
-        // Scope-bound actor proof. Authorization precedes the world/location
-        // readiness checks: a caller that is not the scope-bound actor is refused
-        // for that reason rather than for where it happens to be standing.
-        if (!this.TryGetBoundActor(out Farmer? boundActor, out string scopeReason) || boundActor is null)
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, scopeReason, null);
-
-        if (!Context.IsWorldReady || Game1.player is null || Game1.player.currentLocation is null)
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "world_not_ready", null);
-        // Shared mechanical admission (identity → actionability → deadline →
-        // body exclusivity), behavior-equivalent to the inline sequence it
-        // replaced: identical reasonCodes, identical order. Geometry, target
-        // identity and the postcondition stay action-specific.
-        if (this.AdmitExecution(requestId, executionId, requestedDeadlineMs, nowMs, AdmissionActionabilityProfile.Physical) is LocalExecutionReceipt admissionRejection)
-            return admissionRejection;
-        if (!IsCropTargetInRange(Game1.player, targetX, targetY))
-        {
-            // Out of the native interaction radius: walk in and then harvest, exactly like the
-            // sibling cost actions. Refusing here taught a live Agent nothing: its only evidence
-            // was `target=x,y`, so it retried the same request six times (run O).
-            return this.TryBeginToolApproach(
-                requestId,
-                executionId,
-                "harvest_crop",
-                Game1.player.currentLocation,
-                targetX,
-                targetY,
-                expectedTargetId,
-                (arrivalExecutionId, arrivalRequestId) => this.ExecuteHarvestCrop(arrivalExecutionId, arrivalRequestId, targetX, targetY, expectedQualifiedHarvestItemId, expectedTargetId, requestedDeadlineMs),
-                nowMs,
-                requestedDeadlineMs);
-        }
-
-        return this.ExecuteHarvestCrop(executionId, requestId, targetX, targetY, expectedQualifiedHarvestItemId, expectedTargetId, requestedDeadlineMs);
-    }
+    public LocalExecutionReceipt RequestLocalHarvestCrop(string requestId, int targetX, int targetY, string expectedQualifiedHarvestItemId, string expectedTargetId, long requestedDeadlineMs) =>
+        this.RequestLocalTileTarget(
+            "harvest_crop", requestId, targetX, targetY, expectedTargetId, requestedDeadlineMs,
+            AdmissionActionabilityProfile.Physical,
+            authorize: this.AuthorizeActorOnReadyWorld,
+            gate: null,
+            inReach: IsCropTargetInRange,
+            execute: (executionId, admittedRequestId) => this.ExecuteHarvestCrop(executionId, admittedRequestId, targetX, targetY, expectedQualifiedHarvestItemId, expectedTargetId, requestedDeadlineMs));
 
     /// <summary>
     /// The harvest terminal step: re-validates the target and runs the native grab-harvest.
@@ -410,46 +346,14 @@ internal sealed partial class ExecutionManager
         return slots;
     }
 
-    public LocalExecutionReceipt RequestLocalPlantSeed(string requestId, int slot, int targetX, int targetY, string expectedQualifiedItemId, string expectedTargetId, long requestedDeadlineMs)
-    {
-        if (this.BeginLocalExecution(requestId, out string executionId, out long nowMs) is LocalExecutionReceipt replay) return replay;
-        // Scope-bound actor proof. Authorization precedes the world/location
-        // readiness checks: a caller that is not the scope-bound actor is refused
-        // for that reason rather than for where it happens to be standing.
-        // Scope-bound actor proof. Authorization precedes the world/location
-        // readiness checks: a caller that is not the scope-bound actor is refused
-        // for that reason rather than for where it happens to be standing.
-        if (!this.TryGetBoundActor(out Farmer? boundActor, out string scopeReason) || boundActor is null)
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, scopeReason, null);
-
-        if (!Context.IsWorldReady || Game1.player is null || Game1.player.currentLocation is null)
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "world_not_ready", null);
-        // Shared mechanical admission (identity → actionability → deadline →
-        // body exclusivity), behavior-equivalent to the inline sequence it
-        // replaced: identical reasonCodes, identical order. Geometry, target
-        // identity and the postcondition stay action-specific.
-        if (this.AdmitExecution(requestId, executionId, requestedDeadlineMs, nowMs, AdmissionActionabilityProfile.Physical) is LocalExecutionReceipt admissionRejection)
-            return admissionRejection;
-        if (!IsCropTargetInRange(Game1.player, targetX, targetY))
-        {
-            // Out of the native interaction radius: walk in and then plant, like `harvest_crop` and
-            // `water_crop` in this same file. Refusing here gave the Agent `target=x,y` as its only
-            // evidence, so it retried the same request.
-            return this.TryBeginToolApproach(
-                requestId,
-                executionId,
-                "plant_seed",
-                Game1.player.currentLocation,
-                targetX,
-                targetY,
-                expectedTargetId,
-                (arrivalExecutionId, arrivalRequestId) => this.ExecutePlantSeed(arrivalExecutionId, arrivalRequestId, slot, targetX, targetY, expectedQualifiedItemId, expectedTargetId, requestedDeadlineMs),
-                nowMs,
-                requestedDeadlineMs);
-        }
-
-        return this.ExecutePlantSeed(executionId, requestId, slot, targetX, targetY, expectedQualifiedItemId, expectedTargetId, requestedDeadlineMs);
-    }
+    public LocalExecutionReceipt RequestLocalPlantSeed(string requestId, int slot, int targetX, int targetY, string expectedQualifiedItemId, string expectedTargetId, long requestedDeadlineMs) =>
+        this.RequestLocalTileTarget(
+            "plant_seed", requestId, targetX, targetY, expectedTargetId, requestedDeadlineMs,
+            AdmissionActionabilityProfile.Physical,
+            authorize: this.AuthorizeActorOnReadyWorld,
+            gate: null,
+            inReach: IsCropTargetInRange,
+            execute: (executionId, admittedRequestId) => this.ExecutePlantSeed(executionId, admittedRequestId, slot, targetX, targetY, expectedQualifiedItemId, expectedTargetId, requestedDeadlineMs));
 
     private LocalExecutionReceipt ExecutePlantSeed(string executionId, string requestId, int slot, int targetX, int targetY, string expectedQualifiedItemId, string expectedTargetId, long requestedDeadlineMs)
     {
@@ -580,52 +484,22 @@ internal sealed partial class ExecutionManager
         return this.RememberTerminal(requestId, executionId, state, reasonCode, evidence);
     }
 
-    public LocalExecutionReceipt RequestLocalPlaceWoodFence(string requestId, int slot, int targetX, int targetY, string expectedQualifiedItemId, string expectedTargetId, long requestedDeadlineMs)
-    {
-        if (this.BeginLocalExecution(requestId, out string executionId, out long nowMs) is LocalExecutionReceipt replay) return replay;
-        // Scope-bound actor proof. Authorization precedes the world/location
-        // readiness checks: a caller that is not the scope-bound actor is refused
-        // for that reason rather than for where it happens to be standing.
-        // Scope-bound actor proof. Authorization precedes the world/location
-        // readiness checks: a caller that is not the scope-bound actor is refused
-        // for that reason rather than for where it happens to be standing.
-        if (!this.TryGetBoundActor(out Farmer? boundActor, out string scopeReason) || boundActor is null)
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, scopeReason, null);
-
-        if (!Context.IsWorldReady || Game1.player is null || Game1.player.currentLocation is not Farm farm)
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "farm_required",
-                $"location={(Game1.player?.currentLocation?.NameOrUniqueName ?? "none")}");
-        // Shared mechanical admission (identity → actionability → deadline →
-        // body exclusivity), behavior-equivalent to the inline sequence it
-        // replaced: identical reasonCodes, identical order. Geometry, target
-        // identity and the postcondition stay action-specific.
-        if (this.AdmitExecution(requestId, executionId, requestedDeadlineMs, nowMs, AdmissionActionabilityProfile.Physical) is LocalExecutionReceipt admissionRejection)
-            return admissionRejection;
-        if (expectedQualifiedItemId != "(O)322")
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "unsupported_fence_item", $"item={expectedQualifiedItemId}");
-        if (slot < 0 || slot >= Game1.player.Items.Count || Game1.player.Items[slot] is not StardewValley.Object source || !IsQualifiedWoodFenceSource(source) || source.Stack <= 0)
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "wood_fence_not_owned_in_slot", $"slot={slot}");
-        // 5.2: out of the native radius, walk in rather than refuse. The item checks
-        // above are position-independent; the placement checks (including
-        // Utility.playerCanPlaceItemHere's own native radius requirement) live in
-        // the shared execution body and are re-run after the walk.
-        if (!IsTileWithinChebyshevRadius(Game1.player, targetX, targetY, 1))
-        {
-            return this.TryBeginToolApproach(
-                requestId,
-                executionId,
-                "place_wood_fence",
-                farm,
-                targetX,
-                targetY,
-                expectedTargetId,
-                (arrivalExecutionId, arrivalRequestId) => this.ExecutePlaceWoodFence(arrivalExecutionId, arrivalRequestId, slot, targetX, targetY, expectedQualifiedItemId, expectedTargetId, requestedDeadlineMs),
-                nowMs,
-                requestedDeadlineMs);
-        }
-
-        return this.ExecutePlaceWoodFence(executionId, requestId, slot, targetX, targetY, expectedQualifiedItemId, expectedTargetId, requestedDeadlineMs);
-    }
+    public LocalExecutionReceipt RequestLocalPlaceWoodFence(string requestId, int slot, int targetX, int targetY, string expectedQualifiedItemId, string expectedTargetId, long requestedDeadlineMs) =>
+        this.RequestLocalTileTarget(
+            "place_wood_fence", requestId, targetX, targetY, expectedTargetId, requestedDeadlineMs,
+            AdmissionActionabilityProfile.Physical,
+            authorize: this.AuthorizeActorOnFarmstead,
+            gate: _ =>
+            {
+                if (expectedQualifiedItemId != "(O)322")
+                    return new TileTargetRefusal("unsupported_fence_item", $"item={expectedQualifiedItemId}");
+                return slot >= 0 && slot < Game1.player.Items.Count
+                    && Game1.player.Items[slot] is StardewValley.Object source && IsQualifiedWoodFenceSource(source) && source.Stack > 0
+                        ? null
+                        : new TileTargetRefusal("wood_fence_not_owned_in_slot", $"slot={slot}");
+            },
+            inReach: IsTileWithinNativeReach,
+            execute: (executionId, admittedRequestId) => this.ExecutePlaceWoodFence(executionId, admittedRequestId, slot, targetX, targetY, expectedQualifiedItemId, expectedTargetId, requestedDeadlineMs));
 
     /// <summary>
     /// Executes place_wood_fence against the current world, re-validating the slot,
@@ -693,51 +567,22 @@ internal sealed partial class ExecutionManager
         return this.RememberTerminal(requestId, executionId, state, reasonCode, evidence);
     }
 
-    public LocalExecutionReceipt RequestLocalPlaceCrabPot(string requestId, int slot, int targetX, int targetY, string expectedQualifiedItemId, string expectedTargetId, long requestedDeadlineMs)
-    {
-        if (this.BeginLocalExecution(requestId, out string executionId, out long nowMs) is LocalExecutionReceipt replay) return replay;
-        // Scope-bound actor proof. Authorization precedes the world/location
-        // readiness checks: a caller that is not the scope-bound actor is refused
-        // for that reason rather than for where it happens to be standing.
-        // Scope-bound actor proof. Authorization precedes the world/location
-        // readiness checks: a caller that is not the scope-bound actor is refused
-        // for that reason rather than for where it happens to be standing.
-        if (!this.TryGetBoundActor(out Farmer? boundActor, out string scopeReason) || boundActor is null)
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, scopeReason, null);
-
-        if (!Context.IsWorldReady || Game1.player is null || Game1.player.currentLocation is not Farm farm)
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "farm_required",
-                $"location={(Game1.player?.currentLocation?.NameOrUniqueName ?? "none")}");
-        // Shared mechanical admission (identity → actionability → deadline →
-        // body exclusivity), behavior-equivalent to the inline sequence it
-        // replaced: identical reasonCodes, identical order. Geometry, target
-        // identity and the postcondition stay action-specific.
-        if (this.AdmitExecution(requestId, executionId, requestedDeadlineMs, nowMs, AdmissionActionabilityProfile.Physical) is LocalExecutionReceipt admissionRejection)
-            return admissionRejection;
-        if (expectedQualifiedItemId != "(O)710")
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "unsupported_crab_pot_item", $"item={expectedQualifiedItemId}");
-        if (slot < 0 || slot >= Game1.player.Items.Count || Game1.player.Items[slot] is not StardewValley.Object source || source.QualifiedItemId != "(O)710" || source.Stack <= 0)
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "crab_pot_not_owned_in_slot", $"slot={slot}");
-        // 5.2: out of the native radius, walk in rather than refuse. The item checks
-        // above are position-independent; the placement checks live in the shared
-        // execution body and are re-run after the walk.
-        if (!IsTileWithinChebyshevRadius(Game1.player, targetX, targetY, 1))
-        {
-            return this.TryBeginToolApproach(
-                requestId,
-                executionId,
-                "place_crab_pot",
-                farm,
-                targetX,
-                targetY,
-                expectedTargetId,
-                (arrivalExecutionId, arrivalRequestId) => this.ExecutePlaceCrabPot(arrivalExecutionId, arrivalRequestId, slot, targetX, targetY, expectedQualifiedItemId, expectedTargetId, requestedDeadlineMs),
-                nowMs,
-                requestedDeadlineMs);
-        }
-
-        return this.ExecutePlaceCrabPot(executionId, requestId, slot, targetX, targetY, expectedQualifiedItemId, expectedTargetId, requestedDeadlineMs);
-    }
+    public LocalExecutionReceipt RequestLocalPlaceCrabPot(string requestId, int slot, int targetX, int targetY, string expectedQualifiedItemId, string expectedTargetId, long requestedDeadlineMs) =>
+        this.RequestLocalTileTarget(
+            "place_crab_pot", requestId, targetX, targetY, expectedTargetId, requestedDeadlineMs,
+            AdmissionActionabilityProfile.Physical,
+            authorize: this.AuthorizeActorOnFarmstead,
+            gate: _ =>
+            {
+                if (expectedQualifiedItemId != "(O)710")
+                    return new TileTargetRefusal("unsupported_crab_pot_item", $"item={expectedQualifiedItemId}");
+                return slot >= 0 && slot < Game1.player.Items.Count
+                    && Game1.player.Items[slot] is StardewValley.Object source && source.QualifiedItemId == "(O)710" && source.Stack > 0
+                        ? null
+                        : new TileTargetRefusal("crab_pot_not_owned_in_slot", $"slot={slot}");
+            },
+            inReach: IsTileWithinNativeReach,
+            execute: (executionId, admittedRequestId) => this.ExecutePlaceCrabPot(executionId, admittedRequestId, slot, targetX, targetY, expectedQualifiedItemId, expectedTargetId, requestedDeadlineMs));
 
     /// <summary>
     /// Executes place_crab_pot against the current world, re-validating the slot, the
@@ -805,53 +650,22 @@ internal sealed partial class ExecutionManager
         return this.RememberTerminal(requestId, executionId, state, reasonCode, evidence);
     }
 
-    public LocalExecutionReceipt RequestLocalBaitCrabPot(string requestId, int slot, int targetX, int targetY, string expectedQualifiedItemId, string expectedTargetId, long requestedDeadlineMs)
-    {
-        if (this.BeginLocalExecution(requestId, out string executionId, out long nowMs) is LocalExecutionReceipt replay) return replay;
-        // Scope-bound actor proof. Authorization precedes the world/location
-        // readiness checks: a caller that is not the scope-bound actor is refused
-        // for that reason rather than for where it happens to be standing.
-        // Scope-bound actor proof. Authorization precedes the world/location
-        // readiness checks: a caller that is not the scope-bound actor is refused
-        // for that reason rather than for where it happens to be standing.
-        if (!this.TryGetBoundActor(out Farmer? boundActor, out string scopeReason) || boundActor is null)
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, scopeReason, null);
-        if (!Context.IsWorldReady || Game1.player?.currentLocation is null) return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "world_not_ready", null);
-        // Shared mechanical admission (identity → actionability → deadline →
-        // body exclusivity), behavior-equivalent to the inline sequence it
-        // replaced: identical reasonCodes, identical order. Geometry, target
-        // identity and the postcondition stay action-specific.
-        if (this.AdmitExecution(requestId, executionId, requestedDeadlineMs, nowMs, AdmissionActionabilityProfile.Physical) is LocalExecutionReceipt admissionRejection)
-            return admissionRejection;
-        Farmer player = Game1.player;
-        // THE BAIT IS WHATEVER THE POT ACCEPTS, not one item id. `CrabPot.performObjectDropInAction` takes any `Object`
-        // in the bait category while the pot still needs bait (CrabPot.cs:232-255), which covers Wild Bait, Magnet Bait
-        // and every other bait in the game; the request names the item it means and the pot's own probe decides below.
-        if (slot < 0 || slot >= player.Items.Count || player.Items[slot] is not StardewValley.Object bait || bait.Stack <= 0
-            || !string.Equals(bait.QualifiedItemId, expectedQualifiedItemId, StringComparison.Ordinal))
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "bait_not_owned_in_slot", $"slot={slot};expected={expectedQualifiedItemId}");
-        GameLocation location = player.currentLocation;
-        // 5.2: out of the native radius, walk in rather than refuse. The bait item is
-        // validated above; the pot and its state are re-checked after the walk inside
-        // the closure, because `checkAction` is a real player input path whose outcome
-        // depends on the world at the moment it runs.
-        if (!IsTileWithinChebyshevRadius(player, targetX, targetY, 1))
-        {
-            return this.TryBeginToolApproach(
-                requestId,
-                executionId,
-                "bait_crab_pot",
-                location,
-                targetX,
-                targetY,
-                expectedTargetId,
-                (arrivalExecutionId, arrivalRequestId) => this.ExecuteBaitCrabPot(arrivalExecutionId, arrivalRequestId, slot, targetX, targetY, expectedQualifiedItemId, expectedTargetId),
-                nowMs,
-                requestedDeadlineMs);
-        }
-
-        return this.ExecuteBaitCrabPot(executionId, requestId, slot, targetX, targetY, expectedQualifiedItemId, expectedTargetId);
-    }
+    public LocalExecutionReceipt RequestLocalBaitCrabPot(string requestId, int slot, int targetX, int targetY, string expectedQualifiedItemId, string expectedTargetId, long requestedDeadlineMs) =>
+        this.RequestLocalTileTarget(
+            "bait_crab_pot", requestId, targetX, targetY, expectedTargetId, requestedDeadlineMs,
+            AdmissionActionabilityProfile.Physical,
+            authorize: this.AuthorizeActorOnReadyWorld,
+            // THE BAIT IS WHATEVER THE POT ACCEPTS, not one item id. `CrabPot.performObjectDropInAction` takes any
+            // `Object` in the bait category while the pot still needs bait (CrabPot.cs:232-255), which covers Wild Bait,
+            // Magnet Bait and every other bait in the game; the request names the item it means and the pot's own probe
+            // decides in the body.
+            gate: _ => slot >= 0 && slot < Game1.player.Items.Count
+                && Game1.player.Items[slot] is StardewValley.Object bait && bait.Stack > 0
+                && string.Equals(bait.QualifiedItemId, expectedQualifiedItemId, StringComparison.Ordinal)
+                    ? null
+                    : new TileTargetRefusal("bait_not_owned_in_slot", $"slot={slot};expected={expectedQualifiedItemId}"),
+            inReach: IsTileWithinNativeReach,
+            execute: (executionId, admittedRequestId) => this.ExecuteBaitCrabPot(executionId, admittedRequestId, slot, targetX, targetY, expectedQualifiedItemId, expectedTargetId));
 
     /// <summary>
     /// Executes bait_crab_pot against the current world, re-validating the bait item
@@ -886,45 +700,14 @@ internal sealed partial class ExecutionManager
         return this.RememberTerminal(requestId, executionId, state, reasonCode, evidence);
     }
 
-    public LocalExecutionReceipt RequestLocalFertilizeTile(string requestId, int slot, int targetX, int targetY, string expectedQualifiedItemId, string expectedTargetId, long requestedDeadlineMs)
-    {
-        if (this.BeginLocalExecution(requestId, out string executionId, out long nowMs) is LocalExecutionReceipt replay) return replay;
-        // Scope-bound actor proof. Authorization precedes the world/location
-        // readiness checks: a caller that is not the scope-bound actor is refused
-        // for that reason rather than for where it happens to be standing.
-        // Scope-bound actor proof. Authorization precedes the world/location
-        // readiness checks: a caller that is not the scope-bound actor is refused
-        // for that reason rather than for where it happens to be standing.
-        if (!this.TryGetBoundActor(out Farmer? boundActor, out string scopeReason) || boundActor is null)
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, scopeReason, null);
-
-        if (!Context.IsWorldReady || Game1.player is null || Game1.player.currentLocation is null)
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "world_not_ready", null);
-        // Shared mechanical admission (identity → actionability → deadline →
-        // body exclusivity), behavior-equivalent to the inline sequence it
-        // replaced: identical reasonCodes, identical order. Geometry, target
-        // identity and the postcondition stay action-specific.
-        if (this.AdmitExecution(requestId, executionId, requestedDeadlineMs, nowMs, AdmissionActionabilityProfile.Physical) is LocalExecutionReceipt admissionRejection)
-            return admissionRejection;
-        if (!IsCropTargetInRange(Game1.player, targetX, targetY))
-        {
-            // Out of the native interaction radius: walk in and then fertilize, like `harvest_crop`
-            // and `water_crop` in this same file.
-            return this.TryBeginToolApproach(
-                requestId,
-                executionId,
-                "fertilize_tile",
-                Game1.player.currentLocation,
-                targetX,
-                targetY,
-                expectedTargetId,
-                (arrivalExecutionId, arrivalRequestId) => this.ExecuteFertilizeTile(arrivalExecutionId, arrivalRequestId, slot, targetX, targetY, expectedQualifiedItemId, expectedTargetId, requestedDeadlineMs),
-                nowMs,
-                requestedDeadlineMs);
-        }
-
-        return this.ExecuteFertilizeTile(executionId, requestId, slot, targetX, targetY, expectedQualifiedItemId, expectedTargetId, requestedDeadlineMs);
-    }
+    public LocalExecutionReceipt RequestLocalFertilizeTile(string requestId, int slot, int targetX, int targetY, string expectedQualifiedItemId, string expectedTargetId, long requestedDeadlineMs) =>
+        this.RequestLocalTileTarget(
+            "fertilize_tile", requestId, targetX, targetY, expectedTargetId, requestedDeadlineMs,
+            AdmissionActionabilityProfile.Physical,
+            authorize: this.AuthorizeActorOnReadyWorld,
+            gate: null,
+            inReach: IsCropTargetInRange,
+            execute: (executionId, admittedRequestId) => this.ExecuteFertilizeTile(executionId, admittedRequestId, slot, targetX, targetY, expectedQualifiedItemId, expectedTargetId, requestedDeadlineMs));
 
     private LocalExecutionReceipt ExecuteFertilizeTile(string executionId, string requestId, int slot, int targetX, int targetY, string expectedQualifiedItemId, string expectedTargetId, long requestedDeadlineMs)
     {
