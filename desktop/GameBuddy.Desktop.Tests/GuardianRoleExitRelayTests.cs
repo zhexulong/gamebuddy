@@ -97,6 +97,18 @@ public sealed class GuardianRoleExitRelayTests
     }
 
     [Fact]
+    public async Task A_second_event_for_a_role_already_reported_fails_closed_instead_of_replacing_it()
+    {
+        // A role is launched at most once per attempt, so a second event for the
+        // same role says the Guardian is repeating itself. Accepting it would let
+        // the last frame win: the relay would publish one exit code for a role
+        // that published another, and the product would report a native status
+        // the OS never gave it.
+        await Assert.ThrowsAsync<GuardianLaunchUnavailableException>(
+            () => GuardianPublicResultReader.ReadAsync(Stream(PlayerExit + PlayerExit + ContainmentReply), CancellationToken.None));
+    }
+
+    [Fact]
     public async Task A_stream_of_role_events_that_never_ends_in_a_reply_fails_closed()
     {
         await Assert.ThrowsAsync<GuardianLaunchUnavailableException>(

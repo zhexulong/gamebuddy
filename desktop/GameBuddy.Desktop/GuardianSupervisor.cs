@@ -405,6 +405,11 @@ internal static class GuardianPublicResultReader
     {
         GuardianRoleExit? roleExit = null;
         var events = 0;
+        // One event per role: a role is launched at most once per attempt, so a
+        // second event for a role that already reported says the Guardian is
+        // repeating itself. Taking the last frame would publish an exit code the
+        // OS never gave that process.
+        var reported = new HashSet<string>(StringComparer.Ordinal);
         while (true)
         {
             var line = await GuardianSupervisorLease.ReadLineAsync(stream, cancellationToken).ConfigureAwait(false);
@@ -412,7 +417,7 @@ internal static class GuardianPublicResultReader
             var root = document.RootElement;
             if (TryReadRoleExit(root, out var exit))
             {
-                if (++events > MaxRoleEventsPerRead) throw new GuardianLaunchUnavailableException();
+                if (++events > MaxRoleEventsPerRead || !reported.Add(exit.Role)) throw new GuardianLaunchUnavailableException();
                 roleExit = exit;
                 continue;
             }
