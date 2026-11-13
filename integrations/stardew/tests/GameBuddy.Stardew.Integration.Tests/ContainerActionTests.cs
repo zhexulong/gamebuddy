@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Reflection;
 using System.Runtime.Serialization;
 using FluentAssertions;
@@ -7,6 +8,7 @@ using GameBuddy.Stardew.Core.Routing;
 using GameBuddy.Stardew.Handlers;
 using Microsoft.Xna.Framework;
 using Netcode;
+using StardewModdingAPI;
 using StardewValley;
 using StardewValley.Network;
 using Xunit;
@@ -25,8 +27,17 @@ namespace GameBuddy.Stardew.Integration.Tests;
 /// Structural assertions run without a Game1 harness (world-not-ready path);
 /// full native put/take behavior belongs to the native-local fixture lane per
 /// fixtures/stardew/RUNBOOK.md.
+///
+/// <para>
+/// THE CONTAINER'S LOCK IS TAKEN, NOT MERELY READ (<see cref="ContainerWorld"/>). Reading <c>Chest.GetMutex()</c> and then
+/// writing answers "is somebody else in there" and nothing else: two actors that both read it free write the same
+/// inventory, which is an item-duplication or item-loss race rather than a theoretical concern. The behaviour tests here
+/// therefore observe the LOCK STATE AT THE MOMENT OF THE WRITE, through a real <c>Chest</c> whose own virtual mutation
+/// methods record it, and they observe it through the real body rather than by reading the handler's text.
+/// </para>
 /// </summary>
 // MIXED SHAPE AND BEHAVIOUR: the pins here assert on repository source text because the native seam they cover cannot load in a headless runner, while the rest of the class constructs and calls product code for real; keeping both in one file keeps each pin beside the behaviour it protects.
+[Collection(HeadlessGameWorld.Collection)]
 public sealed class ContainerActionTests
 {
     [Fact]
@@ -261,6 +272,513 @@ public sealed class ContainerActionTests
         receipt.Should().NotBeNull();
         receipt.State.Should().Be(ExecutionState.Rejected);
         receipt.ReasonCode.Should().Be("world_not_ready");
+    }
+
+    // ---------------------------------------------------------------------------------------------------------------
+    // The container's own lock: TAKEN around the write, not read beside it
+    // ---------------------------------------------------------------------------------------------------------------
+
+    /// <summary>
+    /// STORE. The fact that makes a lock worth anything is that it is OURS WHILE THE CHEST IS MUTATED, so the guard is
+    /// the lock state at the moment of the write - read off the chest itself, because <c>Chest.addItem</c> is virtual
+    /// (Chest.cs:867) and the chest can report it. Reading <c>Chest.GetMutex()</c> and then writing answers only "is
+    /// somebody else in there", which two actors can both answer "no" to.
+    /// </summary>
+    [Fact]
+    public void ContainerLock_IsHeldWhileTheChestReceivesTheStack_AndReleasedAfterwards()
+    {
+        using var world = ContainerWorld.Create();
+        LockObservingChest chest = world.PlaceChest(x: 2, y: 2);
+        world.Carry("(O)24", slot: 0, stack: 3);
+        world.StandAt(2, 3);
+        chest.Observing = true;
+
+        LocalExecutionReceipt receipt = world.Store("(O)24");
+
+        receipt.State.Should().Be(ExecutionState.Succeeded, receipt.Evidence);
+        chest.WritesWithoutTheLock.Should().Be(0,
+            "the container's own NetMutex must be held while its inventory is mutated");
+        chest.WritesUnderTheLock.Should().BeGreaterThan(0,
+            "the write has to happen under the lock, not before or after it");
+        chest.GetMutex().IsLocked().Should().BeFalse("the lock is released once the write is done");
+        world.PackCount("(O)24").Should().Be(0, "the exact stored reference left the pack");
+        ContainerWorld.ChestCount(chest, "(O)24").Should().Be(3);
+    }
+
+    /// <summary>
+    /// RETRIEVE. <c>Chest.GetItemsForPlayer().Remove(target)</c> is not virtual, but the <c>clearNulls()</c> that follows
+    /// it is (Chest.cs:1025), so the chest still reports the lock state of the removal it just took part in.
+    ///
+    /// <para>
+    /// WHAT THIS CANNOT REACH: the hand-off itself. <c>Farmer.addItemToInventory</c> calls
+    /// <c>OnItemReceived</c> -> <c>reloadSprite</c> -> <c>ItemRegistry.GetDataOrErrorItem</c>, which needs item data this
+    /// process cannot load - so the retrieve body throws AFTER the chest was mutated, which is why the sibling
+    /// <c>ChestRetrieveRollbackActionSourceShapeTests</c> is a source pin. The exception is the engine's, and it is
+    /// exactly the case the <c>finally</c> has to survive: the lock is released on it.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void ContainerLock_IsHeldWhenTheStackLeavesTheChest_AndReleasedByTheFinallyEvenWhenTheEngineThrows()
+    {
+        using var world = ContainerWorld.Create();
+        LockObservingChest chest = world.PlaceChest(x: 2, y: 2);
+        world.PutInChest(chest, "(O)24", stack: 2);
+        world.StandAt(2, 3);
+        chest.Observing = true;
+
+        Exception? engineFailure = Record.Exception(() => world.Retrieve("(O)24"));
+
+        engineFailure.Should().NotBeNull(
+            "this process cannot load item data, so the native hand-off throws after the chest was mutated");
+        chest.WritesWithoutTheLock.Should().Be(0,
+            "the removal must run under the container's own lock as well");
+        chest.WritesUnderTheLock.Should().BeGreaterThan(0);
+        ContainerWorld.ChestCount(chest, "(O)24").Should().Be(0, "the removal really happened before the throw");
+        chest.GetMutex().IsLocked().Should().BeFalse("the finally releases the lock even when the engine throws");
+    }
+
+    /// <summary>
+    /// ONE of the two contention states, told apart by name: another player already has the container. Nothing is taken
+    /// from the pack, nothing enters the chest, and - the half a "we hold a lock" guard would miss - the other player's
+    /// lock is left exactly where it was.
+    /// </summary>
+    [Fact]
+    public void AContainerAnotherPlayerAlreadyHasOpen_IsRefusedByName_AndNothingMoves()
+    {
+        using var world = ContainerWorld.Create();
+        LockObservingChest chest = world.PlaceChest(x: 2, y: 2);
+        world.Carry("(O)24", slot: 0, stack: 3);
+        world.StandAt(2, 3);
+        ContainerWorld.HoldLockAsAnotherPlayer(chest);
+        chest.Observing = true;
+
+        LocalExecutionReceipt receipt = world.Store("(O)24");
+
+        receipt.State.Should().Be(ExecutionState.Rejected);
+        receipt.ReasonCode.Should().Be("container_in_use", "someone else holding it is its own named situation");
+        world.PackCount("(O)24").Should().Be(3, "a refused store takes nothing from the pack");
+        ContainerWorld.ChestCount(chest, "(O)24").Should().Be(0);
+        chest.WritesUnderTheLock.Should().Be(0, "a refused container is never written to");
+        ContainerWorld.LockOwner(chest).Should().Be(ContainerWorld.OtherPlayerId,
+            "refusing must not release the other player's lock");
+    }
+
+    /// <summary>
+    /// The OTHER contention state, and the reason the two cannot share one name: the actor asked for the lock and the
+    /// grant did not arrive. A request fired from a farmhand travels to the host and comes back on a later game tick,
+    /// which a receipt that settles inside one tick cannot wait for ("the engine's own per-tick settlement" is the same
+    /// `<c>NetMutex.Update</c>` step the fish-tank and pedestal deposits drive). The write is refused rather than
+    /// performed unlocked, and the un-granted request is cancelled instead of left pending.
+    /// </summary>
+    [Fact]
+    public void AContainerWhoseLockIsNotGranted_IsRefusedByName_AndNothingMoves()
+    {
+        using var world = ContainerWorld.Create();
+        LockObservingChest chest = world.PlaceChest(x: 2, y: 2);
+        world.Carry("(O)24", slot: 0, stack: 3);
+        world.StandAt(2, 3);
+        chest.Observing = true;
+        world.JoinAsFarmhand();
+
+        LocalExecutionReceipt receipt = world.Store("(O)24");
+
+        receipt.State.Should().Be(ExecutionState.Rejected);
+        receipt.ReasonCode.Should().Be("container_lock_not_granted",
+            "\"we could not get it\" is not \"someone else holds it\"");
+        chest.WritesUnderTheLock.Should().Be(0);
+        chest.WritesWithoutTheLock.Should().Be(0, "an un-granted lock must not degrade into an unlocked write");
+        world.PackCount("(O)24").Should().Be(3);
+        ContainerWorld.ChestCount(chest, "(O)24").Should().Be(0);
+        chest.GetMutex().IsLocked().Should().BeFalse("an un-granted request is cancelled, not left held");
+    }
+
+    /// <summary>
+    /// SINGLE PLAYER, unchanged: the mutex is free, so the action behaves exactly as it did before the lock was taken -
+    /// the same success and the same receipt bytes, quoted here rather than described.
+    /// </summary>
+    [Fact]
+    public void TheSinglePlayerChestReceipt_NamesTheSameFactsAsBeforeTheLockWasTaken()
+    {
+        using var world = ContainerWorld.Create();
+        world.PlaceChest(x: 2, y: 2);
+        world.Carry("(O)24", slot: 0, stack: 3);
+        world.StandAt(2, 3);
+
+        LocalExecutionReceipt receipt = world.Store("(O)24");
+
+        receipt.State.Should().Be(ExecutionState.Succeeded, receipt.Evidence);
+        receipt.ReasonCode.Should().Be("chest_stored");
+        receipt.Evidence.Should().Be(
+            "location=ProbeFarmHouse;target=chest_c566ec0beae84056;tile=2,2;container=chest;item=(O)24;source_slot=0;"
+            + "player_stack_before=3;player_stack_after=0;source_consumed=true;chest_stack_before=0;chest_stack_after=3;"
+            + "native_menu_opened=false");
+    }
+
+    /// <summary>
+    /// THE ADD PATH STACKS, and it does so because it is <c>Chest.addItem</c> (Chest.cs:867-889: a <c>canStackWith</c>/
+    /// <c>addToStack</c> merge over the existing stacks, then an append only if room is left) and never a hand-written
+    /// slot. This is the evidence for the audit's "destination slot accepts only an empty slot" claim: there is no
+    /// destination-slot search in this file to accept or refuse anything.
+    /// </summary>
+    [Fact]
+    public void AStackAlreadyInTheChest_IsStackedOnto_RatherThanRefusedOrDropped()
+    {
+        using var world = ContainerWorld.Create();
+        LockObservingChest chest = world.PlaceChest(x: 2, y: 2);
+        world.PutInChest(chest, "(O)24", stack: 2);
+        world.Carry("(O)24", slot: 0, stack: 3);
+        world.StandAt(2, 3);
+
+        LocalExecutionReceipt receipt = world.Store("(O)24");
+
+        receipt.State.Should().Be(ExecutionState.Succeeded, receipt.Evidence);
+        ContainerWorld.ChestCount(chest, "(O)24").Should().Be(5, "the stack is merged, not refused");
+        chest.GetItemsForPlayer().Count(item => item is not null && item.QualifiedItemId == "(O)24")
+            .Should().Be(1, "a merge takes no second slot");
+        world.PackCount("(O)24").Should().Be(0);
+    }
+
+    /// <summary>
+    /// The ORDER, and the release: every container mutation of both bodies sits between the lock being taken and a
+    /// <c>finally</c> that gives it back, so a throw cannot leave the container locked behind us.
+    /// </summary>
+    [Fact]
+    public void BothBodies_TakeTheLockBeforeTheWrite_AndReleaseItInAFinally()
+    {
+        string? handlers = TryFindRepoFile(@"integrations\stardew\farmhandexecutioncontroller.containeractions.cs");
+        handlers.Should().NotBeNull();
+        string containers = File.ReadAllText(handlers!);
+        string store = MethodBody(containers, "private LocalExecutionReceipt ExecuteChestStore(");
+        string retrieve = MethodBody(containers, "private LocalExecutionReceipt ExecuteChestRetrieve(");
+
+        foreach ((string body, string write) in new[]
+                 {
+                     (store, "chest.addItem(storedItem)"),
+                     (retrieve, "chest.GetItemsForPlayer().Remove(target)"),
+                 })
+        {
+            body.Should().Contain("TakeContainerLock(chest, location)", "the lock is requested, not merely read");
+            body.IndexOf("TakeContainerLock(chest, location)", StringComparison.Ordinal)
+                .Should().BeLessThan(body.IndexOf(write, StringComparison.Ordinal),
+                    "a lock taken after the write protects nothing");
+            body.Should().Contain("finally");
+            body.IndexOf("ReleaseLock()", StringComparison.Ordinal)
+                .Should().BeGreaterThan(body.IndexOf("finally", StringComparison.Ordinal),
+                    "the release belongs in the finally, where a throw cannot skip it");
+        }
+    }
+
+    /// <summary>
+    /// A real chest whose own virtual mutation methods report whether the container's lock was held AT THAT MOMENT.
+    ///
+    /// <para>
+    /// <c>Chest.addItem</c> (Chest.cs:867) and <c>Chest.clearNulls</c> (Chest.cs:1025) are both <c>virtual</c>, and the two
+    /// container bodies mutate the chest through exactly those two methods: <c>addItem</c> for the store, and
+    /// <c>clearNulls</c> immediately after the <c>GetItemsForPlayer().Remove(target)</c> for the retrieve. Recording there
+    /// is therefore the closest a test can stand to the write without re-implementing it.
+    /// </para>
+    /// </summary>
+    private sealed class LockObservingChest : StardewValley.Objects.Chest
+    {
+        /// <summary>Recorded only while the test is driving an action; the fixture's own setup also mutates the chest.</summary>
+        internal bool Observing { get; set; }
+
+        internal int WritesUnderTheLock { get; private set; }
+
+        internal int WritesWithoutTheLock { get; private set; }
+
+        public override Item? addItem(Item item)
+        {
+            this.Record();
+            return base.addItem(item);
+        }
+
+        public override void clearNulls()
+        {
+            this.Record();
+            base.clearNulls();
+        }
+
+        private void Record()
+        {
+            if (!this.Observing) return;
+            if (this.GetMutex().IsLockHeld()) this.WritesUnderTheLock++;
+            else this.WritesWithoutTheLock++;
+        }
+    }
+
+    /// <summary>
+    /// A real room with a real player-owned <see cref="LockObservingChest"/> on tile (2,2), a real <c>Game1.player</c> and
+    /// a real pack.
+    ///
+    /// <para>
+    /// The shape is <c>PutItemInFishTankActionTests.TankWorld</c>'s, because the container bodies read the same engine
+    /// surface that fixture already proved out: <c>Game1.player.currentLocation</c>, <c>location.objects</c>,
+    /// <c>Chest.GetMutex()</c> and the pack. The <c>Chest</c> itself is a real one (<c>new Chest()</c> runs its own NetField
+    /// initializers, which is what the resolver's <c>IsOwnedOrdinaryChest</c> and <c>GetMutex()</c> read).
+    /// </para>
+    /// </summary>
+    private sealed class ContainerWorld : IDisposable
+    {
+        internal const long OtherPlayerId = 2002;
+
+        private const long ActorId = 1001;
+        private const int PackCapacity = 36;
+
+        private static readonly FieldInfo WorldReadyPerScreen = typeof(Context)
+            .GetProperty("IsWorldReady", BindingFlags.Public | BindingFlags.Static)!
+            .GetGetMethod()!
+            .Module.ResolveField(BitConverter.ToInt32(typeof(Context)
+                .GetProperty("IsWorldReady", BindingFlags.Public | BindingFlags.Static)!
+                .GetGetMethod()!.GetMethodBody()!.GetILAsByteArray()!, 1))!;
+
+        private readonly Dictionary<string, object?> staticsBefore;
+        private readonly byte multiplayerModeBefore;
+
+        internal GameLocation Location { get; }
+
+        private ContainerWorld()
+        {
+            this.staticsBefore = HeadlessGameWorld.CaptureStatics();
+            // `Game1.multiplayerMode` is what `IsMasterGame` answers from (Game1.cs:1808-1818), and this fixture writes it to
+            // put the actor on a farmhand's side of a lock request. It is not in `HeadlessGameWorld.GameStatics` because no
+            // other fixture writes it; it is restored here, by the fixture that does.
+            this.multiplayerModeBefore = Game1.multiplayerMode;
+
+            Game1.game1 = (Game1)FormatterServices.GetUninitializedObject(typeof(Game1));
+            var root = (NetRoot<NetWorldState>)FormatterServices.GetUninitializedObject(typeof(NetRoot<NetWorldState>));
+            root.Value = new NetWorldState();
+            typeof(Game1).GetField("netWorldState", BindingFlags.Public | BindingFlags.Static)!.SetValue(null, root);
+            Game1.random ??= new Random(1);
+            Game1.otherFarmers ??= new NetRootDictionary<long, Farmer>();
+            Game1.hudMessages ??= new List<HUDMessage>();
+            var options = (Options)FormatterServices.GetUninitializedObject(typeof(Options));
+            SetField(options, "gamepadControls", false);
+            SetField(options, "rumble", false);
+            Game1.options ??= options;
+            if (Game1.game1!._locations is null) Game1.game1._locations = new List<GameLocation>();
+            Game1.locationContextData = new Dictionary<string, StardewValley.GameData.LocationContexts.LocationContextData>(StringComparer.Ordinal);
+            Game1.locationContextData["Default"] = new StardewValley.GameData.LocationContexts.LocationContextData();
+            Game1.timeOfDay = 600;
+
+            var location = new GameLocation();
+            var map = new xTile.Map();
+            map.AddLayer(new xTile.Layers.Layer("Back", map, new xTile.Dimensions.Size(16, 16), new xTile.Dimensions.Size(64, 64)));
+            location.map = map;
+            typeof(GameLocation).GetField("name", BindingFlags.Public | BindingFlags.Instance)!
+                .SetValue(location, new NetString("ProbeFarmHouse"));
+            this.Location = location;
+
+            var sprite = (FarmerSprite)FormatterServices.GetUninitializedObject(typeof(FarmerSprite));
+            SetField(sprite, "spriteWidth", new NetInt(16));
+            SetField(sprite, "spriteHeight", new NetInt(32));
+            SetField(sprite, "tempSpriteHeight", -1);
+
+            var actor = (Farmer)FormatterServices.GetUninitializedObject(typeof(Farmer));
+            SetField(actor, "position", new NetPosition());
+            SetField(actor, "currentLocationRef", new NetLocationRef());
+            SetField(actor, "netMount", new NetRef<StardewValley.Characters.Horse>());
+            SetField(actor, "sprite", new NetRef<AnimatedSprite> { Value = sprite });
+            SetField(actor, "uniqueMultiplayerID", new NetLong(ActorId));
+            SetField(actor, "netStamina", new NetFloat(270f));
+            SetField(actor, "usingTool", new NetBool(false));
+            SetField(actor, "toolPower", new NetInt(0));
+            SetField(actor, "temporaryItem", new NetRef<Item>());
+            SetField(actor, "currentToolIndex", new NetInt(0));
+            SetField(actor, "netItemStowed", new NetBool(false));
+            SetField(actor, "facingDirection", new NetDirection(2));
+            SetField(actor, "isSitting", new NetBool(false));
+            SetField(actor, "movementDirections", new List<int>());
+            SetField(actor, "friendshipData", new NetStringDictionary<Friendship, NetRef<Friendship>>());
+            SetField(actor, "stats", new Stats());
+            SetField(actor, "mailReceived", new NetStringHashSet());
+            SetField(actor, "temporaryPassableTiles", new StardewValley.Util.BoundingBoxGroup());
+            // `NetMutex.Update` asks the master-side release rule whether the lock owner is still standing in the
+            // collection, and that rule reads THIS field: a farmer whose `locationBeforeForcedEvent` is not null is
+            // mid-warp, and a farmer it cannot find has its lock RELEASED under it (NetMutex.cs:100). The engine's own
+            // declaration is `new NetString(null)` (Farmer.cs:775), so the fixture must be null here too - an empty
+            // string is a warp in progress, and the grant would be revoked before the write it was taken for.
+            SetField(actor, "locationBeforeForcedEvent", new NetString());
+            var team = (FarmerTeam)FormatterServices.GetUninitializedObject(typeof(FarmerTeam));
+            SetField(team, "useSeparateWallets", new NetBool(false));
+            SetField(actor, "teamRoot", new NetRoot<FarmerTeam> { Value = team });
+            var buffs = new StardewValley.Buffs.BuffManager();
+            typeof(StardewValley.Buffs.BuffManager)
+                .GetField("CombinedEffects", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)!
+                .SetValue(buffs, new StardewValley.Buffs.BuffEffects());
+            buffs.Dirty = false;
+            SetField(actor, "buffs", buffs);
+            typeof(Farmer).GetField("canMove", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)!
+                .SetValue(actor, true);
+
+            var pack = new StardewValley.Inventories.Inventory();
+            for (int slot = 0; slot < PackCapacity; slot++) pack.Add(null!);
+            SetField(actor, "netItems", new NetRef<StardewValley.Inventories.Inventory> { Value = pack });
+            SetField(actor, "maxItems", new NetInt(PackCapacity));
+
+            actor.position.Set(new Vector2(2 * 64 + 8, 3 * 64));
+            actor.currentLocation = location;
+            typeof(Game1).GetField("_player", BindingFlags.NonPublic | BindingFlags.Static)!.SetValue(null, actor);
+
+            WorldReadyPerScreen.GetValue(null)!.GetType()
+                .GetMethod("SetValueForScreen", new[] { typeof(int), typeof(bool) })!
+                .Invoke(WorldReadyPerScreen.GetValue(null), new object[] { Context.ScreenId, true });
+            Context.IsWorldReady.Should().BeTrue("the headless world must satisfy the readiness gate the body checks");
+        }
+
+        internal static ContainerWorld Create() => new();
+
+        /// <summary>A real player-owned chest in the object layer, at the tile the caller names.</summary>
+        internal LockObservingChest PlaceChest(int x, int y)
+        {
+            var chest = new LockObservingChest();
+            chest.playerChest.Value = true;
+            chest.globalInventoryId.Value = null;
+            chest.ItemId = "130";
+            chest.TileLocation = new Vector2(x, y);
+            this.Location.objects[new Vector2(x, y)] = chest;
+            return chest;
+        }
+
+        /// <summary>One carried stack, built the way the container seam's own carried-item pins build one.</summary>
+        internal void Carry(string qualifiedItemId, int slot, int stack)
+        {
+            while (Game1.player.Items.Count <= slot) Game1.player.Items.Add(null!);
+            Game1.player.Items[slot] = NewStack(qualifiedItemId, stack);
+        }
+
+        /// <summary>One stack already in the container's own inventory, through the engine's own add path.</summary>
+        internal void PutInChest(StardewValley.Objects.Chest chest, string qualifiedItemId, int stack) =>
+            chest.addItem(NewStack(qualifiedItemId, stack)).Should().BeNull("the fixture chest has room for the setup stack");
+
+        /// <summary>
+        /// Puts the actor on a farmhand's side of a lock request: <c>Game1.multiplayerMode = 1</c> is what
+        /// <c>Game1.IsMasterGame</c> answers <c>false</c> to, so the request is fired and the host's grant cannot arrive
+        /// inside this game tick.
+        /// </summary>
+        internal void JoinAsFarmhand() => Game1.multiplayerMode = 1;
+
+        internal void StandAt(int x, int y) => Game1.player.position.Set(new Vector2(x * 64 + 8, y * 64));
+
+        /// <summary>The id the snapshot publishes for this tile, read off the production builder.</summary>
+        internal string ContainerIdAt(int x, int y) =>
+            ExecutionManager.BuildContainerTargetId(
+                this.Location,
+                x,
+                y,
+                (StardewValley.Objects.Chest)this.Location.objects[new Vector2(x, y)],
+                isFridge: false);
+
+        internal LocalExecutionReceipt Store(string qualifiedItemId) =>
+            this.Manager().RequestLocalChestStore(
+                $"req_chest_store_{qualifiedItemId}",
+                this.ContainerIdAt(2, 2),
+                qualifiedItemId,
+                DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() + 30_000);
+
+        internal LocalExecutionReceipt Retrieve(string qualifiedItemId) =>
+            this.Manager().RequestLocalChestRetrieve(
+                $"req_chest_retrieve_{qualifiedItemId}",
+                this.ContainerIdAt(2, 2),
+                qualifiedItemId,
+                DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() + 30_000);
+
+        internal int PackCount(string qualifiedItemId)
+        {
+            int count = 0;
+            for (int slot = 0; slot < Game1.player.Items.Count; slot++)
+            {
+                if (Game1.player.Items[slot] is Item carried
+                    && string.Equals(carried.QualifiedItemId, qualifiedItemId, StringComparison.Ordinal))
+                {
+                    count += carried.Stack;
+                }
+            }
+
+            return count;
+        }
+
+        internal static int ChestCount(StardewValley.Objects.Chest chest, string qualifiedItemId) =>
+            chest.GetItemsForPlayer()
+                .Where(item => item is not null && string.Equals(item.QualifiedItemId, qualifiedItemId, StringComparison.Ordinal))
+                .Sum(item => item.Stack);
+
+        /// <summary>
+        /// Takes the container's own lock for another player, which is the state the contention ruling exists for.
+        /// <c>NetMutex.owner</c> is private, so the lock is taken by writing it the way <c>RequestLock</c> would.
+        /// </summary>
+        internal static void HoldLockAsAnotherPlayer(StardewValley.Objects.Chest chest) => OwnerField(chest).Value = OtherPlayerId;
+
+        internal static long LockOwner(StardewValley.Objects.Chest chest) => OwnerField(chest).Value;
+
+        private static NetLong OwnerField(StardewValley.Objects.Chest chest) =>
+            (NetLong)typeof(NetMutex).GetField("owner", BindingFlags.Instance | BindingFlags.NonPublic)!
+                .GetValue(chest.GetMutex())!;
+
+        private ExecutionManager Manager()
+        {
+            var publication = FarmhandCapabilityPublication.Initial(
+                new HashSet<string>(StringComparer.Ordinal) { "chest_store", "chest_retrieve" });
+            return new ExecutionManager(new DummyMonitor(), () => publication, executionScope: null);
+        }
+
+        /// <summary>
+        /// A real <c>StardewValley.Object</c> with the identity and stack the native <c>canStackWith</c>/
+        /// <c>addToStack</c> pair reads. Uninitialised plus seeded NetFields, like every other engine item in this suite:
+        /// <c>Object</c>'s own constructors load item data, which this process cannot do.
+        /// </summary>
+        private static Item NewStack(string qualifiedItemId, int stack)
+        {
+            var item = (StardewValley.Object)FormatterServices.GetUninitializedObject(typeof(StardewValley.Object));
+            SeedMissingNetFields(item);
+            string rawId = qualifiedItemId[3..];
+            SetField(item, "itemId", new NetString(rawId));
+            SetField(item, "netName", new NetString("Parsnip"));
+            SetField(item, "stack", new NetInt(stack));
+            SetField(item, "parentSheetIndex", new NetInt(int.Parse(rawId, CultureInfo.InvariantCulture)));
+            SetField(item, "tileLocation", new NetVector2());
+            SetField(item, "heldObject", new NetRef<StardewValley.Object>());
+            SetField(item, "fragility", new NetInt(0));
+            SetField(item, "bigCraftable", new NetBool(false));
+            typeof(Item).GetField("_qualifiedItemId", BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public)!
+                .SetValue(item, qualifiedItemId);
+            typeof(Item).GetField("_contextTags", BindingFlags.Instance | BindingFlags.NonPublic)!
+                .SetValue(item, new HashSet<string>(StringComparer.OrdinalIgnoreCase));
+            typeof(Item).GetField("_contextTagsDirty", BindingFlags.Instance | BindingFlags.NonPublic)!
+                .SetValue(item, false);
+            return item;
+        }
+
+        public void Dispose()
+        {
+            WorldReadyPerScreen.GetValue(null)!.GetType().GetMethod("ResetAllScreens")!
+                .Invoke(WorldReadyPerScreen.GetValue(null), null);
+            Game1.multiplayerMode = this.multiplayerModeBefore;
+            HeadlessGameWorld.RestoreStatics(this.staticsBefore);
+        }
+
+        private static void SeedMissingNetFields(object instance)
+        {
+            foreach (FieldInfo field in instance.GetType().GetFields(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic))
+            {
+                if (field.FieldType.Namespace is null || !field.FieldType.Namespace.StartsWith("Netcode", StringComparison.Ordinal)) continue;
+                if (field.GetValue(instance) is not null) continue;
+                if (field.FieldType.GetConstructor(Type.EmptyTypes) is null) continue;
+                field.SetValue(instance, Activator.CreateInstance(field.FieldType)!);
+            }
+            if (instance is Item item)
+            {
+                FieldInfo? backing = typeof(Item).GetField("<NetFields>k__BackingField", BindingFlags.Instance | BindingFlags.NonPublic);
+                if (backing is not null && backing.GetValue(item) is null) backing.SetValue(item, new NetFields("Item"));
+            }
+        }
+
+        private static void SetField(object target, string name, object value)
+        {
+            FieldInfo? field = target.GetType().GetField(name, BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+            if (field is null) throw new InvalidOperationException($"{target.GetType().Name} has no field {name}");
+            field.SetValue(target, value);
+        }
     }
 
     /// <summary>
