@@ -25,6 +25,7 @@ import {
   STARDEW_MOD_LOADER_MISSING,
   STARDEW_NOT_A_STARDEW_INSTALL,
   createWindowsGogDiscoveryProposal,
+  createWindowsMicrosoftStoreDiscoveryProposal,
   probeStardewGameRoot,
   requireStardewGameInstalled,
   requireStardewModLoaderInstalled,
@@ -3601,13 +3602,14 @@ export function createStardewProductionLifecycleCoordinator(
     game,
     createWorldBindingSeam,
     containedRuntimeTeardown,
-    // Steam and GOG are both mounted, in that order: a GOG or Game-Pass-shaped player
-    // whose game no Steam library holds would otherwise be told nothing was found on a
-    // machine where it is installed. Whichever source produced a candidate, confirming
-    // it runs the same `registerInstallationLocator` admission - the source only proposes.
+    // Steam, GOG and the Microsoft Store are all mounted: a GOG or Game Pass player whose game no
+    // Steam library holds would otherwise be told nothing was found on a machine where it is
+    // installed. Whichever source produced a candidate, confirming it runs the same
+    // `registerInstallationLocator` admission - the source only proposes.
     createStardewInstallationDiscoveryProvider({
       source: createWindowsSteamInstallationSource(),
       gog: createWindowsGogDiscoveryProposal(),
+      microsoftStore: createWindowsMicrosoftStoreDiscoveryProposal(),
       // Every candidate says whether its folder already holds a mod loader. The player installs the loader
       // themselves, and a machine can hold several installations, so which folder is ready is the fact their
       // choice depends on - the probe that answers it is this one, and it runs before the row is offered.
