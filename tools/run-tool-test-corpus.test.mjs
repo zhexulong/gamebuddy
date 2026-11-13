@@ -9,7 +9,7 @@ import { fileURLToPath } from "node:url";
 import { corpusFiles, corpusMembers } from "./run-tool-test-corpus.mjs";
 
 // red-proof: inject  a failing assertion into one member's suite in a copy of the tree -> `members_failed:1`,
-//                    `corpus_responsible:<that member>` and one `member … · exit 1 · ✖ <test>` line, with
+//                    `corpus_responsible:<that member>` and one `member … · exit 1 · × <test>` line, with
 //                    `corpus_derivation:ok`; a script renamed out of the `test:`/`suite:` namespace -> a green
 //                    member run (`members_failed:0`) beside `corpus_derivation:defect`, so neither reading can
 //                    stand in for the other. Both injections are pinned below on synthetic trees.
@@ -90,13 +90,16 @@ test("a red member fails the step and is named once, with the derivation still o
   });
   const run = runAggregate(root);
   assert.equal(run.status, 1);
-  assert.match(run.stdout, /^corpus_population:2 members \(2 suite files\) quarantined:0 run:2$/m);
+  assert.match(
+    run.stdout,
+    /^corpus_population:2 members \(2 suite files\) elsewhere:0 package:0 untaken:0 quarantined:0 run:2$/m,
+  );
   assert.match(run.stdout, /^corpus_derivation:ok$/m);
   assert.match(run.stdout, /^members_failed:1$/m);
   assert.match(run.stdout, /^corpus_responsible:test:broken$/m);
   const details = lines(run.stdout).filter((line) => line.startsWith("  member test:broken · "));
   assert.equal(details.length, 1, "the responsible member is named once, not once per failing test");
-  assert.match(details[0], /exit 1 · ✖ the injected suite breaks$/);
+  assert.match(details[0], /exit 1 · × the injected suite breaks$/);
   assert.doesNotMatch(run.stdout, /corpus_derivation:defect/);
 });
 
@@ -114,7 +117,7 @@ test("a script renamed out of test:/suite: is a derivation defect, not a silent 
   assert.match(run.stdout, /^corpus_derivation:defect:1 script\(s\) the corpus does not take$/m);
   assert.match(
     run.stdout,
-    /^ {2}untaken held-suite: runs a tools\/ suite but is neither a `test:`\/`suite:` script nor run by an entry point \(node --test tools\/renamed\.test\.mjs\)$/m,
+    /^ {2}untaken held-suite: it runs a `tools\/` suite but is not a `test:`\/`suite:` script \(node --test tools\/renamed\.test\.mjs\)$/m,
   );
   assert.match(run.stdout, /^members_failed:0$/m);
 });
@@ -124,8 +127,9 @@ test("a corpus with no members is a defect, never a pass", () => {
   const run = runAggregate(root);
   assert.equal(run.status, 1);
   assert.match(run.stdout, /^corpus_population:0 members \(0 suite files\)/m);
-  assert.match(run.stdout, /^corpus_derivation:defect:1 script\(s\) the corpus does not take$/m);
+  assert.match(run.stdout, /^corpus_derivation:defect:2 script\(s\) the corpus does not take$/m);
   assert.match(run.stdout, /no members: no `test:`\/`suite:` script in package\.json runs/);
+  assert.match(run.stdout, /untaken test:aggregate: its command runs no `node --test` suite this step can take/);
 });
 
 test("a suite another entry point runs is not a member", () => {
@@ -196,7 +200,10 @@ test("a quarantined file leaves its member's run, it does not remove the member"
   });
   const run = runAggregate(root);
   assert.equal(run.status, 0);
-  assert.match(run.stdout, /^corpus_population:1 members \(2 suite files\) quarantined:1 run:1$/m);
+  assert.match(
+    run.stdout,
+    /^corpus_population:1 members \(2 suite files\) elsewhere:0 package:0 untaken:0 quarantined:1 run:1$/m,
+  );
   assert.match(run.stdout, /^members_failed:0$/m);
 });
 
