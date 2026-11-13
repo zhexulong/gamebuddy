@@ -18,6 +18,29 @@
  * the rule and the words; `fact-brief.ts` owns the block it lands in.
  * </p>
  *
+ * <h2>Two kinds of note, and only one of them is guessed at</h2>
+ *
+ * <p>
+ * A note arrives in one of two states, and the difference cost a run on `2026-11-14`, when a composed note was read as if a
+ * player had typed it:
+ * </p>
+ *
+ * <ul>
+ *   <li>A DECLARED note says whose each item is, in this block's own words - `给你做的：` and `他的事，不是给你做的：`,
+ *     each followed by one or more `「…」` items. Its author was present when it was written (a scenario composing the
+ *     day's note), so its ownership is known and is never re-derived: `readDeclaredNote` keeps what the note says and the
+ *     rule below does not run on it. Measured on the day's note composed as `我今天去镇上办事，${task}你看着办，…` - two
+ *     owners in one sentence: the rule, which must read one sentence at a time, gave the task to him, her reasoning that
+ *     turn was `The player left a note: they're going to town to make a machine.`, and she submitted nothing.</li>
+ *   <li>A FREE-FORM note is what a REAL PLAYER types: prose, arriving with nobody to classify it. That is the only note
+ *     the rule below is for.</li>
+ * </ul>
+ *
+ * <p>
+ * The labelled shape is all-or-nothing: a note with one line that states nothing is read as prose from its first
+ * character, because reading half a note by its labels and half by grammar is how one note comes to mean two things.
+ * </p>
+ *
  * <h2>The rule</h2>
  *
  * <p>
@@ -140,13 +163,24 @@ const ADDRESS_LABEL: Readonly<Record<PlayerNoteAddress, string>> = Object.freeze
   [PLAYER_NOTE_ADDRESS.toCompanion]: "给你做的：",
 });
 
+/** The addresses in the order a declared line is matched against them, so a prefix of one cannot shadow another. */
+const ADDRESSES_IN_ORDER: readonly PlayerNoteAddress[] = Object.freeze([
+  PLAYER_NOTE_ADDRESS.hisOwn,
+  PLAYER_NOTE_ADDRESS.toCompanion,
+]);
+
 /** What the block says when no utterance is hers: the absence, stated rather than left to be noticed. */
 const NO_WORK_LINE = "上面没有给你做的事：这些是他自己的事，你不用动手。";
 
 /**
  * The body of `<player-note>`: his words in his order, each run under the label it belongs to.
  *
- * NOTHING IS PARAPHRASED. Every character of a note appears exactly once, inside `「」`, in the order he wrote it; the
+ * TWO KINDS OF NOTE, and which one you have decides everything about how it is read (see "Two kinds of note" above). A
+ * note that states its own labels keeps them: the block renders what its author declared and never second-guesses it with
+ * the free-form rule. This function is the BLOCK's renderer, not a claim that every note is prose - the prose rule is for
+ * the free-form note a real player types, which is exactly the note whose author is not here to classify it.
+ *
+ * NOTHING IS PARAPHRASED. Every character of a note appears exactly once, inside `「」`, in the order it was written; the
  * labels are the only added text, and they say which side of one line each run falls on. A run of consecutive
  * utterances with the same reading shares one label rather than repeating it - his words are the content, not the
  * headings.
@@ -157,7 +191,7 @@ export function playerNoteLines(notes: readonly string[]): readonly string[] {
   if (texts.length === 0) return lines;
   lines.push(NOTE_VERBATIM_LINE);
   for (const text of texts) {
-    const reading = readPlayerNote(text);
+    const reading = readDeclaredNote(text) ?? readPlayerNote(text);
     for (const group of groupsOf(reading.utterances))
       lines.push(
         `${ADDRESS_LABEL[group.address]}${group.uttered.map((utterance) => `「${utterance.trimEnd()}」`).join("")}`,
@@ -165,6 +199,46 @@ export function playerNoteLines(notes: readonly string[]): readonly string[] {
     if (!reading.asksForWork) lines.push(NO_WORK_LINE);
   }
   return lines;
+}
+
+/**
+ * A note that states whose each item is, or `null` when it is not wholly in that shape.
+ *
+ * Each non-empty line is one label and one or more items: `给你做的：「…」「…」`. Anything else - a line with no label, a
+ * label with no item, an item that is never closed, a line with text after its last item - means the note was not written
+ * in this shape and is prose for the whole of its length rather than for part of it.
+ */
+function readDeclaredNote(text: string): PlayerNoteReading | null {
+  const utterances: PlayerNoteUtterance[] = [];
+  for (const line of text.split("\n")) {
+    const trimmed = line.trim();
+    if (trimmed === "") continue;
+    const address = ADDRESSES_IN_ORDER.find((candidate) => trimmed.startsWith(ADDRESS_LABEL[candidate]));
+    if (address === undefined) return null;
+    const items = readDeclaredItems(trimmed.slice(ADDRESS_LABEL[address].length));
+    if (items === null) return null;
+    for (const item of items) utterances.push({ text: item, address });
+  }
+  if (utterances.length === 0) return null;
+  return Object.freeze({
+    utterances: Object.freeze(utterances),
+    asksForWork: utterances.some((utterance) => utterance.address === PLAYER_NOTE_ADDRESS.toCompanion),
+  });
+}
+
+/** `「a」「b」` and nothing else, as the item texts between the markers; `null` for anything else. */
+function readDeclaredItems(rest: string): readonly string[] | null {
+  if (!rest.startsWith("「")) return null;
+  const items: string[] = [];
+  let index = 0;
+  while (index < rest.length) {
+    if (rest.charAt(index) !== "「") return null;
+    const close = rest.indexOf("」", index + 1);
+    if (close < 0) return null;
+    items.push(rest.slice(index + 1, close));
+    index = close + 1;
+  }
+  return items;
 }
 
 type PlayerNoteGroup = Readonly<{

@@ -178,3 +178,74 @@ test("deterministic: the same note composes the same lines", () => {
   const note = "我今天去镇上办事。找片水，钓条鱼回来。你看着办。";
   assert.deepEqual(playerNoteLines([note]), playerNoteLines([note]));
 });
+
+/**
+ * A NOTE THAT STATES WHOSE EACH PART IS KEEPS IT, and this is the second time the difference cost a run.
+ *
+ * <p>
+ * The measured case (`2026-11-14`, `multiday_routine` day 1): the harness wrote the note as one sentence with two owners -
+ * `我今天去镇上办事，自己做一台机器放下去，再用起来。` - and the free-form rule below, which must decide ownership one
+ * sentence at a time, gave the whole sentence to him. Her reasoning that turn was `The player left a note: they're going
+ * to town to make a machine.`, and she submitted nothing. A sentence with two owners cannot be split by a rule that reads
+ * a sentence; the note has to say what it means.
+ * </p>
+ *
+ * <p>
+ * A composed note can say it, because its author is present when it is written. This block's own two labels are the
+ * vocabulary: `给你做的：` and `他的事，不是给你做的：`, each followed by one or more `「…」` items. The free-form reading
+ * stays exactly what it is for - what a REAL PLAYER types, which arrives as prose because nobody classified it - and the
+ * two paths never mix: a note that is not wholly in the labelled shape is read as prose, from its first character.
+ * </p>
+ */
+const DECLARED_DAY_NOTE: readonly string[] = Object.freeze([
+  `${HERS}「现在是星露谷的早晨（连续第 1 天），桌上留着他的便签。」`,
+  `${HIS}「我今天去镇上办事。」`,
+  `${HERS}「自己做一台机器放下去，再用起来。」`,
+]);
+
+test("declared: a note that states whose each item is keeps the ownership it came with", () => {
+  assert.deepEqual(playerNoteLines([DECLARED_DAY_NOTE.join("\n")]), [VERBATIM, ...DECLARED_DAY_NOTE]);
+});
+
+/** The measured note both ways: the prose composition is the defect, and the declared one is the fix. */
+test("declared_task_stays_hers: the two owners are two items, not one sentence", () => {
+  const prose = "我今天去镇上办事，自己做一台机器放下去，再用起来。";
+  assert.deepEqual(playerNoteLines([prose]).slice(1), [
+    `${HIS}「我今天去镇上办事，自己做一台机器放下去，再用起来。」`,
+    NO_WORK,
+  ]);
+  const rendered = playerNoteLines([DECLARED_DAY_NOTE.join("\n")]);
+  const carries = rendered.filter((line) => line.includes("自己做一台机器放下去"));
+  assert.deepEqual(carries, [`${HERS}「自己做一台机器放下去，再用起来。」`], "the task is hers, and only hers");
+  assert.ok(
+    rendered.some((line) => line === `${HIS}「我今天去镇上办事。」`),
+    "his errand stays his own business, in an item of its own",
+  );
+});
+
+/** An item whose text is empty is not a note: the labelled shape is all-or-nothing, so a half-declared note is prose. */
+test("declared_is_all_or_nothing: one unlabelled line sends the whole note back to the rule", () => {
+  // The second line states nobody's ownership, so nothing may be assumed about the first either: reading the two halves
+  // by different rules is how a note comes to mean two things at once. The property is that the label comes back INSIDE
+  // a quoted run - which is what "read as prose" means - and that the declared item did not survive on its own.
+  const half = playerNoteLines([`${HERS}「早上好。」\n找片水，钓条鱼回来。`]);
+  const quoted = half.flatMap((line) => [...line.matchAll(/「([^」]*)」/gu)].map((match) => match[1] ?? ""));
+  assert.ok(
+    quoted.some((text) => text.includes(HERS)),
+    "the label is the player's words when nothing else says otherwise",
+  );
+  assert.ok(!half.includes(`${HERS}「早上好。」`), "nothing was inferred from the label on the first line");
+  // And a line that merely LOOKS like a label is prose too - the shape is the whole line, item markers included.
+  assert.deepEqual(playerNoteLines(["他的事，不是给你做的：找片水，钓条鱼回来"]).slice(1), [
+    `${HERS}「他的事，不是给你做的：找片水，钓条鱼回来」`,
+  ]);
+});
+
+/** A declared note that asks her for nothing states the absence with the same sentence a prose note does. */
+test("declared_no_work: a note of his own items says there is nothing for her", () => {
+  assert.deepEqual(playerNoteLines([`${HIS}「我今天去镇上办事。」`]), [
+    VERBATIM,
+    `${HIS}「我今天去镇上办事。」`,
+    NO_WORK,
+  ]);
+});
