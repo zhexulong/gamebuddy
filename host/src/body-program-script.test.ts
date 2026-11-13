@@ -165,14 +165,13 @@ function rejectionsOf(result: CompiledPlan): readonly Readonly<{
 /**
  * What became of every call the script wrote, on either answer.
  *
- * The four lists partition the author's calls - each one lands in exactly one - so their counts sum to the number of
+ * The three lists partition the author's calls - each one lands in exactly one - so their counts sum to the number of
  * builder calls the script made. That is the invariant `tools/check-plan-legal-fixpoint.mjs` asserts over the published
  * vocabulary, and the reason an `ok` answer can no longer hide a step that was thrown away.
  */
 function accountOf(result: CompiledPlan) {
   return {
     acceptedSteps: result.acceptedSteps,
-    merged: result.merged,
     noStepNeeded: result.noStepNeeded,
     dropped: result.dropped,
   };
@@ -2725,7 +2724,7 @@ builder.harvest_crop({ x: 58, y: 14, expectedQualifiedItemId: "(O)24", expectedT
   assert.deepEqual(accountOf(result).acceptedSteps, ["n01", "n03", "n04", "n05", "n06"]);
   assert.equal(result.acceptedStepsCount, 5);
   assert.equal(result.droppedCount, 1);
-  assert.equal(result.mergedCount + result.noStepNeededCount, 0, "every call is in exactly one of the four lists");
+  assert.equal(result.noStepNeededCount, 0, "every call is in exactly one of the lists");
 });
 
 /**
@@ -2791,7 +2790,7 @@ builder.move_to_tile({ x: 10 });
  * vocabulary itself - never a list written here - and a zero population FAILS, because a check that examined nothing
  * agrees with itself.
  *
- * A call in NONE of the four lists is the defect the whole account exists for (an `ok` answer carrying a step that was
+ * A call in NONE of the lists is the defect the whole account exists for (an `ok` answer carrying a step that was
  * quietly thrown away); a call in TWO of them is a bookkeeping bug that would hide the first. Both are named with the
  * entry that broke, so the next reader knows which action and which list.
  */
@@ -2804,11 +2803,10 @@ test("every authored call is accounted for exactly once, across the whole publis
     examined += 1;
     const lists = {
       acceptedSteps: result.acceptedSteps,
-      merged: result.merged,
       noStepNeeded: result.noStepNeeded,
       dropped: result.dropped,
     };
-    const counted = result.acceptedStepsCount + result.mergedCount + result.noStepNeededCount + result.droppedCount;
+    const counted = result.acceptedStepsCount + result.noStepNeededCount + result.droppedCount;
     if (counted !== calls)
       faults.push(
         `${label}: ${calls} call(s) written, ${counted} accounted for (${JSON.stringify(lists)}) examined ${examined}`,

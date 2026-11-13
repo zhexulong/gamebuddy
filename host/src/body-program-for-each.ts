@@ -93,21 +93,18 @@ type PlanForEachStep = Readonly<{ action: string }> & Readonly<Record<string, Pl
 type PlanForEachEffect = readonly PlanForEachStep[];
 
 /**
- * One more rule of the same pass: an optional predicate list and what a matching row gets.
+ * One `for_each` call: the rectangle it reads, an optional conjunction of tests, and what a matching row gets.
  *
- * WHY A PASS HAS MORE THAN ONE RULE. A 3x20 intercropped patch is ONE intent and not three: hops on columns 0, 3, 6...,
- * coffee on 1, 4, 7..., and column 2, 5, 8... deliberately a path. Three separate passes would report every tile a pass
- * did not claim as `no_rule_matched` twice over, and a tile two rules claim would be worked twice; one pass with ordered
- * rules decides each row exactly once, by the FIRST rule that claims it.
+ * ONE CALL, ONE RULE. A call used to carry further rules under `then`, which is what made one pass able to claim two
+ * kinds of row; measured over every plan she ever wrote it was authored `0 of 37` `for_each` scripts, and the only thing
+ * that ever wrote it was the compiler's own fold of two calls over one rectangle into one pass. Both are withdrawn here
+ * and in the Mod's reader at the same time: two kinds of row in one rectangle are two `for_each` calls, each its own
+ * node, each reporting the rows it did not claim.
  */
-export type PlanForEachRule = Readonly<{ where?: readonly PlanForEachPredicate[]; do: PlanForEachEffect | null }>;
-
 export type PlanForEachLoop = Readonly<{
   source: PlanForEachSource;
   where?: readonly PlanForEachPredicate[];
   do: PlanForEachEffect | null;
-  /** The rules tried after this one, in the order the caller wrote them. */
-  then?: readonly PlanForEachRule[];
 }>;
 
 /**
@@ -119,6 +116,39 @@ export type PlanForEachLoop = Readonly<{
  * on the game thread, after the compiler and the preflight had both passed them.
  */
 export const PLAN_FOR_EACH_SOURCES: readonly string[] = Object.freeze(["area"]);
+
+/**
+ * The keys one loop document may carry, declared ONCE.
+ *
+ * THE READER, THE MOD AND THE DESCRIPTION ALL READ THIS. `readForEachLoop` refuses any other key as
+ * `for_each_unknown_key:<key>`, the Mod's reader answers the same word on the game thread
+ * (`FarmhandForEachArguments.TryParseDocument`), and the description's own signature is rendered from this list - so a key
+ * withdrawn here is refused by name AND named nowhere the companion reads, and a key re-added on one side only is red in
+ * `body-program-for-each.test.ts` rather than silently taught or silently refused.
+ */
+export const PLAN_FOR_EACH_LOOP_KEYS: readonly string[] = Object.freeze(["source", "where", "do"]);
+
+/**
+ * The keys this grammar HAS HAD and no longer has, each with the measurement that withdrew it.
+ *
+ * It is a declaration rather than a comment because the two halves of a removal cannot be checked against prose: for every
+ * word here the reader must answer `for_each_unknown_key:<word>`, the description must teach no key of that name, and the
+ * word must not reappear in `PLAN_FOR_EACH_LOOP_KEYS`. `body-program-for-each.test.ts` walks this list, so a key quietly
+ * restored to one of the three readers is a red test instead of a dialect nobody can account for.
+ */
+export const PLAN_FOR_EACH_WITHDRAWN_KEYS: readonly string[] = Object.freeze([
+  // Authored `0 of 37` loop scripts; the compiler's same-source fold was its only writer.
+  "then",
+]);
+
+/**
+ * The word both sides answer when a loop document carries a key the grammar does not have.
+ *
+ * ONE WORD ON BOTH SIDES: the compiler refuses such a declaration before submission and the Mod refuses it again on the
+ * game thread (`FarmhandForEachArguments.TryParseDocument`), and the answer is `<this>:<key>` - the key that was written,
+ * which is the only thing a caller has to remove.
+ */
+export const FOR_EACH_UNKNOWN_KEY = "for_each_unknown_key";
 
 /** The two axes a repeating position guard claims. */
 const PLAN_FOR_EACH_AXES: readonly string[] = Object.freeze(["col", "row"]);
@@ -213,9 +243,6 @@ export const MAX_FOR_EACH_ROWS = 64;
 /** How many predicates one loop may carry: a conjunction long enough to be a rule, short enough to be read. */
 const MAX_FOR_EACH_PREDICATES = 8;
 
-/** How many rules one pass may carry, this loop's own included. */
-export const MAX_FOR_EACH_RULES = 8;
-
 /**
  * How many characters one loop DOCUMENT may occupy once it is a canonical string on the wire.
  *
@@ -228,12 +255,11 @@ export const MAX_FOR_EACH_RULES = 8;
  * this is a mirror of a published bound rather than a second opinion; the scalar-argument cap is the same number on both
  * sides (`host/src/protocol.ts` `isBodyCanonicalValue`, `BodyProgramValidation.TryDecodeRuntimeValue`).
  *
- * WHAT FITS, MEASURED through `forEachDocumentLength` on the loop this reader produces: a 20x3 strip with one `then` rule
- * (`till_soil` on columns 0,3,6..., `plant_seed` on 1,4,7...) is 198 characters, and a 3x20 three-rule pass (`till_soil`,
- * `plant_seed`, `do: null` on the path column) is 251 - both comfortably inside. Eight rules of long field names do NOT
- * fit, and no bound chosen here would make them: the Mod's 512 is the smaller authority, so the length check IS the
- * document's limit and the description prints it. The rule/predicate/value bounds above remain validation bounds, not
- * length arithmetic.
+ * WHAT FITS, MEASURED through `forEachDocumentLength` on the loop this reader produces: a 20x3 strip of `till_soil` over
+ * `{ occupant: "weed" }` is 111 characters, and the same strip with an `in` list of two kinds is 131 - both comfortably
+ * inside. A loop of eight long field names does NOT fit, and no bound chosen here would make it: the Mod's 512 is the
+ * smaller authority, so the length check IS the document's limit and the description prints it. The predicate/value bounds
+ * above remain validation bounds, not length arithmetic.
  */
 export const MAX_FOR_EACH_LOOP_DOCUMENT_CHARS = 512;
 
@@ -288,59 +314,28 @@ export function readForEachLoop(value: unknown, actionIds: readonly string[] | n
   // ONE LEVEL IS WHAT THIS BUYS, and nesting is refused BY NAME rather than flattened: a loop inside a loop would either
   // multiply the row bound silently or expand against the outer row's tile, and both are a plan nobody wrote.
   if (namesNestedLoop(value, new Set<object>())) return rejected("nested_loop_unsupported");
-  const unknownKey = Object.keys(value).find((key) => !["source", "where", "do", "then"].includes(key));
-  if (unknownKey !== undefined) return rejected("loop_invalid", `unknown:${unknownKey}`);
+  const unknownKey = Object.keys(value).find((key) => !PLAN_FOR_EACH_LOOP_KEYS.includes(key));
+  if (unknownKey !== undefined) return rejected(FOR_EACH_UNKNOWN_KEY, unknownKey);
   const source = readSource(value.source);
   if (!source.ok) return source;
   const where = readWhere(value.where);
   if (!where.ok) return where;
   const effect = readEffect(value.do, actionIds);
   if (!effect.ok) return effect;
-  const alternates = readAlternates(value.then, actionIds);
-  if (!alternates.ok) return alternates;
   const loop: PlanForEachLoop = Object.freeze({
     source: source.source,
     ...(where.predicates === undefined ? {} : { where: where.predicates }),
     do: effect.effect,
-    ...(alternates.rules === undefined ? {} : { then: alternates.rules }),
   });
   return Object.freeze({ ok: true as const, loop });
-}
-
-type AlternatesReading = Readonly<{ ok: true; rules: readonly PlanForEachRule[] | undefined }> | PlanForEachRejection;
-
-/** The rules a pass tries after its own, in the order the caller wrote them. */
-function readAlternates(value: unknown, actionIds: readonly string[] | null): AlternatesReading {
-  if (value === undefined) return Object.freeze({ ok: true as const, rules: undefined });
-  if (!Array.isArray(value)) return rejected("loop_then_invalid", "not_an_array");
-  if (value.length + 1 > MAX_FOR_EACH_RULES)
-    return rejected("loop_then_invalid", `too_many:${String(value.length + 1)}`);
-  const rules: PlanForEachRule[] = [];
-  for (const [index, entry] of value.entries()) {
-    if (!isRecord(entry)) return rejected("loop_then_invalid", `rule[${String(index)}]:not_an_object`);
-    const unknownKey = Object.keys(entry).find((key) => !["where", "do"].includes(key));
-    if (unknownKey !== undefined) return rejected("loop_then_invalid", `rule[${String(index)}]:unknown:${unknownKey}`);
-    if (!Object.hasOwn(entry, "do")) return rejected("loop_then_invalid", `rule[${String(index)}]:missing_do`);
-    const where = readWhere(entry.where);
-    if (!where.ok) return where;
-    const effect = readEffect(entry.do, actionIds);
-    if (!effect.ok) return effect;
-    rules.push(
-      Object.freeze({
-        ...(where.predicates === undefined ? {} : { where: where.predicates }),
-        do: effect.effect,
-      }),
-    );
-  }
-  return Object.freeze({ ok: true as const, rules: Object.freeze(rules) });
 }
 
 /**
  * Whether the declaration names the same form again anywhere inside it.
  *
- * EVERY OBJECT IS VISITED ONCE, which is the whole guard: a declaration that reaches itself - `then: [itself]`, built in
- * the script rather than written as a literal - terminates instead of recursing, and no depth anywhere is cut short, so
- * a `for_each` buried in a declaration this shape has no rule for is still named as what it is.
+ * EVERY OBJECT IS VISITED ONCE, which is the whole guard: a declaration that reaches itself - a loop built in the script
+ * that carries itself as an argument - terminates instead of recursing, and no depth anywhere is cut short, so a
+ * `for_each` buried in a declaration this shape has no rule for is still named as what it is.
  */
 function namesNestedLoop(value: unknown, visited: Set<object>): boolean {
   if (typeof value !== "object" || value === null) return false;
@@ -613,34 +608,6 @@ function readStep(value: unknown, index: number, actionIds: readonly string[] | 
  */
 export function planFormExecutionUnavailableReason(actionId: string): string {
   return `${actionId}_execution_unavailable`;
-}
-
-/**
- * The ordered rules of one pass: this loop's own predicate and effect first, then the alternates in order.
- *
- * FIRST MATCH WINS, and this is the ONE spelling of "what a pass tries": the writer that composes several `for_each` calls
- * over one source and the reader that expands the pass enumerate the rules through it, so they cannot disagree.
- */
-export function forEachRules(loop: PlanForEachLoop): readonly PlanForEachRule[] {
-  return Object.freeze([
-    Object.freeze({ ...(loop.where === undefined ? {} : { where: loop.where }), do: loop.do }),
-    ...(loop.then ?? []),
-  ]);
-}
-
-/** This pass with one more rule at the end, in the order the caller wrote it. */
-export function withForEachRule(loop: PlanForEachLoop, rule: PlanForEachRule): PlanForEachLoop {
-  return Object.freeze({ ...loop, then: Object.freeze([...(loop.then ?? []), rule]) });
-}
-
-/**
- * Whether two loops read their rows from the same source - which is what makes them rules of ONE pass rather than two.
- *
- * Compared on the canonical source document both loops were read into, so two spellings of the same rectangle can never
- * be read as two passes over it.
- */
-export function sameForEachSource(left: PlanForEachLoop, right: PlanForEachLoop): boolean {
-  return JSON.stringify(left.source) === JSON.stringify(right.source);
 }
 
 /**

@@ -19,11 +19,10 @@ namespace GameBuddy.Stardew.Core.Tests;
 /// </para>
 /// <para>
 /// EVERY BOUND AND EVERY SPELLING COMES FROM THE MODEL, never from this file: `FarmhandForEachSource.Kinds`,
-/// `FarmhandForEachStride.EveryOperator`, `FarmhandForEachStep.ByKindAction`, `FarmhandForEachLoop.MaximumRules`,
-/// `FarmhandForEachRule.MaximumPredicates`, `FarmhandForEachPredicate.MaximumValues`,
-/// `FarmhandForEachStep.MaximumArguments` and `FarmhandForEachEffect.MaximumSteps`. The bare numbers in this file's
-/// documents are the CALLER's values (a 3x20 patch, every-3 columns); the limits are read from those constants so a bound
-/// that changes cannot leave a test behind.
+/// `FarmhandForEachStride.EveryOperator`, `FarmhandForEachStep.ByKindAction`, `FarmhandForEachLoop.MaximumPredicates`,
+/// `FarmhandForEachPredicate.MaximumValues`, `FarmhandForEachStep.MaximumArguments` and
+/// `FarmhandForEachEffect.MaximumSteps`. The bare numbers in this file's documents are the CALLER's values (a 3x20 patch,
+/// every-3 columns); the limits are read from those constants so a bound that changes cannot leave a test behind.
 /// </para>
 /// </summary>
 public sealed class FarmhandForEachArgumentsTests
@@ -71,32 +70,46 @@ public sealed class FarmhandForEachArgumentsTests
     }
 
     /// <summary>
-    /// The intercropped patch: three rules of ONE pass, the first that claims a row deciding it.
+    /// The predicate arrives as the loop's own conjunction, and a `do: null` is a STATEMENT rather than a forgotten row.
     /// </summary>
     [Fact]
-    public void ThePredicatesAndTheLaterRulesArriveInTheOrderTheCallerWroteThem()
+    public void ThePredicatesAndTheEffectArriveAsTheLoopModelCarriesThem()
     {
         string document =
             "{\"source\":{\"area\":{\"x\":60,\"y\":18,\"w\":20,\"h\":3}},"
             + "\"where\":[{\"col\":{\"every\":3,\"offset\":0}}],"
-            + "\"do\":{\"action\":\"plant_seed\",\"slot\":0,\"expectedQualifiedItemId\":\"(O)472\"},"
-            + "\"then\":["
-            + "{\"where\":[{\"col\":{\"every\":3,\"offset\":1}}],\"do\":{\"action\":\"plant_seed\",\"slot\":0,\"expectedQualifiedItemId\":\"(O)473\"}},"
-            + "{\"where\":[{\"col\":{\"every\":3,\"offset\":2}}],\"do\":null}]}";
+            + "\"do\":{\"action\":\"plant_seed\",\"slot\":0,\"expectedQualifiedItemId\":\"(O)472\"}}";
 
         FarmhandForEachArguments.TryParse(Arguments(document), out FarmhandForEachLoop? loop, out string reasonCode)
             .Should()
             .BeTrue(reasonCode);
 
-        loop!.Rules.Should().HaveCount(3, "the loop's own rule is first, then the alternates in order");
-        loop.Rules[0].Where!.Should().ContainSingle();
-        loop.Rules[0].Where![0].Axis.Should().Be(FarmhandForEachPredicate.ColOperator);
-        loop.Rules[0].Where![0].Stride!.Every.Should().Be(3);
-        loop.Rules[0].Where![0].Stride!.Offset.Should().Be(0);
+        loop!.Where.Should().ContainSingle();
+        loop.Where![0].Axis.Should().Be(FarmhandForEachPredicate.ColOperator);
+        loop.Where![0].Stride!.Every.Should().Be(3);
+        loop.Where![0].Stride!.Offset.Should().Be(0);
         // A declared argument rides through as the caller's own scalar, spelled the way a wire scalar is spelled.
-        loop.Rules[0].Do!.Steps[0].Arguments!["slot"].Should().Be("0");
-        loop.Rules[0].Do!.Steps[0].Arguments!["expectedQualifiedItemId"].Should().Be("(O)472");
-        loop.Rules[2].Do.Should().BeNull("`do: null` is a STATEMENT - this column is a path - and not a forgotten row");
+        loop.Do!.Steps[0].Arguments!["slot"].Should().Be("0");
+        loop.Do!.Steps[0].Arguments!["expectedQualifiedItemId"].Should().Be("(O)472");
+
+        string path = "{\"source\":{\"area\":{\"x\":60,\"y\":18,\"w\":20,\"h\":3}},\"do\":null}";
+        FarmhandForEachArguments.TryParse(Arguments(path), out FarmhandForEachLoop? alone, out string aloneCode)
+            .Should()
+            .BeTrue(aloneCode);
+        alone!.Do.Should().BeNull("`do: null` is a STATEMENT - every row this loop claims is a path - and not a forgotten row");
+    }
+
+    /// <summary>
+    /// `then` IS WITHDRAWN BY NAME. One call is one rule; the key the compiler used to fold two calls into one pass is
+    /// answered with its own name, so a document carrying it cannot be read as a pass that silently ignores the second rule.
+    /// </summary>
+    [Fact]
+    public void AWithdrawnKeyIsRefusedByName()
+    {
+        Refused(
+            "{\"source\":{\"area\":{\"x\":0,\"y\":0,\"w\":1,\"h\":1}},\"do\":{\"action\":\"till_soil\"},"
+            + "\"then\":[{\"do\":{\"action\":\"plant_seed\"}}]}",
+            "for_each_unknown_key:then");
     }
 
     [Fact]
@@ -231,18 +244,6 @@ public sealed class FarmhandForEachArgumentsTests
             "{\"source\":{\"area\":{\"x\":0,\"y\":0,\"w\":3,\"h\":1}},\"where\":[{\"col\":{\"every\":3,\"offset\":3}}],\"do\":{\"action\":\"till_soil\"}}",
             "for_each_invalid:where");
 
-    [Fact]
-    public void MoreRulesThanTheBoundAreRefusedWithTheCount()
-    {
-        // `then` carries the bound's worth of rules, so the pass would have one MORE than the bound: the loop's own rule
-        // is one of them, and the refusal names the total the caller actually declared.
-        string[] rules = new string[FarmhandForEachLoop.MaximumRules];
-        for (int index = 0; index < rules.Length; index++) rules[index] = "{\"do\":{\"action\":\"till_soil\"}}";
-        Refused(
-            "{\"source\":{\"area\":{\"x\":0,\"y\":0,\"w\":1,\"h\":1}},\"do\":{\"action\":\"till_soil\"},\"then\":[" + string.Join(",", rules) + "]}",
-            $"for_each_too_many_rules:{FarmhandForEachLoop.MaximumRules + 1}");
-    }
-
     /// <summary>An extent past the per-intent bound says which part of the declaration failed, not a bare `invalid`.</summary>
     [Fact]
     public void AnAreaPastThePerIntentRowBoundIsRefusedAsASourceFault() =>
@@ -301,8 +302,6 @@ public sealed class FarmhandForEachArgumentsTests
     [Theory]
     [InlineData(
         "{\"source\":{\"area\":{\"x\":0,\"y\":0,\"w\":1,\"h\":1}},\"do\":{\"action\":\"water_crop\",\"expectedTargetId\":\"crop_0123456789abcdef\"}}")]
-    [InlineData(
-        "{\"source\":{\"area\":{\"x\":0,\"y\":0,\"w\":1,\"h\":1}},\"do\":null,\"then\":[{\"do\":{\"action\":\"harvest_crop\",\"expectedQualifiedItemId\":\"(O)24\",\"expectedTargetId\":\"crop_0123456789abcdef\"}}]}")]
     public void ARowIdentityTheCallerWroteIsRefusedByName(string document) =>
         Refused(document, FarmhandForEachArguments.RowIdentityIsNotTheCallers);
 

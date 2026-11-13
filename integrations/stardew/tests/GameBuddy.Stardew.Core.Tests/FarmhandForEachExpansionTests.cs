@@ -215,54 +215,69 @@ public sealed class FarmhandForEachExpansionTests
 
     /// <summary>
     /// THE INTERCROPPED PATCH, per tile, nothing coalesced: hops on columns 0, 3, 6..., coffee on 1, 4, 7..., path on
-    /// 2, 5, 8... - three rules of ONE pass, so each of the 60 tiles is decided exactly once.
+    /// 2, 5, 8... - THREE passes, because one call is one rule, and no tile is ever worked twice.
+    ///
+    /// <para>
+    /// IT USED TO BE ONE PASS CARRYING THREE RULES (`then`, written by the compiler's same-source fold). The key was
+    /// authored `0 of 37` loop scripts, so it is withdrawn; what it bought is asserted HERE instead of assumed: the three
+    /// calls decide each of the 60 tiles exactly once BETWEEN them, which is the property the fold existed for.
+    /// </para>
     /// </summary>
     [Fact]
-    public void AnIntercroppedPatchIsOnePassAndEveryTileIsDecidedExactlyOnce()
+    public void AnIntercroppedPatchDecidesEveryTileExactlyOnceAcrossItsThreeCalls()
     {
         FarmhandForEachSource patch = Rect(60, 18, 20, 3);
-        var hops = new FarmhandForEachPredicate[] { Stride(FarmhandForEachPredicate.ColOperator, 3, 0) };
-        var coffee = new FarmhandForEachPredicate[] { Stride(FarmhandForEachPredicate.ColOperator, 3, 1) };
-        var path = new FarmhandForEachPredicate[] { Stride(FarmhandForEachPredicate.ColOperator, 3, 2) };
-        var loop = new FarmhandForEachLoop(patch, hops, Plant("hops"), new[]
-        {
-            new FarmhandForEachRule(coffee, Plant("coffee")),
-            new FarmhandForEachRule(path, null),
-        });
+        var hops = new FarmhandForEachLoop(patch, new[] { Stride(FarmhandForEachPredicate.ColOperator, 3, 0) }, Plant("hops"));
+        var coffee = new FarmhandForEachLoop(patch, new[] { Stride(FarmhandForEachPredicate.ColOperator, 3, 1) }, Plant("coffee"));
+        var path = new FarmhandForEachLoop(patch, new[] { Stride(FarmhandForEachPredicate.ColOperator, 3, 2) }, null);
 
         var handler = new RecordingHandler();
         (FarmhandActionRouter router, Ledger ledger) = Table(handler, "plant_seed");
+        FarmhandForEachPassResult[] passes = new[] { hops, coffee, path }
+            .Select((loop, index) => FarmhandForEachExpansion.Expand(loop, $"pass_{index}", AreaRows(patch), DispatchTo(router, ledger), () => false, _ => true, _ => null))
+            .ToArray();
 
-        FarmhandForEachPassResult pass = FarmhandForEachExpansion.Expand(loop, "pass_1", AreaRows(patch), DispatchTo(router, ledger), () => false, _ => true, _ => null);
-
-        pass.Decided.Should().Be(60, "20 columns by 3 rows is one intent and the measured patch");
-        pass.Omitted.Should().Be(0);
-        pass.Stopped.Should().BeFalse();
-        pass.NotMatched.Should().Be(0, "every column of the patch is a deliberate decision");
-        pass.LeftAlone.Should().Be(18, "columns 2, 5, 8 ... are a path, three per row");
-        pass.Succeeded.Should().Be(42, "hops on 7 columns and coffee on 7, per row");
-        pass.Refused.Should().Be(0);
+        passes.Select(pass => pass.Decided).Should().Equal(new[] { 60, 60, 60 }, "each call decides the rectangle it named");
+        passes.Sum(pass => pass.Succeeded).Should().Be(42, "hops on 7 columns and coffee on 7, per row");
+        passes.Sum(pass => pass.LeftAlone).Should().Be(18, "columns 2, 5, 8 ... are a path, three per row");
+        // THE COST OF THREE CALLS, stated rather than glossed: each of the 60 tiles is `not_matched` in the two calls that
+        // do not own it (39 + 39 + 42 = 120), which is the noise the one-pass fold used to hide. What the fold was FOR -
+        // no tile worked twice - is the assertion below, and it holds without it.
+        passes.Sum(pass => pass.NotMatched).Should().Be(120, "every tile is reported by the two calls that do not own it");
         handler.Requests.Should().HaveCount(42, "a path column starts no native effect at all");
 
-        // The seed each tile was given comes from the rule that claimed it, and it is asserted PER TILE.
-        string[] firstRow = pass.Targets
+        // THE INVARIANT THE FOLD EXISTED FOR, asserted between the passes rather than inside one: every tile of the patch
+        // is decided by exactly one of the three calls, and the seed it was given is its own column's.
+        var seedOfTile = passes
+            .SelectMany(pass => pass.Targets)
+            .Where(target => target.Target is not null)
+            .ToLookup(target => (target.X, target.Y), target => target.Target!.Arguments!["seed"]);
+        seedOfTile.Count.Should().Be(42);
+        seedOfTile.Should().OnlyContain(group => group.Count() == 1, "no tile may be worked by two calls");
+
+        string[] firstRow = passes
+            .SelectMany(pass => pass.Targets)
             .Where(target => target.LocalRow == 0)
             .OrderBy(target => target.LocalColumn)
             .Select(target => target.Target switch
             {
-                null => "path",
+                null => target.Outcome == FarmhandForEachTargetOutcome.NotMatched ? "unclaimed" : "path",
                 FarmhandForEachTarget decided => decided.Arguments!["seed"],
             })
             .ToArray();
-        firstRow.Should().Equal(
-            "hops", "coffee", "path", "hops", "coffee", "path", "hops", "coffee", "path", "hops",
-            "coffee", "path", "hops", "coffee", "path", "hops", "coffee", "path", "hops", "coffee");
+        // Three passes contribute three rows of 20; the one that names each column is the only one that claimed it, and the
+        // two that did not report the tile as `not_matched` rather than dropping it.
+        firstRow.Should().HaveCount(60, "three calls decide the same twenty columns of row 0");
+        firstRow.Count(entry => entry == "hops").Should().Be(7, "columns 0, 3, 6 ... of one 20-wide row");
+        firstRow.Count(entry => entry == "coffee").Should().Be(7, "columns 1, 4, 7 ... of one 20-wide row");
+        firstRow.Count(entry => entry == "path").Should().Be(6, "columns 2, 5, 8 ... of one 20-wide row");
+        firstRow.Count(entry => entry == "unclaimed").Should().Be(40, "the other 40 entries are the two calls that own no tile there");
 
         // Every target reached the router with ITS OWN coordinates: the tile travels with the receipt, not with the plan.
         handler.Requests.Select(request => (request.Args.X, request.Args.Y)).Should().OnlyHaveUniqueItems();
-        pass.Targets.Where(target => target.Outcome == FarmhandForEachTargetOutcome.Succeeded)
+        passes.SelectMany(pass => pass.Targets).Where(target => target.Outcome == FarmhandForEachTargetOutcome.Succeeded)
             .Should().OnlyContain(target => target.ExecutionId != null && target.Tile != null);
-        pass.Targets.Select(target => target.ExecutionId).OfType<string>().Should().OnlyHaveUniqueItems(
+        passes.SelectMany(pass => pass.Targets).Select(target => target.ExecutionId).OfType<string>().Should().OnlyHaveUniqueItems(
             "each target keeps its own receipt lineage, or two effects could not be told apart");
     }
 
@@ -531,27 +546,23 @@ public sealed class FarmhandForEachExpansionTests
     }
 
     /// <summary>
-    /// The ordered rule list is spelled once. A reader that rebuilt it from `Where`/`Then` itself would be a second
-    /// enumeration of the same pass, and the two would disagree the first time a rule was added.
+    /// ONE LOOP IS ONE RULE. The loop carries its conjunction and its effect and nothing else, so there is no second
+    /// enumeration of the same pass for a reader to rebuild and disagree with.
     /// </summary>
     [Fact]
-    public void TheRulesOfAPassAreEnumeratedInTheOrderTheyAreDecided()
+    public void OneLoopIsOneRuleAndItsPredicateBoundIsTheLoopsOwn()
     {
         var own = new FarmhandForEachEffect(new FarmhandForEachStep("cut_weeds"));
-        var second = new FarmhandForEachRule(new[] { Stride(FarmhandForEachPredicate.RowOperator, 2, 1) }, Plant("coffee"));
-        var loop = new FarmhandForEachLoop(Rect(60, 18, 3, 3), null, own, new[] { second });
+        var loop = new FarmhandForEachLoop(Rect(60, 18, 3, 3), new[] { Stride(FarmhandForEachPredicate.RowOperator, 2, 1) }, own);
 
-        loop.Rules.Should().HaveCount(2);
-        loop.Rules[0].Do.Should().Be(own, "the loop's own effect is its FIRST rule");
-        loop.Rules[1].Should().Be(second);
-        loop.Rules[0].Where.Should().BeNull("an absent predicate list means every row, and is carried through as absent");
+        loop.Where.Should().ContainSingle();
+        loop.Do.Should().Be(own, "the loop's own effect is the only effect it can have");
 
         var tooMany = new FarmhandForEachLoop(
             Rect(60, 18, 3, 3),
-            null,
-            own,
-            Enumerable.Range(0, FarmhandForEachLoop.MaximumRules).Select(_ => second).ToArray());
-        tooMany.IsValid.Should().BeFalse("a pass with more rules than the bound is refused, not truncated");
+            Enumerable.Range(0, FarmhandForEachLoop.MaximumPredicates + 1).Select(_ => Stride(FarmhandForEachPredicate.RowOperator, 2, 1)).ToArray(),
+            own);
+        tooMany.IsValid.Should().BeFalse("a conjunction past the bound is refused, not truncated");
     }
 
     /// <summary>

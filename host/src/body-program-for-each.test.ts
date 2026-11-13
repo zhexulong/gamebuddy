@@ -6,19 +6,19 @@ import { fileURLToPath } from "node:url";
 
 import {
   FOR_EACH_SOURCE_UNRECOGNISED,
+  FOR_EACH_UNKNOWN_KEY,
   FOR_EACH_WHERE_UNRECOGNISED,
-  forEachRules,
   isForEachLoopDocument,
   MAX_FOR_EACH_LOOP_DOCUMENT_CHARS,
   MAX_FOR_EACH_OCCUPANT_CHARS,
   MAX_FOR_EACH_ROWS,
-  MAX_FOR_EACH_RULES,
   MAX_FOR_EACH_STEPS,
   type PlanForEachLoop,
-  type PlanForEachRule,
+  PLAN_FOR_EACH_LOOP_KEYS,
   PLAN_FOR_EACH_PREDICATE_SPELLINGS,
   PLAN_FOR_EACH_ROW_IDENTITY_REFUSAL,
   PLAN_FOR_EACH_SOURCES,
+  PLAN_FOR_EACH_WITHDRAWN_KEYS,
   planFormExecutionUnavailableReason,
   readForEachLoop,
 } from "./body-program-for-each.js";
@@ -36,12 +36,12 @@ import { type ActionRegistration, type Snapshot, validateBodyProgramCandidateReq
 /**
  * The `for_each` form's own guards, beside the ten cases the form was specified with.
  *
- * The specification says what the form must carry. This file protects the three properties that decide whether the form
- * is HONEST, each of which a green form test would not notice:
+ * The specification says what the form must carry. This file protects the properties that decide whether the form is
+ * HONEST, each of which a green form test would not notice:
  *
  *   1. The row bound here and the bound in the Mod's rules are ONE number, read from the Mod rather than restated.
- *   2. Several loops over one source are one PASS with ordered rules, not several passes - which is the difference
- *      between "one winner per tile" and a tile worked twice with the other rules reported as forgotten.
+ *   2. One call is one node and one rule: a loop names a source, a conjunction and an effect, and a key the grammar no
+ *      longer has is refused BY NAME on both sides of the bridge and taught nowhere in the description.
  *   3. A form the attached Mod cannot execute is answered BY CODE and never submitted, with the code the companion was
  *      told about in the description it already holds.
  */
@@ -152,44 +152,47 @@ test("the row bound the compiler enforces is the bound the Mod's own rules decla
 });
 
 /**
- * PROPERTY 2. Three loops over one rectangle are ONE pass with three ordered rules.
+ * PROPERTY 2. One `for_each` call is one node carrying one rule, even when an earlier call named the same rectangle.
  *
- * This is the intercropped patch: hops on columns 0, 3, 6..., coffee on 1, 4, 7..., and a path on 2, 5, 8.... Three
- * separate passes would each report the columns the others own as `no_rule_matched`, and a tile two rules claim would be
- * worked twice. One pass decides each row once, by the first rule that claims it - which is the same statement the Mod's
- * own Core suite makes per tile.
+ * TWO KINDS OF ROW IN ONE RECTANGLE ARE TWO CALLS. The compiler used to fold the second call into the first as a further
+ * rule of one pass (`then`), which is a fold the author cannot read off the node list and a key the author never wrote:
+ * `0 of 37` loop scripts, and `then` appeared only in documents the fold itself produced. So each call is its own node, in
+ * the order she wrote them, and the answer stops inventing a list for a fold that no longer happens.
  */
-test("loops over one source compose into one pass whose rules keep the order the caller wrote them in", () => {
+test("each for_each call is its own node, in the order the caller wrote them", () => {
   const compiled = compile(
     `builder.for_each({ source: { area: ${PATCH} }, where: [{ col: { every: 3, offset: 0 } }], do: { action: "plant_seed", seed: "hops" } });
        builder.for_each({ source: { area: ${PATCH} }, where: [{ col: { every: 3, offset: 1 } }], do: { action: "plant_seed", seed: "coffee" } });
        builder.for_each({ source: { area: ${PATCH} }, where: [{ col: { every: 3, offset: 2 } }], do: null });`,
   );
   const nodes = nodesOf(compiled);
-  assert.equal(nodes.length, 1, "one patch is one intent: the three calls are three rules of it");
-  // AND THE ANSWER SAYS SO. Two of her three calls changed the program without becoming nodes of their own, which is a
-  // fact she cannot read off the node list: named here, it is the difference between "the compiler folded my loops" and
-  // "the compiler lost two of my steps".
-  assert.deepEqual(compiled.merged, ["n02:into=n01:same_source", "n03:into=n01:same_source"]);
-  assert.equal(compiled.mergedCount, 2);
-  assert.deepEqual(compiled.acceptedSteps, ["n01"], "only the first call became a node");
-  assert.deepEqual(compiled.dropped, [], "a fold is not a drop, and the answer distinguishes them");
-  const loop = loopOf(nodes[0]!);
-  const rules = forEachRules(loop);
-  assert.equal(rules.length, 3);
+  assert.equal(nodes.length, 3, "three calls are three nodes: nothing she wrote is folded into another call's node");
+  assert.deepEqual(compiled.acceptedSteps, ["n01", "n02", "n03"], "every call is accounted for as its own step");
+  assert.deepEqual(compiled.dropped, [], "nothing was dropped either");
+  // THE PARTITION STILL HOLDS, and it is a SUM rather than a claim: every call she reached lands in exactly one list.
+  assert.equal(
+    compiled.acceptedStepsCount + compiled.noStepNeededCount + compiled.droppedCount,
+    3,
+    "the account's lists partition the three calls",
+  );
+  const loops = nodes.map((node) => loopOf(node));
   assert.deepEqual(
-    rules.map((rule) => rule.do),
+    loops.map((loop) => loop.do),
     [[{ action: "plant_seed", seed: "hops" }], [{ action: "plant_seed", seed: "coffee" }], null],
-    "first match wins, so the order the caller wrote is the order the pass decides in",
+    "each node carries the effect its own call wrote, in the caller's order",
   );
-  assert.deepEqual(
-    rules.map((rule) => rule.where),
-    [[{ col: { every: 3, offset: 0 } }], [{ col: { every: 3, offset: 1 } }], [{ col: { every: 3, offset: 2 } }]],
-  );
+  for (const loop of loops)
+    assert.deepEqual(
+      Object.keys(loop)
+        .filter((key) => key !== "type")
+        .sort(),
+      [...PLAN_FOR_EACH_LOOP_KEYS].sort(),
+      "a loop document carries EXACTLY the declared keys (beside the wire's own `type` tag), so no second rule has anywhere to hide",
+    );
 });
 
-/** The inverse: a different source is a DIFFERENT intent, so it is its own node with its own single rule. */
-test("loops over different sources stay separate passes, so the inverse of composing does not merge", () => {
+/** The inverse: a different source is a different intent, and it is its own node for the same reason. */
+test("loops over different sources are separate nodes like every other call", () => {
   const nodes = nodesOf(
     compile(
       `builder.for_each({ source: { area: ${PATCH} }, where: [{ col: { every: 3, offset: 0 } }], do: { action: "plant_seed", seed: "hops" } });
@@ -197,96 +200,115 @@ test("loops over different sources stay separate passes, so the inverse of compo
     ),
   );
   assert.equal(nodes.length, 2);
-  for (const node of nodes) assert.equal(forEachRules(loopOf(node)).length, 1);
+  assert.notDeepEqual(loopOf(nodes[0]!).source, loopOf(nodes[1]!).source, "the two nodes read two rectangles");
 });
 
 /**
- * PROPERTY 2, SECOND HALF. A merge carries EVERY rule of both loops, or it refuses and names what it would drop.
+ * THE KEYS OF A LOOP DOCUMENT ARE ONE DECLARATION, read by the reader, by the Mod and by the description.
  *
- * Measured at `516e2559`: the merge appended exactly `forEachRules(loop)[0]` - one rule per incoming loop - so a loop
- * whose own intent was TWO ordered rules (its predicate, then an ordered follow-up under `then`) compiled `ok: true` with
- * the follow-up silently gone. She wrote it, the compiler dropped it, and the answer said the plan was accepted.
+ * <p>
+ * The population is `PLAN_FOR_EACH_LOOP_KEYS` itself, so a key added on one side only is red rather than silently taught
+ * or silently refused. Three properties, and each would have caught a different half of this file's own history:
+ * </p>
  *
- * The population is the loop model's own `PLAN_FOR_EACH_SOURCES`, and each case renders its script from the SAME document
- * the model reader is asked to read, so this cannot pass by agreeing with a second hand-written copy of the loop. A
- * source kind with no document here is a blocked reading, named, rather than a silent skip.
+ *   1. Every declared key is ACCEPTED by the reader - a declaration the reader ignores is the mirror of a reader that
+ *      accepts what nobody declared.
+ *   2. Every declared key is NAMED BY THE DESCRIPTION'S OWN SIGNATURE, which is rendered from the same list: a call she is
+ *      never shown a key of is a call she cannot write.
+ *   3. Every withdrawn key is REFUSED BY NAME (`for_each_unknown_key:<key>`) and taught nowhere as a key. The withdrawn
+ *      list is the declaration that makes this checkable at all; `then` is its first member, and the measurement that put
+ *      it there is written beside it.
  */
-test("merge_rule_union: a merged pass carries every rule both loops wrote, or refuses naming what it would drop", () => {
-  // One source document per kind the model declares, checked against the declaration in BOTH directions below.
-  const sourceDocuments: Readonly<Record<string, unknown>> = Object.freeze({
-    area: { area: { x: 60, y: 18, w: 20, h: 3 } },
-  });
-  const undocumented = PLAN_FOR_EACH_SOURCES.filter((kind) => !(kind in sourceDocuments));
+test("the loop document's keys are one declaration: accepted, taught, and the withdrawn ones refused by name", () => {
+  assert.ok(PLAN_FOR_EACH_LOOP_KEYS.length > 0, "blocked: the grammar declares no key, so this gate examined nothing");
   assert.deepEqual(
-    undocumented,
+    PLAN_FOR_EACH_LOOP_KEYS.filter((key) => PLAN_FOR_EACH_WITHDRAWN_KEYS.includes(key)),
     [],
-    `these loop source kinds have no document here, so the merge is unproven for them: ${undocumented.join(", ")}`,
+    "a key cannot be both accepted and withdrawn",
   );
-  const sources = PLAN_FOR_EACH_SOURCES.filter((kind) => kind in sourceDocuments);
-  assert.ok(sources.length > 0, "blocked: the loop model declares no source kind, so this gate examined nothing");
 
-  /** One loop over `source` with a rule of its own AND an ordered follow-up, both distinct per `offset`. */
-  const loopDocument = (source: unknown, offset: number): Record<string, unknown> => ({
-    source,
-    where: [{ col: { every: 2, offset } }],
-    do: offset === 0 ? { action: "cut_weeds" } : null,
-    then: [{ where: [{ row: { every: 2, offset } }], do: { action: "cut_weeds" } }],
+  /** The one document every case below is built from: it carries exactly the keys the grammar declares. */
+  const DOCUMENT: Readonly<Record<string, unknown>> = Object.freeze({
+    source: { area: { x: 60, y: 18, w: 20, h: 3 } },
+    where: [{ occupant: "weed" }],
+    do: { action: "cut_weeds" },
   });
+  assert.deepEqual(
+    Object.keys(DOCUMENT).sort(),
+    [...PLAN_FOR_EACH_LOOP_KEYS].sort(),
+    "the document every case here reads is the declaration written out, so the loop below examines the whole population",
+  );
 
-  for (const kind of sources) {
-    const first = loopDocument(sourceDocuments[kind], 0);
-    const second = loopDocument(sourceDocuments[kind], 1);
-    // The expected pass is the model's OWN reading of the two documents, concatenated in the order they were written.
-    const expected = [first, second].flatMap((document) => {
-      const reading = readForEachLoop(document, null);
-      assert.ok(reading.ok, `${kind}: the loop model must read its own document (${reading.ok ? "" : reading.code})`);
-      return forEachRules(reading.loop);
-    });
-    assert.equal(expected.length, 4, `${kind}: each loop writes two rules, so the union has four`);
-    const nodes = nodesOf(
-      compile(`builder.for_each(${JSON.stringify(first)});\nbuilder.for_each(${JSON.stringify(second)});`),
+  // ONE VERDICT PER WORD, and the verdict is decided by membership alone: a declared key reads, a withdrawn one is refused
+  // BY NAME. A key that is in neither list is not examined here - the declaration is where a key is added, and adding it
+  // there is what puts it under this check.
+  let examined = 0;
+  for (const key of [...PLAN_FOR_EACH_LOOP_KEYS, ...PLAN_FOR_EACH_WITHDRAWN_KEYS]) {
+    examined += 1;
+    const declared = PLAN_FOR_EACH_LOOP_KEYS.includes(key);
+    const reading = readForEachLoop(declared ? DOCUMENT : { ...DOCUMENT, [key]: [] }, null);
+    if (declared) {
+      assert.ok(
+        reading.ok,
+        `${key} is declared as a loop key, so the reader must accept a document carrying it - received ${reading.ok ? "ok" : reading.code}`,
+      );
+      continue;
+    }
+    assert.equal(
+      `${reading.ok ? "" : reading.code}:${reading.ok ? "" : reading.detail}`,
+      `${FOR_EACH_UNKNOWN_KEY}:${key}`,
+      `${key} is withdrawn, so a document carrying it is refused BY NAME rather than read as a field nobody honours`,
     );
-    assert.equal(nodes.length, 1, `${kind}: two loops over one source are one pass, not two`);
-    const carried = forEachRules(loopOf(nodes[0]!));
-    expected.forEach((rule, index) =>
-      assert.deepEqual(
-        carried[index],
-        rule,
-        `${kind}: rule ${String(index)} did not survive the merge - ${JSON.stringify(rule)} is missing from ${JSON.stringify(carried)}`,
-      ),
+    assert.equal(reading.ok ? "" : reading.detail, key, "the refusal names the key, which is the whole correction");
+  }
+  assert.ok(examined > 0, "blocked: the grammar declares no key, so no verdict was taken");
+
+  const description = planWorkDescription(ACTIONS);
+  const signature = /builder\.for_each\(\{ ([a-z_]+(?:, [a-z_]+)*) \}\)/u.exec(description);
+  assert.ok(
+    signature !== null,
+    "the description must still show the call's own signature; this gate reads it from there",
+  );
+  assert.deepEqual(
+    signature[1]!.split(", ").sort(),
+    [...PLAN_FOR_EACH_LOOP_KEYS].sort(),
+    "the signature the companion is shown names exactly the keys the reader accepts",
+  );
+
+  // THE MOD's READER DECLARES THE SAME SET, read from its own array: it is the side that answers on the game thread, and a
+  // key it still accepts is a dialect this file cannot see.
+  const modKeys = /LoopKeys\s*=\s*\{([^}]*)\}/u.exec(readFileSync(MOD_ARGUMENTS_PATH, "utf8"));
+  assert.ok(modKeys !== null, "the Mod's reader must still declare its LoopKeys; this gate reads them from there");
+  const declaredThere = [...modKeys[1]!.matchAll(/"([a-z_]+)"/gu)].map((entry) => entry[1]!);
+  assert.deepEqual(
+    [...declaredThere].sort(),
+    [...PLAN_FOR_EACH_LOOP_KEYS].sort(),
+    "the Mod's reader and the grammar accept one set of keys, read from both declarations",
+  );
+
+  for (const key of PLAN_FOR_EACH_WITHDRAWN_KEYS) {
+    assert.equal(
+      new RegExp(`\\b${key}\\s*:`, "u").test(description),
+      false,
+      `${key} is a key the grammar refuses, so the description must not teach it as one`,
     );
     assert.equal(
-      carried.length,
-      expected.length,
-      `${kind}: the pass carries ${String(carried.length)} rules of the ${String(expected.length)} the caller wrote`,
+      declaredThere.includes(key),
+      false,
+      `${key} is withdrawn here, so the Mod's reader may not still accept it`,
+    );
+    // AND THE ANSWER A CALLER ACTUALLY MEETS, through the compiler that writes the document: one dropped call, named by
+    // the key it wrote. This is the reading that matters, because it is the one the companion can act on.
+    const compiled = compile(
+      `builder.for_each({ source: { area: ${PATCH} }, do: { action: "cut_weeds" }, ${key}: [] });`,
+    );
+    assert.equal(compiled.ok, false, `${key} must refuse the plan rather than compile a document carrying it`);
+    assert.equal(
+      compiled.ok ? "" : compiled.reasonCode,
+      `plan_script_${FOR_EACH_UNKNOWN_KEY}:${key}`,
+      `${key} is answered with its own name, which is the whole correction`,
     );
   }
-
-  // THE REFUSAL ARM. `MAX_FOR_EACH_RULES` is what one pass can carry (the Mod's own reader enforces it), so a merge whose
-  // union crosses it has rules with nowhere to go. Trimming would hand the Mod a pass she did not write, so the answer
-  // names how many of THIS loop's rules could be kept and how many would be dropped, and the plan is refused whole.
-  const full = {
-    source: sourceDocuments.area,
-    do: { action: "cut_weeds" },
-    then: Array.from({ length: MAX_FOR_EACH_RULES - 1 }, () => ({ do: null })),
-  };
-  const extra = {
-    source: sourceDocuments.area,
-    where: [{ col: { every: 3, offset: 0 } }],
-    do: { action: "cut_weeds" },
-  };
-  const refused = compile(`builder.for_each(${JSON.stringify(full)});\nbuilder.for_each(${JSON.stringify(extra)});`);
-  assert.equal(refused.ok, false, "a merge that cannot carry every rule must refuse the plan, not compile it short");
-  assert.equal(
-    refused.ok ? "" : refused.reasonCode,
-    "plan_script_for_each_merge_would_drop_rules:0:1",
-    "the refusal names the incoming loop's rules: none kept of one written, and the pass is already full",
-  );
-  assert.deepEqual(
-    refused.ok ? [] : refused.dropped,
-    ["n02:plan_script_for_each_merge_would_drop_rules:0:1"],
-    "the call that could not be folded is named by its own position",
-  );
 });
 
 /**
@@ -401,14 +423,12 @@ test("the document bound the compiler enforces is the bound the Mod's own reader
 
 /** A document the wire cannot carry is refused by the COMPILER, with its own length and the bound. */
 test("a loop document past the wire bound is refused with its own length", () => {
-  // Every part is legal on its own - names are opaque ids, values are under the scalar bound - and the DOCUMENT is still
-  // too long for the one canonical string it becomes. This is the only test that can catch that: the value bound says
-  // nothing about the sum.
-  const padding = "x".repeat(120);
-  const rule = `{ do: { action: "cut_weeds", note: "${padding}" } }`;
-  const then = Array.from({ length: MAX_FOR_EACH_RULES - 1 }, () => rule).join(", ");
+  // Every part is legal on its own - the field and the values are inside their own bounds - and the DOCUMENT is still too
+  // long for the one canonical string it becomes. This is the only test that can catch that: the value bounds say nothing
+  // about the sum.
+  const values = Array.from({ length: 8 }, () => `"${"v".repeat(120)}"`).join(", ");
   const result = compile(
-    `builder.for_each({ source: { area: { x: 0, y: 0, w: 1, h: 1 } }, do: { action: "cut_weeds" }, then: [${then}] });`,
+    `builder.for_each({ source: { area: { x: 0, y: 0, w: 1, h: 1 } }, where: [{ field: "${"f".repeat(64)}", in: [${values}] }], do: { action: "cut_weeds" } });`,
   );
   assert.equal(result.ok, false, "the script is refused: the document cannot cross the bridge");
   const reasonCode = result.ok ? "" : result.reasonCode;
@@ -432,35 +452,26 @@ test("a loop document past the wire bound is refused with its own length", () =>
 test("a nested loop is refused wherever it sits, and a declaration that reaches itself still ends", () => {
   const buried = {
     source: { area: { x: 0, y: 0, w: 1, h: 1 } },
-    do: null,
-    then: [
-      {
-        do: null,
-        where: [
-          {
-            field: "kind",
-            eq: 1,
-            extra: { a: { b: { for_each: { source: { area: { x: 0, y: 0, w: 1, h: 1 } }, do: null } } } },
-          },
-        ],
-      },
-    ],
+    do: {
+      action: "cut_weeds",
+      note: { a: { b: { for_each: { source: { area: { x: 0, y: 0, w: 1, h: 1 } }, do: null } } } },
+    },
   };
   const nested = readForEachLoop(buried, null);
   assert.equal(
     nested.ok ? "" : nested.code,
     "nested_loop_unsupported",
-    "the form named itself again, so that is what the answer says - not the unknown key it happens to sit under",
+    "the form named itself again, so that is what the answer says - not the argument it happens to sit under",
   );
   const reachingItself: Record<string, unknown> = { source: { area: { x: 0, y: 0, w: 1, h: 1 } }, do: null };
-  reachingItself.then = [reachingItself];
+  reachingItself.do = { action: "cut_weeds", me: reachingItself };
   const cyclic = readForEachLoop(reachingItself, null);
   assert.equal(
     cyclic.ok ? "" : cyclic.code,
-    "loop_then_invalid",
+    "loop_value_invalid",
     "a declaration that reaches itself is read, not walked until the stack ends",
   );
-  assert.equal(cyclic.ok ? "" : cyclic.detail, "rule[0]:unknown:source", "and the rule it broke is still named");
+  assert.equal(cyclic.ok ? "" : cyclic.detail, "step[0].cut_weeds.me", "and the argument it broke is still named");
 });
 
 /**
@@ -497,14 +508,7 @@ test("the plan vocabulary keeps the plan form the Mod publishes, so a loop is su
   );
 });
 
-/** The composed pass reads its rules through ONE function, so a writer and a reader cannot enumerate them differently. */
-test("the rules of a pass are enumerated in the order they are decided, whatever the loop says", () => {
-  const loop: PlanForEachLoop = { source: { area: { x: 60, y: 18, w: 20, h: 3 } }, do: null };
-  const second: PlanForEachRule = { where: [{ field: "readyForHarvest", eq: true }], do: [{ action: "harvest_crop" }] };
-  const composed: PlanForEachLoop = { ...loop, then: [second] };
-  assert.deepEqual(forEachRules(loop), [{ do: null }], "an absent predicate list means every row, not no rows");
-  assert.deepEqual(forEachRules(composed), [{ do: null }, second]);
-});
+// A loop's document carries the effect its own call wrote, and nothing beside it: the effect is read from the one call.
 
 /**
  * PROPERTY 4. THE ROW'S TARGET IDENTITY IS THE MOD'S TO MINT, and a `do` that names one is refused by name.
@@ -921,7 +925,7 @@ test("an occupant predicate is read, compiled, carried by the wire, and bounded 
   const compiled = compile(
     `builder.for_each({ source: { area: ${PATCH} }, where: [{ occupant: "weed" }], do: { action: "cut_weeds" } });`,
   );
-  assert.deepEqual(forEachRules(loopOf(nodesOf(compiled)[0]!))[0]?.where, [{ occupant: "weed" }]);
+  assert.deepEqual(loopOf(nodesOf(compiled)[0]!).where, [{ occupant: "weed" }]);
 
   const description = planWorkDescription(ACTIONS);
   assert.ok(

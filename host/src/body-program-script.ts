@@ -3,18 +3,15 @@ import { createContext, runInContext } from "node:vm";
 import {
   FOR_EACH_SOURCE_UNRECOGNISED,
   forEachDocumentLength,
-  forEachRules,
   MAX_FOR_EACH_LOOP_DOCUMENT_CHARS,
   MAX_FOR_EACH_ROWS,
-  MAX_FOR_EACH_RULES,
   MAX_FOR_EACH_STEPS,
+  PLAN_FOR_EACH_LOOP_KEYS,
   PLAN_FOR_EACH_ROW_IDENTITY_ARGUMENT,
   PLAN_FOR_EACH_ROW_IDENTITY_REFUSAL,
   PLAN_FOR_EACH_SOURCES,
   type PlanForEachLoop,
   readForEachLoop,
-  sameForEachSource,
-  withForEachRule,
 } from "./body-program-for-each.js";
 import { isExpressionOnlyAction } from "./action-registry.js";
 import { packAreaSteps, packingKindOf, toolChargeCeilingForClaim } from "./body-program-packing.js";
@@ -213,7 +210,7 @@ const MAX_REPORTED_PLAN_INSERTIONS = 16;
  * insertions displace for every call after them. Every list is bounded (see `MAX_REPORTED_PLAN_CALLS`) and every count is
  * not, so a bounded list never reads as "that was the whole of it".
  *
- * THE FOUR LISTS PARTITION THE CALLS THE SCRIPT REACHED: each call lands in exactly one of `acceptedSteps`, `merged`,
+ * THE THREE LISTS PARTITION THE CALLS THE SCRIPT REACHED: each call lands in exactly one of `acceptedSteps`,
  * `noStepNeeded` and `dropped`, so their counts sum to the number of builder calls the script made. That is the invariant
  * `tools/check-plan-legal-fixpoint.mjs` asserts over the whole published vocabulary, and the reason an `ok` answer can no
  * longer hide a step that was thrown away.
@@ -227,16 +224,6 @@ type PlanCallAccount = Readonly<{
   /** Her calls whose own step is a node of the program. */
   acceptedSteps: readonly string[];
   acceptedStepsCount: number;
-  /**
-   * Her loops that joined an EARLIER node's loop instead of becoming their own: `n07:into=n03:same_source`.
-   *
-   * A `for_each` over a source a previous `for_each` already names is a second RULE of that one pass - the Mod expands one
-   * pass per source - so the call did change the program, just not into a node of its own. Named because a fold the author
-   * cannot see is the program quietly disagreeing with her script, which is the same defect as a drop one notch softer: the
-   * result still looks right.
-   */
-  merged: readonly string[];
-  mergedCount: number;
   /** Her calls that had nothing to do: `n04:equip_for:already_held`, the tool the action needs was already in hand. */
   noStepNeeded: readonly string[];
   noStepNeededCount: number;
@@ -982,9 +969,11 @@ export function planWorkDescription(actions: readonly PublishedPlanAction[]): st
     planExampleCharge("water_crop") +
     " });\n" +
     "}\n" +
-    'builder.for_each({ source, where, do }) is ONE loop over a collection of live world rows, expanded by the Mod on the game thread: `source` names the live tiles whose rows the pass reads; `where` is a list of tests on ONE row - a field test ({ field: "kind", in: ["weed"] }, { field: "health", gt: 0 }), what stands on the tile ({ occupant: "weed" }, in the engine\'s own words: weed, stone, crop, tree, tree_stump, grass, object, terrain, none), and/or a position guard ({ col: { every: 3, offset: 0 } }, { row: { every: 2, offset: 1 } }), one spelling per test - a word the grammar does not have is refused as for_each_where_unrecognised:<given>;allowed=<the words it does have>; `do` is an ORDERED CHAIN of steps worked on ONE tile - each step an action from the list above with its own arguments, at most ' +
+    "builder.for_each({ " +
+    PLAN_FOR_EACH_LOOP_KEYS.join(", ") +
+    ' }) is ONE loop over a collection of live world rows, expanded by the Mod on the game thread: `source` names the live tiles whose rows the pass reads; `where` is a list of tests on ONE row - a field test ({ field: "kind", in: ["weed"] }, { field: "health", gt: 0 }), what stands on the tile ({ occupant: "weed" }, in the engine\'s own words: weed, stone, crop, tree, tree_stump, grass, object, terrain, none), and/or a position guard ({ col: { every: 3, offset: 0 } }, { row: { every: 2, offset: 1 } }), one spelling per test - a word the grammar does not have is refused as for_each_where_unrecognised:<given>;allowed=<the words it does have>; `do` is an ORDERED CHAIN of steps worked on ONE tile - each step an action from the list above with its own arguments, at most ' +
     String(MAX_FOR_EACH_STEPS) +
-    " of them, or a single action (the chain of length one), or null for a row left deliberately alone (a path). Several for_each calls over the SAME source are the rules of that one pass, decided per row by the first rule that claims it - which is how an intercropped patch is one intent. The caller needs no observation first - no target id, no per-tile coordinate - because the rows are read live. " +
+    " of them, or a single action (the chain of length one), or null for a row left deliberately alone (a path). EACH for_each CALL IS ITS OWN NODE, in the order you write them: a patch needing two actions is two calls over the same rectangle, one per action. The caller needs no observation first - no target id, no per-tile coordinate - because the rows are read live. " +
     forEachRowIdentityText() +
     "A row no predicate claims is reported rather than skipped: ONE code for the whole patch when NO row matched it (no_row_matched_where:<field>_<test>_<value>:<the occupants the tiles carry>), and one per tile (no_rule_matched:<kind>@<x>,<y>) when some rows did. One loop addresses at most " +
     String(MAX_FOR_EACH_ROWS) +
@@ -1371,7 +1360,6 @@ function newPlanScriptState(actions: readonly PublishedPlanAction[]): PlanScript
     rejected: [],
     rejectedCount: 0,
     acceptedSteps: [],
-    merged: [],
     noStepNeeded: [],
     inserted: [],
     insertedNodeIds: [],
@@ -1457,24 +1445,21 @@ export function planResourceConflictCodes(
 /**
  * What became of every call the author wrote, rendered from the state the script left behind.
  *
- * The four lists are built HERE and nowhere else, so no caller can spell the same fact a second way: `acceptedSteps` from
- * the calls that produced their own node, `merged`/`noStepNeeded` from the calls whose work was done another way, and
- * `dropped` from the refusals - the same records `rejected` carries, rendered as the names an author reads. A refusal
- * raised before the script ran (an empty script, a bad snapshot) has no state and therefore no calls, which is a true
- * account of zero rather than a missing one.
+ * The three lists are built HERE and nowhere else, so no caller can spell the same fact a second way: `acceptedSteps` from
+ * the calls that produced their own node, `noStepNeeded` from the calls whose work was already done, and `dropped` from
+ * the refusals - the same records `rejected` carries, rendered as the names an author reads. A refusal raised before the
+ * script ran (an empty script, a bad snapshot) has no state and therefore no calls, which is a true account of zero rather
+ * than a missing one.
  */
 function planCallAccount(state: PlanScriptState | undefined): PlanCallAccount {
   const bounded = <TValue>(entries: readonly TValue[]): readonly TValue[] =>
     Object.freeze(entries.slice(0, MAX_REPORTED_PLAN_CALLS));
   const rejected = state?.rejected ?? [];
   const acceptedSteps = state?.acceptedSteps ?? [];
-  const merged = state?.merged ?? [];
   const noStepNeeded = state?.noStepNeeded ?? [];
   return Object.freeze({
     acceptedSteps: bounded(acceptedSteps.map(planStepName)),
     acceptedStepsCount: acceptedSteps.length,
-    merged: bounded(merged),
-    mergedCount: merged.length,
     noStepNeeded: bounded(noStepNeeded),
     noStepNeededCount: noStepNeeded.length,
     dropped: bounded(rejected.map((rejection) => `${planStepName(rejection.call)}:${rejection.reasonCode}`)),
@@ -1537,12 +1522,10 @@ type PlanScriptState = {
    * The calls whose own step became a node, by position: the `acceptedSteps` half of the account.
    *
    * Recorded where the node is written rather than derived from `builderCalls - rejectedCount` afterwards, because a call
-   * can be honoured WITHOUT adding a node (a `for_each` that merges into an earlier pass, an `equipFor` whose tool is
-   * already in hand) and a subtraction would count those as steps that do not exist.
+   * can be honoured WITHOUT adding a node (an `equipFor` whose tool is already in hand) and a subtraction would count those
+   * as steps that do not exist.
    */
   acceptedSteps: number[];
-  /** The calls whose loop joined an earlier node's loop, `n07:into=n03:same_source`. */
-  merged: string[];
   /** The calls that had nothing to do, `n04:equip_for:already_held`. */
   noStepNeeded: string[];
   /**
@@ -1560,7 +1543,7 @@ type PlanScriptState = {
    */
   insertedNodeIds: string[];
   /**
-   * Which call wrote each node, so a fold can name the call whose loop it joined rather than a node id nothing else in
+   * Which call wrote each node, so the account can name the call a node belongs to rather than a node id nothing else in
    * the account speaks in.
    */
   callOfNode: Map<string, number>;
@@ -2177,7 +2160,7 @@ function emitPlanNode(
       bindings: Object.freeze({}),
     }),
   );
-  // Her step is in the program, so her call is accounted for and cannot also appear as dropped, merged or unneeded.
+  // Her step is in the program, so her call is accounted for and cannot also appear as dropped or unneeded.
   state.acceptedSteps.push(state.builderCalls);
   state.callOfNode.set(authorNodeId, state.builderCalls);
 }
@@ -2368,11 +2351,9 @@ function tryEmitPackedArea(
   actions: readonly PublishedPlanAction[],
   state: PlanScriptState,
 ): boolean {
-  const rules = forEachRules(loop);
-  if (rules.length !== 1) return false;
-  // A rule with a predicate names rows, not a rectangle: the tiles it excludes are tiles a footprint would still cover.
-  if (rules[0]!.where !== undefined) return false;
-  const effect = rules[0]!.do;
+  // A predicate names rows, not a rectangle: the tiles it excludes are tiles a footprint would still cover.
+  if (loop.where !== undefined) return false;
+  const effect = loop.do;
   // A chain is several actions over the SAME tile: the last one's footprint is not the one the first needs, so a chain is
   // never packed.
   if (effect === null || effect.length !== 1) return false;
@@ -2433,13 +2414,19 @@ function tryEmitPackedArea(
  *
  * ONE CALL, ONE NODE - UNLESS THE LOOP IS A PACKABLE AREA, in which case the packing pass above turns it into the native
  * uses that cover the rectangle exactly. That is the ONE exception, and it exists because the loop's own expansion is one
- * target per tile (`FarmhandForEachExpansion.cs:373`): a packed area left as a loop is walked tile by tile again, which
- * hands back every walk the packing saved.
+ * target per tile (`FarmhandForEachExpansion.cs`): a packed area left as a loop is walked tile by tile again, which hands
+ * back every walk the packing saved.
+ *
+ * A LOOP THAT NAMES A SOURCE AN EARLIER LOOP ALREADY NAMES IS STILL ITS OWN NODE. The compiler used to fold it into that
+ * earlier node as a second rule of one pass (`then`), which made one pass claim two kinds of row; measured over every plan
+ * call she wrote, the fold was the ONLY writer of that key and `then` itself was authored `0 of 37`. Two kinds of row in
+ * one rectangle are two calls, and each reports the rows it did not claim - which is a fact she can read per node instead
+ * of a fold she cannot see.
  *
  * A loop this product could never run is refused BY NAME with the part of the declaration that broke it - a source the
- * caller did not write, a rectangle past the row bound with its own count, a stride that claims no index, an action the
- * surface does not publish - so one bad loop is one named refusal beside the loops that did read, and the author corrects
- * that call rather than rewriting the script.
+ * caller did not write, a rectangle past the row bound with its own count, an action the surface does not publish - so one
+ * bad loop is one named refusal beside the loops that did read, and the author corrects that call rather than rewriting the
+ * script.
  */
 function emitForEachNode(
   value: unknown,
@@ -2467,30 +2454,6 @@ function emitForEachNode(
   // step, is a fact the compiler knows - and learning it from a spent pass costs the whole patch.
   refuseMissingStepArguments(loop, actions, state);
   const previous = state.nodes[state.nodes.length - 1];
-  if (previous !== undefined && previous.actionId === FOR_EACH_PLAN_ACTION_ID) {
-    const previousLoop = previous.arguments.loop as PlanForEachLoop | undefined;
-    if (previousLoop !== undefined && sameForEachSource(previousLoop, loop)) {
-      // ONE PASS PER SOURCE. Two `for_each` calls over the same rectangle are two RULES of one intent and not two intents:
-      // separate passes would each report the tile the other one owns as `no_rule_matched`, and a tile both claim would
-      // be worked twice. The first rule stays where the caller wrote it; every rule of the rest joins it in order.
-      const merged: PlanForEachLoop = mergeForEachRules(previousLoop, loop, state);
-      // The LENGTH is measured on the document that would result, not on the call that was just read: composing rules
-      // grows the document, and a check that only saw the new rule would let the merge cross the wire's bound.
-      RefuseOversizedDocument(merged, state);
-      state.nodes[state.nodes.length - 1] = Object.freeze({
-        ...previous,
-        arguments: Object.freeze({ loop: Object.freeze({ type: "loop" as const, ...merged }) }),
-      });
-      // HER LOOP DID CHANGE THE PROGRAM, just not into a node of its own: a second rule over the same source is a rule
-      // of that one pass. Named, because a fold she cannot see is the program quietly disagreeing with her script - and
-      // the result still looks right, which makes it harder to notice than a drop.
-      const into = state.callOfNode.get(previous.nodeId);
-      state.merged.push(
-        `${planStepName(state.builderCalls)}:into=${into === undefined ? previous.nodeId : planStepName(into)}:same_source`,
-      );
-      return;
-    }
-  }
   RefuseOversizedDocument(loop, state);
   state.nodes.push(
     Object.freeze({
@@ -2506,54 +2469,6 @@ function emitForEachNode(
   );
   state.acceptedSteps.push(state.builderCalls);
   state.callOfNode.set(state.nodes[state.nodes.length - 1]!.nodeId, state.builderCalls);
-}
-
-/**
- * Two `for_each` calls over one source as ONE pass carrying every rule both of them wrote - or a refusal that says how
- * much of the second one could not be carried.
- *
- * <p>
- * MEASURED at `516e2559`: the merge appended exactly `forEachRules(loop)[0]`, so a loop whose own intent was TWO ordered
- * rules - a predicate and an ordered follow-up under `then` - compiled `ok: true` with the follow-up gone. She wrote it,
- * the compiler dropped it, and the answer said the plan was accepted.
- * </p>
- *
- * <p>
- * SO A MERGE IS ALLOWED ONLY WHEN EVERY RULE SURVIVES IT. `MAX_FOR_EACH_RULES` is the pass's own representable size and
- * the Mod's reader enforces it, so a union past it has rules with nowhere to go; trimming would hand the Mod a pass the
- * caller did not write. The refusal's counts are the INCOMING loop's: `<kept>:<dropped>` of the rules it wrote, so the
- * caller reads which of its rules the pass has no room for rather than a document length. The union is compared to the
- * ceiling itself - `refuseForEachMergeOverflow` is where the code is spelled - so the measurement and the refusal that
- * names it are the same statement.
- * </p>
- */
-function mergeForEachRules(
-  previous: PlanForEachLoop,
-  incoming: PlanForEachLoop,
-  state: PlanScriptState,
-): PlanForEachLoop {
-  const previousRules = forEachRules(previous);
-  const incomingRules = forEachRules(incoming);
-  if (previousRules.length + incomingRules.length > MAX_FOR_EACH_RULES)
-    refuseForEachMergeOverflow(Math.max(MAX_FOR_EACH_RULES - previousRules.length, 0), incomingRules.length, state);
-  const merged = incomingRules.reduce(withForEachRule, previous);
-  // AND THE RESULT IS CHECKED AGAINST THE UNION rather than trusted to the fold: the rules the pass reports ARE the union,
-  // in the order the caller wrote them, or this refuses instead of shipping a pass that disagrees with her script.
-  const carried = forEachRules(merged);
-  const kept = incomingRules.filter(
-    (rule, index) => JSON.stringify(carried[previousRules.length + index]) === JSON.stringify(rule),
-  ).length;
-  if (kept !== incomingRules.length || carried.length !== previousRules.length + incomingRules.length)
-    refuseForEachMergeOverflow(kept, incomingRules.length, state);
-  return merged;
-}
-
-/**
- * Refuses a merge the pass has no room for, naming how many of THIS loop's rules survive it and how many have nowhere to
- * go - `plan_script_for_each_merge_would_drop_rules:<kept>:<dropped>`, the one spelling of that refusal.
- */
-function refuseForEachMergeOverflow(kept: number, incoming: number, state: PlanScriptState): never {
-  rejectPlanCall(`plan_script_for_each_merge_would_drop_rules:${String(kept)}:${String(incoming - kept)}`, state);
 }
 
 /**
@@ -2847,26 +2762,24 @@ function refuseMissingStepArguments(
   state: PlanScriptState,
 ): void {
   const declared = new Map(actions.map((action) => [action.actionId, action.arguments]));
-  for (const rule of forEachRules(loop)) {
-    if (rule.do === null) continue;
-    for (const step of rule.do) {
-      const arguments_ = declared.get(step.action);
-      if (arguments_ === undefined) continue;
-      const supplied = new Set(Object.keys(step));
-      const declaredNames = arguments_.map((argument) => argument.name);
-      const missing = declaredNames.filter(
-        (name) =>
-          !ROW_DERIVED_STEP_ARGUMENTS.includes(name) &&
-          !STEP_ARGUMENTS_STILL_OMISSIBLE.includes(name) &&
-          !supplied.has(name),
-      );
-      if (missing.length === 0) continue;
-      rejectPlanCall(
-        `plan_script_loop_do_argument_missing:${missing[0]!}:declared=[${declaredNames.join(",")}]`,
-        state,
-        undefined,
-        Object.freeze(missing),
-      );
-    }
+  if (loop.do === null) return;
+  for (const step of loop.do) {
+    const arguments_ = declared.get(step.action);
+    if (arguments_ === undefined) continue;
+    const supplied = new Set(Object.keys(step));
+    const declaredNames = arguments_.map((argument) => argument.name);
+    const missing = declaredNames.filter(
+      (name) =>
+        !ROW_DERIVED_STEP_ARGUMENTS.includes(name) &&
+        !STEP_ARGUMENTS_STILL_OMISSIBLE.includes(name) &&
+        !supplied.has(name),
+    );
+    if (missing.length === 0) continue;
+    rejectPlanCall(
+      `plan_script_loop_do_argument_missing:${missing[0]!}:declared=[${declaredNames.join(",")}]`,
+      state,
+      undefined,
+      Object.freeze(missing),
+    );
   }
 }

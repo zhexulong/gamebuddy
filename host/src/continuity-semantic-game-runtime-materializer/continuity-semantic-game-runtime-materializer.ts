@@ -387,7 +387,6 @@ function createBodyProgramTools(
               droppedTruncated: compiled.droppedCount > compiled.dropped.length,
               acceptedSteps: compiled.acceptedSteps,
               acceptedStepsCount: compiled.acceptedStepsCount,
-              ...(compiled.mergedCount === 0 ? {} : { merged: compiled.merged, mergedCount: compiled.mergedCount }),
               ...(compiled.noStepNeededCount === 0
                 ? {}
                 : { noStepNeeded: compiled.noStepNeeded, noStepNeededCount: compiled.noStepNeededCount }),
@@ -872,7 +871,6 @@ function stepAccountNote(compiled: CompiledPlan): Readonly<Record<string, unknow
           // reading over the run's node outcomes can join on it without matching a node-id prefix.
           insertedNodeIds: compiled.insertedNodeIds,
         }),
-    ...(compiled.mergedCount === 0 ? {} : { merged: compiled.merged, mergedCount: compiled.mergedCount }),
     ...(compiled.noStepNeededCount === 0
       ? {}
       : { noStepNeeded: compiled.noStepNeeded, noStepNeededCount: compiled.noStepNeededCount }),

@@ -97,9 +97,15 @@ public static class FarmhandForEachArguments
     /// <summary>Why a `do` chain with no steps in it is refused: `do: null` is the spelling for a deliberate path.</summary>
     private const string EmptyChain = "for_each_do_empty";
 
-    private const string RulesFault = "for_each_invalid:then";
-
-    private static readonly string[] LoopKeys = { "source", "where", "do", "then" };
+    /// <summary>
+    /// The keys one loop document may carry, read from the grammar's own declaration.
+    ///
+    /// ONE LIST ON BOTH SIDES OF THE BOUNDARY. Any other key is answered <c>for_each_unknown_key:&lt;key&gt;</c> here and by the
+    /// compiler before submission, so a key the grammar withdrew (`then`, authored <c>0 of 37</c> loop scripts) is refused
+    /// by NAME on the game thread rather than read as a field nobody honours. `body-program-for-each.test.ts` reads this
+    /// array and asserts it equals the Host's <c>PLAN_FOR_EACH_LOOP_KEYS</c>, so the two cannot drift apart again.
+    /// </summary>
+    private static readonly string[] LoopKeys = { "source", "where", "do" };
 
     /// <summary>
     /// Reads one `{ type: "loop", ... }` wire value as the canonical string an argument declares.
@@ -219,11 +225,8 @@ public static class FarmhandForEachArguments
                 return false;
             }
             if (!TryReadEffect(doElement, out effect, out reasonCode)) return false;
-            IReadOnlyList<FarmhandForEachRule>? then = null;
-            if (root.TryGetProperty("then", out JsonElement thenElement) && !TryReadRules(thenElement, out then, out reasonCode))
-                return false;
 
-            var candidate = new FarmhandForEachLoop(source!, where, effect, then);
+            var candidate = new FarmhandForEachLoop(source!, where, effect);
             if (candidate.IsValid)
             {
                 loop = candidate;
@@ -233,8 +236,7 @@ public static class FarmhandForEachArguments
             // The model is the acceptance gate, and it names WHICH part failed rather than a bare "invalid".
             reasonCode = !source!.IsValid ? SourceFault
                 : where is not null && where.Any(predicate => !predicate.IsValid) ? WhereFault
-                : effect is not null && !effect.IsValid ? EffectFault
-                : RulesFault;
+                : EffectFault;
             return false;
         }
     }
@@ -292,7 +294,7 @@ public static class FarmhandForEachArguments
     {
         predicates = null;
         reasonCode = WhereFault;
-        if (element.ValueKind != JsonValueKind.Array || element.GetArrayLength() > FarmhandForEachRule.MaximumPredicates) return false;
+        if (element.ValueKind != JsonValueKind.Array || element.GetArrayLength() > FarmhandForEachLoop.MaximumPredicates) return false;
         var read = new List<FarmhandForEachPredicate>(element.GetArrayLength());
         foreach (JsonElement entry in element.EnumerateArray())
         {
@@ -591,43 +593,6 @@ public static class FarmhandForEachArguments
         var candidate = new FarmhandForEachStep(action, arguments is null ? null : new System.Collections.ObjectModel.ReadOnlyDictionary<string, string>(arguments));
         if (!candidate.IsValid) return false;
         step = candidate;
-        reasonCode = "accepted";
-        return true;
-    }
-
-    private static bool TryReadRules(JsonElement element, out IReadOnlyList<FarmhandForEachRule>? rules, out string reasonCode)
-    {
-        rules = null;
-        reasonCode = RulesFault;
-        if (element.ValueKind != JsonValueKind.Array) return false;
-        // The loop's own rule is one of them, which is why the count is checked against the total rather than the array.
-        int total = element.GetArrayLength() + 1;
-        if (total > FarmhandForEachLoop.MaximumRules)
-        {
-            reasonCode = $"for_each_too_many_rules:{total}";
-            return false;
-        }
-        var read = new List<FarmhandForEachRule>(element.GetArrayLength());
-        foreach (JsonElement entry in element.EnumerateArray())
-        {
-            if (entry.ValueKind != JsonValueKind.Object) return false;
-            foreach (JsonProperty property in entry.EnumerateObject())
-                if (property.Name is not ("where" or "do"))
-                {
-                    reasonCode = $"for_each_unknown_key:{property.Name}";
-                    return false;
-                }
-            // A rule that names no effect at all is not a path: only an explicit null is.
-            if (!entry.TryGetProperty("do", out JsonElement doElement)) return false;
-            IReadOnlyList<FarmhandForEachPredicate>? where = null;
-            if (entry.TryGetProperty("where", out JsonElement whereElement) && !TryReadPredicates(whereElement, out where, out reasonCode))
-                return false;
-            if (!TryReadEffect(doElement, out FarmhandForEachEffect? effect, out reasonCode)) return false;
-            var rule = new FarmhandForEachRule(where, effect);
-            if (!rule.IsValid) return false;
-            read.Add(rule);
-        }
-        rules = read.AsReadOnly();
         reasonCode = "accepted";
         return true;
     }

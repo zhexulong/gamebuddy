@@ -182,8 +182,8 @@ public delegate bool FarmhandForEachDispatch(
     out string reasonCode);
 
 /// <summary>
-/// The `for_each` expansion: one pass over the rows a source yields, deciding each row ONCE by the first rule that claims
-/// it, and re-entering the Mod's own dispatch seam for every effect.
+/// The `for_each` expansion: one pass over the rows a source yields, deciding each row ONCE against the loop's own
+/// conjunction, and re-entering the Mod's own dispatch seam for every effect.
 ///
 /// <para>
 /// IT IS PURE ON PURPOSE. The caller supplies the loop, the live rows and the two delegates, so the decision order, the
@@ -276,8 +276,9 @@ public static class FarmhandForEachExpansion
                 targets.Add(Skipped(row, stopped ? FarmhandForEachTargetOutcome.Stopped : FarmhandForEachTargetOutcome.Deferred, ReasonOf(row, stopped)));
                 continue;
             }
-            (bool matched, FarmhandForEachEffect? effect) = FarmhandForEachRules.DecideByRules(loop, row.Fields, row.LocalColumn, row.LocalRow);
-            if (!matched)
+            // ONE RULE PER LOOP: the row either satisfies the loop's conjunction or it does not, and the effect is the
+            // loop's own `do`. A row the loop did not claim is still reported - a skipped row reads as a cleared patch.
+            if (!FarmhandForEachRules.Matches(loop, row.Fields, row.LocalColumn, row.LocalRow))
             {
                 // A ROW THE PASS ALREADY WORKED IS NOT A ROW NOBODY CLAIMED. The predicate is read against the world as
                 // it is NOW, and the pass's own effects move that world: measured `round45`, seven `cut_weeds` rows were
@@ -297,6 +298,7 @@ public static class FarmhandForEachExpansion
                 continue;
             }
             anyMatched = true;
+            FarmhandForEachEffect? effect = loop.Do;
             if (effect is null)
             {
                 targets.Add(Skipped(row, FarmhandForEachTargetOutcome.LeftAlone, null));

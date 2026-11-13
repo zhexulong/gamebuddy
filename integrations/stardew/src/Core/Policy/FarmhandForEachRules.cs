@@ -241,73 +241,39 @@ public sealed record FarmhandForEachEffect(params FarmhandForEachStep[] Steps)
 }
 
 /// <summary>
-/// One more rule of the same pass: an optional conjunction of predicates and what a matching row gets.
+/// One loop intent: a source, an optional conjunction of predicates, and what to do with a matching row.
 ///
-/// WHY A PASS HAS MORE THAN ONE RULE. A 3x20 intercropped patch is ONE intent and not three: hops on columns 0, 3, 6...,
-/// coffee on 1, 4, 7..., and column 2, 5, 8... deliberately a path. Three separate passes would report every tile a pass
-/// did not claim as `no_rule_matched` twice over, and a tile two rules claim would be worked twice; one pass with ordered
-/// rules decides each row exactly once, by the FIRST rule that claims it.
-/// </summary>
-public sealed record FarmhandForEachRule(
-    IReadOnlyList<FarmhandForEachPredicate>? Where,
-    FarmhandForEachEffect? Do)
-{
-    /// <summary>
-    /// How many predicates one rule's conjunction may carry: long enough to be a rule, short enough to be read.
-    ///
-    /// Mirrors `MAX_FOR_EACH_PREDICATES` (`host/src/body-program-for-each.ts:116`).
-    /// </summary>
-    public const int MaximumPredicates = 8;
-
-    public bool IsValid =>
-        (this.Where is null || (this.Where.Count <= MaximumPredicates
-            && this.Where.All(predicate => predicate is not null && predicate.IsValid)))
-        && (this.Do is null || this.Do.IsValid);
-}
-
-/// <summary>
-/// One loop intent: a source, an optional conjunction of predicates, what to do with a matching row, and the further
-/// rules of the same pass.
-///
-/// `Do: null` is a STATEMENT - "this column is a path" - and the pass counts it separately so a reader can tell a
-/// deliberate path from a tile the predicates forgot.
+/// <para>
+/// ONE CALL, ONE RULE. A loop used to carry further rules under <c>then</c>, which is what made one pass able to claim two
+/// kinds of row; measured over every plan she ever wrote it was authored <c>0 of 37</c> <c>for_each</c> scripts, and the
+/// only thing that ever wrote it was the Host's own fold of two calls over one rectangle into one pass. Both are withdrawn
+/// here and in the grammar at the same time: two kinds of row in one rectangle are two <c>for_each</c> calls, each its own
+/// node, each reporting the rows it did not claim.
+/// </para>
+/// <para>
+/// <c>Do: null</c> is a STATEMENT - "every row this rule claims is a path" - and the pass counts it separately so a reader
+/// can tell a deliberate path from a tile the predicate forgot.
+/// </para>
 /// </summary>
 public sealed record FarmhandForEachLoop(
     FarmhandForEachSource Source,
     IReadOnlyList<FarmhandForEachPredicate>? Where,
-    FarmhandForEachEffect? Do,
-    IReadOnlyList<FarmhandForEachRule>? Then = null)
+    FarmhandForEachEffect? Do)
 {
-    /// <summary>How many rules one pass may carry, this loop's own included.</summary>
-    public const int MaximumRules = 8;
-
     /// <summary>
-    /// The ordered rules of one pass: this loop's own predicate and effect first, then <see cref="Then"/> in order.
+    /// How many predicates one loop's conjunction may carry: long enough to be a rule, short enough to be read.
     ///
-    /// FIRST MATCH WINS, and this is the ONE spelling of "what a pass tries": the compiler that composes several
-    /// `for_each` calls over one source and the expansion that runs them enumerate the rules through it, so the two
-    /// cannot disagree about the order or about how many there are.
+    /// Mirrors `MAX_FOR_EACH_PREDICATES` (`host/src/body-program-for-each.ts`), which is the compiler's half of the same
+    /// bound.
     /// </summary>
-    public IReadOnlyList<FarmhandForEachRule> Rules
-    {
-        get
-        {
-            var rules = new List<FarmhandForEachRule>(1 + (this.Then?.Count ?? 0))
-            {
-                new FarmhandForEachRule(this.Where, this.Do),
-            };
-            if (this.Then is not null) rules.AddRange(this.Then);
-            return rules.AsReadOnly();
-        }
-    }
+    public const int MaximumPredicates = 8;
 
     public bool IsValid =>
         this.Source is not null
         && this.Source.IsValid
-        && (this.Where is null || this.Where.All(predicate => predicate is not null && predicate.IsValid))
-        && (this.Do is null || this.Do.IsValid)
-        && (this.Then is null
-            || (this.Then.Count + 1 <= MaximumRules && this.Then.All(rule => rule is not null && rule.IsValid)));
+        && (this.Where is null || (this.Where.Count <= MaximumPredicates
+            && this.Where.All(predicate => predicate is not null && predicate.IsValid)))
+        && (this.Do is null || this.Do.IsValid);
 }
 
 /// <summary>One row the loop considered, and what it decided.</summary>
@@ -353,27 +319,11 @@ public static class FarmhandForEachRules
         int localRow)
     {
         ArgumentNullException.ThrowIfNull(loop);
-        return MatchesRule(loop.Where, fields, localColumn, localRow);
-    }
-
-    /// <summary>
-    /// Whether every predicate of ONE rule holds for this row.
-    ///
-    /// A pass with several rules asks this once per rule and takes the first that answers yes, so the rule grammar and
-    /// the loop grammar cannot drift: <see cref="Matches(FarmhandForEachLoop, IReadOnlyDictionary{string, FarmhandForEachValue}, int, int)"/>
-    /// is this method with the loop's own predicate list.
-    /// </summary>
-    public static bool MatchesRule(
-        IReadOnlyList<FarmhandForEachPredicate>? where,
-        IReadOnlyDictionary<string, FarmhandForEachValue> fields,
-        int localColumn,
-        int localRow)
-    {
         ArgumentNullException.ThrowIfNull(fields);
         // An absent predicate list means every row, which is why it is not an error: the caller may genuinely mean
         // "every row of this source".
-        if (where is null) return true;
-        foreach (FarmhandForEachPredicate predicate in where)
+        if (loop.Where is null) return true;
+        foreach (FarmhandForEachPredicate predicate in loop.Where)
         {
             if (predicate.IsPositionGuard)
             {
@@ -386,24 +336,6 @@ public static class FarmhandForEachRules
             if (!Holds(predicate, value)) return false;
         }
         return true;
-    }
-
-    /// <summary>
-    /// What a pass decides for one row: the FIRST rule that claims it, and whether any rule did.
-    ///
-    /// The two are returned together because "no rule claimed this row" is an outcome the caller must report and not an
-    /// absence it can skip - a skipped row reads as a cleared patch.
-    /// </summary>
-    public static (bool Matched, FarmhandForEachEffect? Effect) DecideByRules(
-        FarmhandForEachLoop loop,
-        IReadOnlyDictionary<string, FarmhandForEachValue> fields,
-        int localColumn,
-        int localRow)
-    {
-        ArgumentNullException.ThrowIfNull(loop);
-        foreach (FarmhandForEachRule rule in loop.Rules)
-            if (MatchesRule(rule.Where, fields, localColumn, localRow)) return (true, rule.Do);
-        return (false, null);
     }
 
     /// <summary>The decision for one row, given the fields the live world reports for it.</summary>
