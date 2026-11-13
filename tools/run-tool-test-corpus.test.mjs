@@ -9,7 +9,7 @@ import { fileURLToPath } from "node:url";
 import { corpusFiles, corpusMembers } from "./run-tool-test-corpus.mjs";
 
 // red-proof: inject  a failing assertion into one member's suite in a copy of the tree -> `members_failed:1`,
-//                    `corpus_responsible:<that member>` and one `member … · exit 1 · × <test>` line, with
+//                    `corpus_responsible:<that member>` and one `member … · exit 1 · <U+2716> <test>` line, with
 //                    `corpus_derivation:ok`; a script renamed out of the `test:`/`suite:` namespace -> a green
 //                    member run (`members_failed:0`) beside `corpus_derivation:defect`, so neither reading can
 //                    stand in for the other. Both injections are pinned below on synthetic trees.
@@ -99,7 +99,7 @@ test("a red member fails the step and is named once, with the derivation still o
   assert.match(run.stdout, /^corpus_responsible:test:broken$/m);
   const details = lines(run.stdout).filter((line) => line.startsWith("  member test:broken · "));
   assert.equal(details.length, 1, "the responsible member is named once, not once per failing test");
-  assert.match(details[0], /exit 1 · × the injected suite breaks$/);
+  assert.match(details[0], /exit 1 · \u2716 the injected suite breaks$/);
   assert.doesNotMatch(run.stdout, /corpus_derivation:defect/);
 });
 

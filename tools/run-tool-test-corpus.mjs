@@ -204,13 +204,18 @@ export function corpusFiles({ root = ROOT } = {}) {
 }
 
 /**
- * The first line that says a test failed, which is the one to read first: node's spec reporter marks it `×`.
+ * The first line that says a test failed, which is the one to read first: node's spec reporter marks it U+2716.
  * A member that died before printing one is reported by its last line, because that is the evidence left, and
  * a member with no output at all says so instead of showing an empty detail.
+ *
+ * THE MARK IS AN ESCAPE, NEVER THE GLYPH. The pre-commit hook formats each staged blob through biome's stdin mode,
+ * and biome rewrites U+2716 to U+00D7 there: a literal in this file committed as `×`, and the matcher stopped
+ * matching what node prints (`member test:broken · exit 1 · last line: at startSubtestAfterBootstrap …` instead of
+ * the failing test). The escape is not reformatted, so the reading survives the hook that ships it.
  */
 function firstFailingLine(output) {
   const lines = cleanOutputLines(output);
-  const failure = lines.find((line) => line.startsWith("×"));
+  const failure = lines.find((line) => line.startsWith("\u2716"));
   if (failure !== undefined) return failure.replace(/\s+\([\d.]+m?s\)$/u, "");
   const last = [...lines].reverse().find((line) => line !== "");
   return last === undefined ? "(no output)" : `last line: ${last}`;
