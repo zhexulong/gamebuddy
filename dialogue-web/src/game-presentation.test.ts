@@ -38,6 +38,9 @@ const SOURCE_READ_FAILURES = [
   "gog-unavailable",
   "gog-metadata-unreadable",
   "gog-metadata-malformed",
+  // The Microsoft Store channel's own two read failures.
+  "microsoft-store-unavailable",
+  "microsoft-store-root-unreadable",
 ];
 
 const INSTALLATION_STATES: readonly InstallationDiscoveryState[] = [
@@ -49,6 +52,8 @@ const INSTALLATION_STATES: readonly InstallationDiscoveryState[] = [
   "cancelled",
   "source-unavailable",
   "no-candidates",
+  // A copy the player has, in the layout no mod loader can run in.
+  "install-cannot-load-mods",
   "result-unavailable",
   "mod-loader-missing",
   "not-stardew-installation",
@@ -68,6 +73,29 @@ test("an empty scan says a source could not be read when a diagnostic names one"
     assert.equal(installationDiscoveryState(0, [diagnostic]), "source-unavailable", diagnostic);
   // One failure diagnostic outweighs any number of absence diagnostics beside it.
   assert.equal(installationDiscoveryState(0, ["no-candidates", "registry-unavailable"]), "source-unavailable");
+});
+
+test("a copy the player has is named ahead of a channel that failed beside it", () => {
+  // The ordinary answer on a Windows machine with no GOG Galaxy: its config file is absent, so the
+  // GOG channel reports `gog-metadata-unreadable` (`stardew-game-install/gog-source.ts`) beside
+  // whatever the Store channel found. A Game Pass player's copy in the layout without mod support
+  // must still be the sentence they read - the fact is about the game they own, while a channel
+  // that failed only means another search is unevaluated.
+  assert.equal(
+    installationDiscoveryState(0, [
+      "microsoft-store-install-not-mod-enabled",
+      "gog-metadata-unreadable",
+      "no-candidates",
+    ]),
+    "install-cannot-load-mods",
+  );
+  // With no such copy, the failed channel is still what the reply says.
+  assert.equal(installationDiscoveryState(0, ["gog-metadata-unreadable", "no-candidates"]), "source-unavailable");
+  // And a candidate the Host offers outranks both.
+  assert.equal(
+    installationDiscoveryState(1, ["microsoft-store-install-not-mod-enabled", "gog-metadata-unreadable"]),
+    "candidates",
+  );
 });
 
 test("a reply that carries a candidate is a candidate whatever else it reported", () => {

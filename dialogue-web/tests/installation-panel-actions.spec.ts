@@ -198,6 +198,19 @@ const SCENARIOS: readonly Scenario[] = [
     discovery: body({ apiVersion: 1, candidates: [], diagnostics: ["registry-unavailable"] }),
   },
   {
+    // The copy Game Pass players have, in the folder the Xbox app installs without mod support: a
+    // diagnostic that names a game the player owns, and the reason the panel has a state of its own
+    // for it. It arrives the way the Host really sends it - beside `no-candidates`, because the
+    // channel offered no row (`windows-stardew-installation-discovery/provider.ts`).
+    name: "a Store copy that cannot load mods",
+    state: "install-cannot-load-mods",
+    discovery: body({
+      apiVersion: 1,
+      candidates: [],
+      diagnostics: ["microsoft-store-install-not-mod-enabled", "no-candidates"],
+    }),
+  },
+  {
     name: "one installation found",
     state: "candidates",
     discovery: body({ apiVersion: 1, candidates: [candidate(candidateId)], diagnostics: [] }),
@@ -722,7 +735,10 @@ test.describe("installation panel: its actions are never behind its own scroll",
    * failed assertion.
    */
   test("records where the panel sits on a fresh mount", async ({ page }) => {
-    const answers = answersFor(SCENARIOS[3]!);
+    // The scenario is named by its state, not by its place in the list: an inserted scenario
+    // used to move this reading onto a different Host answer, and the gate reported a layout
+    // defect that was really an index.
+    const answers = answersFor(SCENARIOS.find((scenario) => scenario.state === "candidates")!);
     await mountRoutes(page, answers);
     await page.setViewportSize({ width: 400, height: 800 });
     await page.goto(`http://127.0.0.1:4173/#profile=composed-reference-game&boot=${token}`);

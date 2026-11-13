@@ -981,6 +981,13 @@ const en = {
   gameInstallationSourceUnavailable: "The installation search is unavailable right now.",
   gameInstallationNoCandidates: "No Stardew Valley installation was found.",
   gameInstallationResultUnavailable: "We couldn't read the installation search result.",
+  // A copy the player HAS, found by the Microsoft Store / PC Game Pass channel, in the folder the
+  // Xbox app installs without mod support (`stardew-game-install/microsoft-store-source.ts`). The
+  // sentence states what is true of that copy and names the route that works - a copy SMAPI can be
+  // installed beside, or no companion - rather than borrowing the mod-loader sentence, whose fix
+  // cannot be carried out in that folder.
+  gameInstallationCannotLoadMods:
+    "We found Stardew Valley, but it is the Microsoft Store / PC Game Pass copy, and that folder cannot load mods. To play with the companion, use a copy you can install SMAPI into — the Steam or GOG version, or a folder you choose yourself — or play Stardew Valley without it.",
   gameInstallationModLoaderPresent: "SMAPI is already installed here, so this folder can run the companion.",
   // The chip above says the loader is missing; this is the player's way to it. It names the loader and the
   // site it opens rather than saying "click here", because the sentence is the only thing that tells a
@@ -1971,6 +1978,8 @@ const zh: Messages = {
   gameInstallationSourceUnavailable: "目前无法搜索游戏安装位置。",
   gameInstallationNoCandidates: "未找到《星露谷物语》安装位置。",
   gameInstallationResultUnavailable: "无法读取游戏安装搜索结果。",
+  gameInstallationCannotLoadMods:
+    "已找到《星露谷物语》，但它是 Microsoft Store / PC Game Pass 版本，那种目录无法加载模组。想和同伴一起玩，请使用可以安装 SMAPI 的版本（Steam 或 GOG 版本，或者你自行选择的一个文件夹）；也可以不使用同伴，直接玩《星露谷物语》。",
   gameInstallationModLoaderMissing:
     "已找到《星露谷物语》，但这个目录里没有模组加载器（SMAPI）。请先安装 SMAPI，再重新查找；也可以选择已经装有 SMAPI 的游戏文件夹。",
   gameInstallationModLoaderPresent: "这里已经装好了 SMAPI，这个文件夹可以直接加载伴侣。",

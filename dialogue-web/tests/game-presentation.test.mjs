@@ -338,10 +338,10 @@ test("a linked folder is refused as a link, in words that name the folder to pic
  * statement about the player's machine the Host never made. That is exactly how the GOG
  * diagnostics would have been lost.
  *
- * So the population is derived from the Host's own declaration and the exclusions are named:
- * every member of `DiscoveryDiagnostic` that does not name the absence of a candidate must make
- * the panel say the search could not run. A new member fails here until someone decides which
- * of the two it is.
+ * So the population is derived from the Host's own declaration and the exceptions are named:
+ * every member of `DiscoveryDiagnostic` must make the panel say one of the three things the
+ * Host's own members can mean - a search that could not run, a copy the player has that cannot
+ * load mods, or an absence. A new member fails here until someone decides which it is.
  */
 test("the panel knows every discovery diagnostic the Host can send, by derivation", () => {
   const hostSource = readFileSync(
@@ -359,11 +359,26 @@ test("the panel knows every discovery diagnostic the Host can send, by derivatio
   // state of most libraries, and telling the player their search could not run would be a statement the Host
   // never made.
   const NAMES_ABSENCE_NOT_FAILURE = ["no-candidates", "candidate-invalid", "library-without-game"];
+  // The member that names neither: the game is really installed, in the Store layout the Xbox app
+  // creates without mod support, so "nothing was found" and "the search could not run" are both
+  // untrue of it. It has its own sentence, and this asks for that sentence by name.
+  const NAMES_A_COPY_THAT_CANNOT_LOAD_MODS = ["microsoft-store-install-not-mod-enabled"];
+  // An exception that outlives the member it excuses would quietly stop checking anything.
+  assert.deepEqual(
+    [...NAMES_ABSENCE_NOT_FAILURE, ...NAMES_A_COPY_THAT_CANNOT_LOAD_MODS].filter(
+      (member) => !members.includes(member),
+    ),
+    [],
+    "a named exception names a member the Host's union no longer declares",
+  );
   const failures = [];
   for (const member of members) {
     if (NAMES_ABSENCE_NOT_FAILURE.includes(member)) continue;
-    if (installationDiscoveryState(0, [member]) !== "source-unavailable")
-      failures.push(`${member} reads as a finding about the machine, not a search that could not run`);
+    const expected = NAMES_A_COPY_THAT_CANNOT_LOAD_MODS.includes(member)
+      ? "install-cannot-load-mods"
+      : "source-unavailable";
+    const actual = installationDiscoveryState(0, [member]);
+    if (actual !== expected) failures.push(`${member} reads as ${actual}, not ${expected}`);
   }
   assert.deepEqual(failures, []);
 });

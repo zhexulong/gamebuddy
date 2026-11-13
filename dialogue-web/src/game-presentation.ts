@@ -151,6 +151,10 @@ export type InstallationDiscoveryState =
   | "cancelled"
   | "source-unavailable"
   | "no-candidates"
+  // A copy the player HAS, in a folder no mod loader can run in: the Microsoft Store's
+  // `XboxGames` layout. Neither a search that failed nor an empty scan - the game is installed,
+  // and the companion cannot run there.
+  | "install-cannot-load-mods"
   | "result-unavailable"
   // The chosen folder holds Stardew Valley and no mod loader. It is the one
   // selection refusal the player can fix, and it is never a search outcome: the
@@ -193,7 +197,20 @@ const SOURCE_READ_FAILURE_DIAGNOSTICS: readonly string[] = [
   "gog-unavailable",
   "gog-metadata-unreadable",
   "gog-metadata-malformed",
+  // The Microsoft Store / PC Game Pass channel's two read failures. Named per channel for the same
+  // reason the GOG ones are: a player whose Xbox app install could not be read is not a player whose
+  // Steam client is missing.
+  "microsoft-store-unavailable",
+  "microsoft-store-root-unreadable",
 ];
+
+/**
+ * The one diagnostic that names a copy the player has rather than a search that failed
+ * (`host/src/stardew-game-install/microsoft-store-source.ts`): the game is really installed in the
+ * Store layout the Xbox app creates without mod support, so SMAPI cannot be installed beside it.
+ * Neither "no installation was found" nor "the search is unavailable" is true of that machine.
+ */
+const INSTALL_CANNOT_LOAD_MODS_DIAGNOSTICS: readonly string[] = ["microsoft-store-install-not-mod-enabled"];
 
 /**
  * The state a settled discovery reply names, from the reply's own answer.
@@ -202,12 +219,20 @@ const SOURCE_READ_FAILURE_DIAGNOSTICS: readonly string[] = [
  * failure. The surface used to derive this from `candidates.length` alone, so the
  * Host's honest "I could not read Steam/GOG" read as "no Stardew Valley installation
  * was found" - on a machine where the game is installed.
+ *
+ * A copy the Host found in the layout that cannot load mods is stated ahead of a channel that
+ * failed beside it. On a Windows machine with no GOG Galaxy the GOG channel reports
+ * `gog-metadata-unreadable` as its ordinary answer - it reads a config file that is simply
+ * absent (`stardew-game-install/gog-source.ts`) - so the other order would bury the one fact
+ * this state exists for, on the very machine it exists for.
  */
 export function installationDiscoveryState(
   candidateCount: number,
   diagnostics: readonly string[],
 ): InstallationDiscoveryState {
   if (candidateCount > 0) return "candidates";
+  if (diagnostics.some((diagnostic) => INSTALL_CANNOT_LOAD_MODS_DIAGNOSTICS.includes(diagnostic)))
+    return "install-cannot-load-mods";
   return diagnostics.some((diagnostic) => SOURCE_READ_FAILURE_DIAGNOSTICS.includes(diagnostic))
     ? "source-unavailable"
     : "no-candidates";
@@ -247,6 +272,8 @@ export function installationStateLabel(labels: Messages, state: InstallationDisc
       return labels.gameInstallationSourceUnavailable;
     case "no-candidates":
       return labels.gameInstallationNoCandidates;
+    case "install-cannot-load-mods":
+      return labels.gameInstallationCannotLoadMods;
     case "result-unavailable":
       return labels.gameInstallationResultUnavailable;
     case "mod-loader-missing":
