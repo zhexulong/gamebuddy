@@ -9,6 +9,7 @@ import {
   STARDEW_ACTION_TOOL_NAMES,
   type StardewActionId,
   type StardewDescriptorDerivedActionId,
+  TILE_TARGET_ARGUMENTS,
   searchActionsFromModCatalog,
   visibleActionsFromModCatalog,
 } from "./action-registry.js";
@@ -920,20 +921,30 @@ function declaredArgumentNames(descriptor: ActionRegistrationDescriptor): readon
 }
 
 /**
- * Forward exactly the argument names the Mod descriptor declares, so a descriptor-derived tool builds its
- * parameter schema and its wire args from ONE source. The two were separate before: several tools derived a
- * complete `{ x, y, expectedTargetId }` schema and then forwarded `{}`, which the Host protocol refused as
- * `invalid_execution_request` before the bridge - a registered, advertised, described capability that could
- * not execute, with no fact in the refusal for the model to act on.
+ * Forward exactly these argument names, and nothing else. This is the ONE projection rule a mount has: a mount that
+ * spelled the names again would be a second spelling of an argument set the Mod or the registry already owns, and the
+ * failure it ships is invisible from outside - several tools derived a complete `{ x, y, expectedTargetId }` schema and
+ * then forwarded `{}`, which the Host protocol refused as `invalid_execution_request` before the bridge: a registered,
+ * advertised, described capability that could not execute, with no fact in the refusal for the model to act on.
+ */
+function forwardDeclaredArguments(
+  names: readonly string[],
+  params: Readonly<Record<string, unknown>>,
+): Readonly<Record<string, unknown>> {
+  const args: Record<string, unknown> = {};
+  for (const name of names) args[name] = params[name];
+  return args;
+}
+
+/**
+ * The descriptor-shaped caller above: the names come off the Mod's own declaration, so a descriptor-derived mount's
+ * parameter schema and its wire args read ONE source.
  */
 function declaredArguments(
   descriptor: ActionRegistrationDescriptor | undefined,
   params: Readonly<Record<string, unknown>>,
 ): Readonly<Record<string, unknown>> {
-  const args: Record<string, unknown> = {};
-  for (const name of (descriptor === undefined ? [] : declaredArgumentNames(descriptor)) ?? [])
-    args[name] = params[name];
-  return args;
+  return forwardDeclaredArguments((descriptor === undefined ? [] : declaredArgumentNames(descriptor)) ?? [], params);
 }
 
 /**
@@ -1364,7 +1375,7 @@ export function createStardewActionTools(
           idempotencyKey: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
         }),
         action: "harvest_bush",
-        toArgs: (params) => ({ x: params.x, y: params.y, expectedTargetId: params.expectedTargetId }),
+        toArgs: (params) => forwardDeclaredArguments(TILE_TARGET_ARGUMENTS, params),
       }),
     );
   }
@@ -1384,7 +1395,7 @@ export function createStardewActionTools(
           idempotencyKey: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
         }),
         action: "fish_here",
-        toArgs: (params) => ({ x: params.x, y: params.y, expectedTargetId: params.expectedTargetId }),
+        toArgs: (params) => forwardDeclaredArguments(TILE_TARGET_ARGUMENTS, params),
       }),
     );
   }
@@ -1426,7 +1437,7 @@ export function createStardewActionTools(
           idempotencyKey: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
         }),
         action,
-        toArgs: (params) => ({ x: params.x, y: params.y, expectedTargetId: params.expectedTargetId }),
+        toArgs: (params) => forwardDeclaredArguments(TILE_TARGET_ARGUMENTS, params),
       }),
     );
   }
@@ -1477,11 +1488,7 @@ export function createStardewActionTools(
           idempotencyKey: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
         }),
         action: "machine_inspect",
-        toArgs: (params) => ({
-          x: params.x,
-          y: params.y,
-          expectedTargetId: params.expectedTargetId,
-        }),
+        toArgs: (params) => forwardDeclaredArguments(TILE_TARGET_ARGUMENTS, params),
       }),
     );
   }
@@ -1535,11 +1542,7 @@ export function createStardewActionTools(
           idempotencyKey: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
         }),
         action: "machine_collect_output",
-        toArgs: (params) => ({
-          x: params.x,
-          y: params.y,
-          expectedTargetId: params.expectedTargetId,
-        }),
+        toArgs: (params) => forwardDeclaredArguments(TILE_TARGET_ARGUMENTS, params),
       }),
     );
   }
@@ -2388,11 +2391,7 @@ export function createStardewActionTools(
           idempotencyKey: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
         }),
         action: "npc_relationship",
-        toArgs: (params) => ({
-          x: params.x,
-          y: params.y,
-          expectedTargetId: params.expectedTargetId,
-        }),
+        toArgs: (params) => forwardDeclaredArguments(TILE_TARGET_ARGUMENTS, params),
       }),
     );
   }
@@ -2412,11 +2411,7 @@ export function createStardewActionTools(
           idempotencyKey: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
         }),
         action: "water_pet_bowl",
-        toArgs: (params) => ({
-          x: params.x,
-          y: params.y,
-          expectedTargetId: params.expectedTargetId,
-        }),
+        toArgs: (params) => forwardDeclaredArguments(TILE_TARGET_ARGUMENTS, params),
       }),
     );
   }
@@ -2436,11 +2431,7 @@ export function createStardewActionTools(
           idempotencyKey: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
         }),
         action: "water_slime_hutch_trough",
-        toArgs: (params) => ({
-          x: params.x,
-          y: params.y,
-          expectedTargetId: params.expectedTargetId,
-        }),
+        toArgs: (params) => forwardDeclaredArguments(TILE_TARGET_ARGUMENTS, params),
       }),
     );
   }
@@ -2776,11 +2767,7 @@ export function createStardewActionTools(
           idempotencyKey: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
         }),
         action: "collect_crab_pot_output",
-        toArgs: (params) => ({
-          x: params.x,
-          y: params.y,
-          expectedTargetId: params.expectedTargetId,
-        }),
+        toArgs: (params) => forwardDeclaredArguments(TILE_TARGET_ARGUMENTS, params),
       }),
     );
   }
@@ -2832,7 +2819,7 @@ export function createStardewActionTools(
           { additionalProperties: false },
         ),
         action: "mount_transport",
-        toArgs: (params) => ({ x: params.x, y: params.y, expectedTargetId: params.expectedTargetId }),
+        toArgs: (params) => forwardDeclaredArguments(TILE_TARGET_ARGUMENTS, params),
       }),
     );
     tools.push(
@@ -2852,7 +2839,7 @@ export function createStardewActionTools(
           { additionalProperties: false },
         ),
         action: "enter_mine",
-        toArgs: (params) => ({ x: params.x, y: params.y, expectedTargetId: params.expectedTargetId }),
+        toArgs: (params) => forwardDeclaredArguments(TILE_TARGET_ARGUMENTS, params),
       }),
     );
     tools.push(

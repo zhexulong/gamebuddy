@@ -1093,8 +1093,15 @@ const PUBLISHES_NATIVE_BINDING = requirement(
 
 // The argument shapes the Mod publishes, each named once: a row that repeated a shape by hand would be a second
 // spelling of it, and the refusal printed beside it would drift from the one next door.
+
+/**
+ * The tile-target shape: the tile a target was published at and the opaque id that names it. Exported because a mounted
+ * tool has to FORWARD this shape as well as require it, and a projection that spelled the three names again would be the
+ * same second spelling - the one that ships unusable when it drifts from the schema beside it.
+ */
+export const TILE_TARGET_ARGUMENTS = Object.freeze(["x", "y", "expectedTargetId"] as const);
 const NO_ARGUMENTS = publishesArguments();
-const TILE_AND_TARGET = publishesArguments("x", "y", "expectedTargetId");
+const TILE_AND_TARGET = publishesArguments(...TILE_TARGET_ARGUMENTS);
 const TILE_SLOT_AND_TARGET = publishesArguments("x", "y", "slot", "expectedTargetId");
 const TILE_ITEM_AND_TARGET = publishesArguments("x", "y", "slot", "expectedQualifiedItemId", "expectedTargetId");
 
