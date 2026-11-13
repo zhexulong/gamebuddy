@@ -448,6 +448,14 @@ function gameActivateProblemCode(error: unknown): string {
       return "unauthorized";
     case "stardew_lifecycle_closing":
       return distinguishableLifecycleProblemCode(error, "game_unavailable");
+    case "stardew_lifecycle_activation_failed":
+      // One wrapper, two refusals underneath. A registration an earlier attempt still
+      // holds is not a missing installation - the player's fix is to close the game and
+      // this GameBuddy session, not to register the folder again - and the surface has a
+      // different word for each, so the wrapper is read for the cause it carries.
+      return boundedLifecycleCause(error) === "stardew_bootstrap_registration_held"
+        ? "stardew_bootstrap_registration_held"
+        : "state_unavailable";
     default:
       return "state_unavailable";
   }

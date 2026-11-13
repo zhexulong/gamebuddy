@@ -177,14 +177,39 @@ test("normal activation fails closed without adopting or cleaning prepared regis
   // a crash case (it succeeds), so it is not listed.
   const cases = [
     // after writeMarker, before the owner is persisted.
-    { name: "prepare marker", marker: true, activeAttempt: false, owner: false },
+    {
+      name: "prepare marker",
+      marker: true,
+      activeAttempt: false,
+      owner: false,
+      refusal: /stardew_bootstrap_registration_unavailable/u,
+    },
     // after the owner is persisted, before the pointer is bound: the owner half
     // exists but the registration half does not.
-    { name: "prepared owner with no bound pointer", marker: true, activeAttempt: false, owner: true },
+    {
+      name: "prepared owner with no bound pointer",
+      marker: true,
+      activeAttempt: false,
+      owner: true,
+      refusal: /stardew_bootstrap_registration_unavailable/u,
+    },
     // after bindPreparedPointer, before clearMarker: the matching pair.
-    { name: "matching prepared owner and active attempt", marker: true, activeAttempt: true, owner: true },
-    // a pointer with no prepared owner: the other one-sided half.
-    { name: "active attempt with missing prepared owner", marker: false, activeAttempt: true, owner: false },
+    {
+      name: "matching prepared owner and active attempt",
+      marker: true,
+      activeAttempt: true,
+      owner: true,
+      refusal: /stardew_bootstrap_registration_unavailable/u,
+    },
+    // a pointer with no prepared owner: the other one-sided half. The registration
+    // itself is intact, so this is the held one and not the missing one.
+    {
+      name: "active attempt with missing prepared owner",
+      marker: false,
+      activeAttempt: true,
+      owner: false,
+      refusal: /stardew_bootstrap_registration_held/u,
+    },
   ] as const;
 
   for (const scenario of cases) {
@@ -203,7 +228,7 @@ test("normal activation fails closed without adopting or cleaning prepared regis
 
     await assert.rejects(
       harness.testCore.reserveOwnedPlayerHostBootstrapForActivation(root, claim),
-      /stardew_bootstrap_registration_unavailable/,
+      scenario.refusal,
       scenario.name,
     );
     await assertAttemptFixtureUnchanged(fixture);
@@ -1368,7 +1393,7 @@ test("finalizing an AI-side recovery terminal releases the pointer, consumes the
       root,
       mintActivationClaim(beforeHarness.composition, "browser-before"),
     ),
-    /stardew_bootstrap_registration_unavailable/,
+    /stardew_bootstrap_registration_held/,
   );
 
   await productionCore.finalizeRecoveredPlayerHostAiSettledRuntimeAttempt(owner, actor);

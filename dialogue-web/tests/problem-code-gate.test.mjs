@@ -506,8 +506,11 @@ test("problem-code.5: the authorities and the sender signatures are read, not as
   // ...and the game process itself ending (`stardew_player_host_exited`, the cabin read answered
   // against a game the Guardian watched die) moved the game count 24 to 25, and the cabin read's
   // other named answer, declared at last (`stardew_player_host_cabin_missing`, a live farm with no
-  // cabin this companion may use), moved it 25 to 26.
-  assert.equal(game.size, 26, `the game problem union should have 26 members, read ${game.size}`);
+  // cabin this companion may use), moved it 25 to 26. The registration an earlier attempt still
+  // holds (`stardew_bootstrap_registration_held`, the activation route's own answer where the
+  // generic `state_unavailable` used to stand for both that and a missing installation) moved it
+  // 26 to 27.
+  assert.equal(game.size, 27, `the game problem union should have 27 members, read ${game.size}`);
   assert.equal(turn.size, 4, `the turn's problemCode union should have 4 members, read ${turn.size}`);
   assert.deepEqual([...transport], ["payload_too_large"], "the transport extra is the ProblemCode alias literal");
   const { findings, examined, senders } = unreadCodeArguments(

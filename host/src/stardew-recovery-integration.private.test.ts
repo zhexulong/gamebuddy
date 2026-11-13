@@ -1556,7 +1556,7 @@ test("a real leftover is recovered, finalized and released, and the next lifecyc
       crashPolicy: { unappliableSettleClosure: false },
       recoveryAnswer: "contained",
     });
-    await expectActivationRefused(blockedFixture, "stardew_bootstrap_registration_unavailable");
+    await expectActivationRefused(blockedFixture, "stardew_bootstrap_registration_held");
     assert.equal(await readRegistrationPointer(runtimeRoot), crashedAttemptId);
     assert.deepEqual(await readSlotLeftover(blockedFixture), leftover);
 

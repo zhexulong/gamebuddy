@@ -1385,7 +1385,7 @@ async function prepareAndBindOwnedRegistrationAttempt(
 ): Promise<DurableOwnerFor<StardewOwnedPlayerHostBootstrapOwnerRecord>> {
   const root = resolve(runtimeRoot);
   try {
-    return await withStardewLifecycleInstallationRegistrationOwner(root, async (registration) => {
+    const outcome = await withStardewLifecycleInstallationRegistrationOwner(root, async (registration) => {
       // A normal launch is not a recovery authority. Retain any interrupted
       // prepare transaction exactly as found for its owner-specific settlement
       // or recovery path, and never adopt its owner or active-attempt pointer.
@@ -1394,9 +1394,14 @@ async function prepareAndBindOwnedRegistrationAttempt(
       }
 
       const current = await registration.readRegistration();
-      if (current === null || current.state !== "ready" || current.activeAttempt !== null) {
+      if (current === null || current.state !== "ready") {
         throw new Error("stardew_bootstrap_registration_unavailable");
       }
+      // The registration itself is fine and an attempt is holding it. It leaves this
+      // callback as a verdict rather than an exception: the registration lock maps every
+      // error it does not own to its own unavailable code, and a held pointer is the
+      // composer's fact about its own records, not the registration module's.
+      if (current.activeAttempt !== null) return Object.freeze({ kind: "held" as const });
       const marker: StardewInstallationRegistrationOwnerTransactionMarker = Object.freeze({
         schema: "gamebuddy-stardew-installation-owner-transaction/v1",
         operation: "prepare_bind",
@@ -1421,8 +1426,10 @@ async function prepareAndBindOwnedRegistrationAttempt(
         throw new Error("stardew_bootstrap_registration_unavailable");
       }
       await registration.clearMarker(marker);
-      return durableOwner;
+      return Object.freeze({ kind: "bound" as const, durableOwner });
     });
+    if (outcome.kind === "held") throw new Error("stardew_bootstrap_registration_held");
+    return outcome.durableOwner;
   } catch (error) {
     if (error instanceof Error && error.message === "stardew_installation_registration_unavailable") {
       throw new Error("stardew_bootstrap_registration_unavailable");

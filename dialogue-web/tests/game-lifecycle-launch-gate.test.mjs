@@ -49,6 +49,8 @@ import {
 } from "../src/game-lifecycle-controls.ts";
 import { messages } from "../src/i18n.ts";
 import { instanceLabel } from "../src/game-presentation.ts";
+import { composedProblemView, gameOperationFailure } from "../src/composed-problem-view.ts";
+import { ComposedReferenceGameProblemError } from "../src/composed-reference-game-browser-api.ts";
 
 const DIALOGUE_WEB = join(dirname(fileURLToPath(import.meta.url)), "..");
 const MODULE = join(DIALOGUE_WEB, "src", "game-lifecycle-controls.ts");
@@ -797,4 +799,39 @@ test("exit 0 is an ending and a non-zero code is a crash, and the two differ onl
   assert.match(en.gameEndedQuarantined, /Close GameBuddy completely/u);
   assert.match(zh.gameEndedQuarantined, /完全关闭 GameBuddy/u);
   t.diagnostic(`game-ended: quit -> ${quitControls.phase}, crashed -> ${crashedControls.phase}`);
+});
+
+/**
+ * The held registration is not a missing installation.
+ *
+ * Measured defect: an activation refused because an earlier attempt still held the installation
+ * registration reached the player as "the installation is not configured" - the state that asks
+ * them to register a folder they had already registered. The refusal now carries its own code, so
+ * the two facts have two sentences, and the held one states the two things that really free it.
+ */
+test("a registration an earlier attempt holds reads as its own refusal, not as a missing installation", async (t) => {
+  const en = messages("en");
+  const held = new ComposedReferenceGameProblemError("stardew_bootstrap_registration_held", 409);
+  const view = composedProblemView(held, en);
+  assert.equal(view.title, en.gameProblemRegistrationHeldTitle);
+  assert.equal(view.detail, en.gameProblemRegistrationHeldDetail);
+  assert.deepEqual(view.step, { kind: "outside_surface", step: "restart_gamebuddy" });
+  // The Host stated it did not stage anything, so the panel's per-operation line must not say the
+  // result is uncertain.
+  assert.deepEqual(gameOperationFailure(held, en), { kind: "refused", sentence: en.gameProblemRegistrationHeldDetail });
+
+  // The negative: the genuinely unregistered case keeps the words it had, and the two never
+  // collapse into one sentence.
+  const missing = composedProblemView(
+    new ComposedReferenceGameProblemError("state_unavailable", 409, null, "stardew_bootstrap_registration_unavailable"),
+    en,
+  );
+  assert.notEqual(missing.title, en.gameProblemRegistrationHeldTitle);
+  assert.notEqual(missing.detail, en.gameProblemRegistrationHeldDetail);
+
+  // The sentence stays true whether or not the game is still running, because the Host cannot
+  // tell those apart at this point: it names both things the player can do.
+  assert.match(en.gameProblemRegistrationHeldDetail, /If Stardew Valley is still running, close it/u);
+  assert.match(messages("zh-CN").gameProblemRegistrationHeldDetail, /如果《星露谷物语》还在运行/u);
+  t.diagnostic(`registration-held: ${view.title} -> ${view.step.step}`);
 });

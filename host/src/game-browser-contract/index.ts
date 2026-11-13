@@ -85,6 +85,11 @@ export const GAME_BROWSER_PROBLEM_CODES_V1 = Object.freeze([
   // companion may use. Its cure is the game's own - have Robin build one - so it must reach the
   // player as that fact rather than as an internal error.
   "stardew_player_host_cabin_missing",
+  // An earlier attempt still holds the installation registration. The activation route answers
+  // this instead of the generic `state_unavailable` because the two facts have opposite fixes: a
+  // missing registration is the installation step, a held one is "close the game and this
+  // GameBuddy session". It names the CONDITION only - which attempt holds it travels in no field.
+  "stardew_bootstrap_registration_held",
 ] as const);
 
 const GameProblemCode = Type.Union([
@@ -116,6 +121,7 @@ const GameProblemCode = Type.Union([
   Type.Literal("stardew_settings_revision_conflict"),
   Type.Literal("stardew_player_host_exited"),
   Type.Literal("stardew_player_host_cabin_missing"),
+  Type.Literal("stardew_bootstrap_registration_held"),
 ]);
 
 // ─── Redacted read projections ──────────────────────────────────────────────

@@ -103,13 +103,13 @@ const en = {
   // actually takes, because a panel with nothing to press and no sentence saying why is the
   // dead end `AGENTS.md`'s zero-forward-path rule exists for.
   gameLaunchQuarantined:
-    "This attempt failed in a way that stops GameBuddy from starting the game again until it is restarted. Close GameBuddy completely, open it again, then play with your companion.",
+    "This attempt failed in a way that stops GameBuddy from starting the game again until it is restarted. If Stardew Valley is still running, close it. Close GameBuddy completely, open it again, then play with your companion.",
   // The same quarantined launch, without the failure claim: the Guardian reported the game's
   // process exiting with the OS's normal-termination code, so the player ended the game and the
   // panel says that instead of telling them it failed. The step is identical because the
   // quarantine is.
   gameEndedQuarantined:
-    "Stardew Valley ended before your companion moved in, which also ends this attempt. Close GameBuddy completely, open it again, then play with your companion.",
+    "Stardew Valley ended before your companion moved in, which also ends this attempt. If Stardew Valley is still running, close it. Close GameBuddy completely, open it again, then play with your companion.",
   gameWaitingForGame:
     "Waiting for the game to hand this window your farm. Load the farm you want to play, and this panel updates when it does.",
   // The state whose step is the read itself. The subject is the Host's read of the player's
@@ -831,6 +831,9 @@ const en = {
   gameProblemCabinMissingTitle: "This farm has no cabin for your companion yet",
   gameProblemCabinMissingDetail:
     "Stardew Valley gave GameBuddy a farm it can join, but no cabin in it that your companion may use. Have Robin build one; Read cabins again once it is built.",
+  gameProblemRegistrationHeldTitle: "The last GameBuddy session still holds this game",
+  gameProblemRegistrationHeldDetail:
+    "GameBuddy could not start a new session because the previous one still holds this game. If Stardew Valley is still running, close it. Close GameBuddy completely, open it again, then play with your companion.",
 
   // Characters (design/28 §2) — companion library + persona/scenario/greeting
   charactersTitle: "Characters",
@@ -1341,9 +1344,9 @@ const zh: Messages = {
   gameLaunch: "与伙伴一起玩",
   gameLaunchFailed: "游戏启动结果不确定；当前显示的是最新权威游戏状态。",
   gameLaunchQuarantined:
-    "这次启动失败的方式会让 GameBuddy 在重启之前无法再次启动游戏。请完全关闭 GameBuddy，重新打开，然后再启动伴玩。",
+    "这次启动失败的方式会让 GameBuddy 在重启之前无法再次启动游戏。如果《星露谷物语》还在运行，请先关闭它。请完全关闭 GameBuddy，重新打开，然后再启动伴玩。",
   gameEndedQuarantined:
-    "《星露谷物语》在同伴搬进农场前已经退出，这次尝试也到此结束。请完全关闭 GameBuddy，重新打开，然后再启动伴玩。",
+    "《星露谷物语》在同伴搬进农场前已经退出，这次尝试也到此结束。如果《星露谷物语》还在运行，请先关闭它。请完全关闭 GameBuddy，重新打开，然后再启动伴玩。",
   gameWaitingForGame: "正在等待游戏把这个窗口接到你的农场上。载入你想玩的农场，载入后这个面板会更新。",
   gameNotRead: "GameBuddy 还没读到你的游戏，所以现在还不能说你的同伴能做什么。请再读一次。",
   gameReadAgain: "再读一次我的游戏",
@@ -1852,6 +1855,9 @@ const zh: Messages = {
   gameProblemCabinMissingTitle: "这个农场还没有同伴可住的小屋",
   gameProblemCabinMissingDetail:
     "《星露谷物语》把可以加入的农场告诉了 GameBuddy，但里面没有同伴可以用的小屋。请让罗宾建一间；建好后再读一次小屋。",
+  gameProblemRegistrationHeldTitle: "上一次 GameBuddy 会话仍占着这个游戏",
+  gameProblemRegistrationHeldDetail:
+    "GameBuddy 无法开始新的会话，因为上一次会话仍占着这个游戏。如果《星露谷物语》还在运行，请先关闭它。请完全关闭 GameBuddy，重新打开，然后再启动伴玩。",
 
   // Characters (design/28 §2)
   charactersTitle: "角色",

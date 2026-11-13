@@ -659,6 +659,14 @@ const gameCabinMissing: ProblemSentence = (labels) =>
     id: "cabin-choice-list",
     elsewhere: { said_as: "Read cabins again" },
   });
+/**
+ * An earlier attempt still holds the installation registration, so activation cannot stage a new
+ * one. Nothing here was read: the Host named the condition, the installation is registered, and the
+ * two facts that would free it are the game's process and this GameBuddy session - which is why the
+ * sentence stays true whether or not the game is still running.
+ */
+const gameRegistrationHeld: ProblemSentence = (labels) =>
+  sentence(labels.gameProblemRegistrationHeldTitle, labels.gameProblemRegistrationHeldDetail, RESTART_GAMEBUDDY);
 
 /**
  * Every member of the game contract's `GameProblemCode` union, and what the player reads for it.
@@ -708,6 +716,7 @@ const GAME_PROBLEM_VIEWS: Readonly<Record<GameProblemCode, GameProblemView>> = {
   stardew_settings_revision_conflict: refused(revisionConflict),
   stardew_player_host_exited: refused(gamePlayerHostExited),
   stardew_player_host_cabin_missing: refused(gameCabinMissing),
+  stardew_bootstrap_registration_held: refused(gameRegistrationHeld),
 };
 
 /** The codes the game contract declares, for the untyped boundary below the map. */
