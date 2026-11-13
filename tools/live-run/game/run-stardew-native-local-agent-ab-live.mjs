@@ -45,6 +45,7 @@ import {
   NIGHT_CAUSE_PASS_OUT,
   nightCause,
   parseReceiptEvidence,
+  sleepPromisesNotTaken,
   worldDayStartsFromFacts,
   worldNightEndingsFromFacts,
 } from "../../lib/multiday-baseline.mjs";
@@ -1846,6 +1847,33 @@ function summarizeDispatchedActions(actionTrace, programOutcomes, programSubmiss
     succeeded,
     accomplished: succeeded.filter((actionId) => !NON_ACCOMPLISHMENT_ACTIONS.has(actionId)),
   });
+}
+
+/**
+ * Whether the turn that has just settled SUBMITTED a `sleep`, from both channels of a dispatch.
+ *
+ * The two channels keep their own record of a submission: a flat request frame lands in `actionTrace`, a Body Program's
+ * node in `programSubmissions`. `sleep` travels both - it is a world-resetting plan action - so a reading that looked at
+ * one channel would say "she never went to bed" for a night she ended through the other.
+ *
+ * `markers` (`dispatchMarkers()`) are the lengths both records had BEFORE the turn, so a dispatch can only ever be
+ * attributed to the turn it happened in. The records are a parameter rather than a closure so this predicate can be
+ * driven in isolation, against real trace rows and real submitted nodes, by `run-stardew-native-local-agent-ab-live.test.mjs`.
+ *
+ * `sleep` is spelled here as the action id the Mod's protocol declares (`BridgeProtocol.cs:2386`: it takes no
+ * arguments), the same literal the night watcher already reads; only the SUBMISSION is asked about, because the question
+ * this answers is "did she act", never "did it succeed".
+ */
+function sleepSubmittedSince(markers, records) {
+  if (records.trace.slice(markers.traceFrom).some((entry) => entry?.action === "sleep")) return true;
+  return records.submissions
+    .slice(markers.submissionsFrom)
+    .some((submission) => (submission?.nodes ?? []).some((node) => node?.actionId === "sleep"));
+}
+
+/** Where a turn starts in both dispatch records, for `sleepSubmittedSince`. */
+function dispatchMarkers(trace, submissions) {
+  return { traceFrom: trace.length, submissionsFrom: submissions.length };
 }
 
 /**
@@ -4627,9 +4655,17 @@ try {
                         ? promptForLateDay(day)
                         : promptForDayContinuation(day);
             const spokenBefore = presentationPieces.length;
+            const dispatchBefore = dispatchMarkers(actionTrace, programSubmissions);
             const walked = await runAgentTurn(prompt, tools, { reason: wake.reason });
             if (walked.status !== null) status = walked.status;
             agentTurnResult = walked.turn;
+            // Whether THIS turn submitted the one action that ends a night. `sessionTurns` is the only record of both
+            // halves at once - what she said and what she dispatched - and the promise reading needs them joined per
+            // turn, which is why the answer is kept here rather than reconstructed from the traces later.
+            const sleepSubmitted = sleepSubmittedSince(dispatchBefore, {
+              trace: actionTrace,
+              submissions: programSubmissions,
+            });
             // What THIS turn said, sliced by index so a line cannot be attributed to another turn.
             const spokenThisTurn = presentationPieces
               .slice(spokenBefore)
@@ -4641,6 +4677,7 @@ try {
                 goal: promptForDay(day),
                 turn: walked.turn,
                 day,
+                sleepSubmitted,
                 // The turn's lines, kept APART: joining them was how a turn of fifteen short bubbles became one
                 // 120-code-point "utterance" the gate then failed.
                 spokenLines: Object.freeze(spokenThisTurn),
@@ -4777,6 +4814,25 @@ try {
         quietBoundMs: QUIET_BOUND_MS,
       }),
     );
+    // WHETHER SHE SAID SHE WAS GOING TO BED AND DID NOT, read from the turn stream before the night is judged.
+    //
+    // Measured 2026-11-13 (`round47`): the farmhouse was entered at 22:00, she said 「就睡」 and 「这就躺平」 and 「这觉才算
+    // 真睡下去」, `sleep` was submitted ZERO times in fifty-nine turns, and at 26:00 the engine passed her out. The
+    // night's cause was therefore `pass_out` - the consequence - and the only rule that fired on it was the settlement
+    // menu she never reached. The promise is the cause, and this is the one place that can see it: the turn stream,
+    // where what she SAID and what she DISPATCHED sit in the same record. It is passed to the assessment rather than
+    // judged beside it, so the run's account cannot publish the consequence without the cause it measured.
+    const sleepPromises = sleepPromisesNotTaken({ turns: sessionTurns });
+    console.error(
+      "MULTIDAY_SLEEP_PROMISES",
+      JSON.stringify({
+        examined: sleepPromises.examined,
+        promiseTurns: sleepPromises.promiseTurns,
+        turnsWithoutSleepRecord: sleepPromises.turnsWithoutSleepRecord,
+        windowsNotMeasured: sleepPromises.windowsNotMeasured,
+        readings: sleepPromises.readings.map((entry) => entry.code),
+      }),
+    );
     // Judged by the ONE baseline module, so the gate and the runner cannot disagree about what a crossing is.
     // The day COUNT is reconciled against the world's own `day_started` facts, not against the loop's own iterations:
     // measured 2026-11-06 (`round38`), two watched nights sat beside five world day starts and the assessment read a
@@ -4788,6 +4844,9 @@ try {
       // The world's own night endings, from the same fact log: `night_ended_pass_out` is the only witness that can
       // say the ENGINE took a night, and a night it took is attributed from here rather than from the loop's records.
       worldNightEndings: worldNightEndingsFromFacts(factLog),
+      // The turn stream's own reading: a list is MEASURED, and an empty list is the measurement answering that no
+      // promise was delivered. `null` would be "nobody looked", which is never the case here.
+      sleepPromises: sleepPromises.readings,
     });
     // A lifecycle that reported a failure for a night the world crossed is stated on the run's own log, beside them.
     for (const entry of assessment.lifecycleDisagreements) console.error("MULTIDAY_LIFECYCLE", entry.code);
@@ -4822,6 +4881,9 @@ try {
       }),
       // Judged by the ONE baseline module, so the gate and the runner cannot disagree about what a crossing is.
       assessment,
+      // What the turn stream said about going to bed, with its own population: the assessment names it as the cause of
+      // a night the engine took, and this is the reading itself, so a promise that caused nothing is still visible.
+      sleepPromises,
       dayRecords: crossing.dayRecords,
     });
   } else {
@@ -4829,6 +4891,7 @@ try {
     // admitted, so the first companion bubble's elapsed time is measured from the
     // real turn boundary, not from process start.
     const firstSpokenBefore = presentationPieces.length;
+    const firstDispatchBefore = dispatchMarkers(actionTrace, programSubmissions);
     const firstTurn = await runAgentTurn(prompt, tools, { reason: WAKE_REASON.dayStart });
     status = firstTurn.status;
     agentTurnResult = firstTurn.turn;
@@ -4837,6 +4900,10 @@ try {
         goalIndex: 0,
         goal: prompt,
         turn: agentTurnResult,
+        sleepSubmitted: sleepSubmittedSince(firstDispatchBefore, {
+          trace: actionTrace,
+          submissions: programSubmissions,
+        }),
         spokenLines: Object.freeze(
           presentationPieces
             .slice(firstSpokenBefore)
@@ -4851,6 +4918,7 @@ try {
     if (SCENARIO === "morning_routine") {
       for (const [index, goal] of SESSION_GOALS.entries()) {
         const spokenBefore = presentationPieces.length;
+        const dispatchBefore = dispatchMarkers(actionTrace, programSubmissions);
         const next = await runAgentTurn(goal, tools, { reason: WAKE_REASON.playerInput });
         if (next.status !== null) status = next.status;
         sessionTurns.push(
@@ -4858,6 +4926,10 @@ try {
             goalIndex: index + 1,
             goal,
             turn: next.turn,
+            sleepSubmitted: sleepSubmittedSince(dispatchBefore, {
+              trace: actionTrace,
+              submissions: programSubmissions,
+            }),
             spokenLines: Object.freeze(
               presentationPieces
                 .slice(spokenBefore)

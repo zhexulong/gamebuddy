@@ -4644,3 +4644,92 @@ test("the multi-day result publishes the wake account the verdict reads", () => 
   assert.match(RUNNER_SOURCE, /suppressedByReason:/u);
   assert.match(RUNNER_SOURCE, /quietBoundMs: QUIET_BOUND_MS/u);
 });
+
+/**
+ * THE PROMISE THAT WAS NEVER TAKEN, on the runner's own side of it.
+ *
+ * The reading itself is the baseline module's (`multiday-baseline.test.mjs` drives it, in both directions). What can only
+ * be checked here is that the runner JOINS the two halves the reading needs - what she said, per turn, and whether that
+ * turn submitted `sleep` - because `sessionTurns` is the only record where they meet.
+ *
+ * Measured 2026-11-13 (`round47`): nine delivered turns in the farmhouse with her saying 「就睡」/「躺平」/「这觉才算真睡下去」,
+ * and ZERO `sleep` submissions in fifty-nine turns. The night was reported as `pass_out` - its consequence - so the
+ * wiring below is what makes the cause visible at all.
+ */
+test("the runner records, per turn, whether that turn submitted a sleep", () => {
+  const sleepSubmittedSince = extractRunnerFunction(RUNNER_SOURCE, "sleepSubmittedSince");
+  const flat = (action) => ({ via: "flat", action, requestId: `req-${action}`, state: "succeeded" });
+  const program = (actionId, args = {}) => ({
+    programId: `plan_${actionId}`,
+    accepted: true,
+    nodes: [{ nodeId: "n01", actionId, arguments: args }],
+  });
+  // THE FLAT CHANNEL: the row is appended by the turn that dispatched it, and only rows AFTER the marker count.
+  const beforeTheTurn = [flat("harvest_crop")];
+  assert.equal(
+    sleepSubmittedSince(
+      { traceFrom: beforeTheTurn.length, submissionsFrom: 0 },
+      { trace: [...beforeTheTurn, flat("sleep")], submissions: [] },
+    ),
+    true,
+    "a flat `sleep` in this turn is the action that ends the night",
+  );
+  // THE PROGRAM CHANNEL: a node names the action, and there is no trace row for it at all.
+  assert.equal(
+    sleepSubmittedSince(
+      { traceFrom: 0, submissionsFrom: 0 },
+      { trace: [], submissions: [program("move_to_tile"), program("sleep")] },
+    ),
+    true,
+    "a `sleep` node inside a submitted program is the same night ended",
+  );
+  // AND THE OTHER DIRECTION, which is the run this reading exists for: a turn of ordinary farm work submits no sleep, and
+  // the thing that merely LOOKS like it - the emote named `sleep` - is not the action.
+  assert.equal(
+    sleepSubmittedSince(
+      { traceFrom: 0, submissionsFrom: 0 },
+      {
+        trace: [flat("move_to_tile"), flat("express_emote")],
+        submissions: [program("express_emote", { emote: "sleep" })],
+      },
+    ),
+    false,
+    "an emote named sleep is not the sleep action",
+  );
+  // A DISPATCH FROM AN EARLIER TURN IS NOT THIS TURN'S: the markers are the boundary, so a night she ended before this
+  // turn cannot answer for it.
+  const earlier = [flat("sleep")];
+  assert.equal(
+    sleepSubmittedSince(
+      { traceFrom: earlier.length, submissionsFrom: 1 },
+      {
+        trace: [...earlier, flat("harvest_crop")],
+        submissions: [program("sleep"), program("harvest_crop")],
+      },
+    ),
+    false,
+    "only what arrived after the marker belongs to this turn",
+  );
+  // AND THE WIRING, which no unit of the reading can check: the turn carries the answer, and the assessment is handed
+  // the reading instead of judging the night by its consequence alone.
+  assert.match(
+    RUNNER_SOURCE,
+    /sessionTurns\.push\(\s*Object\.freeze\(\{\s*goalIndex:[\s\S]{0,400}?sleepSubmitted,/u,
+    "the turn record must carry what the turn dispatched beside what it said",
+  );
+  assert.match(
+    RUNNER_SOURCE,
+    /const sleepPromises = sleepPromisesNotTaken\(\{ turns: sessionTurns \}\);/u,
+    "the reading is taken from the turn stream, with its population printed",
+  );
+  assert.match(
+    RUNNER_SOURCE,
+    /assessMultiDayBaseline\(\{[\s\S]{0,1200}?sleepPromises: sleepPromises\.readings,/u,
+    "the assessment must be handed the promises, not asked to guess them from the pass-out",
+  );
+  assert.match(
+    RUNNER_SOURCE,
+    /MULTIDAY_SLEEP_PROMISES[\s\S]{0,400}?examined: sleepPromises\.examined/u,
+    "the population the reading examined is printed beside the readings themselves",
+  );
+});

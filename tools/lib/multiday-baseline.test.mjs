@@ -8,6 +8,11 @@ import {
   classifyNight,
   DISMISSIBLE_ROLLOVER_MENUS,
   dayOfMonthForTotalDays,
+  SLEEP_PROMISE_NEGATIONS,
+  SLEEP_PROMISE_PHRASES,
+  SLEEP_PROMISE_TURNS,
+  sleepPromiseIn,
+  sleepPromisesNotTaken,
   MAXIMUM_BASELINE_DAYS,
   MINIMUM_BASELINE_DAYS,
   NIGHT_CAUSE_ENGINE,
@@ -880,6 +885,14 @@ test("the rule catalogue lists every rule the gate can fire (round18)", () => {
       worldNightEndings: [{ day: 5, cause: "pass_out" }],
     },
     { dayRecords: [DAY(), DAY({ day: 2 })], worldNightEndings: [{ day: 20, cause: "pass_out" }] },
+    // The promise she did not take: a night the engine took, beside a turn stream that said she was going to bed and a
+    // `sleep` submission that never came (the round47 shape).
+    {
+      dayRecords: [ENGINE_TAKEN_NIGHT({ cause: "pass_out" })],
+      sleepPromises: sleepPromisesNotTaken({
+        turns: [TURN({ day: 1, spokenLines: ["就睡，别撑到一点半了——斧头往墙角一靠，这就躺平。"] }), TURN({ day: 1 })],
+      }).readings,
+    },
   ];
   const fired = new Set();
   for (const entry of battery) {
@@ -888,6 +901,7 @@ test("the rule catalogue lists every rule the gate can fire (round18)", () => {
       daysRequested: entry.daysRequested ?? 2,
       worldDayStarts: entry.worldDayStarts ?? null,
       worldNightEndings: entry.worldNightEndings ?? null,
+      sleepPromises: entry.sleepPromises ?? null,
     });
     for (const violation of result.violations) fired.add(violation.code.split(":")[0]);
   }
@@ -1237,6 +1251,162 @@ test("a caller with no world facts is told whose attribution it is reading", () 
   assert.equal(withoutFacts.worldNightEndings, null);
   assert.equal(withoutFacts.passOutNights, 0, "a sleep receipt is not a pass-out");
   assert.equal(withoutFacts.ok, true, `violations=${JSON.stringify(codes(withoutFacts))}`);
+});
+
+// ------------------------------------------------------------------------------------------------------------
+// A PROMISE TO SLEEP THAT WAS NEVER TAKEN.
+//
+// Measured 2026-11-13 (`round47`): she entered the farmhouse at 22:00 and stood there, saying 「就睡」 and 「这就躺平」
+// and 「这觉才算真睡下去」, for NINE delivered turns - and the engine passed her out at 02:00. `sleep` was submitted
+// ZERO times in fifty-nine turns, so the night's cause was recorded as the pass-out, which is its CONSEQUENCE.
+// ------------------------------------------------------------------------------------------------------------
+
+/** One delivered turn: her lines, and whether a `sleep` submission happened during it. */
+const TURN = (overrides = {}) => ({
+  day: overrides.day ?? 1,
+  spokenLines: overrides.spokenLines ?? ["水壶一路满着，今天一滴没浇，白提了一整天。"],
+  ...("sleepSubmitted" in overrides ? { sleepSubmitted: overrides.sleepSubmitted } : { sleepSubmitted: false }),
+});
+
+test("the words a delivered line has to carry are a declared list, and a negation of one is not a promise", () => {
+  // The three she delivered on the night round47 measured are IN the list, pinned by name: the list is allowed to grow,
+  // and the words this reading exists for may not be dropped from it.
+  for (const phrase of ["就睡", "躺平", "睡下去"]) {
+    assert.ok(SLEEP_PROMISE_PHRASES.includes(phrase), `\`${phrase}\` is one of the measured commitments`);
+  }
+  // And every phrase in the list, whatever it is, is read as a commitment in a delivered line.
+  for (const phrase of SLEEP_PROMISE_PHRASES) {
+    assert.notEqual(sleepPromiseIn([`那就这么定了：${phrase}。`]), null, `\`${phrase}\` is a commitment`);
+  }
+  // A line that says she will NOT is a different claim: every declared negation makes the same words a refusal, so the
+  // reading cannot turn "今晚不躺平了" into a promise she then appears to break.
+  for (const negation of SLEEP_PROMISE_NEGATIONS) {
+    assert.equal(
+      sleepPromiseIn([`今晚${negation}躺平了，也不睡下去，干到天亮。`]),
+      null,
+      `\`${negation}\` negates the commitment rather than making one`,
+    );
+  }
+  // Ordinary narration about the world is not a promise, however much of the night it mentions.
+  assert.equal(sleepPromiseIn(["水壶一路满着，今天一滴没浇，白提了一整天。"]), null);
+  assert.equal(sleepPromiseIn([]), null);
+  assert.equal(sleepPromiseIn([null, 42, "  "]), null);
+});
+
+test("a promise she kept is not a reading, and a promise she did not is named with its turn and her words", () => {
+  const opening = TURN({ spokenLines: ["收工回屋吧，水壶都还满着。"] });
+  const promise = TURN({ spokenLines: ["就睡，别撑到一点半了——斧头往墙角一靠，这就躺平。"] });
+  // NOT TAKEN: nothing submitted `sleep`, so the account carries the code a reader can join to the utterance.
+  const broken = sleepPromisesNotTaken({ turns: [opening, promise, TURN(), TURN()] });
+  assert.equal(broken.promiseTurns, 1);
+  assert.equal(broken.examined, 4);
+  assert.deepEqual(
+    broken.readings.map((entry) => entry.code),
+    ["sleep_promised_not_taken:2:就睡，别撑到一点半了——斧头往墙角一靠，这就躺平。"],
+  );
+  // TAKEN: the same stream with the submission INSIDE the window is silent - the reading is about the missing action.
+  const kept = sleepPromisesNotTaken({
+    turns: [opening, promise, TURN({ sleepSubmitted: true }), TURN()],
+  });
+  assert.deepEqual(kept.readings, []);
+  assert.equal(kept.promiseTurns, 1, "the promise was still delivered: the population does not shrink");
+});
+
+test("the window is the declared three turns, and its edges decide", () => {
+  const promise = TURN({
+    spokenLines: ["这就躺平。"],
+  });
+  // The window is INCLUSIVE of the turn she spoke on: `SLEEP_PROMISE_TURNS` turns, starting with that one.
+  const inside = Array.from({ length: SLEEP_PROMISE_TURNS - 2 }, () => TURN());
+  const atTheEdge = sleepPromisesNotTaken({
+    turns: [promise, ...inside, TURN({ sleepSubmitted: true })],
+  });
+  assert.deepEqual(atTheEdge.readings, [], "the last turn inside the window still keeps it");
+  // One turn later is outside it: the promise stands unkept, and the code names the turn it was spoken on.
+  const outside = Array.from({ length: SLEEP_PROMISE_TURNS - 1 }, () => TURN());
+  const late = sleepPromisesNotTaken({ turns: [promise, ...outside, TURN({ sleepSubmitted: true })] });
+  assert.equal(late.readings.length, 1);
+  assert.equal(late.readings[0].turn, 1);
+});
+
+test("a turn whose submission record nobody kept is not the same as a turn that submitted nothing", () => {
+  // The three zeroes are told apart: a stream with no per-turn record is NOT MEASURED, and a promise inside it is not
+  // turned into a reading on the strength of a field that is absent. The count says how many turns could not be read.
+  const result = sleepPromisesNotTaken({
+    turns: [TURN({ spokenLines: ["这就躺平。"], sleepSubmitted: undefined }), TURN({ sleepSubmitted: undefined })],
+  });
+  assert.deepEqual(result.readings, []);
+  assert.equal(result.turnsWithoutSleepRecord, 2);
+  assert.equal(result.examined, 2);
+  assert.deepEqual(sleepPromisesNotTaken({ turns: [] }), {
+    examined: 0,
+    promiseTurns: 0,
+    turnsWithoutSleepRecord: 0,
+    windowsNotMeasured: 0,
+    readings: [],
+  });
+});
+
+test("the assessment names the promise as the cause of the night the engine took, not the pass-out", () => {
+  // The real night from round47, through the REAL assessment: a pass-out, and a turn stream saying she was going to bed.
+  const night = ENGINE_TAKEN_NIGHT({ day: 1, cause: "pass_out" });
+  const promise = sleepPromisesNotTaken({
+    turns: [TURN({ day: 1, spokenLines: ["就睡，别撑到一点半了——斧头往墙角一靠，这就躺平。"] }), TURN({ day: 1 })],
+  }).readings;
+  const named = assessMultiDayBaseline({
+    dayRecords: [night],
+    daysRequested: 2,
+    worldNightEndings: [],
+    sleepPromises: promise,
+  });
+  assert.equal(named.passOutNights, 1, "the pass-out is still counted: it is the consequence");
+  assert.ok(
+    codes(named).includes("sleep_promised_not_taken:1:就睡，别撑到一点半了——斧头往墙角一靠，这就躺平。"),
+    JSON.stringify(codes(named)),
+  );
+  assert.equal(named.passOutCauses.length, 1);
+  assert.equal(named.passOutCauses[0].code, promise[0].code);
+  assert.equal(named.passOutCauses[0].day, 1);
+  // THE OTHER DIRECTION, on the same night and the same assessment: with nothing said, the pass-out stands alone. It is
+  // still red (the settlement menu it skipped was never dismissed), but nothing claims she promised and reneged.
+  const silent = assessMultiDayBaseline({
+    dayRecords: [night],
+    daysRequested: 2,
+    worldNightEndings: [],
+    sleepPromises: [],
+  });
+  assert.equal(
+    codes(silent).some((code) => code.startsWith("sleep_promised_not_taken")),
+    false,
+    JSON.stringify(codes(silent)),
+  );
+  assert.equal(silent.passOutCauses[0].code, null);
+  assert.equal(silent.passOutCauses[0].reason, "no_promise_delivered");
+  // A CALLER THAT MEASURED NOTHING is told so: `not_measured` is not `no_promise_delivered`.
+  const unmeasured = assessMultiDayBaseline({ dayRecords: [night], daysRequested: 2, worldNightEndings: [] });
+  assert.equal(unmeasured.passOutCauses[0].reason, "not_measured");
+  assert.equal(unmeasured.sleepPromisesNotTaken, null);
+});
+
+test("a night her own sleep ended is never blamed on a promise", () => {
+  // The record's own receipt outranks the turn stream: she said she was going to bed AND did, so the pass-out reading
+  // cannot fire. What the turn stream says stays published, as a reading.
+  const promise = sleepPromisesNotTaken({
+    turns: [TURN({ day: 1, spokenLines: ["这就躺平。"] }), TURN({ day: 1 })],
+  }).readings;
+  const slept = assessMultiDayBaseline({
+    dayRecords: [DAY({ day: 1, cause: "sleep" })],
+    daysRequested: 2,
+    worldNightEndings: [],
+    sleepPromises: promise,
+  });
+  assert.equal(slept.passOutNights, 0);
+  assert.equal(
+    codes(slept).some((code) => code.startsWith("sleep_promised_not_taken")),
+    false,
+    JSON.stringify(codes(slept)),
+  );
+  assert.deepEqual(slept.sleepPromisesNotTaken, promise);
 });
 
 test("the world night reader refuses a fact whose id carries no day", () => {
