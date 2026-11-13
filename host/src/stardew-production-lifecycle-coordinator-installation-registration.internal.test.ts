@@ -198,6 +198,57 @@ test("Game setup cancellation is redacted, replayable, and never launches Player
   });
 });
 
+/**
+ * The defect this exists for: a dismissed folder dialog resolved `setupPlayerHost` successfully and that
+ * success stayed cached under the command's idempotency key, so the player's next click on the same key
+ * replayed a setup that never registered anything and the installation stayed absent.
+ *
+ * The assertion is deliberately the RETRY, not the first click alone: a cancellation that resolves is
+ * harmless as long as the key it resolved under is not kept. Cancelling and then retrying with the same
+ * key must reach the picker again and register the folder it returns.
+ */
+test("a cancelled Game setup does not cache its own success under the idempotency key", async () => {
+  await withWindowsPlatform(async () => {
+    let pickerCalls = 0;
+    const fixture = await createFixture({
+      overrides: {
+        selectStardewFolder: async () => {
+          pickerCalls += 1;
+          // The player dismisses the dialog, then picks the folder on the second click.
+          return pickerCalls === 1
+            ? { status: "cancelled" as const }
+            : { status: "selected" as const, path: gameDirectoryCandidate };
+        },
+        createInstallationInspector: async () => {
+          const chain = identityChainFor(gameDirectoryCandidate);
+          return installationInspector([chain, chain]);
+        },
+      },
+    });
+    try {
+      await fixture.coordinator.activationOwner.activate(fixture.broker.issue());
+      const command = { apiVersion: 1 as const, idempotencyKey: "ABEiM0RVZneImaq7zN3u_w" };
+      const registrationBefore = await readStardewInstallationRegistration(fixture.runtimeRoot);
+      await fixture.coordinator.activationOwner.setupPlayerHost(fixture.broker.issue("game_setup"), command);
+      assert.equal(pickerCalls, 1);
+      // Nothing was registered by the cancelled dialog: the record is byte-identical.
+      assert.deepEqual(await readStardewInstallationRegistration(fixture.runtimeRoot), registrationBefore);
+      // The same key, after the cancellation settled: a fresh attempt, not the cached outcome. The
+      // registration the retry writes is the record it found, advanced by exactly one revision.
+      await fixture.coordinator.activationOwner.setupPlayerHost(fixture.broker.issue("game_setup"), command);
+      assert.equal(pickerCalls, 2);
+      assert.deepEqual(await readStardewInstallationRegistration(fixture.runtimeRoot), {
+        ...registrationBefore!,
+        revision: registrationBefore!.revision + 1,
+      });
+      assert.deepEqual(fixture.playerSpawnCalls, []);
+    } finally {
+      await fixture.coordinator.close();
+      await fixture.broker.close();
+    }
+  });
+});
+
 test("Game setup admits only one pending idempotency lineage", async () => {
   await withWindowsPlatform(async () => {
     let release!: () => void;

@@ -1817,7 +1817,15 @@ function createCoordinator(
       promise = (async () => {
         try {
           const registered = await selectAndRegisterPlayerHostInstallation();
-          if (!registered) return;
+          // A dismissed dialog registers nothing, so its outcome may not stay cached under this
+          // idempotency key: the next click on the same key would replay a success that never
+          // happened and leave the setup believing in an installation that was never bound. The
+          // outcome is a discriminated value and is read as one - as a boolean it is truthy for
+          // every status, which is exactly how a cancellation fell through this guard.
+          if (registered.status === "cancelled") {
+            gameSetups.delete(command.idempotencyKey);
+            return;
+          }
           if (isClosing()) throw new Error("stardew_lifecycle_closing");
         } catch (error) {
           if (isClosing()) throw new Error("stardew_lifecycle_closing", { cause: error });
