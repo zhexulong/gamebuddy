@@ -215,6 +215,8 @@ export type TurnAccount = Readonly<{
   suppressed: Readonly<Record<TurnSuppression, number>>;
   examined: number;
   emptyTurns: TurnWithoutActionResult;
+  /** The turns that settled with nothing said and nothing done - see `TurnSettledSilentResult`. */
+  silentSettled: TurnSettledSilentResult;
   /** The turns a stale reading did NOT open, and why - see `AutoObserveAccount`. */
   autoObserve: AutoObserveAccount;
   lastDecision: TurnDecision | undefined;
@@ -224,10 +226,10 @@ export type TurnAccount = Readonly<{
  * The account as the one line a run's log carries, in the shape the invariant is read back in.
  *
  * `turns opened N · by reason {opener: count} · suppressed M {reason: count} · flushes examined F` (F derived, so the
- * arithmetic closes) `· turn_closed_without_action E {opener:reason: count}` `· auto_observe_on_stale R {ageTurns}` `·
- * auto_observe_unavailable U {reason: count}`. A reason that has never fired is still printed as `0`: it is a declared
- * member of a closed list, and a reader must be able to see that it exists and never happened rather than guess from its
- * absence. The opener histogram is printed for the same reason at the level above: `opened 55` said a number and nothing
+ * arithmetic closes) `· turn_closed_without_action E {opener:reason: count}` `· turn_settled_silent S {opener: count}` `·
+ * auto_observe_on_stale R {ageTurns}` `· auto_observe_unavailable U {reason: count}`. A reason that has never fired is
+ * still printed as `0`: it is a declared member of a closed list, and a reader must be able to see that it exists and
+ * never happened rather than guess from its absence. The opener histogram is printed for the same reason at the level above: `opened 55` said a number and nothing
  * about what opened them, so "she was woken by the clock fifty times" and "the person spoke fifty times" were the same
  * line.
  *
@@ -241,6 +243,9 @@ export function turnAccountLine(account: TurnAccount): string {
   const empty = emptyTurnShapes()
     .map((shape) => `${shape}: ${String(account.emptyTurns.byShape[shape])}`)
     .join(", ");
+  const silent = SILENT_SETTLED_OPENINGS.map(
+    (opener) => `${opener}: ${String(account.silentSettled.byOpener[opener])}`,
+  ).join(", ");
   const unavailable = AUTO_OBSERVE_UNAVAILABLE_REASONS.map(
     (reason) => `${reason}: ${String(account.autoObserve.unavailable[reason])}`,
   ).join(", ");
@@ -254,7 +259,7 @@ export function turnAccountLine(account: TurnAccount): string {
     (total, reason) => total + account.autoObserve.unavailable[reason],
     0,
   );
-  return `turns opened ${String(account.opened)} {${opened}} · suppressed ${String(suppressedTotal(account))} {${suppressed}} · flushes examined ${String(account.examined)} · ${TURN_WITHOUT_ACTION} ${String(account.emptyTurns.total)} {${empty}} · ${refreshed} · ${AUTO_OBSERVE_UNAVAILABLE_TOKEN} ${String(declined)} {${unavailable}}`;
+  return `turns opened ${String(account.opened)} {${opened}} · suppressed ${String(suppressedTotal(account))} {${suppressed}} · flushes examined ${String(account.examined)} · ${TURN_WITHOUT_ACTION} ${String(account.emptyTurns.total)} {${empty}} · ${TURN_SETTLED_SILENT} ${String(account.silentSettled.total)} {${silent}} · ${refreshed} · ${AUTO_OBSERVE_UNAVAILABLE_TOKEN} ${String(declined)} {${unavailable}}`;
 }
 
 /**
@@ -277,6 +282,70 @@ function suppressedTotal(account: TurnAccount): number {
 function initializedEmptyTurns(): Record<TurnWithoutActionShape, number> {
   const counts = {} as Record<TurnWithoutActionShape, number>;
   for (const shape of emptyTurnShapes()) counts[shape] = 0;
+  return counts;
+}
+
+/**
+ * The emitted name of a turn that settled SILENT: it delivered no speech, ran no action, and nothing of hers was still
+ * settling - counted by the opener beside it.
+ *
+ * <p>
+ * MEASURED 2026-11-13 (`round47`): 188 planned nodes across 55 turns, `turn_closed_without_action` 41 of 64 assistant
+ * turns, and the run's own clock split 376 s in turns that acted against 239 s in turns of pure talk. Those 41 are one
+ * statement, "she spoke and did nothing", and the account had no second statement for the turn whose only sanctioned
+ * outcome was a line of speech because the batch that opened it carried RECEIPTS that had already settled everything in
+ * it. That shape exists by construction - the plan tool's description ends with "…end your turn and speak to the player",
+ * and a terminal receipt is a non-held fact that opens a follow-up turn (`#hasPendingFactTrigger`) - and nothing could
+ * count it.
+ * </p>
+ * <p>
+ * It is the OTHER HALF of `turn_closed_without_action`, not a second name for it: that one is a turn that delivered
+ * speech and no action, this one is a turn that delivered neither. With both on the line a reader can tell "she spent the
+ * turn talking" from "there was nothing to say", which is the distinction no artifact of that run carried.
+ * </p>
+ * <p>
+ * A READING, NOT A PERMISSION. Nothing here forbids speech, suppresses it, or asks for silence: the counter reports how a
+ * turn ended, and it cannot make a turn end that way. Today the delivery path barely reaches it - a completed turn whose
+ * assistant message carried no text is classified as a provider failure (`PROVIDER_EMPTY_COMPLETION`,
+ * `companion-loop.ts`) rather than as silence - so the shape this counts is the one a MISSING message record produces,
+ * and a printed zero is a statement about the product rather than about her.
+ * </p>
+ */
+export const TURN_SETTLED_SILENT = "turn_settled_silent";
+
+/**
+ * A silent settlement cannot be the person's turn: a turn the person opened is owed an answer.
+ *
+ * <p>
+ * `player_input` is the one opener whose silence is a different defect with its own reading - someone spoke and got
+ * nothing - so counting it here would say "there was nothing to say" about the one case where the opposite is known. The
+ * class is stated as the complement of that single member rather than as a list of the openers a turn may fall silent on,
+ * so a new opener is counted without anyone returning to this declaration.
+ * </p>
+ */
+export type SilentSettledOpening = Exclude<TurnOpening, "player_input">;
+
+/** Every opener a silent settlement can have, derived from `TURN_OPENINGS` - the population is the closed list. */
+export const SILENT_SETTLED_OPENINGS = Object.freeze(
+  TURN_OPENINGS.filter((opener): opener is SilentSettledOpening => opener !== TURN_OPENING.playerInput),
+);
+
+/**
+ * Turns that delivered no speech, ran no action and closed with nothing of hers still settling, counted by opener.
+ *
+ * The opener is half of it for the reason the empty-turn counter gives: receipts arriving is a turn the HOST owed, an
+ * observation refresh is a turn the WORLD owed, and a due wake is a turn her own schedule owed - three different
+ * statements about why a companion had a turn and used it for nothing.
+ */
+export type TurnSettledSilentResult = Readonly<{
+  total: number;
+  byOpener: Readonly<Record<SilentSettledOpening, number>>;
+}>;
+
+/** The counter, keyed by the declared openers rather than by what this run happened to do. */
+function initializedSilentSettled(): Record<SilentSettledOpening, number> {
+  const counts = {} as Record<SilentSettledOpening, number>;
+  for (const opener of SILENT_SETTLED_OPENINGS) counts[opener] = 0;
   return counts;
 }
 
@@ -937,6 +1006,14 @@ export class CompanionEventPump {
   readonly #emptyTurnsByShape: Record<TurnWithoutActionShape, number> = initializedEmptyTurns();
   #emptyTurns = 0;
   /**
+   * Turns that settled with no speech and no action, one count per opener, beside `#emptyTurns`.
+   *
+   * The two counters answer one question between them - did a delivered turn spend itself on speech, or on nothing? - and
+   * they are counted in the same place, from the same settlement, so they cannot disagree about which turns existed.
+   */
+  readonly #silentSettledByOpener: Record<SilentSettledOpening, number> = initializedSilentSettled();
+  #silentSettledTurns = 0;
+  /**
    * One timing record per execution the pump has seen and not seen settle.
    *
    * A record of its own rather than a reading of `#receipts`, because `takeBatch` empties that window on every delivery
@@ -1155,6 +1232,8 @@ export class CompanionEventPump {
     for (const reason of TURN_SUPPRESSIONS) this.#suppressedByReason[reason] = 0;
     for (const shape of emptyTurnShapes()) this.#emptyTurnsByShape[shape] = 0;
     this.#emptyTurns = 0;
+    for (const opener of SILENT_SETTLED_OPENINGS) this.#silentSettledByOpener[opener] = 0;
+    this.#silentSettledTurns = 0;
     this.#lastTurnDecision = undefined;
   }
 
@@ -1189,6 +1268,10 @@ export class CompanionEventPump {
       suppressed: Object.freeze({ ...this.#suppressedByReason }),
       examined: this.#openedTurns + suppressed,
       emptyTurns: Object.freeze({ total: this.#emptyTurns, byShape: Object.freeze({ ...this.#emptyTurnsByShape }) }),
+      silentSettled: Object.freeze({
+        total: this.#silentSettledTurns,
+        byOpener: Object.freeze({ ...this.#silentSettledByOpener }),
+      }),
       autoObserve: Object.freeze({
         refreshed: this.#autoObserveRefreshed,
         lastAgeTurns: this.#autoObserveLastAgeTurns,
@@ -2229,6 +2312,13 @@ export class CompanionEventPump {
    * refusal - nothing here changes what the turn was allowed to do - because the run's own account has to be able to say
    * "41 of 64 turns were this shape" without anyone opening a session file.
    * </p>
+   * <p>
+   * AND THE THIRD: `said_nothing` is the turn that delivered no speech, so it is counted as `turn_settled_silent` instead -
+   * the other half of the same distinction, taken at the same moment and from the same production the loop published. Two
+   * conditions keep it honest. Something of hers still settling means the silence was a WAIT rather than nothing to say, so
+   * that turn is neither counter's; and the person's own opener is never silence, because a turn someone opened is owed an
+   * answer and its emptiness is a different defect than this one.
+   * </p>
    */
   #observeTurnProduction(
     outcome: CompanionTurnOutcome | undefined,
@@ -2243,6 +2333,14 @@ export class CompanionEventPump {
       const shape = turnWithoutActionShape(opening, this.#emptyTurnReason(broughtObservation));
       this.#emptyTurns += 1;
       this.#emptyTurnsByShape[shape] += 1;
+    }
+    if (
+      this.turnProduction === TURN_PRODUCTION.saidNothing &&
+      !this.hasExecutionInFlight &&
+      opening !== TURN_OPENING.playerInput
+    ) {
+      this.#silentSettledTurns += 1;
+      this.#silentSettledByOpener[opening] += 1;
     }
     if (this.turnProduction === TURN_PRODUCTION.worked) {
       this.#turnsWithoutWork = 0;
