@@ -23,12 +23,6 @@ public sealed record ModConfig
     public string WindowMode { get; init; } = "visible";
 
     /// <summary>
-    /// The player's own way into her conversation: which key opens the engine's chat box, and whether the arrival hint
-    /// is shown. On by default, because a player with no key has no way in at all.
-    /// </summary>
-    public CompanionChatConfig CompanionChat { get; init; } = new();
-
-    /// <summary>
     /// Optional BCP-47 companion presentation locale from the frontend-set
     /// language preference. When present it is the single locale contract for
     /// companion text presentation and Agent session language; when absent the
@@ -509,23 +503,4 @@ public sealed class FarmhandProvisioningProbeConfig
         && HostAddress.All(character => char.IsLetterOrDigit(character) || character is '.' or ':' or '-');
 
     internal bool HasExpectedFarmhand => long.TryParse(ExpectedFarmhandId, out _);
-}
-
-/// <summary>
-/// The player-facing entry into her conversation. The key is a plain SMAPI button name, so a player can move it without
-/// a menu we would have to draw, and the arrival hint is the only thing that ever tells them it exists.
-/// </summary>
-public sealed record CompanionChatConfig
-{
-    internal const string DefaultOpenKey = "H";
-
-    public bool Enable { get; init; } = true;
-
-    /// <summary>
-    /// The key that opens the engine's chat box addressed to her. Whatever vanilla already owns stays vanilla's: see
-    /// <see cref="CompanionChat.VanillaChatKey"/> for the one this refuses by name.
-    /// </summary>
-    public string OpenKey { get; init; } = DefaultOpenKey;
-
-    internal bool IsValid => !Enable || CompanionChat.TryParseOpenKey(OpenKey, out _, out _);
 }

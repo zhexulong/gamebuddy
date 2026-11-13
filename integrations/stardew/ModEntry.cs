@@ -195,9 +195,8 @@ public sealed partial class ModEntry : Mod
         helper.Events.GameLoop.Saved += this.OnSaved;
         helper.Events.GameLoop.ReturnedToTitle += this.OnReturnedToTitle;
         helper.Events.Multiplayer.ModMessageReceived += this.OnModMessageReceived;
-        helper.Events.Input.ButtonPressed += this.OnCompanionChatButtonPressed;
+
         this.InstallCompanionBubbles();
-        this.InstallCompanionChat();
 
         helper.ConsoleCommands.Add("gamebuddy_farmhands", "List authoritative local-co-op player and Farmhand identities without changing game state.", this.FarmhandsCommand);
         helper.ConsoleCommands.Add("gamebuddy_status", "Print the configured AI Farmhand's authoritative snapshot on its local screen.", this.StatusCommand);
@@ -361,8 +360,6 @@ public sealed partial class ModEntry : Mod
             // pathing-behaviour work, so it is activated the same way the xUnit
             // seam probes are (a GAMEBUDDY_STARDEW_* variable set by the external
             // harness) rather than by a field in a user profile.
-            this.pathPredicateProbe = PathPredicateProbe.TryStart(this.Monitor);
-            this.companionChatProbe = CompanionChatProbe.TryStart(this.Monitor);
             return;
         }
         bool hostConfigured = this.config.HostFarmhandProvisioning?.Enable == true;
@@ -466,141 +463,6 @@ public sealed partial class ModEntry : Mod
         }
         this.sleepLifecycle = SleepAndAdvanceDayLifecycle.TryStart(this.Monitor, this.config.SleepLifecycle);
         return true;
-    }
-
-    /// <summary>
-    /// Arms the player's own way into her conversation. Measured on 1.6.15 in a single-player fixture session: the
-    /// engine's chat box takes text in single player, and its submit seam is the one the Host ingress already reads, so
-    /// the whole feature is this key plus the words that name her.
-    /// </summary>
-    private void InstallCompanionChat()
-    {
-        if (!this.config.CompanionChat.Enable)
-            return;
-        if (!CompanionChat.TryParseOpenKey(this.config.CompanionChat.OpenKey, out this.companionChatOpenKey, out string reasonCode))
-        {
-            this.Monitor.Log(
-                $"GameBuddy companion chat is unavailable: {reasonCode} (OpenKey='{this.config.CompanionChat.OpenKey}').",
-                LogLevel.Error);
-            return;
-        }
-        MethodInfo? target = AccessTools.Method(typeof(ChatBox), "draw", new[] { typeof(SpriteBatch) });
-        MethodInfo? postfix = AccessTools.Method(typeof(ModEntry), nameof(DrawCompanionChatTitlePostfix));
-        if (target is null || postfix is null)
-        {
-            this.Monitor.Log(
-                "GameBuddy companion chat is unavailable: ChatBox.draw(SpriteBatch) was not found, so the box cannot be told whose input it is.",
-                LogLevel.Error);
-            return;
-        }
-        try
-        {
-            new Harmony(this.ModManifest.UniqueID + ".companion-chat").Patch(target, postfix: new HarmonyMethod(postfix));
-        }
-        catch (Exception exception)
-        {
-            this.Monitor.Log($"GameBuddy companion chat title is unavailable: {exception.GetType().Name}.", LogLevel.Error);
-            return;
-        }
-        companionChatTitleOwner = this;
-        this.companionChatAvailable = true;
-        this.Monitor.Log($"GameBuddy companion chat armed: {this.companionChatOpenKey} opens the engine's own box, titled with her name.", LogLevel.Info);
-    }
-
-    /// <summary>
-    /// The key the player presses. It opens the engine's own chat box - the box every other text path in this Mod already
-    /// depends on - and suppresses itself so the key does not also do whatever vanilla bound it to.
-    /// </summary>
-    private void OnCompanionChatButtonPressed(object? sender, ButtonPressedEventArgs e)
-    {
-        if (!this.companionChatAvailable || e.Button != this.companionChatOpenKey || e.IsSuppressed())
-            return;
-        if (Game1.chatBox is null
-            || !CompanionChat.CanOpen(
-                Context.IsWorldReady,
-                alreadyActive: Game1.chatBox.isActive(),
-                otherTextInputOwnsKeyboard: Game1.keyboardDispatcher?.Subscriber is not null,
-                menuOpen: Game1.activeClickableMenu is not null,
-                eventRunning: Game1.CurrentEvent is not null))
-        {
-            return;
-        }
-        Game1.chatBox.activate();
-        this.Helper.Input.Suppress(e.Button);
-        this.Monitor.Log($"[companion-chat] opened;key={this.companionChatOpenKey}", LogLevel.Trace);
-    }
-
-    /// <summary>
-    /// The one time the player is told any of this: her arrival. It fires once per session and only once she is actually
-    /// standing in this world - a hint shown before she exists would teach the key and then open a box addressed to no
-    /// one.
-    /// </summary>
-    private void MaybeShowCompanionChatHint()
-    {
-        if (this.companionChatHintShown
-            || !this.companionChatAvailable
-            || !Context.IsWorldReady
-            || !Game1.IsMasterGame
-            || this.hostFarmhandProvisioner is null)
-        {
-            return;
-        }
-        long now = Environment.TickCount64;
-        if (now < this.nextCompanionChatHintCheckAtMs)
-            return;
-        this.nextCompanionChatHintCheckAtMs = now + 2_000L;
-        FarmhandBinding[] bound;
-        try
-        {
-            FarmhandBindingStore store = this.Helper.Data.ReadSaveData<FarmhandBindingStore>(FarmhandProvisioningProtocol.SaveDataKey)
-                ?? new FarmhandBindingStore();
-            string saveId = Game1.uniqueIDForThisGame.ToString();
-            string worldId = Game1.MasterPlayer.UniqueMultiplayerID.ToString();
-            bound = store.Bindings.Where(binding => binding.SaveId == saveId && binding.WorldId == worldId).ToArray();
-        }
-        catch
-        {
-            return;
-        }
-        if (bound.Length != 1
-            || !long.TryParse(bound[0].FarmhandId.ToString(), out long farmhandId)
-            || this.Helper.Multiplayer.GetConnectedPlayer(farmhandId) is null)
-        {
-            return;
-        }
-        this.companionChatHintShown = true;
-        Game1.addHUDMessage(new HUDMessage(CompanionChat.HintText(
-            this.CompanionName(),
-            this.companionChatOpenKey.ToString(),
-            ResolvePresentationLocale(this.config)))
-        {
-            timeLeft = CompanionChat.HintDurationMs,
-        });
-        this.Monitor.Log($"[companion-chat] arrival hint shown;key={this.companionChatOpenKey}", LogLevel.Info);
-    }
-
-    /// <summary>Her name as the game knows it: the farmer name the Host wrote for her.</summary>
-    private string CompanionName() => CompanionChat.Name(this.config.HostFarmhandProvisioning?.FarmhandName);
-
-    private static void DrawCompanionChatTitlePostfix(ChatBox __instance) =>
-        companionChatTitleOwner?.DrawCompanionChatTitle(__instance);
-
-    /// <summary>
-    /// Her name over the engine's own box, drawn with the engine's own text routine in the font the HUD already uses.
-    /// The box itself is untouched: this adds the one sentence the box cannot say for itself.
-    /// </summary>
-    private void DrawCompanionChatTitle(ChatBox chat)
-    {
-        if (!this.companionChatAvailable || Game1.spriteBatch is null || chat.chatBox is null || !chat.isActive())
-            return;
-        Utility.drawTextWithShadow(
-            Game1.spriteBatch,
-            CompanionChat.TitleText(this.CompanionName(), ResolvePresentationLocale(this.config)),
-            Game1.smallFont,
-            new Vector2(chat.chatBox.X, chat.chatBox.Y - 40f),
-            Game1.textColor,
-            1f,
-            1f);
     }
 
     private void StopChatCommand(string[] command, ChatBox chat)
@@ -1343,7 +1205,6 @@ public sealed partial class ModEntry : Mod
         this.MarkTickPhase("window_mode");
         Volatile.Write(ref this.tickWatchdogPhase, "window_mode");
         this.ApplyWindowModeTick();
-        this.MaybeShowCompanionChatHint();
         // This gate must precede bootstrap, binding, producer, and bridge work.
         if (this.provisioningConfigurationRejected)
         {
@@ -1423,10 +1284,6 @@ public sealed partial class ModEntry : Mod
                 this.PumpBridgeWhileBodyOwned();
                 return;
             }
-            // The companion-chat probe types into the engine's own chat box and owns no actor, so it runs beside the
-            // bridge rather than in front of it: it must not be able to hold up a request while it measures.
-            if (this.companionChatProbe is not null && this.companionChatProbe.Update())
-                this.companionChatProbe = null;
             // The path-predicate probe is a one-tick read-only measurement that
             // needs only an idle actor and the post-scenario collision field, so
             // it is consulted before any body owner and never claims the actor.

@@ -194,12 +194,6 @@ public sealed partial class ModEntry : Mod
     private SleepModalProbe? sleepModalProbe;
     private bool sleepModalProbeRejected;
     private PathPredicateProbe? pathPredicateProbe;
-    private CompanionChatProbe? companionChatProbe;
-    private SButton companionChatOpenKey;
-    private bool companionChatAvailable;
-    private bool companionChatHintShown;
-    private long nextCompanionChatHintCheckAtMs;
-    private static ModEntry? companionChatTitleOwner;
 
     /// <summary>The longest a stage line may take to appear again, in milliseconds: one sample per window, per lane.</summary>
     private const long StageLogWindowMs = 2_000L;
