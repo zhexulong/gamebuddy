@@ -73,6 +73,9 @@ test("one reading is `not_measured:game_clock_read_once`, never a pass", () => {
   assert.equal(reading.first, 600);
   assert.equal(reading.last, 600);
   assert.equal(reading.advancedMinutes, null, "no second reading means no span, not a zero span");
+  // And it must not borrow the still world's word for it: "the world stood still" and "nobody looked twice" are the two
+  // readings this module exists to keep apart.
+  assert.equal(reading.facts.state, "span_not_measured");
 });
 
 test("sampling one admitted snapshot twice is one reading of the world", () => {

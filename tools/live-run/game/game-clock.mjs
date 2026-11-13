@@ -136,7 +136,7 @@ export function createGameClock({ now = () => Date.now() } = {}) {
     // A rate needs a denominator: zero facts over a still world is `null` here (`state: "still_world"`), never 0 per
     // game hour, because the second number would read as a measured rate of a world that did not move.
     const perGameHour = counted === null || gameMinutes === null ? null : round(counted / (gameMinutes / 60), 2);
-    const factState = classifyFacts({ counted, gameMinutes });
+    const factState = classifyFacts({ counted, verdict });
     // ONE spelling of the triple, used by the object and by the printed line: two formatters for one reading is how a
     // published number and a printed number come to disagree.
     const factsReading = describeFacts({ counted, gameMinutes, spanMinutes, perGameHour });
@@ -223,12 +223,15 @@ function judgeSpan({ readings, spanMinutes, first, last }) {
 }
 
 /** What the facts the run recorded say, given whether the clock gave them a denominator at all. */
-function classifyFacts({ counted, gameMinutes }) {
+function classifyFacts({ counted, verdict }) {
   if (counted === null) return "facts_not_counted";
   if (counted > 0) return "facts_observed";
-  // Zero facts over a still world is the clock's own answer (`still_world`); over a span it is a real finding about the
-  // Mod or the bridge, and the two must never publish the same word.
-  return gameMinutes === null ? "still_world" : "no_facts_while_the_world_moved";
+  // Zero facts means something different in each of these shapes, and they must never publish the same word: over a
+  // moving world it is a real finding about the Mod or the bridge, over a still one it is the clock's own answer, and
+  // everywhere else the DENOMINATOR is missing - a run that looked once was never able to see a rate at all.
+  if (verdict === "advanced") return "no_facts_while_the_world_moved";
+  if (verdict === "never_advanced") return "still_world";
+  return "span_not_measured";
 }
 
 /** `facts N · game minutes M · per game hour X`, formatted once and used by the object and the printed line. */
