@@ -43,6 +43,13 @@ namespace GameBuddy.Stardew;
 /// depth table, the railroad's one flagged fish. On such a location the table is not the authority for "what may bite",
 /// so the answer is <c>not measured</c> rather than a table reading wearing the authority's clothes.
 /// </para>
+///
+/// <para>
+/// THE FIFTH ARGUMENT IS A ROW, NOT A FLAG. `GetChance`'s last parameter is the engine's answer to "is THIS row the
+/// species the specific bait names" (`spawn.ItemId == text`, `:13969`), and it multiplies THAT row's own chance
+/// (`SpawnFishData.GetChance`). It is derived from the row's own id inside the projection; a value computed once for the
+/// table would be a false statement about every row at once, and would boost all of them when no bait names any.
+/// </para>
 /// </summary>
 internal static class FishingCatchableQuery
 {
@@ -115,7 +122,10 @@ internal static class FishingCatchableQuery
         int? depth = bobberTile is { } tile ? FishingRod.distanceToLand(tile.X, tile.Y, location) : null;
         bool magicBait = player.CurrentTool is FishingRod rod && rod.HasMagicBait();
         bool curiosityLure = player.CurrentTool is FishingRod lureRod && lureRod.HasCuriosityLure();
-        bool targetBait = magicBait == false && string.Equals(TargetBaitSpecies(player), string.Empty, StringComparison.Ordinal);
+        // The species the equipped bait names, or null when it names none. It is carried INTO the projection because the
+        // engine compares it against each row's own id (`spawn.ItemId == text`, GameLocation.cs:13969): a value computed
+        // here, once for the whole table, is a different question from the one the engine asks.
+        string? targetedSpecies = TargetBaitSpecies(player);
         FishingMoment moment = new(
             location.NameOrUniqueName,
             Game1.GetSeasonForLocation(location).ToString(),
@@ -135,7 +145,7 @@ internal static class FishingCatchableQuery
 
         List<FishingSpawn> spawns = new(rows.Count);
         foreach (SpawnFishData row in rows)
-            spawns.Add(Project(row, player, location, fishRows, curiosityLure, targetBait));
+            spawns.Add(Project(row, player, location, fishRows, curiosityLure, targetedSpecies));
 
         return new FishingCatchAnswer(
             FishingCatchable.CatchableNow(moment, spawns, MayProduceChance),
@@ -148,7 +158,7 @@ internal static class FishingCatchableQuery
         GameLocation location,
         Dictionary<string, string> fishRows,
         bool curiosityLure,
-        bool usingTargetBait)
+        string? targetedSpecies)
     {
         // THE ENGINE DECIDES WHAT THE ROW NAMES. `SpawnFishData.ItemId` is "either a qualified item ID, or an item query
         // like ALL_ITEMS" (`StardewValley.GameData.xml:1863-1865`), and `ItemRegistry.GetData` is the reader for both id
@@ -181,26 +191,35 @@ internal static class FishingCatchableQuery
             isItemQuery,
             fishRow,
             // The engine's own chance arithmetic, asked for a number; whether a number may produce is the answer's call.
+            // The fifth argument is the engine's own per-row question - "is THIS row the species the specific bait
+            // names" (`spawn.ItemId == text`, GameLocation.cs:13969) - and `GetChance` spends it on this row's chance
+            // alone (`num * SpecificBaitMultiplier + SpecificBaitBuff`). `row.RequireMagicBait` is the separate magic-bait
+            // condition; the engine's fifth argument has no magic-bait term at all.
             DeclaredChance: row.GetChance(
                 curiosityLure,
                 player.DailyLuck,
                 player.LuckLevel,
                 (float value, IList<QuantityModifier> modifiers, QuantityModifier.QuantityModifierMode mode) =>
                     Utility.ApplyQuantityModifiers(value, modifiers, mode, location),
-                usingTargetBait),
+                string.Equals(row.ItemId, targetedSpecies, StringComparison.Ordinal)),
             CanUseTrainingRod: row.CanUseTrainingRod,
             PlayerPosition: ToRectangle(row.PlayerPosition),
             BobberPosition: ToRectangle(row.BobberPosition));
     }
 
-    /// <summary>The species a target bait names, or the empty string: `(O)SpecificBait` carries it in `preservedParentSheetIndex` (<c>GameLocation.cs:13925-13928</c>).</summary>
-    private static string TargetBaitSpecies(Farmer player) =>
+    /// <summary>
+    /// The species a target bait names, or null when the rod's bait names none: `(O)SpecificBait` carries it in
+    /// `preservedParentSheetIndex`, and the engine builds the string it compares against each row's id from it
+    /// (<c>GameLocation.cs:13920-13931</c>, <c>:13969</c>). Null and not the empty string, because the engine's own
+    /// `text` is null when no bait names a species - the empty string is what made an inverted comparison look right.
+    /// </summary>
+    private static string? TargetBaitSpecies(Farmer player) =>
         player.CurrentTool is FishingRod rod
         && rod.GetBait() is { } bait
         && string.Equals(bait.QualifiedItemId, "(O)SpecificBait", StringComparison.Ordinal)
         && bait.preservedParentSheetIndex.Value is { } preserved
             ? ItemRegistry.QualifyItemId(preserved)
-            : string.Empty;
+            : null;
 
     private static FishingRectangle? ToRectangle(Rectangle? source) =>
         source is { } rectangle ? new FishingRectangle(rectangle.X, rectangle.Y, rectangle.Width, rectangle.Height) : null;
