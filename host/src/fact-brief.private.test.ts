@@ -574,6 +574,126 @@ test("soilTiles prints the ground till_soil accepts, beside the hoe dirt it refu
 });
 
 /**
+ * The morning the seed fact is about: sixty-two tiles under the Hoe, and the seed half of "can I sow" unstated.
+ *
+ * The fields are the ones the wire really publishes for that morning - `soilTiles` is the `till_soil` target list,
+ * `seedTargets` is the empty hoe dirt the Mod pairs with a seed she HOLDS (so it is `[]` until she has one), and
+ * `seedSupplyTargets` is published only while `plant_seed` is advertised. `inventoryItemFacts` is absent on purpose:
+ * the Mod gates it on eight OTHER capabilities, and `plant_seed` is not one of them, so the pack line she would have read
+ * the seeds out of is not there on a reduced action set either.
+ */
+function seedWorld(overrides: Readonly<Record<string, unknown>> = {}): Snapshot {
+  return {
+    ...world,
+    cropTargets: undefined,
+    weedTargets: undefined,
+    debrisTargets: undefined,
+    rockSourceTargets: undefined,
+    inventoryItemFacts: undefined,
+    soilTiles: Array.from({ length: 62 }, (_, index) => ({ x: 60 + (index % 20), y: 15 + Math.floor(index / 20) })),
+    seedTargets: [],
+    ...overrides,
+  } as unknown as Snapshot;
+}
+
+/** The world block for one snapshot of that morning. */
+const seedText = (snapshot: Snapshot): string => composeWorldState({ snapshot, revision: 1205, ageTurns: 0, ageMs: 0 });
+
+/**
+ * A TRUE FACT THAT IS NOT ACTIONABLE: "these sixty-two tiles can be hoed" and no word about seeds.
+ *
+ * Measured 2026-11-13: `<world-state>` rendered `可锄的地块 (62,18) …` 43 times in one run and said nothing about whether
+ * she held a seed, so her thinking answered the question itself - `Note 让种地，但我背包似乎没种子？` - never checked, never
+ * planned to buy, and she went and chopped trees. The block below also said `这一带没有：…、卖种子的地方`, because
+ * `seedSupplyTargets: []` is a row set of (a seed she HOLDS x a shop) and an empty one was read as "no shop is here".
+ */
+test("seed_shortage: a measured no-seed pack says so, and the block stops calling a seed shop absent", () => {
+  const text = seedText(seedWorld({ seedSupplyTargets: [] }));
+  assert.match(text, /种子: 0（背包里没有种子）/u, `the block must state the measured zero; it read:\n${text}`);
+  assert.ok(
+    !text.includes("卖种子的地方"),
+    `\`seedSupplyTargets: []\` means she holds no plantable seed, not that no shop is here; the block read:\n${text}`,
+  );
+  // And the family is not one the row printer speaks for at all: its rows carry no tile of their own.
+  assert.equal(
+    nearbyTargetFamilies(seedWorld({ seedSupplyTargets: [] })).some((family) => family.family === "seedSupplyTargets"),
+    false,
+    "a supply row is (held seed x shop) and names no place, so the family must not be rendered as one",
+  );
+  assert.ok(
+    (NON_ROW_FAMILIES.seedSupplyTargets ?? "").trim() !== "",
+    "seedSupplyTargets must state the reason it is not a row family",
+  );
+});
+
+/**
+ * The other half: she HAS seeds, and the count reaches her once.
+ *
+ * Once, because `heldCount` is the Mod's own sum of the published pack rows - two sentences stating it would be one fact
+ * with two spellings, and the pack line is the sentence that must give the seed half up: a plantable seed is the one
+ * thing in the pack that a tile family is waiting on.
+ */
+test("seed_held: the seeds she can plant print their own count, once", () => {
+  const held = seedWorld({
+    inventoryItemFacts: [
+      { slot: 0, qualifiedItemId: "(O)388", displayName: "木头", stack: 47 },
+      { slot: 4, qualifiedItemId: "(O)472", displayName: "防风草种子", stack: 3 },
+    ],
+    seedTargets: [{ targetId: "seed_1", slot: 4, x: 65, y: 15, qualifiedItemId: "(O)472", displayName: "防风草种子" }],
+    seedSupplyTargets: [
+      {
+        qualifiedItemId: "(O)472",
+        displayName: "防风草种子",
+        heldCount: 3,
+        shopId: "SeedShop",
+        shopDisplayName: "皮埃尔杂货店",
+        openNow: true,
+        shopLocation: "SeedShop",
+      },
+    ],
+  });
+  const text = seedText(held);
+  assert.match(text, /种子: 3 防风草种子/u, `the held count must reach the block; it read:\n${text}`);
+  assert.equal(
+    (text.match(/防风草种子/gu) ?? []).length,
+    1,
+    `one fact, one spelling: the pack line must hand the plantable seeds over, and the block read:\n${text}`,
+  );
+  // `heldCount` absent is NOT zero: the Mod publishes it only when the pack rows were published too.
+  const unmeasured = seedText(
+    seedWorld({ seedSupplyTargets: [{ qualifiedItemId: "(O)472", displayName: "防风草种子" }] }),
+  );
+  assert.match(
+    unmeasured,
+    /种子: 防风草种子（数量未测）/u,
+    `an unmeasured count must not print as a number:\n${unmeasured}`,
+  );
+  assert.doesNotMatch(unmeasured, /种子: 0/u, "a count the Mod did not measure must never render as zero");
+});
+
+/**
+ * Degrading to today's bytes: a snapshot that never published the family gets the line it gets now.
+ *
+ * The golden below is the block this snapshot rendered at `fcfdce40`, before the seed fact existed - captured from the
+ * running composer, not retyped from memory.
+ */
+test("seed_absent: an unmeasured seed family leaves the block byte-identical", () => {
+  const text = seedText(seedWorld());
+  assert.equal(
+    text,
+    [
+      "<world-state>",
+      "世界（revision 1205，刚刚更新）",
+      "06:20（清晨）；1年第3天 春季；天气：雨天；位置: 农场；脚下: (64, 15)；手持: 锄头（+2）；体力: 82；血量: 100；身体: 空闲",
+      "可锄的地块 (64,15) (63,15) (63,16) (64,16) (65,15) (65,16) 其余 56 格未列出",
+      "这一带没有：可收的作物、已播种的地",
+      "</world-state>",
+    ].join("\n"),
+    "a snapshot with no seed family must not gain a word: absent is not zero",
+  );
+});
+
+/**
  * The family cap, made to say what it took.
  *
  * `soilTiles` is the thirteenth family a real farm strip publishes, so the cap that prints twelve is the next place the

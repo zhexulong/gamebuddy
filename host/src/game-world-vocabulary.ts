@@ -806,7 +806,6 @@ export const TARGET_FAMILY_LABELS: Readonly<Record<string, string>> = Object.fre
   cookingRecipeTargets: "可做的菜",
   cookingStationTargets: "灶台",
   shopTargets: "商店",
-  seedSupplyTargets: "卖种子的地方",
   mineElevatorFloorTargets: "矿洞电梯",
   animalDoorTargets: "畜舍门",
   fishPondTargets: "鱼塘",
@@ -848,6 +847,8 @@ export const NON_ROW_FAMILIES: Readonly<Record<string, string>> = Object.freeze(
     "every loaded map's villagers, printed by `formatNearbyVillagers` on this same line; `npcRelationshipTargets` is the radius-bounded family an action names",
   fixedInteractionPoints:
     "the map's own fixed interaction points - a mine ladder, a bed - each with a closed `kind`. No published action declares it as its target family (`mineEntranceTargets` and `doorTargets` are the families actions name), so it reaches her through the observation instead of the per-turn line",
+  seedSupplyTargets:
+    "a supply row is (a seed she HOLDS x a shop that stocks it), so an empty array means she holds no plantable seed - not that no shop is here. Reading it as a place produced `这一带没有：卖种子的地方` on a farm with sixty-two tiles under the Hoe, which is a reason to walk away rather than a fact. The seed half prints as `种子: …` on this same line (`formatHeldSeeds` in `fact-brief.ts`), and a row names a counter only for a seed she already holds, so a zero-seed actor has no place to be pointed at",
 });
 
 /** Tiles one family names before it counts the rest. Six fits a plan; a 64-row patch does not fit a prompt. */

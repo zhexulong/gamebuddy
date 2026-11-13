@@ -271,6 +271,8 @@ export function composeWorldState(reading: WorldStateReading | undefined): strin
   if (canWater !== "") parts.push(canWater);
   const carrying = formatCarrying(world);
   if (carrying !== "") parts.push(carrying);
+  const seeds = formatHeldSeeds(world);
+  if (seeds !== "") parts.push(seeds);
   const lines: string[] = [worldStateHeader(reading)];
   const paragraph = parts.join("；");
   if (paragraph !== "") lines.push(paragraph);
@@ -309,12 +311,19 @@ const MAX_CARRYING_ROWS = 8;
  * is `displayName` - the wire's own spelling, the one the shipping bin and every other reader uses. ABSENT means the Mod
  * did not publish the family at all - the field is gated on the actions that read the inventory - and stays silent,
  * which is a different statement from `身上没有别的东西`.
+ *
+ * THE PLANTABLE SEEDS ARE NOT PRINTED TWICE: the ids `seedSupplyTargets` names are left out here and printed by
+ * `formatHeldSeeds`, which states the count AND the one thing this list cannot - that a measured empty one means she can
+ * sow nothing. One count in two sentences would be two readings of one fact, and the seed half has a consumer (the tilled
+ * ground waiting for it) this list does not serve.
  */
 function formatCarrying(world: Snapshot): string {
   const rows = world.inventoryItemFacts;
   if (!Array.isArray(rows)) return "";
+  const seeds = plantableSeedIds(world);
   const named = rows
     .filter((row) => typeof row?.displayName === "string" && row.displayName.trim() !== "")
+    .filter((row) => !seeds.has(row.qualifiedItemId))
     .map((row) => ({
       name: row.displayName.trim(),
       stack: Number.isFinite(row.stack) ? Number(row.stack) : 1,
@@ -323,6 +332,68 @@ function formatCarrying(world: Snapshot): string {
   const shown = named.slice(0, MAX_CARRYING_ROWS).map((row) => `${String(row.stack)} 份 ${row.name}`);
   const rest = named.length - shown.length;
   return `身上带着 ${shown.join("、")}${rest > 0 ? ` 其余 ${String(rest)} 种未列出` : ""}`;
+}
+
+/**
+ * The qualified ids of the seeds she is holding, as the supply family states them.
+ *
+ * ONE AUTHORITY, TWO SPELLINGS REFUSED. `seedSupplyTargets` is the Mod's own answer to "which seeds in this pack can be
+ * planted" - it reads `Object.SeedsCategory` on the game thread - and its `heldCount` is summed from the same
+ * `inventoryItemFacts` rows this pack list prints. So the seed half of the pack is printed once, from that family:
+ * whichever renderer prints the count, the other one leaves those ids alone.
+ */
+function plantableSeedIds(world: Snapshot): ReadonlySet<string> {
+  const rows = world.seedSupplyTargets;
+  if (!Array.isArray(rows)) return new Set();
+  return new Set(rows.map((row) => row.qualifiedItemId));
+}
+
+/**
+ * The seeds she can actually plant, and how many of each.
+ *
+ * <p>
+ * WHY IT IS HERE. Measured 2026-11-13: `<world-state>` rendered `可锄的地块 (62,18) …` 43 times in one run and never said
+ * whether she held a seed, so her own thinking answered it - `Note 让种地，但我背包似乎没种子？` - and she did not check the
+ * pack and did not plan to buy one; she went and chopped trees instead. The tile fact was true and she could not act on
+ * it. The two readings that decide whether hoeing is worth anything are the can's water (`formatCarriedCanWater`) and
+ * this one.
+ * </p>
+ *
+ * <p>
+ * THE ZERO IS THE FACT, AND IT IS MEASURED. `seedSupplyTargets` is published only while `plant_seed` is advertised, and
+ * the Mod answers with an empty row set only when no pack slot holds an `Object.SeedsCategory` item - so `[]` is "she
+ * holds no plantable seed", the sentence that turns her guess into a plan. A family the snapshot does not carry prints
+ * NOTHING: absent is not zero, exactly as for the can and for the pack list.
+ * </p>
+ *
+ * <p>
+ * THE COUNT IS THE WIRE'S OWN, NEVER A DEFAULT. A row's `heldCount` is absent when the pack rows were not published at
+ * all, and then the seed is named without a number rather than counted as `0`. Rows are (seed x shop), so the seeds are
+ * de-duplicated by id and the seed's first row states its count.
+ * </p>
+ *
+ * <p>
+ * NO SHOP IS NAMED BESIDE IT. The rows carry where a seed she HOLDS is sold (`shopLocation` / `shopDestination`), and a
+ * zero-seed actor has no row at all - so a counter named beside the zero would be the one invention this line exists to
+ * prevent. The zero is the whole next step: with no seed, hoeing sows nothing.
+ * </p>
+ */
+function formatHeldSeeds(world: Snapshot): string {
+  const rows = world.seedSupplyTargets;
+  if (!Array.isArray(rows)) return "";
+  if (rows.length === 0) return "种子: 0（背包里没有种子）";
+  const seeds: string[] = [];
+  const seen = new Set<string>();
+  for (const row of rows) {
+    if (seen.has(row.qualifiedItemId)) continue;
+    seen.add(row.qualifiedItemId);
+    const name =
+      typeof row.displayName === "string" && row.displayName.trim() !== ""
+        ? row.displayName.trim()
+        : row.qualifiedItemId;
+    seeds.push(Number.isFinite(row.heldCount) ? `${String(row.heldCount)} ${name}` : `${name}（数量未测）`);
+  }
+  return `种子: ${seeds.join("、")}`;
 }
 
 /**
