@@ -24,8 +24,9 @@ import { auditSnapshotRendering, RENDERER_SOURCES, RENDERING_EXEMPTIONS } from "
 // only as `1 份 喷壶` in the pack list. She shook it and narrated a gauge instead: `壶底见底了`, `壶空了正好`.
 //
 // PROVENANCE - 2026-11-21, the audience defect: `health` was exempted by `printedBy: "host/src/snapshot-hud.ts"`, a
-// block whose only consumer is a `typeof` guard (`host/src/host-service.ts:1235`). Her own hit points were printed into a
-// string no reader receives, and the gate called the field handled.
+// block whose only consumer in the tree was a `typeof` guard. Her own hit points were printed into a string no reader
+// receives, and the gate called the field handled. That module and its block were deleted; the audience it held is still
+// a member kind, declared in the proofs below with a fixture renderer.
 
 const REPOSITORY_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const GATE = join(REPOSITORY_ROOT, "tools", "check-snapshot-field-rendering.mjs");
@@ -33,12 +34,29 @@ const SOURCES = {
   protocol: "host/src/protocol.ts",
   factBrief: "host/src/fact-brief.ts",
   vocabulary: "host/src/game-world-vocabulary.ts",
-  hud: "host/src/snapshot-hud.ts",
+  unreadHud: "host/src/unread-hud.ts",
   playerHud: "host/src/player-hud.ts",
 };
 
 /** A renderer that reaches the PLAYER's own surface: the audience this tree has none of, declared here for the proofs. */
 const PLAYER_HUD_RENDERER = Object.freeze({ path: SOURCES.playerHud, audience: "player" });
+
+/**
+ * A renderer whose text reaches NOBODY: the audience `host/src/snapshot-hud.ts` held before it was deleted.
+ *
+ * Declared here rather than imported from the tree because the tree has no such module any more, and the property it
+ * proves - a field printed into text no reader receives clears nothing - has to stay checkable.
+ */
+const UNREAD_HUD_RENDERER = Object.freeze({ path: SOURCES.unreadHud, audience: "unread" });
+const UNREAD_HUD = [
+  'import type { Snapshot } from "./protocol.js";',
+  "",
+  "export function formatUnreadHud(snapshot: Snapshot): string {",
+  "  const ripe = Array.isArray(snapshot.harvestWhereabouts) ? snapshot.harvestWhereabouts.length : 0;",
+  "  return `ripe ${String(ripe)}`;",
+  "}",
+  "",
+].join("\n");
 const PLAYER_HUD = [
   'import type { Snapshot } from "./protocol.js";',
   "",
@@ -67,12 +85,11 @@ async function withFixtureRoot(specs, run) {
 }
 
 /** The sources this gate reads, each optionally rewritten, as one fixture tree. */
-function tree({ protocol, factBrief, vocabulary, hud } = {}) {
+function tree({ protocol, factBrief, vocabulary } = {}) {
   return {
     [SOURCES.protocol]: protocol ?? readReal(SOURCES.protocol),
     [SOURCES.factBrief]: factBrief ?? readReal(SOURCES.factBrief),
     [SOURCES.vocabulary]: vocabulary ?? readReal(SOURCES.vocabulary),
-    [SOURCES.hud]: hud ?? readReal(SOURCES.hud),
   };
 }
 
@@ -130,21 +147,18 @@ test("every wire field is in her view or carries an owner, and the reading state
     assert.ok(typeof entry.owedBy === "string" && entry.owedBy.trim() !== "", `${field}: an exemption needs an owner`);
     assert.ok(typeof entry.reason === "string" && entry.reason.trim() !== "", `${field}: an exemption needs a reason`);
   }
-  // THE AUDIENCE THIS UNIT ADDED: the HUD block's fields are printed and reach NOBODY, so they clear nothing. The
-  // disposition says so per field, which is what the exemption's prose used to claim without a check.
+  // THE TWO AUDIENCES THAT CLEAR NOTHING. `harvestWhereabouts` is in neither the text she reads nor any text at all -
+  // the report says so per field, which is what the exemption's prose used to claim without a check. Nothing in the tree
+  // prints a wire key on the player's own surface (`dialogue-web`'s Game panel reads `game_browser_api/v1` -
+  // connection, instance, compatibility, capabilities, outcome - not a `Snapshot`), and nothing composes a snapshot field
+  // into text no reader receives: the module that did was deleted. Both zeros are measured and reported rather than
+  // assumed, so the day a surface does either, this line changes.
   const ripe = dispositionOf(reading, "harvestWhereabouts");
   assert.equal(ripe?.renderedBy, null, "harvestWhereabouts is not in the text she reads");
-  assert.equal(ripe?.renderedTo, "neither", "and the report does not pretend the HUD block is an audience of hers");
-  assert.equal(ripe?.printedBy, SOURCES.hud, "it names the module that prints it");
-  assert.equal(ripe?.printedTo, "unread", "and where that module's text goes");
-  // Nothing in the tree prints a wire key on the player's own surface: `dialogue-web`'s Game panel reads
-  // `game_browser_api/v1` (connection, instance, compatibility, capabilities, outcome), not a `Snapshot`. The zero is
-  // measured and reported rather than assumed, so the day a player surface prints one, this line changes.
+  assert.equal(ripe?.renderedTo, "neither", "and the report does not pretend a module that writes it is her audience");
   assert.equal(reading.printedToThePlayer, 0, "no player-audience renderer prints a wire field today");
-  assert.ok(
-    reading.printedToNoReader >= 2,
-    `printed into text with no reader ${String(reading.printedToNoReader)}, too few to include the exempted fields`,
-  );
+  assert.equal(reading.printedToNoReader, 0, "no renderer composes a wire field for nobody today");
+  assert.equal(reading.printedOutsideHerView, 0, "so nothing is printed outside her view at all");
   process.stdout.write(
     `snapshot_field_rendering examined ${String(reading.examined)} · in her view ${String(reading.rendered)} · ` +
       `exempt ${String(reading.exempt)} · for the player ${String(reading.printedToThePlayer)} · ` +
@@ -227,15 +241,19 @@ test("a player_only declaration must say why, and the player surface must really
   assert.deepEqual(codes(backed.violations), [], "a reason and a real player rendering make the declaration hold");
 });
 
-test("the HUD block printing a field is not the companion reading it", async () => {
-  // The HUD still prints `harvestWhereabouts`, and the field is still exempt - but the exemption no longer rests on the
-  // HUD. Deleting every trace of the module from the tree changes nothing about her view, and that is the point.
-  const reading = await withFixtureRoot(tree({ hud: "/** a HUD that prints nothing */\nexport {};\n" }), (root) =>
-    auditSnapshotRendering({ root }),
+test("a renderer that reaches nobody is named per field, and clears nothing she does not read", async () => {
+  // The audience the deleted module held is still part of the gate: a member declared `unread` must be named per field,
+  // reported as reaching nobody, and must NOT clear an exemption - the defect that let `health` sit "handled" by a block
+  // nobody received.
+  const reading = await withFixtureRoot({ ...tree(), [SOURCES.unreadHud]: UNREAD_HUD }, (root) =>
+    auditSnapshotRendering({ root, renderers: [...RENDERER_SOURCES, UNREAD_HUD_RENDERER] }),
   );
   const ripe = dispositionOf(reading, "harvestWhereabouts");
   assert.equal(ripe?.renderedTo, "neither");
-  assert.equal(ripe?.printedBy, null, "no module prints it now");
+  assert.equal(ripe?.renderedBy, null, "a module that writes it is not the companion reading it");
+  assert.equal(ripe?.printedBy, SOURCES.unreadHud, "it names the module that prints it");
+  assert.equal(ripe?.printedTo, "unread", "and says where that module's text goes");
+  assert.ok(reading.printedToNoReader >= 1, `printed into text with no reader ${String(reading.printedToNoReader)}`);
   assert.deepEqual(codes(reading.violations), [], "and the exemption is what holds the field, not a rendering claim");
 });
 

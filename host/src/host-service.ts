@@ -17,13 +17,12 @@ import type {
   GameCompanionTextExpression,
   HostPresentationAdmissionProvider,
 } from "./presentation.js";
-import type { ExecutionReceipt, Snapshot } from "./protocol.js";
+import type { ExecutionReceipt } from "./protocol.js";
 import {
   boundProviderFailureLine,
   classifyProviderFailure,
   type ProviderFailureClass,
 } from "./provider-failure-classification.js";
-import { formatSnapshotHud } from "./snapshot-hud.js";
 import {
   resolveProviderFailureSystemNotice,
   resolveProviderWaitSystemNotice,
@@ -443,18 +442,10 @@ export class CompanionHostService {
    * The session's latest world snapshot fact, re-stated into every turn (see `#restateWorldSnapshot`).
    *
    * The pump holds a snapshot as latest state and hands it out with the batch that follows its arrival, so a
-   * turn with no new observation would carry no state at all. That is the defect the standing state block
-   * exists to remove: a model told where the ladder was four turns ago either guesses or re-observes.
+   * turn with no new observation would carry no state at all. That is the defect the re-statement removes: a model
+   * told where the ladder was four turns ago either guesses or re-observes.
    */
   #latestSnapshotFact: WorldFact | undefined;
-  /**
-   * `pump.deliveredBatches` at the moment `#latestSnapshotFact` arrived.
-   *
-   * The difference is the age the standing state block reports. Nothing refreshes a snapshot between turns (the
-   * bridge has no unsolicited snapshot push), so the block is re-stated from an observation that stands still while
-   * the world does not - and a count of delivered turns is the only age the Host can state without inventing a clock.
-   */
-  #snapshotArrivedAfterBatch = 0;
   #stopVoice: ((reasonCode: string) => Promise<unknown>) | undefined;
   /**
    * The Host-owned line channel a player-facing surface installs, and the locale its
@@ -1010,7 +1001,6 @@ export class CompanionHostService {
       if (fact.kind === "snapshot") {
         this.#nativeNotices.observeSnapshot(fact.payload);
         this.#latestSnapshotFact = fact;
-        this.#snapshotArrivedAfterBatch = this.loop.pump.deliveredBatches;
       }
       // The attach's own snapshot is the world clock's first live reading for this session, so the
       // arrival fact is minted here - before the snapshot itself, which the pump holds as latest state
@@ -1212,36 +1202,7 @@ export class CompanionHostService {
    */
   #restateWorldSnapshot(): void {
     const snapshot = this.#latestSnapshotFact;
-    if (snapshot !== undefined) this.loop.pump.enqueueFact(this.#stateBlockAsOf(snapshot));
-  }
-
-  /**
-   * The snapshot fact with its state block re-rendered for the turn about to be composed.
-   *
-   * <p>
-   * The block is composed once, when the snapshot is converted, and the Host then re-sends that fact every turn - so
-   * without this the block presents the last observation as the current world, for as long as nobody observes again.
-   * `snapshot-hud.ts#aged` carries the measurement that made that a defect and the reason the age is counted in turns.
-   * </p>
-   * <p>
-   * A snapshot on its first delivery is returned untouched, so a turn that observed the world itself still carries
-   * exactly the block `toWorldFact` composed.
-   * </p>
-   */
-  #stateBlockAsOf(snapshot: WorldFact): WorldFact {
-    const ageTurns = this.loop.pump.deliveredBatches - this.#snapshotArrivedAfterBatch;
-    const projection = snapshot.contextProjection;
-    // A projection without a block is one the adapter refused as invalid; there is no state to qualify.
-    if (!(ageTurns >= 1) || projection === undefined || typeof projection.hud !== "string") return snapshot;
-    return Object.freeze({
-      ...snapshot,
-      contextProjection: Object.freeze({
-        ...projection,
-        // The payload is the bridge-admitted `Snapshot` - `local-stardew-bridge.ts#receive` validates every inbound
-        // frame before `toWorldFact` types it - not a second, unchecked copy of the world.
-        hud: formatSnapshotHud(snapshot.payload as unknown as Snapshot, ageTurns),
-      }),
-    });
+    if (snapshot !== undefined) this.loop.pump.enqueueFact(snapshot);
   }
 
   private async flushSoon(): Promise<void> {

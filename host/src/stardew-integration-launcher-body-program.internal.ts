@@ -1,6 +1,5 @@
 import type { WorldFact } from "./event-pump.js";
 import { projectGameSnapshotContext } from "./snapshot-projection.js";
-import { formatSnapshotHud } from "./snapshot-hud.js";
 import { classifyFactListenerFailure } from "./local-stardew-bridge.js";
 import { isTerminalExecutionState } from "./execution-correlation-ledger.js";
 import {
@@ -452,13 +451,7 @@ export function toWorldFact(message: LocalStardewBridgeFact): WorldFact {
         correlationId: message.correlationId,
         revision: message.payload.revision,
         payload: message.payload,
-        // The standing state block rides BESIDE the projection rather than inside it: the projection describes the
-        // snapshot that was observed (and may be old by now), while this is the state the Host re-states into every
-        // turn's batch. A snapshot the projection refused as invalid gets no block, because there is no state to stand
-        // on.
-        contextProjection: Object.freeze(
-          projection.available ? { ...projection, hud: formatSnapshotHud(message.payload) } : projection,
-        ),
+        contextProjection: projection,
       };
     }
     case "execution_receipt":

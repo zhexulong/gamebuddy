@@ -3,7 +3,7 @@
 //
 // The gate answers one question per (action, family) pair: can the model ASK about this family, or must it pay a whole
 // `stardew_observe`? Its population comes from the surface's own `targetFamily` entries and its channels come from the
-// sources that answer questions (`host/src/game-lookup.ts`, `host/src/snapshot-hud.ts`, the Mod's scene affordances).
+// sources that answer questions (`host/src/game-lookup.ts` and the Mod's scene affordances).
 //
 // Every guard here is proven red before it is trusted: each `no_channel`, `stale_baseline_entry`, `baseline_entry_*`
 // and `blocked` case is driven by a planted defect, because a suite that only re-runs the gate on a green tree proves
@@ -12,8 +12,8 @@
 // red-proof: inject  with the baseline emptied, the gate failed on
 //   70 `observation_consumers_no_channel` pairs (`rotate_furniture -> worldObjectTargets` first of them, `travel ->
 //   warps` beside it) and exited 1; this suite then fails on
-//   "a target-bearing action with no channel reds" with the planted pair, on the stale-entry case when the HUD line is
-//   widened, and on the unaskable-after-removal case when a look_up subject's case is deleted.
+//   "a target-bearing action with no channel reds" with the planted pair, and on the unaskable-after-removal case when a
+//   look_up subject's case is deleted.
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
@@ -24,8 +24,6 @@ import {
   auditConsumers,
   auditTree,
   BASELINE,
-  hudChannels,
-  HUD_SOURCE,
   lookupChannels,
   LOOKUP_SOURCE,
   MOD_ENTRY,
@@ -43,7 +41,6 @@ const read = (file) => readFileSync(resolve(ROOT, file), "utf8");
 const TREE = {
   surface: JSON.parse(read(SURFACE)),
   lookupSource: read(LOOKUP_SOURCE),
-  hudSource: read(HUD_SOURCE),
   modEntrySource: read(MOD_ENTRY),
   // The snapshot's declared keys are the population for the generic family door; without them every family looks
   // undeclared, which would make the suite measure the fixture rather than the tool.
@@ -51,7 +48,7 @@ const TREE = {
   baseline: JSON.parse(read(BASELINE)),
 };
 
-/** The real tree with one of its five sources replaced, so a planted defect is the only difference. */
+/** The real tree with one of its sources replaced, so a planted defect is the only difference. */
 function withSources(overrides) {
   return auditConsumers({ ...TREE, ...overrides });
 }
@@ -82,11 +79,13 @@ test("every advertised look_up subject has a case, and every case answers from a
   assert.deepEqual(lookupChannels(synthetic).problems, ["lookup_subject_reads_nothing:hollow(hollow)"]);
 });
 
-test("the State HUD declares at least one family, and every line it declares is read", () => {
-  const { lines, problems } = hudChannels(TREE.hudSource);
-  assert.deepEqual(problems, [], "a HUD line that declares no field cannot be a channel");
-  assert.ok(lines.length > 0, "the HUD block reads at least one family; zero lines would be a blocked measurement");
-  for (const line of lines) assert.notEqual(line.name.trim(), "", "a HUD line without a name cannot be reported");
+test("the family -> channel map is derived, and the generic door is the one that answers by name", () => {
+  // `shop_purchase -> shopTargets` used to be answered by the `[State HUD: …]` block's `shop` line - text composed into
+  // `WorldFact.contextProjection.hud` and read by nobody. With that module gone the pair is answered by
+  // `stardew_look_up`'s generic family door, and this pins WHICH channel it is so a re-appearing "arrives every turn"
+  // claim has to name a renderer she actually reads.
+  const result = auditTree();
+  assert.equal(pairOf(result, "shop_purchase -> shopTargets")?.channel, "look_up:shopTargets");
 });
 
 // The falsifier for "the family -> channel map is derived": delete one subject from the switch and the pairs it used
@@ -113,40 +112,6 @@ test("removing a look_up subject's case makes its pairs unaskable, so the map co
   assert.notEqual(withoutDoor, withoutCrops, "the planted edit must actually close the generic door");
   const closed = withSources({ lookupSource: withoutDoor });
   assert.equal(pairOf(closed, "water_crop -> cropTargets").classification, "no_channel");
-});
-
-// The same falsifier for the HUD channel: give the HUD line one more family and the pairs that family answers stop
-// being findings - and their baseline entries become stale, which is the ratchet working.
-test("a HUD line that declares a family answers it, and its baseline entries become stale", () => {
-  const widened = TREE.hudSource.replace('fields: ["timeOfDay"]', 'fields: ["timeOfDay", "warps"]');
-  assert.notEqual(widened, TREE.hudSource, "the planted edit must actually widen a HUD line");
-  const result = withSources({ hudSource: widened });
-  assert.equal(pairOf(result, "travel -> warps").classification, "hud_line");
-  // `enter_exit -> warps` is answered by the Mod's Door affordance and is not a baseline entry at all - a widening of
-  // the HUD can only make the pairs that were findings stop being findings.
-  const stale = result.findings.filter((finding) => finding.code === "stale_baseline_entry").map((f) => f.pair);
-  // The real baseline no longer lists `travel -> warps` (the generic door answers it), so the ratchet is proven on a
-  // baseline that still names the pair: widening the HUD must make THAT entry stale by name.
-  const withEntry = withSources({
-    hudSource: widened,
-    baseline: {
-      ...TREE.baseline,
-      entries: [
-        {
-          kind: "no_channel",
-          id: "travel -> warps",
-          reason: "planted: the baseline names a pair the widened HUD line now answers, so the entry must go stale",
-        },
-      ],
-    },
-  });
-  assert.deepEqual(
-    withEntry.findings.filter((f) => f.code === "stale_baseline_entry").map((f) => f.pair),
-    ["travel -> warps"],
-  );
-  assert.equal(withEntry.status, "failed");
-  assert.deepEqual(stale, [], "nothing in the real baseline is stale while every pair has a channel");
-  assert.equal(result.status, "passed");
 });
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -182,13 +147,13 @@ test("a target-bearing action with no channel reds, naming the action, the famil
   assert.match(text, /observation_consumers: failed/u);
 });
 
-// The legitimate classes must stay legitimate: a pair answered by a HUD line and a pair answered by a scene affordance
-// are not findings, and a gate that reds them would be wrong about the product.
-test("hud_line and scene answers are classified, not reddened", () => {
+// The legitimate classes must stay legitimate: a pair answered by a `look_up` family door and a pair answered by a scene
+// affordance are not findings, and a gate that reds them would be wrong about the product.
+test("queryable and scene answers are classified, not reddened", () => {
   const result = auditTree();
-  assert.equal(pairOf(result, "shop_purchase -> shopTargets").classification, "hud_line");
-  assert.equal(pairOf(result, "chop_tree -> treeChopSourceTargets").classification, "scene");
-  assert.equal(pairOf(result, "chest_store -> chests").classification, "queryable");
+  assert.equal(pairOf(result, "shop_purchase -> shopTargets")?.classification, "queryable");
+  assert.equal(pairOf(result, "chop_tree -> treeChopSourceTargets")?.classification, "scene");
+  assert.equal(pairOf(result, "chest_store -> chests")?.classification, "queryable");
   for (const id of ["shop_purchase -> shopTargets", "chop_tree -> treeChopSourceTargets", "chest_store -> chests"])
     assert.ok(!result.findings.some((finding) => finding.pair === id), `${id} is answered and must not be a finding`);
 });
@@ -202,9 +167,9 @@ test("the tree at HEAD passes, and the population is a measurement rather than a
   assert.deepEqual(result.findings, [], `HEAD must be green, findings: ${JSON.stringify(result.findings)}`);
   assert.equal(result.status, "passed");
   assert.ok(result.pairs > 50, `examined ${result.pairs} pairs: a population this small would not be a reading`);
-  assert.ok(result.lookupVocabulary.length > 0 && result.hudLines > 0);
+  assert.ok(result.lookupVocabulary.length > 0, "a lookup subject vocabulary is what the doors are derived from");
   assert.equal(
-    result.counts.queryable + result.counts.hud_line + result.counts.scene + result.counts.no_channel,
+    result.counts.queryable + result.counts.scene + result.counts.no_channel,
     result.pairs,
     "every pair is classified exactly once",
   );
@@ -232,7 +197,7 @@ test("a baseline entry for a pair that now has a channel is stale, not satisfiab
       {
         kind: "opaque_identity_unaskable",
         id: "shop_purchase -> shopTargets",
-        reason: "a planted entry naming an action and a family that a HUD line already answers",
+        reason: "a planted entry naming an action and a family that the generic look_up family door already answers",
       },
     ],
   };
@@ -241,7 +206,7 @@ test("a baseline entry for a pair that now has a channel is stale, not satisfiab
   const stale = result.findings.find((finding) => finding.code === "stale_baseline_entry");
   assert.ok(stale, "an entry whose family gained a channel must be deleted");
   assert.equal(stale.pair, "shop_purchase -> shopTargets");
-  assert.match(stale.detail, /now hud_line through hud:shop/u);
+  assert.match(stale.detail, /now queryable through look_up:shopTargets/u);
 });
 
 test("a baseline entry for a pair the surface no longer declares is reported, not ignored", () => {
@@ -280,7 +245,6 @@ test("each zero population blocks by name instead of passing", () => {
   const cases = [
     [{ surface: { actions: [] } }, "surface_declares_no_target_family"],
     [{ lookupSource: "" }, "lookup_subjects_unread"],
-    [{ hudSource: "" }, "hud_lines_unread"],
     [{ modEntrySource: "" }, "scene_affordances_unread"],
   ];
   for (const [overrides, reason] of cases) {

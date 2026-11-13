@@ -30,10 +30,12 @@
  *              the text she reads every turn, and the only surface that answers "does she know this fact".
  *   player     the browser's own Game panel (`dialogue-web/src/components/GameStatePanel.tsx`, fed by
  *              `game_browser_api/v1`). A fact printed there is real and useful, and it is still not a fact she has.
- *   unread     text composed and delivered to nobody. `host/src/snapshot-hud.ts` composes the `[State HUD: …]` block
- *              into `WorldFact.contextProjection.hud` (`host/src/host-service.ts:1242`); the only read of that key in
- *              the tree is the `typeof` guard on the line above it (`:1235`), `composeFactBrief` reads the projection's
- *              `text` and never `hud`, and no browser module names it.
+ *   unread     text composed and delivered to nobody. The one member this audience ever had was
+ *              `host/src/snapshot-hud.ts`, which composed a `[State HUD: …]` block into `WorldFact.contextProjection.hud`
+ *              whose only read in the tree was a `typeof` guard; `composeFactBrief` reads the projection's `text` and
+ *              never `hud`. That module and its block were deleted, so no renderer is declared `unread` today - the
+ *              audience stays because a module can be wired into this declaration the day it composes text for nobody,
+ *              and because the report's `printedToNoReader` is what made the defect visible.
  *
  * Until this unit the gate judged one question and answered another. `health` and `harvestWhereabouts` were cleared by
  * `printedBy: "host/src/snapshot-hud.ts"` - a rendering into the third bucket - so "she knows her own hit points" was
@@ -49,8 +51,8 @@
  * key and would therefore mark every field rendered, which is the false green this gate exists to prevent. The
  * declaration is the smaller risk, and the claim check above is what keeps a member honest.
  *
- * A rendering into any other audience still clears nothing: the player's panel and the unread HUD block are both
- * reported per field (`printedBy` / `printedTo`), so a reader can tell "she reads it" from "a module writes it".
+ * A rendering into any other audience still clears nothing: the player's panel is reported per field
+ * (`printedBy` / `printedTo`), so a reader can tell "she reads it" from "a module writes it".
  *
  * READING IS NOT MENTIONING. Comments are stripped before a field is matched, because this file's own prose names
  * fields it does not render and a gate that counts its documentation as a rendering is the "check that reads the wrong
@@ -98,12 +100,12 @@ const UNREAD = "unread";
  * its own is NOT a renderer here: the companion's player reads the Game turn, and that is what this gate protects.
  * </p>
  * <p>
- * `snapshot-hud.ts` composes text from the same `Snapshot` and delivers it to NOBODY - the measurement is in the header -
- * so it is a member of this population with audience `unread`. Keeping it is what lets the report say which fields are
- * printed into text with no reader (22 of 120, four of them printed nowhere else) instead of leaving that fact in a
- * comment. What makes a module a member of this set is that it COMPOSES TEXT FROM THE SNAPSHOT - it is read here field
- * by field. A module that merely reads a snapshot field to decide something is not a renderer; adding one would credit
- * its reads as renderings.
+ * `snapshot-hud.ts` was the one member with audience `unread` - it composed text from the same `Snapshot` and delivered
+ * it to nobody (the measurement is in the header) - and it was deleted rather than kept for the report's sake. What the
+ * declaration must keep is the distinction, not that module: a member whose text reaches no reader clears nothing, and
+ * a reader of the report can tell "she reads it" from "a module writes it". What makes a module a member of this set is
+ * that it COMPOSES TEXT FROM THE SNAPSHOT - it is read here field by field. A module that merely reads a snapshot field
+ * to decide something is not a renderer; adding one would credit its reads as renderings.
  * </p>
  * <p>
  * THE AUDIENCE IS THE CLAIM. `companion` is the only one that clears an obligation; `player` is the audience a
@@ -115,7 +117,6 @@ const UNREAD = "unread";
 export const RENDERER_SOURCES = Object.freeze([
   { path: "host/src/fact-brief.ts", audience: COMPANION },
   { path: "host/src/game-world-vocabulary.ts", audience: COMPANION },
-  { path: "host/src/snapshot-hud.ts", audience: UNREAD },
 ]);
 
 /** The row tables a renderer iterates: a key in one of these is printed by the world-state composer that reads it. */

@@ -324,11 +324,13 @@ function formatCarrying(world: Snapshot): string {
  *
  * <p>
  * WHY IT IS HERE (measured 2026-11-21). `health` was exempted in `tools/check-snapshot-field-rendering.mjs` by
- * `printedBy: "host/src/snapshot-hud.ts"`, and that block's only consumer in the tree is a `typeof` guard
- * (`host-service.ts:1235`). So her own hit points were composed on every turn, printed by a module, and read by nobody:
- * the fact a mine level is spent against was the one fact the gate counted as handled. The sentence that did the damage
- * was the exemption's own - the prose "states the stamina a day's work spends and says nothing about collapsing at
- * zero" - which named the gap and then closed it with a rendering nobody receives.
+ * `printedBy: "host/src/snapshot-hud.ts"`, a module that composed a `[State HUD: …]` block into
+ * `contextProjection.hud` - and that block's only consumer in the tree was a `typeof` guard. So her own hit points
+ * were composed on every turn, printed by a module, and read by nobody: the fact a mine level is spent against was the
+ * one fact the gate counted as handled. (That module has since been deleted; the measurement is kept because it is why
+ * this line exists.) The sentence that did the damage was the exemption's own - the prose "states the stamina a day's
+ * work spends and says nothing about collapsing at zero" - which named the gap and then closed it with a rendering
+ * nobody receives.
  * </p>
  *
  * <p>
@@ -841,7 +843,8 @@ function boundedField(field: ModelVisibleField, value: unknown): string | undefi
  *
  * `gameTime` is published on some world facts and not on others, and a receipt carries no game clock at all. An absent
  * clock prints as an empty prefix rather than as a Host wall-clock guess: the Host does not know what hour it is in the
- * game (`snapshot-hud.ts#aged` carries the same measurement), and `08:12` invented from `Date.now()` would be a fact.
+ * game (`composeWorldState` states the age of the observation in turns for the same reason), and `08:12` invented from
+ * `Date.now()` would be a fact.
  */
 function clockOf(fact: WorldFact): string {
   if (typeof fact.gameTime !== "string") return "";

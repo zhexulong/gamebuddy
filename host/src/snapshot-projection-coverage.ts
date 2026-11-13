@@ -6,8 +6,7 @@
  * reaches the model: `snapshot-projection.ts` (the user-turn fact block), `fact-brief.ts` (the per-turn paragraph),
  * `game-world-vocabulary.ts` (the world-sense line both of those render), `runtime-core.internal.ts` (the
  * `<runtime-environment>` header), `stardew-observation-budget.ts` (the `stardew_observe` payload),
- * `body-program-script.ts` (the plan builder's action set) and `snapshot-hud.ts` (the standing state block re-sent with
- * every turn). When the native layer grows a field, nothing forces any of them to notice.
+ * `body-program-script.ts` (the plan builder's action set). When the native layer grows a field, nothing forces any of them to notice.
  *
  * Measured 2026-10-28: `actorDispositionDetail` had been on the wire since the disposition work
  * (`farmhandexecutioncontroller.cs:2401`, `protocol.ts:272-276`), and a `ShippingMenu` owned the screen while the
@@ -48,7 +47,8 @@ export const REQUIRED_PROJECTED_KEYS = Object.freeze([
   // The current map's live kitchen: the per-turn line answers "is there a stove here" from it, which is what
   // the farmhouse's own form is (it gains its kitchen with its upgrade). Measured 2026-11-05.
   "cookingStationTargets",
-  // The water a rod may be cast at on this map, read by the "fishable water" line of `snapshot-hud.ts`.
+  // The water a rod may be cast at on this map, read by the nearby-target line `<world-state>` prints: the family is a
+  // key of `TARGET_FAMILY_LABELS` (`game-world-vocabulary.ts`), so the line names its tiles every turn.
   //
   // `DiscoverWaterTargets` is a whole-map scan of the engine's own `canFishHere` + `isTileFishable` pair, so the family
   // is a property of the MAP: only its order and its cap depend on where the actor stands. And `fish_here` refuses
@@ -215,7 +215,6 @@ export const PROJECTION_SOURCES = Object.freeze([
   "host/src/runtime-core.internal.ts",
   "host/src/stardew-observation-budget.ts",
   "host/src/body-program-script.ts",
-  "host/src/snapshot-hud.ts",
 ]);
 
 /** Whether a projection source mentions a snapshot key in a field-position read. */
@@ -231,10 +230,34 @@ export function projectionReads(source: string, key: string): boolean {
   ];
   // Strip comments first: this file's own prose names keys it does not read, and a gate that counts its own
   // documentation as a read is the "check that reads the wrong thing" failure this repo keeps paying for.
-  const code = source
+  const code = withoutComments(source);
+  return patterns.some((pattern) => pattern.test(code)) || nearbyTargetFamiliesOf(code).includes(key);
+}
+
+/**
+ * The families the nearby-target line prints, read out of the line's own label table.
+ *
+ * `nearbyTargetFamilies` (`game-world-vocabulary.ts`) iterates `TARGET_FAMILY_LABELS` and prints six tiles per family
+ * into `<world-state>`, so a family named there reaches the model without any module spelling `snapshot.<family>` - the
+ * TABLE is the read. Derived from the source, so a family added to the table needs no edit here, and a family removed
+ * from it stops counting.
+ */
+function nearbyTargetFamiliesOf(code: string): readonly string[] {
+  const declaration = code.indexOf("export const TARGET_FAMILY_LABELS");
+  if (declaration < 0) return [];
+  const open = code.indexOf("{", declaration);
+  if (open < 0) return [];
+  // The table's own close, so the next object literal in the same file is not read as part of it.
+  const close = code.indexOf("\n});", open);
+  if (close < 0) return [];
+  return [...code.slice(open, close).matchAll(/^\s+([A-Za-z][A-Za-z0-9]*):/gmu)].map((match) => match[1] ?? "");
+}
+
+/** Source text with comments removed: prose about a field is not a read of it. */
+function withoutComments(source: string): string {
+  return source
     .replace(/\/\*[\s\S]*?\*\//g, "")
     .split("\n")
     .map((line) => line.replace(/^\s*\/\/.*$/, ""))
     .join("\n");
-  return patterns.some((pattern) => pattern.test(code));
 }

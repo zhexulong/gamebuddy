@@ -1,6 +1,5 @@
 import type { Snapshot } from "./protocol.js";
-import { seasonName } from "./game-world-vocabulary.js";
-import { formatGameClock } from "./snapshot-hud.js";
+import { formatGameClock, seasonName } from "./game-world-vocabulary.js";
 
 const GAME_SNAPSHOT_PROJECTION_SCHEMA = "gamebuddy-game-snapshot-projection/v1" as const;
 /** The projection is smaller than the bridge frame and remains safe to attach to a turn batch. */
@@ -327,11 +326,11 @@ export function projectGameSnapshotContext(
     [
       "[Game Snapshot Projection v1:",
       // No age here. This text is composed once, when the snapshot is taken, so any age printed into it is frozen at
-      // that instant and reads as fresh forever - the HUD already says the live age (`observed N turns ago`), and two
-      // spellings of one fact let the stale one win (round35: `Sampled: 5ms ago` beside `observed 9 turns ago` for a
-      // 112 s old snapshot). One owner, no number here.
+      // that instant and reads as fresh forever - `<world-state>` already says the live age (`composeWorldState`'s
+      // `observed N turns ago` clause), and two spellings of one fact let the stale one win (round35: `Sampled: 5ms ago`
+      // beside `observed 9 turns ago` for a 112 s old snapshot). One owner, no number here.
       `- Snapshot Revision: #${snapshot.revision}`,
-      `- Time: ${formatGameClock(clock.timeOfDay)}, Season: ${seasonName(clock.seasonIndex)}, Day: ${clock.dayOfMonth}, Year: ${clock.year}`,
+      `- Time: ${formatGameClock(clock.timeOfDay, true)}, Season: ${seasonName(clock.seasonIndex)}, Day: ${clock.dayOfMonth}, Year: ${clock.year}`,
       `- Location: ${location}, Tile: (${movement.tile.x}, ${movement.tile.y}), Actionable: ${movement.actionable}`,
       ...(movement.holdingModal === null
         ? []
