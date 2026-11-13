@@ -41,20 +41,22 @@ namespace GameBuddy.Stardew.Core;
 /// </para>
 ///
 /// <para>
-/// SOUND-OR-SILENT. <see cref="FishingCatchReport.RefusalFor"/> answers a code only when a species is POSITIVELY
-/// blocked, and <see cref="NotMeasured"/> is what a caller with unreadable data gets - never an empty report, because an
-/// empty report reads as "nothing bites here". The guard admits on both.
+/// SOUND-OR-SILENT. A refusal is minted only from <see cref="FishingCatchReport.NothingCatchable"/> - a measured answer
+/// whose every row is blocked - and its evidence is the blocked rows' own codes (<see cref="FishingCatchReport.DescribeBlocked"/>),
+/// so the condition that would change the answer is named per species. <see cref="NotMeasured"/> is what a caller with
+/// unreadable data gets, never an empty report, because an empty report reads as "nothing bites here". The guard admits on
+/// both.
 /// </para>
 ///
 /// <para>
 /// PARITY, AND WHAT IT DOES NOT PROVE. The forward direction of the parity claim - "every fish the engine's sampler
 /// produces is in this candidate set" - is NOT provable in this process: <c>getFish</c> reads
 /// <c>DataLoader.Fish(Game1.content)</c> and <c>Game1.locationData</c>, and the Mod's test process has no content manager
-/// (the same limit <c>FishingActionTests</c> records for the engine's own catch). It is a live-run gate. What IS proven
-/// headless is the arithmetic: the field indices and the filter order below are pinned from the engine's own source by
-/// <c>FishingCatchableTests</c>, and the reverse direction - a species this file calls catchable that the sampler never
-/// produces - cannot be excluded at any finite N either, because the sampler is a sampler. Both directions need the
-/// game running; neither is claimed here.
+/// (the same limit <c>FishingActionTests</c> records for the engine's own catch). It is a live-run gate. The reverse
+/// direction is not provable at any sane N either: the chance an item has no lower clamp below zero, <c>CatchLimit</c>
+/// retires a species permanently, and <c>UseFishCaughtSeededRandom</c> is a save-deterministic draw - so a species this
+/// file calls possible can be one the sampler never yields on this save. Both directions need the game running; neither
+/// is claimed by a green test here.
 /// </para>
 /// </summary>
 public static class FishingCatchable
@@ -97,11 +99,24 @@ public static class FishingCatchable
     /// <c>Data/Locations</c> row joined to its species' raw <c>Data/Fish</c> row (<see cref="FishingSpawn.FishRow"/>), so
     /// this file parses the species table itself rather than trusting a second parse elsewhere.
     /// </para>
+    ///
+    /// <para>
+    /// ZERO RNG, AND WHY THE PREDICATE IS A PARAMETER. The engine rolls twice per row (<c>GameLocation.cs:13977</c> and
+    /// <c>:14178</c>) and burns a <c>Next()</c> even when it sorts (<c>:13946</c>), so no reading of its tables can say
+    /// what WILL bite - only what MAY. <paramref name="mayProduceChance"/> is that question, asked of the row's own chance:
+    /// <c>NextBool(chance)</c> accepts iff one draw is below it, so a chance of zero can never produce and any positive
+    /// one may. The callers pass <c>chance =&gt; chance &gt; 0.0</c> - the widest reading, which is the one that keeps a
+    /// refusal sound - and neither this file nor their call site is ever the engine's random.
+    /// </para>
     /// </summary>
-    public static FishingCatchReport CatchableNow(FishingMoment moment, IReadOnlyList<FishingSpawn> spawns)
+    public static FishingCatchReport CatchableNow(
+        FishingMoment moment,
+        IReadOnlyList<FishingSpawn> spawns,
+        Func<double, bool> mayProduceChance)
     {
         ArgumentNullException.ThrowIfNull(moment);
         ArgumentNullException.ThrowIfNull(spawns);
+        ArgumentNullException.ThrowIfNull(mayProduceChance);
 
         List<FishingSpeciesRow> catchable = new();
         List<FishingSpeciesRow> blocked = new();
@@ -110,7 +125,7 @@ public static class FishingCatchable
             FishingSpawn spawn = spawns[index];
             FishRowSpec spec = spawn.FishRow is null ? FishRowSpec.None : FishRowSpec.Parse(spawn.FishRow);
             FishingSpeciesRow row = Describe(spawn, spec);
-            string? code = BlockingCode(moment, spawn, row, spec, out string fact);
+            string? code = BlockingCode(moment, spawn, row, spec, mayProduceChance, out string fact);
             if (code is null) catchable.Add(row);
             else blocked.Add(row with { BlockedCode = code, BlockedFact = fact });
         }
@@ -130,42 +145,42 @@ public static class FishingCatchable
         new(false, reason, Array.Empty<FishingSpeciesRow>(), Array.Empty<FishingSpeciesRow>(), 0, false);
 
     /// <summary>
-    /// Whether <paramref name="requestedQualifiedItemId"/> is positively blocked here and now, with the fact that would
-    /// have to change.
+    /// Whether NOTHING may be produced here and now - the guard's whole predicate.
     ///
     /// <para>
-    /// A species the table does not name at all is blocked by name: the engine only ever produces a row from this table
-    /// (its last resort is the junk fallback at <c>GameLocation.cs:13874</c>), so a species absent from it cannot bite
-    /// here. A row whose <c>ItemId</c> is an item QUERY (<c>ALL_ITEMS</c>, <c>RANDOM_ITEMS</c>, ...) resolves to no
-    /// species, so it can never be excluded and answers null.
+    /// True only on a measured answer whose every row is blocked. It says nothing about the engine's junk fallback
+    /// (<see cref="JunkFallbackSpecies"/>): a cast that reaches the water still yields something, and the guard's
+    /// promise is about the location's own fish table, not about whether the line comes back empty.
     /// </para>
     /// </summary>
-    public static FishingRefusal? RefusalFor(this FishingCatchReport report, string requestedQualifiedItemId)
+    public static bool? NothingCatchable(this FishingCatchReport report)
     {
         ArgumentNullException.ThrowIfNull(report);
-        if (!report.Measured || string.IsNullOrEmpty(requestedQualifiedItemId)) return null;
-        foreach (FishingSpeciesRow row in report.Blocked)
-            if (string.Equals(row.Species, requestedQualifiedItemId, StringComparison.Ordinal))
-                return new FishingRefusal(row.BlockedCode, row.BlockedFact);
-        foreach (FishingSpeciesRow row in report.Catchable)
-            if (string.Equals(row.Species, requestedQualifiedItemId, StringComparison.Ordinal))
-                return null;
-        foreach (FishingSpeciesRow row in report.Catchable.Concat(report.Blocked))
-            if (row.SpeciesIsItemQuery) return null;
-        return new FishingRefusal(
-            $"not_in_this_location:{requestedQualifiedItemId}",
-            $"requested={requestedQualifiedItemId};species_rows={report.Examined.ToString(CultureInfo.InvariantCulture)};"
-            + "detail=the engine only produces a species from this location's fish table (junk fallback aside)");
+        return report.Measured ? report.Catchable.Count == 0 : null;
     }
 
     /// <summary>
-    /// The answer for a cast that named NO species: the junk facts only.
+    /// The blocking facts of the first <paramref name="limit"/> blocked rows as one evidence string, so a refusal names the
+    /// condition that would have to change for each species rather than saying only that nothing bites.
+    /// </summary>
+    public static string DescribeBlocked(this FishingCatchReport report, int limit)
+    {
+        ArgumentNullException.ThrowIfNull(report);
+        List<string> parts = new();
+        for (int index = 0; index < report.Blocked.Count && parts.Count < limit; index++)
+            parts.Add($"{report.Blocked[index].Species}={report.Blocked[index].BlockedCode}");
+        if (report.Blocked.Count > parts.Count)
+            parts.Add($"+{report.Blocked.Count - parts.Count} more");
+        return string.Join(";", parts);
+    }
+
+    /// <summary>
+    /// The engine's last line when no row matched: <c>getFish</c> returns <c>ItemRegistry.Create("(O)168")</c>
+    /// (<c>GameLocation.cs:13874</c>).
     ///
     /// <para>
-    /// Never a refusal, and the reason is the engine's own last line: <c>getFish</c> returns
-    /// <c>ItemRegistry.Create("(O)168")</c> when no row matched (<c>GameLocation.cs:13874</c>), so a cast always yields
-    /// SOMETHING and "nothing is catchable here" is never true. A guard that refused here would block the capability to
-    /// remove a wait.
+    /// Named because it bounds what a refusal can claim: "nothing in this location's fish table matches" is a fact, and
+    /// "the line comes back empty" is not.
     /// </para>
     /// </summary>
     public const string JunkFallbackSpecies = "(O)168";
@@ -179,6 +194,7 @@ public static class FishingCatchable
         FishingSpawn spawn,
         FishingSpeciesRow row,
         FishRowSpec spec,
+        Func<double, bool> mayProduceChance,
         out string fact)
     {
         fact = string.Empty;
@@ -238,6 +254,14 @@ public static class FishingCatchable
         {
             fact = Describe(moment, spawn, row, "requires_magic_bait=true;magic_bait=false");
             return $"requires_magic_bait:{species}";
+        }
+
+        // :13969-13980 - the row's own chance, asked as a question rather than rolled. `GetChance` is the engine's own
+        // arithmetic and runs in the caller; this only decides what a zero means, which is the one value it can decide.
+        if (spawn.DeclaredChance is { } chance && !mayProduceChance(chance))
+        {
+            fact = Describe(moment, spawn, row, $"declared_chance={chance.ToString("0.####", CultureInfo.InvariantCulture)}");
+            return $"chance_never:{species}:{chance.ToString("0.####", CultureInfo.InvariantCulture)}";
         }
 
         // :14002 - the catch limit, read from the farmer's own record. A row with no resolvable species carries no limit
@@ -421,6 +445,7 @@ public sealed record FishingSpawn(
     int CaughtSoFar,
     bool SpeciesIsItemQuery,
     string? FishRow,
+    double? DeclaredChance = null,
     bool? CanUseTrainingRod = null,
     FishingRectangle? PlayerPosition = null,
     FishingRectangle? BobberPosition = null);
@@ -437,9 +462,6 @@ public sealed record FishingSpeciesRow(
     bool SpeciesIsItemQuery,
     string BlockedCode,
     string BlockedFact);
-
-/// <summary>A refusal: the code a reader can act on, and the evidence that decided it.</summary>
-public sealed record FishingRefusal(string Code, string Fact);
 
 /// <summary>
 /// The answer. <see cref="Measured"/> is false exactly when no reading was taken, and a caller must then neither refuse

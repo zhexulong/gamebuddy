@@ -1,4 +1,5 @@
 using System.Globalization;
+using GameBuddy.Stardew.Core;
 using GameBuddy.Stardew.Core.Models;
 using StardewValley;
 using StardewValley.GameData.BigCraftables;
@@ -108,6 +109,15 @@ internal static class ContentDataQuery
             static _ => null,
             "each row is a LocationData whose spawn, fish and forage tables are tens of kilobytes; the locations " +
             "themselves are already published as world rows, and no action chooses a target from this table"),
+        // The one question about `Data/Locations` that IS answerable: which species MAY be caught in one location at this
+        // moment. It is a different table from `Locations` on purpose - that one refuses because a whole row is an
+        // observation, while this one projects two tables into the rows an action decides on (`fish_here` is the action,
+        // and its admission guard reads the same answer through `FishingCatchableQuery.Answer`).
+        ["LocationFish"] = new Table(
+            "LocationFish",
+            "Game1.locationData",
+            LocationFishIds,
+            LocationFishRow),
     };
 
     private static Table Of<T>(
@@ -383,5 +393,86 @@ internal static class ContentDataQuery
         List<string> bounded = all.GetRange(0, limit);
         bounded.Add($"+{all.Count - limit} more");
         return bounded;
+    }
+
+    /// <summary>
+    /// Species lines one answer carries per half: fifteen plus one omission line, because the wire admits at most sixteen
+    /// entries in a field array (<c>host/src/protocol.ts:3168</c>) and a seventeenth entry would refuse the whole row.
+    /// </summary>
+    private const int MaximumLocationSpecies = 15;
+
+    /// <summary>
+    /// The keys <c>LocationFish</c> answers: <see cref="FishingCatchableQuery.HereKey"/> first, then every location
+    /// <c>Data/Locations</c> declares.
+    ///
+    /// <para>
+    /// `Default` is deliberately absent: it is the shared spawn row the engine concatenates into EVERY location
+    /// (<c>GameLocation.cs:13940-13944</c>), not a place the actor can stand in, so listing it would invite a caller to ask
+    /// what may be caught in a location that does not exist.
+    /// </para>
+    /// </summary>
+    private static IReadOnlyList<string> LocationFishIds()
+    {
+        List<string> names = new() { FishingCatchableQuery.HereKey };
+        names.AddRange(Game1.locationData.Keys
+            .Where(static key => !string.Equals(key, "Default", StringComparison.Ordinal))
+            .OrderBy(static key => key, StringComparer.Ordinal));
+        return names;
+    }
+
+    /// <summary>
+    /// One location's fish answer, projected into the fields a caller decides from.
+    ///
+    /// <para>
+    /// <c>status</c> is <c>measured</c> or <c>not_measured</c>, and a not-measured answer carries no species at all rather
+    /// than an empty list: the two look identical in a language without null, and only one of them is a claim about the
+    /// world. <c>catchable</c> and <c>blocked</c> are bounded lines, one per species, and each blocked line ends with the
+    /// code that names the fact which would have to change.
+    /// </para>
+    /// </summary>
+    private static BridgeDataQueryRow LocationFishRow(string key)
+    {
+        FishingCatchableQuery.FishingCatchAnswer answer = FishingCatchableQuery.Answer(Game1.player, key);
+        FishingCatchReport report = answer.Report;
+        FishingMoment? moment = answer.Moment;
+        return new BridgeDataQueryRow(
+            key,
+            Fields(
+                ("status", report.Measured ? "measured" : "not_measured"),
+                ("reason", report.NotMeasuredReason ?? string.Empty),
+                ("location", moment?.Location ?? key),
+                ("season", moment?.Season ?? string.Empty),
+                ("day", moment?.DayOfMonth ?? 0),
+                ("timeOfDay", moment?.TimeOfDay ?? 0),
+                ("raining", moment?.Raining ?? false),
+                ("fishingLevel", moment?.FishingLevel ?? 0),
+                ("fishArea", moment?.FishAreaId),
+                ("examined", report.Examined),
+                ("catchableCount", report.Catchable.Count),
+                ("blockedCount", report.Blocked.Count),
+                ("depthApplied", report.DepthApplied),
+                ("junkFallbackSpecies", FishingCatchable.JunkFallbackSpecies),
+                ("catchable", Bounded(report.Catchable.Select(static row => DescribeSpecies(row, blocked: false)), MaximumLocationSpecies)),
+                ("catchableOmitted", Math.Max(0, report.Catchable.Count - MaximumLocationSpecies)),
+                ("blocked", Bounded(report.Blocked.Select(static row => DescribeSpecies(row, blocked: true)), MaximumLocationSpecies)),
+                ("blockedOmitted", Math.Max(0, report.Blocked.Count - MaximumLocationSpecies))));
+    }
+
+    /// <summary>
+    /// One species as a single line: who it is, how hard it fights, what it needs, when, in what weather, and - when it is
+    /// blocked - the code naming the fact that would change the answer.
+    /// </summary>
+    private static string DescribeSpecies(FishingSpeciesRow row, bool blocked)
+    {
+        string label = row.DisplayName is { Length: > 0 } display ? $"{row.Species} {display}" : row.Species;
+        string line = string.Format(
+            CultureInfo.InvariantCulture,
+            "{0} difficulty={1} level={2} window={3} weather={4}",
+            label,
+            row.Difficulty?.ToString(CultureInfo.InvariantCulture) ?? "none",
+            row.MinimumFishingLevel.ToString(CultureInfo.InvariantCulture),
+            row.TimeWindow,
+            row.Weather);
+        return blocked ? $"{line} blocked_by={row.BlockedCode}" : line;
     }
 }
