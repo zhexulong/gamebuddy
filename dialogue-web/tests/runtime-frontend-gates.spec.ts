@@ -517,146 +517,237 @@ test("gate 2: the transcript author line wraps a long companion name", async ({ 
 });
 
 /**
- * Gate 3: WCAG AA contrast for every text tone the surfaces draw.
- *
- * Every text-bearing leaf of the surface is sampled: its computed `color`, its
- * font size and weight, and the *effective* background behind it, composited
- * from the element's own background up through its ancestors to the first opaque
- * one. The required ratio is 3:1 for large text (>= 24px, or >= 18.66px bold)
- * and 4.5:1 otherwise. A leaf whose background cannot be resolved to an opaque
- * backing is counted as indeterminate rather than silently passing, and the
- * count is reported; today every surface resolves, so there are none.
+ * The two window sizes gate 3 measures: the narrowest and the widest member of
+ * `VIEWPORTS` above - the two ends where a tone is likeliest to disappear, one to
+ * the fold and one to the reading measure. The drift check inside the gate keeps
+ * them members instead of letting this list quietly describe a window the rest of
+ * the file stopped testing.
  */
-test("gate 3: every text tone clears WCAG AA on its effective background", async ({ page }) => {
-  await mountShell(page);
-  const failures: string[] = [];
-  let sampled = 0;
-  let indeterminate = 0;
-  let minimum = Number.POSITIVE_INFINITY;
-  let minimumAt = "";
+const CONTRAST_VIEWPORTS: readonly Readonly<{ width: number; height: number }>[] = [
+  { width: 400, height: 800 },
+  { width: 1440, height: 900 },
+];
 
-  for (const surface of SURFACES) {
-    await openSurface(page, surface);
-    // Let the surface's own reads settle so the tones are the settled ones.
-    await page.waitForTimeout(200);
-    const measured = await page.evaluate((testId: string) => {
-      const parse = (value: string): [number, number, number, number] => {
-        const legacy = value.match(/rgba?\(([^)]+)\)/);
-        if (legacy !== null) {
-          const parts = legacy[1]!.split(",").map((part) => Number.parseFloat(part.trim()));
-          return [parts[0] ?? 0, parts[1] ?? 0, parts[2] ?? 0, parts[3] ?? 1];
-        }
-        // CSS Color 4: what a modern Chromium computes `color-mix()` to. The channels are 0..1 floats, so scaling by 255 is the same
-        // mapping `rgba()` uses - not a different measurement, the same one in another spelling.
-        const modern = value.match(/^color\(srgb\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)(?:\s*\/\s*([\d.]+))?\s*\)$/u);
-        if (modern !== null) {
-          const channel = (part: string): number => Math.round(Number.parseFloat(part) * 255);
-          return [
-            channel(modern[1]!),
-            channel(modern[2]!),
-            channel(modern[3]!),
-            modern[4] === undefined ? 1 : Number.parseFloat(modern[4]),
-          ];
-        }
-        // An unknown function is not transparent black: measuring it as black is how this gate reported a 6.51:1 badge as 1.32:1.
-        // Throwing fails the gate loudly instead of inventing a colour - a new syntax should stop this measurement, not be skipped.
-        throw new Error(`unparsed colour: ${value}`);
-      };
-      const effective = (element: Element): [number, number, number] | null => {
-        const stack: [number, number, number, number][] = [];
-        let node: Element | null = element;
-        while (node !== null) {
-          const background = parse(getComputedStyle(node).backgroundColor);
-          stack.push(background);
-          if (background[3] >= 0.999) break;
-          node = node.parentElement;
-        }
-        const bottom = stack[stack.length - 1]!;
-        if (bottom[3] < 0.999) return null;
-        let result = bottom;
-        for (let index = stack.length - 2; index >= 0; index -= 1) {
-          const top = stack[index]!;
-          const alpha = top[3];
-          result = [
-            top[0] * alpha + result[0] * (1 - alpha),
-            top[1] * alpha + result[1] * (1 - alpha),
-            top[2] * alpha + result[2] * (1 - alpha),
-            1,
-          ];
-        }
-        return [result[0], result[1], result[2]];
-      };
-      const luminance = ([red, green, blue]: readonly number[]): number => {
-        const channel = (value: number): number => {
-          const scaled = value / 255;
-          return scaled <= 0.03928 ? scaled / 12.92 : ((scaled + 0.055) / 1.055) ** 2.4;
-        };
-        return 0.2126 * channel(red!) + 0.7152 * channel(green!) + 0.0722 * channel(blue!);
-      };
-      const ratio = (foreground: readonly number[], background: readonly number[]): number => {
-        const [lighter, darker] = [luminance(foreground), luminance(background)].sort((a, b) => b - a);
-        return (lighter! + 0.05) / (darker! + 0.05);
-      };
-      const root = document.querySelector<HTMLElement>(`[data-testid="${testId}"]`)!;
-      // An element's own text nodes, not its subtree's: a button that carries an
-      // icon and a label keeps its label here, and the icon is not text.
-      const ownText = (element: Element): string =>
-        [...element.childNodes]
-          .filter((node) => node.nodeType === Node.TEXT_NODE)
-          .map((node) => node.textContent ?? "")
-          .join("")
-          .trim();
-      const leaves = [...root.querySelectorAll<HTMLElement>("*")].filter((element) => {
-        if ((element.textContent ?? "").trim().length === 0) return false;
-        if (element.getClientRects().length === 0) return false;
-        const style = getComputedStyle(element);
-        if (style.visibility === "hidden" || style.opacity === "0") return false;
-        // An element with children is still a text leaf when its own text nodes
-        // carry the words. Skipping every element with children is how a button
-        // that paints light text on a filled accent - with an icon beside the
-        // label - stayed under the floor while this gate was green.
-        if (element.children.length > 0 && ownText(element).length === 0) return false;
-        return true;
-      });
-      return leaves.map((element) => {
-        const style = getComputedStyle(element);
-        const background = effective(element);
-        const size = Number.parseFloat(style.fontSize);
-        const weight = Number.parseInt(style.fontWeight, 10) || 400;
-        const large = size >= 24 || (size >= 18.66 && weight >= 700);
-        return {
-          text: (ownText(element).length > 0 ? ownText(element) : (element.textContent ?? "")).trim().slice(0, 32),
-          color: style.color,
-          size,
-          large,
-          ratio: background === null ? null : ratio(parse(style.color), background),
-        };
-      });
-    }, surface.testId);
+/**
+ * The appearances this file measures. A third token root joins a gate by being written into
+ * `style.css`: the population is read off the sheet by `paintedAppearances` below, so a new
+ * appearance fails loudly instead of going unmeasured.
+ */
+const PAINTED_APPEARANCES = ["dark", "light"] as const;
 
-    for (const sample of measured) {
-      if (sample.ratio === null) {
-        indeterminate += 1;
-        continue;
+/** The appearance attribute values `style.css` declares: the authority both lists above are held to. */
+function paintedAppearances(): readonly string[] {
+  const stylesheet = readFileSync(new URL("../src/style.css", import.meta.url), "utf8").replace(
+    /\/\*[\s\S]*?\*\//gu,
+    " ",
+  );
+  return [...new Set([...stylesheet.matchAll(/:root\[data-theme="([^"]+)"\]/gu)].map((match) => match[1]))];
+}
+
+/**
+ * Every text-bearing leaf of one surface, with the ink it paints and the ratio that ink reads at
+ * against the effective background behind it.
+ *
+ * Written as a page function with no free variables, because it is serialised into the browser:
+ * this is the ONE place gate 3's tones are read, in every cell it evaluates.
+ */
+function sampleTextTones(page: Page, testId: string) {
+  return page.evaluate((id: string) => {
+    const parse = (value: string): [number, number, number, number] => {
+      const legacy = value.match(/rgba?\(([^)]+)\)/);
+      if (legacy !== null) {
+        const parts = legacy[1]!.split(",").map((part) => Number.parseFloat(part.trim()));
+        return [parts[0] ?? 0, parts[1] ?? 0, parts[2] ?? 0, parts[3] ?? 1];
       }
-      sampled += 1;
-      const required = sample.large ? 3 : 4.5;
-      if (sample.ratio < required - 0.01)
-        failures.push(
-          `${surface.label}: "${sample.text}" is ${sample.color} at ${sample.size}px = ${sample.ratio.toFixed(2)}:1, needed ${required}:1`,
+      // CSS Color 4: what a modern Chromium computes `color-mix()` to. The channels are 0..1 floats, so scaling by 255 is the same
+      // mapping `rgba()` uses - not a different measurement, the same one in another spelling.
+      const modern = value.match(/^color\(srgb\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)(?:\s*\/\s*([\d.]+))?\s*\)$/u);
+      if (modern !== null) {
+        const channel = (part: string): number => Math.round(Number.parseFloat(part) * 255);
+        return [
+          channel(modern[1]!),
+          channel(modern[2]!),
+          channel(modern[3]!),
+          modern[4] === undefined ? 1 : Number.parseFloat(modern[4]),
+        ];
+      }
+      // An unknown function is not transparent black: measuring it as black is how this gate reported a 6.51:1 badge as 1.32:1.
+      // Throwing fails the gate loudly instead of inventing a colour - a new syntax should stop this measurement, not be skipped.
+      throw new Error(`unparsed colour: ${value}`);
+    };
+    const effective = (element: Element): [number, number, number] | null => {
+      const stack: [number, number, number, number][] = [];
+      let node: Element | null = element;
+      while (node !== null) {
+        const background = parse(getComputedStyle(node).backgroundColor);
+        stack.push(background);
+        if (background[3] >= 0.999) break;
+        node = node.parentElement;
+      }
+      const bottom = stack[stack.length - 1]!;
+      if (bottom[3] < 0.999) return null;
+      let result = bottom;
+      for (let index = stack.length - 2; index >= 0; index -= 1) {
+        const top = stack[index]!;
+        const alpha = top[3];
+        result = [
+          top[0] * alpha + result[0] * (1 - alpha),
+          top[1] * alpha + result[1] * (1 - alpha),
+          top[2] * alpha + result[2] * (1 - alpha),
+          1,
+        ];
+      }
+      return [result[0], result[1], result[2]];
+    };
+    const luminance = ([red, green, blue]: readonly number[]): number => {
+      const channel = (value: number): number => {
+        const scaled = value / 255;
+        return scaled <= 0.03928 ? scaled / 12.92 : ((scaled + 0.055) / 1.055) ** 2.4;
+      };
+      return 0.2126 * channel(red!) + 0.7152 * channel(green!) + 0.0722 * channel(blue!);
+    };
+    const ratio = (foreground: readonly number[], background: readonly number[]): number => {
+      const [lighter, darker] = [luminance(foreground), luminance(background)].sort((a, b) => b - a);
+      return (lighter! + 0.05) / (darker! + 0.05);
+    };
+    const root = document.querySelector<HTMLElement>(`[data-testid="${id}"]`)!;
+    // An element's own text nodes, not its subtree's: a button that carries an
+    // icon and a label keeps its label here, and the icon is not text.
+    const ownText = (element: Element): string =>
+      [...element.childNodes]
+        .filter((node) => node.nodeType === Node.TEXT_NODE)
+        .map((node) => node.textContent ?? "")
+        .join("")
+        .trim();
+    const leaves = [...root.querySelectorAll<HTMLElement>("*")].filter((element) => {
+      if ((element.textContent ?? "").trim().length === 0) return false;
+      if (element.getClientRects().length === 0) return false;
+      const style = getComputedStyle(element);
+      if (style.visibility === "hidden" || style.opacity === "0") return false;
+      // An element with children is still a text leaf when its own text nodes
+      // carry the words. Skipping every element with children is how a button
+      // that paints light text on a filled accent - with an icon beside the
+      // label - stayed under the floor while this gate was green.
+      if (element.children.length > 0 && ownText(element).length === 0) return false;
+      return true;
+    });
+    return leaves.map((element) => {
+      const style = getComputedStyle(element);
+      const background = effective(element);
+      const size = Number.parseFloat(style.fontSize);
+      const weight = Number.parseInt(style.fontWeight, 10) || 400;
+      const large = size >= 24 || (size >= 18.66 && weight >= 700);
+      return {
+        text: (ownText(element).length > 0 ? ownText(element) : (element.textContent ?? "")).trim().slice(0, 32),
+        color: style.color,
+        size,
+        large,
+        ratio: background === null ? null : ratio(parse(style.color), background),
+      };
+    });
+  }, testId);
+}
+
+/**
+ * Gate 3: WCAG AA contrast for every text tone the surfaces draw, in every appearance the
+ * stylesheet paints and at both ends of the window range.
+ *
+ * Every text-bearing leaf of the surface is sampled: its computed `color`, its font size and
+ * weight, and the *effective* background behind it, composited from the element's own background
+ * up through its ancestors to the first opaque one. The required ratio is 3:1 for large text
+ * (>= 24px, or >= 18.66px bold) and 4.5:1 otherwise. A leaf whose background cannot be resolved
+ * to an opaque backing is counted as indeterminate rather than silently passing, and the count is
+ * reported per cell; today every surface resolves, so there are none.
+ *
+ * WHAT THE ONE CELL HID. This gate judged one cell: one appearance, one window, six surfaces. It
+ * never set `data-theme`, and nothing in `mountShell` answers the appearance record, so the shell
+ * stayed on the default `useAppearance` leaves in force when that read fails - and this run's
+ * browser asks for light. The header here used to say the dark theme's primary, secondary and
+ * muted tones were what it sampled, which was the one appearance it did not sample: every green
+ * reading was the light appearance. The dark appearance's ink on the card, the plate, the wash and
+ * the notice - the appearance the product is mostly played in - was measured only by the static
+ * token pairs in `tools/check-contrast-tokens.mjs`, which cannot see a `color-mix()` wash or a
+ * leaf a rule paints with a literal.
+ *
+ * The cost is a second pass over the same six surfaces, not a second suite: the surfaces are
+ * opened once per appearance per size, and the table states what each cell examined and the margin
+ * it keeps, so "no failures" is never read as "measured nothing".
+ */
+test("gate 3: every text tone clears WCAG AA on its effective background, in every appearance and at both sizes", async ({
+  page,
+}) => {
+  await mountShell(page);
+  // The settled cascade rather than an animation frame: a tone read mid-transition is a value
+  // between two appearances, which is a value no reader ever sees (gate 16's lesson).
+  await freezeTransitions(page);
+  const failures: string[] = [];
+  const table: string[] = [];
+
+  for (const viewport of CONTRAST_VIEWPORTS) {
+    await page.setViewportSize({ width: viewport.width, height: viewport.height });
+    for (const appearance of PAINTED_APPEARANCES) {
+      // The attribute the stylesheet's token root selects on: `appearance.ts` writes exactly this,
+      // and the token roots are what decide every colour sampled below.
+      await page.evaluate((value) => document.documentElement.setAttribute("data-theme", value), appearance);
+      for (const surface of SURFACES) {
+        const cell = `${appearance}/${viewport.width}x${viewport.height}`;
+        await openSurface(page, surface);
+        // The cell is PROVEN, not assumed: the attribute is read back after the surface opened,
+        // because the shell repaints it from `useAppearance` - and a cell whose attribute was
+        // replaced would be judging the other appearance under this cell's name.
+        const painted = await page.evaluate(() => document.documentElement.getAttribute("data-theme"));
+        if (painted !== appearance) {
+          failures.push(
+            `${cell} ${surface.label}: the page paints data-theme="${painted ?? ""}", so this cell is not the ${appearance} appearance`,
+          );
+          continue;
+        }
+        // Let the surface's own reads settle so the tones are the settled ones.
+        await page.waitForTimeout(200);
+        const measured = await sampleTextTones(page, surface.testId);
+        let sampled = 0;
+        let indeterminate = 0;
+        let lowest = Number.POSITIVE_INFINITY;
+        let lowestAt = "";
+        for (const sample of measured) {
+          if (sample.ratio === null) {
+            indeterminate += 1;
+            continue;
+          }
+          sampled += 1;
+          const required = sample.large ? 3 : 4.5;
+          if (sample.ratio < required - 0.01)
+            failures.push(
+              `${cell} ${surface.label}: "${sample.text}" is ${sample.color} at ${sample.size}px = ` +
+                `${sample.ratio.toFixed(2)}:1, needed ${required}:1`,
+            );
+          if (sample.ratio < lowest) {
+            lowest = sample.ratio;
+            lowestAt = `"${sample.text}" (${sample.color})`;
+          }
+        }
+        table.push(
+          `${cell.padEnd(17)} ${surface.label.padEnd(10)} ${String(sampled).padStart(3)} tone(s), ` +
+            `${indeterminate} indeterminate, lowest ${Number.isFinite(lowest) ? lowest.toFixed(2) : "n/a"}:1 ` +
+            `at ${lowestAt === "" ? "-" : lowestAt}`,
         );
-      if (sample.ratio < minimum) {
-        minimum = sample.ratio;
-        minimumAt = `${surface.label} "${sample.text}" (${sample.color})`;
       }
     }
   }
 
-  record(
-    "gate-3",
-    `${sampled} text tone(s) sampled, ${indeterminate} indeterminate; lowest ${Number.isFinite(minimum) ? minimum.toFixed(2) : "n/a"}:1 at ${minimumAt}; ${failures.length} failure(s)`,
+  // The sizes and appearances are the file's own declared population, held to the authorities
+  // that declare them rather than to a second copy written for this gate.
+  for (const viewport of CONTRAST_VIEWPORTS)
+    expect(
+      VIEWPORTS.some((each) => each.width === viewport.width && each.height === viewport.height),
+      `${viewport.width}x${viewport.height} is one of the sizes this file tests`,
+    ).toBe(true);
+  expect(paintedAppearances().sort(), "this gate measures every appearance the stylesheet paints").toEqual(
+    [...PAINTED_APPEARANCES].sort(),
   );
-  expect(failures, "every text tone clears WCAG AA for its size").toEqual([]);
+
+  record("gate-3", `\n${table.join("\n")}`);
+  expect(failures, "every text tone clears WCAG AA for its size, in every appearance and at both sizes").toEqual([]);
 });
 
 /**
@@ -1879,13 +1970,6 @@ const BEAT_SIDES = {
   player: "li.message.player .message-bubble:has(em.message-action)",
 } as const;
 
-/**
- * The two appearances the stylesheet paints. A third token root joins a gate by being
- * written into `style.css`: the population is read off the sheet below, so a new
- * appearance fails loudly instead of going unmeasured.
- */
-const PAINTED_APPEARANCES = ["dark", "light"] as const;
-
 for (const locale of ["en", "zh-CN"] as const) {
   test(`gate 16: a beat is told from its speech by more than one visible channel (${locale})`, async ({ page }) => {
     const reply = BEAT_REPLY[locale];
@@ -1919,14 +2003,9 @@ for (const locale of ["en", "zh-CN"] as const) {
     }
 
     // The population is the stylesheet's, not this file's: a third appearance joins the
-    // gate by being painted, and the drift below fails loudly instead of leaving it
+    // gate by being painted, and the drift check below fails loudly instead of leaving it
     // unmeasured.
-    const stylesheet = readFileSync(new URL("../src/style.css", import.meta.url), "utf8").replace(
-      /\/\*[\s\S]*?\*\//gu,
-      " ",
-    );
-    const painted = [...new Set([...stylesheet.matchAll(/:root\[data-theme="([^"]+)"\]/gu)].map((match) => match[1]))];
-    expect(painted.sort(), "this gate measures every appearance the stylesheet paints").toEqual(
+    expect(paintedAppearances().sort(), "this gate measures every appearance the stylesheet paints").toEqual(
       [...PAINTED_APPEARANCES].sort(),
     );
 
