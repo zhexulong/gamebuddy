@@ -951,7 +951,7 @@ export function planWorkDescription(actions: readonly PublishedPlanAction[]): st
     "// Or ONE LOOP over a collection of live world rows, expanded by the Mod on the game thread:\n" +
     "builder.for_each({\n" +
     "  source: { area: { x: 60, y: 18, w: 20, h: 3 } },\n" +
-    "  where: [{ col: { every: 3, offset: 0 } }],\n" +
+    '  where: [{ occupant: "none" }, { field: "tillable", in: [true] }],\n' +
     '  do: { action: "till_soil", ' +
     planExampleCharge("till_soil") +
     " }\n" +
@@ -971,7 +971,7 @@ export function planWorkDescription(actions: readonly PublishedPlanAction[]): st
     "}\n" +
     "builder.for_each({ " +
     PLAN_FOR_EACH_LOOP_KEYS.join(", ") +
-    ' }) is ONE loop over a collection of live world rows, expanded by the Mod on the game thread: `source` names the live tiles whose rows the pass reads; `where` is a list of tests on ONE row - a field test ({ field: "kind", in: ["weed"] }, { field: "health", gt: 0 }), what stands on the tile ({ occupant: "weed" }, in the engine\'s own words: weed, stone, crop, tree, tree_stump, grass, object, terrain, none), and/or a position guard ({ col: { every: 3, offset: 0 } }, { row: { every: 2, offset: 1 } }), one spelling per test - a word the grammar does not have is refused as for_each_where_unrecognised:<given>;allowed=<the words it does have>; `do` is an ORDERED CHAIN of steps worked on ONE tile - each step an action from the list above with its own arguments, at most ' +
+    ' }) is ONE loop over a collection of live world rows, expanded by the Mod on the game thread: `source` names the live tiles whose rows the pass reads; `where` is a list of tests on ONE row, and EVERY test must hold - the list is a CONJUNCTION, never a choice, and each predicate is exactly ONE test: what stands on the tile ({ occupant: "weed" }, in the engine\'s own words: weed, stone, crop, tree, tree_stump, grass, object, terrain, none), or a field the row reports ({ field: "kind", in: ["weed"] }, where `in` is the one comparison and takes the list of accepted values). So `where: [{ occupant: "none" }, { field: "tillable", in: [true] }]` claims the rows that are BOTH empty and tillable - which is how a `till_soil` pass avoids tilling the grass - and two tests inside ONE predicate object is refused rather than read as either; a word the grammar does not have is refused as for_each_where_unrecognised:<given>;allowed=<the words it does have>. The filter is what makes a rectangle a row SET: without it every tile is a row, and the tiles you meant to leave alone are worked or refused one by one. `do` is an ORDERED CHAIN of steps worked on ONE tile - each step an action from the list above with its own arguments, at most ' +
     String(MAX_FOR_EACH_STEPS) +
     " of them, or a single action (the chain of length one), or null for a row left deliberately alone (a path). EACH for_each CALL IS ITS OWN NODE, in the order you write them: a patch needing two actions is two calls over the same rectangle, one per action. The caller needs no observation first - no target id, no per-tile coordinate - because the rows are read live. " +
     forEachRowIdentityText() +
@@ -2332,11 +2332,11 @@ function transitionApproachNode(
  * </p>
  * <p>
  * A FILTERED LOOP IS NEVER PACKED. `where` decides a row against the live world, so a loop that carries one names a SUBSET
- * of its rectangle - the path column inside an intercropped patch - and the compiler cannot know which tiles those are. A
- * packed use covers every tile of its footprint, so packing a filtered loop would till the columns the caller excluded: the
- * one thing a packed native use may never do (the same rule the Mod's own sweep applies to an arc nobody named,
- * `farmhandexecutioncontroller.resourcetoolactions.cs:1428-1439`). The loop is left exactly as written, and the Mod's
- * per-row rules decide it live.
+ * of its rectangle - the empty tillable tiles inside a patch of weeds and stone - and the compiler cannot know which tiles
+ * those are. A packed use covers every tile of its footprint, so packing a filtered loop would till the rows the caller
+ * excluded - an EFFECT rather than a refusal, and the one thing a packed native use may never do (the same rule the Mod's
+ * own sweep applies to an arc nobody named, `farmhandexecutioncontroller.resourcetoolactions.cs:1428-1439`). The loop is
+ * left exactly as written, and the Mod's per-row rules decide it live.
  * </p>
  * <p>
  * IT REFUSES TO GUESS, AND DOES NOT DRESS A FALLBACK AS A REFUSAL. An unreadable tool reading leaves the loop exactly as
@@ -2730,11 +2730,11 @@ export const ROW_DERIVED_STEP_ARGUMENTS: readonly string[] = Object.freeze([
 /**
  * The arguments a step may still leave out, and why it is not every argument.
  *
- * MEASURED, and it is a finding rather than a permission: every shipped loop example - the one in the description and the
- * intercropping one in `body-program-area-dispatch.test.ts` - writes `do: { action: "plant_seed", seed: "hops" }`,
- * which omits `slot` and `expectedQualifiedItemId` (and names an argument `plant_seed` does not declare at all). The Mod
+ * MEASURED, and it is a finding rather than a permission: the description's own chain example writes
+ * `do: [{ action: "till_soil", charge: 0 }, { action: "plant_seed", seed: "hops" }]`, which omits `slot` and
+ * `expectedQualifiedItemId` (and names an argument `plant_seed` does not declare at all). The Mod
  * refuses every one of those rows today, because `TryBuildRowArguments` demands each declared argument the row cannot
- * derive, so those examples are ALREADY broken per row. Moving them to plan time here would turn a repair of this unit
+ * derive, so that example is ALREADY broken per row. Moving it to plan time here would turn a repair of this unit
  * into a rewrite of that form's documentation, so they are named instead; a THIRD name is a capability decision, and the
  * test that reads this list asserts it holds exactly these two.
  */

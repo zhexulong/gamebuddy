@@ -14,11 +14,14 @@ import {
   MAX_FOR_EACH_ROWS,
   MAX_FOR_EACH_STEPS,
   type PlanForEachLoop,
+  PLAN_FOR_EACH_FIELD_COMPARISONS,
   PLAN_FOR_EACH_LOOP_KEYS,
   PLAN_FOR_EACH_PREDICATE_SPELLINGS,
   PLAN_FOR_EACH_ROW_IDENTITY_REFUSAL,
   PLAN_FOR_EACH_SOURCES,
+  PLAN_FOR_EACH_WITHDRAWN_COMPARISONS,
   PLAN_FOR_EACH_WITHDRAWN_KEYS,
+  PLAN_FOR_EACH_WITHDRAWN_PREDICATE_SPELLINGS,
   planFormExecutionUnavailableReason,
   readForEachLoop,
 } from "./body-program-for-each.js";
@@ -161,9 +164,9 @@ test("the row bound the compiler enforces is the bound the Mod's own rules decla
  */
 test("each for_each call is its own node, in the order the caller wrote them", () => {
   const compiled = compile(
-    `builder.for_each({ source: { area: ${PATCH} }, where: [{ col: { every: 3, offset: 0 } }], do: { action: "plant_seed", seed: "hops" } });
-       builder.for_each({ source: { area: ${PATCH} }, where: [{ col: { every: 3, offset: 1 } }], do: { action: "plant_seed", seed: "coffee" } });
-       builder.for_each({ source: { area: ${PATCH} }, where: [{ col: { every: 3, offset: 2 } }], do: null });`,
+    `builder.for_each({ source: { area: ${PATCH} }, where: [{ occupant: "weed" }], do: { action: "cut_weeds" } });
+       builder.for_each({ source: { area: ${PATCH} }, where: [{ occupant: "stone" }], do: { action: "break_rock" } });
+       builder.for_each({ source: { area: ${PATCH} }, where: [{ occupant: "crop" }], do: null });`,
   );
   const nodes = nodesOf(compiled);
   assert.equal(nodes.length, 3, "three calls are three nodes: nothing she wrote is folded into another call's node");
@@ -178,7 +181,7 @@ test("each for_each call is its own node, in the order the caller wrote them", (
   const loops = nodes.map((node) => loopOf(node));
   assert.deepEqual(
     loops.map((loop) => loop.do),
-    [[{ action: "plant_seed", seed: "hops" }], [{ action: "plant_seed", seed: "coffee" }], null],
+    [[{ action: "cut_weeds" }], [{ action: "break_rock" }], null],
     "each node carries the effect its own call wrote, in the caller's order",
   );
   for (const loop of loops)
@@ -195,8 +198,8 @@ test("each for_each call is its own node, in the order the caller wrote them", (
 test("loops over different sources are separate nodes like every other call", () => {
   const nodes = nodesOf(
     compile(
-      `builder.for_each({ source: { area: ${PATCH} }, where: [{ col: { every: 3, offset: 0 } }], do: { action: "plant_seed", seed: "hops" } });
-       builder.for_each({ source: { area: { x: 60, y: 21, w: 20, h: 3 } }, where: [{ col: { every: 3, offset: 0 } }], do: { action: "plant_seed", seed: "hops" } });`,
+      `builder.for_each({ source: { area: ${PATCH} }, where: [{ occupant: "weed" }], do: { action: "cut_weeds" } });
+       builder.for_each({ source: { area: { x: 60, y: 21, w: 20, h: 3 } }, where: [{ occupant: "weed" }], do: { action: "cut_weeds" } });`,
     ),
   );
   assert.equal(nodes.length, 2);
@@ -782,9 +785,7 @@ test("where_spellings: every spelling the model declares is read by both readers
 
   // One minimal document per spelling; a spelling with none here is a blocked reading that says so, never a silent skip.
   const documents: Readonly<Record<string, unknown>> = Object.freeze({
-    field: { field: "kind", eq: "weed" },
-    col: { col: { every: 2, offset: 0 } },
-    row: { row: { every: 2, offset: 0 } },
+    field: { field: "kind", in: ["weed"] },
     occupant: { occupant: "weed" },
   });
   for (const spelling of modSpellings) {
@@ -824,6 +825,150 @@ test("where_spellings: every spelling the model declares is read by both readers
     `the refusal also names the row of the declaration that broke it, received ${detail}`,
   );
 });
+
+/**
+ * THE WORDS THE FILTER NO LONGER HAS ARE A DECLARATION, NOT A COMMENT, AND THIS IS THE GATE FOR IT.
+ *
+ * <p>
+ * POPULATION: `PLAN_FOR_EACH_WITHDRAWN_PREDICATE_SPELLINGS` and `PLAN_FOR_EACH_WITHDRAWN_COMPARISONS` - the two lists a
+ * withdrawal is written in. A word in neither list is not examined here; adding it there is what puts it under this check.
+ * </p>
+ * <p>
+ * WHY EACH WORD WENT, in the numbers the declarations carry: `col` and `row` were authored `0 of 2,871` raw plan calls
+ * (2,145 distinct scripts, 339 runs) and `0 of 34` compiled loop documents; `eq`, `ne`, `lt`, `lte`, `gt` and `gte` were
+ * `0 of 2,871` each. What the corpus DOES write is `occupant` (30 of 38 loop calls) and `field`+`in` (7 of 38), which is why
+ * those two stay: the filter is load-bearing - 898 decided rows across the 20 loop passes that reported, 700 of them
+ * `not_matched`, i.e. rows the rectangle held and the caller excluded.
+ * </p>
+ * <p>
+ * FIVE PROPERTIES, each of which this withdrawal's own history would have broken:
+ * </p>
+ *
+ *   1. A word cannot be both accepted and withdrawn.
+ *   2. The reader refuses every one BY NAME, with the accepted words as the alternatives - read from the declaration, not a
+ *      list written beside the message.
+ *   3. The COMPILER answers the same word and the same alternatives, because that is the answer a caller actually meets.
+ *   4. The description teaches none of them as a key, and still teaches both accepted spellings.
+ *   5. The Mod's `Selectors` and `Comparisons` carry none of them, read from its own arrays: a word still accepted on the
+ *      game thread is a dialect this file cannot see.
+ */
+test("where_withdrawn_words: a filter word this grammar no longer has is refused by name, taught nowhere, and read by neither reader", () => {
+  const withdrawnSelectors = [...PLAN_FOR_EACH_WITHDRAWN_PREDICATE_SPELLINGS];
+  const withdrawnComparisons = [...PLAN_FOR_EACH_WITHDRAWN_COMPARISONS];
+  assert.ok(
+    withdrawnSelectors.length > 0 || withdrawnComparisons.length > 0,
+    "blocked: neither withdrawn declaration names a word, so this gate examined nothing",
+  );
+
+  // 1. ONE SET OF ACCEPTED WORDS, and a withdrawn word may not be in it either.
+  assert.deepEqual(
+    PLAN_FOR_EACH_PREDICATE_SPELLINGS.filter((word) => withdrawnSelectors.includes(word)),
+    [],
+    "a predicate spelling cannot be both accepted and withdrawn",
+  );
+  assert.deepEqual(
+    PLAN_FOR_EACH_FIELD_COMPARISONS.filter((word) => withdrawnComparisons.includes(word)),
+    [],
+    "a comparison cannot be both accepted and withdrawn",
+  );
+  assert.deepEqual(
+    PLAN_FOR_EACH_FIELD_COMPARISONS,
+    [...withdrawnComparisons, "in"].filter((word) => !withdrawnComparisons.includes(word)),
+    "`in` is the one comparison the corpus ever wrote beside `field` (7 of 38 loop calls), so it is the one that stays",
+  );
+
+  /** One document per withdrawn word, and the alternatives the refusal must name for it. */
+  const cases: readonly (readonly [string, Record<string, unknown>, string])[] = [
+    ...withdrawnSelectors.map(
+      (word) => [word, { [word]: { every: 2, offset: 0 } }, PLAN_FOR_EACH_PREDICATE_SPELLINGS.join(",")] as const,
+    ),
+    ...withdrawnComparisons.map(
+      (word) => [word, { field: "kind", [word]: "weed" }, PLAN_FOR_EACH_FIELD_COMPARISONS.join(",")] as const,
+    ),
+  ];
+
+  let examined = 0;
+  for (const [word, predicate, allowed] of cases) {
+    examined += 1;
+    // 2. THE READER, on the document the caller wrote: named by the word, and the alternatives are the declaration.
+    const reading = readForEachLoop(loopAround(predicate), null);
+    assert.equal(
+      reading.ok ? "accepted" : reading.code,
+      FOR_EACH_WHERE_UNRECOGNISED,
+      `${word} is withdrawn from \`where\`, so the reader must refuse it by name - it was read as ${reading.ok ? JSON.stringify(reading.loop.where) : `${reading.code}:${reading.detail}`}`,
+    );
+    assert.equal(
+      reading.ok ? "" : reading.detail,
+      `predicate[0]:${word};allowed=${allowed}`,
+      `${word} is refused with the row of the declaration that broke it and the words that may be written instead`,
+    );
+    // THE SAME WORD THROUGH THE WIRE READER: one reader, so a node carrying it is not a loop document.
+    assert.equal(
+      isForEachLoopDocument({ type: "loop", ...loopAround(predicate) }),
+      false,
+      `${word} must not be a loop document on the wire either`,
+    );
+    // 3. THE COMPILER, which is the answer a caller actually meets: the same word, the same alternatives.
+    const compiled = compile(
+      `builder.for_each({ source: { area: ${PATCH} }, where: [${JSON.stringify(predicate)}], do: { action: "cut_weeds" } });`,
+    );
+    assert.equal(compiled.ok, false, `${word} must refuse the plan rather than compile a loop carrying it`);
+    assert.equal(
+      compiled.ok ? "" : compiled.reasonCode,
+      `plan_script_${FOR_EACH_WHERE_UNRECOGNISED}:predicate[0]:${word};allowed=${allowed}`,
+      `${word} is answered by the compiler with its own name and the words that may be written instead`,
+    );
+  }
+  assert.ok(examined > 0, "blocked: no withdrawn word was examined, so no verdict was taken");
+
+  // 4. TAUGHT NOWHERE AS A KEY, and both accepted spellings still taught: the description is the only place she learns one.
+  const description = planWorkDescription(ACTIONS);
+  for (const word of [...withdrawnSelectors, ...withdrawnComparisons])
+    assert.equal(
+      new RegExp(`\\b${word}\\s*:`, "u").test(description),
+      false,
+      `where_word_taught_but_refused:${word} - the grammar refuses it, so the description may not show it as a key`,
+    );
+  assert.ok(
+    description.includes('{ occupant: "weed" }'),
+    "the description still teaches the spelling the corpus writes",
+  );
+  assert.ok(
+    description.includes('{ field: "tillable", in: [true] }'),
+    "the description still teaches the field test, including the conjunction whose failure mode is an EFFECT rather than a refusal",
+  );
+
+  // 5. THE MOD'S HALF, read from its own declarations: it answers on the game thread, so a word it still accepts is a
+  // dialect this file cannot see.
+  const modSelectors = modWhereSpellings();
+  const modComparisons = modWhereComparisons();
+  for (const word of withdrawnSelectors)
+    assert.equal(modSelectors.includes(word), false, `where_readers_disagree:${word}:mod - the Mod still accepts it`);
+  for (const word of withdrawnComparisons)
+    assert.equal(modComparisons.includes(word), false, `where_readers_disagree:${word}:mod - the Mod still accepts it`);
+});
+
+/**
+ * The comparison words the Mod's predicate model declares, resolved through their own constant names out of
+ * `FarmhandForEachPredicate.Comparisons`, so this gate follows a rename instead of going quiet.
+ */
+function modWhereComparisons(): readonly string[] {
+  const source = readFileSync(MOD_RULES_PATH, "utf8");
+  const block = /Comparisons\s*=\s*\{([^}]*)\}/u.exec(source);
+  assert.ok(block !== null, "the Mod's predicate model must still declare Comparisons; this gate reads it from there");
+  return block[1]!
+    .split(",")
+    .map((entry) => entry.trim())
+    .filter((entry) => entry.length > 0)
+    .map((name) => {
+      const declared = new RegExp(`${name}\\s*=\\s*"([a-z0-9_]+)"`, "u").exec(source);
+      assert.ok(
+        declared !== null,
+        `the Mod's Comparisons names ${name}, which must still be declared in the same file`,
+      );
+      return declared[1]!;
+    });
+}
 
 /**
  * The row sources the Mod's reader accepts, read out of `FarmhandForEachSource.Kinds` rather than restated here: the
@@ -1040,7 +1185,7 @@ test("the loop description teaches the charge and prints a step the compiler acc
   // The example the description prints is compiled HERE, so a description that drifts from the compiler fails rather
   // than teaching a call that is refused.
   const example = compile(
-    `builder.for_each({ source: { area: { x: 60, y: 18, w: 20, h: 3 } }, where: [{ col: { every: 3, offset: 0 } }], do: { action: "till_soil", charge: 0 } });`,
+    `builder.for_each({ source: { area: { x: 60, y: 18, w: 20, h: 3 } }, where: [{ occupant: "none" }, { field: "tillable", in: [true] }], do: { action: "till_soil", charge: 0 } });`,
   );
   assert.equal(example.ok, true, "the loop the description prints must compile");
 });

@@ -24,7 +24,7 @@ public interface IFarmhandForEachWorld
     /// The live tile at <paramref name="x"/>,<paramref name="y"/>, or null when that tile is not on the farm this pass
     /// reads. A tile that is not on the farm is not a row, and the pass says so instead of acting on it.
     /// </summary>
-    /// <param name="localColumn">The row's 0-based column inside the loop's source, which a position guard tests.</param>
+    /// <param name="localColumn">The row's 0-based column inside the loop's source, which is part of the row's dispatch identity.</param>
     /// <param name="localRow">The row's 0-based row inside the loop's source.</param>
     FarmhandForEachRow? ReadRow(int x, int y, int localColumn, int localRow);
 

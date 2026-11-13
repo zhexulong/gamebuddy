@@ -8,8 +8,8 @@ namespace GameBuddy.Stardew.Core.Policy;
 ///
 /// The caller supplies the row; this pass never reads the world and never trusts the snapshot the plan was written
 /// from. `LocalColumn`/`LocalRow` are the row's position INSIDE the source (0-based, in the source's own order), which is
-/// what a position guard tests; `X`/`Y` are the map tile, absent for the thirteen published families whose rows carry no
-/// tile.
+/// part of the identity the pass dispatches the row with; `X`/`Y` are the map tile, absent for the thirteen published
+/// families whose rows carry no tile.
 /// </summary>
 public sealed record FarmhandForEachRow(
     int? X,
@@ -278,7 +278,7 @@ public static class FarmhandForEachExpansion
             }
             // ONE RULE PER LOOP: the row either satisfies the loop's conjunction or it does not, and the effect is the
             // loop's own `do`. A row the loop did not claim is still reported - a skipped row reads as a cleared patch.
-            if (!FarmhandForEachRules.Matches(loop, row.Fields, row.LocalColumn, row.LocalRow))
+            if (!FarmhandForEachRules.Matches(loop, row.Fields))
             {
                 // A ROW THE PASS ALREADY WORKED IS NOT A ROW NOBODY CLAIMED. The predicate is read against the world as
                 // it is NOW, and the pass's own effects move that world: measured `round45`, seven `cut_weeds` rows were

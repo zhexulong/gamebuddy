@@ -19,10 +19,11 @@ namespace GameBuddy.Stardew.Core.Tests;
 /// </para>
 /// <para>
 /// EVERY BOUND AND EVERY SPELLING COMES FROM THE MODEL, never from this file: `FarmhandForEachSource.Kinds`,
-/// `FarmhandForEachStride.EveryOperator`, `FarmhandForEachStep.ByKindAction`, `FarmhandForEachLoop.MaximumPredicates`,
+/// `FarmhandForEachPredicate.Comparisons`, `FarmhandForEachStep.ByKindAction`, `FarmhandForEachLoop.MaximumPredicates`,
 /// `FarmhandForEachPredicate.MaximumValues`, `FarmhandForEachStep.MaximumArguments` and
 /// `FarmhandForEachEffect.MaximumSteps`. The bare numbers in this file's documents are the CALLER's values (a 3x20 patch,
-/// every-3 columns); the limits are read from those constants so a bound that changes cannot leave a test behind.
+/// two values in a membership list); the limits are read from those constants so a bound that changes cannot leave a test
+/// behind.
 /// </para>
 /// </summary>
 public sealed class FarmhandForEachArgumentsTests
@@ -70,24 +71,26 @@ public sealed class FarmhandForEachArgumentsTests
     }
 
     /// <summary>
-    /// The predicate arrives as the loop's own conjunction, and a `do: null` is a STATEMENT rather than a forgotten row.
+    /// The predicates arrive as the loop's own conjunction - AND, every test must hold - and a `do: null` is a STATEMENT
+    /// rather than a forgotten row.
     /// </summary>
     [Fact]
     public void ThePredicatesAndTheEffectArriveAsTheLoopModelCarriesThem()
     {
         string document =
             "{\"source\":{\"area\":{\"x\":60,\"y\":18,\"w\":20,\"h\":3}},"
-            + "\"where\":[{\"col\":{\"every\":3,\"offset\":0}}],"
+            + "\"where\":[{\"occupant\":\"none\"},{\"field\":\"tillable\",\"in\":[true]}],"
             + "\"do\":{\"action\":\"plant_seed\",\"slot\":0,\"expectedQualifiedItemId\":\"(O)472\"}}";
 
         FarmhandForEachArguments.TryParse(Arguments(document), out FarmhandForEachLoop? loop, out string reasonCode)
             .Should()
             .BeTrue(reasonCode);
 
-        loop!.Where.Should().ContainSingle();
-        loop.Where![0].Axis.Should().Be(FarmhandForEachPredicate.ColOperator);
-        loop.Where![0].Stride!.Every.Should().Be(3);
-        loop.Where![0].Stride!.Offset.Should().Be(0);
+        loop!.Where.Should().HaveCount(2, "two predicates are one conjunction: the row must be BOTH empty and tillable");
+        loop.Where![0].Field.Should().Be(FarmhandForEachHealing.OccupantField);
+        loop.Where[0].Values[0].Text.Should().Be("none");
+        loop.Where[1].Field.Should().Be("tillable");
+        loop.Where[1].Values[0].Flag.Should().Be(true, "a JSON boolean is a flag, not the word for one");
         // A declared argument rides through as the caller's own scalar, spelled the way a wire scalar is spelled.
         loop.Do!.Steps[0].Arguments!["slot"].Should().Be("0");
         loop.Do!.Steps[0].Arguments!["expectedQualifiedItemId"].Should().Be("(O)472");
@@ -113,11 +116,11 @@ public sealed class FarmhandForEachArgumentsTests
     }
 
     [Fact]
-    public void AFieldPredicateCarriesItsComparisonAndItsValue()
+    public void AFieldPredicateCarriesItsComparisonAndItsValues()
     {
         string document =
             "{\"source\":{\"area\":{\"x\":0,\"y\":0,\"w\":2,\"h\":1}},"
-            + "\"where\":[{\"field\":\"kind\",\"eq\":\"weed\"},{\"field\":\"health\",\"gt\":0}],"
+            + "\"where\":[{\"field\":\"kind\",\"in\":[\"weed\",\"stone\"]},{\"field\":\"health\",\"in\":[0]}],"
             + "\"do\":{\"action\":\"cut_weeds\"}}";
 
         FarmhandForEachArguments.TryParse(Arguments(document), out FarmhandForEachLoop? loop, out string reasonCode)
@@ -126,10 +129,8 @@ public sealed class FarmhandForEachArgumentsTests
 
         loop!.Where.Should().HaveCount(2);
         loop.Where![0].Field.Should().Be("kind");
-        loop.Where[0].Comparison.Should().Be(FarmhandForEachComparison.Eq);
-        loop.Where[0].Values[0].Text.Should().Be("weed");
+        loop.Where[0].Values.Select(value => value.Text).Should().Equal(new[] { "weed", "stone" });
         loop.Where[1].Field.Should().Be("health");
-        loop.Where[1].Comparison.Should().Be(FarmhandForEachComparison.Gt);
         loop.Where[1].Values[0].Number.Should().Be(0, "a JSON number is a number, not the word for one");
     }
 
@@ -181,10 +182,8 @@ public sealed class FarmhandForEachArgumentsTests
         {
             string predicate = selector switch
             {
-                FarmhandForEachPredicate.FieldOperator => "{\"field\":\"kind\",\"eq\":\"weed\"}",
+                FarmhandForEachPredicate.FieldOperator => "{\"field\":\"kind\",\"in\":[\"weed\"]}",
                 FarmhandForEachPredicate.OccupantOperator => "{\"occupant\":\"weed\"}",
-                FarmhandForEachPredicate.ColOperator or FarmhandForEachPredicate.RowOperator =>
-                    "{\"" + selector + "\":{\"every\":2,\"offset\":0}}",
                 _ => throw new InvalidOperationException($"where_spelling_unproven:{selector}"),
             };
             FarmhandForEachArguments.TryParseDocument(Document(predicate), out _, out string answered)
@@ -192,10 +191,9 @@ public sealed class FarmhandForEachArgumentsTests
                 .BeTrue($"where_readers_disagree:{selector}:mod answered {answered}");
         }
 
-        foreach ((string word, FarmhandForEachComparison _) in FarmhandForEachPredicate.Comparisons)
+        foreach (string word in FarmhandForEachPredicate.Comparisons)
         {
-            string value = string.Equals(word, FarmhandForEachPredicate.InOperator, StringComparison.Ordinal) ? "[\"weed\"]" : "\"weed\"";
-            FarmhandForEachArguments.TryParseDocument(Document("{\"field\":\"kind\",\"" + word + "\":" + value + "}"), out _, out string answered)
+            FarmhandForEachArguments.TryParseDocument(Document("{\"field\":\"kind\",\"" + word + "\":[\"weed\"]}"), out _, out string answered)
                 .Should()
                 .BeTrue($"where_readers_disagree:{word}:mod answered {answered}");
         }
@@ -208,7 +206,7 @@ public sealed class FarmhandForEachArgumentsTests
 
         FarmhandForEachArguments.TryParseDocument(Document("{\"field\":\"kind\",\"equals\":\"weed\"}"), out _, out reasonCode).Should().BeFalse();
         reasonCode.Should().StartWith(
-            $"{FarmhandForEachArguments.WhereUnrecognised}:equals;allowed={string.Join(",", FarmhandForEachPredicate.Comparisons.Select(entry => entry.Word))}",
+            $"{FarmhandForEachArguments.WhereUnrecognised}:equals;allowed={string.Join(",", FarmhandForEachPredicate.Comparisons)}",
             "beside `field` the alternatives are the comparison words, and they are printed from the same declaration the reader accepts");
 
         (FarmhandForEachPredicate.Selectors.Length + FarmhandForEachPredicate.Comparisons.Length).Should()
@@ -216,12 +214,47 @@ public sealed class FarmhandForEachArgumentsTests
     }
 
     /// <summary>
+    /// THE FILTER'S WITHDRAWN WORDS ARE REFUSED BY NAME ON THE GAME THREAD TOO.
+    ///
+    /// <para>
+    /// The population lives on the Host side, where it is a declaration (`PLAN_FOR_EACH_WITHDRAWN_PREDICATE_SPELLINGS`,
+    /// `PLAN_FOR_EACH_WITHDRAWN_COMPARISONS`) and a gate walks it; this is the answer the GAME THREAD gives to a document
+    /// that carries one anyway, which is the one a program authored through `stardew_submit_action_program` actually meets.
+    /// The words are listed here because a `.cs` test file cannot read a TypeScript declaration, and each one is checked
+    /// against the model first: a word the model re-accepts fails here rather than being refused by a stale test.
+    /// </para>
+    /// <para>
+    /// Why they went, measured 2026-11-14 over every plan script a run captured (2,871 raw calls): `col` and `row` were
+    /// authored <c>0 of 2,871</c> each, and `eq`, `ne`, `lt`, `lte`, `gt`, `gte` were each <c>0 of 2,871</c> - while
+    /// `occupant` (30 of 38 loop calls) and `field`+`in` (7 of 38) are how the corpus writes a filter.
+    /// </para>
+    /// </summary>
+    [Theory]
+    [InlineData("{\"col\":{\"every\":3,\"offset\":1}}", "col")]
+    [InlineData("{\"row\":{\"every\":2,\"offset\":1}}", "row")]
+    [InlineData("{\"field\":\"kind\",\"eq\":\"weed\"}", "eq")]
+    [InlineData("{\"field\":\"kind\",\"ne\":\"weed\"}", "ne")]
+    [InlineData("{\"field\":\"health\",\"lt\":5}", "lt")]
+    [InlineData("{\"field\":\"health\",\"lte\":5}", "lte")]
+    [InlineData("{\"field\":\"health\",\"gt\":0}", "gt")]
+    [InlineData("{\"field\":\"health\",\"gte\":0}", "gte")]
+    public void AWithdrawnFilterWordIsRefusedWithTheWordsThatMayBeWritten(string predicate, string word)
+    {
+        FarmhandForEachPredicate.Selectors.Should().NotContain(word, $"where_readers_disagree:{word}:mod - the model still accepts it as a selector");
+        FarmhandForEachPredicate.Comparisons.Should().NotContain(word, $"where_readers_disagree:{word}:mod - the model still accepts it as a comparison");
+        string allowed = word is "col" or "row"
+            ? string.Join(",", FarmhandForEachPredicate.Selectors)
+            : string.Join(",", FarmhandForEachPredicate.Comparisons);
+        Refused(Document(predicate), $"{FarmhandForEachArguments.WhereUnrecognised}:{word};allowed={allowed}");
+    }
+
+    /// <summary>
     /// `occupant` IS THE TILE FIELD THE CLEARING JOIN READS, not a second vocabulary beside it.
     ///
     /// The words are the engine's own (<c>ExecutionManager.DescribeTileOccupant</c>, and the `Clears` declarations that
-    /// name the same words), and the predicate is the ONE field test on
+    /// name the same words), and the predicate is the MEMBERSHIP test on
     /// <see cref="FarmhandForEachHealing.OccupantField"/> - so `occupant: "weed"` and
-    /// `field: "occupant", eq: "weed"` cannot come to mean two things.
+    /// `field: "occupant", in: ["weed"]` cannot come to mean two things.
     /// </summary>
     [Fact]
     public void TheOccupantSpellingReadsTheFieldTheClearingJoinReads()
@@ -232,17 +265,21 @@ public sealed class FarmhandForEachArgumentsTests
 
         loop!.Where.Should().ContainSingle();
         loop.Where![0].Field.Should().Be(FarmhandForEachHealing.OccupantField);
-        loop.Where[0].Comparison.Should().Be(FarmhandForEachComparison.Eq);
         loop.Where[0].Values[0].Text.Should().Be("weed");
-        loop.Where[0].IsPositionGuard.Should().BeFalse("occupant is a test of what stands there, not of where the row is");
     }
 
-    /// <summary>A stride that claims no index is a rule that can never match, so it is refused rather than run dead.</summary>
+    /// <summary>
+    /// TWO TESTS IN ONE PREDICATE ARE REFUSED, because a predicate is ONE test and a conjunction is TWO predicates.
+    ///
+    /// <c>{ occupant: "none", field: "tillable", in: [true] }</c> was written once in the corpus and is refused here; the
+    /// spelling that means "empty AND tillable" is the list. If this read as either, a `till_soil` pass would till the
+    /// grass - an effect rather than a refusal.
+    /// </summary>
     [Fact]
-    public void AStrideThatClaimsNoIndexIsRefusedAsAWhereFault() =>
+    public void TwoTestsInOnePredicateAreRefusedRatherThanReadAsEither() =>
         Refused(
-            "{\"source\":{\"area\":{\"x\":0,\"y\":0,\"w\":3,\"h\":1}},\"where\":[{\"col\":{\"every\":3,\"offset\":3}}],\"do\":{\"action\":\"till_soil\"}}",
-            "for_each_invalid:where");
+            Document("{\"occupant\":\"none\",\"field\":\"tillable\",\"in\":[true]}"),
+            $"for_each_invalid:where:one_selector_of:{string.Join(",", FarmhandForEachPredicate.Selectors)}");
 
     /// <summary>An extent past the per-intent bound says which part of the declaration failed, not a bare `invalid`.</summary>
     [Fact]

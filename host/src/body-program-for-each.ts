@@ -22,43 +22,51 @@ import { hasOnlyKeys, isNonNegativeSafeInteger, isOpaqueId, isRecord } from "./p
  * three source kinds - `area`, `family` and `query` - and the Mod enumerated one: `FarmhandForEachArguments.TryReadSource`
  * refused the other two on the game thread as `for_each_source_unavailable:<kind>`, so a caller could write a loop this
  * pipeline validated, that the preflight passed, and that then answered with a code naming a source the form does not
- * have. "Every dry crop in this patch" is a field test on the area's rows (`{ field: "kind", eq: "crop" }`), which is
+ * have. "Every dry crop in this patch" is a field test on the area's rows (`{ field: "kind", in: ["crop"] }`), which is
  * implemented; a family or query source would be a new enumeration, so it is withdrawn here and finished in the Mod's
  * reader at the same time - the accepted set and the enumerated set are one set, and
  * `body-program-for-each.test.ts` reads the Mod's declaration to keep them one.
+ * </p>
+ * <p>
+ * THE FILTER IS THE ROW SET, AND IT IS LOAD-BEARING. A rectangle is a region, not an intent: measured over the 20 loop
+ * passes that reported their rows, 898 rows were decided and 700 of them (78.0%) were `not_matched` - tiles the rectangle
+ * held and the caller excluded. That is why `where` is not a convenience to be withdrawn when nobody writes a particular
+ * spelling: the corpus writes it in 35 of 38 `for_each` calls. What was withdrawn is the rest of its vocabulary, each word
+ * with its own `0 of 2,871` measurement (`PLAN_FOR_EACH_WITHDRAWN_PREDICATE_SPELLINGS`,
+ * `PLAN_FOR_EACH_WITHDRAWN_COMPARISONS`).
  * </p>
  */
 
 /** One scalar a `where` predicate or a `do` argument may carry. */
 type PlanForEachScalar = string | number | boolean;
 
-/** A repeating position guard: `every: 3, offset: 1` claims local index 1, 4, 7 ... */
-type PlanForEachStride = Readonly<{ every: number; offset: number }>;
-
 /**
- * One predicate over a row. THREE SPELLINGS: a FIELD test, a POSITION guard on `col`/`row`, or the OCCUPANT of the tile.
+ * One predicate over a row. TWO SPELLINGS: a FIELD test, or the OCCUPANT of the tile.
  *
- * Position is the operator the whole form exists for. Trellis crops grow into impassable tiles, so a real farm leaves a
- * walkable column between trellis columns and plants a filler crop between trellis rows; those decisions depend on the
- * row's POSITION, never on what the tile contains, so a dispatch keyed on the row's kind cannot represent them.
- *
+ * <p>
+ * A `where` LIST IS A CONJUNCTION. Every predicate in it must hold for the row, and each predicate is ONE test - two
+ * spellings in one object is not "either", it is a declaration this form refuses, because a rule a reader could read as
+ * OR is a plan that works rows the caller meant to leave alone.
+ * </p>
+ * <p>
+ * THE FILTER IS THE REASON A LOOP IS USABLE, and it is written in nearly every loop: measured over every plan script a run
+ * captured (`0 of 2,871` raw calls for each withdrawn word, below), `where` was written in 35 of 38 `for_each` calls, and
+ * the row answers of 20 loop passes show 898 decided rows of which 700 (78.0%) were `not_matched` - rows the rectangle held
+ * and the caller did not mean to touch. A loop without the filter is not the same intent over a bigger set: the pair
+ * `[{ occupant: "none" }, { field: "tillable", in: [true] }] -> till_soil` exists to till EMPTY ground, and an unfiltered
+ * `till_soil` over that rectangle tills the grass too.
+ * </p>
+ * <p>
  * THE OCCUPANT SPELLING IS NOT A SECOND VOCABULARY. `{ occupant: "weed" }` is the field test on the field the Mod's
  * clearing join reads (`FarmhandForEachHealing.OccupantField`), whose words are the engine's own what-stands-here names -
  * exactly the words a `Clears` declaration is written in - so the two spellings mean one test and cannot come to disagree.
  * It exists because `kind` answers a different question: a mixed patch filtered by kind says "work whatever the Mod would
  * clear with a scythe", and one filtered by occupant says "work the weeds and leave the stones".
+ * </p>
  */
 type PlanForEachPredicate = Readonly<{
-  col?: PlanForEachStride;
-  row?: PlanForEachStride;
   field?: string;
   occupant?: string;
-  eq?: PlanForEachScalar;
-  ne?: PlanForEachScalar;
-  lt?: PlanForEachScalar;
-  lte?: PlanForEachScalar;
-  gt?: PlanForEachScalar;
-  gte?: PlanForEachScalar;
   in?: readonly PlanForEachScalar[];
 }>;
 
@@ -150,25 +158,78 @@ export const PLAN_FOR_EACH_WITHDRAWN_KEYS: readonly string[] = Object.freeze([
  */
 export const FOR_EACH_UNKNOWN_KEY = "for_each_unknown_key";
 
-/** The two axes a repeating position guard claims. */
-const PLAN_FOR_EACH_AXES: readonly string[] = Object.freeze(["col", "row"]);
-
 /**
- * The spellings a `where` predicate may be written with: the keys that say WHAT one predicate tests.
+ * The spellings a `where` predicate may be written with, DECLARED ONCE, each with the measurement that keeps it.
+ *
+ * POPULATION AND MEASUREMENT, from every plan script a run's own session record captured (339 runs, 2,871 deduped raw
+ * `stardew_plan_work` calls, measured 2026-11-14):
+ *
+ *   - `occupant` - authored 30 of 38 raw `for_each` calls (3 runs). The corpus's dominant spelling: `[{ occupant: "weed" }]
+ *     -> cut_weeds`, `[{ occupant: "stone" }] -> break_rock`, `[{ occupant: "crop" }] -> harvest_crop`.
+ *   - `field`    - authored 7 of 38, always with `in`: `[{ field: "kind", in: ["weed"] }]`, and the conjunction
+ *     `[{ occupant: "none" }, { field: "tillable", in: [true] }]` twice. It is not a second way to spell `occupant`: it
+ *     tests a value no occupant word carries (`tillable`), which is why both spellings stay.
+ *
+ * The two words this list does NOT have measured ZERO and are declared in `PLAN_FOR_EACH_WITHDRAWN_PREDICATE_SPELLINGS`.
+ * That is the bar for withdrawing a third: print `0 of <the calls read>` before it goes.
  *
  * ONE DECLARATION, and every refusal for a word this form does not have is generated from it - a second hand-written copy
  * of these words beside the message is how a caller ends up told `for_each_where_unrecognised:in` and left to guess what
  * `where` does accept. Mirrors `FarmhandForEachPredicate.Selectors`, and `body-program-for-each.test.ts` reads that array
  * out of the Mod and asserts the two are equal, so a spelling added on either side is red on both.
  */
-export const PLAN_FOR_EACH_PREDICATE_SPELLINGS: readonly string[] = Object.freeze([
-  "field",
-  ...PLAN_FOR_EACH_AXES,
-  "occupant",
+export const PLAN_FOR_EACH_PREDICATE_SPELLINGS: readonly string[] = Object.freeze(["field", "occupant"]);
+
+/**
+ * The predicate words this grammar HAS HAD and no longer has, each with the measurement that withdrew it.
+ *
+ * A POSITION GUARD IS INEXPRESSIBLE NOW, and that is a stated cost rather than an oversight: `{ col: { every: 3,
+ * offset: 0 } }` was authored `0 of 2,871` raw calls and even fewer compiled documents, so the notion that a farm layout is
+ * decided by column arithmetic was never a caller's - every loop in the corpus filters on what a tile CONTAINS
+ * (`occupant`, `field`). A caller that wanted "every third column" has no spelling here; it writes one `for_each` per tile
+ * it means, or accepts the whole rectangle and lets each row's own action refusal drop the tiles it cannot touch.
+ *
+ * It is a declaration rather than a comment because the two halves of a removal cannot be checked against prose: for every
+ * word here the reader must answer `for_each_where_unrecognised:<word>;allowed=<the accepted spellings>`, the description
+ * must teach no predicate of that name, and the word must not reappear in `PLAN_FOR_EACH_PREDICATE_SPELLINGS` or in the
+ * Mod's `Selectors`. `body-program-for-each.test.ts` walks this list.
+ */
+export const PLAN_FOR_EACH_WITHDRAWN_PREDICATE_SPELLINGS: readonly string[] = Object.freeze([
+  // Authored `0 of 2,871` raw calls each; the compiled side agreed (0 of 34 loop documents).
+  "col",
+  "row",
 ]);
 
-/** The two keys a repeating position guard is written with, declared once for the same reason the spellings are. */
-const PLAN_FOR_EACH_STRIDE_SPELLINGS: readonly string[] = Object.freeze(["every", "offset"]);
+/**
+ * The comparisons a FIELD test offers, DECLARED ONCE: a membership list.
+ *
+ * ONE MEMBER, AND IT IS THE ONE THE CORPUS WROTE: 7 of 38 loop calls filtered a field, every one of them with `in`. The six
+ * ordering/equality words that used to sit beside it measured `0 of 2,871` raw calls each and are declared withdrawn below.
+ * `in` exists where `occupant` cannot reach, because `occupant` tests one field with the engine's own words while `in`
+ * tests ANY field the tile reports - `{ field: "tillable", in: [true] }` is the tillable-ground test no occupant word
+ * spells.
+ */
+export const PLAN_FOR_EACH_FIELD_COMPARISONS: readonly string[] = Object.freeze(["in"]);
+
+/**
+ * The comparison words this grammar HAS HAD and no longer has.
+ *
+ * `eq`, `ne`, `lt`, `lte`, `gt` and `gte` were each authored `0 of 2,871` raw plan calls, and the compiled loop documents
+ * carried none of them either. A caller that meant `{ field: "health", gt: 0 }` wrote `{ field: "health", in: [1, 2, 3] }`
+ * or refused the rows by a different predicate; nothing in the corpus ever asked a row to be ORDERED.
+ *
+ * Declared rather than commented for the same reason the withdrawn selectors are: every word here must be refused by name
+ * with the comparisons this form does have, taught nowhere, and absent from `PLAN_FOR_EACH_FIELD_COMPARISONS` and from the
+ * Mod's `Comparisons`.
+ */
+export const PLAN_FOR_EACH_WITHDRAWN_COMPARISONS: readonly string[] = Object.freeze([
+  "eq",
+  "ne",
+  "lt",
+  "lte",
+  "gt",
+  "gte",
+]);
 
 /**
  * The word both sides answer when a declaration names something the `where` grammar does not have.
@@ -200,8 +261,8 @@ function forEachUnrecognised(given: string, allowed: readonly string[]): string 
  */
 export const FOR_EACH_SOURCE_UNRECOGNISED = "for_each_source_unrecognised";
 
-/** The comparisons a field predicate offers. `in` is the only one that takes a list. */
-const PLAN_FOR_EACH_COMPARISONS: readonly string[] = Object.freeze(["eq", "ne", "lt", "lte", "gt", "gte", "in"]);
+/** The one comparison a field test offers. It is the only one that takes a list, and it is the only one left. */
+const PLAN_FOR_EACH_COMPARISONS: readonly string[] = Object.freeze([...PLAN_FOR_EACH_FIELD_COMPARISONS]);
 
 /**
  * The token that means "whatever action the Mod's own classifier names for this row's kind".
@@ -418,23 +479,10 @@ function readPredicate(value: unknown, at: string): PredicateReading {
       forEachUnrecognised(`${at}:${given}`, PLAN_FOR_EACH_PREDICATE_SPELLINGS),
     );
   }
-  const spelling = spellings[0]!;
+  const spelling = spellings[0];
   // Anything else beside the one spelling is a second test, and a second test is a second predicate: the caller should
   // write two, and the alternatives this answer names are the ones the spelling it wrote accepts beside itself.
   const others = Object.keys(value).filter((key) => key !== spelling);
-  if (spelling === "col" || spelling === "row") {
-    if (others.length > 0)
-      return rejected(
-        FOR_EACH_WHERE_UNRECOGNISED,
-        forEachUnrecognised(`${at}:${others[0]!}`, PLAN_FOR_EACH_PREDICATE_SPELLINGS),
-      );
-    const stride = readStride(value[spelling], `${at}.${spelling}`);
-    if (!stride.ok) return stride;
-    return Object.freeze({
-      ok: true as const,
-      predicate: spelling === "col" ? Object.freeze({ col: stride.stride }) : Object.freeze({ row: stride.stride }),
-    });
-  }
   if (spelling === "occupant") {
     if (others.length > 0)
       return rejected(
@@ -453,64 +501,27 @@ function readPredicate(value: unknown, at: string): PredicateReading {
   if (typeof field !== "string" || field.length < 1 || field.length > 64)
     return rejected("loop_where_invalid", `${at}:field`);
   // A WORD THAT IS NOT A COMPARISON IS ANSWERED BEFORE THE COUNT, because naming it is the more useful answer: `equals`
-  // beside `field` says the caller spelled a comparison wrongly, not that a comparison is missing.
+  // beside `field` says the caller spelled a comparison wrongly, not that a comparison is missing. The six ordering words
+  // that used to be accepted here are withdrawn declarations (`PLAN_FOR_EACH_WITHDRAWN_COMPARISONS`), so `{ field: "kind",
+  // eq: "weed" }` is refused by the word `eq` and told the one comparison this form has.
   const unknown = others.find((key) => !PLAN_FOR_EACH_COMPARISONS.includes(key));
   if (unknown !== undefined)
     return rejected(FOR_EACH_WHERE_UNRECOGNISED, forEachUnrecognised(`${at}:${unknown}`, PLAN_FOR_EACH_COMPARISONS));
   if (others.length !== 1)
     return rejected("loop_where_invalid", `${at}:${field}:one_of:${PLAN_FOR_EACH_COMPARISONS.join(",")}`);
-  const comparison = others[0]!;
-  if (comparison === "in") {
-    const list = value.in;
-    if (!Array.isArray(list) || list.length < 1 || list.length > MAX_FOR_EACH_VALUES)
-      return rejected("loop_where_invalid", `${at}:${field}:in`);
-    const values: PlanForEachScalar[] = [];
-    for (const [index, entry] of list.entries()) {
-      const scalar = readScalar(entry, `${at}.${field}.in[${String(index)}]`);
-      if (!scalar.ok) return scalar;
-      values.push(scalar.value);
-    }
-    return Object.freeze({
-      ok: true as const,
-      predicate: Object.freeze({ field, in: Object.freeze(values) }),
-    });
+  const list = value.in;
+  if (!Array.isArray(list) || list.length < 1 || list.length > MAX_FOR_EACH_VALUES)
+    return rejected("loop_where_invalid", `${at}:${field}:in`);
+  const values: PlanForEachScalar[] = [];
+  for (const [index, entry] of list.entries()) {
+    const scalar = readScalar(entry, `${at}.${field}.in[${String(index)}]`);
+    if (!scalar.ok) return scalar;
+    values.push(scalar.value);
   }
-  const scalar = readScalar(value[comparison], `${at}.${field}.${comparison}`);
-  if (!scalar.ok) return scalar;
-  switch (comparison) {
-    case "eq":
-      return Object.freeze({ ok: true as const, predicate: Object.freeze({ field, eq: scalar.value }) });
-    case "ne":
-      return Object.freeze({ ok: true as const, predicate: Object.freeze({ field, ne: scalar.value }) });
-    case "lt":
-      return Object.freeze({ ok: true as const, predicate: Object.freeze({ field, lt: scalar.value }) });
-    case "lte":
-      return Object.freeze({ ok: true as const, predicate: Object.freeze({ field, lte: scalar.value }) });
-    case "gt":
-      return Object.freeze({ ok: true as const, predicate: Object.freeze({ field, gt: scalar.value }) });
-    default:
-      return Object.freeze({ ok: true as const, predicate: Object.freeze({ field, gte: scalar.value }) });
-  }
-}
-
-type StrideReading = Readonly<{ ok: true; stride: PlanForEachStride }> | PlanForEachRejection;
-
-function readStride(value: unknown, at: string): StrideReading {
-  if (!isRecord(value))
-    return rejected("loop_where_invalid", `${at}:expected:${PLAN_FOR_EACH_STRIDE_SPELLINGS.join(",")}`);
-  const unknownKey = Object.keys(value).find((key) => !PLAN_FOR_EACH_STRIDE_SPELLINGS.includes(key));
-  if (unknownKey !== undefined)
-    return rejected(
-      FOR_EACH_WHERE_UNRECOGNISED,
-      forEachUnrecognised(`${at}:${unknownKey}`, PLAN_FOR_EACH_STRIDE_SPELLINGS),
-    );
-  const every = value.every;
-  const offset = value.offset;
-  // An offset at or past the stride claims no index at all, and a guard that can never match is indistinguishable from a
-  // tile nobody thought about - so it is refused rather than silently dead.
-  if (!isNonNegativeSafeInteger(every) || !isNonNegativeSafeInteger(offset) || every < 1 || offset >= every)
-    return rejected("loop_where_invalid", `${at}:never_claims`);
-  return Object.freeze({ ok: true as const, stride: Object.freeze({ every, offset }) });
+  return Object.freeze({
+    ok: true as const,
+    predicate: Object.freeze({ field, in: Object.freeze(values) }),
+  });
 }
 
 type ScalarReading = Readonly<{ ok: true; value: PlanForEachScalar }> | PlanForEachRejection;

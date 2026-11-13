@@ -299,10 +299,10 @@ test("a 3x20 patch is the native uses the held tool covers, at every level, from
 
 test("a filtered loop is never packed: the tiles its predicate excludes are never covered", () => {
   // THE HARD INVARIABLE, at the one place the compiler could still break it. `where` decides a row against the LIVE world,
-  // so a loop that carries one names a subset of its rectangle - here the path columns of an intercropped patch - and the
-  // compiler cannot know which tiles those are. A packed use covers every tile of its footprint, so packing it would till
-  // the columns the caller excluded: the same rule the Mod's own sweep applies to an arc nobody named
-  // (`farmhandexecutioncontroller.resourcetoolactions.cs:1428-1439`).
+  // so a loop that carries one names a subset of its rectangle - here the empty tillable tiles of a patch that also holds
+  // weeds and stone - and the compiler cannot know which tiles those are. A packed use covers every tile of its footprint,
+  // so packing it would till the rows the caller excluded: an effect rather than a refusal, and the same rule the Mod's own
+  // sweep applies to an arc nobody named (`farmhandexecutioncontroller.resourcetoolactions.cs:1428-1439`).
   const wide = "{ area: { x: 60, y: 18, w: 20, h: 3 } }";
   const unfiltered = nodesOf(
     compile(`builder.for_each({ source: ${wide}, do: { action: "till_soil", charge: 0 } });`, { upgradeLevel: 3 }),
@@ -342,7 +342,7 @@ test("a filtered loop is never packed: the tiles its predicate excludes are neve
 
   const filtered = nodesOf(
     compile(
-      `builder.for_each({ source: ${wide}, where: [{ col: { every: 3, offset: 0 } }], do: { action: "till_soil", charge: 0 } });`,
+      `builder.for_each({ source: ${wide}, where: [{ occupant: "none" }], do: { action: "till_soil", charge: 0 } });`,
       { upgradeLevel: 3 },
     ),
   );
@@ -432,7 +432,7 @@ test("a 3x20 patch is packed for the hoe the Mod will swing, not the one in her 
  * </p>
  */
 test("every loop a plan emits is priced at its own per-tile expansion, never at the packed footprint", () => {
-  const filtered = `builder.for_each({ source: { area: { x: ${String(PATCH.x)}, y: ${String(PATCH.y)}, w: ${String(PATCH.w)}, h: ${String(PATCH.h)} } }, where: [{ col: { every: 3, offset: 0 } }], do: { action: "till_soil", charge: 0 } });`;
+  const filtered = `builder.for_each({ source: { area: { x: ${String(PATCH.x)}, y: ${String(PATCH.y)}, w: ${String(PATCH.w)}, h: ${String(PATCH.h)} } }, where: [{ occupant: "none" }], do: { action: "till_soil", charge: 0 } });`;
   const cases = [
     { label: "holds_0_owns_0", script: tillArea(0), bestLevel: 0 },
     { label: "filtered_holds_0_owns_4", script: filtered, bestLevel: 4 },
