@@ -1,5 +1,4 @@
 #!/usr/bin/env node
-import { readdir, readFile, writeFile } from "node:fs/promises";
 /**
  * Does the companion reach the things the PLAYER can invoke? This census takes the ENGINE as its population.
  *
@@ -120,6 +119,7 @@ import { readdir, readFile, writeFile } from "node:fs/promises";
  *   `claim_museum_reward` cites `LibraryMuseum.getRewardsForPlayer`, so the reward desk's deeper method is claimed
  *   and the player's own way in is not (tools/check-engine-affordance-census.test.mjs, against the exact tree)
  */
+import { readdir, readFile, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
