@@ -22,9 +22,10 @@
  * `footprint_table_disagrees_with_engine:<charge>:<host>:<engine>`.
  * </para>
  *
- * THE LADDER IS NOT A DESCRIPTOR FACT. How far one use reaches depends on the HELD TOOL'S upgrade level - runtime state,
- * published in the snapshot as `toolSlots[].upgradeLevel`, bounded by `Game1.cs:13032-13051` - so no wire field is added
- * anywhere: the resolver reads the snapshot's fact and this table's geometry.
+ * THE LADDER IS NOT A DESCRIPTOR FACT. How far one use reaches depends on the upgrade level of the tool the ACTION will
+ * swing - runtime state, published in the snapshot as `toolSlots[].upgradeLevel`, bounded by `Game1.cs:13032-13051` - so
+ * no wire field is added anywhere: the resolver reads the snapshot's fact and this table's geometry. See
+ * `toolChargeCeilingForClaim` for which of the pack's tools that is.
  */
 
 /** One charged use's geometry, relative to the named tile. */
@@ -58,52 +59,115 @@ export const TOOL_FOOTPRINT_TILES_BY_CHARGE: readonly ToolFootprintShape[] = Obj
 export const TOOL_FOOTPRINT_MAXIMUM_CHARGE = TOOL_FOOTPRINT_TILES_BY_CHARGE.length - 1;
 
 /**
- * What the engine makes one native use cost, declared ONCE so the packing objective can weigh a charge against a walk.
+ * What one native use and one walked tile cost, declared ONCE so the packing objective can weigh a charge against a walk.
  *
  * <p>
- * `swingMs` and `walkMsPerTile` are not this file's numbers: they are `tools/lib/action-pace.mjs`'s declared pace
- * (`ANIMATION_CLASS.toolSwing` = 8 frames x 60 ms, `Tool.cs:610-620`; `WALK_MS_PER_TILE`, computed from the engine's own
- * tile size, walk speed and movement multiplier). `ToolFootprintTableParityTests` reads that module and fails if the two
- * disagree, so this is a copy that cannot drift silently - and the day the pace standard changes the test names it rather
- * than letting the packing optimise against a stale price.
+ * No number here is this file's invention. `swingMs` is `tools/lib/action-pace.mjs`'s `ANIMATION_CLASS.toolSwing` (8 frames x
+ * 60 ms, `Tool.cs:610-620`), the class `till_soil` falls in - the only action this file can pack. `walkMsPerTile` is that
+ * same module's `BODY_WALK_MS_PER_TILE`: the pace OUR body actually crosses a tile at, measured from the route receipts
+ * (217 ms, cited there), NOT `WALK_MS_PER_TILE`, which is what the engine forces a player *walking* to spend (505 ms) and
+ * which is the floor a speed verdict divides by rather than the price a plan is bought at. `chargeMsPerLevel` is the
+ * engine's own hold: `Game1.cs:13040` sets `toolHold = 600 * AnimationSpeedModifier` and `:13045-13048` raises one power
+ * level each time it runs out.
  * </p>
  * <p>
- * `chargeMsPerLevel` is the one number the pace standard does NOT declare: the hold before a charged release, per level
- * above the tap. It is declared here because the Packing objective cannot be expressed without it, and a second copy of
- * 600 anywhere else is the same "two spellings of one fact" defect the rest of this work has been removing.
+ * `chargeMsPerLevel` is the one number the pace standard does NOT declare, and it is declared here because the packing
+ * objective cannot be expressed without it; a second copy of 600 anywhere else would be the "two spellings of one fact"
+ * defect the rest of this work has been removing. `body-program-packing.test.ts` imports the pace module at run time and
+ * fails on any disagreement with the two numbers it does declare, naming the constant that drifted.
  * </p>
  */
 const NATIVE_COST = Object.freeze({
   /** One tool swing's animation, the class `till_soil` falls in: 8 frames x 60 ms (`Tool.cs:610-620`). */
   swingMs: 480,
-  /** One level of charge held before release. */
+  /** One level of charge held before release (`Game1.cs:13040`, `:13045-13048`). */
   chargeMsPerLevel: 600,
-  /** One tile walked at run speed, the same figure `tools/lib/action-pace.mjs` computes. */
-  walkMsPerTile: 505,
+  /** One tile walked by OUR body, the pace its own route receipts measure (`BODY_WALK_MS_PER_TILE`). */
+  walkMsPerTile: 217,
 });
 
+/** The snapshot facts either ceiling is read from: which slot is held, and what tools the pack carries. */
+type ToolSlotFacts = Readonly<{
+  currentToolSlot?: number | null;
+  toolSlots?: readonly Readonly<{ slot: number; upgradeLevel?: number; category?: string }>[];
+}>;
+
+/** The tool one action's own `tool:<category>` claim declares, reduced to the facts a ceiling needs. */
+type ClaimedTool = Readonly<{
+  category: string;
+  minimumUpgradeLevel: number | null;
+  maximumUpgradeLevel: number | null;
+}>;
+
 /**
- * The held tool's charge ceiling, read from the snapshot's own facts: which slot is held and what that slot's tool is
+ * The HELD tool's charge ceiling, read from the snapshot's own facts: which slot is held and what that slot's tool is
  * upgraded to (`toolSlots[].upgradeLevel`).
  *
+ * <para>
+ * This is the fallback, not the rule: a tool action does not swing the tool in her hand (see
+ * `toolChargeCeilingForClaim`), so this reading answers only for a snapshot whose slots publish no category at all.
+ * </para>
  * <para>
  * `undefined` means the reading is UNAVAILABLE, not zero: `upgradeLevel` is absent on a Mod older than that projection and
  * `currentToolSlot` is absent when nothing is held, and a plan that read either as "level 0" would silently plan a
  * one-tile patch for a gold hoe. The caller must fall back and say so instead.
  * </para>
  */
-export function heldToolChargeCeiling(
-  snapshot: Readonly<{
-    currentToolSlot?: number | null;
-    toolSlots?: readonly Readonly<{ slot: number; upgradeLevel?: number }>[];
-  }>,
-): number | undefined {
+export function heldToolChargeCeiling(snapshot: ToolSlotFacts): number | undefined {
   const held = snapshot.currentToolSlot;
   if (typeof held !== "number" || !Number.isInteger(held)) return undefined;
   const row = (snapshot.toolSlots ?? []).find((candidate) => candidate.slot === held);
   if (row === undefined) return undefined;
-  const level = row.upgradeLevel;
-  if (typeof level !== "number" || !Number.isInteger(level) || level < 0) return undefined;
+  const level = publishedLevel(row.upgradeLevel);
+  return level === undefined ? undefined : ladderCharge(level);
+}
+
+/**
+ * The ceiling of the use the Mod WILL ACTUALLY MAKE for one action: the highest upgrade level the pack carries among the
+ * tools whose published category is the one the action's own `tool:<category>` claim names.
+ *
+ * <para>
+ * THE MOD SWITCHES TOOLS, SO THIS READING MUST AGREE WITH IT. A tool action does not use the tool in her hand: the Mod
+ * resolves the action's claim across the WHOLE pack, keeps the highest `UpgradeLevel` among the tools that satisfy it
+ * (ties to the smallest slot) and points `CurrentToolIndex` at that slot for the length of the use, restoring it after
+ * (`integrations/stardew/farmhandexecutioncontroller.resourcetoolactions.cs:857-887`, `:969-994`), and the charge ceiling
+ * is the SELECTED tool's (`:557-558` into `farmhandexecutioncontroller.cs:4768`). That ranking is declared in the Mod, not
+ * in the Host - the Host's only other reading of it is `publishedSlotOfCategory`, which resolves an equip SLOT from the
+ * same rule - so the C# is cited here and `DeclaredToolSelectionTests.AnUpgradedPickaxeSatisfiesTheClaimAndIsPreferred`
+ * pins it from the Mod's side. Reading `currentToolSlot` here instead is what packed the same 3x20 patch for charge 0
+ * while the Mod swung a gold hoe: sixty single-tile rows where the Mod needed twelve uses.
+ * </para>
+ * <para>
+ * EACH FALLBACK IS A DIFFERENT FACT. The claim's category decides while the pack publishes categories at all; a Mod older
+ * than that projection publishes none, and then the held tool is the only tool this side can name. `undefined` anywhere
+ * else means the action cannot be packed here - an unreadable level, no owned tool of that category, or none inside the
+ * level range the claim allows - and the Mod names that per row (`tool_not_owned`, `tool_upgrade_insufficient`) rather
+ * than this side inventing a footprint for a swing that will be refused.
+ * </para>
+ */
+export function toolChargeCeilingForClaim(snapshot: ToolSlotFacts, claim: ClaimedTool | undefined): number | undefined {
+  const rows = snapshot.toolSlots ?? [];
+  if (claim === undefined || !rows.some((row) => typeof row.category === "string"))
+    return heldToolChargeCeiling(snapshot);
+  let best: number | undefined;
+  for (const row of rows) {
+    if (row.category !== claim.category) continue;
+    const level = publishedLevel(row.upgradeLevel);
+    if (level === undefined) return undefined;
+    if (level < (claim.minimumUpgradeLevel ?? 0)) continue;
+    if (claim.maximumUpgradeLevel !== null && level > claim.maximumUpgradeLevel) continue;
+    if (best === undefined || level > best) best = level;
+  }
+  return best === undefined ? undefined : ladderCharge(best);
+}
+
+/** One published upgrade level as a number, or `undefined` when the wire carried none - an absence is not a zero. */
+function publishedLevel(level: number | undefined): number | undefined {
+  return typeof level === "number" && Number.isInteger(level) && level >= 0 ? level : undefined;
+}
+
+/** That level as a charge: the ladder stops at its own top, which is where the engine's own hold stops. */
+function ladderCharge(level: number): number {
   return Math.min(level, TOOL_FOOTPRINT_MAXIMUM_CHARGE);
 }
 
@@ -157,7 +221,7 @@ type PackedStep = Readonly<{
 export type PackingInput = Readonly<{
   area: Readonly<{ x: number; y: number; w: number; h: number }>;
   kind: PackingKind;
-  /** The held tool's ceiling from the snapshot (`toolSlots[].upgradeLevel` + Reaching). `undefined` = unreadable. */
+  /** The ceiling the action's own tool reaches (`toolChargeCeilingForClaim`). `undefined` = unreadable. */
   maximumCharge: number | undefined;
   /** `y` sweeps down a column (the farm's usual strip), `x` along a row. */
   axis?: "x" | "y";
@@ -171,7 +235,7 @@ export type PackingResult = Readonly<{
   standingPositions: number;
   /** Tiles of walking along the emitted order (Manhattan between consecutive stances). */
   walkTiles: number;
-  /** What this plan costs in the engine times declared in NATIVE_COST: swing + charge per use, walk between stances. */
+  /** What this plan costs in the times declared in NATIVE_COST: swing + charge per use, walk between stances at the body's measured pace. */
   timeMs: number;
 }>;
 
@@ -210,15 +274,16 @@ export function packAreaSteps(input: PackingInput): PackingResult {
   if (kind === "body_arc") return refuse(singleTiles(area, axis), `${PLAN_PACKING_NOT_PACKABLE}:body_arc`);
   const ceiling = input.maximumCharge;
   if (ceiling === undefined || !Number.isInteger(ceiling))
-    return refuse(singleTiles(area, axis), `${PLAN_PACKING_FOOTPRINT_UNKNOWN}:held_tool`);
-  if (ceiling < 0) return refuse(singleTiles(area, axis), `${PLAN_PACKING_FOOTPRINT_UNKNOWN}:held_tool_level`);
+    return refuse(singleTiles(area, axis), `${PLAN_PACKING_FOOTPRINT_UNKNOWN}:tool_claim`);
+  if (ceiling < 0) return refuse(singleTiles(area, axis), `${PLAN_PACKING_FOOTPRINT_UNKNOWN}:tool_claim_level`);
 
   const bounded = Math.min(ceiling, TOOL_FOOTPRINT_MAXIMUM_CHARGE);
-  // THE OBJECTIVE IS TIME, NOT STEP COUNT. Charge time grows linearly with the level while coverage does not, so the
-  // fewest steps is not the fastest plan: on a 3-wide strip a steel hoe (charge 2, 1x5) beats a gold one (charge 3, 3x3)
-  // because the two need the same twelve uses and steel spends 600 ms less on each. Every candidate that tiles the region
-  // EXACTLY is scored, and exactness is a hard constraint rather than a term in the score: a footprint that overlaps
-  // re-tills a tile the engine refuses (`soil_already_tilled`) and the walk that got there is pure loss.
+  // THE OBJECTIVE IS TIME, NEITHER STEP COUNT NOR CHARGE. Every candidate that tiles the region EXACTLY is scored at
+  // `packingTimeMs`, so a plan wins by being cheaper and not by being smaller or by charging harder, and the two usually
+  // disagree: on a 3x20 strip iridium's nine 3x6 uses beat gold's twelve 3x3 uses by 5,040 ms, while steel's twelve 1x5
+  // uses lose to gold by 14,667 ms - the same twelve uses, 51 more walked tiles and 3,600 ms more charge. Exactness is a
+  // hard constraint rather than a term in the score: a footprint that overlaps re-tills a tile the engine refuses
+  // (`soil_already_tilled`) and the walk that got there is pure loss.
   let best: Tiling | undefined;
   for (let charge = bounded; charge >= 0; charge--) {
     const candidate = tileAtCharge(area, axis, charge);
@@ -282,16 +347,19 @@ function tileAtCharge(
  *
  * The three numbers are NOT this file's invention - see `NATIVE_COST` - and the walk is counted between CONSECUTIVE
  * stances rather than as a straight line, because that is the path the plan asks the body to take.
+ *
+ * `walkMsPerTile` is a parameter with a default rather than a second table: the resolver scores with the body's measured
+ * pace, and the test prices the SAME steps at the engine's own `WALK_MS_PER_TILE` to show which plan that price would have
+ * bought instead. A plan optimiser whose answer nobody can re-price under the other clock is one whose answer nobody can
+ * check.
  */
-function packingTimeMs(steps: readonly PackedStep[]): number {
+export function packingTimeMs(steps: readonly PackedStep[], walkMsPerTile: number = NATIVE_COST.walkMsPerTile): number {
   let total = 0;
   for (const [index, step] of steps.entries()) {
     total += NATIVE_COST.swingMs + step.charge * NATIVE_COST.chargeMsPerLevel;
     if (index > 0) {
       const previous = steps[index - 1]!;
-      total +=
-        (Math.abs(step.stanceX - previous.stanceX) + Math.abs(step.stanceY - previous.stanceY)) *
-        NATIVE_COST.walkMsPerTile;
+      total += (Math.abs(step.stanceX - previous.stanceX) + Math.abs(step.stanceY - previous.stanceY)) * walkMsPerTile;
     }
   }
   return total;

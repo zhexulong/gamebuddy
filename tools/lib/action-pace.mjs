@@ -207,6 +207,41 @@ export const WALK_MS_PER_TILE =
   (TILE_PX.value / (WALK_SPEED.value * MOVEMENT_MULTIPLIER.value * ELAPSED_MS_PER_TICK.value)) * TICK_MS.value;
 
 /**
+ * How long ONE TILE of OUR OWN body's walking takes, measured, in ms.
+ *
+ * NOT A SECOND SPELLING OF `WALK_MS_PER_TILE`, and the gap between them is the point. That
+ * number is what the ENGINE forces a player walking at `base.speed` to spend on a tile, and
+ * it is the floor a verdict divides our duration by. This number is what OUR actor spends
+ * per tile, and it is what a PLAN must be priced with: an optimiser given a wrong walk price
+ * buys the wrong plan, because 505 ms/tile under-values the walking a charged use saves and
+ * therefore prefers fewer, larger charges than the walk justifies.
+ *
+ * MEASURED over every `.live-runs` bundle that stamps `atMs` (the `receipts` channel of
+ * `GAME_SIDE_INTERVAL`, which is the only one that records the route):
+ *   - p50 of 24,479 consecutive `tile_advanced` deltas across 2,111 execution chains: 217 ms;
+ *   - least squares on `move_to_tile` spans, 637 executions over 29 tile counts:
+ *     `span = 33 ms + 218.1 ms x tiles` - 33 ms is the per-action round trip, the slope is
+ *     the tile, and the two readings agree inside the 216..218 ms the stamps can resolve;
+ *   - per family p50 ms/tile: `cut_weeds` 213, `move_to_tile` 214, `till_soil` 216,
+ *     `water_crop` 200, `plant_seed` 208, `harvest_crop` 206 - so ONE constant is the honest
+ *     spelling and no per-family table is owed: the same path follower walks every family.
+ *
+ * 217 ms is also 13 engine ticks of 1000/60 ms, which is what a 64 px tile at 5.28 px/tick
+ * rounds up to. That agreement is not the derivation and must not become one: the
+ * measurement is the authority, because nothing in the artifacts says WHY the body crosses
+ * a tile in thirteen ticks and a model invented from the engine's walk speed would be wrong
+ * by the factor this constant exists to correct.
+ */
+export const BODY_WALK_MS_PER_TILE = Object.freeze({
+  value: 217,
+  source: engine(
+    ".live-runs/**/timeline.jsonl",
+    null,
+    "p50 of 24,479 `tile_advanced` atMs deltas over 2,111 chains; `move_to_tile` fit 33 ms + 218.1 ms x tiles over 637 executions",
+  ),
+});
+
+/**
  * Every declared constant above, so `assertDeclaredConstants` can refuse one whose
  * provenance nobody wrote down.
  */
@@ -218,6 +253,7 @@ export const DECLARED_CONSTANTS = Object.freeze({
   ELAPSED_MS_PER_TICK,
   WALK_SPEED,
   MOVEMENT_MULTIPLIER,
+  BODY_WALK_MS_PER_TILE,
 });
 
 /**

@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 
 import {
   PLAN_PACKING_FOOTPRINT_UNKNOWN,
@@ -7,8 +9,28 @@ import {
   TOOL_FOOTPRINT_MAXIMUM_CHARGE,
   TOOL_FOOTPRINT_TILES_BY_CHARGE,
   footprintTiles,
+  heldToolChargeCeiling,
   packAreaSteps,
+  packingTimeMs,
+  toolChargeCeilingForClaim,
 } from "./body-program-packing.js";
+import { repositoryRoot } from "./wire-declaration.test-support.js";
+
+/**
+ * The pace this file must price a plan with, read from the module the perf gate reads it from.
+ *
+ * The two numbers are NOT restated here: `ANIMATION_CLASS.toolSwing` is the engine's swing and `BODY_WALK_MS_PER_TILE` is
+ * the pace our own body crosses a tile at, measured from the route receipts. A test holding its own copy of either would
+ * agree with the resolver today and stop agreeing the day the pace standard changes - which is the defect the parity test
+ * below exists for.
+ */
+const pace = (await import(
+  pathToFileURL(join(repositoryRoot(import.meta.dirname), "tools", "lib", "action-pace.mjs")).href
+)) as Readonly<{
+  ANIMATION_CLASS: Readonly<{ toolSwing: number }>;
+  BODY_WALK_MS_PER_TILE: Readonly<{ value: number }>;
+  WALK_MS_PER_TILE: number;
+}>;
 
 /** The patch the user's question is about: three wide, twenty tall. */
 const PATCH = Object.freeze({ x: 10, y: 20, w: 3, h: 20 });
@@ -114,26 +136,68 @@ test("GOLD is the worked example: a charge-3 use is one 3x3, which is what a rea
   assert.deepEqual(ys, [PATCH.y, PATCH.y + 1, PATCH.y + 2], "three rows starting at the region's first row");
 });
 
+test("the swing and the walk are the pace standard's numbers, not this file's", () => {
+  // ONE DECLARATION, ONE COPY THAT CANNOT DRIFT. `NATIVE_COST` lives in the resolver because the Host cannot import an
+  // `.mjs` from `tools/` at build time, so this compares the copy against the declaration it exists to mirror - through
+  // `packingTimeMs`, on a real plan, rather than against a second hard-coded number here.
+  const tap = packAreaSteps({ area: { x: 10, y: 20, w: 1, h: 1 }, kind: "charged_rectangle", maximumCharge: 4 });
+  assert.equal(
+    packingTimeMs(tap.steps, 0),
+    pace.ANIMATION_CLASS.toolSwing,
+    "one tap's priced time is one engine swing and nothing else",
+  );
+  const strip = packAreaSteps({ area: PATCH, kind: "charged_rectangle", maximumCharge: 4 });
+  assert.ok(strip.walkTiles > 0, "the population must walk, or the comparison below agrees with itself");
+  assert.equal(
+    packingTimeMs(strip.steps) - packingTimeMs(strip.steps, 0),
+    strip.walkTiles * pace.BODY_WALK_MS_PER_TILE.value,
+    "the walk the resolver prices is the walk the body's own receipts measure, and not the engine's walking pace",
+  );
+  assert.notEqual(
+    pace.BODY_WALK_MS_PER_TILE.value,
+    pace.WALK_MS_PER_TILE,
+    "the body's measured pace and the engine's walking floor are different facts: pricing a plan with the floor is the" +
+      " defect this file was corrected for",
+  );
+});
+
 test("the charge is chosen by TIME, not by step count", () => {
-  // THE OBJECTIVE IS THE ENGINE'S OWN CLOCK. Charge time grows with the level while coverage does not, so a plan with more
-  // steps can be the faster one: on a 3-wide strip steel's 1x5 costs twelve uses of 1,680 ms and a 77-tile walk, while
-  // gold's 3x3 covers the same strip in the same twelve uses with a 26-tile walk. A resolver that minimised steps would
-  // still pick gold here - and would pick iridium on a 20-wide strip only by accident.
+  // THE OBJECTIVE IS THE PLAN'S OWN CLOCK, and every column of the table below is DERIVED from the two authorities rather
+  // than restated: `use` is the swing-plus-charge part (`packingTimeMs` at 0 ms/tile), `swing` is the shared engine
+  // constant times the uses, `walk` is what the remaining time is made of, and `at the engine's walk` re-prices THE SAME
+  // steps at `WALK_MS_PER_TILE` - which is what this resolver used to charge, and which bought exactly these plans while
+  // over-pricing every walked tile by 2.3x.
+  //
+  // AND THE TABLE SAYS WHY THE TOOL LEVEL MATTERS MORE THAN THE CONSTANT. At the fixture's level (0) the packer saves
+  // nothing: sixty tiles need sixty uses, `body-program-script.ts` refuses a packing that saves no step
+  // (`packing.steps.length >= tiles`), and the round47 job compiles to one `for_each` loop per family. The 49,849 -> 17,162
+  // span across the ladder is what an upgraded hoe is worth to this job, and no recorded bundle has one: all 421
+  // `toolSlots[].upgradeLevel` readings in `.live-runs` are 0.
   const strip = { x: 10, y: 20, w: 3, h: 20 };
-  const times = TIERS.map(({ tier, maximumCharge }) => {
+  const rows = TIERS.map(({ tier, maximumCharge }) => {
     const plan = packAreaSteps({ area: strip, kind: "charged_rectangle", maximumCharge });
-    return `${tier}=${String(plan.timeMs)}`;
+    const useMs = packingTimeMs(plan.steps, 0);
+    const swingMs = plan.steps.length * pace.ANIMATION_CLASS.toolSwing;
+    const atEngineWalk = Math.round(packingTimeMs(plan.steps, pace.WALK_MS_PER_TILE));
+    return (
+      `${tier}: uses ${String(plan.steps.length)} walk ${String(plan.walkTiles)} charge ${String(useMs - swingMs)}` +
+      ` swing ${String(swingMs)} walk ${String(plan.timeMs - useMs)} total ${String(plan.timeMs)}` +
+      ` (${String(atEngineWalk)}, ${String(plan.timeMs - atEngineWalk)})`
+    );
   });
-  assert.deepEqual(times, [
-    "level_0_basic=77785",
-    "copper=71305",
-    "steel=59045",
-    "gold=29690",
-    "iridium=24650",
-    "iridium_reaching=24650",
+  assert.deepEqual(rows, [
+    "level_0_basic: uses 60 walk 97 charge 0 swing 28800 walk 21049 total 49849 (77790, -27941)",
+    "copper: uses 24 walk 97 charge 10800 swing 11520 walk 21049 total 43369 (71310, -27941)",
+    "steel: uses 12 walk 77 charge 14400 swing 5760 walk 16709 total 36869 (59049, -22180)",
+    "gold: uses 12 walk 26 charge 10800 swing 5760 walk 5642 total 22202 (29691, -7489)",
+    "iridium: uses 9 walk 26 charge 7200 swing 4320 walk 5642 total 17162 (24651, -7489)",
+    "iridium_reaching: uses 9 walk 26 charge 7200 swing 4320 walk 5642 total 17162 (24651, -7489)",
   ]);
   // The chosen charges, which is what an objective on steps alone cannot produce: the tail of two rows has no ladder shape
-  // that fits it, so it is worked one tile per step while the body of the patch is charged.
+  // that fits it, so it is worked one tile per step while the body of the patch is charged. The tail is SIX TILE-SIZED
+  // POKES and not one charge-2 use, and the price is why rather than an assumption: a 1x5 named anywhere inside the two
+  // remaining rows covers three tiles the region never named, so it is not a candidate at all (exactness is a hard
+  // constraint), and 1x3 does not fit two rows either.
   const chargesOf = (maximumCharge: number): string =>
     [...packAreaSteps({ area: strip, kind: "charged_rectangle", maximumCharge }).steps]
       .map((step) => step.charge)
@@ -144,12 +208,47 @@ test("the charge is chosen by TIME, not by step count", () => {
   assert.equal(chargesOf(2), "222222222222", "steel: every use fits five rows of the strip exactly");
 });
 
+test("the Reaching ladder buys a plan only at the pace the body walks", () => {
+  // NINE WIDE BY FIVE TALL IS THE CASE WHERE THE WALK PRICE ALONE DECIDES. Both plans are nine uses, so a resolver scoring
+  // step count cannot tell them apart: at the body's 217 ms/tile the Reaching plan (six pokes, a 3x3 and a 5x5 over twenty
+  // walked tiles) is the cheap one; at the engine's 505 ms/tile the same two plans swap places and the nine 3x3s win on
+  // eight walked tiles. That swap is the red proof for the constant: reverting `NATIVE_COST.walkMsPerTile` to the engine's
+  // walking pace makes the first assertion below fail, because `timeMs` would then be the 505-priced column.
+  const area = Object.freeze({ x: 10, y: 20, w: 9, h: 5 });
+  const reaching = packAreaSteps({ area, kind: "charged_rectangle", maximumCharge: 5 });
+  const withoutReaching = packAreaSteps({ area, kind: "charged_rectangle", maximumCharge: 4 });
+  assert.equal(
+    reaching.steps.length,
+    withoutReaching.steps.length,
+    "both plans are nine uses: only the price separates them",
+  );
+  assert.ok(
+    reaching.timeMs < withoutReaching.timeMs,
+    `at the body's pace the 5x5 plan is cheaper: ${String(reaching.timeMs)} vs ${String(withoutReaching.timeMs)}`,
+  );
+  assert.ok(
+    packingTimeMs(withoutReaching.steps, pace.WALK_MS_PER_TILE) < packingTimeMs(reaching.steps, pace.WALK_MS_PER_TILE),
+    "at the engine's walking pace the same two plans swap, which is why the price is not a preference",
+  );
+  // The shape the operator asked about, where the 5x5 does fit and does win: 5 wide by 20 tall, four uses of five rows,
+  // fifteen walked tiles. Its engine-walk price is 21,496 ms and the body's is 17,175.
+  const tall = packAreaSteps({ area: { x: 10, y: 20, w: 5, h: 20 }, kind: "charged_rectangle", maximumCharge: 5 });
+  assert.equal(tall.steps.length, 4, "four 5x5 uses cover a five-wide twenty-tall patch exactly");
+  assert.equal(tall.walkTiles, 15);
+  assert.equal(tall.timeMs, 17175);
+  assert.ok(
+    tall.timeMs <
+      packAreaSteps({ area: { x: 10, y: 20, w: 5, h: 20 }, kind: "charged_rectangle", maximumCharge: 4 }).timeMs,
+    "with the enchantment the 5x5 is chosen; without it the same patch needs seventeen uses",
+  );
+});
+
 test("a wide patch changes which tool wins, and that is the point of computing it", () => {
-  // 20 columns by 3 rows: the same sixty tiles, the opposite answer. A 3x3 fits a three-row strip and a 1x5 band does not
-  // reach it at all (forward 5 into 3 rows), so gold beats steel here where the 3x20 strip reversed them. The REACHING
-  // ladder is no further help: a 5x5 covers five rows, and two of them lie outside a three-row patch. The plan this test
-  // pinned before the exactness gate below existed - "only the 5x5 fits a twenty-wide strip in four uses" - was four
-  // 3x3s, 36 of the sixty tiles, and the time objective preferred it BECAUSE it did less work.
+  // 20 columns by 3 rows: the same sixty tiles, a different answer. A 3x3 fits a three-row strip and a 1x5 band does not
+  // reach it at all (forward 5 into 3 rows), so steel falls back to copper's plan and gold wins by eight uses at 19,746 ms
+  // against 25,723. The REACHING ladder is no further help: a 5x5 covers five rows, and two of them lie outside a
+  // three-row patch. The plan this test pinned before the exactness gate below existed - "only the 5x5 fits a twenty-wide
+  // strip in four uses" - was four 3x3s, 36 of the sixty tiles, and the time objective preferred it BECAUSE it did less work.
   const wide = { x: 10, y: 20, w: 20, h: 3 };
   const steps = (maximumCharge: number): number =>
     packAreaSteps({ area: wide, kind: "charged_rectangle", maximumCharge }).steps.length;
@@ -158,6 +257,11 @@ test("a wide patch changes which tool wins, and that is the point of computing i
   assert.equal(steps(2), 20, "a 1x5 band cannot fit three rows, so steel falls back to the same plan as copper");
   assert.equal(steps(3), 8, "six 3x3 uses across eighteen columns, then two one-wide strips in three-row bands");
   assert.equal(steps(5), 8, "a 5x5 footprint cannot cover a three-row patch exactly, so Reaching adds nothing here");
+  // The price, not the count: steel and copper need the same twenty uses, and gold's eight walk eighteen tiles against
+  // their nineteen - so gold wins on both axes and the eight-use gap is not what decided it.
+  const time = (maximumCharge: number): number =>
+    packAreaSteps({ area: wide, kind: "charged_rectangle", maximumCharge }).timeMs;
+  assert.ok(time(3) < time(2), `gold ${String(time(3))} must beat steel ${String(time(2))} on the wide patch`);
 });
 
 /**
@@ -235,10 +339,10 @@ test("a body-anchored arc is not packable and says so instead of guessing", () =
   assert.equal(plan.standingPositions, 60);
 });
 
-test("an unreadable held tool refuses by name rather than inventing a footprint", () => {
+test("an unreadable tool reading refuses by name rather than inventing a footprint", () => {
   for (const [maximumCharge, reason] of [
-    [undefined, PLAN_PACKING_FOOTPRINT_UNKNOWN + ":held_tool"],
-    [-1, PLAN_PACKING_FOOTPRINT_UNKNOWN + ":held_tool_level"],
+    [undefined, PLAN_PACKING_FOOTPRINT_UNKNOWN + ":tool_claim"],
+    [-1, PLAN_PACKING_FOOTPRINT_UNKNOWN + ":tool_claim_level"],
   ] as const) {
     const plan = packAreaSteps({ area: PATCH, kind: "charged_rectangle", maximumCharge });
     assert.equal(plan.status, "refused", String(maximumCharge));
@@ -268,5 +372,70 @@ test("a single-tile action keeps one step per tile and carries no refusal", () =
       [2, 3],
       [3, 3],
     ],
+  );
+});
+
+/**
+ * THE CEILING IS THE TOOL THE MOD WILL SWING, and every branch of that reading is a different fact.
+ *
+ * <p>
+ * The Mod resolves an action's own `tool:<category>` claim across the WHOLE pack and switches to the best tool it finds
+ * for the length of the use (`resourcetoolactions.cs:857-887`, `:980-994`), so the tool in her hand is not the tool the
+ * use is priced at. `heldToolChargeCeiling` is the FALLBACK for a pack that publishes no category word at all; the claim
+ * decides everywhere else, and `undefined` - never zero - is what an unanswerable claim returns.
+ * </p>
+ */
+test("the ceiling is the best tool the pack carries for the action's own claim", () => {
+  const holdBasicOwnGold = {
+    currentToolSlot: 1,
+    toolSlots: [
+      { slot: 1, upgradeLevel: 0, category: "hoe" },
+      { slot: 7, upgradeLevel: 3, category: "hoe" },
+    ],
+  };
+  const hoe = { category: "hoe", minimumUpgradeLevel: 0, maximumUpgradeLevel: null };
+  assert.equal(
+    toolChargeCeilingForClaim(holdBasicOwnGold, hoe),
+    3,
+    "a gold hoe in the bag is the tool `till_soil` is priced at, not the basic one in her hand",
+  );
+  // INVERSE: which slot the hand is in changes nothing about the tool the action takes.
+  assert.equal(
+    toolChargeCeilingForClaim({ ...holdBasicOwnGold, currentToolSlot: 7 }, hoe),
+    3,
+    "the same pack answers the same ceiling whichever hoe she happens to hold",
+  );
+  // BOUNDARY: a pack that publishes no category at all is a Mod older than that projection, so the held tool is the only
+  // reading left - and a surface that declares no claim reads the same way.
+  assert.equal(toolChargeCeilingForClaim({ currentToolSlot: 1, toolSlots: [{ slot: 1, upgradeLevel: 2 }] }, hoe), 2);
+  assert.equal(toolChargeCeilingForClaim(holdBasicOwnGold, undefined), 0);
+  // CROSS-CHECK: where her hand already holds the best, the two readings MUST agree - the defect was never the fallback,
+  // it was using the fallback as the rule.
+  const holdGold = { currentToolSlot: 7, toolSlots: [{ slot: 7, upgradeLevel: 3, category: "hoe" }] };
+  assert.equal(toolChargeCeilingForClaim(holdGold, hoe), heldToolChargeCeiling(holdGold));
+  // A pack that publishes categories and none of them is the claim's does not own the tool: `tool_not_owned` is the Mod's
+  // refusal to make, and a footprint invented here would be spent on a swing the Mod refuses row by row.
+  assert.equal(
+    toolChargeCeilingForClaim({ currentToolSlot: 1, toolSlots: [{ slot: 1, upgradeLevel: 0, category: "axe" }] }, hoe),
+    undefined,
+  );
+  // A claim that permits only the basic tier is satisfied by the basic hoe and NOT by the gold one, which is the level
+  // range `ResolveOwnedTool` filters by before it ranks.
+  assert.equal(
+    toolChargeCeilingForClaim(
+      { currentToolSlot: 7, toolSlots: [{ slot: 7, upgradeLevel: 3, category: "hoe" }] },
+      { ...hoe, maximumUpgradeLevel: 0 },
+    ),
+    undefined,
+  );
+  // An absent level is the wire's own statement that the tool does not upgrade, and an absence is never read as zero.
+  assert.equal(
+    toolChargeCeilingForClaim({ toolSlots: [{ slot: 3, category: "scythe" }] }, { ...hoe, category: "scythe" }),
+    undefined,
+  );
+  // The ladder stops at its own top, which is where the engine's own hold stops.
+  assert.equal(
+    toolChargeCeilingForClaim({ toolSlots: [{ slot: 1, upgradeLevel: 9, category: "hoe" }] }, hoe),
+    TOOL_FOOTPRINT_MAXIMUM_CHARGE,
   );
 });
