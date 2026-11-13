@@ -147,7 +147,7 @@ test("an empty population blocks, and says why, instead of reporting a corpus no
   assert.ok(lines.some((line) => line.startsWith("preset_macro_frequency_no_presets:")));
   assert.ok(lines.includes("preset_macro_frequency: blocked"));
   assert.ok(!lines.some((line) => line.startsWith("preset_macro_frequency: passed")));
-  assert.equal(verdict(censusReading([], { table: PRESET_MACROS })), 1, "an empty population is a failing exit code");
+  assert.equal(verdict(censusReading([], { table: PRESET_MACROS })), 2, "an empty population is a blocked exit code");
   assert.equal(
     verdict(censusReading([preset([{ content: "{{char}}" }])], { table: PRESET_MACROS })),
     0,

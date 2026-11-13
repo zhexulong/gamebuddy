@@ -1,7 +1,7 @@
 // red-proof: inject  the actor.CanMove spelling dropped from the detector's own line filter in findSites
-//  -> `✖ the detector still finds a fork in all three spellings, and names the handler` (`two triple spellings plus the split one`), exit 1
+//  -> `× the detector still finds a fork in all three spellings, and names the handler` (`two triple spellings plus the split one`), exit 1
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
+import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -18,12 +18,15 @@ import test from "node:test";
 const REPO = new URL("..", import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "$1").replace(/\/$/, "");
 
 function measure(args = []) {
-  const out = execFileSync(process.execPath, ["tools/audit-stardew-admission-fork-delta.mjs", "--json", ...args], {
+  const out = spawnSync(process.execPath, ["tools/audit-stardew-admission-fork-delta.mjs", "--json", ...args], {
     cwd: REPO,
     encoding: "utf8",
     maxBuffer: 64 * 1024 * 1024,
   });
-  return JSON.parse(out);
+  // Exit 1 is the assertion (a fork was found), not a tool failure, so the report is parsed either way; exit 2 is a
+  // blocked reading and carries no report, which is the one case that has to throw.
+  if (out.status === 2) throw new Error(`${out.stdout}${out.stderr}`);
+  return { ...JSON.parse(out.stdout), exit: out.status };
 }
 
 /** A source root holding one file with all three forked spellings. */
@@ -71,17 +74,23 @@ function withSyntheticForks(run) {
 test("the converged tree has no forked admission sites left", () => {
   const report = measure();
   assert.equal(report.artifactKind, "stardew_admission_fork_delta");
-  // The wave is finished. This number is expected to be 0 and stay 0: a new fork is what it catches.
+  // The wave is finished. This number is expected to be 0 and stay 0: a new fork is what it catches, and the exit code
+  // is what says so - the tool exited 0 while reporting 0 for two days before it had one.
   assert.equal(report.siteCount, 0);
   assert.equal(report.exactTripleCount, 0);
   assert.equal(report.splitSpellingCount, 0);
   assert.deepEqual(report.sites, []);
+  assert.equal(report.status, "passed");
+  assert.equal(report.exit, 0);
+  assert.ok(report.fileCount > 0, "`forked 0` over `examined 0` files would agree with itself");
 });
 
 test("the detector still finds a fork in all three spellings, and names the handler", () => {
   withSyntheticForks((root) => {
     const report = measure(["--source-root", root]);
     assert.equal(report.siteCount, 3, "two triple spellings plus the split one");
+    assert.equal(report.status, "failed");
+    assert.equal(report.exit, 1, "a forked site is a failing exit code, not a printed number beside a green 0");
     // `exactTripleCount` counts ONLY the verbatim spelling; the `actor.CanMove` variant is reported as its own
     // spelling, which is why the three numbers sum to the site count rather than overlapping.
     assert.equal(report.exactTripleCount, 1);

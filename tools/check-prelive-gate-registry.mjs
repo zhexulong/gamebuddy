@@ -97,7 +97,8 @@ export const POPULATION_SCAN = Object.freeze([
 export const REASON_CLASSES = Object.freeze({
   elsewhere:
     "runs on every push in the CI gates job through a pnpm script; prelive would be a second copy of a gate that " +
-    "already has a home, and the ladder's budget is the ~5 s L0 plus the ~40 s L0b it already spends",
+    "already has a home, and the ladder's budget is the ~53 s L0 plus the ~40 s L0b it already spends (measured " +
+    "2026-11-13 at 449f0fb0)",
   environment:
     "needs an input this checkout has not got (the decompiled tree, a game install, a built generation, a live DB, the " +
     "design mount) - prelive runs install-free and offline",
@@ -226,7 +227,8 @@ export const EXEMPTIONS = Object.freeze([
     reason:
       "report: re-derives the ledger of design/architecture/stardew-action-execution-kernel.md and prints the drift " +
       "to stderr while exiting 0 (measured 2026-11-05: `requestHandlers: document says 42, source has 95`), so a rung " +
-      "would report it green while it is reporting a disagreement",
+      "would report it green while it is reporting a disagreement · measured 12 ledger rows re-derived, drift printed " +
+      "(requestHandlers document 42 vs source 103, revisionIncrements 74 vs 70, executionIds 45 vs 9) at 95dd6efe",
     runsIn: "on-demand",
   },
   {
@@ -295,7 +297,8 @@ export const EXEMPTIONS = Object.freeze([
     path: "tools/check-action-coverage.mjs",
     reason:
       "report: counts dispatches out of `.live-runs/game-ladder` artifacts and exits 0 by design until someone puts a " +
-      "number on what well-covered means (`--fail-under`), so there is nothing to fail before a run exists",
+      "number on what well-covered means (`--fail-under`), so there is nothing to fail before a run exists · measured " +
+      "published actions 106, succeeded at least once 40, attempted 46, never attempted 60 at 95dd6efe",
     runsIn: "on-demand",
   },
   {
@@ -361,7 +364,7 @@ export const EXEMPTIONS = Object.freeze([
     reason:
       "debt: measured red at HEAD — 3 sites hand-parse subprocess output and all three are files another lane holds " +
       "uncommitted (`tools/sandbox/sandbox-bus.mjs`, `tools/scripts/check-workspace-debris.mjs`), " +
-      "so adopting it needs their fix, not the wiring",
+      "so adopting it needs their fix, not the wiring · measured examined 135 files, violations 47, exit 1 at 449f0fb0",
     runsIn: "on-demand",
   },
   {
@@ -371,7 +374,8 @@ export const EXEMPTIONS = Object.freeze([
       "this gate is off rather than wired: 1073 of the 1222 are a literal 0, 1 or 2 over a fixture the test itself " +
       "builds, and the 148 that are 3-and-up (62 of them in `tools/`) include the genuine freezes whose derived side " +
       "does not exist yet. The dated paragraph beside the gate's usage says which members those are and what would " +
-      "make it schedulable; wiring it now would red the tree for assertions whose authority is the fixture above them",
+      "make it schedulable; wiring it now would red the tree for assertions whose authority is the fixture above them · " +
+      "measured examined 981, violations 1226, unread 1 at 449f0fb0",
     runsIn: "on-demand",
   },
   {
@@ -419,7 +423,8 @@ export const EXEMPTIONS = Object.freeze([
     path: "tools/check-dist-runtime-exports.mjs",
     reason:
       "installed: imports `vendor/magic-context/packages/pi-plugin/dist` (a build output), which nothing in the " +
-      "ladder assembles",
+      "ladder assembles · measured 0 violations, every dist runtime export matching the Host contract, exit 0 with the " +
+      "dist present at 449f0fb0",
     runsIn: "on-demand",
   },
   {
@@ -518,7 +523,9 @@ export const EXEMPTIONS = Object.freeze([
   },
   {
     path: "tools/check-perf-scaling.mjs",
-    reason: "installed: drives the bench suite as size pairs in child processes, which needs a built `host/dist-test`",
+    reason:
+      "installed: drives the bench suite as size pairs in child processes, which needs a built `host/dist-test` · " +
+      "measured findings 6 over 6 files and 0 pairs, both benches refusing `live_run_artifact_stale` at 95dd6efe",
     runsIn: "pnpm check:perf-scaling",
   },
   {
@@ -546,7 +553,8 @@ export const EXEMPTIONS = Object.freeze([
     reason:
       "debt: measured red at HEAD (exit 1, `unclassified_reason_code " +
       "remove_placed_item_furniture_move_unsupported - no declared family matches it`), so wiring it into a rung " +
-      "would only stop the ladder on a defect this register is meant to report",
+      "would only stop the ladder on a defect this register is meant to report · measured 29 unclassified_reason_code " +
+      "findings at 449f0fb0",
     runsIn: "on-demand",
   },
   {
@@ -560,7 +568,9 @@ export const EXEMPTIONS = Object.freeze([
   },
   {
     path: "tools/check-scope-references.mjs",
-    reason: "debt: measured 4 findings (3 out_of_scope_reference, 1 read_before_declaration) at HEAD",
+    reason:
+      "debt: measured red at HEAD on scope references · measured 6 findings (5 out_of_scope_reference, 1 " +
+      "read_before_declaration) over 1086 files at 95dd6efe",
     runsIn: "pnpm check:scope-references",
   },
   {
@@ -572,14 +582,6 @@ export const EXEMPTIONS = Object.freeze([
     path: "tools/check-spec-reachability.mjs",
     reason: "elsewhere: derives which tools/ suites a checkout runs, and runs on every push in the CI gates job",
     runsIn: "pnpm check:spec-reachability",
-  },
-  {
-    path: "tools/check-stardew-actor-admissibility.mjs",
-    reason:
-      "debt: measured red at HEAD - ENOENT on " +
-      "integrations/stardew/action-development/contracts/actor-admissibility/actor-admissibility.v1.json, an input " +
-      "nothing in this tree produces",
-    runsIn: "on-demand",
   },
   {
     path: "tools/check-stardew-companion-production-admission.mjs",
@@ -629,25 +631,6 @@ export const EXEMPTIONS = Object.freeze([
     path: "tools/check-stardew-gameplay-completeness.mjs",
     reason: "arguments: requires `--report <direct-inspector-report.json>`, a report a live lane produces",
     runsIn: "pnpm check:stardew-gameplay-completeness",
-  },
-  {
-    path: "tools/check-stardew-hold-sufficiency.mjs",
-    reason:
-      "debt: measured red at HEAD - ENOENT on " +
-      "integrations/stardew/action-development/contracts/actor-admissibility/actor-admissibility.v1.json, the same " +
-      "missing input check-stardew-actor-admissibility names",
-    runsIn: "on-demand",
-  },
-  {
-    path: "tools/check-stardew-invented-gates.mjs",
-    reason:
-      "debt: measured red at HEAD - one gating constant states a number no engine member backs " +
-      "(`GeodeCounterInteractionRadius = 2`, geodeactions.cs:104, `ours=2:engine=unstated`, measured against the " +
-      "owner's tile rather than the counter), which is the fix this gate asks for and not a wiring gap; adopting it " +
-      "in a rung would also need `ref/external/StardewValleyDecompiled`, which prelive runs without. Its falsifier " +
-      "suite runs in CI through `pnpm test:stardew-invented-gates` (the tool-test corpus), where the real-tree arm " +
-      "skips itself when the decompiled tree is absent",
-    runsIn: "on-demand",
   },
   {
     path: "tools/check-stardew-loop-closure.mjs",
@@ -711,19 +694,9 @@ export const EXEMPTIONS = Object.freeze([
     path: "tools/check-stardew-snapshot-family-bounds.mjs",
     reason:
       "debt: measured red at HEAD (exit 1, 1 finding) on the Mod's bounded target arrays against the Host's caps, so " +
-      "wiring it would stop the ladder on a disagreement between two hand-written sides",
-    runsIn: "on-demand",
-  },
-  {
-    path: "tools/check-stardew-discovery-exclusions.mjs",
-    reason:
-      "debt: measured red at HEAD - `discoveries 84, with exclusions 8, filters without a reason 5 (filed 5)` plus 10" +
-      " `backlog_token_available` findings, i.e. ten discovery families still filter a subject on a state the closed" +
-      " vocabulary already names (`not_ready` for five building-construction countdowns, `already_tapped` and `dead`" +
-      " for two whereabouts counts, `wrong_harvest_method`, and a baitless crab pot) and publish nothing about it." +
-      " Wiring it into L0 today would stop the ladder on a defect this register is meant to report; the ten are" +
-      " named, with their owner files, in tools/stardew-discovery-exclusions-backlog.json, and the gate turns green" +
-      " the moment the last of them records its reason",
+      "wiring it would stop the ladder on a disagreement between two hand-written sides · measured exit 1 with ZERO " +
+      "families derived: `construction_arity_mismatch` (118 arguments against 120 parameters), so no cap is compared " +
+      "at all at 449f0fb0",
     runsIn: "on-demand",
   },
   {
@@ -760,7 +733,9 @@ export const EXEMPTIONS = Object.freeze([
   },
   {
     path: "tools/check-text-hygiene.mjs",
-    reason: "debt: measured red at HEAD - committed C# files under desktop/ are missing a final newline",
+    reason:
+      "debt: measured red at HEAD - committed files are missing a final newline or carry trailing whitespace · " +
+      "measured files examined 3472, violations 201, verdict blocked at 95dd6efe",
     runsIn: "pnpm check:text-hygiene",
   },
   {
@@ -837,6 +812,50 @@ export function verifyRunsIn(entry, { scripts, headScripts = {}, workflow }) {
 /** Reason classes that assert the gate runs on every push; that claim is checked against the CI coverage gate. */
 const RUNS_ON_EVERY_PUSH = "elsewhere";
 
+/**
+ * The classes whose reason states a MEASUREMENT of this tree, and therefore goes stale in both directions.
+ *
+ * `debt` says "measured red, N findings", `report` says "it prints while exiting 0", `installed` says "the build output
+ * does not match" - each is a reading taken on a day, and a reading nobody re-takes is how five of eight `debt` rows
+ * ended up wrong both ways at once (three were green, and three understated their own debt by an order of magnitude).
+ *
+ * `environment` is deliberately NOT here: it states which input a checkout has not got, which is a property of the
+ * checkout rather than a reading that drifts. `elsewhere` states where a gate runs (which `runsIn` and the CI coverage
+ * gate verify mechanically), `arguments` what a caller must supply, `fixup`/`suite` where the work happens - none of
+ * those is re-measurable, so stamping them would be ceremony rather than evidence.
+ */
+export const MEASURED_REASON_CLASSES = Object.freeze(["debt", "report", "installed"]);
+
+/** ` · measured <reading> at <sha>`: the reading a reason was taken from, and the revision it was true at. */
+const MEASUREMENT_STAMP = / · measured (.+?) at ([0-9a-f]{7,40})$/u;
+
+/**
+ * How many release tags may be cut after a reading before the register stops calling it current.
+ *
+ * Releases are this repository's `v0.1.0-rc.*` tags, counted with `git tag --contains <sha>`: a reading taken five
+ * releases ago describes a tree that has moved five times, and re-taking it is cheaper than trusting it.
+ */
+export const RELEASES_BEFORE_UNVERIFIED = 5;
+
+/** The stamp a reason carries, or null when it carries none. */
+export function stampOf(entry) {
+  const match = MEASUREMENT_STAMP.exec(typeof entry.reason === "string" ? entry.reason : "");
+  return match === null ? null : { reading: match[1], revision: match[2] };
+}
+
+/**
+ * Release tags containing `revision`, or null when git cannot resolve it.
+ *
+ * Null is the interesting answer: a stamp naming a revision nobody can find is not an old reading, it is a claim with no
+ * subject, so the caller reports it as a finding rather than as staleness.
+ */
+export function releasesSince(revision, { root = ROOT } = {}) {
+  if (!/^[0-9a-f]{7,40}$/u.test(revision)) return null;
+  const result = spawnSync("git", ["tag", "--contains", revision], { cwd: root, encoding: "utf8", windowsHide: true });
+  if (result.status !== 0) return null;
+  return result.stdout.split("\n").filter((line) => line.trim() !== "").length;
+}
+
 /** The class an exemption declares, or `null` when it carries no reason to declare one. */
 function declaredClass(entry) {
   return typeof entry.reason === "string" ? entry.reason.split(":")[0].trim() : null;
@@ -855,11 +874,13 @@ export function checkRegistry({
   headScripts = {},
   workflow,
   ciCoverage,
+  releases = releasesSince,
 }) {
   const wiredPaths = new Set(wired.keys());
   const populationMembers = new Set(population);
   const exempt = new Map();
   const findings = [];
+  const unverified = [];
   for (const path of wiredPaths)
     if (!populationMembers.has(path))
       findings.push({ code: "wired_not_a_gate", path, detail: `prelive ${wired.get(path)} names it` });
@@ -906,6 +927,25 @@ export function checkRegistry({
     }
     const dangling = verifyRunsIn(entry, { scripts, headScripts, workflow });
     if (dangling !== null) findings.push({ ...dangling, path: entry.path });
+    // A reason in a measured class states a reading; this is where it says when it was taken, and where a reading too
+    // old to trust is named. Printed rather than found: a register that reddens on ninety unstamped rows teaches nobody
+    // which row to re-measure, and one that says nothing leaves the prose unmeasured - so it names each row.
+    if (MEASURED_REASON_CLASSES.includes(className)) {
+      const stamp = stampOf(entry);
+      if (stamp === null)
+        unverified.push({ path: entry.path, why: "the reason carries no ` · measured <reading> at <sha>`" });
+      else {
+        const since = releases(stamp.revision);
+        if (since === null)
+          findings.push({
+            code: "exempt_measured_revision_unknown",
+            path: entry.path,
+            detail: `the stamp names ${stamp.revision}, which git cannot resolve`,
+          });
+        else if (since >= RELEASES_BEFORE_UNVERIFIED)
+          unverified.push({ path: entry.path, why: `${since} release(s) since ${stamp.revision}` });
+      }
+    }
     if (className === RUNS_ON_EVERY_PUSH && entry.runsIn.startsWith("pnpm ")) {
       const script = entry.runsIn.slice("pnpm ".length);
       if (!ciCoverage.runs.has(script)) {
@@ -935,6 +975,7 @@ export function checkRegistry({
     exempt: exemptOnly.length,
     byClass: Object.fromEntries([...counts.entries()].sort()),
     onDemand,
+    unverified,
     scriptTrees: {
       head: headScripts === null ? null : Object.keys(headScripts).length,
       disagreeing: headScripts === null ? [] : scriptTreeDisagreements(scripts, headScripts),
@@ -1039,6 +1080,12 @@ export function renderRegistry(result) {
     );
   if (result.onDemand.length > 0)
     lines.push(`prelive_gate_registry: no_scheduled_home=${result.onDemand.length} ${result.onDemand.join(",")}`);
+  if (result.unverified.length > 0)
+    lines.push(
+      `prelive_gate_registry: reason_unverified=${result.unverified.length} ${result.unverified
+        .map((entry) => entry.path)
+        .join(",")}`,
+    );
   for (const finding of result.findings) {
     switch (finding.code) {
       case "gate_forgotten":
@@ -1076,6 +1123,12 @@ export function renderRegistry(result) {
         break;
       case "exempt_elsewhere_not_in_ci":
         lines.push(`prelive_gate_registry_exempt_elsewhere_not_in_ci: ${finding.path} - ${finding.detail}`);
+        break;
+      case "exempt_measured_revision_unknown":
+        lines.push(
+          `prelive_gate_registry_exempt_measured_revision_unknown: ${finding.path} - ${finding.detail}; a stamp naming a ` +
+            "revision nobody can resolve is a reading with no subject, not an old one",
+        );
         break;
       default:
         lines.push(`prelive_gate_registry_${finding.code}: ${finding.path} - ${finding.detail}`);

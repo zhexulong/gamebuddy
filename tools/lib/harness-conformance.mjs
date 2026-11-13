@@ -513,14 +513,13 @@ const GATES_WITH_FALSIFIER = Object.freeze([
   // Prints a per-reading verdict (`import_to_export`, `export_to_reimport`, `source_to_reexport`) plus the population
   // it examined, so its default run is the report the conformance suite reads.
   "check-preset-round-trip.mjs",
-  // These two decide the actionability algebra and the orphan-hold search over the decompiled tree, and both read
-  // `integrations/stardew/action-development/contracts/actor-admissibility/actor-admissibility.v1.json` - a contract no
-  // commit has ever carried and nothing in this repository produces. Their default run is therefore `blocked`: it prints
-  // its report, every check reads `blocked`, and `examined: 0` carries the stated reason the shared judge reads as
-  // `not_measured`. That distinction is the whole point - a gate whose input does not exist must read as one that
-  // measured nothing, never as one that found nothing wrong, and the suite now prints that list by name.
+  // Decides the actionability algebra and the orphan-hold search over the decompiled tree, and reads
+  // `integrations/stardew/action-development/contracts/actor-admissibility/actor-admissibility.v1.json`. When the mount
+  // or the contract is absent its default run is `blocked`: it prints its report, every check reads `blocked`, and
+  // `examined: 0` carries the stated reason the shared judge reads as `not_measured`. That distinction is the whole point
+  // - a gate whose input does not exist must read as one that measured nothing, never as one that found nothing wrong,
+  // and the suite now prints that list by name.
   "check-stardew-actor-admissibility.mjs",
-  "check-stardew-hold-sufficiency.mjs",
   "check-stardew-fixture-action-coverage.mjs",
   // Prints `invented-gates: constants examined N · engine-cited M · debt K · invented D` plus a `checks[]` verdict
   // enumerating its six rules (the decompiled tree is readable, the population comes from the request paths, every bound

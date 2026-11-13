@@ -9,7 +9,6 @@
     "test:sandbox-configs",
     "test:stardew-fixture-scenario-wiring",
     "test:stardew-soil-itm-canary",
-    "test:voice-protocol",
-    "tools/audit-stardew-handler-actor-guard.mjs"
+    "test:voice-protocol"
   ]
 }

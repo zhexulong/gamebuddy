@@ -359,6 +359,28 @@ test("(v) L0 reports each gate's exit code by name", () => {
   );
 });
 
+test("(v) a gate that could not measure is UNAVAILABLE in both dialects, and an exit 1 stays a failure", () => {
+  // The two spellings of one fact: exit 0 with a `*_skipped:` marker (a gate that returns quietly) and exit 2 with one
+  // (this repository's blocked code for "I could not measure this"). Any other non-zero exit is red even with a marker,
+  // so a blocked reading never swallows a defect.
+  const marker = "stardew_probe_skipped: needs ref/external/StardewValleyDecompiled\n";
+  const report = runGateRung({
+    gates: ["tools/quiet.mjs", "tools/blocked.mjs", "tools/red-with-marker.mjs"],
+    resolveCommand: (gate) => ({ command: `node ${gate}`, discovered: false }),
+    run: (command) => ({
+      status: command.endsWith("quiet.mjs") ? 0 : command.endsWith("blocked.mjs") ? 2 : 1,
+      stdout: marker,
+      stderr: "",
+    }),
+  });
+  assert.deepEqual(
+    report.gates.map((entry) => entry.outcome),
+    ["not_measured", "not_measured", "failed"],
+  );
+  assert.equal(report.status, "failed", "one red member reddens the rung even when another is UNAVAILABLE");
+  assert.equal(report.unavailable.length, 2);
+});
+
 test("L4 delegates the named action to the existing live preflight", () => {
   const commands = [];
   const passed = actionRung({

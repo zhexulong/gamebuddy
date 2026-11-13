@@ -34,18 +34,24 @@
  * dying on an ENOENT that reads like a defect in this file. A run that examined nothing is `blocked` for the same
  * reason: `0 findings` means nothing without `examined N`.
  *
+ * The engine's source is the gate's other input and it is a gitignored mount (`ref/external/StardewValleyDecompiled`), so
+ * a checkout without it prints `stardew_actor_admissibility_skipped:` and exits 2 - the same blocked code, with the
+ * reason stated. `tools/prelive.mjs` reads exit 2 beside that marker as UNAVAILABLE, so the L0b rung says "this checkout
+ * cannot measure the hold algebra" instead of red, and a person running the file by hand gets the same line and a
+ * non-zero exit rather than a green reading over nothing.
+ *
  * red-proof: inject  the Idle hold reason given a code the Mod never mints (`player_busy_probe`) ->
  *   `FAIL  FACT-3 named`, report status failed at examined 15 with detail `Idle carries player_busy_probe; a body
  *   that is not held must not carry a hold code`, exit 1
  */
-import { readFileSync, readdirSync, statSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import {
   ACTOR_ADMISSIBILITY_CONTRACT,
   readActorAdmissibilityContract,
   repoRoot,
   searchCounterExamples,
   writeEstablishes,
-} from "./check-stardew-hold-sufficiency.mjs";
+} from "./lib/stardew-actor-holds.mjs";
 import { reportBlockedInput } from "./lib/blocked-input-report.mjs";
 import { basename, join, relative } from "node:path";
 
@@ -62,6 +68,15 @@ if (modelSource === null)
     checks: ["contract_readable"],
   });
 const model = JSON.parse(modelSource);
+if (!existsSync(GAME_ROOT)) {
+  // IFACE-1, FACT-4 and IFACE-2 are all decided against the engine's own source; without it this gate can resolve no
+  // read, pin no release and accompany no hold, so there is nothing to report a verdict over.
+  process.stdout.write(
+    `stardew_actor_admissibility_skipped: needs ref/external/StardewValleyDecompiled - IFACE-1 reads, FACT-4 releases ` +
+      "and IFACE-2 holds are all decided against the engine's own source\n",
+  );
+  process.exit(2);
+}
 const worldModel = readFileSync(join(ROOT, WORLD_MODEL), "utf8");
 const worldModelLines = worldModel.split("\n");
 

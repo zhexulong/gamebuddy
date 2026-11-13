@@ -12,8 +12,20 @@
  * It measures and never edits. Site detection matches the reconciliation test on purpose, so the worklist and
  * the measured list cannot drift apart.
  *
+ * THE ASSERTION IT NOW CARRIES: `forked 0`. For two days this tool printed its count and exited 0 whichever count it
+ * found, so the invariant it exists for - every handler routes through the shared admission - was vacuous and could not
+ * be observed failing. A forked site is now exit 1 (naming each one), a source root that is absent is exit 2
+ * (`stardew_admission_fork_delta_skipped:`, "I could not look" rather than "there are none"), and the file count is
+ * printed beside the site count because the two zeros have to be told apart by the reader: an existing root with no
+ * controller partial holds no fork and no population, which the tool's own falsifier pins as an empty worklist rather
+ * than a blocked reading.
+ *
  * Usage:
  *   node tools/audit-stardew-admission-fork-delta.mjs [--source-root <dir>] [--json]
+ *
+ * red-proof: inject  a handler body that tests the triple inline in a synthetic source root -> `forked 1` and exit 1
+ *   (`the detector still finds a fork in all three spellings`); a `--source-root` that does not exist ->
+ *   `stardew_admission_fork_delta_skipped: stardew_source_root_missing:...` and exit 2
  */
 
 import { existsSync, readFileSync, readdirSync } from "node:fs";
@@ -131,6 +143,7 @@ function findSites(sourceRoot) {
     }
   }
   return {
+    fileCount: readdirSync(directory).filter((name) => /^farmhandexecutioncontroller.*\.cs$/.test(name)).length,
     sites: [...sites, ...split].sort((a, b) => a.file.localeCompare(b.file) || a.line - b.line),
     splitCount: split.length,
   };
@@ -138,11 +151,22 @@ function findSites(sourceRoot) {
 
 const values = parseArguments(process.argv.slice(2));
 const sourceRoot = values.get("source-root") ?? ".";
-const { sites, splitCount } = findSites(sourceRoot);
+let scanned;
+try {
+  scanned = findSites(sourceRoot);
+} catch (error) {
+  // "I could not look" is not "there are none": the one answer this must never give silently is a clean worklist.
+  console.log(`stardew_admission_fork_delta_skipped: ${error.message}`);
+  console.log("stardew_admission_fork_delta: blocked - a source root that is not there is not an empty worklist");
+  process.exit(2);
+}
+const { fileCount, sites, splitCount } = scanned;
 const exactTriple = sites.filter((site) => site.spelling === "exact triple").length;
 
 const report = {
   artifactKind: "stardew_admission_fork_delta",
+  status: sites.length === 0 ? "passed" : "failed",
+  fileCount,
   siteCount: sites.length,
   exactTripleCount: exactTriple,
   splitSpellingCount: splitCount,
@@ -171,8 +195,11 @@ const report = {
 if (values.has("json")) console.log(JSON.stringify(report, null, 2));
 else {
   console.log(
-    `${report.artifactKind}: ${report.siteCount} forked sites (${report.exactTripleCount} exact triple, ${report.splitSpellingCount} split spelling)`,
+    `${report.artifactKind}: examined ${report.fileCount} file(s) · forked ${report.siteCount} ` +
+      `(${report.exactTripleCount} exact triple, ${report.splitSpellingCount} split spelling)`,
   );
+  if (report.siteCount === 0)
+    console.log(`${report.artifactKind}: passed - every handler routes through the authority`);
   console.log("");
   for (const site of report.sites)
     console.log(
@@ -184,3 +211,6 @@ else {
   console.log("");
   console.log(report.decisionQuestion);
 }
+
+// The assertion: the fork count is 0, so a future fork fails this. Exit 2 above is the blocked reading (no source root).
+process.exit(report.siteCount === 0 ? 0 : 1);

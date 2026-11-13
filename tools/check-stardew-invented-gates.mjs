@@ -62,7 +62,10 @@
  *
  * Refusals: no decompiled tree -> `stardew_decompile_root_missing`; no member ->
  * `invented_gates_no_population`. Both print and exit 2, because a gate that passes on an empty
- * reading is indistinguishable from one that found nothing.
+ * reading is indistinguishable from one that found nothing. The first also prints a
+ * `*_skipped:` marker naming the absent mount, which is how `tools/prelive.mjs` tells "this
+ * checkout cannot measure it" (UNAVAILABLE) from "it measured and something is wrong" (red);
+ * the second is a defect and prints no marker.
  *
  * THE REPORT. Every run ends with one JSON line carrying `checks`: one entry per rule in `RULES` below, each with its own
  * outcome, so the run says which rules this gate is able to report red and what each one found - a rule that passed is
@@ -672,9 +675,9 @@ function main() {
   const modRoot = modIndex >= 0 ? process.argv[modIndex + 1] : undefined;
   const engine = indexEngineSources();
   if (engine === null) {
-    console.log(`stardew_decompile_root_missing: ${DECOMPILED_ROOT}`);
     console.log(
-      "invented-gates: not measured - no cited member can be read, so no constant can be called engine-cited",
+      `stardew_invented_gates_skipped: stardew_decompile_root_missing - ${DECOMPILED_ROOT} is absent, so no cited ` +
+        "member can be read and no constant can be called engine-cited",
     );
     console.log(reportLine({ blocked: "stardew_decompile_root_missing" }));
     process.exitCode = 2;

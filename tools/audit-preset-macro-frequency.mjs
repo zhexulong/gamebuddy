@@ -49,7 +49,7 @@
  *   spelling the product would report as `macro_unknown`, not a macro this census can call on the table's behalf.
  *
  * red-proof: fixture  `--root tools/fixtures` (88 JSON documents read, 86 rejected by the shape and none carrying a
- *   top-level `prompts` array) -> `preset_macro_frequency_no_presets` and `preset_macro_frequency: blocked`, exit 1
+ *   top-level `prompts` array) -> `preset_macro_frequency_no_presets` and `preset_macro_frequency: blocked`, exit 2
  *
  * VERDICT
  *
@@ -57,6 +57,11 @@
  *   zero presets BLOCKS as `preset_macro_frequency_no_presets`, because "no preset uses `{{if}}`" and "no preset was
  *   read" must not print the same. With a non-empty population the run exits 0 and prints the table; which macro the
  *   numbers support is the reader's call, made on the printed counts.
+ *
+ *   The blocked cases exit 2, not 1: 2 is this repository's code for "I could not measure this"
+ *   (`tools/lib/blocked-input-report.mjs`), and it is what tells a reader the difference between a census that read
+ *   nothing and one that found something. An unreadable `PRESET_MACROS` table exits 2 for the same reason - it is the
+ *   population's own prerequisite.
  *
  * CONTROL
  *
@@ -365,10 +370,10 @@ export function formatCensus(result) {
   return Object.freeze(lines);
 }
 
-/** Prints the reading and answers with the exit code: blocked when nothing was read, otherwise 0. */
+/** Prints the reading and answers with the exit code: 2 (blocked) when nothing could be read, otherwise 0. */
 export function verdict(result) {
-  if (result.error !== undefined) return 1;
-  return result.examined === 0 ? 1 : 0;
+  if (result.error !== undefined) return 2;
+  return result.examined === 0 ? 2 : 0;
 }
 
 /** Prints the reading and answers with the exit code the reading earned. */

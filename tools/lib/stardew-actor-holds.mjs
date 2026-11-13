@@ -1,8 +1,7 @@
-#!/usr/bin/env node
 /**
- * Hold-sufficiency counter-example search  (环境侧闭环：反例消除)
+ * The hold companions and the counter-example search - the engine half of the actor-admissibility contract.
  *
- * THE ASSERTION THIS DECIDES:
+ * THE ASSERTION THESE FUNCTIONS SERVE (stated once, decided by two callers):
  *
  *     every site that writes `Farmer.canMove = false` in the decompiled tree has, in its own method or one same-file
  *     callee, a write that ESTABLISHES one of the facts `WorldModel.ReadFacts` reads - or carries an adjudicated row
@@ -11,6 +10,12 @@
  *
  *   because if one does not, the game holds the actor while our reads still say `Idle` - an orphan hold, a state we
  *   cannot name, cannot report, and cannot remedy. That is a hole in the state space, not a documentation gap.
+ *
+ * WHY IT IS A MODULE AND NOT A GATE. This file used to be `tools/check-stardew-hold-sufficiency.mjs`, a gate whose whole
+ * measurement was IFACE-2 of `tools/check-stardew-actor-admissibility.mjs`: one contract, one scan, two CLIs. The stricter
+ * gate was already the scheduled one, so the CLI went and the functions stayed - IFACE-2 `hold sufficiency` (the search),
+ * FACT-4 `release` (the pins) and DECISION-3 `owed` (the adjudication names) are the three assertions that read them, and
+ * `tools/check-stardew-actor-admissibility.mjs` is where a verdict is rendered over all three.
  *
  * THE COMPANION SIDE IS THE CONTRACT'S, AND IT IS DIRECTIONAL. `environmentReads` is derived from `ReadFacts`, so the
  * population cannot go stale (`tools/derive-stardew-actor-admissibility.mjs`), and each read carries the predicate it
@@ -30,17 +35,11 @@
  *   Therefore a residual row is a JUDGEMENT about Stardew's source, checked against the engine on every run by the
  *   row's own release anchor: the line that row blames for the release must still write what the row says it writes.
  *
- * WHAT IT REFUSES TO REPORT GREEN OVER: `examined: 0`. A search that scanned no file has not shown anything, so the
- * report says `blocked` and the exit code says so too.
- *
- * red-proof: inject  one `environmentReads` entry removed from the contract, so a hold loses the read that
- *   establishes it -> report status failed with `residual_adjudicated` (18 orphans against 16 adjudicated rows) and
- *   `adjudication_named` naming a `namedBy` that is not a declared fact, exit 1
+ * `searchCounterExamples` returns `fileCount` and `siteCount` with every result, because the caller has to refuse to
+ * report green over `examined: 0`: a search that scanned no file has not shown anything.
  */
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
-import { pathToFileURL } from "node:url";
-import { reportBlockedInput } from "./lib/blocked-input-report.mjs";
 
 export const HELD_FACT = "Farmer.canMove";
 
@@ -351,124 +350,4 @@ export function adjudicationNames(model, rows) {
       failures.push(`${row.site}: namedBy "${row.namedBy}" is not a declared fact of ${[...facts].join(", ")}`);
   }
   return { named, unnamed, failures };
-}
-
-// ------------------------------------------------------------------ CLI
-// Windows: import.meta.url is file:///E:/... while argv[1] is E:\..., so compare by resolved URL.
-const invokedDirectly = (() => {
-  try {
-    return import.meta.url === pathToFileURL(process.argv[1]).href;
-  } catch {
-    return false;
-  }
-})();
-if (invokedDirectly) {
-  const root = repoRoot();
-  const modelSource = readActorAdmissibilityContract(root);
-  if (modelSource === null)
-    reportBlockedInput({
-      gate: "stardew_hold_sufficiency/v1",
-      input: ACTOR_ADMISSIBILITY_CONTRACT,
-      examined: 0,
-      checks: ["contract_readable"],
-    });
-  const model = JSON.parse(modelSource);
-  const companions = (model.environmentReads ?? []).filter(
-    (read) => memberOf(read.member).toLowerCase() !== memberOf(HELD_FACT).toLowerCase(),
-  );
-  const residual = model.orphanHoldResidual ?? [];
-  const unattributed = model.unattributedHoldSites ?? [];
-  const found = searchCounterExamples({ root, companions, residual, unattributed });
-  // Every row states the release it blames, whether the analysis could place it or not: an entry site whose release
-  // nobody checked is the hole both gates used to have.
-  const pins = releasePins(root, [...residual, ...unattributed]);
-  const naming = adjudicationNames(model, [...residual, ...unattributed]);
-
-  const checks = [
-    {
-      id: "contract_readable",
-      status: "passed",
-      detail: `${ACTOR_ADMISSIBILITY_CONTRACT}: ${companions.length} declared reads`,
-    },
-    {
-      id: "companions_declared",
-      status: companions.length > 0 ? "passed" : "failed",
-      detail:
-        companions.length > 0
-          ? `${companions.length} reads, each with the predicate it is holding under`
-          : "no declared read, so nothing could accompany a hold",
-    },
-    {
-      id: "residual_adjudicated",
-      status: found.undeclaredOrphans.length === 0 && found.staleRows.length === 0 ? "passed" : "failed",
-      detail:
-        `${found.orphans.length} orphan(s) against ${residual.length} adjudicated row(s)` +
-        (found.undeclaredOrphans.length > 0
-          ? `; UNADJUDICATED: ${found.undeclaredOrphans.map((o) => `${o.site} ${o.method}()`).join(", ")}`
-          : "") +
-        (found.staleRows.length > 0 ? `; STALE: ${found.staleRows.map((r) => r.site).join(", ")}` : ""),
-    },
-    {
-      id: "unattributed_named",
-      status: found.undeclaredUnattributed.length === 0 && found.staleUnattributed.length === 0 ? "passed" : "failed",
-      detail:
-        `${found.unparsed.length} site(s) the brace walk cannot attribute against ` +
-        `${unattributed.length} named one(s)` +
-        (found.undeclaredUnattributed.length > 0
-          ? `; UNNAMED: ${found.undeclaredUnattributed.map((u) => u.site).join(", ")}`
-          : "") +
-        (found.staleUnattributed.length > 0 ? `; STALE: ${found.staleUnattributed.map((r) => r.site).join(", ")}` : ""),
-    },
-    {
-      id: "adjudication_named",
-      status: naming.failures.length === 0 && naming.named + naming.unnamed > 0 ? "passed" : "failed",
-      detail:
-        naming.failures.length > 0
-          ? naming.failures.join("; ")
-          : naming.named + naming.unnamed === 0
-            ? "no adjudicated row, so nothing named the holds"
-            : `${naming.named} row(s) name a declared fact; ${naming.unnamed} state why none can`,
-    },
-    {
-      id: "release_pins",
-      status: pins.failures.length === 0 ? "passed" : "failed",
-      detail:
-        pins.failures.length === 0
-          ? `${pins.examined} release anchor(s) still write what their row says`
-          : pins.failures.join("; "),
-    },
-  ];
-
-  console.log(`\n=== hold-sufficiency counter-example search  (${HELD_FACT} = false) ===\n`);
-  console.log(`  scanned files:                    ${found.fileCount}`);
-  console.log(`  writes of ${HELD_FACT}=false:      ${found.siteCount}`);
-  console.log(`  ACCOMPANIED by a holding write:   ${found.accompanied}`);
-  console.log(`  ORPHANS (no holding write):       ${found.orphans.length}`);
-  console.log(`  unparsed (no method recognised):  ${found.unparsed.length}`);
-  console.log(`\n  --- orphans, each adjudicated in the contract ---`);
-  for (const o of found.orphans) {
-    const row = residual.find((r) => r.site === o.site);
-    console.log(
-      `  ${o.site}  ${o.method}()  ->  ${row === undefined ? "UNADJUDICATED" : `${row.verdict}${row.namedBy === null ? "" : ` (${row.namedBy})`}`}`,
-    );
-  }
-  if (found.unparsed.length) {
-    console.log(`\n  --- unparsed (the analysis bound, stated rather than hidden) ---`);
-    for (const u of found.unparsed) console.log(`  ${u.site}`);
-  }
-
-  const failed = checks.filter((check) => check.status === "failed");
-  const examined = found.siteCount + found.unparsed.length;
-  console.log(
-    `\n=== ${failed.length === 0 ? "ENVIRONMENT CLOSED: the declared reads are a sufficient statistic" : `${failed.length} check(s) FAILED`} ===\n`,
-  );
-  console.log(
-    JSON.stringify({
-      gate: "stardew_hold_sufficiency/v1",
-      status: failed.length === 0 ? "passed" : "failed",
-      examined,
-      checks,
-    }),
-  );
-  if (examined === 0 || failed.length > 0) process.exit(examined === 0 ? 2 : 1);
 }

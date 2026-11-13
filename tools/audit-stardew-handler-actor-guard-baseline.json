@@ -1,0 +1,5 @@
+{
+  "schema": "gamebuddy-handler-actor-guard-baseline/v1",
+  "note": "The `RequestLocal*` handlers whose own body neither calls the scope-bound actor proof nor routes through a controller method that performs the shared admission, read out of the revision this was recorded from. A ceiling, not debt accepted: rewrite it with `node tools/audit-stardew-handler-actor-guard.mjs --record-shrinks`, which refuses when anything grew.",
+  "sites": []
+}

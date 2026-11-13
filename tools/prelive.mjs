@@ -17,8 +17,12 @@
  *                             re-derives from five files: a lane editing a handler otherwise pays a ~300 s compile for a
  *                             gate that then prints `not_re_derived:inputs_unchanged`. See `modExportBuildPreparation`.
  *                             `dotnet` absent is UNAVAILABLE here and the gate names what it could not run.
- *   L0  contract triad      - measured 5.3 s. The static gates that cost milliseconds, one child process each, every
- *                             exit code reported by name. It ends with `tools/check-prelive-gate-registry.mjs`, which
+ *   L0  contract triad      - measured 2026-11-13 at 449f0fb0: 52.7 s over 38 gates, one child process each, every
+ *                             exit code reported by name. The "5.3 s" this line carried was two orders of magnitude
+ *                             stale, and the reason is visible in the same run: `check-harness-conformance` alone is
+ *                             27.9 s (it spawns every gate whose default run prints a report) and `audit-totality`
+ *                             8.9 s, so the rung's cost is two members rather than its thirty-eight. It ends with
+ *                             `tools/check-prelive-gate-registry.mjs`, which
  *                             derives the population of every gate in the tree and fails when one of them neither runs
  *                             here nor names where else it runs - so a gate added to this list, or left out of it, is a
  *                             fact this rung states rather than a habit someone remembers.
@@ -239,6 +243,11 @@ export const L0_GATES = Object.freeze([
   // that drifted by three lines whose only signal was `180614 !== 180548`. Measured 0.7 s here (three `dotnet`
   // invocations and one sandboxed derive), so it runs on the ladder rather than in a document a lane reads afterwards.
   "tools/check-generated-artifact-reproducibility.mjs",
+  // The discovery half nothing measured: every family that drops a subject on a state the hold vocabulary names must
+  // publish the reason it withheld it. Measured here 2026-11-13 at 449f0fb0: `discoveries 87, with exclusions 16,
+  // filters without a reason 5 (filed 5)`, 0.3 s, worktree only - and it already answers `examined 0` with
+  // `stardew_discovery_exclusions_skipped:`, which is the dialect this rung reads as UNAVAILABLE.
+  "tools/check-stardew-discovery-exclusions.mjs",
   "tools/check-prelive-gate-registry.mjs",
   // The five instance family of one two days: a thing the companion can SAY that one layer accepts and the next refuses or
   // silently reinterprets - `charge` on the wire but not in the tool schema, `sweep_scythe` in three surfaces and no mount,
@@ -252,13 +261,29 @@ export const L0_GATES = Object.freeze([
 
 /**
  * L0b: everything that recomputes the Stardew action inventory from the decompiled tree, which is the expensive input
- * and the one a bare checkout has not got. Two members, ~40 s together, and both of them are measurements the ladder
- * previously did not make at all: the projection drift tests are pure recomputation of checked-in artifacts, and the
- * observation-gap report's `--fail-on-ungranted` flag was written and never armed.
+ * and the one a bare checkout has not got. ~40 s for the first two, and all four are measurements the ladder previously
+ * did not make at all: the projection drift tests are pure recomputation of checked-in artifacts, the observation-gap
+ * report's `--fail-on-ungranted` flag was written and never armed, and the other two decide the hold algebra and the
+ * reach constants against the engine's own source.
+ *
+ * The input is the reason this is a rung of its own: `ref/external/StardewValleyDecompiled` is a gitignored mount, so
+ * each member must say it measured nothing on a checkout that has not got it - `*_skipped:` on stdout, exit 2 (this
+ * repository's blocked code), which `runGateRung` reports as UNAVAILABLE rather than red.
  */
 export const L0B_GATES = Object.freeze([
   "integrations/stardew/action-development/tests/stardew-action-inventory-reconciliation.test.mjs",
   "tools/check-stardew-observation-gap.mjs",
+  // The hold algebra over `ActorWorldFacts`: every member has a row, publishes the kind `WorldModel.Classify` decides,
+  // resolves in the engine, releases where the row says, and every `canMove = false` write is accompanied by a holding
+  // write of a declared read or carries an adjudicated residual row. Green here 2026-11-13 at 449f0fb0: `examined 15`,
+  // IFACE-1 16 reads resolved, IFACE-2 `scanned 948 files: 58 writes of the move flag, 42 accompanied, 16 orphans, 4
+  // unparsed`, 1.5 s. It absorbed `check-stardew-hold-sufficiency`'s CLI, whose whole measurement was its IFACE-2.
+  "tools/check-stardew-actor-admissibility.mjs",
+  // The reach-bound half: a numeric bound in an admission predicate must be the engine's number, or sit in an expiring
+  // `STATED_DEBT` row. Green here 2026-11-13 at 449f0fb0: `constants examined 72 · engine-cited 68 · debt 4 · invented
+  // 0`, 0.6 s. This is the class behind the round-42 shop refusal - a reach our predicate invented - and it is the only
+  // gate in the tree that compares our number against the engine's by reading the engine's line.
+  "tools/check-stardew-invented-gates.mjs",
 ]);
 
 /**
@@ -439,8 +464,14 @@ export function modExportBuildRung({ prepare = modExportBuildPreparation, build 
 
 /**
  * Run one gate rung and report each exit code by name with its own wall time. All of them run (a gate that is red
- * must not hide the three that are also red), and the rung verdict is red when any is. A gate that exits 0 having
- * printed a `*_skipped:` marker is `not_measured`: it is listed as UNAVAILABLE and never folded into the pass count.
+ * must not hide the three that are also red), and the rung verdict is red when any is.
+ *
+ * `not_measured` has TWO dialects and they are the same fact: exit 0 with a `*_skipped:` marker (a gate that returns
+ * quietly), or exit 2 with one, because 2 is this repository's blocked code for "I could not measure this"
+ * (`tools/lib/blocked-input-report.mjs`, `check-stardew-actor-admissibility`, `check-stardew-invented-gates`). Accepting
+ * only the first would have made an absent mount red the rung, and would have forced those gates to answer 0 when a
+ * person runs them by hand - the reading this ladder exists to stop. Any other non-zero exit is `failed`, marker or no
+ * marker, so `check-plan-legal-fixpoint`'s `plan_fixpoint_history_skipped:` beside exit 1 stays a failure.
  */
 export function runGateRung({
   id = "l0",
@@ -480,7 +511,14 @@ export function runGateRung({
       ms: Date.now() - startedAt,
       stdout,
       stderr: outcome.stderr ?? "",
-      outcome: exitCode !== 0 ? "failed" : NOT_MEASURED_MARKER.test(stdout) ? "not_measured" : "passed",
+      outcome:
+        exitCode === 0
+          ? NOT_MEASURED_MARKER.test(stdout)
+            ? "not_measured"
+            : "passed"
+          : exitCode === 2 && NOT_MEASURED_MARKER.test(stdout)
+            ? "not_measured"
+            : "failed",
       summary: firstOutputLine(stdout),
     };
   });
