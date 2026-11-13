@@ -2236,3 +2236,77 @@ The `check-harness-conformance`, `check-cognitive-complexity` and `check-code-du
 other lanes' work on this worktree (`test:pre-commit` arrived without a `red-proof:` marker in `7018cf37`; `ModEntry` grew
 by four complexity points; the duplication census reads an untracked file), not this unit's: the parity gate runs green in
 79 ms inside it, and every gate this unit touches exits 0.
+
+## The audit batch: the five gates a widened population made obligations
+
+`tools/lib/gate-population.mjs` now derives half A from `check-ci-coverage`'s own gate namespace and half B from
+`(check|audit)-*.mjs`, which took the census from 351 to 372 examined and made five gates owe a red proof nobody had
+ever asked them for: `report:stardew-remaining-actions`, `tools/audit-preset-macro-frequency.mjs`,
+`tools/audit-stardew-action-admission-ledger.mjs`, `tools/audit-stardew-handler-actor-guard.mjs` and
+`tools/audit-stardew-nogame-subset.mjs`. `f02b0699` recorded one of them in the baseline
+(`tools/audit-stardew-handler-actor-guard.mjs`) and left markers on the other four as it went past. This batch
+re-derived all five against their own commands, corrected the two claims that did not survive re-reading, and kept the
+one gate that cannot fire where the census can hold it. One commit per verdict group, so each message states its own
+evidence; no gate's rule was changed.
+
+| gate | verdict | the input, and the line it produced |
+| --- | --- | --- |
+| `report:stardew-remaining-actions` | **proven, `inject`** | tier C's branch assigned `B_no_catalog_intent` in `stardew-remaining-actions-report.mjs` → `× 三档计数之和等于未匹配候选总数（总数来自 candidates 产物）` with `AssertionError [ERR_ASSERTION]: C_non_gameplay_writes 不应为空`, `× B 档有 gameplay 写入但无 intent 引用` beside it, exit 1. Re-derived here rather than trusted: the suite is 7/7 green in the copy before the injection and 2 failing after it |
+| `tools/audit-preset-macro-frequency.mjs` | **proven, `fixture`** | `--root tools/fixtures` → `88 json document(s) read, 86 rejected by the shape, 2 unparseable`, `preset_macro_frequency_no_presets`, `preset_macro_frequency: blocked`, exit 1. A census's only failing verdict is the zero population, so this is the whole of its exit path and the marker says so |
+| `tools/audit-stardew-action-admission-ledger.mjs` | **proven, `history`** | `--rev 1eb9dc10 --check` → thirteen printed rows disagreeing with the table the design document states (`idempotentLookup: document says 39, source has 9`, `executionIds: document says 45, source has 10`, `bodyOwned: document says 24, source has 1`, `requestHandlers: document says 42, source has 103`, and nine more), exit 1. `revisionIncrements` is the one derived value that agrees, so the run is a disagreement about numbers rather than a table the reader could not parse |
+| `tools/audit-stardew-nogame-subset.mjs` | **proven, `history`; red at HEAD** | four suite files shipped without a line in the no-game project's `<Compile Include>` list — `BodyProgramJournalSchemaTests.cs` (`cdacf139`), `SeedSupplyAddressSourceShapeTests.cs` (`80965015`), `SuiteRedProofTests.cs` (`df96b6a1`), `TileTargetRequestSeamTests.cs` (`213d8c87`) → `headless_file_not_included:` four times, `4 file(s) disagree with the measurements`, exit 1 |
+| `tools/audit-stardew-handler-actor-guard.mjs` | **cannot fire** — no marker, baseline row kept | nothing in this repository can make it exit non-zero: see below |
+
+**Two claims were corrected, and neither correction moved a count.** The ledger's proof named `--rev HEAD~40`, which
+resolves to a different commit every time another lane lands one — a proof that moves cannot be re-run, so it now names
+`1eb9dc10`, the revision the thirteen rows above were read at; it also said "and seven more" where the command prints
+nine more after the four named. The no-game gate's proof was labelled `fixture`, but its input is not a constructed
+fixture: it is the tree at HEAD, four committed files whose omission the gate finds today. A `history` label states that,
+and the marker now says the reading is the tree's rather than a replay.
+
+### The gate that cannot fire: `tools/audit-stardew-handler-actor-guard.mjs`
+
+The question a `cannot fire` verdict answers is mechanical and was measured, not argued: the file contains no
+`process.exit` and no `exitCode` assignment (0 occurrences of each), `--rev` is its only argument and it only chooses
+which revision to read, and its default run prints `rev HEAD: 105 handlers in 47 files`, `guarded:   34`,
+`UNGUARDED: 71` and then the 71 names, exiting 0. So it is a **review instrument**, not a gate: its coverage is real —
+71 of the 105 `RequestLocal*` handlers in the Mod execution controller have neither an inline `TryGetBoundActor` nor a
+delegated `AdmitExecution(`, and `f02b0699`'s "65" is now 71 because handlers moved under it — and no event in the
+repository turns that reading into an exit code.
+
+The census has a disposition for exactly this and it is the one used: `unproven`, held by its recorded row in
+`tools/gate-red-proof-baseline.json`, so the run neither fails nor forgets. It is deliberately **not** given a marker
+(the temptation is an `inject` claim about a reddened count, which would prove that a number can be printed, not that a
+gate can fail) and deliberately **not** turned into a failing gate here: giving it `--check` semantics would red the
+tree for a migration another lane is running, which is a rule change and belongs to the gate's owner, not to a proof
+unit. What would retire this row: an exit path scoped to the handlers a change touches, demonstrated red once.
+
+### What the batch did not repair
+
+The four files are the whole of the no-game gate's red, and the repair is the no-game project's own list, which this
+batch may not edit. Measured, so the owner does not have to re-derive it: neither `GameBuddy.Stardew.NoGame.Tests.csproj`
+nor `excluded-files.tsv` names any of the four, so they are in neither half of the partition the lane's runner asserts —
+and the gate's own falsifier suite carries the same red: `node --test --test-name-pattern "no game-free file is left
+out" tools/audit-stardew-nogame-subset.test.mjs` → `AssertionError [ERR_ASSERTION]: unrun headless tests:
+BodyProgramJournalSchemaTests.cs, SeedSupplyAddressSourceShapeTests.cs, SuiteRedProofTests.cs,
+TileTargetRequestSeamTests.cs`, exit 1. Adding the four lines is the fix; the marker's `history` label is what makes the
+red visible instead of leaving a green-looking proof over a red gate.
+
+### The census, before and after
+
+| reading | counts |
+| --- | --- |
+| `node tools/audit-gate-red-proofs.mjs` at `8681d797`, before this batch's corrections | `population=372 · proven=352 · external=11 · declared without=9 · unreadable=0 · undeclared=0`, exit 0, and `352 + 11 + 9 = 372` |
+| the same command after them, at `f15ae390` | `population=372 · proven=351 · external=11 · declared without=9 · unreadable=1 · undeclared=0`, exit 1, and `351 + 11 + 9 + 1 = 372` |
+
+Every delta between those two lines is accounted for, and none of it is this batch's: all five records carry the same
+verdict in both readings (`report:stardew-remaining-actions` proven/`inject`, `audit-preset-macro-frequency.mjs`
+proven/`fixture`, `audit-stardew-action-admission-ledger.mjs` proven/`history`, `audit-stardew-nogame-subset.mjs`
+proven — `fixture` before this batch's relabel, `history` after, which moves no count because both are falsifier kinds —
+and `audit-stardew-handler-actor-guard.mjs` unproven and held). The one new gap
+is `check:live-run-preflight`, `malformed`: `tools/preflight-live-run.mjs:18` carries `red-proof: machine`, and `machine`
+is not one of the five kinds (`inject`, `history`, `fixture`, `self-check`, `external`), so the census reports it as
+`red_proof_kind_unknown` and exits 1 for every lane. It landed in `f15ae390` after the "before" reading was taken and
+belongs to that lane: either the kind is one of the five, or the reading it describes is not a falsifier. Recording it
+here rather than repairing it, because the file is another lane's and the kind set lives in
+`tools/audit-gate-red-proofs.mjs`, which this unit may not edit.
