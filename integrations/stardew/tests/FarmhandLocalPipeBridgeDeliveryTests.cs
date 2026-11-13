@@ -46,6 +46,7 @@ internal static class FarmhandLocalPipeBridgeDeliveryTests
     {
         RunAdmissionIsNotDeliveryAndExactStaleResolution();
         RunDisconnectResolvesPendingCompletionFalse();
+        RunHeldPipeNameIsRetriedAndNamed();
         RunDisposeResolvesPendingCompletionFalseAndRejectsAdmission();
         RunUnconfirmedTerminalClassificationMatchesWireAndHostTerminalStates();
         RunTerminalReceiptDeliveryTrackerFlushedConfirmsExactlyOnce();
@@ -174,6 +175,39 @@ internal static class FarmhandLocalPipeBridgeDeliveryTests
         {
             clientA?.Dispose();
             clientB?.Dispose();
+        }
+    }
+
+    /// <summary>
+    /// A pipe name another handle still holds is a listener refusal, not a connection fault: nothing connected, so
+    /// nothing is bound to a generation, and the retry is the whole recovery. The refusal must be named with the error
+    /// that caused it and the bridge must keep listening. The constructor used to sit outside the retry, so this exact
+    /// refusal ended the worker task with an unobserved exception - no connection, no retry, and not one fact anywhere
+    /// - and the IPC stayed dead for the rest of the session.
+    /// </summary>
+    private static void RunHeldPipeNameIsRetriedAndNamed()
+    {
+        string pipeName = "gamebuddy_farmhand_busy_" + Guid.NewGuid().ToString("N");
+        using NamedPipeServerStream held = HeldPipe(pipeName);
+        using LocalPipeBridge bridge = new(pipeName);
+        NamedPipeClientStream? client = null;
+        try
+        {
+            Require(WaitForListenerRefusal(bridge, out PipeWorkerTerminal? refusal),
+                "a pipe name another handle holds must be recorded as a listener refusal.");
+            Require(refusal!.Kind == PipeWorkerTerminalKind.ListenerUnavailable,
+                "the refusal must be its own kind, never a reader or writer ending.");
+            Require(refusal.Reason.Contains(nameof(IOException), StringComparison.Ordinal),
+                "the refusal must name the error that caused it, so a busy pipe reads differently from a permission problem.");
+
+            held.Dispose();
+            client = ConnectClient(pipeName);
+            Require(WaitForGeneration(bridge) > 1,
+                "the listener must retry the same name after the refusal instead of dying on it.");
+        }
+        finally
+        {
+            client?.Dispose();
         }
     }
 
@@ -395,6 +429,10 @@ internal static class FarmhandLocalPipeBridgeDeliveryTests
         return client;
     }
 
+    private static NamedPipeServerStream HeldPipe(string pipeName) =>
+        new(pipeName, PipeDirection.InOut, 1, PipeTransmissionMode.Byte,
+            PipeOptions.Asynchronous | PipeOptions.CurrentUserOnly, 0, BridgeProtocol.MaximumMessageBytes);
+
     private static long WaitForGeneration(LocalPipeBridge bridge)
     {
         long deadline = Environment.TickCount64 + BoundedDeliveryWindowMilliseconds;
@@ -405,6 +443,22 @@ internal static class FarmhandLocalPipeBridgeDeliveryTests
             Thread.Sleep(10);
         }
         throw new InvalidOperationException("named-pipe generation did not connect within the bounded window.");
+    }
+
+    private static bool WaitForListenerRefusal(LocalPipeBridge bridge, out PipeWorkerTerminal? refusal)
+    {
+        long deadline = Environment.TickCount64 + BoundedDeliveryWindowMilliseconds;
+        while (Environment.TickCount64 < deadline)
+        {
+            if (bridge.TryConsumeWorkerTerminal(out PipeWorkerTerminal seen))
+            {
+                refusal = seen;
+                return true;
+            }
+            Thread.Sleep(10);
+        }
+        refusal = null;
+        return false;
     }
 
     private static bool WaitForSettled(LocalPipeBridge bridge, int timeoutMs)

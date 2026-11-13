@@ -213,13 +213,20 @@ internal sealed class LocalPipeBridge : IDisposable
         while (!this.cancellation.IsCancellationRequested)
         {
             long generation = Interlocked.Increment(ref this.activeGeneration);
-            // Reserve a bounded server output buffer. The frame limit is the
-            // only buffer size permitted here; the asynchronous writer flushes
-            // each unsolicited event before completing its delivery receipt.
-            using NamedPipeServerStream pipe = new(this.pipeName, PipeDirection.InOut, 1, PipeTransmissionMode.Byte,
-                PipeOptions.Asynchronous | PipeOptions.CurrentUserOnly, 0, BridgeProtocol.MaximumMessageBytes);
+            bool listenerOpened = false;
             try
             {
+                // Reserve a bounded server output buffer. The frame limit is the
+                // only buffer size permitted here; the asynchronous writer flushes
+                // each unsolicited event before completing its delivery receipt.
+                //
+                // The construction belongs INSIDE this try. A name another handle still holds refuses the listener
+                // outright, and while this line sat above the try that refusal ended the worker task with an
+                // unobserved exception: no connection, no retry, and no artifact anywhere saying why the IPC was
+                // dead for the rest of the session.
+                using NamedPipeServerStream pipe = new(this.pipeName, PipeDirection.InOut, 1, PipeTransmissionMode.Byte,
+                    PipeOptions.Asynchronous | PipeOptions.CurrentUserOnly, 0, BridgeProtocol.MaximumMessageBytes);
+                listenerOpened = true;
                 await pipe.WaitForConnectionAsync(this.cancellation.Token).ConfigureAwait(false);
                 Interlocked.Exchange(ref this.connectedGeneration, generation);
                 using CancellationTokenSource connectionCancellation = CancellationTokenSource.CreateLinkedTokenSource(this.cancellation.Token);
@@ -260,8 +267,11 @@ internal sealed class LocalPipeBridge : IDisposable
             {
                 return;
             }
-            catch (Exception) when (this.cancellation.IsCancellationRequested is false)
+            catch (Exception exception) when (this.cancellation.IsCancellationRequested is false)
             {
+                // A refused listener is not a connection fault: nothing connected, so nothing was discarded there,
+                // and the retry below is the whole recovery. It is named once, by the error that caused it.
+                if (!listenerOpened) this.RecordListenerUnavailable(generation, exception);
                 this.DiscardGeneration(generation);
                 try { await Task.Delay(250, this.cancellation.Token).ConfigureAwait(false); }
                 catch (OperationCanceledException) { return; }
@@ -284,6 +294,23 @@ internal sealed class LocalPipeBridge : IDisposable
         }
         if (task.IsCanceled) return "cancelled";
         return "completed";
+    }
+
+    /// <summary>
+    /// The one fact that explains a bridge with no listener: why the pipe name could not be opened.
+    ///
+    /// A name still held by another handle - a crashed session's orphan, or a second Mod instance - refuses the
+    /// listener with ERROR_PIPE_BUSY or an access refusal. The type, the HRESULT and the message all travel with the
+    /// fact, because the difference between a busy pipe (0x800700E7) and a permission problem (0x80070005) is the
+    /// whole diagnosis, and a count would carry none of it.
+    /// </summary>
+    private void RecordListenerUnavailable(long generation, Exception exception)
+    {
+        Interlocked.CompareExchange(
+            ref this.workerTerminal,
+            new PipeWorkerTerminal(generation, PipeWorkerTerminalKind.ListenerUnavailable,
+                $"{exception.GetType().Name}:0x{exception.HResult:X8}:{exception.Message}"),
+            null);
     }
 
     private async Task ReadLoopAsync(Stream stream, long generation, CancellationToken cancellationToken)
@@ -466,7 +493,12 @@ internal sealed class LocalPipeBridge : IDisposable
 internal sealed record PipeInbound(long Generation, string Json);
 internal sealed record PipeOutbound(long Generation, string Json, PipeOutboundCompletion? Completion = null);
 internal sealed record PipeWorkerTerminal(long Generation, PipeWorkerTerminalKind Kind, string Reason = "unstated");
-internal enum PipeWorkerTerminalKind { ReaderEnded, WriterEnded }
+
+/// <summary>
+/// Which half of the bridge ended, or - for <see cref="ListenerUnavailable"/> - that no half ever started because the
+/// pipe name refused the listener.
+/// </summary>
+internal enum PipeWorkerTerminalKind { ReaderEnded, WriterEnded, ListenerUnavailable }
 
 internal sealed class PipeOutboundCompletion
 {

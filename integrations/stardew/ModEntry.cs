@@ -1913,9 +1913,16 @@ public sealed partial class ModEntry : Mod
             return;
 
         if (state.LocalPipeBridge.TryConsumeWorkerTerminal(out PipeWorkerTerminal terminal))
-            this.MonitorNativeChatIngress(terminal.Kind == PipeWorkerTerminalKind.ReaderEnded
-                ? $"ai_player_control_pipe_reader_ended:{terminal.Reason}"
-                : $"ai_player_control_pipe_writer_ended:{terminal.Reason}");
+            this.MonitorNativeChatIngress(terminal.Kind switch
+            {
+                PipeWorkerTerminalKind.ReaderEnded => $"ai_player_control_pipe_reader_ended:{terminal.Reason}",
+                PipeWorkerTerminalKind.WriterEnded => $"ai_player_control_pipe_writer_ended:{terminal.Reason}",
+                // Named, never folded into a reader/writer ending: a listener that never opened is the one state
+                // in which the bridge has no half to report at all, and a mislabelled terminal fact would hide a
+                // dead IPC for the rest of the session.
+                PipeWorkerTerminalKind.ListenerUnavailable => $"ai_player_control_pipe_listener_unavailable:{terminal.Reason}",
+                _ => throw new InvalidOperationException($"unhandled pipe worker terminal kind: {terminal.Kind}"),
+            });
 
         long generation = state.LocalPipeBridge.CurrentGeneration;
         if (state.LastBridgeGeneration != generation)
