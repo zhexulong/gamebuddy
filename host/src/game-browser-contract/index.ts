@@ -136,6 +136,11 @@ const PrerequisiteStatus = Type.Union([
  * `unknown` (a player-external game it could not verify). It is deliberately not `none`,
  * which means "nothing is running yet"; a game the Host has not read has established no
  * instance fact at all. `game-browser/game-browser-state-provider.ts` is its only writer.
+ *
+ * `crashed` and `stopped` are the two ways a game that ended reads there, and the exit code
+ * decides between them: a non-zero code (or a launch that failed with no exit reported at all)
+ * is `crashed`, and the OS's normal-termination code `0` is `stopped` - the player ended the
+ * game, which is terminal for this attempt but is not a fault to report as one.
  */
 const InstanceStatus = Type.Union([
   Type.Literal("none"),

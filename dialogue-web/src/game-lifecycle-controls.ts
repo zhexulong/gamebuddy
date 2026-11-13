@@ -150,6 +150,15 @@ export type GameSessionPhase =
    */
   | "launch_failed"
   /**
+   * No attachment and the game ended without failing: the Guardian reported the
+   * process exiting with the OS's normal-termination code, so the instance reads
+   * `stopped` rather than `crashed`. The attempt is terminal exactly as a failed
+   * launch is - the same quarantine refuses every further launch for the life of
+   * this Host process - but nothing here failed, so this phase exists to keep the
+   * surface from telling a player who quit the game that it crashed.
+   */
+  | "game_ended"
+  /**
    * No attachment and the Host has not read the player's game (`instance.status:
    * "unread"`, from the coordinator's own `unavailable`/`unknown` Player Host slot).
    * Every control the getting-going guide offers acts on a premise that read would
@@ -195,7 +204,8 @@ export type GameSessionPhase =
  *   farm has not handed over a session yet). The surface states it, because a
  *   player reading a panel with no control has no way to tell a wait from a trap.
  * - `restart_gamebuddy` is the only way out of a quarantined launch, and it is
- *   off this page entirely.
+ *   off this page entirely. Both endings of a game - the failed launch and the
+ *   game the player quit - reach it, because the quarantine is the same in both.
  */
 type GameSessionForwardAction =
   /**
@@ -243,7 +253,8 @@ export type GameSessionControls = Readonly<{
   waitingForGame: boolean;
   /**
    * Whether the surface must state that a fresh GameBuddy is the step, in place
-   * of the getting-going guide. True exactly in `launch_failed`.
+   * of the getting-going guide. True exactly in `launch_failed` and `game_ended`,
+   * whose two sentences differ because only one of them names a failure.
    */
   restartRequired: boolean;
   /**
@@ -312,7 +323,7 @@ export function deriveGameSessionControls(
       ...flags,
       forwardActions: Object.freeze([...forwardActions]),
       waitingForGame: phase === "launching" || phase === "running_without_attachment",
-      restartRequired: phase === "launch_failed",
+      restartRequired: phase === "launch_failed" || phase === "game_ended",
       rereadAvailable: phase === "game_not_read",
     });
 
@@ -377,6 +388,10 @@ export function deriveGameSessionControls(
   // No attachment: what the Player Host instance is doing decides the step, and
   // the staging controls are the same derivation the getting-going guide renders.
   if (instance.status === "crashed") return build("launch_failed", {}, ["restart_gamebuddy"]);
+  // The game the player ended. Its attempt is as terminal as a failed launch's (the
+  // coordinator's launch is refused for the rest of this Host process), so the step is the
+  // same and only the sentence differs - see `restartRequired`.
+  if (instance.status === "stopped") return build("game_ended", {}, ["restart_gamebuddy"]);
   if (instance.status === "launching") return build("launching", {}, ["wait_for_game"]);
   // Before any lifecycle control is considered: the Host has not read the game, so
   // there is no installation standing, staged attempt or expected generation for those
@@ -401,6 +416,7 @@ export const GAME_SESSION_PHASES: readonly GameSessionPhase[] = Object.freeze([
   "launching",
   "running_without_attachment",
   "launch_failed",
+  "game_ended",
   "game_not_read",
   "attached_connected",
   "attached_actions_paused",
@@ -488,6 +504,11 @@ export const GAME_SESSION_INPUTS: Readonly<Record<GameSessionPhase, Parameters<t
         game({
           instance: { status: "crashed", gameTitle: "Stardew Valley", generation: 0 },
           latestOutcome: "failed",
+        }),
+      ),
+      game_ended: input(
+        game({
+          instance: { status: "stopped", gameTitle: "Stardew Valley", generation: 0, playerHostExitCode: 0 },
         }),
       ),
       game_not_read: input(

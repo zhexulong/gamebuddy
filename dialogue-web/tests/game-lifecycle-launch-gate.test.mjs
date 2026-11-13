@@ -48,6 +48,7 @@ import {
   CABIN_HANDOFF_KINDS,
 } from "../src/game-lifecycle-controls.ts";
 import { messages } from "../src/i18n.ts";
+import { instanceLabel } from "../src/game-presentation.ts";
 
 const DIALOGUE_WEB = join(dirname(fileURLToPath(import.meta.url)), "..");
 const MODULE = join(DIALOGUE_WEB, "src", "game-lifecycle-controls.ts");
@@ -712,4 +713,88 @@ test("cabin-forward-path.5 (mutation): a kind whose state offers nothing is repo
     "the real kind in the same population passes: the comparison is not simply always-red",
   );
   t.diagnostic(`cabin-forward-path.5: planted -> ${findings.join(" | ")}`);
+});
+
+/**
+ * The two endings a game can have, told apart by the number the OS reported.
+ *
+ * Measured defect this test exists for: the Host's Guardian reports the game process ending with
+ * the code the OS gave it, and the browser read the PRESENCE of that exit as a crash. A player who
+ * quit Stardew normally was shown the same `crashed` instance, the same `failed` outcome and the
+ * same danger sentence - "This attempt failed ..." - as a player whose game really died, with only
+ * the digit in "Ended (exit code N)" telling them apart.
+ *
+ * The pair below is that exact pair, driven through the REAL Host projection
+ * (`game-browser/game-browser-state-provider.ts`) into the panel's own derivation, so the two
+ * sides cannot drift: the difference between them is the difference the product is allowed to
+ * state - the ending's own word for the instance, the outcome category, and the code - and
+ * nothing else. The last assertions hold the sentences to the same rule.
+ */
+test("exit 0 is an ending and a non-zero code is a crash, and the two differ only there", async (t) => {
+  const readGame = async (playerHostExitCode) =>
+    await readState(
+      Object.freeze({
+        schemaVersion: 1,
+        playerHost: Object.freeze({ state: "not_started", ownership: "none" }),
+        aiClient: Object.freeze({ state: "not_started", ownership: "none" }),
+      }),
+      { status: "failed", generation: 0, playerHostExitCode },
+      "registered",
+    );
+  const quit = await readGame(0);
+  const crashed = await readGame(86);
+
+  assert.equal(quit.game.instance.status, "stopped", "the OS's normal termination is an ending, not a crash");
+  assert.equal(quit.game.instance.playerHostExitCode, 0, "the code the OS reported is published as it is");
+  assert.equal(quit.game.latestOutcome, "none", "a game the player ended is not a failed outcome");
+  assert.equal(crashed.game.instance.status, "crashed");
+  assert.equal(crashed.game.instance.playerHostExitCode, 86);
+  assert.equal(crashed.game.latestOutcome, "failed");
+
+  const controlsFor = (game) =>
+    deriveGameSessionControls({ ready: true, game, resumeFailureSurface: false, resumeAttemptFailed: false });
+  const quitControls = controlsFor(quit);
+  const crashedControls = controlsFor(crashed);
+  assert.equal(quitControls.phase, "game_ended");
+  assert.equal(crashedControls.phase, "launch_failed");
+  // The step is the SAME in both, and so is the reason: the attempt is terminal either way, and
+  // no control on this page can launch it again.
+  assert.deepEqual([...quitControls.forwardActions], ["restart_gamebuddy"]);
+  assert.deepEqual([...crashedControls.forwardActions], ["restart_gamebuddy"]);
+  assert.equal(quitControls.restartRequired, true);
+  assert.equal(crashedControls.restartRequired, true);
+  // And no staging control is offered beside it: the guide would be a panel of refusals.
+  for (const [name, value] of Object.entries(clientControls(quit)))
+    assert.equal(value, name === "launchGeneration" ? null : name === "activationBlockedBy" ? null : false, name);
+
+  const en = messages("en");
+  const zh = messages("zh-CN");
+  assert.equal(instanceLabel(en, quit.game.instance), "Ended (exit code 0)");
+  assert.equal(instanceLabel(en, crashed.game.instance), "Ended (exit code 86)");
+  assert.equal(instanceLabel(zh, quit.game.instance), "已退出（退出代码 0）");
+  // The two instance sentences differ in the digit and in nothing else - the ending itself is one
+  // sentence, because it is one fact: the game is gone.
+  assert.equal(
+    instanceLabel(en, quit.game.instance).replace("0", "#"),
+    instanceLabel(en, crashed.game.instance).replace("86", "#"),
+    "the two endings differ only in the code the OS reported",
+  );
+
+  // The sentences are where the difference has to be stated: only the crash may claim a failure,
+  // and both must name the same step, because the quarantine they walk out of is the same one.
+  assert.match(en.gameLaunchQuarantined, /failed/u, "the crashed attempt's sentence names the failure it was");
+  assert.doesNotMatch(en.gameEndedQuarantined, /fail/iu, "a game the player ended is not told back to them as failed");
+  assert.match(zh.gameLaunchQuarantined, /失败/u);
+  assert.doesNotMatch(zh.gameEndedQuarantined, /失败/u);
+  for (const labels of [en, zh]) {
+    assert.match(
+      labels.gameEndedQuarantined,
+      /GameBuddy/u,
+      "the ended sentence names the one step out, which is a fresh GameBuddy",
+    );
+    assert.notEqual(labels.gameEndedQuarantined, labels.gameLaunchQuarantined);
+  }
+  assert.match(en.gameEndedQuarantined, /Close GameBuddy completely/u);
+  assert.match(zh.gameEndedQuarantined, /完全关闭 GameBuddy/u);
+  t.diagnostic(`game-ended: quit -> ${quitControls.phase}, crashed -> ${crashedControls.phase}`);
 });

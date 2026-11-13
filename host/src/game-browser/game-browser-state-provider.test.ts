@@ -123,6 +123,57 @@ test("provider projects a failed launch terminality as latestOutcome failed", as
   assert.equal(state.game.latestOutcome, "failed");
 });
 
+/**
+ * The exit code, not the presence of an exit, decides what the game's ending is called.
+ *
+ * The two projections below are a player who quit Stardew and a player whose game died - the same
+ * dead process and the same dead attempt, differing only in the number the OS reported. They must
+ * differ in exactly the words that are about failure and in nothing else: `stopped` versus
+ * `crashed` for the instance, `none` versus `failed` for the last outcome, and the code itself.
+ * Reading the presence of an exit as a crash is what this test keeps out.
+ */
+test("a normal exit reads as an ending and only a non-zero one reads as a crash", async () => {
+  const read = async (playerHostExitCode: number) =>
+    await createGameBrowserStateProvider(
+      profile(),
+      lifecycle(notStartedView()),
+      attachment(),
+      launchReadiness(Object.freeze({ generation: 0, status: "failed", playerHostExitCode })),
+    ).readState(context);
+
+  const quit = await read(0);
+  const crashed = await read(86);
+  for (const state of [quit, crashed])
+    assert.equal(GameBrowserValidatorsV1.GameBrowserStateV1Schema.Check(state), true, "the projection stays valid");
+
+  assert.equal(quit.game.instance.status, "stopped", "exit 0 is the OS's normal termination, not a crash");
+  assert.equal(quit.game.instance.playerHostExitCode, 0, "the code the OS reported is published as it is");
+  assert.equal(quit.game.latestOutcome, "none", "a game the player ended is not a failed outcome");
+
+  assert.equal(crashed.game.instance.status, "crashed");
+  assert.equal(crashed.game.instance.playerHostExitCode, 86);
+  assert.equal(crashed.game.latestOutcome, "failed");
+
+  // The only differences are the ones justified above: the two words for what happened, and the
+  // digit. Everything else a reader sees is the same fact about the same attempt.
+  const differing = Object.keys(quit.game).filter(
+    (key) =>
+      JSON.stringify(quit.game[key as keyof typeof quit.game]) !==
+      JSON.stringify(crashed.game[key as keyof typeof crashed.game]),
+  );
+  assert.deepEqual(
+    differing.sort(),
+    ["instance", "latestOutcome"],
+    "an ending and a crash differ only in the instance row's two facts and the outcome word",
+  );
+  const instanceKeys = Object.keys(quit.game.instance).filter(
+    (key) =>
+      JSON.stringify(quit.game.instance[key as keyof typeof quit.game.instance]) !==
+      JSON.stringify(crashed.game.instance[key as keyof typeof crashed.game.instance]),
+  );
+  assert.deepEqual(instanceKeys.sort(), ["playerHostExitCode", "status"]);
+});
+
 test("read-only provider accepts a reader-only fresh lifecycle and projects only unchecked/none", async () => {
   const reader = lifecycle(notStartedView());
   assert.deepEqual(Object.keys(reader), ["readRoleLifecycleView"]);

@@ -346,12 +346,22 @@ export function GameStatePanel({
           <PanelGroup id="game-group-next-step" title={labels.gameGroupNextStep}>
             {/* The two states whose step is not a control on this page, stated where the
                 guide would have been so the player is never left reading a panel of
-                withdrawn controls with nothing saying why. `launch_failed` also holds
-                the guide back: every control in it is refused for the life of this Host
-                process, so showing it would be exactly the trap design/26 §1 rules out. */}
+                withdrawn controls with nothing saying why. Both hold the guide back:
+                every control in it is refused for the life of this Host process, so
+                showing it would be exactly the trap design/26 §1 rules out. The two
+                sentences differ because only one of them names a failure: a game that
+                crashed (`launch_failed`) and a game the player ended (`game_ended`) are
+                the same dead end for this attempt, but they are not the same event. */}
             {session.controls.restartRequired && (
-              <p className="game-status" data-tone="danger" role="status" data-testid="game-launch-quarantined">
-                {labels.gameLaunchQuarantined}
+              <p
+                className="game-status"
+                data-tone={session.controls.phase === "launch_failed" ? "danger" : undefined}
+                role="status"
+                data-testid="game-launch-quarantined"
+              >
+                {session.controls.phase === "launch_failed"
+                  ? labels.gameLaunchQuarantined
+                  : labels.gameEndedQuarantined}
               </p>
             )}
             {session.controls.waitingForGame && (

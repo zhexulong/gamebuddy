@@ -98,7 +98,17 @@ function projectGameBrowserState(
   const launchFailed = launchReadiness.status === "failed";
   const prerequisitesMet =
     playerHostStarted || launchReadiness.status === "ready" || launchFailed || installation === "registered";
-  const instanceStatus = launchFailed ? ("crashed" as const) : projectInstanceStatus(lifecycle.playerHost);
+  // The game's own fate is the exit code the Guardian reported, not the launch attempt's
+  // terminality: an attempt the player ended by quitting the game is over too, but the game did
+  // not fail. `0` is the OS's normal-termination code, so it reads as the ending it is and keeps
+  // the `crashed` word for the code that really is a crash. With no reported exit there is no
+  // code to read, and a launch that failed for its own reasons keeps the word it always had.
+  const endedCleanly = launchFailed && launchReadiness.playerHostExitCode === 0;
+  const instanceStatus: GameBrowserStateV1["game"]["instance"]["status"] = launchFailed
+    ? endedCleanly
+      ? "stopped"
+      : "crashed"
+    : projectInstanceStatus(lifecycle.playerHost);
   return Object.freeze({
     apiVersion: 1,
     build: Object.freeze({ browserContract: GAME_BROWSER_API_V1, profileId: profile.profileId }),
@@ -134,8 +144,10 @@ function projectGameBrowserState(
       // failed Game outcome this provider can attest: it is set once the owned
       // Player Host launch or attestation correlation failed and the owner was
       // quarantined. The browser refreshes recover this fact from the root
-      // state instead of trusting volatile client memory.
-      latestOutcome: launchFailed ? "failed" : "none",
+      // state instead of trusting volatile client memory. A game the player
+      // ended themselves is terminal the same way but is not a failed outcome,
+      // so it publishes `none` rather than borrowing the crash's word.
+      latestOutcome: launchFailed && !endedCleanly ? "failed" : "none",
     }),
   });
 }
