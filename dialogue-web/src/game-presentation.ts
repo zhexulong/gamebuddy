@@ -64,6 +64,12 @@ export function connectionLabel(labels: Messages, status: GameProjection["connec
  * localized lifecycle state otherwise. The title is content, never a label.
  */
 export function instanceLabel(labels: Messages, instance: GameProjection["instance"]): string {
+  // The game ended and the Host knows how: the native exit code replaces the bare title,
+  // because naming a game that just died tells the player nothing about what happened to
+  // it. The code is only present when the Host's own Guardian reported the exit, so this
+  // line never claims an ending the Host did not observe.
+  if (instance.playerHostExitCode !== undefined)
+    return labels.gameInstanceExited.replace("{{code}}", String(instance.playerHostExitCode));
   if (instance.gameTitle !== null) return instance.gameTitle;
   switch (instance.status) {
     case "none":

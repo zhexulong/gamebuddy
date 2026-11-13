@@ -90,7 +90,10 @@ function attachmentReader() {
 }
 
 function launchReadinessReader(view) {
-  return Object.freeze({ readLaunchReadinessView: () => Object.freeze({ ...view }) });
+  // `playerHostExitCode` is part of the launch-readiness fact: absent means the Host observed no
+  // exit for this lifecycle's game process. The default keeps every fixture below honest about
+  // that instead of letting an omitted field reach the projection as `undefined`.
+  return Object.freeze({ readLaunchReadinessView: () => Object.freeze({ playerHostExitCode: null, ...view }) });
 }
 
 function lifecycleReader(view) {

@@ -139,6 +139,8 @@ export const GAME_PROBLEM_CODES = [
   "state_unavailable",
   "game_endgame_settlement_unavailable",
   "stardew_settings_revision_conflict",
+  "stardew_player_host_exited",
+  "stardew_player_host_cabin_missing",
 ] as const;
 export type GameProblemCode = (typeof GAME_PROBLEM_CODES)[number];
 
@@ -161,7 +163,17 @@ const GAME_KEYS = [
 const GAME_STATE_KEYS = ["apiVersion", "build", "csrfToken", "browserSession", "game"] as const;
 const GAME_BUILD_KEYS = ["browserContract", "profileId"] as const;
 const GAME_PREREQUISITES_KEYS = ["status", "detectedGame", "missingItems"] as const;
-const GAME_INSTANCE_KEYS = ["status", "gameTitle", "generation"] as const;
+const GAME_INSTANCE_REQUIRED_KEYS = ["status", "gameTitle", "generation"] as const;
+/**
+ * The instance members the contract declares `Type.Optional`. `playerHostExitCode` is one: it
+ * exists only on a Host whose Guardian reported the game process ending, and its absence is the
+ * honest "this Host observed no exit" rather than a number a client invented.
+ */
+const GAME_INSTANCE_OPTIONAL_KEYS = ["playerHostExitCode"] as const;
+const GAME_INSTANCE_ALLOWED_KEYS: ReadonlySet<string> = new Set([
+  ...GAME_INSTANCE_REQUIRED_KEYS,
+  ...GAME_INSTANCE_OPTIONAL_KEYS,
+]);
 const GAME_COMPATIBILITY_KEYS = ["status", "message"] as const;
 const GAME_ATTACHMENT_KEYS = ["status", "generation"] as const;
 const GAME_CAPABILITY_SUMMARY_KEYS = ["available", "count"] as const;
@@ -184,6 +196,12 @@ export type GameBrowserStateV1 = Readonly<{
       status: (typeof INSTANCE_STATUSES)[number];
       gameTitle: string | null;
       generation: number;
+      /**
+       * The native exit code the game process ended with, present only when the Host's
+       * Guardian reported an exit for this activation. Absent is "no exit observed", never
+       * "running": `status` is the field that answers whether the game is there.
+       */
+      playerHostExitCode?: number;
     }>;
     compatibility: Readonly<{
       status: (typeof COMPATIBILITY_STATUSES)[number];
@@ -875,12 +893,16 @@ function isGameProjection(value: unknown): value is GameBrowserStateV1 {
   ) {
     return false;
   }
+  const instanceKeys = isRecord(game.instance) ? Object.keys(game.instance) : [];
   if (
     !isRecord(game.instance) ||
-    !hasExactKeys(game.instance, GAME_INSTANCE_KEYS) ||
+    !GAME_INSTANCE_REQUIRED_KEYS.every((key) => instanceKeys.includes(key)) ||
+    !instanceKeys.every((key) => GAME_INSTANCE_ALLOWED_KEYS.has(key)) ||
     !isOneOf(game.instance.status, INSTANCE_STATUSES) ||
     !isNullableLabel(game.instance.gameTitle, MAX_GAME_LABEL_LENGTH) ||
-    !isSafeInteger(game.instance.generation, 0)
+    !isSafeInteger(game.instance.generation, 0) ||
+    (game.instance.playerHostExitCode !== undefined &&
+      !(isSafeInteger(game.instance.playerHostExitCode, 0) && game.instance.playerHostExitCode <= 4_294_967_295))
   ) {
     return false;
   }

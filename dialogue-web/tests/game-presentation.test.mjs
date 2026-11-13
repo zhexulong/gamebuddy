@@ -5,6 +5,8 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 import ts from "typescript";
 import { messages } from "../src/i18n.ts";
+import { composedProblemView, gameOperationFailure } from "../src/composed-problem-view.ts";
+import { ComposedReferenceGameProblemError } from "../src/composed-reference-game-browser-api.ts";
 import {
   authorityLabel,
   capabilitiesLabel,
@@ -639,4 +641,74 @@ test("a candidate says whether its folder can load the companion, and ready fold
     ["a", "b", "c", "d"],
     "ordering re-sorted the caller's own list",
   );
+});
+
+
+/**
+ * A game that died, and the words the panel owes it.
+ *
+ * The measured defect behind this pair: the Guardian's `role_exited` fact reached the Host and
+ * stopped there, so a crash was projected as the ordinary "still starting" instance and the
+ * cabin read as a retryable `state_unavailable`. The two facts below are what the panel now
+ * reads instead - the exit sentence with the code the OS reported, and the cabin refusal's own
+ * sentence - and the negative is the half that keeps it honest: with no exit reported, neither
+ * may claim the game ended.
+ */
+test("the instance reads the exit the Host published, code and all, in both languages", () => {
+  const exitCode = 3221225781;
+  for (const locale of locales) {
+    const labels = messages(locale);
+    const sentence = instanceLabel(labels, {
+      status: "crashed",
+      gameTitle: "Stardew Valley",
+      generation: 1,
+      playerHostExitCode: exitCode,
+    });
+    assert.ok(sentence.includes(String(exitCode)), `${locale} hides the exit code the Host published`);
+    assert.ok(!sentence.includes("{{code}}"), `${locale} left the template marker in the sentence`);
+    assert.notEqual(sentence, labels.gameInstanceCrashed, `${locale} falls back to the bare state word`);
+    // The title alone ("Stardew Valley") beside a crashed instance says nothing about what
+    // happened to it, which is why the published code wins.
+    assert.notEqual(sentence, instanceLabel(labels, { status: "running", gameTitle: "Stardew Valley", generation: 1 }));
+  }
+  assert.notEqual(
+    instanceLabel(messages("zh-CN"), { status: "crashed", gameTitle: null, generation: 0, playerHostExitCode: exitCode }),
+    instanceLabel(messages("en"), { status: "crashed", gameTitle: null, generation: 0, playerHostExitCode: exitCode }),
+    "the exit sentence is not translated",
+  );
+  // The negative: no published code means the Host observed no exit, so the panel must not
+  // claim one - it says the state word it always said.
+  const withoutExit = instanceLabel(messages("en"), { status: "crashed", gameTitle: "Stardew Valley", generation: 1 });
+  assert.equal(withoutExit, "Stardew Valley", "a Host that published no exit must not be read as one");
+  assert.ok(!withoutExit.includes("exit code"), "the panel invented an exit code");
+});
+
+test("the cabin read's exit refusal reaches the player as the ending it is, not as a retry", () => {
+  const cabinReadRefused = () => new ComposedReferenceGameProblemError("stardew_player_host_exited", 409);
+  for (const locale of locales) {
+    const labels = messages(locale);
+    const view = composedProblemView(cabinReadRefused(), labels);
+    assert.equal(view.kind, "problem");
+    assert.ok(view.title.length > 0 && view.detail.length > 0, `${locale} has no sentence for the refusal`);
+    assert.ok(!view.title.includes("stardew_player_host_exited"), `${locale} prints the raw code`);
+    assert.ok(!view.detail.includes("stardew_player_host_exited"), `${locale} prints the raw code`);
+    // It is a refusal, not an unsettled operation: the read did not happen and cannot.
+    assert.deepEqual(gameOperationFailure(cabinReadRefused(), labels), {
+      kind: "refused",
+      sentence: view.detail,
+    });
+    // The step is the one that can change the answer. Restarting GameBuddy is what a
+    // quarantined lifecycle needs; "read it again" is the retry that cannot help.
+    assert.equal(view.step.kind, "outside_surface");
+    assert.equal(view.step.step, "restart_gamebuddy");
+    // The negative: the same read with no exit reported keeps the "we do not know" sentence,
+    // which is a retry - so the two situations really do read differently.
+    const unknown = composedProblemView(new ComposedReferenceGameProblemError("state_unavailable", 503), labels);
+    assert.notEqual(unknown.title, view.title, `${locale} reads "gone" and "unknown" the same way`);
+    assert.equal(unknown.step.kind, "control");
+    assert.ok(
+      !unknown.detail.includes("{{code}}") && !unknown.title.includes("{{code}}"),
+      `${locale} left a template marker in the unknown sentence`,
+    );
+  }
 });

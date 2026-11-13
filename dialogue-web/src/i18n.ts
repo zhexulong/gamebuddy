@@ -814,6 +814,18 @@ const en = {
   gameProblemStateUnavailableDetail:
     "GameBuddy could not read or settle the game's own state just now. Reload the game page to see where it stands, then try again.",
 
+  // The game process itself ended. Unlike the row above, this is not "unknown": the Host's
+  // Guardian watched the process end and reported the code the OS gave it, so the player is
+  // told what happened and what the next step is, instead of being invited to retry a read
+  // against a game that is no longer running.
+  gameProblemPlayerHostExitedTitle: "The game ended",
+  gameProblemPlayerHostExitedDetail:
+    "Stardew Valley ended while your companion was moving in, so there were no cabins to read. Restart GameBuddy to start the game again.",
+  gameInstanceExited: "Ended (exit code {{code}})",
+  gameProblemCabinMissingTitle: "This farm has no cabin for your companion yet",
+  gameProblemCabinMissingDetail:
+    "Stardew Valley gave GameBuddy a farm it can join, but no cabin in it that your companion may use. Have Robin build one; Read cabins again once it is built.",
+
   // Characters (design/28 §2) — companion library + persona/scenario/greeting
   charactersTitle: "Characters",
   charactersUnavailable: "Character management is unavailable in this profile.",
@@ -1821,6 +1833,17 @@ const zh: Messages = {
   gameProblemStateUnavailableTitle: "游戏现在不可用",
   gameProblemStateUnavailableDetail:
     "GameBuddy 刚才无法读取或确认游戏自身的状态。请重新加载游戏页面，看清它现在的情况，再试一次。",
+
+  // 游戏进程本身已经退出。与上一条不同，这不是“不知道”：Host 的 Guardian 看着进程结束，
+  // 并报告了系统给出的退出代码，所以这里直接告诉玩家发生了什么、下一步做什么，
+  // 而不是让他对着一个已经不在运行的游戏反复重试。
+  gameProblemPlayerHostExitedTitle: "游戏已退出",
+  gameProblemPlayerHostExitedDetail:
+    "同伴搬进农场时，《星露谷物语》已经退出，因此读不到可选的农舍。请重启 GameBuddy，再启动游戏。",
+  gameInstanceExited: "已退出（退出代码 {{code}}）",
+  gameProblemCabinMissingTitle: "这个农场还没有同伴可住的小屋",
+  gameProblemCabinMissingDetail:
+    "《星露谷物语》把可以加入的农场告诉了 GameBuddy，但里面没有同伴可以用的小屋。请让罗宾建一间；建好后再读一次小屋。",
 
   // Characters (design/28 §2)
   charactersTitle: "角色",

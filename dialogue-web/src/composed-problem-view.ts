@@ -640,6 +640,25 @@ const gameRouteUnavailable: ProblemSentence = (labels) =>
   sentence(labels.gameProblemRouteUnavailableTitle, labels.gameProblemRouteUnavailableDetail, RESTART_GAMEBUDDY);
 const gameStateUnavailable: ProblemSentence = (labels) =>
   sentence(labels.gameProblemStateUnavailableTitle, labels.gameProblemStateUnavailableDetail, RETRY_READ);
+/**
+ * The game process itself ended. The Host states it (the Guardian reported the exit and the code
+ * that came with it), so this is a fact, not a failure of a read: the retry that `state_unavailable`
+ * offers cannot change it, and the only step that can is starting the game again from a GameBuddy
+ * whose lifecycle was not quarantined by the crash.
+ */
+const gamePlayerHostExited: ProblemSentence = (labels) =>
+  sentence(labels.gameProblemPlayerHostExitedTitle, labels.gameProblemPlayerHostExitedDetail, RESTART_GAMEBUDDY);
+/**
+ * The cabin read's other named answer: the world is live and offers no cabin this companion may
+ * use. Its cure is in the game (have Robin build one), and the read that finds it is the handoff's
+ * own refresh - so the step names that control rather than asking for a retry of the whole page.
+ */
+const gameCabinMissing: ProblemSentence = (labels) =>
+  sentence(labels.gameProblemCabinMissingTitle, labels.gameProblemCabinMissingDetail, {
+    kind: "control",
+    id: "cabin-choice-list",
+    elsewhere: { said_as: "Read cabins again" },
+  });
 
 /**
  * Every member of the game contract's `GameProblemCode` union, and what the player reads for it.
@@ -687,6 +706,8 @@ const GAME_PROBLEM_VIEWS: Readonly<Record<GameProblemCode, GameProblemView>> = {
   // what it says now and save again. Same fact and same step as every other settings
   // CAS in the product, which is why it reads the shared sentence.
   stardew_settings_revision_conflict: refused(revisionConflict),
+  stardew_player_host_exited: refused(gamePlayerHostExited),
+  stardew_player_host_cabin_missing: refused(gameCabinMissing),
 };
 
 /** The codes the game contract declares, for the untyped boundary below the map. */
