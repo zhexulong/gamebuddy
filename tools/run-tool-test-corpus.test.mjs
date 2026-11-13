@@ -138,7 +138,10 @@ test("a corpus with no members is a defect, never a pass", () => {
   assert.match(run.stdout, /^corpus_population:0 members \(0 suite files\)/m);
   assert.match(run.stdout, /^corpus_derivation:defect:2 script\(s\) the corpus does not take$/m);
   assert.match(run.stdout, /no members: no `test:`\/`suite:` script in package\.json runs/);
-  assert.match(run.stdout, /untaken test:aggregate: its command runs no `node --test` suite this step can take/);
+  assert.match(
+    run.stdout,
+    /untaken test:aggregate: it runs a node driver, not `node --test` over tools\/ files; home: none - nothing this tree's CI runs names tools\/run-tool-test-corpus\.mjs \(exemption dated \d{4}-\d{2}-\d{2}, expiring when an entry point or a run script names it\)/,
+  );
 });
 
 test("a count is read against the population it was taken from", () => {
@@ -157,7 +160,28 @@ test("a count is read against the population it was taken from", () => {
     /^corpus_examined:3 test:\/suite: scripts · 1 members \+ 1 elsewhere \+ 0 package \+ 1 untaken = 3 · dropped 0 of 3 · untaken 1 of 3$/m,
     "every test:/suite: script in package.json is in exactly one bucket, and the line says so",
   );
-  assert.match(run.stdout, /^ {2}untaken test:driver: its command runs no `node --test` suite this step can take/m);
+  assert.match(
+    run.stdout,
+    /^ {2}untaken test:driver: it runs a node driver, not `node --test` over tools\/ files; home: none - nothing this tree's CI runs names tools\/driver\.mjs \(exemption dated \d{4}-\d{2}-\d{2}, expiring when an entry point or a run script names it\)/m,
+  );
+});
+
+test("an untaken script names the run that would take it, when one exists", () => {
+  const root = makeTree({
+    scripts: {
+      "test:held": "node --test tools/held.test.mjs",
+      "test:driver": "node tools/driver.mjs",
+    },
+    suites: { "tools/held.test.mjs": PASSING_SUITE },
+    workflow: ["jobs:", "  quality:", "    steps:", "      - run: node tools/driver.mjs"],
+  });
+  const run = runAggregate(root);
+  assert.match(
+    run.stdout,
+    /^ {2}untaken test:driver: it runs a node driver, not `node --test` over tools\/ files; home: \.github\/workflows\/ci\.yml runs tools\/driver\.mjs/m,
+    "a script CI already runs is a home, and no exemption is claimed for it",
+  );
+  assert.doesNotMatch(run.stdout, /exemption dated/);
 });
 
 test("a suite another entry point runs is not a member", () => {

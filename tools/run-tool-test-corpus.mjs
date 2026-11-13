@@ -56,6 +56,10 @@ const MEMBER_TIMEOUT_MS = 5 * 60_000;
 const MEMBER_CONCURRENCY = Math.max(2, availableParallelism() - 1);
 const MEMBER_DETAIL_LIMIT = 5;
 const QUARANTINE_PATH = "tools/tool-test-corpus-quarantine.json";
+/** The `package.json` scripts treated as entry points: a script they name is a run that already happens. */
+const ENTRY_POINT_SCRIPTS = Object.freeze(["quality:check", "test", "test:all", "test:dialogue-web", "typecheck"]);
+/** The date the `untaken` exemption was recorded. Its EXPIRY is not the date: it is the claim, read on every run. */
+const UNCLAIMED_EXEMPTION_DATED = "2026-11-14";
 const ENTRY_POINT_FILES = Object.freeze([".github/workflows/ci.yml", ".github/workflows/release-windows.yml"]);
 // A member is run, not reported to a test runner: a `node --test` child that inherits `NODE_TEST_CONTEXT` writes
 // nothing and exits 0, so a red member read from inside a suite would look green.
@@ -118,20 +122,19 @@ function memberCommand(command) {
  *   package    its files all live under a package's `tests/` directory, that package declares a `test` script, and an
  *              entry point runs it - the package's own runner derives the directory, so a new suite file joins by
  *              existing. Stated limit: this reads the directory-level declaration, never inside the package's runner.
- *   untaken    none of the above: the script runs nothing in this tree's CI, and it is named on every run
+ *   untaken    none of the above: nothing in this tree's CI runs it. Named on every run with the runner it uses
+ *              instead and the home that would run it - or, when it has no home, a dated exemption (see
+ *              `untakenReason`)
  *
  * Every `test:`/`suite:` name in package.json is returned in `namespace`, which is the population the four buckets
  * are checked against: a member that reaches none of them is named, not lost.
  */
 export function corpusMembers({ root = ROOT } = {}) {
   const pkg = JSON.parse(readFileSync(resolve(root, "package.json"), "utf8"));
+  const workflowTexts = ENTRY_POINT_FILES.map((file) => [file, readIn(root, file)]);
   const entryPoints = [
-    ...ENTRY_POINT_FILES.map((file) => readIn(root, file)),
-    pkg.scripts["quality:check"],
-    pkg.scripts.test,
-    pkg.scripts["test:all"],
-    pkg.scripts["test:dialogue-web"],
-    pkg.scripts.typecheck,
+    ...workflowTexts.map(([, text]) => text),
+    ...ENTRY_POINT_SCRIPTS.map((name) => pkg.scripts[name]),
   ].join("\n");
   const members = [];
   const elsewhere = [];
@@ -149,7 +152,8 @@ export function corpusMembers({ root = ROOT } = {}) {
     if (run === null) {
       const owner = packageSuiteOwner({ root, command, entryPoints });
       if (owner === null) {
-        notTaken.push({ name, command, why: "its command runs no `node --test` suite this step can take" });
+        // Filled in below, once every bucket is known: a home is a run that exists, not a run declared later.
+        notTaken.push({ name, command, why: null });
         continue;
       }
       packages.push({ name, command, owner });
@@ -163,6 +167,9 @@ export function corpusMembers({ root = ROOT } = {}) {
     }
     members.push({ name, flags: run.flags, files: run.files });
   }
+  const reachable = new Set([...members, ...elsewhere, ...packages].map((entry) => entry.name));
+  for (const entry of notTaken)
+    if (entry.why === null) entry.why = untakenReason({ entry, pkg, reachable, workflowTexts });
   return {
     members,
     elsewhere,
@@ -170,6 +177,79 @@ export function corpusMembers({ root = ROOT } = {}) {
     notTaken,
     namespace: Object.keys(pkg.scripts).filter((name) => TEST_NAMESPACE.test(name)),
   };
+}
+
+/** A command `node --test` over files the corpus does not take, most often a package's own suite outside `tools/`. */
+const NODE_TEST_ELSEWHERE = "`node --test` over files outside `tools/`";
+
+/**
+ * What a script that is not a corpus member actually runs, in the words of the thing that runs it.
+ *
+ * Derived from the command line, never from a list of script names: a new `test:` script over playwright, python,
+ * powershell or a vendored package joins this reading by existing, which is the same rule the members follow.
+ */
+function commandRunner(command) {
+  if (/\bplaywright\b/u.test(command)) return "playwright";
+  if (/(?:^|[\s/\\])(?:powershell|pwsh)(?:\.exe)?\b/iu.test(command)) return "powershell";
+  if (/(?:^|[\s/\\])python3?\b/u.test(command)) return "python";
+  if (/(?:^|\s)pnpm\s+--dir\s+\S+\s+(?:run\s+)?\S+/u.test(command)) return "a vendored package's own script";
+  if (/^node\s+--test\b/u.test(command.trim())) return NODE_TEST_ELSEWHERE;
+  if (/^node\s+\S+/u.test(command.trim())) return "a node driver";
+  return "a shell command line";
+}
+
+/**
+ * The runs that name every file a command names, or `null` when some named file has no run at all.
+ *
+ * A HOME HAS TO BE A RUN SOMEONE MAKES. A claimant is a workflow file that names the path, or a package.json script
+ * that an entry point invokes (members, `elsewhere`, `package`) - a script no one runs is not a home, which is the
+ * whole defect this bucket exists for. `null` therefore means "this tree runs nothing that touches the file", not
+ * "I could not find it": the files are printed either way.
+ */
+function commandOwners({ command, self, pkg, reachable, workflowTexts }) {
+  const files = [...new Set(command.match(COMMAND_FILE) ?? [])];
+  if (files.length === 0) return { files, owners: [] };
+  const owners = new Set();
+  for (const file of files) {
+    const claimants = [
+      ...workflowTexts.filter(([, text]) => text.includes(file)).map(([path]) => path),
+      ...Object.entries(pkg.scripts)
+        .filter(([name, text]) => name !== self && reachable.has(name) && text.includes(file))
+        .map(([name]) => `scripts.${name}`),
+    ];
+    if (claimants.length === 0) return { files, owners: null };
+    for (const claimant of claimants) owners.add(claimant);
+  }
+  return { files, owners: [...owners] };
+}
+
+/**
+ * Why one script is in `untaken`, and what would run it.
+ *
+ * Two halves, because "not a corpus member" and "nobody runs it" are different findings with different owners: the
+ * first is a fact about the command's runner and never a defect, the second is a coverage gap. A gap is recorded as
+ * an exemption with a DATE and an expiry condition that is re-read on every run - the condition is the claim itself,
+ * so the moment an entry point or a run script names the file the exemption text is replaced by that owner's name,
+ * and there is nothing left to remember. No clock is consulted, so the reading repeats.
+ */
+function untakenReason({ entry, pkg, reachable, workflowTexts }) {
+  const { files, owners } = commandOwners({
+    command: entry.command,
+    self: entry.name,
+    pkg,
+    reachable,
+    workflowTexts,
+  });
+  const runner = commandRunner(entry.command);
+  const statement =
+    runner === NODE_TEST_ELSEWHERE ? `it runs ${runner}` : `it runs ${runner}, not \`node --test\` over tools/ files`;
+  if (owners === null)
+    return (
+      `${statement}; home: none - nothing this tree's CI runs names ${files.join(", ")} ` +
+      `(exemption dated ${UNCLAIMED_EXEMPTION_DATED}, expiring when an entry point or a run script names it)`
+    );
+  if (owners.length === 0) return `${statement}; home: none - its command names no file in this tree`;
+  return `${statement}; home: ${owners.join(" and ")} runs ${files.join(", ")}`;
 }
 
 /**
