@@ -236,11 +236,12 @@ test("composed profile fails closed on a malformed root", async ({ page }) => {
 
   await page.goto(`/#profile=composed-reference-game&boot=${token}`);
 
-  await expect(page.getByRole("alert")).toContainText("Unable to read chat");
   // The root was malformed, so this is an internal error and the presentation says
   // so, naming the code the client actually got. It must not claim a reconciliation
   // conflict: that wording sent the reader after a consistency fault that was not
-  // the fault.
+  // the fault - and the two faults no longer share a heading either, which is what
+  // `problem-code.14` holds apart.
+  await expect(page.getByRole("alert")).toContainText("Something failed inside GameBuddy");
   await expect(page.getByRole("alert")).toContainText(
     "GameBuddy reported an internal error (code invalid_composed_root).",
   );

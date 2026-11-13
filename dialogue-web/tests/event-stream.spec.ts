@@ -162,7 +162,7 @@ test("the composed conversation opens the projected event stream, previews a del
   expect(draftReads).toBe(0);
   await expect(surface.locator(".composer-textarea")).toHaveValue(repairedDraft.text);
   expect(await page.evaluate(() => (window as unknown as { __streams: Array<{ closed: boolean }> }).__streams[0]!.closed)).toBe(true);
-  await expect(surface).not.toContainText("Unable to read chat");
+  await expect(page.locator(".problem-view"), "the repair kept the conversation instead of replacing it with a problem card").toHaveCount(0);
 
   // No recovery loop: the repaired stream carries the new cursor and one frame
   // does not become a second read.
@@ -173,7 +173,7 @@ test("the composed conversation opens the projected event stream, previews a del
   // An explicit resync marker repairs the same way instead of becoming a fault.
   await emit(1, "stream.resync_required", frame(3, 1, "stream.resync_required", { reason: "gap" }), `${"J".repeat(42)}A`);
   await expect.poll(() => stateReads).toBe(2);
-  await expect(surface).not.toContainText("Unable to read chat");
+  await expect(page.locator(".problem-view"), "the repair kept the conversation instead of replacing it with a problem card").toHaveCount(0);
 });
 
 
@@ -365,6 +365,6 @@ test("a burst of stream frames costs two authoritative reads, not one per frame,
   // No gap was manufactured by the frames that arrived mid-read: the burst needed
   // no recovery and no reconnect.
   expect(await streamCount()).toBe(1);
-  await expect(surface).not.toContainText("Unable to read chat");
+  await expect(page.locator(".problem-view"), "the repair kept the conversation instead of replacing it with a problem card").toHaveCount(0);
 });
 

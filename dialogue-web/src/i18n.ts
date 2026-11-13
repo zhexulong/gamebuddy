@@ -592,9 +592,14 @@ const en = {
 
   problemBootstrapUnavailableTitle: "Unable to open chat",
   problemBootstrapUnavailableDetail: "The bootstrap handoff is unavailable.",
-  problemTemporarilyUnavailableTitle: "Unable to read chat",
+  // Three faults a player meets while a chat cannot be read, and three headings: the card's `<h1>` is
+  // what a player reads first and compares between two failures, so a heading it shares with another
+  // fault is the card saying nothing where it must say what. The retryable refusal clears itself, the
+  // reconciliation needs the read taken again, and the internal error is this build's own fault with a
+  // code in the detail below.
+  problemTemporarilyUnavailableTitle: "Chat is not ready yet",
   problemTemporarilyUnavailableDetail: "The chat state is temporarily unavailable.",
-  problemReconciliationFailedTitle: "Unable to read chat",
+  problemReconciliationFailedTitle: "Chat needs to be read again",
   problemReconciliationFailedDetail: "The chat state could not be safely reconciled.",
   problemSessionExpiredTitle: "Your session ended",
   problemSessionExpiredDetail:
@@ -622,7 +627,7 @@ const en = {
   problemStepNoStepAlreadyTrue: "Nothing to do here: this is already the state you asked for.",
   problemStepNoStepNotThisArtifact:
     "Nothing here can change this: what this names is not something GameBuddy can act on.",
-  problemInternalErrorTitle: "Unable to read chat",
+  problemInternalErrorTitle: "Something failed inside GameBuddy",
   problemInternalErrorDetail: "GameBuddy reported an internal error (code {{code}}).",
   problemInternalErrorCauseDetail: "GameBuddy reported an internal error (code {{code}}; cause {{cause}}).",
   problemInternalErrorNoCode: "none reported",
@@ -1642,9 +1647,9 @@ const zh: Messages = {
 
   problemBootstrapUnavailableTitle: "无法打开聊天",
   problemBootstrapUnavailableDetail: "Bootstrap 令牌不可用。",
-  problemTemporarilyUnavailableTitle: "无法读取聊天",
+  problemTemporarilyUnavailableTitle: "聊天还没准备好",
   problemTemporarilyUnavailableDetail: "聊天状态暂时不可用。",
-  problemReconciliationFailedTitle: "无法读取聊天",
+  problemReconciliationFailedTitle: "聊天需要重新读取",
   problemReconciliationFailedDetail: "聊天状态未能安全对齐。",
   problemSessionExpiredTitle: "会话已失效",
   problemSessionExpiredDetail:
@@ -1662,7 +1667,7 @@ const zh: Messages = {
   problemStepNoStepOverACeiling: "这里改变不了：要保存的东西超过了 GameBuddy 保留的尺寸。",
   problemStepNoStepAlreadyTrue: "这里不用做什么：这已经就是你要的状态。",
   problemStepNoStepNotThisArtifact: "这里改变不了：这个名字指向的东西不是 GameBuddy 能对它做什么的东西。",
-  problemInternalErrorTitle: "无法读取聊天",
+  problemInternalErrorTitle: "GameBuddy 内部出错了",
   problemInternalErrorDetail: "GameBuddy 报告了内部错误（代码 {{code}}）。",
   problemInternalErrorCauseDetail: "GameBuddy 报告了内部错误（代码 {{code}}；原因 {{cause}}）。",
   problemInternalErrorNoCode: "未报告任何代码",

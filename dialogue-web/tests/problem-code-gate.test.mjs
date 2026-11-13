@@ -661,9 +661,9 @@ test("problem-code.8: every declared code reaches the player as its own sentence
     const labels = messages(locale);
     for (const code of declared) {
       const view = composedProblemView(problemFor(code), labels);
-      // The detail is the sentence: several families legitimately share a title ("Unable to read
-      // chat" is the heading of the internal, reconciliation, retryable and route sentences), and
-      // what told the player they had hit a system fault was the detail naming a raw code.
+      // The detail is the sentence: what told the player they had hit a system fault was the detail
+      // naming a raw code, not a shared heading (`problem-code.14` holds the headings themselves
+      // apart).
       const internalDetails = [
         labels.problemInternalErrorDetail.replace("{{code}}", code),
         labels.problemInternalErrorCauseDetail
@@ -1037,4 +1037,64 @@ test("problem-code.13: the provider-cause vocabulary is one list, spelled the sa
     [],
     "a cause the wire carries and a surface cannot word is a refusal the player cannot act on",
   );
+});
+
+/**
+ * `problem-code.14`: two different facts never wear one heading.
+ *
+ * `ProblemView` draws `title` as the card's `<h1>` and `detail` as the paragraph under it. A heading
+ * is what a player reads first and what they compare between two failures, so a heading shared by
+ * two different facts makes the card say "something went wrong" in the one place it must say what.
+ *
+ * This rule exists for a measured collapse: "Unable to read chat" was the heading of a state the Host
+ * said could be retried AND of a state the shell could not safely reconcile AND of a failure that
+ * named no code at all. Three faults, three answers - read again, read again and expect the state to
+ * hold, and report a build that does not know what the Host now says - and one heading over all of
+ * them. The existing tests could not see it: each asserted a key equalled itself.
+ *
+ * The population is the facts `composedProblemView` distinguishes while a chat cannot be read, not
+ * the codes: the internal-error heading deliberately covers EVERY failure that named nothing (that
+ * is one fact, whatever the cause), so a code-wide "all headings differ" rule would be wrong and
+ * would have to be weakened the first time a family was added. What must differ is the heading of
+ * two facts a player would act on differently.
+ */
+test("problem-code.14: three different read failures do not share one heading", (t) => {
+  const facts = [
+    {
+      fact: "a refusal the Host says may be retried",
+      error: problemFor("a_code_from_a_future_host", true),
+    },
+    {
+      fact: "a state the shell could not safely reconcile",
+      error: problemFor("state_reconciliation_required"),
+    },
+    {
+      fact: "a failure that named no code at all",
+      error: new Error("plain"),
+    },
+  ];
+  const failures = [];
+  let headings = 0;
+  for (const locale of ["en", "zh-CN"]) {
+    const labels = messages(locale);
+    // The view the card is drawn from, for each fact, in this catalogue.
+    const drawn = facts.map(({ fact, error }) => ({ fact, view: composedProblemView(error, labels) }));
+    const byHeading = new Map();
+    for (const { fact, view } of drawn) {
+      headings += 1;
+      if (view.kind !== "problem") {
+        failures.push(`${locale} ${fact} renders no problem card at all`);
+        continue;
+      }
+      if (view.title.trim().length === 0) failures.push(`${locale} ${fact} has no heading`);
+      byHeading.set(view.title, [...(byHeading.get(view.title) ?? []), fact]);
+    }
+    for (const [title, sharing] of byHeading)
+      if (sharing.length > 1)
+        failures.push(`${locale} ${JSON.stringify(title)} is the heading of ${sharing.join(" and ")}`);
+  }
+  t.diagnostic(
+    `problem-code.14: ${facts.length} distinct read failure(s) through the real view in 2 catalogues, ${headings} heading(s) read, ${failures.length} violation(s)`,
+  );
+  assert.deepEqual(failures, [], "one heading over two facts is the card saying nothing where it must say what");
 });
