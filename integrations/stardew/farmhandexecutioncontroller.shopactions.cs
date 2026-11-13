@@ -730,6 +730,93 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
     /// </summary>
     internal static string ShopPurchaseRefusal(string engineReason) => $"shop_purchase_refused:{engineReason}";
 
+    /// <summary>
+    /// The disposition of one purchase, from the facts the transaction produced — the ONE place that decides it, so the
+    /// state the caller reads and the terminal it reads cannot be two judgements.
+    ///
+    /// <para>
+    /// A TOOL UPGRADE is a purchase whose goods never enter the pack: <c>Tool.actionWhenPurchased</c> sets
+    /// <c>Farmer.toolBeingUpgraded</c> and <c>daysLeftForToolUpgrade = 2</c> for the shop id <c>ClintUpgrade</c>
+    /// (Tool.cs:875-895) and returns true, so <c>ShopMenu.tryToPurchaseItem</c> discards the entry it charged for
+    /// (ShopMenu.cs:1369-1378) while the tool the upgrade consumes leaves the pack (:879-888). Judged by "goods
+    /// arrived" alone, a successful upgrade therefore read as <c>Uncertain/purchase_partial</c> — the receipt could not
+    /// tell a finished upgrade from a half-done trade. The engine's own two fields are the effect, so they are what
+    /// this reads: nothing else in the game writes <c>toolBeingUpgraded</c>.
+    /// </para>
+    /// <para>
+    /// The upgraded tool's id is compared with the requested one because <c>toolBeingUpgraded</c> may already have held
+    /// a DIFFERENT tool (Tool.cs:875 is the only writer's guard); a purchase is never the answer for a tool it did not
+    /// put there. <paramref name="requiredToolBefore"/> and <paramref name="requiredToolAfter"/> are the pack counts of
+    /// the item the upgrade consumes, which is the second half of the engine's effect.
+    /// </para>
+    /// </summary>
+    internal readonly record struct ShopPurchaseOutcome(ExecutionState State, string ReasonCode);
+
+    internal static ShopPurchaseOutcome ShopPurchaseOutcomeFor(
+        long currencyBefore,
+        long currencyAfter,
+        int gained,
+        string? purchaseRefusal,
+        string expectedItemId,
+        string? upgradedToolId,
+        int daysLeftForToolUpgrade,
+        string? requiredToolId,
+        int requiredToolBefore,
+        int requiredToolAfter)
+    {
+        bool paid = currencyAfter < currencyBefore;
+        bool requiredToolTaken = requiredToolId is not null && requiredToolAfter == requiredToolBefore - 1;
+
+        // A named reason IS the terminal, and it names the state too: a refusal before anything moved is a rejection the
+        // caller can plan around, while the same refusal after the purse paid is an uncertain outcome that has to be
+        // looked at. A consumed upgrade tool counts as movement for that judgement, for the same reason it counts as
+        // success above.
+        if (purchaseRefusal is not null)
+            return new ShopPurchaseOutcome(
+                paid || gained > 0 || requiredToolTaken ? ExecutionState.Uncertain : ExecutionState.Rejected,
+                purchaseRefusal);
+
+        if (paid
+            && upgradedToolId is not null
+            && string.Equals(upgradedToolId, expectedItemId, StringComparison.Ordinal)
+            && daysLeftForToolUpgrade > 0
+            && requiredToolTaken)
+            return new ShopPurchaseOutcome(ExecutionState.Succeeded, "tool_upgrade_purchased");
+
+        if (paid && gained > 0)
+            return new ShopPurchaseOutcome(ExecutionState.Succeeded, "item_purchased");
+
+        if (paid || gained > 0)
+            return new ShopPurchaseOutcome(ExecutionState.Uncertain, "purchase_partial");
+
+        return new ShopPurchaseOutcome(ExecutionState.Failed, ShopPurchaseRefusal("no_effect"));
+    }
+
+    /// <summary>
+    /// What a purchase that was a TOOL UPGRADE adds to the receipt: the engine's own three effects, in the one spelling
+    /// the Host's <c>tool_upgrade_purchased</c> rule declares.
+    ///
+    /// <para>
+    /// Empty for every other purchase, which is what keeps the ordinary <c>item_purchased</c> detail byte-identical: the
+    /// Host reads a detail as an exact key set, so an extra field on the ordinary path would be a producer bug there.
+    /// </para>
+    /// </summary>
+    internal static string ShopToolUpgradeEvidence(
+        string? upgradedToolId,
+        int daysLeftForToolUpgrade,
+        string requiredToolQualifiedId,
+        int requiredToolBefore,
+        int requiredToolAfter,
+        string purchaseDialogue)
+    {
+        if (upgradedToolId is null)
+            return string.Empty;
+        return $";tool_upgraded={upgradedToolId};days_left={daysLeftForToolUpgrade}"
+            + $";required_tool={(requiredToolQualifiedId.Length == 0 ? "none" : requiredToolQualifiedId)}"
+            + $";required_before={requiredToolBefore};required_after={requiredToolAfter}"
+            + $";purchase_dialogue={purchaseDialogue}";
+    }
+
     public LocalExecutionReceipt RequestLocalShopPurchase(BridgeExecutionRequest request, IExecutionLedger ledger)
     {
         if (ledger.TryGetExistingReceipt(request.RequestId, out LocalExecutionReceipt existing))
@@ -974,6 +1061,20 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
             .Sum(i => i.Stack);
         int stockBefore = stock[offer].Stock;
 
+        // Which pack item this entry consumes, read BEFORE the click: `GetToolUpgradeData` filters on the required tool
+        // still being in the pack (ShopBuilder.cs:171), so after `Tool.actionWhenPurchased` removed it (:882-888) the
+        // same call answers a different row. The rule is the engine's own (:879-888 only removes what
+        // `GetToolUpgradeData` names), not a second one; a shop entry that is not a tool upgrade has no required item and
+        // the three facts below stay zero.
+        Tool? upgradeEntry = offer as Tool;
+        string? requiredToolId = upgradeEntry is null
+            ? null
+            : ShopBuilder.GetToolUpgradeData(upgradeEntry.GetToolData(), actor)?.RequireToolId;
+        string requiredToolQualifiedId = requiredToolId is null
+            ? string.Empty
+            : actor.Items.GetById(requiredToolId).FirstOrDefault()?.QualifiedItemId ?? string.Empty;
+        int requiredToolBefore = requiredToolId is null ? 0 : actor.Items.CountId(requiredToolId);
+
         // The transaction is the game's. TryOpenShopMenu builds the real ShopMenu from the
         // same content data; the purchase is then dispatched through the menu's own click
         // handler over its public forSaleButtons, so pricing, currency, stock decrement and
@@ -1214,6 +1315,20 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
             .Where(i => string.Equals(i.QualifiedItemId, expectedItemId, StringComparison.Ordinal))
             .Sum(i => i.Stack);
         int gained = ownedAfter - ownedBefore;
+        // The upgrade the engine ran also MOUNTS ITS OWN NOTICE and freezes the actor: `Tool.actionWhenPurchased` calls
+        // Game1.exitActiveMenu then Game1.DrawDialogue(Clint, ...) (Tool.cs:892-893), and DrawDialogue pushes a
+        // DialogueBox onto activeClickableMenu and sets player.CanMove = false (Game1.cs:9614-9625). The body is only
+        // free once that box is closed - `menu_closed` alone would not say so, because it tests for a ShopMenu. Closed
+        // here with the same public step the closed-message path above uses.
+        Tool? upgradedTool = actor.toolBeingUpgraded?.Value;
+        int daysLeftForToolUpgrade = actor.daysLeftForToolUpgrade?.Value ?? 0;
+        int requiredToolAfter = requiredToolId is null ? 0 : actor.Items.CountId(requiredToolId);
+        string purchaseDialogue = "none";
+        if (upgradedTool is not null && Game1.activeClickableMenu is DialogueBox upgradeNotice)
+        {
+            purchaseDialogue = "closed";
+            upgradeNotice.closeDialogue();
+        }
         bool menuClosed = Game1.activeClickableMenu is not ShopMenu;
 
         string entryKind = tileOpened ? "tile_action" : "npc_owner";
@@ -1237,30 +1352,35 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
             + $"stock_before={stockBefore};stock_after={(menu is not null && stock.TryGetValue(offer, out ItemStockInformation? after) && after is not null ? after.Stock : -1)};"
             + $"owner_tile={target.CounterX},{target.CounterY};menu_closed={menuClosed.ToString().ToLowerInvariant()};"
             + $"clicks={clickDiagnostics.Count}[{string.Join("||", clickDiagnostics)}];"
-            + $"drops={dropDiagnostics.Count}[{string.Join("||", dropDiagnostics)}]";
+            + $"drops={dropDiagnostics.Count}[{string.Join("||", dropDiagnostics)}]"
+            // The upgrade half, from the engine's own state rather than from the click. Empty for every purchase that
+            // is not a tool upgrade, which is what keeps the ordinary `item_purchased` detail byte-identical.
+            + ShopToolUpgradeEvidence(
+                upgradedTool?.QualifiedItemId,
+                daysLeftForToolUpgrade,
+                requiredToolQualifiedId,
+                requiredToolBefore,
+                requiredToolAfter,
+                purchaseDialogue);
 
-        // Success is the world fact: the shop's own currency left the purse AND the item entered the inventory.
-        // A receipt that spent nothing and gained nothing is not a purchase.
-        if (currencyAfter < currencyBefore && gained > 0 && purchaseRefusal is null)
-            return this.RememberTerminal(request.RequestId, executionId, ExecutionState.Succeeded, "item_purchased", evidence, this.TryCreateLocalObservation(actor));
-
-        // A named reason IS the terminal, and it names the state too: a refusal before anything moved is a rejection the
-        // caller can plan around, while the same refusal after the purse paid is an uncertain outcome that has to be
-        // looked at. `purchase_partial` said only "something happened" - it could not say WHICH goods, or why.
-        if (purchaseRefusal is not null)
-        {
-            return this.RememberTerminal(
-                request.RequestId,
-                executionId,
-                currencyAfter < currencyBefore || gained > 0 ? ExecutionState.Uncertain : ExecutionState.Rejected,
-                purchaseRefusal,
-                evidence);
-        }
-
-        if (currencyAfter < currencyBefore || gained > 0)
-            return this.RememberTerminal(request.RequestId, executionId, ExecutionState.Uncertain, "purchase_partial", evidence);
-
-        return this.RememberTerminal(request.RequestId, executionId, ExecutionState.Failed, ShopPurchaseRefusal("no_effect"), evidence);
+        ShopPurchaseOutcome outcome = ShopPurchaseOutcomeFor(
+            currencyBefore,
+            currencyAfter,
+            gained,
+            purchaseRefusal,
+            expectedItemId,
+            upgradedTool?.QualifiedItemId,
+            daysLeftForToolUpgrade,
+            requiredToolId,
+            requiredToolBefore,
+            requiredToolAfter);
+        return this.RememberTerminal(
+            request.RequestId,
+            executionId,
+            outcome.State,
+            outcome.ReasonCode,
+            evidence,
+            outcome.State == ExecutionState.Succeeded ? this.TryCreateLocalObservation(actor) : null);
     }
 }
 
