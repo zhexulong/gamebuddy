@@ -8,7 +8,7 @@
  *   `check-prelive-gate-registry.mjs` 143 population members
  *   `tools/lib/gate-population.mjs` 371 gates, read by `audit-gate-red-proofs.mjs` and by
  *                                     `tools/lib/harness-conformance.mjs`
- *   `run-tool-test-corpus.mjs`       169 members + 12 notTaken + 18 elsewhere + 12 packages
+ *   `run-tool-test-corpus.mjs`       169 members + 12 notTaken
  *
  * No two of those numbers describe the same set, and nothing compared them: 9 scripts that CI runs were outside the
  * derivation, 18 gate files prelive read were outside it too, and 5 `suite:` scripts the corpus reads are outside the
@@ -31,7 +31,9 @@
  *
  * THE CONSUMERS are read through their own entry points - `deriveCiCoverage`, `derivePopulation`, `auditGateRedProofs`,
  * `corpusMembers` - never re-derived, so a consumer that changes its reading changes this gate's verdict the same day
- * instead of drifting from a copy.
+ * instead of drifting from a copy. Each is read in the shape its producer returns and no other: this gate shipped
+ * reading `corpus.elsewhere` and `corpus.packages`, two keys `corpusMembers` has never returned, so it threw
+ * `Cannot read properties of undefined` on its first reading and answered nothing for as long as that stood.
  *
  * WHAT IT ASKS, and each finding names its member:
  *
@@ -129,8 +131,8 @@ export function registerMembers({ root, exemptions }) {
  * The reading, from readings rather than from the file system: the consumers' own answers plus the three surfaces.
  *
  * `census` is `auditGateRedProofs`'s result, `prelive` is `derivePopulation()`'s list, `corpus` is `corpusMembers`'s
- * result, and `disk` is the gate files on disk. Everything here is a set comparison, so the test can drive it with
- * synthetic trees without touching the repository.
+ * result (`{members, notTaken}` - its whole shape), and `disk` is the gate files on disk. Everything here is a set
+ * comparison, so the test can drive it with synthetic trees without touching the repository.
  */
 export function agree({ root, invoked, scripts, disk, census, prelive, corpus, registers, untracked = [] }) {
   const findings = [];
@@ -139,8 +141,6 @@ export function agree({ root, invoked, scripts, disk, census, prelive, corpus, r
   const corpusNames = new Set([
     ...corpus.members.map((member) => member.name),
     ...corpus.notTaken.map((entry) => entry.name),
-    ...corpus.elsewhere.map((entry) => (typeof entry === "string" ? entry : entry.name)),
-    ...corpus.packages.map((entry) => (typeof entry === "string" ? entry : entry.name)),
   ]);
   const preliveSet = new Set(prelive);
   const ciNames = new Set(census.ciGateScripts);

@@ -3,6 +3,12 @@
 // The gate exists because four tools each answered "how many gates are there" differently and nothing compared them
 // (129 / 143 / 371 / 211 at HEAD on 2026-11-13). Its assertions are therefore about membership, one member at a time:
 // each case injects one member that a consumer reads and another does not, and requires the gate to name it.
+//
+// red-proof: inject  making `agree` read the corpus key `elsewhere` that `corpusMembers` never returns -> seven cases
+//   including `the real tree agrees: no member is unread, invented, or a falsifier counted as a gate`, each
+//   `TypeError: Cannot read properties of undefined (reading 'map')`, exit 1 - and the same throw is what the gate
+//   itself printed on the real tree before this suite derived its fixture from the producer
+//   (tools/check-gate-population-agreement.test.mjs)
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
@@ -13,9 +19,18 @@ import {
   workflowInvocations,
   invokedGateScripts,
 } from "./check-gate-population-agreement.mjs";
+import { corpusMembers } from "./run-tool-test-corpus.mjs";
 
 const SCRIPTS = { "check:a": "node tools/check-a.mjs", "test:b": "node --test tools/b.test.mjs", build: "tsc" };
-const CORPUS = { members: [], notTaken: [], elsewhere: [], packages: [] };
+/**
+ * An empty corpus in the PRODUCER's own shape, keyed off `corpusMembers()` rather than written out here.
+ *
+ * This line is what makes the synthetic cases catch the defect that took this gate down: it shipped reading
+ * `corpus.elsewhere` and `corpus.packages`, keys the producer has never returned, so every case below fed a shape no
+ * caller has and the gate threw on the real tree instead. Deriving the keys from the producer means a key this gate
+ * invents is absent here, and `agree` throws `Cannot read properties of undefined` - red, not green.
+ */
+const CORPUS = Object.fromEntries(Object.keys(corpusMembers()).map((key) => [key, []]));
 
 /** One reading with nothing to disagree about; each case changes exactly one member of it. */
 const cleanReading = (overrides = {}) => ({
