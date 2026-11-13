@@ -1,0 +1,66 @@
+{
+  "version": "rederivation-parity-registry/v1",
+  "note": "One entry per place our code produces a value the engine also produces, or supplies an engine call's argument the engine's own call site computes for itself. `parityTest` is the test that drives the ENGINE and compares; `null` means no such test exists and the gate reports it. `engineSite` is a citation, not a check: the decompiled tree is gitignored and is not on every checkout.",
+  "entries": [
+    {
+      "id": "tool-footprint-ladder",
+      "kind": "formula",
+      "engineMember": "Tool.tilesAffected",
+      "engineSite": "StardewValley.Tools/Tool.cs:913-1074 — the charge ladder: `charge++` at :915, cases 1..6 with the last one `power >= 6` at :1062",
+      "ourSite": {
+        "path": "host/src/body-program-packing.ts",
+        "anchor": "Object.freeze({ tiles: 25, forward: 5, across: 5, back: 2 })"
+      },
+      "parityTest": {
+        "path": "integrations/stardew/tests/GameBuddy.Stardew.Integration.Tests/ToolFootprintTableParityTests.cs",
+        "member": "tilesAffected",
+        "what": "enumerates charge 0..5 through the engine's own `tilesAffected` (a test-only `Hoe` subclass) and compares tiles, forward, across and back against TOOL_FOOTPRINT_TILES_BY_CHARGE, failing as `footprint_table_disagrees_with_engine:<charge>`"
+      }
+    },
+    {
+      "id": "fishing-chance-targeted-bait",
+      "kind": "argument",
+      "engineMember": "SpawnFishData.GetChance",
+      "engineSite": "StardewValley/GameLocation.cs:13969 — `spawn.GetChance(hasCuriosityLure, player.DailyLuck, player.LuckLevel, applyModifiers, spawn.ItemId == text)`: the FIFTH argument is the row's own item compared to the targeted-bait species, re-evaluated for every row of the loop",
+      "ourSite": {
+        "path": "integrations/stardew/FishingCatchableQuery.cs",
+        "anchor": "DeclaredChance: row.GetChance("
+      },
+      "perIterationArguments": [
+        {
+          "index": 4,
+          "parameter": "isTargetedFish",
+          "engineExpression": "spawn.ItemId == text",
+          "why": "the engine binds it from the row the loop is on, so a value computed once outside the loop cannot be it"
+        }
+      ],
+      "scan": "integrations/stardew",
+      "parityTest": null,
+      "owed": "a test that drives `SpawnFishData.GetChance` itself over a fixture row set with the engine's own predicate `spawn.ItemId == text` per row and shows the answer differs per row — the shape that catches a flag computed once outside the loop. `FishingCatchableReaderTests` names `GetChance` only in prose and says its argument-level facts are 'held by the compiler', and no test in the tree references the member in code."
+    },
+    {
+      "id": "scythe-arc-rectangles",
+      "kind": "argument",
+      "engineMember": "MeleeWeapon.getAreaOfEffect",
+      "engineSite": "StardewValley.Tools/MeleeWeapon.cs:1369 — `DoDamage` derives its rectangle per animation frame as `getAreaOfEffect(x, y, facing, ref tileLocation, ref tileLocation2, who.GetBoundingBox(), who.FarmerSprite.currentAnimationIndex)`; the tick that arms the index is :1269",
+      "ourSite": {
+        "path": "integrations/stardew/farmhandexecutioncontroller.cs",
+        "anchor": "internal static IReadOnlyList<Vector2> Sampled(MeleeWeapon weapon, Farmer who, int tileX, int tileY, int facing)"
+      },
+      "parityTest": null,
+      "owed": "the 4096/4096 standing-pixel claim in `MeleeSweepArc`'s docblock (:6116-6127) is a MEASUREMENT RECORDED AS PROSE. A parity test would drive `getAreaOfEffect` over the 4096 standing pixels per facing and compare the engine's rectangles with what `Sampled` unions, and check that `UseNativeMeleeSweep` drives the same animation indices. No test in the tree calls `getAreaOfEffect` at all."
+    },
+    {
+      "id": "fishing-catchable-conditions",
+      "kind": "formula",
+      "engineMember": "GameLocation.getFishFromLocationData",
+      "engineSite": "StardewValley/GameLocation.cs:13955-14132 — the per-row filters (FishAreaId, Season, PlayerPosition, BobberPosition, MinFishingLevel, the two distance bounds, RequireMagicBait at :13955-13965, CatchLimit at :14002) and the species row's own requirements (:14062, :14091, :14116, :14132)",
+      "ourSite": {
+        "path": "integrations/stardew/src/Core/FishingCatchable.cs",
+        "anchor": "public static FishingCatchReport CatchableNow("
+      },
+      "parityTest": null,
+      "owed": "the module's own docblock says parity is NOT claimed in either direction: the forward direction needs `DataLoader.Fish(Game1.content)` and `Game1.locationData` (no content manager in the Mod's test process) and the reverse needs the engine's chance/roll/CatchLimit semantics, so both are live-run claims. No test compares this filter against the engine's own sampler, and nothing in the tree would have failed if a condition were dropped."
+    }
+  ]
+}

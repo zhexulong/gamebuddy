@@ -401,6 +401,7 @@
     "test:release-live-evidence": "node --test tools/check-release-live-evidence.test.mjs",
     "check:production-artifact": "node host/scripts/check-production-artifact.mjs",
     "test:child-output-parsing": "node --test tools/check-child-output-parsing.test.mjs",
+    "test:rederivation-parity": "node --test tools/check-rederivation-parity.test.mjs",
     "test:derived-population": "node --test tools/check-derived-population.test.mjs",
     "check:ci-dead-conditions": "node tools/check-ci-dead-conditions.mjs",
     "check:vendor-build-artifacts": "node tools/check-vendor-build-artifacts.mjs",

@@ -1016,6 +1016,19 @@ const GATES_WITHOUT_FALSIFIER = Object.freeze([
   // falsifier is the `red-proof:` marker in the gate's own file, which `tools/audit-gate-red-proofs.mjs` reads and
   // reports as proven. `tools/audit-stardew-receipt-transition-fields.mjs` is the exception and lives in
   // `GATES_WITH_FALSIFIER` instead: its default run prints `{gate, population: 443, status}`.
+  {
+    gate: "check-rederivation-parity.mjs",
+    reason:
+      "static gate over a declared registry and the C#/TS it points at: no install, no build, no run. Its default run " +
+      "prints the population line, one line per finding and the verdict, rather than the `{gate, checks[]}` report this " +
+      "suite parses, so its falsifier is tools/check-rederivation-parity.test.mjs (run by test:rederivation-parity, in " +
+      "the derived corpus): the footprint entry's `parityTest` deleted names " +
+      "`rederivation_without_parity:Tool.tilesAffected:host/src/body-program-packing.ts`, a parity test whose CALL is " +
+      "renamed while the prose keeps the member name is still red, a product file cannot be its own parity test, and the " +
+      "pre-fix reader replayed from e882b765 is named at `integrations/stardew/FishingCatchableQuery.cs:190` while the " +
+      "same file with a per-row argument is clean. The gate is red at HEAD on three declared entries with no parity " +
+      "test; the `red-proof:` markers in its own file are what this suite audits it by",
+  },
   ...AUDIT_WITHOUT_SELF_REPORT.map((gate) => ({ gate, reason: AUDIT_WITHOUT_SELF_REPORT_REASON })),
 ]);
 

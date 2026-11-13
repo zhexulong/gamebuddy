@@ -560,6 +560,17 @@ export const EXEMPTIONS = Object.freeze([
     runsIn: "pnpm check:red-proof-markers",
   },
   {
+    path: "tools/check-rederivation-parity.mjs",
+    reason:
+      "debt: it is red at HEAD on the three declared re-derivations whose parity test does not exist (the fifth " +
+      "`SpawnFishData.GetChance` argument, `MeleeWeapon.getAreaOfEffect`'s arc, `GameLocation.getFishFromLocationData`'s " +
+      "row filter), and a rung that ran it would stop a prelive run on exactly the state this register exists to report; " +
+      "its falsifier suite does run in the derived corpus, green, through `test:rederivation-parity`. What would make it " +
+      "schedulable is the parity tests, not the wiring · measured rederivations examined 4 · with a parity test 1 · " +
+      "engine members 4 · without parity 3 · call sites examined 1 at e882b765",
+    runsIn: "on-demand",
+  },
+  {
     path: "tools/check-refusal-informativeness.mjs",
     reason:
       "debt: measured red at HEAD (exit 1, `unclassified_reason_code " +
