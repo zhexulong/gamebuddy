@@ -3,7 +3,7 @@
 // that ends the day.
 //
 // red-proof: inject  the rollover-menu branch answering `dismiss` where the loop must wait ->
-//                    `× a menu with no audited handling stops the run by name instead of timing out`, exit 1; the
+//                    `✖ a menu with no audited handling stops the run by name instead of timing out`, exit 1; the
 //                    unmodified loop passes the same suite, exit 0 (tools/lib/multiday-loop.test.mjs)
 import assert from "node:assert/strict";
 import test from "node:test";

@@ -7,12 +7,16 @@
  * (`tools/scripts/pre-commit.mjs` measured all five substitutions over the 2010 non-ASCII codepoints this tree
  * contains). It landed twice: `0100ae9a` committed `tools/check-gameplay-capability-catalog.test.mjs` with two
  * red-proof markers turned into `×`, and `a1389e75` - the commit that restored them - came out EMPTY because the hook
- * formatted the restored blob back into the bytes its parent already held. The hook no longer does that, but the tree
- * carries the evidence of a second, earlier wave nobody has seen yet: 111 marker lines in 7 files, among them the
- * twelve `package.json` gate descriptions and the whole falsifier ledger. A file that says "× <what is wrong>" where
- * every gate prints `✖ <what is wrong>` is a transcript of a gate this tree does not have. This file names both glyphs
- * in prose and never in a marker position - the rule below is what makes that possible, and the first draft of this
- * header got it wrong and the gate reported itself (`check-red-proof-markers.mjs:12`).
+ * formatted the restored blob back into the bytes its parent already held.
+ *
+ * AND THE WAVE THAT WAS ALREADY THERE. This gate's first complete reading found 110 corrupted marker lines in 6 files -
+ * the twelve `package.json` gate descriptions, the whole falsifier ledger, and four test headers - every one of them a
+ * quoted transcript of a gate whose own output line starts with that glyph. They are repaired, and the baseline is
+ * empty because they were deleted as they were repaired rather than re-recorded: the gate's reading is
+ * `corrupted 0 · baselined 0`. A file that says "× <what is wrong>" where every gate prints `✖ <what is wrong>` is a
+ * transcript of a gate this tree does not have. This file names both glyphs in prose and never in a marker position -
+ * the rule below is what makes that possible, and the first draft of this header got it wrong and the gate reported
+ * itself.
  *
  * POPULATION, derived on every run (`examined NN` is printed): every tracked file whose text contains `✖` or `×`. The
  * pairing is the point - a file containing neither cannot hold a marker, and a file containing either is where a marker
@@ -27,11 +31,12 @@
  * convenient: `2×2`, `×6`, `3 × 9`, `[✗×]` (dotnet's own glyphs) and biome's own "× Formatter would have printed" are
  * all uses of U+00D7 that are not this marker.
  *
- * BASELINE. `tools/baselines/red-proof-markers.json` records the marker lines that are corrupted at the revision this
- * gate was introduced - the second wave above - because those files belong to lanes this gate does not own. An entry is
- * identified by its FILE and its LINE TEXT, never by its line number: the number is printed from the live scan. An
- * entry whose line is no longer corrupted is reported as `red_proof_marker_baseline_stale` and must be deleted, so the
- * list cannot outlive the damage it excuses. `--write-baseline` re-records it.
+ * BASELINE. `tools/baselines/red-proof-markers.json` records a wave of corrupted marker lines that belongs to files the
+ * fixing lane does not own; it holds no entries today. An entry is identified by its FILE and its LINE TEXT, never by
+ * its line number: the number is printed from the live scan. An entry whose line is no longer corrupted is reported as
+ * `red_proof_marker_baseline_stale` and must be deleted, so the list cannot outlive the damage it excuses - that is how
+ * the 110 entries above went, one stale finding per repaired line, and a re-record over them would have been the
+ * exception list this gate exists to refuse. `--write-baseline` records a new wave.
  *
  * The baseline itself is the one file outside the population, and the census prints it as `not examined 1`: a list of
  * corruptions necessarily quotes them, so examining it would report the ledger as a defect and the ledger would have to
@@ -46,7 +51,10 @@
  *                     the same file after the marker fix is clean
  * red-proof: inject  a U+00D7 marker in a `-> `-quoted transcript line -> `red_proof_marker_corrupted:<path>:<line>`;
  *                     with that entry in the baseline the run is clean, and fixing the line without deleting the entry
- *                     -> `red_proof_marker_baseline_stale` (tools/check-red-proof-markers.test.mjs)
+ *                     -> `red_proof_marker_baseline_stale` (tools/check-red-proof-markers.test.mjs). On the real tree the
+ *                     same reading arrived one line at a time: the 110 repaired lines were corrected first and the run
+ *                     said `corrupted 0 · baselined 0 · stale 110`, exit 1, naming every expired entry, before the
+ *                     ledger was emptied
  */
 import { execFileSync } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
@@ -159,8 +167,8 @@ export function loadBaseline(payload) {
 }
 
 const WHY =
-  "Red-proof markers corrupted at the commit this gate was introduced, recorded so the gate can be wired before the " +
-  "files are fixed. Each entry is one file and one line's exact text; fixing the line makes the entry stale and a " +
+  "Red-proof markers corrupted in files the fixing lane does not own, recorded so the gate can be wired before those " +
+  "waves are repaired. Each entry is one file and one line's exact text; fixing the line makes the entry stale and a " +
   "stale entry fails the gate until it is deleted, which is what keeps this list from outliving the damage. Delete " +
   "entries as the waves are repaired; do not re-record over them.";
 

@@ -11,7 +11,7 @@
  * audit under test, and a literal marker here would be read as one of the audit's own proofs.
  *
  * red-proof: inject  the anchor test removed from `readRedProofMarkers`, so a marker inside a string literal counts ->
- *                    `× a marker on a code line is not a marker, so a gate cannot satisfy itself` (with five more),
+ *                    `✖ a marker on a code line is not a marker, so a gate cannot satisfy itself` (with five more),
  *                    exit 1; the unmodified audit passes all ten cases, exit 0 (tools/audit-gate-red-proofs.test.mjs)
  *
  * red-proof: inject  this suite's gate-file scan re-spelled as `/^check-.*\.mjs$/` in a copy whose population is widened
