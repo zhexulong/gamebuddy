@@ -1003,4 +1003,59 @@ expect(reading.hasInstallCard, "the install card is not offered").toBe(false);
     }
     expect(failures, "the folder picker's wait is legible without claiming more than the panel knows").toEqual([]);
   });
+
+  /**
+   * The other work the panel can be abandoned for does not abandon the dialog.
+   *
+   * `Cancel` belongs to the scan: it retires the read it interrupts and says "Search cancelled". A folder
+   * dialog outstanding at that moment is a different operation with a different end, so the scan's cancel
+   * may not clear its wait or re-open the picker over it - the branch this drives is the reason `cancel`
+   * keeps a `picker` pending instead of overwriting it with its own.
+   */
+  test("abandoning the scan leaves the folder dialog's wait standing", async ({ page }) => {
+    test.setTimeout(120_000);
+    let closeDialog!: () => void;
+    const dialogHeld = new Promise<void>((resolve) => (closeDialog = resolve));
+    const scenario = SCENARIOS.find((entry) => entry.state === "cancelled")!;
+    const answers = answersFor(scenario);
+    const pickerRequests: string[] = [];
+    await mountRoutes(page, answers);
+    // The scan never answers, so the panel stays in the state `Cancel` is offered for.
+    await page.route(DISCOVERY_ROUTE, async (route) => {
+      await dialogHeld;
+      await route.fulfill(jsonOk({ apiVersion: 1, candidates: [], diagnostics: [] })).catch(() => undefined);
+    });
+    await page.route(PICKER_ROUTE, async (route) => {
+      pickerRequests.push(route.request().url());
+      await dialogHeld;
+      await route.fulfill(jsonOk({ apiVersion: 1, status: "cancelled" })).catch(() => undefined);
+    });
+    await page.setViewportSize({ width: 400, height: 800 });
+    await page.goto(`http://127.0.0.1:4173/#profile=composed-reference-game&boot=${token}`);
+    await openGameSurface(page);
+    await expect(panel(page)).toHaveAttribute("data-state", "loading", { timeout: 15_000 });
+
+    const picker = panel(page).getByRole("button", { name: labels.gameInstallationChooseFolder, exact: true });
+    const cancel = panel(page).getByRole("button", { name: labels.gameResumeCancel, exact: true });
+    await picker.click();
+    await expect(panel(page).getByTestId("game-installation-picker-wait")).toBeVisible({ timeout: 5_000 });
+
+    await cancel.click();
+    await expect(panel(page)).toHaveAttribute("data-state", "cancelled", { timeout: 15_000 });
+    record(
+      `400x800 scan abandoned while the dialog is open: waitLine=${
+        (await panel(page).getByTestId("game-installation-picker-wait").count()) === 1 ? "shown" : "absent"
+      } pickerDisabled=${await picker.isDisabled()} requests=${pickerRequests.length}`,
+    );
+    await expect(
+      panel(page).getByTestId("game-installation-picker-wait"),
+      "abandoning the scan cleared the wait for a dialog that is still open",
+    ).toBeVisible();
+    expect(await picker.isDisabled(), "abandoning the scan re-opened the picker over the dialog").toBe(true);
+
+    closeDialog();
+    await expect(panel(page).getByTestId("game-installation-picker-wait")).toHaveCount(0, { timeout: 15_000 });
+    await expect(picker, "the picker is offered again once the dialog is gone").toBeEnabled();
+    expect(pickerRequests.length, "the dialog reached the Host once").toBe(1);
+  });
 });
