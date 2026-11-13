@@ -9,13 +9,14 @@
  * cross-file linkage, so no single gate owned it. This one does, and it fails loudly here instead of in the game.
  *
  * RUNGS (each stops the ladder on red, so the first line of a failure is the cause):
- *   prep Mod export build  - `dotnet build <the export project> -c Release`, the one preparation the rungs below need:
- *                             the producer `tools/check-generated-artifact-reproducibility.mjs` runs is a build output,
- *                             and a checkout nobody has built has none, so that gate blocks (exit 2) and a reader has to
- *                             build the project by hand before the ladder can say anything about three artefacts.
- *                             MSBuild's own up-to-date check is the skip, so a warm run costs 0.7 s (measured
- *                             2026-11-12) and compiles nothing; `dotnet` absent is UNAVAILABLE here and the gate names
- *                             what it could not run.
+ *   prep Mod export build  - `dotnet build <the export project> -c Release`, the one preparation the artefact gate in L0
+ *                             needs: the producer it runs is a build output, and a checkout nobody has built has none, so
+ *                             that gate blocks (exit 2) until it exists. The build runs only when something asks for it -
+ *                             no build output at all, or an artefact input newer than the artefact, both read from the
+ *                             gate's own declaration - because its inputs are the WHOLE Mod compile while the gate
+ *                             re-derives from five files: a lane editing a handler otherwise pays a ~300 s compile for a
+ *                             gate that then prints `not_re_derived:inputs_unchanged`. See `modExportBuildPreparation`.
+ *                             `dotnet` absent is UNAVAILABLE here and the gate names what it could not run.
  *   L0  contract triad      - measured 5.3 s. The static gates that cost milliseconds, one child process each, every
  *                             exit code reported by name. It ends with `tools/check-prelive-gate-registry.mjs`, which
  *                             derives the population of every gate in the tree and fails when one of them neither runs
@@ -48,8 +49,9 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { resolveStardewFixtureRoots } from "./lib/stardew-fixture-roots.mjs";
+import { ARTEFACT_PRODUCERS, inputsMovedSince } from "./check-generated-artifact-reproducibility.mjs";
 import { containedChildEnvironment } from "./lib/crash-report-containment.mjs";
+import { resolveStardewFixtureRoots } from "./lib/stardew-fixture-roots.mjs";
 import { fixtureActions, fixtureScenario } from "./lib/stardew-native-local-player-fixture.mjs";
 import { GATE_EXEMPT_PUBLISHED_ACTIONS } from "./lib/stardew-published-action-registry.mjs";
 import {
@@ -338,12 +340,12 @@ function readScripts() {
 }
 
 /**
- * The Mod export project: the build output the reproducibility gate runs as its producer. Spelled here as well as in
- * `tools/check-generated-artifact-reproducibility.mjs` (its `MOD_EXPORT_PROJECT`), the same way `HOST_TEST_ARTIFACT_BUILD`
- * is spelled here as well as in `host/package.json`.
+ * The generated artefacts whose producer is a BUILD OUTPUT, and the one build they share - both read from the gate's own
+ * declaration rather than spelled again here: `tools/check-generated-artifact-reproducibility.mjs` owns which artefacts
+ * need the Mod export assembly, which project emits it and how that project is built.
  */
-const MOD_EXPORT_PROJECT =
-  "integrations/stardew/tests/actiondevelopmentactionsurfaceexport/actiondevelopmentactionsurfaceexport.csproj";
+const BUILD_OUTPUT_ARTEFACTS = Object.freeze(ARTEFACT_PRODUCERS.filter((entry) => entry.resolve !== undefined));
+const MOD_EXPORT = BUILD_OUTPUT_ARTEFACTS[0]?.resolve ?? null;
 const MOD_EXPORT_BUILD_TIMEOUT_MS = 5 * 60_000;
 
 /** The first MSBuild diagnostic in a build's output, verbatim: the summary line names a count, not a cause. */
@@ -357,19 +359,57 @@ function firstBuildError(output) {
 }
 
 /**
+ * Whether the tree holds a build output at all: any `<name>` under the project's `bin/`, in whichever configuration and
+ * framework a lane built it. Existence only - the staleness question below is the gate's, and this is the one case the
+ * gate cannot answer, because a tree with no assembly has nothing for it to compare and it blocks `missing_built_assembly`.
+ */
+function builtAssemblyPresent(root, resolution) {
+  const bin = path.join(root, resolution.directory, "bin");
+  if (!fs.existsSync(bin)) return false;
+  return fs.readdirSync(bin, { recursive: true }).some((entry) => path.basename(String(entry)) === resolution.name);
+}
+
+/**
+ * Whether the Mod export build is needed at all, and if so what asked for it.
+ *
+ * MEASURED, not imagined: on a tree whose Mod sources have moved, `dotnet build` compiles the whole Core project - 300 s
+ * against the rest of the ladder's ~49 s, and the rung every lane runs constantly cannot spend it. MSBuild's own up-to-date
+ * check is not that skip: its inputs are the entire Mod compile, while the artefacts that need this build are re-derived
+ * from the five files the gate declares, so a lane editing a handler paid a full compile for a gate that then printed
+ * `not_re_derived:inputs_unchanged`.
+ *
+ * So the decision reuses the reading the gate already makes - `inputsMovedSince` against each artefact that needs the
+ * assembly, which is the same comparison that decides whether the gate re-derives - and adds the one case it cannot see: a
+ * tree with no build output, where the gate blocks `missing_built_assembly` and the whole preparation exists.
+ */
+export function modExportBuildPreparation({
+  root = REPO,
+  artefacts = BUILD_OUTPUT_ARTEFACTS,
+  moved = inputsMovedSince,
+  present = builtAssemblyPresent,
+} = {}) {
+  if (MOD_EXPORT === null) return { needed: false, reason: "no artefact declares a build output" };
+  if (!present(root, MOD_EXPORT)) return { needed: true, reason: "no_built_assembly" };
+  for (const entry of artefacts) {
+    const staleness = moved({ root, entry, artefact: entry.artefact });
+    if (staleness.moved) return { needed: true, reason: `${entry.artefact}:${staleness.reason}` };
+  }
+  return { needed: false, reason: `inputs unchanged since ${artefacts.map((entry) => entry.artefact).join(", ")}` };
+}
+
+/**
  * The Mod export build, as the gate's own `build` field spells it: `dotnet build <project> -c Release`.
  *
- * Unconditional, because the skip belongs to the layer that owns the inputs: MSBuild compiles nothing when its outputs
- * are newer than every source, and a mtime rule here would be a second spelling of the list
- * `tools/check-generated-artifact-reproducibility.mjs` already declares. An absent `dotnet` is `unavailable`, not a
- * failure - the gate below states what it could not run, so the verdict keeps one owner.
+ * An absent `dotnet` is `unavailable`, not a failure - the gate below states what it could not run, so the verdict keeps
+ * one owner.
  */
 export function buildModExportAssembly({
   run = (executable, args, options) => spawnSync(executable, args, options),
   timeoutMs = MOD_EXPORT_BUILD_TIMEOUT_MS,
+  project = MOD_EXPORT?.project,
 } = {}) {
   const startedAt = Date.now();
-  const outcome = run("dotnet", ["build", MOD_EXPORT_PROJECT, "-c", "Release", "--nologo", "-v", "quiet"], {
+  const outcome = run("dotnet", ["build", project, "-c", "Release", "--nologo", "-v", "quiet"], {
     cwd: REPO,
     encoding: "utf8",
     timeout: timeoutMs,
@@ -386,9 +426,13 @@ export function buildModExportAssembly({
 
 /**
  * The preparation as a rung: a red build stops the ladder here, because a Mod that does not compile is a cause no gate
- * below can state better. `unavailable` passes with its reason printed, and the artefact gate says the rest.
+ * below can state better. `unavailable` passes with its reason printed, and the artefact gate says the rest; a build that
+ * nothing needs is not run, and the rung says what asked for it every time it does run.
  */
-export function modExportBuildRung({ build = buildModExportAssembly } = {}) {
+export function modExportBuildRung({ prepare = modExportBuildPreparation, build = buildModExportAssembly } = {}) {
+  const preparation = prepare();
+  if (!preparation.needed)
+    return { id: "prep", status: "passed", build: { status: "not_needed", ms: 0, ...preparation } };
   const outcome = build();
   return { id: "prep", status: outcome.status === "failed" ? "failed" : "passed", build: outcome };
 }
@@ -1267,6 +1311,8 @@ export function format(ladder, { elapsedMs, options, notice }) {
     if (rung.id === "prep") {
       const build = rung.build;
       if (build.status === "passed") lines.push(`  prep: Mod export build passed (dotnet -c Release) in ${build.ms}ms`);
+      else if (build.status === "not_needed")
+        lines.push(`  prep: Mod export build not needed (${build.reason}) - nothing it produces is re-derived`);
       else if (build.status === "unavailable")
         lines.push(
           `  prep: Mod export build UNAVAILABLE: ${build.reason} - the artefact gate in L0 names what it could not run`,

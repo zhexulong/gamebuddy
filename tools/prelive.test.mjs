@@ -15,22 +15,29 @@
  * checking either would fail those tests, not pass silently.
  */
 import assert from "node:assert/strict";
+import { dirname, resolve } from "node:path";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 
+import { ARTEFACT_PRODUCERS, inputsMovedSince } from "./check-generated-artifact-reproducibility.mjs";
+import { GATE_EXEMPT_PUBLISHED_ACTIONS } from "./lib/stardew-published-action-registry.mjs";
 import {
-  DEFAULT_GAME_INSTALL,
   actionRegistryRung,
   actionRung,
+  buildModExportAssembly,
   checkDeployIsolation,
   checkLinkageClosure,
   checkPopulationAgreement,
   checkRunnerShape,
   compileHostTestArtifact,
+  DEFAULT_GAME_INSTALL,
   deployRung,
   firstTypeScriptError,
   format,
   isInside,
   linkageRung,
+  modExportBuildPreparation,
+  modExportBuildRung,
   optOutRules,
   parseActionPopulations,
   parseArgs,
@@ -41,7 +48,6 @@ import {
   runLadder,
   shapeRung,
 } from "./prelive.mjs";
-import { GATE_EXEMPT_PUBLISHED_ACTIONS } from "./lib/stardew-published-action-registry.mjs";
 import { resolveStardewActionGateRunner } from "./resolve-stardew-action-gate-runner.mjs";
 import {
   STARDEW_EXPERIMENTAL_ACTION_RUNNERS,
@@ -603,4 +609,93 @@ test("the real tree: every action population names the same members", () => {
     `expected the whole adapter list, got ${rung.population.counts.adapters}`,
   );
   assert.equal(rung.population.counts.adapters, rung.population.counts.toolNames);
+});
+
+// ---------------------------------------------------------------------------
+// The prep rung: the one build the artefact gate's producer needs, run only
+// when something asks for it. Measured 2026-11-13: the rung cost 300 s on a
+// tree whose Mod sources had moved, against 49 s for the rest of the ladder.
+// ---------------------------------------------------------------------------
+
+test("(prep) nothing is built when no artefact input has moved since the artefact", () => {
+  const preparation = modExportBuildPreparation({
+    present: () => true,
+    moved: () => ({ moved: false, reason: "inputs_unchanged" }),
+  });
+  assert.equal(preparation.needed, false);
+  let built = 0;
+  const rung = modExportBuildRung({
+    prepare: () => preparation,
+    build: () => {
+      built += 1;
+      return { status: "passed", ms: 0 };
+    },
+  });
+  assert.equal(built, 0, "a build nothing needs must not run");
+  assert.equal(rung.status, "passed");
+  assert.equal(rung.build.status, "not_needed");
+  const text = format(runLadder({ rungs: [() => rung] }), { elapsedMs: 1, options: { noGame: true }, notice: null });
+  assert.match(text, /prep: Mod export build not needed \(inputs unchanged/u);
+  assert.doesNotMatch(text, /Mod export build passed/u);
+});
+
+test("(prep) a tree with no build output is built even when every artefact input is unchanged", () => {
+  let consultedStaleness = false;
+  const preparation = modExportBuildPreparation({
+    present: () => false,
+    moved: () => {
+      consultedStaleness = true;
+      return { moved: false, reason: "inputs_unchanged" };
+    },
+  });
+  assert.deepEqual(preparation, { needed: true, reason: "no_built_assembly" });
+  assert.equal(consultedStaleness, false, "a tree with no producer has nothing to compare, so staleness is not asked");
+});
+
+test("(prep) an artefact input newer than the artefact asks for the build, and the reason names both", () => {
+  const newest = "integrations/stardew/src/Core/Policy/FarmhandActionHandlerGroupExport.cs";
+  const preparation = modExportBuildPreparation({
+    present: () => true,
+    moved: ({ entry }) =>
+      entry.artefact.endsWith("action-handler-groups.v1.json")
+        ? { moved: true, reason: `input_newer:${newest}` }
+        : { moved: false, reason: "inputs_unchanged" },
+  });
+  assert.equal(preparation.needed, true);
+  assert.ok(preparation.reason.endsWith(`action-handler-groups.v1.json:input_newer:${newest}`), preparation.reason);
+});
+
+test("(prep) a build that fails stops the ladder, because the Mod does not compile", () => {
+  const rung = modExportBuildRung({
+    prepare: () => ({ needed: true, reason: "no_built_assembly" }),
+    build: () => ({ status: "failed", ms: 1, firstError: "FarmhandActionDefinitions.cs(1,1): error CS1002" }),
+  });
+  assert.equal(rung.id, "prep");
+  assert.equal(rung.status, "failed");
+  const text = format(runLadder({ rungs: [() => rung] }), { elapsedMs: 1, options: { noGame: true }, notice: null });
+  assert.match(text, /Mod export build failed/u);
+  assert.match(text, /error CS1002/u);
+});
+
+test("(prep) the build command is the gate's own declaration, not a project path spelled here", () => {
+  const calls = [];
+  const outcome = buildModExportAssembly({
+    run: (executable, args) => {
+      calls.push([executable, args]);
+      return { status: 0 };
+    },
+  });
+  assert.equal(outcome.status, "passed");
+  const resolution = ARTEFACT_PRODUCERS.find((entry) => entry.resolve !== undefined).resolve;
+  assert.deepEqual(calls, [["dotnet", ["build", resolution.project, "-c", "Release", "--nologo", "-v", "quiet"]]]);
+});
+
+test("the real tree: the prep decision agrees with the gate's own staleness reading of the artefacts it produces", () => {
+  const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+  const consumers = ARTEFACT_PRODUCERS.filter((entry) => entry.resolve !== undefined);
+  const readings = consumers.map((entry) => inputsMovedSince({ root, entry, artefact: entry.artefact }));
+  const preparation = modExportBuildPreparation();
+  if (readings.some((reading) => reading.moved))
+    assert.equal(preparation.needed, true, "an artefact whose input moved is re-derived, so the build is needed");
+  else assert.equal(preparation.needed, false, preparation.reason);
 });
