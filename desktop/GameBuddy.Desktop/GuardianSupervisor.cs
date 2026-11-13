@@ -2,6 +2,7 @@ using Microsoft.Win32.SafeHandles;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json;
 
 namespace GameBuddy.Desktop;
 
@@ -244,8 +245,9 @@ internal sealed class GuardianSupervisorLease : IAsyncDisposable
             }
             var expected = command.Operation switch { "arm_attempt" => "armed", "launch_role" => "role_active", "contain_role" => "role_contained", _ => throw new GuardianLaunchUnavailableException() };
             command.ThrowIfExpired(commandCancellation);
-            if (await ReadPublicResultAsync(commandCancellation).ConfigureAwait(false) != expected) throw new GuardianLaunchUnavailableException();
-            return new GuardianRelayResult(expected);
+            var publicResult = await GuardianPublicResultReader.ReadAsync(PublicOutputStream(), commandCancellation).ConfigureAwait(false);
+            if (publicResult.Status != expected) throw new GuardianLaunchUnavailableException();
+            return new GuardianRelayResult(expected, publicResult.RoleExit);
         }
         catch
         {
@@ -313,15 +315,10 @@ internal sealed class GuardianSupervisorLease : IAsyncDisposable
         await stream.FlushAsync(cancellationToken).ConfigureAwait(false);
     }
 
-    private async Task<string> ReadPublicResultAsync(CancellationToken cancellationToken)
+    private Stream PublicOutputStream()
     {
         var output = publicOutput ?? throw new GuardianLaunchUnavailableException();
-        var stream = publicOutputStream ??= new FileStream(output, FileAccess.Read, bufferSize: 4096, isAsync: false);
-        var line = await ReadLineAsync(stream, cancellationToken).ConfigureAwait(false);
-        using var document = System.Text.Json.JsonDocument.Parse(line);
-        var root = document.RootElement;
-        if (root.ValueKind != System.Text.Json.JsonValueKind.Object || !root.EnumerateObject().Select(value => value.Name).SequenceEqual(new[] { "schemaVersion", "result" }, StringComparer.Ordinal) || root.GetProperty("schemaVersion").GetInt32() != 1 || root.GetProperty("result").ValueKind != System.Text.Json.JsonValueKind.String) throw new GuardianLaunchUnavailableException();
-        return root.GetProperty("result").GetString()!;
+        return publicOutputStream ??= new FileStream(output, FileAccess.Read, bufferSize: 4096, isAsync: false);
     }
 
     internal static async Task<string> ReadLineAsync(Stream stream, CancellationToken cancellationToken)
@@ -368,7 +365,74 @@ internal sealed class GuardianPrivateIngress : IDisposable
     public void Dispose() => stream?.Dispose();
 }
 
-internal sealed record GuardianRelayResult(string Status);
+internal sealed record GuardianRelayResult(string Status, GuardianRoleExit? RoleExit);
+
+/// <summary>
+/// A role process the Guardian saw end on its own, as the Guardian published it.
+///
+/// `ExitCode` is the process's native exit code, not a product status: it says
+/// how the OS says the role ended, and nothing here interprets it.
+/// </summary>
+internal sealed record GuardianRoleExit(string Role, long ExitCode);
+
+/// <summary>One public-channel read: the Guardian's reply, plus any role event that preceded it.</summary>
+internal sealed record GuardianPublicResult(string Status, GuardianRoleExit? RoleExit);
+
+/// <summary>
+/// Reads the Guardian's public channel, which carries two kinds of frame.
+///
+/// A reply answers the command just written and is the exact two-key
+/// `{"schemaVersion":1,"result":"..."}` shape. A role event is unsolicited: it
+/// names a role that ended on its own and the native exit code, in the exact
+/// three-key `{"operation":"role_exited","role":"...","exitCode":N}` shape, and
+/// the Guardian may publish it at any moment — including while a command is
+/// waiting for its reply.
+///
+/// This reader is the one place that separates them, so a command's reply is
+/// still found and returned when an event is queued in front of it. Treating the
+/// event as the reply instead would fail the relay and close the Guardian's
+/// control channel, which is how an unexpected role death used to make the
+/// product's own explicit containment unavailable.
+/// </summary>
+internal static class GuardianPublicResultReader
+{
+    // One event per role, and a role is launched at most once per attempt, so a
+    // third event inside one read means the Guardian is repeating itself: fail
+    // closed instead of letting an unbounded stream consume the reply's deadline.
+    private const int MaxRoleEventsPerRead = 2;
+
+    internal static async Task<GuardianPublicResult> ReadAsync(Stream stream, CancellationToken cancellationToken)
+    {
+        GuardianRoleExit? roleExit = null;
+        var events = 0;
+        while (true)
+        {
+            var line = await GuardianSupervisorLease.ReadLineAsync(stream, cancellationToken).ConfigureAwait(false);
+            using var document = JsonDocument.Parse(line);
+            var root = document.RootElement;
+            if (TryReadRoleExit(root, out var exit))
+            {
+                if (++events > MaxRoleEventsPerRead) throw new GuardianLaunchUnavailableException();
+                roleExit = exit;
+                continue;
+            }
+            if (root.ValueKind != JsonValueKind.Object || !root.EnumerateObject().Select(value => value.Name).SequenceEqual(new[] { "schemaVersion", "result" }, StringComparer.Ordinal) || root.GetProperty("schemaVersion").GetInt32() != 1 || root.GetProperty("result").ValueKind != JsonValueKind.String) throw new GuardianLaunchUnavailableException();
+            return new GuardianPublicResult(root.GetProperty("result").GetString()!, roleExit);
+        }
+    }
+
+    private static bool TryReadRoleExit(JsonElement root, out GuardianRoleExit roleExit)
+    {
+        roleExit = null!;
+        if (root.ValueKind != JsonValueKind.Object || !root.EnumerateObject().Select(value => value.Name).SequenceEqual(new[] { "operation", "role", "exitCode" }, StringComparer.Ordinal)) return false;
+        if (root.GetProperty("operation").GetString() != "role_exited") return false;
+        var role = root.GetProperty("role").GetString();
+        if (role is not ("player_host" or "ai_client")) return false;
+        if (!root.GetProperty("exitCode").TryGetInt64(out var exitCode) || exitCode < 0 || exitCode > uint.MaxValue) return false;
+        roleExit = new GuardianRoleExit(role, exitCode);
+        return true;
+    }
+}
 internal sealed record GuardianRelayCommand(string Operation, string GuardianInstanceId, int GuardianEpoch, string AttemptId, string? Role, byte[]? PrivateFrame, long DeadlineUnixMs, long OperationWaitBudgetMs)
 {
     internal CancellationTokenSource BindDeadline(CancellationToken cancellationToken)

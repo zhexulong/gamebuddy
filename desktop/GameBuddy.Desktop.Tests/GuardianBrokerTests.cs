@@ -151,11 +151,15 @@ public sealed class GuardianBrokerTests
         var publicWrite = source.IndexOf("WritePublicCommandAsync(command, commandCancellation)", StringComparison.Ordinal);
         var privateConnect = source.IndexOf("privateIngress.ConnectAsync(commandCancellation)", StringComparison.Ordinal);
         var privateAccepted = source.IndexOf("!= \"accepted\"", StringComparison.Ordinal);
-        var nativeResult = source.IndexOf("ReadPublicResultAsync(commandCancellation)", publicWrite, StringComparison.Ordinal);
+        var nativeResult = source.IndexOf("GuardianPublicResultReader.ReadAsync(PublicOutputStream(), commandCancellation)", publicWrite, StringComparison.Ordinal);
         Assert.True(publicWrite >= 0 && privateConnect > publicWrite && privateAccepted > privateConnect && nativeResult > privateAccepted);
         Assert.Contains("command.ThrowIfExpired(commandCancellation);\n            await WritePublicCommandAsync", source, StringComparison.Ordinal);
         Assert.Contains("command.ThrowIfExpired(commandCancellation);\n                var ingress", source, StringComparison.Ordinal);
-        Assert.Contains("command.ThrowIfExpired(commandCancellation);\n            if (await ReadPublicResultAsync", source, StringComparison.Ordinal);
+        Assert.Contains("command.ThrowIfExpired(commandCancellation);\n            var publicResult = await GuardianPublicResultReader.ReadAsync", source, StringComparison.Ordinal);
+        // The reply is the Guardian's own, and the role event it may publish in
+        // front of that reply travels with it instead of failing the relay.
+        Assert.Contains("if (publicResult.Status != expected) throw new GuardianLaunchUnavailableException();", source, StringComparison.Ordinal);
+        Assert.Contains("return new GuardianRelayResult(expected, publicResult.RoleExit);", source, StringComparison.Ordinal);
         Assert.Contains("BindDeadline(cancellationToken)", source, StringComparison.Ordinal);
         Assert.Contains("await CloseControlAsync(CancellationToken.None)", source, StringComparison.Ordinal);
         Assert.Contains("CloseControlAndWaitForExitAsync", source, StringComparison.Ordinal);
