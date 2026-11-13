@@ -162,6 +162,11 @@ internal sealed class DesktopHostBootstrapBroker : IAsyncDisposable
                 AdvanceTransition(parsed);
                 parsed.ThrowIfExpired(commandCancellation);
                 await WriteAcknowledgementAsync(parsed, result.Status, commandCancellation).ConfigureAwait(false);
+                // The acknowledgement goes first, because it is the answer the Host is
+                // waiting for; the role exit the native reported travels after it as the
+                // unsolicited frame it is. Nothing about the command that just finished
+                // depends on it, and the Host reads it without consuming its own waiter.
+                if (result.RoleExit is not null) await WriteRoleExitAsync(result.RoleExit, commandCancellation).ConfigureAwait(false);
             }
         }
         catch
@@ -278,6 +283,26 @@ internal sealed class DesktopHostBootstrapBroker : IAsyncDisposable
         if (command.Operation == "arm_attempt") armed = true;
         else if (command.Operation == "launch_role") launchedRoles.Add(command.Role!);
         else containedRoles.Add(command.Role!);
+    }
+
+    /// <summary>
+    /// Relays the one unsolicited frame this session carries: a role the native
+    /// Guardian reported ended on its own, with its native exit code.
+    ///
+    /// It is bound to this session's own correlation and generation like every
+    /// acknowledgement, so the Host can only read an exit that belongs to the
+    /// attempt it is driving. A role cannot end before the attempt is armed, so an
+    /// exit with no correlation is refused rather than sent unbound.
+    /// </summary>
+    private async Task WriteRoleExitAsync(GuardianRoleExit exit, CancellationToken cancellationToken)
+    {
+        var exact = correlation ?? throw new GuardianLaunchUnavailableException();
+        await WriteAsync(new
+        {
+            schema = "gamebuddy-desktop-guardian-session/v1", protocolVersion = 1, operation = "role_exited", bootstrapId,
+            generation, inventoryDigest, runtimeAdmissionSha256, guardianInstanceId = exact.InstanceId,
+            guardianEpoch = exact.Epoch, attemptId = exact.AttemptId, role = exit.Role, exitCode = exit.ExitCode,
+        }, cancellationToken).ConfigureAwait(false);
     }
 
     private async Task WriteAcknowledgementAsync(BrokerCommand command, string status, CancellationToken cancellationToken)

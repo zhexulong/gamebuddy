@@ -302,6 +302,18 @@ export type StardewPlayerHostRuntimeLaunchCollaborator = Readonly<{
     owner: StardewOwnedPlayerHostBootstrap,
   ): Promise<import("../../../containment/runtime/contract/game-runtime.js").RedactedContainmentOutcome>;
   /**
+   * The player-role exit the Guardian reported for this launch, with the native
+   * exit code the game process ended with, or null while none has been reported.
+   *
+   * Only the containment transport can observe this: it owns the process the
+   * Guardian launched. Null is "unknown" and must never be read as "still
+   * running" - a session that carried no such event says nothing about the
+   * process either way.
+   */
+  readPlayerHostRoleExit?():
+    | import("../../../containment/auth/desktop-guardian-session.internal.js").GuardianRoleExit
+    | null;
+  /**
    * The exact owner's durable recovery drive. A recovery is a chain of durable
    * transitions over this owner's `owner.json`, so it belongs to the one
    * collaborator that already holds the exact owner and its consumed Guardian

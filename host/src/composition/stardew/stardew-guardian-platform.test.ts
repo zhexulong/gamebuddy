@@ -12,6 +12,7 @@ import type {
   DesktopGuardianSession,
   GuardianAck,
   GuardianRecoveryAck,
+  GuardianRoleExit,
 } from "../../containment/auth/desktop-guardian-session.internal.js";
 import { STARDEW_NATIVE_ROLE_ENVIRONMENT_KEYS } from "./stardew-native-role-launch-plan.private.js";
 import type { TypedPrivateGameFacts } from "../../containment/runtime/contract/game-runtime.js";
@@ -134,6 +135,52 @@ function recordingSession(calls: RecordedCall[]): DesktopGuardianSession {
     close: async () => {},
   });
 }
+
+test("the platform records the player-role exit the Guardian reports, and only the player's", () => {
+  let handler: ((exit: GuardianRoleExit) => void) | undefined;
+  const platform = createDesktopGuardianGameRuntimePlatform(
+    Object.freeze({
+      ...recordingSession([]),
+      onRoleExit: (registered: (exit: GuardianRoleExit) => void) => {
+        handler = registered;
+      },
+    }),
+  );
+
+  // No event yet is UNKNOWN, not "the game is running": the platform never invents
+  // a living process, because the cabin read is allowed to treat an exit as the
+  // cause and is never allowed to invent one.
+  assert.equal(platform.readPlayerHostRoleExit(), null);
+
+  handler!(Object.freeze({ role: "ai_client", exitCode: 1 }));
+  assert.equal(platform.readPlayerHostRoleExit(), null, "the AI client's exit is not the game process's");
+
+  handler!(Object.freeze({ role: "player_host", exitCode: 3221225781 }));
+  assert.deepEqual(platform.readPlayerHostRoleExit(), { role: "player_host", exitCode: 3221225781 });
+});
+
+test("a session that cannot carry a role exit reports none rather than a living game", () => {
+  const platform = createDesktopGuardianGameRuntimePlatform(recordingSession([]));
+
+  assert.equal(platform.readPlayerHostRoleExit(), null);
+});
+
+test("the launch collaborator carries the same player-role exit the platform recorded", () => {
+  let handler: ((exit: GuardianRoleExit) => void) | undefined;
+  const platform = createDesktopGuardianGameRuntimePlatform(
+    Object.freeze({
+      ...recordingSession([]),
+      onRoleExit: (registered: (exit: GuardianRoleExit) => void) => {
+        handler = registered;
+      },
+    }),
+  );
+  const collaborator = createStardewPlayerHostRuntimeLaunchCollaboratorFactory(platform);
+
+  assert.equal(collaborator.readPlayerHostRoleExit!(), null);
+  handler!(Object.freeze({ role: "player_host", exitCode: 7 }));
+  assert.deepEqual(collaborator.readPlayerHostRoleExit!(), { role: "player_host", exitCode: 7 });
+});
 
 test("composition-private platform relays arm facts and encodes launch exactly as ParseLaunch accepts", async () => {
   const calls: RecordedCall[] = [];

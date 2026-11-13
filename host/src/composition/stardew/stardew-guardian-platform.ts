@@ -15,7 +15,10 @@
  */
 import { randomUUID } from "node:crypto";
 
-import type { DesktopGuardianSession } from "../../containment/auth/desktop-guardian-session.internal.js";
+import type {
+  DesktopGuardianSession,
+  GuardianRoleExit,
+} from "../../containment/auth/desktop-guardian-session.internal.js";
 import type { ContainedGameRuntimePlatform } from "../../containment/runtime/core/contained-game-runtime.js";
 import type {
   RecoverableContainedGameRuntime,
@@ -299,6 +302,20 @@ function encodeRecoveryPostCasFrame(
 }
 
 /**
+ * The platform the Desktop composition binds to one authenticated Guardian
+ * session: the generic contained-runtime transport plus the one fact about the
+ * game process only the Guardian can know.
+ *
+ * `readPlayerHostRoleExit` answers the player-role exit the Guardian reported on
+ * this exact session - the native exit code the game process ended with - or null
+ * while none has been reported. Null is "unknown", never "still running": the
+ * Guardian reports an exit when it observes one, and a session that carries no
+ * such event has told this layer nothing about the process either way.
+ */
+export type DesktopGuardianGameRuntimePlatform = ContainedGameRuntimePlatform &
+  Readonly<{ readPlayerHostRoleExit(): GuardianRoleExit | null }>;
+
+/**
  * The part of a recovery only the calling layer can supply.
  *
  * The gate binding and both durable steps deliberately are NOT part of it: they
@@ -399,7 +416,7 @@ export function readStardewOwnerRecoveryDriver(
  * `recovery(owner)` accessor, whose own refusal shape is unchanged.
  */
 export function createStardewPlayerHostRuntimeLaunchCollaboratorFactory(
-  platform: ContainedGameRuntimePlatform,
+  platform: DesktopGuardianGameRuntimePlatform,
 ): StardewPlayerHostRuntimeLaunchCollaborator & StardewOwnerRecoveryDriver {
   // The Guardian owner binding is one-shot per owner; the contained runtime
   // for that owner is therefore bound once and retained here. A launch retry
@@ -593,6 +610,16 @@ export function createStardewPlayerHostRuntimeLaunchCollaboratorFactory(
       return requireRuntime(owner).containRole("ai_client");
     },
     /**
+     * The player-role exit the Guardian reported, or null while none has been.
+     *
+     * It is read from the authenticated session the contained runtime already
+     * speaks on, so it is the Guardian's own observation of the process it
+     * launched rather than anything this layer inferred from a missing file.
+     */
+    readPlayerHostRoleExit(): GuardianRoleExit | null {
+      return platform.readPlayerHostRoleExit();
+    },
+    /**
      * The exact owner's durable recovery drive, projected from the same one-shot
      * Guardian owner binding the contained runtime consumes. Reaching it needs
      * no launch, and a later launch on the same owner reuses the exact same
@@ -713,7 +740,15 @@ export function createStardewPlayerHostRuntimeLaunchCollaboratorFactory(
  */
 export function createDesktopGuardianGameRuntimePlatform(
   session: DesktopGuardianSession,
-): ContainedGameRuntimePlatform {
+): DesktopGuardianGameRuntimePlatform {
+  // The player-role exit the Guardian reports on this session. Recorded once and
+  // read by the lifecycle, which is the only layer that can turn "the game process
+  // is gone" into an answer the player can act on. A session that cannot carry the
+  // event leaves this null, which reads as unknown and never as "still running".
+  let playerHostRoleExit: GuardianRoleExit | null = null;
+  session.onRoleExit?.((exit) => {
+    if (exit.role === "player_host") playerHostRoleExit = exit;
+  });
   // The platform session terminates exactly once. Settlement is the deliberate
   // terminal operation and the coordinator's ordinary close may still run
   // afterwards on the same attempt, so both go through this single latch rather
@@ -815,6 +850,7 @@ export function createDesktopGuardianGameRuntimePlatform(
   };
 
   return Object.freeze({
+    readPlayerHostRoleExit: (): GuardianRoleExit | null => playerHostRoleExit,
     async arm(input) {
       const { authorization, armFacts, ...transportInput } = input;
       // The attested installation executable is fixed at arm time and is later

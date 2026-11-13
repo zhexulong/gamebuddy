@@ -89,6 +89,15 @@ export type DesktopGuardianRecoveryTransport = Readonly<{
   receive(): Promise<Record<string, unknown>>;
 }>;
 
+/**
+ * One role process the Guardian reported ended on its own, with the native exit
+ * code it ended with.
+ *
+ * It is a fact about the OS process, not a product status: `exitCode` is what
+ * the OS reports and nothing here interprets it.
+ */
+export type GuardianRoleExit = Readonly<{ role: "player_host" | "ai_client"; exitCode: number }>;
+
 export type DesktopGuardianSession = Readonly<{
   arm(
     input: Readonly<{
@@ -126,5 +135,14 @@ export type DesktopGuardianSession = Readonly<{
    * earn.
    */
   recover(input: DesktopGuardianRecovery): Promise<GuardianRecoveryAck>;
+  /**
+   * Registers the one watcher for the role exits the Guardian publishes.
+   *
+   * A role exit is unsolicited: it can arrive while a command is waiting for its
+   * own acknowledgement, and it is the only fact that says a role process is
+   * gone. A session that cannot carry it reports no exits rather than inventing
+   * one, so a consumer must treat "no exit" as unknown, never as "still running".
+   */
+  onRoleExit?(handler: (exit: GuardianRoleExit) => void): void;
   close(): Promise<void>;
 }>;

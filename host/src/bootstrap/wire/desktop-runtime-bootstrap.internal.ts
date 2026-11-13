@@ -9,6 +9,7 @@ import type {
   GuardianRecoveryAck,
   GuardianRecoveryClassification,
   GuardianRecoveryRole,
+  GuardianRoleExit,
 } from "../../containment/auth/desktop-guardian-session.internal.js";
 import {
   createDesktopProductComposition,
@@ -656,6 +657,7 @@ class GuardianSessionClient implements DesktopGuardianSession {
   #lost: (() => void) | undefined;
   #buffer = Buffer.alloc(0);
   #waiter: PendingResponse | undefined;
+  #roleExit: ((exit: GuardianRoleExit) => void) | undefined;
   #serial: Promise<void> = Promise.resolve();
 
   constructor(
@@ -680,6 +682,20 @@ class GuardianSessionClient implements DesktopGuardianSession {
       return;
     }
     this.#lost = callback;
+  }
+
+  /**
+   * Registers the one watcher for the role exits the Guardian publishes.
+   *
+   * A role exit is not the answer to any command, so it neither consumes nor
+   * requires an acknowledgement waiter: the broker relays it whenever the native
+   * reported it, which may be while a command is in flight and may be between
+   * commands. A closed session reports no further exits, and a caller that never
+   * registers reads every exit as unknown rather than as a living role.
+   */
+  onRoleExit(handler: (exit: GuardianRoleExit) => void): void {
+    if (this.#closed) return;
+    this.#roleExit = handler;
   }
 
   async arm(
@@ -837,27 +853,30 @@ class GuardianSessionClient implements DesktopGuardianSession {
     if (this.#closed) return;
     this.#buffer = Buffer.concat([this.#buffer, chunk]);
     if (this.#buffer.length > MAX_GUARDIAN_WIRE_BYTES) return this.fail();
-    const newline = this.#buffer.indexOf(10);
-    if (newline < 0) return;
-    const line = this.#buffer.subarray(0, newline + 1);
-    if (
-      newline !== this.#buffer.length - 1 ||
-      line.includes(0) ||
-      line.includes(13) ||
-      line[0] === 0xef ||
-      this.#waiter === undefined
-    )
-      return this.fail();
-    this.#buffer = Buffer.alloc(0);
-    try {
-      const value = parseStrictJson(new TextDecoder("utf-8", { fatal: true }).decode(line.subarray(0, -1)));
+    // Every complete line is one frame, and one read can carry more than one: the
+    // broker writes its acknowledgement and then the role exit the relay recorded,
+    // so a reader that assumed one frame per chunk would fail the session closed on
+    // the very event that names why the game is gone.
+    for (let newline = this.#buffer.indexOf(10); newline >= 0; newline = this.#buffer.indexOf(10)) {
+      const line = this.#buffer.subarray(0, newline + 1);
+      this.#buffer = this.#buffer.subarray(newline + 1);
+      if (line.includes(0) || line.includes(13) || line[0] === 0xef) return this.fail();
+      let value: unknown;
+      try {
+        value = parseStrictJson(new TextDecoder("utf-8", { fatal: true }).decode(line.subarray(0, -1)));
+      } catch {
+        return this.fail();
+      }
       if (!isRecord(value)) return this.fail();
+      if (isRoleExitFrame(value, this.binding)) {
+        this.#roleExit?.(Object.freeze({ role: value.role, exitCode: value.exitCode }));
+        continue;
+      }
       const waiter = this.#waiter;
+      if (waiter === undefined) return this.fail();
       this.#waiter = undefined;
       if (waiter.timer !== undefined) clearTimeout(waiter.timer);
       waiter.resolve(value);
-    } catch {
-      this.fail();
     }
   }
 
@@ -996,6 +1015,50 @@ function validCommandAcknowledgement(
     value.guardianEpoch === input.guardianEpoch &&
     value.attemptId === input.attemptId &&
     value.role === role
+  );
+}
+
+/**
+ * The one unsolicited frame this channel carries: a role the Guardian reported
+ * ended on its own, with the native exit code it ended with.
+ *
+ * It is bound to this exact session like every acknowledgement, so an exit from
+ * another generation can never be read as this one's. The exit code is the whole
+ * native uint32 range and nothing else: a code outside it is not something the OS
+ * reported, so it is refused rather than carried.
+ */
+function isRoleExitFrame(
+  value: Record<string, unknown>,
+  binding: DesktopGuardianSessionBinding,
+): value is Record<string, unknown> & GuardianRoleExit {
+  return (
+    exactKeys(value, [
+      "schema",
+      "protocolVersion",
+      "operation",
+      "bootstrapId",
+      "generation",
+      "inventoryDigest",
+      "runtimeAdmissionSha256",
+      "guardianInstanceId",
+      "guardianEpoch",
+      "attemptId",
+      "role",
+      "exitCode",
+    ]) &&
+    value.schema === guardianSessionSchema &&
+    value.protocolVersion === 1 &&
+    value.operation === "role_exited" &&
+    matchesBinding(value, binding) &&
+    validOpaque(value.guardianInstanceId) &&
+    Number.isSafeInteger(value.guardianEpoch) &&
+    (value.guardianEpoch as number) >= 1 &&
+    validOpaque(value.attemptId) &&
+    validRole(value.role) &&
+    typeof value.exitCode === "number" &&
+    Number.isSafeInteger(value.exitCode) &&
+    value.exitCode >= 0 &&
+    value.exitCode <= 4_294_967_295
   );
 }
 
