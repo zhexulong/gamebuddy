@@ -124,10 +124,10 @@ export type TurnOpening = (typeof TURN_OPENINGS)[number];
  * Why a flush that was EXAMINED opened no turn. Closed, so "fewer turns" and "lost turns" are distinguishable.
  *
  * The two re-statement reasons are derived from the member they answer: a batch whose only pending content is the
- * `observation` member at a revision already delivered, or `world_fact` members she already received. A fact whose
- * content is a MOMENT rather than a statement is never a re-statement (`DAY_BOUNDARY_SEMANTIC_KINDS`), so `due` needs no
- * reason of its own: a Host-minted wake fact carries its re-arm counter in its content, and a clock or day fact is news
- * every time.
+ * `observation` member saying what the delivered reading said (`readingContentIdentity`), or `world_fact` members she
+ * already received. A fact whose content is a MOMENT rather than a statement is never a re-statement
+ * (`DAY_BOUNDARY_SEMANTIC_KINDS`), so `due` needs no reason of its own: a Host-minted wake fact carries its re-arm counter
+ * in its content, and a clock or day fact is news every time.
  *
  * `nothing_pending` is not a lost turn: there was nothing to deliver, and counting it keeps the arithmetic closed
  * (`examined === opened + every suppressed reason`).
@@ -937,7 +937,7 @@ export class CompanionEventPump {
    */
   #lastSnapshot: WorldFact | undefined;
   /**
-   * The reading she was last TOLD ABOUT, as its own content (`factContentIdentity`), so a re-statement cannot read as a
+   * The reading she was last TOLD ABOUT, as its own content (`readingContentIdentity`), so a re-statement cannot read as a
    * fresh observation.
    *
    * <p>
@@ -979,7 +979,7 @@ export class CompanionEventPump {
   /**
    * The crossed READING whose probes have been spent, and whether its refusal has already been said.
    *
-   * The re-arm key is the reading's own CONTENT (`factContentIdentity`), not the turn and not the Mod's revision: a probe
+   * The re-arm key is the reading's own CONTENT (`readingContentIdentity`), not the turn and not the Mod's revision: a probe
    * can only be answered by a reading that says something else, so a second probe under the same content asks the
    * question the first one asked. Keyed on the revision instead, a re-observation that only bumped the counter re-armed
    * the budget and a frozen world became a spin; keyed on content, `WORLD_STATE_REFRESH_ATTEMPTS` is spent by the reading
@@ -2126,7 +2126,8 @@ export class CompanionEventPump {
   }
 
   /**
-   * The world as `<world-state>` states it: the last reading, its own revision, and how many delivered turns old it is.
+   * The world as `<world-state>` states it: the last reading, the revision the Mod reported for it, and how many delivered
+   * turns old it is.
    *
    * THE FRESHNESS IS THE COMPARISON, not a caller's flag. `ageTurns === 0` is what `fact-brief.ts` renders as `刚刚更新`
    * and anything else as `本轮无新观察`, so it is decided the same way the suppressor decides a flush: by asking whether this
