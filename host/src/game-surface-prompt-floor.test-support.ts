@@ -185,31 +185,32 @@ export const GAME_SURFACE_PROMPT_FLOOR: PromptFloorReading = Object.freeze({
       "The delivery-block rule stopped being prose with a number in it: its count and its member names are now read from `FACT_BRIEF_BLOCKS`, so a fifth block (`<in-flight>`, added 2026-11-11) is named in the sentence instead of the prompt saying four while the batch carried five. Measured by the test against the product's builder: `systemChars` 11,101 (10,452 + the 559-char rule of 2026-11-10 + 90 from this rewrite) and the conduct slice 7,268 (6,631 + 559 + 78). The two deltas differ by 12 chars and are recorded AS MEASURED, not reconciled: the previous entry asserted the conduct grew by exactly the same 559 as the prompt, which was arithmetic rather than a second reading. `envelopeChars`/`envelopeBytes` follow the system string by its own delta (+90, ASCII, no new escapes). The TOKEN columns are again carried unchanged and are now a larger under-count still.",
     remeasured_2026_11_12:
       "The body-language conduct rule was rewritten, so every column that counts it moved. `systemChars` 10829 and the conduct slice 6997 (+166 both, the rule grew by exactly that much and it is ASCII: the JSON-escaped delta and the UTF-8 byte delta are both 166). The share is re-derived as 6997 / 10829 = 0.6461. `envelopeChars`/`envelopeBytes` follow the system string by its own delta (+166: 25959 -> 26125, 35268 -> 35434) and were NOT re-measured, because that needs the whole materialized-session instrumentation. THE PRE-EXISTING -1 IS RECORDED HERE RATHER THAN ABSORBED SILENTLY: before this change the tree's builder produced 10663 against the recorded 10664, while the conduct slice measured exactly 6831 both times - so that character was never in the conduct block and is not this change's. It is the card/persona side, and the envelope columns above inherit it. The TOKEN columns are again carried unchanged and remain the under-count `remeasured_2026_11_05` describes.",
+    remeasured_2026_11_12_b:
+      "The body-language rule gained the argument its route requires, so every column that counts it moved again. `systemChars` 11032 and the conduct slice 7200 - both +203, and the two deltas AGREE here because the edit is inside the one rule and nowhere else (the rule grew by exactly that much, ASCII, so the JSON-escaped delta and the UTF-8 byte delta are both 203). The share is re-derived as 7200 / 11032 = 0.6526. `envelopeChars`/`envelopeBytes` follow the system string by its own delta (+203: 26125 -> 26328, 35434 -> 35637) and were NOT re-measured, because that needs the whole materialized-session instrumentation; the recorded -1 from `remeasured_2026_11_12` is inherited unchanged. The added text is what the plan description cannot state - the closed-set argument `express_emote` takes and where its words are printed - and it carries no frequency: nothing in the floor makes an emote owed. The TOKEN columns are again carried unchanged and remain the under-count `remeasured_2026_11_05` describes.",
     remeasured_2026_11_11_b:
       "The Game prompt SHRANK by exactly one conduct rule (-437 chars, 11,101 to 10,664): the rule that ordered a spoken remark to the partner before every action or planning tool (`Speak before you act ... Never run tools in total silence ...`). It was FORM by the doctrine this floor's own module states - how long a turn is and how many beats it carries - and the shipped card already governs that (`default-companion/card.json`: 「说话紧扣当下真实生活体验，收放自如，不啰嗦不客套」), so an unconditional 'always deliver a spoken remark first' overrode 收放自如 with its opposite. Measured consequence (round46b, 36 minutes over 2 in-game days): 93 prompt turns, 159 assistant messages, 132 bubbles, of which 90 were standalone speech with no tool call in the same message - one bubble every 16 seconds, 1.42 per turn, 1.91 per tool call. The CHARACTER columns are re-derived from the product's builder exactly: `systemChars` 10,664 and the conduct slice 6,831 (7,268 - 437), so its share is 6,831 / 10,664 = 0.6406, recorded as 0.641. The two deltas agree (-437 both) because the deleted text was inside the floor and nowhere else. `envelopeChars`/`envelopeBytes` follow the system string by its own delta (-437: the rule is ASCII, so JSON-escaped characters and UTF-8 bytes move together) with `tools` and `messages` unchanged, which is what makes that the whole envelope's delta. The TOKEN columns were NOT re-measured in this commit and are now stale by 437 characters as well as by everything `remeasured_2026_11_05` describes.",
   }),
   floor: Object.freeze({
     toolCount: 14,
-    // Re-derived from the product's builder by the test itself: 10,829 at `remeasured_2026_11_12`, which is the
-    // 2026-11-11 reading plus the 166 chars of the rewritten body-language rule (`remeasured_2026_11_12` states the
-    // delta and the -1 that preceded it). The token column below is the 2026-11-05 MEASUREMENT, an under-count of a
-    // shorter prompt that is no longer this one.
-    systemChars: 10829,
+    // Re-derived from the product's builder by the test itself: 11,032 at `remeasured_2026_11_12_b` (10,829 plus the
+    // 203 chars naming `express_emote`'s argument in the body-language rule). The token column below is the 2026-11-05
+    // MEASUREMENT, an under-count of a shorter prompt that is no longer this one.
+    systemChars: 11032,
     systemTokens: 5119,
     toolsTokens: 3552,
-    // The recorded envelope plus this change's own JSON-escaped delta (+166): the tool array and the empty message
-    // list are unchanged, so the system string is the whole of it. Not re-measured - see `remeasured_2026_11_12`.
-    envelopeChars: 26125,
-    // The same +166 in UTF-8 bytes: the rewritten rule is ASCII.
-    envelopeBytes: 35434,
+    // The recorded envelope plus this change's own JSON-escaped delta (+203): the tool array and the empty message list
+    // are unchanged, so the system string is the whole of it. Not re-measured - see `remeasured_2026_11_12_b`.
+    envelopeChars: 26328,
+    // The same +203 in UTF-8 bytes: the added clause is ASCII.
+    envelopeBytes: 35637,
     envelopeTokens: 8787,
   }),
   conductBlock: Object.freeze({
-    chars: 6997,
+    chars: 7200,
     tokens: 1227,
-    // The measured slice over the measured prompt: 6,997 / 10,829. Recorded as the quotient, not as a share typed
+    // The measured slice over the measured prompt: 7,200 / 11,032. Recorded as the quotient, not as a share typed
     // separately from the two numbers it divides - the previous recording carried 0.655 against 7,268/11,101.
-    charShareOfSystemPrompt: 0.6461,
+    charShareOfSystemPrompt: 0.6526,
     tokenShareOfSystemPrompt: 0.24,
   }),
   denominator: Object.freeze([

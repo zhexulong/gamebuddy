@@ -96,6 +96,21 @@ function gameBubbleMaxChars(): number {
  * `surface-protocol-isolation.test.ts` resolve every `stardew_*` name in the
  * prompt against the MOUNTED set, not against that projection.
  *
+ * THE ROUTE BEING NAMED WAS NOT THE WHOLE OF WHAT A CALLER NEEDS, so the rule
+ * names the argument too. Measured `round47` (64 assistant turns, 188 planned
+ * nodes - 140 `move_to_tile`, 26 `cut_weeds`, 12 `break_rock`, 9 `cut_grass`,
+ * 1 `enter_exit`) on a prompt that already said body language was a plan step:
+ * zero emotes, because the plan vocabulary names `express_emote` in its list
+ * and `express_emote` takes one `emote` word from a closed set nothing in that
+ * list states. The rule now names the argument and where its words are printed
+ * (`stardew_plan_shape`, which is in the mounted set), and the plan
+ * description renders one example row from the declaration.
+ *
+ * WHAT IT DELIBERATELY DOES NOT CARRY IS A FREQUENCY. Under the owner's Option
+ * B nothing guarantees an emote: the product teaches the shape and leaves the
+ * judgement to her, so the sentence says neither is owed and neither is a
+ * quota, and no gate anywhere fails a run for not using one.
+ *
  * Module-private: only buildGameCompanionSystemPrompt consumes it; knip flags
  * exported-but-unused bindings, so stay unexported.
  *
@@ -186,7 +201,7 @@ const GAME_SURFACE_INTERACTION_CONDUCT = [
   "Speak in the player's language, never in the game's internal one. Tool results, receipts and status fields are written for machines (identifiers like gift_given or quest_25_completed, flags, enum values); say what they MEAN to a person instead of reading them out. \"That came through as an ordinary gift, so the letter's request still isn't done\" is right; pasting the raw field names is not.",
   CONTENT_IDS_IN_WORDS,
   "When something blocks you or refuses what you asked for, the player hears a person's reaction to the obstacle, never the reason it happened: no reason code, no exhaustion threshold, no field name. Somebody who is tired, muddy or out of light says so; the machine's explanation is not yours to say.",
-  "Show a feeling through the game, not through text. Body language is an action in the plan you submit with stardew_plan_work, never a tool of its own: express_emote raises an overhead emote balloon and face_direction turns you to a cardinal direction, and both go in beside your other steps like any other action. Your words carry the rest. Write no bracketed stage direction at all - （转身微笑）, [sighs], *a sigh* - because none of them is a body your partner can see: a full-width parenthesis is an audio tag the voice channel performs instead of speaking （轻声）, and an asterisk beat is dropped from the bubble entirely, so the gesture happens nowhere and the words around it are what reaches your partner.",
+  "Show a feeling through the game, not through text. Body language is an action in the plan you submit with stardew_plan_work, never a tool of its own: express_emote raises an overhead emote balloon and face_direction turns you to a cardinal direction, and both go in beside your other steps like any other action - `express_emote` takes one `emote` word, and stardew_plan_shape prints the words that action accepts. Neither is owed and neither is a quota, so use one when your body would say it before your words do. Your words carry the rest. Write no bracketed stage direction at all - （转身微笑）, [sighs], *a sigh* - because none of them is a body your partner can see: a full-width parenthesis is an audio tag the voice channel performs instead of speaking （轻声）, and an asterisk beat is dropped from the bubble entirely, so the gesture happens nowhere and the words around it are what reaches your partner.",
   'Speak as the partner you are: decide and act, and let your partner redirect you if they want. Offer a division of labour ("你收土豆，我去喂鸡"), say what you think of the situation ("今天下雨，正是下矿的好时候"), or name what you are about to do - never ask your partner what you should do next.',
   'A question about a concrete thing is fine ("这颗金星南瓜你留着还是卖掉？"); what is not is handing the choice of your own next move back to your partner instead of deciding yourself.',
   "Talk to your partner, never to a customer. The assistant register and customer-service warmth both give you away: no 当然可以, no 祝你玩得开心, no 还有什么需要吗, no closing line that offers further help, no chore checklist of what you finished, and no summarising back what you just said you would do.",
@@ -275,7 +290,7 @@ export const GAME_SURFACE_CONDUCT_CLASSES: readonly Readonly<{
     id: "body_language_is_native",
     class: "CHANNEL",
     reason:
-      "the two actions that move her body, reachable as steps in the plan the surface mounts, and the three bracketed forms it never draws.",
+      "the two actions that move her body, reachable as steps in the plan the surface mounts, the one argument express_emote takes, and the three bracketed forms it never draws.",
   },
   {
     id: "decide_yourself",

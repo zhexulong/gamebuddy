@@ -247,3 +247,42 @@ test("the recorded denominator is the geometry function's own arithmetic, not a 
     `the recorded floor is ${(share * 100).toFixed(1)}% of usableSoft, but the reading states ${(primary.floorShare * 100).toFixed(1)}%`,
   );
 });
+
+/**
+ * The body-language rule names the route the surface really has, and the argument that route requires.
+ *
+ * <p>
+ * Two measured defects sit behind this, one turn each. `round46b` (2026-11-11): the rule sent body language to
+ * `stardew_express_emote`, a per-action tool a plan surface drops, so it named a route the Agent was never handed -
+ * `action-registry-consistency.test.ts` holds that half against the mounted set. `round47` (2026-11-12, 64 assistant
+ * turns): the rule named the plan step and the run still submitted zero emotes out of 188 planned nodes, because the
+ * plan vocabulary lists the action id and says nothing about the one `emote` word it takes - the one part of the call a
+ * caller cannot infer.
+ * </p>
+ *
+ * <p>
+ * The ARGUMENT is read from the Mod's own descriptor (`SURFACE`, the emitted action surface), not typed here: an action
+ * that grows a second argument joins this gate without an edit, and a rule that names an argument the action does not
+ * declare is refused by name. What is asserted about the shape is only that the rule states it - never a frequency,
+ * because nothing guarantees an emote and no run is failed for not using one.
+ * </p>
+ */
+test("the body-language rule names the plan route and the argument that route declares", () => {
+  const rule = conductBlock(GAME_PROMPT)
+    .split("\n")
+    .find((line) => line.includes("Body language is an action in the plan"));
+  assert.ok(rule !== undefined, "the Game prompt must still carry a body-language rule to hold");
+  assert.ok(
+    rule.includes("stardew_plan_work"),
+    "the rule must name the plan builder, which is the route the live Game surface mounts",
+  );
+  const emote = SURFACE.find((action) => action.actionId === "express_emote");
+  assert.ok(emote !== undefined, "express_emote is published, or the rule names an action the surface does not have");
+  const declared = Object.keys(emote.argumentSchema ?? {});
+  assert.ok(declared.length > 0, "blocked: express_emote declares no argument, so this gate examines nothing");
+  for (const argument of declared)
+    assert.ok(
+      rule.includes(`\`${argument}\``),
+      `the rule teaches express_emote without naming its \`${argument}\` argument, so the one call it shows is refused as loop_do_argument_missing:${argument}`,
+    );
+});
