@@ -156,13 +156,15 @@ test.describe("the shell is accessible in every appearance and every language", 
         [],
         `the ${cell.appearance}/${cell.locale} shell leaves no rule undecided`,
       );
-      assert.deepEqual(
+      // Written as an `expect` rather than a bare `assert` for the reason `check:assertion-substance`
+      // exists: the verdict is a value this gate claims, and a journey whose whole claim reads as
+      // "something is visible" is counted as debt by the ratchet.
+      expect(
         observed.violations,
-        RECORDED_VIOLATIONS[cell.appearance],
         `the ${cell.appearance}/${cell.locale} shell reports exactly the violations this gate records - none, in ` +
           "either appearance; a new one is recorded in RECORDED_VIOLATIONS with the rule, the impact and the " +
           "selector it fires on, and not tolerated",
-      );
+      ).toEqual(RECORDED_VIOLATIONS[cell.appearance]);
     });
   }
 });
@@ -286,5 +288,7 @@ test("every notice reads its own ink over its own wash, in both appearances", as
   const painted = [...new Set([...stylesheet.matchAll(/:root\[data-theme="([^"]+)"\]/gu)].map((match) => match[1]))];
   assert.deepEqual(painted.sort(), [...APPEARANCES].sort(), "this test measures every appearance the stylesheet paints");
 
-  assert.deepEqual(failures, [], "every notice's own ink reads at AA over its own wash, in both appearances");
+  // An `expect` for the same reason the four cells' verdict is one: the claim is a value, and the
+  // substance ratchet has to be able to read it.
+  expect(failures, "every notice's own ink reads at AA over its own wash, in both appearances").toEqual([]);
 });
