@@ -245,6 +245,47 @@ public sealed class FishingCatchableTests
         asked.Should().Equal(new[] { 0.1, 0.9 }, "only rows that declare a chance are asked about, and each once");
     }
 
+    [Fact]
+    public void TheNearestBlockedSpeciesIsTheOneWhoseFactIsCheapestToChange()
+    {
+        // A season is weeks away; a cast from another tile is seconds. A refusal that named the season would send her back
+        // tomorrow to the same answer.
+        FishingCatchReport report = FishingCatchable.CatchableNow(
+            Moment(),
+            new[]
+            {
+                Spawn(Carp, season: "Summer", fishRow: FishRow()),
+                Spawn(Pufferfish, minimumDepth: 9, fishRow: FishRow()),
+            },
+            MayProduce);
+
+        FishingSpeciesRow nearest = report.NearestBlocked()!;
+        nearest.Species.Should().Be(Pufferfish);
+        nearest.BlockedCode.Should().Be($"needs_deeper_water:{Pufferfish}:9:0");
+        report.NearestBlocked()!.BlockedCode.Should().Be(nearest.BlockedCode, "ties are broken by species, so two runs answer the same");
+    }
+
+    [Fact]
+    public void AnAnswerWithSomethingCatchableNearestNothingAndARefusalAlwaysNamesSomething()
+    {
+        FishingCatchable.CatchableNow(Moment(), new[] { Spawn(Carp, fishRow: FishRow()) }, MayProduce)
+            .NearestBlocked().Should().BeNull("there is nothing to change");
+
+        FishingCatchable.NotMeasured("locations_unreadable").NearestBlocked().Should().BeNull(
+            "an unmeasured answer must not name a fact it did not read");
+
+        FishingCatchable
+            .CatchableNow(Moment(), new[] { Spawn(Carp, fishRow: FishRow(timeSpans: "600 900")) }, MayProduce)
+            .NearestBlocked().Should().NotBeNull("a refusal that names nothing cannot be acted on");
+    }
+
+    [Fact]
+    public void ACodeWithNoRankingThrowsRatherThanSortingLast()
+    {
+        Action unknown = () => FishingCatchable.ChangeCost("a_code_nobody_ranked");
+        unknown.Should().Throw<InvalidOperationException>("an unranked block would silently become the least worth naming");
+    }
+
     // ------------------------------------------------------------------
     // The species row's three early returns, which a naive reader gets wrong in the unsafe direction.
     // ------------------------------------------------------------------

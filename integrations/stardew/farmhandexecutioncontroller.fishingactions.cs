@@ -1,5 +1,7 @@
 using System.Globalization;
+using GameBuddy.Stardew.Core;
 using Microsoft.Xna.Framework;
+using StardewModdingAPI;
 using StardewValley;
 using StardewValley.Menus;
 using StardewValley.Tools;
@@ -147,6 +149,12 @@ internal sealed partial class ExecutionManager
         // and the actor move during the walk.
         if (this.RefuseCastingRig(requestId, executionId) is LocalExecutionReceipt rigRefusal)
             return rigRefusal;
+        // ASK THE WORLD BEFORE THE WALK AND BEFORE THE CAST. The derivation reads the game's own two fish tables - the
+        // location's spawn rows and each species' Data/Fish row, joined on the RAW item id (GameLocation.cs:14044) - and
+        // answers whether anything in this place MAY be produced now. "May", never "will": the engine rolls twice per row,
+        // so the answer is the set of species the conditions admit, and an empty set means a cast is a wasted minute.
+        if (this.RefuseNothingCatchable(requestId, executionId, location, targetX, targetY) is LocalExecutionReceipt nothingCatchable)
+            return nothingCatchable;
         if (!IsTileWithinChebyshevRadius(Game1.player, targetX, targetY, 1))
             return this.TryBeginToolApproach(
                 requestId,
@@ -197,6 +205,80 @@ internal sealed partial class ExecutionManager
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "out_of_stamina",
                 $"stamina={Game1.player.Stamina.ToString("0.####", CultureInfo.InvariantCulture)};required=more_than_1;blocked_by={new RefusalLayerToken(RefusalLayerKind.Stamina, "one_cast").Format()}");
         return null;
+    }
+
+    /// <summary>
+    /// Whether a cast here could produce anything at all, asked of the SAME derivation the `data` lookup's `LocationFish`
+    /// row answers with - one evaluation, two consumers.
+    ///
+    /// <para>
+    /// WHY THIS IS NOT THE WATCHDOG'S JOB. A cast whose every species the conditions exclude still opens the engine's line,
+    /// waits out the bite, plays the win path and settles as a catch of something else - a minute bought for nothing. The
+    /// watchdog stays as the fallback for the case this cannot judge; the judgement itself happens here, at admission, in
+    /// zero milliseconds.
+    /// </para>
+    ///
+    /// <para>
+    /// SOUND-OR-SILENT. A refusal is minted only from a MEASURED answer whose every row is blocked
+    /// (<c>NothingCatchable() == true</c>). An unreadable premise - either table missing, no location data, a level nobody
+    /// could read - is admitted and logged as <c>not measured: reason</c>, because a false refusal blocks the capability and a
+    /// missed refusal costs the minute we are trying to remove.
+    /// </para>
+    ///
+    /// <para>
+    /// THE EVIDENCE NAMES THE CHEAPEST CHANGE, not the absence. "Nothing bites here" is what she already suspects; the fact
+    /// worth carrying is the one she could act on - the species closest to being catchable and the condition that blocks it -
+    /// and then the blocked rows themselves, so a reader can see the whole population rather than one sample of it.
+    /// </para>
+    /// </summary>
+    private LocalExecutionReceipt? RefuseNothingCatchable(string requestId, string executionId, GameLocation location, int targetX, int targetY)
+    {
+        FishingCatchableQuery.FishingCatchAnswer answer = FishingCatchableQuery.Answer(Game1.player, string.Empty, targetX, targetY);
+        if (!answer.Report.Measured)
+            this.monitor.Log(
+                $"[fish-admission] admitted; not measured: {answer.Report.NotMeasuredReason ?? "unspecified"}; target={targetX},{targetY};",
+                LogLevel.Trace);
+        if (NothingCatchableVerdict(answer.Report, answer.Moment, location.NameOrUniqueName) is not { } verdict)
+            return null;
+        return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, verdict.Code, verdict.Evidence);
+    }
+
+    /// <summary>
+    /// The guard's whole decision, as data: the refusal code and the evidence that carries the cheapest change, or null when
+    /// the cast is admitted.
+    ///
+    /// <para>
+    /// WHY THIS IS ITS OWN MEMBER. The decision is the feature and the phase it runs in cannot be driven headless - it needs
+    /// a loaded world, a farmer and a water tile - so the choice is split out the way `CreditedCatchTerminal` was: the three
+    /// exclusion classes (a season, an hour, a level) are asserted against this member directly, with a real
+    /// <see cref="FishingCatchReport"/> the shipped derivation produced, and the receipt around it is one call to
+    /// `RememberTerminal`.
+    /// </para>
+    ///
+    /// <para>
+    /// SOUND-OR-SILENT. Only a MEASURED answer whose every row is blocked may refuse; <c>NothingCatchable()</c> answers null
+    /// on an unreadable premise and null is not true, so the cast is admitted. The evidence names the nearest change first,
+    /// then the blocked rows themselves, so the answer is a set with a next step rather than a verdict.
+    /// </para>
+    /// </summary>
+    internal static (string Code, string Evidence)? NothingCatchableVerdict(
+        FishingCatchReport report, FishingMoment? moment, string location)
+    {
+        if (report.NothingCatchable() != true) return null;
+        FishingSpeciesRow? nearest = report.NearestBlocked();
+        string evidence = string.Format(
+            CultureInfo.InvariantCulture,
+            "location={0};season={1};time={2};raining={3};level={4};depth={5};examined={6};nearest={7};blocked={8}",
+            location,
+            moment?.Season ?? "unreadable",
+            moment?.TimeOfDay ?? -1,
+            moment?.Raining ?? false,
+            moment?.FishingLevel ?? -1,
+            moment?.WaterDepth?.ToString(CultureInfo.InvariantCulture) ?? "unmeasured",
+            report.Examined,
+            nearest is null ? "none" : $"{nearest.Species}={nearest.BlockedCode}",
+            report.DescribeBlocked(3));
+        return ($"nothing_catchable_here:{location}", evidence);
     }
 
     /// <summary>

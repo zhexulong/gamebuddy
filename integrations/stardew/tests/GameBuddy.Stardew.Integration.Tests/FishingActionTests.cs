@@ -5,6 +5,7 @@ using System.IO;
 using System.Linq;
 using System.Reflection;
 using FluentAssertions;
+using GameBuddy.Stardew.Core;
 using GameBuddy.Stardew.Core.Models;
 using GameBuddy.Stardew.Core.Policy;
 using GameBuddy.Stardew.Handlers;
@@ -660,6 +661,148 @@ public sealed class FishingActionTests
             .GetValue(tool)!;
         attachments.GetType().GetMethod("SetCount")!.Invoke(attachments, new object[] { slots });
     }
+
+    // ------------------------------------------------------------------
+    // THE ADMISSION GUARD: one derivation, two consumers.
+    //
+    // The three exclusion classes below are asserted against `NothingCatchableVerdict`, the guard's whole decision, fed a REAL
+    // `FishingCatchReport` from the shipped derivation - the same function the `data` lookup's `LocationFish` row answers
+    // with. The phase itself (a loaded world, a farmer, a water tile) cannot be driven headless, which is why the decision is
+    // its own member, exactly as `CreditedCatchTerminal` is.
+    // ------------------------------------------------------------------
+
+    /// <summary>A species the season excludes is refused, and the season that would change it is named.</summary>
+    [Fact]
+    public void TheGuardRefusesASeasonAndNamesIt()
+    {
+        (string Code, string Evidence)? refused = ExecutionManager.NothingCatchableVerdict(
+            GuardReport(GuardMoment(), season: "Summer"), GuardMoment(), "Forest");
+        refused.Should().NotBeNull("nothing in this table can be caught in spring");
+        (string Code, string Evidence) verdict = refused!.Value;
+
+        verdict.Code.Should().Be("nothing_catchable_here:Forest");
+        verdict.Evidence.Should().Contain("nearest=(O)128=season_mismatch:(O)128:Summer");
+        verdict.Evidence.Should().Contain("examined=1");
+        verdict.Evidence.Should().Contain("season=Spring");
+    }
+
+    /// <summary>A species whose window excludes this hour is refused, and the window is named.</summary>
+    [Fact]
+    public void TheGuardRefusesAnHourAndNamesTheWindow()
+    {
+        (string Code, string Evidence)? refused = ExecutionManager.NothingCatchableVerdict(
+            GuardReport(GuardMoment(timeOfDay: 1200), timeSpans: "600 900"), GuardMoment(timeOfDay: 1200), "Forest");
+        refused.Should().NotBeNull();
+        (string Code, string Evidence) verdict = refused!.Value;
+
+        verdict.Code.Should().Be("nothing_catchable_here:Forest");
+        verdict.Evidence.Should().Contain("time_outside_window:(O)128:600-900");
+        verdict.Evidence.Should().Contain("time=1200");
+    }
+
+    /// <summary>A species the level excludes is refused, and both numbers are named so the gap is arithmetic.</summary>
+    [Fact]
+    public void TheGuardRefusesALevelAndNamesBothNumbers()
+    {
+        (string Code, string Evidence)? refused = ExecutionManager.NothingCatchableVerdict(
+            GuardReport(GuardMoment(level: 2), minimumLevel: 9), GuardMoment(level: 2), "Forest");
+        refused.Should().NotBeNull();
+        (string Code, string Evidence) verdict = refused!.Value;
+
+        verdict.Code.Should().Be("nothing_catchable_here:Forest");
+        verdict.Evidence.Should().Contain("skill_too_low:(O)128:9:2");
+        verdict.Evidence.Should().Contain("level=2");
+    }
+
+    /// <summary>Something catchable, and the guard says nothing: the refusal is only for an empty set.</summary>
+    [Fact]
+    public void TheGuardAdmitsWhenSomethingMayBeProduced()
+    {
+        ExecutionManager.NothingCatchableVerdict(GuardReport(GuardMoment()), GuardMoment(), "Forest")
+            .Should().BeNull("a species the conditions admit is a reason to cast");
+    }
+
+    /// <summary>
+    /// An unreadable premise ADMITS: a false refusal blocks the capability, and `NothingCatchable()` answers null rather than
+    /// false for an answer nobody measured.
+    /// </summary>
+    [Fact]
+    public void TheGuardAdmitsAnUnreadablePremise()
+    {
+        ExecutionManager
+            .NothingCatchableVerdict(FishingCatchable.NotMeasured("locations_unreadable"), null, "Forest")
+            .Should().BeNull("not measured is not a no");
+    }
+
+    /// <summary>
+    /// Gate: the guard asks BEFORE the walk and BEFORE the cast, and it never reads the fish tables itself.
+    ///
+    /// The ordering is the 60 seconds: a refusal after the approach leg is a distance rather than a reason, and a refusal
+    /// after `rod.DoFunction` has spent the stamina and started the line is the watchdog's job. The absence of a second table
+    /// read is the one-evaluation rule: `DataLoader.Fish` and `Game1.locationData` live in `FishingCatchableQuery` only, so
+    /// the set the lookup prints and the set the guard refuses on cannot diverge.
+    /// </summary>
+    [Fact]
+    public void TheGuardAsksTheWorldBeforeItWalksOrCastsAndReadsNoTableItself()
+    {
+        string source = FishingSource();
+
+        int asked = source.IndexOf("RefuseNothingCatchable(requestId, executionId, location, targetX, targetY)", StringComparison.Ordinal);
+        int walked = source.IndexOf("TryBeginToolApproach(", StringComparison.Ordinal);
+        int cast = source.IndexOf("rod.DoFunction(", StringComparison.Ordinal);
+        asked.Should().BeGreaterThan(0, "admission must ask the derivation");
+        asked.Should().BeLessThan(walked, "a refusal after the walk is a distance, not a reason");
+        asked.Should().BeLessThan(cast, "and after the cast it is the watchdog's job, not this one's");
+
+        source.Should().NotContain("DataLoader.Fish", "the handler must not read the species table a second time");
+        source.Should().NotContain("Game1.locationData", "nor the location table");
+        source.Should().Contain("FishingCatchableQuery.Answer(Game1.player, string.Empty, targetX, targetY)");
+        source.Should().Contain("nothing_catchable_here:");
+    }
+
+    /// <summary>The fixed report the three exclusion classes are asserted on: one species, one spawn row.</summary>
+    private static FishingCatchReport GuardReport(
+        FishingMoment moment,
+        string season = "Spring",
+        string timeSpans = "600 1900",
+        int minimumLevel = 0) =>
+        FishingCatchable.CatchableNow(
+            moment,
+            new[]
+            {
+                new FishingSpawn(
+                    "128",
+                    Species: "(O)128",
+                    DisplayName: "Pufferfish",
+                    Season: season,
+                    FishAreaId: null,
+                    MinimumFishingLevel: minimumLevel,
+                    MinimumDistanceFromShore: 0,
+                    MaximumDistanceFromShore: -1,
+                    RequiresMagicBait: false,
+                    IgnoresFishDataRequirements: false,
+                    CatchLimit: -1,
+                    CaughtSoFar: 0,
+                    SpeciesIsItemQuery: false,
+                    FishRow: $"Pufferfish/80/floater/1/36/{timeSpans}/spring summer//0/0/0.5/0.1/{minimumLevel}/false"),
+            },
+            static chance => chance > 0.0);
+
+    private static FishingMoment GuardMoment(int timeOfDay = 1200, int level = 10) =>
+        new(
+            "Forest",
+            "Spring",
+            1,
+            timeOfDay,
+            Raining: false,
+            level,
+            FishAreaId: null,
+            MagicBait: false,
+            TrainingRod: false,
+            FirstCatch: false,
+            WaterDepth: 2,
+            PlayerTile: new FishingTile(10, 10),
+            BobberTile: new FishingTile(11, 10));
 
     /// <summary>The shipped partial, read from the repository root the test assembly was built inside.</summary>
     private static string FishingSource()

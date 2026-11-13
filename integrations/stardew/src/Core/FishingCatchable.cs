@@ -175,6 +175,67 @@ public static class FishingCatchable
     }
 
     /// <summary>
+    /// The blocked species whose blocking fact is CHEAPEST TO CHANGE, or null when something may be produced or the answer
+    /// was not measured.
+    ///
+    /// <para>
+    /// This is what makes a refusal actionable rather than merely true: "nothing bites here" is what she already suspects,
+    /// and the one fact worth naming is the one she could change. The ranking below is a product judgement about how much
+    /// GAME TIME the change costs - not the engine's filter order - and it is declared once, here.
+    /// </para>
+    /// </summary>
+    public static FishingSpeciesRow? NearestBlocked(this FishingCatchReport report)
+    {
+        ArgumentNullException.ThrowIfNull(report);
+        FishingSpeciesRow? nearest = null;
+        int best = int.MaxValue;
+        foreach (FishingSpeciesRow row in report.Blocked)
+        {
+            int cost = ChangeCost(row.BlockedCode);
+            if (cost > best) continue;
+            if (cost == best && nearest is not null
+                && string.CompareOrdinal(row.Species, nearest.Species) >= 0) continue;
+            best = cost;
+            nearest = row;
+        }
+        return nearest;
+    }
+
+    /// <summary>
+    /// The cost of the change a code names, in game time: standing elsewhere is seconds, a level is an afternoon, a season is
+    /// weeks. A code this table does not know is a programming error rather than an ordering fact, so it THROWS: a silent
+    /// last place would rank an unknown block as the least worth mentioning, which is exactly backwards for a new fact.
+    /// </summary>
+    public static int ChangeCost(string code)
+    {
+        foreach ((string prefix, int cost) in ChangeCosts)
+            if (code.StartsWith(prefix, StringComparison.Ordinal)) return cost;
+        throw new InvalidOperationException("unranked_fishing_block: " + code);
+    }
+
+    /// <summary>
+    /// Cheapest first. Declared once, so a new blocking fact must state what changing it costs before it can refuse.
+    /// </summary>
+    private static readonly (string Prefix, int Cost)[] ChangeCosts = new[]
+    {
+        ("fish_area_mismatch", 1),
+        ("bobber_position_excluded", 1),
+        ("player_position_excluded", 1),
+        ("needs_deeper_water", 2),
+        ("needs_shallower_water", 2),
+        ("first_catch_accepts_only_tutorial_fish", 3),
+        ("training_rod_too_weak", 4),
+        ("requires_magic_bait", 4),
+        ("chance_never", 4),
+        ("time_outside_window", 5),
+        ("weather_mismatch", 6),
+        ("skill_too_low", 7),
+        ("season_mismatch", 8),
+        ("catch_limit_reached", 9),
+        ("fish_data_malformed", 9),
+    };
+
+    /// <summary>
     /// The engine's last line when no row matched: <c>getFish</c> returns <c>ItemRegistry.Create("(O)168")</c>
     /// (<c>GameLocation.cs:13874</c>).
     ///

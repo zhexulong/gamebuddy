@@ -29,6 +29,7 @@ public sealed class FishingCatchableReaderTests
 {
     private const string ReaderPath = "integrations/stardew/FishingCatchableQuery.cs";
     private const string ContentDataPath = "integrations/stardew/ContentDataQuery.cs";
+    private const string ModulePath = "integrations/stardew/src/Core/FishingCatchable.cs";
     private const string ProtocolPath = "host/src/protocol.ts";
 
     /// <summary>
@@ -123,6 +124,36 @@ public sealed class FishingCatchableReaderTests
         source.Should().Contain("(\"reason\", report.NotMeasuredReason ?? string.Empty)", "not measured says why");
         source.Should().Contain("(\"depthApplied\", report.DepthApplied)", "the answer says which question it answered");
         source.Should().Contain("FishingCatchable.JunkFallbackSpecies", "and what the engine still yields when nothing matches");
+    }
+
+    /// <summary>
+    /// Every blocking code the module can mint has a declared change cost, so a new fact cannot arrive unranked.
+    ///
+    /// The population is the module's OWN string literals - the codes it returns - read from the source rather than listed
+    /// here, so the day a sixteenth block is written this gate fails before it can be the one fact a refusal never names.
+    /// </summary>
+    [Fact]
+    public void EveryBlockingCodeTheModuleCanMintHasADeclaredCost()
+    {
+        string source = StripComments(Read(ModulePath));
+        MatchCollection minted = Regex.Matches(source, "\\$\"(?<code>[a-z][a-z0-9_]*):");
+        minted.Count.Should().BeGreaterThan(10, "the population is the module's own codes, and a shrinking one must not read as green");
+
+        foreach (Match match in minted)
+        {
+            string code = match.Groups["code"].Value;
+            bool ranked = true;
+            try
+            {
+                GameBuddy.Stardew.Core.FishingCatchable.ChangeCost(code);
+            }
+            catch (InvalidOperationException)
+            {
+                ranked = false;
+            }
+
+            ranked.Should().BeTrue($"`{code}` is minted by the module, so a refusal may have to rank it");
+        }
     }
 
     private static string Read(string relativePath)
