@@ -5,7 +5,7 @@
 // shipped at rather than described here.
 //
 // red-proof: inject  the footprint entry's `parityTest` deleted from the registry -> `rederivation_without_parity:
-//   Tool.tilesAffected:host/src/body-program-packing.ts`, asserted by "a declared entry with no parity test"
+//   Tool.tilesAffected:<our site>`, asserted by "a declared entry with no parity test"
 //   (tools/check-rederivation-parity.test.mjs)
 // red-proof: history  the fifth `GetChance` argument as it shipped at e882b765, bound once outside the row loop, is
 //   named at `integrations/stardew/FishingCatchableQuery.cs:190` - the argument's own line, not the call's - by

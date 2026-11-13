@@ -27,8 +27,7 @@
  *      DOTTED invocation (`row.GetChance(`) is a call site, so a declaration or an override is not a site.
  *
  * red-proof: inject  the footprint entry's `parityTest` deleted from the registry -> `rederivation_without_parity:
- *   Tool.tilesAffected:host/src/body-program-packing.ts`, verdict blocked
- *   (tools/check-rederivation-parity.test.mjs)
+ *   Tool.tilesAffected:<our site>`, verdict blocked (tools/check-rederivation-parity.test.mjs)
  * red-proof: history  today's shipped reader - the fifth `GetChance` argument bound once outside the row loop
  *   (`integrations/stardew/FishingCatchableQuery.cs:190` at e882b765) - read by the scan -> `rederivation_undeclared:
  *   integrations/stardew/FishingCatchableQuery.cs:190` (tools/check-rederivation-parity.test.mjs)
