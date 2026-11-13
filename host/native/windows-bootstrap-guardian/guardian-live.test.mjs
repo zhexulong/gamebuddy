@@ -567,6 +567,67 @@ test("naturally exited role contains without a drain timeout or false active sta
   } finally { await session.close(); await removeRoot(root); }
 });
 
+test("a role that ends on its own publishes its native exit before the reply to the next command", { ...winOnly, timeout: 30_000 }, async () => {
+  // The Guardian's public channel carries two kinds of frame, and this drives the
+  // producing half the Desktop reader was already written for. The exit is
+  // observed at the command boundary, so a controller that sends nothing after a
+  // death learns of it only on its next command - the assertion before `contain`
+  // is that cost, stated where a reader will meet it.
+  const root = await temporaryRoot("role-exit-published");
+  const session = await startGuardianSession();
+  try {
+    const report = resolve(root, "exit.txt");
+    await session.launch("player_host", ["--signal", report, "--exit-after-report"]);
+    await waitForFile(report);
+    await delay(250);
+    assert.deepEqual(session.publicEvents, [], "a death was published with no command to publish it in front of");
+    await session.contain("player_host");
+    assert.deepEqual(session.publicEvents, [{ operation: "role_exited", role: "player_host", exitCode: 0 }], JSON.stringify(session.diagnostics()));
+  } finally { await session.close(); await removeRoot(root); }
+});
+
+test("explicit containment still succeeds after a role published its own exit", { ...winOnly, timeout: 30_000 }, async () => {
+  // This is the #506 invariant on the wire: the game died, the Guardian said so,
+  // and the product's own endgame still has to work for that session. It does,
+  // because the death is a frame in front of the reply rather than instead of it.
+  const root = await temporaryRoot("role-exit-then-contain");
+  const session = await startGuardianSession();
+  try {
+    const report = resolve(root, "exit.txt");
+    await session.launch("player_host", ["--signal", report, "--exit-after-report"]);
+    await waitForFile(report);
+    await delay(250);
+    session.sendPublic(session.publicCommand("contain_role", "player_host"));
+    assert.equal(await session.nextPublicResult(), "role_contained");
+    assert.equal(session.publicEvents.length, 1, JSON.stringify(session.diagnostics()));
+    assert.equal(session.exitCode(), null, "the Guardian ended the session instead of answering the containment");
+  } finally { await session.close(); await removeRoot(root); }
+});
+
+test("a role the Guardian contained on purpose publishes no death", { ...winOnly, timeout: 30_000 }, async () => {
+  // The other direction of the same policy, and the one that would make #506
+  // meaningless if it were wrong: a death we caused is not an unexpected death.
+  // Both roles end here by explicit containment, and each containment's reply is
+  // an observation point that would carry the event if it were published.
+  const root = await temporaryRoot("role-exit-suppressed");
+  const session = await startGuardianSession();
+  const playerPidFile = resolve(root, "player.pid");
+  let playerPid = null;
+  try {
+    await session.launch("player_host", ["--heartbeat", resolve(root, "player-heartbeat.txt"), "--pid-file", playerPidFile]);
+    await session.launch("ai_client", ["--heartbeat", resolve(root, "ai-heartbeat.txt")]);
+    await waitForFile(playerPidFile);
+    playerPid = Number(await readFile(playerPidFile, "utf8"));
+    await session.contain("ai_client");
+    await session.contain("player_host");
+    assert.deepEqual(session.publicEvents, [], JSON.stringify(session.diagnostics()));
+    assert.deepEqual(session.publicResults, ["armed", "role_active", "role_active", "role_contained", "role_contained"]);
+  } finally {
+    try { await terminateAndWaitForFixtureExit(playerPid ?? await readPidIfPresent(playerPidFile)); }
+    finally { await session.close(); await removeRoot(root); }
+  }
+});
+
 test("role environment excludes Guardian control pipe and token", { ...winOnly, timeout: 15_000 }, async () => {
   const root = await temporaryRoot("environment"); const session = await startGuardianSession();
   try {
@@ -859,7 +920,23 @@ async function startUnarmedGuardian({ controlPipe = `GameBuddyGuardian-${crypto.
   const testBarrierEnvironment = testBarrierDirectory === undefined ? {} : { GAMEBUDDY_GUARDIAN_TEST_BARRIER_DIRECTORY: testBarrierDirectory, GAMEBUDDY_GUARDIAN_TEST_BARRIER_PHASE: testBarrierPhase };
   const child = spawn(executable, [], { cwd: projectRoot, windowsHide: true, shell: false, env: { ...process.env, GAMEBUDDY_GUARDIAN_MODE: "resident", GAMEBUDDY_GUARDIAN_CONTROL_PIPE: controlPipe, GAMEBUDDY_GUARDIAN_CONTROL_TOKEN: token, ...testBarrierEnvironment }, stdio: ["pipe", "pipe", "pipe"] });
   const publicResults = [];
-  const nextOutputLine = lineReader(child.stdout, (line) => { try { publicResults.push(JSON.parse(line).result); } catch { publicResults.push("invalid"); } });
+  const publicEvents = [];
+  const replies = [];
+  const replyWaiters = [];
+  const deliverReply = (result) => { if (replyWaiters.length !== 0) replyWaiters.shift()(result); else replies.push(result); };
+  // The public channel carries two kinds of frame: a reply to the command just
+  // written, and the role exit the Guardian publishes in front of that reply.
+  // Reading the next line as the reply would report an event as a failed
+  // command, which is the defect the Desktop reader exists to prevent.
+  // The reader this returns is deliberately unused: the handler delivers every
+  // frame to its own queue, so nothing waits on this one.
+  lineReader(child.stdout, (line) => {
+    let frame;
+    try { frame = JSON.parse(line); } catch { publicResults.push("invalid"); deliverReply("invalid"); return; }
+    if (frame.operation === "role_exited") { publicEvents.push(frame); return; }
+    publicResults.push(frame.result);
+    deliverReply(frame.result);
+  });
   let stderr = "";
   child.stderr.on("data", (chunk) => { stderr += String(chunk); });
   let socket; let nextPrivateLine; let activeArmBinding;
@@ -867,13 +944,13 @@ async function startUnarmedGuardian({ controlPipe = `GameBuddyGuardian-${crypto.
   const armBinding = (overrides = {}) => ({ token, guardianInstanceId, guardianEpoch: 1, attemptId, revision: crypto.randomUUID(), leaseName: `Local\\Lease-${crypto.randomUUID()}`, playerJobName: `Local\\Player-${crypto.randomUUID()}`, aiJobName: `Local\\Ai-${crypto.randomUUID()}`, approvedExecutable: fixture, ...overrides });
   const plan = (role, arguments_, overrides = {}) => ({ guardianInstanceId, guardianEpoch: 1, attemptId, planId: crypto.randomUUID(), role, deadlineUnixMs: Date.now() + 30_000, executable: fixture, cwd: projectRoot, arguments: arguments_, environment: PATH_ENVIRONMENT, ...overrides });
   return {
-    publicResults, publicCommand, armBinding, plan,
+    publicResults, publicEvents, publicCommand, armBinding, plan,
     connect: async () => await connectPipe(`\\\\.\\pipe\\${controlPipe}`, child),
     setSocket(value) { socket = value; nextPrivateLine = lineReader(socket); },
     setActiveArmBinding(value) { activeArmBinding = Object.freeze({ ...value }); },
     activeArmBinding() { if (activeArmBinding === undefined) throw new Error("guardian arm binding unavailable"); return activeArmBinding; },
     nextPrivateLine: async () => await nextPrivateLine(),
-    nextPublicResult: async () => JSON.parse(await nextOutputLine()).result,
+    nextPublicResult: async () => replies.length !== 0 ? replies.shift() : new Promise((resolveReply) => replyWaiters.push(resolveReply)),
     sendPublic(command) { child.stdin.write(JSON.stringify(command) + "\n"); },
     endPublicInput() { child.stdin.end(); },
 

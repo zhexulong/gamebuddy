@@ -47,10 +47,23 @@ internal static class Program
             GuardianPrivateLaunchIngress.ArmBinding? armBinding = null;
             GuardianProtocol.Correlation? activeCorrelation = null;
             var launchedRoles = new HashSet<GuardianProtocol.Role>();
+            var reportedExits = new HashSet<GuardianProtocol.Role>();
             while (true)
             {
                 var line = await publicFrames.Reader.ReadAsync().ConfigureAwait(false);
                 if (line is null) { closing.Cancel(); break; }
+                // A role that ended while we still held it for use is a death this
+                // controller did not cause, so it is published in front of this
+                // command's reply rather than instead of it. The publication
+                // boundary is the command read, not the death itself: a controller
+                // that sends nothing learns of the death when it next sends a
+                // command. A role we ended ourselves never reaches this line with a
+                // handle to report - contain_role terminates and releases the role
+                // in one step before answering, and the EOF drain of AI happens
+                // after this loop - which is what keeps an explicit endgame from
+                // being published as the game having died (#506).
+                await PublishRoleExitAsync(output, GuardianProtocol.Role.PlayerHost, player, reportedExits).ConfigureAwait(false);
+                await PublishRoleExitAsync(output, GuardianProtocol.Role.AiClient, ai, reportedExits).ConfigureAwait(false);
                 var command = GuardianProtocol.Parse(line);
                 if (command.Operation == "arm_attempt")
                 {
@@ -176,6 +189,20 @@ internal static class Program
         }
         catch { return Fail(); }
         finally { gate?.Dispose(); ingress?.Dispose(); }
+    }
+
+    /**
+     * Publishes a role's own exit, exactly once per role.
+     *
+     * It runs on the command loop and only there, so the event and the reply that
+     * follows it are written by one thread and cannot interleave into half a line.
+     */
+    private static async Task PublishRoleExitAsync(Stream output, GuardianProtocol.Role role, WindowsRoleLauncher.LaunchedRole? launched, HashSet<GuardianProtocol.Role> reported)
+    {
+        if (launched is null || reported.Contains(role)) return;
+        if (!WindowsRoleLauncher.TryReadExitCode(launched, out var exitCode)) return;
+        reported.Add(role);
+        await WriteAsync(output, GuardianProtocol.RoleExit(role, exitCode)).ConfigureAwait(false);
     }
 
     private static async Task ReadPublicFramesAsync(Stream stream, ChannelWriter<byte[]?> frames, CancellationTokenSource closing, ResidentGuardianStateGate stateGate)

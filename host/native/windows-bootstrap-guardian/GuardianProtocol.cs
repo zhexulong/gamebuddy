@@ -43,12 +43,24 @@ internal static class GuardianProtocol
         return result;
     }
 
-    private static Role RequiredRole(JsonElement root, string name) => RequiredString(root, name) switch
+    private static Role RequiredRole(JsonElement root, string name)
     {
-        "player_host" => Role.PlayerHost,
-        "ai_client" => Role.AiClient,
-        _ => throw Invalid(),
+        var value = RequiredString(root, name);
+        foreach (var pair in RoleNames) if (pair.Value == value) return pair.Key;
+        throw Invalid();
+    }
+
+    /// <summary>
+    /// The one spelling of each role's wire name. Parsing and publishing read it,
+    /// so a role cannot be named one way in a command and another in an event.
+    /// </summary>
+    private static readonly IReadOnlyDictionary<Role, string> RoleNames = new Dictionary<Role, string>
+    {
+        [Role.PlayerHost] = "player_host",
+        [Role.AiClient] = "ai_client",
     };
+
+    internal static string RoleName(Role role) => RoleNames.TryGetValue(role, out var name) ? name : throw Invalid();
 
     internal static void RequireExactKeys(JsonElement root, params string[] expected)
     {
@@ -58,6 +70,13 @@ internal static class GuardianProtocol
 
     internal static Exception Invalid() => new InvalidDataException("windows_bootstrap_guardian_invalid_request");
     internal static string Response(string result) => $"{{\"schemaVersion\":1,\"result\":\"{result}\"}}\n";
+
+    /// <summary>
+    /// The one unsolicited frame this channel carries: a role that ended on its
+    /// own, with the native exit code the OS reported for it.
+    /// </summary>
+    internal static string RoleExit(Role role, uint exitCode) =>
+        $"{{\"operation\":\"role_exited\",\"role\":\"{RoleName(role)}\",\"exitCode\":{exitCode.ToString(System.Globalization.CultureInfo.InvariantCulture)}}}\n";
 
     internal enum Role { PlayerHost, AiClient }
     internal readonly record struct Correlation(string InstanceId, int Epoch, string AttemptId);

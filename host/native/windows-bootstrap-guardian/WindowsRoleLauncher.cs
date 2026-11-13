@@ -71,6 +71,21 @@ internal sealed class WindowsRoleLauncher
 
     internal static void Resume(LaunchedRole role) { if (ResumeThread(role.Thread) == uint.MaxValue) { TerminateProcess(role.Process, 1); throw new Win32Exception(Marshal.GetLastWin32Error()); } }
 
+    /// <summary>
+    /// The role has ended and this is the exit code the OS reports for it.
+    ///
+    /// The wait comes first because a process that has not ended reports
+    /// STILL_ACTIVE (259), which is also a legal exit code: only a signalled
+    /// handle makes the code final, so the code alone cannot say "still running".
+    /// </summary>
+    internal static bool TryReadExitCode(LaunchedRole role, out uint exitCode)
+    {
+        exitCode = 0;
+        if (role.Process.IsInvalid || role.Process.IsClosed) return false;
+        if (WaitForSingleObject(role.Process, 0) != WaitObject0) return false;
+        return GetExitCodeProcess(role.Process, out exitCode);
+    }
+
     private static string BuildCommandLine(string executable, IReadOnlyList<string> arguments) =>
         string.Join(" ", new[] { QuoteForWindowsCrt(executable) }.Concat(arguments.Select(QuoteForWindowsCrt)));
 
@@ -111,6 +126,7 @@ internal sealed class WindowsRoleLauncher
     [DllImport("kernel32.dll", SetLastError = true)] private static extern void DeleteProcThreadAttributeList(IntPtr list);
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)] private static extern bool CreateProcessW(string applicationName, System.Text.StringBuilder commandLine, IntPtr processAttributes, IntPtr threadAttributes, bool inheritHandles, uint flags, IntPtr environment, string? currentDirectory, ref STARTUPINFOEX startupInfo, out PROCESS_INFORMATION processInformation);
     [DllImport("kernel32.dll", SetLastError = true)] private static extern uint ResumeThread(SafeKernelHandle thread);
+    [DllImport("kernel32.dll", SetLastError = true)] private static extern bool GetExitCodeProcess(SafeKernelHandle process, out uint exitCode);
     [DllImport("kernel32.dll", SetLastError = true)] private static extern bool TerminateProcess(SafeKernelHandle process, uint code);
     [DllImport("kernel32.dll", SetLastError = true)] private static extern uint WaitForSingleObject(SafeKernelHandle handle, uint milliseconds);
     [DllImport("kernel32.dll", SetLastError = true)] private static extern bool IsProcessInJob(SafeKernelHandle process, IntPtr job, out bool result);

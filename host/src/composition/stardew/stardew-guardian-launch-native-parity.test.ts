@@ -412,6 +412,28 @@ test(
         "role_contained",
         "(c) the AI containment must be the native's own role_contained result",
       );
+      // The native's other frame kind, read on the wire rather than assumed. These
+      // roles run the fixture with `--exit-after-report`, so they end on their own;
+      // such a death is published in front of the next command's reply. How many
+      // arrive here is timing - a role contained before the following command
+      // boundary was ended by this session, and that death is deliberately not
+      // published - but each one that does arrive must be a real frame about a real
+      // role, and no role may report its exit twice.
+      for (const event of host.native.publicEvents) {
+        assert.ok(
+          event.role === "player_host" || event.role === "ai_client",
+          `(c) a role exit must name a role this Guardian launched, not ${quoted(event.role)}`,
+        );
+        assert.ok(
+          Number.isInteger(event.exitCode) && event.exitCode >= 0 && event.exitCode <= 0xffffffff,
+          `(c) a role exit's code must be the native uint32 range, not ${quoted(String(event.exitCode))}`,
+        );
+      }
+      assert.deepEqual(
+        host.native.publicEvents.map((event) => event.role).sort(),
+        [...new Set(host.native.publicEvents.map((event) => event.role))].sort(),
+        `(c) one role must not report its exit twice: ${JSON.stringify(host.native.publicEvents)}`,
+      );
 
       // ---------------------------------------------------------------------
       // (d) the falsification: one extra key, or one field mutated, is REFUSED. This
@@ -821,6 +843,8 @@ class NativeResidentGuardian {
   public readonly pipeName = `GameBuddyLaunchParity-${randomUUID()}`;
   private readonly child: ChildProcessByStdio<Writable, Readable, Readable>;
   private readonly publicResults: string[] = [];
+  /** The role exits the native published, in order. They are frames, never replies. */
+  public readonly publicEvents: Array<Readonly<{ role: string; exitCode: number }>> = [];
   private readonly publicWaiters: Array<(line: string | undefined) => void> = [];
   private readonly privateLines: string[] = [];
   private readonly privateWaiters: Array<(line: string | undefined) => void> = [];
@@ -847,14 +871,24 @@ class NativeResidentGuardian {
     readLines(
       this.child.stdout,
       (line) => {
-        // The public answer is the native's own `{"schemaVersion":1,"result":"…"}`.
-        let result: string | undefined;
+        // The channel carries two frame kinds: the reply to the command just written,
+        // and - in front of it - the role exit the native publishes for a role that
+        // ended on its own. Separating them here is what the production reader
+        // (`GuardianSupervisor.GuardianPublicResultReader`) exists for; a reader that
+        // returned the event as the reply would report a command that did happen as a
+        // command that was lost.
+        let parsed: Record<string, unknown> | undefined;
         try {
-          const parsed = JSON.parse(line) as Record<string, unknown>;
-          result = typeof parsed.result === "string" ? parsed.result : undefined;
+          parsed = JSON.parse(line) as Record<string, unknown>;
         } catch {
-          result = undefined;
+          parsed = undefined;
         }
+        if (parsed?.operation === "role_exited") {
+          this.publicEvents.push(Object.freeze({ role: String(parsed.role), exitCode: Number(parsed.exitCode) }));
+          return;
+        }
+        // A reply is the native's own `{"schemaVersion":1,"result":"..."}`.
+        const result = typeof parsed?.result === "string" ? parsed.result : undefined;
         this.deliverPublic(result ?? line);
       },
       () => {
