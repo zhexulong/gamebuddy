@@ -2977,6 +2977,18 @@ test("the run bundle publishes the crossing record, and one it cannot judge is r
     verdict: { state: "blocked", reasonCode: "multiday_routine_blocked", rubric: { broken: [], unmeasured: [] } },
     timeline: { path: "timeline.jsonl", records: 0, sources: ["player", "smapi", "llm"] },
     actionTrace: { path: "actionTrace.jsonl", records: 0 },
+    // The run trace is a DECLARATION the writer always publishes, not a reading a caller supplies:
+    // `writeEvidenceBundle` replaces it with the record it decides from the file it copies, so every manifest the
+    // product can write carries it - including the ones whose product wrote no trace, which publish
+    // `present: false` with the reason. A hand-built manifest that omits the field is therefore not a bundle this
+    // contract can describe, and the fixture below was the incomplete side, not the check.
+    runTrace: {
+      path: "run-trace.json",
+      present: false,
+      reason: "run_trace_not_declared",
+      sourcePath: null,
+      spans: null,
+    },
     keyFrames: { status: "skipped", reason: "headless_environment", dir: null },
     // The run's memory and its unwind: the two fields an auditor reads that `round40` published as nothing. Here they
     // are the honest EMPTY shapes - a run that took no turn sample and one whose unwind nobody has measured yet - which
@@ -2998,6 +3010,25 @@ test("the run bundle publishes the crossing record, and one it cannot judge is r
   };
   const codesFor = (bundle) => validateEvidenceBundle(bundle).violations.map((entry) => entry.code);
   assert.deepEqual(codesFor({ ...base, multiday: bundleCrossingRecord(record) }), [], "a judged record is writable");
+  // THE DECLARATION IS READ, NOT MERELY REQUIRED: both legal states of the run-trace record are writable, and a
+  // presence claim the file cannot back is refused by its own code. Without this, `run_trace_declaration_missing`
+  // would be indistinguishable from a check that insists every bundle contain a trace.
+  assert.deepEqual(
+    codesFor({
+      ...base,
+      runTrace: { path: "run-trace.json", present: true, reason: null, sourcePath: "run-trace.json", spans: 3 },
+    }),
+    [],
+    "a trace that was copied is writable",
+  );
+  assert.deepEqual(
+    codesFor({
+      ...base,
+      runTrace: { path: "run-trace.json", present: true, reason: null, sourcePath: "run-trace.json", spans: null },
+    }),
+    ["run_trace_spans_invalid"],
+    "a presence claim with no span count is refused by name",
+  );
   assert.ok(
     codesFor({
       ...base,
