@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using System.Globalization;
 using System.Linq;
 using System.Reflection;
 using GameBuddy.Stardew.Core;
@@ -8,6 +7,7 @@ using Microsoft.Xna.Framework;
 using StardewValley;
 using StardewValley.GameData;
 using StardewValley.GameData.Locations;
+using StardewValley.ItemTypeDefinitions;
 using StardewValley.Tools;
 
 namespace GameBuddy.Stardew;
@@ -150,17 +150,20 @@ internal static class FishingCatchableQuery
         bool curiosityLure,
         bool usingTargetBait)
     {
+        // THE ENGINE DECIDES WHAT THE ROW NAMES. `SpawnFishData.ItemId` is "either a qualified item ID, or an item query
+        // like ALL_ITEMS" (`StardewValley.GameData.xml:1863-1865`), and `ItemRegistry.GetData` is the reader for both id
+        // forms and for every item type (`ItemRegistry.cs:316-323`): it answers the row's one item, or null when the value
+        // names nothing - an item query, or an id this save does not have. The retired test was `int.TryParse(itemId)`,
+        // which is FALSE for `(O)128` by construction, so every qualified row was called a query and lost its species, its
+        // name and its `Data/Fish` row.
         string itemId = row.ItemId ?? string.Empty;
-        bool isItemQuery = !int.TryParse(itemId, NumberStyles.Integer, CultureInfo.InvariantCulture, out _);
-        string? species = isItemQuery ? null : ItemRegistry.QualifyItemId(itemId);
-        string? displayName = null;
-        string? fishRow = null;
-        if (species is not null)
-        {
-            var metadata = ItemRegistry.GetDataOrErrorItem(species);
-            displayName = metadata.IsErrorItem ? null : metadata.DisplayName;
-            if (fishRows.TryGetValue(itemId, out string? raw)) fishRow = raw;
-        }
+        ParsedItemData? speciesData = ItemRegistry.GetData(itemId);
+        string? species = speciesData?.QualifiedItemId;
+        bool isItemQuery = speciesData is null;
+        string displayName = ItemDisplayName.Resolve(itemId, speciesData?.DisplayName);
+        // The species row is joined on the RESOLVED item's unqualified id, which is the key the engine itself joins on
+        // (`fish.ItemId`, GameLocation.cs:14044) - the row's raw value carries a type tag and misses every entry.
+        string? fishRow = speciesData is { } resolved && fishRows.TryGetValue(resolved.ItemId, out string? raw) ? raw : null;
 
         return new FishingSpawn(
             itemId,

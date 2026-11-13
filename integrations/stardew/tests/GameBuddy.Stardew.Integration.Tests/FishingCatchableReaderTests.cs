@@ -13,9 +13,9 @@ namespace GameBuddy.Stardew.Integration.Tests;
 /// WHY THIS FILE EXISTS AT ALL. The answer's arithmetic is asserted in `FishingCatchableTests` (Core, pure). What CANNOT be
 /// driven here is the reader: `Game1.locationData` and `DataLoader.Fish(Game1.content)` need a content manager, which this
 /// process does not have - the same limit `FishingActionTests` records for the engine's own catch. So the reader is pinned
-/// by the facts that decide its correctness and are readable without the engine: it joins BOTH tables, it joins the
-/// species row on the RAW item id, it reads the season through the engine's own location-aware call, and it never touches
-/// `Game1.random`.
+/// by the facts that decide its correctness and are readable without the engine: it joins BOTH tables, it resolves the
+/// row's item through the engine's own reader, it joins the species row on the resolved item's unqualified id, it reads the
+/// season through the engine's own location-aware call, and it never touches `Game1.random`.
 /// </para>
 ///
 /// <para>
@@ -33,11 +33,13 @@ public sealed class FishingCatchableReaderTests
     private const string ProtocolPath = "host/src/protocol.ts";
 
     /// <summary>
-    /// The conditions live in TWO tables, joined on the raw item id, and a reader that consults one of them is wrong about
-    /// "now": `Data/Locations` says where and in what season, `Data/Fish` says at what hour, in what weather, at what level.
+    /// The conditions live in TWO tables, joined on the resolved item's unqualified id, and a reader that consults one of
+    /// them is wrong about "now": `Data/Locations` says where and in what season, `Data/Fish` says at what hour, in what
+    /// weather, at what level. The join key is `fish.ItemId` - the RESTING item the engine created from the row - not the
+    /// row's raw value (`GameLocation.cs:14002`, `:14044`), which carries a type tag (`(O)128`) and misses every entry.
     /// </summary>
     [Fact]
-    public void TheReaderJoinsBothTablesOnTheRawItemId()
+    public void TheReaderJoinsBothTablesOnTheResolvedItemId()
     {
         string source = Read(ReaderPath);
 
@@ -47,8 +49,8 @@ public sealed class FishingCatchableReaderTests
             "the shared spawn row the engine concatenates into every location (GameLocation.cs:13940)");
         source.Should().Contain("DataLoader.Fish(Game1.content)", "the species table (GameLocation.cs:13908)");
         source.Should().Contain(
-            "fishRows.TryGetValue(itemId, out string? raw)",
-            "the join key is the RAW item id, exactly as the engine joins it (GameLocation.cs:14044)");
+            "fishRows.TryGetValue(resolved.ItemId",
+            "the join key is the resolved item's unqualified id, exactly as the engine joins it (GameLocation.cs:14044)");
         source.Should().Contain(
             "Game1.GetSeasonForLocation(",
             "the season is the engine's location-aware answer, not a calendar read (GameLocation.cs:13909)");
