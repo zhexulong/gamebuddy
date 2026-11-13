@@ -148,6 +148,62 @@ export type TurnDecision =
   | Readonly<{ kind: "suppressed"; reason: TurnSuppression }>;
 
 /**
+ * Why a turn that spoke and ran no tool closed with nothing done, in the three conditions the pump can tell apart.
+ *
+ * MEASURED 2026-11-13 (`round47`, the companion's own account): 64 assistant turns, 41 of them speech only, median 27
+ * characters, while the world reading stood still for eighteen turns. Her explanation was economic and exact - "a line of
+ * speech passes, the cost is zero; submitting a plan may be refused, may fail, and has to be awaited". Nothing in the run
+ * could say how many of those turns were that shape, because a turn that spoke was counted as a turn that happened.
+ *
+ * <p>
+ * The three reasons are the conditions that can make acting impossible WITHOUT being a refusal, and they are ordered:
+ * a contradicted picture first (the block itself already calls an aged reading "the world is not like this any more"),
+ * then a body the engine holds, then the residual - nothing was pending and she was free to act. `nothing_pending` is the
+ * one this measurement exists to expose: it is the shape where the zero-cost exit won with nothing at all in its way.
+ * </p>
+ */
+export const TURN_WITHOUT_ACTION_REASON = Object.freeze({
+  /** The turn was handed a reading it did not bring: her picture of the world was already out of date. */
+  worldStale: "world_stale",
+  /** The snapshot says the body cannot take a command (`actionable: false`): the engine is holding the actor. */
+  bodyHeld: "body_held",
+  /** A fresh reading, a free body, and still no action. */
+  nothingPending: "nothing_pending",
+});
+
+export const TURN_WITHOUT_ACTION_REASONS = Object.freeze(Object.values(TURN_WITHOUT_ACTION_REASON));
+
+export type TurnWithoutActionReason = (typeof TURN_WITHOUT_ACTION_REASONS)[number];
+
+/** The emitted name of one empty-turn shape: `turn_closed_without_action:<opener>:<reason>`. */
+export const TURN_WITHOUT_ACTION = "turn_closed_without_action";
+
+/** The one shape key, so a log reader and this counter spell a shape the same way. */
+export type TurnWithoutActionShape = `${TurnOpening}:${TurnWithoutActionReason}`;
+
+/** The shape key of one `<opener>:<reason>` pair: one spelling for the counter, the printer and any reader. */
+export function turnWithoutActionShape(opener: TurnOpening, reason: TurnWithoutActionReason): TurnWithoutActionShape {
+  return `${opener}:${reason}`;
+}
+
+export function turnWithoutActionToken(opener: TurnOpening, reason: TurnWithoutActionReason): string {
+  return `${TURN_WITHOUT_ACTION}:${turnWithoutActionShape(opener, reason)}`;
+}
+
+/**
+ * Turns that delivered speech, ran no action, and closed - counted by BOTH halves of the shape.
+ *
+ * The opener is half of it because the two mean different things: a `player_input` turn that spoke and did nothing was
+ * an answer to the person, while a `due` or `observation` turn that spoke and did nothing is the robot narrating to
+ * itself. `total` is counted beside the shapes so the two can be checked against each other, and the shape population is
+ * the product of the two closed lists so a new opener or reason cannot go unreported.
+ */
+export type TurnWithoutActionResult = Readonly<{
+  total: number;
+  byShape: Readonly<Record<TurnWithoutActionShape, number>>;
+}>;
+
+/**
  * What this pump has done with the flushes it examined: one counter per member, one per suppression reason.
  *
  * `examined` is DERIVED (`opened + every suppressed reason`) rather than counted, so a flush cannot be decided and then
@@ -158,23 +214,50 @@ export type TurnAccount = Readonly<{
   byReason: Readonly<Record<TurnOpening, number>>;
   suppressed: Readonly<Record<TurnSuppression, number>>;
   examined: number;
+  emptyTurns: TurnWithoutActionResult;
   lastDecision: TurnDecision | undefined;
 }>;
 
 /**
  * The account as the one line a run's log carries, in the shape the invariant is read back in.
  *
- * `turns opened N · suppressed M {reason: count} · flushes examined F`. A suppression reason that has never fired is
- * still printed as `0`: it is a declared member of the closed list, and a reader must be able to see that it exists and
- * never happened rather than guess from its absence.
+ * `turns opened N · by reason {opener: count} · suppressed M {reason: count} · flushes examined F` (F derived, so the
+ * arithmetic closes) `· turn_closed_without_action E {opener:reason: count}`. A reason that has never fired is still
+ * printed as `0`: it is a declared member of a closed list, and a reader must be able to see that it exists and never
+ * happened rather than guess from its absence. The opener histogram is printed for the same reason at the level above:
+ * `opened 55` said a number and nothing about what opened them, so "she was woken by the clock fifty times" and "the
+ * person spoke fifty times" were the same line.
  */
 export function turnAccountLine(account: TurnAccount): string {
+  const opened = TURN_OPENINGS.map((reason) => `${reason}: ${String(account.byReason[reason])}`).join(", ");
   const suppressed = TURN_SUPPRESSIONS.map((reason) => `${reason}: ${String(account.suppressed[reason])}`).join(", ");
-  return `turns opened ${String(account.opened)} · suppressed ${String(suppressedTotal(account))} {${suppressed}} · flushes examined ${String(account.examined)}`;
+  const empty = emptyTurnShapes()
+    .map((shape) => `${shape}: ${String(account.emptyTurns.byShape[shape])}`)
+    .join(", ");
+  return `turns opened ${String(account.opened)} {${opened}} · suppressed ${String(suppressedTotal(account))} {${suppressed}} · flushes examined ${String(account.examined)} · ${TURN_WITHOUT_ACTION} ${String(account.emptyTurns.total)} {${empty}}`;
+}
+
+/**
+ * Every shape an empty turn can have: the product of the two closed lists, in one spelling.
+ *
+ * Derived rather than listed, so an opener added to `TURN_OPENINGS` (or a reason added beside this function) is printed
+ * and counted without anyone remembering to extend a second table.
+ */
+export function emptyTurnShapes(): readonly TurnWithoutActionShape[] {
+  return TURN_OPENINGS.flatMap((opener) =>
+    TURN_WITHOUT_ACTION_REASONS.map((reason) => turnWithoutActionShape(opener, reason)),
+  );
 }
 
 function suppressedTotal(account: TurnAccount): number {
   return TURN_SUPPRESSIONS.reduce((total, reason) => total + account.suppressed[reason], 0);
+}
+
+/** The counter, keyed by the closed set of shapes rather than by what this run happened to do. */
+function initializedEmptyTurns(): Record<TurnWithoutActionShape, number> {
+  const counts = {} as Record<TurnWithoutActionShape, number>;
+  for (const shape of emptyTurnShapes()) counts[shape] = 0;
+  return counts;
 }
 
 /**
@@ -196,6 +279,15 @@ export type PendingBatch = Readonly<{
   events: readonly NormalizedEvent[];
   /** The exact model-facing text. Retained verbatim if the sink rejects it. */
   text: string;
+  /**
+   * Whether THIS batch brought the observation, as `takeBatch` decided it for the world-state block.
+   *
+   * Carried on the batch rather than re-derived at settlement because it is the batch's own statement: the model was
+   * told `刚刚更新` or `本轮无新观察` according to this flag, so a turn that spoke and did nothing can be split into "her
+   * picture was already old" and "her picture was current" without a second computation that could disagree with the
+   * one the model read.
+   */
+  broughtObservation: boolean;
 }>;
 
 export type NormalizedEvent = Readonly<{
@@ -749,6 +841,14 @@ export class CompanionEventPump {
   };
   #lastTurnDecision: TurnDecision | undefined;
   /**
+   * Turns that spoke, ran no action and closed, one count per `<opener>:<reason>` shape.
+   *
+   * Its population is `emptyTurnShapes()`, so the counter and the line a run prints cannot disagree about which shapes
+   * exist - a shape nobody has taken is still a declared zero rather than an absent key.
+   */
+  readonly #emptyTurnsByShape: Record<TurnWithoutActionShape, number> = initializedEmptyTurns();
+  #emptyTurns = 0;
+  /**
    * One timing record per execution the pump has seen and not seen settle.
    *
    * A record of its own rather than a reading of `#receipts`, because `takeBatch` empties that window on every delivery
@@ -962,6 +1062,8 @@ export class CompanionEventPump {
     this.#openedTurns = 0;
     for (const reason of TURN_OPENINGS) this.#openedByReason[reason] = 0;
     for (const reason of TURN_SUPPRESSIONS) this.#suppressedByReason[reason] = 0;
+    for (const shape of emptyTurnShapes()) this.#emptyTurnsByShape[shape] = 0;
+    this.#emptyTurns = 0;
     this.#lastTurnDecision = undefined;
   }
 
@@ -995,6 +1097,7 @@ export class CompanionEventPump {
       byReason: Object.freeze({ ...this.#openedByReason }),
       suppressed: Object.freeze({ ...this.#suppressedByReason }),
       examined: this.#openedTurns + suppressed,
+      emptyTurns: Object.freeze({ total: this.#emptyTurns, byShape: Object.freeze({ ...this.#emptyTurnsByShape }) }),
       lastDecision: this.#lastTurnDecision,
     });
   }
@@ -1354,7 +1457,7 @@ export class CompanionEventPump {
     try {
       const outcome = (await sink.deliver(pending)) ?? undefined;
       this.#deliveredBatches += 1;
-      this.#observeTurnProduction(outcome);
+      this.#observeTurnProduction(outcome, opening, pending.broughtObservation);
       return outcome;
     } catch (error) {
       // Do not revive a batch cleared while its asynchronous delivery was in
@@ -1540,7 +1643,9 @@ export class CompanionEventPump {
       facts: Object.freeze(deliveredFacts),
       events: Object.freeze([]),
       // A steer states the world it is already carrying: the turn it joins has `<world-state>` from its own batch, and
-      // this one repeats the same reading rather than leaving the model with no state at all.
+      // this one repeats the same reading rather than leaving the model with no state at all - which is also why it
+      // brought no observation: it opened no turn, and the settlement that counts empty turns reads the batch that DID.
+      broughtObservation: false,
       text: composeFactBrief({
         inputs: [],
         snapshot: this.#worldStateReading(false),
@@ -1708,6 +1813,7 @@ export class CompanionEventPump {
       facts: composed.deliveredFacts,
       events: composed.events,
       text: composed.text,
+      broughtObservation,
     });
   }
 
@@ -1964,7 +2070,7 @@ export class CompanionEventPump {
   }
 
   /**
-   * Record what the turn that just settled DID, for `narrationWithoutWork`.
+   * Record what the turn that just settled DID, for `narrationWithoutWork` and for the empty-turn reading.
    *
    * <p>
    * A turn that produced work clears the run and dates it; a turn that spoke and ran no tool extends it; anything else
@@ -1977,11 +2083,26 @@ export class CompanionEventPump {
    * window, and that window is emptied by the batch the turn consumed - so a receipt that arrived DURING the turn for an
    * execution still running is seen, and a turn with her body mid-action is not narration.
    * </p>
+   * <p>
+   * THE SAME SETTLEMENT ANSWERS THE OTHER QUESTION: `turnProduction === spoke` is exactly "delivered speech, ran no
+   * tool", so the turn is counted under the shape its opener and its condition describe. It is a READING and not a
+   * refusal - nothing here changes what the turn was allowed to do - because the run's own account has to be able to say
+   * "41 of 64 turns were this shape" without anyone opening a session file.
+   * </p>
    */
-  #observeTurnProduction(outcome: CompanionTurnOutcome | undefined): void {
+  #observeTurnProduction(
+    outcome: CompanionTurnOutcome | undefined,
+    opening: TurnOpening,
+    broughtObservation: boolean,
+  ): void {
     if (outcome !== "completed") {
       this.#turnsWithoutWork = 0;
       return;
+    }
+    if (this.turnProduction === TURN_PRODUCTION.spoke && !this.hasExecutionInFlight) {
+      const shape = turnWithoutActionShape(opening, this.#emptyTurnReason(broughtObservation));
+      this.#emptyTurns += 1;
+      this.#emptyTurnsByShape[shape] += 1;
     }
     if (this.turnProduction === TURN_PRODUCTION.worked) {
       this.#turnsWithoutWork = 0;
@@ -1990,6 +2111,25 @@ export class CompanionEventPump {
     }
     this.#turnsWithoutWork =
       this.turnProduction === TURN_PRODUCTION.spoke && !this.hasExecutionInFlight ? this.#turnsWithoutWork + 1 : 0;
+  }
+
+  /**
+   * Why a speaking turn with no action behind it closed, in the declared order of `TURN_WITHOUT_ACTION_REASON`.
+   *
+   * The snapshot is asked directly for the body half: `actionable` is the Mod's own admission gate, so "the engine is
+   * holding this actor" is its statement rather than this pump's inference. A session with no reading at all is neither
+   * stale nor held - it has nothing to act on - and falls to `nothing_pending`, where the absence is already visible in
+   * the world-state block's `尚未收到观察`.
+   */
+  #emptyTurnReason(broughtObservation: boolean): TurnWithoutActionReason {
+    if (this.#lastSnapshot !== undefined && !broughtObservation) return TURN_WITHOUT_ACTION_REASON.worldStale;
+    if (this.#bodyHeld()) return TURN_WITHOUT_ACTION_REASON.bodyHeld;
+    return TURN_WITHOUT_ACTION_REASON.nothingPending;
+  }
+
+  /** Whether the last reading says the actor cannot take a command (`Snapshot.actionable`). */
+  #bodyHeld(): boolean {
+    return (this.#lastSnapshot?.payload as { actionable?: unknown } | undefined)?.actionable === false;
   }
 
   /**

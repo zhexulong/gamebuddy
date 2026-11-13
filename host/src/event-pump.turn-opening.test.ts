@@ -7,10 +7,16 @@ import {
   MAX_DELIVERED_FACT_IDENTITIES,
   TURN_OPENING,
   TURN_OPENINGS,
+  TURN_PRODUCTION,
   TURN_SUPPRESSION,
   TURN_SUPPRESSIONS,
+  TURN_WITHOUT_ACTION,
+  TURN_WITHOUT_ACTION_REASON,
+  emptyTurnShapes,
   factContentIdentity,
   turnAccountLine,
+  turnWithoutActionShape,
+  turnWithoutActionToken,
   type PendingBatch,
   type TurnAccount,
   type WorldFact,
@@ -529,7 +535,78 @@ test("the delivered-content memory is bounded, and its drain errs toward a turn"
   );
 });
 
-test("the account prints in the shape the invariant is read back in", () => {
+const SEGMENT_SEPARATOR = " · ";
+
+/** One `name: count, name: count` histogram as the line prints it, read back into the counts. */
+function parseCounts(inner: string): Record<string, number> {
+  if (inner.trim() === "") return {};
+  return Object.fromEntries(
+    inner.split(", ").map((entry) => {
+      const at = entry.lastIndexOf(": ");
+      assert.ok(at > 0, `an entry in the printed histogram is not "<name>: <count>": ${entry}`);
+      return [entry.slice(0, at), Number(entry.slice(at + 2))];
+    }),
+  );
+}
+
+/** One `label N {counts}` segment, or one `label N` segment with no histogram. */
+function parseSegment(segment: string): Readonly<{ label: string; total: number; counts: Record<string, number> }> {
+  const matched = /^([\w ]+) (\d+)(?: \{(.*)\})?$/u.exec(segment);
+  assert.ok(matched !== null, `the account line carries a segment this reader cannot parse: ${segment}`);
+  const label = matched[1];
+  const total = matched[2];
+  assert.ok(
+    typeof label === "string" && typeof total === "string",
+    `the account line carries a segment this reader cannot parse: ${segment}`,
+  );
+  return Object.freeze({ label, total: Number(total), counts: parseCounts(matched[3] ?? "") });
+}
+
+/**
+ * The account line READ BACK, so the assertion is the inverse of the printer rather than a copy of its output.
+ *
+ * A hand-written expected string can only pin what its author remembered; this reader refuses a line that lost a
+ * segment, so a printer that silently dropped the opener histogram fails here by name. The four labels are the four
+ * things a run's account has to answer: how many turns opened and why, how many flushes were suppressed and why, how
+ * many were examined, and how many turns closed on speech alone and of which shape.
+ */
+function readTurnAccountLine(line: string): Readonly<{
+  opened: number;
+  byReason: Record<string, number>;
+  suppressed: Readonly<{ total: number; counts: Record<string, number> }>;
+  examined: number;
+  emptyTurns: Readonly<{ total: number; counts: Record<string, number> }>;
+}> {
+  const segments = line.split(SEGMENT_SEPARATOR).map(parseSegment);
+  const labels = ["turns opened", "suppressed", "flushes examined", TURN_WITHOUT_ACTION];
+  assert.deepEqual(
+    segments.map((segment) => segment.label),
+    labels,
+    `the account line's segments are ${labels.join(", ")}: a missing one is a reading nobody can recover`,
+  );
+  const [openedSegment, suppressedSegment, examinedSegment, emptySegment] = segments as [
+    ReturnType<typeof parseSegment>,
+    ReturnType<typeof parseSegment>,
+    ReturnType<typeof parseSegment>,
+    ReturnType<typeof parseSegment>,
+  ];
+  return Object.freeze({
+    opened: openedSegment.total,
+    byReason: openedSegment.counts,
+    suppressed: Object.freeze({ total: suppressedSegment.total, counts: suppressedSegment.counts }),
+    examined: examinedSegment.total,
+    emptyTurns: Object.freeze({ total: emptySegment.total, counts: emptySegment.counts }),
+  });
+}
+
+/** Every shape an empty turn can have, with the given ones counted: the population comes from the pump's own list. */
+function emptyTurnShapeCounts(overrides: Readonly<Record<string, number>>): Record<string, number> {
+  const counts: Record<string, number> = {};
+  for (const shape of emptyTurnShapes()) counts[shape] = overrides[shape] ?? 0;
+  return counts;
+}
+
+test("the account line reads back into the account it names", () => {
   const account: TurnAccount = Object.freeze({
     opened: 12,
     byReason: Object.freeze({
@@ -544,10 +621,241 @@ test("the account prints in the shape the invariant is read back in", () => {
       [TURN_SUPPRESSION.nothingPending]: 5,
     }),
     examined: 24,
+    emptyTurns: Object.freeze({
+      total: 3,
+      byShape: Object.freeze(
+        emptyTurnShapeCounts({
+          [turnWithoutActionShape(TURN_OPENING.worldFact, TURN_WITHOUT_ACTION_REASON.worldStale)]: 3,
+        }),
+      ),
+    }),
     lastDecision: undefined,
   });
+  const parsed = readTurnAccountLine(turnAccountLine(account));
+
+  assert.equal(parsed.opened, account.opened);
+  assert.deepEqual(parsed.byReason, account.byReason, "every opener is printed WITH its count, not only the total");
+  assert.equal(parsed.suppressed.total, 12);
+  assert.deepEqual(parsed.suppressed.counts, account.suppressed);
+  assert.equal(parsed.examined, account.examined);
+  assert.equal(parsed.emptyTurns.total, account.emptyTurns.total);
+  assert.deepEqual(parsed.emptyTurns.counts, account.emptyTurns.byShape);
   assert.equal(
-    turnAccountLine(account),
-    "turns opened 12 · suppressed 12 {observation_restated: 3, world_fact_restated: 4, nothing_pending: 5} · flushes examined 24",
+    parsed.emptyTurns.total,
+    Object.values(parsed.emptyTurns.counts).reduce((total, count) => total + count, 0),
+    "the empty-turn total is the sum of its shapes, so a turn cannot be counted and then disappear from the account",
+  );
+});
+
+test("the account line names a member that never fired, in both histograms", () => {
+  // `opened 55` with no histogram was the measured line: it said how many turns the run paid for and nothing about what
+  // opened them. The population is the closed lists, so a member at zero is printed as `0` rather than left out.
+  const account: TurnAccount = Object.freeze({
+    opened: 1,
+    byReason: Object.freeze({
+      [TURN_OPENING.playerInput]: 1,
+      [TURN_OPENING.worldFact]: 0,
+      [TURN_OPENING.observation]: 0,
+      [TURN_OPENING.due]: 0,
+    }),
+    suppressed: Object.freeze({
+      [TURN_SUPPRESSION.observationRestated]: 0,
+      [TURN_SUPPRESSION.worldFactRestated]: 0,
+      [TURN_SUPPRESSION.nothingPending]: 0,
+    }),
+    examined: 1,
+    emptyTurns: Object.freeze({ total: 0, byShape: Object.freeze(emptyTurnShapeCounts({})) }),
+    lastDecision: undefined,
+  });
+  const parsed = readTurnAccountLine(turnAccountLine(account));
+
+  assert.deepEqual(
+    Object.keys(parsed.byReason),
+    [...TURN_OPENINGS],
+    "the opener population is the closed list itself, so a new opener cannot be opened without being counted",
+  );
+  assert.deepEqual(Object.keys(parsed.emptyTurns.counts), [...emptyTurnShapes()]);
+  assert.deepEqual(Object.keys(parsed.suppressed.counts), [...TURN_SUPPRESSIONS]);
+});
+
+test("the account line this repo printed before the change is REFUSED by the reader", () => {
+  // THE FALSIFIER for the shape above. This is the exact line `round47` printed for 55 turns - `turns opened 55` with
+  // no histogram of what opened them and no statement about how those turns ended.
+  const measured =
+    "turns opened 55 · suppressed 0 {observation_restated: 0, world_fact_restated: 0, nothing_pending: 0} · flushes examined 55";
+  assert.throws(
+    () => readTurnAccountLine(measured),
+    /turns opened, suppressed, flushes examined, turn_closed_without_action/u,
+    "a line that cannot say what opened its turns is not an account, and must not read as one",
+  );
+});
+
+/** A sink that says how the turn it was handed ended, which is what the loop's own sink publishes to the pump. */
+function speakingSink(
+  pump: CompanionEventPump,
+  production: (typeof TURN_PRODUCTION)[keyof typeof TURN_PRODUCTION] = TURN_PRODUCTION.spoke,
+  batches: PendingBatch[] = [],
+): { deliver(batch: PendingBatch): Promise<"completed"> } {
+  return {
+    async deliver(batch) {
+      batches.push(batch);
+      pump.turnProduction = production;
+      return "completed" as const;
+    },
+  };
+}
+
+const BODY_FREE = Object.freeze({ location: "Farm", gameTime: "0740", actionable: true });
+
+function readingAt(revision: number, observedTick: number, payload: Readonly<Record<string, unknown>>): WorldFact {
+  return {
+    source: "stardew_mod",
+    kind: "snapshot",
+    correlationId: `snapshot_${String(observedTick)}`,
+    observedTick,
+    revision,
+    occurredAtMs: WINDOW_AT_MS + observedTick,
+    payload,
+  };
+}
+
+test("turn_closed_without_action: a speaking turn with a stale reading is counted, and its opener is named", async () => {
+  // THE MEASURED SHAPE (round47): 41 of 64 turns delivered speech and no action, while the reading stood still for
+  // eighteen turns. The turn itself was legitimate - the pump opened it for news - so the defect is that nothing in the
+  // run's account could say how many turns were this shape.
+  const pump = new CompanionEventPump();
+  const sink = speakingSink(pump);
+
+  // Turn one: the reading arrives with a settlement. The batch brings the observation, and the body is free.
+  pump.enqueueFact(readingAt(14, 0, BODY_FREE));
+  pump.enqueueFact(settlementFact("program_settled_plan_r46_weed_row_1", WINDOW_AT_MS + 1_000));
+  await pump.flush(sink);
+  assert.equal(pump.turnAccount.opened, 1);
+  assert.equal(
+    pump.turnAccount.emptyTurns.byShape[`${TURN_OPENING.worldFact}:${TURN_WITHOUT_ACTION_REASON.nothingPending}`],
+    1,
+    "a fresh reading and a free body, and she only spoke: that is the zero-cost exit with nothing in its way",
+  );
+
+  // Turn two: the Host re-states the same reading and publishes a clock milestone - the turn opens, the reading is old.
+  pump.enqueueFact(readingAt(14, 1, BODY_FREE));
+  pump.enqueueFact(milestoneFact(600, WINDOW_AT_MS + 60_000));
+  await pump.flush(sink);
+
+  const account = pump.turnAccount;
+  const staleShape = turnWithoutActionShape(TURN_OPENING.worldFact, TURN_WITHOUT_ACTION_REASON.worldStale);
+  assert.equal(account.emptyTurns.byShape[staleShape], 1, "a turn that acted on a reading it did not bring");
+  assert.equal(account.emptyTurns.total, 2);
+
+  const printed = turnAccountLine(account);
+  const parsed = readTurnAccountLine(printed);
+  assert.equal(parsed.emptyTurns.total, 2);
+  assert.equal(parsed.emptyTurns.counts[staleShape], 1);
+  assert.equal(parsed.byReason[TURN_OPENING.worldFact], 2, "and the line says WHICH opener produced them");
+  assert.ok(
+    printed.includes(`${TURN_WITHOUT_ACTION} 2 {`),
+    "the empty-turn count and its shapes are on the same line, so one grep answers both halves",
+  );
+  assert.equal(
+    parsed.emptyTurns.counts[staleShape],
+    1,
+    `the shape printed is ${turnWithoutActionToken(TURN_OPENING.worldFact, TURN_WITHOUT_ACTION_REASON.worldStale)}`,
+  );
+
+  // Turn three: the same settlement re-stated, and the reading re-stated - the flush is suppressed, so it is not a turn
+  // and must not be counted as one. The count stays where it was and the suppression names its reason.  pump.enqueueFact(readingAt(14, 2, BODY_FREE));
+  pump.enqueueFact(settlementFact("program_settled_plan_r46_weed_row_2", WINDOW_AT_MS + 120_000));
+  await pump.flush(sink);
+
+  const afterSuppression = pump.turnAccount;
+  assert.equal(afterSuppression.opened, 2, "a suppressed flush opens no turn");
+  assert.equal(afterSuppression.emptyTurns.total, 2, "and an empty turn that never ran is not an empty turn");
+  assert.equal(afterSuppression.lastDecision?.kind, "suppressed");
+  assert.equal(afterSuppression.lastDecision?.reason, TURN_SUPPRESSION.worldFactRestated);
+  assert.equal(
+    readTurnAccountLine(turnAccountLine(afterSuppression)).suppressed.counts[TURN_SUPPRESSION.worldFactRestated],
+    1,
+    "the line names the reason the flush was suppressed, so `fewer turns` stays distinguishable from `lost turns`",
+  );
+});
+
+test("turn_closed_without_action: the same flush suppressed rather than opened counts nothing", async () => {
+  // The other half of the red proof: the SAME flush that produced a count above, suppressed, leaves the count at zero
+  // and names the reason. A counter that incremented on every examined flush would pass the test above and be blind to
+  // the difference between a turn that happened and one that did not.
+  const pump = new CompanionEventPump();
+  const sink = speakingSink(pump);
+  pump.enqueueFact(readingAt(14, 0, BODY_FREE));
+  pump.enqueueFact(settlementFact("program_settled_plan_r46_weed_row_1", WINDOW_AT_MS));
+  await pump.flush(sink);
+  assert.equal(pump.turnAccount.emptyTurns.total, 1);
+
+  const suppressed = new CompanionEventPump();
+  suppressed.enqueueFact(readingAt(14, 0, BODY_FREE));
+  suppressed.enqueueFact(settlementFact("program_settled_plan_r46_weed_row_1", WINDOW_AT_MS));
+  await suppressed.flush(speakingSink(suppressed));
+  const before = suppressed.turnAccount.emptyTurns.total;
+
+  // Now the same content again: nothing pending that she does not already have.
+  suppressed.enqueueFact(readingAt(14, 1, BODY_FREE));
+  suppressed.enqueueFact(settlementFact("program_settled_plan_r46_weed_row_2", WINDOW_AT_MS + 60_000));
+  await suppressed.flush(speakingSink(suppressed));
+
+  const account = suppressed.turnAccount;
+  assert.equal(account.lastDecision?.kind, "suppressed");
+  assert.equal(account.emptyTurns.total, before, "a suppressed flush moved no count");
+  const parsed = readTurnAccountLine(turnAccountLine(account));
+  assert.equal(
+    parsed.suppressed.counts[TURN_SUPPRESSION.worldFactRestated],
+    1,
+    "and the line says which reason answered the flush instead",
+  );
+});
+
+test("turn_closed_without_action: a turn that ran a tool, or said nothing, is not one", async () => {
+  // THE FALSIFIERS for the count above: the same fixture, with only the turn's production changed. A counter that
+  // counted every turn would pass the test above and answer nothing.
+  const worked = new CompanionEventPump();
+  worked.enqueueFact(readingAt(14, 0, BODY_FREE));
+  worked.enqueueFact(settlementFact("program_settled_plan_r46_weed_row_1", WINDOW_AT_MS));
+  await worked.flush(speakingSink(worked, TURN_PRODUCTION.worked));
+  assert.equal(worked.turnAccount.emptyTurns.total, 0, "a turn that moved something is not an empty turn");
+
+  const silent = new CompanionEventPump();
+  silent.enqueueFact(readingAt(14, 0, BODY_FREE));
+  silent.enqueueFact(settlementFact("program_settled_plan_r46_weed_row_1", WINDOW_AT_MS));
+  await silent.flush(speakingSink(silent, TURN_PRODUCTION.saidNothing));
+  assert.equal(
+    silent.turnAccount.emptyTurns.total,
+    0,
+    "a turn that carried no text said nothing, and is not this shape",
+  );
+});
+
+test("turn_closed_without_action: a held body is its own reason, and a fresh observation is not stale", async () => {
+  // The three reasons have to be told apart or the count says one number for three different conditions. `body_held` is
+  // the shape round47 named in her own account: the farmhouse door put her in `身体: 忙（不可行动）` and she read it as
+  // "nothing may be submitted this turn".
+  const held = new CompanionEventPump();
+  held.enqueueFact(readingAt(14, 0, { ...BODY_FREE, actionable: false, actorDispositionKind: "modal" }));
+  held.enqueueFact(settlementFact("program_settled_plan_r46_weed_row_1", WINDOW_AT_MS));
+  await held.flush(speakingSink(held));
+
+  const heldShape = turnWithoutActionShape(TURN_OPENING.worldFact, TURN_WITHOUT_ACTION_REASON.bodyHeld);
+  assert.equal(held.turnAccount.emptyTurns.byShape[heldShape], 1);
+  assert.equal(
+    held.turnAccount.emptyTurns.byShape[`${TURN_OPENING.worldFact}:${TURN_WITHOUT_ACTION_REASON.worldStale}`],
+    0,
+    "this turn BROUGHT the reading, so the world was not the reason it ended without an action",
+  );
+
+  const fresh = new CompanionEventPump();
+  fresh.enqueueFact(readingAt(14, 0, BODY_FREE));
+  fresh.enqueueFact(settlementFact("program_settled_plan_r46_weed_row_1", WINDOW_AT_MS));
+  await fresh.flush(speakingSink(fresh));
+  assert.equal(
+    fresh.turnAccount.emptyTurns.byShape[`${TURN_OPENING.worldFact}:${TURN_WITHOUT_ACTION_REASON.nothingPending}`],
+    1,
+    "a current picture and a free body is `nothing_pending`, which is the shape the measurement exists to expose",
   );
 });
