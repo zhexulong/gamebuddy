@@ -215,6 +215,8 @@ export type TurnAccount = Readonly<{
   suppressed: Readonly<Record<TurnSuppression, number>>;
   examined: number;
   emptyTurns: TurnWithoutActionResult;
+  /** What the turns that COMPLETED declared, including the fourth case - see `TurnCloseAccount`. */
+  close: TurnCloseAccount;
   lastDecision: TurnDecision | undefined;
 }>;
 
@@ -234,7 +236,12 @@ export function turnAccountLine(account: TurnAccount): string {
   const empty = emptyTurnShapes()
     .map((shape) => `${shape}: ${String(account.emptyTurns.byShape[shape])}`)
     .join(", ");
-  return `turns opened ${String(account.opened)} {${opened}} · suppressed ${String(suppressedTotal(account))} {${suppressed}} · flushes examined ${String(account.examined)} · ${TURN_WITHOUT_ACTION} ${String(account.emptyTurns.total)} {${empty}}`;
+  const declared = TURN_OUTCOMES.map((outcome) => `${outcome}: ${String(account.close.declared[outcome])}`).join(", ");
+  const onSpeech = TURN_OPENINGS.map(
+    (opener) => `${opener}: ${String(account.close.completedOnSpeech.byOpener[opener])}`,
+  ).join(", ");
+  const declaredTotal = TURN_OUTCOMES.reduce((total, outcome) => total + account.close.declared[outcome], 0);
+  return `turns opened ${String(account.opened)} {${opened}} · suppressed ${String(suppressedTotal(account))} {${suppressed}} · flushes examined ${String(account.examined)} · ${TURN_WITHOUT_ACTION} ${String(account.emptyTurns.total)} {${empty}} · ${TURN_OUTCOME_TOKEN} ${String(declaredTotal)} {${declared}} · ${TURN_COMPLETED_ON_SPEECH} ${String(account.close.completedOnSpeech.total)} {${onSpeech}}`;
 }
 
 /**
@@ -259,6 +266,79 @@ function initializedEmptyTurns(): Record<TurnWithoutActionShape, number> {
   for (const shape of emptyTurnShapes()) counts[shape] = 0;
   return counts;
 }
+
+/**
+ * What a COMPLETED turn closed as, read from state the turn already has rather than from what she wrote.
+ *
+ * <p>
+ * MEASURED 2026-11-13 (`round47`): 41 of 64 delivered turns carried speech and nothing else, and the run's account could
+ * not tell one of them from a turn that did work - `turn_closed_without_action` counted the shape, but nothing about the
+ * turn's own COMPLETION said "this ended without doing anything". Her account of the choice, verbatim: "a line of speech
+ * passes, the cost is zero; submitting a plan may be refused, may fail, and has to be awaited". A turn that spoke was
+ * counted as a turn that happened.
+ * </p>
+ *
+ * <p>
+ * The three members are read in this order from three facts the close already holds: did a tool run (`turnProduction`,
+ * published by the loop that saw Pi's stream), is anything of hers still settling (`hasExecutionInFlight`, and the
+ * journal ledger's in-flight programmes), and does the Mod's own admission gate say the body cannot take a command
+ * (`#bodyHeld`, the `actionable: false` the snapshot carries). None of them is inferred from her text, and none of them
+ * costs a model call.
+ * </p>
+ *
+ * <p>
+ * A completed turn that delivered SPEECH and satisfies none of the three declared no outcome at all, and that is
+ * `TURN_COMPLETED_ON_SPEECH` - the fourth case, and the one this vocabulary exists to make sayable.
+ * </p>
+ */
+export const TURN_OUTCOME = Object.freeze({
+  /** At least one tool call ran: the turn moved something in the world or submitted a plan. */
+  acted: "acted",
+  /** Nothing ran, and something of hers is still settling: the turn ended waiting for a settlement. */
+  awaited: "awaited",
+  /** Nothing ran, nothing is settling, and the product itself said the body could take no command. */
+  idle: "idle",
+});
+
+export const TURN_OUTCOMES = Object.freeze(Object.values(TURN_OUTCOME));
+
+export type TurnOutcome = (typeof TURN_OUTCOMES)[number];
+
+/** The emitted name of one declared outcome: `turn_outcome:acted`. */
+export const TURN_OUTCOME_TOKEN = "turn_outcome";
+
+export function turnOutcomeToken(outcome: TurnOutcome): string {
+  return `${TURN_OUTCOME_TOKEN}:${outcome}`;
+}
+
+/**
+ * The FOURTH case: a completed turn that delivered speech and declared none of the three outcomes.
+ *
+ * <p>
+ * It is deliberately not a member of `TURN_OUTCOME`: it is not a declaration, it is the answer a reader gets when the
+ * only thing that happened was a line of prose. The opener rides in the name (`turn_completed_on_speech:<opener>`)
+ * because the two readings differ: a `player_input` turn that answered the person is not the same statement as a `due`
+ * or `observation` turn in which the robot narrated to itself - the same reason `turn_closed_without_action` carries the
+ * door the turn came in by.
+ * </p>
+ */
+export const TURN_COMPLETED_ON_SPEECH = "turn_completed_on_speech";
+
+export function turnCompletedOnSpeechToken(opener: TurnOpening): string {
+  return `${TURN_COMPLETED_ON_SPEECH}:${opener}`;
+}
+
+/**
+ * What the completed turns this pump paid for declared.
+ *
+ * `declared` is one counter per member of the closed list; `completedOnSpeech` is the fourth case, by opener. Their sum
+ * is every COMPLETED turn the pump delivered - a turn the provider aborted, errored, refused or that nobody observed is
+ * a different ending, named by `CompanionTurnOutcome`, and is not counted here.
+ */
+export type TurnCloseAccount = Readonly<{
+  declared: Readonly<Record<TurnOutcome, number>>;
+  completedOnSpeech: Readonly<{ total: number; byOpener: Readonly<Record<TurnOpening, number>> }>;
+}>;
 
 /**
  * One delivered batch: the model-facing TEXT, and the frame its readers hang on it.
@@ -849,6 +929,24 @@ export class CompanionEventPump {
   readonly #emptyTurnsByShape: Record<TurnWithoutActionShape, number> = initializedEmptyTurns();
   #emptyTurns = 0;
   /**
+   * What the completed turns declared, one counter per `TURN_OUTCOME` member and per opener of the fourth case.
+   *
+   * The population is the two closed lists, so an outcome or an opening added to them is counted without a second table
+   * - and a turn that declared none of the three cannot be counted under one of them by accident.
+   */
+  readonly #declaredOutcomes: Record<TurnOutcome, number> = {
+    [TURN_OUTCOME.acted]: 0,
+    [TURN_OUTCOME.awaited]: 0,
+    [TURN_OUTCOME.idle]: 0,
+  };
+  readonly #completedOnSpeechByOpener: Record<TurnOpening, number> = {
+    [TURN_OPENING.playerInput]: 0,
+    [TURN_OPENING.worldFact]: 0,
+    [TURN_OPENING.observation]: 0,
+    [TURN_OPENING.due]: 0,
+  };
+  #completedOnSpeech = 0;
+  /**
    * One timing record per execution the pump has seen and not seen settle.
    *
    * A record of its own rather than a reading of `#receipts`, because `takeBatch` empties that window on every delivery
@@ -1064,6 +1162,9 @@ export class CompanionEventPump {
     for (const reason of TURN_SUPPRESSIONS) this.#suppressedByReason[reason] = 0;
     for (const shape of emptyTurnShapes()) this.#emptyTurnsByShape[shape] = 0;
     this.#emptyTurns = 0;
+    for (const outcome of TURN_OUTCOMES) this.#declaredOutcomes[outcome] = 0;
+    for (const opener of TURN_OPENINGS) this.#completedOnSpeechByOpener[opener] = 0;
+    this.#completedOnSpeech = 0;
     this.#lastTurnDecision = undefined;
   }
 
@@ -1098,6 +1199,13 @@ export class CompanionEventPump {
       suppressed: Object.freeze({ ...this.#suppressedByReason }),
       examined: this.#openedTurns + suppressed,
       emptyTurns: Object.freeze({ total: this.#emptyTurns, byShape: Object.freeze({ ...this.#emptyTurnsByShape }) }),
+      close: Object.freeze({
+        declared: Object.freeze({ ...this.#declaredOutcomes }),
+        completedOnSpeech: Object.freeze({
+          total: this.#completedOnSpeech,
+          byOpener: Object.freeze({ ...this.#completedOnSpeechByOpener }),
+        }),
+      }),
       lastDecision: this.#lastTurnDecision,
     });
   }
@@ -2104,6 +2212,7 @@ export class CompanionEventPump {
       this.#emptyTurns += 1;
       this.#emptyTurnsByShape[shape] += 1;
     }
+    this.#declareClose(opening);
     if (this.turnProduction === TURN_PRODUCTION.worked) {
       this.#turnsWithoutWork = 0;
       this.#lastWorkTurnAtMs = Date.now();
@@ -2130,6 +2239,51 @@ export class CompanionEventPump {
   /** Whether the last reading says the actor cannot take a command (`Snapshot.actionable`). */
   #bodyHeld(): boolean {
     return (this.#lastSnapshot?.payload as { actionable?: unknown } | undefined)?.actionable === false;
+  }
+
+  /**
+   * Record what this turn's CLOSE declared, and name the fourth case when it declared none of the three.
+   *
+   * <p>
+   * Called from `#observeTurnProduction`, so it runs once per delivered turn that actually completed and reads only what
+   * that method already holds. The counters are separate from `#emptyTurns` on purpose: the shape counter answers "she
+   * spoke and did nothing", this one answers "the turn closed as this" - and a turn that acted, or that ended with her
+   * own work still settling, is a different statement about the same delivery.
+   * </p>
+   */
+  #declareClose(opening: TurnOpening): void {
+    const declared = this.#turnOutcome();
+    if (declared !== undefined) {
+      this.#declaredOutcomes[declared] += 1;
+      return;
+    }
+    this.#completedOnSpeech += 1;
+    this.#completedOnSpeechByOpener[opening] += 1;
+  }
+
+  /**
+   * What the turn that just settled declared, or `undefined` when it declared none of the three.
+   *
+   * <p>
+   * THE ORDER IS THE STATEMENT. A turn that ran a tool ACTED whatever else was true of it, and a turn that ran nothing
+   * while her own work was still settling AWAITED - both are things the turn did. Only then is the product's own
+   * admission gate asked: `actionable: false` is the Mod saying this body can take no command this tick, which is the
+   * one condition in which "nothing to do" is the product's statement rather than hers. What is left delivered speech
+   * with nothing in flight and nothing physically in the way, and that is the fourth case - the shape 41 of `round47`'s
+   * 64 turns had, of which 21 had a free body.
+   * </p>
+   *
+   * <p>
+   * `said_nothing` counts as `idle`: a turn that delivered no text did not complete ON speech, and borrowing that name
+   * would make one word mean two shapes. Nothing happened, nothing was in flight and the body was free, so nothing was
+   * owed either.
+   * </p>
+   */
+  #turnOutcome(): TurnOutcome | undefined {
+    if (this.turnProduction === TURN_PRODUCTION.worked) return TURN_OUTCOME.acted;
+    if (this.hasExecutionInFlight || this.#inFlight().programmes.length > 0) return TURN_OUTCOME.awaited;
+    if (this.#bodyHeld() || this.turnProduction === TURN_PRODUCTION.saidNothing) return TURN_OUTCOME.idle;
+    return undefined;
   }
 
   /**
