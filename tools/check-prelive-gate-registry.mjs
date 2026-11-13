@@ -368,17 +368,6 @@ export const EXEMPTIONS = Object.freeze([
     runsIn: "on-demand",
   },
   {
-    path: "tools/check-derived-population.mjs",
-    reason:
-      "debt: measured red at HEAD 2026-11-13 — `examined 980, violations 1222, unread 0`, and the measurement is why " +
-      "this gate is off rather than wired: 1073 of the 1222 are a literal 0, 1 or 2 over a fixture the test itself " +
-      "builds, and the 148 that are 3-and-up (62 of them in `tools/`) include the genuine freezes whose derived side " +
-      "does not exist yet. The dated paragraph beside the gate's usage says which members those are and what would " +
-      "make it schedulable; wiring it now would red the tree for assertions whose authority is the fixture above them · " +
-      "measured examined 981, violations 1226, unread 1 at 449f0fb0",
-    runsIn: "on-demand",
-  },
-  {
     path: "tools/check-gate-population-agreement.mjs",
     reason:
       "elsewhere: reads the four gate populations (check-ci-coverage, check-prelive-gate-registry, the red-proof census " +

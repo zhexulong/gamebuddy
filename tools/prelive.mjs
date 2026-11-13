@@ -219,6 +219,14 @@ export const L0_GATES = Object.freeze([
   // summed 391 ms, and a hang reports nothing. Measured here: `awaits examined 12 · with a deadline 12`, 426 test files,
   // 1.2 s.
   "tools/check-test-await-deadlines.mjs",
+  // The third reading of the same corpus, and the one that was switched off for two days because it could not tell a
+  // fixture from a population: a test that freezes a product's size with a literal (`Object.keys(TABLE).length === 12`)
+  // fails when the product grows, and the failure names a number instead of the member. Measured here 2026-11-13:
+  // `examined 983 sites 110 findings 0 baseline 95 unread 1`, residual by shape `6 declaration_site · 35 call_result ·
+  // 69 unresolved`, with 1099 counts set aside as the test's own construction and 23 as text. The judgement is the
+  // counted value's provenance, and the 110 survivors are recorded in `tools/derived-population-baseline.json` under a
+  // ratchet that fails on a new site AND on a stale entry, so this rung cannot drift back to `violations 1222`.
+  "tools/check-derived-population.mjs",
   // The leak, measured: 787 Node crash reports in the repository root, 238 of them carrying a plaintext credential,
   // because `NODE_OPTIONS` on this machine fires a report into every dying child's cwd. The `.gitignore` entry that
   // covered the root is not containment - this gate reads the disk at any depth and names the variable, never the
