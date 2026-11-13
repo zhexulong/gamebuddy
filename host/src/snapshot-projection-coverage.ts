@@ -6,8 +6,8 @@
  * reaches the model: `snapshot-projection.ts` (the user-turn fact block), `fact-brief.ts` (the per-turn paragraph),
  * `game-world-vocabulary.ts` (the world-sense line both of those render), `runtime-core.internal.ts` (the
  * `<runtime-environment>` header), `stardew-observation-budget.ts` (the `stardew_observe` payload),
- * `body-program-script.ts` (the plan builder's action set) and `snapshot-hud.ts` (the standing state block re-sent with
- * every turn). When the native layer grows a field, nothing forces any of them to notice.
+ * `body-program-script.ts` (the plan builder's action set). When the native layer grows a field, nothing forces any of
+ * them to notice.
  *
  * Measured 2026-10-28: `actorDispositionDetail` had been on the wire since the disposition work
  * (`farmhandexecutioncontroller.cs:2401`, `protocol.ts:272-276`), and a `ShippingMenu` owned the screen while the
@@ -48,7 +48,7 @@ export const REQUIRED_PROJECTED_KEYS = Object.freeze([
   // The current map's live kitchen: the per-turn line answers "is there a stove here" from it, which is what
   // the farmhouse's own form is (it gains its kitchen with its upgrade). Measured 2026-11-05.
   "cookingStationTargets",
-  // The water a rod may be cast at on this map, read by the "fishable water" line of `snapshot-hud.ts`.
+  // The water a rod may be cast at on this map, read by the per-turn paragraph's water line.
   //
   // `DiscoverWaterTargets` is a whole-map scan of the engine's own `canFishHere` + `isTileFishable` pair, so the family
   // is a property of the MAP: only its order and its cap depend on where the actor stands. And `fish_here` refuses
@@ -215,7 +215,6 @@ export const PROJECTION_SOURCES = Object.freeze([
   "host/src/runtime-core.internal.ts",
   "host/src/stardew-observation-budget.ts",
   "host/src/body-program-script.ts",
-  "host/src/snapshot-hud.ts",
 ]);
 
 /** Whether a projection source mentions a snapshot key in a field-position read. */
@@ -228,6 +227,11 @@ export function projectionReads(source: string, key: string): boolean {
     // A destructure binding is a read too: `const { actorDispositionDetail } = snapshot` names the key with no
     // dot and no quotes, and that is how the projections actually take most fields.
     new RegExp(`\\{[^}]*\\b${key}\\b[^}]*\\}\\s*=`),
+    // A LABEL-TABLE ENTRY is a read. `TARGET_FAMILY_LABELS` maps a family key to the words she reads
+    // (`waterTargets: "可下竿的水面"`), and the renderer iterates that table - so the key reaches her without its
+    // name ever appearing in field position. Without this, retiring a module that read the key literally would make
+    // a still-rendered fact look unprojected, and the gate would push a second reader into the tree.
+    new RegExp(`^\\s*["']?${key}["']?:\\s*["']`, "m"),
   ];
   // Strip comments first: this file's own prose names keys it does not read, and a gate that counts its own
   // documentation as a read is the "check that reads the wrong thing" failure this repo keeps paying for.

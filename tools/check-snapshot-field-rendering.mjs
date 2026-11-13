@@ -30,10 +30,10 @@
  *              the text she reads every turn, and the only surface that answers "does she know this fact".
  *   player     the browser's own Game panel (`dialogue-web/src/components/GameStatePanel.tsx`, fed by
  *              `game_browser_api/v1`). A fact printed there is real and useful, and it is still not a fact she has.
- *   unread     text composed and delivered to nobody. `host/src/snapshot-hud.ts` composes the `[State HUD: …]` block
- *              into `WorldFact.contextProjection.hud` (`host/src/host-service.ts:1242`); the only read of that key in
- *              the tree is the `typeof` guard on the line above it (`:1235`), `composeFactBrief` reads the projection's
- *              `text` and never `hud`, and no browser module names it.
+ *   unread     text composed and delivered to nobody. There is no such renderer today: the `[State HUD: …]` block was
+ *              retired, because a string nothing reads is not a surface, and its three facts nobody else rendered moved
+ *              into the per-turn paragraph. The audience stays in the vocabulary because the gate must be able to name
+ *              a rendering into it if one reappears.
  *
  * Until this unit the gate judged one question and answered another. `health` and `harvestWhereabouts` were cleared by
  * `printedBy: "host/src/snapshot-hud.ts"` - a rendering into the third bucket - so "she knows her own hit points" was
@@ -98,10 +98,11 @@ const UNREAD = "unread";
  * its own is NOT a renderer here: the companion's player reads the Game turn, and that is what this gate protects.
  * </p>
  * <p>
- * `snapshot-hud.ts` composes text from the same `Snapshot` and delivers it to NOBODY - the measurement is in the header -
- * so it is a member of this population with audience `unread`. Keeping it is what lets the report say which fields are
- * printed into text with no reader (22 of 120, four of them printed nowhere else) instead of leaving that fact in a
- * comment. What makes a module a member of this set is that it COMPOSES TEXT FROM THE SNAPSHOT - it is read here field
+ * The `[State HUD: …]` block was the third audience's only member: it composed text from the same `Snapshot` and
+ * delivered it to nobody, so 22 of 120 fields were printed and read by no one. It is gone - the three facts nobody else
+ * rendered moved into the paragraph, and the rest were already there - so `printedToNoReader` now reads 0. The audience
+ * stays, because the next renderer wired to nothing must be namable rather than invisible. What makes a module a member
+ * of this set is that it COMPOSES TEXT FROM THE SNAPSHOT - it is read here field
  * by field. A module that merely reads a snapshot field to decide something is not a renderer; adding one would credit
  * its reads as renderings.
  * </p>
@@ -115,7 +116,6 @@ const UNREAD = "unread";
 export const RENDERER_SOURCES = Object.freeze([
   { path: "host/src/fact-brief.ts", audience: COMPANION },
   { path: "host/src/game-world-vocabulary.ts", audience: COMPANION },
-  { path: "host/src/snapshot-hud.ts", audience: UNREAD },
 ]);
 
 /** The row tables a renderer iterates: a key in one of these is printed by the world-state composer that reads it. */
@@ -143,17 +143,8 @@ const TRUNCATION_COUNT_REASON =
   "the number of rows a Mod cap left out, paired with the family it counts. `<world-state>` prints that family, so the count beside it is the next unit: a family truncated at its cap reads as complete without it.";
 
 export const RENDERING_EXEMPTIONS = Object.freeze({
-  actionable: { reason: BODY_HELD_REASON, owedBy: "host/src/fact-brief.ts" },
-  actorDispositionKind: { reason: BODY_HELD_REASON, owedBy: "host/src/fact-brief.ts" },
   actorDispositionDetail: { reason: BODY_HELD_REASON, owedBy: "host/src/fact-brief.ts" },
   actorDispositionActionOwned: { reason: BODY_HELD_REASON, owedBy: "host/src/fact-brief.ts" },
-  harvestWhereabouts: {
-    reason:
-      "the WHOLE-MAP ripe-crop count. `<world-state>` names only the radius-bounded `可收的作物` family, so ripe crops " +
-      "beyond that radius are in neither the prose nor a count beside it - the gap the dry-crop line closed for " +
-      "`wateringWhereabouts`, still open for this family.",
-    owedBy: "host/src/fact-brief.ts",
-  },
   warps: {
     reason:
       "the map's own warp table, addresses rather than places to walk to. `doorTargets` is the family `<world-state>` prints; a warp with a button tile is addressed by `move_to_tile` and read from the observation.",

@@ -447,6 +447,61 @@ function formatUnwateredCrops(source: GameEnvironmentFactsSource, zh: boolean): 
 }
 
 /**
+ * How many crops are ready to pick, and where the nearest one is.
+ *
+ * THE SAME QUADRANT, ONE CROP LATER. `harvestWhereabouts` was already published and already validated, and nothing
+ * rendered it - so the only way to learn that anything was ripe was a full `stardew_observe`, and a companion who had
+ * just finished watering had no per-turn signal that the crop it walked past was ready.
+ *
+ * It lived in `snapshot-hud.ts`, a per-turn block whose only reader was a `typeof` guard, so the fact reached nobody for
+ * as long as that block existed. The block is gone; the fact is here, in the paragraph the companion actually reads.
+ *
+ * The whole-map count is the Mod's own scan, and the nearest tile is named so the answer is actionable rather than only
+ * true - the same shape as `formatUnwateredCrops` beside it.
+ */
+export function formatRipeCrops(
+  source: Pick<GameEnvironmentFactsSource, "location"> & Partial<Pick<Snapshot, "harvestWhereabouts">>,
+  zh: boolean,
+): string {
+  const whereabouts = source.harvestWhereabouts;
+  if (whereabouts === undefined) return "";
+  const here = whereabouts.find((entry) => entry.location === source.location);
+  if (here !== undefined && here.readyForHarvestCount > 0)
+    return here.nearestX === undefined || here.nearestY === undefined
+      ? zh
+        ? `可收作物: ${here.readyForHarvestCount}`
+        : `ripe crops: ${here.readyForHarvestCount}`
+      : zh
+        ? `可收作物: ${here.readyForHarvestCount}（最近: ${here.nearestX},${here.nearestY}）`
+        : `ripe crops: ${here.readyForHarvestCount} (nearest: ${here.nearestX},${here.nearestY})`;
+  if (whereabouts.length === 0) return zh ? "可收作物: 无" : "ripe crops: none";
+  const elsewhere = whereabouts.map((entry) => `${entry.location}:${entry.readyForHarvestCount}`).join(", ");
+  return zh ? `本图可收作物: 0（其他地图: ${elsewhere}）` : `ripe crops here: 0 (elsewhere: ${elsewhere})`;
+}
+
+/**
+ * Whether the body can take a new command, and what holds it when it cannot.
+ *
+ * Deliberately not `activeExecution`: that key is withheld from the always-on block by name ("the Host already owns
+ * execution state from action receipts"), and an action id here would read as an instruction to repeat the previous
+ * turn rather than as a description of the body. `actionable` plus the disposition answer the question from facts that
+ * are already projected every turn.
+ *
+ * Absent means the Mod did not project the body yet - the line then says nothing, rather than claiming "free".
+ */
+export function formatBodyState(
+  source: Partial<Pick<Snapshot, "actionable" | "actorDispositionKind">>,
+  zh: boolean,
+): string {
+  const disposition = source.actorDispositionKind;
+  if (disposition !== undefined && disposition !== "idle")
+    return zh ? `身体: 忙（${disposition}）` : `body: busy (${disposition})`;
+  if (source.actionable === undefined) return "";
+  const free = source.actionable;
+  return zh ? `身体: ${free ? "空闲" : "忙（不可行动）"}` : `body: ${free ? "free" : "busy (not actionable)"}`;
+}
+
+/**
  * Whether the map she is standing on has a kitchen.
  *
  * `cookingStationTargets` is the Mod's own scan of the CURRENT map for the vanilla kitchen action tile

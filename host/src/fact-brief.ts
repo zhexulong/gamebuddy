@@ -43,8 +43,10 @@
 
 import type { PlayerInput, WorldFact } from "./event-pump.js";
 import {
+  formatBodyState,
   formatGameClock,
   formatGameEnvironmentFacts,
+  formatRipeCrops,
   MAX_COUNTED_FAMILIES_NAMED,
   MAX_TARGET_FAMILIES_SHOWN,
   nearbyTargetFamilies,
@@ -261,6 +263,10 @@ export function composeWorldState(reading: WorldStateReading | undefined): strin
   if (environment !== "") parts.push(environment);
   const health = formatOwnHealth(world);
   if (health !== "") parts.push(health);
+  const body = formatBodyState(world, true);
+  if (body !== "") parts.push(body);
+  const ripeCrops = formatRipeCrops(world, true);
+  if (ripeCrops !== "") parts.push(ripeCrops);
   const canWater = formatCarriedCanWater(world);
   if (canWater !== "") parts.push(canWater);
   const carrying = formatCarrying(world);

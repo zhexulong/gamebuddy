@@ -76,9 +76,9 @@ test("bounded companion projection renders snapshot time and calendar fields", (
   assert.equal(lateNightLastDay.clock.seasonIndex, 3);
   assert.equal(lateNightLastDay.clock.year, 4);
   // Rendered into the bounded text too: late night shows a wall clock.
-  assert.match(lateNightLastDay.text, /23:50/);
+  assert.match(lateNightLastDay.text, /11:50 PM/);
   assert.match(lateNightLastDay.text, /Winter/);
-  assert.match(early.text, /00:00/);
+  assert.match(early.text, /12:00 AM/);
   assert.match(early.text, /Spring/);
 
   // Positive control: situational fields still project distinctly.
