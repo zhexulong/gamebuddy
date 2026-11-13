@@ -103,6 +103,7 @@
     "check:tavern-references": "node tools/verify-tavern-semantic-references.mjs",
     "check:tavern-release-prerequisites": "node tools/check-tavern-release-prerequisites.mjs",
     "check:terminal-commit-single-entry": "node tools/check-terminal-commit-single-entry.mjs",
+    "test:terminal-commit-single-entry": "node --test tools/check-terminal-commit-single-entry.test.mjs",
     "check:terminal-idle-publication": "node tools/check-terminal-idle-publication.mjs",
     "check:test-store-teardown": "node tools/check-test-store-teardown.mjs",
     "check:contrast-tokens": "node tools/check-contrast-tokens.mjs --fail",
@@ -434,6 +435,7 @@
     "test:gate-populations": "node --test tools/check-gate-populations.test.mjs",
     "test:action-surface-parity": "node --test tools/check-action-surface-parity.test.mjs",
     "check:gate-population-agreement": "node tools/check-gate-population-agreement.mjs",
+    "test:gate-population-agreement": "node --test tools/check-gate-population-agreement.test.mjs",
     "check:gate-premises": "node tools/check-gate-premises.mjs",
     "test:gate-premises": "node --test tools/check-gate-premises.test.mjs"
   },
