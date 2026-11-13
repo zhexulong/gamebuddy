@@ -877,13 +877,50 @@ internal sealed partial class ExecutionManager
         if (bestSlot >= 0)
             return new DeclaredToolResolution(word, bestSlot, null, ownedLevel);
         if (ownedLevel < 0)
-            return new DeclaredToolResolution(word, -1, $"tool_not_owned:{word}", ownedLevel);
+            return new DeclaredToolResolution(word, -1, PendingToolUpgradeRefusal(satisfies, word) ?? $"tool_not_owned:{word}", ownedLevel);
         // Owned, but not at a level the declaration permits: `need` is its own floor and `have` the best owned one.
         return new DeclaredToolResolution(
             word,
             -1,
             $"tool_upgrade_insufficient:{word}:{minimum.ToString(CultureInfo.InvariantCulture)}:{ownedLevel.ToString(CultureInfo.InvariantCulture)}",
             ownedLevel);
+    }
+
+    /// <summary>
+    /// The reason the pack answers nothing, when the tool that would have answered is at Clint's:
+    /// <c>tool_being_upgraded:&lt;category&gt;:&lt;daysLeft&gt;</c>, or
+    /// <c>tool_being_upgraded:&lt;category&gt;:ready_at_clint</c> once the counter has run out. Null when nothing is being
+    /// upgraded, or the tool at the blacksmith's is not one this claim would have taken.
+    ///
+    /// <para>
+    /// <c>tool_not_owned</c> is the resolver's one word for "the pack cannot answer", and while an upgrade is in flight it
+    /// is false in the expensive direction: the player owns the tool, cannot buy a second one, and the only repair is to
+    /// wait - which is cheap the moment it is told. The engine keeps the fact in two fields (<c>Farmer.cs:628-632</c>):
+    /// <c>toolBeingUpgraded</c> holds the tool itself and <c>daysLeftForToolUpgrade</c> the counter, which
+    /// <c>Tool.cs:889-890</c> sets to two days on purchase and <c>Farmer.cs:3535-3538</c> decrements at day start. The
+    /// tool is handed back when the actor talks to Clint (<c>GameLocation.cs:10961-10966</c>), not on a timer, which is
+    /// why the state is READ here and published nowhere: the actor that started the upgrade remembers it, and this is a
+    /// reason for the moment of refusal rather than a fact republished every turn.
+    /// </para>
+    /// <para>
+    /// <paramref name="satisfies"/> is the claim's own question, so a tool at the blacksmith's that this action would
+    /// never have looked for cannot account for its refusal. A counter at zero names no number: the engine's own reading
+    /// splits at <c>&lt;= 0</c> and the tool is then ready but uncollected (<c>GameLocation.cs:10961</c>), so
+    /// <c>tool_being_upgraded:hoe:0</c> would read as "done" about the request it is refusing, while
+    /// <c>ready_at_clint</c> says what to do instead. Whether the actor can take it is the counter's own answer
+    /// (<c>GameLocation.cs:10963</c>, <c>Clint_NoInventorySpace</c>), not this refusal's.
+    /// </para>
+    /// </summary>
+    private static string? PendingToolUpgradeRefusal(Func<Tool, bool> satisfies, string word)
+    {
+        Tool? upgrading = Game1.player?.toolBeingUpgraded?.Value;
+        if (upgrading is null || !satisfies(upgrading))
+            return null;
+        int daysLeft = Game1.player!.daysLeftForToolUpgrade?.Value ?? 0;
+        string category = ToolCategory(upgrading) ?? word;
+        return daysLeft > 0
+            ? $"tool_being_upgraded:{category}:{daysLeft.ToString(CultureInfo.InvariantCulture)}"
+            : $"tool_being_upgraded:{category}:ready_at_clint";
     }
 
     /// <summary>
