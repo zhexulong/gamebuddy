@@ -2570,7 +2570,7 @@ for (const locale of ROLE_LOCALES) {
 }
 
 /* ========================================================================== *
- * Gate 17, the group half: three distinct problems are three distinct headings.
+ * Gate 18, the group half: three distinct problems are three distinct headings.
  *
  * The pairs above ask whether two roles can be told apart on ONE page. This asks the
  * other shape the audit found: three different faults that each get the whole-window
@@ -2578,14 +2578,23 @@ for (const locale of ROLE_LOCALES) {
  * `<h1>` is what a player compares between two failures.
  *
  * The population is the declaration: every member is mounted, and every pair of members
- * is compared. A member that draws the same heading as another is the collapse, and the
- * failure names which two members and what they both said.
+ * is compared. A member whose selector resolves to nothing is named as a member that is
+ * not on the page (a group that quietly measured two of its three members is the same
+ * false pass as a pair that measured neither), and two members the declared channels
+ * cannot separate are the collapse, reported with the words both of them said.
  * ========================================================================== */
 for (const locale of ROLE_LOCALES) {
-  test(`gate 17: every declared role group is told apart member by member (${locale})`, async ({ page }) => {
+  test(`gate 18: every declared role group is told apart member by member (${locale})`, async ({ page }) => {
     if (locale === "zh-CN") await page.addInitScript(() => localStorage.setItem("gamebuddy.tavern.ui-locale", "zh-CN"));
     const failures: string[] = [];
     for (const group of ROLE_GROUPS) {
+      // A group of one is pairwise over nothing, which is the zero population this file
+      // refuses everywhere else.
+      if (group.members.length < 2) {
+        failures.push(
+          `${group.name}: declared with ${group.members.length} member(s), and a group is told apart pairwise - one member compares with nothing`,
+        );
+      }
       const readings: { member: string; reading: RoleReading }[] = [];
       for (const member of group.members) {
         // The failure that puts this member's own fact on the page: the composed
@@ -2601,13 +2610,23 @@ for (const locale of ROLE_LOCALES) {
         await page.goto(`/#profile=composed-reference-game&boot=${token}`);
         await expect(page.locator(".problem-card")).toBeVisible();
         await freezeTransitions(page);
-        const reading = await page.locator(member.role).evaluate(roleReadingOf);
-        readings.push({ member: member.name, reading });
+        // Exactly one element, named: a member whose role resolves to nothing is otherwise
+        // a Playwright timeout about a locator, which names neither the group nor the member.
+        const found = page.locator(member.role);
+        const count = await found.count();
+        if (count !== 1) {
+          failures.push(
+            `${group.name} (${locale}) member "${member.name}": \`${member.role}\` resolved to ${count} element(s), ` +
+              `so this member is not on the page and the group cannot be told apart`,
+          );
+          continue;
+        }
+        readings.push({ member: member.name, reading: await found.evaluate(roleReadingOf) });
       }
       const table = readings
-        .map(({ member, reading }) => `${member}: h1{${roleVoice(reading)}}`)
+        .map(({ member, reading }) => `${member}: ${group.members.find((each) => each.name === member)?.role}{${roleVoice(reading)}}`)
         .join("\n");
-      record(`gate-17 ${group.name}`, `\n${table}`);
+      record(`gate-18 ${group.name}`, `\n${table}`);
       // Every ordered pair of members, so "two of the three are the same" cannot hide
       // behind which two somebody remembered to name.
       for (const [index, left] of readings.entries()) {
@@ -2615,9 +2634,10 @@ for (const locale of ROLE_LOCALES) {
           const channels = distinguishingChannels(left.reading, right.reading, group.channels.of);
           if (channels.length < group.channels.atLeast) {
             failures.push(
-              `${group.name} (${locale}): "${left.member}" and "${right.member}" draw the same heading ` +
-                `"${left.reading.text}" - ${channels.length} channel(s) [${channels.join(", ") || "none"}] of ` +
-                `[${group.channels.of.join(", ")}], ${group.channels.atLeast} required`,
+              `${group.name} (${locale}): "${left.member}" and "${right.member}" are not told apart - ` +
+                `${channels.length} channel(s) [${channels.join(", ") || "none"}] of ` +
+                `[${group.channels.of.join(", ")}], ${group.channels.atLeast} required; ` +
+                `a said "${left.reading.text}", b said "${right.reading.text}"`,
             );
           }
         }
