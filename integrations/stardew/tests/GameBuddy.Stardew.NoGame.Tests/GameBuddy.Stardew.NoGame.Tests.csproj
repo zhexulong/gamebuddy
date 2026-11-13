@@ -58,6 +58,7 @@
     <Compile Include="..\GameBuddy.Stardew.Integration.Tests\ActiveExecutionProjectionSourceShapeTests.cs" Link="ActiveExecutionProjectionSourceShapeTests.cs" />
     <Compile Include="..\GameBuddy.Stardew.Integration.Tests\AnswerDialogueNpcQuestionDispatchSourceShapeTests.cs" Link="AnswerDialogueNpcQuestionDispatchSourceShapeTests.cs" />
     <Compile Include="..\GameBuddy.Stardew.Integration.Tests\AssemblyInfo.cs" Link="AssemblyInfo.cs" />
+    <Compile Include="..\GameBuddy.Stardew.Integration.Tests\BodyProgramJournalSchemaTests.cs" Link="BodyProgramJournalSchemaTests.cs" />
     <Compile Include="..\GameBuddy.Stardew.Integration.Tests\BodySettledOwnershipSourceShapeTests.cs" Link="BodySettledOwnershipSourceShapeTests.cs" />
     <Compile Include="..\GameBuddy.Stardew.Integration.Tests\BuildFarmBuildingActionSourceShapeTests.cs" Link="BuildFarmBuildingActionSourceShapeTests.cs" />
     <Compile Include="..\GameBuddy.Stardew.Integration.Tests\BuildFarmBuildingPreconditionOrderTests.cs" Link="BuildFarmBuildingPreconditionOrderTests.cs" />
@@ -93,10 +94,13 @@
     <Compile Include="..\GameBuddy.Stardew.Integration.Tests\RedeemPrizeTicketActionTests.cs" Link="RedeemPrizeTicketActionTests.cs" />
     <Compile Include="..\GameBuddy.Stardew.Integration.Tests\RefillWateringCanWholeMapSourceShapeTests.cs" Link="RefillWateringCanWholeMapSourceShapeTests.cs" />
     <Compile Include="..\GameBuddy.Stardew.Integration.Tests\RolloverMenuOwnershipSourceShapeTests.cs" Link="RolloverMenuOwnershipSourceShapeTests.cs" />
+    <Compile Include="..\GameBuddy.Stardew.Integration.Tests\SeedSupplyAddressSourceShapeTests.cs" Link="SeedSupplyAddressSourceShapeTests.cs" />
     <Compile Include="..\GameBuddy.Stardew.Integration.Tests\SettlementMenuCapabilitySourceShapeTests.cs" Link="SettlementMenuCapabilitySourceShapeTests.cs" />
+    <Compile Include="..\GameBuddy.Stardew.Integration.Tests\SuiteRedProofTests.cs" Link="SuiteRedProofTests.cs" />
     <Compile Include="..\GameBuddy.Stardew.Integration.Tests\SyntheticEffectDeclarationTests.cs" Link="SyntheticEffectDeclarationTests.cs" />
     <Compile Include="..\GameBuddy.Stardew.Integration.Tests\ShipItemCarriedItemTests.cs" Link="ShipItemCarriedItemTests.cs" />
     <Compile Include="..\GameBuddy.Stardew.Integration.Tests\TargetPublicationOrderTests.cs" Link="TargetPublicationOrderTests.cs" />
+    <Compile Include="..\GameBuddy.Stardew.Integration.Tests\TileTargetRequestSeamTests.cs" Link="TileTargetRequestSeamTests.cs" />
     <Compile Include="..\GameBuddy.Stardew.Integration.Tests\ToolApproachContractSourceShapeTests.cs" Link="ToolApproachContractSourceShapeTests.cs" />
     <Compile Include="..\GameBuddy.Stardew.Integration.Tests\ToolLightActionTests.cs" Link="ToolLightActionTests.cs" />
     <Compile Include="..\GameBuddy.Stardew.Integration.Tests\ToolPreconditionUniformityTests.cs" Link="ToolPreconditionUniformityTests.cs" />

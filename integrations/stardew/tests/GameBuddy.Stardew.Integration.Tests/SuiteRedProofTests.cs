@@ -36,6 +36,17 @@ namespace GameBuddy.Stardew.Integration.Tests;
 /// that a discovered fact that fails is reported as failed and exits non-zero.
 /// </para>
 /// <para>
+/// ONE GATE NEEDS THE GAME, AND ITS FACT IS SKIPPED THERE RATHER THAN PASSED. The integration project references
+/// the Mod, whose build package refuses before the compiler runs when the machine holds no licensed game folder
+/// (`Pathoschild.Stardew.ModBuildConfig.targets`: "The mod build package can't find your game folder"), so its
+/// probe cannot build and the injected fact is never reported. That is a missing prerequisite, not a failing fact:
+/// a skipped fact says "not measured" while a passing one would say "measured, and clean", and the second reading
+/// is the one this lane must never produce for a gate it did not run. The skip is decided by
+/// <see cref="GameFolderFactAttribute"/> on the Mod build package's own verdict, so the game path is not spelled a
+/// second time here, and it covers only that one refusal - a missing SMAPI, a broken import or any other build
+/// failure leaves the fact running, and it then fails on the runner's own lines.
+/// </para>
+/// <para>
 /// The injected facts live in <see cref="ProbeNamespace"/> and each run is filtered to it, which is also what
 /// keeps the integration probe from recursing: it compiles this file, and the nested run never executes it.
 /// </para>
@@ -57,7 +68,7 @@ public sealed class SuiteRedProofTests
         AssertGateReportsTheInjectedFailure(CoreProject);
     }
 
-    [Fact]
+    [GameFolderFact]
     public void TheIntegrationSuiteGateGoesRedForAFactThatFails()
     {
         AssertGateReportsTheInjectedFailure(IntegrationProject);
@@ -219,4 +230,50 @@ public sealed class SuiteRedProofTests
     }
 
     private sealed record ProcessResult(int ExitCode, string Output);
+
+    /// <summary>
+    /// <c>[Fact]</c> for a gate whose project cannot even build where no game is installed, reported as SKIPPED with
+    /// its reason instead of passing with nothing measured.
+    ///
+    /// <para>
+    /// The prerequisite is asked of the Mod's own build package - its <c>BeforeBuild</c> target, the one carrying the
+    /// <c>&lt;Error&gt;</c> lines - rather than re-deriving the game path here, which would be a second copy of a fact
+    /// the package already owns. Only its missing-game-folder refusal skips; every other outcome, including a build
+    /// failure for another reason, leaves the skip unset so the fact runs and answers for itself.
+    /// </para>
+    /// </summary>
+    public sealed class GameFolderFactAttribute : FactAttribute
+    {
+        private const string MissingGameFolderRefusal = "The mod build package can't find your game folder";
+
+        public GameFolderFactAttribute()
+        {
+            if (MissingGameFolder() is string skip) Skip = skip;
+        }
+
+        private static string? MissingGameFolder()
+        {
+            try
+            {
+                string project = Path.Combine(RepositoryRoot(), "integrations", "stardew", "GameBuddy.Stardew.csproj");
+                ProcessResult result = RunDotnet(
+                    Path.GetDirectoryName(project)!,
+                    "msbuild",
+                    project,
+                    "-t:BeforeBuild",
+                    "-nologo",
+                    "-v",
+                    "q");
+                return result.ExitCode != 0 && result.Output.Contains(MissingGameFolderRefusal, StringComparison.Ordinal)
+                    ? "not measured: game folder absent"
+                    : null;
+            }
+            catch (Exception)
+            {
+                // Discovery runs this constructor for every fact in the assembly, so a throw here would take the
+                // whole suite down. Leaving the skip unset runs this one fact, which fails by name on the same cause.
+                return null;
+            }
+        }
+    }
 }
