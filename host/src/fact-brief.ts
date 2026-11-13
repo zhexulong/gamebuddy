@@ -18,12 +18,19 @@
  * </p>
  *
  * <p>
+ * THE HEAD OF THE MESSAGE IS SPEECH, and it is not a block. The player's own words are the first text in the message,
+ * character for character what they typed, outside every block and under no label: a person talking to their companion
+ * is not a field of the machine's report. Until `2026-11-14` they arrived inside `<player-note>` and were split by an
+ * attribution rule (`player-note.ts`) that guessed, per sentence, whether the words were his own business or a job for
+ * her - machinery that existed only because speech had been presented as data. An imperative addressed to her is hers
+ * and a statement about him is context; nothing has to classify that, and nothing does any more.
+ * </p>
+ *
+ * <p>
  * WHICH BLOCK A FACT BELONGS IN is a property of the fact, not of the batch:
  * </p>
  *
  * <ul>
- *   <li>`<player-note>` - the player's own words, verbatim, first, never mixed with a fact: his text split by whose
- *       each sentence is, one label per run (`player-note.ts` reads the note);</li>
  *   <li>`<world-state>` - the snapshot as a paragraph: clock, date, weather, where, stamina, what she carries, and the
  *       nearby target families with their tiles;</li>
  *   <li>`<in-flight>` - the programme she has DISPATCHED and not yet seen settle: what `action_program_status` would
@@ -51,7 +58,6 @@ import {
   MAX_TARGET_FAMILIES_SHOWN,
   nearbyTargetFamilies,
 } from "./game-world-vocabulary.js";
-import { playerNoteLines } from "./player-note.js";
 import type { InFlightProgramme, InFlightProgrammeReading } from "./program-status-wait.js";
 import { MAX_BODY_PROGRAM_REFUSAL_DETAIL_LENGTH, type Snapshot } from "./protocol.js";
 
@@ -69,7 +75,6 @@ import { MAX_BODY_PROGRAM_REFUSAL_DETAIL_LENGTH, type Snapshot } from "./protoco
  * list.
  */
 export const FACT_BRIEF_BLOCKS = Object.freeze([
-  "player-note",
   "world-state",
   "in-flight",
   "world-facts",
@@ -202,8 +207,8 @@ export const NOTHING_IN_FLIGHT: InFlightProgrammeReading = Object.freeze({
  */
 export function composeFactBrief(input: FactBriefInput): string {
   const blocks: string[] = [];
-  const note = composePlayerNote(input.inputs);
-  if (note !== "") blocks.push(note);
+  const speech = playerSpeech(input.inputs);
+  if (speech !== "") blocks.push(speech);
   const state = composeWorldState(input.snapshot);
   if (state !== "") blocks.push(state);
   const inFlight = composeInFlight(input.inFlight ?? NOTHING_IN_FLIGHT);
@@ -217,12 +222,37 @@ export function composeFactBrief(input: FactBriefInput): string {
   return blocks.join("\n");
 }
 
-/** The player's own words, verbatim, split by whose each sentence is (`player-note.ts` reads the note). Empty when
- * nobody said anything. */
-function composePlayerNote(inputs: readonly PlayerInput[]): string {
-  const lines = playerNoteLines(inputs.map((input) => input.text));
-  if (lines.length === 0) return "";
-  return block("player-note", lines.join("\n"));
+/**
+ * The player's own words, verbatim, as the head of the message: outside every block and under no label.
+ *
+ * <p>
+ * NOTHING IS ADDED, REMOVED OR REORDERED. Not trimmed, not re-punctuated, not joined into sentences: the text is what
+ * the person typed, and one message per input, in arrival order. A blank input is dropped rather than rendered as an
+ * empty line, which is the one thing a caller can hand over that is not words.
+ * </p>
+ *
+ * <p>
+ * It is deliberately not wrapped in a block. A block is the machine's channel, and the prompt floor tells her that
+ * everything in a block is written by the machine; putting speech in one made the person a field of a report, which is
+ * the defect `<player-note>` carried for three days of live runs.
+ * </p>
+ *
+ * <p>
+ * IT IS NOT FILTERED, AND THAT IS A DECISION RATHER THAN AN OVERSIGHT. Passed through unchanged, a player who types a
+ * block's own markup (`<world-state>`, `</world-state>`) puts that markup in the message, and position alone no longer
+ * tells their words from the machine's report. It is left alone because this channel has ONE sender: `player_text` is
+ * minted by the authenticated control surface of the person this companion belongs to (`companion-control-server.ts`),
+ * so imitating a block imitates it to themselves - there is no third party to deceive, and the words grant nothing.
+ * Everything they could ask for is still admitted by the Mod against the live world on the game thread
+ * (`FarmhandCapabilitySurface`), and a run's verdicts read receipts rather than prose. Escaping or stripping the markup
+ * would silently edit what the player said, which is the one thing this function promises not to do.
+ * </p>
+ */
+function playerSpeech(inputs: readonly PlayerInput[]): string {
+  return inputs
+    .map((input) => input.text)
+    .filter((text) => text !== "")
+    .join("\n");
 }
 
 /**

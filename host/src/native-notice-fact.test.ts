@@ -116,9 +116,14 @@ test("an idle companion learns the clock: a notice reaches the conversation once
 
     assert.equal(delivered.length, 1, "the notice alone wakes the companion exactly one turn");
     const text = delivered[0] ?? "";
-    // Not shaped as the player speaking: the batch carries no <player-note> block, and the notice travels as a world
-    // fact of its own rather than as a receipt field or a player message.
-    assert.doesNotMatch(text, /<player-note>/u, "the notice is not player text");
+    // Not shaped as the player speaking. The positive form is the property: the message's first content is a block,
+    // so no words were put in the person's position by a batch that carries no player input at all - the notice travels
+    // as a world fact of its own rather than as a receipt field or as speech.
+    assert.match(
+      text,
+      /^<[a-z-]+>/u,
+      `the notice turn opens with a block, not with speech: ${JSON.stringify(text.slice(0, 40))}`,
+    );
     assert.equal(noticesIn(text), 1, "the notice appears once, with its own identity");
     assert.match(text, /「It's getting late\.\.\.」/u, "the game's own words are quoted verbatim");
     // No imperative: the notice reports the hour and names who showed it - it never tells her what to do.

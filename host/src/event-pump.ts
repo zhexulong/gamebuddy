@@ -353,9 +353,10 @@ function initializedSilentSettled(): Record<SilentSettledOpening, number> {
  * One delivered batch: the model-facing TEXT, and the frame its readers hang on it.
  *
  * <p>
- * The text is `composeFactBrief`'s named blocks of prose (`fact-brief.ts`). It is one string and nothing parses it: what
- * a reader needs structurally - the batch identity, the inputs' locales, the presentation events - is a field here, so
- * there is exactly one spelling of each and no JSON envelope inside the model's user message.
+ * The text is the player's own words verbatim at its head, then `composeFactBrief`'s named blocks of prose
+ * (`fact-brief.ts`). It is one string and nothing parses it: what a reader needs structurally - the batch identity, the
+ * inputs' locales, the presentation events - is a field here, so there is exactly one spelling of each and no JSON
+ * envelope inside the model's user message.
  * </p>
  */
 export type PendingBatch = Readonly<{

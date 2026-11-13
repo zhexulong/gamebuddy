@@ -5053,12 +5053,7 @@ test("the note assertion is wired to the session record, the planner's clock and
 // every run, because nothing in this harness ever asked the Host to hand the reading over.
 //
 // These tests hold both ends: the reading that NAMES a blind day, and the attach boundary that stops one happening.
-const ROUND49_FIRST_DELIVERY = [
-  "<player-note>…</player-note>",
-  "<world-state>",
-  "世界：尚未收到观察",
-  "</world-state>",
-].join("\n");
+const ROUND49_FIRST_DELIVERY = ["…", "<world-state>", "世界：尚未收到观察", "</world-state>"].join("\n");
 const OBSERVED_FIRST_DELIVERY = [
   "<world-state>",
   "世界（revision 0，刚刚更新）06:20（清晨）；春季 1 日；位置: 农舍；种子: 2 花椰菜种子",

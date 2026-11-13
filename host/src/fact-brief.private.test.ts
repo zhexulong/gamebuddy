@@ -32,7 +32,7 @@ import { SNAPSHOT_KEYS, type Snapshot } from "./protocol.js";
  * The model's user message was one stringified object for a year: measured 2026-11-10 (`round44`, 109 delivered
  * batches) it averaged 11,066 characters, carried `worldFacts` and the SAME facts again under `events`, and the
  * player's own note ("找片水，钓条鱼回来") was one array element inside it - 0 of 162 thinking parts mentioned fishing.
- * `fact-brief.ts` replaces it with four named blocks of prose.
+ * `fact-brief.ts` replaces it with speech at the head of the message and four named blocks of prose after it.
  * </p>
  *
  * <p>
@@ -98,7 +98,7 @@ function fact(overrides: Partial<WorldFact> & Pick<WorldFact, "kind">): WorldFac
 const snapshotFact = (revision: number, payload: Snapshot = { ...world, revision } as Snapshot): WorldFact =>
   fact({ kind: "snapshot", eventId: `snapshot_${String(revision)}`, revision, payload: payload as never });
 
-/** One batch that exercises every block: a player note, a fresh reading, events, and a settled programme. */
+/** One batch that exercises every block: the player speaking, a fresh reading, events, and a settled programme. */
 function richBatchFacts(): WorldFact[] {
   return [
     fact({ kind: "world_fact", eventId: "day_3", semanticKind: "day_started", payload: { day: 3 }, gameTime: "600" }),
@@ -223,11 +223,12 @@ test("block_coverage: every block the composer emits is in the closed set, and e
  * The prompt floor's block sentence, as ONE place the count can come from.
  *
  * <p>
- * The floor (`identity-profile.ts`) introduces the delivery in prose - "it arrives as prose in four blocks - &lt;player-note&gt;
- * … and &lt;execution-result&gt;" - and that `four` is a hand-written copy of `FACT_BRIEF_BLOCKS.length`. `<in-flight>` made
- * it five, and the paragraph was not this change's to edit: `identity-profile.ts` and
- * `game-surface-prompt-floor.test-support.ts` both carry another lane's uncommitted hunk for that very paragraph, so a
- * path-scoped commit here would have swept it.
+ * The floor (`game-surface-prompt-floor.ts`) introduces the delivery in prose - "the message opens with your partner's
+ * own words … then the machine's report follows as prose in four blocks - &lt;world-state&gt; … and
+ * &lt;execution-result&gt;" - and that `four` is READ FROM `FACT_BRIEF_BLOCKS.length` rather than typed, which is the
+ * property this test holds. It was typed once: `<in-flight>` made the set five on 2026-11-11 while the paragraph still
+ * said four, and `identity-profile.ts` and `game-surface-prompt-floor.test-support.ts` carried another lane's
+ * uncommitted hunk for that paragraph at the time.
  * </p>
  *
  * <p>
@@ -257,23 +258,34 @@ test("floor_block_count_owes_update: the prompt floor states the closed set's ow
   process.stdout.write(`floor_blocks examined ${String(counts)} of FACT_BRIEF_BLOCKS\n`);
 });
 
-test("note_in_own_block: the player's words are in <player-note> and nowhere else", () => {
+test("player_speech_head: the player's words are the head of the message, untouched, and outside every block", () => {
   const text = richBrief();
-  const occurrences = text.split(playerInput.text).length - 1;
   assert.equal(
-    occurrences,
+    text.split(playerInput.text).length - 1,
     1,
-    `the player's note appears ${String(occurrences)} times, and it must appear exactly once`,
+    `player_speech_not_verbatim: the player's words appear ${String(text.split(playerInput.text).length - 1)} time(s) in\n${text}`,
   );
-  // The block holds a label line per run of his sentences (`player-note.ts` reads the note) and his words inside `「」`:
-  // the words are unbroken, in his order, and the labels are the only added text.
-  const note = /<player-note>\n([\s\S]*?)\n<\/player-note>/u.exec(text)?.[1] ?? "";
-  const quoted = [...note.matchAll(/「([^」]*)」/gu)].map((match) => match[1] ?? "");
-  assert.equal(
-    quoted.join(""),
-    playerInput.text,
-    "the quoted runs of the note block are the player's words, verbatim and in his order",
+  // THE HEAD, not merely present: a block that opened the message would put the machine first and the person second,
+  // and `player_speech_inside_a_fact_block` is the whole defect this shape replaced.
+  const firstBlockAt = text.indexOf("<");
+  assert.notEqual(firstBlockAt, -1, `the message carries no blocks at all:\n${text}`);
+  assert.ok(
+    text.startsWith(playerInput.text),
+    `player_speech_inside_a_fact_block: the message opens ${JSON.stringify(text.slice(0, 40))} rather than with the words the person typed`,
   );
+  const head = text.slice(0, firstBlockAt);
+  assert.ok(
+    head.includes(playerInput.text),
+    `player_speech_inside_a_fact_block: the words sit inside a block; the head of the message is ${JSON.stringify(head)}`,
+  );
+  // A label or wrapper is the third way speech stops being speech: the words are present, the block is absent, and the
+  // person is still reading as a field of the machine's report.
+  for (const wrapper of ["player-note", "他跟你说的", "给你做的", "不是给你做的", "上面没有给你做的事"])
+    assert.equal(
+      text.includes(wrapper),
+      false,
+      `player_speech_labelled: ${JSON.stringify(wrapper)} appears in the delivery, so the speech is a labelled section`,
+    );
 });
 
 test("bare_json_in_model_text: the composed text is prose, not an envelope", () => {

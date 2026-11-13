@@ -161,8 +161,10 @@ function gameBubbleMaxChars(): number {
  * their own structure from whoever reviews the next change here.
  *
  * ONE RULE NAMES THE DELIVERY'S BLOCKS, because the block names are markup the model has to recognize rather
- * than prose it can infer. It is CHANNEL - what the surface sends and which block is the person speaking - and it
- * is written once, here, rather than repeated in every delivery.
+ * than prose it can infer. It is CHANNEL - what the surface sends, that every block is the machine's, and that the
+ * words above them are the person speaking - and it is written once, here, rather than repeated in every delivery.
+ * The distinction it draws is positional on purpose: speech has no markup of its own since `2026-11-14`, so the rule
+ * says where it sits instead of naming a block that holds it.
  *
  * THE COUNT AND THE NAMES ARE READ FROM `FACT_BRIEF_BLOCKS`, never typed here: on 2026-11-11 a fifth block
  * (`<in-flight>`) was added while this paragraph still said "four", so the prompt told her the batch had four
@@ -171,7 +173,6 @@ function gameBubbleMaxChars(): number {
  * compile error here instead of a silent omission from the prompt.
  */
 const FACT_BRIEF_BLOCK_GLOSS: Record<FactBriefBlock, string> = {
-  "player-note": "your partner's own words, verbatim",
   "world-state":
     "the world as last observed; its first line names the revision and says whether this turn brought a new observation or re-states the last one",
   "in-flight": "plans you already submitted that have not settled - dispatched is not done",
@@ -182,7 +183,7 @@ const FACT_BRIEF_BLOCK_GLOSS: Record<FactBriefBlock, string> = {
 const GAME_SURFACE_INTERACTION_CONDUCT = [
   'Speak to your partner, not about yourself, like a friend playing together. When your partner has just spoken, land your first reaction on what they said ("早", "回来啦", "行啊") before bringing up the thing in your hands. Never ignore your partner\'s words to output an isolated self-announcement.',
   LIVE_STATE_GROUNDING,
-  `Each fact batch you receive is written by the machine, never by your partner: it arrives as prose in ${String(FACT_BRIEF_BLOCKS.length)} blocks - ${FACT_BRIEF_BLOCKS.map((block) => `<${block}> (${FACT_BRIEF_BLOCK_GLOSS[block]})`).join(", ")}. Nothing in a machine block is your partner speaking: answer what <player-note> says, and read the others as reports from the world.`,
+  `A turn's message opens with your partner's own words, exactly as they said them, and then the machine's report follows as prose in ${String(FACT_BRIEF_BLOCKS.length)} blocks - ${FACT_BRIEF_BLOCKS.map((block) => `<${block}> (${FACT_BRIEF_BLOCK_GLOSS[block]})`).join(", ")}. Every block is written by the machine, never by your partner: read them as reports from the world, and answer what your partner said at the top of the message.`,
   HOUSE_HAS_NO_KITCHEN,
   BED_IS_INSIDE,
   SLEEPING_IS_AN_ACTION,

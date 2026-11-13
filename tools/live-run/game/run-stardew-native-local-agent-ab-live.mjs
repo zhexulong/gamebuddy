@@ -839,47 +839,36 @@ const SCENARIO_PROMPTS = Object.freeze({
     en: `Today is Spring day 19 in Stardew Valley. You received a letter from Jodi: she needs a fresh cauliflower for a recipe and asks you to bring her one. There happens to be a fully grown cauliflower in your farm soil, and she is nearby on the farm today. `,
   }),
   multiday_routine: Object.freeze({
-    // Per-day, with the day number in the text: the companion decides its day AND decides when the day is
-    // over, by dispatching its own `sleep`. The loop never ends a night for it - the prompt is where
-    // "the day is yours to end" is said, because a night the harness chose would be a scripted crossing.
+    // Per-day, and the player SPEAKS: one message, first person, the day's task as something he is asking of her.
     //
-    // The last clause exists because the previous wording named a CLOCK ("when it gets dark") and left the
-    // authority implicit. Measured 2026-10-26: two runs had the companion at the bedside reasoning "Advancing
-    // day is a big action... it may be the player's prerogative... I'll ask nothing, just state" - it announced
-    // going to bed and dispatched nothing, then passed out at 02:00. The reluctance was not a bug in the model:
-    // ending a shared world's day IS normally the player's call, and nothing here had said it was not.
-    // The TASK changes per day, so one run covers several capabilities and the night crossing doubles as a
-    // task switch. The invariant clauses - the player is away, ending the day is yours - are the same every
-    // day, because they are what this scenario exists to observe and a task change must not rewrite them.
-    // THE NOTE IS DELIVERED AS ITEMS ALREADY CLASSIFIED BY ITS COMPOSER, not as one sentence for the block to read.
-    // Measured 2026-11-14, day 1: the errand and the task shared one sentence - `我今天去镇上办事，${task}你看着办，…` -
-    // and `<player-note>` classifies PER SENTENCE, so the task came back labelled `他的事，不是给你做的`. Her reasoning
-    // that turn was `The player left a note: they're going to town to make a machine.` and she submitted nothing. A
-    // sentence with two owners cannot be split by a rule that reads a sentence; the writer of a composed note knows whose
-    // each part is, so it says so, one owner per item, in the block's own two labels. The person who left the note is
-    // away, which is why the invariant clauses are said as hers to act on and his own business is left as his.
+    // It used to be narrated stage direction - items built only to convey two facts the message did not need:
+    // 「现在是星露谷的早晨（连续第 N 天），桌上留着他的便签。」 for the day number, and 「活干完了或者天黑累了就回床上睡，这一天才真正
+    // 过去。」「只在嘴里说“我睡了”而身体没躺下，天不会自己过去。」 for the rules. Nobody says any of that. Measured 2026-11-14, day 1:
+    // the labelled note round-tripped through an attribution rule that read it one sentence at a time, the task came
+    // back as his own business - `The player left a note: they're going to town to make a machine.` - and she submitted
+    // nothing.
     //
-    // `tools/live-run/game/multiday-day-note.test.mjs` holds these templates to it: for every task in both tables the task
-    // must land inside a `给你做的` item and never inside a `他的事，不是给你做的` one, every character exactly once, no
-    // quote left open - and the two labels below are compared against the block's own rather than trusted.
-    zh: (day, task) =>
-      `给你做的：「现在是星露谷的早晨（连续第 ${String(day)} 天），桌上留着他的便签。」\n` +
-      `他的事，不是给你做的：「我今天去镇上办事。」\n` +
-      `给你做的：「${DAILY_TASK_PROMPT_ZH[task].trim()}」\n` +
-      `给你做的：「你看着办。」\n` +
-      `给你做的：「天黑累了就回屋歇着。」\n` +
-      `他的事，不是给你做的：「不用等我，明天还有别的。」\n` +
-      `给你做的：「活干完了或者天黑累了就回床上睡，这一天才真正过去。」\n` +
-      `给你做的：「只在嘴里说“我睡了”而身体没躺下，天不会自己过去。」`,
-    en: (day, task) =>
-      `给你做的：「It is morning in Stardew Valley (day ${String(day)} in a row for you), and there is a note on the table from your partner.」\n` +
-      `他的事，不是给你做的：「I'm heading into town today to run errands.」\n` +
-      `给你做的：「${DAILY_TASK_PROMPT_EN[task].trim()}」\n` +
-      `给你做的：「That is yours to handle.」\n` +
-      `给你做的：「When it gets dark and you're tired, head inside and rest.」\n` +
-      `他的事，不是给你做的：「No need to wait up for me, and there will be other things tomorrow.」\n` +
-      `给你做的：「When the work is done or when it is dark and you are tired, go to bed and sleep so the night passes.」\n` +
-      `给你做的：「Announcing it without lying down does not end the day.」`,
+    // THE THREE THINGS THE NARRATION WAS CARRYING are owned by layers that already state them:
+    //   - WHICH DAY IT IS: `<world-state>`'s own date line, from `snapshot.dayOfMonth` / `seasonIndex` / `year` through
+    //     `game-world-vocabulary.ts#formatGameDate` (`春季 3 日`), restated every turn.
+    //   - THAT SLEEPING IS WHAT ENDS THE DAY: the Game prompt floor's `SLEEPING_IS_AN_ACTION` and `BED_IS_INSIDE`
+    //     (`games/stardew/prompt/stardew-game-conduct.ts`), said once for every Game run rather than restated in the
+    //     player's mouth on every day of one scenario.
+    //   - WHOSE THE WORDS ARE: the shape. The player's text is the head of the turn, verbatim, and the machine's blocks
+    //     follow it (`fact-brief.ts#composeFactBrief`), so nothing has to label it and nothing can mislabel it.
+    // What is left is what a person says to their companion: I am out, here is the job, order it yourself, do not wait
+    // up. The invariant clauses are the same every day because they are what this scenario exists to observe.
+    //
+    // `tools/live-run/game/multiday-day-note.test.mjs` holds it: for every task in both tables the composed turn must
+    // contain the task text, contain the player's words byte-identical exactly once, outside every block, with no label
+    // and no stage direction.
+    zh: (_day, task) =>
+      `我今天去镇上办事，你把这活儿干一下：${DAILY_TASK_PROMPT_ZH[task].trim()}` +
+      `怎么安排你自己定，天黑累了就回屋睡，不用等我。`,
+    en: (_day, task) =>
+      `I'm heading into town today - take care of this for me while I'm gone: ${DAILY_TASK_PROMPT_EN[task].trim()} ` +
+      `However you want to go about it is up to you. If it gets dark and you're tired, go inside and get some sleep. ` +
+      `No need to wait up.`,
   }),
 });
 const SESSION_GOALS = (process.env.GAMEBUDDY_AGENT_SESSION_GOALS ?? "")

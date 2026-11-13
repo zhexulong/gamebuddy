@@ -226,7 +226,7 @@ test("in_flight_block_when_nothing_is_running: no unsettled programme means no b
   const opened = [...text.matchAll(/<([a-z-]+)>/gu)].map((match) => match[1] ?? "");
   assert.deepEqual(
     opened,
-    FACT_BRIEF_BLOCKS.filter((name) => name !== "in-flight" && name !== "execution-result" && name !== "player-note"),
+    FACT_BRIEF_BLOCKS.filter((name) => name !== "in-flight" && name !== "execution-result"),
     `the batch carries the blocks it has content for, and no <in-flight> placeholder: ${text}`,
   );
 });
