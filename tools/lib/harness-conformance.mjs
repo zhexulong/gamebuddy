@@ -859,6 +859,15 @@ const GATES_WITHOUT_FALSIFIER = Object.freeze([
   },
   { gate: "check-stardew-action-promotion.mjs", reason: "static table gate; falsifier in its test" },
   {
+    gate: "check-engine-affordance-census.mjs",
+    reason:
+      "reads the gitignored decompiled tree, so its default run on a checkout is `blocked: " +
+      "engine_affordance_tree_unavailable` (exit 2) rather than a report; where the tree exists it prints the census " +
+      "line, the per-marker breakdown, the population reading and the owner-type groups, and its falsifier " +
+      "(tools/check-engine-affordance-census.test.mjs) drives throwaway trees through a planted affordance, an empty " +
+      "population, a stale baseline and a refused regrow, then reads the three knowns off the exact tree",
+  },
+  {
     gate: "check-stardew-promotion-parity.mjs",
     reason:
       "compares the catalog, the published gate table, the experimental runner map and the fixture scenario; its " +
