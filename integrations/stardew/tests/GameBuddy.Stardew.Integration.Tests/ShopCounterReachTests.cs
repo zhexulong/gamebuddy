@@ -151,6 +151,16 @@ public sealed class ShopCounterReachTests
     /// cannot appear without someone saying which world fact it reports. The four world answers are the counter being
     /// shut, the item not being sold, the item being out of stock and the purse being short; the rest are identity or
     /// request-shape answers, which are not about the trade.
+    ///
+    /// <para>
+    /// The POPULATION is the handler's, never this table's: every <c>ExecutionState.Rejected</c> code the request body
+    /// emits, plus every code a refusal producer that body reaches by name mints. A producer spells its family
+    /// <c>family:{payload}</c> because the code carries an item id, a page count or the engine's own reason, so it is
+    /// declared by family. When the confirm moved into the engine's own click path the row refusal split into
+    /// <c>shop_item_absent_from_sale</c>, <c>shop_item_beyond_last_page</c>, <c>inventory_cannot_accept</c> and
+    /// <c>shop_purchase_refused</c>, and <c>shop_offer_not_purchasable</c> stopped existing - this gate said so instead
+    /// of agreeing with a stale copy.
+    /// </para>
     /// </summary>
     [Fact]
     public void EveryRefusalAPurchaseCanReachIsNamedAndJustified()
@@ -170,32 +180,44 @@ public sealed class ShopCounterReachTests
             ["invalid_quantity"] = "the request asked for fewer than one",
             ["world_not_ready"] = "the actor has no current location",
             ["modal_open"] = "a menu or dialogue is up, so this action would be driving over whatever opened it",
-            ["shop_offer_not_purchasable"] = "the opened menu cannot reach the row, so no native click could buy it",
+            // What the engine's own confirm path answered, each named by the goods or by the reason it carries.
+            ["shop_item_absent_from_sale:*"] = "the opened menu's own forSale list does not hold the item, so there is no row to click",
+            ["shop_item_beyond_last_page:*"] = "the engine's own pager could not bring the sale's row on screen, so no click can address it",
+            ["inventory_cannot_accept:*"] = "the engine charged and the goods are still on the cursor: no inventory slot could take the stack",
+            ["shop_purchase_refused:*"] = "the engine's confirm charged nothing; the payload is its reason (no_effect, native_click_refused, held_item_occupied, menu_closed)",
             // The Bookseller's own tile gate: refused rather than bypassed, because a real click would not have opened it.
             ["shop_tile_gate_refused"] = "the Bookseller stall is not open on this day of the season (GameLocation.cs:8727-8744)",
             ["shop_tile_requires_dialogue"] = "the Bookseller stall asks a Buy/Trade/Leave question, which this action does not drive",
         };
 
-        string body = MethodBody(
-            File.ReadAllText(RepositorySourcePath(ImplementationRelativePath)),
-            "public LocalExecutionReceipt RequestLocalShopPurchase(");
+        string handler = File.ReadAllText(RepositorySourcePath(ImplementationRelativePath));
+        string body = MethodBody(handler, "public LocalExecutionReceipt RequestLocalShopPurchase(");
 
-        // Literal codes, plus the two the body spells as expressions: the bound-actor guard's own reason, and the closed
-        // token shared with discovery (which is why `shop_closed_today` must NOT be a literal here).
-        List<string> literal = Regex
-            .Matches(body, "ExecutionState\\.Rejected,\\s*\"([a-z0-9_]+)\"")
-            .Select(match => match.Groups[1].Value)
-            .ToList();
-        literal.Should().NotBeEmpty("the extraction must read the body's refusals, or this gate reads nothing");
-        literal.Should().NotContain("shop_closed_today", "the closed token has ONE spelling, in DiscoveryExclusionReasons");
-
-        HashSet<string> reached = new(literal, StringComparer.Ordinal);
+        // The set is read out of the handler. The two the body spells as expressions are handled here: the bound-actor
+        // guard's own reason comes from `TryGetBoundActor`, and the closed token is discovery's (which is why
+        // `shop_closed_today` must NOT be a literal in this body).
+        HashSet<string> reached = RefusalCodesReachedBy(handler, body);
+        reached.Should().NotContain("shop_closed_today", "the closed token has ONE spelling, in DiscoveryExclusionReasons");
         body.Should().Contain(
             "DiscoveryExclusionReasons.ShopClosedToday,",
             "the shut-counter refusal is emitted, through discovery's own token");
         reached.Add("shop_closed_today");
 
-        reached.Should().BeEquivalentTo(declared.Keys, "every refusal must be declared with the fact it reports");
+        List<string> undeclared = reached
+            .Where(code => !declared.ContainsKey(code))
+            .OrderBy(code => code, StringComparer.Ordinal)
+            .ToList();
+        undeclared.Should().BeEmpty(
+            "every refusal this purchase can reach must be declared with the fact it reports; undeclared: "
+            + string.Join(", ", undeclared));
+
+        List<string> unreached = declared.Keys
+            .Where(key => !reached.Contains(key))
+            .OrderBy(key => key, StringComparer.Ordinal)
+            .ToList();
+        unreached.Should().BeEmpty(
+            "a declared refusal the handler no longer mints is a stale copy of it, not a gate; stale: "
+            + string.Join(", ", unreached));
     }
 
     /// <summary>
@@ -230,6 +252,87 @@ public sealed class ShopCounterReachTests
         Occurrences(body, "ShopPurchaseAffordabilityEvidence(").Should().Be(
             Occurrences(body, "price="),
             "every refusal whose evidence names a price renders it through the one producer that adds held=/short=");
+    }
+
+    /// <summary>How far the closure follows producers: request body, the producer it calls, and the one that calls.</summary>
+    private const int MaxProducerHops = 3;
+
+    private static readonly Regex RejectedCode =
+        new("ExecutionState\\.Rejected,\\s*\"([a-z][a-z0-9_]*)\"", RegexOptions.Compiled);
+
+    private static readonly Regex RefusalFamily = new("\\$?\"([a-z][a-z0-9_]*):", RegexOptions.Compiled);
+
+    private static readonly Regex NamedCall = new("\\b([A-Za-z_][A-Za-z0-9_]*)\\s*\\(", RegexOptions.Compiled);
+
+    /// <summary>
+    /// Every refusal code this purchase can return, read from the handler itself: the literals the request body emits
+    /// and the codes each refusal producer it reaches by name mints. A producer's code carries a payload (an item id, a
+    /// page count, the engine's reason), so it is collected as the family <c>name:*</c>.
+    /// </summary>
+    private static HashSet<string> RefusalCodesReachedBy(string handler, string requestBody)
+    {
+        var codes = new HashSet<string>(StringComparer.Ordinal);
+        var pending = new Queue<(string Body, int Hop)>();
+        var visited = new HashSet<string>(StringComparer.Ordinal);
+        int bodies = 0;
+        pending.Enqueue((requestBody, 0));
+        while (pending.Count > 0)
+        {
+            (string body, int hop) = pending.Dequeue();
+            bodies++;
+            foreach (Match match in RejectedCode.Matches(body))
+                codes.Add(match.Groups[1].Value);
+            foreach (Match match in RefusalFamily.Matches(body))
+                codes.Add(match.Groups[1].Value + ":*");
+            if (hop >= MaxProducerHops)
+                continue;
+            foreach (Match call in NamedCall.Matches(body))
+            {
+                string name = call.Groups[1].Value;
+                if (!visited.Add(name))
+                    continue;
+                int declaration = DeclarationOf(handler, name);
+                if (declaration >= 0)
+                    pending.Enqueue((MemberBody(handler, declaration), hop + 1));
+            }
+        }
+
+        bodies.Should().BeGreaterThan(
+            1, "the closure must reach the producers the body calls, or this gate reads nothing but the request");
+        return codes;
+    }
+
+    /// <summary>Where this file declares <paramref name="name"/>, or -1 when the member lives elsewhere.</summary>
+    private static int DeclarationOf(string handler, string name)
+    {
+        Match declaration = Regex.Match(
+            handler,
+            $@"(?:internal|private|public)\s+static\s+[^;{{}}]*?\b{Regex.Escape(name)}\s*\(",
+            RegexOptions.Singleline);
+        return declaration.Success ? declaration.Index : -1;
+    }
+
+    /// <summary>The body of the member declared at <paramref name="declaration"/>, braced or expression-bodied.</summary>
+    private static string MemberBody(string handler, int declaration)
+    {
+        int brace = handler.IndexOf('{', declaration);
+        int arrow = handler.IndexOf("=>", declaration, StringComparison.Ordinal);
+        if (arrow >= 0 && (brace < 0 || arrow < brace))
+        {
+            int end = handler.IndexOf(';', arrow);
+            return handler[arrow..(end + 1)];
+        }
+
+        int depth = 0;
+        for (int cursor = brace; cursor < handler.Length; cursor++)
+        {
+            if (handler[cursor] == '{')
+                depth++;
+            else if (handler[cursor] == '}' && --depth == 0)
+                return handler[brace..(cursor + 1)];
+        }
+
+        throw new InvalidOperationException("unbalanced member body");
     }
 
     private static int Occurrences(string source, string needle)

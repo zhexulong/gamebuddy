@@ -58,8 +58,23 @@ public sealed class ShopPurchaseCurrencySourceShapeTests
                 "and that producer divides the amount the native reader returned, never the purse");
         request.Should().Contain("long currencyBefore = ShopMenu.getPlayerCurrencyAmount(actor, shopCurrency);");
         request.Should().Contain("long currencyAfter = ShopMenu.getPlayerCurrencyAmount(actor, shopCurrency);");
-        request.Should().Contain("currencyAfter < currencyBefore && gained > 0");
-        request.Should().Contain("currencyAfter < currencyBefore || gained > 0");
+        // The judgement itself. The engine's confirm moved this handler onto the one decider
+        // (`ShopPurchaseOutcomeFor`, 67cf82ac), so the comparison the old pin named inline now lives there - still made
+        // on the amounts the native reader returned, and still the only place an outcome is decided: a second
+        // judgement in the request body is how the state and the terminal disagree.
+        string judgement = MethodBody(code, "internal static ShopPurchaseOutcome ShopPurchaseOutcomeFor(");
+        judgement.Should().Contain("bool paid = currencyAfter < currencyBefore;", "the comparison is the shop's currency, not the purse");
+        judgement.Should().Contain(
+            "if (paid && gained > 0)",
+            "a success is the currency really moving AND the goods arriving");
+        judgement.Should().Contain(
+            "if (paid || gained > 0)",
+            "a half-done trade is Uncertain, so the branch that says so cannot be dropped");
+        request.Should().Contain(
+            "ShopPurchaseOutcomeFor(",
+            "the terminal the caller reads is the decider's answer, not a judgement of the request's own");
+        request.Should().NotContain("item_purchased", "the outcome code is minted in the decider and nowhere else");
+        request.Should().NotContain("purchase_partial", "the outcome code is minted in the decider and nowhere else");
 
         // The refusal names the currency it could not afford, rendered from the amount the gate above read.
         request.Should().Contain(
