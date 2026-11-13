@@ -4,26 +4,16 @@
  * The hook formats what is being committed. It used to do that by running the formatter `--write` over the STAGED
  * PATHS as the worktree resolves them, and then `git add`ing every path whose worktree bytes the formatter had
  * changed. In this repository the worktree is several lanes' work in flight, so "the formatter changed this file"
- * was answered about a file that a neighbour was editing: on 2026-11-13 a lane staged a 2-line hunk of the tool-test
- * corpus runner through a private index, a neighbour's 258-line rewrite of that file sat in the worktree, the
- * formatter rewrote two characters of it, and `git add` put the whole rewrite into that lane's commit (`d8567157`).
- * A private index promised only the lane's hunks; the re-stage broke the promise.
+ * was answered about a file that a neighbour was editing: on 2026-11-13 a lane staged a 2-line hunk of
+ * `tools/run-tool-test-corpus.mjs` through a private index, a neighbour's 258-line rewrite of that file sat in the
+ * worktree, the formatter rewrote two characters of it, and `git add` put the whole rewrite into that lane's commit
+ * (`d8567157`). A private index promised only the lane's hunks; the re-stage broke the promise.
  *
- * The suite runs the REAL hook (the tracked hook wrapper and the script it execs, copied out of this tree) in a
- * fixture repository, and asserts on what the commit contains. The formatter is a stand-in for one reason: it is
- * another process, and its CLI is a boundary this suite does not own. The stand-in reproduces both of its modes -
- * `--write` rewrites files, `--stdin-file-path=<path>` formats stdin to stdout, with the character defect the real
- * stdin mode has - so a hook that goes back to rewriting worktree files, or to the stdin mode that changed a
- * committed mark to another one, fails these tests on their substance rather than on a missing feature.
- *
- * red-proof: inject  the hook's pre-fix shape restored - the formatter run `--write` over the staged paths as the
- *                    worktree resolves them, then `git add` on every path whose worktree bytes it changed ->
- *                    `✖ a commit carries the staged bytes when the worktree holds a foreign hunk` and
- *                    `✖ with GIT_INDEX_FILE the hook formats that index and leaves the shared one alone`,
- *                    with the neighbour's whole rewrite committed where the index held 2 insertions
- * red-proof: inject  the formatter's stdin mode substituted for the file it formats (biome 2.2.4 rewrites one mark to
- *                    another there) -> the same test: the committed blob reads the rewritten mark where the staged
- *                    blob reads the author's
+ * The suite runs the REAL hook (`tools/git-hooks/pre-commit` -> `tools/scripts/pre-commit.mjs`, copied out of this
+ * tree) in a fixture repository, and asserts on what the commit contains. The formatter is a stand-in for one
+ * reason: it is another process, and its CLI is a boundary this suite does not own. The stand-in reproduces both of
+ * its modes - `--write` rewrites files, `--stdin-file-path=<path>` formats stdin to stdout - so a hook that goes
+ * back to formatting files in the worktree fails these tests on their substance rather than on a missing feature.
  *
  * Red on the pre-fix hook, measured in a copy of this tree at `d8567157^`: with the same scenario the old hook
  * committed 210 insertions and 61 deletions (the neighbour's rewrite) where the index held 2 insertions.
@@ -51,13 +41,7 @@ const STUBBED_STEPS = [
   "tools/scripts/check-lockfile-freeze.mjs",
 ];
 
-/**
- * A formatter process: both CLI modes, and a record of every invocation so "no formatter ran" is observable.
- *
- * The stdin mode keeps the one defect the real binary has (measured on biome 2.2.4): it rewrites `✖` to `×` in the
- * text it hands back. A hook that formats through stdin must fail these tests for the same reason - a commit that
- * carries characters no author wrote is the defect this suite measures.
- */
+/** One formatter process: both CLI modes, and a record of every invocation so "no formatter ran" is observable. */
 const FORMATTER = `#!/usr/bin/env node
 import { appendFileSync, readFileSync, writeFileSync } from "node:fs";
 
@@ -84,7 +68,7 @@ if (!args.some((arg) => arg.startsWith("--stdin-file-path="))) {
   process.stderr.write("formatter fixture: neither --write nor --stdin-file-path was given\\n");
   process.exit(1);
 }
-process.stdout.write(format_(readFileSync(0, "utf8")).replaceAll("✖", "×"));
+process.stdout.write(format_(readFileSync(0, "utf8")));
 `;
 
 const fixture = () => {
@@ -122,7 +106,7 @@ const fixture = () => {
   ]) {
     ok(["config", key, value]);
   }
-  write(SCENARIO, "export const base = { a: 1 };\n// ✖ marks the step node's reporter failed\n");
+  write(SCENARIO, "export const base = { a: 1 };\n");
   ok(["add", "-A"]);
   ok(["commit", "-m", "fixture"]);
   rmSync(join(root, FORMATTER_LOG), { force: true });
@@ -133,10 +117,7 @@ const combined = (result) => `${result.stdout ?? ""}${result.stderr ?? ""}`;
 
 test("a commit carries the staged bytes when the worktree holds a foreign hunk", () => {
   const { root, write, git, ok } = fixture();
-  write(
-    SCENARIO,
-    "export const base = { a: 1 };\nexport const lane = { b: 2 };\n// ✖ marks the step node's reporter failed\n",
-  );
+  write(SCENARIO, "export const base = { a: 1 };\nexport const lane = { b: 2 };\n");
   ok(["add", "--", SCENARIO]);
   const stagedBlob = ok(["show", `:${SCENARIO}`]);
   const foreignBytes = `${stagedBlob}export const neighbour={c:3};\n`;
@@ -157,15 +138,15 @@ test("a commit carries the staged bytes when the worktree holds a foreign hunk",
 
 test("the hook still formats what it commits, in the index", () => {
   const { root, write, git, ok } = fixture();
-  write(SCENARIO, "export const lane = {p:8};\n// ✖ stays as written\n");
+  write(SCENARIO, "export const lane = {p:8};\n");
   ok(["add", "--", SCENARIO]);
 
   const commit = git(["commit", "-m", "unformatted"]);
   assert.equal(commit.status, 0, combined(commit));
-  assert.equal(ok(["show", `HEAD:${SCENARIO}`]), "export const lane = { p: 8 };\n// ✖ stays as written\n");
+  assert.equal(ok(["show", `HEAD:${SCENARIO}`]), "export const lane = { p: 8 };\n");
   assert.equal(
     readFileSync(join(root, SCENARIO), "utf8"),
-    "export const lane = {p:8};\n// ✖ stays as written\n",
+    "export const lane = {p:8};\n",
     "formatting is the index's business; the author's bytes stay where they are",
   );
 });
