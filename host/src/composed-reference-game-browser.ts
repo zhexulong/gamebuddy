@@ -650,6 +650,11 @@ function stardewCabinProblemCode(error: unknown): string {
     case "stardew_cabin_confirmation_conflict":
       return "game_operation_in_progress";
     case "stardew_cabin_publication_uncertain":
+    // An expired Farmhand join is the same fact from the browser's side - the handoff was
+    // admitted and did not complete - but the Host keeps the attempt alive: the player's exit is
+    // the ordinary close, not a quarantined session. Its own coordinator code stays the name the
+    // Host reports; only the player-visible problem code is shared.
+    case "stardew_farmhand_join_deadline_exceeded":
       return "stardew_manifest_handoff_uncertain";
     default:
       return "state_unavailable";

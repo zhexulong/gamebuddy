@@ -998,6 +998,48 @@ function isTransientFarmhandBridgeConnectError(error: unknown): boolean {
 }
 
 /**
+ * What the Farmhand join wait is made of, and why it can no longer be one flat number.
+ *
+ * `STARDEW_FARMHAND_JOIN_BASE_BUDGET_MS` is what an attach pays with no player Mod installed, and it is not a round
+ * number: the wait it bounds contains phases that already carry their own budgets. The contained role launch owns
+ * `STARDEW_PLAYER_HOST_ROLE_LAUNCH_OPERATION_BUDGET_MS` (60 s), the AI-client Mod's own provisioner owns the
+ * `FarmhandProvisioner.TimeoutSeconds` the composer writes into its profile (45 s), and the authenticated pipe connect
+ * plus `hello` handshake owns the last 45 s. A deadline smaller than the sum of the budgets beneath it fires on a
+ * launch every one of those layers still considers healthy - which is what the flat 60 s cap did, being smaller than
+ * the role-launch budget alone.
+ *
+ * `STARDEW_FARMHAND_JOIN_PER_PLAYER_MOD_MS` is the workload term. The world the companion joins is the Player Host's
+ * world, and a launched Player Host reports exactly the player Mod directories it carried into its `--mods-path` root
+ * (`StardewPlayerHostModsRoot.entries`). A joining client loads and validates each of them against the host's Mod list
+ * before its own bridge listener can exist, so the count of player Mods is the cheap, already-measured evidence of how
+ * long the join itself takes: an empty `Mods` folder and a 100-Mod SVE world are not the same wait, and a constant
+ * sized for the first one reports the second as a hang.
+ */
+export const STARDEW_FARMHAND_JOIN_BASE_BUDGET_MS = 150_000;
+export const STARDEW_FARMHAND_JOIN_PER_PLAYER_MOD_MS = 1_000;
+
+/** The join budget for a world carrying this many player Mods. */
+export function stardewFarmhandJoinBudgetMs(playerModCount: number): number {
+  if (!Number.isSafeInteger(playerModCount) || playerModCount < 0)
+    throw new Error("stardew_farmhand_join_mod_count_invalid");
+  return STARDEW_FARMHAND_JOIN_BASE_BUDGET_MS + playerModCount * STARDEW_FARMHAND_JOIN_PER_PLAYER_MOD_MS;
+}
+
+/**
+ * The join wait ran out: the authenticated pipe handshake did not answer inside the budget.
+ *
+ * It is the one attach failure that proves nothing bad, which is why it has its own predicate instead of sharing the
+ * quarantine path with a real failure. The transport's own code names what expired (`bridge_connect_deadline_exceeded`,
+ * the bridge connect), and the core restores the owner's connection state on that path, so the AI client is still
+ * owned and the attempt is still ordinary-closable. The create and resume paths already treat an expired join as a
+ * failure of THIS attempt (`unavailable` / a failed attachment projection); the cabin path was the only one that read
+ * the same clock as a native state unknown enough to quarantine.
+ */
+function isFarmhandJoinDeadlineError(error: unknown): boolean {
+  return error instanceof Error && error.message === "bridge_connect_deadline_exceeded";
+}
+
+/**
  * The two shapes of "the leftover attempt this world slot names is already closed
  * out", read at the one place that opens it.
  *
@@ -1136,6 +1178,13 @@ function createCoordinator(
   const installationDiscoveryProvider = installationDiscovery;
   let launchTerminal = false;
   let playerHostAttestationCorrelated = false;
+  /**
+   * The player Mods the launched Player Host carried into its `--mods-path` root, as that
+   * launch reported them. It is the workload reading every attach deadline in this lifecycle
+   * is sized by: the world the companion joins is this one, so the count is both cheap and
+   * already measured, and no attach has to scan the player's `Mods` folder a second time.
+   */
+  let playerModCount = 0;
   // Roles launched through the contained runtime. Containment/close at close()
   // is invoked only for roles that actually reached the launched state through
   // the runtime; the direct-spawn test reference has no runtime and must never
@@ -1433,6 +1482,9 @@ function createCoordinator(
       launchCompleted = true;
       if (result.status.kind !== "awaiting_player_host_attestation")
         throw new Error("stardew_player_host_launch_terminal_projection_invalid");
+      // The launch's own reading of what it carried: the world the companion will join is this
+      // Mod list, so this is the workload every later attach deadline is sized by.
+      playerModCount = result.modsRoot.kind === "carried" ? result.modsRoot.entries.length : 0;
       if (isClosing()) throw new Error("stardew_lifecycle_closing");
       transition("awaiting_player_host_attestation");
       if (containedRuntimeTeardown !== undefined) playerHostLaunchThroughRuntime = true;
@@ -1520,6 +1572,13 @@ function createCoordinator(
     const installation = await admitStardewInstallation(inspector, registration.locator);
     return await callback(installation);
   };
+
+  /**
+   * The deadline every attach in this lifecycle waits under, sized by the world it attaches to
+   * and never longer than the browser session (or the advertised cabin) it was admitted under.
+   */
+  const joinDeadlineMs = (sessionExpiryMs: number): number =>
+    Math.min(sessionExpiryMs, Date.now() + stardewFarmhandJoinBudgetMs(playerModCount));
 
   /**
    * The holder handle a world-binding registration must carry is the attempt's
@@ -1891,7 +1950,7 @@ function createCoordinator(
         apiVersion: 1 as const,
         choices: choices.map((choice) => {
           const choiceHandle = randomBytes(32).toString("base64url");
-          const expiresAtMs = Math.min(choice.expiresAtMs, sessionExpiry, Date.now() + 60_000);
+          const expiresAtMs = Math.min(choice.expiresAtMs, joinDeadlineMs(sessionExpiry));
           cabinHandles.set(
             choiceHandle,
             Object.freeze({
@@ -1980,6 +2039,17 @@ function createCoordinator(
           return Object.freeze({ apiVersion: 1 as const, status: "manifest_admitted" as const });
         })
         .catch(async (error: unknown) => {
+          // A wait that ran out proves nothing bad. Quarantine is the durable "this attempt's native
+          // state is unknown" terminal - nothing may be opened, recovered or ordinarily closed over
+          // it - and it is reachable only from a failure of an operation that really ran. On an
+          // expired join the AI client is still owned and the core has restored the owner's
+          // connection state, so the attempt stays closable, exactly as the create and resume paths
+          // already treat the same expiry. `uncertain` still holds: the manifest WAS admitted, so a
+          // replay of this key must not re-publish one.
+          if (isFarmhandJoinDeadlineError(error)) {
+            uncertain.value = true;
+            throw new Error("stardew_farmhand_join_deadline_exceeded", { cause: error });
+          }
           if (
             manifestAdmitted ||
             (error instanceof Error && error.message === "stardew_manifest_handoff_publication_uncertain")
@@ -2459,7 +2529,7 @@ function createCoordinator(
       const nextGeneration = Math.max(attachmentGeneration + 1, 2);
       if (command.expectedAttachmentGeneration !== nextGeneration)
         throw new Error("stardew_game_attachment_generation_conflict");
-      const resumeDeadlineMs = Math.min(sessionExpiryMs, Date.now() + 60_000);
+      const resumeDeadlineMs = joinDeadlineMs(sessionExpiryMs);
       // A genuinely new attempt resets the cancel epoch; a cancel is only
       // admitted while THIS attempt is in flight, so no stale flag survives.
       resumeCancelRequested = false;
@@ -2616,7 +2686,7 @@ function createCoordinator(
       // for the terminal failure path (card D1 decision 3 / D2).
       const creationRequestId = randomBytes(32).toString("base64url");
       const operationId = randomBytes(32).toString("base64url");
-      const createDeadlineMs = Math.min(sessionExpiryMs, Date.now() + 60_000);
+      const createDeadlineMs = joinDeadlineMs(sessionExpiryMs);
       // Resolved once per admitted command so the failure closure below always
       // reaches the same durable surface and the same seam builder the attempt
       // started with, after the attempt's own block scope has unwound.

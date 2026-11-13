@@ -1899,6 +1899,7 @@ test("Stardew cabin confirmation maps only frozen typed outcomes", async () => {
     ["stardew_cabin_idempotency_conflict", "idempotency_conflict"],
     ["stardew_cabin_confirmation_conflict", "game_operation_in_progress"],
     ["stardew_cabin_publication_uncertain", "stardew_manifest_handoff_uncertain"],
+    ["stardew_farmhand_join_deadline_exceeded", "stardew_manifest_handoff_uncertain"],
     ["private-sensitive-detail", "state_unavailable"],
   ] as const;
   for (const [internalMessage, expectedCode] of cases) {
