@@ -27,6 +27,7 @@
  *            got, which argument the gate needs, which measurement is red at HEAD. A reason too short to name anything
  *            is a finding, not an exemption.
  *   `runsIn` is one of `pnpm <script>` / `suite:<script>` (the script must exist and name this gate's path),
+ *            `falsifier:<script>` (the script must name this gate's falsifier suite, and that suite must run the gate),
  *            `ci:<workflow>` (that workflow must name the path), or `on-demand` (no scheduled home at all - printed
  *            under `no_scheduled_home`, so the gates nothing runs are a line of output rather than an assumption).
  *            An `elsewhere` exemption additionally asserts that the script runs on every push, and that assertion is
@@ -124,7 +125,7 @@ export const EXEMPTIONS = Object.freeze([
       " run exists there is nothing for it to examine, and it says so with `delivery_account_not_measured` (exit 2) rather" +
       " than passing on an empty population. Its verdict is also an arm of every run's own rung in the runner" +
       " (`deliveryAccountClause`), which is what keeps a bundle whose pieces and account disagree from being published as" +
-      " passed without anyone remembering to run this entry",
+      " passed without anyone remembering to run this entry · expires when a rung has a run bundle of its own to hand it",
     runsIn: "on-demand",
   },
   {
@@ -213,7 +214,7 @@ export const EXEMPTIONS = Object.freeze([
       "`preset_macro_frequency_no_presets` by design rather than passing; measured 2026-11-09 with the mount: " +
       "`examined 1 preset file(s), 4 macro occurrences` (char 3, user 1, and neither `{{if}}` nor `{{random}}`), 1087 " +
       "json document(s) read and 1033 rejected by the preset shape",
-    runsIn: "on-demand",
+    runsIn: "falsifier:test:tools-lib",
   },
   {
     path: "tools/audit-run-reading-shape.mjs",
@@ -227,18 +228,18 @@ export const EXEMPTIONS = Object.freeze([
     reason:
       "report: re-derives the ledger of design/architecture/stardew-action-execution-kernel.md and prints the drift " +
       "to stderr while exiting 0 (measured 2026-11-05: `requestHandlers: document says 42, source has 95`), so a rung " +
-      "would report it green while it is reporting a disagreement · measured 12 ledger rows re-derived, drift printed " +
+      "would report it green while it is reporting a disagreement · expires when `--check` becomes its default so a drift" +
+      " exits non-zero · measured 12 ledger rows re-derived, drift printed " +
       "(requestHandlers document 42 vs source 103, revisionIncrements 74 vs 70, executionIds 45 vs 9) at 95dd6efe",
     runsIn: "on-demand",
   },
   {
     path: "tools/audit-stardew-admission-fork-delta.mjs",
     reason:
-      "elsewhere: static audit of the forked admission sites - a migration decision aid that prints the delta and " +
-      "exits 0, so it is not a gate and no script declares it. Measured 2026-11-11: removing its `audit:` script line " +
-      "was the honest fix, because a gate that cannot fail occupies a covered position while measuring nothing; " +
-      "`test:stardew-admission-fork-delta` still runs its suite",
-    runsIn: "on-demand",
+      "suite: static audit of the forked admission sites, and a migration decision aid - it prints the delta and exits 0," +
+      " so a prelive rung would report it green while it reports a disagreement. What does run on every push is its" +
+      " falsifier, through `test:stardew-admission-fork-delta` in the corpus, which is where its rules are exercised",
+    runsIn: "falsifier:test:stardew-admission-fork-delta",
   },
   {
     path: "tools/audit-stardew-open-ground-claims.mjs",
@@ -263,7 +264,8 @@ export const EXEMPTIONS = Object.freeze([
     path: "tools/audit-stardew-handler-actor-guard.mjs",
     reason:
       "arguments: reads `integrations/stardew/` out of a git revision (`git ls-tree -r <rev>`, `git show <rev>:<file>`), " +
-      "so it measures a commit's tree, not the worktree the ladder is about to run",
+      "so it measures a commit's tree, not the worktree the ladder is about to run · expires when it reads the worktree," +
+      " or when its falsifier lands and a `test:`/`suite:` script names it",
     runsIn: "on-demand",
   },
   {
@@ -297,9 +299,10 @@ export const EXEMPTIONS = Object.freeze([
     path: "tools/check-action-coverage.mjs",
     reason:
       "report: counts dispatches out of `.live-runs/game-ladder` artifacts and exits 0 by design until someone puts a " +
-      "number on what well-covered means (`--fail-under`), so there is nothing to fail before a run exists · measured " +
+      "number on what well-covered means (`--fail-under`), so there is nothing to fail before a run exists. Its" +
+      " falsifier does run on every push, through `suite:tools-utilities` · measured " +
       "published actions 106, succeeded at least once 40, attempted 46, never attempted 60 at 95dd6efe",
-    runsIn: "on-demand",
+    runsIn: "falsifier:suite:tools-utilities",
   },
   {
     path: "tools/check-assertion-substance.mjs",
@@ -341,7 +344,8 @@ export const EXEMPTIONS = Object.freeze([
     path: "tools/check-commit-staging.mjs",
     reason:
       "fixup: a committer's preflight over the staged set against the paths the commit names, so it describes a " +
-      "commit in flight; bare mode says it cannot see the commit's intent and exits 0",
+      "commit in flight; bare mode says it cannot see the commit's intent and exits 0 · expires when the `-- <paths>`" +
+      " form the commit hook uses is declared by a script",
     runsIn: "on-demand",
   },
   {
@@ -356,8 +360,9 @@ export const EXEMPTIONS = Object.freeze([
     path: "tools/check-crab-pot-output-fixture-contract.mjs",
     reason:
       "arguments: requires `--contract <path>` to a provenance contract; without it the gate exits 1 with its own " +
-      "usage line, so bare running is not a reading of the tree",
-    runsIn: "on-demand",
+      "usage line, so bare running is not a reading of the tree. Its falsifier runs on every push, through" +
+      " `suite:tools-utilities`",
+    runsIn: "falsifier:suite:tools-utilities",
   },
   {
     path: "tools/check-child-output-parsing.mjs",
@@ -365,7 +370,7 @@ export const EXEMPTIONS = Object.freeze([
       "debt: measured red at HEAD — 3 sites hand-parse subprocess output and all three are files another lane holds " +
       "uncommitted (`tools/sandbox/sandbox-bus.mjs`, `tools/scripts/check-workspace-debris.mjs`), " +
       "so adopting it needs their fix, not the wiring · measured examined 135 files, violations 47, exit 1 at 449f0fb0",
-    runsIn: "on-demand",
+    runsIn: "falsifier:test:child-output-parsing",
   },
   {
     path: "tools/check-gate-population-agreement.mjs",
@@ -412,7 +417,8 @@ export const EXEMPTIONS = Object.freeze([
     path: "tools/check-dist-runtime-exports.mjs",
     reason:
       "installed: imports `vendor/magic-context/packages/pi-plugin/dist` (a build output), which nothing in the " +
-      "ladder assembles · measured 0 violations, every dist runtime export matching the Host contract, exit 0 with the " +
+      "ladder assembles · expires when a rung assembles that generation · measured 0 violations, every dist runtime" +
+      " export matching the Host contract, exit 0 with the " +
       "dist present at 449f0fb0",
     runsIn: "on-demand",
   },
@@ -430,6 +436,14 @@ export const EXEMPTIONS = Object.freeze([
     path: "tools/check-error-identity-classification.mjs",
     reason: "elsewhere: static scan for failure classification by message text, runs on every push",
     runsIn: "pnpm check:error-identity-classification",
+  },
+  {
+    path: "tools/check-engine-affordance-census.mjs",
+    reason:
+      "environment: its population is the game's own `activeClickableMenu` and interaction entry points, read out of the " +
+      "decompiled tree under `ref/` - gitignored, so a fresh checkout reads zero and the gate exits 2 BLOCKED rather " +
+      "than passing. `pnpm census:engine-affordances` is where that reading is taken, with the tree present",
+    runsIn: "pnpm census:engine-affordances",
   },
   {
     path: "tools/check-evidence-bundle.mjs",
@@ -542,7 +556,8 @@ export const EXEMPTIONS = Object.freeze([
     reason:
       "debt: measured red at HEAD (exit 1, `unclassified_reason_code " +
       "remove_placed_item_furniture_move_unsupported - no declared family matches it`), so wiring it into a rung " +
-      "would only stop the ladder on a defect this register is meant to report · measured 29 unclassified_reason_code " +
+      "would only stop the ladder on a defect this register is meant to report · expires when its falsifier is green and a" +
+      " `test:`/`suite:` script names it · measured 29 unclassified_reason_code " +
       "findings at 449f0fb0",
     runsIn: "on-demand",
   },
@@ -583,13 +598,15 @@ export const EXEMPTIONS = Object.freeze([
     path: "tools/check-stardew-dialogue-autonomy.mjs",
     reason:
       "arguments: takes `<ladder-result.json> [--session <file>]` and judges one run's autonomy, so there must be a " +
-      "run first",
-    runsIn: "on-demand",
+      "run first; its falsifier runs on every push, through `test:stardew-dialogue-autonomy`",
+    runsIn: "falsifier:test:stardew-dialogue-autonomy",
   },
   {
     path: "tools/check-stardew-dialogue-stream.mjs",
-    reason: "arguments: takes `<result.json> [--expect-speaker] [--session]` and judges one run's dialogue stream",
-    runsIn: "on-demand",
+    reason:
+      "arguments: takes `<result.json> [--expect-speaker] [--session]` and judges one run's dialogue stream, and its" +
+      " falsifier runs on every push through `test:stardew-dialogue-stream`",
+    runsIn: "falsifier:test:stardew-dialogue-stream",
   },
   {
     path: "tools/check-stardew-discovery-collection-coverage.mjs",
@@ -683,7 +700,8 @@ export const EXEMPTIONS = Object.freeze([
     path: "tools/check-stardew-snapshot-family-bounds.mjs",
     reason:
       "debt: measured red at HEAD (exit 1, 1 finding) on the Mod's bounded target arrays against the Host's caps, so " +
-      "wiring it would stop the ladder on a disagreement between two hand-written sides · measured exit 1 with ZERO " +
+      "wiring it would stop the ladder on a disagreement between two hand-written sides · expires when its falsifier is" +
+      " green and a `test:`/`suite:` script names it · measured exit 1 with ZERO " +
       "families derived: `construction_arity_mismatch` (118 arguments against 120 parameters), so no cap is compared " +
       "at all at 449f0fb0",
     runsIn: "on-demand",
@@ -697,8 +715,8 @@ export const EXEMPTIONS = Object.freeze([
     path: "tools/check-stardew-wia-agent-loop.mjs",
     reason:
       "arguments: judges ONE ladder-6 run from its result/session artifacts, so it is a post-run verdict with " +
-      "nothing to read before the run",
-    runsIn: "on-demand",
+      "nothing to read before the run; its falsifier runs on every push through `suite:stardew-tooling`",
+    runsIn: "falsifier:suite:stardew-tooling",
   },
   {
     path: "tools/check-stub-subject-collision.mjs",
@@ -731,6 +749,13 @@ export const EXEMPTIONS = Object.freeze([
     path: "tools/check-unreported-catch.mjs",
     reason: "elsewhere: static scan of catch clauses through the workspace's TypeScript compiler, runs on every push",
     runsIn: "pnpm check:unreported-catch",
+  },
+  {
+    path: "tools/check-viewport-population.mjs",
+    reason:
+      "elsewhere: derives the viewport cells every dialogue-web spec asks for and holds the declared matrix together with " +
+      "them; `check:viewport-population` is in the CI gates job's derived `check:*` set, so a rung would be a second copy",
+    runsIn: "pnpm check:viewport-population",
   },
   {
     path: `${STARDEW_TESTS}/stardew-reachable-exit-reconciliation.test.mjs`,
@@ -768,8 +793,11 @@ export function preludeGatePaths({ rungs = PRELUDE_RUNGS } = {}) {
  * A script is read from both `package.json` trees - `HEAD`'s and the worktree's - because a script either of them has
  * is a script that runs somewhere, and a worktree copy that has not caught up is not evidence about the commit.
  */
-export function verifyRunsIn(entry, { scripts, headScripts = {}, workflow }) {
+export function verifyRunsIn(entry, { scripts, headScripts = {}, workflow, gateSource = readAtRoot }) {
   if (entry.runsIn === "on-demand") return null;
+  const fromFalsifier = /^falsifier:(\S+)$/u.exec(entry.runsIn);
+  if (fromFalsifier !== null)
+    return verifyFalsifierClaim(entry, fromFalsifier[1], { scripts, headScripts, gateSource });
   const fromPnpm = /^pnpm (\S+)$/u.exec(entry.runsIn);
   const fromSuite = /^suite:(\S+)$/u.exec(entry.runsIn);
   if (fromPnpm !== null || fromSuite !== null) {
@@ -800,6 +828,41 @@ export function verifyRunsIn(entry, { scripts, headScripts = {}, workflow }) {
 
 /** Reason classes that assert the gate runs on every push; that claim is checked against the CI coverage gate. */
 const RUNS_ON_EVERY_PUSH = "elsewhere";
+
+/**
+ * `falsifier:<script>`: an automated entry point reaches this gate through its own falsifier suite.
+ *
+ * The claim has two halves and both are read from files, because "something runs it" is the assertion this register
+ * exists to stop anybody making on trust:
+ *
+ *   1. the named `test:`/`suite:` script's command names `<gate>.test.mjs`;
+ *   2. that falsifier file names the gate itself, which is how a suite that SPAWNS its gate reads.
+ *
+ * Why this is reachability and not another label: `tools/run-tool-test-corpus.mjs` derives every `test:`/`suite:` script
+ * and `tools/check-gate-population-agreement.mjs` holds that derivation to the scripts CI runs, so a `test:`/`suite:`
+ * script either IS a corpus member (`ci.yml` runs `test:tool-corpus`) or is named by an entry point directly. A gate whose
+ * falsifier is one of them runs on every push without a prelive rung of its own - which is what the eight `arguments` and
+ * `report` rows below actually are, and what `on-demand` was wrongly saying about them.
+ */
+function verifyFalsifierClaim(entry, name, { scripts, headScripts, gateSource }) {
+  const command = [scripts?.[name], headScripts?.[name]].find((reading) => typeof reading === "string");
+  if (command === undefined)
+    return {
+      code: "exempt_runs_in_unknown_script",
+      detail: `${name} is in neither the worktree nor HEAD's package.json`,
+    };
+  const falsifier = entry.path.replace(/\.mjs$/u, ".test.mjs");
+  if (!command.includes(falsifier))
+    return { code: "exempt_runs_in_script_does_not_name_the_falsifier", detail: `${name} runs: ${command}` };
+  const source = gateSource(falsifier);
+  const gate = entry.path.replace(/^.*\//u, "");
+  if (source === null || !source.includes(gate))
+    return {
+      code: "exempt_falsifier_does_not_run_the_gate",
+      detail: `${falsifier} exists` + (source === null ? " not" : " and never names") + ` ${gate}`,
+    };
+  return null;
+}
 
 /**
  * The classes whose reason states a MEASUREMENT of this tree, and therefore goes stale in both directions.
@@ -973,7 +1036,7 @@ export function checkRegistry({
   };
 }
 
-function readWorkflow(file) {
+function readAtRoot(file) {
   try {
     return readFileSync(resolve(ROOT, file), "utf8");
   } catch {
@@ -1029,7 +1092,7 @@ export function auditRegistry() {
   const files = readdirSync(resolve(ROOT, WORKFLOW_DIR))
     .filter((name) => name.endsWith(".yml"))
     .map((name) => `${WORKFLOW_DIR}/${name}`);
-  const texts = new Map(files.map((file) => [file, readWorkflow(file) ?? ""]));
+  const texts = new Map(files.map((file) => [file, readAtRoot(file) ?? ""]));
   const coverage = deriveCiCoverage({ scripts, workflowText: [...texts.values()].join("\n") });
   return checkRegistry({
     population: derivePopulation(),

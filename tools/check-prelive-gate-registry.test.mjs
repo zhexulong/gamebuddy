@@ -39,6 +39,11 @@ import { PRELUDE_RUNGS } from "./prelive.mjs";
  *   expected, so the disagreement that decides an exemption was never printed
  * red-proof: inject  `readHeadScripts` parsing the file on disk instead of the commit -> `{}` where the commit's
  *   script table was expected
+ * red-proof: inject  deleting the first half of a `falsifier:` claim (that the named script runs the gate's suite) ->
+ *   one case read `undefined` where `exempt_runs_in_script_does_not_name_the_falsifier` was expected, so a script naming
+ *   any suite counted as reachability
+ * red-proof: inject  deleting the second half (that the suite runs the gate) -> one case read `undefined` where
+ *   `exempt_falsifier_does_not_run_the_gate` was expected, so a suite that never mentions its gate counted as a home
  */
 
 const CLEAN = () => ({
@@ -355,4 +360,43 @@ test("the real tree: every withdrawn gate names the input or the measurement tha
       EXEMPTIONS.find((entry) => entry.path === path)?.reason.length > 40,
       `${path} has no scheduled home and must still say why`,
     );
+});
+
+// `falsifier:<script>` is the claim "an automated entry point reaches this gate through its falsifier suite", and it has
+// two halves because either one alone can be true of a gate nothing runs: a `test:` script that names the suite, and a
+// suite that actually runs the gate. Measured 2026-11-13: eight on-demand rows already had both halves and were being
+// reported as having no scheduled home at all.
+test("a falsifier claim holds only when the script names the suite and the suite runs the gate", () => {
+  const gateSource = (file) => (file.endsWith("check-b.test.mjs") ? 'spawnSync(node, ["tools/check-b.mjs"])' : null);
+  const reading = { workflow: () => "", gateSource };
+  assert.equal(
+    verifyRunsIn(
+      { path: "tools/check-b.mjs", runsIn: "falsifier:test:b" },
+      { ...reading, scripts: { "test:b": "node --test tools/check-b.test.mjs" } },
+    ),
+    null,
+  );
+  // The script names a suite that never runs the gate: the file exists and says nothing about it.
+  assert.equal(
+    verifyRunsIn(
+      { path: "tools/check-b.mjs", runsIn: "falsifier:test:b" },
+      { ...reading, scripts: { "test:b": "node --test tools/check-other.test.mjs" } },
+    ).code,
+    "exempt_runs_in_script_does_not_name_the_falsifier",
+  );
+  assert.equal(
+    verifyRunsIn(
+      { path: "tools/check-a.mjs", runsIn: "falsifier:test:b" },
+      {
+        ...reading,
+        scripts: { "test:b": "node --test tools/check-a.test.mjs" },
+        gateSource: (file) => (file.endsWith("check-a.test.mjs") ? "// no gate here" : null),
+      },
+    ).code,
+    "exempt_falsifier_does_not_run_the_gate",
+  );
+  assert.equal(
+    verifyRunsIn({ path: "tools/check-b.mjs", runsIn: "falsifier:test:missing" }, { ...reading, scripts: {} }).code,
+    "exempt_runs_in_unknown_script",
+  );
 });
