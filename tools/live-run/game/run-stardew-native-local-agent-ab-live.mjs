@@ -31,6 +31,7 @@ import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
   decideDayWake,
+  objectiveProgressKey,
   QUIET_BOUND_MS,
   runMultiDayLoop,
   WAKE_REASON,
@@ -1874,6 +1875,23 @@ function sleepSubmittedSince(markers, records) {
 /** Where a turn starts in both dispatch records, for `sleepSubmittedSince`. */
 function dispatchMarkers(trace, submissions) {
   return { traceFrom: trace.length, submissionsFrom: submissions.length };
+}
+
+/**
+ * The run's OWN prompt-turn cadence, from the moments the harness began its prompt turns.
+ *
+ * `readObjectiveState` needs one span to answer "the objective's reading has not moved for a whole turn", and a turn
+ * of this run is what that phrase means: a companion's turn takes as long as this run's turns take, so the number is
+ * measured from the turn stream instead of chosen here (measured 2026-11-11, `round45`: 62 prompt turns in 2510 s, so
+ * about 40 s a turn). Fewer than two turns is not a zero interval - it is no interval, and `null` makes
+ * `readObjectiveState` answer `advancing` rather than licence a stall nobody measured.
+ */
+function medianPromptTurnIntervalMs(starts) {
+  if (starts.length < 2) return null;
+  const intervals = starts.slice(1).map((start, index) => start - starts[index]);
+  const sorted = [...intervals].sort((left, right) => left - right);
+  const middle = Math.floor(sorted.length / 2);
+  return sorted.length % 2 === 1 ? sorted[middle] : Math.round((sorted[middle - 1] + sorted[middle]) / 2);
 }
 
 /**
@@ -4558,6 +4576,9 @@ try {
     // The baseline for the refusal sample, taken BEFORE the first turn: lines already in this lane's log belong to an
     // earlier run, and counting them would let an old refusal answer a question about "just now".
     sampleRefusalEvidence();
+    // The moments the harness began its prompt turns, in order. The day loop's own span - "nothing moved for a whole
+    // turn" - is measured from these rather than from a constant, so it means the same thing as this run's turns.
+    const promptTurnStarts = [];
     const crossing = await runMultiDayLoop({
       crossNights: MULTIDAY_CROSSINGS,
       dayTurn: async (day) => {
@@ -4602,16 +4623,32 @@ try {
           // Whether this day's day-end offer has been made. ONE per day: an offer repeated until answered is the ping
           // this change exists to remove.
           let dayEndOffered = false;
+          // THE OBJECTIVE'S OWN PROGRESS, per day: the purpose reading publishes progress facts, `objectiveProgressKey`
+          // is that reading's own change, and the age of the last change is what the decider reads to tell "still
+          // working" from "cannot be done today". A day starts its own window because it is asked for a different task.
+          let objectiveProgress = null;
+          let objectiveProgressAtMs = Date.now();
           while (!nightCrossedIn(dayScope)) {
             const clock = readWorldClock();
+            const nowMs = Date.now();
             // Whether the model is woken at all is decided BEFORE anything is asked of her, from facts and never from
             // the fact that a turn just settled. A settlement only says that what the harness was waiting for stopped;
             // the facts below say whether that stop left her anything to decide.
             const body = bodyWorkNow();
             const stallFacts = newStallFacts();
+            // ONE read of the purpose per poll: what it says is both the answer to "achieved" and the progress facts
+            // whose age is the stall, and two reads could disagree.
+            const purpose = judgeTaskPurpose(dayTask, receiptsSince(factsBefore));
+            const progressNow = objectiveProgressKey(purpose);
+            if (progressNow !== objectiveProgress) {
+              objectiveProgress = progressNow;
+              objectiveProgressAtMs = nowMs;
+            }
             const wake = decideDayWake({
               turnIndex: turns,
-              objectiveMet: judgeTaskPurpose(dayTask, receiptsSince(factsBefore)).state === "achieved",
+              objectiveMet: purpose.state === "achieved",
+              objectiveProgressSinceMs: nowMs - objectiveProgressAtMs,
+              objectiveSpanMs: medianPromptTurnIntervalMs(promptTurnStarts),
               programRunning: body.programRunning,
               admissionPending: body.admissionPending,
               quietMs: quietMsNow(),
@@ -4629,7 +4666,8 @@ try {
             }
             turns += 1;
             recordWake(wake.reason);
-            if (wake.reason === WAKE_REASON.dayEndOffer) dayEndOffered = true;
+            if (wake.reason === WAKE_REASON.dayEndOffer || wake.reason === WAKE_REASON.objectiveUnreachableForToday)
+              dayEndOffered = true;
             // The day's shortage fact, read from the world as it stands at the FIRST turn of the day: what the task
             // asks for, what she holds, and where the missing seed is sold. Null when there is nothing to say (the task
             // declares no patch, or the pack already covers it), and then the prompt is untouched.
@@ -4645,7 +4683,7 @@ try {
             const prompt =
               turns === 1
                 ? withDayFact(promptForDay(day), dayFact)
-                : wake.reason === WAKE_REASON.dayEndOffer
+                : wake.reason === WAKE_REASON.dayEndOffer || wake.reason === WAKE_REASON.objectiveUnreachableForToday
                   ? promptForLateDay(day)
                   : wake.reason === WAKE_REASON.stallWake
                     ? promptForStall(stallFacts.at(-1) ?? null)
@@ -4656,6 +4694,7 @@ try {
                         : promptForDayContinuation(day);
             const spokenBefore = presentationPieces.length;
             const dispatchBefore = dispatchMarkers(actionTrace, programSubmissions);
+            promptTurnStarts.push(Date.now());
             const walked = await runAgentTurn(prompt, tools, { reason: wake.reason });
             if (walked.status !== null) status = walked.status;
             agentTurnResult = walked.turn;
@@ -4799,6 +4838,10 @@ try {
     // THE WAKE ACCOUNT, in one line, because it is the run's answer to "why did the harness think 109 times for four
     // days": what it issued and by which reason, and every settlement it deliberately did not turn into a prompt.
     const wakeByReason = Object.fromEntries(WAKE_REASONS.map((reason) => [reason, wakeAccount.issued[reason] ?? 0]));
+    // The span the objective branch read, computed from the turn stream this run actually issued. Published because a
+    // reader of `objective_unreachable_for_today: 1` has to be able to check the `objective_span_ms=...` condition the
+    // decision printed, and the number exists only here.
+    const objectiveSpanMs = medianPromptTurnIntervalMs(promptTurnStarts);
     const wakeSuppressedByReason = Object.fromEntries(
       WAKE_SUPPRESSION_REASONS.map((reason) => [reason, wakeAccount.suppressed[reason] ?? 0]),
     );
@@ -4812,6 +4855,7 @@ try {
         suppressed: wakesSuppressed,
         suppressedByReason: wakeSuppressedByReason,
         quietBoundMs: QUIET_BOUND_MS,
+        objectiveSpanMs,
       }),
     );
     // WHETHER SHE SAID SHE WAS GOING TO BED AND DID NOT, read from the turn stream before the night is judged.
@@ -4878,6 +4922,9 @@ try {
         // The bound the decision waited out, published so a reader can tell "nothing moved" from "nothing moved for
         // long enough": the same number `waitForSessionQuiet` uses, stated once.
         quietBoundMs: QUIET_BOUND_MS,
+        // The run's own prompt-turn cadence, which is the span the objective branch read: `null` when the run issued
+        // fewer than two prompt turns, and then no stall could be stated from it.
+        objectiveSpanMs,
       }),
       // Judged by the ONE baseline module, so the gate and the runner cannot disagree about what a crossing is.
       assessment,

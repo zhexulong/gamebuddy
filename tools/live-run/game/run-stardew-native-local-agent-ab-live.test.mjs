@@ -4645,6 +4645,16 @@ const WAKE_PRODUCERS = Object.freeze({
   stall_wake: () => decideDayWake({ ...IDLE_DAY, stalled: true }).reason,
   stale_world: () => decideDayWake({ ...IDLE_DAY, worldStateStale: true }).reason,
   day_end_offer: () => decideDayWake({ ...IDLE_DAY, objectiveMet: true, lateDay: true }).reason,
+  // THE TWO MEASUREMENTS, not a timer: the day is called unfinishable when the objective's published reading has
+  // stood still for a whole measured turn, so this producer hands the decider exactly that - a still reading one
+  // span old - and `lateDay`, which it takes from the world clock.
+  objective_unreachable_for_today: () =>
+    decideDayWake({
+      ...IDLE_DAY,
+      lateDay: true,
+      objectiveProgressSinceMs: QUIET_BOUND_MS * 2,
+      objectiveSpanMs: QUIET_BOUND_MS,
+    }).reason,
   // A session goal is a PLAYER turn, so its reason is declared at its own call site: this reads that site rather than
   // restating it, which is what makes "reachable" a fact about the runner instead of about this table.
   player_input: () => {
@@ -4667,6 +4677,88 @@ test("every declared wake reason is reachable from a test, and no reason is decl
   );
 });
 
+/**
+ * THE OTHER HALF OF REACHABILITY, on the runner's side of it.
+ *
+ * `objective_unreachable_for_today` is answered from `readObjectiveState`, which answers `advancing` whenever either
+ * the progress or the span is unmeasured - deliberately, so "we could not tell" can never licence the reason. The
+ * consequence for the RUN is not visible to any test of the decider: a day loop that hands `decideDayWake` an
+ * `objectiveMet` and nothing else can never reach the reason, however late its evening gets, and every producer table
+ * above would still pass. Measured on the tree this test was written against: the runner's one `decideDayWake` call
+ * passed neither `objectiveProgressSinceMs` nor `objectiveSpanMs`.
+ */
+test("the day loop measures the facts its objective branch reads, instead of handing the decider a branch that cannot fire", () => {
+  const loop = dayTurnSource(RUNNER_SOURCE);
+  const callAt = loop.indexOf("decideDayWake({");
+  assert.ok(callAt >= 0, "the day loop must ask the decider");
+  const call = loop.slice(callAt, loop.indexOf("});", callAt) + 3);
+  for (const fact of ["objectiveMet:", "objectiveProgressSinceMs:", "objectiveSpanMs:"]) {
+    assert.ok(
+      call.includes(fact),
+      `the day loop never hands the decider ${fact}: the objective branch that reads it cannot fire in any run`,
+    );
+  }
+  // AND FROM MEASUREMENTS RATHER THAN FROM NUMBERS: the progress is the age of the objective's own published reading,
+  // the span is this run's prompt-turn cadence. A constant here would be a timer wearing the reason's name.
+  assert.match(
+    call,
+    /objectiveProgressSinceMs:[\s\S]{0,120}?objectiveProgress/u,
+    "the progress handed to the decider must be the age of the objective's published reading",
+  );
+  assert.match(
+    call,
+    /objectiveSpanMs: medianPromptTurnIntervalMs\(/u,
+    "the span handed to the decider must be this run's own measured prompt-turn interval",
+  );
+});
+
+test("the run's prompt-turn span is measured from its own turns, and an unmeasured cadence is not a span", () => {
+  // "Nothing moved for a whole turn" is a statement about THIS run's turns, so the number comes from the turn starts
+  // the harness recorded. Fewer than two turns is no interval at all - `null`, which `readObjectiveState` refuses as
+  // unmeasured - rather than a zero that would read as a stall nobody observed.
+  const interval = extractRunnerFunction(RUNNER_SOURCE, "medianPromptTurnIntervalMs");
+  assert.equal(interval([]), null, "a run with no prompt turn has no cadence to measure");
+  assert.equal(interval([1_000]), null, "one turn is not an interval");
+  assert.equal(interval([1_000, 3_000]), 2_000, "two turns: the one interval between them");
+  assert.equal(interval([0, 10_000, 30_000]), 15_000, "two intervals: their mean, rounded");
+  assert.equal(interval([0, 10_000, 30_000, 100_000]), 20_000, "three intervals: the middle one");
+  // A cadence the world produced in zero milliseconds is `0`, and `readObjectiveState` refuses `spanMs <= 0` as an
+  // unmeasured span: the answer is `advancing`, not a stall. The reading does not silently become `1` here.
+  assert.equal(interval([5, 5]), 0);
+});
+
+test("the day's offer is closed by BOTH reasons that make it, and asked as the late-day question", () => {
+  // `decideWake` answers `already_offered` once `dayEndOffered` is true, for `day_end_offer` AND for
+  // `objective_unreachable_for_today`: they are the day's one question, asked once. The runner keeps one flag, so a
+  // flag closed on only one of them re-asks the same question on every poll until the night - the ping the flag
+  // exists to remove - and the second reason only became able to fire once the run measured the two facts above.
+  const loop = dayTurnSource(RUNNER_SOURCE);
+  const flagAt = loop.indexOf("dayEndOffered = true");
+  assert.ok(flagAt >= 0, "the day loop must remember that it offered the day");
+  // The STATEMENT, not the line: the condition names both reasons and may be laid out over several lines.
+  const statementAt = loop.lastIndexOf("if (", flagAt);
+  assert.ok(statementAt >= 0 && statementAt < flagAt, "the flag must be closed by a condition, not unconditionally");
+  const flagStatement = loop.slice(statementAt, loop.indexOf("\n", flagAt));
+  for (const reason of ["WAKE_REASON.dayEndOffer", "WAKE_REASON.objectiveUnreachableForToday"]) {
+    assert.ok(
+      flagStatement.includes(reason),
+      `the day's offer is not closed when ${reason} fires: it repeats every poll`,
+    );
+  }
+  // AND ASKED AS THE LATE-DAY QUESTION: this reason means the rest of the day is the decision, so the prompt states
+  // the clock and the one action that ends a day rather than saying "carry on".
+  const promptChoice = loop.slice(loop.indexOf("const prompt ="), loop.indexOf("const spokenBefore"));
+  assert.ok(promptChoice.length > 0, "the day loop must choose what it asks her");
+  assert.ok(
+    promptChoice.includes("WAKE_REASON.objectiveUnreachableForToday"),
+    "the reason's own question is not chosen: it would fall through to whichever prompt the clock happened to select",
+  );
+  assert.ok(
+    /objectiveUnreachableForToday[\s\S]{0,80}promptForLateDay/u.test(promptChoice),
+    "the still objective is asked the late-day question, not `carry on`",
+  );
+});
+
 test("the multi-day result publishes the wake account the verdict reads", () => {
   // The three readings cannot be reconstructed from the session alone - a prompt that was never issued leaves no
   // record there - so the runner has to publish them by name.
@@ -4674,6 +4766,9 @@ test("the multi-day result publishes the wake account the verdict reads", () => 
   assert.match(RUNNER_SOURCE, /continuationPromptsSuppressed:/u);
   assert.match(RUNNER_SOURCE, /suppressedByReason:/u);
   assert.match(RUNNER_SOURCE, /quietBoundMs: QUIET_BOUND_MS/u);
+  // The span the objective branch read travels with them: a run that published `objective_unreachable_for_today: 1`
+  // must be readable against the number that licensed it, and that number exists nowhere else.
+  assert.match(RUNNER_SOURCE, /objectiveSpanMs/u);
 });
 
 /**
