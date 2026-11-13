@@ -1,5 +1,5 @@
 // red-proof: inject  `lastClick = Vector2.Zero` dropped from SEAM_REQUIRED_STEPS in
-//                    tools/check-stardew-tool-family-stamina-evidence.mjs -> `✖ a seam that drops the lastClick reset is
+//                    tools/check-stardew-tool-family-stamina-evidence.mjs -> `× a seam that drops the lastClick reset is
 //                    reported`, `expected a lastClick failure, got []`, exit 1; restored -> green
 import assert from "node:assert/strict";
 import test from "node:test";
@@ -8,6 +8,7 @@ import {
   STARDEW_EXECUTION_MANAGER_FILES,
   STARDEW_NATIVE_TOOL_USE_SEAM,
   STARDEW_TOOL_FAMILY,
+  toolDrivingHandlers,
   validateToolFamilyStaminaEvidence,
 } from "./check-stardew-tool-family-stamina-evidence.mjs";
 
@@ -198,10 +199,19 @@ private LocalExecutionReceipt ExecuteChopTreeSource(string requestId)
   );
 });
 
-test("the family covers every DoFunction-driving handler the sources declare", () => {
-  // Regression guard: the family list must not silently lose an entry. Each
-  // entry names a real handler signature, and the count matches the known set.
-  assert.equal(Object.keys(STARDEW_TOOL_FAMILY).length, 12);
+test("the family covers every DoFunction-driving handler the sources declare", async () => {
+  // Derived from the Mod, not counted: every handler whose own body - or a body it delegates to - dispatches a tool is a
+  // member of this family, so a handler the sources grow arrives as a missing row naming itself instead of as a literal
+  // that goes stale. Measured when this replaced `Object.keys(STARDEW_TOOL_FAMILY).length === 12`: the derivation found
+  // RequestLocalCutGrass and RequestLocalBreakResourceClump driving a scythe and a pickaxe with no family row.
+  const sources = {};
+  for (const file of STARDEW_EXECUTION_MANAGER_FILES)
+    sources[file] = await readFile(new URL(`../${file}`, import.meta.url), "utf8");
+  assert.deepEqual(
+    Object.keys(STARDEW_TOOL_FAMILY).sort(),
+    toolDrivingHandlers(sources),
+    "the tool family must name exactly the handlers that drive a native tool",
+  );
   for (const entry of Object.values(STARDEW_TOOL_FAMILY)) {
     assert.ok(typeof entry.tool === "string" && entry.tool.length > 0);
     assert.ok(typeof entry.dispatch === "string" && entry.dispatch.length > 0);

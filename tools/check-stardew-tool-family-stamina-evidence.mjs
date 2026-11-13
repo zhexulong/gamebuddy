@@ -27,7 +27,7 @@
  * receipt without this gate.
  *
  * red-proof: inject  the shared `UseNativeToolOnTile` seam with its closing `checkForExhaustion(` step removed ->
- *                    `tool-family stamina evidence: 1 violation(s)` with `✖ UseNativeToolOnTile: the seam body must
+ *                    `tool-family stamina evidence: 1 violation(s)` with `× UseNativeToolOnTile: the seam body must
  *                    run Farmer.useTool's `checkForExhaustion(` step in native order, after `lastClick = Vector2.Zero``,
  *                    exit 1; the unmodified tree prints `OK (every tool-family action reports stamina)`, exit 0
  *                    (tools/check-stardew-tool-family-stamina-evidence.mjs)
@@ -67,9 +67,38 @@ const TOOL_FAMILY = Object.freeze({
   RequestLocalClearDebris: { tool: "activeTool", dispatch: "DoFunction", terminal: "debris_cleared" },
   RequestLocalScytheCrop: { tool: "scythe", dispatch: "performToolAction", terminal: "scythe_crops_harvested" },
   RequestLocalCutWeeds: { tool: "scythe", dispatch: "performToolAction", terminal: "weeds_cut" },
+  RequestLocalCutGrass: { tool: "scythe", dispatch: "performToolAction", terminal: "grass_cut" },
+  RequestLocalBreakResourceClump: { tool: "pickaxe", dispatch: "DoFunction", terminal: "clump_broken" },
   RequestLocalCollectAnimalProduct: { tool: "tool", dispatch: "BeginUsingTool", terminal: "animal_product_collected" },
 });
 export const STARDEW_TOOL_FAMILY = TOOL_FAMILY;
+
+/** The native calls that mean "this handler drives a tool", so the family can be derived from the C# rather than listed. */
+const TOOL_DISPATCH_CALLS = Object.freeze([
+  "DoFunction(",
+  "UseNativeToolOnTile(",
+  "BeginUsingTool(",
+  "performToolAction(",
+]);
+
+/**
+ * Every handler the execution-manager sources declare that drives a native tool, read from the C# itself: the handler's
+ * own body, or a body it delegates to, contains one of `TOOL_DISPATCH_CALLS`. This is the authority `TOOL_FAMILY` answers
+ * to - the table is a projection of this set, so a handler the sources grow is a missing row rather than a silent gap.
+ */
+export function toolDrivingHandlers(sources) {
+  const handlers = new Set();
+  for (const text of Object.values(sources)) {
+    for (const match of text.matchAll(/public LocalExecutionReceipt (Request[A-Za-z0-9_]*)\(/gu)) {
+      const handler = match[1];
+      const declaration = handlerBody(text, `public LocalExecutionReceipt ${handler}(`);
+      if (declaration === null) continue;
+      const bodies = [declaration, ...reachableExecutionBodies(sources, declaration)];
+      if (bodies.some((body) => TOOL_DISPATCH_CALLS.some((call) => body.includes(call)))) handlers.add(handler);
+    }
+  }
+  return [...handlers].sort();
+}
 
 const STAMINA_EVIDENCE_ALL = /stamina_before/;
 const STAMINA_EVIDENCE_FIELDS = ["stamina_before", "stamina_after", "stamina_delta", "expected_stamina_cost"];
@@ -275,7 +304,7 @@ async function main() {
   const failures = validateToolFamilyStaminaEvidence(sources);
   if (failures.length > 0) {
     console.error(`tool-family stamina evidence: ${failures.length} violation(s)`);
-    for (const f of failures) console.error(`  ✖ ${f}`);
+    for (const f of failures) console.error(`  × ${f}`);
     process.exitCode = 1;
   } else {
     console.log("tool-family stamina evidence: OK (every tool-family action reports stamina)");
