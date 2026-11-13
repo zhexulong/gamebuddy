@@ -11,11 +11,11 @@ using GameBuddy.Stardew.Handlers;
 using GameBuddy.Stardew.Sensory;
 using HarmonyLib;
 using Microsoft.Xna.Framework;
+using Microsoft.Xna.Framework.Graphics;
 using StardewModdingAPI;
 using StardewModdingAPI.Events;
 using StardewModdingAPI.Utilities;
 using StardewValley;
-using StardewValley.BellsAndWhistles;
 using StardewValley.Menus;
 using StardewValley.Tools;
 
@@ -150,6 +150,14 @@ public sealed partial class ModEntry : Mod
     private bool nativeChatObservationInstalled;
     private bool nativeChatStopCommandRegistered;
     private static ModEntry? nativeChatIngressOwner;
+    // Presentation only: a client shows the companion's lines it has heard about, and forgets them on their own clock.
+    private readonly CompanionBubbleBoard companionBubbles = new();
+    private static ModEntry? companionBubbleOwner;
+    // The parameter types of the bubble layer, hoisted because the per-frame resolution runs inside the engine's draw.
+    private static readonly Type[] BubbleLayerSignature = { typeof(SpriteBatch) };
+    // Which declaration of that layer the runtime call resolves to, per location type: filled on the game thread as
+    // locations are drawn, so a type is resolved once rather than once per frame.
+    private static readonly Dictionary<Type, Type?> ResolvedBubbleLayer = new();
     private StardewSalientEventHooks? salientEventHooks;
     private NpcDialoguePager? npcDialoguePager;
     private ModalTransitionObserver? modalTransitionObserver;
@@ -187,6 +195,7 @@ public sealed partial class ModEntry : Mod
         helper.Events.GameLoop.Saved += this.OnSaved;
         helper.Events.GameLoop.ReturnedToTitle += this.OnReturnedToTitle;
         helper.Events.Multiplayer.ModMessageReceived += this.OnModMessageReceived;
+        this.InstallCompanionBubbles();
 
         helper.ConsoleCommands.Add("gamebuddy_farmhands", "List authoritative local-co-op player and Farmhand identities without changing game state.", this.FarmhandsCommand);
         helper.ConsoleCommands.Add("gamebuddy_status", "Print the configured AI Farmhand's authoritative snapshot on its local screen.", this.StatusCommand);
@@ -577,7 +586,14 @@ public sealed partial class ModEntry : Mod
 
     private void OnModMessageReceived(object? sender, ModMessageReceivedEventArgs e)
     {
-        if (e.FromModID != this.ModManifest.UniqueID || e.Type != PlayerControlProtocol.MessageType)
+        if (e.FromModID != this.ModManifest.UniqueID)
+            return;
+        if (e.Type == CompanionBubble.MessageType)
+        {
+            this.ShowReceivedCompanionBubble(e);
+            return;
+        }
+        if (e.Type != PlayerControlProtocol.MessageType)
             return;
         // Record wire arrival before role/lifecycle admission so an early guard
         // cannot masquerade as a failed host-to-AI transport.
@@ -1189,10 +1205,6 @@ public sealed partial class ModEntry : Mod
         this.MarkTickPhase("window_mode");
         Volatile.Write(ref this.tickWatchdogPhase, "window_mode");
         this.ApplyWindowModeTick();
-        // Before any role or lifecycle gate, because this is the one piece of presentation that must run on EVERY
-        // client: the human watching the companion is on the host client, which returns below without ever reaching
-        // the AI-screen work.
-        this.FollowCompanionBubbles();
         // This gate must precede bootstrap, binding, producer, and bridge work.
         if (this.provisioningConfigurationRejected)
         {
@@ -2513,35 +2525,26 @@ public sealed partial class ModEntry : Mod
     }
 
     /// <summary>
-    /// The in-world half of one companion line: text over her head, in the world,
-    /// where a player already looking at her reads it without looking away.
+    /// The in-world half of one companion line: the engine's own speech bubble over her head, where a player already
+    /// looking at her reads it without looking away.
     ///
     /// <para>
-    /// The seam is the engine's own text sprite, not <c>showTextAboveHead</c>: on the
-    /// target version that method is declared by <c>NPC</c> alone and the companion is a
-    /// <c>Farmer</c>, which has no <c>*AboveHead*</c> member at all. A
-    /// <c>TemporaryAnimatedSprite</c> carrying <c>text</c> with
-    /// <c>extraInfoForEndBehavior = -777</c> is the engine's primitive for text over an
-    /// arbitrary character (<c>TemporaryAnimatedSprite.draw</c> routes it to
-    /// <c>SpriteText.drawString</c>), and <c>Multiplayer.broadcastSprites</c> is the
-    /// engine's own sync path for it - <c>temporarySprites</c> is a plain list, so the
-    /// broadcast IS the sync and there is no world state to mirror.
+    /// Two steps, one line. This client shows it locally and broadcasts it to the other clients, because SMAPI does not
+    /// deliver a ModMessage to its own sender - and the local half is also what single-player draws, where there is no
+    /// peer to send to. Every client that receives it draws it in its own above-always-front layer from the speaker's
+    /// own standing pixel (<see cref="DrawCompanionBubbles"/>), which is why the human on the host client sees the line
+    /// over the farmer they are watching.
     /// </para>
     /// <para>
-    /// The APPEARANCE is now three things the engine alone could not give a text sprite: a panel behind the glyphs
-    /// (white text on snow and in the dark was unreadable), a position re-derived from her every frame (the text branch
-    /// of <c>TemporaryAnimatedSprite.draw</c> draws at <c>GlobalToLocal(position)</c> and never reads
-    /// <c>attachedCharacter</c>, so a spawn-time position hangs in the air behind her), and an alpha that follows the
-    /// line's own elapsed ticks rather than a loop count that ends on a cut. <see cref="CompanionBubble"/> owns all
-    /// three, and <see cref="FollowCompanionBubbles"/> is the per-frame half - the only code in the Mod that runs on
-    /// every client, because the human watching the companion is on the HOST client, which never reaches this method.
+    /// WHAT CROSSES THE WIRE IS THE LINE, NOT A DRAWING. The previous shape broadcast two sprites - glyphs and a panel
+    /// assembled from the bubble's centre tile - because a broadcast sprite must be something the receiving client can
+    /// reload from a content asset name. What arrived was a right-angled rectangle with no corners, no edges and no
+    /// tail. Now the wire carries the speaker and the text, and the engine draws the bubble itself
+    /// (<c>SpriteText.drawSmallTextBubble</c>), so the presentation is the game's, not a reconstruction of it.
     /// </para>
     /// <para>
-    /// Topology: only the AI screen reaches this method (the host role has no bridge),
-    /// so the emission is the Farmhand's and <c>broadcastSprites</c> carries it - to the
-    /// master's own world through <c>processIncomingMessage</c> case 7, and from there
-    /// to every other client, because type 7 is in <c>isClientBroadcastType</c> and
-    /// <c>GameServer</c> rebroadcasts it to all players but the sender. No new transport.
+    /// Topology: only the AI screen reaches this method (the host role has no bridge). The message goes to the Mod's own
+    /// UniqueID on every connected player; SMAPI filters the peers that cannot receive it.
     /// </para>
     /// </summary>
     private void TryShowCompanionBubble(Farmer farmhand, string text, string locale)
@@ -2566,33 +2569,21 @@ public sealed partial class ModEntry : Mod
             return;
         }
 
-        // Same egress identity as the chat write: the exact static field with the
-        // exact native type. The field is not public on every target build, so the
-        // identity check is the only legal way to reach the engine's own broadcast.
-        FieldInfo? field = typeof(Game1).GetField("multiplayer", BindingFlags.Static | BindingFlags.NonPublic | BindingFlags.Public);
-        if (!NativeChatPresentationPolicy.IsExactMultiplayerField(field)
-            || field!.GetValue(null) is not Multiplayer multiplayer)
-        {
-            this.Monitor.Log("[companion-bubble] skipped;reason=multiplayer_seam_not_exact", LogLevel.Trace);
-            return;
-        }
-
         try
         {
+            this.companionBubbles.Show(farmhand.UniqueMultiplayerID, text, CompanionBubbleNowMs());
+            this.Helper.Multiplayer.SendMessage(
+                new CompanionBubbleMessage(farmhand.UniqueMultiplayerID, text),
+                CompanionBubble.MessageType,
+                new[] { this.ModManifest.UniqueID },
+                playerIDs: null);
+            // This line is the last fact the Mod owns about the broadcast: SMAPI reports nothing about delivery, and
+            // what each client does with it is that client's own draw. It names the tile and the text length rather
+            // than the text - the line is already in the chat log, and repeating it here would log the companion's
+            // speech twice.
             Point standing = farmhand.StandingPixel;
-            int width = SpriteText.getWidthOfString(text);
-            int height = SpriteText.getHeightOfString(text);
-            // Two sprites, one line: the panel is drawn by the engine (a stretched interior tile of the vanilla small
-            // bubble, so the receiving client reloads it from its asset name), and the glyph run sits on top of it.
-            TemporaryAnimatedSprite panel = CompanionBubble.PanelSprite(farmhand, width, height);
-            TemporaryAnimatedSprite line = CompanionBubble.TextSprite(farmhand, text, width);
-            multiplayer.broadcastSprites(location, panel, line);
-            // The engine's receipt is the broadcast returning; what it does with the sprite afterwards is not reported by
-            // the engine, so this line is the last fact this Mod owns about the bubble. It names the tile and the text
-            // length rather than the text - the line is already in the chat log, and repeating it here would log the
-            // companion's speech twice.
             this.Monitor.Log(
-                $"[companion-bubble] broadcast;location={location.NameOrUniqueName};tile={standing.X},{standing.Y};chars={text.Length};ticks={CompanionBubble.Ticks}",
+                $"[companion-bubble] broadcast;location={location.NameOrUniqueName};tile={standing.X},{standing.Y};chars={text.Length};duration_ms={CompanionBubble.DurationMs}",
                 LogLevel.Trace);
         }
         catch (Exception exception)
@@ -2603,28 +2594,193 @@ public sealed partial class ModEntry : Mod
     }
 
     /// <summary>
-    /// The per-frame half of every live companion bubble: where the speaker is now, and how far into its life the line
-    /// is. Runs for the whole world, on every client that renders it - the AI client because it owns her body, and the
-    /// human's host client because that is where she is being watched.
+    /// One companion line arriving from the client that owns her body. The receiving client does not trust it beyond
+    /// what a line can be (a speaker and a bounded text), because everything else it needs - where she stands, what
+    /// layer to draw in - is the receiving client's own world state.
+    /// </summary>
+    private void ShowReceivedCompanionBubble(ModMessageReceivedEventArgs e)
+    {
+        if (!Context.IsWorldReady)
+            return;
+        CompanionBubbleMessage? message;
+        try { message = e.ReadAs<CompanionBubbleMessage>(); }
+        catch
+        {
+            this.Monitor.Log("GameBuddy rejected malformed companion-bubble ModMessage.", LogLevel.Warn);
+            return;
+        }
+        if (!CompanionBubble.IsValid(message, out string reasonCode))
+        {
+            this.Monitor.Log($"GameBuddy rejected companion-bubble ModMessage: {reasonCode}.", LogLevel.Warn);
+            return;
+        }
+        this.companionBubbles.Show(message!.SpeakerPlayerId, message.Text, CompanionBubbleNowMs());
+        this.Monitor.Log(
+            $"[companion-bubble] received;speaker={message.SpeakerPlayerId};chars={message.Text.Length}",
+            LogLevel.Trace);
+    }
+
+    /// <summary>
+    /// Arms the bubble's draw hook. The postfix goes on EVERY declaration of
+    /// <c>GameLocation.drawAboveAlwaysFrontLayer</c> in the loaded game assembly, derived from the assembly itself:
+    /// the engine overrides that method per location type (<c>Town</c>, <c>Woods</c>, <c>MineShaft</c>...), so a
+    /// base-only patch would silently skip most of the maps the companion actually walks on. No hand-written list, and
+    /// a future location type is covered by existing.
+    /// </summary>
+    private void InstallCompanionBubbles()
+    {
+        MethodInfo? postfix = AccessTools.Method(typeof(ModEntry), nameof(DrawCompanionBubblesPostfix));
+        MethodInfo? signature = AccessTools.Method(
+            typeof(GameLocation),
+            nameof(GameLocation.drawAboveAlwaysFrontLayer),
+            new[] { typeof(SpriteBatch) });
+        if (postfix is null || signature is null)
+        {
+            this.Monitor.Log(
+                "GameBuddy companion bubbles are unavailable: GameLocation.drawAboveAlwaysFrontLayer(SpriteBatch) was not found; companion lines reach the chat log only.",
+                LogLevel.Warn);
+            return;
+        }
+        Harmony harmony = new(this.ModManifest.UniqueID + ".companion-bubble");
+        int patched = 0;
+        foreach (Type locationType in typeof(GameLocation).Assembly.GetTypes())
+        {
+            if (!typeof(GameLocation).IsAssignableFrom(locationType)
+                || locationType.GetMethod(
+                    signature.Name,
+                    BindingFlags.Instance | BindingFlags.Public,
+                    null,
+                    BubbleLayerSignature,
+                    null) is not { } declaration
+                || declaration.DeclaringType != locationType)
+            {
+                continue;
+            }
+            try
+            {
+                harmony.Patch(declaration, postfix: new HarmonyMethod(postfix));
+                patched++;
+            }
+            catch (Exception exception)
+            {
+                this.Monitor.Log(
+                    $"GameBuddy companion bubbles skipped {locationType.Name}.{signature.Name}: {exception.GetType().Name}.",
+                    LogLevel.Warn);
+            }
+        }
+        if (patched == 0)
+        {
+            this.Monitor.Log(
+                "GameBuddy companion bubbles are unavailable: no GameLocation declaration of drawAboveAlwaysFrontLayer could be patched; companion lines reach the chat log only.",
+                LogLevel.Warn);
+            return;
+        }
+        companionBubbleOwner = this;
+        this.Monitor.Log(
+            $"GameBuddy companion bubbles armed: {patched} GameLocation declarations of {signature.Name} draw them above the world.",
+            LogLevel.Info);
+    }
+
+    /// <summary>
+    /// Draws the live lines of the location the engine is drawing, inside the batch it has already begun for the
+    /// above-always-front layer - after the world, after the lighting overlay, and where vanilla draws its own overhead
+    /// text.
     ///
     /// <para>
-    /// It walks the location's own sprite list because the bubble is NOT here: on the host client the sprite was
-    /// recreated from the wire, so there is no reference to hold. The walk is one integer and one null check per
-    /// sprite - the same list the engine itself walks every frame to draw them - and it touches nothing that is not
-    /// one of ours (<see cref="CompanionBubble.IsCompanionBubble"/>).
+    /// Its parameters are Harmony's injections, not choices: <c>__instance</c> is the location instance, and
+    /// <c>__originalMethod</c> is which declaration of the layer was entered. Nothing else may appear there, because
+    /// Harmony binds a postfix's ordinary parameters BY NAME to the target's and refuses the whole patch when the name is
+    /// not one of them (measured on the shipped 0Harmony 2.2.2: <c>Parameter "batch" not found in method ...</c> - the
+    /// hook would then arm nothing and draw nothing). The batch is therefore read from <c>Game1.spriteBatch</c>, which is
+    /// the object every caller passes and the one the engine has already begun for this layer.
+    /// </para>
+    /// <para>
+    /// A location whose override calls <c>base</c> enters this postfix once per declaration, and only the declaration the
+    /// runtime call resolved to may draw: drawing the line twice blends its antialiased glyph edges twice, so it would be
+    /// bolder on those maps than on the ones where no override exists.
     /// </para>
     /// </summary>
-    private void FollowCompanionBubbles()
+    private static void DrawCompanionBubblesPostfix(GameLocation __instance, MethodBase __originalMethod)
     {
-        if (!Context.IsWorldReady || Game1.currentLocation is not GameLocation location)
-            return;
-        foreach (TemporaryAnimatedSprite sprite in location.temporarySprites)
+        if (companionBubbleOwner is not { } owner
+            || Game1.spriteBatch is not { } batch
+            || __originalMethod?.DeclaringType is not { } declarationType
+            || !IsResolvedBubbleLayer(__instance.GetType(), __originalMethod.Name, declarationType))
         {
-            if (!CompanionBubble.IsCompanionBubble(sprite) || sprite.attachedCharacter is not Character speaker)
+            return;
+        }
+        owner.DrawCompanionBubbles(__instance, batch);
+    }
+
+    /// <summary>
+    /// Whether <paramref name="declarationType"/> is the type whose declaration of the bubble layer the runtime call on
+    /// this location resolves to. Resolved once per location type, because this runs inside the engine's draw and must
+    /// not walk metadata every frame.
+    /// </summary>
+    private static bool IsResolvedBubbleLayer(Type locationType, string name, Type declarationType)
+    {
+        if (!ResolvedBubbleLayer.TryGetValue(locationType, out Type? resolved))
+        {
+            resolved = locationType.GetMethod(
+                name,
+                BindingFlags.Instance | BindingFlags.Public,
+                null,
+                BubbleLayerSignature,
+                null)?.DeclaringType;
+            ResolvedBubbleLayer[locationType] = resolved;
+        }
+        return resolved == declarationType;
+    }
+
+    /// <summary>
+    /// The per-frame half of every live companion line: where the speaker is NOW, and one engine call per line.
+    ///
+    /// <para>
+    /// The position still has to be re-derived every frame: she walks. The engine's bubble routine places the box
+    /// around the bottom-centre it is given and draws it immediately, so it holds no reference to the speaker and has
+    /// no place to re-anchor from - the per-frame work is one <c>StandingPixel</c> read (cached by the engine against
+    /// her position), one camera conversion and the draw. Nothing is allocated per frame, and no sprite exists to be
+    /// tracked: a line that is over is dropped by <see cref="CompanionBubbleBoard.Expire"/> before anything is drawn.
+    /// </para>
+    /// </summary>
+    private void DrawCompanionBubbles(GameLocation location, SpriteBatch batch)
+    {
+        if (!Context.IsWorldReady)
+            return;
+        this.companionBubbles.Expire(CompanionBubbleNowMs());
+        foreach (CompanionBubbleLine line in this.companionBubbles.Lines)
+        {
+            Farmer? speaker = FindFarmer(location, line.SpeakerPlayerId);
+            if (speaker is null)
+            {
+                // She is not on this map - a scene change ends the line, because there is no head to hang it over.
                 continue;
-            CompanionBubble.Follow(sprite, speaker);
+            }
+            CompanionBubble.Draw(
+                batch,
+                line.Text,
+                Game1.GlobalToLocal(
+                    CompanionBubble.BottomCenter(speaker.StandingPixel, speaker.Sprite.SpriteHeight)));
         }
     }
+
+    /// <summary>The farmer in this location with that multiplayer id, or null when she is somewhere else.</summary>
+    private static Farmer? FindFarmer(GameLocation location, long playerId)
+    {
+        foreach (Farmer farmer in location.farmers)
+        {
+            if (farmer.UniqueMultiplayerID == playerId)
+                return farmer;
+        }
+        return null;
+    }
+
+    /// <summary>
+    /// The engine's elapsed game time in milliseconds: the clock a line's lifetime is measured on, so a paused game does
+    /// not age a bubble that nobody could have read.
+    /// </summary>
+    private static long CompanionBubbleNowMs() =>
+        (long)(Game1.currentGameTime?.TotalGameTime.TotalMilliseconds ?? 0d);
 
     /// <summary>
     /// Best-effort embodied companion presentation. Turns the companion to
