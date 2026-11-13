@@ -65,9 +65,6 @@ public static class FarmhandExecutionAcceptance
         FarmhandExecutionAcceptanceFacts facts = descriptor.Acceptance ?? Default;
         foreach (FarmhandActionArgument argument in descriptor.Arguments)
         {
-            // An argument the descriptor declares Omissible may be ABSENT; when present its value is checked like any
-            // other. `requestedFish` is the only one, and `""` is its other spelling for "named nothing".
-            if (argument.Omissible && !HasArgumentValue(args, argument.Name)) continue;
             if (!IsValidArgumentValue(argument, facts, args, destinationValidator))
             { reasonCode = "invalid_execution_request"; return false; }
         }
@@ -103,7 +100,6 @@ public static class FarmhandExecutionAcceptance
     bool expectedSkill = args.ExpectedSkill.HasValue;
     bool expectedLevel = args.ExpectedLevel.HasValue;
     bool charge = args.Charge.HasValue;
-    bool requestedFish = args.RequestedFish is not null;
         return x == HasArgument(descriptor, "x")
             && y == HasArgument(descriptor, "y")
             && slot == HasArgument(descriptor, "slot")
@@ -124,28 +120,11 @@ public static class FarmhandExecutionAcceptance
         && choice == HasArgument(descriptor, "choice")
         && expectedSkill == HasArgument(descriptor, "expectedSkill")
         && expectedLevel == HasArgument(descriptor, "expectedLevel")
-        && charge == HasArgument(descriptor, "charge")
-        // A declared Omissible argument may be ABSENT, and a present one is validated like any other - so the shape
-        // check is satisfied either way. `fish_here`'s `requestedFish` is the only one, and the reason it may be absent
-        // is the action's own native-local live runner (see `FarmhandActionArgument.Omissible`).
-        && (requestedFish == HasArgument(descriptor, "requestedFish")
-            || IsOmissibleAndAbsent(descriptor, "requestedFish", requestedFish));
+        && charge == HasArgument(descriptor, "charge");
     }
-
-    /// <summary>An argument the descriptor declares Omissible may be absent from the request.</summary>
-    private static bool IsOmissibleAndAbsent(FarmhandActionDescriptor descriptor, string name, bool present) =>
-        !present && descriptor.Arguments.Any(argument =>
-            argument.Omissible && string.Equals(argument.Name, name, StringComparison.Ordinal));
 
     private static bool HasArgument(FarmhandActionDescriptor descriptor, string name) =>
         descriptor.Arguments.Any(argument => string.Equals(argument.Name, name, StringComparison.Ordinal));
-
-    /// <summary>Whether the request carries a value for one declared argument.</summary>
-    private static bool HasArgumentValue(BridgeExecutionArgs args, string name) => name switch
-    {
-        "requestedFish" => args.RequestedFish is not null,
-        _ => true,
-    };
 
     private static bool IsValidArgumentValue(
         FarmhandActionArgument argument,
@@ -180,13 +159,6 @@ public static class FarmhandExecutionAcceptance
         "charge" => args.Charge is int chargeValue
             && chargeValue >= facts.MinimumToolCharge
             && chargeValue <= facts.MaximumToolCharge,
-        // The species she is after. EMPTY means any fish, so the only rule is the ceiling the wire and the handler both
-        // enforce: the value is echoed into the refusal that reports a mismatch
-        // (`fish_species_mismatch:<requested>:<caught>`), and a reason code no frame can carry is not a refusal. The
-        // id's own grammar is deliberately NOT re-checked here - the engine's comparison is the answer, and a shape rule
-        // here would refuse a spelling the Host accepts.
-        "requestedFish" => args.RequestedFish is { } species
-            && species.Length <= FarmhandActionCatalog.RequestedFishMaximumLength,
         "text" => !string.IsNullOrWhiteSpace(args.Text) && args.Text.Length <= FarmhandActionCatalog.ChatMessageMaximumLength,
         "destination" => destinationValidator is { } validator && validator(args.Destination),
         "emote" => !string.IsNullOrWhiteSpace(args.Emote) && argument.Enum is { } emoteEnum

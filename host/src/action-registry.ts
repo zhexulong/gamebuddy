@@ -1100,17 +1100,6 @@ const PUBLISHES_NATIVE_BINDING = requirement(
  * same second spelling - the one that ships unusable when it drifts from the schema beside it.
  */
 export const TILE_TARGET_ARGUMENTS = Object.freeze(["x", "y", "expectedTargetId"] as const);
-
-/**
- * The water-target shape: the tile a rod was published at, the opaque `waterTargets` id that binds it, and the species
- * she wants (empty for any).
- *
- * The fourth name is here rather than in `TILE_TARGET_ARGUMENTS` because it is `fish_here`'s alone: every other
- * tile-target mount would then have to describe an argument its action does not declare. It is REQUIRED with `""`
- * meaning any fish - the same spelling `till_soil`'s `charge` uses for "this tile only" (`0`), because an optional
- * argument is not expressible in this stack.
- */
-export const WATER_TARGET_ARGUMENTS = Object.freeze(["x", "y", "expectedTargetId", "requestedFish"] as const);
 const NO_ARGUMENTS = publishesArguments();
 const TILE_AND_TARGET = publishesArguments(...TILE_TARGET_ARGUMENTS);
 const TILE_SLOT_AND_TARGET = publishesArguments("x", "y", "slot", "expectedTargetId");

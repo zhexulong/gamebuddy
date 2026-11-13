@@ -5188,31 +5188,6 @@
         }
       }
     },
-    "xyTargetSpeciesArgs": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "x",
-        "y",
-        "expectedTargetId",
-        "requestedFish"
-      ],
-      "properties": {
-        "x": {
-          "$ref": "#/$defs/tile"
-        },
-        "y": {
-          "$ref": "#/$defs/tile"
-        },
-        "expectedTargetId": {
-          "$ref": "#/$defs/opaqueId"
-        },
-        "requestedFish": {
-          "type": "string",
-          "maxLength": 128
-        }
-      }
-    },
     "minecartRideArgs": {
       "type": "object",
       "additionalProperties": false,
@@ -6697,6 +6672,7 @@
                 "enum": [
                   "water_crop",
                   "break_resource_clump",
+                  "fish_here",
                   "machine_inspect",
                   "machine_collect_output",
                   "npc_relationship",
@@ -6711,27 +6687,6 @@
             "properties": {
               "args": {
                 "$ref": "#/$defs/xyTargetArgs"
-              }
-            }
-          }
-        },
-        {
-          "if": {
-            "required": [
-              "action"
-            ],
-            "properties": {
-              "action": {
-                "enum": [
-                  "fish_here"
-                ]
-              }
-            }
-          },
-          "then": {
-            "properties": {
-              "args": {
-                "$ref": "#/$defs/xyTargetSpeciesArgs"
               }
             }
           }

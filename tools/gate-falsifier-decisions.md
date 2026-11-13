@@ -2686,3 +2686,54 @@ below were taken in a private worktree at `322e05f8` carrying only this unit's f
 `bun test host/src/snapshot-projection-coverage.private.test.ts` 1/1, `node --test tools/check-snapshot-field-rendering.test.mjs`
 10/10. In the shared checkout the same project's `tsc --noEmit` reports exactly the two foreign errors and none from this
 unit's files.
+
+## The species on the cast made an honest catch read as unproven, and the runner that believed it had bypassed every gate
+
+`fish_here` shipped a required `requestedFish` in three commits in forty minutes (`88d9d9d2` 16:05, `db3e5b91` 16:38,
+`715723cf` 16:43) and all three came back out in one revert. Not because the feature was unlovely: **a required species
+made an honest catch read as unproven, and no reachable id could satisfy it.**
+
+The mechanism is two rules meeting. Naming a species that is not the one that bites produced
+`Rejected / fish_species_mismatch:<requested>:<caught>`, and a `Rejected` receipt never reaches completion evidence - the
+`fish_here` rule requires `reasonCode === "fish_caught"`, so the fold's `default: false` is the whole story - which means
+a task that asked for a bass and landed a carp reads as unfinished with the fish already in her bag. And the id that
+refusal was measured against was not reachable: the content registry carries no `Data/Fish` (`git grep "Data/Fish" host/src`
+is empty) and the `Objects` index returns ids only, so every species she could have supplied was a guess.
+
+What she wants is different and better served elsewhere: "what can be caught here, and now" is a read-only data query -
+`stardew_look_up({ subject: "data" })` against a `LocationFish` table entry (`host/src/game-tools.ts:379`) - not an
+argument on the cast. An argument that can only be satisfied by a guess is not a capability, and its refusal is not a
+refusal: it is the task reading as unfinished.
+
+Two facts from those commits are independent of the feature and stay:
+
+- **The model-facing evidence cut, measured.** `MODEL_FIELD_CEILINGS.evidence` is 160 characters and keeps whole `k=v`
+  fields from the front. `fish_here`'s success proof is 24 fields; `caught_qualified_item_id`, the only field that says
+  which fish was landed, is field 4 inside an 86-byte prefix (`location=Farm` 13, `target=water_0123456789abcdef` 29,
+  `tile=41,12` 10, `caught_qualified_item_id=(O)136` 31, plus three separators). So a fact only an appended field could
+  carry is a fact she does not read: anything after `credit` is the first thing a cut drops. It is stated in `fish_here`'s
+  completion-contract docblock (`host/src/stardew-completion-contracts.ts:4494`), where a reader of that rule meets it.
+- **A runner that bypasses one gate has not bypassed every gate.** `client.execute` in a native-local runner
+  (`tools/run-stardew-native-local-player-fish-here-smoke.mjs`) skips the Host's `validateExecutionRequest` and NOT the
+  Mod's frame parse, which runs on the wire frame whoever wrote it. A runner can therefore be green about a frame the Mod
+  refuses, and green about a frame the Host would refuse: that runner sends exactly `{ x, y, expectedTargetId }`, and the
+  reverted Host demands exactly those three again, so the tolerance is no longer what makes it work. The same shape
+  applies to any test that believes it bypassed every gate by bypassing one, and the proof that a frame was admitted
+  belongs on the side that parses it.
+
+**What the revert had to carry, and one hunk it must not.** `715723cf` also carried
+`gate_skip_can_pass test:engine-affordance-census` in `tools/gate-population-baseline.json`, which belongs to the census
+lane; reverting the commit removes it, so it was re-added in the same commit and the baseline ends byte-identical to its
+`715723cf` state (`git diff 715723cf -- tools/gate-population-baseline.json` empty). Every other reverted file ends at
+its pre-`88d9d9d2` content, the two exceptions being `c2e1a2fc`'s charged-footprint declaration and `1501a852`'s
+own-health test, both later than the feature and untouched by it. `fish_here` accepts the three wire arguments again -
+`x`, `y`, `expectedTargetId` - in `exactArgs`, the tool schema, the Mod's frame reader and the regenerated
+`action-surface.v1.json`.
+
+**Measured after the revert.** `dotnet build integrations/stardew/GameBuddy.Stardew.csproj -c Release` 0 warnings / 0
+errors; `pnpm --dir host build:test` exit 0; `bun test host/src/game-tools-argument-contract.test.ts` 9/9,
+`host/src/stardew-completion-evidence-coverage.test.ts` 189/189 (190 with the feature), `host/src/execution-request-declaration.test.ts` 5/5;
+Integration `FishingActionTests` 16/16 (19 with the feature), `RefusalLayerNamingTests` 13/13;
+`node integrations/stardew/action-development/src/action-surface-export-check.mjs` `status: valid`, 63891 bytes - the
+producer reproduces the restored artifact byte for byte; `check-action-surface-parity` (106 actions, 6 surfaces, 307
+pairs), `check-stardew-postcondition-delta` and `check-cross-language-wire-parity` (211 fields accepted) all pass.

@@ -129,14 +129,8 @@ internal sealed partial class ExecutionManager
     /// Admission for one cast: identity, actionability, deadline and body exclusivity through the shared seam, then the
     /// target binding and the geometry. Out of the native reach the actor WALKS to the water's edge and the same body
     /// runs on arrival - a refusal there would be a distance, not a reason.
-    ///
-    /// <para>
-    /// <paramref name="requestedFish"/> is the species the caller asked for, or the empty string for any fish. It is
-    /// carried on the cast rather than compared here because the engine decides what bites: the comparison belongs to
-    /// <see cref="UpdateFishingCast"/>, after the catch the engine credited.
-    /// </para>
     /// </summary>
-    public LocalExecutionReceipt RequestLocalFishHere(string requestId, int targetX, int targetY, string expectedTargetId, string requestedFish, long requestedDeadlineMs)
+    public LocalExecutionReceipt RequestLocalFishHere(string requestId, int targetX, int targetY, string expectedTargetId, long requestedDeadlineMs)
     {
         if (this.AdmitLocalExecution(requestId, requestedDeadlineMs, AdmissionActionabilityProfile.Physical, out string executionId, out long nowMs) is LocalExecutionReceipt admissionRejection)
             return admissionRejection;
@@ -148,11 +142,6 @@ internal sealed partial class ExecutionManager
         if (!string.Equals(BuildWaterTargetId(location, targetX, targetY), expectedTargetId, StringComparison.Ordinal))
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "water_not_fishable:target_changed",
                 $"target={expectedTargetId};tile={targetX},{targetY};actual={BuildWaterTargetId(location, targetX, targetY)};blocked_by={new RefusalLayerToken(RefusalLayerKind.LocationConstraint, "target_changed").Format()}");
-        // The species is checked for SHAPE here and for identity after the catch. A value too long for the refusal that
-        // would report a mismatch is refused now, before a byte is spent, with the same ceiling the wire enforces.
-        if (requestedFish.Length > FarmhandActionCatalog.RequestedFishMaximumLength)
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "invalid_requested_fish",
-                $"requested_fish_length={requestedFish.Length.ToString(CultureInfo.InvariantCulture)};maximum={FarmhandActionCatalog.RequestedFishMaximumLength.ToString(CultureInfo.InvariantCulture)}");
         // Ask before walking: a pack that cannot cast is refused NOW rather than after an approach leg the action could
         // never finish - the same order `refill_watering_can` keeps. The refusal is re-asked on arrival, because the pack
         // and the actor move during the walk.
@@ -167,10 +156,10 @@ internal sealed partial class ExecutionManager
                 targetX,
                 targetY,
                 expectedTargetId,
-                (arrivalExecutionId, arrivalRequestId) => this.ExecuteFishHere(arrivalExecutionId, arrivalRequestId, targetX, targetY, expectedTargetId, requestedFish, requestedDeadlineMs),
+                (arrivalExecutionId, arrivalRequestId) => this.ExecuteFishHere(arrivalExecutionId, arrivalRequestId, targetX, targetY, expectedTargetId, requestedDeadlineMs),
                 nowMs,
                 requestedDeadlineMs);
-        return this.ExecuteFishHere(executionId, requestId, targetX, targetY, expectedTargetId, requestedFish, requestedDeadlineMs);
+        return this.ExecuteFishHere(executionId, requestId, targetX, targetY, expectedTargetId, requestedDeadlineMs);
     }
 
     /// <summary>
@@ -223,7 +212,7 @@ internal sealed partial class ExecutionManager
     /// <see cref="SettleFishingCast"/>.
     /// </para>
     /// </summary>
-    private LocalExecutionReceipt ExecuteFishHere(string executionId, string requestId, int targetX, int targetY, string expectedTargetId, string requestedFish, long requestedDeadlineMs)
+    private LocalExecutionReceipt ExecuteFishHere(string executionId, string requestId, int targetX, int targetY, string expectedTargetId, long requestedDeadlineMs)
     {
         GameLocation? location = Game1.player.currentLocation;
         if (location is null)
@@ -312,7 +301,6 @@ internal sealed partial class ExecutionManager
                 baitBefore,
                 nowMs,
                 requestedDeadlineMs,
-                requestedFish,
                 LocalFishingPhase.WaitingForBite));
             return this.RememberTerminal(
                 requestId,
@@ -470,22 +458,11 @@ internal sealed partial class ExecutionManager
                     spec.CaughtCountBefore,
                     caughtAfter,
                     caughtAfter - spec.CaughtCountBefore);
-                // THE ASK TRAVELS LAST, AND ONLY WHEN THERE WAS ONE, and it is appended BEFORE the verdict is asked for
-                // so the proof and the verdict are one string. Two reasons for the position, both measured: a receipt
-                // from a request that named no species stays byte-identical to the one this action minted before the
-                // argument existed, and the model-facing cut (`MODEL_FIELD_CEILINGS.evidence`, 160 characters, WHOLE
-                // `k=v` fields kept from the front) prints exactly the leading fields it printed before -
-                // `caught_qualified_item_id` is field 4 of 25 there, about 87 characters in, so the species survives the
-                // cut and it is this appended pair, which on success IS the caught id, that a cut may drop.
-                if (spec.RequestedFish.Length != 0)
-                    evidence += $";requested_fish={spec.RequestedFish}";
-                // One member answers both directions, so "the fish she asked for" and "a different fish" cannot drift
-                // apart; it is also where the credited half turns a mismatch into a REFUSAL rather than a field (see
-                // <see cref="CreditedCatchTerminal"/> for why the code, not an evidence fact, is the right carrier).
-                (ExecutionState terminalState, string terminalCode) = credited
-                    ? CreditedCatchTerminal(spec.RequestedFish, fishQualifiedItemId)
-                    : (ExecutionState.Uncertain, "fish_here_catch_not_credited");
-                this.SettleFishingCast(spec, terminalState, terminalCode, evidence);
+                this.SettleFishingCast(
+                    spec,
+                    credited ? ExecutionState.Succeeded : ExecutionState.Uncertain,
+                    credited ? "fish_caught" : "fish_here_catch_not_credited",
+                    evidence);
                 return;
             }
         }
@@ -505,35 +482,6 @@ internal sealed partial class ExecutionManager
     /// </summary>
     internal static int ReadCaughtCount(Farmer player, string qualifiedItemId) =>
         player.fishCaught.TryGetValue(qualifiedItemId, out int[]? entry) ? entry[0] : 0;
-
-    /// <summary>
-    /// What a CREDITED catch settles as, given the species the request named: the engine's own postcondition when it is
-    /// the fish she asked for (or she asked for none), and `fish_species_mismatch:&lt;requested&gt;:&lt;caught&gt;` when it is
-    /// a different one.
-    ///
-    /// <para>
-    /// THE MISMATCH IS A REFUSAL AND NOT A FIELD, and the reason is measured. The model-facing evidence is cut at
-    /// `MODEL_FIELD_CEILINGS.evidence` (160 characters, whole `k=v` fields kept from the front), so a `requested_fish=`
-    /// fact appended to a twenty-five field proof is one of the first things the cut removes; the reason code prints
-    /// verbatim, and thirty-odd characters naming BOTH ids is the entire answer. What the refusal does NOT do is undo or
-    /// hide the catch: the evidence is the same proof of it, and `credited` is what says the engine booked it - the
-    /// refusal is about the request she made, not about the fish she got.
-    /// </para>
-    ///
-    /// <para>
-    /// WHY THIS IS ITS OWN MEMBER. It is the whole feature, and the phase it runs in cannot be driven headless - by the
-    /// time `AwaitingCredit` asks, `doneHoldingFish` has already run and `CreateFish` needs `Data/ItemData`, which this
-    /// process has no content manager for (the class docblock of `FishingActionTests` names the same limit for the
-    /// successful catch). Splitting the decision out is what lets both directions be asserted against the shipped code
-    /// rather than against a re-reading of it, while `TheTickSettlesTheSpeciesComparisonAfterTheCredit` pins that the
-    /// tick is what calls it, after the credit.
-    /// </para>
-    /// </summary>
-    internal static (ExecutionState State, string ReasonCode) CreditedCatchTerminal(
-        string requestedFish, string caughtQualifiedItemId) =>
-        requestedFish.Length == 0 || string.Equals(requestedFish, caughtQualifiedItemId, StringComparison.Ordinal)
-            ? (ExecutionState.Succeeded, "fish_caught")
-            : (ExecutionState.Rejected, $"fish_species_mismatch:{requestedFish}:{caughtQualifiedItemId}");
 
     /// <summary>
     /// The rod's remaining durability, which IS its tackle's remaining uses: `FishingRod.doDoneFishing` increments

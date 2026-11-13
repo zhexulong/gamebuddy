@@ -59,7 +59,7 @@ public enum FarmhandResourceTemplateValue
     /// </summary>
     BasicOnly = 3,
 }
-public sealed record FarmhandActionArgument(string Name, string Type, IReadOnlyList<string>? Enum = null, string? Description = null, bool Omissible = false);
+public sealed record FarmhandActionArgument(string Name, string Type, IReadOnlyList<string>? Enum = null, string? Description = null);
 /// <summary>Mod-owned symbolic resource claim; ScopePlayer materializes embodied_actor to the current scoped player.
 /// A `tool:&lt;category&gt;` key is the SAME shape with a different subject: the tool that category names, which the
 /// handler requires the actor to OWN and takes as the current tool by selecting it, and whose value half is the
@@ -349,18 +349,6 @@ public static class FarmhandActionCatalog
     /// cannot be invoked, which is the defect `quantity` once was.
     /// </summary>
     public const int ChatMessageMaximumLength = 256;
-
-    /// <summary>
-    /// The longest species string `fish_here` accepts, which the Host's wire row enforces with the SAME number.
-    ///
-    /// <para>
-    /// It is bounded because the value is echoed into the refusal that reports a mismatch
-    /// (`fish_species_mismatch:&lt;requested&gt;:&lt;caught&gt;`), and a reason code no frame can carry is not a refusal. The
-    /// pair is the same shape as <see cref="ChatMessageMaximumLength"/>: one number on both sides, so an argument the
-    /// wire accepts is never one the handler refuses for its length.
-    /// </para>
-    /// </summary>
-    public const int RequestedFishMaximumLength = 128;
 
     public static readonly IReadOnlyList<string> EmoteEnum = Array.AsReadOnly(new[]
     {
@@ -694,18 +682,7 @@ E("enter_exit", "movement_navigation", FarmhandActionHandlerGroup.Movement, Tran
         // falsifier says so: "reads fish_here, which the Mod registers Experimental - no run can dispatch it"). The
         // missing half is the Host's, and it is the promotion gate that names it field by field; `LiveVerified` stays
         // for the run that proves the catch is credited by the engine.
-        //
-        // `requestedFish` IS REQUIRED WITH `""` MEANING ANY FISH, for the same reason `till_soil`'s `charge` is
-        // required with `0` meaning the single named tile: an optional argument is not expressible here. Four layers
-        // enforce that, each for a reason of its own - the Host's `exactArgs`/`hasExactKeys`, the Mod's
-        // `HasExactProperties` frame reader, `BodyProgramVerifier.ArgumentsMatch` (a node's canonical argument count must
-        // EQUAL the descriptor's), and the plan grammar's `PlanArgumentShape.required` - so the empty string is the
-        // stack's own spelling for "named nothing", exactly as `ResourceToolCall.QualifiedItemId` already spells it.
-        // What the argument buys: the engine will not say in advance what bites (`GameLocation.getFish` is a SAMPLER that
-        // consumes the RNG, so publishing "what is here" would change what she catches), so the only verifiable form of
-        // "land a named fish" is the comparison made AFTER the catch, against the engine's own `Farmer.fishCaught`
-        // record - which is what `fish_species_mismatch:<requested>:<caught>` reports.
-        E("fish_here", "resource_gathering", FarmhandActionHandlerGroup.ResourceTools, SelfWalked(new FarmhandActionDescriptor(new[] { new FarmhandActionArgument("x", "integer"), new FarmhandActionArgument("y", "integer"), new FarmhandActionArgument("expectedTargetId", "string"), new FarmhandActionArgument("requestedFish", "string", null, FishSpeciesMeaning, Omissible: true) }, new Dictionary<string, string>(), ToolResource("fishing_rod", FarmhandResourceTemplateValue.AnyUpgrade), "write", "fish_caught")), FarmhandActionLifecycle.Published, "waterTargets"),
+        E("fish_here", "resource_gathering", FarmhandActionHandlerGroup.ResourceTools, SelfWalked(A(null, ToolResource("fishing_rod", FarmhandResourceTemplateValue.AnyUpgrade), "fish_caught", ("x", "integer"), ("y", "integer"), ("expectedTargetId", "string"))), FarmhandActionLifecycle.Published, "waterTargets"),
         E("npc_relationship", "npc_social", FarmhandActionHandlerGroup.MachinesAndAnimals, SelfWalked(Target()), FarmhandActionLifecycle.LiveVerified, "npcRelationshipTargets"),
         E("pet_animal", "animals_pets", FarmhandActionHandlerGroup.MachinesAndAnimals, SelfWalked(Target()), FarmhandActionLifecycle.LiveVerified, "petTargets"),
         E("pet_farm_animal", "animals_pets", FarmhandActionHandlerGroup.MachinesAndAnimals, SelfWalked(Target()), FarmhandActionLifecycle.LiveVerified, "farmAnimalPetTargets"),
@@ -1155,19 +1132,6 @@ E("enter_exit", "movement_navigation", FarmhandActionHandlerGroup.Movement, Tran
     /// held. The item actions below do require it, and they read `Items[CurrentToolIndex]` through `TryGetHeldItem`.
     /// </summary>
     private const string CarriedToolSlotMeaning = "The TOOL's backpack slot, copied from `snapshot.toolSlots`. The slot must hold a tool this action can use, but it need not be `snapshot.currentToolSlot`: the handler takes the tool from the named slot directly.";
-
-    /// <summary>
-    /// What `requestedFish` means: the qualified item id of the fish the caller wants, or `""` for any fish.
-    ///
-    /// <para>
-    /// The empty string is not a default a reader has to know from elsewhere - it is the required spelling, because the
-    /// wire, the Mod's frame reader, `BodyProgramVerifier.ArgumentsMatch` and the plan grammar all demand exact arity
-    /// (`till_soil`'s `charge: 0` is the same idiom). It also states the honest limit: which fish is down there is not a
-    /// fact anyone can read in advance, so naming one is a request, and the answer arrives after the catch
-    /// (`fish_species_mismatch:&lt;requested&gt;:&lt;caught&gt;`).
-    /// </para>
-    /// </summary>
-    private const string FishSpeciesMeaning = "The qualified item id of the fish she wants (`(O)136`), or an empty string for ANY fish. Which fish will bite is decided inside the engine at the bite and cannot be read in advance, so a named species is checked AFTER the catch against the engine's own catch record: a different species is refused by name (`fish_species_mismatch:<requested>:<caught>`) rather than reported as the fish she asked for. This argument is required and the empty string is how you ask for no species - an optional argument is not expressible (see `till_soil`'s `charge`, where `0` is the same spelling).";
 
     /// <summary>What `slot` means on an action that consumes a held non-tool item (clothing, a display item, hay).</summary>
     private const string HeldItemSlotMeaning = "The backpack slot HOLDING the item this action consumes, which must also be `snapshot.currentToolSlot`: the handler reads `Items[CurrentToolIndex]` and refuses with a named `*_not_held_in_requested_slot` code when the named slot is not the held one. `snapshot.currentToolSlotItem` names what that slot holds.";

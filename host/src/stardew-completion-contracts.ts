@@ -4496,7 +4496,7 @@ export const STARDEW_COMPLETION_CONTRACTS = Object.freeze({
     // location;target;tile;caught_qualified_item_id;display_name;fish_size;quality;pull_outcome;
     // pull_unobserved_field;bite_observed;cast_to_credit_ms;rod_durability_left;bait_before;bait_left;
     // bait_consumed;stamina_before;stamina_after;stamina_delta;inventory_before;inventory_after;
-    // fish_caught_before;fish_caught_after;fish_caught_delta;credit;requested_fish.
+    // fish_caught_before;fish_caught_after;fish_caught_delta;credit.
     //
     // THE CATCH IS THE CREDIT, and the rod cannot answer it: `FishingRod.fishCaught` is set by the win path
     // (:1092) and cleared by the very next settle (:2352). The engine's own saved record is `Farmer.fishCaught`,
@@ -4505,6 +4505,14 @@ export const STARDEW_COMPLETION_CONTRACTS = Object.freeze({
     // after the engine's settle. `credit` restates the pair, so a receipt whose two readings and its own summary
     // disagree is refused. The bar was not played, and the receipt says so (`pull_outcome=not_verified` with the
     // field it could not observe named) - that openness is the Mod's honesty, not a gap this rule may fill.
+    //
+    // WHAT THE MODEL-FACING CUT KEEPS, measured on this literal at `MODEL_FIELD_CEILINGS.evidence` (160 characters,
+    // whole `k=v` fields kept from the front): 24 fields, and `caught_qualified_item_id` - the only field that says
+    // WHICH fish was landed - is field 4, inside a 86-byte prefix (`location=Farm` 13,
+    // `target=water_0123456789abcdef` 29, `tile=41,12` 10, `caught_qualified_item_id=(O)136` 31, plus the 3
+    // separators). So a fact only an APPENDED field could carry is a fact she does not read, and a field appended after
+    // `credit` is the first thing a cut drops. Re-measure this arithmetic if a field moves in front of the species, or
+    // a long location name pushes the prefix past the ceiling.
     return (
       claim.reasonCode === "fish_caught" &&
       declaredCompletionEvidence(
@@ -4574,16 +4582,9 @@ export const STARDEW_COMPLETION_CONTRACTS = Object.freeze({
             caughtDelta !== null &&
             caughtDelta >= 1 &&
             caughtAfter === caughtBefore + caughtDelta &&
-            e.credit === `fishCaught:${caughtBefore}->${caughtAfter}` &&
-            // THE SPECIES SHE ASKED FOR, when the request named one: the Mod appends it LAST and only then, so this
-            // rule states the pair rather than requiring a key a request without a species never produces. It must be
-            // the fish this receipt says the engine credited - a `fish_caught` that named one species and caught
-            // another is the Mod's own refusal (`fish_species_mismatch:<requested>:<caught>`) arriving under the wrong
-            // reason code, and the receipt disagreeing with its own rule is what this contract is for.
-            (e.requested_fish === undefined || e.requested_fish === e.caught_qualified_item_id)
+            e.credit === `fishCaught:${caughtBefore}->${caughtAfter}`
           );
         },
-        ["requested_fish"],
       )
     );
   },

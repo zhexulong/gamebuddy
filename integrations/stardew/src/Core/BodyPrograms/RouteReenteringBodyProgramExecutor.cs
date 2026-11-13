@@ -178,7 +178,6 @@ public sealed class RouteReenteringBodyProgramExecutor : IBodyProgramNodeExecuto
         string? choice = null;
         string? expectedQualifiedItemId = null;
         string? expectedTargetId = null;
-        string? requestedFish = null;
         string? chestId = null;
         string? emote = null;
         string? direction = null;
@@ -253,12 +252,6 @@ public sealed class RouteReenteringBodyProgramExecutor : IBodyProgramNodeExecuto
                 case "expectedTargetId" when value.Kind == BodyProgramArgumentKind.String:
                     expectedTargetId = value.CanonicalValue;
                     break;
-                // The species `fish_here` was asked for. Without this case a node carrying the descriptor's required
-                // `requestedFish` reached the handler as null, so a plan that named a fish would have been checked
-                // against nothing and reported as the fish it asked for.
-                case "requestedFish" when value.Kind == BodyProgramArgumentKind.String:
-                    requestedFish = value.CanonicalValue;
-                    break;
                 // The container pair names its container through `chestId`, which IS the address: it binds
                 // the location, the tile and the chest type, so there is no x/y or slot beside it. Without
                 // this case a program node carrying a legal chestId reached the handler with null and was
@@ -314,7 +307,6 @@ public sealed class RouteReenteringBodyProgramExecutor : IBodyProgramNodeExecuto
                 Choice = choice,
                 ExpectedQualifiedItemId = expectedQualifiedItemId,
                 ExpectedTargetId = expectedTargetId,
-                RequestedFish = requestedFish,
                 ChestId = chestId,
                 Emote = emote,
                 Direction = direction,

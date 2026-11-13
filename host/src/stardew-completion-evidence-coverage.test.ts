@@ -1077,36 +1077,6 @@ const completionFixtures: Readonly<Record<string, CompletionFixture>> = {
       ["fish_caught_after", "4"],
       ["fish_caught_delta", "1"],
       ["credit", "fishCaught:3->4"],
-      // The species the request named, appended LAST and only when there was one. It equals the caught id whenever the
-      // Mod mints `fish_caught` - a different one is the refusal below - so it is OPTIONAL in the rule and required to
-      // AGREE when present. `requiredFields` below is therefore this same list minus this key.
-      ["requested_fish", "(O)136"],
-    ],
-    requiredFields: [
-      "location",
-      "target",
-      "tile",
-      "caught_qualified_item_id",
-      "display_name",
-      "fish_size",
-      "quality",
-      "pull_outcome",
-      "pull_unobserved_field",
-      "bite_observed",
-      "cast_to_credit_ms",
-      "rod_durability_left",
-      "bait_before",
-      "bait_left",
-      "bait_consumed",
-      "stamina_before",
-      "stamina_after",
-      "stamina_delta",
-      "inventory_before",
-      "inventory_after",
-      "fish_caught_before",
-      "fish_caught_after",
-      "fish_caught_delta",
-      "credit",
     ],
   },
   open_geode: {
@@ -1316,51 +1286,6 @@ test("dismiss_modal: the latch's re-ask is a commit already under way, not a dis
     completionEvidence("dismiss_modal", "settlement_commit_in_progress", detail(dismissal.fields)),
     false,
     "an ordinary dismissal is not readable as the latch's re-ask, and it has its own reason code for that",
-  );
-});
-
-test("fish_here: a species mismatch is the Mod's refusal and never completion", () => {
-  // `requested_fish` is the species she was after and the engine decides what bites (`GameLocation.getFish` is a
-  // SAMPLER that consumes the RNG, so asking it beforehand would change what she catches), so the comparison can only
-  // happen AFTER the catch. The Mod answers a different species with `fish_species_mismatch:<requested>:<caught>` in the
-  // reason code - a REFUSAL and not a field, because the model-facing evidence is cut at 160 characters and an appended
-  // fact is among the first things that cut removes, while thirty-odd characters of reason code print verbatim and name
-  // both ids.
-  //
-  // WHY THIS CASE EXISTS AT ALL. `hasStardewCompletionEvidence` refuses every state except `succeeded` before the table
-  // is read, so this refusal falls to the same `false` a missing arm would produce and no gate would notice if a later
-  // change made a catch of the wrong fish count as the fish she asked for. Both readings are asserted: the real rejected
-  // shape through the adapter, and the same reason code arriving under a `succeeded` state.
-  const fixture = completionFixtures.fish_here;
-  assert.ok(fixture !== undefined, "the fish_here fixture must exist");
-  const mismatch = "fish_species_mismatch:(O)136:(O)147";
-  assert.equal(
-    STARDEW_GAME_INTEGRATION_ADAPTER.actionCatalog.hasCompletionEvidence("fish_here", {
-      state: "rejected",
-      reasonCode: mismatch,
-      evidence: { detail: detail(fixture.fields) },
-    }),
-    false,
-    "a catch of a different species is a refusal, even though the same proof of the catch is in the evidence",
-  );
-  assert.equal(
-    completionEvidence("fish_here", mismatch, detail(fixture.fields)),
-    false,
-    "and the mismatch code is not completion under any state: the fish she got is not the fish she asked for",
-  );
-  assert.equal(
-    completionEvidence(
-      "fish_here",
-      "fish_caught",
-      detail(fixture.fields.map(([key, value]) => [key, key === "requested_fish" ? "(O)147" : value] as const)),
-    ),
-    false,
-    "a fish_caught receipt naming a species other than the one it caught disagrees with its own rule",
-  );
-  assert.equal(
-    completionEvidence("fish_here", "fish_caught", detail(fixture.fields.filter(([key]) => key !== "requested_fish"))),
-    true,
-    "a request that named no species produces the receipt this action minted before the argument existed",
   );
 });
 

@@ -186,7 +186,6 @@ public sealed class WarpSourceAdmissionTests
         string? responseKey = null;
         string? text = null;
         string? choice = null;
-        string? requestedFish = null;
         BridgeNavigationDestinationSelector? destination = null;
 
         foreach (FarmhandActionArgument argument in descriptor.Arguments)
@@ -219,9 +218,7 @@ public sealed class WarpSourceAdmissionTests
                 case "direction": direction = scalar; break;
                 case "responseKey": responseKey = scalar; break;
                 case "text": text = scalar; break;
-                // The species `fish_here` may name: the EMPTY string, which is this stack's spelling for "any fish"
-                // and the only value that does not turn a coordinate test into a claim about a fish.
-                case "requestedFish": requestedFish = string.Empty; break;
+                case "choice": choice = scalar; break;
                 case "destination": destination = new BridgeNavigationDestinationSelector("label", "Farm", null); break;
                 default:
                     throw new Xunit.Sdk.XunitException(
@@ -253,7 +250,6 @@ public sealed class WarpSourceAdmissionTests
             ResponseKey = responseKey,
             Text = text,
             Choice = choice,
-            RequestedFish = requestedFish,
             Destination = destination,
         };
     }

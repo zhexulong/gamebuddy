@@ -1392,7 +1392,8 @@ private static bool IsValidBodyProgramEvent(BridgeBodyProgramEvent? @event) => @
                 || !payload.TryGetProperty("action", out JsonElement action)
                 || action.ValueKind != JsonValueKind.String
                 || !payload.TryGetProperty("args", out JsonElement args)
-                || !HasDeclaredArguments(args, action.GetString())
+                || ExecutionArgumentProperties(action.GetString()) is not { } argumentProperties
+                || !HasExactProperties(args, argumentProperties)
                  || (action.GetString() == "navigate_to_destination"
                      && (!args.TryGetProperty("destination", out JsonElement destination)
                          || !IsExactNavigationDestinationSelector(destination)))
@@ -2271,60 +2272,6 @@ private static bool IsValidBodyProgramEvent(BridgeBodyProgramEvent? @event) => @
         return actual.SetEquals(expected);
     }
 
-    /// <summary>
-    /// The arguments one action's frame may leave OUT: read from the DESCRIPTOR's own
-    /// <see cref="FarmhandActionArgument.Omissible"/> declaration, never from a list here.
-    ///
-    /// <para>
-    /// `fish_here`'s `requestedFish` is required-with-`""`-meaning-any at every Host surface (`till_soil`'s
-    /// `charge: 0` is the same idiom), because this stack has no optional argument: the Host's `exactArgs`, this frame
-    /// reader, `BodyProgramVerifier.ArgumentsMatch` and the plan grammar's `PlanArgumentShape.required` all demand
-    /// exact arity. The reason the absent spelling is still accepted here is the action's OWN native-local live runner
-    /// (`tools/run-stardew-native-local-player-fish-here-smoke.mjs`), which speaks this same frame and names only the
-    /// water tile. The absence normalises to `""` at the one point the handler reads it (`RequestLocalFishHere`), so
-    /// "the frame named no species" and "the frame named the empty species" are one fact below this line.
-    /// </para>
-    /// <para>
-    /// THE MOD ACCEPTING MORE THAN THE HOST DEMANDS IS NOT A PARITY FINDING
-    /// (`tools/check-action-surface-parity.mjs` reports a surface that REFUSES what another accepts, and the Host still
-    /// requires the argument). Do not "fix" this back by refusing the three-argument frame: that closes the action's
-    /// own live gate.
-    /// </para>
-    /// </summary>
-    private static bool HasDeclaredArguments(JsonElement args, string? action)
-    {
-        if (ExecutionArgumentProperties(action) is not { } declared)
-            return false;
-        FarmhandActionDescriptor? descriptor = action is null
-            ? null
-            : FarmhandActionCatalog.Registrations
-                .FirstOrDefault(registration => string.Equals(registration.ActionId, action, StringComparison.Ordinal))?
-                .Descriptor;
-        string[] omissible = descriptor is null
-            ? Array.Empty<string>()
-            : descriptor.Arguments.Where(argument => argument.Omissible).Select(argument => argument.Name).ToArray();
-        if (omissible.Length == 0)
-            return HasExactProperties(args, declared);
-        string[] required = declared.Where(name => !omissible.Contains(name, StringComparer.Ordinal)).ToArray();
-        return HasProperties(args, required, omissible);
-    }
-
-    /// <summary>Every `required` name present, every other property one of `optional`, and no duplicates.</summary>
-    private static bool HasProperties(JsonElement value, string[] required, string[] optional)
-    {
-        if (value.ValueKind != JsonValueKind.Object)
-            return false;
-        HashSet<string> allowed = new(required, StringComparer.Ordinal);
-        allowed.UnionWith(optional);
-        HashSet<string> actual = new(StringComparer.Ordinal);
-        foreach (JsonProperty property in value.EnumerateObject())
-        {
-            if (!allowed.Contains(property.Name) || !actual.Add(property.Name))
-                return false;
-        }
-        return required.All(actual.Contains);
-    }
-
     public static string[]? ExecutionArgumentProperties(string? action) => action switch
     {
             "move_to_tile" or "enter_exit" or "travel" => new[] { "x", "y" },
@@ -2357,10 +2304,8 @@ private static bool IsValidBodyProgramEvent(BridgeBodyProgramEvent? @event) => @
         "refill_watering_can" => new[] { "x", "y", "slot", "expectedTargetId" },
         // fish_here names the water tile it casts at and the opaque `waterTargets` row that binds it. It carries no slot:
         // the rod comes from the action's own `tool:fishing_rod` claim, exactly as every other declared-tool action takes
-        // its tool, and the slot the actor held before the cast is restored on every exit. `requestedFish` is the
-        // species she wants (empty for any), which is what `fish_species_mismatch:<requested>:<caught>` compares AFTER
-        // the catch - see <see cref="FarmhandActionArgument.Omissible"/> for why the frame may still arrive without it.
-        "fish_here" => new[] { "x", "y", "expectedTargetId", "requestedFish" },
+        // its tool, and the slot the actor held before the cast is restored on every exit.
+        "fish_here" => new[] { "x", "y", "expectedTargetId" },
         "plant_seed" or "fertilize_tile" or "place_wood_fence" or "place_crab_pot" or "bait_crab_pot" or "machine_load" or "plant_sapling" or "interact_npc_with_item" => new[] { "x", "y", "slot", "expectedQualifiedItemId", "expectedTargetId" },
         "clear_debris" or "collect_animal_product" or "feed_animal" or "chop_tree" or "break_rock" or "clear_hoedirt" or "dig_artifact_spot" or "chop_stump" or "cut_weeds" or "cut_grass" or "scythe_crop" => new[] { "x", "y", "slot", "expectedTargetId" },
         // sweep_scythe names the tile to FACE and nothing else. No `slot`: the scythe comes from the action's own

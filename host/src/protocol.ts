@@ -3539,25 +3539,6 @@ function boundedTextRow(name: string, maxLength: number, refusal: string): Execu
 }
 
 /**
- * `args.<name>` as `""` or a string of at most `maxLength` characters: the shape of an argument whose EMPTY value is a
- * meaning rather than an omission.
- *
- * `fish_here`'s `requestedFish` is the only member today: `""` asks for any fish, and the ceiling is the same number
- * the Mod enforces (`FarmhandActionCatalog.RequestedFishMaximumLength`) for the same reason
- * `send_multiplayer_chat`'s text is bounded on both sides - the value is echoed into the refusal that reports a
- * mismatch (`fish_species_mismatch:<requested>:<caught>`), and a reason code no frame can carry is not a refusal.
- */
-function optionalTextRow(name: string, maxLength: number, refusal: string): ExecutionRequestRequirement {
-  return requirement(
-    `args.${name}`,
-    `an empty string, or a string of at most ${maxLength} characters`,
-    refusal,
-    (reading) => typeof reading.args[name] === "string" && (reading.args[name] as string).length <= maxLength,
-    withArg(name, "x".repeat(maxLength + 1)),
-  );
-}
-
-/**
  * `args.text` as the action's ONLY argument.
  *
  * One row and not two, because here the arguments are one field: the key set, the blankness and the ceiling are that
@@ -4055,17 +4036,7 @@ export const EXECUTION_REQUEST_ARGUMENT_RULES = Object.freeze({
     exactArgs(["x", "y", "expectedTargetId"], "invalid_args"),
     ...tileAndTarget("invalid_clump_target"),
   ],
-  // `requestedFish` is the species she wants, and `""` is how she asks for any: it is REQUIRED for the same reason
-  // `till_soil`'s `charge` is (an optional argument is not expressible in this stack - the Mod's frame reader,
-  // `BodyProgramVerifier.ArgumentsMatch` and the plan grammar all demand exact arity), and the empty string is the
-  // spelling `ResourceToolCall` already uses for "named none". Nothing here compares it with a fish: which fish bites is
-  // the engine's own decision at the bite, so the species is checked AFTER the catch and a different one is refused by
-  // name (`fish_species_mismatch:<requested>:<caught>`) rather than reported as the fish she asked for.
-  fish_here: [
-    exactArgs(["x", "y", "expectedTargetId", "requestedFish"], "invalid_args"),
-    ...tileAndTarget("invalid_fish_here_target"),
-    optionalTextRow("requestedFish", 128, "invalid_args"),
-  ],
+  fish_here: [exactArgs(["x", "y", "expectedTargetId"], "invalid_args"), ...tileAndTarget("invalid_fish_here_target")],
   machine_inspect: [
     exactArgs(["x", "y", "expectedTargetId"], "invalid_args"),
     ...tileAndTarget("invalid_machine_target"),

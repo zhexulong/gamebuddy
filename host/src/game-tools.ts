@@ -10,7 +10,6 @@ import {
   type StardewActionId,
   type StardewDescriptorDerivedActionId,
   TILE_TARGET_ARGUMENTS,
-  WATER_TARGET_ARGUMENTS,
   searchActionsFromModCatalog,
   visibleActionsFromModCatalog,
 } from "./action-registry.js";
@@ -1387,19 +1386,16 @@ export function createStardewActionTools(
         name: STARDEW_ACTION_TOOL_NAMES.fish_here,
         label: "Fish Stardew Water Tile",
         description:
-          "Cast a fishing rod at one water tile the game itself says a rod may be cast at, wait for the game's own bite, and let the game's own win path credit the catch. x, y and expectedTargetId must be copied exactly from the waterTargets entries of the MOST RECENT observe result for the current location - never invent or guess coordinates. requestedFish is the qualified item id of the fish she is after, and an EMPTY STRING asks for any fish: which fish swims there is decided inside the engine at the bite and cannot be read in advance, so a named species is compared AFTER the catch against the engine's own catch record, and a different one is refused by name (fish_species_mismatch:<requested>:<caught>) - the fish is still credited to her, and the refusal names what she got instead of pretending she caught what she asked for. There is no slot to name: the handler selects the rod the action's own tool claim requires and restores the previous selection on every exit. Every other refusal happens before the cast - no rod in the pack, no bait that rod needs, water the engine refuses, too little stamina, or a target id that no longer names this tile - and success is the catch the engine itself credited.",
+          "Cast a fishing rod at one water tile the game itself says a rod may be cast at, wait for the game's own bite, and let the game's own win path credit the catch. x, y and expectedTargetId must be copied exactly from the waterTargets entries of the MOST RECENT observe result for the current location - never invent or guess coordinates. The row names a tile the engine's own canFishHere/isTileFishable pair admitted, not a particular fish: which fish swims there is decided inside the engine at the bite. There is no slot to name: the handler selects the rod the action's own tool claim requires and restores the previous selection on every exit. Every refusal happens before the cast - no rod in the pack, no bait that rod needs, water the engine refuses, too little stamina, or a target id that no longer names this tile - and success is the catch the engine itself credited.",
         parameters: Type.Object({
           x: Type.Integer({ minimum: 0, maximum: 1000 }),
           y: Type.Integer({ minimum: 0, maximum: 1000 }),
           expectedTargetId: Type.String({ minLength: 1, maxLength: 128 }),
-          // The wire's own ceiling, stated here as the ADVISORY bound it is: the Mod refuses a longer species by name, and
-          // no gate compares the two numbers, so this comment is the tie.
-          requestedFish: Type.String({ maxLength: 128 }),
           requestId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
           idempotencyKey: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
         }),
         action: "fish_here",
-        toArgs: (params) => forwardDeclaredArguments(WATER_TARGET_ARGUMENTS, params),
+        toArgs: (params) => forwardDeclaredArguments(TILE_TARGET_ARGUMENTS, params),
       }),
     );
   }

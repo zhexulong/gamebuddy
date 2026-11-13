@@ -1116,13 +1116,6 @@ public sealed class BridgeExecutionArgs
     public string? Tool { get; init; }
     public string? ExpectedQualifiedItemId { get; init; }
     public string? ExpectedTargetId { get; init; }
-    /// <summary>The species `fish_here` was asked for, as the engine's qualified item id, or null/empty for any fish.
-    /// Required-with-`""`-meaning-any rather than optional: the Host's `exactArgs`, this frame reader's
-    /// `HasExactProperties`, `BodyProgramVerifier.ArgumentsMatch` and the plan grammar's required argument all demand
-    /// exact arity, so the empty string is the stack's spelling for "named nothing" (`till_soil`'s `charge: 0`).
-    /// The species is checked AFTER the catch - the engine decides what bites - so this is a request, never a
-    /// precondition.</summary>
-    public string? RequestedFish { get; init; }
     /// <summary>The `Data/Buildings` type id a build_farm_building commission is for (the value
     /// `CarpenterMenu.BlueprintEntry.Id` carries for the selected blueprint).</summary>
     public string? BuildingType { get; init; }

@@ -76,7 +76,7 @@ internal sealed class ResourceToolActionHandler : IFarmhandActionHandler
             "break_rock" => this.executions.RequestLocalBreakRockSource(call.RequestId, call.Slot, call.X, call.Y, call.TargetId, call.DeadlineMs),
             "dig_artifact_spot" => this.executions.RequestLocalDigArtifactSpot(call.RequestId, call.Slot, call.X, call.Y, call.TargetId, call.DeadlineMs),
             "refill_watering_can" => this.executions.RequestLocalRefillWateringCan(call.RequestId, call.Slot, call.X, call.Y, call.TargetId, call.DeadlineMs),
-            "fish_here" => this.executions.RequestLocalFishHere(call.RequestId, call.X, call.Y, call.TargetId, call.RequestedFish, call.DeadlineMs),
+            "fish_here" => this.executions.RequestLocalFishHere(call.RequestId, call.X, call.Y, call.TargetId, call.DeadlineMs),
             "place_wood_fence" => this.executions.RequestLocalPlaceWoodFence(call.RequestId, call.Slot, call.X, call.Y, call.QualifiedItemId, call.TargetId, call.DeadlineMs),
             "place_crab_pot" => this.executions.RequestLocalPlaceCrabPot(call.RequestId, call.Slot, call.X, call.Y, call.QualifiedItemId, call.TargetId, call.DeadlineMs),
             "bait_crab_pot" => this.executions.RequestLocalBaitCrabPot(call.RequestId, call.Slot, call.X, call.Y, call.QualifiedItemId, call.TargetId, call.DeadlineMs),
@@ -128,15 +128,6 @@ internal sealed class ResourceToolActionHandler : IFarmhandActionHandler
 
         /// <summary>The qualified id the caller believes a slot holds, empty when it names none.</summary>
         public string QualifiedItemId => this.request.Args.ExpectedQualifiedItemId ?? string.Empty;
-
-        /// <summary>
-        /// The species a `fish_here` request names, or the empty string for any fish.
-        ///
-        /// THE TWO SPELLINGS OF "NO SPECIES" ARE ONE FACT HERE, which is the only place they meet: the Host's wire
-        /// requires the argument and spells "any" as `""`, while the Mod's frame reader also accepts a frame that omits
-        /// it (the action's own live runner does), and both arrive as the empty string below this line.
-        /// </summary>
-        public string RequestedFish => this.request.Args.RequestedFish ?? string.Empty;
 
         /// <summary>The Data/Buildings type id a commission is for, empty when it names none.</summary>
         public string BuildingType => this.request.Args.BuildingType ?? string.Empty;
