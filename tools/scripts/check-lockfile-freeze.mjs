@@ -31,7 +31,7 @@ const GATE = "tools/check-dependency-risk.mjs";
 let staged;
 try {
   staged = cleanOutputLines(
-    execFileSync("git", ["diff", "--cached", "--name-only", "--diff-filter=ACMR"], {
+    execFileSync("git", ["diff", "--cached", "--name-only", "--diff-filter=ACMR", "--ignore-submodules=all"], {
       encoding: "utf8",
       maxBuffer: 1 << 26,
     }),

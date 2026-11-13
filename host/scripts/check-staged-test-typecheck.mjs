@@ -100,7 +100,9 @@ export function hostProjectFiles(paths) {
 }
 
 function committedPaths(range) {
-  return git(["diff", "--name-only", "--diff-filter=ACMR", ...range])
+  // `--ignore-submodules=all`: this checkout carries a junctioned submodule whose gitfile is unreadable, and git then
+  // refuses the whole diff - which this file would report as a typecheck failure. Measured 2026-11-13.
+  return git(["diff", "--name-only", "--diff-filter=ACMR", "--ignore-submodules=all", ...range])
     .split(/\r?\n/u)
     .filter((path) => path.length > 0);
 }
