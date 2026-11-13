@@ -731,15 +731,21 @@ const PRESENCE_ACTION_VOCABULARY = Object.freeze({
 // .dist directory once, and without this the run failed later with
 // `windows_stale_lock_reclaimer_unavailable`. Building on demand is the self-heal (the builder is 4s); the
 // published capability still requires the inventory binding, which is asserted separately.
+//
+// The pair's directory and file names are READ FROM THE BUILDER, never spelled a second time here. This block used to
+// name `../../../native/windows-stale-lock-reclaimer/.dist/win-x64/` while the builder publishes to
+// `host/native/windows-stale-lock-reclaimer/.dist/win-x64/`, so the check passed only in a checkout that happened to
+// still carry an old repo-root `native/` directory. Measured 2026-11-13 on `head-ladder`: the builder ran and DID
+// produce the pair under `host/native`, the recheck looked in the absent `native/` path, and the run reported
+// `windows_stale_lock_reclaimer_unavailable:builder_did_not_produce_the_pair` before it ever started. The builder is
+// invoked by its own resolved path for the same reason: a relative path silently depends on the launcher's cwd.
 {
-  const fsRequired = await import("node:fs");
-  const required = ["GameBuddy.WindowsStaleLockReclaimer.exe", "windows-stale-lock-reclaimer.manifest.json"];
-  const pairRoot = new URL("../../../native/windows-stale-lock-reclaimer/.dist/win-x64/", import.meta.url);
-  if (!required.every((name) => fsRequired.existsSync(new URL(name, pairRoot)))) {
-    const { execFileSync } = await import("node:child_process");
-    execFileSync(process.execPath, ["host/scripts/build-windows-stale-lock-reclaimer.mjs"], { stdio: "inherit" });
-    if (!required.every((name) => fsRequired.existsSync(new URL(name, pairRoot))))
-      throw new Error("windows_stale_lock_reclaimer_unavailable:builder_did_not_produce_the_pair");
+  const builderUrl = new URL("../../../host/scripts/build-windows-stale-lock-reclaimer.mjs", import.meta.url);
+  const { helperFileName, manifestFileName, outputRoot } = await import(builderUrl.href);
+  const pairPresent = () => [helperFileName, manifestFileName].every((name) => existsSync(join(outputRoot, name)));
+  if (!pairPresent()) {
+    execFileSync(process.execPath, [fileURLToPath(builderUrl)], { stdio: "inherit" });
+    if (!pairPresent()) throw new Error("windows_stale_lock_reclaimer_unavailable:builder_did_not_produce_the_pair");
   }
 }
 
