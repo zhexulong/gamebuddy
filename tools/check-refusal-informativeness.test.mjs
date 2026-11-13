@@ -33,6 +33,7 @@ import {
   toSnakeCase,
 } from "./check-refusal-informativeness.mjs";
 import { cleanOutputLines } from "./lib/subprocess-output.mjs";
+import { describeMemberDiff } from "./lib/member-diff.mjs";
 
 const REPOSITORY_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const CLI_PATH = fileURLToPath(new URL("check-refusal-informativeness.mjs", import.meta.url));
@@ -60,23 +61,54 @@ function mutateLine(relativePath, line, transform) {
 }
 
 test("the published surface is enumerated from the artifact, not hand-listed", () => {
+  // The artifact declares its actions, their argument schemas and their resource claims once; every assertion below
+  // compares the reader's projection to that declaration BY MEMBER, so a surface that grows names the actions that
+  // arrived. Measured when this replaced `actions.length === 95` and `targetBound ... === 70`: the surface had grown to
+  // 106 actions, 77 of them target-bound and 21 tool-bound, and the three literals had stayed - the failure read
+  // "expected 95, got 106" and named no member.
+  const declared = JSON.parse(read(SOURCES.surface)).actions;
   const actions = readActionSurface(read(SOURCES.surface));
-  assert.equal(actions.length, 95);
-  const toolActions = actions.filter((action) => action.toolCategory !== null);
-  assert.deepEqual(toolActions.map((action) => `${action.actionId}:${action.toolCategory}`).sort(), [
-    "break_rock_source:pickaxe",
-    "cut_grass:scythe",
-    "cut_weeds:scythe",
-    "water_crop:watering_can",
-  ]);
+  const ids = (list) => list.map((action) => action.actionId).sort();
+  const claimsOf = (action) =>
+    (action.resourceTemplate?.claims ?? []).filter(
+      (claim) => typeof claim.key === "string" && claim.key.startsWith("tool:"),
+    );
+
+  const actionIds = ids(actions);
+  assert.deepEqual(actionIds, ids(declared), describeMemberDiff("published actions", actionIds, ids(declared)));
+
+  const toolBound = actions
+    .filter((action) => action.toolCategory !== null)
+    .map((action) => `${action.actionId}:${action.toolCategory}`)
+    .sort();
+  const declaredToolBound = declared
+    .filter((action) => claimsOf(action).length > 0)
+    .map((action) => `${action.actionId}:${claimsOf(action)[0].key.slice("tool:".length)}`)
+    .sort();
+  assert.deepEqual(
+    toolBound,
+    declaredToolBound,
+    describeMemberDiff("tool-bound actions", toolBound, declaredToolBound),
+  );
   // Every tool claim carries the upgrade word a tool refusal needs to say which tool satisfies it.
   assert.equal(
-    toolActions.every(
-      (action) => action.toolUpgradeRequirement === "AnyUpgrade" || action.toolUpgradeRequirement === "BasicOnly",
-    ),
+    actions
+      .filter((action) => action.toolCategory !== null)
+      .every(
+        (action) => action.toolUpgradeRequirement === "AnyUpgrade" || action.toolUpgradeRequirement === "BasicOnly",
+      ),
     true,
   );
-  assert.equal(actions.filter((action) => action.targetBound).length, 70);
+
+  const targetBound = ids(actions.filter((action) => action.targetBound));
+  const declaredTargetBound = ids(
+    declared.filter((action) => Object.keys(action.argumentSchema ?? {}).includes("expectedTargetId")),
+  );
+  assert.deepEqual(
+    targetBound,
+    declaredTargetBound,
+    describeMemberDiff("target-bound actions", targetBound, declaredTargetBound),
+  );
 });
 
 test("a reason code is a closed family, not a free-form string", () => {
