@@ -371,18 +371,30 @@ test("a charge the held tool cannot reach is left to the Mod's per-row refusal, 
  * does hold nothing better than level 0.
  * </p>
  * <p>
- * THE MS COLUMN IS THE PLAN THE ROW EMITS, priced by the resolver the pure-packer table pins (`BODY_WALK_MS_PER_TILE`,
- * 217 ms a tile - the pace the route receipts measured). At level 0 that is the sixty-row pass the loop expands; above it,
- * it is the packed plan the compiler now emits, so `holds_0_owns_4=9/17162` says nine native uses and 17,162 ms for a
- * patch the held tool alone would have priced at 49,849. A change to the walk constant moves the second column of every
- * row together with that other table's, or one of the two has stopped reading the pace.
+ * THE MS COLUMN IS THE COST OF THE SHAPE THIS ROW EMITS, never of the shape the packer would have preferred. A packed row's
+ * nodes ARE the packing's steps (asserted below on tiles and charges), so the packing at the ceiling prices them; a loop row
+ * is priced as the LOOP, which the Mod expands one native use per tile at the charge the loop carries
+ * (`FarmhandForEachExpansion.cs:373`) - see `emittedPlanCost`, which is the only thing this file prices a row with. Those
+ * two numbers differ: at `holds_0_owns_1` the loop spends the level-0 figure (49,849 ms: 60 taps, 97 walked tiles) while the
+ * packed plan it could have been spends 43,369 - and quoting the second for the first is what this column was once wrong
+ * about. The pace is the resolver's (`BODY_WALK_MS_PER_TILE`, 217 ms a tile, `packingTimeMs` in body-program-packing.ts).
  * </p>
  */
 test("a 3x20 patch is packed for the hoe the Mod will swing, not the one in her hand", () => {
   const rows = [0, 1, 2, 3, 4].map((bestLevel) => {
     const nodes = nodesOf(compileWithPack(tillArea(0), snapshotHoldingBasicOwningBetter(bestLevel)));
     const loop = nodes.length === 1 && nodes[0]!.actionId === "for_each";
-    const price = packAreaSteps({ area: PATCH, kind: "charged_rectangle", maximumCharge: bestLevel }).timeMs;
+    const price = emittedPlanCost(nodes, PATCH, 0, bestLevel);
+    if (!loop) {
+      // THE COST ABOVE IS THIS PLAN'S, because the emitted nodes are the packing's own steps: same tiles, same charges. A
+      // plan that packed something else would make the price a claim about a plan nobody runs.
+      const packing = packAreaSteps({ area: PATCH, kind: "charged_rectangle", maximumCharge: bestLevel });
+      assert.deepEqual(
+        nodes.map((node) => tileOf(node)),
+        packing.steps.map((step) => ({ x: step.x, y: step.y, charge: step.charge })),
+        `holds_0_owns_${String(bestLevel)}: the packed nodes are the packing's steps, so its price is theirs`,
+      );
+    }
     return `holds_0_owns_${String(bestLevel)}=${loop ? "1_loop" : String(nodes.length)}/${String(price)}`;
   });
   assert.deepEqual(rows, [
@@ -399,6 +411,71 @@ test("a 3x20 patch is packed for the hoe the Mod will swing, not the one in her 
   );
   assert.equal(Math.max(...gold), 3, "the packed uses are the gold hoe's, not the level-0 tap in her hand");
 });
+
+/**
+ * EVERY LOOP A PLAN EMITS IS PRICED AT ITS OWN PER-TILE EXPANSION, never at the packed footprint.
+ *
+ * <p>
+ * This is the assertion the payoff table needed and did not have. The table once priced every row with `packAreaSteps` at
+ * the CEILING - the plan the compiler would emit if it could pack - so a row that emitted a single `for_each` quoted the
+ * packed price, and the before/after comparison read "43,369 ms either way" for a change that removed thirty-six native
+ * uses. The two are different plans whenever the compiler declines to pack: a filtered loop names a live SUBSET of its
+ * rectangle, worked one native use per tile at the charge it carries (`FarmhandForEachExpansion.cs:373`), so its cost is
+ * the per-tile expansion of the rectangle it names and never one charged footprint.
+ * </p>
+ * <p>
+ * The population is the loop cases themselves, asserted to BE loops first; the discriminating one owns an iridium hoe (so
+ * the packed price is 17,162 ms) while the row it leaves as a loop spends the level-0 figure (49,849 ms). red-proof: price
+ * a row with `packAreaSteps` at the ceiling instead of `emittedPlanCost` and both
+ * `plan_cost_disagrees_with_emitted_shape:filtered_holds_0_owns_4:17162:49849` and
+ * `plan_cost_prices_a_loop_at_the_packed_footprint:filtered_holds_0_owns_4:17162` are the failures.
+ * </p>
+ */
+test("every loop a plan emits is priced at its own per-tile expansion, never at the packed footprint", () => {
+  const filtered = `builder.for_each({ source: { area: { x: ${String(PATCH.x)}, y: ${String(PATCH.y)}, w: ${String(PATCH.w)}, h: ${String(PATCH.h)} } }, where: [{ col: { every: 3, offset: 0 } }], do: { action: "till_soil", charge: 0 } });`;
+  const cases = [
+    { label: "holds_0_owns_0", script: tillArea(0), bestLevel: 0 },
+    { label: "filtered_holds_0_owns_4", script: filtered, bestLevel: 4 },
+  ];
+  const perTile = packAreaSteps({ area: PATCH, kind: "charged_rectangle", maximumCharge: 0 }).timeMs;
+  const failures: string[] = [];
+  for (const { label, script, bestLevel } of cases) {
+    const nodes = nodesOf(compileWithPack(script, snapshotHoldingBasicOwningBetter(bestLevel)));
+    // The case must BE a loop, or it is not in this population and the reading below would price packed steps.
+    assert.equal(nodes.length, 1, `${label}: this case must be a loop`);
+    assert.equal(nodes[0]!.actionId, "for_each", `${label}: this case must be the loop form`);
+    const reported = emittedPlanCost(nodes, PATCH, 0, bestLevel);
+    if (reported !== perTile)
+      failures.push(`plan_cost_disagrees_with_emitted_shape:${label}:${String(reported)}:${String(perTile)}`);
+    const packedAtCeiling = packAreaSteps({ area: PATCH, kind: "charged_rectangle", maximumCharge: bestLevel }).timeMs;
+    if (bestLevel > 0 && reported === packedAtCeiling)
+      failures.push(`plan_cost_prices_a_loop_at_the_packed_footprint:${label}:${String(reported)}`);
+  }
+  assert.equal(cases.length, 2, "the population is the two loop shapes this file can produce, and it is empty");
+  assert.deepEqual(failures, [], `the loop's own expansion is ${String(perTile)} ms at the charge it carries`);
+});
+
+/**
+ * The cost of the plan AS EMITTED - which shape it is decides what prices it.
+ *
+ * <p>
+ * A `for_each` node carries no footprint: the Mod expands it one target per tile at the charge the loop names
+ * (`FarmhandForEachExpansion.cs:373`), so its cost is `packAreaSteps` at THAT charge and not at the ceiling the compiler
+ * declined to use. A packed plan's nodes ARE the packing's steps, tile for tile and charge for charge, so the packing at
+ * the ceiling is exactly what the Mod will spend. Both numbers come from `packingTimeMs`
+ * (`body-program-packing.ts`, swing + charge per use + the walks between stances at `BODY_WALK_MS_PER_TILE`), which is why
+ * a loop and a packed plan are comparable rather than merely countable.
+ * </p>
+ */
+function emittedPlanCost(
+  nodes: readonly Readonly<Record<string, unknown>>[],
+  area: Readonly<{ x: number; y: number; w: number; h: number }>,
+  writtenCharge: number,
+  ceiling: number,
+): number {
+  const loop = nodes.length === 1 && nodes[0]?.actionId === "for_each";
+  return packAreaSteps({ area, kind: "charged_rectangle", maximumCharge: loop ? writtenCharge : ceiling }).timeMs;
+}
 
 /**
  * THE GATE, NOT A CASE: for EVERY tool action the surface publishes, the ceiling this side packs for is the tool the Mod
