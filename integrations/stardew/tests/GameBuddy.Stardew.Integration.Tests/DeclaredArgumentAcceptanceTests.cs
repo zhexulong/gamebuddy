@@ -128,6 +128,9 @@ public sealed class DeclaredArgumentAcceptanceTests
                 // half and is covered where it belongs: the action's own test suite has
                 // Refusal_EmptyOrBlankText_IsChatMessageInvalid, so this perturbation spends itself on the bound.
                 "text" => new[] { new string('x', GameBuddy.Stardew.Core.Policy.FarmhandActionCatalog.ChatMessageMaximumLength + 1) },
+                // The species is required-with-`""`-meaning-ANY, so emptiness is its LEGAL second spelling and the
+                // perturbation has to spend itself on the ceiling the wire and the handler both enforce.
+                "requestedFish" => new[] { new string('x', GameBuddy.Stardew.Core.Policy.FarmhandActionCatalog.RequestedFishMaximumLength + 1) },
                 _ => new[] { string.Empty },
             },
             // kind "label" tolerates neither a null label nor a non-null ref.
@@ -164,6 +167,7 @@ public sealed class DeclaredArgumentAcceptanceTests
         string? text = null;
         string? buildingType = null;
         string? choice = null;
+        string? requestedFish = null;
         int? expectedSkill = null;
         int? expectedLevel = null;
         int? charge = null;
@@ -195,6 +199,9 @@ public sealed class DeclaredArgumentAcceptanceTests
                 case "expectedSkill": expectedSkill = int.Parse(effective); break;
                 case "expectedLevel": expectedLevel = int.Parse(effective); break;
                 case "charge": charge = int.Parse(effective); break;
+                // The species `fish_here` names: the legal value is the empty string (any fish), and the perturbation
+                // table above is what proves the ceiling.
+                case "requestedFish": requestedFish = effective; break;
                 case "destination":
                     // The only label-shaped combination the converter accepts carries the label
                     // and no ref; the invalid case sends both.
@@ -233,6 +240,7 @@ public sealed class DeclaredArgumentAcceptanceTests
             ExpectedSkill = expectedSkill,
             ExpectedLevel = expectedLevel,
             Charge = charge,
+            RequestedFish = requestedFish,
             Destination = destination,
             // A descriptor declaring a scene binding must receive a well-formed one: the
             // acceptance layer validates it as its own contract member, so omitting it fails

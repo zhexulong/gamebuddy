@@ -4496,7 +4496,7 @@ export const STARDEW_COMPLETION_CONTRACTS = Object.freeze({
     // location;target;tile;caught_qualified_item_id;display_name;fish_size;quality;pull_outcome;
     // pull_unobserved_field;bite_observed;cast_to_credit_ms;rod_durability_left;bait_before;bait_left;
     // bait_consumed;stamina_before;stamina_after;stamina_delta;inventory_before;inventory_after;
-    // fish_caught_before;fish_caught_after;fish_caught_delta;credit.
+    // fish_caught_before;fish_caught_after;fish_caught_delta;credit;requested_fish.
     //
     // THE CATCH IS THE CREDIT, and the rod cannot answer it: `FishingRod.fishCaught` is set by the win path
     // (:1092) and cleared by the very next settle (:2352). The engine's own saved record is `Farmer.fishCaught`,
@@ -4574,9 +4574,16 @@ export const STARDEW_COMPLETION_CONTRACTS = Object.freeze({
             caughtDelta !== null &&
             caughtDelta >= 1 &&
             caughtAfter === caughtBefore + caughtDelta &&
-            e.credit === `fishCaught:${caughtBefore}->${caughtAfter}`
+            e.credit === `fishCaught:${caughtBefore}->${caughtAfter}` &&
+            // THE SPECIES SHE ASKED FOR, when the request named one: the Mod appends it LAST and only then, so this
+            // rule states the pair rather than requiring a key a request without a species never produces. It must be
+            // the fish this receipt says the engine credited - a `fish_caught` that named one species and caught
+            // another is the Mod's own refusal (`fish_species_mismatch:<requested>:<caught>`) arriving under the wrong
+            // reason code, and the receipt disagreeing with its own rule is what this contract is for.
+            (e.requested_fish === undefined || e.requested_fish === e.caught_qualified_item_id)
           );
         },
+        ["requested_fish"],
       )
     );
   },

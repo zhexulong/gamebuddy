@@ -1066,6 +1066,79 @@ test("truncated_evidence_keeps_whole_fields: a cut shows whole k=v fields and co
   );
 });
 
+test("fish_here: the species she caught survives the model-facing evidence cut, byte for byte", () => {
+  // `fish_here` can be asked for a NAMED fish, and the only place that answer reaches her is this line: the receipt's
+  // evidence, cut at `MODEL_FIELD_CEILINGS.evidence` (160 characters) on WHOLE `k=v` field boundaries, from the front.
+  // So the assertion is not "the receipt carries the species" - it is that the text SHE READS still carries it.
+  //
+  // THE ARITHMETIC, measured on the Mod's own success shape (`farmhandexecutioncontroller.fishingactions.cs`, the
+  // `AwaitingCredit` evidence literal, plus the `requested_fish` pair the argument appends LAST):
+  //   location=Farm                         13
+  //   ;target=water_0123456789abcdef        30
+  //   ;tile=41,12                           11
+  //   ;caught_qualified_item_id=(O)136      32
+  //   = 86 of 160, so the species is field 4 of 25 and most of the budget would have to be eaten before a cut reached
+  // it. The ceiling was NOT moved to make this true; if the evidence grows a field in FRONT of the species, or a long
+  // location name pushes it past the cut, this test is what says so.
+  const fields = [
+    "location=Farm",
+    "target=water_0123456789abcdef",
+    "tile=41,12",
+    "caught_qualified_item_id=(O)136",
+    "display_name=Largemouth Bass",
+    "fish_size=12",
+    "quality=1",
+    "pull_outcome=not_verified",
+    "pull_unobserved_field=BobberBar.distanceFromCatching",
+    "bite_observed=isNibbling",
+    "cast_to_credit_ms=4200",
+    "rod_durability_left=-1",
+    "bait_before=5",
+    "bait_left=4",
+    "bait_consumed=1",
+    "stamina_before=100",
+    "stamina_after=98",
+    "stamina_delta=-2",
+    "inventory_before=0",
+    "inventory_after=1",
+    "fish_caught_before=3",
+    "fish_caught_after=4",
+    "fish_caught_delta=1",
+    "credit=fishCaught:3->4",
+    "requested_fish=(O)136",
+  ];
+  const species = fields[3] as string;
+  assert.equal(
+    fields.slice(0, 4).join(";").length,
+    86,
+    "the docblock's byte budget is the measured prefix: re-measure it rather than the assertion",
+  );
+  const text = fields.join(";");
+  assert.ok(
+    text.length > MODEL_FIELD_CEILINGS.evidence,
+    `the fixture must meet the cut (${String(text.length)} against ${String(MODEL_FIELD_CEILINGS.evidence)}), or this gate examines no cut at all`,
+  );
+
+  const rendered = composedField("evidence", text);
+  const line = rendered.slice(rendered.indexOf("（") + 1, rendered.lastIndexOf("）"));
+  assert.ok(
+    line.includes(species),
+    `the species the engine credited must reach the model through the cut: the line says ${JSON.stringify(line)}`,
+  );
+  const markerAt = line.indexOf("…[fields_not_shown:");
+  assert.notEqual(markerAt, -1, `a cut must say what it dropped: ${JSON.stringify(line)}`);
+  const shown = line.slice(0, markerAt).split(";");
+  assert.deepEqual(shown, fields.slice(0, shown.length), "a cut prints whole fields, byte for byte, from the front");
+  assert.ok(shown.includes(species), "and the species is inside what it printed");
+  // The appended pair is what the cut may drop: on success it IS the caught id, so a line that lost it still says which
+  // fish was landed. Stated as an assertion so a future field appended BEFORE the species cannot pass quietly.
+  assert.equal(
+    shown.includes("requested_fish=(O)136"),
+    false,
+    `the ask is the field the cut may drop, and the species the field it may not: ${JSON.stringify(shown)}`,
+  );
+});
+
 /**
  * DESTRUCTIVE REFUSAL SENTENCE REACHES THE MODEL.
  *

@@ -172,6 +172,7 @@ public sealed class ExecutionRequestFingerprintCoverageTests
         string? responseKey = null;
         string? choice = null;
         string? text = null;
+        string? requestedFish = null;
         BridgeNavigationDestinationSelector? destination = null;
 
         foreach (FarmhandActionArgument argument in descriptor.Arguments)
@@ -198,6 +199,8 @@ public sealed class ExecutionRequestFingerprintCoverageTests
                 case "responseKey": responseKey = "yes"; break;
                 case "choice": choice = First(argument, "confirm"); break;
                 case "text": text = "hello farm"; break;
+                // The species `fish_here` names: a distinct value of the declared type, which is all this file needs.
+                case "requestedFish": requestedFish = "(O)136"; break;
                 case "destination": destination = new BridgeNavigationDestinationSelector("label", "Farm", null); break;
                 default:
                     throw new XunitException(
@@ -229,6 +232,7 @@ public sealed class ExecutionRequestFingerprintCoverageTests
             ResponseKey = responseKey,
             Choice = choice,
             Text = text,
+            RequestedFish = requestedFish,
             Destination = destination,
         };
     }

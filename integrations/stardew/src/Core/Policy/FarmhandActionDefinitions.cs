@@ -59,7 +59,7 @@ public enum FarmhandResourceTemplateValue
     /// </summary>
     BasicOnly = 3,
 }
-public sealed record FarmhandActionArgument(string Name, string Type, IReadOnlyList<string>? Enum = null, string? Description = null);
+public sealed record FarmhandActionArgument(string Name, string Type, IReadOnlyList<string>? Enum = null, string? Description = null, bool Omissible = false);
 /// <summary>Mod-owned symbolic resource claim; ScopePlayer materializes embodied_actor to the current scoped player.
 /// A `tool:&lt;category&gt;` key is the SAME shape with a different subject: the tool that category names, which the
 /// handler requires the actor to OWN and takes as the current tool by selecting it, and whose value half is the
@@ -705,7 +705,7 @@ E("enter_exit", "movement_navigation", FarmhandActionHandlerGroup.Movement, Tran
         // consumes the RNG, so publishing "what is here" would change what she catches), so the only verifiable form of
         // "land a named fish" is the comparison made AFTER the catch, against the engine's own `Farmer.fishCaught`
         // record - which is what `fish_species_mismatch:<requested>:<caught>` reports.
-        E("fish_here", "resource_gathering", FarmhandActionHandlerGroup.ResourceTools, SelfWalked(new FarmhandActionDescriptor(new[] { new FarmhandActionArgument("x", "integer"), new FarmhandActionArgument("y", "integer"), new FarmhandActionArgument("expectedTargetId", "string"), new FarmhandActionArgument("requestedFish", "string", null, FishSpeciesMeaning) }, new Dictionary<string, string>(), ToolResource("fishing_rod", FarmhandResourceTemplateValue.AnyUpgrade), "write", "fish_caught")), FarmhandActionLifecycle.Published, "waterTargets"),
+        E("fish_here", "resource_gathering", FarmhandActionHandlerGroup.ResourceTools, SelfWalked(new FarmhandActionDescriptor(new[] { new FarmhandActionArgument("x", "integer"), new FarmhandActionArgument("y", "integer"), new FarmhandActionArgument("expectedTargetId", "string"), new FarmhandActionArgument("requestedFish", "string", null, FishSpeciesMeaning, Omissible: true) }, new Dictionary<string, string>(), ToolResource("fishing_rod", FarmhandResourceTemplateValue.AnyUpgrade), "write", "fish_caught")), FarmhandActionLifecycle.Published, "waterTargets"),
         E("npc_relationship", "npc_social", FarmhandActionHandlerGroup.MachinesAndAnimals, SelfWalked(Target()), FarmhandActionLifecycle.LiveVerified, "npcRelationshipTargets"),
         E("pet_animal", "animals_pets", FarmhandActionHandlerGroup.MachinesAndAnimals, SelfWalked(Target()), FarmhandActionLifecycle.LiveVerified, "petTargets"),
         E("pet_farm_animal", "animals_pets", FarmhandActionHandlerGroup.MachinesAndAnimals, SelfWalked(Target()), FarmhandActionLifecycle.LiveVerified, "farmAnimalPetTargets"),

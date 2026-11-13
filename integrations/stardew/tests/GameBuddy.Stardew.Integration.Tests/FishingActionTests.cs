@@ -7,6 +7,7 @@ using System.Reflection;
 using FluentAssertions;
 using GameBuddy.Stardew.Core.Models;
 using GameBuddy.Stardew.Core.Policy;
+using GameBuddy.Stardew.Core.Protocol;
 using GameBuddy.Stardew.Handlers;
 using Netcode;
 using StardewValley;
@@ -60,11 +61,19 @@ public sealed class FishingActionTests
 
     /// <summary>
     /// The card's failure vocabulary is CLOSED and every member of it is spent BEFORE the cast: no `fish_escaped`,
-    /// no `no_bite_in_window`, and no refusal minted after `DoFunction(...)` has been called.
+    /// no `no_bite_in_window`, and no refusal decided before the cast minted after `DoFunction(...)` has been called.
     ///
     /// <para>
     /// The post-cast assertion is the one that stops the card's ruling from decaying: a settlement-time failure code
     /// added later (the natural thing to write when a bite is slow) turns a turn into a bet, and this fails by name.
+    /// </para>
+    ///
+    /// <para>
+    /// ONE POST-CATCH REFUSAL IS DECLARED, and it is not that shape. `fish_species_mismatch:<requested>:<caught>`
+    /// cannot be decided earlier by construction - the engine decides what bites, so "was it the fish she asked for"
+    /// only exists once the fish is out of the water - and it is not a bet on whether the cast worked: the catch is
+    /// credited either way and the receipt is the same proof of it. It is named here, and counted, rather than
+    /// absorbed: a SECOND rejection after the cast fails this gate by name.
     /// </para>
     /// </summary>
     [Fact]
@@ -90,10 +99,14 @@ public sealed class FishingActionTests
         cast.Should().BeGreaterThan(0, "the handler must run the engine's own cast");
         // EVERY rejection, not just the ones minted through `Refuse`: a rejection written directly as a receipt after the
         // cast would be the same defect, and matching the state literal catches both spellings.
-        int lastRejection = source.LastIndexOf("ExecutionState.Rejected", StringComparison.Ordinal);
-        lastRejection.Should().BeGreaterThan(0, "the handler must mint its refusals by name");
-        lastRejection.Should().BeLessThan(cast,
-            "every refusal must be spent before a byte is cast: a refusal after DoFunction has already spent stamina");
+        source.Should().Contain("ExecutionState.Rejected", "the handler must mint its refusals by name");
+
+        string afterTheCast = source[cast..];
+        int PostCast(string text) => afterTheCast.Split(text, StringSplitOptions.None).Length - 1;
+        // The species comparison is the ONLY rejection the post-catch half may carry, and its code says which it is.
+        PostCast("ExecutionState.Rejected").Should().Be(1,
+            "one post-catch refusal is declared - the species comparison - and a second would be the bet this gate forbids");
+        afterTheCast.Should().Contain("fish_species_mismatch:", "and the declared one is the species comparison, by name");
     }
 
     /// <summary>
@@ -130,7 +143,7 @@ public sealed class FishingActionTests
         CompletionSeamViolations(withoutSettle).Should().Contain("missing_settle_call:doneHoldingFish",
             "the bait/tackle consumption and the inventory add live in the engine's own settle, not in a copy of it");
 
-        string withoutCreditBinding = source.Replace("credited ? ExecutionState.Succeeded : ExecutionState.Uncertain", "ExecutionState.Succeeded", StringComparison.Ordinal);
+        string withoutCreditBinding = source.Replace("CreditedCatchTerminal(spec.RequestedFish, fishQualifiedItemId)", "(ExecutionState.Succeeded, \"fish_caught\")", StringComparison.Ordinal);
         CompletionSeamViolations(withoutCreditBinding).Should().Contain("success_not_bound_to_engine_credit",
             "an unconditional Succeeded is exactly the default-success shape the card forbids");
     }
@@ -241,8 +254,8 @@ public sealed class FishingActionTests
         // The credit fact itself, and the state that depends on it.
         Require("rod.fishCaught", "missing_engine_credit_fact:rod.fishCaught");
         Require("caughtAfter > spec.CaughtCountBefore", "missing_credit_before_after:fishCaught");
-        Require("credited ? ExecutionState.Succeeded : ExecutionState.Uncertain", "success_not_bound_to_engine_credit");
-        Require("fish_here_catch_not_credited", "missing_uncredited_code");
+        Require("? CreditedCatchTerminal(spec.RequestedFish, fishQualifiedItemId)", "success_not_bound_to_engine_credit");
+        Require(": (ExecutionState.Uncertain, \"fish_here_catch_not_credited\")", "missing_uncredited_code");
         return violations;
     }
 
@@ -302,6 +315,152 @@ public sealed class FishingActionTests
         receipt.Evidence.Should().Contain("credit=fishCaught:0->0",
             "the credit record is named with the reading before and after, so `not credited` can be told from `not read`");
         BodySlotSeeding.Peek(executions, "activeFishing").Should().BeNull("the cast's slot is released on every exit");
+    }
+
+    /// <summary>
+    /// THE THREE-ARGUMENT FRAME THE ACTION'S OWN LIVE RUNNER SENDS IS ADMITTED, AND IT MEANS ANY FISH.
+    ///
+    /// <para>
+    /// `requestedFish` is required-with-`""`-meaning-any at every Host surface (`till_soil`'s `charge: 0` is the same
+    /// idiom), because this stack has no optional argument. The Mod still admits the three-argument frame, and the
+    /// reason is concrete: `tools/run-stardew-native-local-player-fish-here-smoke.mjs` - the action's OWN native-local
+    /// live gate - speaks exactly `{ x, y, expectedTargetId }`, so refusing it here would close the gate that proves the
+    /// action works. The tolerance is exactly ONE named argument: an undeclared key and a missing required one are both
+    /// still refused by name.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void TheThreeArgumentFrameTheLiveRunnerSendsIsAdmittedAndMeansAnyFish()
+    {
+        // The Mod's own declaration names the species, and `check-action-surface-parity` holds every other surface to it.
+        BridgeProtocol.ExecutionArgumentProperties("fish_here")
+            .Should()
+            .Equal("x", "y", "expectedTargetId", "requestedFish");
+
+        BridgeProtocol.TryDeserializeExecutionRequest(
+                FishHereEnvelope("{\"x\":2,\"y\":3,\"expectedTargetId\":\"water_0123456789abcdef\"}"),
+                out BridgeEnvelope<BridgeExecutionRequest>? runnerFrame,
+                out string runnerReason)
+            .Should().BeTrue($"the action's own live runner speaks this frame; it answered {runnerReason}");
+        runnerFrame!.Payload.Args.RequestedFish.Should().BeNull(
+            "an absent species stays absent at the wire; the handler's one read is what spells it as 'any fish'");
+
+        BridgeProtocol.TryDeserializeExecutionRequest(
+                FishHereEnvelope("{\"x\":2,\"y\":3,\"expectedTargetId\":\"water_0123456789abcdef\",\"requestedFish\":\"(O)136\"}"),
+                out BridgeEnvelope<BridgeExecutionRequest>? namedFrame,
+                out string namedReason)
+            .Should().BeTrue($"a request that names a species is the shape the Host builds; it answered {namedReason}");
+        namedFrame!.Payload.Args.RequestedFish.Should().Be("(O)136");
+
+        foreach ((string args, string because) in new[]
+                 {
+                     ("{\"x\":2,\"y\":3}", "the tile binding is still required - only the species may be absent"),
+                     ("{\"x\":2,\"y\":3,\"expectedTargetId\":\"water_0123456789abcdef\",\"requested_spices\":\"(O)136\"}",
+                         "a key the action does not declare still rides along as a malformed request"),
+                 })
+        {
+            BridgeProtocol.TryDeserializeExecutionRequest(FishHereEnvelope(args), out _, out string refusedWith)
+                .Should().BeFalse(because);
+            refusedWith.Should().Be("invalid_envelope", "a malformed request is refused by name, before any handler sees it");
+        }
+    }
+
+    /// <summary>
+    /// A NAMED SPECIES IS THE CATCH WHEN IT COMES UP, AND A REFUSAL WHEN IT DOES NOT.
+    ///
+    /// <para>
+    /// Both directions are driven against the shipped decision (`ExecutionManager.CreditedCatchTerminal`, the one member
+    /// the credited arm asks) rather than through the tick, and the LIMIT is the one this class already states for the
+    /// successful catch: the `AwaitingCredit` arm settles with `doneHoldingFish`, whose `CreateFish` reads `Data/ItemData`
+    /// through `ItemRegistry`, and this process has no content manager - measured here as
+    /// `KeyNotFoundException: no item type definition found`. What the tick does with the answer is the next case.
+    /// </para>
+    ///
+    /// <para>
+    /// Why the comparison exists at all, and cannot be a precondition: the engine decides what bites
+    /// (`GameLocation.getFish` is a SAMPLER that consumes the RNG, so asking it beforehand would change what she catches).
+    /// A mismatch is a REFUSAL and not a field because the model-facing evidence is cut at 160 characters from the front,
+    /// where an appended `requested_fish=` fact is among the first things a cut removes - while
+    /// `fish_species_mismatch:&lt;requested&gt;:&lt;caught&gt;` names both ids in the reason code, which prints verbatim.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void ANamedSpeciesIsTheCatchWhenItComesUpAndARefusalWhenItDoesNot()
+    {
+        const string Wanted = "(O)136";
+        const string SomethingElse = "(O)128";
+
+        ExecutionManager.CreditedCatchTerminal(Wanted, Wanted).Should().Be(
+            (ExecutionState.Succeeded, "fish_caught"),
+            $"she asked for {Wanted} and that is the fish the engine credited");
+
+        (ExecutionState State, string ReasonCode) mismatch = ExecutionManager.CreditedCatchTerminal(Wanted, SomethingElse);
+        mismatch.State.Should().Be(ExecutionState.Rejected,
+            "a different species is a refusal: it is not the fish she asked for, and the receipt must not pretend it is");
+        mismatch.ReasonCode.Should().Be($"fish_species_mismatch:{Wanted}:{SomethingElse}",
+            "the code names BOTH ids, which is the part of the answer that survives the model-facing cut");
+
+        ExecutionManager.CreditedCatchTerminal(string.Empty, SomethingElse).Should().Be(
+            (ExecutionState.Succeeded, "fish_caught"),
+            "an empty species asks for ANY fish, which is how every caller that names none is spelled");
+    }
+
+    /// <summary>
+    /// THE TICK SETTLES THE CREDITED CATCH WITH THAT ANSWER, AFTER THE ENGINE'S OWN CREDIT, and appends the ask only
+    /// when the request carried one.
+    ///
+    /// <para>
+    /// The three facts this pins are exactly the ones the credited arm owns and no test can drive (see the case above):
+    /// the decision is asked AFTER `doneHoldingFish`, so it never decides anything about a cast the engine did not
+    /// book; the uncredited path keeps its own verdict; and the evidence grows by exactly one pair, only for a request
+    /// that named a species - which is what keeps every existing caller's receipt byte-identical.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void TheTickSettlesTheSpeciesComparisonAfterTheCredit()
+    {
+        string source = FishingSource();
+
+        int settle = source.IndexOf("rod.doneHoldingFish(", StringComparison.Ordinal);
+        int decision = source.IndexOf("CreditedCatchTerminal(spec.RequestedFish, fishQualifiedItemId)", StringComparison.Ordinal);
+        settle.Should().BeGreaterThan(0, "the credited arm settles the catch through the engine's own `doneHoldingFish`");
+        decision.Should().BeGreaterThan(settle,
+            "the species is compared after the engine's own settle: nothing about this decision may run before the catch exists");
+
+        source.Should().Contain(": (ExecutionState.Uncertain, \"fish_here_catch_not_credited\")",
+            "an uncredited catch keeps its own verdict - a mismatch is only claimed for a catch the engine booked");
+        source.Should().Contain("if (spec.RequestedFish.Length != 0)",
+            "the ask is appended only when there was one, so a request that names no species produces the older receipt");
+        source.Should().Contain("evidence += $\";requested_fish={spec.RequestedFish}\"",
+            "and it is one appended pair on the same proof of the catch, never a separate field to keep in step");
+    }
+
+    /// <summary>
+    /// One serialized <c>execution_request</c> frame for <c>fish_here</c>, with <paramref name="args"/> written verbatim
+    /// as the payload's <c>args</c> object so a case can omit a name or add one.
+    /// </summary>
+    private static string FishHereEnvelope(string args)
+    {
+        var request = new BridgeExecutionRequest(
+            "req_fish_here",
+            "idem_fish_here",
+            "fish_here",
+            new BridgeExecutionArgs { X = 2, Y = 3, ExpectedTargetId = "water_0123456789abcdef" },
+            ExpectedRevision: 7,
+            DeadlineMs: 30_000);
+        var envelope = new BridgeEnvelope<BridgeExecutionRequest>(
+            BridgeProtocol.Version,
+            "msg_fish_here",
+            "corr_fish_here",
+            1_000L,
+            new BridgeScope("stardew", "save_01", "world_01", "player_01", "companion_01"),
+            "execution_request",
+            request);
+
+        BridgeProtocol.TrySerialize(envelope, out string json, out string reason).Should().BeTrue(reason);
+        System.Text.Json.Nodes.JsonNode frame = System.Text.Json.Nodes.JsonNode.Parse(json)!;
+        frame["payload"]!["args"] = System.Text.Json.Nodes.JsonNode.Parse(args);
+        return frame.ToJsonString();
     }
 
     /// <summary>

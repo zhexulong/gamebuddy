@@ -2272,10 +2272,11 @@ private static bool IsValidBodyProgramEvent(BridgeBodyProgramEvent? @event) => @
     }
 
     /// <summary>
-    /// The arguments one action's frame may leave OUT: the ONE place "an absent argument" is declared.
+    /// The arguments one action's frame may leave OUT: read from the DESCRIPTOR's own
+    /// <see cref="FarmhandActionArgument.Omissible"/> declaration, never from a list here.
     ///
     /// <para>
-    /// `fish_here`'s `requested_fish` is required-with-`""`-meaning-any at every Host surface (`till_soil`'s
+    /// `fish_here`'s `requestedFish` is required-with-`""`-meaning-any at every Host surface (`till_soil`'s
     /// `charge: 0` is the same idiom), because this stack has no optional argument: the Host's `exactArgs`, this frame
     /// reader, `BodyProgramVerifier.ArgumentsMatch` and the plan grammar's `PlanArgumentShape.required` all demand
     /// exact arity. The reason the absent spelling is still accepted here is the action's OWN native-local live runner
@@ -2290,17 +2291,19 @@ private static bool IsValidBodyProgramEvent(BridgeBodyProgramEvent? @event) => @
     /// own live gate.
     /// </para>
     /// </summary>
-    private static readonly Dictionary<string, string[]> OmissibleExecutionArguments = new(StringComparer.Ordinal)
-    {
-        ["fish_here"] = new[] { "requested_fish" },
-    };
-
-    /// <summary>The frame's `args` against the action's declared argument set, allowing that action's omissions.</summary>
     private static bool HasDeclaredArguments(JsonElement args, string? action)
     {
         if (ExecutionArgumentProperties(action) is not { } declared)
             return false;
-        if (action is null || !OmissibleExecutionArguments.TryGetValue(action, out string[]? omissible))
+        FarmhandActionDescriptor? descriptor = action is null
+            ? null
+            : FarmhandActionCatalog.Registrations
+                .FirstOrDefault(registration => string.Equals(registration.ActionId, action, StringComparison.Ordinal))?
+                .Descriptor;
+        string[] omissible = descriptor is null
+            ? Array.Empty<string>()
+            : descriptor.Arguments.Where(argument => argument.Omissible).Select(argument => argument.Name).ToArray();
+        if (omissible.Length == 0)
             return HasExactProperties(args, declared);
         string[] required = declared.Where(name => !omissible.Contains(name, StringComparer.Ordinal)).ToArray();
         return HasProperties(args, required, omissible);
@@ -2354,10 +2357,10 @@ private static bool IsValidBodyProgramEvent(BridgeBodyProgramEvent? @event) => @
         "refill_watering_can" => new[] { "x", "y", "slot", "expectedTargetId" },
         // fish_here names the water tile it casts at and the opaque `waterTargets` row that binds it. It carries no slot:
         // the rod comes from the action's own `tool:fishing_rod` claim, exactly as every other declared-tool action takes
-        // its tool, and the slot the actor held before the cast is restored on every exit. `requested_fish` is the
+        // its tool, and the slot the actor held before the cast is restored on every exit. `requestedFish` is the
         // species she wants (empty for any), which is what `fish_species_mismatch:<requested>:<caught>` compares AFTER
-        // the catch - see <see cref="OmissibleExecutionArguments"/> for why the frame may still arrive without it.
-        "fish_here" => new[] { "x", "y", "expectedTargetId", "requested_fish" },
+        // the catch - see <see cref="FarmhandActionArgument.Omissible"/> for why the frame may still arrive without it.
+        "fish_here" => new[] { "x", "y", "expectedTargetId", "requestedFish" },
         "plant_seed" or "fertilize_tile" or "place_wood_fence" or "place_crab_pot" or "bait_crab_pot" or "machine_load" or "plant_sapling" or "interact_npc_with_item" => new[] { "x", "y", "slot", "expectedQualifiedItemId", "expectedTargetId" },
         "clear_debris" or "collect_animal_product" or "feed_animal" or "chop_tree" or "break_rock" or "clear_hoedirt" or "dig_artifact_spot" or "chop_stump" or "cut_weeds" or "cut_grass" or "scythe_crop" => new[] { "x", "y", "slot", "expectedTargetId" },
         // sweep_scythe names the tile to FACE and nothing else. No `slot`: the scythe comes from the action's own
