@@ -74,13 +74,8 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
     /// </summary>
     public LocalExecutionReceipt RequestLocalDismissModal(BridgeExecutionRequest request, IExecutionLedger ledger)
     {
-        if (ledger.TryGetExistingReceipt(request.RequestId, out LocalExecutionReceipt existing))
-            return existing;
-
-        string executionId = ledger is IDispatchExecutionLedger dispatchLedger
-            && dispatchLedger.TryGetBoundExecutionId(request.RequestId, out string boundExecutionId)
-            ? boundExecutionId
-            : this.ledger.NewExecutionId(request.RequestId);
+        if (this.OpenDispatchEnvelope(request, ledger, out string executionId) is DispatchEnvelope.Answered alreadyAnswered)
+            return alreadyAnswered.Receipt;
 
         this.revision++;
 
@@ -278,13 +273,8 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
     /// <summary>Answers the currently displayed native question dialogue.</summary>
     public LocalExecutionReceipt RequestLocalAnswerDialogue(BridgeExecutionRequest request, IExecutionLedger ledger)
     {
-        if (ledger.TryGetExistingReceipt(request.RequestId, out LocalExecutionReceipt existing))
-            return existing;
-
-        string executionId = ledger is IDispatchExecutionLedger dispatchLedger
-            && dispatchLedger.TryGetBoundExecutionId(request.RequestId, out string boundExecutionId)
-            ? boundExecutionId
-            : this.ledger.NewExecutionId(request.RequestId);
+        if (this.OpenDispatchEnvelope(request, ledger, out string executionId) is DispatchEnvelope.Answered alreadyAnswered)
+            return alreadyAnswered.Receipt;
 
         this.revision++;
 
@@ -506,13 +496,8 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
     /// </summary>
     public LocalExecutionReceipt RequestLocalRespondLevelUp(BridgeExecutionRequest request, IExecutionLedger ledger)
     {
-        if (ledger.TryGetExistingReceipt(request.RequestId, out LocalExecutionReceipt existing))
-            return existing;
-
-        string executionId = ledger is IDispatchExecutionLedger dispatchLedger
-            && dispatchLedger.TryGetBoundExecutionId(request.RequestId, out string boundExecutionId)
-            ? boundExecutionId
-            : this.ledger.NewExecutionId(request.RequestId);
+        if (this.OpenDispatchEnvelope(request, ledger, out string executionId) is DispatchEnvelope.Answered alreadyAnswered)
+            return alreadyAnswered.Receipt;
 
         this.revision++;
 

@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Globalization;
+using GameBuddy.Stardew.Core.Abstractions;
 using GameBuddy.Stardew.Core.Models;
 using GameBuddy.Stardew.Core.Policy;
 using StardewModdingAPI;
@@ -69,6 +70,39 @@ internal abstract class AdmissionOutcome
         internal LocalExecutionReceipt Marker { get; }
 
         internal override LocalExecutionReceipt? Withholding => this.Marker;
+    }
+}
+
+/// <summary>
+/// What a dispatch request's envelope already is, as two types rather than as a nullable receipt beside a string: a
+/// request this Mod already ANSWERED is answered again with the receipt it already has, and every other request is
+/// OPEN - its body runs under the execution identity the resolver handed back with it.
+///
+/// <para>
+/// The choice is the type because the two answers are not interchangeable: reading an answered request as "run this"
+/// would start a second body for a request that already has one, and reading an open one as "already answered" would
+/// drop the request. The execution identity travels on the resolver's <c>out</c> parameter instead of on
+/// <see cref="Opened"/>, because it is the body's INPUT and every action reads it a dozen times: a payload here would be
+/// one fact spelled twice, and every one of those reads would be a cast.
+/// </para>
+/// </summary>
+internal abstract class DispatchEnvelope
+{
+    private DispatchEnvelope()
+    {
+    }
+
+    /// <summary>Already answered: this receipt answers the request instead of any body running.</summary>
+    internal sealed class Answered : DispatchEnvelope
+    {
+        internal Answered(LocalExecutionReceipt receipt) => this.Receipt = receipt;
+
+        internal LocalExecutionReceipt Receipt { get; }
+    }
+
+    /// <summary>Nothing answers it: its body runs under the execution identity that came back with this envelope.</summary>
+    internal sealed class Opened : DispatchEnvelope
+    {
     }
 }
 
@@ -349,6 +383,45 @@ internal sealed class ExecutionAdmission
     /// </summary>
     internal BodyOwner Describe() =>
         this.Peek() ?? new BodyOwner(ExecutionManager.BodyOwned, "owner_execution_id=unknown;owner_action=unknown;interruptible=false;phase=unknown;cancel_safe=false", false, "unknown", false);
+
+    /// <summary>
+    /// Opens the envelope every dispatch request arrives with, before its handler does any work: a request this Mod
+    /// already answered is ANSWERED again with the receipt it has, and every other request is OPEN, with
+    /// <paramref name="executionId"/> set to the identity its body runs under.
+    ///
+    /// <para>
+    /// This is the hop BETWEEN the two owners that already exist - <see cref="ExecutionReceiptStore"/> holds the receipts,
+    /// the bindings and <see cref="ExecutionReceiptStore.NewExecutionId"/>, and <see cref="Admit"/> rules on a request
+    /// whose identity is already resolved - so hand-written it was nine copies of one `if` plus one ternary, each of them
+    /// restating the same `is IDispatchExecutionLedger` test for "did the caller bring a dispatch lineage". The ledger is
+    /// the ARGUMENT and the store is this Mod's own: a caller may dispatch through a ledger of its own, while the identity
+    /// a body runs under is minted once, here.
+    /// </para>
+    ///
+    /// <para>
+    /// It is not the same hop as the manager's revision-advancing <c>BeginLocalExecution</c>, which mints an identity no
+    /// dispatch lineage bound and advances the revision before the body's own checks run: that one serves the action
+    /// families that answer a bare request, while this one hands back the id a dispatch already owns and leaves the
+    /// revision to the body.
+    /// </para>
+    /// </summary>
+    internal DispatchEnvelope OpenDispatchEnvelope(
+        BridgeExecutionRequest request,
+        IExecutionLedger ledger,
+        out string executionId)
+    {
+        if (ledger.TryGetExistingReceipt(request.RequestId, out LocalExecutionReceipt existing))
+        {
+            executionId = existing.ExecutionId;
+            return new DispatchEnvelope.Answered(existing);
+        }
+
+        executionId = ledger is IDispatchExecutionLedger dispatchLedger
+            && dispatchLedger.TryGetBoundExecutionId(request.RequestId, out string boundExecutionId)
+            ? boundExecutionId
+            : this.store.NewExecutionId(request.RequestId);
+        return new DispatchEnvelope.Opened();
+    }
 
     /// <summary>
     /// The mechanical admission every executing action shares, in the single order invariant 1 fixes: identity →

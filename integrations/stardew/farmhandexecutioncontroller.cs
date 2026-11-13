@@ -374,6 +374,16 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         this.admission.TryGetBoundActor(out actor, out reasonCode);
 
     /// <summary>
+    /// The envelope a dispatch request arrives with: the receipt that already answers it, or the execution identity its
+    /// body runs under. <see cref="ExecutionAdmission.OpenDispatchEnvelope"/> is its only resolver.
+    /// </summary>
+    private DispatchEnvelope OpenDispatchEnvelope(
+        BridgeExecutionRequest request,
+        IExecutionLedger ledger,
+        out string executionId) =>
+        this.admission.OpenDispatchEnvelope(request, ledger, out executionId);
+
+    /// <summary>
     /// The actionability profile an action declares to the shared mechanical
     /// admission. It is the one part of the sequence that legitimately varies by
     /// action family, so it is a parameter rather than a fork.

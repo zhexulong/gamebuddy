@@ -35,13 +35,8 @@ internal sealed partial class ExecutionManager
 
     public LocalExecutionReceipt RequestLocalExpressEmote(BridgeExecutionRequest request, IExecutionLedger ledger)
     {
-        if (ledger.TryGetExistingReceipt(request.RequestId, out LocalExecutionReceipt existing))
-            return existing;
-
-        string executionId = ledger is IDispatchExecutionLedger dispatchLedger
-            && dispatchLedger.TryGetBoundExecutionId(request.RequestId, out string boundExecutionId)
-            ? boundExecutionId
-            : this.ledger.NewExecutionId(request.RequestId);
+        if (this.OpenDispatchEnvelope(request, ledger, out string executionId) is DispatchEnvelope.Answered alreadyAnswered)
+            return alreadyAnswered.Receipt;
 
         this.revision++;
 
