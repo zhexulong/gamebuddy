@@ -556,6 +556,30 @@ internal sealed partial class ExecutionManager
             // The charge is refused BEFORE the tool is charged, so a refusal can never leave `toolPower` written.
             if (RefuseToolCharge(charge, hoe, Game1.player, targetX, targetY) is { } chargeRefusal)
                 return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, chargeRefusal, $"target={targetX},{targetY};charge={charge};max={ToolChargeCeiling(hoe)}");
+            // THE RECTANGLE IS NOT CENTRED ON THE NAMED TILE, so the tiles it reaches are asked BEFORE the swing. A gold hoe
+            // covers a 3x3 whose edges are one row either side of the named one (`Tool.cs:972-982`), so ONE packed row also
+            // reaches two rows the plan never named: a keg, a tapper or an artifact spot standing there left the world with
+            // no refusal saying so. The named tile's own answers (`soil_already_tilled`, the soil refusal) stay where they
+            // are - they answer a different question, about the tile the request named.
+            List<Vector2>? footprint = null;
+            if (charge > 0)
+            {
+                footprint = ChargedFootprint.Tiles(hoe, targetX, targetY, charge, Game1.player, out string unreadable);
+                if (footprint is null)
+                    return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, $"footprint_unavailable:{unreadable}", $"target={targetX},{targetY};charge={charge}");
+                List<(Vector2 Tile, string Kind)> undeclared = ChargedFootprint.Undeclared(location, footprint, tile);
+                if (undeclared.Count > 0)
+                {
+                    // `,` is outside the reason-code alphabet (`FarmhandExecutionJournal.IsValidReasonCode`), so the tile
+                    // travels as `x:y` - the spelling a receipt detail already uses for one tile.
+                    return this.RememberTerminal(
+                        requestId,
+                        executionId,
+                        ExecutionState.Rejected,
+                        $"charged_use_would_destroy:{undeclared[0].Kind}:{undeclared[0].Tile.X:0}:{undeclared[0].Tile.Y:0}",
+                        $"target={targetX},{targetY};charge={charge};footprint_tiles={footprint.Count.ToString(CultureInfo.InvariantCulture)};would_destroy={MeleeSweepOccupancy.Describe(undeclared)};blocked_by={new RefusalLayerToken(RefusalLayerKind.Terrain, undeclared[0].Kind).Format()}");
+                }
+            }
 
             LocalSoilTillingSpec specification = new(executionId, requestId, location.NameOrUniqueName, targetX, targetY, this.revision, requestedDeadlineMs);
             // The one charged native use, bracketed by the same read on both sides: `Hoe.DoFunction` covers the engine's

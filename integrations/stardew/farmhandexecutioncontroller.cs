@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Globalization;
+using System.Reflection;
 using GameBuddy.Stardew.Core.Abstractions;
 using GameBuddy.Stardew.Core.Models;
 using GameBuddy.Stardew.Core.Policy;
@@ -6264,22 +6265,190 @@ internal static class MeleeSweepOccupancy
         IReadOnlySet<string>? declared = null)
     {
         IReadOnlySet<string> intent = declared ?? Intent;
+        return UndeclaredFootprintOccupancy.Over(
+            arc,
+            read,
+            named,
+            state => Destructive.Contains(state.Occupant)
+                && ((string.Equals(state.Occupant, Crop, StringComparison.Ordinal) && !state.Harvestable)
+                    || !intent.Contains(state.Occupant)));
+    }
+}
+
+/// <summary>
+/// The ONE question both charged-area families ask about the tiles their swing reaches: which of those tiles the caller
+/// did NOT name, and which of them the swing would take.
+///
+/// <para>
+/// The tile list is the caller's own - the engine's sampled arc for <c>sweep_scythe</c> (<see cref="MeleeSweepArc.Sampled"/>)
+/// and the engine's rectangular footprint for a charged tool use (<see cref="ChargedFootprint.Tiles"/>) - and this walk is
+/// the same for both: the named tile is skipped, every other tile is READ through <see cref="MeleeSweepOccupancy.Read"/>
+/// (so <c>weed</c>, <c>crop</c> and <c>object</c> are <c>ClearableKind</c>'s words in both receipts), and anything the
+/// caller's own <c>takes</c> predicate says the swing would take comes back with its occupant and its coordinates.
+/// </para>
+/// <para>
+/// WHAT IS NOT SHARED IS WHAT EACH SWING LOSES, which is why <c>takes</c> is a caller argument rather than a branch in
+/// here. A scythe's protectable occupants are DECLARED by the catalogue - the <c>Destructive</c> flag on the scythe rows'
+/// <c>Clears</c> - so <c>sweep_scythe</c> asks the declaration. A hoe's are decided by the ENGINE's own removal branches
+/// (<c>Object.performToolAction</c>, and <c>HoeDirt.performToolAction</c> into <c>Crop.hitWithHoe</c>), and the occupants
+/// that survive there are named by engine predicates no row declares. A single predicate covering both would have to be
+/// right about two different authorities at once, and it would lie about one of them.
+/// </para>
+/// <para>
+/// THE ANSWER IS ORDERED AND COMPLETE, so a refusal is reproducible: tiles by row then column, every losing tile named
+/// rather than the first one found.
+/// </para>
+/// </summary>
+internal static class UndeclaredFootprintOccupancy
+{
+    internal static List<(Vector2 Tile, string Kind)> Over(
+        IReadOnlyList<Vector2> tiles,
+        Func<Vector2, MeleeSweepTile> read,
+        Vector2 named,
+        Func<MeleeSweepTile, bool> takes)
+    {
         List<(Vector2 Tile, string Kind)> found = new();
-        foreach (Vector2 tile in arc.OrderBy(tile => tile.Y).ThenBy(tile => tile.X))
+        foreach (Vector2 tile in tiles.OrderBy(tile => tile.Y).ThenBy(tile => tile.X))
         {
             if (tile == named)
                 continue;
             MeleeSweepTile state = read(tile);
-            if (!Destructive.Contains(state.Occupant))
-                continue;
-            if (string.Equals(state.Occupant, Crop, StringComparison.Ordinal) && !state.Harvestable)
-            {
-                found.Add((tile, state.Occupant));
-                continue;
-            }
-            if (!intent.Contains(state.Occupant))
+            if (takes(state))
                 found.Add((tile, state.Occupant));
         }
         return found;
     }
+}
+
+/// <summary>
+/// The tiles ONE charged tool use covers, asked of the engine instead of derived here, and the one destruction rule a
+/// charged <c>till_soil</c> needs.
+///
+/// <para>
+/// WHY REFLECTION. <c>Tool.tilesAffected</c> is <c>protected</c> (<c>Tool.cs:913</c>) and it is the ONLY declaration of the
+/// rectangle: the Host's <c>TOOL_FOOTPRINT_TILES_BY_CHARGE</c> (<c>host/src/body-program-packing.ts:42</c>) is a projection
+/// of it pinned back to the engine by <c>ToolFootprintTableParityTests</c>, and the Mod cannot read a TypeScript module on
+/// the game thread. Re-deriving the six facing cases here would be a second copy of an engine fact that agrees today and
+/// drifts later, so the engine answers for itself through a cached <c>MethodInfo</c> - the seam shape
+/// <c>SleepAndAdvanceDayLifecycle</c> already uses for <c>ShippingMenu</c>'s private commit.
+/// </para>
+/// <para>
+/// FAIL CLOSED. A bind that stops working - a game version that renames or moves the member - would otherwise produce an
+/// EMPTY rectangle, and an empty rectangle refuses nothing while the swing still covers the same nine tiles. So a missing
+/// member or a throwing call answers <c>footprint_unavailable:&lt;reason&gt;</c> and the charged use is refused, never
+/// performed on a guess.
+/// </para>
+/// <para>
+/// THE RECTANGLE IS NOT CENTRED ON THE NAMED TILE, AND THAT IS THE DEFECT THIS TYPE EXISTS FOR. <c>tilesAffected</c> adds
+/// one row on EITHER side of the named tile at charge 3 and 4 and two rows before it at charge 5
+/// (<c>Tool.cs:972-982</c>, <c>:983-989</c>, <c>:1062-1072</c>), so a gold hoe aimed at (61,18) facing right also covers
+/// (61,17) and (61,19). The packer names exact rows; the engine covers three; and until this existed the two rows the
+/// request never named were changed with no refusal saying so.
+/// </para>
+/// </summary>
+internal static class ChargedFootprint
+{
+    /// <summary>The engine member the rectangle comes from (<c>Tool.cs:913</c>), named once so the bind and the reason agree.</summary>
+    private const string EngineMember = "tilesAffected";
+
+    /// <summary>
+    /// <c>Tool.tilesAffected(Vector2, int, Farmer)</c>, bound once. Null means this game version does not offer it, which
+    /// <see cref="Tiles"/> reports by name rather than treating as an empty rectangle.
+    /// </summary>
+    private static readonly MethodInfo? TilesAffectedSeam = typeof(Tool).GetMethod(
+        EngineMember,
+        BindingFlags.Instance | BindingFlags.NonPublic,
+        null,
+        new[] { typeof(Vector2), typeof(int), typeof(Farmer) },
+        null);
+
+    /// <summary>
+    /// The one crop a hoe actually loses, as the engine states it: <c>Crop.hitWithHoe</c> answers true only for
+    /// <c>forageCrop</c> with <c>whichForageCrop == "2"</c> (<c>Crop.cs:470-478</c>).
+    /// </summary>
+    private const string ForageSeedSpotCrop = "2";
+
+    /// <summary>
+    /// The engine's own rectangle for ONE use of <paramref name="tool"/> at <paramref name="charge"/>, or null with the
+    /// reason it could not be read. Charge 0 answers the named tile alone (<c>Tool.cs:916-917</c>), which is why a
+    /// <c>till_soil</c> at charge 0 never needs this.
+    /// </summary>
+    internal static List<Vector2>? Tiles(Tool tool, int tileX, int tileY, int charge, Farmer who, out string unavailableReason)
+    {
+        if (TilesAffectedSeam is null)
+        {
+            unavailableReason = $"{EngineMember}_not_found";
+            return null;
+        }
+        try
+        {
+            unavailableReason = string.Empty;
+            return (List<Vector2>)TilesAffectedSeam.Invoke(tool, new object[] { new Vector2(tileX, tileY), charge, who })!;
+        }
+        catch (TargetInvocationException)
+        {
+            unavailableReason = $"{EngineMember}_threw";
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// What ONE footprint tile holds that this swing would TAKE, in the vocabulary the scythe's arc check already speaks -
+    /// or <see cref="FarmhandForEachHealing.NoOccupant"/> for every tile the engine leaves exactly as it found it.
+    /// </summary>
+    internal static MeleeSweepTile Read(GameLocation location, FarmhandForEachFarmWorld world, Vector2 tile)
+    {
+        // A TILE THAT CARRIES A TERRAIN FEATURE IS SKIPPED WHOLE by `Hoe.DoFunction` (Hoe.cs:69-76): it hands the feature
+        // to `performToolAction` and then `continue`s past the tilling branch, so the objects layer on that tile is never
+        // reached either. The one feature a hoe loses there is a HoeDirt's FORAGE seed-spot crop (`HoeDirt.cs:758-765` into
+        // `Crop.hitWithHoe`); a planted crop, a grass tuft, a tree, a bush and bare tilled soil all answer false.
+        if (location.terrainFeatures.TryGetValue(tile, out StardewValley.TerrainFeatures.TerrainFeature? feature))
+        {
+            bool losesForageCrop = feature is StardewValley.TerrainFeatures.HoeDirt { crop: not null } dirt
+                && dirt.crop.forageCrop.Value
+                && string.Equals(dirt.crop.whichForageCrop.Value, ForageSeedSpotCrop, StringComparison.Ordinal);
+            return losesForageCrop ? MeleeSweepOccupancy.Read(location, world, tile) : Untouched(location, world, tile);
+        }
+        if (!location.objects.TryGetValue(tile, out StardewValley.Object? placed) || placed is null)
+            return Untouched(location, world, tile);
+        // THE PLACED THINGS A HOE PROVABLY LEAVES ALONE, each by the engine's own branch rather than by a preference:
+        //   * a weed is what the swing is for - clearing one IS tilling a field, and the catalogue marks `cut_weeds`
+        //     non-destructive (`Object.cs:1150`),
+        //   * a breakable stone needs a Pickaxe and is skipped for every other tool (`Object.cs:1121,1138`),
+        //   * a sprinkler is excluded by name (`t is Hoe && IsSprinkler()` answers false, `Object.cs:1352`),
+        //   * a chest answers false to every tool (`Chest.cs:379-451`: a player chest only shakes, and the pickaxe branch
+        //     is the only removal and needs an empty one).
+        // Everything else - a keg, a tapper, a furnace, a cask, an artifact spot, a supply crate - leaves the world under a
+        // charged swing (`Object.cs:1310-1338`, `:1348-1432`), so it is named.
+        if (placed.IsWeeds()
+            || placed.IsBreakableStone()
+            || placed.IsSprinkler()
+            || placed is StardewValley.Objects.Chest)
+            return Untouched(location, world, tile);
+        return MeleeSweepOccupancy.Read(location, world, tile);
+    }
+
+    /// <summary>
+    /// The footprint tiles a charged use would take without the request naming them, the named tile excluded - the same
+    /// rule <see cref="MeleeSweepOccupancy.Undeclared"/> asks of a scythe's arc. EMPTY is the answer that lets the swing run.
+    /// </summary>
+    internal static List<(Vector2 Tile, string Kind)> Undeclared(
+        GameLocation location,
+        IReadOnlyList<Vector2> footprint,
+        Vector2 named)
+    {
+        FarmhandForEachFarmWorld world = new(location, MeleeSweepOccupancy.NoActionsEnabled, () => false);
+        return UndeclaredFootprintOccupancy.Over(
+            footprint,
+            tile => Read(location, world, tile),
+            named,
+            state => !string.Equals(state.Occupant, FarmhandForEachHealing.NoOccupant, StringComparison.Ordinal));
+    }
+
+    /// <summary>
+    /// One tile the swing leaves as it found it, spelled in the same vocabulary: an occupant word the caller compares
+    /// against, never a third state.
+    /// </summary>
+    private static MeleeSweepTile Untouched(GameLocation location, FarmhandForEachFarmWorld world, Vector2 tile) =>
+        MeleeSweepOccupancy.Read(location, world, tile) with { Occupant = FarmhandForEachHealing.NoOccupant };
 }

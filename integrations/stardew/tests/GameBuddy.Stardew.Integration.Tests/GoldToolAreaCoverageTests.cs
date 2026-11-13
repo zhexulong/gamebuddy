@@ -132,6 +132,21 @@ public sealed class GoldToolAreaCoverageTests
         // proof that nothing was silently clamped down to a footprint the request did not name.
         receipt.Evidence.Should().Contain("charge_requested=3").And.Contain("charge_applied=3");
         receipt.Evidence.Should().Contain("tiles_changed=9");
+        // THE RECTANGLE THE PRE-CHECK WALKED IS THE RECTANGLE THE SWING COVERED, and the receipt's `changed` is where it
+        // travels: the Mod's receipt key set is PINNED to the Host's own `TILL_SOIL_EVIDENCE_KEYS`
+        // (`host/src/stardew-completion-contracts.ts`, compared by `DeclaredToolSelectionTests`), so a new key is not this
+        // unit's to add - and on clean ground the tiles that entered `HoeDirt` ARE the footprint.
+        Tool precheckedTool = world.Actor.Items[0] as Tool ?? throw new InvalidOperationException("the fixture put a hoe in slot 0");
+        List<Vector2>? prechecked = ChargedFootprint.Tiles(precheckedTool, TargetX, TargetY, 3, world.Actor, out string unreadable);
+        prechecked.Should().NotBeNull($"the engine's rectangle could not be read: footprint_unavailable:{unreadable}");
+        List<Vector2> expectedFootprint = prechecked!;
+        expectedFootprint.Should().HaveCount(9, "one charged gold use covers the engine's own 3x3");
+        string[] footprint = (receipt.Evidence ?? string.Empty)
+            .Split(';')
+            .Single(fact => fact.StartsWith("changed=", StringComparison.Ordinal))["changed=".Length..]
+            .Split('|');
+        footprint.Should().BeEquivalentTo(expectedFootprint.Select(tile => $"{tile.X:0}:{tile.Y:0}"),
+            "the receipt reports exactly the tiles the pre-check walked, and the swing changed every one of them");
 
         Vector2[] tilled = world.Farm.terrainFeatures.Pairs
             .Where(pair => pair.Value is StardewValley.TerrainFeatures.HoeDirt)
@@ -143,11 +158,159 @@ public sealed class GoldToolAreaCoverageTests
             for (int y = TargetY; y <= TargetY + 2; y++)
             {
                 tilled.Should().Contain(new Vector2(x, y), "the footprint is the 3x3 the actor faces, tile by tile");
+                footprint.Should().Contain($"{x}:{y}", "the reported footprint is the same nine tiles the world shows tilled");
             }
         }
 
         world.Farm.GetHoeDirtAtTile(new Vector2(TargetX, TargetY)).Should().NotBeNull(
             "the NAMED tile is the completion condition; the other eight are the footprint it was measured through");
+    }
+
+    /// <summary>
+    /// THE REFUSAL: a keg standing on a tile the request never named stops the charged swing, and the receipt names both
+    /// the occupant and the tile.
+    ///
+    /// <para>
+    /// WHY A KEG AND NOT A CROP. `Hoe.DoFunction` hands a tile that carries a terrain feature to
+    /// `TerrainFeature.performToolAction` and then `continue`s past its tilling branch (<c>Hoe.cs:69-76</c>), and on a
+    /// planted crop that is <c>Crop.hitWithHoe</c>, which answers true only for a forage seed spot (<c>Crop.cs:468-480</c>).
+    /// A mature crop SURVIVES a charged hoe, so refusing on one would forbid the ordinary act of tilling a new row beside a
+    /// planted field. A keg is the case the engine really does take: <c>Object.performToolAction</c> removes every
+    /// <c>Type == "Crafting"</c> object a heavy hitter swings at (<c>Object.cs:1350-1432</c>), and the swing then drops it
+    /// into the debris layer.
+    /// </para>
+    /// <para>
+    /// THE PAIR PROVES BOTH HALVES: this half proves the Mod refuses and leaves the world alone; the sibling fact below
+    /// proves the same world without the guard loses the keg. Asserting the refusal alone would only show that something
+    /// said no.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void AChargedGoldHoeRefusesAKegInsideItsFootprint()
+    {
+        using TargetFamilyWorld world = WorldWithAKegInTheFootprint(out Vector2 kegTile);
+        StardewValley.Object keg = world.Farm.objects[kegTile];
+        float staminaBefore = world.Actor.Stamina;
+
+        LocalExecutionReceipt receipt;
+        using (ToolSwingProcessScope.Create())
+        {
+            receipt = world.NewExecutionManager("till_soil").RequestLocalTillSoil(
+                "req_charged_footprint_keg",
+                TargetX,
+                TargetY,
+                charge: 3,
+                requestedDeadlineMs: DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() + 30_000);
+        }
+
+        receipt.State.Should().Be(ExecutionState.Rejected, receipt.Evidence);
+        // `,` is outside the reason-code alphabet, so the tile travels as `x:y` and the code still names the occupant AND
+        // where it stands - a bare `charged_use_would_destroy` would leave the caller to guess which of nine tiles.
+        receipt.ReasonCode.Should().Be($"charged_use_would_destroy:object:{kegTile.X:0}:{kegTile.Y:0}");
+        receipt.Evidence.Should().Contain($"would_destroy={kegTile.X:0}:{kegTile.Y:0}:object");
+        receipt.Evidence.Should().Contain("blocked_by=");
+        FarmhandExecutionJournal.IsValidReasonCode(receipt.ReasonCode).Should().BeTrue(
+            "the code is what a journal row carries, so it has to be in that alphabet");
+
+        // THE WORLD IS WHAT THE REFUSAL CLAIMED. The object is the same instance on the same tile, no tile was tilled, and
+        // no stamina was spent - a refusal that still swung would be the very defect it exists to prevent.
+        world.Farm.objects[kegTile].Should().BeSameAs(keg, "a refused swing leaves the keg standing");
+        world.Farm.terrainFeatures.Pairs.Should().NotContain(pair => pair.Value is StardewValley.TerrainFeatures.HoeDirt,
+            "a refused swing tills nothing, the named tile included");
+        world.Actor.Stamina.Should().Be(staminaBefore, "the swing never ran, so it cost nothing");
+    }
+
+    /// <summary>
+    /// WHICH OCCUPANTS A CHARGED FOOTPRINT IS REFUSED FOR, answered by the engine's own predicates over a real world.
+    ///
+    /// <para>
+    /// THE PROTECTION IS ONE-SIDED ON PURPOSE. A rule that refused every occupied tile would make a packed row
+    /// unusable on a working farm - a sprinkler, a stone or a planting sits beside almost every strip - which is the
+    /// "refuses the normal case" defect <c>MeleeSweepOccupancy.Undeclared</c> already records for pasture. So the
+    /// occupants are partitioned by what the engine's own branches answer for a hoe, not by what looks hazardous:
+    /// </para>
+    /// <list type="bullet">
+    /// <item>a weed is NOT named - cutting one is what a hoe does, and the catalogue marks `cut_weeds` non-destructive
+    /// (<c>Object.cs:1150</c>);</item>
+    /// <item>a breakable stone is NOT named - it needs a Pickaxe and every other tool is skipped (<c>Object.cs:1121,1138</c>);
+    /// </item>
+    /// <item>a sprinkler is NOT named - the engine excludes it by name for a hoe (<c>Object.cs:1352</c>);</item>
+    /// <item>a chest is NOT named - <c>Chest.performToolAction</c> answers false to every tool (<c>Chest.cs:379-451</c>);
+    /// </item>
+    /// <item>a PLANTED CROP is NOT named - a mature crop survives a charged hoe (<c>HoeDirt.cs:758-765</c> into
+    /// <c>Crop.hitWithHoe</c>, true only for a forage seed spot), so refusing one would forbid tilling a new row beside a
+    /// planted field;</item>
+    /// <item>already-tilled soil is NOT named - a hoe leaves <c>HoeDirt</c> alone, so a packed use neither refuses it nor
+    /// claims to have tilled it;</item>
+    /// <item>a KEG is named, with the occupant word the classifier uses and its tile, because
+    /// <c>Object.performToolAction</c> removes every <c>Type == "Crafting"</c> object a heavy hitter swings at
+    /// (<c>Object.cs:1350-1432</c>).</item>
+    /// </list>
+    /// <para>
+    /// WHY THE REMOVAL ITSELF IS NOT DRIVEN HERE. A charged swing at a crafting object runs into
+    /// <c>Object.IsTapper</c> → <c>HasContextTag</c> → <c>ItemRegistry</c> (<c>Object.cs:1371,6190</c>), and a process with
+    /// no <c>Data/Objects</c> throws <c>KeyNotFoundException</c> from the item registry - measured while writing this
+    /// fact, not assumed. The removal is therefore cited to the engine's branch and the *behaviour* that matters (the Mod
+    /// refuses before the swing) is driven for real in the sibling fact.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void OnlyTheOccupantsTheEngineCannotLeaveAreNamed()
+    {
+        using TargetFamilyWorld world = TargetFamilyWorld.Create();
+        var kegTile = new Vector2(9f, 10f);
+        var weedTile = new Vector2(8f, 10f);
+        var stoneTile = new Vector2(7f, 10f);
+        var sprinklerTile = new Vector2(9f, 9f);
+        var chestTile = new Vector2(7f, 9f);
+        var cropTile = new Vector2(8f, 9f);
+        var tilledTile = new Vector2(7f, 8f);
+        world.Farm.objects[kegTile] = TargetFamilyWorld.PlacedObject("(BC)12", name: "Keg", category: -9);
+        world.Farm.objects[kegTile].Type = "Crafting";
+        world.PlaceWeed((int)weedTile.X, (int)weedTile.Y);
+        world.PlaceRock((int)stoneTile.X, (int)stoneTile.Y, durability: 2);
+        world.Farm.objects[sprinklerTile] = TargetFamilyWorld.PlacedObject("(O)599", name: "Sprinkler", category: -9);
+        world.PlaceOrdinaryChest((int)chestTile.X, (int)chestTile.Y, Array.Empty<ChestItem>());
+        world.PlaceHarvestableCrop((int)cropTile.X, (int)cropTile.Y);
+        world.PlaceEmptyHoeDirt((int)tilledTile.X, (int)tilledTile.Y);
+
+        var footprint = new List<Vector2>();
+        for (int x = 7; x <= 9; x++)
+        {
+            for (int y = 8; y <= 10; y++)
+                footprint.Add(new Vector2(x, y));
+        }
+
+        List<(Vector2 Tile, string Kind)> named = ChargedFootprint.Undeclared(world.Farm, footprint, new Vector2(8f, 9f));
+
+        named.Should().ContainSingle("the keg is the one tile of nine the engine would have taken")
+            .Which.Tile.Should().Be(kegTile);
+        named[0].Kind.Should().Be("object", "the classifier's own word for a placed object it cannot name more precisely");
+    }
+
+    /// <summary>
+    /// The Given both halves share: a gold hoe in slot 0, dry diggable ground over the 3x3 in front of the actor, and one
+    /// keg in the far corner of that rectangle - a tile the plan never names.
+    /// </summary>
+    private static TargetFamilyWorld WorldWithAKegInTheFootprint(out Vector2 kegTile)
+    {
+        TargetFamilyWorld world = TargetFamilyWorld.Create();
+        world.PutToolInPackSlot(0, typeof(Hoe), "(T)Hoe", upgradeLevel: 0);
+        RaiseThroughTheFixture(world.Actor.Items[0]!, upgradeLevel: 3);
+        world.StandAt(TargetX, TargetY - 1);
+        for (int x = TargetX - 1; x <= TargetX + 1; x++)
+        {
+            for (int y = TargetY; y <= TargetY + 2; y++)
+                world.MakeDiggable(x, y);
+        }
+        Game1.netWorldState.Value!.LocationWeather["Default"] = new StardewValley.Network.LocationWeather();
+        kegTile = new Vector2(TargetX + 1, TargetY + 2);
+        world.Farm.objects[kegTile] = TargetFamilyWorld.PlacedObject("(BC)12", name: "Keg", category: -9);
+        // `Type` is the field the engine's own removal branch reads (`Object.cs:1350`), and a real `(BC)12` carries
+        // `crafting`; an uninitialized `Object` carries the empty string, which would make the engine test below prove
+        // nothing at all.
+        world.Farm.objects[kegTile].Type = "Crafting";
+        return world;
     }
 
     /// <summary>

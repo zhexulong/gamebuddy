@@ -77,6 +77,27 @@ public sealed class ToolFootprintTableParityTests
     }
 
     [Fact]
+    public void TheReflectedRectangleIsTheOneTheSwingActuallySweeps()
+    {
+        // THE MOD'S OWN PATH TO THE RECTANGLE IS COVERED TOO, not only this test's subclass probe. The Mod reaches
+        // `Tool.tilesAffected` through a cached `MethodInfo` (`ChargedFootprint`), and that bind is what the charged-use
+        // pre-check walks before it swings. A game version that renames or moves the member would leave the reflection null
+        // - the pre-check then refuses every charged use with `footprint_unavailable:<reason>` rather than checking an
+        // empty rectangle, and this fact fails first by naming the charge, so the change is never silent.
+        Farmer actor = FacingActor(FacingRight);
+        var named = new Vector2(10f, 12f);
+        ProbeHoe hoe = Uninitialized<ProbeHoe>();
+        for (int charge = 0; charge <= 5; charge++)
+        {
+            List<Vector2>? reflected = ChargedFootprint.Tiles(hoe, (int)named.X, (int)named.Y, charge, actor, out string unreadable);
+            reflected.Should().NotBeNull($"the engine's rectangle could not be read: footprint_unavailable:{unreadable}");
+            reflected!.Should().BeEquivalentTo(
+                hoe.Footprint(named, charge, actor),
+                $"footprint_reflection_disagrees_with_engine:{charge.ToString(CultureInfo.InvariantCulture)}");
+        }
+    }
+
+    [Fact]
     public void ChargeZeroIsTheNamedTileAndTheLadderOnlyGrows()
     {
         // The two properties the Host's resolver relies on: charge 0 is one tile (so the "no packing" fallback is exact),
