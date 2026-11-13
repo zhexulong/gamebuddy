@@ -2310,3 +2310,111 @@ is not one of the five kinds (`inject`, `history`, `fixture`, `self-check`, `ext
 belongs to that lane: either the kind is one of the five, or the reading it describes is not a falsifier. Recording it
 here rather than repairing it, because the file is another lane's and the kind set lives in
 `tools/audit-gate-red-proofs.mjs`, which this unit may not edit.
+
+## The second renderer: the rendering gate asked one of the snapshot's two text producers
+
+`tools/check-snapshot-field-rendering.mjs` protects one property - a field `SNAPSHOT_KEYS` publishes is printed in
+`<world-state>` or carries an exemption naming its owner - and its population of renderers was one of the two modules
+that compose text from a `Snapshot`. At `74e642e0` that constant read
+
+```
+export const RENDERER_SOURCES = Object.freeze(["host/src/fact-brief.ts", "host/src/game-world-vocabulary.ts"]);
+```
+
+and `host/src/snapshot-hud.ts` - which exports `formatSnapshotHud(snapshot: Snapshot, ageTurns = 0): string` and composes
+the `[State HUD: …]` block - was not in it. Two exemptions in that same file rest entirely on the missing renderer:
+
+| field | the exemption's reason, verbatim | `owedBy` |
+| --- | --- | --- |
+| `health` | "her own health, which `snapshot-hud.ts` prints and `<world-state>` does not …" | `host/src/fact-brief.ts` |
+| `harvestWhereabouts` | "the WHOLE-MAP ripe-crop count, which `snapshot-hud.ts` prints …" | `host/src/fact-brief.ts` |
+
+So "rendered" meant "a file says so". Measured in a copy of the tree with the HUD's health line deleted:
+
+| reader | status | examined | rendered | exempt | violations |
+| --- | --- | --- | --- | --- | --- |
+| the gate at `74e642e0` | `passed` | 120 | 95 | 25 | none - the deleted rendering is invisible |
+| the gate after this unit | `failed` | 120 | 95 | 25 | `field_rendered_by_an_unchecked_renderer:health:host/src/snapshot-hud.ts` |
+
+That comparison came from a lane-local probe over the gate read at HEAD and the gate read at the new tree; the same
+assertion is now permanent in `tools/check-snapshot-field-rendering.test.mjs` ("a field only the HUD printed is named
+when the HUD stops printing it"), so the fixture lives in the suite rather than in a script.
+
+**The unit.** `RENDERER_SOURCES` now carries every module that composes text from the snapshot, each tagged with the
+surface it composes (`world_state` for `fact-brief.ts` and `game-world-vocabulary.ts`, `state_block` for
+`snapshot-hud.ts`). An exemption that credits another surface declares it in `printedBy`; the gate reads that module and
+confirms its source prints the field, and an unverifiable claim - a module this gate does not read, or a module whose
+source does not print it - is `field_rendered_by_an_unchecked_renderer:<field>:<module>`. `health` and
+`harvestWhereabouts` now carry `printedBy: "host/src/snapshot-hud.ts"`, and the gate is green because both claims are
+true in that source, not because a reason says so.
+
+**Why the set is declared rather than derived.** The obvious derivation - a function taking `Snapshot` and returning
+`string` - was measured over `host/src/*.ts` and returns `formatSnapshotHud` plus nine helpers in its own module, three in
+`fact-brief.ts`, `snapshot-projection.ts#holdingModalOf`, `body-program-script.ts`'s two path builders **and two
+validators in `protocol.ts`** (eighteen functions in five modules). A validator names every key the wire admits, so that
+one member would mark all 120 fields
+rendered - the exact false green this gate exists to prevent. The declaration is the smaller risk, and `printedBy` is
+what keeps a member from being a name with nothing behind it.
+
+**The reading, before and after** (`node tools/check-snapshot-field-rendering.mjs`):
+
+| tree | line |
+| --- | --- |
+| at `74e642e0` | `snapshot fields examined 120 · rendered 95 · exempt 25 · status passed` |
+| after this unit | `snapshot fields examined 120 · rendered 95 · exempt 25 · printed outside <world-state> 22 · status passed` |
+
+`120 = 95 + 25` in both, so the three original numbers still describe one population; the fourth answers the question
+the gate could not ask - 22 fields are printed by the HUD, and the report names the module per field (`health:
+printedBy host/src/snapshot-hud.ts`, `stamina: renderedBy host/src/game-world-vocabulary.ts, printedBy
+host/src/snapshot-hud.ts`). Its suite is 9/9 green (`node --test tools/check-snapshot-field-rendering.test.mjs`), and
+two of the nine were seen red once: the HUD health line deleted, and an exemption crediting
+`host/src/somebody-elses-hud.ts`.
+
+### The HUD's own 1,200-byte cap: where it lives, and who can see it truncate
+
+`export const MAX_SNAPSHOT_HUD_BYTES = 1_200` (`host/src/snapshot-hud.ts:11`) bounds the whole `[State HUD: …]` block,
+and `formatSnapshotHud` enforces it by dropping the widest line until the block fits. **Its owner is
+`host/src/snapshot-hud.ts`** - the cap, the loop and the report of what it dropped are all in that module, and nothing
+else declares it: it has no entry in `MODEL_FIELD_CEILINGS` (`host/src/fact-brief.ts:614`, whose `evidence: 160` is the
+model-facing ceiling of the same shape), and no gate reads it. Its only falsifier is `snapshot-hud.test.ts:153`.
+
+Truncation is not silent. Measured by executing the module on a 2,000-character location, the block is 435 bytes and
+reads:
+
+```
+[State HUD:
+- time: 06:20
+…
+- mine floors: none here
+- omitted over 1200 bytes: where (bound the value at its source)
+]
+```
+
+A reader of the block sees that a line is missing and which one, by HUD line name. That is the discipline the
+model-facing ceilings use too (`fields_not_shown` / `field_over_ceiling`, `host/src/fact-brief.ts:764-770`), with one
+difference: it names a LINE, and a line carries several snapshot fields (`where` carries `location` and `tile`), so the
+reader learns that something was withheld and not which facts.
+
+**Whether the model can see it is the finding.** The per-turn model message is `batch.text` from `composeFactBrief`
+(`host/src/agent-turn-sink.ts:15`), and neither `composeFactBrief` nor `composeWorldState` reads `contextProjection.hud`.
+The string is written at `stardew-integration-launcher-body-program.internal.ts:460` and re-rendered at
+`host-service.ts:1242`; `git grep -w hud` finds exactly one read of `.hud` in the tree, `host-service.ts:1235`'s
+`typeof projection.hud !== "string"` guard before it re-renders. `event-pump.ts:2376` does put the projection on
+`batch.events[].payload`, and the only reader of `batch.events` is `canonicalPresentationSource`
+(`companion-loop.ts:897`), which reads kinds and ids. So the block is composed on every turn, its truncation is reported
+to a reader, and nothing in the tree is that reader.
+
+**What was not changed, and the decision it leaves.** The cap, the omission line and the two exemptions are untouched:
+deleting a HUD rendering to make a gate green is a product decision, and so is printing `health` in `<world-state>`. The
+next owner owes one of three, and each is a product call: give `hud` a reader (the presentation projection is the
+obvious one), delete the re-render at `host-service.ts:1242` if no surface ever reads the block, or move `health` and
+`harvestWhereabouts` into `<world-state>` so the two fields stop depending on a block nobody reads. Until one of them is
+decided, the 1,200 bytes are a second ceiling with an owner in code and no owner in the model-facing budget.
+
+**One drift this unit did not repair.** The census entry for this gate in `tools/lib/harness-conformance.mjs:408-413`
+still quotes the old report line (`snapshot fields examined N · rendered M · exempt K`) and its old falsifier list. That
+file is outside this unit's bounds; the gate's own header and `red-proof:` markers are updated, and the shared judge
+reads the JSON report, which gained a field rather than changing one. The conformance run on the new tree reads
+`gate_falsifiers: FAILED` for one finding, `gate_declaration_stale: tools/audit-stardew-handler-actor-guard.mjs` - another
+lane's baseline entry, which `node tools/audit-gate-red-proofs.mjs` also reports at this tree and which nothing in this
+unit touches. The gate this section is about is not named in the failure.
