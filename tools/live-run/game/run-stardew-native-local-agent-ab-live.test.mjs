@@ -47,6 +47,7 @@ import {
   summarizeCrossings,
 } from "./night-verdict.mjs";
 import { shouldAbandonTurnForTransport } from "./transport-loss.mjs";
+import { createGameClock } from "./game-clock.mjs";
 import { STARDEW_ACTION_TOOL_NAMES } from "../../../host/dist-test/action-registry.js";
 import { TERMINAL_STATES } from "../../lib/stardew-native-smoke-harness-v1.mjs";
 import { STARDEW_PUBLISHED_ACTION_GATES } from "../../stardew-action-gate-descriptors.mjs";
@@ -4027,6 +4028,16 @@ const instrumentGlobals = Object.freeze({
   }),
   summarizeHostMemory,
   RESULT_FILE: "/tmp/gb-runner-result.json",
+  // The world's own clock, as the run sampled it, and the facts it recorded over that span. Both are read by
+  // `buildRunResult` on every path, so a test that assembles a result has to supply them: the sampler here is MEASURED
+  // (two readings, the clock between them), so a fixture that does not care about the clock is not blocked by it.
+  gameClock: (() => {
+    const clock = createGameClock({ now: () => 1_000 });
+    clock.observe(Object.freeze({ timeOfDay: 600, dayOfMonth: 1, seasonIndex: 0, year: 1, revision: 1 }));
+    clock.observe(Object.freeze({ timeOfDay: 660, dayOfMonth: 1, seasonIndex: 0, year: 1, revision: 2 }));
+    return clock;
+  })(),
+  factLog: [],
 });
 
 /** The globals `buildRunResult` reads besides the ones a test supplies, kept in one place for the reason tests below. */
@@ -4146,6 +4157,102 @@ test("a blocked run names the clause that failed, never the scenario it ran in",
   assert.equal(passed.state, "passed");
   assert.equal(passed.failure, null);
   assert.equal(passed.reasonCode, undefined, "a passed run publishes no reason at all");
+});
+
+/**
+ * A clock sampler fed the snapshots a bridge would admit: a NEW frozen object per read, which is how
+ * `local-stardew-bridge.ts` stores one (`this.#snapshot = Object.freeze({ ...snapshot, ... })`) and what makes two
+ * samples of one snapshot a single reading.
+ */
+const clockFrom = (...timesOfDay) => {
+  const clock = createGameClock({ now: () => 1_000 });
+  timesOfDay.forEach((timeOfDay, index) =>
+    clock.observe(Object.freeze({ timeOfDay, dayOfMonth: 1, seasonIndex: 0, year: 1, revision: index + 1 })),
+  );
+  return clock;
+};
+/** Every clause of the rung satisfied: what a run looks like when only the world's own clock is against it. */
+const ALL_CLAUSES_PASSED = ROUND38_CLAUSES.map((clause) => ({ ...clause, passed: true }));
+
+/**
+ * WHETHER THE WORLD MOVED IS A PRECONDITION OF THE VERDICT, NOT A CLAUSE BESIDE IT.
+ *
+ * Measured 2026-11-19 (`round50b`): ten real minutes, the game process alive with its update counter advancing
+ * (`stage=capability_publication;tick=37851`), `BRIDGE_FACT 0`, `time_milestone 0`, `day_started 0` - and the same
+ * scenario in `round49` produced `time_milestone` six times in nineteen minutes. A paused world (no `gameTimeInterval`)
+ * and a Mod that stopped publishing produce that same artifact, so the verdict "she stopped" cannot be read. The clock
+ * is therefore the FIRST clause the builder ANDs, and it fails closed in BOTH of its unmeasured shapes: one reading, or
+ * two readings of one clock.
+ */
+test("a run whose clock never advanced publishes a refused verdict, not a behavioural one", async () => {
+  const [, buildRunResult] = extractRunnerFunction(
+    RUNNER_SOURCE,
+    ["summarizeDispatchedActions", "buildRunResult", "deriveRungVerdict", "planPollCount"],
+    builderGlobals({ gameClock: clockFrom(600, 600), factLog: [] }),
+  );
+  // A run that ALSO has something to say about the companion - a silent session - so the assertion is about PRECEDENCE:
+  // the refusal has to outrank the behavioural clause, or "she stopped" is published against a world that never moved.
+  const silentSession = ROUND38_CLAUSES.map((clause) =>
+    clause.id === "companion_interaction"
+      ? { ...clause, passed: false, reasonCode: "unobserved" }
+      : { ...clause, passed: true },
+  );
+  const result = await buildRunResult({ rungClauses: silentSession, settlement: null });
+  assert.equal(result.failedClause, "game_clock", "the clock is the clause that speaks first");
+  assert.equal(result.state, "blocked");
+  assert.equal(result.reasonCode, "world_clock_never_advanced:600:600:0");
+  assert.equal(result.failure.reasonCode, "world_clock_never_advanced:600:600:0", "and the dump agrees with it");
+  // The behavioural finding is not swallowed by the refusal: it is still named as a failed clause beside the reason.
+  assert.deepEqual(
+    result.failedClauses.map((clause) => clause.id),
+    ["game_clock", "companion_interaction"],
+    "a second, independent finding must not live only in the evidence",
+  );
+  assert.equal(result.gameClock.first, 600, "the reading travels with the refusal");
+  assert.equal(result.gameClock.last, 600);
+  assert.equal(result.gameClock.advancedMinutes, 0);
+  assert.equal(result.gameClock.snapshotsSeen, 2);
+});
+
+test("one reading is `not_measured:game_clock_read_once`, and the same clause list passes on a moving clock", async () => {
+  // The other unmeasured shape: `round50b` looked at the world once, so its span is unknown rather than zero. And the
+  // falsifier for the whole clause: with the clock advancing, the SAME clauses pass - a gate that reds everything is not
+  // a gate.
+  const [, buildRunResult] = extractRunnerFunction(
+    RUNNER_SOURCE,
+    ["summarizeDispatchedActions", "buildRunResult", "deriveRungVerdict", "planPollCount"],
+    builderGlobals({ gameClock: clockFrom(600), factLog: [] }),
+  );
+  const single = await buildRunResult({ rungClauses: ALL_CLAUSES_PASSED, settlement: null });
+  assert.equal(single.state, "blocked");
+  assert.equal(single.reasonCode, "not_measured:game_clock_read_once");
+  assert.equal(single.gameClock.advancedMinutes, null, "no second reading is not a zero span");
+
+  const [, movingBuilder] = extractRunnerFunction(
+    RUNNER_SOURCE,
+    ["summarizeDispatchedActions", "buildRunResult", "deriveRungVerdict", "planPollCount"],
+    builderGlobals({ gameClock: clockFrom(600, 660), factLog: [] }),
+  );
+  const moved = await movingBuilder({ rungClauses: ALL_CLAUSES_PASSED, settlement: null });
+  assert.equal(moved.state, "passed");
+  assert.equal(moved.gameClock.advancedMinutes, 60);
+});
+
+test("the run reads the clock where it already reads the world, and once more before the verdict", () => {
+  // WIRED, not merely present: a module nobody feeds is a gate that agrees with itself. Three call sites, each at a point
+  // the run already passes: the sampler the world reads go through, the pre-dispatch read every executed action takes,
+  // and one SOLICITED read before the bridge closes - the read a run with no observations at all (round50b) needs.
+  const remember = extractRunnerFunction(RUNNER_SOURCE, "rememberObservation").source;
+  assert.match(remember, /gameClock\.observe\(/u, "every world read must reach the sampler");
+  const finalRead = RUNNER_SOURCE.indexOf('await readGameClockOnce({ source: "final_read" })');
+  assert.ok(finalRead > 0, "the run must solicit one reading of its own before it judges anything");
+  const lastJournalRead = RUNNER_SOURCE.indexOf("programOutcomesAtTeardown = await sampleProgramOutcomes();");
+  const verdict = RUNNER_SOURCE.indexOf("const result = await buildRunResult({\n    rungClauses,");
+  assert.ok(lastJournalRead > 0 && verdict > 0, "the boundary this reading sits in must still exist");
+  assert.ok(
+    finalRead > lastJournalRead && finalRead < verdict,
+    "the last reading has to happen while the bridge is still alive and before the verdict is written",
+  );
 });
 
 test("an unproven task is not a pass: the arm names the criterion it could not decide", async () => {

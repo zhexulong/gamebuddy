@@ -176,6 +176,9 @@ import {
 // The one projection of a node's outcome: the Host's own `planBatchAnswer`, which the settlement digest answers with.
 import { programNodeOutcomes } from "./program-node-outcomes.mjs";
 import { shouldAbandonTurnForTransport } from "./transport-loss.mjs";
+// Whether the WORLD moved while this run watched it: the clock every snapshot carries, read at least twice, so a paused
+// world cannot be reported as a companion that stopped (see the module's header for the measurement it answers).
+import { assessPauseOnUnfocus, createGameClock } from "./game-clock.mjs";
 // The Mod's own durable Body Program journal: the fallback that answers when the game - and with it the bridge - dies
 // mid-run, which is exactly when a program's evidence matters most.
 import {
@@ -606,6 +609,14 @@ const hostMemory = {
 // only the flat count reads as "nothing had happened" on a run whose work all went through programs.
 let lastKnownProgramDispatches = 0;
 const factLog = [];
+/**
+ * THE WORLD'S OWN CLOCK, sampled wherever this run already reads the world.
+ *
+ * Declared here, above the failure hooks, because `buildRunResult` publishes its reading on EVERY exit and the dump
+ * assembles a run whose module evaluation died. Feeding it costs nothing: `observe` is a function call on a snapshot the
+ * run already holds, and one solicited `observe` before the verdict is the only bridge request it adds.
+ */
+const gameClock = createGameClock();
 // The LAST world snapshot and the LAST actor pose this run actually observed.
 //
 // Reading `client.state.snapshot` when the bundle is assembled is too late: by then the session has finished and
@@ -926,11 +937,32 @@ let advertisedSampleMaxSize = 0;
 function rememberObservation() {
   const snapshot = client?.state?.snapshot;
   if (snapshot !== null && snapshot !== undefined) {
+    // The snapshot object the client admitted, NOT the copy below: the bridge has no unsolicited push, so one admitted
+    // snapshot is one reading of the world and sampling it twice is not a second one (game-clock.mjs).
+    gameClock.observe(snapshot, { source: "snapshot" });
     lastObservedSnapshot = Object.freeze({ ...snapshot });
     snapshotCensusSamples += 1;
     addSnapshotToCensus(snapshotFamilyRows, snapshot);
   }
   return lastObservedSnapshot;
+}
+/**
+ * One SOLICITED reading of the world clock, taken while the bridge is still alive.
+ *
+ * The samples above only re-read whatever snapshot the run happened to be handed, and a run that never acted (measured
+ * 2026-11-19, `round50b`: two turns, zero actions, zero bridge facts) is handed exactly one - at hello. That run has no
+ * second reading and therefore no way to tell a paused world from a Mod that stopped publishing, which is the whole
+ * question its verdict depends on. One `observe_request` answers it, and an observe is the same read the Agent's own
+ * `stardew_observe` makes: it changes nothing in the world.
+ */
+async function readGameClockOnce({ source }) {
+  try {
+    await client.observe();
+  } catch (error) {
+    // A refused observe is NOT a reading: it is recorded as one of the reasons the clock could not be measured.
+    return gameClock.observeUnreadable({ source, reason: classifyFailure(error).reasonCode });
+  }
+  return gameClock.observe(client?.state?.snapshot ?? null, { source });
 }
 function rememberPose(observation) {
   if (observation === null || observation === undefined) return;
@@ -5597,6 +5629,26 @@ try {
       `[program-outcomes] pre-teardown read failed: ${String(error?.message ?? error).slice(0, 160)}\n`,
     );
   }
+  // THE LAST READING OF THE WORLD'S CLOCK, taken HERE because this is the last point at which the bridge can be asked:
+  // the `finally` closes the runtime and the client, and after that the run has a result and no world. One solicit, so a
+  // run that dispatched nothing - and was therefore handed nothing but its hello snapshot - still has two readings to
+  // span, which is the difference between `not_measured:game_clock_read_once` and an answer about the world.
+  await readGameClockOnce({ source: "final_read" });
+  // AND THE FIRST HYPOTHESIS ANYONE REACHES FOR, answered from this run's own Mod log rather than assumed: a Stardew
+  // window that loses focus pauses the game unless something clears `Game1.options.pauseWhenOutOfFocus`, and this Mod
+  // does (every tick, `WindowModeManagement`). A frozen clock is therefore NOT explained by an unfocused window unless
+  // the mechanism cannot be shown to have run - and then the reading says `not_established` instead of guessing.
+  const pauseOnUnfocus = assessPauseOnUnfocus({ modLog: readModLogText() });
+  console.error(
+    "PAUSE_ON_UNFOCUS",
+    pauseOnUnfocus.state,
+    JSON.stringify({
+      windowMode: pauseOnUnfocus.windowMode,
+      reasserted: pauseOnUnfocus.reasserted,
+      reason: pauseOnUnfocus.reason,
+      decidedIn: pauseOnUnfocus.decidedIn,
+    }),
+  );
   // Both CHANNELS of an execution, each from its own source: the flat request frames the runner sent, and the nodes a
   // program ran natively (joined to their action ids through the submissions).
   const sessionDispatch = summarizeDispatchedActions(actionTrace, programOutcomesAtTeardown ?? [], programSubmissions);
@@ -6036,6 +6088,9 @@ try {
     capture,
     runtimeRoot,
     providerReadiness,
+    // Whether the world this run judged was moving at all, and what this run's own log says about the one mechanism that
+    // would stop its clock without stopping its process.
+    pauseOnUnfocus,
     settlement: { snapshot: lastObservedSnapshot, reasonCode: null, component: null },
     // This run's own Mod log, archived with the lines an audit needs (see captureModLogFacts).
     modLog: captureModLogFacts(capture?.dir ?? null),
@@ -6514,6 +6569,9 @@ async function buildRunResult({
   runtimeRoot,
   settlement,
   providerReadiness = null,
+  // Whether this run's own log says the unfocus pause was cleared for it (`assessPauseOnUnfocus`), or `null` for a run
+  // whose main path never got there: a crashed run publishes that it did not measure it, never a guess.
+  pauseOnUnfocus = null,
   ...evidence
 }) {
   // Both halves of "where and when": the snapshot carries the clock and location, the execution receipt's local
@@ -6584,10 +6642,23 @@ async function buildRunResult({
   // whose own commitment count disagrees with its account cannot be a passed run, and the bundle publishes the same
   // object the clause was decided on.
   const presentationEvidence = summarizePresentationEvidence();
+  // WHETHER THE WORLD MOVED, derived ONCE and read twice - by the clause below and by the result this function
+  // publishes - so a run cannot be blocked by a clock its own artifact says was turning. It is the FIRST clause for a
+  // reason: a paused world measures nothing about the companion, so the behavioural clauses below it have to be preceded
+  // by the fact that there was a world to behave in. `round50b` (2026-11-19) is that case measured: ten real minutes,
+  // zero bridge facts, and no reading anywhere in the artifact to say whether the clock had stopped.
+  const clockReadout = gameClock.read({ facts: factLog.length });
+  console.error("GAME_CLOCK", clockReadout.line);
+  const clockClause = Object.freeze({
+    id: "game_clock",
+    passed: clockReadout.verdict === "advanced",
+    reasonCode: clockReadout.reasonCode ?? "game_clock_advanced",
+  });
   const rung =
     rungClauses === null
       ? null
       : deriveRungVerdict([
+          clockClause,
           ...rungClauses,
           actionBreadthClause(actionBreadth),
           // The run's own delivery account, beside the ledger's: `presentation.pieceCount` pieces were committed and
@@ -6748,6 +6819,15 @@ async function buildRunResult({
     // reason }`. A later `503 auth_unavailable` in this result is then a provider that went down mid-run, not a run
     // nobody checked - and `null` says nobody checked at all.
     providerReadiness,
+    // THE WORLD'S OWN CLOCK across this run: `first`/`last` in the game's own `HHmm`, the span between them in game
+    // minutes, how many readings that span rests on, and the facts this run recorded turned into a rate PER GAME HOUR.
+    // `not_measured:game_clock_read_once` and `world_clock_never_advanced:<first>:<last>:<minutes>` are the two shapes
+    // that refuse a verdict, and both are published rather than left to be inferred from a missing field.
+    gameClock: clockReadout,
+    // The pause hypothesis, tested against this run's own log: which window mode the Mod applied, whether the engine put
+    // the unfocus pause back, and `not_established` when the log cannot say. `null` for a run that never reached the
+    // reading, which is a different answer from "the mechanism ran".
+    pauseOnUnfocus,
     // What the presentation layer did: every committed companion_text piece in arrival order with its elapsed time,
     // so `firstPieceTtfbMs` (the headline TTFB target) survives however the run ended.
     presentation: presentationEvidence,
