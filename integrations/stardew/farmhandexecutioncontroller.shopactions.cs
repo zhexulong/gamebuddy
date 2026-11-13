@@ -616,6 +616,120 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
         return (affordable, (int)Math.Min(Math.Min(requestedQuantity, charged.Stock), affordable));
     }
 
+    /// <summary>
+    /// The row inside <c>forSaleButtons</c> that holds <paramref name="saleIndex"/>, once the menu's own cursor has been
+    /// moved onto the page that shows it; -1 with <paramref name="refusal"/> naming why no row can hold it.
+    ///
+    /// <para>
+    /// A ROW, not a sale index, because the native click handler resolves the button under the pointer as
+    /// <c>forSale[currentItemIndex + k]</c> (<c>ShopMenu.cs:1096-1102</c>): the number it accepts is an offset from
+    /// the page on screen, so the same sale has a different one at every scroll position. Measured 2026-11-13: the
+    /// translation without the scroll refused EVERY purchase past the fourth with <c>button=-1</c> - a number that is
+    /// not an item, not a page and not a reason - because the menu draws four rows at a time and nothing ever moved
+    /// the cursor to the page an off-screen sale sits on.
+    /// </para>
+    /// </summary>
+    internal static int ShopSaleRowInView(ShopMenu shop, int saleIndex, out string? refusal)
+    {
+        int rows = shop.forSaleButtons.Count;
+        if (rows > 0 && saleIndex >= 0 && saleIndex < shop.forSale.Count)
+        {
+            // The engine's own pager, not a coordinate: receiveScrollWheelAction(-1) is downArrowPressed()
+            // (ShopMenu.cs:933-951), the same cursor move the down arrow's click makes, and the engine clamps the
+            // cursor into [0, forSale.Count - 4] every time it handles a click (ShopMenu.cs:1021). Driving that cursor
+            // is what makes every entry reachable; the click then lands on a row that really holds the sale.
+            int lastPage = Math.Max(0, shop.forSale.Count - rows);
+            int target = Math.Clamp(saleIndex, 0, lastPage);
+            for (int step = 0; step <= shop.forSale.Count && shop.currentItemIndex != target; step++)
+                shop.receiveScrollWheelAction(shop.currentItemIndex < target ? -1 : 1);
+
+            int row = saleIndex - shop.currentItemIndex;
+            if (row >= 0 && row < rows)
+            {
+                refusal = null;
+                return row;
+            }
+        }
+
+        // The cursor did not arrive. Refusing by name is the honest answer: the row this index WOULD land on holds a
+        // different item, and clicking it would buy that instead.
+        refusal = ShopPageRefusal(saleIndex, shop.forSale.Count, rows);
+        return -1;
+    }
+
+    /// <summary>
+    /// The refusal a sale the menu's pager could not reach is answered with: which sale, out of how many pages the
+    /// menu draws. Naming both is what a bare <c>button=-1</c> never did - it stated an index that is not an item, not
+    /// a page and not a reason, so round42's refusal could only be read as "the shop has no such thing".
+    /// </summary>
+    internal static string ShopPageRefusal(int saleIndex, int saleCount, int visibleRows)
+    {
+        int rows = Math.Max(1, visibleRows);
+        return $"shop_item_beyond_last_page:{saleIndex}:{(saleCount + rows - 1) / rows}";
+    }
+
+    /// <summary>
+    /// The inventory slot that can take <paramref name="held"/> when a purchase leaves it on the cursor.
+    ///
+    /// <para>
+    /// The engine's own placement is <c>InventoryMenu.leftClick</c> at the slot's centre, which hands the stack to
+    /// <c>Utility.addItemToInventory</c> (<c>InventoryMenu.cs:318-344</c>): that call MERGES into a stack it can add to
+    /// and only otherwise takes an empty slot (<c>Utility.cs:6397-6411</c>), so which slot this answers decides whether
+    /// a stackable purchase is merged or left unplaceable.
+    /// </para>
+    /// </summary>
+    internal static int ShopDropSlot(IList<Item> slots, Item? held)
+    {
+        if (held is null)
+            return -1;
+
+        // A stack it merges into comes FIRST, and the one with the most room wins: Utility.addItemToInventory takes the
+        // whole stack or leaves the remainder on the cursor (Utility.cs:6397-6411), so a nearly-full stack chosen over
+        // an emptier one would strand what did not fit. An empty slot is the fallback, never the first answer: an
+        // inventory with room left but a partial stack of the same goods must still grow that stack.
+        int mergeSlot = -1;
+        int mergeRoom = 0;
+        int emptySlot = -1;
+        for (int slot = 0; slot < slots.Count; slot++)
+        {
+            Item? occupying = slots[slot];
+            if (occupying is null)
+            {
+                if (emptySlot < 0)
+                    emptySlot = slot;
+                continue;
+            }
+
+            int room = occupying.getRemainingStackSpace();
+            if (room > mergeRoom && occupying.canStackWith(held))
+            {
+                mergeRoom = room;
+                mergeSlot = slot;
+            }
+        }
+
+        return mergeSlot >= 0 ? mergeSlot : emptySlot;
+    }
+
+    /// <summary>
+    /// The refusal a stack the inventory could not take is answered with. The item is named because the caller cannot
+    /// act on "the purchase failed": it has to know WHICH goods are stranded - the purse already paid for them.
+    /// </summary>
+    internal static string ShopInventoryRefusal(Item held) => $"inventory_cannot_accept:{held.QualifiedItemId}";
+
+    /// <summary>
+    /// The refusal a purchase the engine itself refused is answered with, and the reason it refused.
+    ///
+    /// <para>
+    /// The engine's confirm path is <c>ShopMenu.receiveLeftClick</c> - the same handler a player's click runs - so what
+    /// it does with an entry is the engine's business: money, stock limits, stacking, and
+    /// <c>ISalable.actionWhenPurchased</c> (a tool upgrade, a recipe, a recovered item) all happen inside
+    /// <c>ShopMenu.tryToPurchaseItem</c> (<c>ShopMenu.cs:1319-1397</c>). None of them is done here, so a purchase that
+    /// does not happen has to be answered with the engine's own reason rather than with a claim about the trade.
+    /// </para>
+    /// </summary>
+    internal static string ShopPurchaseRefusal(string engineReason) => $"shop_purchase_refused:{engineReason}";
+
     public LocalExecutionReceipt RequestLocalShopPurchase(BridgeExecutionRequest request, IExecutionLedger ledger)
     {
         if (ledger.TryGetExistingReceipt(request.RequestId, out LocalExecutionReceipt existing))
@@ -782,6 +896,9 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
         // is diagnosable from the evidence instead of requiring another live round.
         List<string> clickDiagnostics = new();
         List<string> dropDiagnostics = new();
+        // Filled by the click loop below and reported as the terminal: every refusal this body mints about a purchase
+        // NAMES its reason, in one spelling each (ShopPageRefusal / ShopInventoryRefusal / ShopPurchaseRefusal).
+        string? purchaseRefusal = null;
 
         Dictionary<ISalable, ItemStockInformation> stock;
         try
@@ -922,31 +1039,32 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
             // Match by wire identity, NOT by object reference: GetShopStock builds its own
             // items, so the instance that was priced is never the instance the menu holds.
             // IndexOf would therefore always miss (measured live: shop_offer_not_purchasable).
-            //
-            // The result is a BUTTON index, not a sale index. The game resolves a clicked
-            // button k as forSale[currentItemIndex + k] (ShopMenu.cs:1096-1102), so returning
-            // the raw sale index happens to work only while the view is scrolled to the top.
-            // Translating here keeps the coordinate and the item in agreement at any scroll.
-            int FindOfferIndex(ShopMenu shop)
+            int SaleIndexOf(ShopMenu shop) => shop.forSale.FindIndex(candidate => string.Equals(
+                candidate?.QualifiedItemId, expectedItemId, StringComparison.Ordinal));
+
+            int saleIndex = SaleIndexOf(menu);
+            if (saleIndex < 0)
             {
-                int saleIndex = shop.forSale.FindIndex(candidate => string.Equals(
-                    candidate?.QualifiedItemId, expectedItemId, StringComparison.Ordinal));
-                if (saleIndex < 0)
-                    return -1;
-                int buttonIndex = saleIndex - shop.currentItemIndex;
-                // Scrolled past it: the native click handler cannot reach an off-screen row.
-                return buttonIndex >= 0 && buttonIndex < shop.forSaleButtons.Count ? buttonIndex : -1;
+                // Not in the shop's own sale list at all: the row IS the address, so there is nothing to click and
+                // nothing to scroll to. Naming the item is what tells the caller the shop does not sell THIS.
+                return this.RememberTerminal(
+                    request.RequestId,
+                    executionId,
+                    ExecutionState.Rejected,
+                    $"shop_item_absent_from_sale:{expectedItemId}",
+                    $"shop={target.ShopId};item={expectedItemId};offers={menu.forSale.Count}");
             }
 
-            int buttonIndex = FindOfferIndex(menu);
-            if (buttonIndex < 0 || buttonIndex >= menu.forSaleButtons.Count)
+            int row = ShopSaleRowInView(menu, saleIndex, out string? pageRefusal);
+            if (row < 0)
             {
                 return this.RememberTerminal(
                     request.RequestId,
                     executionId,
                     ExecutionState.Rejected,
-                    "shop_offer_not_purchasable",
-                    $"shop={target.ShopId};item={expectedItemId};button={buttonIndex};offers={menu.forSale.Count}");
+                    pageRefusal!,
+                    $"shop={target.ShopId};item={expectedItemId};offers={menu.forSale.Count};"
+                    + $"rows={menu.forSaleButtons.Count};cursor={menu.currentItemIndex}");
             }
 
             // One native click per unit; the game decrements stock and moves money itself.
@@ -968,13 +1086,26 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
             for (int bought = 0; bought < purchasable; bought++)
             {
                 if (Game1.activeClickableMenu is not ShopMenu stillOpen || !ReferenceEquals(stillOpen, menu))
+                {
+                    purchaseRefusal = ShopPurchaseRefusal("menu_closed");
                     break;
+                }
 
-                int index = FindOfferIndex(menu);
-                if (index < 0 || index >= menu.forSaleButtons.Count)
+                int saleRow = SaleIndexOf(menu);
+                if (saleRow < 0)
+                {
+                    purchaseRefusal = $"shop_item_absent_from_sale:{expectedItemId}";
                     break;
+                }
 
-                ClickableComponent button = menu.forSaleButtons[index];
+                saleRow = ShopSaleRowInView(menu, saleRow, out string? loopPageRefusal);
+                if (saleRow < 0)
+                {
+                    purchaseRefusal = loopPageRefusal;
+                    break;
+                }
+
+                ClickableComponent button = menu.forSaleButtons[saleRow];
                 // Record the state the native handler will read, and what it did, instead of
                 // guessing which gate refused. These are all public members.
                 long currencyBeforeClick = ShopMenu.getPlayerCurrencyAmount(actor, shopCurrency);
@@ -985,68 +1116,73 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
                 int clickY = button.bounds.Center.Y;
                 bool addressedToButton = button.containsPoint(clickX, clickY);
 
-                // The native click handler, at the native click coordinates.
+                // The engine's own confirm path: ShopMenu.receiveLeftClick is the handler a player's click runs, and
+                // its purchase branch does the money, the stock limit, the stacking and `actionWhenPurchased`
+                // (ShopMenu.cs:1096-1140, 1319-1421). Nothing about the trade is computed here.
                 menu.receiveLeftClick(clickX, clickY, playSound: true);
 
-                // The purchase leaves the item ON THE CURSOR, not in the inventory:
-                // tryToPurchaseItem assigns heldItem = item.GetSalableInstance()
-                // (ShopMenu.cs:1352) and only clears it for items with
-                // actionWhenPurchased (:1369-1378). A real player then clicks an empty
-                // inventory slot to put it away; a scripted purchase must do the same or
-                // the money moves and the goods never arrive. Measured live: money 500->480
-                // with owned_before = owned_after = 0, i.e. purchase_partial.
-                //
-                // receiveLeftClick routes coordinates inside the inventory to
-                // inventory.leftClick (ShopMenu.cs:1094), which is the native drop.
-                string heldBeforeDrop = menu.heldItem?.QualifiedItemId ?? "none";
-                int emptySlotIndex = -1;
-                string dropAt = "none";
-                if (menu.heldItem is not null)
+                long currencyAfterClick = ShopMenu.getPlayerCurrencyAmount(actor, shopCurrency);
+                int stockAfterClick = stock.TryGetValue(offer, out ItemStockInformation? s1) && s1 is not null ? s1.Stock : -1;
+                clickDiagnostics.Add(
+                    $"click{bought}:row={saleRow}|cursor={menu.currentItemIndex}|at={clickX},{clickY}|addressed={addressedToButton}|"
+                    + $"safety_before={safetyBefore}|held_null={heldNull}|"
+                    + $"currency={currencyBeforeClick}->{currencyAfterClick}|stock={stockBeforeClick}->{stockAfterClick}|"
+                    + $"held_after={menu.heldItem?.QualifiedItemId ?? "none"}");
+
+                if (currencyAfterClick == currencyBeforeClick)
                 {
+                    // The engine's purchase charged nothing. Two shapes produce that, and they need different answers:
+                    // an item already on the cursor reaches only the `held_item.canStackWith(item)` branch
+                    // (ShopMenu.cs:1431), which silently does nothing when the two do not stack; with an empty cursor
+                    // the click never entered the branch at all.
+                    purchaseRefusal = ShopPurchaseRefusal(heldNull ? "native_click_refused" : "held_item_occupied");
+                    break;
+                }
+
+                // The purchase leaves the goods ON THE CURSOR, not in the inventory: tryToPurchaseItem assigns
+                // heldItem = item.GetSalableInstance() (ShopMenu.cs:1352) and only clears it for items whose
+                // actionWhenPurchased consumed them (:1369-1378). A real player then clicks an inventory slot to put
+                // them away, so this does the same: receiveLeftClick routes coordinates inside the inventory to
+                // inventory.leftClick (ShopMenu.cs:1094), the game's own placement step.
+                Item? held = menu.heldItem as Item;
+                string heldBeforeDrop = held?.QualifiedItemId ?? "none";
+                int dropSlot = -1;
+                string dropAt = "none";
+                if (held is not null)
+                {
+                    // The ITEM LIST is what decides, not ClickableComponent.item: the menu builds its slots as
+                    // `new ClickableComponent(bounds, j.ToString())` (InventoryMenu.cs:103) and never assigns `.item`,
+                    // so selecting on that field picked slot 0 every time.
                     List<ClickableComponent>? slots = menu.inventory?.inventory;
                     IList<Item>? actual = menu.inventory?.actualInventory;
                     if (slots is not null && actual is not null)
                     {
-                        for (int slotIndex = 0; slotIndex < slots.Count && slotIndex < actual.Count; slotIndex++)
-                        {
-                            // Read the ITEM LIST, not ClickableComponent.item. The menu builds its
-                            // slots as `new ClickableComponent(bounds, j.ToString())`
-                            // (InventoryMenu.cs:103) — the string overload — and never assigns
-                            // `.item`, so `slot.item` is ALWAYS null. Selecting on it picked slot 0
-                            // every time; when slot 0 holds a tool, InventoryMenu.leftClick refuses
-                            // (InventoryMenu.cs:318 `actualInventory[num] != null && !canStackWith`)
-                            // and returns the held item unchanged. Measured live:
-                            // `drops=1[drop0:empty_slot=0;at=412,544;held=(O)472->(O)472]`.
-                            if (actual[slotIndex] is null && slots[slotIndex] is { bounds.Width: > 0 })
-                            {
-                                emptySlotIndex = slotIndex;
-                                dropAt = $"{slots[slotIndex].bounds.Center.X},{slots[slotIndex].bounds.Center.Y}";
-                                break;
-                            }
-                        }
+                        dropSlot = ShopDropSlot(actual, held);
+                        if (dropSlot >= 0 && (dropSlot >= slots.Count || slots[dropSlot].bounds.Width <= 0))
+                            dropSlot = -1;
                     }
-                    if (emptySlotIndex >= 0)
+
+                    if (dropSlot >= 0)
                     {
-                        // The native drop: ShopMenu.receiveLeftClick routes coordinates that
-                        // land in the inventory to inventory.leftClick with the held item
-                        // (ShopMenu.cs:1094), which is the game's own placement step.
+                        dropAt = $"{slots![dropSlot].bounds.Center.X},{slots[dropSlot].bounds.Center.Y}";
                         menu.receiveLeftClick(
-                            slots![emptySlotIndex].bounds.Center.X,
-                            slots![emptySlotIndex].bounds.Center.Y,
+                            slots[dropSlot].bounds.Center.X,
+                            slots[dropSlot].bounds.Center.Y,
                             playSound: true);
                     }
                 }
                 string heldAfterDrop = menu.heldItem?.QualifiedItemId ?? "none";
                 dropDiagnostics.Add(
-                    $"drop{bought}:empty_slot={emptySlotIndex}|at={dropAt}|held={heldBeforeDrop}->{heldAfterDrop}");
+                    $"drop{bought}:slot={dropSlot}|at={dropAt}|held={heldBeforeDrop}->{heldAfterDrop}");
 
-                long currencyAfterClick = ShopMenu.getPlayerCurrencyAmount(actor, shopCurrency);
-                int stockAfterClick = stock.TryGetValue(offer, out ItemStockInformation? s1) && s1 is not null ? s1.Stock : -1;
-                clickDiagnostics.Add(
-                    $"click{bought}:button={index}|at={clickX},{clickY}|addressed={addressedToButton}|"
-                    + $"safety_before={safetyBefore}|held_null={heldNull}|"
-                    + $"currency={currencyBeforeClick}->{currencyAfterClick}|stock={stockBeforeClick}->{stockAfterClick}|"
-                    + $"held_after={menu.heldItem?.QualifiedItemId ?? "none"}");
+                if (menu.heldItem is Item stranded)
+                {
+                    // The purse paid and the goods are still on the cursor: no slot could take them, and closing the
+                    // menu would destroy them. The refusal names the goods, because the caller has to know WHICH stack
+                    // is stranded - not merely that "the purchase failed".
+                    purchaseRefusal = ShopInventoryRefusal(stranded);
+                    break;
+                }
             }
         }
         catch (Exception nativeException)
@@ -1105,13 +1241,26 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
 
         // Success is the world fact: the shop's own currency left the purse AND the item entered the inventory.
         // A receipt that spent nothing and gained nothing is not a purchase.
-        if (currencyAfter < currencyBefore && gained > 0)
+        if (currencyAfter < currencyBefore && gained > 0 && purchaseRefusal is null)
             return this.RememberTerminal(request.RequestId, executionId, ExecutionState.Succeeded, "item_purchased", evidence, this.TryCreateLocalObservation(actor));
+
+        // A named reason IS the terminal, and it names the state too: a refusal before anything moved is a rejection the
+        // caller can plan around, while the same refusal after the purse paid is an uncertain outcome that has to be
+        // looked at. `purchase_partial` said only "something happened" - it could not say WHICH goods, or why.
+        if (purchaseRefusal is not null)
+        {
+            return this.RememberTerminal(
+                request.RequestId,
+                executionId,
+                currencyAfter < currencyBefore || gained > 0 ? ExecutionState.Uncertain : ExecutionState.Rejected,
+                purchaseRefusal,
+                evidence);
+        }
 
         if (currencyAfter < currencyBefore || gained > 0)
             return this.RememberTerminal(request.RequestId, executionId, ExecutionState.Uncertain, "purchase_partial", evidence);
 
-        return this.RememberTerminal(request.RequestId, executionId, ExecutionState.Failed, "purchase_not_effective", evidence);
+        return this.RememberTerminal(request.RequestId, executionId, ExecutionState.Failed, ShopPurchaseRefusal("no_effect"), evidence);
     }
 }
 
