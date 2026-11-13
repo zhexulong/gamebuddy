@@ -222,6 +222,31 @@ export const MEMORY_READ_STATES = Object.freeze([
 ] as const);
 
 export type MemoryReadState = (typeof MEMORY_READ_STATES)[number];
+
+/**
+ * The two states that describe the player's own filter over rows a read DID return.
+ *
+ * They are not read states: a notebook can be `ready` and every row hidden behind the search at the
+ * same time, and that is one render of one fact plus one narrowing - never two answers about the
+ * notebook.
+ */
+export const MEMORY_ROW_NARROWINGS = Object.freeze(["filtered-empty", "search-empty"] as const);
+
+export type MemoryRowNarrowing = (typeof MEMORY_ROW_NARROWINGS)[number];
+
+/**
+ * The one vocabulary `data-memory-state` carries, declared once.
+ *
+ * The attribute used to hold three: the notebook's count line wrote `empty`/`loading`/`error` and
+ * wrote NOTHING when the notebook was ready (absence standing for a state), the row list wrote
+ * `ready`, and the empty-filter placeholder wrote `filtered-empty`/`search-empty`. A reader of the
+ * attribute - a person or a test - could not tell which of the three facts it had, and one render
+ * carried `empty` from one vocabulary beside `ready` from another. Every element that names a state
+ * now names one of these, and the two halves say which fact they are.
+ */
+export const MEMORY_NOTEBOOK_STATES = Object.freeze([...MEMORY_READ_STATES, ...MEMORY_ROW_NARROWINGS]);
+
+export type MemoryNotebookState = MemoryReadState | MemoryRowNarrowing;
 export type ConnectionForm = Readonly<{
   providerId: string;
   apiKey: string;
@@ -1519,8 +1544,11 @@ export function MemoryPanel({
   // production does not run. Both sentences carry that number as text, because
   // a count that exists only as an element attribute is not something a player
   // can read.
-  const notebookState = memoryNotebookState(memoryView);
-  const notebookReading = memoryNotebookReading(notebookState, rows.length, notebook, labels.loading);
+  const readState = memoryNotebookState(memoryView);
+  const notebookReading = memoryNotebookReading(readState, rows.length, notebook, labels.loading);
+  // The rows this render was given are a read the notebook has already reported as ready, so the
+  // placeholder that hides all of them describes the player's filter and nothing else.
+  const filterPlaceholder: MemoryRowNarrowing = needle.length === 0 ? "filtered-empty" : "search-empty";
   return (
     <section className="tavern-memory-section" aria-label={notebook.title} data-memory-panel>
       <div className="tavern-memory-header">
@@ -1541,7 +1569,7 @@ export function MemoryPanel({
         <p className="memory-notebook-promise">{notebook.promise}</p>
         <p
           className="memory-notebook-count"
-          data-memory-state={notebookState === "ready" ? undefined : notebookState}
+          data-memory-state={readState}
           data-memory-count={notebookReading.count ?? undefined}
         >
           {notebookReading.text}
@@ -1728,12 +1756,12 @@ export function MemoryPanel({
         // active search says nothing matched IT, and the "nothing recorded yet"
         // line would be a lie about a notebook that has rows. Under an origin
         // chip alone the old line stays, and the pressed chip names the slice.
-        <div className="state-placeholder" data-memory-state={needle.length === 0 ? "filtered-empty" : "search-empty"}>
+        <div className="state-placeholder" data-memory-state={filterPlaceholder}>
           <p className="loading-text">{needle.length === 0 ? labels.noMemories : labels.memorySearchEmpty}</p>
         </div>
       )}
       {memoryView.kind === "ready" && visibleRows.length > 0 && (
-        <div className="memory-list" role="list" data-memory-state="ready" data-memory-filter={originFilter}>
+        <div className="memory-list" role="list" data-memory-state={readState} data-memory-filter={originFilter}>
           {visibleRows.map((item) => (
             <MemoryRow
               key={item.handle}
