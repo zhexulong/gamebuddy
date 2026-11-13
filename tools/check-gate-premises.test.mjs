@@ -2,14 +2,13 @@
 // Falsifiers for tools/check-gate-premises.mjs.
 //
 // The claim this file protects: a source gate's declared inputs exist, so a gate cannot be red for a reason that is not
-// its subject. Two real gates were red for exactly that reason for a week - `213cde50` deleted `host/src/snapshot-hud.ts`
-// and neither `tools/check-stardew-observation-consumers.mjs` nor the analyzer `tools/check-stardew-observation-gap.mjs`
-// spawns was told - and the decisive case below is that commit replayed through this gate, not a fixture invented here.
+// its subject. Two real gates were red for exactly that reason for a week - the commit that deleted the HUD module told
+// neither the consumer gate nor the analyzer the gap gate spawns - and the decisive case below is that commit replayed
+// through this gate, not a fixture invented here.
 //
-// red-proof: history  `checkPremises` over the two gates' `213cde50` texts names
-//   `gate_premise_missing:tools/check-stardew-observation-consumers.mjs:host/src/snapshot-hud.ts` and the same path for
-//   `tools/check-stardew-observation-gap.mjs`, with `missing 2` - and dropping the analyzer from that gate's `reads`
-//   loses the second finding, which is why the inheritance is in the registry and not in a comment.
+// red-proof: history  `checkPremises` over the two gates' `213cde50` texts names the deleted module for BOTH gates, with
+//   `missing 2` - and dropping the analyzer from that gate's `reads` loses the second finding, which is why the
+//   inheritance is in the registry and not in a comment.
 // red-proof: inject  a registry row whose gate is a hand-written source declaring a path that does not exist reddens
 //   `gate_premise_missing:<gate>:<path>` (the mechanism on its own, without the git history).
 import assert from "node:assert/strict";

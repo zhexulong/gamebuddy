@@ -41,11 +41,11 @@
  *   node tools/check-gate-premises.mjs --root DIR # the same reading of a copied tree
  *   node tools/check-gate-premises.mjs --json     # every gate's derived input list, machine-readable
  *
- * red-proof: history  `git show 213cde50:tools/check-stardew-observation-consumers.mjs` still declares
- *            `host/src/snapshot-hud.ts`, and this gate reddens on it with `gate_premise_missing` - the commit that
- *            deleted the file, replayed (tools/check-gate-premises.test.mjs, "the deletion commit's own gate text").
- * red-proof: inject  a registry row whose gate declares `host/src/snapshot-hud.ts` a second time reddens
- *            `gate_premise_missing:<gate>:host/src/snapshot-hud.ts` (the same suite, the mechanism itself).
+ * red-proof: history  the deletion commit's own copy of a consumer gate still declares the HUD module it deleted, and
+ *            this gate reddens on that text with `gate_premise_missing` - replayed from git, not from a fixture
+ *            (tools/check-gate-premises.test.mjs, "the deletion commit's own gate text").
+ * red-proof: inject  a registry row whose gate declares a path that is not on disk reddens
+ *            `gate_premise_missing:<gate>:<path>` (the same suite, the mechanism on its own).
  */
 import { existsSync, globSync, readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
