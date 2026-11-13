@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   assertShopPurchasePostconditions,
+  assertToolUpgradePostconditions,
   runShopPurchaseSmoke,
 } from "./run-stardew-native-local-player-shop-purchase-smoke.mjs";
 import { publishedActionRegistrations } from "./lib/stardew-native-smoke-harness-v1.mjs";
@@ -230,4 +231,212 @@ test("the pass contract rejects each clause it claims", () => {
   assert.throws(() => assertShopPurchasePostconditions({ ...detail, purchased: 0 }), /shop_purchased_invalid/);
   assert.throws(() => assertShopPurchasePostconditions({ ...detail, unitPrice: 0 }), /shop_unit_price_invalid/);
   assert.throws(() => assertShopPurchasePostconditions({ ...detail, trace: [] }), /shop_trace/);
+});
+
+// ---------------------------------------------------------------------------------------------------------------
+// The tool-upgrade case: the same action over the blacksmith's counter.
+// ---------------------------------------------------------------------------------------------------------------
+
+const UPGRADE_SCENARIO = "native_shop_tool_upgrade_v1";
+const UPGRADE_ITEM = "(T)SteelHoe";
+
+const upgradeConfig = {
+  ...config,
+  NativeLocalPlayerFixture: { ...config.NativeLocalPlayerFixture, FixtureScenario: UPGRADE_SCENARIO },
+};
+
+const UPGRADE_SHOP = {
+  targetId: "shop_blacksmith_upgrade",
+  shopId: "ClintUpgrade",
+  ownerName: "Clint",
+  location: "Blacksmith",
+  ownerTileX: 9,
+  ownerTileY: 5,
+  ownerInReach: true,
+  stockCount: 1,
+  // One entry, because the fixture leaves exactly one upgradable tool in the pack.
+  stockItemIds: [UPGRADE_ITEM],
+};
+
+/**
+ * What the Mod emits for an engine-recorded upgrade. The four facts this case exists for are the last five fields:
+ * the tool the engine put into `Farmer.toolBeingUpgraded`, the two days it is due back in, the tool the upgrade
+ * consumed (and its count before/after), and the notice the purchase mounted. `gained` is 0 because the entry is
+ * discarded rather than carried - which is exactly why `item_purchased` could never describe this purchase.
+ */
+function upgradeEvidence({
+  moneyBefore = 5000,
+  moneyAfter = 0,
+  purchased = 1,
+  unitPrice = 5000,
+  toolUpgraded = UPGRADE_ITEM,
+  daysLeft = 2,
+  requiredTool = "(T)CopperHoe",
+  requiredBefore = 1,
+  requiredAfter = 0,
+  purchaseDialogue = "closed",
+} = {}) {
+  return (
+    `shop=ClintUpgrade;owner=Clint;entry=npc_owner;item=${UPGRADE_ITEM};requested=1;purchased=${purchased};` +
+    `unit_price=${unitPrice};money_before=${moneyBefore};money_after=${moneyAfter};` +
+    `owned_before=0;owned_after=0;gained=0;stock_before=1;stock_after=1;owner_tile=9,5;menu_closed=true;` +
+    `clicks=1[click0:row=0|cursor=0];drops=0[];` +
+    `tool_upgraded=${toolUpgraded};days_left=${daysLeft};required_tool=${requiredTool};` +
+    `required_before=${requiredBefore};required_after=${requiredAfter};purchase_dialogue=${purchaseDialogue}`
+  );
+}
+
+function makeUpgradeClient({ evidence = upgradeEvidence(), shops = [UPGRADE_SHOP], reasonCode } = {}) {
+  let current = snapshot(3, "Blacksmith", shops);
+  const client = {
+    state: { catalogRegistrations: publishedActionRegistrations(), snapshot: current },
+    observe: async () => current,
+    execute: async (request) => {
+      assert.equal(request.action, "shop_purchase");
+      assert.equal(request.args.expectedTargetId, UPGRADE_SHOP.targetId);
+      assert.equal(request.args.expectedQualifiedItemId, UPGRADE_ITEM);
+      const receipt = {
+        requestId: request.requestId,
+        executionId: "exec_shop_tool_upgrade",
+        state: "succeeded",
+        reasonCode: reasonCode ?? "tool_upgrade_purchased",
+        revision: 4,
+        evidence: { detail: evidence },
+      };
+      current = { ...snapshot(4, "Blacksmith", shops), menuOpen: false };
+      return receipt;
+    },
+  };
+  return { client };
+}
+
+test("the upgrade case passes when the engine recorded the upgrade and took the tool", async () => {
+  const { client } = makeUpgradeClient();
+  const result = await runShopPurchaseSmoke(client, upgradeConfig, { timeoutMs: 500 });
+
+  assert.equal(result.state, "passed");
+  assert.equal(result.caseName, "clint_upgrade");
+  assert.equal(result.reasonCode, "tool_upgrade_purchased");
+  assert.equal(result.shopId, "ClintUpgrade");
+  assert.equal(result.toolUpgraded, UPGRADE_ITEM);
+  assert.equal(result.daysLeftForToolUpgrade, 2);
+  assert.equal(result.requiredBefore - result.requiredAfter, 1);
+  assert.equal(result.moneyBefore - result.moneyAfter, 5000);
+  assert.equal(result.returnPathVerified, false, "the two-night return is deliberately not exercised");
+});
+
+test("the tally names the case this launch did not arm, and counts it", async () => {
+  const { client } = makeUpgradeClient();
+  const result = await runShopPurchaseSmoke(client, upgradeConfig, { timeoutMs: 500 });
+
+  assert.equal(result.tally.cases, 2);
+  assert.equal(result.tally.passed, 1);
+  assert.equal(result.tally.failed, 0);
+  assert.deepEqual(result.tally.unarmed, ["item_purchase:native_shop_purchase_v1"]);
+
+  const { client: ordinaryClient } = makeClient();
+  const ordinary = await runShopPurchaseSmoke(ordinaryClient, config, { timeoutMs: 500 });
+  assert.deepEqual(ordinary.tally.unarmed, ["clint_upgrade:native_shop_tool_upgrade_v1"]);
+});
+
+test("a failed case still counts as failed in the tally, so the run cannot read as green", async () => {
+  const { client } = makeUpgradeClient({ evidence: upgradeEvidence({ requiredAfter: 1 }) });
+  const result = await runShopPurchaseSmoke(client, upgradeConfig, { timeoutMs: 500 });
+
+  assert.equal(result.state, "blocked");
+  assert.equal(result.tally.passed, 0);
+  assert.equal(result.tally.failed, 1);
+});
+
+test("the upgrade reported as the OLD partial terminal is not a pass", async () => {
+  // This is the shape the defect produced: a finished, paid-for upgrade came back `purchase_partial` because the
+  // terminal required the goods to arrive. The runner must never accept it as proof of the upgrade.
+  const { client } = makeUpgradeClient({ reasonCode: "purchase_partial" });
+  const result = await runShopPurchaseSmoke(client, upgradeConfig, { timeoutMs: 500 });
+
+  assert.equal(result.state, "blocked");
+  assert.match(result.reasonCode, /shop_terminal_mismatch:state=succeeded;reason=purchase_partial/);
+});
+
+test("blocks when the blacksmith's upgrade counter is not advertised", async () => {
+  const { client } = makeUpgradeClient({ shops: [{ ...SHOP }] });
+  const result = await runShopPurchaseSmoke(client, upgradeConfig, { timeoutMs: 500 });
+
+  assert.equal(result.state, "blocked");
+  assert.match(result.reasonCode, /shop_upgrade_counter_not_advertised:location=Blacksmith/);
+  assert.match(result.reasonCode, /advertised=SeedShop/, "the refusal names what IS on offer, not just what is not");
+});
+
+test("blocks when the shop offers more than the one entry the Given leaves", async () => {
+  const { client } = makeUpgradeClient({
+    shops: [{ ...UPGRADE_SHOP, stockCount: 4, stockItemIds: [UPGRADE_ITEM, "(T)CopperAxe"] }],
+  });
+  const result = await runShopPurchaseSmoke(client, upgradeConfig, { timeoutMs: 500 });
+
+  assert.equal(result.state, "blocked");
+  assert.match(result.reasonCode, /shop_upgrade_entry_ambiguous:\(T\)SteelHoe\/\(T\)CopperAxe/);
+});
+
+test("the upgrade contract rejects each of the four facts it claims", () => {
+  const detail = {
+    reasonCode: "tool_upgrade_purchased",
+    shopId: "ClintUpgrade",
+    owner: "Clint",
+    item: UPGRADE_ITEM,
+    targetItemId: UPGRADE_ITEM,
+    purchased: 1,
+    unitPrice: 5000,
+    moneyBefore: 5000,
+    moneyAfter: 0,
+    toolUpgraded: UPGRADE_ITEM,
+    daysLeftForToolUpgrade: 2,
+    requiredTool: "(T)CopperHoe",
+    requiredBefore: 1,
+    requiredAfter: 0,
+    gained: 0,
+    menuClosed: true,
+    purchaseDialogue: "closed",
+    trace: [{ phase: "purchase" }],
+  };
+  assert.doesNotThrow(() => assertToolUpgradePostconditions({ ...detail }));
+
+  // 1. the engine's own field
+  assert.throws(() => assertToolUpgradePostconditions({ ...detail, toolUpgraded: null }), /shop_upgrade_tool_absent/);
+  assert.throws(
+    () => assertToolUpgradePostconditions({ ...detail, toolUpgraded: "(T)GoldHoe" }),
+    /shop_upgrade_tool_mismatch/,
+  );
+  assert.throws(
+    () => assertToolUpgradePostconditions({ ...detail, targetItemId: "(T)CopperAxe" }),
+    /shop_upgrade_tool_not_the_entry/,
+  );
+  // 2. two days
+  assert.throws(
+    () => assertToolUpgradePostconditions({ ...detail, daysLeftForToolUpgrade: 1 }),
+    /shop_upgrade_days_not_fresh/,
+  );
+  // 3. the consumed tool
+  assert.throws(
+    () => assertToolUpgradePostconditions({ ...detail, requiredTool: null }),
+    /shop_upgrade_required_tool_absent/,
+  );
+  assert.throws(
+    () => assertToolUpgradePostconditions({ ...detail, requiredTool: UPGRADE_ITEM }),
+    /shop_upgrade_required_tool_is_the_entry/,
+  );
+  assert.throws(
+    () => assertToolUpgradePostconditions({ ...detail, requiredAfter: 1 }),
+    /shop_upgrade_tool_not_consumed/,
+  );
+  // 4. the purse
+  assert.throws(() => assertToolUpgradePostconditions({ ...detail, moneyAfter: 5000 }), /shop_purse_not_charged/);
+  assert.throws(() => assertToolUpgradePostconditions({ ...detail, unitPrice: 0 }), /shop_unit_price_invalid/);
+  // and the body is free
+  assert.throws(() => assertToolUpgradePostconditions({ ...detail, menuClosed: false }), /shop_menu_left_open/);
+  assert.throws(
+    () => assertToolUpgradePostconditions({ ...detail, purchaseDialogue: null }),
+    /shop_upgrade_notice_not_settled/,
+  );
+  assert.throws(() => assertToolUpgradePostconditions({ ...detail, shopId: "SeedShop" }), /shop_upgrade_shop_mismatch/);
+  assert.throws(() => assertToolUpgradePostconditions({ ...detail, trace: [] }), /shop_trace/);
 });

@@ -463,6 +463,9 @@ export function fixtureActions(action) {
   // publishes the read-only observe_scene capability so the runner can pull a
   // projection with reachability attached.
   if (action === "scene_reachable_probe") return ["observe_scene"];
+  // The shop action's SECOND world: the same capability set the published shop_purchase gate publishes, because the
+  // runner is the same one - only the counter the Given stands at differs.
+  if (action === "shop_purchase_tool_upgrade") return ["shop_purchase"];
   if (action === "move_to_tile") return ["move_to_tile"];
   // The move-stall probe (design 5.3 observation) drives the published
   // move_to_tile action over a fixture that stands a native blocker on the
@@ -899,6 +902,10 @@ export function fixtureScenario(actions, action) {
   if (action === "ride_minecart") return "native_ride_minecart_v1";
   if (action === "ride_bus") return "native_ride_bus_v1";
   if (action === "shop_purchase") return "native_shop_purchase_v1";
+  // The SAME action over the blacksmith's counter. Action-keyed here, before every includes() fallback, because the
+  // published action's world is the SeedShop and no single world can be in two shops: the upgrade Given is one copper
+  // hoe in the pack, the counter tile the engine's own `Blacksmith` action opens, and the material the upgrade charges.
+  if (action === "shop_purchase_tool_upgrade") return "native_shop_tool_upgrade_v1";
   // Action-keyed, before every includes() fallback: the farm-animal pet needs its own Given (one coop, exactly one animal,
   // the actor in its ring), which no other action's world carries.
   if (action === "pet_farm_animal") return "native_pet_farm_animal_v1";
