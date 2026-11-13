@@ -26,16 +26,39 @@
  * reads the root's own model profile, provider catalog and credential, then asks the provider for one model listing.
  * A provider that cannot answer is the failure that costs the most wall clock for the least evidence - two runs ended
  * `503 auth_unavailable` with zero tokens, and nothing in their results said the provider had never been asked.
+ *
+ * `probeGuardianPipe` is the one check that decides whether this MACHINE can run at all, and the caller passes its
+ * answer in rather than having `preflightLiveRun` read it: the gate conformance suite materializes synthetic trees
+ * that never launch a Host (`tools/lib/harness-conformance.mjs`), and judging those against this machine's pipe
+ * namespace would red a good tree. Measured 2026-11-13: a chat live run was launched four times and every attempt
+ * ended `dialogue_exited_before_ready:1:desktop_runtime_bootstrap_unavailable:guardian_pipe_unreachable`, reaching
+ * no capture phase at all, while the preflight reported this tree healthy.
+ *
+ * Every check therefore reports one of three verdicts, not two: `passed`, `blocked` (a condition this host fails) and
+ * `not_measured` (the prerequisite was absent, so nothing was measured - never a pass, and the same line
+ * `tools/lib/assert-non-vacuous.mjs` draws for a gate's population). A `not_measured` check refuses the run exactly
+ * as a `blocked` one does, because a run started on an unmeasured prerequisite is how four launches died.
  */
 import { spawnSync } from "node:child_process";
 import { existsSync, readdirSync, statSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
-import { bridgeConfigPath, bridgePipeNameFor } from "./stardew-bridge-pipe.mjs";
 import { OPERATOR_GATEWAY_PROVIDER_ID } from "./operator-gateway.mjs";
+import { bridgeConfigPath, bridgePipeNameFor } from "./stardew-bridge-pipe.mjs";
 
-const check = (code, ok, detail) => ({ code, ok, detail });
+/** `passed` when the condition holds; `blocked` when this host fails it; `not_measured` when nothing was measured. */
+const check = (code, ok, detail) => ({ code, ok, status: ok ? "passed" : "blocked", detail });
+
+/** The prerequisite is absent, so the check measured nothing. `ok` is false: an unmeasured run is not a startable one. */
+const notMeasured = (code, condition, detail, route) => ({
+  code,
+  ok: false,
+  status: "not_measured",
+  condition,
+  detail: `${condition}: ${detail}`,
+  route,
+});
 
 const newestUnder = (root, match, skipDirectory) => {
   let newest = null;
@@ -294,6 +317,99 @@ export function providerReadinessRefusal(readiness) {
   return `provider_not_ready:${readiness.provider}:${readiness.model ?? "unknown"}:${readiness.reason}`;
 }
 
+/* ------------------------------------------------------------------ the Desktop guardian endpoint */
+
+/**
+ * The endpoint prefix of the Host's one authenticated guardian session.
+ *
+ * The endpoint is `\\.\pipe\GameBuddy.HostGuardian.<bootstrapId>`, and it has exactly two owners in this tree:
+ *
+ *   - the SERVER, only inside the native Desktop supervisor -
+ *     `desktop/GameBuddy.Desktop/DesktopHostBootstrapBroker.cs:47` creates
+ *     `GameBuddy.HostGuardian.<bootstrapId>` with `FirstPipeInstance | CurrentUserOnly`;
+ *   - the CLIENT, the Host's own bootstrap - `host/src/bootstrap/wire/desktop-runtime-bootstrap.internal.ts:621`
+ *     connects to that name, and a refused connect is `guardian_pipe_unreachable` (:904).
+ *
+ * Nothing else derives a name of its own here: the bootstrap id is opaque and minted per launch
+ * (`tools/desktop-composition-launch.mjs:769`), so reachability is read from the OS pipe namespace rather than
+ * from a name this file could build. `live-run-preflight.test.mjs` holds every file that spells the prefix, so a
+ * rename on the product side goes red here instead of silently matching nothing.
+ *
+ * The gate launcher binds a look-alike endpoint for a launch it drives (`tools/desktop-composition-launch.mjs:508`)
+ * and answers `hello` only: any `arm_attempt` / `launch_role` / `contain_role` frame destroys the socket (:542-545),
+ * because forging those would forge Stardew containment.
+ */
+export const GUARDIAN_ENDPOINT_PREFIX = "GameBuddy.HostGuardian.";
+
+const WINDOWS_NAMED_PIPE_DIRECTORY = "\\\\.\\pipe\\";
+
+/**
+ * Whether a Desktop guardian endpoint is bound on this machine right now, read without launching anything.
+ *
+ * Read-only, and deliberately never connects. The production broker authenticates the FIRST client on that
+ * one-shot pipe by comparing its process id and session with the child it launched and refuses anything else
+ * (`DesktopHostBootstrapBroker.cs:63-67`), so a probe that dialled an in-flight launch's endpoint would break the
+ * launch it was checking.
+ *
+ * `examined` travels with the answer on purpose: "no endpoint" is only a measurement of a namespace that was
+ * actually read, and `unreadable` names the case where it was not.
+ */
+export function probeGuardianPipe({
+  readPipeDirectory = () => readdirSync(WINDOWS_NAMED_PIPE_DIRECTORY),
+  prefix = GUARDIAN_ENDPOINT_PREFIX,
+} = {}) {
+  let names;
+  try {
+    names = readPipeDirectory();
+  } catch (error) {
+    const code = typeof error?.code === "string" ? error.code : String(error?.message ?? error);
+    return Object.freeze({ endpoints: Object.freeze([]), examined: 0, unreadable: code });
+  }
+  const endpoints = [...names]
+    .map((name) => String(name))
+    .filter((name) => name.startsWith(prefix))
+    .sort();
+  return Object.freeze({ endpoints: Object.freeze(endpoints), examined: names.length, unreadable: null });
+}
+
+/**
+ * The operator's two routes to a run, printed when no guardian endpoint is bound.
+ *
+ * The first is the product path: the Desktop supervisor owns the endpoint and is the only thing that can answer
+ * `arm_attempt` / `launch_role` / `contain_role`. The second exists and is named rather than implied, because it is
+ * a real route for a chat-only run and a dead one for anything that arms, launches or contains a game.
+ */
+const GUARDIAN_OPERATOR_ROUTE = Object.freeze([
+  "start the native Desktop supervisor - it is the only server of this endpoint (desktop/GameBuddy.Desktop/DesktopHostBootstrapBroker.cs:47)",
+  "or drive a chat-only run through tools/desktop-composition-launch.mjs, which binds the same endpoint for the launch it drives and answers hello only: it destroys the socket on any arm_attempt/launch_role/contain_role frame (tools/desktop-composition-launch.mjs:542-545), so it cannot carry a run that arms, launches or contains a game",
+]);
+
+/**
+ * The guardian reading as a check. A bound endpoint passes; an absent or unreadable namespace is `not_measured`.
+ *
+ * The absent case names the condition the product will fail with (`guardian_pipe_unreachable`) and what it costs
+ * the run: the guardian session is the Host's second bootstrap stage, before the composition exists, so nothing is
+ * captured and `INJECTION` and `RECONCILIATION` would be unobserved rather than passing.
+ */
+const guardianCheck = (probe) => {
+  if (probe.endpoints.length > 0)
+    return check(
+      "guardian_pipe_reachable",
+      true,
+      `${String(probe.examined)} named pipe(s) examined; bound: ${probe.endpoints.join(", ")}`,
+    );
+  const examined =
+    probe.unreadable === null
+      ? `${String(probe.examined)} named pipe(s) examined`
+      : `pipe namespace unreadable:${probe.unreadable}`;
+  return notMeasured(
+    "guardian_pipe_reachable",
+    "guardian_pipe_unreachable",
+    `${examined}; no ${GUARDIAN_ENDPOINT_PREFIX}* endpoint is bound, so the Host's guardian-session bootstrap stage cannot connect (host/src/bootstrap/wire/desktop-runtime-bootstrap.internal.ts:621) and the run dies dialogue_exited_before_ready:1:desktop_runtime_bootstrap_unavailable:guardian_pipe_unreachable before any capture phase - INJECTION and RECONCILIATION would be unobserved, not passing`,
+    GUARDIAN_OPERATOR_ROUTE,
+  );
+};
+
 const runnerCheck = (action) => {
   const runner = ACTION_RUNNERS[action];
   if (runner === undefined) return [check("smoke_runner_resolves", false, `no runner known for ${action}`)];
@@ -361,11 +477,15 @@ export function preflightLiveRun(options) {
     runningGameProcesses = 0,
     hostRoot = "host",
     modRoot = "integrations/stardew",
+    guardian = null,
   } = options;
 
   const folders = gameBuddyFoldersIn(modsPath);
   const oneFolder = folders.length === 1 && !folders[0].startsWith("(");
   const checks = [
+    // First because it is the one failure no rebuild repairs: a stale artifact is fixed by building, and a machine
+    // with no guardian endpoint is not. Reported first, the operator reads the cause rather than a symptom of it.
+    ...(guardian === null ? [] : [guardianCheck(guardian)]),
     hostArtifactCheck(hostRoot),
     modBundleCheck(modRoot, releaseDir),
     check(

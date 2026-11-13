@@ -3,14 +3,16 @@
 // A gate nobody can make fail is decoration, which is why each case below builds the exact tree shape that check exists
 // for and asserts the code it must report. The good tree is the control.
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
 import {
+  GUARDIAN_ENDPOINT_PREFIX,
   importsWithoutStarting,
   preflightLiveRun,
+  probeGuardianPipe,
   probeProviderReadiness,
   providerReadinessRefusal,
 } from "./live-run-preflight.mjs";
@@ -42,23 +44,35 @@ function goodTree(root) {
 /** Timestamps are what these checks compare, so the fixture tree has to control them. */
 const touch = (path, when) => utimesSync(path, when, when);
 
-test("the good tree passes every check", () => {
-  const root = mkdtempSync(join(tmpdir(), "preflight-good-"));
+/** The control tree: the good tree with the timestamps that make every file-system check pass. */
+function freshGoodTree(root) {
+  const tree = goodTree(root);
+  // The DLL must be at least as new as the sources, and the artifact at least as new as host/src.
+  const past = new Date(Date.now() - 60_000);
+  const now = new Date();
+  touch(join(tree.modRoot, "src", "Thing.cs"), past);
+  touch(join(tree.releaseDir, "GameBuddy.Stardew.dll"), now);
+  touch(join(tree.hostRoot, "src", "index.ts"), past);
+  touch(join(tree.hostRoot, "dist-test", "index.js"), now);
+  return tree;
+}
+
+/** One temporary root per case, removed whatever the case did. */
+function withRoot(prefix, run) {
+  const root = mkdtempSync(join(tmpdir(), prefix));
   try {
-    const tree = goodTree(root);
-    // The DLL must be at least as new as the sources, and the artifact at least as new as host/src.
-    const past = new Date(Date.now() - 60_000);
-    const now = new Date();
-    touch(join(tree.modRoot, "src", "Thing.cs"), past);
-    touch(join(tree.releaseDir, "GameBuddy.Stardew.dll"), now);
-    touch(join(tree.hostRoot, "src", "index.ts"), past);
-    touch(join(tree.hostRoot, "dist-test", "index.js"), now);
-    const result = preflightLiveRun(tree);
-    assert.deepEqual(failureCodes(result), [], JSON.stringify(result.checks, null, 1));
-    assert.equal(result.ok, true);
+    return run(root);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
+}
+
+test("the good tree passes every check", () => {
+  withRoot("preflight-good-", (root) => {
+    const result = preflightLiveRun(freshGoodTree(root));
+    assert.deepEqual(failureCodes(result), [], JSON.stringify(result.checks, null, 1));
+    assert.equal(result.ok, true);
+  });
 });
 
 test("two GameBuddy folders are refused, because SMAPI would load neither", () => {
@@ -301,3 +315,123 @@ test("a root whose profile names no model is refused before anything can be aske
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+// ── The Desktop guardian endpoint ──
+//
+// The two readings 2026-11-13 produced are the two cases below: a machine with no `GameBuddy.HostGuardian.*`
+// endpoint (four chat runs died `guardian_pipe_unreachable` and the preflight said nothing at all) and a machine that
+// has one. The pipe namespace belongs to the OS, so it is read through the probe's own seam; the last two cases are
+// real - one asks this machine's own namespace, the other asks the files that spell the endpoint.
+
+/** A pipe-directory reader standing in for the OS namespace: the names it would list. */
+const pipeDirectory =
+  (...names) =>
+  () =>
+    names;
+
+const GUARDIAN_ENDPOINT = `${GUARDIAN_ENDPOINT_PREFIX}${"a".repeat(64)}`;
+
+test("a machine with no bound guardian endpoint is not_measured, and refuses the run by name", () => {
+  withRoot("preflight-guardian-absent-", (root) => {
+    const guardian = probeGuardianPipe({ readPipeDirectory: pipeDirectory("InitShutdown", "lsass", "edge") });
+    assert.deepEqual(guardian.endpoints, []);
+    assert.equal(guardian.examined, 3);
+
+    const result = preflightLiveRun({ ...freshGoodTree(root), guardian });
+    assert.equal(result.ok, false, "an unmeasured prerequisite is not a startable run");
+    // First, because it is the one failure no rebuild repairs.
+    assert.equal(result.checks[0].code, "guardian_pipe_reachable");
+    const failure = result.firstFailure;
+    assert.equal(failure.code, "guardian_pipe_reachable");
+    assert.equal(failure.status, "not_measured", "absent is not the same verdict as a condition this host fails");
+    assert.equal(failure.condition, "guardian_pipe_unreachable");
+    assert.match(failure.detail, /^guardian_pipe_unreachable: 3 named pipe\(s\) examined/u);
+    assert.match(failure.detail, /no GameBuddy[.]HostGuardian[.]\* endpoint is bound/u);
+    // What it costs the run, in the words the run's own result files use.
+    assert.match(failure.detail, /dialogue_exited_before_ready:1:desktop_runtime_bootstrap_unavailable/u);
+    assert.match(failure.detail, /INJECTION and RECONCILIATION would be unobserved, not passing/u);
+    // Both routes an operator can take, and the limit of the second one.
+    assert.equal(failure.route.length, 2);
+    assert.match(failure.route[0], /Desktop supervisor/u);
+    assert.match(failure.route[1], /tools\/desktop-composition-launch[.]mjs/u);
+    assert.match(failure.route[1], /arm_attempt\/launch_role\/contain_role/u);
+  });
+});
+
+test("a pipe namespace that cannot be read is not_measured, never a pass", () => {
+  withRoot("preflight-guardian-unreadable-", (root) => {
+    const guardian = probeGuardianPipe({
+      readPipeDirectory: () => {
+        const error = new Error("no such file or directory");
+        error.code = "ENOENT";
+        throw error;
+      },
+    });
+    assert.deepEqual(guardian, { endpoints: [], examined: 0, unreadable: "ENOENT" });
+    const result = preflightLiveRun({ ...freshGoodTree(root), guardian });
+    assert.equal(result.ok, false);
+    assert.equal(result.firstFailure.status, "not_measured");
+    assert.equal(result.firstFailure.condition, "guardian_pipe_unreachable");
+    assert.match(result.firstFailure.detail, /^guardian_pipe_unreachable: pipe namespace unreadable:ENOENT/u);
+  });
+});
+
+test("a bound guardian endpoint passes, and the reading names it", () => {
+  withRoot("preflight-guardian-bound-", (root) => {
+    const guardian = probeGuardianPipe({ readPipeDirectory: pipeDirectory("lsass", GUARDIAN_ENDPOINT) });
+    assert.deepEqual(guardian.endpoints, [GUARDIAN_ENDPOINT]);
+    const result = preflightLiveRun({ ...freshGoodTree(root), guardian });
+    const entry = result.checks.find((item) => item.code === "guardian_pipe_reachable");
+    assert.equal(entry.ok, true, JSON.stringify(entry));
+    assert.equal(entry.status, "passed");
+    assert.equal(entry.detail, `2 named pipe(s) examined; bound: ${GUARDIAN_ENDPOINT}`);
+    assert.deepEqual(failureCodes(result), [], JSON.stringify(result.checks, null, 1));
+  });
+});
+
+test("the guardian condition is reported ahead of a stale artifact, because a rebuild does not repair it", () => {
+  withRoot("preflight-guardian-order-", (root) => {
+    const tree = freshGoodTree(root);
+    touch(join(tree.releaseDir, "GameBuddy.Stardew.dll"), new Date(Date.now() - 120_000));
+    touch(join(tree.modRoot, "src", "Thing.cs"), new Date());
+    // Without the probe the tree reports the rebuildable failure, which is what the preflight used to show while
+    // four runs died on the unrepairable one.
+    assert.equal(preflightLiveRun(tree).firstFailure.code, "mod_bundle_fresh");
+    const result = preflightLiveRun({
+      ...tree,
+      guardian: probeGuardianPipe({ readPipeDirectory: pipeDirectory("lsass") }),
+    });
+    assert.equal(result.firstFailure.code, "guardian_pipe_reachable");
+  });
+});
+
+// The prefix in this module is a copy of one word two other files own, and a copy is only safe while it still
+// matches. The population is the files that create the endpoint and the file that connects to it: a rename on
+// either side must go red here rather than leave the check matching nothing for ever.
+const GUARDIAN_ENDPOINT_SPELLERS = Object.freeze([
+  "host/src/bootstrap/wire/desktop-runtime-bootstrap.internal.ts",
+  "desktop/GameBuddy.Desktop/DesktopHostBootstrapBroker.cs",
+  "tools/desktop-composition-launch.mjs",
+]);
+
+test("the guardian endpoint prefix is still the spelling its producers and consumer use", () => {
+  const drifted = GUARDIAN_ENDPOINT_SPELLERS.filter(
+    (path) => !readFileSync(path, "utf8").includes(GUARDIAN_ENDPOINT_PREFIX),
+  );
+  assert.deepEqual(
+    drifted,
+    [],
+    `these files no longer spell "${GUARDIAN_ENDPOINT_PREFIX}", so the reachability check would silently examine nothing`,
+  );
+});
+
+test(
+  "the default probe reads this machine's own pipe namespace",
+  { skip: process.platform !== "win32" ? "the named-pipe namespace is a Windows fact" : false },
+  () => {
+    const guardian = probeGuardianPipe();
+    assert.equal(guardian.unreadable, null, JSON.stringify(guardian));
+    assert.ok(guardian.examined > 0, `examined ${String(guardian.examined)} named pipe(s)`);
+    assert.ok(Array.isArray(guardian.endpoints));
+  },
+);
