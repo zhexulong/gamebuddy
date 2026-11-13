@@ -259,6 +259,8 @@ export function composeWorldState(reading: WorldStateReading | undefined): strin
   else if (reading.ageTurns >= 1) parts.push(`（这是 ${reading.ageTurns} 轮之前看到的，世界已经不一样了）`);
   const environment = formatGameEnvironmentFacts(world, true);
   if (environment !== "") parts.push(environment);
+  const health = formatOwnHealth(world);
+  if (health !== "") parts.push(health);
   const canWater = formatCarriedCanWater(world);
   if (canWater !== "") parts.push(canWater);
   const carrying = formatCarrying(world);
@@ -315,6 +317,31 @@ function formatCarrying(world: Snapshot): string {
   const shown = named.slice(0, MAX_CARRYING_ROWS).map((row) => `${String(row.stack)} 份 ${row.name}`);
   const rest = named.length - shown.length;
   return `身上带着 ${shown.join("、")}${rest > 0 ? ` 其余 ${String(rest)} 种未列出` : ""}`;
+}
+
+/**
+ * Her own health, in the shape the stamina beside it is written in.
+ *
+ * <p>
+ * WHY IT IS HERE (measured 2026-11-21). `health` was exempted in `tools/check-snapshot-field-rendering.mjs` by
+ * `printedBy: "host/src/snapshot-hud.ts"`, and that block's only consumer in the tree is a `typeof` guard
+ * (`host-service.ts:1235`). So her own hit points were composed on every turn, printed by a module, and read by nobody:
+ * the fact a mine level is spent against was the one fact the gate counted as handled. The sentence that did the damage
+ * was the exemption's own - the prose "states the stamina a day's work spends and says nothing about collapsing at
+ * zero" - which named the gap and then closed it with a rendering nobody receives.
+ * </p>
+ *
+ * <p>
+ * THE FIGURE IS THE WIRE'S OWN AND IS NOT COMPLETED. `protocol.ts` refuses a snapshot whose `health` is not a finite
+ * number and the Mod publishes no maximum beside it, so a percentage or a `45/100` would be a number this file invented -
+ * the rule `formatGameStamina` already follows for stamina, and the reason the value prints bare. ABSENT PRINTS NOTHING:
+ * an unreadable reading is silence, never a healthy default.
+ * </p>
+ */
+function formatOwnHealth(world: Snapshot): string {
+  const health = world.health;
+  if (typeof health !== "number" || !Number.isFinite(health)) return "";
+  return `血量: ${String(health)}`;
 }
 
 /**

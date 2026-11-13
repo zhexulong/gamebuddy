@@ -119,6 +119,11 @@ test("every wire field is in her view or carries an owner, and the reading state
   const can = dispositionOf(reading, "wateringCanFacts");
   assert.equal(can?.renderedBy, SOURCES.factBrief, "wateringCanFacts is rendered by the composer she reads");
   assert.equal(can?.renderedTo, "model", "and the report says the audience is hers");
+  // The fact the audience split exposed: her own hit points, in the text she reads instead of in a block no reader
+  // receives. It was exempt until this unit, and the exemption's stale check is what forced the rendering.
+  const health = dispositionOf(reading, "health");
+  assert.equal(health?.renderedBy, SOURCES.factBrief, "her own health is composed for her, not for a module");
+  assert.equal(health?.renderedTo, "model", "and it reaches nobody else first");
   // Every exemption names its owner and its reason, which is what makes it a debt rather than a silence.
   for (const field of Object.keys(RENDERING_EXEMPTIONS)) {
     const entry = RENDERING_EXEMPTIONS[field];

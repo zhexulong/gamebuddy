@@ -303,6 +303,27 @@ test("the world block names the objects she acts on, with their tiles", () => {
   assert.match(text, /这一带没有/u, "and a family the Mod published as empty says so");
 });
 
+test("own_health_in_the_world_block: her hit points are in the text she reads, bare and never completed", () => {
+  const block = (snapshot: Snapshot): string => composeWorldState({ snapshot, revision: 1, ageTurns: 0, ageMs: 0 });
+
+  // The fact, in the shape the stamina beside it uses. Before this line `health` was exempted by a rendering into
+  // `contextProjection.hud`, a block nothing in the tree reads (`host/src/host-service.ts:1235` is its only consumer).
+  const hurt = block({ ...world, health: 45 } as Snapshot);
+  assert.match(hurt, /血量: 45/u, `her own health is in the block she reads: ${hurt}`);
+
+  // BARE, because the wire publishes no maximum: a `45/100` would be a number this file invented, the same rule
+  // `formatGameStamina` follows for stamina.
+  assert.equal(/血量: 45\//u.test(hurt), false, `no invented maximum beside the reading: ${hurt}`);
+
+  // ABSENT IS NOT A HEALTHY DEFAULT: a reading that is not a finite number prints nothing at all.
+  for (const unreadable of [Number.NaN, Number.POSITIVE_INFINITY, undefined])
+    assert.equal(
+      /血量/u.test(block({ ...world, health: unreadable } as unknown as Snapshot)),
+      false,
+      `an unreadable health reading (${String(unreadable)}) is silence, not a full bar`,
+    );
+});
+
 test("can_water_beside_the_held_tool: the can's own water reaches the prose, and an absent reading says nothing", () => {
   const block = (snapshot: Snapshot): string => composeWorldState({ snapshot, revision: 1, ageTurns: 0, ageMs: 0 });
   const can = {

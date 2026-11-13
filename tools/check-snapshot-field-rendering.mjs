@@ -147,13 +147,6 @@ export const RENDERING_EXEMPTIONS = Object.freeze({
   actorDispositionKind: { reason: BODY_HELD_REASON, owedBy: "host/src/fact-brief.ts" },
   actorDispositionDetail: { reason: BODY_HELD_REASON, owedBy: "host/src/fact-brief.ts" },
   actorDispositionActionOwned: { reason: BODY_HELD_REASON, owedBy: "host/src/fact-brief.ts" },
-  health: {
-    reason:
-      "her own health, which no text she reads prints: `<world-state>` states the stamina a day's work spends and not the " +
-      "hit points a mine level takes, so the only notice she gets of her own condition is `night_ended_pass_out`, after " +
-      "it has already happened.",
-    owedBy: "host/src/fact-brief.ts",
-  },
   harvestWhereabouts: {
     reason:
       "the WHOLE-MAP ripe-crop count. `<world-state>` names only the radius-bounded `可收的作物` family, so ripe crops " +
