@@ -68,7 +68,12 @@ import { chooseLevelUpResolution, readPendingLevelUpsFromSnapshot } from "../../
 import { checkHistorianRubric, readCompartments } from "../../lib/historian-rubric.mjs";
 import { collectContextSummary } from "../../lib/context-db-summary.mjs";
 import { assessMorningLiveness } from "../../lib/morning-liveness.mjs";
-import { SCHEDULED_DIALOGUE_GATES, assessDialogueGates, planGateDeliveries } from "../dialogue-gates.mjs";
+import {
+  SCHEDULED_DIALOGUE_GATES,
+  assessDialogueGates,
+  assessPlayerInputSchedule,
+  planGateDeliveries,
+} from "../dialogue-gates.mjs";
 import { assessInteractionValue } from "../interaction-value-gate.mjs";
 import { executeFresh, TERMINAL_STATES } from "../../lib/stardew-native-smoke-harness-v1.mjs";
 import { OPERATOR_GATEWAY_PROVIDER_ID } from "../../lib/operator-gateway.mjs";
@@ -803,6 +808,20 @@ const DAILY_TASK_PROMPT_EN = Object.freeze({
   ...sweepTaskPrompts().en,
 });
 
+/**
+ * The sentence a day's note carries for a task, taken from the table that WRITES the note.
+ *
+ * The assertion that a note arrived must not spell the note a second time: `SCENARIO_PROMPTS.multiday_routine` composes
+ * every note out of `DAILY_TASK_PROMPT_*[task]`, so that entry is the fragment a session record is searched for. A task
+ * the table does not cover answers `null`, and the reading reports that as a missing note text - the `town_errand` defect
+ * this table's own comment records, where a day was handed the literal string "undefined" instead of a task.
+ */
+function dayNoteFragment(task, locale) {
+  const table = locale === "zh" ? DAILY_TASK_PROMPT_ZH : DAILY_TASK_PROMPT_EN;
+  const sentence = table[task];
+  return typeof sentence === "string" && sentence.trim().length > 0 ? sentence.trim() : null;
+}
+
 const SCENARIO_PROMPTS = Object.freeze({
   morning_routine: Object.freeze({
     zh: `现在是星露谷春季的早晨，你独自在农场里。今天没有人给你派活，你自己看看周围，把今天这一摊活当成一整件事（地里的农活、农场上的杂物、屋里的箱子和机器都算）：先说清楚整件事要做成什么样，其余怎么排开由系统来。做完之后用两三句话跟对方说说：整件活做到哪儿了、哪一段做不了或者卡住了、卡在哪里（控制在 120 字以内，挑重点说，不用把每道工序都报一遍）。`,
@@ -832,14 +851,35 @@ const SCENARIO_PROMPTS = Object.freeze({
     // The TASK changes per day, so one run covers several capabilities and the night crossing doubles as a
     // task switch. The invariant clauses - the player is away, ending the day is yours - are the same every
     // day, because they are what this scenario exists to observe and a task change must not rewrite them.
+    // THE NOTE IS DELIVERED AS ITEMS ALREADY CLASSIFIED BY ITS COMPOSER, not as one sentence for the block to read.
+    // Measured 2026-11-14, day 1: the errand and the task shared one sentence - `我今天去镇上办事，${task}你看着办，…` -
+    // and `<player-note>` classifies PER SENTENCE, so the task came back labelled `他的事，不是给你做的`. Her reasoning
+    // that turn was `The player left a note: they're going to town to make a machine.` and she submitted nothing. A
+    // sentence with two owners cannot be split by a rule that reads a sentence; the writer of a composed note knows whose
+    // each part is, so it says so, one owner per item, in the block's own two labels. The person who left the note is
+    // away, which is why the invariant clauses are said as hers to act on and his own business is left as his.
+    //
+    // `tools/live-run/game/multiday-day-note.test.mjs` holds these templates to it: for every task in both tables the task
+    // must land inside a `给你做的` item and never inside a `他的事，不是给你做的` one, every character exactly once, no
+    // quote left open - and the two labels below are compared against the block's own rather than trusted.
     zh: (day, task) =>
-      `现在是星露谷的早晨（连续第 ${String(day)} 天）。` +
-      `桌上留着便签：“我今天去镇上办事，${DAILY_TASK_PROMPT_ZH[task]}你看着办，天黑累了就回屋歇着不用等我，明天还有别的。”` +
-      `活干完了或者天黑累了就回床上睡，这一天才真正过去。只在嘴里说“我睡了”而身体没躺下，天不会自己过去。`,
+      `给你做的：「现在是星露谷的早晨（连续第 ${String(day)} 天），桌上留着他的便签。」\n` +
+      `他的事，不是给你做的：「我今天去镇上办事。」\n` +
+      `给你做的：「${DAILY_TASK_PROMPT_ZH[task].trim()}」\n` +
+      `给你做的：「你看着办。」\n` +
+      `给你做的：「天黑累了就回屋歇着。」\n` +
+      `他的事，不是给你做的：「不用等我，明天还有别的。」\n` +
+      `给你做的：「活干完了或者天黑累了就回床上睡，这一天才真正过去。」\n` +
+      `给你做的：「只在嘴里说“我睡了”而身体没躺下，天不会自己过去。」`,
     en: (day, task) =>
-      `It is morning in Stardew Valley (day ${String(day)} in a row for you). ` +
-      `There is a note on the table from your partner: "I'm heading into town today to run errands. ${DAILY_TASK_PROMPT_EN[task]}That is yours to handle; when it gets dark and you're tired, head inside and rest, no need to wait up for me. There will be other things tomorrow." ` +
-      `When the work is done or when it is dark and you are tired, go to bed and sleep so the night passes. Announcing it without lying down does not end the day. `,
+      `给你做的：「It is morning in Stardew Valley (day ${String(day)} in a row for you), and there is a note on the table from your partner.」\n` +
+      `他的事，不是给你做的：「I'm heading into town today to run errands.」\n` +
+      `给你做的：「${DAILY_TASK_PROMPT_EN[task].trim()}」\n` +
+      `给你做的：「That is yours to handle.」\n` +
+      `给你做的：「When it gets dark and you're tired, head inside and rest.」\n` +
+      `他的事，不是给你做的：「No need to wait up for me, and there will be other things tomorrow.」\n` +
+      `给你做的：「When the work is done or when it is dark and you are tired, go to bed and sleep so the night passes.」\n` +
+      `给你做的：「Announcing it without lying down does not end the day.」`,
   }),
 });
 const SESSION_GOALS = (process.env.GAMEBUDDY_AGENT_SESSION_GOALS ?? "")
@@ -1156,6 +1196,12 @@ const dialogueReplies = new Map();
 // A claimed entry carries `state: "delivered"` with the moment, the refusal it was spoken against and what the admission
 // path answered (`accepted`, or `refused:<code>`).
 const dialogueDelivery = new Map();
+// EVERY player line the harness submitted, in order, with the clock it was submitted at and what the admission path
+// answered. It exists because the day-note reading is judged against what ARRIVED, and "the Host accepted it" and "she
+// was told" came apart in round49: one player message reached the session and it was not the day's note. `channel`
+// separates the harness's own turns (`harness`) from a scheduled gate (`gate`), so the note's absence can name whether it
+// was never submitted, refused, or accepted into nothing.
+const playerInputs = [];
 // The night that ended each day, as this run's own night watch observed it: `bedTime` is the latest clock it saw while
 // that day was still current, `passedOut` is the ENGINE taking the night at its own 26:00. The honesty gate asks about
 // yesterday, and this process has no other record of yesterday to answer with.
@@ -1369,6 +1415,46 @@ function planPollCount(toolTiming) {
   const calls = toolTiming?.planCalls;
   if (calls === null || calls === undefined) return null;
   return calls.stardew_action_program_status ?? 0;
+}
+
+/**
+ * The user messages a session record holds, in order - what she was actually TOLD.
+ *
+ * This is the only instrument that answers that question. `acceptPlayerText` answers whether the Host took the line, and
+ * `round49` is the case where the two came apart: one player message in the session, and it was a gate's, while the day's
+ * note appeared nowhere. A record that cannot be read answers `null`, which the reading reports as NOT MEASURED rather
+ * than as an absent note - the two have different owners. Text is read here for matching only and is never copied into
+ * the result.
+ */
+function readSessionPlayerTexts(sessionJsonlPath) {
+  if (typeof sessionJsonlPath !== "string" || sessionJsonlPath.length === 0) return null;
+  let raw;
+  try {
+    raw = readFileSync(sessionJsonlPath, "utf8");
+  } catch {
+    return null;
+  }
+  const texts = [];
+  for (const line of raw.split("\n")) {
+    if (line.trim().length === 0) continue;
+    let entry;
+    try {
+      entry = JSON.parse(line);
+    } catch {
+      // A half-written last line is what a killed run leaves; it is skipped, not repaired.
+      continue;
+    }
+    if (entry?.type !== "message" || entry?.message?.role !== "user") continue;
+    const content = entry.message.content;
+    const text =
+      typeof content === "string"
+        ? content
+        : Array.isArray(content)
+          ? content.map((part) => (typeof part?.text === "string" ? part.text : "")).join("\n")
+          : "";
+    texts.push(text);
+  }
+  return Object.freeze(texts);
 }
 
 function readToolTiming(
@@ -1942,6 +2028,9 @@ function deriveSessionVerdict({
   // `stopReason` is read here; the outcome object carries much more and none of it belongs in a verdict.
   agentTurnOutcome,
   morningLiveness,
+  // The day-note reading's own verdict code (`day_note_not_delivered:...` and its siblings), or `null` when every
+  // scheduled day was told what it was for and no gate spoke over it.
+  dayNoteVerdict = null,
 }) {
   if (worldStallReason !== null) return "world_stopped_advancing";
   if (sessionTurns.length === 0) return "no_turns";
@@ -1968,6 +2057,9 @@ function deriveSessionVerdict({
   // `4357a95b`, `76c51da4`) and on 2026-10-31 it recurred with `menu=ShippingMenu` and the clock at 600 for the rest of
   // the run. Naming the OUTCOME is what makes the fifth occurrence impossible to report as anything else.
   if ((morningLiveness?.violations?.length ?? 0) > 0) return "morning_clock_frozen";
+  // A day she was never given is not a day she failed. This arm sits above `silent` and `nothing_accomplished` because
+  // those describe a companion who was asked and did not answer, which is the opposite of what happened in round49.
+  if (dayNoteVerdict !== null) return dayNoteVerdict;
   if (!sessionSpoken) return "silent";
   if (accomplishedActionIds.length === 0) return "nothing_accomplished";
   // A session that changed the world has still not necessarily done the TASK it was given. The task's own criterion
@@ -2128,13 +2220,20 @@ function dialogueGateContext(gate) {
  * WHICH gates are due is decided by `planGateDeliveries`, from the schedule the gate module owns - including the
  * refusal-triggered obstacle gate, which was skipped here by kind and therefore could never be spoken at all. Every
  * decision, spoken or not, is recorded with the fact behind it, so an untriggered gate stops reading like an unwired one.
+ *
+ * THE WORLD CLOCK IS HANDED IN because a gate declares the in-game hour it speaks at, and this boundary is the only place
+ * that knows which hour it is. Until it was passed, `turn-initiative-split` (`atGameTime: "1200"`) was due from the first
+ * tick of day 1 and fired at 06:20 (round49).
  */
 async function deliverDialogueGatesForDay(day, tools) {
   // A refusal is the obstacle gate's only ground truth, and the boundary is where that gate is decided on: re-read it
   // here so the age judged is the age now, not the age at the last in-turn sample.
   sampleRefusalEvidence();
+  const boundaryClock = readWorldClock();
+  const gameTime = boundaryClock.unknown === true ? null : boundaryClock.timeOfDay;
   const plans = planGateDeliveries(SCHEDULED_DIALOGUE_GATES, {
     day,
+    gameTime,
     lastRefusalAtMs: refusalSample.atMs,
     refusalReadError: refusalSample.readError,
     receiptMarkers: refusalSample.markers,
@@ -2160,6 +2259,10 @@ async function deliverDialogueGatesForDay(day, tools) {
       state: "delivered",
       day,
       atMs: Date.now(),
+      // The in-game hour the line was spoken at, beside the hour it declares: `round49` spoke a 12:00 gate at 06:20 and
+      // nothing in the artifact carried either number, so the early firing had to be argued from a session file.
+      gameTime,
+      declaredGameTime: gate.trigger.atGameTime ?? null,
       // The refusal is evidence only for the gate that is triggered by one; it is the sample, plus how old it was when
       // the player spoke, so the answer can be traced back to the refusal it answers.
       refusal:
@@ -2181,6 +2284,17 @@ async function deliverDialogueGatesForDay(day, tools) {
       locale: "zh-CN",
       timeoutMs: Number(process.env.GAMEBUDDY_PLAYER_INPUT_ADMISSION_MS ?? 90_000),
     }).catch((error) => ({ accepted: false, lastRefusal: String(error?.message ?? error) }));
+    playerInputs.push(
+      Object.freeze({
+        day,
+        channel: "gate",
+        gateId: gate.id,
+        text: gate.prompt,
+        gameTime,
+        declaredGameTime: gate.trigger.atGameTime ?? null,
+        admitted: admission.accepted === true,
+      }),
+    );
     if (admission.accepted !== true) {
       // A refused line is recorded as an absent answer WITH its reason: an admission that never happened must not read
       // as silence from the companion, and it must not read as a gate nobody wired either.
@@ -4706,7 +4820,20 @@ try {
             const spokenBefore = presentationPieces.length;
             const dispatchBefore = dispatchMarkers(actionTrace, programSubmissions);
             promptTurnStarts.push(Date.now());
+            // The clock the line is spoken at, read BEFORE the turn: `runAgentTurn` does not return until the turn has
+            // settled, so a reading taken after it would date the day's note to the end of the day it opened.
+            const spokenAt = readWorldClock();
             const walked = await runAgentTurn(prompt, tools, { reason: wake.reason });
+            playerInputs.push(
+              Object.freeze({
+                day,
+                channel: "harness",
+                reason: wake.reason,
+                text: prompt,
+                gameTime: spokenAt.unknown === true ? null : spokenAt.timeOfDay,
+                admitted: walked.turn?.admission?.accepted === true,
+              }),
+            );
             if (walked.status !== null) status = walked.status;
             agentTurnResult = walked.turn;
             // Whether THIS turn submitted the one action that ends a night. `sessionTurns` is the only record of both
@@ -5248,6 +5375,25 @@ try {
   );
   const spokeToPlayer = typeof presentedSummary === "string" && presentedSummary.trim().length > 0;
   const sessionSpoken = SCENARIO !== "morning_routine" || spokeToPlayer;
+  // WHAT SHE WAS ACTUALLY TOLD, per scheduled day, read from the session record rather than from what the harness sent.
+  //
+  // `round49` delivered exactly one player message, it was the stance gate's, and the day's note appeared nowhere in the
+  // run: she answered a question correctly, submitted nothing, and the round was scored as a talk-only round it had never
+  // been given the task for. Every check the harness had asked what it SENT - a task purpose, a delivery reason - and one
+  // of them was even green. This one reads the session's own user messages, so an admission the Host accepted and never
+  // delivered is visible instead of reading as a day that accomplished nothing.
+  const dayNoteDelivery = assessPlayerInputSchedule({
+    schedulesDayNotes: SCENARIO === "multiday_routine",
+    scheduled: dayTasksScheduled.map(({ day, task }) => ({ day, task, note: dayNoteFragment(task, localeKey) })),
+    inputs: playerInputs,
+    sessionTexts: readSessionPlayerTexts(sessionSearch.path),
+    sessionReason: sessionSearch.reason ?? null,
+  });
+  console.error(
+    "MULTIDAY_DAY_NOTES",
+    dayNoteDelivery.reading,
+    dayNoteDelivery.findings.map((finding) => finding.code).join(","),
+  );
 
   const sessionVerdict = deriveSessionVerdict({
     worldStallReason,
@@ -5264,6 +5410,9 @@ try {
     agentTurnOutcome,
     morningLiveness,
     dialogueGates,
+    // The note a scheduled day was given, or the reason it was not: a session that was never told what the day was for has
+    // not completed a day of it, whatever it did instead.
+    dayNoteVerdict: dayNoteDelivery.verdictCode,
   });
   const morningRoutinePassed =
     SCENARIO === "morning_routine"
@@ -5495,6 +5644,14 @@ try {
     }),
     // The multi-day clause IS the session verdict (see `multidayRoutinePassed`), so its code is the verdict's own.
     Object.freeze({ id: "multiday_routine", passed: multidayRoutinePassed, reasonCode: sessionVerdict }),
+    // THE DAY'S NOTE, in its own right beside the day's purpose: a run that was never told what the day was for cannot be
+    // scored as a day that did not do it. Its codes are the reading's own (`day_note_not_delivered:<day>:<task>`,
+    // `dialogue_gate_preempted_the_day_note:<gateId>:<day>`, `dialogue_gate_fired_early:<gateId>:<declared>:<actual>`).
+    Object.freeze({
+      id: "day_note_delivery",
+      passed: dayNoteDelivery.passed,
+      reasonCode: dayNoteDelivery.verdictCode ?? "day_notes_delivered",
+    }),
     // THE TASK'S OWN QUESTION, beside the session's shape rather than inside it. A run whose day purpose was
     // `unproven` has not been shown to have done what it was asked, and the clause states it in its own right so the
     // artifact names it even when a more structural clause fails first (see `deriveRungVerdict`'s `failedClauses`).
@@ -5598,6 +5755,9 @@ try {
     // gate that reported a pass without ground truth (which the module cannot do: it reports `not_judgeable`).
     dialogueGates,
     dialogueGateDelivery,
+    // The day-note reading and its findings, from the session record: what each scheduled day WAS told, whether a gate
+    // spoke over it, and whether that gate kept its declared hour.
+    dayNoteDelivery,
     // The 30-minute interaction-value gate, clause by clause, from this run's own session record and timeline.
     interactionValue,
     capabilityAudit,

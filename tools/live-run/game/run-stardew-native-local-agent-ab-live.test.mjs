@@ -51,6 +51,7 @@ import { STARDEW_ACTION_TOOL_NAMES } from "../../../host/dist-test/action-regist
 import { TERMINAL_STATES } from "../../lib/stardew-native-smoke-harness-v1.mjs";
 import { STARDEW_PUBLISHED_ACTION_GATES } from "../../stardew-action-gate-descriptors.mjs";
 import { DAILY_TASK_ROTATION, sweepTaskPrompts } from "../../lib/multiday-daily-tasks.mjs";
+import { assessPlayerInputSchedule, SCHEDULED_DIALOGUE_GATES } from "../dialogue-gates.mjs";
 
 const RUNNER_SOURCE = await readFile(new URL("./run-stardew-native-local-agent-ab-live.mjs", import.meta.url), "utf8");
 /**
@@ -4871,4 +4872,172 @@ test("the runner records, per turn, whether that turn submitted a sleep", () => 
     /MULTIDAY_SLEEP_PROMISES[\s\S]{0,400}?examined: sleepPromises\.examined/u,
     "the population the reading examined is printed beside the readings themselves",
   );
+});
+
+// ---- THE DAY'S NOTE, ASSERTED AGAINST WHAT SHE WAS TOLD ------------------------------------------------
+//
+// round49 (multiday_routine, day 1) delivered exactly one player message and it was the stance gate's prompt: the day's
+// note (`clear_east_patch`) appeared nowhere in the run, she answered a question correctly, submitted nothing, and the
+// round was scored as a talk-only round it had never been given the task for. The three assertions below are that
+// finding, its order, and the hour the gate claimed - each read through the real prompt table and the real gate module.
+
+/** The prompt table and the note composition, evaluated from the runner's own source with the sweep prompts bound in. */
+function loadPromptScope() {
+  const build = new Function(
+    "sweepTaskPrompts",
+    `
+${extractRunnerConstant(RUNNER_SOURCE, "DAILY_TASK_PROMPT_ZH")}
+${extractRunnerConstant(RUNNER_SOURCE, "DAILY_TASK_PROMPT_EN")}
+${extractRunnerFunction(RUNNER_SOURCE, "dayNoteFragment").source}
+${extractRunnerConstant(RUNNER_SOURCE, "SCENARIO_PROMPTS")}
+return { DAILY_TASK_PROMPT_ZH, DAILY_TASK_PROMPT_EN, SCENARIO_PROMPTS, dayNoteFragment };
+`,
+  );
+  return build(sweepTaskPrompts);
+}
+
+const sessionLine = (text) =>
+  JSON.stringify({
+    type: "message",
+    timestamp: new Date().toISOString(),
+    message: { role: "user", content: [{ type: "text", text }] },
+  });
+
+test("the fragment the note assertion searches for is the note's own text, for every task the rotation can ask for", () => {
+  // A second hand-written copy of the note would pass this assertion on the day it was written and stop meaning anything
+  // the moment the note's wording changed. The population comes from the rotation, not from a list here.
+  const scope = loadPromptScope();
+  const drifted = [];
+  for (const task of DAILY_TASK_ROTATION) {
+    for (const locale of ["zh", "en"]) {
+      const fragment = scope.dayNoteFragment(task, locale);
+      const note = scope.SCENARIO_PROMPTS.multiday_routine[locale](1, task);
+      if (typeof fragment !== "string" || fragment.length === 0) drifted.push(`${locale}:${task}:no_fragment`);
+      else if (!note.includes(fragment)) drifted.push(`${locale}:${task}:not_in_the_note`);
+    }
+  }
+  assert.deepEqual(drifted, [], drifted.join("; "));
+  // A task the table cannot state is reported as a missing note text, never as an empty fragment that matches everything.
+  assert.equal(scope.dayNoteFragment("a_task_nobody_wrote", "zh"), null);
+});
+
+test("the session reader answers what she was told, and null when it could not read the record", () => {
+  // The reader is the instrument the whole assertion rests on: an admission the Host accepted and never delivered must be
+  // visible as absent, so the reading is taken from the session's own user messages.
+  const readSessionPlayerTexts = extractRunnerFunction(RUNNER_SOURCE, "readSessionPlayerTexts", { readFileSync });
+  const dir = mkdtempSync(join(tmpdir(), "session-player-texts-"));
+  const path = join(dir, "session.jsonl");
+  writeFileSync(
+    path,
+    [
+      sessionLine("早上好"),
+      JSON.stringify({
+        type: "message",
+        message: { role: "assistant", content: [{ type: "text", text: "早上好。" }] },
+      }),
+      JSON.stringify({ type: "message", message: { role: "user", content: "a bare string" } }),
+      JSON.stringify({ type: "other", message: { role: "user", content: "not a message entry" } }),
+      "{ half-written",
+    ].join("\n"),
+    "utf8",
+  );
+  assert.deepEqual(readSessionPlayerTexts(path), ["早上好", "a bare string"]);
+  assert.equal(readSessionPlayerTexts(undefined), null, "no record is not an empty record");
+  assert.equal(readSessionPlayerTexts(join(dir, "absent.jsonl")), null);
+});
+
+test("round49's shape is three findings and a zero, and the same run with its note delivered is none", () => {
+  // Both cases from ONE population: the session record this run would have written. The note's text is composed by the
+  // runner's own scenario prompt, and the fragment is the table entry that note is built from.
+  const scope = loadPromptScope();
+  const stance = SCHEDULED_DIALOGUE_GATES.find((entry) => entry.id === "turn-initiative-split");
+  const note = scope.SCENARIO_PROMPTS.multiday_routine.zh(1, "clear_east_patch");
+  const scheduled = [{ day: 1, task: "clear_east_patch", note: scope.dayNoteFragment("clear_east_patch", "zh") }];
+  const readSessionPlayerTexts = extractRunnerFunction(RUNNER_SOURCE, "readSessionPlayerTexts", { readFileSync });
+  const dir = mkdtempSync(join(tmpdir(), "day-note-"));
+  const round49Session = join(dir, "round49.jsonl");
+  const correctSession = join(dir, "correct.jsonl");
+  writeFileSync(round49Session, sessionLine(stance.prompt), "utf8");
+  writeFileSync(correctSession, [sessionLine(note), sessionLine(stance.prompt)].join("\n"), "utf8");
+
+  const lost = assessPlayerInputSchedule({
+    schedulesDayNotes: true,
+    scheduled,
+    inputs: [
+      { day: 1, channel: "harness", text: note, admitted: true },
+      {
+        day: 1,
+        channel: "gate",
+        gateId: stance.id,
+        text: stance.prompt,
+        declaredGameTime: stance.trigger.atGameTime,
+        gameTime: 620,
+        admitted: true,
+      },
+    ],
+    sessionTexts: readSessionPlayerTexts(round49Session),
+  });
+  assert.equal(lost.reading, "days scheduled 1 · notes delivered 0");
+  assert.deepEqual(
+    lost.findings.map((finding) => finding.code),
+    [
+      "day_note_not_delivered:1:clear_east_patch",
+      "dialogue_gate_preempted_the_day_note:turn-initiative-split:1",
+      "dialogue_gate_fired_early:turn-initiative-split:1200:0620",
+    ],
+  );
+  assert.equal(lost.passed, false);
+
+  const correct = assessPlayerInputSchedule({
+    schedulesDayNotes: true,
+    scheduled,
+    inputs: [
+      { day: 1, channel: "harness", text: note, admitted: true },
+      {
+        day: 1,
+        channel: "gate",
+        gateId: stance.id,
+        text: stance.prompt,
+        declaredGameTime: stance.trigger.atGameTime,
+        gameTime: 1205,
+        admitted: true,
+      },
+    ],
+    sessionTexts: readSessionPlayerTexts(correctSession),
+  });
+  assert.deepEqual(correct.findings, []);
+  assert.equal(correct.reading, "days scheduled 1 · notes delivered 1");
+  assert.equal(correct.passed, true);
+});
+
+test("the note assertion is wired to the session record, the planner's clock and the run's verdict", () => {
+  // A reading nobody calls is a document. These are the links that make it a measurement.
+  assert.match(RUNNER_SOURCE, /assessPlayerInputSchedule,/);
+  // 1. BOTH submission sites record what they sent, and where the note arrived from: the harness's own day turns and the
+  //    scheduled gates. One site recording is a note whose absence can only be guessed at.
+  assert.equal(
+    (RUNNER_SOURCE.match(/playerInputs\.push\(/gu) ?? []).length,
+    2,
+    "the day turns and the gates are the two places a player line is submitted",
+  );
+  // 2. The clock reaches the planner, read at the boundary that speaks - otherwise `atGameTime` is a comment.
+  assert.match(
+    RUNNER_SOURCE,
+    /const boundaryClock = readWorldClock\(\);\n\s+const gameTime = boundaryClock\.unknown === true \? null : boundaryClock\.timeOfDay;/u,
+    "the boundary reads the world clock it is about to be judged on",
+  );
+  assert.match(RUNNER_SOURCE, /planGateDeliveries\(SCHEDULED_DIALOGUE_GATES, \{\n\s+day,\n\s+gameTime,/u);
+  // 3. The reading is taken from THIS run's session record, and prints its population so a zero is visible as a zero.
+  assert.match(
+    RUNNER_SOURCE,
+    /sessionTexts: readSessionPlayerTexts\(sessionSearch\.path\),/u,
+    "the reading must read what arrived, not what was sent",
+  );
+  assert.match(RUNNER_SOURCE, /MULTIDAY_DAY_NOTES[\s\S]{0,200}dayNoteDelivery\.reading/u);
+  // 4. And it reaches the verdict: an arm of the session verdict (so `completed` is unreachable), a clause of its own,
+  //    and the reading itself in result.json.
+  assert.match(RUNNER_SOURCE, /dayNoteVerdict: dayNoteDelivery\.verdictCode,/u);
+  assert.match(RUNNER_SOURCE, /if \(dayNoteVerdict !== null\) return dayNoteVerdict;/u);
+  assert.match(RUNNER_SOURCE, /id: "day_note_delivery",/u);
+  assert.match(RUNNER_SOURCE, /^\s+dayNoteDelivery,$/mu, "the reading must reach result.json");
 });
