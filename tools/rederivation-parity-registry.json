@@ -35,8 +35,11 @@
         }
       ],
       "scan": "integrations/stardew",
-      "parityTest": null,
-      "owed": "a test that drives `SpawnFishData.GetChance` itself over a fixture row set with the engine's own predicate `spawn.ItemId == text` per row and shows the answer differs per row — the shape that catches a flag computed once outside the loop. `FishingCatchableReaderTests` names `GetChance` only in prose and says its argument-level facts are 'held by the compiler', and no test in the tree references the member in code."
+      "parityTest": {
+        "path": "integrations/stardew/tests/GameBuddy.Stardew.Integration.Tests/TargetBaitRowChanceTests.cs",
+        "member": "GetChance",
+        "what": "drives real `SpawnFishData` rows through the shipped `GetChance` and measures what the fifth argument does to a row's chance (`num * SpecificBaitMultiplier + SpecificBaitBuff`), so the per-row meaning of the argument is the ENGINE's answer rather than a reading of its source. It cannot compare our reader's output with `GameLocation.getFishFromLocationData`, which needs `DataLoader.Fish(Game1.content)` and `Game1.locationData` - the Mod's test process has no content manager - so that half stays a live-run claim."
+      }
     },
     {
       "id": "scythe-arc-rectangles",
@@ -48,7 +51,7 @@
         "anchor": "internal static IReadOnlyList<Vector2> Sampled(MeleeWeapon weapon, Farmer who, int tileX, int tileY, int facing)"
       },
       "parityTest": null,
-      "owed": "the 4096/4096 standing-pixel claim in `MeleeSweepArc`'s docblock (:6116-6127) is a MEASUREMENT RECORDED AS PROSE. A parity test would drive `getAreaOfEffect` over the 4096 standing pixels per facing and compare the engine's rectangles with what `Sampled` unions, and check that `UseNativeMeleeSweep` drives the same animation indices. No test in the tree calls `getAreaOfEffect` at all."
+      "owed": "the 4096/4096 standing-pixel claim in `MeleeSweepArc`'s docblock (:6116-6127) is a MEASUREMENT RECORDED AS PROSE. A parity test would drive `getAreaOfEffect` over the 4096 standing pixels per facing and compare the engine's rectangles with what `Sampled` unions, and check that `UseNativeMeleeSweep` drives the same animation indices. No test in the tree calls `getAreaOfEffect` at all, and `MeleeSweepOccupancy` measures the world around one real `DoDamage` instead - which is the engine answering by doing it, not a comparison of our prediction with the engine's."
     },
     {
       "id": "fishing-catchable-conditions",
