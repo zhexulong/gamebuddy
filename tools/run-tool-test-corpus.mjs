@@ -19,6 +19,7 @@
  * owners, so each member now runs on its own and the step reports:
  *
  *   corpus_population:<N> members (<F> suite files)   what the derivation found
+ *   corpus_examined:<M> test:/suite: scripts            the population those members are read against
  *   corpus_derivation:ok|defect:<why>                whether the corpus itself is what it claims to be
  *   members_failed:<N>                               how many members are red in their own run
  *   corpus_responsible:<member,member>               the members to blame, named once each
@@ -118,6 +119,9 @@ function memberCommand(command) {
  *              entry point runs it - the package's own runner derives the directory, so a new suite file joins by
  *              existing. Stated limit: this reads the directory-level declaration, never inside the package's runner.
  *   untaken    none of the above: the script runs nothing in this tree's CI, and it is named on every run
+ *
+ * Every `test:`/`suite:` name in package.json is returned in `namespace`, which is the population the four buckets
+ * are checked against: a member that reaches none of them is named, not lost.
  */
 export function corpusMembers({ root = ROOT } = {}) {
   const pkg = JSON.parse(readFileSync(resolve(root, "package.json"), "utf8"));
@@ -159,7 +163,13 @@ export function corpusMembers({ root = ROOT } = {}) {
     }
     members.push({ name, flags: run.flags, files: run.files });
   }
-  return { members, elsewhere, packages, notTaken };
+  return {
+    members,
+    elsewhere,
+    packages,
+    notTaken,
+    namespace: Object.keys(pkg.scripts).filter((name) => TEST_NAMESPACE.test(name)),
+  };
 }
 
 /**
@@ -274,7 +284,17 @@ const detail = (run) =>
 async function main(argv) {
   const rootIndex = argv.indexOf("--root");
   const root = rootIndex >= 0 && typeof argv[rootIndex + 1] === "string" ? resolve(argv[rootIndex + 1]) : ROOT;
-  const { members, elsewhere, packages, notTaken } = corpusMembers({ root });
+  const { members, elsewhere, packages, notTaken, namespace } = corpusMembers({ root });
+  const namespaced = new Set(namespace);
+  const inNamespace = (entries) => entries.filter((entry) => namespaced.has(entry.name)).length;
+  const accounted = new Set([...members, ...elsewhere, ...packages, ...notTaken].map((entry) => entry.name));
+  const dropped = namespace.filter((name) => !accounted.has(name));
+  const outside = [
+    ...new Set(
+      [...elsewhere, ...packages, ...notTaken].map((entry) => entry.name).filter((name) => !namespaced.has(name)),
+    ),
+  ];
+  const taken = members.length + inNamespace(elsewhere) + inNamespace(packages) + inNamespace(notTaken);
   const quarantine = JSON.parse(readFileSync(resolve(root, QUARANTINE_PATH), "utf8")).exclusions;
   const corpus = [...new Set(members.flatMap((member) => member.files))].sort();
   const quarantined = new Set(quarantine.map((entry) => entry.file));
@@ -289,11 +309,26 @@ async function main(argv) {
   if (members.length === 0)
     derivation.push("no members: no `test:`/`suite:` script in package.json runs `node --test` over tools/ files");
   for (const script of notTaken) derivation.push(`untaken ${script.name}: ${script.why} (${script.command})`);
+  for (const name of dropped)
+    derivation.push(`dropped ${name}: a \`test:\`/\`suite:\` script this derivation classified nowhere`);
 
   process.stdout.write(
     `corpus_population:${members.length} members (${corpus.length} suite files) elsewhere:${elsewhere.length} ` +
       `package:${packages.length} untaken:${notTaken.length} quarantined:${quarantine.length} run:${runnable.length}\n`,
   );
+  // A count without its population is a number nobody can check: `members` is read against the `test:`/`suite:`
+  // names package.json declares, the buckets have to add up to it, and whatever does not is named in the derivation.
+  process.stdout.write(
+    `corpus_examined:${namespace.length} test:/suite: scripts · ${members.length} members + ` +
+      `${inNamespace(elsewhere)} elsewhere + ${inNamespace(packages)} package + ${inNamespace(notTaken)} untaken ` +
+      `= ${taken} · dropped ${dropped.length} of ${namespace.length} · ` +
+      `untaken ${inNamespace(notTaken)} of ${namespace.length}\n`,
+  );
+  if (outside.length > 0)
+    process.stdout.write(
+      `corpus_outside_namespace:${outside.length} script(s) this derivation reads that are not ` +
+        `\`test:\`/\`suite:\` scripts: ${outside.join(",")}\n`,
+    );
   for (const script of elsewhere)
     process.stdout.write(`corpus_elsewhere:${script.name}: an entry point names it, so this step would duplicate it\n`);
   for (const script of packages)

@@ -119,6 +119,15 @@ test("a script renamed out of test:/suite: is a derivation defect, not a silent 
     run.stdout,
     /^ {2}untaken held-suite: it runs a `tools\/` suite but is not a `test:`\/`suite:` script \(node --test tools\/renamed\.test\.mjs\)$/m,
   );
+  assert.match(
+    run.stdout,
+    /^corpus_outside_namespace:1 script\(s\) this derivation reads that are not `test:`\/`suite:` scripts: held-suite$/m,
+    "a script the derivation reads but package.json does not name `test:`/`suite:` is not counted against that namespace",
+  );
+  assert.match(
+    run.stdout,
+    /^corpus_examined:1 test:\/suite: scripts · 1 members \+ 0 elsewhere \+ 0 package \+ 0 untaken = 1 · dropped 0 of 1 · untaken 0 of 1$/m,
+  );
   assert.match(run.stdout, /^members_failed:0$/m);
 });
 
@@ -130,6 +139,25 @@ test("a corpus with no members is a defect, never a pass", () => {
   assert.match(run.stdout, /^corpus_derivation:defect:2 script\(s\) the corpus does not take$/m);
   assert.match(run.stdout, /no members: no `test:`\/`suite:` script in package\.json runs/);
   assert.match(run.stdout, /untaken test:aggregate: its command runs no `node --test` suite this step can take/);
+});
+
+test("a count is read against the population it was taken from", () => {
+  const root = makeTree({
+    scripts: {
+      "test:held": "node --test tools/held.test.mjs",
+      "test:already-run": "node --test tools/already-run.test.mjs",
+      "test:driver": "node tools/driver.mjs",
+    },
+    suites: { "tools/held.test.mjs": PASSING_SUITE, "tools/already-run.test.mjs": PASSING_SUITE },
+    workflow: ["jobs:", "  quality:", "    steps:", "      - run: pnpm test:already-run"],
+  });
+  const run = runAggregate(root);
+  assert.match(
+    run.stdout,
+    /^corpus_examined:3 test:\/suite: scripts · 1 members \+ 1 elsewhere \+ 0 package \+ 1 untaken = 3 · dropped 0 of 3 · untaken 1 of 3$/m,
+    "every test:/suite: script in package.json is in exactly one bucket, and the line says so",
+  );
+  assert.match(run.stdout, /^ {2}untaken test:driver: its command runs no `node --test` suite this step can take/m);
 });
 
 test("a suite another entry point runs is not a member", () => {
