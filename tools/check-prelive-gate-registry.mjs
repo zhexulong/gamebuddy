@@ -341,10 +341,10 @@ export const EXEMPTIONS = Object.freeze([
   {
     path: "tools/check-contrast-tokens.mjs",
     reason:
-      "report: measures every declared token pair in dialogue-web/src/style.css and prints each ratio while exiting 0 " +
-      "unless --fail is passed, so a rung would call a pair below AA green; it also has no pnpm script yet, so " +
-      "on-demand is the honest home rather than a rung",
-    runsIn: "on-demand",
+      "elsewhere: measures every declared token pair in dialogue-web/src/style.css against AA, per theme, and runs on " +
+      "every push in the CI gates job through `pnpm check:contrast-tokens --fail`; it used to have no script at all, " +
+      "so it exited 0 over every pair it measured and no command invoked it - a token edit below AA blocked nothing",
+    runsIn: "pnpm check:contrast-tokens",
   },
   {
     path: "tools/check-crab-pot-output-fixture-contract.mjs",
