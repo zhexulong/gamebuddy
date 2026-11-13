@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import type { StardewGogInstallRootSource, StardewSteamSource } from "./index.js";
+import type {
+  StardewGogInstallRootSource,
+  StardewMicrosoftStoreInstallRootSource,
+  StardewSteamSource,
+} from "./index.js";
 import { createStardewInstallationDiscoveryProvider } from "./index.js";
 import type { DiscoveryDiagnostic } from "./internal.js";
 
@@ -369,6 +373,79 @@ test("a GOG root the probe could not read is named, never treated as empty", asy
   const result = await provider.discover();
   assert.deepEqual(result.candidates, []);
   assert.deepEqual(result.diagnostics, ["gog-metadata-unreadable", "no-candidates"]);
+});
+
+/**
+ * A Microsoft Store proposal source for tests: the roots the Xbox app's mods-enabled layout really
+ * holds, and the diagnostics that source's own read produced. The real source probes the drives
+ * itself (`microsoft-store-source.test.ts` owns that behaviour), so this arm only adds the loader
+ * fact - exactly as the GOG arm does.
+ */
+function microsoftStoreSource(
+  roots: readonly string[],
+  diagnostics: readonly DiscoveryDiagnostic[] = [],
+): StardewMicrosoftStoreInstallRootSource {
+  return Object.freeze({
+    read: async () => Object.freeze({ roots: Object.freeze([...roots]), diagnostics: Object.freeze([...diagnostics]) }),
+  });
+}
+
+/**
+ * The reported gap: the panel's provider mounted Steam and GOG, so a player whose Stardew Valley came
+ * from PC Game Pass was told no installation was found on a machine where it is installed. The Store
+ * channel is now a third source, and its candidate is a candidate like any other - an opaque handle
+ * whose root the same admission later reads.
+ */
+test("offers a Microsoft Store installation no Steam library or GOG record names", async () => {
+  const installRoot = "C:\\Program Files\\ModifiableWindowsApps\\Stardew Valley";
+  const provider = createStardewInstallationDiscoveryProvider({
+    probe: async () => ({ readable: true, smapi: false }),
+    source: steamWithoutRoots(),
+    microsoftStore: microsoftStoreSource([installRoot]),
+  });
+  const result = await provider.discover();
+  assert.deepEqual(
+    result.candidates.map((candidate) => [candidate.source, candidate.location]),
+    [["microsoft-store", "C: · ModifiableWindowsApps"]],
+  );
+  assert.deepEqual(result.diagnostics, []);
+  assert.equal(provider.confirm(result.candidates[0]!.candidateId), installRoot);
+});
+
+/**
+ * The half of the channel that must never become a row: a Store copy in the layout no mod loader can
+ * run in. The source names it, the provider publishes the name and offers nothing, because choosing
+ * it would send the player to install SMAPI into a folder that cannot accept it.
+ */
+test("names the Store copy that cannot load a mod loader instead of offering it", async () => {
+  const provider = createStardewInstallationDiscoveryProvider({
+    probe: async () => ({ readable: true, smapi: false }),
+    source: steamWithoutRoots(),
+    microsoftStore: microsoftStoreSource([], ["microsoft-store-install-not-mod-enabled"]),
+  });
+  const result = await provider.discover();
+  assert.deepEqual(result.candidates, []);
+  assert.deepEqual(result.diagnostics, ["microsoft-store-install-not-mod-enabled", "no-candidates"]);
+});
+
+/** The Store channel fails independently too: its own unavailability is named beside the others. */
+test("a Store source that cannot be read is named without erasing another source's candidate", async () => {
+  const provider = createStardewInstallationDiscoveryProvider({
+    probe: async () => ({ readable: true, smapi: false }),
+    source: source([["steam-vdf", "C:\\Steam"]]),
+    readFile: async () => manifest,
+    microsoftStore: {
+      read: async () => {
+        throw new Error("drive sweep failed");
+      },
+    },
+  });
+  const result = await provider.discover();
+  assert.deepEqual(
+    result.candidates.map((candidate) => candidate.source),
+    ["steam-vdf"],
+  );
+  assert.deepEqual(result.diagnostics, ["microsoft-store-unavailable"]);
 });
 
 /**

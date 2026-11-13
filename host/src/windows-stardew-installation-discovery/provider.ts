@@ -24,6 +24,7 @@ export type StardewInstallationDiscoveryProvider = Readonly<{
 type StardewInstallationDiscoveryProviderInput = Readonly<{
   source?: StardewSteamSource;
   gog?: StardewGogInstallRootSource;
+  microsoftStore?: StardewMicrosoftStoreInstallRootSource;
   readFile?: (path: string) => Promise<string>;
   /**
    * Reports whether a verified root holds a mod loader. Declared structurally for the same reason the GOG arm's
@@ -57,6 +58,20 @@ type StardewGogInstallRootSource = Readonly<{
 }>;
 export type { StardewGogInstallRootSource };
 
+/**
+ * The Microsoft Store proposal source (`stardew-game-install/microsoft-store-source.ts`), read
+ * structurally for the same reason as the GOG one: that module is read by the game's own discovery
+ * module, so importing it back would be a cycle in everything that reads the real module graph.
+ *
+ * It carries no probe seam because it has already probed: a Store candidate is only proposed when
+ * the game executable was really found in it, and a copy in the layout no mod loader can run in
+ * reaches this arm as a named diagnostic instead of a root.
+ */
+type StardewMicrosoftStoreInstallRootSource = Readonly<{
+  read(): Promise<Readonly<{ roots: readonly string[]; diagnostics: readonly DiscoveryDiagnostic[] }>>;
+}>;
+export type { StardewMicrosoftStoreInstallRootSource };
+
 type StardewSourceRoots = Readonly<{
   roots: readonly (readonly [StardewInstallationCandidate["source"], string, StardewCandidateModLoader])[];
   diagnostics: readonly DiscoveryDiagnostic[];
@@ -84,6 +99,7 @@ export function createStardewInstallationDiscoveryProvider(
   };
   const source = input.source;
   const gog = input.gog;
+  const microsoftStore = input.microsoftStore;
 
   /** Steam's arm: a library root becomes an install root only through this game's app manifest. */
   const readSteamRoots = async (): Promise<StardewSourceRoots> => {
@@ -181,17 +197,54 @@ export function createStardewInstallationDiscoveryProvider(
     return Object.freeze({ roots: Object.freeze(roots), diagnostics: Object.freeze(diagnostics) });
   };
 
+  /**
+   * The Microsoft Store arm: the source has already probed every drive's two layouts, so its roots
+   * are install roots and its diagnostics are its own named failures - including the copy it found
+   * in the layout that cannot load a mod loader. Only the loader fact is added here, exactly as for
+   * a GOG candidate.
+   */
+  const readMicrosoftStoreRoots = async (): Promise<StardewSourceRoots> => {
+    const diagnostics: DiscoveryDiagnostic[] = [];
+    const roots: Array<readonly [StardewInstallationCandidate["source"], string, StardewCandidateModLoader]> = [];
+    if (microsoftStore === undefined)
+      return Object.freeze({ roots: Object.freeze(roots), diagnostics: Object.freeze(diagnostics) });
+    let facts: Awaited<ReturnType<StardewMicrosoftStoreInstallRootSource["read"]>>;
+    try {
+      facts = await microsoftStore.read();
+    } catch {
+      return Object.freeze({
+        roots: Object.freeze(roots),
+        diagnostics: Object.freeze(["microsoft-store-unavailable"] as const),
+      });
+    }
+    diagnostics.push(...facts.diagnostics);
+    for (const root of facts.roots) roots.push(["microsoft-store", root, await modLoaderFor(root)]);
+    return Object.freeze({ roots: Object.freeze(roots), diagnostics: Object.freeze(diagnostics) });
+  };
+
   return Object.freeze({
     reset: () => session.reset(),
     confirm: (candidateId: string) => session.consume(candidateId),
     discover: async () => {
-      // Both sources are read before either is offered, so one source's failure can never
-      // abort the other's candidates. GOG is appended after Steam deliberately: deduplication
-      // keeps the FIRST proposal of a folder, so a folder both sources name is attributed to
-      // Steam - the sole channel that proves the game is there through its own app manifest.
-      const [steam, gogFacts] = await Promise.all([readSteamRoots(), readGogRoots()]);
-      const diagnostics: DiscoveryDiagnostic[] = [...steam.diagnostics, ...gogFacts.diagnostics];
-      const candidates = normalizeBoundCandidates(session, [...steam.roots, ...gogFacts.roots]);
+      // Every source is read before any is offered, so one source's failure can never abort
+      // another's candidates. The order is the attribution order: deduplication keeps the FIRST
+      // proposal of a folder, so a folder both Steam and another channel name stays with Steam -
+      // the sole channel that proves the game is there through its own app manifest.
+      const [steam, gogFacts, microsoftStoreFacts] = await Promise.all([
+        readSteamRoots(),
+        readGogRoots(),
+        readMicrosoftStoreRoots(),
+      ]);
+      const diagnostics: DiscoveryDiagnostic[] = [
+        ...steam.diagnostics,
+        ...gogFacts.diagnostics,
+        ...microsoftStoreFacts.diagnostics,
+      ];
+      const candidates = normalizeBoundCandidates(session, [
+        ...steam.roots,
+        ...gogFacts.roots,
+        ...microsoftStoreFacts.roots,
+      ]);
       if (candidates.length === 0) diagnostics.push("no-candidates");
       return Object.freeze({ candidates, diagnostics: Object.freeze(diagnostics) });
     },
