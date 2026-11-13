@@ -1,4 +1,6 @@
+using System.Globalization;
 using FluentAssertions;
+using Microsoft.Xna.Framework;
 using Xunit;
 
 namespace GameBuddy.Stardew.Integration.Tests;
@@ -10,14 +12,15 @@ namespace GameBuddy.Stardew.Integration.Tests;
 /// in the chat box and nowhere else: a player looking at the farmer saw her face the player and emote, and then had to
 /// look away to read what she said.
 ///
-/// WHAT IT IS NOW. The engine draws the bubble: <c>SpriteText.drawSmallTextBubble</c>, the routine behind the game's own
-/// small speech bubbles (<c>PetBowl.cs:137</c>, <c>Object.cs:5494</c>, <c>DayTimeMoneyBox.cs:539</c>). The line crosses
-/// the wire as a ModMessage - the speaker's player id and the text - and every client draws it in the engine's
-/// above-always-front layer from the speaker's own standing pixel.
+/// WHAT IT IS NOW. The engine's own bubble box - its 9-slice panel and its pointer, the geometry behind the game's own
+/// small speech bubbles (<c>PetBowl.cs:137</c>, <c>Object.cs:5494</c>, <c>DayTimeMoneyBox.cs:539</c>) - with the glyphs
+/// drawn in the dialogue face, because that routine is <c>Game1.smallFont</c> end to end and a spoken line in the
+/// pet-name font was too small to read. The line crosses the wire as a ModMessage - the speaker's player id and the
+/// text - and every client draws it in the engine's above-always-front layer from the speaker's own standing pixel.
 ///
 /// WHY THE DRAW CANNOT BE A BEHAVIOUR TEST. The seam needs <c>Game1.currentLocation</c> (null outside a loaded world), a
 /// live <c>SpriteBatch</c> and a drawn frame, none of which exists in a runner. What CAN be run without a game is the
-/// board that owns a line's lifetime, and that is where the behaviour tests below point.
+/// board that owns a line's lifetime and the layout that sizes the box, and that is where the behaviour tests point.
 /// </summary>
 // MIXED SHAPE AND BEHAVIOUR: the board's lifetime and one-line-per-speaker rules run as real objects, while the draw
 // path and the wire can only be pinned by reading the Mod's own source - the game's draw cannot run in a test process.
@@ -113,25 +116,173 @@ public sealed class CompanionBubbleTests
     // ---------------------------------------------------------------------------------------
 
     [Fact]
-    public void TheBubbleIsDrawnByTheEnginesOwnRoutineWithItsOwnPointer()
+    public void TheBubbleKeepsTheEngineNineSliceAndThePointerButNotItsFont()
     {
         string bubble = StripLineComments(ReadCompanionBubble());
 
-        // The engine's own small speech bubble. Its signature on the target version is
-        // drawSmallTextBubble(SpriteBatch, string, Vector2 positionOfBottomCenter, int maxWidth, float layerDepth,
-        // bool drawPointerOnTop) - the named arguments below cannot compile against any other one.
-        AssertPresent(bubble, "SpriteText.drawSmallTextBubble(", "the engine's own bubble routine is the whole of this presentation");
-        AssertPresent(bubble, "maxWidth: MaxWidth", "a long line has to be wrapped by the engine, not by us");
+        // The box and the tail are the engine's own geometry, copied from the routine this replaces: the same texture,
+        // the same source rectangles, the same 4x scale (SpriteText.cs:456 for the 9-slice, :463 for the pointer).
+        AssertPresent(bubble, "new Rectangle(241, 503, 9, 9)", "the box is the engine's 9-slice source tile, not a rectangle we assemble");
+        AssertPresent(bubble, "new Rectangle(251, 506, 5, 5)", "the tail is the engine's own 5x5 tile, at the coordinates the small bubble draws it");
         AssertPresent(
             bubble,
-            "drawPointerOnTop: false",
-            "the pointer is the whole reason this routine replaces the panel: the tail hangs below the box and points at her");
+            "IClickableMenu.drawTextureBox(",
+            "the box is drawn by the engine's 9-slice routine, so corners, edges and scale are the game's and not ours");
 
-        // The anchor is re-derived from the speaker every frame: she walks, and the engine draws immediately around the
+        // ... but the glyphs are the dialogue face, parsed, measured and drawn with the SAME font: a panel sized by one
+        // font and filled by another is text hanging out of the box.
+        AssertPresent(bubble, "Game1.parseText(text, Game1.dialogueFont,", "a line is wrapped at the size it will be read at");
+        AssertPresent(
+            bubble,
+            "MaxWidth - BubbleLayout.BoxPaddingX",
+            "the engine's own inset is taken off before wrapping (SpriteText.cs:452 parses at maxWidth - 16), so the run cannot outgrow the box's padding");
+        AssertPresent(bubble, "Game1.dialogueFont.MeasureString(line)", "the panel is sized from the font that draws it");
+        AssertPresent(
+            bubble,
+            "Utility.drawTextWithShadow(batch, line, Game1.dialogueFont,",
+            "the glyphs are the dialogue face a player already reads an NPC's line in");
+
+        // And no other font may size or fill it. drawSmallTextBubble is smallFont end to end (SpriteText.cs:452 parses,
+        // :455 measures, :465 draws) - the face the game uses for pet names and gold strings, which is why the line was
+        // too small to read. Calling it again would reinstate exactly that.
+        AssertAbsent(bubble, "smallFont", "smallFont is the font that made the line unreadable; the slice is reused, the face is not");
+        AssertAbsent(
+            bubble,
+            "SpriteText.drawSmallTextBubble(",
+            "the engine routine measures and draws with smallFont; this unit keeps its 9-slice and pointer and replaces its font");
+
+        // The behaviour checked below is the behaviour this draw uses: the budget is what Draw clamps with, and the box,
+        // run and tail are the layout's - not three coordinate sets that happen to look the same today.
+        AssertPresent(bubble, "string line = ClampToLines(", "the run that is sized and drawn is the clamped one, or the budget is a number nobody applies");
+        AssertPresent(
+            bubble,
+            "LinesThatFit(Game1.dialogueFont.LineSpacing, spriteHeight)",
+            "the budget comes from the font that draws the line and from the speaker's own frame height");
+        AssertPresent(bubble, "layout.Box.X", "the box drawn is the box the layout tests measure");
+        AssertPresent(bubble, "layout.Text", "the run drawn is the run the layout tests place inside that box");
+        AssertPresent(bubble, "layout.Pointer", "the tail drawn is the tail the layout tests centre on her head");
+    }
+
+    [Fact]
+    public void TheAnchorIsHerHeadEveryFrame()
+    {
+        // The anchor is re-derived from the speaker every frame: she walks, and the box is drawn immediately around the
         // point it is handed, so nothing in it can follow her.
         string draw = MethodBody(StripLineComments(ReadModEntry()), "private void DrawCompanionBubbles(");
-        AssertPresent(draw, "CompanionBubble.BottomCenter(speaker.StandingPixel, speaker.Sprite.SpriteHeight)", "the anchor is her head, now");
+        AssertPresent(draw, "CompanionBubble.BottomCenter(speaker.StandingPixel, spriteHeight)", "the anchor is her head, now");
         AssertPresent(draw, "Game1.GlobalToLocal(", "the above-always-front batch is in screen pixels; a world pixel would land off-screen");
+        AssertPresent(
+            draw,
+            "spriteHeight);",
+            "the height her bubble may not outgrow is the same height the anchor lifts it by, read from her own sprite");
+    }
+
+    // ---------------------------------------------------------------------------------------
+    // The box, the tail and the height budget: the engine's geometry, checked as geometry.
+    // ---------------------------------------------------------------------------------------
+
+    /// <summary>
+    /// The measured runs below are the real dialogue face's own, read off the shipped <c>Fonts/SpriteFont1.zh-CN</c> with
+    /// <c>SpriteFont.MeasureString</c>: one CJK glyph advances 25 px and a line is 42 px tall, so the round47 line
+    /// 「鬓角全是汗，头发黏在颈侧，手背一抹黏糊糊的。」 is 425 x 84 at the 432-px wrap width - two lines. The same line in
+    /// <c>Game1.smallFont</c> measures 397 x 30 as one line: that is the size difference this unit exists for, and why the
+    /// box has to be sized by the face that fills it.
+    /// </summary>
+    [Theory]
+    [InlineData(425f, 84f, "the round47 line at the wrap width: two dialogue lines")]
+    [InlineData(175f, 42f, "a short line: one dialogue line")]
+    [InlineData(450f, 84f, "a line cut at the budget, plus the ellipsis glyph")]
+    [InlineData(25f, 42f, "a single glyph")]
+    public void TheGlyphRunSitsInsideTheBoxItSized(float width, float height, string what)
+    {
+        Vector2 measured = new(width, height);
+        Vector2 anchor = new(640f, 300f);
+        BubbleLayout layout = BubbleLayout.For(anchor, measured);
+
+        // The defect this replaces: a box sized for one face and filled with a larger one, so the glyphs hang out of it.
+        layout.Text.X.Should().BeGreaterThanOrEqualTo(layout.Box.Left, $"the run starts inside the left edge for {what}");
+        layout.Text.Y.Should().BeGreaterThanOrEqualTo(layout.Box.Top, $"the run starts below the top edge for {what}");
+        (layout.Text.X + measured.X).Should().BeLessThanOrEqualTo(
+            layout.Box.Right,
+            $"the run ends inside the right edge for {what}: a box measured with a smaller face lets the text hang out");
+        (layout.Text.Y + measured.Y).Should().BeLessThanOrEqualTo(
+            layout.Box.Bottom,
+            $"the run ends above the bottom edge for {what}: a box measured with a smaller face lets the text hang out");
+
+        // The box hangs from the anchor and the tail is centred on it, so the bubble points at her head and not beside it.
+        layout.Box.Bottom.Should().BeLessThanOrEqualTo((int)anchor.Y + BubbleLayout.BoxPaddingY, $"the box hangs above the anchor for {what}");
+        (layout.Pointer.X + 5f * CompanionBubble.SpriteScale / 2f).Should().Be(
+            anchor.X,
+            $"the tail is centred on the anchor for {what}: the engine draws its 5x5 tile at 4x from the anchor");
+    }
+
+    [Fact]
+    public void TheBoxCannotGrowTallerThanTheSpaceSheStandsIn()
+    {
+        // Every number here is the engine's, not ours: the dialogue face's line height, a Farmer's own frame height, and
+        // the scale the bubble is drawn at.
+        int lineSpacing = EngineInt("StardewValley/Game1.cs", 3104, "dialogueFont.LineSpacing = ", ";");
+        int spriteHeight = EngineInt("StardewValley/FarmerSprite.cs", 564, "base.SpriteHeight = ", ";");
+        int engineScale = EngineInt(
+            Path.Combine("StardewValley.BellsAndWhistles", "SpriteText.cs"),
+            463,
+            "Vector2.Zero, ",
+            ", SpriteEffects.None");
+        CompanionBubble.SpriteScale.Should().Be(
+            engineScale,
+            "the box and tail are drawn at the engine's own scale, and the lift the budget divides by is that same scale");
+
+        int lift = spriteHeight * CompanionBubble.SpriteScale;
+
+        int lines = CompanionBubble.LinesThatFit(lineSpacing, spriteHeight);
+        (lines * lineSpacing + BubbleLayout.BoxPaddingY).Should().BeLessThanOrEqualTo(
+            lift,
+            $"a box of {lines} dialogue lines must still fit the {lift} px the engine lifts overhead text by");
+        ((lines + 1) * lineSpacing + BubbleLayout.BoxPaddingY).Should().BeGreaterThan(
+            lift,
+            "the budget is the LARGEST that fits, not merely a small number: one more line would climb above her");
+
+        // And the layout that budget produces is the height the budget allows.
+        BubbleLayout layout = BubbleLayout.For(new Vector2(0f, lift), new Vector2(100f, lines * lineSpacing));
+        layout.Box.Height.Should().BeLessThanOrEqualTo(lift, "the box the draw builds for the allowed lines stays inside the space");
+
+        CompanionBubble.LinesThatFit(lineSpacing, spriteHeight: 8).Should().Be(1, "a sprite too short for a line still shows the one line the line needs");
+    }
+
+    [Fact]
+    public void ALineInsideTheBudgetIsShownWholeAndPastItIsCut()
+    {
+        string twoLines = "鬓角全是汗，头发黏在颈侧，" + Environment.NewLine + "手背一抹黏糊糊的。";
+        CompanionBubble.ClampToLines(twoLines, 2).Should().Be(
+            twoLines.Trim(),
+            "a line the box can hold is not touched: the whole sentence she said reaches the world");
+
+        string[] six =
+        {
+            "一", "二", "三", "四", "五", "六",
+        };
+        string cut = CompanionBubble.ClampToLines(string.Join(Environment.NewLine, six), 2);
+        string[] kept = cut.Replace("\r\n", "\n").Split('\n');
+        kept.Should().HaveCount(2, "the budget is the number of lines, not a suggestion");
+        kept[0].Should().Be("一", "the cut keeps the wrapped run's own lines, in order - it invents nothing");
+        kept[1].Should().Be("二" + CompanionBubble.Ellipsis, "the cut says so on the line it stops at");
+        cut.Should().NotContain("三", "nothing past the budget is drawn; the chat write already carried the whole sentence");
+    }
+
+    [Fact]
+    public void TheGeometryCopiedHereIsStillTheEnginesOwn()
+    {
+        // The box and the tail are copied from one routine: if the engine moves those tiles or changes the padding, this
+        // copy is wrong, and the failure names the line to re-derive rather than drawing someone else's pixels.
+        // The last two fragments are also the reason the routine is no longer CALLED: it measures (:455) and draws (:465)
+        // with Game1.smallFont, the face that made a spoken line too small to read.
+        AssertLinesContain(Path.Combine(DecompiledRelativeRoot, "StardewValley.BellsAndWhistles", "SpriteText.cs"), new (int Line, string Fragment)[]
+        {
+            (455, "Vector2 vector = Game1.smallFont.MeasureString(s);"),
+            (456, "new Rectangle(241, 503, 9, 9)"),
+            (463, "new Rectangle(251, 506, 5, 5)"),
+            (465, "Utility.drawTextWithShadow(b, s, Game1.smallFont"),
+        });
     }
 
     [Fact]
@@ -268,6 +419,25 @@ public sealed class CompanionBubbleTests
             }
             yield return (relative, StripLineComments(File.ReadAllText(file)));
         }
+    }
+
+    /// <summary>
+    /// The integer one decompiled line assigns, read from the engine's own source: no second hand-written copy of a
+    /// fact this gate compares against.
+    /// </summary>
+    private static int EngineInt(string relativePath, int line, string prefix, string suffix)
+    {
+        string path = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, RepositoryRelativeRoot, DecompiledRelativeRoot, relativePath));
+        File.Exists(path).Should().BeTrue($"the decompiled reference must exist at {relativePath}; re-derive the engine seam against the target version");
+        string text = File.ReadAllLines(path)[line - 1];
+
+        int at = text.IndexOf(prefix, StringComparison.Ordinal);
+        Assert.True(at >= 0, $"decompiled {Path.GetFileName(relativePath)}:{line} no longer contains '{prefix}' -- the target version drifted; re-derive the engine seam before accepting this presentation path.");
+        int start = at + prefix.Length;
+        int end = text.IndexOf(suffix, start, StringComparison.Ordinal);
+        Assert.True(end > start, $"decompiled {Path.GetFileName(relativePath)}:{line} does not end '{prefix}' with '{suffix}'");
+        // The engine writes a float where it draws (4f); the number is the same one.
+        return int.Parse(text[start..end].TrimEnd('f'), CultureInfo.InvariantCulture);
     }
 
     private static void AssertLinesContain(string relative, IReadOnlyList<(int Line, string Fragment)> expected)

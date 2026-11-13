@@ -360,6 +360,7 @@ public sealed partial class ModEntry : Mod
             // seam probes are (a GAMEBUDDY_STARDEW_* variable set by the external
             // harness) rather than by a field in a user profile.
             this.pathPredicateProbe = PathPredicateProbe.TryStart(this.Monitor);
+            this.companionChatProbe = CompanionChatProbe.TryStart(this.Monitor);
             return;
         }
         bool hostConfigured = this.config.HostFarmhandProvisioning?.Enable == true;
@@ -1284,6 +1285,10 @@ public sealed partial class ModEntry : Mod
                 this.PumpBridgeWhileBodyOwned();
                 return;
             }
+            // The companion-chat probe types into the engine's own chat box and owns no actor, so it runs beside the
+            // bridge rather than in front of it: it must not be able to hold up a request while it measures.
+            if (this.companionChatProbe is not null && this.companionChatProbe.Update())
+                this.companionChatProbe = null;
             // The path-predicate probe is a one-tick read-only measurement that
             // needs only an idle actor and the post-scenario collision field, so
             // it is consulted before any body owner and never claims the actor.
@@ -2539,8 +2544,9 @@ public sealed partial class ModEntry : Mod
     /// WHAT CROSSES THE WIRE IS THE LINE, NOT A DRAWING. The previous shape broadcast two sprites - glyphs and a panel
     /// assembled from the bubble's centre tile - because a broadcast sprite must be something the receiving client can
     /// reload from a content asset name. What arrived was a right-angled rectangle with no corners, no edges and no
-    /// tail. Now the wire carries the speaker and the text, and the engine draws the bubble itself
-    /// (<c>SpriteText.drawSmallTextBubble</c>), so the presentation is the game's, not a reconstruction of it.
+    /// tail. Now the wire carries the speaker and the text, and the engine's own 9-slice box and pointer are drawn around
+    /// it over her head (<see cref="CompanionBubble.Draw"/>) - the box the game's own speech bubbles use, with the glyphs
+    /// in the dialogue face rather than the pet-name font, so the line is as readable as a villager's.
     /// </para>
     /// <para>
     /// Topology: only the AI screen reaches this method (the host role has no bridge). The message goes to the Mod's own
@@ -2733,14 +2739,14 @@ public sealed partial class ModEntry : Mod
     }
 
     /// <summary>
-    /// The per-frame half of every live companion line: where the speaker is NOW, and one engine call per line.
+    /// The per-frame half of every live companion line: where the speaker is NOW, and one bubble per line.
     ///
     /// <para>
-    /// The position still has to be re-derived every frame: she walks. The engine's bubble routine places the box
-    /// around the bottom-centre it is given and draws it immediately, so it holds no reference to the speaker and has
-    /// no place to re-anchor from - the per-frame work is one <c>StandingPixel</c> read (cached by the engine against
-    /// her position), one camera conversion and the draw. Nothing is allocated per frame, and no sprite exists to be
-    /// tracked: a line that is over is dropped by <see cref="CompanionBubbleBoard.Expire"/> before anything is drawn.
+    /// The position still has to be re-derived every frame: she walks. The bubble is drawn around the bottom-centre it
+    /// is given, so it holds no reference to the speaker and has no place to re-anchor from - the per-frame work is one
+    /// <c>StandingPixel</c> read (cached by the engine against her position), one camera conversion and the draw.
+    /// Nothing is allocated per frame, and no sprite exists to be tracked: a line that is over is dropped by
+    /// <see cref="CompanionBubbleBoard.Expire"/> before anything is drawn.
     /// </para>
     /// </summary>
     private void DrawCompanionBubbles(GameLocation location, SpriteBatch batch)
@@ -2756,11 +2762,14 @@ public sealed partial class ModEntry : Mod
                 // She is not on this map - a scene change ends the line, because there is no head to hang it over.
                 continue;
             }
+            // Her own frame height bounds the bubble twice over: the anchor is lifted by it, and the box may not grow
+            // taller than the space it lifts through, so a long line wraps and is cut instead of climbing the screen.
+            int spriteHeight = speaker.Sprite.SpriteHeight;
             CompanionBubble.Draw(
                 batch,
                 line.Text,
-                Game1.GlobalToLocal(
-                    CompanionBubble.BottomCenter(speaker.StandingPixel, speaker.Sprite.SpriteHeight)));
+                Game1.GlobalToLocal(CompanionBubble.BottomCenter(speaker.StandingPixel, spriteHeight)),
+                spriteHeight);
         }
     }
 
