@@ -3,9 +3,9 @@
  *
  * <p>
  * This module exists because the same fact had two spellings and a third was about to be added. The map, weather, tool,
- * season and clock tables lived inside `runtime-core.internal.ts`, while `snapshot-hud.ts` rendered the season from a
- * second array of its own and the clock as a bare `06:20`; a per-turn block assembled from either would have had to pick
- * a spelling per line.
+ * season and clock tables lived inside `runtime-core.internal.ts`, while `snapshot-hud.ts` - deleted in `90b1cabf` -
+ * rendered the season from a second array of its own and the clock as a bare `06:20`; a per-turn block assembled from
+ * either would have had to pick a spelling per line.
  * </p>
  *
  * <p>
