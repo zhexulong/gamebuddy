@@ -621,6 +621,11 @@ const gameClock = createGameClock({
   // The beat carries the run's OWN answer to "who cleared pause-when-out-of-focus" (`assessPauseOnUnfocus`), read
   // lazily: `readModLogText` is declared further down, and the probe only runs once a heartbeat fires.
   pauseOnUnfocus: () => assessPauseOnUnfocus({ modLog: readModLogText() }),
+  // And the beat ASKS the world for its reading instead of waiting to be handed one (game-clock.mjs: `round52` read two
+  // clock values twenty game-minutes apart while the Mod's own console showed its tick advancing, and the log could not
+  // say whether the world had stopped or the Mod had). `readGameClockOnce` is a hoisted declaration and this closure is
+  // only called from a beat, so binding it here costs nothing at module evaluation.
+  solicit: () => (client === null ? { notAttempted: "bridge_not_attached" } : readGameClockOnce({ source: "solicit" })),
 });
 // The LAST world snapshot and the LAST actor pose this run actually observed.
 //
@@ -959,15 +964,21 @@ function rememberObservation() {
  * second reading and therefore no way to tell a paused world from a Mod that stopped publishing, which is the whole
  * question its verdict depends on. One `observe_request` answers it, and an observe is the same read the Agent's own
  * `stardew_observe` makes: it changes nothing in the world.
+ *
+ * It answers `{ reading, reason }`, because the two callers need different things from a refusal: the last read before
+ * the verdict only needs the miss recorded, while the heartbeat has to print the code it got back.
  */
 async function readGameClockOnce({ source }) {
   try {
     await client.observe();
   } catch (error) {
     // A refused observe is NOT a reading: it is recorded as one of the reasons the clock could not be measured.
-    return gameClock.observeUnreadable({ source, reason: classifyFailure(error).reasonCode });
+    const reason = classifyFailure(error).reasonCode;
+    gameClock.observeUnreadable({ source, reason });
+    return { reading: null, reason };
   }
-  return gameClock.observe(client?.state?.snapshot ?? null, { source });
+  // A bridge that answered with a world-not-ready snapshot is equally not a reading, and `observe` records why.
+  return { reading: gameClock.observe(client?.state?.snapshot ?? null, { source }), reason: null };
 }
 function rememberPose(observation) {
   if (observation === null || observation === undefined) return;
@@ -1168,6 +1179,10 @@ hostMemoryTimer.unref?.();
 ledger.record("run.start");
 client.onConnectionFact((fact) => {
   if (fact?.state !== "disconnected") return;
+  // The bridge this run reads the clock through is gone, and this runner never reconnects (one `connect`, one
+  // `client.close`): a beat that kept asking would repeat a known refusal every 30 s and pad the run's own
+  // `unreadable` count with it. From here the beat says `not_attempted:bridge_closed` and keeps reporting the silence.
+  gameClock.close();
   const entry = Object.freeze({
     reasonCode: fact.reasonCode ?? null,
     atMs: Date.now(),
@@ -6300,6 +6315,9 @@ try {
   });
   unwindSteps.push(reclamationStep({ step: "binding_close", ok: bindingFailure === null, detail: bindingFailure }));
   let detachFailure = null;
+  // The bridge is about to go: from here a beat that fires must not go asking it anything (game-clock.mjs `close`), so
+  // it says `not_attempted:bridge_closed` instead of reporting the closed bridge as a solicitation that failed.
+  gameClock.close();
   try {
     client.close("agent_ab_complete");
   } catch (error) {

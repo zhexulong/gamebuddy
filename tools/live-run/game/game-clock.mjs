@@ -47,17 +47,47 @@
  * reports only at the end cannot describe a run that stalls, so this module prints as it samples:
  * </p>
  * <ul>
- *   <li>{@link GAME_CLOCK_READ}, at every read, with `atMs`, the game's four clock fields, and the GAME minutes since the
- *       first read - the log itself then shows whether the world was moving, and how far it had got at the last read
- *       before the silence;</li>
- *   <li>`GAME_CLOCK_STALLED`, from {@link createGameClock}.heartbeat, once per `heartbeatMs` of silence, so a quiet log
- *       says whether the sampler has stopped reading and what the last clock it saw was. A sampler that never read at all
- *       says so in the line: the clock is only readable from an admitted snapshot, and `lastReading: null` is that fact,
- *       not an omission.</li>
+ *   <li>{@link GAME_CLOCK_READ}, at every read, with `atMs`, `source`, the game's four clock fields, and the GAME minutes
+ *       since the first read - the log itself then shows whether the world was moving, and how far it had got at the last
+ *       read before the silence;</li>
+ *   <li>`GAME_CLOCK_STALLED`, from {@link createGameClock}.heartbeat, once per `heartbeatMs` of SNAPSHOT silence, so a
+ *       quiet log says what the snapshot channel has stopped delivering and what clock the beat read when it asked. A
+ *       sampler that no snapshot ever reached says so with `lastSnapshotReading: null`, which is that fact and not an
+ *       omission.</li>
  * </ul>
  * <p>
  * Both are bounded into the traffic that already exists: one line per admitted snapshot (never per poll - a second look at
  * a held snapshot is not a read) and one line per bound of silence. The END-OF-RUN VERDICT IS UNCHANGED by them.
+ * </p>
+ *
+ * <h2>The beat asks for its own reading</h2>
+ * <p>
+ * MEASURED 2026-11-21 (`round52`): `GAME_CLOCK_READ` twice, 06:10 then 06:30, then nine `GAME_CLOCK_STALLED` lines whose
+ * `sinceLastReadMs` grew 216 s -> 247 s -> 277 s, while the Mod's own console printed `capability_publication tick
+ * 2310 -> 19630`. Two readings twenty game-minutes apart, then 4.6 real minutes in which nothing was read - and the tick
+ * counter cannot settle it, because it advances while the game is PAUSED. A `GAME_CLOCK_STALLED` line that only waits to
+ * be handed a snapshot therefore cannot distinguish a stopped world from a silent Mod, which is the question it exists
+ * for. Waiting is the defect: the bridge has no unsolicited push, so a run that is not acting is handed nothing at all.
+ * </p>
+ * <p>
+ * So the beat SOLICITS one reading of its own, through the same `observe` the run already makes (a read, which changes
+ * nothing). Three bounds keep that honest in a live run:
+ * </p>
+ * <ul>
+ *   <li>ONE ask per `heartbeatMs`, not per tick. The beat runs on a timer, and the bound is re-checked here so a caller
+ *       that beats from a waiting loop cannot turn the instrument into a poll;</li>
+ *   <li>the two channels stay distinguishable: a solicited read prints `source: "solicit"`, a snapshot-delivered one
+ *       `source: "snapshot"`, and `GAME_CLOCK_STALLED` keeps measuring the SNAPSHOT silence (`sinceLastSnapshotMs`, which
+ *       keeps growing across solicited reads). The line carries the clock it just read, so a reader sees the clock move
+ *       while the pushes are absent - the two facts are separate numbers, not one word;</li>
+ *   <li>an ask that FAILED says so on the same line (`solicit_failed:<reason>`), and an ask the run could not make at all -
+ *       the bridge is not attached yet, or it has closed - says `not_attempted:<reason>` rather than pretending the bridge
+ *       answered. {@link createGameClock} returns `close`, which stops the asking once the bridge is gone.</li>
+ * </ul>
+ * <p>
+ * THE END-OF-RUN VERDICT IS UNCHANGED. A solicited read is one more reading of the same world: it can make a span
+ * measurable that was not measured before, and {@link createGameClock} still refuses a still world and a single reading
+ * exactly as it did.
  * </p>
  */
 
@@ -111,26 +141,37 @@ export function readSnapshotClock(snapshot) {
 /**
  * The run's sampler: feed it every snapshot the run reads, ask it once at the end, and beat it while you wait.
  *
- * `observe` is called wherever the runner already samples the world, so it costs no bridge traffic. Two samples of the
- * SAME admitted snapshot are ONE reading taken twice - the bridge admits a snapshot only in answer to a solicited
- * observe, so the object's identity is what distinguishes "the world was read again" from "the same read was looked at
- * again", and counting the second as a reading would let a run claim it had seen the world twice.
+ * `observe` is called wherever the runner already samples the world, so it costs no bridge traffic; the ONLY read this
+ * module adds is the beat's own (`solicit`, one per {@link heartbeatMs}). Two samples of the SAME admitted snapshot are
+ * ONE reading taken twice - the bridge admits a snapshot only in answer to a solicited observe, so the object's identity
+ * is what distinguishes "the world was read again" from "the same read was looked at again", and counting the second as
+ * a reading would let a run claim it had seen the world twice.
  *
  * `print` is where the live lines go (the run's stderr); `heartbeatMs` is the silence that earns one; and
  * `pauseOnUnfocus` is the run's own probe for who cleared the engine's pause-when-out-of-focus, read lazily so a
  * heartbeat carries it (`assessPauseOnUnfocus`) instead of the reader having to assume it.
+ *
+ * `solicit` is how the beat asks the world for a reading of its own, and it answers one of three shapes, because "the
+ * bridge refused" and "there is no bridge to ask" are different facts that an operator acts on differently:
+ *
+ *   - `{ reading }` - the world was read (the reading itself is already `observe`d by the caller, so it prints there);
+ *   - `{ reason }` - the bridge was asked and refused, naming its own code;
+ *   - `{ notAttempted: reason }` - nothing was asked (no bridge yet, or one that has closed).
  */
 export function createGameClock({
   now = () => Date.now(),
   print = (line) => console.error(line),
   heartbeatMs = GAME_CLOCK_HEARTBEAT_MS,
   pauseOnUnfocus = null,
+  solicit = null,
 } = {}) {
   const startedAtMs = now();
   const readings = [];
   const misses = [];
   let samples = 0;
   let lastSnapshot = null;
+  let lastSolicitAtMs = null;
+  let bridgeClosed = false;
 
   const observe = (snapshot, { source = "snapshot" } = {}) => {
     const clock = readSnapshotClock(snapshot);
@@ -218,24 +259,81 @@ export function createGameClock({
   };
 
   /**
-   * A beat of the live instrument: the silence since the last read, or `line: null` while the silence is still inside
-   * the bound (the read lines are already that interval's record, and a beat per tick would bury them).
-   *
-   * It never manufactures a reading: with no snapshot in hand there is no clock to read, and the line says exactly that
-   * with `lastReading: null` instead of leaving a gap in the log.
+   * One reading the beat asks for itself, bounded and named. The bound is checked HERE rather than at the call site: a
+   * beat that fires from a waiting loop must not become a poll of the bridge.
    */
-  const heartbeat = ({ atMs = now() } = {}) => {
-    const last = readings.at(-1) ?? null;
-    const sinceLastReadMs = atMs - (last?.atMs ?? startedAtMs);
-    const stalled = sinceLastReadMs >= heartbeatMs;
-    const line = stalled
-      ? describeStall({ atMs, sinceLastReadMs, last, heartbeatMs, readingsSeen: readings.length, pauseOnUnfocus })
-      : null;
-    if (line !== null) print(line);
-    return Object.freeze({ stalled, sinceLastReadMs, line });
+  const solicitOnce = async (atMs) => {
+    if (solicit === null) return { state: "not_attempted", reason: "no_solicitation_bound", reading: null };
+    if (bridgeClosed) return { state: "not_attempted", reason: "bridge_closed", reading: null };
+    if (lastSolicitAtMs !== null && atMs - lastSolicitAtMs < heartbeatMs)
+      return { state: "not_attempted", reason: "inside_heartbeat_bound", reading: null };
+    lastSolicitAtMs = atMs;
+    let answer;
+    try {
+      answer = await solicit();
+    } catch (error) {
+      // A solicit that threw is a failed ask, never a beat that kills the run it is describing.
+      return { state: "solicit_failed", reason: String(error?.message ?? error).slice(0, 120), reading: null };
+    }
+    if (answer?.reading !== null && answer?.reading !== undefined)
+      return { state: "read", reason: null, reading: answer.reading };
+    if (answer?.notAttempted !== null && answer?.notAttempted !== undefined)
+      return { state: "not_attempted", reason: String(answer.notAttempted), reading: null };
+    return { state: "solicit_failed", reason: String(answer?.reason ?? "no_reading_returned"), reading: null };
   };
 
-  return Object.freeze({ observe, observeUnreadable, heartbeat, read });
+  /**
+   * A beat of the live instrument: ASK the world for a reading, then report the silence the SNAPSHOT channel left behind
+   * - or `line: null` while that silence is still inside the bound (the read lines are already that interval's record,
+   * and a beat per tick would bury them).
+   *
+   * The silence is measured from the last snapshot-delivered reading, not from the last reading of any kind: once the
+   * beat reads the clock itself, "nothing has been read for 30 s" could never be true again, and the fact that no
+   * snapshot is arriving (the push path is silent while the world is not) would disappear from the log.
+   */
+  const heartbeat = async ({ atMs = now() } = {}) => {
+    const lastSnapshotReading = lastReadingFrom(readings, "snapshot");
+    const sinceLastSnapshotMs = atMs - (lastSnapshotReading?.atMs ?? startedAtMs);
+    const stalled = sinceLastSnapshotMs >= heartbeatMs;
+    if (!stalled) return Object.freeze({ stalled: false, sinceLastSnapshotMs, solicit: null, line: null });
+    const solicitToken = describeSolicit(await solicitOnce(atMs));
+    const line = describeStall({
+      atMs,
+      sinceLastSnapshotMs,
+      lastReading: readings.at(-1) ?? null,
+      lastSnapshotReading,
+      first: readings[0] ?? null,
+      solicit: solicitToken,
+      heartbeatMs,
+      readingsSeen: readings.length,
+      pauseOnUnfocus,
+    });
+    print(line);
+    return Object.freeze({ stalled: true, sinceLastSnapshotMs, solicit: solicitToken, line });
+  };
+
+  /** The bridge this clock reads through is gone: from here the beat says `not_attempted`, it does not go asking. */
+  const close = () => {
+    bridgeClosed = true;
+  };
+
+  return Object.freeze({ observe, observeUnreadable, heartbeat, read, close });
+}
+
+/** The newest reading a CHANNEL produced: `snapshot` when the run's own sampling read the world, `solicit` when the beat
+ * asked. Returns `null` when that channel has never produced one - which is not the same as "the last reading was
+ * old". */
+function lastReadingFrom(readings, source) {
+  for (let index = readings.length - 1; index >= 0; index -= 1) {
+    if (readings[index].source === source) return readings[index];
+  }
+  return null;
+}
+
+/** A solicitation as one token a log tail can carry, in the same shape `pausedOnUnfocus` already uses (`state:detail`). */
+function describeSolicit({ state, reason, reading }) {
+  if (state === "read") return `read:${reading.timeOfDay}`;
+  return `${state}:${reason}`;
 }
 
 /** The span between the first and the last reading, on the sampler's own axis.
@@ -307,51 +405,62 @@ function describeClock({ readings, first, last, spanMinutes, verdict, reasonCode
 }
 
 /**
- * `GAME_CLOCK_READ {atMs, timeOfDay, day, season, year, minutesSinceFirst, source}` - one read of the world, printed
- * as it happens.
+ * The fields one reading contributes to a printed line, spelled once for both lines that carry readings.
  *
  * `minutesSinceFirst` is a GAME span on the same axis `spanOf` lays readings on, so a log tail shows the clock moving in
  * the game's own unit (and a night it crossed correctly) rather than in wall minutes the world does not experience.
  */
-function describeRead({ reading, first }) {
-  return `GAME_CLOCK_READ ${JSON.stringify({
+function readingFields({ reading, first }) {
+  if (reading === null) return null;
+  return {
     atMs: reading.atMs,
+    source: reading.source,
     timeOfDay: reading.timeOfDay,
     day: reading.day,
     season: reading.season,
     year: reading.year,
     minutesSinceFirst: spanOf([first, reading]),
-    source: reading.source,
-  })}`;
+  };
 }
 
 /**
- * `GAME_CLOCK_STALLED {...}` - the silence itself, with the last clock the run saw.
- *
- * `note` tells the three silences apart rather than leaving a `null` to interpret: nothing has ever been read (the clock
- * is only readable from an admitted snapshot, and none was admitted), or a reading exists and nothing has arrived since.
+ * `GAME_CLOCK_READ {atMs, source, timeOfDay, day, season, year, minutesSinceFirst}` - one read of the world, printed as
+ * it happens. `source` is what makes the two channels readable apart: `solicit` is the beat's own ask, `snapshot` is a
+ * read the run's sampling took.
  */
-function describeStall({ atMs, sinceLastReadMs, last, heartbeatMs, readingsSeen, pauseOnUnfocus }) {
+function describeRead({ reading, first }) {
+  return `GAME_CLOCK_READ ${JSON.stringify(readingFields({ reading, first }))}`;
+}
+
+/**
+ * `GAME_CLOCK_STALLED {...}` - the SILENCE of the snapshot channel, with the clock the beat just read.
+ *
+ * Four things are kept apart rather than left to a `null`: `sinceLastSnapshotMs` is the silence of the push channel and
+ * keeps growing across solicited reads; `solicit` says whether this beat asked and what came back; `lastReading` is the
+ * newest reading of ANY channel (so a reader sees the clock move while the silence grows); and `lastSnapshotReading` is
+ * the reading the silence is measured from - `null` says no snapshot was ever read, not that the sampler forgot.
+ */
+function describeStall({
+  atMs,
+  sinceLastSnapshotMs,
+  lastReading,
+  lastSnapshotReading,
+  first,
+  solicit,
+  heartbeatMs,
+  readingsSeen,
+  pauseOnUnfocus,
+}) {
   return `GAME_CLOCK_STALLED ${JSON.stringify({
     atMs,
-    sinceLastReadMs,
+    sinceLastSnapshotMs,
     heartbeatMs,
     readingsSeen,
-    lastReading:
-      last === null
-        ? null
-        : {
-            atMs: last.atMs,
-            timeOfDay: last.timeOfDay,
-            day: last.day,
-            season: last.season,
-            year: last.year,
-          },
+    solicit,
+    lastReading: readingFields({ reading: lastReading, first }),
+    lastSnapshotReading: readingFields({ reading: lastSnapshotReading, first }),
     pausedOnUnfocus: describePauseOnUnfocus(pauseOnUnfocus),
-    note:
-      last === null
-        ? "no_snapshot_admitted:this_sampler_reads_the_clock_from_an_admitted_snapshot_only"
-        : "no_snapshot_since_that_read",
+    note: lastSnapshotReading === null ? "no_snapshot_read_since_run_start" : "no_snapshot_since_that_read",
   })}`;
 }
 
