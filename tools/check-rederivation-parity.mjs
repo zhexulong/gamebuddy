@@ -346,10 +346,12 @@ export function checkRederivationParity({ root = ROOT, registry = null, override
     const declared = entry.perIterationArguments;
     if (!Array.isArray(declared) || declared.length === 0) continue;
     const member = entry.engineMember.split(".").at(-1);
+    let found = 0;
     for (const path of listSources({ root, directory: entry.scan ?? "", overrides })) {
       const source = blankNonCode(read(path));
       const loopVariables = iterationVariables(source);
       for (const call of callSites(source, member)) {
+        found += 1;
         examined.callSites += 1;
         for (const argument of declared) {
           examined.arguments += 1;
@@ -366,6 +368,12 @@ export function checkRederivationParity({ root = ROOT, registry = null, override
         }
       }
     }
+    // A declaration whose invocation this scan could not find examined NOTHING, which is not the same as a clean site.
+    if (found === 0)
+      findings.push({
+        code: "rederivation_site_missing",
+        detail: `${entry.id}: no ${member} invocation under ${entry.scan}`,
+      });
   }
 
   examined.engineMembers = engineMembers.size;

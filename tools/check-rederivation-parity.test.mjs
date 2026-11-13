@@ -214,6 +214,22 @@ test("a hoisted value is caught even when the expression is written inline at th
   );
 });
 
+test("a declared argument whose invocation the scan cannot find measures nothing and is refused", () => {
+  // "zero call sites" is not a clean site: the same shape as a gate that passes over an empty population. The scan is
+  // pointed at a tree that cannot contain the call, and the declaration is named rather than believed.
+  const report = checkRederivationParity({
+    registry: withEntry("fishing-chance-targeted-bait", { scan: "host/src" }),
+  });
+
+  assert.equal(report.verdict, "blocked");
+  assert.ok(
+    codes(report).includes(
+      "rederivation_site_missing:fishing-chance-targeted-bait: no GetChance invocation under host/src",
+    ),
+    `a scan that found nothing must say so: ${codes(report).join(", ")}`,
+  );
+});
+
 test("a registry that measured nothing is refused rather than passed", () => {
   const report = checkRederivationParity({ registry: [] });
 
