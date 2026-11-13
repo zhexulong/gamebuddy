@@ -4680,6 +4680,33 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
     /// section is therefore synchronous on purpose: no <c>await</c>, no continuation and
     /// no reentrancy may sit between the write and the restore, or a STOP, a refusal or
     /// an exception could leave the actor held.
+    /// </para>
+    ///
+    /// <para>
+    /// STAMINA IS SPENT BY THE CALL BELOW, INSIDE EACH TOOL'S OWN <c>DoFunction</c> - not by
+    /// <c>Farmer.useTool</c>, which is only the sprite-frame wrapper around it. Measured on the
+    /// target-version assembly over a fresh <c>TargetFamilyWorld</c> farmer at 270 stamina, one use
+    /// each: hoe 270-&gt;268, axe 268, pickaxe 268, watering can 268; the same can at charge 3 costs 8.
+    /// Each number is the engine's own formula: <c>Hoe.cs:58</c> <c>2*power - FarmingLevel*0.1</c> (the
+    /// ARGUMENT, hence flat in the charge), <c>Axe.cs:68</c> the same against ForagingLevel,
+    /// <c>Pickaxe.cs:88</c> and <c>WateringCan.cs:169</c> <c>2*(toolPower+1) - skill*0.1</c>. So a
+    /// receipt's <c>expected_stamina_cost</c> describes what this call already charges, and a tool-use
+    /// gateway that skipped it would not make a swing free - it would make the swing not happen.
+    /// <c>ProbeWorldContractTests.EveryContractClaimHoldsOnAFreshProbeWorld</c> is the gate that keeps
+    /// "the swing costs nothing" unshippable: it asserts a <c>break_rock</c> swing lowers
+    /// <c>Farmer.Stamina</c> and goes red the moment this call stops charging it.
+    /// </para>
+    ///
+    /// <para>
+    /// WHAT IS GENUINELY MISSING FROM VANILLA IS THE SWING, NOT THE COST. <c>Tool.beginUsing</c> arms the
+    /// animation (<c>Tool.cs:729-741</c>), <c>Tool.endUsing</c> plays it
+    /// (<c>Tool.cs:605-622</c>, <c>animateOnce(160/168/176/184, 60f*num, 8)</c>), and the effect lands at
+    /// the END of that animation through <c>Game1.toolAnimationDone</c> (<c>Game1.cs:11073-11120</c>) -
+    /// which is why that path would make every action asynchronous. The effects are broadcast on THIS
+    /// path already (<c>Hoe.cs:99,112</c>, <c>WateringCan.cs:183</c>); only the avatar's swing is not.
+    /// The two questions must not be conflated: the cost is settled here, the animation is a separate
+    /// design decision with a documented reason (see the scythe note below).
+    /// </para>
     /// </summary>
     private static void UseNativeToolOnTile(Tool tool, GameLocation location, int tileX, int tileY, Farmer who, float staminaBefore, int charge = 0)
     {
@@ -4745,6 +4772,14 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
     /// own geometry and the engine's own per-tile statements (`:1390-1404`) run inside THIS call, in one tick, and the
     /// reads on either side of it describe the whole swing. The visible swing animation is the price, and this Mod
     /// already pays it everywhere: `UseNativeToolOnTile` above calls `DoFunction` directly for the same reason.
+    /// </para>
+    /// <para>
+    /// A SWING STRIKES NOTHING IN STAMINA, and that is read off the assembly rather than assumed: the only
+    /// <c>who.Stamina -=</c> sites in the target version are the four tool families (<c>Hoe.cs:58</c>, <c>Axe.cs:68</c>,
+    /// <c>Pickaxe.cs:88</c>, <c>WateringCan.cs:169</c>) plus <c>MilkPail.cs:103</c>, <c>Shears.cs:64</c> and
+    /// <c>FishingRod.cs:408</c>. <c>MeleeWeapon</c> has none, so this receipt's <c>expected_stamina_cost=0</c> describes
+    /// the engine instead of excusing a missing charge. The tool families do charge, inside their own <c>DoFunction</c>
+    /// - see the note on <c>UseNativeToolOnTile</c> above for the measured numbers and the gate that pins them.
     /// </para>
     /// <para>
     /// THE ACTOR STATE IS THE HAZARD, exactly as `who.toolPower` is for a charged tool use. The animation index is
