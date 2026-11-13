@@ -37,9 +37,14 @@
  *                 (`parameters: Type.Object({...})`) or from the descriptor (`buildCandidateToolSchema`), whose per-action
  *                 arms are read here and whose fallback is `declaredArgumentNames(descriptor)`. The caller-identity fields
  *                 (`requestId`, `idempotencyKey`) are the ones `callerRequestIds` reads - a declaration, not a list.
- *   tool-args     the same mounts, one layer further: the keys `toArgs` actually forwards to the wire, or
- *                 `declaredArguments(descriptor, params)`. A schema that declares an argument the projector drops is an
- *                 intent the tool accepts and silently discards, which is instance `charge`'s second half.
+ *   tool-args     the same mounts, one layer further: the arguments `toArgs` forwards to the wire, read from the
+ *                 DECLARATION it derives from rather than from the syntax it is written in - its own object literal, the
+ *                 frozen table it names (`forwardDeclaredArguments(TILE_TARGET_ARGUMENTS, params)`, declared in
+ *                 `host/src/action-registry.ts`), or the action's descriptor (`declaredArguments(descriptor, params)`),
+ *                 whose arguments the catalog already projects. A schema that declares an argument the projector drops is
+ *                 an intent the tool accepts and silently discards, which is instance `charge`'s second half; and a mount
+ *                 that forwards names is a claim about its action, so a forwarded set that differs from the action's own
+ *                 declared arguments is `tool_args_disagrees_with_declaration:<action>`.
  *   mod           the Mod's reader: `BridgeProtocol.ExecutionArgumentProperties(action)`, the `switch` that
  *                 `TryDeserializeExecutionRequest` requires to match the frame's `args` exactly. Read from source, no
  *                 build; `Array.Empty<string>()` is its statement that an action carries no argument at all.
@@ -51,6 +56,12 @@
  *
  * one line per refusing surface, so an argument two surfaces drop is two lines and not one. The admitting surface named is
  * the first in alphabetical order, which is a spelling of "this is not a complaint about the other one".
+ *
+ * READING THROUGH A DECLARATION, NOT THROUGH SYNTAX (2026-11-13). Six mounts stopped spelling their argument names twice
+ * and began forwarding `TILE_TARGET_ARGUMENTS`; eight more resolved their own descriptor inside a loop. This gate parsed
+ * the call's syntax, found no literal, and blocked with `tool_args_unreadable` on fourteen actions that were correct -
+ * the reading depended on HOW a mount was written. It now follows the declaration the mount names, so both shapes resolve
+ * to the same set for the same action, and the only thing still blocked is a declaration this reader cannot read.
  *
  * THE LIFECYCLE RULE, per (action, surface): an action absent from a surface is `surface_silently_omits_action:<action>:
  * <surface>` unless a declaration says why. Two declarations exist and both are read, never restated:
@@ -99,8 +110,9 @@
  *   `surface_silently_omits_action:sweep_scythe:tool-schema` (tools/check-action-surface-parity.test.mjs)
  * red-proof: inject  an argument deleted from a mount's `toArgs`, a key deleted from the wire declaration, an arm
  *   deleted from the Mod's switch, a `continue` added beside the grammar's two declared filters, a `toArgs` this reader
- *   cannot enumerate, and an empty source tree -> `surface_refuses_what_another_accepts:<action>:<argument>:tool-args:*`,
- *   `surface_silently_omits_action:<action>:wire|mod`,
+ *   cannot enumerate, an argument deleted from the frozen table a forwarded mount names, and an empty source tree ->
+ *   `surface_refuses_what_another_accepts:<action>:<argument>:tool-args:*`,
+ *   `tool_args_disagrees_with_declaration:<action>`, `surface_silently_omits_action:<action>:wire|mod`,
  *   `plan_grammar_vocabulary_not_descriptor_derived:undeclared_skip:*`, `tool_args_unreadable:<action>`,
  *   `action_surface_population_empty` (tools/check-action-surface-parity.test.mjs)
  */
@@ -117,6 +129,9 @@ export const PATHS = Object.freeze({
   planGrammar: "host/src/body-program-script.ts",
   toolSchema: "host/src/game-tools.ts",
   mod: "integrations/stardew/src/Core/Protocol/BridgeProtocol.cs",
+  // Not a surface: the argument tables a mounted tool FORWARDS by name. Read because `tool-args` must follow the
+  // declaration a mount names, and this file is where those declarations live.
+  actionRegistry: "host/src/action-registry.ts",
 });
 
 /** The surfaces, in the order findings name them. Every one is read from its own declaration, never from a table here. */
@@ -127,6 +142,7 @@ export const EXIT = Object.freeze({ passed: 0, failed: 1, blocked: 2 });
 export const CODES = Object.freeze({
   refuses: "surface_refuses_what_another_accepts",
   omits: "surface_silently_omits_action",
+  disagrees: "tool_args_disagrees_with_declaration",
 });
 
 // ---------------------------------------------------------------------------
@@ -445,12 +461,13 @@ function undeclaredSkips(builder) {
  * descriptor (`buildCandidateToolSchema`), whose per-action arms are override constraints and whose fallback is the
  * descriptor's own argument list. The caller-identity fields are the ones `callerRequestIds` reads.
  */
-export function readToolSurface(source, catalog) {
+export function readToolSurface(source, catalog, argumentDeclarations = "") {
   const text = stripComments(source);
   const problems = [];
   const identity = callerIdentityFields(text);
   const arms = schemaArmKeys(text);
   const loops = loopActionIds(text);
+  const tables = readArgumentTables(argumentDeclarations);
   const describesDescriptor = (text.match(/declaredArgumentNames\(descriptor\)/gu) ?? []).length > 0;
   if (!describesDescriptor) problems.push("tool_schema_descriptor_fallback_unreadable");
   if (loops.length === 0) problems.push("tool_schema_loop_mounts_unreadable");
@@ -472,13 +489,16 @@ export function readToolSurface(source, catalog) {
       continue;
     }
     const parameters = declaredToolParameters(block, arms, catalog, identity);
-    const forwarded = forwardedToolArguments(block, catalog);
+    const declaration = forwardedArgumentDeclaration(block);
     for (const id of ids) {
       if (parameters === null) problems.push(`tool_schema_parameters_unreadable:${id}`);
       else if (declaredByAction.has(id)) problems.push(`tool_mounted_twice:${id}`);
       else declaredByAction.set(id, parameters);
-      if (forwarded === null) problems.push(`tool_args_unreadable:${id}`);
-      else forwardedByAction.set(id, forwarded);
+      const forwarded = forwardedArguments(declaration, id, catalog, tables);
+      if (forwarded !== null) forwardedByAction.set(id, forwarded);
+      else if (declaration?.kind === "table")
+        problems.push(`tool_args_declaration_unreadable:${id}:${declaration.name}`);
+      else problems.push(`tool_args_unreadable:${id}`);
     }
   }
   if (declaredByAction.size === 0) problems.push("tool_schema_mounts_empty");
@@ -570,23 +590,58 @@ function declaredToolParameters(block, arms, catalog, identity) {
   return new Set([...entry.arguments].filter((name) => !identity.includes(name)));
 }
 
-/** What one mount's `toArgs` FORWARDS, or null when it is not a shape this reader can enumerate. */
-function forwardedToolArguments(block, catalog) {
+/**
+ * The argument tables a mount may FORWARD by name: every `const NAME … = Object.freeze(["a", "b"])` in the registry.
+ *
+ * A map rather than a list, because which table a mount names is a fact about that mount; writing `TILE_TARGET_ARGUMENTS`
+ * here as well would be the second spelling this gate exists to catch. A table whose literal this reader cannot enumerate
+ * is left out, so a mount forwarding it is blocked by name instead of being read as an argument set it does not have.
+ */
+export function readArgumentTables(source) {
+  const text = stripComments(source);
+  const tables = new Map();
+  for (const declaration of text.matchAll(/const ([A-Za-z_$][\w$]*)[^=;\n]*=\s*Object\.freeze\(\[/gu)) {
+    const names = frozenStringArray(text, declaration[1]);
+    if (names !== null && names.length > 0) tables.set(declaration[1], names);
+  }
+  return tables;
+}
+
+/**
+ * What one mount's `toArgs` forwards, as the DECLARATION it derives from - never as a key list parsed out of the call.
+ *
+ * Three shapes, and the third is why this reader is shaped like this: a mount may hand-write its object literal, name a
+ * frozen table of arguments (`forwardDeclaredArguments(TILE_TARGET_ARGUMENTS, params)`), or forward the action's own
+ * descriptor (`declaredArguments(descriptor, params)`). Only the first carries its names; the other two name a
+ * declaration, and the resolution below reads that declaration per action. Anything else is null: a reading this gate
+ * cannot take is blocked by name rather than guessed at.
+ */
+function forwardedArgumentDeclaration(block) {
   const at = block.indexOf("toArgs:");
   if (at < 0) return null;
   const rest = block.slice(at);
-  if (/=>\s*declaredArguments\(/u.test(rest)) {
-    const actionId = /\baction:\s*"([a-z0-9_]+)"/u.exec(block)?.[1];
-    const entry = actionId === undefined ? undefined : catalog.actions.get(actionId);
-    return entry === undefined ? null : new Set(entry.arguments);
-  }
+  if (/=>\s*declaredArguments\(/u.test(rest)) return { kind: "descriptor" };
+  const table = /=>\s*forwardDeclaredArguments\(\s*([A-Za-z_$][\w$]*)\s*,/u.exec(rest);
+  if (table !== null) return { kind: "table", name: table[1] };
   const arrow = /=>\s*\(\s*\{/u.exec(rest);
   if (arrow === null) return null;
   const open = arrow.index + arrow[0].length - 1;
   const close = balancedEnd(rest, open);
   if (close < 0) return null;
   const keys = objectLiteralKeys(rest.slice(open + 1, close));
-  return keys === null ? null : new Set(keys);
+  return keys === null ? null : { kind: "literal", names: new Set(keys) };
+}
+
+/** The argument set one mount's declaration yields for one action, or null when that declaration cannot be read. */
+function forwardedArguments(declaration, actionId, catalog, tables) {
+  if (declaration === null) return null;
+  if (declaration.kind === "literal") return declaration.names;
+  if (declaration.kind === "table") {
+    const names = tables.get(declaration.name);
+    return names === undefined ? null : new Set(names);
+  }
+  const entry = catalog.actions.get(actionId);
+  return entry === undefined ? null : new Set(entry.arguments);
 }
 
 // ---------------------------------------------------------------------------
@@ -635,6 +690,25 @@ function compareAction(actionId, catalogEntry, carried, grammarSurface) {
   return { findings, declared, pairs: arguments_.length };
 }
 
+/**
+ * The projector must forward exactly the arguments its action declares.
+ *
+ * A mount is a claim about the arguments its action carries, whether it spells them or forwards them; the set the action's
+ * catalog entry declares is the one it had to match. A difference in EITHER direction is `tool_args_disagrees_with_
+ * declaration:<action>` - a finding rather than a blocked run, because both readings were taken and both are readable: this
+ * is the two of them disagreeing, which is the defect, not a reading this gate could not make.
+ */
+function projectionDisagreements(forwarded, catalog) {
+  const findings = [];
+  for (const [actionId, names] of forwarded) {
+    const entry = catalog.get(actionId);
+    if (entry === undefined) continue;
+    if (names.size === entry.arguments.size && [...names].every((name) => entry.arguments.has(name))) continue;
+    findings.push(`${CODES.disagrees}:${actionId}`);
+  }
+  return findings;
+}
+
 /** The verdict, worst first: a surface this gate could not read is blocked even when other surfaces also disagree. */
 function verdictOf({ findings, problems, blocks }) {
   if (blocks.length > 0 || problems.length > 0) return "blocked";
@@ -645,17 +719,19 @@ function verdictOf({ findings, problems, blocks }) {
  * The matrix, over the sources it is given.
  *
  * `sources` is the five files' text plus the parsed catalog, so the falsifier injects a violation into a real declaration
- * instead of rewriting the reader. `examined` is the number of actions any surface names, `pairs` is the number of
- * (action, argument) cells those actions contribute - the two numbers a zero can hide behind.
+ * instead of rewriting the reader. `argumentDeclarations` is `host/src/action-registry.ts`, read for the frozen argument
+ * tables a mount forwards by name; it carries no actions of its own, so it adds no population. `examined` is the number of
+ * actions any surface names, `pairs` is the number of (action, argument) cells those actions contribute - the two numbers
+ * a zero can hide behind.
  */
-export function checkActionSurfaceParity({ catalog, wire, planGrammar, toolSchema, mod }) {
+export function checkActionSurfaceParity({ catalog, wire, planGrammar, toolSchema, mod, argumentDeclarations }) {
   const problems = [];
   const blocks = [];
   const catalogSurface = readCatalogSurface(catalog);
   const wireSurface = readWireSurface(wire ?? "");
   const modSurface = readModSurface(mod ?? "");
   const grammarSurface = readPlanGrammarSurface(planGrammar ?? "", catalogSurface);
-  const toolSurface = readToolSurface(toolSchema ?? "", catalogSurface);
+  const toolSurface = readToolSurface(toolSchema ?? "", catalogSurface, argumentDeclarations ?? "");
   for (const [id, surface] of [
     ["catalog", catalogSurface],
     ["wire", wireSurface],
@@ -683,7 +759,7 @@ export function checkActionSurfaceParity({ catalog, wire, planGrammar, toolSchem
     for (const actionId of actions.keys())
       if (!catalogSurface.actions.has(actionId)) blocks.push(`action_not_in_catalog:${actionId}:${surfaceId}`);
 
-  const findings = [];
+  const findings = projectionDisagreements(toolSurface.forwarded, catalogSurface.actions);
   const declarations = new Map();
   let pairs = 0;
   for (const actionId of actionIds) {
@@ -713,7 +789,7 @@ export function checkActionSurfaceParity({ catalog, wire, planGrammar, toolSchem
   });
 }
 
-/** Read one checkout's five authorities and run the matrix over them. */
+/** Read one checkout's five authorities and the argument declarations they forward from, and run the matrix over them. */
 export function readActionSurfaceParity({ root = REPOSITORY_ROOT } = {}) {
   const sources = {};
   const blocked = [];
@@ -722,6 +798,7 @@ export function readActionSurfaceParity({ root = REPOSITORY_ROOT } = {}) {
     ["planGrammar", PATHS.planGrammar],
     ["toolSchema", PATHS.toolSchema],
     ["mod", PATHS.mod],
+    ["argumentDeclarations", PATHS.actionRegistry],
   ]) {
     try {
       sources[key] = readFileSync(resolve(root, path), "utf8");

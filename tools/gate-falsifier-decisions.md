@@ -2107,3 +2107,65 @@ state: the return type's guarantee belongs to that signature and is lost by a la
 statement after the switch or relaxes the type, while `assertNever` travels with the switch. This is **not** recorded as
 a defect in the gate's reading - it cannot see a return type, and its rule is a uniform spelling with no
 side-condition - but the narrower finding is kept: this gate's message asserted a consequence it had not measured.
+
+## The parity gate reads the declaration a mount forwards from
+
+`check:action-surface-parity` / `test:action-surface-parity`. Six minutes after the refactor `14223302` ("one projection
+rule, and the tile-target set is named once") landed, the matrix was red on fourteen actions that were correct:
+
+```
+blocked: tool_args_unreadable:harvest_bush
+blocked: tool_args_unreadable:fish_here
+blocked: tool_args_unreadable:harvest_fruit_tree
+blocked: tool_args_unreadable:shake_tree
+blocked: tool_args_unreadable:take_pedestal_item
+blocked: tool_args_unreadable:toggle_fence_gate
+blocked: tool_args_unreadable:machine_inspect            (# and seven more: the loop mounts)
+population per authority: catalog 106 · mod 103 · plan-grammar 96 · tool-args 89 · tool-schema 103 · wire 103
+action surface parity blocked                                    exit 2
+```
+
+Six of them had stopped spelling `{ x, y, expectedTargetId }` and began forwarding `TILE_TARGET_ARGUMENTS`; eight were
+mounts inside `for (const action of [...] as const)` loops forwarding `declaredArguments(registration.descriptor, params)`.
+The `tool-args` reader followed the call's SYNTAX - a `toArgs: (params) => ({ ... })` literal, or a mount block carrying a
+literal `action: "<id>"` - so a forwarded mount had no key list to enumerate and a loop mount had no id to look up. Blocking
+is the right verdict for a reading that cannot be taken; the wrong part was that the reading depended on HOW the mount was
+written, and a refactor that removed a second spelling turned fourteen correct mounts into a blocked gate.
+
+**The reading is now the declaration, not the syntax.** `toArgs` resolves in three shapes, each to the declaration it names:
+its own literal keys; the frozen table named in `forwardDeclaredArguments(<TABLE>, params)`, read from
+`host/src/action-registry.ts` as every `const <NAME> … = Object.freeze([...])` it declares (a map, not a list of the one
+table name - which table a mount names is a fact about that mount); or the action's own descriptor for
+`declaredArguments(descriptor, params)`, whose arguments the catalog already projects. The action id is resolved per ID
+rather than per mount block, so a loop mount is read for each action its header names.
+
+**A forwarded set is a claim about its action, and a disagreement is a finding.** `tool_args_disagrees_with_declaration:
+<action>` is emitted when the set a mount resolves to differs in EITHER direction from the set the action's catalog entry
+declares. A finding rather than a block, because both readings were taken and both are readable - the two disagreeing is
+the defect. Only a declaration this gate cannot read is still blocked: `tool_args_declaration_unreadable:<action>:<table>`
+when a mount forwards a name the declarations do not carry, and `tool_args_unreadable:<action>` for a shape that is neither
+a literal nor a named declaration.
+
+**Both shapes, one set.** `test:action-surface-parity` replaces the first forwarded mount with the literal form it replaced
+and asserts the two readings produce the same set for every mounted action; it also injects an argument deleted from
+`TILE_TARGET_ARGUMENTS` and asserts the gate names `harvest_bush` - finding
+
+```
+surface_refuses_what_another_accepts:harvest_bush:expectedTargetId:tool-args:catalog
+tool_args_disagrees_with_declaration:harvest_bush
+```
+
+and not a block. That second line is load-bearing and was seen red once: with the `projectionDisagreements(...)` call
+replaced by `[]`, the same injection prints the refusal line alone. The first line alone would have been enough to fail the
+run, so the test asserts the code this unit added, not one that already existed.
+
+**Readings before and after, same tree, same catalog.** Before: `tool-args 89`, the fourteen `tool_args_unreadable` rows
+above, fourteen `surface_silently_omits_action:*:tool-args` rows, exit 2. After: `tool-args 103`, `pairs checked 307`,
+`action surface parity passed`, exit 0 - and the disagreement check finds nothing to report on today's tree, which is the
+expected reading: every literal mount already agrees with the declaration its action publishes.
+
+**The population is the argument, not the count.** `readArgumentTables` scans the registry for frozen string arrays
+instead of naming `TILE_TARGET_ARGUMENTS`; a table whose literal cannot be enumerated (a spread) is left out of the map, so
+a mount forwarding it blocks by name rather than being read as an empty argument set. `check-action-surface-parity.test.mjs`
+holds the case: a forwarded name the declarations do not carry is `tool_args_declaration_unreadable:harvest_bush:
+TILE_TARGET_ARGUMENTS_MISSING`, exit 2.

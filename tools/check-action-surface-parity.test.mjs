@@ -14,12 +14,15 @@
  *   `surface_silently_omits_action:sweep_scythe:tool-schema` and `:tool-args`
  * red-proof: inject  a `charge` deleted from a mount's `parameters`, one deleted from its `toArgs`, the `sleep` key
  *   deleted from `EXECUTION_REQUEST_ARGUMENT_RULES`, its arm deleted from the Mod's `ExecutionArgumentProperties`, a
- *   `continue` added beside the grammar's two declared filters, a `toArgs` spread, and an empty source tree ->
+ *   `continue` added beside the grammar's two declared filters, a `toArgs` spread, an argument deleted from the frozen
+ *   table a forwarded mount names, and an empty source tree ->
  *   `surface_refuses_what_another_accepts:till_soil:charge:tool-schema:*`,
  *   `surface_refuses_what_another_accepts:till_soil:charge:tool-args:*`,
  *   `surface_silently_omits_action:sleep:wire`, `surface_silently_omits_action:sleep:mod`,
- *   `plan_grammar_vocabulary_not_descriptor_derived:undeclared_skip:*`, `tool_args_unreadable:till_soil`, and
- *   `action_surface_population_empty`
+ *   `plan_grammar_vocabulary_not_descriptor_derived:undeclared_skip:*`, `tool_args_unreadable:till_soil`,
+ *   `tool_args_declaration_unreadable:<action>:<table>`,
+ *   `surface_refuses_what_another_accepts:harvest_bush:expectedTargetId:tool-args:catalog` and
+ *   `tool_args_disagrees_with_declaration:harvest_bush`, and `action_surface_population_empty`
  */
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
@@ -47,6 +50,7 @@ const sources = () => ({
   planGrammar: real(PATHS.planGrammar),
   toolSchema: real(PATHS.toolSchema),
   mod: real(PATHS.mod),
+  argumentDeclarations: real(PATHS.actionRegistry),
 });
 
 /** A named assertion: a matrix finding has to be a whole line, and a near miss is worth reading. */
@@ -97,7 +101,7 @@ test("an action the Mod spells `Array.Empty` carries NO argument and is not repo
 
 const treeCache = new Map();
 
-/** A committed tree's five authorities, written under the OS temporary directory - never inside the repository. */
+/** A committed tree's authorities, written under the OS temporary directory - never inside the repository. */
 function historicalTree(revision) {
   if (!treeCache.has(revision)) {
     let unavailable = null;
@@ -111,7 +115,14 @@ function historicalTree(revision) {
     }
     if (unavailable === null) {
       const root = mkdtempSync(join(tmpdir(), "action-surface-parity-"));
-      for (const path of [PATHS.catalog, PATHS.wire, PATHS.planGrammar, PATHS.toolSchema, PATHS.mod]) {
+      for (const path of [
+        PATHS.catalog,
+        PATHS.wire,
+        PATHS.planGrammar,
+        PATHS.toolSchema,
+        PATHS.mod,
+        PATHS.actionRegistry,
+      ]) {
         const target = join(root, path);
         mkdirSync(dirname(target), { recursive: true });
         writeFileSync(target, execFileSync("git", ["show", `${revision}:${path}`], { cwd: REPOSITORY_ROOT }));
@@ -220,6 +231,7 @@ test("red proof (inject): an empty source tree is a blocked population, not a cl
     planGrammar: "",
     toolSchema: "",
     mod: "",
+    argumentDeclarations: "",
   });
   assert.equal(report.status, "blocked");
   assert.equal(report.examined, 0);
@@ -227,8 +239,68 @@ test("red proof (inject): an empty source tree is a blocked population, not a cl
 });
 
 test("the tool reader takes its identity fields from `callerRequestIds`, not from a list", () => {
-  const surface = readToolSurface(real(PATHS.toolSchema), readCatalogSurface(realCatalog()));
+  const surface = readToolSurface(
+    real(PATHS.toolSchema),
+    readCatalogSurface(realCatalog()),
+    real(PATHS.actionRegistry),
+  );
   assert.deepEqual([...surface.identity].sort(), ["idempotencyKey", "requestId"]);
   // ... and therefore the schema for an action carries its ACTION arguments only.
   assert.deepEqual([...surface.actions.get("till_soil")].sort(), ["charge", "x", "y"]);
+});
+test("a mount that forwards a table is read through the DECLARATION, not through the literal it stopped writing", () => {
+  const surface = readToolSurface(
+    real(PATHS.toolSchema),
+    readCatalogSurface(realCatalog()),
+    real(PATHS.actionRegistry),
+  );
+  assert.deepEqual(surface.problems, []);
+  assert.deepEqual([...surface.forwarded.get("harvest_bush")].sort(), ["expectedTargetId", "x", "y"]);
+  // ... and the loop mounts resolve the action's own descriptor, which is the set the catalog already projects.
+  assert.deepEqual([...surface.forwarded.get("machine_inspect")].sort(), ["expectedTargetId", "x", "y"]);
+});
+
+test("both shapes of one mount resolve to the same set for the same action", () => {
+  const catalog = readCatalogSurface(realCatalog());
+  const registry = real(PATHS.actionRegistry);
+  const forwarded = readToolSurface(real(PATHS.toolSchema), catalog, registry);
+  const literal = readToolSurface(
+    real(PATHS.toolSchema).replace(
+      "toArgs: (params) => forwardDeclaredArguments(TILE_TARGET_ARGUMENTS, params),",
+      "toArgs: (params) => ({ x: params.x, y: params.y, expectedTargetId: params.expectedTargetId }),",
+    ),
+    catalog,
+    registry,
+  );
+  const sets = (surface) =>
+    Object.fromEntries([...surface.forwarded].map(([actionId, names]) => [actionId, [...names].sort()]));
+  assert.deepEqual(sets(literal), sets(forwarded), "a forwarded mount and a hand-written one must read the same");
+  assert.deepEqual([...literal.forwarded.get("harvest_bush")].sort(), ["expectedTargetId", "x", "y"]);
+});
+
+test("red proof (inject): an argument deleted from the forwarded table is a finding that names the action", () => {
+  const read = sources();
+  read.argumentDeclarations = read.argumentDeclarations.replace(
+    'export const TILE_TARGET_ARGUMENTS = Object.freeze(["x", "y", "expectedTargetId"] as const);',
+    'export const TILE_TARGET_ARGUMENTS = Object.freeze(["x", "y"] as const);',
+  );
+  const report = checkActionSurfaceParity(read);
+  // A finding, not a block: both readings were taken and they are what disagree.
+  assert.equal(report.status, "failed");
+  assertFinding(report, /^tool_args_disagrees_with_declaration:harvest_bush$/u);
+  assertFinding(report, new RegExp(`^${CODES.refuses}:harvest_bush:expectedTargetId:tool-args:[a-z-]+$`, "u"));
+});
+
+test("red proof (inject): a forwarded table the declarations do not carry is BLOCKED by name", () => {
+  const read = sources();
+  read.toolSchema = read.toolSchema.replace(
+    "toArgs: (params) => forwardDeclaredArguments(TILE_TARGET_ARGUMENTS, params),",
+    "toArgs: (params) => forwardDeclaredArguments(TILE_TARGET_ARGUMENTS_MISSING, params),",
+  );
+  const report = checkActionSurfaceParity(read);
+  assert.equal(report.status, "blocked");
+  assert.ok(
+    report.blocked.includes("tool_args_declaration_unreadable:harvest_bush:TILE_TARGET_ARGUMENTS_MISSING"),
+    report.blocked.join("\n"),
+  );
 });
