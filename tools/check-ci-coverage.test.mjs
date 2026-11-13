@@ -168,6 +168,18 @@ test("a register entry needs a reason from the vocabulary and its measurement", 
   ]);
 });
 
+test("a script listed twice in the register is named, because registered= would count a gate that is not there", () => {
+  const result = coverage({
+    scripts: { "check:live-run-isolation": "node tools/check-live-run-isolation.mjs" },
+    register: [
+      { script: "check:live-run-isolation", reason: "environment", detail: "the Steam install at D:/Steam" },
+      { script: "check:live-run-isolation", reason: "environment", detail: "a Mod Release build" },
+    ],
+  });
+  assert.deepEqual(result.problems, [{ code: "register_duplicated", script: "check:live-run-isolation" }]);
+  assert.equal(result.derived.length, 0);
+});
+
 test("test:* suites are the corpus runner's business, not this gate's", () => {
   const result = coverage({ scripts: { "test:stardew-loop-closure": "node --test tools/x.test.mjs" } });
   assert.deepEqual(result.gateScripts, []);

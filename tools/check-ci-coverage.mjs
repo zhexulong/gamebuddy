@@ -124,7 +124,7 @@ const REGISTER = Object.freeze([
     script: "check:live-run-isolation",
     reason: "environment",
     detail:
-      "builds lanes from %LOCALAPPDATA%/GameBuddy/stardew-profiles/native-local-stable and the Steam install at D:/Steam/...; a checkout has neither, so it exits 1 with live_run_isolation_source_profile_config_missing",
+      "builds lanes from %LOCALAPPDATA%/GameBuddy/stardew-profiles/native-local-stable and the Steam install at D:/Steam/...; a checkout has neither, so it exits 1 with live_run_isolation_source_profile_config_missing, measured native_local_fixture_path_missing when the release build is absent too",
   },
   {
     script: "check:stardew-native-multiplayer-sensitivity",
@@ -135,11 +135,6 @@ const REGISTER = Object.freeze([
     script: "check:live-run-artifact-freshness",
     reason: "environment",
     detail: "compares live-run outputs against source age; there is no run to judge on a push",
-  },
-  {
-    script: "check:live-run-isolation",
-    reason: "environment",
-    detail: "measured native_local_fixture_path_missing: it needs a Mod Release build and a game install",
   },
   {
     script: "check:production-pack-load",
@@ -278,6 +273,14 @@ export function deriveCiCoverage({ scripts, workflowText: text, register = REGIS
     (runsInWorkflow(name) ? workflow : derived).push(name);
   }
   const problems = [];
+  // A register that names one script twice reports one gate more than it registers: `registered` collapses the pair,
+  // so the printed count and the derived set disagree and neither of them says so. Measured 2026-11-13:
+  // `check:live-run-isolation` was listed at :124 and at :140, and `registered=29` described 28 gates.
+  const listed = new Set();
+  for (const entry of register) {
+    if (listed.has(entry.script)) problems.push({ code: "register_duplicated", script: entry.script });
+    listed.add(entry.script);
+  }
   for (const entry of register) {
     const known = gateScripts.includes(entry.script);
     if (!known) problems.push({ code: "register_stale", script: entry.script });
@@ -323,6 +326,11 @@ function report(coverage) {
         break;
       case "register_undetailed":
         process.stderr.write(`ci_coverage_register_undetailed:${problem.script} must say why, with the measurement\n`);
+        break;
+      case "register_duplicated":
+        process.stderr.write(
+          `ci_coverage_register_duplicated:${problem.script} is listed twice, so registered= counts a gate that is not there\n`,
+        );
         break;
       default:
         process.stderr.write(
