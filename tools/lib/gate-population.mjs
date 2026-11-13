@@ -82,6 +82,32 @@ const NESTED_FILE_REASON =
   "gate-shaped but outside the gate directory `tools/` - a subdirectory holds run-harness helpers and modules - and no " +
   "`package.json` script names it";
 
+/**
+ * What each gate-shaped file outside the gate directory IS, because "no script names it" states the rule and not the
+ * verdict: a reader still has to open the file to learn whether it is an unwired gate or not a gate at all.
+ *
+ * These are the tree's own three members of that shape (measured 2026-11-13). The entries are not a population - they
+ * cannot add a member - and each one EXPIRES: `deriveGatePopulation` throws `dropped_verdict_stale` for a path that is no
+ * longer a dropped member, so a file that joins a script or leaves the tree takes its verdict with it.
+ */
+const DROPPED_FILE_VERDICTS = new Map([
+  [
+    "tools/live-run/chat/audit-trace.mjs",
+    "not a gate: the audit recorder, validator and writer the chat live-run harness imports; its `audit-` name is a " +
+      "coincidence of the glob",
+  ],
+  [
+    "tools/live-run/chat/check-post-history-instructions-live.mjs",
+    "a live probe rather than a tree gate: it needs a real runtime root and a served provider endpoint, so the run " +
+      "harness owns when it runs and the census has no tree state to judge",
+  ],
+  [
+    "tools/scripts/check-lockfile-freeze.mjs",
+    "not a tree gate: it fires from the commit hook when THIS commit changes a lockfile and runs `check:dependency-risk`, " +
+      "so its subject is the staged set rather than the tree",
+  ],
+]);
+
 /** Half A: every declared gate script, with the paths its command runs. */
 function declaredGateScripts(root) {
   const parsed = read(join(root, "package.json"));
@@ -172,7 +198,7 @@ function isGateName(name) {
  * prints nothing is how a corpus reports `untaken 0` while discarding 42 scripts, which is the defect this field exists
  * for: an operator can only audit an exclusion they can see.
  */
-export function deriveGatePopulation({ root }) {
+export function deriveGatePopulation({ root, verdicts = DROPPED_FILE_VERDICTS }) {
   const scripts = declaredGateScripts(root);
   const suites = droppedSuiteScripts(root);
   const claimed = new Set(scripts.flatMap((gate) => gate.entryFiles));
@@ -186,8 +212,14 @@ export function deriveGatePopulation({ root }) {
     ...suites,
     ...orphanFiles
       .filter((file) => file.slice(`${GATE_DIRECTORY}/`.length).includes("/"))
-      .map((file) => ({ member: file, reason: NESTED_FILE_REASON })),
+      .map((file) => ({ member: file, reason: verdicts.get(file) ?? NESTED_FILE_REASON })),
   ];
+  // A verdict that outlives its reason is the same defect as a filter that drops in silence: if the file is on disk and
+  // is no longer dropped - a script now claims it, or it moved into the gate directory - the entry has to go.
+  const names = new Set(dropped.map((entry) => entry.member));
+  const shapedSet = new Set(shaped);
+  for (const path of verdicts.keys())
+    if (shapedSet.has(path) && !names.has(path)) throw new Error(`dropped_verdict_stale:${path}`);
   return {
     gates,
     scripts,

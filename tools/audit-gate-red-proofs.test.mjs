@@ -21,6 +21,10 @@
  * red-proof: inject  the untracked term made a suffix that disappears at zero, as this audit had it before -> "a zero
  *                    complement is a reading that has to be printed, not an absence a reader fills in", actual
  *                    `... unreadable=0 ` with no term at all (tools/audit-gate-red-proofs.test.mjs)
+ *
+ * red-proof: inject  a stated verdict for a file that has since become a gate (the map entry moved from a dropped path to
+ *                    `tools/check-action-coverage.mjs`) -> `Error: dropped_verdict_stale:tools/check-action-coverage.mjs`,
+ *                    exit 1, instead of an excuse outliving the member it describes (tools/audit-gate-red-proofs.test.mjs)
  */
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
@@ -39,7 +43,7 @@ import {
   readRedProofMarkers,
 } from "./audit-gate-red-proofs.mjs";
 import { POPULATION_FIELDS } from "./lib/assert-non-vacuous.mjs";
-import { isGateFile } from "./lib/gate-population.mjs";
+import { deriveGatePopulation, isGateFile } from "./lib/gate-population.mjs";
 
 const REPOSITORY_ROOT = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const KEYWORD = ["red", "proof"].join("-");
@@ -549,5 +553,34 @@ test("every member the derivation leaves out is named with its reason, and a zer
   } finally {
     rmSync(root, { recursive: true, force: true });
     rmSync(clean, { recursive: true, force: true });
+  }
+});
+
+// A `dropped:` line that states only the rule still leaves the reader to open the file to learn whether it is a gate
+// nobody wired or not a gate at all. The three files outside the gate directory say which they are - and each verdict
+// EXPIRES: an entry whose file is no longer a dropped member throws instead of outliving the thing it describes.
+test("a dropped member carries the verdict for its own file, and a verdict that no longer applies is a stale exemption", () => {
+  const proof = marker("inject", "an omission -> the finding", "tools/check-a.test.mjs");
+  const root = makeTree({
+    "tools/check-a.mjs": gateSource(proof),
+    "tools/nested/check-sub.mjs": gateSource("// no proof here"),
+  });
+  try {
+    const verdicts = new Map([["tools/nested/check-sub.mjs", "not a gate: a helper module the harness imports"]]);
+    const entry = deriveGatePopulation({ root, verdicts }).dropped.find(
+      (candidate) => candidate.member === "tools/nested/check-sub.mjs",
+    );
+    assert.equal(entry.reason, "not a gate: a helper module the harness imports");
+    // The drift that matters: the file became a gate, so the verdict describes a member nobody drops any more.
+    assert.throws(
+      () =>
+        deriveGatePopulation({
+          root,
+          verdicts: new Map([["tools/check-a.mjs", "not a gate: the fixture's gate, now run by `check:a`"]]),
+        }),
+      /dropped_verdict_stale:tools\/check-a\.mjs/u,
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
   }
 });
