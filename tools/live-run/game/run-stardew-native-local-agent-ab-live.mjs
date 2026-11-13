@@ -455,10 +455,232 @@ function failureDumpEvidence(thrown) {
     voiceResult,
     agentTurn: agentTurnResult,
     bridgeFacts: factLog,
-    authenticated: client.state.authenticated,
-    revision: client.state.snapshot?.revision,
+    // `client` is null for a run that died before the bridge connected, and that is a fact about the run, not a reason to
+    // throw the whole evidence block away: `null` here says "there was no connection to ask", which is what the dump
+    // must report for a failure at the config read or the connect itself.
+    authenticated: client?.state?.authenticated ?? null,
+    revision: client?.state?.snapshot?.revision ?? null,
   };
 }
+// ── The record the failure dump assembles from ──────────────────────────────────────────────────────────────
+//
+// WHY THIS SITS HERE, immediately above the two `process.once` hooks, and not beside each field's first use: module
+// evaluation IS the run's first phase, and that phase throws. The hooks are installed before the artifact freshness
+// check, the stale-lock pair check, the Mod config read and the bridge connect - every one of which can throw, and every
+// one of which happens BEFORE a declaration further down the file would have run. The dump then assembles the run's
+// result out of exactly these bindings, so a binding declared lower is a ReferenceError that REPLACES the run's failure
+// with `assembly failed` and leaves no artifact at all.
+//
+// Measured 2026-11-13 on `head-ladder`: the module died at the stale-lock pair check and the dump published
+// `Cannot access 'programSubmissions' before initialization` rather than the pair. `programSubmissions` alone was
+// hoisted first, and the dump simply stopped at the next member (`bodyProgramJournal`) - so the whole population was
+// enumerated instead of chased. `run-stardew-native-local-agent-ab-live.record-order.test.mjs` reads THIS FILE and
+// fails, naming the binding and its line, when any `const`/`let`/`class` the dump path reads is declared after the
+// first `process.once(`.
+//
+// Everything below is a container the run fills, an outcome a later stage assigns, a constant its readers consult, or a
+// placeholder assigned at the point its value becomes knowable. None of it is derived from anything that runs later, so
+// declaring it first changes no behaviour.
+
+// Three values that cannot exist before the Mod config is read and the bridge is connected. Declared here and ASSIGNED
+// where they used to be declared - the pattern `capture`, `runtimeRoot` and `gameSessionId` above already use for this
+// same reason: the dump path reads them, and null is the name of "this run never got that far" instead of an exception
+// that destroys the artifact.
+let identity = null;
+let client = null;
+let bodyProgramJournal = null;
+// The constants the dump's readers consult. \`buildRunResult\` calls \`readToolTiming\`/\`toolTimingCategory\` and
+// \`writeRunBundle\` reads \`PROGRAM_EVENTS_PAGE_SIZE\`'s readers, so these are part of the record the dump needs even
+// though they never change: a \`const\` declared below the hooks is still in its dead zone when one of them runs.
+/**
+ * A per-tool-call duration only answers "why was this run slow" when it names WHO made the Agent wait.
+ *
+ * `actionTrace` timestamps the bridge call and nothing else, so it cannot see the other owners of agent wall clock. An
+ * audit of a real run read its 533 s over 19 "long actions" as bridge latency, while the same audit named
+ * `delegate_game_task` - a nested agent - separately: the execute response had returned and the tool result landed
+ * 5-60 s later, which is not a shape the bridge can produce. Optimising the journal for a tail that belongs to a nested
+ * agent, or vice versa, is the cost of not separating them. These are different owners with different fixes, so every
+ * agent tool call is attributed here by the NAME OF THE TOOL ACTUALLY CALLED.
+ *
+ * One category per real thing, never a pattern. `stardew_plan_work` compiles a script into a submitted plan and
+ * `stardew_plan_shape` reads what a plan step must supply; neither dispatches an action, and a `stardew_`-prefix rule
+ * would have folded them into dispatch latency. The categories are the mounted surface's tools, spelled one by one, so
+ * a new tool has to be classified on purpose instead of landing in whichever bucket its name resembles.
+ *
+ * Nothing is published unless it is a MEASUREMENT OF THIS RUN: `sessionJsonlPath` is the record bound to this run's own
+ * surface session, and `unboundReason` is what the binding reported when there was none. When the counts disagree with
+ * the frames the run sent, the categories come back `null` and the violation is the only number published.
+ *
+ * The source is the runtime's own session record (the one `readAgentTurnOutcome` reads): a `toolCall` part in an
+ * assistant message carries the call's entry timestamp, the `toolResult` entry matched by `toolCallId` carries the
+ * arrival. A call that never got a result (session cut off mid-call) has no duration and is left out rather than being
+ * given an invented one.
+ */
+const TOOL_TIMING_LONGEST_LIMIT = 10;
+const TOOL_TIMING_INVARIANT_VIOLATED = "TOOL_TIMING_INVARIANT_VIOLATED";
+const TOOL_TIMING_CATEGORIES = Object.freeze([
+  "delegate",
+  "plan_shape",
+  "plan_compile",
+  "program_submit",
+  "program_status",
+  "flat_dispatch",
+]);
+const DELEGATE_TOOL_NAME = "delegate_game_task";
+// The planning tools: one answers what a step must supply, one compiles a written script and submits the result.
+const PLAN_SHAPE_TOOL_NAMES = Object.freeze(["stardew_plan_shape"]);
+const PLAN_COMPILE_TOOL_NAMES = Object.freeze(["stardew_plan_work"]);
+// The program tools: a submission waits on the compile + native accept, a status/event read waits on the journal.
+const PROGRAM_SUBMIT_TOOL_NAMES = Object.freeze(["stardew_submit_action_program"]);
+const PROGRAM_STATUS_TOOL_NAMES = Object.freeze(["stardew_action_program_status", "stardew_action_program_events"]);
+const ACTION_TOOL_NAMES = new Set(Object.values(STARDEW_ACTION_TOOL_NAMES));
+// The plan tools whose call counts the run's cost account reads, by name: `program_status` alone is the poll, and the
+// category above deliberately folds it together with the event log because both are bridge reads of one journal.
+const PLAN_TOOL_NAMES = new Set([
+  ...PLAN_SHAPE_TOOL_NAMES,
+  ...PLAN_COMPILE_TOOL_NAMES,
+  ...PROGRAM_SUBMIT_TOOL_NAMES,
+  ...PROGRAM_STATUS_TOOL_NAMES,
+]);
+
+// Actions that MOVE the actor, LOOK at the world, or change only the actor's own gear.
+// A play session that did nothing but these has not played: run H attempted 14 actions,
+// got 14 refusals and one successful walk, harvested nothing, and still reported `passed`
+// because the verdict only required "a real attempt". "Did the companion actually do
+// something" is a different question from "did it try", and a rung whose whole job is to
+// report what the companion could do must not call an empty session a success.
+const NON_ACCOMPLISHMENT_ACTIONS = Object.freeze(
+  new Set([
+    "move_to_tile",
+    "travel",
+    "enter_exit",
+    "navigate_to_destination",
+    "observe_scene",
+    "inspect_world_map",
+    "express_emote",
+    "face_direction",
+    "equip_tool",
+  ]),
+);
+// memory_covenant's protected item (design chat-long-horizon-memory-probe-design.md
+// §10.5 class 1): the strawberry qualified id that must never enter the
+// shipping bin. The runner asserts on the Mod receipt evidence field, so this
+// is the single spelling used by the covenant probe.
+const PROTECTED_COVENANT_ITEM_ID = "(O)400";
+// Startup phase timings. "The live run is slow to start" needs numbers, not
+// impressions: this separates the phases a reader can act on (bridge connect,
+// covenant seed, runtime materialization, agent turn) instead of one total.
+const phaseTimings = { runStartedAtMs: Date.now(), marks: {} };
+/** The run's own record of what happened when (`run-ledger.mjs`): the dump publishes it, so it exists before the hooks. */
+const ledger = createLedger({ now: () => Date.now() });
+// Free physical memory, sampled cheaply and continuously, because three runs ended with the process simply gone and no
+// log said why.
+//
+// Measured 2026-11-03 (`round28`): the Mod's own heartbeat showed a managed heap growing 32 -> 180 MB in 2.5 minutes and
+// a working set of 1.0 -> 1.25 GB, on a machine holding **2.3 GB free of 31** at the same moment. That is a real number
+// and an ambiguous one - Windows counts file cache as used and reclaims it on demand - so the honest response is to
+// record what free memory was doing when a run dies, beside the reason code, rather than argue about it later.
+//
+// `minFreeMb` over the whole run is the useful statistic: a death under sustained single-digit-hundred free megabytes
+// is a different finding from a death with gigabytes available, and only one of them is our bug.
+const hostMemory = {
+  samples: 0,
+  minFreeMb: null,
+  maxHostRssMb: null,
+  startRssMb: null,
+  minRssMb: null,
+  series: [],
+  // One point per turn, bounded (`HOST_MEMORY_TURN_CAP`), because the question a death leaves open is the SHAPE across
+  // turns and the artifact could not answer it at all (see `../../lib/live-run-memory.mjs`).
+  turns: [],
+  turnsOmitted: 0,
+};
+// The program half of "how far had this run got", updated as the journal reports it. A disconnect that says
+// only the flat count reads as "nothing had happened" on a run whose work all went through programs.
+let lastKnownProgramDispatches = 0;
+const factLog = [];
+// The LAST world snapshot and the LAST actor pose this run actually observed.
+//
+// Reading `client.state.snapshot` when the bundle is assembled is too late: by then the session has finished and
+// the bridge has cleared its state, so a failure dump built from it is all nulls and the contract refuses it
+// (measured 2026-10-16, and it is the same "sample during the run, not after teardown" rule the capture notes
+// carry). They are therefore kept while the bridge is live — the snapshot whenever the world is read, and the pose
+// from each execution receipt's own local observation (the `Snapshot` shape has no facing: protocol.ts:108-111 vs
+// :896-904). These are declared as hoisted function declarations so the sampler below can use them.
+let lastObservedSnapshot = null;
+let lastObservedPose = null;
+// The families this run's OWN snapshots published, with the largest row count seen for each, and how many snapshots
+// that census rests on. Kept while the run is live for the same reason the last snapshot is: after teardown the bridge
+// has cleared its state, and a family that was empty cannot be told from one nobody looked at.
+//
+// This is the denominator of the run's `action_breadth` clause. A target-bound action is only constructible while its
+// `*Targets` family has a row in the snapshot, and one `FixtureScenario` string arms one world - so dividing attempted
+// actions by the 95 published ones charged the companion for the fixture's world (measured: `round39` attempted 15 of
+// the 40 its own observations made addressable, and the gate called that 15 of 95).
+const snapshotFamilyRows = new Map();
+let snapshotCensusSamples = 0;
+let voice = null;
+let voiceChild = null;
+let voiceObservation = null;
+let voiceStarted = false;
+let presentedSummary = null;
+// Presence-mechanism instrumentation (design stardew-companion-presence-mechanisms §1.5 / §2.4).
+// `presentationPieces` records every companion_text commit EXACTLY as the
+// presentation port saw it, in arrival order — the raw evidence for chunked /
+// incremental presentation. `turnStartedAtMs` is the wall-clock moment the
+// agent turn was accepted, so the first piece's time-to-first-bubble is
+// measurable instead of inferred.
+const presentationPieces = [];
+const presentationPieceAtMs = [];
+let turnStartedAtMs = null;
+let agentTurnCount = 0;
+/**
+ * Everything this process has written to stderr, so the Host's own artifact lines can be read back.
+ *
+ * The Host publishes ONE `NATIVE_COMPANION_TURN_DELIVERY` line per turn that had anything to deliver
+ * (`host/dist-test/companion-loop.js`, over the same channel as `BODY_PROGRAM_MOUNT`), and that line is the only place
+ * the run states which parts a turn produced and which pieces it committed. The bundle has to reconcile those against
+ * the pieces this harness's own presentation port counted (`presentation.pieceCount`), and the line exists exactly
+ * once - in the log - so it is kept as it is written rather than re-derived from a different population.
+ *
+ * MEASURED 2026-11-09 (round41): 59 pieces presented, and the thirteen delivery records in the log accounted 46 parts
+ * with `unaccounted: 0`. Both numbers were right (11 reaction sounds, 46 paragraphs, 2 extra pieces from a paragraph the
+ * length budget split) and the bundle could not say so, so a reader reported thirteen pieces - a whole turn - with no
+ * record. See `tools/lib/presentation-delivery-account.mjs`.
+ */
+const hostLogChunks = [];
+// Trace every ordinary-action execution request the Agent sends so a
+// rejected coordinate is attributable to the actual submitted args. A thrown
+// rejection (stale_snapshot, replay rejection, bridge_rejected:*) never returns
+// a receipt, so the catch records the rejection instead of skipping the entry —
+// otherwise the run's own health report sees zero rejections while the session
+// shows real ones.
+const actionTrace = [];
+/** Page size for the journal read: the wire caps an events page at 32 (validateBodyProgramEventsResult). */
+const PROGRAM_EVENTS_PAGE_SIZE = 32;
+/** The per-program execution records, filled at assembly time so every result path publishes the same answer. */
+let programOutcomes = Object.freeze([]);
+// Filled before teardown, so the builder publishes what the programs did rather than when the harness asked.
+let programOutcomesAtTeardown = null;
+// How many submissions existed when the journal was read. A program submitted later did not fail to be observed -
+// it arrived after the harness looked, and that is a different fact from "the Mod did not know it".
+let programOutcomesReadAtSubmissionCount = null;
+// Where and when the run stood, and the two facts a later stage assigns (the runtime root it materialized and the
+// capture directory it opened): null until then, so a failure at either step still publishes what came before it.
+// The covenant planted for `memory_covenant`, the agent turn's own terminal facts, the multi-day record, the
+// narrative judgement and this run's own session record: each is assigned by a later stage and each is published by a
+// failed run too.
+let covenantSeed = null;
+let agentTurnResult = null;
+let voiceResult = null;
+let multidayOutcome = null;
+let historianRubricOutcome = null;
+let runSessionRecord = Object.freeze({
+  path: undefined,
+  reason: "session_record_binding_not_established",
+  searched: Object.freeze([]),
+});
+
 // `once`, not `on`: a throw inside the dump must not re-enter the dump, and both handlers must still terminate the
 // process with the run's failure once the artifact is on disk.
 const exitAfterDump = (error) => {
@@ -651,26 +873,6 @@ const advertisedActionSamples = new Set();
 // was the second case and looked like the first.
 let advertisedSampleCount = 0;
 let advertisedSampleMaxSize = 0;
-// The LAST world snapshot and the LAST actor pose this run actually observed.
-//
-// Reading `client.state.snapshot` when the bundle is assembled is too late: by then the session has finished and
-// the bridge has cleared its state, so a failure dump built from it is all nulls and the contract refuses it
-// (measured 2026-10-16, and it is the same "sample during the run, not after teardown" rule the capture notes
-// carry). They are therefore kept while the bridge is live — the snapshot whenever the world is read, and the pose
-// from each execution receipt's own local observation (the `Snapshot` shape has no facing: protocol.ts:108-111 vs
-// :896-904). These are declared as hoisted function declarations so the sampler below can use them.
-let lastObservedSnapshot = null;
-let lastObservedPose = null;
-// The families this run's OWN snapshots published, with the largest row count seen for each, and how many snapshots
-// that census rests on. Kept while the run is live for the same reason the last snapshot is: after teardown the bridge
-// has cleared its state, and a family that was empty cannot be told from one nobody looked at.
-//
-// This is the denominator of the run's `action_breadth` clause. A target-bound action is only constructible while its
-// `*Targets` family has a row in the snapshot, and one `FixtureScenario` string arms one world - so dividing attempted
-// actions by the 95 published ones charged the companion for the fixture's world (measured: `round39` attempted 15 of
-// the 40 its own observations made addressable, and the gate called that 15 of 95).
-const snapshotFamilyRows = new Map();
-let snapshotCensusSamples = 0;
 function rememberObservation() {
   const snapshot = client?.state?.snapshot;
   if (snapshot !== null && snapshot !== undefined) {
@@ -701,11 +903,6 @@ function sampleAdvertisedActions() {
   advertisedSampleMaxSize = Math.max(advertisedSampleMaxSize, advertised.length);
   for (const actionId of advertised) if (typeof actionId === "string") advertisedActionSamples.add(actionId);
 }
-// memory_covenant's protected item (design chat-long-horizon-memory-probe-design.md
-// §10.5 class 1): the strawberry qualified id that must never enter the
-// shipping bin. The runner asserts on the Mod receipt evidence field, so this
-// is the single spelling used by the covenant probe.
-const PROTECTED_COVENANT_ITEM_ID = "(O)400";
 /**
  * Scenario vocabulary for the presence projection (design
  * architecture/stardew-companion-presence-audit-dimensions.md §3.2): maps the
@@ -812,7 +1009,7 @@ const storedContinuityId = (() => {
 const runContinuityId = usesConfiguredRuntimeRoot
   ? (process.env.GAMEBUDDY_COMPANION_CONTINUITY_ID ?? storedContinuityId ?? `native-agent-${Date.now()}`)
   : `native-agent-${config.PlayerId}-${config.CompanionId}`;
-const identity = Object.freeze({
+identity = Object.freeze({
   playerId: config.PlayerId,
   companionId: config.CompanionId,
   continuityId: runContinuityId,
@@ -830,14 +1027,10 @@ const RUN_BUDGET_MS = (() => {
   return SCENARIO === "multiday_routine" ? 4 * 60 * 60 * 1000 : 600_000;
 })();
 const deadline = Date.now() + RUN_BUDGET_MS;
-// Startup phase timings. "The live run is slow to start" needs numbers, not
-// impressions: this separates the phases a reader can act on (bridge connect,
-// covenant seed, runtime materialization, agent turn) instead of one total.
-const phaseTimings = { runStartedAtMs: Date.now(), marks: {} };
 const markPhase = (name) => {
   phaseTimings.marks[name] = Date.now() - phaseTimings.runStartedAtMs;
 };
-const client = await LocalStardewBridgeClient.connect(
+client = await LocalStardewBridgeClient.connect(
   scope,
   config.PipeName,
   config.BridgeToken,
@@ -851,30 +1044,7 @@ markPhase("bridgeConnectedMs");
 // `bridge_disconnected:local_close`, and nothing recorded what the Mod was told or how far into the run it
 // happened (measured 2026-10-16, and twice before on the retired rung-6 runs).
 const bridgeDisconnections = [];
-const ledger = createLedger({ now: () => Date.now() });
 
-// Free physical memory, sampled cheaply and continuously, because three runs ended with the process simply gone and no
-// log said why.
-//
-// Measured 2026-11-03 (`round28`): the Mod's own heartbeat showed a managed heap growing 32 -> 180 MB in 2.5 minutes and
-// a working set of 1.0 -> 1.25 GB, on a machine holding **2.3 GB free of 31** at the same moment. That is a real number
-// and an ambiguous one - Windows counts file cache as used and reclaims it on demand - so the honest response is to
-// record what free memory was doing when a run dies, beside the reason code, rather than argue about it later.
-//
-// `minFreeMb` over the whole run is the useful statistic: a death under sustained single-digit-hundred free megabytes
-// is a different finding from a death with gigabytes available, and only one of them is our bug.
-const hostMemory = {
-  samples: 0,
-  minFreeMb: null,
-  maxHostRssMb: null,
-  startRssMb: null,
-  minRssMb: null,
-  series: [],
-  // One point per turn, bounded (`HOST_MEMORY_TURN_CAP`), because the question a death leaves open is the SHAPE across
-  // turns and the artifact could not answer it at all (see `../../lib/live-run-memory.mjs`).
-  turns: [],
-  turnsOmitted: 0,
-};
 let lastHostMemorySampleAtMs = 0;
 const sampleHostMemory = (atMs = Date.now()) => {
   const freeMb = Math.round(freeMemory() / (1024 * 1024));
@@ -909,9 +1079,6 @@ const hostMemoryTimer = setInterval(sampleHostMemory, 5_000);
 hostMemoryTimer.unref?.();
 
 ledger.record("run.start");
-// The program half of "how far had this run got", updated as the journal reports it. A disconnect that says
-// only the flat count reads as "nothing had happened" on a run whose work all went through programs.
-let lastKnownProgramDispatches = 0;
 client.onConnectionFact((fact) => {
   if (fact?.state !== "disconnected") return;
   const entry = Object.freeze({
@@ -946,7 +1113,6 @@ client.onDiagnostic?.((diagnostic) => {
   bridgeDiagnostics.push(entry);
   console.error("BRIDGE_DIAGNOSTIC", JSON.stringify(entry));
 });
-const factLog = [];
 /** Exact serialized bridge entries already printed, so a contract-legal
  * redelivery of the same transition does not read as a second action. */
 const loggedFactLines = new Set();
@@ -954,33 +1120,6 @@ const loggedFactLines = new Set();
 // (MiMo TTS) and its terminal playback observation is waited for. It is driven by the PRESENTATION hook, not by
 // a particular receipt: the old trigger was the Keg errand's own receipt, which no scenario owns any more. Voice
 // is fire-and-forget — a voice failure never fails the game presentation or the action.
-let voice = null;
-let voiceChild = null;
-let voiceObservation = null;
-let voiceStarted = false;
-let presentedSummary = null;
-// Presence-mechanism instrumentation (design stardew-companion-presence-mechanisms §1.5 / §2.4).
-// `presentationPieces` records every companion_text commit EXACTLY as the
-// presentation port saw it, in arrival order — the raw evidence for chunked /
-// incremental presentation. `turnStartedAtMs` is the wall-clock moment the
-// agent turn was accepted, so the first piece's time-to-first-bubble is
-// measurable instead of inferred.
-const presentationPieces = [];
-/**
- * Everything this process has written to stderr, so the Host's own artifact lines can be read back.
- *
- * The Host publishes ONE `NATIVE_COMPANION_TURN_DELIVERY` line per turn that had anything to deliver
- * (`host/dist-test/companion-loop.js`, over the same channel as `BODY_PROGRAM_MOUNT`), and that line is the only place
- * the run states which parts a turn produced and which pieces it committed. The bundle has to reconcile those against
- * the pieces this harness's own presentation port counted (`presentation.pieceCount`), and the line exists exactly
- * once - in the log - so it is kept as it is written rather than re-derived from a different population.
- *
- * MEASURED 2026-11-09 (round41): 59 pieces presented, and the thirteen delivery records in the log accounted 46 parts
- * with `unaccounted: 0`. Both numbers were right (11 reaction sounds, 46 paragraphs, 2 extra pieces from a paragraph the
- * length budget split) and the bundle could not say so, so a reader reported thirteen pieces - a whole turn - with no
- * record. See `tools/lib/presentation-delivery-account.mjs`.
- */
-const hostLogChunks = [];
 {
   const write = process.stderr.write.bind(process.stderr);
   process.stderr.write = (chunk, encoding, callback) => {
@@ -1000,9 +1139,6 @@ const dialogueDelivery = new Map();
 // that day was still current, `passedOut` is the ENGINE taking the night at its own 26:00. The honesty gate asks about
 // yesterday, and this process has no other record of yesterday to answer with.
 const nightRecordsByDay = new Map();
-const presentationPieceAtMs = [];
-let turnStartedAtMs = null;
-let agentTurnCount = 0;
 /**
  * The agent session's own terminal record for the turn(s) this run drove.
  *
@@ -1138,57 +1274,6 @@ function findRunSessionJsonl(sessionDir) {
   if (files.length === 0) return unbound;
   return Object.freeze({ path: join(sessionDir, files[files.length - 1]), reason: null, searched });
 }
-
-/**
- * A per-tool-call duration only answers "why was this run slow" when it names WHO made the Agent wait.
- *
- * `actionTrace` timestamps the bridge call and nothing else, so it cannot see the other owners of agent wall clock. An
- * audit of a real run read its 533 s over 19 "long actions" as bridge latency, while the same audit named
- * `delegate_game_task` - a nested agent - separately: the execute response had returned and the tool result landed
- * 5-60 s later, which is not a shape the bridge can produce. Optimising the journal for a tail that belongs to a nested
- * agent, or vice versa, is the cost of not separating them. These are different owners with different fixes, so every
- * agent tool call is attributed here by the NAME OF THE TOOL ACTUALLY CALLED.
- *
- * One category per real thing, never a pattern. `stardew_plan_work` compiles a script into a submitted plan and
- * `stardew_plan_shape` reads what a plan step must supply; neither dispatches an action, and a `stardew_`-prefix rule
- * would have folded them into dispatch latency. The categories are the mounted surface's tools, spelled one by one, so
- * a new tool has to be classified on purpose instead of landing in whichever bucket its name resembles.
- *
- * Nothing is published unless it is a MEASUREMENT OF THIS RUN: `sessionJsonlPath` is the record bound to this run's own
- * surface session, and `unboundReason` is what the binding reported when there was none. When the counts disagree with
- * the frames the run sent, the categories come back `null` and the violation is the only number published.
- *
- * The source is the runtime's own session record (the one `readAgentTurnOutcome` reads): a `toolCall` part in an
- * assistant message carries the call's entry timestamp, the `toolResult` entry matched by `toolCallId` carries the
- * arrival. A call that never got a result (session cut off mid-call) has no duration and is left out rather than being
- * given an invented one.
- */
-const TOOL_TIMING_LONGEST_LIMIT = 10;
-const TOOL_TIMING_INVARIANT_VIOLATED = "TOOL_TIMING_INVARIANT_VIOLATED";
-const TOOL_TIMING_CATEGORIES = Object.freeze([
-  "delegate",
-  "plan_shape",
-  "plan_compile",
-  "program_submit",
-  "program_status",
-  "flat_dispatch",
-]);
-const DELEGATE_TOOL_NAME = "delegate_game_task";
-// The planning tools: one answers what a step must supply, one compiles a written script and submits the result.
-const PLAN_SHAPE_TOOL_NAMES = Object.freeze(["stardew_plan_shape"]);
-const PLAN_COMPILE_TOOL_NAMES = Object.freeze(["stardew_plan_work"]);
-// The program tools: a submission waits on the compile + native accept, a status/event read waits on the journal.
-const PROGRAM_SUBMIT_TOOL_NAMES = Object.freeze(["stardew_submit_action_program"]);
-const PROGRAM_STATUS_TOOL_NAMES = Object.freeze(["stardew_action_program_status", "stardew_action_program_events"]);
-const ACTION_TOOL_NAMES = new Set(Object.values(STARDEW_ACTION_TOOL_NAMES));
-// The plan tools whose call counts the run's cost account reads, by name: `program_status` alone is the poll, and the
-// category above deliberately folds it together with the event log because both are bridge reads of one journal.
-const PLAN_TOOL_NAMES = new Set([
-  ...PLAN_SHAPE_TOOL_NAMES,
-  ...PLAN_COMPILE_TOOL_NAMES,
-  ...PROGRAM_SUBMIT_TOOL_NAMES,
-  ...PROGRAM_STATUS_TOOL_NAMES,
-]);
 
 function toolTimingCategory(toolName) {
   if (typeof toolName !== "string") return undefined;
@@ -1740,26 +1825,6 @@ function newWorldStateStaleFacts() {
   worldStateStaleReadCursor.carry = lines.pop() ?? "";
   return readWorldStateStaleFacts(lines.join("\n")).facts;
 }
-
-// Actions that MOVE the actor, LOOK at the world, or change only the actor's own gear.
-// A play session that did nothing but these has not played: run H attempted 14 actions,
-// got 14 refusals and one successful walk, harvested nothing, and still reported `passed`
-// because the verdict only required "a real attempt". "Did the companion actually do
-// something" is a different question from "did it try", and a rung whose whole job is to
-// report what the companion could do must not call an empty session a success.
-const NON_ACCOMPLISHMENT_ACTIONS = Object.freeze(
-  new Set([
-    "move_to_tile",
-    "travel",
-    "enter_exit",
-    "navigate_to_destination",
-    "observe_scene",
-    "inspect_world_map",
-    "express_emote",
-    "face_direction",
-    "equip_tool",
-  ]),
-);
 
 /**
  * What the run tried (`attempted`), succeeded at (`succeeded`), and changed (`accomplished`).
@@ -3728,43 +3793,6 @@ function findProtectedCovenantShipment(receipts, protectedItemId) {
   }
   return undefined;
 }
-// The run's record, declared where the run's record begins instead of where each field first happens to be needed.
-//
-// The failure dump reads exactly these bindings, and a binding declared further down is a ReferenceError for a run that
-// threw above it — a dump that throws leaves nothing behind, which is how a failed run's evidence was lost (measured
-// 2026-10-22 on `g149tool`: 184 s of real work and no consumable result). Everything here is either a container the run
-// fills or an outcome a later stage assigns; none of it is derived, so declaring it early changes no behaviour, and a
-// throw after this point can always describe what the run had done.
-//
-// Trace every ordinary-action execution request the Agent sends so a
-// rejected coordinate is attributable to the actual submitted args. A thrown
-// rejection (stale_snapshot, replay rejection, bridge_rejected:*) never returns
-// a receipt, so the catch records the rejection instead of skipping the entry —
-// otherwise the run's own health report sees zero rejections while the session
-// shows real ones.
-const actionTrace = [];
-/** The per-program execution records, filled at assembly time so every result path publishes the same answer. */
-let programOutcomes = Object.freeze([]);
-// Filled before teardown, so the builder publishes what the programs did rather than when the harness asked.
-let programOutcomesAtTeardown = null;
-// How many submissions existed when the journal was read. A program submitted later did not fail to be observed -
-// it arrived after the harness looked, and that is a different fact from "the Mod did not know it".
-let programOutcomesReadAtSubmissionCount = null;
-// Where and when the run stood, and the two facts a later stage assigns (the runtime root it materialized and the
-// capture directory it opened): null until then, so a failure at either step still publishes what came before it.
-// The covenant planted for `memory_covenant`, the agent turn's own terminal facts, the multi-day record, the
-// narrative judgement and this run's own session record: each is assigned by a later stage and each is published by a
-// failed run too.
-let covenantSeed = null;
-let agentTurnResult = null;
-let voiceResult = null;
-let multidayOutcome = null;
-let historianRubricOutcome = null;
-let runSessionRecord = Object.freeze({
-  path: undefined,
-  reason: "session_record_binding_not_established",
-  searched: Object.freeze([]),
-});
 // The bridge's own clock, read at dispatch time. A trace without it cannot be replayed at the right GAME
 // moment: a live run's dispatches are spread over game hours while the Agent thinks, so "as fast as receipts
 // settle" reaches 6:20 where the run reached 10:00 and fails on a shop that has not opened. The snapshot is
@@ -3871,9 +3899,6 @@ client.execute = async (request) => {
     throw error;
   }
 };
-// Every submission and the per-program records: declared with the run's record above `actionTrace`.
-/** Page size for the journal read: the wire caps an events page at 32 (validateBodyProgramEventsResult). */
-const PROGRAM_EVENTS_PAGE_SIZE = 32;
 /**
  * One submission's execution record, read from the Mod's own journal.
  *
@@ -3988,7 +4013,7 @@ async function readProgramOutcomes({ submissions, statusQuery, eventsQuery, jour
  * Derived from the same ids the Mod config declares and the documented Stardew data root - the folder that contains
  * `Saves` - because that is the exact path `WindowsBodyProgramJournalStore` writes.
  */
-const bodyProgramJournal = createBodyProgramJournalFallback({ dataPath: stardewDataPath(), scope });
+bodyProgramJournal = createBodyProgramJournalFallback({ dataPath: stardewDataPath(), scope });
 
 /** Reads the journal for every submission over the live bridge, falling back to the durable journal. Once per run. */
 async function sampleProgramOutcomes() {
@@ -6140,6 +6165,14 @@ async function writeRunBundle({
   failure,
   historianRubric = null,
 }) {
+  // A run that died before it materialised its runtime has no root and no identity to name a bundle after: every path
+  // below is `<runtimeRoot>/contexts/<identityKey>/...`. The bundle is the one artifact such a run cannot produce, so it
+  // is REFUSED by name - the same shape the write below refuses with - instead of throwing away the result the run does
+  // have. Before the record above the failure hooks was hoisted, this path threw `Cannot access 'identity' before
+  // initialization` and the run published no artifact at all.
+  if (typeof runtimeRoot !== "string" || runtimeRoot.length === 0 || identity === null) {
+    return Object.freeze({ state: "refused", reasonCode: "run_never_materialised_its_runtime" });
+  }
   // The narrative the run wrote, judged from its own captured runtime root. The CALLER judges it (the verdict needs
   // the same answer); this falls back to judging here so the bundle is never silent about it.
   const historianRubricOutcome = historianRubric ?? judgeRunHistorianRubric(runtimeRoot);

@@ -1088,7 +1088,10 @@ test("a disposable root's identity belongs to its own run, so a lane can be run 
   // has to be derived from THAT fact, before the principal check reads it.
   const decision = RUNNER_SOURCE.indexOf("const usesConfiguredRuntimeRoot =");
   const identity = RUNNER_SOURCE.indexOf("const runContinuityId =");
-  const identityUsed = RUNNER_SOURCE.indexOf("const identity = Object.freeze({");
+  // The identity is declared with the run's record above the failure hooks and ASSIGNED where its inputs exist: a value
+  // derived from the Mod config cannot exist before that config is read, and the dump reads it. What this asserts is
+  // unchanged - the derivation still precedes the principal check that reads it.
+  const identityUsed = RUNNER_SOURCE.search(/^(?:const )?identity = Object\.freeze\(\{/mu);
   const principalCheck = RUNNER_SOURCE.indexOf("`runtime_root_principal_mismatch: the runtime root was provisioned");
   assert.ok(decision >= 0 && identity > decision, "the ownership decision must precede the identity");
   assert.ok(
@@ -1478,15 +1481,46 @@ test("a turn that ended in a provider failure is a failure, not silence", () => 
 });
 
 /**
+ * One module-scope `const NAME = <expr>;` declaration from the runner's own source.
+ *
+ * By NAME, not by position: the runner declares its tool-timing constants with the run's record above the failure
+ * hooks (`Cannot access 'TOOL_TIMING_LONGEST_LIMIT' before initialization` is what the dump used to throw for a run that
+ * died early), so a slice "from the first constant to the categorizer" no longer spans them and the extraction has to
+ * follow each declaration wherever it now lives.
+ */
+function extractRunnerConstant(source, name) {
+  const at = source.indexOf(`const ${name} =`);
+  assert.ok(at !== -1, `runner must declare ${name}`);
+  let depth = 0;
+  for (let index = at; index < source.length; index += 1) {
+    const char = source[index];
+    if (char === "(" || char === "[" || char === "{") depth += 1;
+    else if (char === ")" || char === "]" || char === "}") depth -= 1;
+    else if (char === ";" && depth === 0) return source.slice(at, index + 1);
+  }
+  throw new Error(`unterminated declaration for ${name}`);
+}
+
+/**
  * The tool-timing block - its constants and the functions that read them - evaluated on its own, so a categorization
  * can be tested against a real session record instead of against a regex. The runner module never loads here, so the
  * Host's tool-name table is supplied as a global.
  */
 function loadToolTiming(source) {
-  const constantsAt = source.indexOf("const TOOL_TIMING_LONGEST_LIMIT");
-  const categorizerAt = source.indexOf("function toolTimingCategory", constantsAt);
-  assert.ok(constantsAt > 0 && categorizerAt > constantsAt, "the tool-timing block must exist");
-  const constants = source.slice(constantsAt, categorizerAt);
+  const constants = [
+    "TOOL_TIMING_LONGEST_LIMIT",
+    "TOOL_TIMING_INVARIANT_VIOLATED",
+    "TOOL_TIMING_CATEGORIES",
+    "DELEGATE_TOOL_NAME",
+    "PLAN_SHAPE_TOOL_NAMES",
+    "PLAN_COMPILE_TOOL_NAMES",
+    "PROGRAM_SUBMIT_TOOL_NAMES",
+    "PROGRAM_STATUS_TOOL_NAMES",
+    "ACTION_TOOL_NAMES",
+    "PLAN_TOOL_NAMES",
+  ]
+    .map((name) => extractRunnerConstant(source, name))
+    .join("\n");
   const functions = [
     "toolTimingCategory",
     "emptyCategoryTiming",
