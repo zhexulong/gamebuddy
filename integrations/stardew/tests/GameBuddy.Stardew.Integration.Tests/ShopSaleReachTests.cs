@@ -196,7 +196,11 @@ public sealed class ShopSaleReachTests : IDisposable
     public void APurchaseThatCanStackGrowsTheStack_AndNothingIsLost()
     {
         var bag = new List<Item?>();
-        var seed = new StardewValley.Object { ParentSheetIndex = 472, Stack = 3 };
+        // The bag's stack is the SAME kind of item the purchase hands over: `Item.canStackWith` refuses across types
+        // (Item.cs:720-742), so a merge test between two unrelated types would pass for the wrong reason and fail for
+        // one. SaleItem is the fixture's content-free stand-in for both sides; the merge itself is the engine's own
+        // `Item.addToStack`, driven through Utility.addItemToInventory.
+        var seed = new SaleItem { ItemId = "472", Stack = 3 };
         bag.Add(seed);
         for (int slot = 1; slot < 12; slot++)
             bag.Add(new StardewValley.Object { ParentSheetIndex = 300 + slot });
@@ -296,8 +300,8 @@ public sealed class ShopSaleReachTests : IDisposable
         var team = (FarmerTeam)RuntimeHelpers.GetUninitializedObject(typeof(FarmerTeam));
         Instance(typeof(FarmerTeam), "money").SetValue(team, new NetIntDelta(0));
         Instance(typeof(FarmerTeam), "useSeparateWallets").SetValue(team, new NetBool(false));
+        // `Farmer.team` is a property over this root (Farmer.cs:1263), not a field, so the root IS the binding.
         Instance(typeof(Farmer), "teamRoot").SetValue(farmer, new NetRoot<FarmerTeam> { Value = team });
-        Instance(typeof(Farmer), "team").SetValue(farmer, new NetRef<FarmerTeam> { Value = team });
         farmer._money = money;
 
         foreach (Item? item in bag ?? Array.Empty<Item?>())
@@ -325,6 +329,10 @@ public sealed class ShopSaleReachTests : IDisposable
             this.Menu.buyBackItems = new HashSet<ISalable>();
             Instance(typeof(ShopMenu), "animations").SetValue(
                 this.Menu, Activator.CreateInstance(Instance(typeof(ShopMenu), "animations").FieldType));
+            // tabButtons is a field initializer too, and receiveLeftClick iterates it unconditionally: a null list here
+            // is the NRE the fixture must not ship.
+            Instance(typeof(ShopMenu), "tabButtons").SetValue(
+                this.Menu, Activator.CreateInstance(Instance(typeof(ShopMenu), "tabButtons").FieldType));
 
             // The geometry ShopMenu.Initialize computes from the viewport (ShopMenu.cs:336, 384-406). It matters:
             // receiveLeftClick exits the menu on any click outside these bounds (ShopMenu.cs:1144).
