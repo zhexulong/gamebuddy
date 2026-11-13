@@ -13,15 +13,15 @@ import {
   AUTO_OBSERVE_UNAVAILABLE,
   AUTO_OBSERVE_UNAVAILABLE_REASONS,
   AUTO_OBSERVE_UNAVAILABLE_TOKEN,
+  autoObserveOnStaleToken,
+  autoObserveUnavailableToken,
   CompanionEventPump,
   type PendingBatch,
   type TurnAccount,
+  turnAccountLine,
   WORLD_STATE_REFRESH_ATTEMPTS,
   type WorldFact,
   type WorldStateRefreshPort,
-  autoObserveOnStaleToken,
-  autoObserveUnavailableToken,
-  turnAccountLine,
 } from "./event-pump.js";
 import { WORLD_STATE_STALE_TURNS } from "./fact-brief.js";
 

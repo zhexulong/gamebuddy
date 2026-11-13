@@ -20,14 +20,13 @@
 
 import assert from "node:assert/strict";
 import test from "node:test";
-
+import { createGameCompanionLoop } from "./continuity-semantic-game-runtime-materializer/continuity-semantic-game-runtime-materializer.js";
 import {
   type CompanionEventPump,
   WORLD_STATE_REFRESH_ATTEMPTS,
   WORLD_STATE_REFRESH_REFUSED_SEMANTIC_KIND,
   type WorldFact,
 } from "./event-pump.js";
-import { createGameCompanionLoop } from "./continuity-semantic-game-runtime-materializer/continuity-semantic-game-runtime-materializer.js";
 import { worldStateStaleThreshold } from "./fact-brief.js";
 import type { GameConnection } from "./game-connection.js";
 import type { Snapshot } from "./protocol.js";
