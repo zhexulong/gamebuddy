@@ -6,7 +6,7 @@ import { dirname, join, resolve } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
-import { auditDerivedPopulation, byFile } from "./check-derived-population.mjs";
+import { auditDerivedPopulation, byFile, compareWithBaseline } from "./check-derived-population.mjs";
 import { describeMemberDiff, memberDiff } from "./lib/member-diff.mjs";
 
 // red-proof: inject  `assert.equal(list.length, 15)` into a test file -> `literal_population_assertion:
@@ -119,15 +119,69 @@ test("the defect spelled in a comment or a string is prose, not code", async () 
       `test("x", () => {`,
       '  const spelled = "assert.equal(list.length, 15)";',
       "  assert.equal(spelled.length, 30);",
+      "  assert.equal(AUTHORITY_TEXT.length, 30);",
       "});",
       "",
     ].join("\n"),
   });
   assert.equal(examined, 1);
+  // Only the prose's own count on a name this file does not declare; `spelled` is a literal the test wrote.
   assert.deepEqual(
     violations.map((violation) => violation.line),
-    [4],
+    [5],
   );
+});
+
+test("a count of the test's own recorder is a fixture, not a population", async () => {
+  const { setAside, violations } = await reading({
+    "host/src/recorder.test.ts": [
+      `test("x", () => {`,
+      `  const calls: unknown[] = [];`,
+      `  const fixture = { spawnCalls: [] as unknown[] };`,
+      `  assert.equal(calls.length, 1);`,
+      `  assert.equal(fixture.spawnCalls.length, 1);`,
+      `  const empty = [];`,
+      `  assert.equal(empty.length, 0);`,
+      `});`,
+      "",
+    ].join("\n"),
+  });
+  assert.deepEqual(violations, []);
+  assert.equal(setAside.test_built, 3);
+});
+
+test("a string's length is a character count, not a member count", async () => {
+  const { setAside, violations } = await reading({
+    "host/src/text.test.ts": [
+      `import { readFile } from "node:fs/promises";`,
+      `test("x", async () => {`,
+      `  assert.equal((await readFile("a.txt", "utf8")).length, 0);`,
+      `  assert.equal("abc".length, 3);`,
+      `});`,
+      "",
+    ].join("\n"),
+  });
+  assert.deepEqual(violations, []);
+  assert.equal(setAside.not_a_members, 1);
+  assert.equal(setAside.test_built, 1);
+});
+
+test("a hand-written population this file declares at module level is the finding", async () => {
+  // The shape that makes the gate worth switching on: a fresh list written beside the derived set it duplicates.
+  const { violations } = await reading({
+    "host/src/surface.test.ts": [
+      `const SURFACES = ["water_crop", "cut_weeds"];`,
+      `test("x", () => {`,
+      `  assert.equal(SURFACES.length, 2);`,
+      `});`,
+      "",
+    ].join("\n"),
+  });
+  assert.deepEqual(messages(violations), [
+    "literal_population_assertion:host/src/surface.test.ts:3:2 — use SURFACES.length or " +
+      "assert.deepEqual(new Set(actual), new Set(AUTHORITY))",
+  ]);
+  assert.equal(violations[0].shape, "declaration_site");
 });
 
 test("production files and test support are outside the population", async () => {
@@ -165,7 +219,7 @@ test("a tree with no test file at all is blocked, not passed", () => {
   try {
     const result = spawnSync(process.execPath, [GATE, "--root", root], { encoding: "utf8", windowsHide: true });
     assert.equal(result.status, 1);
-    assert.match(result.stdout, /derived_population examined 0 violations 0 unread 0 status blocked/u);
+    assert.match(result.stdout, /derived_population examined 0 .*status blocked/u);
     assert.equal(JSON.parse(result.stdout.trim().split("\n").at(-1)).status, "blocked");
     assert.match(result.stderr, /no test file was examined, so nothing can be judged/u);
   } finally {
@@ -182,13 +236,28 @@ test("the CLI prints examined N and names the violation it found", async () => {
     (root) => {
       const result = spawnSync(process.execPath, [GATE, "--root", root], { encoding: "utf8", windowsHide: true });
       assert.equal(result.status, 1);
-      assert.match(result.stdout, /derived_population examined 2 violations 1 unread 0 status failed/u);
+      assert.match(
+        result.stdout,
+        /derived_population examined 2 sites 1 findings 1 baseline 0 unread 0 status failed/u,
+      );
       assert.match(result.stdout, /host\/src\/seams\.test\.ts: 1$/mu);
+      assert.match(result.stdout, /residual by shape: 0 declaration_site · 0 call_result · 1 unresolved/u);
       assert.match(result.stderr, /literal_population_assertion:host\/src\/seams\.test\.ts:2:15/u);
       const reading = JSON.parse(result.stdout.trim().split("\n").at(-1));
-      assert.deepEqual(Object.keys(reading), ["gate", "examined", "violations", "unparsed", "status"]);
+      assert.deepEqual(Object.keys(reading), [
+        "gate",
+        "examined",
+        "sites",
+        "shapes",
+        "baselineSites",
+        "setAside",
+        "findings",
+        "unparsed",
+        "status",
+      ]);
       assert.equal(reading.gate, "derived-population");
       assert.equal(reading.examined, 2);
+      assert.equal(reading.sites.length, 1);
     },
   );
 });
@@ -205,4 +274,44 @@ test("the per-file counts are what a lane receives", () => {
       ["b.test.ts", 1],
     ],
   );
+});
+
+test("the baseline records the residual, and a site it does not hold is new debt", () => {
+  const site = { file: "a.test.ts", line: 3, literal: "2", authority: "SURFACES", shape: "declaration_site" };
+  const baseline = { sites: [{ ...site, sites: 1 }] };
+  assert.deepEqual(compareWithBaseline({ violations: [site], baseline }).findings, []);
+  // The same site forty lines lower is the same site: identity is content, never position.
+  assert.deepEqual(compareWithBaseline({ violations: [{ ...site, line: 43 }], baseline }).findings, []);
+
+  const added = { ...site, line: 9, authority: "TOOLS" };
+  const findings = compareWithBaseline({ violations: [site, added], baseline }).findings;
+  assert.deepEqual(
+    findings.map((finding) => [finding.code, finding.authority]),
+    [["literal_population_assertion", "TOOLS"]],
+  );
+  assert.match(findings[0].message, /literal_population_assertion:a\.test\.ts:9:2/u);
+});
+
+test("a recorded site the tree no longer has is stale, because the residual may only shrink", () => {
+  const site = { file: "a.test.ts", line: 3, literal: "2", authority: "SURFACES", shape: "declaration_site" };
+  const findings = compareWithBaseline({ violations: [], baseline: { sites: [{ ...site, sites: 1 }] } }).findings;
+  assert.deepEqual(
+    findings.map((finding) => finding.code),
+    ["literal_population_baseline_stale"],
+  );
+  assert.match(findings[0].message, /the baseline recorded 1 site\(s\) for `SURFACES`, the tree has 0/u);
+  assert.match(findings[0].hint, /may only shrink/u);
+});
+
+test("a recorded site that gained a copy fails, so two copies cannot hide behind one entry", () => {
+  const site = { file: "a.test.ts", line: 3, literal: "2", authority: "SURFACES", shape: "declaration_site" };
+  const findings = compareWithBaseline({
+    violations: [site, { ...site, line: 20 }],
+    baseline: { sites: [{ ...site, sites: 1 }] },
+  }).findings;
+  assert.deepEqual(
+    findings.map((finding) => [finding.code, finding.sites]),
+    [["literal_population_baseline_grew", 1]],
+  );
+  assert.match(findings[0].message, /now has 2 copies, the baseline recorded 1/u);
 });

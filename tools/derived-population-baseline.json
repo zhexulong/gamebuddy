@@ -1,0 +1,772 @@
+{
+  "gate": "derived-population",
+  "measured": "2026-11-13",
+  "rule": "One entry per surviving literal count. Identity is file + authority + literal - never the line - so a reformat is the same site and a third copy beside two is not. `line` is documentation only. The recorded residual may only shrink: `literal_population_baseline_stale` fails a site the tree no longer has, and `literal_population_baseline_grew` fails a site that gained copies.",
+  "shapes": {
+    "declaration_site": 6,
+    "call_result": 35,
+    "unresolved": 69
+  },
+  "sites": [
+    {
+      "file": "dialogue-web/tests/card-import-hidden-input.spec.ts",
+      "authority": "element.getClientRects()",
+      "literal": "0",
+      "shape": "call_result",
+      "sites": 1,
+      "line": 119
+    },
+    {
+      "file": "dialogue-web/tests/draft-declaration-coverage.spec.ts",
+      "authority": "appeared",
+      "literal": "0",
+      "shape": "unresolved",
+      "sites": 1,
+      "line": 279
+    },
+    {
+      "file": "dialogue-web/tests/draft-declaration-coverage.spec.ts",
+      "authority": "inventory",
+      "literal": "0",
+      "shape": "unresolved",
+      "sites": 1,
+      "line": 341
+    },
+    {
+      "file": "dialogue-web/tests/first-viewport-forward-path.spec.ts",
+      "authority": "SUBMIT_AVAILABILITY",
+      "literal": "0",
+      "shape": "declaration_site",
+      "sites": 1,
+      "line": 661
+    },
+    {
+      "file": "host/src/approach-requirement-pipeline.test.ts",
+      "authority": "gamePath",
+      "literal": "0",
+      "shape": "declaration_site",
+      "sites": 1,
+      "line": 45
+    },
+    {
+      "file": "host/src/body-program-for-each.test.ts",
+      "authority": "rules",
+      "literal": "3",
+      "shape": "unresolved",
+      "sites": 1,
+      "line": 179
+    },
+    {
+      "file": "host/src/body-program-for-each.test.ts",
+      "authority": "forEachRules(loopOf(node))",
+      "literal": "1",
+      "shape": "call_result",
+      "sites": 1,
+      "line": 200
+    },
+    {
+      "file": "host/src/bootstrap/entry/desktop-host-entry.internal.test.ts",
+      "authority": "line",
+      "literal": "0",
+      "shape": "unresolved",
+      "sites": 1,
+      "line": 351
+    },
+    {
+      "file": "host/src/companion-control-server.private.test.ts",
+      "authority": "line",
+      "literal": "0",
+      "shape": "unresolved",
+      "sites": 1,
+      "line": 72
+    },
+    {
+      "file": "host/src/companion-presentation-callers.test.ts",
+      "authority": "thirdCaller",
+      "literal": "1",
+      "shape": "unresolved",
+      "sites": 1,
+      "line": 190
+    },
+    {
+      "file": "host/src/composition/companion-library-list.test.ts",
+      "authority": "list.filter((entry) => entry.handle === \"handle-companion_01\")",
+      "literal": "1",
+      "shape": "call_result",
+      "sites": 1,
+      "line": 29
+    },
+    {
+      "file": "host/src/composition/companion-library-list.test.ts",
+      "authority": "list",
+      "literal": "2",
+      "shape": "unresolved",
+      "sites": 1,
+      "line": 30
+    },
+    {
+      "file": "host/src/composition/stardew/stardew-native-role-launch-plan.private.test.ts",
+      "authority": "first",
+      "literal": "36",
+      "shape": "unresolved",
+      "sites": 1,
+      "line": 40
+    },
+    {
+      "file": "host/src/composition/stardew/stardew-native-role-launch-plan.private.test.ts",
+      "authority": "Object.keys(plan).filter((key) => key === \"planId\")",
+      "literal": "1",
+      "shape": "call_result",
+      "sites": 1,
+      "line": 62
+    },
+    {
+      "file": "host/src/declaration-agreement.test.ts",
+      "authority": "readers",
+      "literal": "0",
+      "shape": "unresolved",
+      "sites": 1,
+      "line": 302
+    },
+    {
+      "file": "host/src/declaration-agreement.test.ts",
+      "authority": "scalars",
+      "literal": "0",
+      "shape": "unresolved",
+      "sites": 1,
+      "line": 446
+    },
+    {
+      "file": "host/src/declaration-agreement.test.ts",
+      "authority": "omitted",
+      "literal": "0",
+      "shape": "unresolved",
+      "sites": 1,
+      "line": 450
+    },
+    {
+      "file": "host/src/farmhand-companion-preview.test.ts",
+      "authority": "uncertain()",
+      "literal": "1",
+      "shape": "call_result",
+      "sites": 4,
+      "line": 483
+    },
+    {
+      "file": "host/src/farmhand-companion-preview.test.ts",
+      "authority": "uncertain()",
+      "literal": "0",
+      "shape": "call_result",
+      "sites": 1,
+      "line": 583
+    },
+    {
+      "file": "host/src/game-integration-adapter.private.test.ts",
+      "authority": "identity.companionId",
+      "literal": "0",
+      "shape": "unresolved",
+      "sites": 1,
+      "line": 105
+    },
+    {
+      "file": "host/src/game-tools-dispatch-args.test.ts",
+      "authority": "declared!",
+      "literal": "0",
+      "shape": "unresolved",
+      "sites": 1,
+      "line": 82
+    },
+    {
+      "file": "host/src/games/stardew/lifecycle/stardew-private-bootstrap-composer.private.test.ts",
+      "authority": "results.filter((result) => result.status === \"fulfilled\")",
+      "literal": "1",
+      "shape": "call_result",
+      "sites": 3,
+      "line": 2375
+    },
+    {
+      "file": "host/src/games/stardew/lifecycle/stardew-private-bootstrap-composer.private.test.ts",
+      "authority": "results.filter((result) => result.status === \"rejected\")",
+      "literal": "1",
+      "shape": "call_result",
+      "sites": 1,
+      "line": 2418
+    },
+    {
+      "file": "host/src/native-companion-pacing-delivery.test.ts",
+      "authority": "finals",
+      "literal": "1",
+      "shape": "unresolved",
+      "sites": 2,
+      "line": 130
+    },
+    {
+      "file": "host/src/native-companion-split-commit.test.ts",
+      "authority": "committed",
+      "literal": "1",
+      "shape": "unresolved",
+      "sites": 1,
+      "line": 116
+    },
+    {
+      "file": "host/src/pi-magic-context-chapter-fold.private.test.ts",
+      "authority": "afterRemoval.filter((chapter) => chapter.status !== \"deleted\")",
+      "literal": "0",
+      "shape": "call_result",
+      "sites": 1,
+      "line": 472
+    },
+    {
+      "file": "host/src/run-trace-waits.private.test.ts",
+      "authority": "waits",
+      "literal": "1",
+      "shape": "unresolved",
+      "sites": 2,
+      "line": 19
+    },
+    {
+      "file": "host/src/run-trace-waits.private.test.ts",
+      "authority": "uncontestedModelWaits(waits)",
+      "literal": "0",
+      "shape": "call_result",
+      "sites": 1,
+      "line": 36
+    },
+    {
+      "file": "host/src/run-trace-waits.private.test.ts",
+      "authority": "waits",
+      "literal": "0",
+      "shape": "unresolved",
+      "sites": 1,
+      "line": 53
+    },
+    {
+      "file": "host/src/run-trace-waits.private.test.ts",
+      "authority": "waits",
+      "literal": "2",
+      "shape": "unresolved",
+      "sites": 1,
+      "line": 65
+    },
+    {
+      "file": "host/src/runtime-identity.test.ts",
+      "authority": "first",
+      "literal": "64",
+      "shape": "unresolved",
+      "sites": 1,
+      "line": 51
+    },
+    {
+      "file": "host/src/schema-contract.test.ts",
+      "authority": "witnesses",
+      "literal": "0",
+      "shape": "unresolved",
+      "sites": 1,
+      "line": 1608
+    },
+    {
+      "file": "host/src/stardew-game-install/desktop-entry-mod-deployment.test.ts",
+      "authority": "inputs",
+      "literal": "1",
+      "shape": "unresolved",
+      "sites": 1,
+      "line": 101
+    },
+    {
+      "file": "host/src/stardew-humanlike-action-projection.test.ts",
+      "authority": "visible",
+      "literal": "0",
+      "shape": "unresolved",
+      "sites": 1,
+      "line": 515
+    },
+    {
+      "file": "host/src/stardew-observation-budget-reachability.test.ts",
+      "authority": "kept",
+      "literal": "0",
+      "shape": "unresolved",
+      "sites": 1,
+      "line": 231
+    },
+    {
+      "file": "host/src/tavern/chat-thread-store.private.test.ts",
+      "authority": "fulfilled",
+      "literal": "1",
+      "shape": "unresolved",
+      "sites": 1,
+      "line": 556
+    },
+    {
+      "file": "host/src/tavern/chat-thread-store.private.test.ts",
+      "authority": "rejected",
+      "literal": "1",
+      "shape": "unresolved",
+      "sites": 1,
+      "line": 557
+    },
+    {
+      "file": "host/src/tavern/p4-provider-start-execution.test.ts",
+      "authority": "refs",
+      "literal": "1",
+      "shape": "unresolved",
+      "sites": 1,
+      "line": 456
+    },
+    {
+      "file": "host/src/tavern/preset-placement.private.test.ts",
+      "authority": "identifiers(placements, \"unplaced\")",
+      "literal": "0",
+      "shape": "call_result",
+      "sites": 1,
+      "line": 120
+    },
+    {
+      "file": "host/src/tavern/preset-placement.private.test.ts",
+      "authority": "kinds.filter((kind) => kind === \"cut\")",
+      "literal": "1",
+      "shape": "call_result",
+      "sites": 1,
+      "line": 281
+    },
+    {
+      "file": "host/src/tavern/preset-st-conformance.private.test.ts",
+      "authority": "rows",
+      "literal": "9",
+      "shape": "unresolved",
+      "sites": 1,
+      "line": 519
+    },
+    {
+      "file": "host/src/tavern/reference-pipeline-state.test.ts",
+      "authority": "results",
+      "literal": "10",
+      "shape": "unresolved",
+      "sites": 1,
+      "line": 247
+    },
+    {
+      "file": "host/src/voice-gateway-client.test.ts",
+      "authority": "line",
+      "literal": "0",
+      "shape": "unresolved",
+      "sites": 1,
+      "line": 91
+    },
+    {
+      "file": "host/src/world-state-stale-publication.test.ts",
+      "authority": "silent",
+      "literal": "1",
+      "shape": "unresolved",
+      "sites": 1,
+      "line": 342
+    },
+    {
+      "file": "integrations/stardew/action-development/tests/stardew-branch-writeset.test.mjs",
+      "authority": "methods",
+      "literal": "0",
+      "shape": "unresolved",
+      "sites": 1,
+      "line": 86
+    },
+    {
+      "file": "integrations/stardew/action-development/tests/stardew-branch-writeset.test.mjs",
+      "authority": "methods",
+      "literal": "1",
+      "shape": "unresolved",
+      "sites": 1,
+      "line": 210
+    },
+    {
+      "file": "integrations/stardew/action-development/tests/stardew-observation-gap.test.mjs",
+      "authority": "population.filter((entry) => entry.id.toLowerCase() === \"objects\")",
+      "literal": "1",
+      "shape": "call_result",
+      "sites": 1,
+      "line": 198
+    },
+    {
+      "file": "integrations/stardew/action-development/tests/stardew-rejected-layer-verdicts.test.mjs",
+      "authority": "rows",
+      "literal": "1",
+      "shape": "unresolved",
+      "sites": 1,
+      "line": 67
+    },
+    {
+      "file": "integrations/stardew/action-development/tests/stardew-rejected-layer-verdicts.test.mjs",
+      "authority": "stillNeeding",
+      "literal": "0",
+      "shape": "unresolved",
+      "sites": 1,
+      "line": 162
+    },
+    {
+      "file": "integrations/stardew/action-development/tests/stardew-remaining-actions-report.test.mjs",
+      "authority": "r.gameplayWrites",
+      "literal": "0",
+      "shape": "unresolved",
+      "sites": 1,
+      "line": 110
+    },
+    {
+      "file": "integrations/stardew/action-development/tests/stardew-remaining-actions-report.test.mjs",
+      "authority": "r.referenceIntents",
+      "literal": "0",
+      "shape": "unresolved",
+      "sites": 1,
+      "line": 141
+    },
+    {
+      "file": "integrations/stardew/action-development/tests/static-verifier-contract.test.mjs",
+      "authority": "INTEGRATION_REQUIREMENTS",
+      "literal": "3",
+      "shape": "declaration_site",
+      "sites": 1,
+      "line": 63
+    },
+    {
+      "file": "tools/audit-preset-macro-frequency.test.mjs",
+      "authority": "shorthandFamily",
+      "literal": "3",
+      "shape": "unresolved",
+      "sites": 1,
+      "line": 96
+    },
+    {
+      "file": "tools/audit-stardew-decision-closure.test.mjs",
+      "authority": "admitted",
+      "literal": "0",
+      "shape": "unresolved",
+      "sites": 1,
+      "line": 1123
+    },
+    {
+      "file": "tools/check-code-duplication.test.mjs",
+      "authority": "groups",
+      "literal": "1",
+      "shape": "unresolved",
+      "sites": 2,
+      "line": 151
+    },
+    {
+      "file": "tools/check-crash-report-containment.test.mjs",
+      "authority": "reports(cwd)",
+      "literal": "1",
+      "shape": "call_result",
+      "sites": 1,
+      "line": 245
+    },
+    {
+      "file": "tools/check-crash-report-containment.test.mjs",
+      "authority": "reports(elsewhere)",
+      "literal": "0",
+      "shape": "call_result",
+      "sites": 1,
+      "line": 246
+    },
+    {
+      "file": "tools/check-crash-report-containment.test.mjs",
+      "authority": "reports(cwd)",
+      "literal": "0",
+      "shape": "call_result",
+      "sites": 1,
+      "line": 255
+    },
+    {
+      "file": "tools/check-crash-report-containment.test.mjs",
+      "authority": "reports(elsewhere)",
+      "literal": "1",
+      "shape": "call_result",
+      "sites": 1,
+      "line": 256
+    },
+    {
+      "file": "tools/check-credential-export-isolation.test.mjs",
+      "authority": "credentials",
+      "literal": "2",
+      "shape": "unresolved",
+      "sites": 1,
+      "line": 540
+    },
+    {
+      "file": "tools/check-perf-scaling.test.mjs",
+      "authority": "findings",
+      "literal": "1",
+      "shape": "unresolved",
+      "sites": 2,
+      "line": 39
+    },
+    {
+      "file": "tools/check-refusal-informativeness.test.mjs",
+      "authority": "priced",
+      "literal": "1",
+      "shape": "unresolved",
+      "sites": 1,
+      "line": 334
+    },
+    {
+      "file": "tools/check-stardew-dialogue-stream.test.mjs",
+      "authority": "found",
+      "literal": "1",
+      "shape": "unresolved",
+      "sites": 1,
+      "line": 102
+    },
+    {
+      "file": "tools/lib/catalog-fact-ownership.test.mjs",
+      "authority": "live.filter((finding) => finding.path === exemption.path)",
+      "literal": "0",
+      "shape": "call_result",
+      "sites": 1,
+      "line": 372
+    },
+    {
+      "file": "tools/lib/duplicated-authority.test.mjs",
+      "authority": "findings",
+      "literal": "1",
+      "shape": "unresolved",
+      "sites": 2,
+      "line": 83
+    },
+    {
+      "file": "tools/lib/evidence-bundle.test.mjs",
+      "authority": "validateActionTraceEntry(null)",
+      "literal": "1",
+      "shape": "call_result",
+      "sites": 1,
+      "line": 415
+    },
+    {
+      "file": "tools/lib/live-run-teardown.test.mjs",
+      "authority": "JSON.parse(readFileSync(resultPath, \"utf8\")).reclamation.steps",
+      "literal": "5",
+      "shape": "call_result",
+      "sites": 1,
+      "line": 294
+    },
+    {
+      "file": "tools/lib/parser-agreement.test.mjs",
+      "authority": "readings",
+      "literal": "1",
+      "shape": "unresolved",
+      "sites": 1,
+      "line": 62
+    },
+    {
+      "file": "tools/lib/parser-agreement.test.mjs",
+      "authority": "findings",
+      "literal": "1",
+      "shape": "unresolved",
+      "sites": 2,
+      "line": 110
+    },
+    {
+      "file": "tools/lib/silent-failure.test.mjs",
+      "authority": "findings",
+      "literal": "1",
+      "shape": "unresolved",
+      "sites": 2,
+      "line": 33
+    },
+    {
+      "file": "tools/lib/silent-failure.test.mjs",
+      "authority": "findSilentFailures(root)",
+      "literal": "0",
+      "shape": "call_result",
+      "sites": 2,
+      "line": 128
+    },
+    {
+      "file": "tools/live-run/frontend/capture/capability.test.mjs",
+      "authority": "surplus",
+      "literal": "1",
+      "shape": "unresolved",
+      "sites": 1,
+      "line": 192
+    },
+    {
+      "file": "tools/live-run/frontend/capture/injection-claims.test.mjs",
+      "authority": "history",
+      "literal": "0",
+      "shape": "unresolved",
+      "sites": 1,
+      "line": 90
+    },
+    {
+      "file": "tools/live-run/frontend/capture/observation.test.mjs",
+      "authority": "pairs",
+      "literal": "1",
+      "shape": "unresolved",
+      "sites": 1,
+      "line": 119
+    },
+    {
+      "file": "tools/live-run/game/execution-trace.test.mjs",
+      "authority": "twoPrograms",
+      "literal": "2",
+      "shape": "unresolved",
+      "sites": 1,
+      "line": 311
+    },
+    {
+      "file": "tools/live-run/game/program-outcome-journal-fallback.test.mjs",
+      "authority": "records",
+      "literal": "1",
+      "shape": "unresolved",
+      "sites": 1,
+      "line": 150
+    },
+    {
+      "file": "tools/live-run/round-verdict.test.mjs",
+      "authority": "insertedNodeIds",
+      "literal": "0",
+      "shape": "unresolved",
+      "sites": 1,
+      "line": 54
+    },
+    {
+      "file": "tools/promote-stardew-action.test.mjs",
+      "authority": "PROMOTION_RESPONSIBILITIES",
+      "literal": "6",
+      "shape": "declaration_site",
+      "sites": 1,
+      "line": 147
+    },
+    {
+      "file": "tools/run-stardew-native-local-player-accept-daily-quest-smoke.test.mjs",
+      "authority": "Object.entries(checks).filter(([, ok]) => ok === false || ok === \"not_checked\")",
+      "literal": "1",
+      "shape": "call_result",
+      "sites": 2,
+      "line": 108
+    },
+    {
+      "file": "tools/run-stardew-native-local-player-build-farm-building-smoke.test.mjs",
+      "authority": "Object.entries(checks).filter(([, ok]) => ok === false || ok === \"not_checked\")",
+      "literal": "2",
+      "shape": "call_result",
+      "sites": 1,
+      "line": 168
+    },
+    {
+      "file": "tools/run-stardew-native-local-player-clear-fish-pond-smoke.test.mjs",
+      "authority": "Object.entries(checks).filter(([, ok]) => ok === false || ok === \"not_checked\")",
+      "literal": "1",
+      "shape": "call_result",
+      "sites": 1,
+      "line": 99
+    },
+    {
+      "file": "tools/run-stardew-native-local-player-color-placed-object-smoke.test.mjs",
+      "authority": "EXPECTED_EVIDENCE_KEYS",
+      "literal": "7",
+      "shape": "declaration_site",
+      "sites": 1,
+      "line": 127
+    },
+    {
+      "file": "tools/run-stardew-native-local-player-dialogue-stream-smoke.test.mjs",
+      "authority": "JSON.parse(result.bridgeFacts[0].worldFactPayload.payloadJson).pages",
+      "literal": "2",
+      "shape": "call_result",
+      "sites": 1,
+      "line": 70
+    },
+    {
+      "file": "tools/run-stardew-native-local-player-equip-wearable-smoke.test.mjs",
+      "authority": "digest",
+      "literal": "16",
+      "shape": "unresolved",
+      "sites": 1,
+      "line": 40
+    },
+    {
+      "file": "tools/run-stardew-native-local-player-multiplayer-live-loop-smoke.test.mjs",
+      "authority": "archived",
+      "literal": "2",
+      "shape": "unresolved",
+      "sites": 1,
+      "line": 159
+    },
+    {
+      "file": "tools/run-stardew-native-local-player-multiplayer-live-loop-smoke.test.mjs",
+      "authority": "turns",
+      "literal": "2",
+      "shape": "unresolved",
+      "sites": 1,
+      "line": 199
+    },
+    {
+      "file": "tools/run-stardew-native-local-player-name-entity-smoke.test.mjs",
+      "authority": "Object.entries(checks).filter(([, ok]) => ok === false || ok === \"not_checked\")",
+      "literal": "2",
+      "shape": "call_result",
+      "sites": 1,
+      "line": 102
+    },
+    {
+      "file": "tools/run-stardew-native-local-player-unequip-wearable-smoke.test.mjs",
+      "authority": "digest",
+      "literal": "16",
+      "shape": "unresolved",
+      "sites": 1,
+      "line": 28
+    },
+    {
+      "file": "tools/run-tavern-management-operation-evidence.test.mjs",
+      "authority": "assertions",
+      "literal": "0",
+      "shape": "unresolved",
+      "sites": 1,
+      "line": 95
+    },
+    {
+      "file": "tools/run-tool-test-corpus.test.mjs",
+      "authority": "details",
+      "literal": "1",
+      "shape": "unresolved",
+      "sites": 1,
+      "line": 101
+    },
+    {
+      "file": "tools/run-tool-test-corpus.test.mjs",
+      "authority": "lines(run.stdout).filter((line) => line.startsWith(\"  member \"))",
+      "literal": "5",
+      "shape": "call_result",
+      "sites": 1,
+      "line": 163
+    },
+    {
+      "file": "tools/stardew-humanlike-target-version-characterization.test.mjs",
+      "authority": "m.parameters",
+      "literal": "1",
+      "shape": "unresolved",
+      "sites": 2,
+      "line": 257
+    },
+    {
+      "file": "tools/stardew-player-command-graph.test.mjs",
+      "authority": "candidates",
+      "literal": "0",
+      "shape": "unresolved",
+      "sites": 1,
+      "line": 416
+    },
+    {
+      "file": "tools/stardew-soil-itm-canary-gate.test.mjs",
+      "authority": "missingSoilItmWitnesses({ root: path.join(REPOSITORY_ROOT, \".tmp-stardew-decompile\") })",
+      "literal": "0",
+      "shape": "call_result",
+      "sites": 1,
+      "line": 35
+    },
+    {
+      "file": "tools/stardew-soil-itm-canary.test.mjs",
+      "authority": "missingWitnesses",
+      "literal": "0",
+      "shape": "declaration_site",
+      "sites": 1,
+      "line": 35
+    }
+  ]
+}
