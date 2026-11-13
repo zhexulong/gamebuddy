@@ -678,6 +678,13 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
     /// byte-identical, which is why the lookup precedes the revision advance; on that path <paramref name="executionId"/>
     /// and <paramref name="nowMs"/> are never read, because the caller has already been answered.
     /// </para>
+    ///
+    /// <para>
+    /// The identity is the STORE's answer, never one this method invents: a request a dispatch already bound to an
+    /// execution (every body-program node routes with the node's own id) runs under that id, and an unbound request is
+    /// given a fresh one. Minting here instead made a program node and its own receipt two different identities, which
+    /// the executor's terminal then published as the node's execution.
+    /// </para>
     /// </summary>
     private LocalExecutionReceipt? BeginLocalExecution(string requestId, out string executionId, out long nowMs)
     {
@@ -688,7 +695,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             return existing;
         }
         this.revision++;
-        executionId = Guid.NewGuid().ToString("N");
+        executionId = this.ledger.NewExecutionId(requestId);
         nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
         return null;
     }
