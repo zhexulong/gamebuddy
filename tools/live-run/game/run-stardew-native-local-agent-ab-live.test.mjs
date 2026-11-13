@@ -5041,3 +5041,288 @@ test("the note assertion is wired to the session record, the planner's clock and
   assert.match(RUNNER_SOURCE, /id: "day_note_delivery",/u);
   assert.match(RUNNER_SOURCE, /^\s+dayNoteDelivery,$/mu, "the reading must reach result.json");
 });
+
+// A DAY'S FIRST TURN MUST NOT OPEN ON `世界：尚未收到观察`.
+//
+// Measured `round49` (day 1): the harness's very first delivery carried that world-state block, her first thinking was
+// "no observation yet", and her first action was `stardew_observe {}` - a whole turn spent looking at a world the
+// harness already held. THE PRODUCER WAS MISSING, NOT A DELAY: the launch handle observes the world and parks the
+// snapshot in `launch.initialFacts`, and only `runtime.connected.activateIngress()` hands those facts to the pump
+// (`host.acceptInitialFacts` -> `pump.enqueueFact`, which sets `#lastSnapshot` synchronously). Production calls it once
+// after the enter receipt commits and refuses every task prompt until it has. A bounded wait alone would have expired on
+// every run, because nothing in this harness ever asked the Host to hand the reading over.
+//
+// These tests hold both ends: the reading that NAMES a blind day, and the attach boundary that stops one happening.
+const ROUND49_FIRST_DELIVERY = [
+  "<player-note>…</player-note>",
+  "<world-state>",
+  "世界：尚未收到观察",
+  "</world-state>",
+].join("\n");
+const OBSERVED_FIRST_DELIVERY = [
+  "<world-state>",
+  "世界（revision 0，刚刚更新）06:20（清晨）；春季 1 日；位置: 农舍；种子: 2 花椰菜种子",
+  "</world-state>",
+].join("\n");
+const BLIND_MARKER = "世界：尚未收到观察";
+
+test("a day that opened without a world is a finding, named with its day and the wait in front of it", () => {
+  const [readDayFirstDelivery, assessDayStarts] = extractRunnerFunction(RUNNER_SOURCE, [
+    "readDayFirstDelivery",
+    "assessDayStarts",
+  ]);
+  // RED, on round49's own delivery: the message that reached her carried no world.
+  const blind = readDayFirstDelivery({
+    day: 1,
+    texts: [ROUND49_FIRST_DELIVERY],
+    fromIndex: 0,
+    waitedMs: 15_000,
+    marker: BLIND_MARKER,
+  });
+  assert.equal(blind.measured, true);
+  assert.equal(blind.startedBlind, true, "round49's first delivery was handed a turn with no world in it");
+  const red = assessDayStarts({ scheduledDays: 1, readings: [blind] });
+  assert.deepEqual(
+    red.findings.map((finding) => finding.code),
+    ["day_started_blind:1"],
+  );
+  assert.equal(red.findings[0].waitedMs, 15_000, "the finding carries the wait that expired in front of it");
+  assert.equal(red.reading, "days started blind 1 of 1");
+  assert.equal(red.verdictCode, "day_started_blind:1");
+  assert.equal(red.blocked, null);
+
+  // GREEN, on the delivery the attach boundary produces: the world-state block is the reading itself, so a reader can
+  // check the judgement instead of trusting it.
+  const observed = readDayFirstDelivery({
+    day: 1,
+    texts: [OBSERVED_FIRST_DELIVERY],
+    fromIndex: 0,
+    waitedMs: 0,
+    marker: BLIND_MARKER,
+  });
+  assert.equal(observed.startedBlind, false);
+  assert.match(observed.worldState ?? "", /^<world-state>世界（revision 0/u);
+  const green = assessDayStarts({ scheduledDays: 1, readings: [observed] });
+  assert.deepEqual(green.findings, []);
+  assert.equal(green.reading, "days started blind 0 of 1");
+  assert.equal(green.verdictCode, null);
+});
+
+test("the reading is over the days the run scheduled, so zero days and an unread record cannot pass", () => {
+  const [readDayFirstDelivery, assessDayStarts] = extractRunnerFunction(RUNNER_SOURCE, [
+    "readDayFirstDelivery",
+    "assessDayStarts",
+  ]);
+  // A run that scheduled no day has not been measured, and `0 of 0` would agree with itself.
+  const empty = assessDayStarts({ scheduledDays: 0, readings: [] });
+  assert.equal(empty.reading, "days started blind 0 of 0");
+  assert.equal(empty.blocked, "no_days_scheduled");
+  assert.equal(empty.verdictCode, "no_days_scheduled", "zero population is blocked, never green");
+
+  // The three gaps that are not "blind" and are not a pass either, each with its own owner.
+  const unread = readDayFirstDelivery({ day: 1, texts: null, fromIndex: 0, marker: BLIND_MARKER });
+  assert.equal(unread.measured, false);
+  assert.equal(unread.reason, "session_record_unreadable");
+  const blocked = assessDayStarts({ scheduledDays: 1, readings: [unread] });
+  assert.equal(blocked.findings[0].code, "day_start_reading_missing:1:session_record_unreadable");
+  assert.equal(blocked.verdictCode, "day_start_reading_missing:1:session_record_unreadable");
+  const appended = readDayFirstDelivery({ day: 2, texts: ["one message"], fromIndex: 1, marker: BLIND_MARKER });
+  assert.equal(appended.reason, "no_user_message_after_day_prompt");
+  const rotated = readDayFirstDelivery({
+    day: 1,
+    texts: [OBSERVED_FIRST_DELIVERY],
+    fromIndex: 0,
+    sourcePath: "before.jsonl",
+    readingPath: "after.jsonl",
+    marker: BLIND_MARKER,
+  });
+  assert.equal(rotated.reason, "session_record_changed_mid_turn");
+  // And a reading with no marker fails loudly: comparing against "" would call every delivery blind or every one sound.
+  assert.throws(
+    () => readDayFirstDelivery({ day: 1, texts: [OBSERVED_FIRST_DELIVERY], fromIndex: 0 }),
+    /day_start_marker_required/u,
+  );
+});
+
+test("the wait for the world is bounded in polls as well as in the clock, and its expiry is named", async () => {
+  const [awaitDayOpeningWorld, dayPromptWithoutObservation] = extractRunnerFunction(RUNNER_SOURCE, [
+    "awaitDayOpeningWorld",
+    "dayPromptWithoutObservation",
+  ]);
+  // The world arrives on the third poll: the wait reports HOW LONG, and the revision it saw.
+  let probes = 0;
+  const observed = await awaitDayOpeningWorld({
+    probe: () => {
+      probes += 1;
+      return { observed: probes >= 3, revision: probes >= 3 ? 0 : null };
+    },
+    timeoutMs: 10_000,
+    pollMs: 100,
+    now: () => 0,
+    pause: async () => {},
+  });
+  assert.equal(observed.observed, true);
+  assert.equal(observed.polls, 2);
+  assert.equal(observed.revision, 0);
+  assert.equal(observed.waitedMs, 0);
+
+  // It never arrives and the clock never moves: the POLL BOUND is what ends the wait, so "bounded" is a property of this
+  // function rather than a claim about the caller's clock.
+  let never = 0;
+  const expired = await awaitDayOpeningWorld({
+    probe: () => {
+      never += 1;
+      return { observed: false };
+    },
+    timeoutMs: 1000,
+    pollMs: 100,
+    now: () => 0,
+    pause: async () => {},
+  });
+  assert.equal(expired.observed, false);
+  assert.equal(expired.polls, 11);
+  assert.ok(never >= 12, "the probe is not asked after the bound is spent");
+
+  // The prompt keeps the day's own words and says what the harness could not hand over - a fact about the harness, not
+  // an instruction to go and look.
+  const dayPrompt = "第 1 天：去钓鱼。";
+  const expiredPrompt = dayPromptWithoutObservation(dayPrompt, { observed: false, waitedMs: 15_000 }, "zh");
+  assert.ok(expiredPrompt.startsWith(dayPrompt), "the day's prompt is not rewritten");
+  assert.match(expiredPrompt, /系统没有拿到世界的观察：等了 15 秒/u);
+  assert.doesNotMatch(
+    expiredPrompt,
+    /观察一下|先看看|observe first/u,
+    "the fix is the snapshot, not a sentence telling her to look",
+  );
+  assert.equal(dayPromptWithoutObservation(dayPrompt, { observed: true, waitedMs: 0 }, "zh"), dayPrompt);
+});
+
+test("the attach boundary is called before the first prompt, and both first turns wait for the world", () => {
+  const attachBoundaryGate = (source) => {
+    const at = source.indexOf("runtime.connected.activateIngress();");
+    const guard = source.indexOf(
+      'if (runtime.connected === undefined) throw new Error("agent_runtime_not_connected");',
+    );
+    return at > 0 && guard !== -1 && guard < at && at < source.indexOf("await runAgentTurn(");
+  };
+  assert.ok(
+    attachBoundaryGate(RUNNER_SOURCE),
+    "the harness must activate the ingress between the materialized-runtime check and the first turn: it is the only path that hands launch.initialFacts to the pump",
+  );
+  // FALSIFIER: the same gate on a source with that one line removed is red, so the guard reads the call and not the file.
+  assert.equal(attachBoundaryGate(RUNNER_SOURCE.replace("runtime.connected.activateIngress();", "")), false);
+  // Both ways a run reaches its first turn go through the wait, and neither can reach `runAgentTurn` with the raw prompt.
+  assert.match(RUNNER_SOURCE, /const opening = turns === 1 \? await dayOpeningFor\(day\) : null;/u);
+  assert.match(RUNNER_SOURCE, /const firstOpening = await dayOpeningFor\(1\);/u);
+  assert.match(
+    RUNNER_SOURCE,
+    /opening !== null && opening\.observed !== true\n\s+\? dayPromptWithoutObservation\(prompt, opening, localeKey\)\n\s+: prompt;/u,
+  );
+  assert.match(
+    RUNNER_SOURCE,
+    /const walked = await runAgentTurn\(deliveredPrompt, tools, \{ reason: wake\.reason \}\);/u,
+  );
+  assert.match(RUNNER_SOURCE, /const firstTurn = await runAgentTurn\(firstDeliveredPrompt, tools,/u);
+  // And the reading reaches the record and the verdict, printed so a zero is visible as a zero.
+  assert.match(RUNNER_SOURCE, /"DAY_STARTS",\n\s+dayStartAssessment\.reading,/u);
+  assert.match(RUNNER_SOURCE, /^\s+dayStarts: dayStartAssessment,$/mu, "the reading must reach result.json");
+  assert.match(RUNNER_SOURCE, /dayStartVerdict: dayStartAssessment\.verdictCode,/u);
+  assert.match(RUNNER_SOURCE, /if \(dayStartVerdict !== null\) return dayStartVerdict;/u);
+  assert.match(
+    RUNNER_SOURCE,
+    /day_prompt_delivered_without_observation:\$\{String\(day\)\}:\$\{String\(opening\.waitedMs\)\}/u,
+  );
+});
+
+test("a blind day outranks her silence, and the attach's arrival is answered before it too", () => {
+  const [, deriveSessionVerdict] = extractRunnerFunction(RUNNER_SOURCE, ["taskPurposeVerdict", "deriveSessionVerdict"]);
+  const healthy = {
+    worldStallReason: null,
+    sessionTurns: [{}],
+    unsettledTurns: [],
+    turnFailureReason: undefined,
+    bridgeDisconnections: [],
+    sessionSpoken: true,
+    accomplishedActionIds: ["harvest_crop"],
+    taskPurposes: [],
+    multidayAssessment: null,
+  };
+  assert.equal(deriveSessionVerdict({ ...healthy, dayStartVerdict: "day_started_blind:1" }), "day_started_blind:1");
+  // The earlier fact wins: a day that was handed a turn before it was handed the world is blind first, note-less second.
+  assert.equal(
+    deriveSessionVerdict({
+      ...healthy,
+      dayStartVerdict: "day_started_blind:1",
+      dayNoteVerdict: "day_note_not_delivered:1",
+    }),
+    "day_started_blind:1",
+  );
+  // `silent` describes a companion who was asked and did not answer; the arrival was never delivered at all.
+  assert.equal(
+    deriveSessionVerdict({
+      ...healthy,
+      sessionSpoken: false,
+      companionArrivalVerdict: "companion_arrival_not_delivered",
+    }),
+    "companion_arrival_not_delivered",
+  );
+  assert.equal(
+    deriveSessionVerdict({ ...healthy, dayStartVerdict: null, dayNoteVerdict: null, companionArrivalVerdict: null }),
+    "completed",
+  );
+});
+
+test("the attach's arrival fact is said once per session, and a run that never attached is not charged for it", () => {
+  const [assessCompanionArrival] = extractRunnerFunction(RUNNER_SOURCE, ["assessCompanionArrival"]);
+  const arrivalZh = "你刚到这座农场，第一次真的站在这里。";
+  const once = assessCompanionArrival({ attached: true, texts: [OBSERVED_FIRST_DELIVERY, arrivalZh] });
+  assert.equal(once.said, 1);
+  assert.equal(once.reading, "arrival said 1 of 1");
+  assert.equal(once.verdictCode, null);
+  // The same call that suppressed the world-state block suppressed this: a companion never told she arrived.
+  assert.equal(
+    assessCompanionArrival({ attached: true, texts: [OBSERVED_FIRST_DELIVERY] }).verdictCode,
+    "companion_arrival_not_delivered",
+  );
+  assert.equal(
+    assessCompanionArrival({
+      attached: true,
+      texts: [arrivalZh, "You have just arrived on this farm and are standing here for the first time."],
+    }).verdictCode,
+    "companion_arrival_said_twice",
+  );
+  // A run that never materialized already names its own cause; the attach it never attempted is not a second charge.
+  const unattached = assessCompanionArrival({ attached: false, texts: null });
+  assert.equal(unattached.measured, false);
+  assert.equal(unattached.verdictCode, null);
+  // A record that cannot be read is a gap, and it is still not a pass.
+  assert.equal(assessCompanionArrival({ attached: true, texts: null }).verdictCode, "companion_arrival_unmeasured");
+});
+
+test("the runner reads the owner's own strings for both markers, so neither can drift in silence", () => {
+  // One authority per fact: the marker lives in `host/src/fact-brief.ts` and the arrival openings in
+  // `host/src/companion-arrival-fact.ts`. Neither is exported, so they are compared against the owner's source instead of
+  // being restated here (a copy that agrees today is a disagreement scheduled for later).
+  const factBrief = readFileSync(new URL("../../../host/src/fact-brief.ts", import.meta.url), "utf8");
+  const ownerMarker = /const NOTHING_OBSERVED = "([^"]+)";/u.exec(factBrief)?.[1];
+  const runnerMarker = /const NOTHING_OBSERVED_WORLD = "([^"]+)";/u.exec(RUNNER_SOURCE)?.[1];
+  assert.ok(ownerMarker === undefined || ownerMarker.length > 0);
+  assert.ok(
+    (ownerMarker ?? "").length > 0,
+    "the owner must still declare NOTHING_OBSERVED; if it was renamed, update this reading",
+  );
+  assert.equal(runnerMarker, ownerMarker, "the blind marker must be the owner's wording, not a second copy of it");
+
+  const arrivalOwner = readFileSync(new URL("../../../host/src/companion-arrival-fact.ts", import.meta.url), "utf8");
+  const openings = [
+    /const ARRIVAL_OPENING_ZH = "([^"]+)";/u.exec(arrivalOwner)?.[1],
+    /const ARRIVAL_OPENING_EN = "([^"]+)";/u.exec(arrivalOwner)?.[1],
+  ];
+  assert.deepEqual(
+    openings.filter((opening) => (opening ?? "").length > 0).length,
+    2,
+    "the owner must still declare both arrival openings",
+  );
+  for (const opening of openings)
+    assert.ok(RUNNER_SOURCE.includes(`"${opening}"`), `the arrival marker must be the host's own sentence: ${opening}`);
+});

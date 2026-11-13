@@ -1457,6 +1457,246 @@ function readSessionPlayerTexts(sessionJsonlPath) {
   return Object.freeze(texts);
 }
 
+/**
+ * The world-state block's own words when no observation has arrived.
+ *
+ * The block's owner is `host/src/fact-brief.ts` (`NOTHING_OBSERVED`), and that constant is not exported, so it is spelled
+ * here ONCE and compared against the owner's source by this runner's own test - the two cannot drift apart in silence.
+ * It is the marker that makes "this day started blind" readable from a delivered message instead of inferred from code.
+ */
+const NOTHING_OBSERVED_WORLD = "世界：尚未收到观察";
+
+/**
+ * Wait, bounded, for the world she is about to be handed to have been OBSERVED.
+ *
+ * <p>
+ * The day's first prompt is the one turn with nothing behind it: no tool result, no receipt, no settled programme. Handing
+ * it over before the world has been read is what `round49` did - the first delivery carried `世界：尚未收到观察`, her first
+ * thinking was "no observation yet", and her first action was `stardew_observe {}`, a whole turn spent looking at a world
+ * the harness already held.
+ * </p>
+ *
+ * <p>
+ * A WAIT CANNOT MANUFACTURE A READING, and it is not asked to: the producer is the attach boundary
+ * (`runtime.connected.activateIngress()`, called before the first prompt). What this adds is the failure mode - if the
+ * world is still unread when the bound expires, the caller delivers anyway and NAMES the wait, so a blind day is a stated
+ * outcome instead of an invisible one. The bound is a HARNESS bound (design 1432), never a product verdict.
+ * </p>
+ *
+ * <p>
+ * The poll count is bounded as well as the clock. Without it a `now` that never advances - the shape every test that
+ * fakes the clock has - would loop forever, and "bounded" would be a claim about the caller's clock instead of a property
+ * of this function.
+ * </p>
+ */
+async function awaitDayOpeningWorld({
+  probe,
+  timeoutMs = 15_000,
+  pollMs = 250,
+  now = () => Date.now(),
+  pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+} = {}) {
+  const pollBound = Math.max(1, Math.ceil(timeoutMs / Math.max(1, pollMs)) + 1);
+  const startedAtMs = now();
+  let polls = 0;
+  for (;;) {
+    const reading = probe();
+    if (reading?.observed === true)
+      return Object.freeze({
+        observed: true,
+        waitedMs: now() - startedAtMs,
+        revision: Number.isInteger(reading.revision) ? reading.revision : null,
+        polls,
+      });
+    const waitedMs = now() - startedAtMs;
+    if (waitedMs >= timeoutMs || polls >= pollBound)
+      return Object.freeze({ observed: false, waitedMs, revision: null, polls });
+    await pause(pollMs);
+    polls += 1;
+  }
+}
+
+/**
+ * The day's prompt when the wait expired: the harness says what it could not hand over.
+ *
+ * A statement about the HARNESS, not an instruction to go and look. The turn is still delivered - a companion nobody asks
+ * anything cannot act at all - and the sentence exists so the model is not left to read an empty world as a real one.
+ * It is deliberately not "observe first": the fix for a blind day is that the observation is handed over, and a prompt
+ * that told her to look would hide the harness's own gap behind her next action.
+ */
+function dayPromptWithoutObservation(prompt, opening, locale) {
+  // A prompt that says the harness never got the world must be about a wait that actually expired: an observed opening
+  // returns the prompt untouched rather than stating something false about the harness.
+  if (opening?.observed === true) return prompt;
+  const waitedSeconds = String(Math.max(0, Math.round((opening?.waitedMs ?? 0) / 1000)));
+  return locale === "zh"
+    ? `${prompt}\n\n（这一轮之前，系统没有拿到世界的观察：等了 ${waitedSeconds} 秒，仍然没有。现在不知道时间、位置和身上带着什么。）`
+    : `${prompt}\n\n(Before this turn the harness never received an observation of the world: it waited ${waitedSeconds}s and none arrived. Time, place and what you carry are unknown.)`;
+}
+
+/**
+ * What the Host actually DELIVERED for one day's first turn, read from this run's own session record.
+ *
+ * <p>
+ * The reading is the session's user message at the moment the day's first prompt was issued, and nothing else: a day that
+ * carried `世界：尚未收到观察` started blind, however healthy the turn after it looked. `fromIndex` is captured BEFORE the
+ * turn - the count of user messages the record already held - so a gate's line or a later turn can never be read as the
+ * day's opening.
+ * </p>
+ *
+ * <p>
+ * NOT MEASURED is its own answer, with the reason, and never a pass: an unreadable record, a record that rotated mid-turn
+ * (a compaction writes a new file and every index in it means something else), and a turn that appended no user message
+ * at all are three different gaps with three different owners.
+ * </p>
+ */
+function readDayFirstDelivery({
+  day,
+  texts,
+  fromIndex,
+  sourcePath = null,
+  readingPath = null,
+  waitedMs = null,
+  marker,
+}) {
+  const unmeasured = (reason) =>
+    Object.freeze({ day, waitedMs, measured: false, startedBlind: false, worldState: null, reason });
+  // A reading with no marker would compare every delivery against "" and call each one blind, and one with a missing
+  // marker would call every delivery sound; both are silent, so the caller must name what it is looking for.
+  if (typeof marker !== "string" || marker.length === 0) throw new Error("day_start_marker_required");
+  if (typeof sourcePath === "string" && typeof readingPath === "string" && sourcePath !== readingPath)
+    return unmeasured("session_record_changed_mid_turn");
+  if (!Array.isArray(texts)) return unmeasured("session_record_unreadable");
+  if (!Number.isInteger(fromIndex) || fromIndex < 0 || texts.length <= fromIndex)
+    return unmeasured("no_user_message_after_day_prompt");
+  const delivered = texts[fromIndex];
+  const block = /<world-state>([\s\S]*?)<\/world-state>/u.exec(delivered)?.[1]?.trim() ?? null;
+  return Object.freeze({
+    day,
+    waitedMs,
+    measured: true,
+    startedBlind: delivered.includes(marker),
+    // The block itself, bounded: the evidence a reader needs, and never the whole delivery (the player's own note is in
+    // there and is read for matching only).
+    worldState: block === null ? null : `<world-state>${block.slice(0, 200)}</world-state>`,
+    reason: null,
+  });
+}
+
+/**
+ * Whether a run started its days BLIND, over the days it scheduled.
+ *
+ * <p>
+ * THE POPULATION IS THE DAYS THE RUN SCHEDULED, so a run that scheduled none is blocked rather than green: `0 of 0` would
+ * agree with itself. Every scheduled day must be measured, and a blind one is a finding that names the day and the wait
+ * that expired in front of it.
+ * </p>
+ *
+ * <p>
+ * The verdict code is the first blind day if there is one, else whatever made the population unmeasurable, else `null` -
+ * so the caller cannot fold "not measured" into a pass by reading a `null` and a missing field the same way.
+ * </p>
+ */
+function assessDayStarts({ scheduledDays, readings } = {}) {
+  const list = Array.isArray(readings) ? readings : [];
+  const findings = [];
+  const blindDays = [];
+  let measured = 0;
+  for (const reading of list) {
+    if (reading?.measured !== true) {
+      findings.push(
+        Object.freeze({
+          code: `day_start_reading_missing:${String(reading?.day ?? "?")}:${String(reading?.reason ?? "no_reading")}`,
+          day: Number.isInteger(reading?.day) ? reading.day : null,
+        }),
+      );
+      continue;
+    }
+    measured += 1;
+    if (reading.startedBlind === true) {
+      blindDays.push(reading.day);
+      findings.push(
+        Object.freeze({
+          code: `day_started_blind:${String(reading.day)}`,
+          day: reading.day,
+          waitedMs: Number.isInteger(reading.waitedMs) ? reading.waitedMs : null,
+        }),
+      );
+    }
+  }
+  const population = Number.isInteger(scheduledDays) && scheduledDays > 0 ? scheduledDays : 0;
+  const missing = findings.find((finding) => finding.code.startsWith("day_start_reading_missing:"));
+  const blocked =
+    population === 0
+      ? "no_days_scheduled"
+      : list.length < population
+        ? `day_start_reading_missing:${String(list.length)}_of_${String(population)}`
+        : (missing?.code ?? null);
+  return Object.freeze({
+    population,
+    measured,
+    startedBlind: blindDays.length,
+    blindDays: Object.freeze(blindDays),
+    findings: Object.freeze(findings),
+    reading: `days started blind ${String(blindDays.length)} of ${String(population)}`,
+    blocked,
+    verdictCode: blindDays.length > 0 ? `day_started_blind:${String(blindDays[0])}` : blocked,
+  });
+}
+
+/**
+ * Whether the attach's own arrival fact was said, exactly once.
+ *
+ * <p>
+ * The same call that hands the launch's snapshot to the Host (`activateIngress` -> `host.acceptInitialFacts`) is the
+ * attach boundary `companionArrivalFact` is gated on (`host-service.ts`, `#sayArrivalOnce`). A harness that never
+ * activated the ingress therefore lost BOTH readings with one omission, and only the world-state half was visible: a
+ * companion who is never told she arrived is a second defect hiding behind the first.
+ * </p>
+ *
+ * <p>
+ * The marker is the arrival paragraph's own invariant opening (`host/src/companion-arrival-fact.ts`,
+ * `ARRIVAL_OPENING_*`), and the two openings are spelled here because the module does not export them; this runner's test
+ * compares them against the owner's source so the marker cannot drift. The record is the authority, not the activation
+ * flag: "the flag was set" and "the delivery happened" came apart in every other reading in this file.
+ * </p>
+ *
+ * <p>
+ * `attached: false` is NOT a finding about the arrival: a run that never materialized already has a failure that names
+ * its own cause, and reporting the attach it never attempted would report a symptom over it.
+ * </p>
+ */
+function assessCompanionArrival({ attached, texts } = {}) {
+  const openings = Object.freeze([
+    "你刚到这座农场，第一次真的站在这里",
+    "You have just arrived on this farm and are standing here for the first time",
+  ]);
+  if (attached !== true)
+    return Object.freeze({
+      measured: false,
+      said: 0,
+      reading: "arrival said 0 of 1",
+      reason: "ingress_not_activated",
+      verdictCode: null,
+    });
+  if (!Array.isArray(texts))
+    return Object.freeze({
+      measured: false,
+      said: 0,
+      reading: "arrival said 0 of 1",
+      reason: "session_record_unreadable",
+      verdictCode: "companion_arrival_unmeasured",
+    });
+  const said = texts.filter((text) => openings.some((opening) => text.includes(opening))).length;
+  return Object.freeze({
+    measured: true,
+    said,
+    reading: `arrival said ${String(said)} of 1`,
+    reason: null,
+    verdictCode: said === 1 ? null : said === 0 ? "companion_arrival_not_delivered" : "companion_arrival_said_twice",
+  });
+}
+
 function readToolTiming(
   sessionJsonlPath,
   { executionTraceFlat, unboundReason = "no_session_record" } = {},
@@ -2031,6 +2271,13 @@ function deriveSessionVerdict({
   // The day-note reading's own verdict code (`day_note_not_delivered:...` and its siblings), or `null` when every
   // scheduled day was told what it was for and no gate spoke over it.
   dayNoteVerdict = null,
+  // The day-START reading's own code (`day_started_blind:<day>`, or the reason the population could not be measured).
+  // It sits above `dayNoteVerdict` because the two describe the same delivery from opposite ends: a day that opened on
+  // `世界：尚未收到观察` was handed a turn before it was handed a task, and the earlier fact is the one to name first.
+  dayStartVerdict = null,
+  // The attach's own arrival fact, which only exists once `activateIngress()` has handed the launch's initial snapshot to
+  // the Host. Exactly one per Game session; absent means the harness never completed the attach boundary.
+  companionArrivalVerdict = null,
 }) {
   if (worldStallReason !== null) return "world_stopped_advancing";
   if (sessionTurns.length === 0) return "no_turns";
@@ -2059,7 +2306,10 @@ function deriveSessionVerdict({
   if ((morningLiveness?.violations?.length ?? 0) > 0) return "morning_clock_frozen";
   // A day she was never given is not a day she failed. This arm sits above `silent` and `nothing_accomplished` because
   // those describe a companion who was asked and did not answer, which is the opposite of what happened in round49.
+  if (dayStartVerdict !== null) return dayStartVerdict;
   if (dayNoteVerdict !== null) return dayNoteVerdict;
+  // The attach itself, named: a companion who was never told she arrived was never given the world either.
+  if (companionArrivalVerdict !== null) return companionArrivalVerdict;
   if (!sessionSpoken) return "silent";
   if (accomplishedActionIds.length === 0) return "nothing_accomplished";
   // A session that changed the world has still not necessarily done the TASK it was given. The task's own criterion
@@ -4525,6 +4775,20 @@ try {
     }),
   );
   if (runtime.connected === undefined) throw new Error("agent_runtime_not_connected");
+  // THE ATTACH BOUNDARY, and the one call this harness never made.
+  //
+  // `activateIngress()` is the single path that hands the launch's own initial facts to the Host
+  // (`host.acceptInitialFacts` -> `pump.enqueueFact`, which sets the pump's `#lastSnapshot` synchronously), and production
+  // calls it exactly once after the durable enter receipt commits (`continuity-semantic-game-facade.internal.ts`), where
+  // `dispatchPromptDefinedTask` then HARD-REFUSES every task prompt until it has fired (`semantic_game_ingress_not_activated`).
+  //
+  // The launch has already observed the world by the time this line runs: `createStardewIntegrationLaunchHandleFromAuthenticatedBridge`
+  // does `await bridge.observe()` and THROWS `stardew_initial_snapshot_not_observed` rather than proceed without one, then
+  // parks that snapshot in `launch.initialFacts`. So the reading existed on every run; nothing handed it over. Measured
+  // `round49` (day 1): the first delivery carried `世界：尚未收到观察`, her first thinking was "no observation yet", and her
+  // first action was `stardew_observe {}` - a whole turn spent looking at a world the harness was already holding.
+  // `#sayArrivalOnce` is gated on the same attach (`host-service.ts`), so the companion-arrival fact was lost with it.
+  runtime.connected.activateIngress();
   markPhase("runtimeMaterializedMs");
   // A disposable root's catalog arrives with its runtime, so readiness is asked here instead - still before the first
   // turn, and a provider that cannot answer costs one probe instead of the turn's whole budget.
@@ -4654,6 +4918,53 @@ try {
    * fact repeated every turn would become the instruction by repetition that this deliberately is not.
    */
   const withDayFact = (prompt, fact) => dayPromptWithFact(prompt, fact, localeKey);
+  // WHETHER THE WORLD HAS BEEN OBSERVED, as two halves of one reading: the attach HANDED OVER a snapshot
+  // (`launch.initialFacts`, which is what `activateIngress` delivered to the pump) and the connection ADMITS one now
+  // (`client.state.snapshot`, the same client the ingress wraps). A probe that only asked the second half would pass on a
+  // run whose pump never received the fact - the exact shape of `round49`.
+  const worldObserved = () => {
+    const revision = client.state?.snapshot?.revision ?? null;
+    const handed = Array.isArray(launch.initialFacts)
+      ? launch.initialFacts.filter((fact) => fact?.kind === "snapshot").length
+      : 0;
+    return Object.freeze({
+      observed: Number.isInteger(revision) && handed > 0,
+      revision: Number.isInteger(revision) ? revision : null,
+    });
+  };
+  // Every day's start, in order: whether the world was there, how long the wait was, and what the Host actually delivered.
+  const dayStarts = [];
+  /**
+   * The world, before the day - and the code that says so when it was not there.
+   *
+   * The wait is bounded (`awaitDayOpeningWorld`), so a world that never arrives costs the harness its bound instead of her
+   * turn, and an expired wait is published twice: once as a line a log reader sees, once in the record.
+   */
+  const dayOpeningFor = async (day) => {
+    const opening = await awaitDayOpeningWorld({ probe: worldObserved });
+    if (opening.observed !== true)
+      process.stderr.write(`day_prompt_delivered_without_observation:${String(day)}:${String(opening.waitedMs)}\n`);
+    return opening;
+  };
+  // Where the session record stood before a turn, so the day's own delivery is the message at this index and not whatever
+  // a gate or a later turn appended.
+  const sessionDeliveryCursor = () => {
+    const found = findRunSessionJsonl(gameSessionPaths.sessionDir);
+    const texts = readSessionPlayerTexts(found.path);
+    return Object.freeze({ path: found.path ?? null, fromIndex: texts === null ? 0 : texts.length });
+  };
+  const readDayStart = (day, cursor, waitedMs) => {
+    const found = findRunSessionJsonl(gameSessionPaths.sessionDir);
+    return readDayFirstDelivery({
+      day,
+      texts: readSessionPlayerTexts(found.path),
+      fromIndex: cursor?.fromIndex ?? 0,
+      sourcePath: cursor?.path ?? null,
+      readingPath: found.path ?? null,
+      waitedMs,
+      marker: NOTHING_OBSERVED_WORLD,
+    });
+  };
   let status = null;
   // The promise the CURRENT day's turn settles on. The night watcher waits on it so "the night has not begun"
   // and "the companion will not sleep" are different answers instead of one timeout.
@@ -4794,6 +5105,12 @@ try {
             recordWake(wake.reason);
             if (wake.reason === WAKE_REASON.dayEndOffer || wake.reason === WAKE_REASON.objectiveUnreachableForToday)
               dayEndOffered = true;
+            // THE DAY'S FIRST TURN WAITS FOR THE WORLD, bounded, before anything is asked of her. A day that opens on
+            // `世界：尚未收到观察` costs a whole turn of looking (`round49`), and the reading it costs is one the harness
+            // already held. The bound's expiry is named (`day_prompt_delivered_without_observation`) and the turn is still
+            // delivered, with the prompt saying so.
+            const dayStartCursor = turns === 1 ? sessionDeliveryCursor() : null;
+            const opening = turns === 1 ? await dayOpeningFor(day) : null;
             // The day's shortage fact, read from the world as it stands at the FIRST turn of the day: what the task
             // asks for, what she holds, and where the missing seed is sold. Null when there is nothing to say (the task
             // declares no patch, or the pack already covers it), and then the prompt is untouched.
@@ -4817,19 +5134,29 @@ try {
                   : wake.reason === WAKE_REASON.stallWake
                     ? promptForStall(stallFacts.at(-1) ?? null)
                     : promptForStaleWorld(staleFacts.at(-1) ?? null);
+            // WHAT REACHES HER: the prompt above, plus the harness's own statement when the wait expired. The prompt
+            // itself is untouched - the fix for a blind day is the observation being handed over, not a sentence telling
+            // her to go and look.
+            const deliveredPrompt =
+              opening !== null && opening.observed !== true
+                ? dayPromptWithoutObservation(prompt, opening, localeKey)
+                : prompt;
             const spokenBefore = presentationPieces.length;
             const dispatchBefore = dispatchMarkers(actionTrace, programSubmissions);
             promptTurnStarts.push(Date.now());
             // The clock the line is spoken at, read BEFORE the turn: `runAgentTurn` does not return until the turn has
             // settled, so a reading taken after it would date the day's note to the end of the day it opened.
             const spokenAt = readWorldClock();
-            const walked = await runAgentTurn(prompt, tools, { reason: wake.reason });
+            const walked = await runAgentTurn(deliveredPrompt, tools, { reason: wake.reason });
+            // WHAT THE HOST ACTUALLY DELIVERED for this day's opening, from the session record: the reading that says a
+            // day started blind even when everything after it looked healthy.
+            if (turns === 1) dayStarts.push(readDayStart(day, dayStartCursor, opening?.waitedMs ?? null));
             playerInputs.push(
               Object.freeze({
                 day,
                 channel: "harness",
                 reason: wake.reason,
-                text: prompt,
+                text: deliveredPrompt,
                 gameTime: spokenAt.unknown === true ? null : spokenAt.timeOfDay,
                 admitted: walked.turn?.admission?.accepted === true,
               }),
@@ -5082,7 +5409,15 @@ try {
     // real turn boundary, not from process start.
     const firstSpokenBefore = presentationPieces.length;
     const firstDispatchBefore = dispatchMarkers(actionTrace, programSubmissions);
-    const firstTurn = await runAgentTurn(prompt, tools, { reason: WAKE_REASON.dayStart });
+    // THE RUN'S FIRST TURN WAITS FOR THE WORLD, the same boundary the multi-day loop's day-1 turn keeps: a single-goal
+    // rung handed a blind first prompt spends its opening turn looking (`round49`), and the reading it costs is one the
+    // harness already held.
+    const firstDayCursor = sessionDeliveryCursor();
+    const firstOpening = await dayOpeningFor(1);
+    const firstDeliveredPrompt =
+      firstOpening.observed === true ? prompt : dayPromptWithoutObservation(prompt, firstOpening, localeKey);
+    const firstTurn = await runAgentTurn(firstDeliveredPrompt, tools, { reason: WAKE_REASON.dayStart });
+    dayStarts.push(readDayStart(1, firstDayCursor, firstOpening.waitedMs));
     status = firstTurn.status;
     agentTurnResult = firstTurn.turn;
     sessionTurns.push(
@@ -5394,6 +5729,24 @@ try {
     dayNoteDelivery.reading,
     dayNoteDelivery.findings.map((finding) => finding.code).join(","),
   );
+  // DID ANY DAY START BLIND? Read from the world-state block each day's first delivery actually carried, over the days
+  // this run scheduled - printed, because a reading nobody prints is a reading nobody sees.
+  const dayStartAssessment = assessDayStarts({
+    scheduledDays: SCENARIO === "multiday_routine" ? dayTasksScheduled.length : 1,
+    readings: dayStarts,
+  });
+  console.error(
+    "DAY_STARTS",
+    dayStartAssessment.reading,
+    dayStartAssessment.findings.map((finding) => finding.code).join(","),
+  );
+  // AND THE ATTACH'S OWN ARRIVAL, which the same missing call suppressed: once `activateIngress()` hands over the
+  // snapshot, `companionArrivalFact` mints one `companion_arrival` per Game session, and the record says whether it did.
+  const companionArrival = assessCompanionArrival({
+    attached: runtime?.connected !== undefined,
+    texts: readSessionPlayerTexts(sessionSearch.path),
+  });
+  console.error("COMPANION_ARRIVAL", companionArrival.reading, companionArrival.verdictCode ?? "");
 
   const sessionVerdict = deriveSessionVerdict({
     worldStallReason,
@@ -5413,6 +5766,10 @@ try {
     // The note a scheduled day was given, or the reason it was not: a session that was never told what the day was for has
     // not completed a day of it, whatever it did instead.
     dayNoteVerdict: dayNoteDelivery.verdictCode,
+    // The day-start reading and the attach's arrival: both are the harness's own delivery, and both come before anything
+    // she did with the day.
+    dayStartVerdict: dayStartAssessment.verdictCode,
+    companionArrivalVerdict: companionArrival.verdictCode,
   });
   const morningRoutinePassed =
     SCENARIO === "morning_routine"
@@ -5758,6 +6115,12 @@ try {
     // The day-note reading and its findings, from the session record: what each scheduled day WAS told, whether a gate
     // spoke over it, and whether that gate kept its declared hour.
     dayNoteDelivery,
+    // What each day's first delivery carried, day by day: whether the world had been observed, how long the harness waited
+    // for it, and the world-state block itself. Published beside the note reading because "she was handed a turn before she
+    // was handed the world" and "she was never handed the task" are different findings about the same day.
+    dayStarts: dayStartAssessment,
+    // The attach's own arrival fact, exactly once per Game session, or the reason the record could not say.
+    companionArrival,
     // The 30-minute interaction-value gate, clause by clause, from this run's own session record and timeline.
     interactionValue,
     capabilityAudit,
