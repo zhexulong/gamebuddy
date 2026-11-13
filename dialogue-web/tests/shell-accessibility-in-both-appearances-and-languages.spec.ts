@@ -38,6 +38,7 @@
  * measured by the last test in this file, on the same engine.
  */
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { AxeBuilder } from "@axe-core/playwright";
 import { type AccessibilityFinding, BASELINE_TAGS, readAccessibility } from "./frontend-criteria.js";
 import { type Page, expect, test } from "./frontend-coverage";
@@ -177,65 +178,113 @@ const NOTICES = [
 ] as const;
 
 /**
- * The notices' own ink over their own wash, as a family.
+ * The appearances the shell can be launched in, and the authority that declares them.
+ *
+ * The token roots in `style.css` decide every colour a notice paints; a third appearance joins this
+ * list by being written there, and the drift check in the test fails loudly instead of leaving it
+ * unmeasured.
+ */
+const APPEARANCES = ["dark", "light"] as const;
+
+/**
+ * The notices' own ink over their own wash, as a family, in every appearance the shell paints.
  *
  * The four cells above judge the page a launch paints, and that page carries one notice: the Chat
- * surface's "no model yet" warning. A failed connection and a finished import are reached later, so
- * a wash that put either of the other two under the floor was reported by nothing - and the measured
+ * surface's "no model yet" warning. A failed connection and a finished import are reached later, so a
+ * wash that put either of the other two under the floor was reported by nothing - and the measured
  * family disagreed with itself: at the light theme's original 12%/14% the warning notice read 4.35:1,
- * the danger notice 4.25:1 and the success notice 4.43:1, all under AA, while the launch rendered
- * only the first of them. This test mounts all three on the shell that is already running - the
- * product's own classes, tokens and cascade, no styles of its own - and asks the same engine the same
- * question, so a plate strength can no longer pass notice by notice.
+ * the danger notice 4.25:1 and the success notice 4.43:1, all under AA, while the launch rendered only
+ * the first of them. This test mounts all three on the shell that is already running - the product's
+ * own classes, tokens and cascade, no styles of its own - and asks the same engine the same question,
+ * so a plate strength can no longer pass notice by notice.
+ *
+ * WHY THE APPEARANCE IS A CELL AND THE LANGUAGE IS NOT. The plate each notice is drawn on is a
+ * per-appearance strength - `--banner-wash` is 12% in the dark root and 6% in the light one - so one
+ * cell can only say that one of the two washes reads at AA. This test judged the light appearance only,
+ * and the light appearance is the one whose numbers are already recorded in the stylesheet's own
+ * comment: the half of the family with no recorded reading was the dark one, which is the appearance the
+ * product is mostly played in. The language is not a cell here because what axe weighs is ink against
+ * plate; the sentence is the measurement's carriage, and a longer Chinese sentence does not change the
+ * colour it is painted in. Each cell below launches the shell from the Host's own appearance record and
+ * proves the appearance it claims, and the printed table carries every notice's ink, plate and the ratio
+ * the engine settled it at.
  */
-test("every notice reads its own ink over its own wash", async ({ page }) => {
-  await stubRoutes(page, { appearance: "light", locale: "en" });
-  // As in every cell: the OS asks for the other appearance, so the painted one is the record's.
-  await page.emulateMedia({ colorScheme: "dark" });
-  await page.goto(`/#profile=composed-reference-game&boot=${token}`);
-  await expect(page.getByTestId("chat-surface")).toBeVisible();
-  await expect
-    .poll(async () => (await readPainted(page)).appearance, {
-      message: "the shell paints the light appearance the Host's record holds",
-    })
-    .toBe("light");
+test("every notice reads its own ink over its own wash, in both appearances", async ({ page }) => {
+  const failures: string[] = [];
+  const plates = new Map<string, readonly string[]>();
 
-  const paints = await page.evaluate((notices) => {
-    const host = document.createElement("div");
-    host.setAttribute("data-notice-probe", "");
-    for (const notice of notices) {
-      const banner = document.createElement("div");
-      banner.className = notice.className;
-      const span = document.createElement("span");
-      span.textContent = notice.text;
-      banner.append(span);
-      host.append(banner);
-    }
-    const shell = document.querySelector(".tavern-app-shell");
-    if (shell === null) throw new Error("the shell did not render: `.tavern-app-shell` is absent");
-    shell.append(host);
-    return [...host.children].map((banner) => ({
-      className: banner.className,
-      ink: getComputedStyle(banner).color,
-      plate: getComputedStyle(banner).backgroundColor,
-    }));
-  }, NOTICES);
+  for (const appearance of APPEARANCES) {
+    // The record is re-answered per cell, and a route registered for the previous cell would answer
+    // first: the appearance is the one fact that changes between these two loads.
+    await page.unroute("**/api/tavern/v1/settings/appearance");
+    await stubRoutes(page, { appearance, locale: "en" });
+    // A real load per cell: the two cells share one URL, and a same-document hash navigation would
+    // keep the first cell's appearance on screen and read it under the second cell's name.
+    await page.goto("about:blank");
+    // As in every cell: the OS asks for the other appearance, so the painted one is the record's.
+    await page.emulateMedia({ colorScheme: appearance === "dark" ? "light" : "dark" });
+    await page.goto(`/#profile=composed-reference-game&boot=${token}`);
+    await expect(page.getByTestId("chat-surface")).toBeVisible();
+    await expect
+      .poll(async () => (await readPainted(page)).appearance, {
+        message: `the shell paints the ${appearance} appearance the Host's record holds`,
+      })
+      .toBe(appearance);
 
-  const observed = await new AxeBuilder({ page })
-    .withTags([...BASELINE_TAGS])
-    .include("[data-notice-probe]")
-    .analyze();
-  const found = observed.violations.flatMap((violation) =>
-    violation.nodes.map((node) => `${violation.id} on ${node.target.join(" ")}: ${node.any[0]?.message ?? ""}`),
+    const paints = await page.evaluate((notices) => {
+      const host = document.createElement("div");
+      host.setAttribute("data-notice-probe", "");
+      for (const notice of notices) {
+        const banner = document.createElement("div");
+        banner.className = notice.className;
+        const span = document.createElement("span");
+        span.textContent = notice.text;
+        banner.append(span);
+        host.append(banner);
+      }
+      const shell = document.querySelector(".tavern-app-shell");
+      if (shell === null) throw new Error("the shell did not render: `.tavern-app-shell` is absent");
+      shell.append(host);
+      return [...host.children].map((banner) => ({
+        className: banner.className,
+        ink: getComputedStyle(banner).color,
+        plate: getComputedStyle(banner).backgroundColor,
+      }));
+    }, NOTICES);
+    plates.set(
+      appearance,
+      paints.map((paint) => paint.plate),
+    );
+
+    const observed = await new AxeBuilder({ page })
+      .withTags([...BASELINE_TAGS])
+      .include("[data-notice-probe]")
+      .analyze();
+    for (const violation of observed.violations)
+      for (const node of violation.nodes)
+        failures.push(`${appearance}: ${violation.id} on ${node.target.join(" ")}: ${node.any[0]?.message ?? ""}`);
+    // The ratio the engine settled each passing notice at, so a green run states the margin it keeps
+    // rather than only that it cleared the floor.
+    const settled = observed.passes
+      .filter((rule) => rule.id === "color-contrast")
+      .flatMap((rule) => rule.nodes.map((node) => `${node.target.join(" ")} ${node.any[0]?.data?.contrastRatio}:1`));
+    // The population, printed rather than implied: three notices, the pair each one paints, and the
+    // ratio the engine settled - per appearance, because the wash is a per-appearance strength.
+    console.log(`[notices ${appearance}] examined=${NOTICES.length} violations=${observed.violations.length}`);
+    for (const paint of paints) console.log(`  ${paint.className.padEnd(16)} ink=${paint.ink} plate=${paint.plate}`);
+    for (const reading of settled) console.log(`  settled ${reading}`);
+  }
+
+  // The cells are proven, not assumed: two appearances that paint the same three plates would let an
+  // unstyled page be judged twice under two names.
+  assert.notDeepEqual(plates.get("dark"), plates.get("light"), "the two appearances paint different notice plates");
+  // The appearance list is held to the token roots, so a third appearance cannot arrive unmeasured.
+  const stylesheet = readFileSync(new URL("../src/style.css", import.meta.url), "utf8").replace(
+    /\/\*[\s\S]*?\*\//gu,
+    " ",
   );
-  // The ratio the engine settled each passing notice at, so a green run states the margin it keeps
-  // rather than only that it cleared the floor.
-  const settled = observed.passes
-    .filter((rule) => rule.id === "color-contrast")
-    .flatMap((rule) => rule.nodes.map((node) => `${node.target.join(" ")} ${node.any[0]?.data?.contrastRatio}:1`));
-  // The population, printed rather than implied: three notices, and the pair each one paints.
-  console.log(`[notices light] examined=${NOTICES.length} violations=${found.length}`);
-  for (const paint of paints) console.log(`  ${paint.className.padEnd(16)} ink=${paint.ink} plate=${paint.plate}`);
-  for (const reading of settled) console.log(`  settled ${reading}`);
-  assert.deepEqual(found, [], "every notice's own ink reads at AA over its own wash in the light appearance");
+  const painted = [...new Set([...stylesheet.matchAll(/:root\[data-theme="([^"]+)"\]/gu)].map((match) => match[1]))];
+  assert.deepEqual(painted.sort(), [...APPEARANCES].sort(), "this test measures every appearance the stylesheet paints");
+
+  assert.deepEqual(failures, [], "every notice's own ink reads at AA over its own wash, in both appearances");
 });
