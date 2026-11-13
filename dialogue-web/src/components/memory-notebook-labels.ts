@@ -30,6 +30,7 @@ export type MemoryNotebookLabelKey =
   | "title"
   | "promise"
   | "count"
+  | "unknown"
   | "empty"
   | "unavailable"
   | "failed"
@@ -47,6 +48,14 @@ const MESSAGES: Readonly<Record<MemoryNotebookLabelKey, { en: string; zh: string
     zh: "这是她的手札。你告诉她值得留下的事，就会留在这里。",
   },
   count: { en: "{{count}} memories written down so far.", zh: "已经悄悄记下 {{count}} 件事。" },
+  // The one state that printed a number nobody had taken: a notebook no read had returned said
+  // "0 memories written down so far", i.e. the zero that means "not measured" was rendered in the
+  // same sentence as the zero that means "measured, and empty". This sentence counts nothing - it
+  // says the notebook was never read, and which control reads it.
+  unknown: {
+    en: "Her notebook has not been read yet. Refresh to see what she keeps.",
+    zh: "还没有读过她的手札。刷新一次，就能看到她记下的事。",
+  },
   // The empty sentence carries the same number the count sentence does. "Nothing yet"
   // is information, and the number is part of it: the zero used to exist only as the
   // element's `data-memory-count` attribute, so the one state a new player is most
@@ -69,6 +78,7 @@ export function memoryNotebookLabels(locale: Locale): MemoryNotebookLabels {
     title: MESSAGES.title[language],
     promise: MESSAGES.promise[language],
     count: MESSAGES.count[language],
+    unknown: MESSAGES.unknown[language],
     empty: MESSAGES.empty[language],
     unavailable: MESSAGES.unavailable[language],
     failed: MESSAGES.failed[language],

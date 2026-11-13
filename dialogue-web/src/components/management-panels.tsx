@@ -3,7 +3,7 @@ import { assertNever } from "../assert-never";
 import { type AppearanceChoice, isAppearanceChoice } from "../appearance";
 import { problemTextWithCode } from "../composed-problem-view";
 import { type Locale, messages, recordLabel } from "../i18n";
-import { memoryNotebookLabels } from "./memory-notebook-labels";
+import { memoryNotebookLabels, type MemoryNotebookLabels } from "./memory-notebook-labels";
 import {
   CONNECTION_API_SHAPES,
   type MemoryChapterV1,
@@ -203,6 +203,25 @@ export type MemoryView =
       projectionRevision: string;
       chapters: readonly MemoryChapterV1[];
     }>;
+
+/**
+ * The states a READ of the notebook can be in.
+ *
+ * `unknown` is the one that had no name: nothing has read the notebook yet, so nothing on this card is
+ * known about it - not even that it is empty. It used to fall through the panel's chain into `ready`,
+ * and the card then printed the count of a list no read had returned: a zero that means "not
+ * measured" shown in the same sentence as the zero that means "measured, and empty".
+ */
+export const MEMORY_READ_STATES = Object.freeze([
+  "unknown",
+  "loading",
+  "unavailable",
+  "error",
+  "empty",
+  "ready",
+] as const);
+
+export type MemoryReadState = (typeof MEMORY_READ_STATES)[number];
 export type ConnectionForm = Readonly<{
   providerId: string;
   apiKey: string;
@@ -1364,6 +1383,65 @@ const MEMORY_TITLE_ID = "tavern-memory-title";
  */
 export type MemoryMutationOutcome = Readonly<{ kind: "saved" }> | Readonly<{ kind: "refused"; text: string }>;
 
+/**
+ * Which of the read's states a view is.
+ *
+ * A `switch` rather than a chain of ternaries, because the chain's last arm was `ready`: every member
+ * nobody had thought about was silently reported as a read that found a notebook, and `idle` - the one
+ * state in which nothing has been read at all - was the member that fell through it. An exhaustive
+ * switch makes a forgotten member a compile error instead.
+ */
+export function memoryNotebookState(memoryView: MemoryView): MemoryReadState {
+  switch (memoryView.kind) {
+    case "idle":
+      return "unknown";
+    case "loading":
+      return "loading";
+    case "unavailable":
+      return "unavailable";
+    case "error":
+      return "error";
+    case "empty":
+      return "empty";
+    case "ready":
+      return "ready";
+    default:
+      return assertNever(memoryView);
+  }
+}
+
+/**
+ * The notebook card's sentence, and the count it may print, for one state.
+ *
+ * `count` is `null` for every state no read produced the rows in - `unknown`, `loading`,
+ * `unavailable`, `error` - so the card cannot print a number nobody measured. The empty and ready
+ * sentences both carry their figure as text, because a count that exists only as an element attribute
+ * is not something a player can read.
+ */
+export function memoryNotebookReading(
+  state: MemoryReadState,
+  rows: number,
+  notebook: MemoryNotebookLabels,
+  loadingText: string,
+): Readonly<{ text: string; count: number | null }> {
+  switch (state) {
+    case "unknown":
+      return { text: notebook.unknown, count: null };
+    case "loading":
+      return { text: loadingText, count: null };
+    case "unavailable":
+      return { text: notebook.unavailable, count: null };
+    case "error":
+      return { text: notebook.failed, count: null };
+    case "empty":
+      return { text: notebook.empty.replace("{{count}}", String(rows)), count: rows };
+    case "ready":
+      return { text: notebook.count.replace("{{count}}", String(rows)), count: rows };
+    default:
+      return assertNever(state);
+  }
+}
+
 export function MemoryPanel({
   memoryView,
   labels,
@@ -1441,26 +1519,8 @@ export function MemoryPanel({
   // production does not run. Both sentences carry that number as text, because
   // a count that exists only as an element attribute is not something a player
   // can read.
-  const notebookState: "ready" | "loading" | "empty" | "unavailable" | "error" =
-    memoryView.kind === "loading"
-      ? "loading"
-      : memoryView.kind === "unavailable"
-        ? "unavailable"
-        : memoryView.kind === "error"
-          ? "error"
-          : memoryView.kind === "empty"
-            ? "empty"
-            : "ready";
-  const notebookText =
-    notebookState === "loading"
-      ? labels.loading
-      : notebookState === "unavailable"
-        ? notebook.unavailable
-        : notebookState === "error"
-          ? notebook.failed
-          : notebookState === "empty"
-            ? notebook.empty.replace("{{count}}", String(rows.length))
-            : notebook.count.replace("{{count}}", String(rows.length));
+  const notebookState = memoryNotebookState(memoryView);
+  const notebookReading = memoryNotebookReading(notebookState, rows.length, notebook, labels.loading);
   return (
     <section className="tavern-memory-section" aria-label={notebook.title} data-memory-panel>
       <div className="tavern-memory-header">
@@ -1482,9 +1542,9 @@ export function MemoryPanel({
         <p
           className="memory-notebook-count"
           data-memory-state={notebookState === "ready" ? undefined : notebookState}
-          data-memory-count={notebookState === "ready" || notebookState === "empty" ? rows.length : undefined}
+          data-memory-count={notebookReading.count ?? undefined}
         >
-          {notebookText}
+          {notebookReading.text}
         </p>
       </aside>
       {chapters.length > 0 && (
