@@ -1,8 +1,8 @@
 // red-proof: inject  one published primitive action with no catalog row pushed into the generated action-surface
-//   artefact -> `× catalog seed covers every published registry action without claiming completeness` and
+//   artefact -> `✖ catalog seed covers every published registry action without claiming completeness` and
 //   `Published registry actions missing covered catalog rows: probe_uncovered_action.`, exit 1
 // red-proof: history the tree at HEAD, where the Host retired-label table wrote `end_day: [sleep_ready,
-//   sleep_after_ready]` -> `× the Host retired-label table names only terms a declaration owns` with
+//   sleep_after_ready]` -> `✖ the Host retired-label table names only terms a declaration owns` with
 //   `capability_term_undeclared:sleep_after_ready:end_day` and
 //   `capability_term_unnamed:advance_day_after_ready:end_day (composite end_day_multiplayer_v1)`
 //   (tools/check-gameplay-capability-catalog.test.mjs)
