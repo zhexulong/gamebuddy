@@ -14,9 +14,10 @@
  * exits non-zero on drift, so the document's numbers can be asserted in CI
  * rather than trusted.
  *
- * red-proof: history  `--rev HEAD~40 --check` -> the ledger derived from that revision disagrees with the table this
- *   document states (`idempotentLookup: document says 39, source has 9`, `executionIds: document says 45, source has
- *   10`, `bodyOwned: document says 24, source has 1`, and seven more), exit 1
+ * red-proof: history  `--rev 1eb9dc10 --check` -> thirteen printed rows disagree with the table this document states
+ *   (`idempotentLookup: document says 39, source has 9`, `executionIds: document says 45, source has 10`,
+ *   `bodyOwned: document says 24, source has 1`, `requestHandlers: document says 42, source has 103`, and nine more),
+ *   exit 1. The sha is pinned rather than `HEAD~n`: a relative revision names a different commit as lanes land
  */
 import { execFileSync } from "node:child_process";
 

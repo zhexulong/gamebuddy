@@ -35,11 +35,14 @@
  *   node tools/audit-stardew-nogame-subset.mjs --list     # print the derived set
  *   node tools/audit-stardew-nogame-subset.mjs --json     # machine-readable report
  *
- * red-proof: fixture  a suite file the compiler accepts against GameBuddy.Stardew.Core alone while the project's
- *   <Compile Include> list omits it (measured 2026-11-13: BodyProgramJournalSchemaTests.cs,
- *   SeedSupplyAddressSourceShapeTests.cs, SuiteRedProofTests.cs, TileTargetRequestSeamTests.cs) ->
- *   `stardew_nogame_subset: headless_file_not_included: <file>` per file, `4 file(s) disagree with the measurements`,
- *   exit 1
+ * red-proof: history  four suite files shipped without a line in the project's `<Compile Include>` list -
+ *   BodyProgramJournalSchemaTests.cs (cdacf139), SeedSupplyAddressSourceShapeTests.cs (80965015), SuiteRedProofTests.cs
+ *   (df96b6a1), TileTargetRequestSeamTests.cs (213d8c87) - and the tree still carries them, so this is the tree's own
+ *   reading rather than a replay: `headless_file_not_included: <file>` per file, exit 1.
+ *
+ * That reading is the tree's today: the gate is RED at HEAD for this reason, and the four files are in neither the
+ * project's list nor `excluded-files.tsv`, so the no-game lane runs none of them. The repair is the no-game project's
+ * own list, not this gate, which is why the red is reported rather than worked around here.
  */
 import { execFileSync } from "node:child_process";
 import { mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";

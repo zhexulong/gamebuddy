@@ -16,8 +16,8 @@
  *   node tools/report-stardew-remaining-actions.mjs \
  *     --candidates <candidates.json> --catalog <catalog.json> [--out <file>] [--pretty]
  *
- * red-proof: inject  the tier-C branch assigned tier B (line 107's `C_non_gameplay_writes` written as
- *   `B_no_catalog_intent`, so a unit whose writes are all visual/timer lands in B) ->
+ * red-proof: inject  the tier-C branch assigned tier B (`tier = "C_non_gameplay_writes"` written as
+ *   `"B_no_catalog_intent"`, so a unit whose writes are all visual/timer lands in B) ->
  *   `× 三档计数之和等于未匹配候选总数（总数来自 candidates 产物）` with
  *   `AssertionError [ERR_ASSERTION]: C_non_gameplay_writes 不应为空`, exit 1
  *   (integrations/stardew/action-development/tests/stardew-remaining-actions-report.test.mjs)
