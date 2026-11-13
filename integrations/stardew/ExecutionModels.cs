@@ -379,6 +379,11 @@ internal sealed record LocalFishingCastSpec(
     int BaitBefore,
     long StartedAtMs,
     long DeadlineMs,
+    /// <summary>
+    /// The species the request named, or the empty string for any fish. Carried on the cast because the engine decides
+    /// what bites, so the comparison belongs after the catch (`UpdateFishingCast`'s credit arm), never before the cast.
+    /// </summary>
+    string RequestedFish,
     LocalFishingPhase Phase,
     string? CaughtQualifiedItemId = null,
     int CaughtFishSize = 0,

@@ -175,7 +175,7 @@ const VALID_ARGS: Readonly<Record<ExecutionRequest["action"], Readonly<Record<st
   bait_crab_pot: { ...SLOT_ITEM_AND_TARGET, expectedQualifiedItemId: "(O)685" },
   clear_debris: SLOT_AND_TARGET,
   break_resource_clump: TARGET,
-  fish_here: TARGET,
+  fish_here: { ...TARGET, requested_fish: "" },
   machine_inspect: TARGET,
   machine_load: SLOT_ITEM_AND_TARGET,
   machine_collect_output: TARGET,

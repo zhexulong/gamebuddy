@@ -282,6 +282,7 @@ public sealed class FishingActionTests
             BaitBefore: 0,
             StartedAtMs: past - 5_000,
             DeadlineMs: past,
+            RequestedFish: "",
             LocalFishingPhase.AwaitingCredit,
             CaughtQualifiedItemId: "(O)128",
             CaughtFishSize: 12,
@@ -579,6 +580,7 @@ public sealed class FishingActionTests
             BaitBefore: 0,
             StartedAtMs: now,
             DeadlineMs: now + 30_000,
+            RequestedFish: "",
             LocalFishingPhase.WaitingForBite);
         BodySlotSeeding.Seed(executions, "activeFishing", spec);
 

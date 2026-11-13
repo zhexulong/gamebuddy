@@ -129,8 +129,14 @@ internal sealed partial class ExecutionManager
     /// Admission for one cast: identity, actionability, deadline and body exclusivity through the shared seam, then the
     /// target binding and the geometry. Out of the native reach the actor WALKS to the water's edge and the same body
     /// runs on arrival - a refusal there would be a distance, not a reason.
+    ///
+    /// <para>
+    /// <paramref name="requestedFish"/> is the species the caller asked for, or the empty string for any fish. It is
+    /// carried on the cast rather than compared here because the engine decides what bites: the comparison belongs to
+    /// <see cref="UpdateFishingCast"/>, after the catch the engine credited.
+    /// </para>
     /// </summary>
-    public LocalExecutionReceipt RequestLocalFishHere(string requestId, int targetX, int targetY, string expectedTargetId, long requestedDeadlineMs)
+    public LocalExecutionReceipt RequestLocalFishHere(string requestId, int targetX, int targetY, string expectedTargetId, string requestedFish, long requestedDeadlineMs)
     {
         if (this.AdmitLocalExecution(requestId, requestedDeadlineMs, AdmissionActionabilityProfile.Physical, out string executionId, out long nowMs) is LocalExecutionReceipt admissionRejection)
             return admissionRejection;
@@ -142,6 +148,11 @@ internal sealed partial class ExecutionManager
         if (!string.Equals(BuildWaterTargetId(location, targetX, targetY), expectedTargetId, StringComparison.Ordinal))
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "water_not_fishable:target_changed",
                 $"target={expectedTargetId};tile={targetX},{targetY};actual={BuildWaterTargetId(location, targetX, targetY)};blocked_by={new RefusalLayerToken(RefusalLayerKind.LocationConstraint, "target_changed").Format()}");
+        // The species is checked for SHAPE here and for identity after the catch. A value too long for the refusal that
+        // would report a mismatch is refused now, before a byte is spent, with the same ceiling the wire enforces.
+        if (requestedFish.Length > FarmhandActionCatalog.RequestedFishMaximumLength)
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "invalid_requested_fish",
+                $"requested_fish_length={requestedFish.Length.ToString(CultureInfo.InvariantCulture)};maximum={FarmhandActionCatalog.RequestedFishMaximumLength.ToString(CultureInfo.InvariantCulture)}");
         // Ask before walking: a pack that cannot cast is refused NOW rather than after an approach leg the action could
         // never finish - the same order `refill_watering_can` keeps. The refusal is re-asked on arrival, because the pack
         // and the actor move during the walk.
@@ -156,10 +167,10 @@ internal sealed partial class ExecutionManager
                 targetX,
                 targetY,
                 expectedTargetId,
-                (arrivalExecutionId, arrivalRequestId) => this.ExecuteFishHere(arrivalExecutionId, arrivalRequestId, targetX, targetY, expectedTargetId, requestedDeadlineMs),
+                (arrivalExecutionId, arrivalRequestId) => this.ExecuteFishHere(arrivalExecutionId, arrivalRequestId, targetX, targetY, expectedTargetId, requestedFish, requestedDeadlineMs),
                 nowMs,
                 requestedDeadlineMs);
-        return this.ExecuteFishHere(executionId, requestId, targetX, targetY, expectedTargetId, requestedDeadlineMs);
+        return this.ExecuteFishHere(executionId, requestId, targetX, targetY, expectedTargetId, requestedFish, requestedDeadlineMs);
     }
 
     /// <summary>
@@ -212,7 +223,7 @@ internal sealed partial class ExecutionManager
     /// <see cref="SettleFishingCast"/>.
     /// </para>
     /// </summary>
-    private LocalExecutionReceipt ExecuteFishHere(string executionId, string requestId, int targetX, int targetY, string expectedTargetId, long requestedDeadlineMs)
+    private LocalExecutionReceipt ExecuteFishHere(string executionId, string requestId, int targetX, int targetY, string expectedTargetId, string requestedFish, long requestedDeadlineMs)
     {
         GameLocation? location = Game1.player.currentLocation;
         if (location is null)
@@ -301,6 +312,7 @@ internal sealed partial class ExecutionManager
                 baitBefore,
                 nowMs,
                 requestedDeadlineMs,
+                requestedFish,
                 LocalFishingPhase.WaitingForBite));
             return this.RememberTerminal(
                 requestId,
