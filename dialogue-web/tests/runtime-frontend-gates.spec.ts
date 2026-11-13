@@ -2595,6 +2595,13 @@ for (const locale of ROLE_LOCALES) {
           `${group.name}: declared with ${group.members.length} member(s), and a group is told apart pairwise - one member compares with nothing`,
         );
       }
+      // A group that requires no channel separates nothing: every pair of members would pass
+      // on the declaration's own arithmetic, which is the exemption this file refuses.
+      if (group.channels.atLeast < 1) {
+        failures.push(
+          `${group.name}: declared with ${group.channels.atLeast} required channel(s), so no two members have to differ at all`,
+        );
+      }
       const readings: { member: string; reading: RoleReading }[] = [];
       for (const member of group.members) {
         // The failure that puts this member's own fact on the page: the composed
