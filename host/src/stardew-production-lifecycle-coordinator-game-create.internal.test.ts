@@ -17,6 +17,7 @@ import {
 } from "./stardew-production-lifecycle-coordinator.test-support.js";
 import assert from "node:assert/strict";
 import test from "node:test";
+import { stardewFarmhandJoinBudgetMs } from "./stardew-production-lifecycle-coordinator.internal.js";
 import { GameBrowserValidatorsV1 } from "./game-browser-contract/index.js";
 
 installLifecycleTestHooks();
@@ -597,11 +598,12 @@ test("game.create whose first AI activation bridge retry expires settles durably
     // Waiting for the launch itself (the connect attempt always follows it) keeps
     // this bounded well under the create's own activation deadline.
     await waitFor(() => fixture.spawnCalls.length >= 1, 2_000);
-    // The create's own activation deadline is `min(browser session expiry,
-    // now + 60s)`, so skewing the process clock past it expires the retry wait
-    // immediately instead of letting this test sleep for a minute. Restored
-    // before the second create, which must run on the real clock.
-    Date.now = () => realDateNow() + 60_000;
+    // The create's own activation deadline is `min(browser session expiry, now + the
+    // Farmhand join budget)`, so skewing the process clock past that budget expires the
+    // retry wait immediately instead of letting this test sleep it out. This fixture mounts
+    // no real installation folder, so the Player Host carried no player Mod and the skew is
+    // the zero-Mod budget. Restored before the second create, which must run on the real clock.
+    Date.now = () => realDateNow() + stardewFarmhandJoinBudgetMs(0) + 1_000;
     const first = await creating;
     Date.now = realDateNow;
     // Consumer/verifier: an expired activation is a real failure of this
