@@ -2523,3 +2523,109 @@ marker at tools/preflight-live-run.mjs:18 is not readable`. Both come from `f15a
 endpoint is not_measured, not a silent pass"), another lane's commit: `git diff HEAD` on
 `tools/preflight-live-run.mjs` and `tools/gate-population-baseline.json` is empty. Neither finding names a gate this
 unit wrote.
+
+## The audience the rendering gate was judging: her text, or somebody else's
+
+This supersedes the reading in "The second renderer: the rendering gate asked one of the snapshot's two text producers". That
+unit made the gate's claim checkable (a module's source really does print the field); it did not ask who READS that
+module's text, and one of the two surfaces it added reaches nobody. Measured at `faa6df11^`:
+
+| destination | the text | who receives it |
+| --- | --- | --- |
+| her view | `batch.text` from `composeFactBrief` (`host/src/fact-brief.ts:201`), handed to Pi unchanged (`host/src/agent-turn-sink.ts:15`) | the model, every turn |
+| the player's view | the browser's Game panel (`dialogue-web/src/components/GameStatePanel.tsx`, fed by `game_browser_api/v1`) | the player: connection, instance, world/save, compatibility, capability summary, action authority, latest outcome |
+| no reader | the `[State HUD: …]` block, written into `WorldFact.contextProjection.hud` (`host/src/host-service.ts:1242`) | nobody. The only read of `.hud` in the tree is the `typeof` guard on the line above (`host-service.ts:1235`); `composeFactBrief` reads the projection's `text` and never `hud`; `git grep -w hud` finds no `dialogue-web/**` or `desktop/**` reader at all |
+
+So the split over the 120 `SNAPSHOT_KEYS`:
+
+| in her text | in the player's view | both | neither |
+| --- | --- | --- | --- |
+| 95 | 0 | 0 | 25 |
+
+22 of those fields are printed into the block nobody reads. Four of them - `actionable`, `actorDispositionKind`, `health`,
+`harvestWhereabouts` - were printed **nowhere else**, and two of those four carried an exemption whose `printedBy` was
+`host/src/snapshot-hud.ts`.
+
+**The defect was one line of judgement.** `exemptionViolations` accepted `printedBy` as the reason a field may stay out of
+her text, and `falseRenderingClaim` only asked whether that module's SOURCE printed the field. `health` - her own hit
+points - was exempted that way: `snapshot-hud.ts:56` prints `${snapshot.health}` into a string whose only consumer is a
+`typeof` guard. The exemption's own reason said the prose "states the stamina a day's work spends and says nothing about
+collapsing at zero", which names the gap and then closes it with a rendering nobody receives. A gate that asks "does a file
+print it" answers a question about files; the product's question is whether she knows her own condition.
+
+**The unit.** `RENDERER_SOURCES` carries each module's AUDIENCE beside its path - `companion`, `player`, `unread` - and
+every disposition now reports `renderedTo: model | player | both | neither` plus the surface that prints the field when it
+is not hers (`printedBy` / `printedTo`). Only a `companion` renderer clears a field:
+
+- a field she does not read and no exemption owns is `fact_not_visible_to_the_companion:<field>`, and the detail names the
+  other audience (`… reaches the player, which is not the companion's view` / `… reaches no reader`);
+- `printedBy` is no longer something an exemption can declare. It is derived from the renderer declarations and published
+  in the report, so "a module writes it" and "she reads it" cannot be confused again;
+- the one audience claim an exemption may still make is `player_only: <reason>`, and it is checked twice. The field must be
+  printed by a renderer whose audience is `player` (`player_only_without_a_player_renderer`) and the reason must be written
+  (`player_only_without_reason`). A fact printed into a block no reader receives is not the player's either, which is
+  exactly the hole `health` fell through; the tree declares no `player` renderer today, so the declaration cannot be used
+  to launder the HUD.
+
+| tree | the gate's line |
+| --- | --- |
+| at `faa6df11^` | `snapshot fields examined 120 · rendered 95 · exempt 25 · printed outside <world-state> 22 · status passed` |
+| after the audience split | `snapshot fields examined 120 · in her view 95 · exempt 25 · printed outside her view 22 (for the player 0 · for no reader 22) · status passed` |
+| after the health fix | `snapshot fields examined 120 · in her view 96 · exempt 24 · printed outside her view 22 (for the player 0 · for no reader 22) · status passed` |
+
+**The fact it exposed, and the fix.** `health` leaves `RENDERING_EXEMPTIONS` and is rendered by the composer she reads:
+`formatOwnHealth` (`host/src/fact-brief.ts`) pushes `血量: <health>` into the `<world-state>` paragraph, directly after the
+environment line whose last fact is `体力: <stamina>`. Three properties the sibling line already holds are kept:
+
+- BARE, never completed: `protocol.ts` refuses a snapshot whose `health` is not a finite number and the Mod publishes no
+  maximum beside it, so `45/100` would be a number this file invented - the rule `formatGameStamina` follows, and the
+  reason no percentage is printed;
+- ABSENT PRINTS NOTHING: an unreadable reading is silence, never a healthy default (`assert`ed for `NaN`, `Infinity` and
+  `undefined`);
+- IN THE PARAGRAPH, not in the environment line: `composeGameEnvironmentFacts`' 512-byte cap drops body facts last, and a
+  fact that can be dropped can be absent from the text she reads while the gate reports it rendered. The paragraph has no
+  byte cap, so this rendering cannot silently vanish - and the Chat surface's `<runtime-environment>` is unchanged by this
+  unit, because the Game turn is the surface this gate protects.
+
+`stamina` needed no work: it was already in her view (`game-world-vocabulary.ts:553` hands it to the environment line) and
+is also printed by the HUD, so its disposition read `both` before this unit.
+
+**Red proofs** (all in `tools/check-snapshot-field-rendering.test.mjs`, each seen red once):
+
+| injected | the finding |
+| --- | --- |
+| the water line deleted from a copy of `host/src/fact-brief.ts` | `fact_not_visible_to_the_companion:wateringCanFacts` |
+| `stamina`/`exhausted` moved out of the companion's renderers and into a player-audience module, in a copy | `fact_not_visible_to_the_companion:stamina`, `…:exhausted` - with the other audience printing both |
+| a `player_only` exemption with a blank reason | `player_only_without_reason:<field>` |
+| a `player_only` exemption whose field no player-audience renderer prints | `player_only_without_a_player_renderer:<field>` |
+| the `health` lines deleted from a copy of `host/src/fact-brief.ts` | `own_health_in_the_world_block` in `host/src/fact-brief.private.test.ts` |
+
+The two `player_only` proofs also show the declaration holding where both halves are true (a written reason, and a
+fixture player renderer whose source prints the field), so the check is not a check that can only fail.
+
+**What was not changed.** `host/src/snapshot-hud.ts` is untouched: its 1,200-byte cap, its lines and its whole-map crop
+count stay, because the module may legitimately serve the player one day - the defect was the gate's conflation, not the
+module's existence. `host/src/host-service.ts:1242` still re-renders the block into `contextProjection.hud`; whether that
+wiring should exist at all is the decision the previous section left open and this unit does not take. `harvestWhereabouts`
+stays an exemption, with its reason rewritten to drop the HUD claim it can no longer make: `<world-state>` names the
+radius-bounded `可收的作物` family and the whole-map count for DRY crops, so the ripe-crop count beside that family is the
+debt `host/src/fact-brief.ts` still owes.
+
+**Two drifts that outlive this unit.** The census entry for this gate in `tools/lib/harness-conformance.mjs:408-413` still
+quotes the old report line and the retired codes (`snapshot_field_never_rendered`,
+`field_rendered_by_an_unchecked_renderer`); that file is outside this unit's bounds and the shared judge reads the JSON
+report, which kept `examined`, `rendered`, `exempt` and `checks[]` and added fields rather than renaming them. And
+`node tools/audit-gate-red-proofs.mjs` still reports `proven_but_nothing_runs` for the `host/src/fact-brief.ts` pointer in
+this gate's first marker - it reported two such pointers before this unit (`host/src/fact-brief.ts` and
+`host/src/snapshot-hud.ts`), so the marker set improved by one and the remaining one is the same over-strict reading of a
+source-file pointer the audit applies to every gate.
+
+**How the host suites were read.** The shared checkout could not compile during this unit: another lane's uncommitted
+`host/src/body-program-script.ts` imports `toolChargeCeilingForClaim`, which the same lane's `host/src/body-program-packing.ts`
+does not export yet, so `pnpm --dir host build:test` fails at `tsc` for a reason this unit does not touch. The readings
+below were taken in a private worktree at `322e05f8` carrying only this unit's four files:
+`npx tsc -p host/tsconfig.test.json --noEmit` exit 0, `bun test host/src/fact-brief.private.test.ts` 21/21,
+`bun test host/src/snapshot-hud.test.ts host/src/snapshot-hud-delivery.test.ts host/src/world-state-stale-brief.test.ts` 32/32,
+`bun test host/src/snapshot-projection-coverage.private.test.ts` 1/1, `node --test tools/check-snapshot-field-rendering.test.mjs`
+10/10. In the shared checkout the same project's `tsc --noEmit` reports exactly the two foreign errors and none from this
+unit's files.
