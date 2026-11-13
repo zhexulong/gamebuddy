@@ -74,6 +74,16 @@
  * growth of a KIND, which is the point of a closed vocabulary — a table of 200 free-form sentences hides a
  * decision, three kinds do not.
  *
+ * <h2>The reading leads with the groups</h2>
+ * The default run prints the census line, the per-marker breakdown, the population questions the marker set invites,
+ * and the unreachable set grouped by owning type, largest first. The grouping is not decoration: 264 keys under 178
+ * owner types, the largest owing three, reads as a gap in BREADTH, while 264 under six types would read as one surface
+ * nobody built. The baseline stays per affordance, because a key is what a fix retires.
+ *
+ * The population lines exist so the marker set cannot be tuned inch by inch until the number looks comfortable. Two
+ * tightenings of this same population are COMPUTED (a menu counted once; `performAction` split by its `Action`
+ * selector) and they disagree by more than 2x, which is the honest state of a derivation whose unit is a decision.
+ *
  * <h2>Ratchet, not a wall</h2>
  * `tools/engine-affordance-baseline.json` records today's unreachable set as keys. A run fails on any affordance
  * that is unreachable and absent from the baseline (`engine_affordance_unreachable:<type>:<marker>`) and on any
@@ -533,6 +543,68 @@ function kindRows({ affordances, currentKinds, rows }) {
 }
 
 /**
+ * The unreachable set grouped by owning type, most affordances first.
+ *
+ * This is the reading, and the flat list is the evidence: 264 keys spread over 178 types is a gap in BREADTH (the
+ * largest type owes three), while 264 keys under six types would be a gap in depth. The baseline stays per
+ * affordance - a key is what a fix retires - but a reader triaging the debt needs the groups first.
+ */
+function groupUnreachableByType(rows) {
+  const byType = new Map();
+  for (const row of rows) byType.set(row.type, [...(byType.get(row.type) ?? []), row]);
+  return Object.freeze(
+    [...byType.entries()]
+      .map(([type, group]) =>
+        Object.freeze({
+          type,
+          count: group.length,
+          markers: Object.freeze(group.map((row) => row.marker)),
+          keys: Object.freeze(group.map((row) => row.key)),
+        }),
+      )
+      .sort((left, right) => right.count - left.count || left.type.localeCompare(right.type)),
+  );
+}
+
+const MOUSE_MARKERS = Object.freeze(["receiveLeftClick", "receiveRightClick"]);
+
+/**
+ * The shape of the population, so the reading can ask out loud whether 264 is a capability gap or a coarse unit.
+ *
+ * Two tightenings of the same population are computed rather than argued, and they disagree: counting a menu once
+ * (its mouse entries as one input surface) shrinks the population, while splitting `performAction` by the `Action`
+ * selector it dispatches grows it. That disagreement is the reason the marker set is declared here and printed on
+ * every run instead of being tuned to whatever number a reader finds comfortable.
+ */
+function populationShape({ affordances, rows }) {
+  const mouseRows = rows.filter((row) => MOUSE_MARKERS.includes(row.marker));
+  const mouseAffordances = affordances.filter((affordance) => MOUSE_MARKERS.includes(affordance.marker));
+  const openableMenuTypes = new Set(affordances.filter((affordance) => affordance.opensAsMenu).map((a) => a.type));
+  // One set per side of the tightening: the menu types that own a mouse row, and how many of those are unreachable.
+  const menuTypesWithMouseRows = new Set(mouseAffordances.filter((row) => row.opensAsMenu).map((row) => row.type));
+  const unreachableMenuTypesWithMouseRows = new Set(mouseRows.filter((row) => row.opensAsMenu).map((row) => row.type));
+  const dispatchers = rows.filter((row) => row.marker === "performAction");
+  const dispatcherSelectors = new Set(dispatchers.flatMap((row) => row.selectors));
+  return Object.freeze({
+    mouse: Object.freeze({
+      examined: mouseAffordances.length,
+      unreachable: mouseRows.length,
+      insideOpenableMenus: mouseRows.filter((row) => row.opensAsMenu).length,
+      openableMenuTypes: openableMenuTypes.size,
+    }),
+    dispatcher: Object.freeze({ rows: dispatchers.length, selectors: dispatcherSelectors.size }),
+    menuCountedOnce: Object.freeze({
+      examined: affordances.length - mouseAffordances.length + menuTypesWithMouseRows.size,
+      unreachable: rows.length - mouseRows.length + unreachableMenuTypesWithMouseRows.size,
+    }),
+    splitBySelector: Object.freeze({
+      examined: affordances.length - dispatchers.length + dispatcherSelectors.size,
+      unreachable: rows.length - dispatchers.length + dispatcherSelectors.size,
+    }),
+  });
+}
+
+/**
  * The census, as data: today's tree, the register's edge, the authored declarations and the recorded baseline.
  *
  * Pure, so the falsifier can hand it a population the repository does not have. `affordances` is the derivation's
@@ -574,6 +646,8 @@ export function evaluateEngineAffordanceCensus({
     declared: rows.filter((row) => row.declaration !== null).length,
     coveredRows: Object.freeze(covered),
     kinds: kindRows({ affordances, currentKinds, rows }),
+    ownerGroups: groupUnreachableByType(rows),
+    population: populationShape({ affordances, rows }),
     findings: Object.freeze(findings),
     hasNewUnreachable: findings.some((finding) => finding.code.startsWith("engine_affordance_unreachable:")),
   });
@@ -637,6 +711,44 @@ function kindLines(reading) {
         `  marker ${kind.marker}: examined ${String(kind.examined)} · covered ${String(kind.covered)} · ` +
         `unreachable ${String(kind.unreachable)} · declared ${String(kind.declared)}`,
     );
+}
+
+/**
+ * The population question, asked out loud on every run: is this count a capability gap, or a coarse unit?
+ * Every number here is derived from the reading, so the sentences change with the tree instead of going stale.
+ */
+function populationLines(reading) {
+  const { mouse, dispatcher, menuCountedOnce, splitBySelector } = reading.population;
+  const largest = reading.ownerGroups[0]?.count ?? 0;
+  return [
+    `  population: ${String(mouse.examined)} of the ${String(reading.examined)} rows are mouse input ` +
+      `(receiveLeftClick, receiveRightClick) and ${String(mouse.unreachable)} of the ` +
+      `${String(reading.unreachable.length)} unreachable ones are, because every menu, settings screen and minigame ` +
+      `declares its own handlers; ${String(mouse.insideOpenableMenus)} of those sit inside the ` +
+      `${String(mouse.openableMenuTypes)} menus the game assigns to activeClickableMenu.`,
+    `  population: performAction is the opposite shape — ${String(dispatcher.rows)} rows for ` +
+      `${String(dispatcher.rows)} dispatchers that between them switch on ${String(dispatcher.selectors)} distinct ` +
+      "`Action` selectors, so one row can hide twenty entries.",
+    `  population: two tightenings of this same population disagree — counting a menu once (its mouse entries as one ` +
+      `input surface) would read ${String(menuCountedOnce.examined)} examined / ` +
+      `${String(menuCountedOnce.unreachable)} unreachable, while splitting performAction by selector would read ` +
+      `${String(splitBySelector.examined)} / ${String(splitBySelector.unreachable)}. Neither is applied: the ` +
+      "population is the engine's, and the marker set is declared and printed rather than tuned to a comfortable number.",
+    `  population: the ${String(reading.unreachable.length)} unreachable affordances are spread over ` +
+      `${String(reading.ownerGroups.length)} owner types, the largest owing ${String(largest)}, so this reads as a gap ` +
+      "in breadth rather than one type hiding a surface.",
+  ];
+}
+
+/** The triage view: the unreachable set by owning type, largest group first. */
+function groupLines(reading, { top }) {
+  const groups = top === null ? reading.ownerGroups : reading.ownerGroups.slice(0, top);
+  const scope = top === null ? "all" : `the ${String(groups.length)} largest`;
+  return [
+    `  unreachable by owner type: ${String(reading.ownerGroups.length)} groups over ` +
+      `${String(reading.unreachable.length)} affordances, ${scope}`,
+    ...groups.map((group) => `    ${group.type} (${String(group.count)}): ${group.markers.join(", ")}`),
+  ];
 }
 
 async function readJson(file) {
@@ -766,7 +878,8 @@ async function main() {
     declarations,
   });
 
-  const lines = [censusLine(reading), ...kindLines(reading)];
+  const lines = [censusLine(reading), ...kindLines(reading), ...populationLines(reading)];
+  lines.push(...groupLines(reading, { top: args.report ? null : 10 }));
   if (args.report) lines.push(...reportBody({ reading, derivation }));
   for (const finding of reading.findings)
     lines.push(`  finding ${finding.code}${finding.detail === null ? "" : ` — ${finding.detail}`}`);

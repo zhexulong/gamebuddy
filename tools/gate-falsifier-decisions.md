@@ -2516,6 +2516,63 @@ dispatcher are evidence on the dispatcher's row, not population — the dispatch
 what a seam CLAIMS, re-proved by that register's own Axis 3; this gate does not re-prove it, because two readings of
 one fact is the defect it exists to avoid.
 
+**The reading leads with the groups.** 264 keys is a wall, so the default run prints the unreachable set by owning
+type, largest first, and names the ten largest:
+
+```
+  unreachable by owner type: 178 groups over 264 affordances, the 10 largest
+    Chest (3): checkForAction, performObjectDropInAction, performToolAction
+    Fence (3): checkForAction, performObjectDropInAction, performToolAction
+    IndoorPot (3): checkForAction, performObjectDropInAction, performToolAction
+    IslandWest (3): checkAction, performAction, performToolAction
+    AbigailGame (2): receiveLeftClick, receiveRightClick
+    AnimalQueryMenu (2): receiveLeftClick, receiveRightClick
+    Billboard (2): receiveLeftClick, receiveRightClick
+    BoatJourney (2): receiveLeftClick, receiveRightClick
+    BoatTunnel (2): answerDialogue, checkAction
+    BuildingPaintMenu (2): receiveLeftClick, receiveRightClick
+```
+
+The shape is the finding: 264 affordances under 178 owner types, the largest owing **three**, so this is a gap in
+breadth and not one surface nobody built. The baseline stays per affordance because a key is what a fix retires.
+
+**The population question, asked out loud on every run.** Are all 284 entries genuinely player-invokable, or does the
+marker set over-count? The run prints its own answer, and every number in it is derived:
+
+- **152 of the 284 rows are mouse input** (`receiveLeftClick` 103, `receiveRightClick` 49) and **150 of the 264
+  unreachable** ones are, because every menu, settings screen and minigame declares its own handlers; 67 of those sit
+  inside the 47 menus the game assigns to `activeClickableMenu`. This is the noisiest family by far — the title,
+  save/load, language and options screens are rows no companion will ever act on.
+- **`performAction` is the opposite shape**: 18 rows for 18 location dispatchers that between them switch on **145
+  distinct `Action` selectors**, so one row can hide twenty entries. It under-counts where the mouse markers
+  over-count.
+- **Two tightenings of the same population disagree**, which is why the marker set is declared and printed instead of
+  tuned: counting a menu once (its mouse entries as one input surface) reads **179 examined / 161 unreachable**, while
+  splitting `performAction` by selector reads **411 / 391**. Neither is applied. Narrowing the population to make the
+  number smaller would be the same defect as widening it to make coverage look better.
+
+```
+  population: 152 of the 284 rows are mouse input (receiveLeftClick, receiveRightClick) and 150 of the 264
+    unreachable ones are, because every menu, settings screen and minigame declares its own handlers; 67 of those sit
+    inside the 47 menus the game assigns to activeClickableMenu.
+  population: performAction is the opposite shape — 18 rows for 18 dispatchers that between them switch on 145
+    distinct `Action` selectors, so one row can hide twenty entries.
+  population: two tightenings of this same population disagree — counting a menu once (its mouse entries as one input
+    surface) would read 179 examined / 161 unreachable, while splitting performAction by selector would read 411 / 391.
+  population: the 264 unreachable affordances are spread over 178 owner types, the largest owing 3, so this reads as a
+    gap in breadth rather than one type hiding a surface.
+```
+
+**`gate_skip_can_pass` is one class with thirteen members, not thirteen exemptions.** Recording
+`test:engine-affordance-census` in `tools/gate-population-baseline.json` makes it the thirteenth suite in that
+baseline for one reason: a test that needs a gitignored input skips itself with a named reason, a plain
+`node --test <suite>` exits 0 on an all-skip run, and the runner's `# pass 0` is otherwise indistinguishable from a
+measurement. The class retires together, not one row at a time: each suite would report `not measured` with its reason
+through `tools/lib/assert-non-vacuous.mjs`'s `allowEmpty` path instead of using `skip:`, so an all-skip run would
+answer with a marker the caller can act on. Until that exists the baseline entry is the record, and the line was added
+**by hand** rather than with `--update`: `--update` re-records from the working tree, which at this commit held another
+lane's in-flight change and a stale `check:live-run-preflight` entry, so it would have banked a fact nobody reviewed.
+
 **Two reds at this tree that this unit did not cause.** `node tools/check-gate-populations.mjs` reports
 `gate_population_baseline_stale: gate_without_population check:live-run-preflight`, and
 `node tools/audit-gate-red-proofs.mjs` reports `gate_red_proof_red_proof_kind_unknown:check:live-run-preflight: the

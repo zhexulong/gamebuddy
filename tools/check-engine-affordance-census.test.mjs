@@ -15,6 +15,16 @@
  * seeing them would be refuted by the same test that recorded them. They are a named skip on a machine without the
  * decompile (the tree is gitignored, `ref/`), never a silent pass.
  * </p>
+ *
+ * red-proof: inject  adding `performToolAction` to the fixture `Furnace` ->
+ *   `engine_affordance_unreachable:Furnace::performToolAction` and `affordance_kind_grew:performToolAction:0->1`,
+ *   exit 1 ("a planted player entry no seam claims fails under its own name")
+ * red-proof: inject  a fixture tree of C# sources with no player entry ->
+ *   `blocked: engine_affordance_population_empty`, exit 2 ("a tree with C# sources and no player entry anywhere is
+ *   BLOCKED, never passed")
+ * red-proof: history  `GameLocation::performAction` is unreachable and its selectors still name `Blacksmith`; the
+ *   museum's `LibraryMuseum::checkAction` and `MuseumMenu::receiveLeftClick`/`receiveRightClick` are unreachable
+ *   while `claim_museum_reward` cites `getRewardsForPlayer` (the three tests on the exact tree)
  */
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
@@ -176,6 +186,9 @@ test("the census measures a tree it has never seen and prints the three counts w
   );
   assert.match(run.stdout, /marker checkAction: examined 1 · covered 1 · unreachable 0 · declared 0/u);
   assert.match(run.stdout, /marker checkForAction: examined 1 · covered 0 · unreachable 1 · declared 0/u);
+  assert.match(run.stdout, /unreachable by owner type: 2 groups over 2 affordances, the 2 largest/u);
+  assert.match(run.stdout, /^ {4}Furnace \(1\): checkForAction$/mu);
+  assert.match(run.stdout, /^ {2}population: 1 of the 3 rows are mouse input/mu);
 });
 
 test("a planted player entry no seam claims fails under its own name, and the marker's growth is named beside it", (t) => {
@@ -254,6 +267,29 @@ test("--record-shrinks refuses a set that grew, so accepting a new unreachable i
   assert.equal(run.status, 1, run.stderr);
   assert.match(run.stderr, /engine_affordance_baseline_can_only_shrink/u);
   assert.deepEqual(JSON.parse(readFileSync(fixture.baseline, "utf8")).unreachable, ["MuseumMenu::receiveLeftClick"]);
+});
+
+test("the reading groups the unreachable set by owning type, largest group first", () => {
+  const reading = evaluateEngineAffordanceCensus({
+    affordances: [
+      { key: "A::checkAction", type: "A", marker: "checkAction", file: "a.cs", sites: [1], selectors: [] },
+      { key: "B::checkAction", type: "B", marker: "checkAction", file: "b.cs", sites: [1], selectors: [] },
+      { key: "B::performToolAction", type: "B", marker: "performToolAction", file: "b.cs", sites: [9], selectors: [] },
+      { key: "C::receiveLeftClick", type: "C", marker: "receiveLeftClick", file: "c.cs", sites: [1], selectors: [] },
+    ],
+    seams: new Map([["c.cs::receiveLeftClick", ["open_geode"]]]),
+    actionIds: new Set(["open_geode"]),
+    declarations: [],
+    baseline: { unreachable: ["A::checkAction", "B::checkAction", "B::performToolAction"] },
+  });
+  assert.deepEqual(
+    reading.ownerGroups.map((group) => [group.type, group.count]),
+    [
+      ["B", 2],
+      ["A", 1],
+    ],
+  );
+  assert.deepEqual(reading.ownerGroups[0].markers, ["checkAction", "performToolAction"]);
 });
 
 test("a declaration for an affordance an action already reaches is refused in both directions", () => {
