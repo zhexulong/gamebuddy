@@ -911,6 +911,33 @@ function planExampleCharge(action: "till_soil" | "water_crop"): string {
   return `charge: ${String(bound.minimum)}`;
 }
 
+/** The one action whose body language this description teaches, and its one argument. */
+const PLAN_EMOTE_ACTION_ID = "express_emote";
+const PLAN_EMOTE_ARGUMENT_NAME = "emote";
+
+/**
+ * The `emote` row a plan EXAMPLE prints, read from the argument's declared enum rather than written beside it.
+ *
+ * `express_emote`'s one argument is a CLOSED SET on the Mod's own descriptor (`FarmhandActionArgument("emote",
+ * "string", FarmhandActionCatalog.EmoteEnum)`), and its acceptance check refuses any word outside it - so the one fact
+ * an example here must supply, and the one a caller cannot infer, is which word. Measured `round47` (64 assistant turns,
+ * 188 planned nodes: 140 `move_to_tile`, 26 `cut_weeds`, 12 `break_rock`, 9 `cut_grass`, 1 `enter_exit`): not one
+ * `express_emote`, from a description that named the action in its vocabulary and never once in an example. A name in a
+ * list is a vocabulary entry; an example is the shape that gets copied.
+ *
+ * The value is the declaration's OWN first member, so the example moves with the enum. A word typed here would be the
+ * second spelling this file exists to avoid, and `game-tools-argument-contract.test.ts` fails by name
+ * (`plan_example_uses_an_undeclared_value:express_emote.emote=<value>`) when the two disagree. A surface that publishes
+ * no such action, or publishes the argument with no enum, gets no example row rather than a guessed word.
+ */
+function planExampleEmoteRow(actions: readonly PublishedPlanAction[]): string | null {
+  const action = actions.find((candidate) => candidate.actionId === PLAN_EMOTE_ACTION_ID);
+  const argument = action?.arguments.find((candidate) => candidate.name === PLAN_EMOTE_ARGUMENT_NAME);
+  const value = argument?.enum?.[0];
+  if (value === undefined) return null;
+  return `builder.${PLAN_EMOTE_ACTION_ID}({ ${PLAN_EMOTE_ARGUMENT_NAME}: "${value}" });\n`;
+}
+
 /**
  * The `stardew_plan_work` description: what the tool does, and the builder methods it exposes, named.
  *
@@ -937,14 +964,24 @@ function planExampleCharge(action: "till_soil" | "water_crop"): string {
  * taught a shape the compiler then refuses with a different number. Change one and the printed sentence moves with it;
  * change the sentence's MEANING without changing the reader and the two disagree silently, which is how a form ends up
  * named in the description and absent from the tool it names.
+ *
+ * ONE ACTION IS TAUGHT AS A ROW AND NEVER AS A DUTY. `express_emote` is the only step here that is not work, so it gets
+ * one example line and no instruction: measured `round47`, 188 planned nodes and zero emotes from a description that
+ * named it in the vocabulary and nowhere else. What the example carries is the SHAPE (`{ emote: <a declared word> }`),
+ * which is the part a caller cannot infer and the part a plan refuses when it is missing. Whether a feeling is shown is
+ * the companion's judgement, not the description's - so nothing below says one per turn, per utterance or per anything.
  */
 export function planWorkDescription(actions: readonly PublishedPlanAction[]): string {
+  const emoteRow = planExampleEmoteRow(actions);
   return (
     "Write one script over the current snapshot and the builder, one builder.<actionId>({...}) call per step; the host compiles it into a single plan the Mod runs in the game and advances itself. The call returns as soon as the plan is accepted: do NOT poll it - each step's receipt arrives later as a new message, so end your turn and speak to the player. Every answer carries `nodes`: one row per node you wrote, at its own `index`, with the Mod's `state` (`succeeded` when the step did the thing and its receipt proved it, `rejected`/`failed`/`cancelled` when it did not, `pending`/`running` when it has not stopped yet), a `reasonCode` when it did not succeed, and the `tile` it named - plus `settled`, true only when every node has stopped, and `remaining`, how many have not. stardew_action_program_status is for a plan that is not moving, not a progress bar. Every action below is a builder method, grouped by the family the Mod declared, with no per-action tool beside them; ask stardew_plan_shape ONCE for every action the script will call - it takes a list - and every argument it lists is required. A piece of work with a SHAPE - a 3-wide 20-long strip, the row along a fence, the 5x5 around the shed - is one RECTANGLE to query, not a reason to observe again: stardew_observe shows only a square window around you, stardew_inspect_tiles answers exactly the rectangle you name, and stardew_look_up answers what this session already holds with no round trip; all three are reads, so asking costs the plan no node, and each one's own description says what it takes. One call the compiler refuses voids the whole plan - nothing runs - and the answer names which calls were dropped beside which ones compiled, so repair that step and resend the same piece of work. Stop when builder.isFull() is true and plan the rest in the next call, in this shape:\n" +
     `${planActionVocabularyText(actions)}\n` +
     "// Sequential steps - one call per step, in order:\n" +
     "builder.move_to_tile({ x: 10, y: 20 });\n" +
     "builder.enter_exit({ x: 10, y: 20 });\n" +
+    (emoteRow === null
+      ? ""
+      : "// Body language is a step like any other, and the word is one the surface declares:\n" + emoteRow) +
     "// Or ONE LOOP over a collection of live world rows, expanded by the Mod on the game thread:\n" +
     "builder.for_each({\n" +
     "  source: { area: { x: 60, y: 18, w: 20, h: 3 } },\n" +

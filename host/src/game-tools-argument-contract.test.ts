@@ -607,7 +607,27 @@ function exampleArgumentNames(body: string): readonly string[] {
   return names;
 }
 
-type PlanExample = Readonly<{ action: string; names: readonly string[]; source: "builder" | "step" }>;
+type PlanExample = Readonly<{
+  action: string;
+  names: readonly string[];
+  /** The double-quoted values the example states, by name - the half a closed-set argument is judged on. */
+  strings: readonly (readonly [string, string])[];
+  source: "builder" | "step";
+}>;
+
+/**
+ * The string values a plan example states, by argument name.
+ *
+ * The names beside this are not enough for an argument the surface declares as a CLOSED SET: `emote: "happy"` and
+ * `emote: "joyful"` supply the same name and only one of them is a call the Mod admits, so a gate that reads names alone
+ * passes the example it exists to refuse. Only the double-quoted spelling the examples use is read; a value the reader
+ * cannot see is reported as absent rather than passed.
+ */
+function exampleStringValues(body: string): readonly (readonly [string, string])[] {
+  return [...body.matchAll(/([A-Za-z_][A-Za-z0-9_]*)\s*:\s*"([^"]*)"/gu)].map((match) =>
+    Object.freeze([match[1]!, match[2]!] as const),
+  );
+}
 
 /**
  * Every example the plan tool's own description prints, read off the rendered text.
@@ -621,9 +641,19 @@ function planExamples(description: string): readonly PlanExample[] {
   for (const line of description.split("\n")) {
     const builder = /^\s*builder\.([a-z0-9_]+)\(\{(.*)\}\);?\s*$/u.exec(line);
     if (builder !== null)
-      examples.push({ action: builder[1]!, names: exampleArgumentNames(builder[2]!), source: "builder" });
+      examples.push({
+        action: builder[1]!,
+        names: exampleArgumentNames(builder[2]!),
+        strings: exampleStringValues(builder[2]!),
+        source: "builder",
+      });
     for (const step of line.matchAll(/\{ action: "([a-z0-9_]+)"([^}]*)\}/gu))
-      examples.push({ action: step[1]!, names: exampleArgumentNames(step[2]!), source: "step" });
+      examples.push({
+        action: step[1]!,
+        names: exampleArgumentNames(step[2]!),
+        strings: exampleStringValues(step[2]!),
+        source: "step",
+      });
   }
   return examples;
 }
@@ -672,8 +702,58 @@ test("every plan example carries the arguments the wire requires of it", () => {
 });
 
 /**
- * The loop closes: a call built ONLY from the rendered `till_soil` schema passes the real validator.
+ * A plan example that states a value the surface's own declaration does not admit.
  *
+ * The sibling of `plan_example_omits_argument`, on the other half of the same fact: an argument can be PRESENT and the
+ * call still be one the Mod refuses, because a closed-set argument is validated by its VALUE. `express_emote`'s `emote`
+ * is such a set (`FarmhandActionArgument("emote", "string", EmoteEnum)`, refused by `FarmhandExecutionAcceptance` for
+ * any word outside it), and an example that prints a word the surface does not declare is a call a caller copies and the
+ * game then rejects - the same defect as an omitted argument, one layer along.
+ *
+ * The population is every closed-set argument of every action an example names, taken from the published surface, so an
+ * action that gains an enum is covered without an edit here. `plan_example_uses_an_undeclared_value:<action>.<argument>
+ * =<value>;declared=[...]` names both halves, so the fix is the word and not a hunt.
+ *
+ * red-proof: write a value into the emote example that the enum does not carry ->
+ *   `plan_example_uses_an_undeclared_value:express_emote.emote=happyyy;declared=[happy,sad,...]`;
+ *   drop the `emote` clause from that example -> `plan_example_omits_argument:express_emote:emote`;
+ *   render no emote example at all -> blocked, `no rendered example states a value for express_emote's closed-set
+ *   `emote``.
+ */
+test("every closed-set value a plan example states is one the surface declares", () => {
+  const actions = planActionsFromRegistrations(publishedSurface().map(registrationFor));
+  const examples = planExamples(planWorkDescription(actions));
+  const findings: string[] = [];
+  const examined: string[] = [];
+
+  for (const example of examples) {
+    const action = actions.find((candidate) => candidate.actionId === example.action);
+    if (action === undefined) continue;
+    for (const argument of action.arguments) {
+      if (argument.enum === undefined || argument.enum.length === 0) continue;
+      const stated = example.strings.find(([name]) => name === argument.name)?.[1];
+      // An argument the example leaves out is the neighbour test's finding: this one speaks about values that are there.
+      if (stated === undefined) continue;
+      examined.push(`${example.action}.${argument.name}=${stated}`);
+      if (!argument.enum.includes(stated))
+        findings.push(
+          `plan_example_uses_an_undeclared_value:${example.action}.${argument.name}=${stated};declared=[${argument.enum.join(",")}]`,
+        );
+    }
+  }
+
+  // Zero population is BLOCKED, never green: an example the parser no longer reads, or a description that stopped printing
+  // the closed-set row, must fail here rather than agree with itself. `emote` is named for the same reason `charge` is
+  // named one test above - it is the value this gate was written for.
+  assert.ok(
+    examined.some((entry) => entry.startsWith("express_emote.emote=")),
+    `blocked: no rendered example states a value for express_emote's closed-set emote, so the gate examines nothing (examined ${examined.join(", ") || "nothing"})`,
+  );
+  assert.deepEqual(findings, [], "an example a caller copies must state a value the surface admits");
+});
+
+/**
+ * The loop closes: a call built ONLY from the rendered `till_soil` schema passes the real validator.
  * Every other test here compares statements about the schema - its names, its bounds, what the mount forwards. This one
  * hands the schema's own required arguments to `validateExecutionRequest`, so the two halves are tied by behaviour: while
  * the schema lacked `charge`, the arguments it declared were refused with `invalid_args` before the bridge, which is the
