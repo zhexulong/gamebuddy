@@ -145,17 +145,76 @@ test("the charge is chosen by TIME, not by step count", () => {
 });
 
 test("a wide patch changes which tool wins, and that is the point of computing it", () => {
-  // 20 columns by 3 rows: the same sixty tiles, the opposite answer. The 5x5 at charge 5 fits a twenty-wide strip and the
-  // 3x6 at charge 4 does not fit three rows, so only a Reaching tool reaches four uses - the packing is a property of the
-  // PATCH SHAPE as much as of the tool.
+  // 20 columns by 3 rows: the same sixty tiles, the opposite answer. A 3x3 fits a three-row strip and a 1x5 band does not
+  // reach it at all (forward 5 into 3 rows), so gold beats steel here where the 3x20 strip reversed them. The REACHING
+  // ladder is no further help: a 5x5 covers five rows, and two of them lie outside a three-row patch. The plan this test
+  // pinned before the exactness gate below existed - "only the 5x5 fits a twenty-wide strip in four uses" - was four
+  // 3x3s, 36 of the sixty tiles, and the time objective preferred it BECAUSE it did less work.
   const wide = { x: 10, y: 20, w: 20, h: 3 };
   const steps = (maximumCharge: number): number =>
     packAreaSteps({ area: wide, kind: "charged_rectangle", maximumCharge }).steps.length;
   assert.equal(steps(0), 60);
   assert.equal(steps(1), 20);
   assert.equal(steps(2), 20, "a 1x5 band cannot fit three rows, so steel falls back to the same plan as copper");
-  assert.equal(steps(3), 7);
-  assert.equal(steps(5), 4, "only the 5x5 fits a twenty-wide strip in four uses");
+  assert.equal(steps(3), 8, "six 3x3 uses across eighteen columns, then two one-wide strips in three-row bands");
+  assert.equal(steps(5), 8, "a 5x5 footprint cannot cover a three-row patch exactly, so Reaching adds nothing here");
+});
+
+/**
+ * THE GATE, NOT A CASE: every region shape, every ceiling, tiled EXACTLY.
+ *
+ * <p>
+ * The defect this closes lived in a region shape nobody had written a case for: a 20x3 patch at gold emitted seven uses
+ * covering 57 of its sixty tiles, and at a Reaching ceiling four uses covering 36 - a plan that says the patch is worked
+ * while a third of it is not, and that the time objective then PREFERS because covering less costs less. The size gate
+ * above passed throughout, because its population was one region shape.
+ * </p>
+ * <p>
+ * So the population here is the whole space: every width 1..13 against every height 1..13 against every ceiling the
+ * ladder declares. Zero population is a failure rather than a pass, and every violation names the shape, the ceiling and
+ * the tile, so the next reader does not have to find the region by hand.
+ * </p>
+ */
+test("every region shape is tiled exactly at every ceiling the ladder declares", () => {
+  const failures: string[] = [];
+  const failingPairs = new Set<string>();
+  let examined = 0;
+  for (let w = 1; w <= 13; w++) {
+    for (let h = 1; h <= 13; h++) {
+      const area = Object.freeze({ x: 10, y: 20, w, h });
+      const region = new Set<string>();
+      for (let y = area.y; y < area.y + h; y++)
+        for (let x = area.x; x < area.x + w; x++) region.add(String(x) + ":" + String(y));
+      for (let ceiling = 0; ceiling <= TOOL_FOOTPRINT_MAXIMUM_CHARGE; ceiling++) {
+        examined += 1;
+        const label = String(w) + "x" + String(h) + "@" + String(ceiling);
+        const fail = (detail: string): void => {
+          failingPairs.add(label);
+          failures.push(label + ": " + detail);
+        };
+        const plan = packAreaSteps({ area, kind: "charged_rectangle", maximumCharge: ceiling });
+        if (plan.status !== "packed") fail("a readable ceiling must pack, not " + plan.status);
+        const covered = new Map<string, number>();
+        for (const step of plan.steps) {
+          if (step.charge > ceiling) fail("a step asks for charge " + String(step.charge));
+          const shape = TOOL_FOOTPRINT_TILES_BY_CHARGE[step.charge]!;
+          for (const tile of footprintTiles({ x: step.x, y: step.y }, shape, "y")) {
+            const key = String(tile.x) + ":" + String(tile.y);
+            if (!region.has(key)) fail(key + " is outside the named region");
+            covered.set(key, (covered.get(key) ?? 0) + 1);
+          }
+        }
+        for (const [key, count] of covered) if (count > 1) fail(key + " is covered " + String(count) + " times");
+        for (const key of region) if (!covered.has(key)) fail(key + " was never covered");
+      }
+    }
+  }
+  assert.equal(examined, 13 * 13 * (TOOL_FOOTPRINT_MAXIMUM_CHARGE + 1), "the population is the whole space");
+  assert.deepEqual(
+    failures.slice(0, 8),
+    [],
+    String(failingPairs.size) + " of " + String(examined) + " region/ceiling pairs are not tiled exactly",
+  );
 });
 
 test("a shape wider than the patch is never used, even at the top of the ladder", () => {

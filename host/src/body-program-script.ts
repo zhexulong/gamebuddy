@@ -974,7 +974,7 @@ export function planWorkDescription(actions: readonly PublishedPlanAction[]): st
     String(MAX_FOR_EACH_ROWS) +
     " rows, and a loop inside a loop is refused by name. The Mod EXECUTES the loop: each row is decided against the world as it is at that moment and dispatched through the same action path a single step takes, so the node's answer carries `succeeded`/`failed`/`refused`/`left_alone`/`not_matched`/`deferred` counts and ONE ROW PER TILE with its own action, state and reasonCode - and a row worked as a chain also carries its `steps` in the order it took them, plus `stopped_at=<step>:<reasonCode>` when it stopped before its last step, so a tile that stopped half-done says where. A tile that is not on the farm (not_on_farm), a kind `by_kind` cannot resolve (no_action_for_kind:<kind>), an action the live policy disables (row_action_not_enabled:<actionId>) and an argument the action declares that the loop cannot supply (row_argument_missing:<name>) are each NAMED PER ROW rather than skipped - a skipped row reads as a cleared patch. THE ARGUMENTS A STEP MAY CARRY ARE THAT ACTION'S OWN (its `argumentSchema`): row_argument_missing:<name> means the action declares `name` and your step left it out, and a name the action does NOT declare is row_argument_unknown:<name> - `slot` belongs to `cut_weeds`, not to `till_soil`, so one action's argument list is never another's. A STEP THAT LEAVES OUT AN ARGUMENT ONLY THE CALLER CAN SUPPLY IS REFUSED AT COMPILE TIME (loop_do_argument_missing:<name>:declared=[<the action's arguments>]) rather than per row, so one wrong step costs one repair and not a whole pass: fresh ground is tilled with `{ action: \"till_soil\", " +
     planExampleCharge("till_soil") +
-    " }` - the range's own minimum is the one named tile, and a charge the held tool cannot reach is refused by name instead of being quietly reduced - while `by_kind` covers only the kinds whose work needs no per-action argument. " +
+    " }` - the range's own minimum is the one named tile - so a step always DECLARES a charge. What that value does NOT decide is the footprint of a packable AREA: the rectangle names the tiles, the held tool's whole footprint covers them, and the compiler emits those native uses at the charge that footprint needs. The one value that is not the compiler's is a charge ABOVE the held tool, which leaves the loop alone for the Mod to refuse by name (charge_exceeds_tool_upgrade:<asked>:<ceiling>); a charge at or below it does not bound the footprint either. `by_kind` covers only the kinds whose work needs no per-action argument. " +
     forEachSourceText() +
     " And one loop document may be at most " +
     String(MAX_FOR_EACH_LOOP_DOCUMENT_CHARS) +
@@ -2325,13 +2325,32 @@ function transitionApproachNode(
  * its own receipt.
  * </p>
  * <p>
- * THE CHARGE IS THE COMPILER'S CHOICE, not the caller's: the words a model should have to write are "till this 3x20", and a
- * model that had to pick a charge would pick wrong and get a silent downgrade. A caller who does write a charge is bounded
- * by the held tool and never raised to it.
+ * THE CHARGE IS THE COMPILER'S CHOICE, and the step's own value is not it. The words a model should have to write are "till
+ * this 3x20"; `charge` is a per-ROW value that exists because a single row cannot derive a footprint, and the description's
+ * own example writes the wire's minimum (`0`, the one-tile tap). Reading that value as the intent pinned every copied plan
+ * to the tap: a 3x20 patch at gold compiled to one loop node, the Mod expanded sixty rows
+ * (`RouteReenteringBodyProgramExecutor.cs:442`), and the walk the resolver exists to save was handed straight back - the one
+ * shape this bypass was written for, produced by the tool's own teaching. The rectangle names the tiles; how many native
+ * uses cover it is the held tool's answer.
  * </p>
  * <p>
- * IT REFUSES TO GUESS. No readable held tool and no written charge is `plan_packing_footprint_unknown:held_tool` rather than
- * a level-0 assumption, and a packing that would not save a single step is left as the loop, which resolves its rows live.
+ * A CHARGE THE HELD TOOL CANNOT REACH IS NOT RAISED OR LOWERED INTO ONE. That value is left to the loop, whose rows the Mod
+ * refuses by name (`charge_exceeds_tool_upgrade:<requested>:<held>`), because silently packing at the ceiling would spend a
+ * native use the caller asked for something else on.
+ * </p>
+ * <p>
+ * A FILTERED LOOP IS NEVER PACKED. `where` decides a row against the live world, so a loop that carries one names a SUBSET
+ * of its rectangle - the path column inside an intercropped patch - and the compiler cannot know which tiles those are. A
+ * packed use covers every tile of its footprint, so packing a filtered loop would till the columns the caller excluded: the
+ * one thing a packed native use may never do (the same rule the Mod's own sweep applies to an arc nobody named,
+ * `farmhandexecutioncontroller.resourcetoolactions.cs:1428-1439`). The loop is left exactly as written, and the Mod's
+ * per-row rules decide it live.
+ * </p>
+ * <p>
+ * IT REFUSES TO GUESS, AND DOES NOT DRESS A FALLBACK AS A REFUSAL. An unreadable held tool leaves the loop exactly as
+ * written rather than packing from a level-0 assumption - `plan_packing_footprint_unknown:held_tool` is the resolver's own
+ * name for why it could not answer, and the loop is still a correct program, so the caller is handed no refusal to repair.
+ * A packing that would not save a single step is left as the loop for the same reason: its rows are resolved live.
  * </p>
  */
 function tryEmitPackedArea(
@@ -2341,6 +2360,8 @@ function tryEmitPackedArea(
 ): boolean {
   const rules = forEachRules(loop);
   if (rules.length !== 1) return false;
+  // A rule with a predicate names rows, not a rectangle: the tiles it excludes are tiles a footprint would still cover.
+  if (rules[0]!.where !== undefined) return false;
   const effect = rules[0]!.do;
   // A chain is several actions over the SAME tile: the last one's footprint is not the one the first needs, so a chain is
   // never packed.
@@ -2351,16 +2372,16 @@ function tryEmitPackedArea(
   if (packingKindOf(action.arguments.map((argument) => argument.name)) !== "charged_rectangle") return false;
   const written = step.charge;
   if (written !== undefined && (typeof written !== "number" || !Number.isInteger(written) || written < 0)) return false;
-  const requested = written ?? state.heldToolCeiling;
-  // NO READABLE CEILING, NO PACKING. A written charge is not a substitute: the plan would then promise footprints the held
-  // tool may not reach, and the Mod would refuse them one by one after the walk. The loop is still a correct program, so
-  // it is left exactly as the caller wrote it.
-  if (state.heldToolCeiling === undefined || requested === undefined) return false;
-  if (written !== undefined && written > state.heldToolCeiling) return false;
+  // NO READABLE CEILING, NO PACKING. The plan would then promise footprints the held tool may not reach, and the Mod would
+  // refuse them one by one after the walk. The loop is still a correct program, so it is left exactly as the caller wrote it.
+  const ceiling = state.heldToolCeiling;
+  if (ceiling === undefined) return false;
+  // A CHARGE ABOVE THE HELD TOOL IS THE MOD'S REFUSAL TO MAKE, per row and by name, not a footprint this side invents.
+  if (written !== undefined && written > ceiling) return false;
   const packing = packAreaSteps({
     area: loop.source.area,
     kind: "charged_rectangle",
-    maximumCharge: requested,
+    maximumCharge: ceiling,
   });
   if (packing.status !== "packed") return false;
   const tiles = loop.source.area.w * loop.source.area.h;

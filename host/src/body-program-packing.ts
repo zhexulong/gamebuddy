@@ -240,20 +240,17 @@ function tileAtCharge(
   const acrossOrigin = axis === "y" ? area.x : area.y;
   const alongOrigin = axis === "y" ? area.y : area.x;
   const steps: PackedStep[] = [];
-  // The widest footprint this charge fits the region's width with: a shape wider than the region would cover tiles the
-  // caller never named, which is the surprise the destruction rule exists to refuse.
-  const stripWidth = Math.max(1, Math.min(acrossPatch, TOOL_FOOTPRINT_TILES_BY_CHARGE[charge]!.across));
-  const strips = Math.ceil(acrossPatch / stripWidth);
-  for (let strip = 0; strip < strips; strip++) {
-    const stripStart = acrossOrigin + strip * stripWidth;
-    const width = Math.min(stripWidth, acrossOrigin + acrossPatch - stripStart);
+  // THE ACROSS AXIS IS TILED, NOT APPROXIMATED. Every strip is exactly as wide as some shape the ceiling reaches, so its
+  // footprint spans the strip and nothing else. Splitting by `min(acrossPatch, shape.across)` instead left a remainder two
+  // tiles wide - no 2-wide shape exists - which the 1-wide shape then half-covered: 57 of a 20x3 patch's sixty tiles were
+  // worked, 36 of 60 at a Reaching ceiling, and the time objective preferred the smaller plan BECAUSE it did less work.
+  for (const { start: stripStart, width } of acrossStrips(acrossOrigin, acrossPatch, charge)) {
     let position = 0;
-    // A PARTIAL STRIP NEEDS A NARROWER FOOTPRINT. A 3x3 on a region whose last strip is two tiles wide would cover a
-    // column the caller never named, so the charge is reduced to the widest shape that still fits THIS strip.
-    const chargeForWidth = chargeFittingWidth(charge, width);
     while (position < alongPatch) {
       const remaining = alongPatch - position;
-      const usable = chargeFittingAlong(chargeForWidth, remaining);
+      // The charge must fit the strip's WIDTH as well as the rows left: reducing along the facing axis must never narrow
+      // the footprint across it, or the strip's remaining columns go unworked.
+      const usable = chargeFittingAlong(charge, width, remaining);
       if (usable === null) {
         // Nothing at this charge fits what is left: one tile per step, so the region is still covered exactly.
         for (let along = position; along < alongPatch; along++) {
@@ -300,18 +297,38 @@ function packingTimeMs(steps: readonly PackedStep[]): number {
   return total;
 }
 
-/** The largest charge at or below `ceiling` whose footprint is not wider than `width`. */
-function chargeFittingWidth(ceiling: number, width: number): number {
-  for (let charge = ceiling; charge > 0; charge--) {
-    if (TOOL_FOOTPRINT_TILES_BY_CHARGE[charge]!.across <= width) return charge;
+/**
+ * The across-axis split, in widths a shape at or below `ceiling` covers EXACTLY.
+ *
+ * Widest first, and `across` 1 is on the ladder at charge 0, so any width terminates. The widths come from the declared
+ * ladder rather than from a second copy of it, which is what makes a new shape a change to this function's answer.
+ */
+function acrossStrips(
+  acrossOrigin: number,
+  acrossPatch: number,
+  ceiling: number,
+): readonly { start: number; width: number }[] {
+  const widths = [...new Set(TOOL_FOOTPRINT_TILES_BY_CHARGE.slice(0, ceiling + 1).map((shape) => shape.across))].sort(
+    (left, right) => right - left,
+  );
+  const strips: { start: number; width: number }[] = [];
+  let position = 0;
+  while (position < acrossPatch) {
+    const width = widths.find((candidate) => candidate <= acrossPatch - position) ?? 1;
+    strips.push({ start: acrossOrigin + position, width });
+    position += width;
   }
-  return 0;
+  return strips;
 }
 
-/** The largest charge at or below `ceiling` whose footprint fits the rows still uncovered; `null` when none does. */
-function chargeFittingAlong(ceiling: number, remaining: number): number | null {
+/**
+ * The largest charge at or below `ceiling` whose footprint is `width` ACROSS and fits the rows still uncovered; `null`
+ * when none does, which is what leaves the one-tile tail.
+ */
+function chargeFittingAlong(ceiling: number, width: number, remaining: number): number | null {
   for (let charge = ceiling; charge >= 1; charge--) {
-    if (TOOL_FOOTPRINT_TILES_BY_CHARGE[charge]!.forward <= remaining) return charge;
+    const shape = TOOL_FOOTPRINT_TILES_BY_CHARGE[charge]!;
+    if (shape.across === width && shape.forward <= remaining) return charge;
   }
   return null;
 }
