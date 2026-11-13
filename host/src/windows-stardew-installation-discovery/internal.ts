@@ -2,6 +2,15 @@ import { randomBytes } from "node:crypto";
 
 const STARDEW_APP_ID = "413150" as const;
 export const WINDOWS_PATH_MAX_LENGTH = 32_767;
+/**
+ * The one bounded drive sweep every known-location probe shares: a root per letter, never a
+ * recursive disk walk. Two channels derive their candidate folders from it - Steam's own client
+ * directory and the Microsoft Store's install layouts - so a machine with a drive neither list
+ * can see is one fact, not two enumerations that could disagree.
+ */
+export const WINDOWS_DRIVE_ROOTS: readonly string[] = Object.freeze(
+  [..."ABCDEFGHIJKLMNOPQRSTUVWXYZ"].map((letter) => `${letter}:\\`),
+);
 export const STEAM_METADATA_MAX_BYTES = 4 * 1024 * 1024;
 /** The wire's own cap on a location label (`GameCandidateV1Schema`). */
 export const INSTALLATION_LOCATION_MAX_LENGTH = 64;
@@ -55,7 +64,7 @@ export type StardewCandidateModLoader = "present" | "missing";
 
 export type StardewInstallationCandidate = Readonly<{
   candidateId: string;
-  source: "steam-registry" | "steam-vdf" | "known-location" | "gog";
+  source: "steam-registry" | "steam-vdf" | "known-location" | "gog" | "microsoft-store";
   label: string;
   displayPath: string;
   location: string | null;
@@ -83,7 +92,19 @@ export type DiscoveryDiagnostic =
   // is missing, and the surface says which search it could not run.
   | "gog-unavailable"
   | "gog-metadata-unreadable"
-  | "gog-metadata-malformed";
+  | "gog-metadata-malformed"
+  // The Microsoft Store / PC Game Pass channel's own three failures
+  // (`stardew-game-install/microsoft-store-source.ts`). Named per channel for the same reason the
+  // GOG ones are: a player whose Xbox app install could not be read is not a player whose Steam
+  // client is missing.
+  | "microsoft-store-unavailable"
+  | "microsoft-store-root-unreadable"
+  /**
+   * A Store copy of the game was found in the layout no mod loader can run in, so it is named and
+   * not offered. This is the one diagnostic here that describes a game the player HAS: reporting
+   * it as no installation was the sentence this channel exists to stop saying.
+   */
+  | "microsoft-store-install-not-mod-enabled";
 export type StardewInstallationDiscoveryResult = Readonly<{
   candidates: readonly StardewInstallationCandidate[];
   diagnostics: readonly DiscoveryDiagnostic[];

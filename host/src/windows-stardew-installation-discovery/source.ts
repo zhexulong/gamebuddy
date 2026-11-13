@@ -6,6 +6,7 @@ import {
   normalizeWindowsPath,
   parseLibraryFoldersVdf,
   STEAM_METADATA_MAX_BYTES,
+  WINDOWS_DRIVE_ROOTS,
   type DiscoveryDiagnostic,
 } from "./internal.js";
 
@@ -106,7 +107,7 @@ function readWindowsSteamKnownLocationRoots(): readonly string[] {
     process.env.ProgramFiles ?? "C:\\Program Files",
   ])
     roots.push(win32.join(directory, STEAM_KNOWN_LOCATION_LEAF));
-  for (const letter of "ABCDEFGHIJKLMNOPQRSTUVWXYZ") roots.push(`${letter}:\\${STEAM_KNOWN_LOCATION_LEAF}`);
+  for (const driveRoot of WINDOWS_DRIVE_ROOTS) roots.push(win32.join(driveRoot, STEAM_KNOWN_LOCATION_LEAF));
   return roots;
 }
 

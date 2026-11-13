@@ -300,16 +300,17 @@ internal sealed class LocalPipeBridge : IDisposable
     /// The one fact that explains a bridge with no listener: why the pipe name could not be opened.
     ///
     /// A name still held by another handle - a crashed session's orphan, or a second Mod instance - refuses the
-    /// listener with ERROR_PIPE_BUSY or an access refusal. The type, the HRESULT and the message all travel with the
-    /// fact, because the difference between a busy pipe (0x800700E7) and a permission problem (0x80070005) is the
-    /// whole diagnosis, and a count would carry none of it.
+    /// listener with ERROR_PIPE_BUSY or an access refusal. The type and the HRESULT travel with the fact because they
+    /// are what tells a busy pipe (0x800700E7) from a permission problem (0x80070005), and because they are the same
+    /// reading on every locale where the message text is not: the stage vocabulary is content-free and parsed by
+    /// `[A-Za-z0-9_:]+`, so the exception's message never enters it.
     /// </summary>
     private void RecordListenerUnavailable(long generation, Exception exception)
     {
         Interlocked.CompareExchange(
             ref this.workerTerminal,
             new PipeWorkerTerminal(generation, PipeWorkerTerminalKind.ListenerUnavailable,
-                $"{exception.GetType().Name}:0x{exception.HResult:X8}:{exception.Message}"),
+                $"{exception.GetType().Name}:0x{exception.HResult:X8}"),
             null);
     }
 
