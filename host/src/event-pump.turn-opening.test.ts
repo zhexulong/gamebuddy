@@ -1,22 +1,12 @@
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
-import { mkdtempSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
 import test from "node:test";
-import { fileURLToPath, pathToFileURL } from "node:url";
-import ts from "typescript";
 import {
   CompanionEventPump,
   EXECUTION_STALL_SEMANTIC_KIND,
   HOST_MINTED_FACT_SOURCE,
   MAX_DELIVERED_FACT_IDENTITIES,
-  TURN_COMPLETED_ON_SPEECH,
   TURN_OPENING,
   TURN_OPENINGS,
-  TURN_OUTCOME,
-  TURN_OUTCOMES,
-  TURN_OUTCOME_TOKEN,
   TURN_PRODUCTION,
   TURN_SUPPRESSION,
   TURN_SUPPRESSIONS,
@@ -25,8 +15,6 @@ import {
   emptyTurnShapes,
   factContentIdentity,
   turnAccountLine,
-  turnCompletedOnSpeechToken,
-  turnOutcomeToken,
   turnWithoutActionShape,
   turnWithoutActionToken,
   type PendingBatch,
@@ -588,44 +576,26 @@ function readTurnAccountLine(line: string): Readonly<{
   suppressed: Readonly<{ total: number; counts: Record<string, number> }>;
   examined: number;
   emptyTurns: Readonly<{ total: number; counts: Record<string, number> }>;
-  close: Readonly<{
-    declared: Readonly<{ total: number; counts: Record<string, number> }>;
-    completedOnSpeech: Readonly<{ total: number; counts: Record<string, number> }>;
-  }>;
 }> {
   const segments = line.split(SEGMENT_SEPARATOR).map(parseSegment);
-  const labels = [
-    "turns opened",
-    "suppressed",
-    "flushes examined",
-    TURN_WITHOUT_ACTION,
-    TURN_OUTCOME_TOKEN,
-    TURN_COMPLETED_ON_SPEECH,
-  ];
+  const labels = ["turns opened", "suppressed", "flushes examined", TURN_WITHOUT_ACTION];
   assert.deepEqual(
     segments.map((segment) => segment.label),
     labels,
     `the account line's segments are ${labels.join(", ")}: a missing one is a reading nobody can recover`,
   );
-  const [openedSegment, suppressedSegment, examinedSegment, emptySegment, declaredSegment, onSpeechSegment] =
-    segments as [
-      ReturnType<typeof parseSegment>,
-      ReturnType<typeof parseSegment>,
-      ReturnType<typeof parseSegment>,
-      ReturnType<typeof parseSegment>,
-      ReturnType<typeof parseSegment>,
-      ReturnType<typeof parseSegment>,
-    ];
+  const [openedSegment, suppressedSegment, examinedSegment, emptySegment] = segments as [
+    ReturnType<typeof parseSegment>,
+    ReturnType<typeof parseSegment>,
+    ReturnType<typeof parseSegment>,
+    ReturnType<typeof parseSegment>,
+  ];
   return Object.freeze({
     opened: openedSegment.total,
     byReason: openedSegment.counts,
     suppressed: Object.freeze({ total: suppressedSegment.total, counts: suppressedSegment.counts }),
     examined: examinedSegment.total,
     emptyTurns: Object.freeze({ total: emptySegment.total, counts: emptySegment.counts }),
-    close: Object.freeze({
-      declared: Object.freeze({ total: declaredSegment.total, counts: declaredSegment.counts }),
-      completedOnSpeech: Object.freeze({ total: onSpeechSegment.total, counts: onSpeechSegment.counts }),
-    }),
   });
 }
 
@@ -634,24 +604,6 @@ function emptyTurnShapeCounts(overrides: Readonly<Record<string, number>>): Reco
   const counts: Record<string, number> = {};
   for (const shape of emptyTurnShapes()) counts[shape] = overrides[shape] ?? 0;
   return counts;
-}
-
-/** The three declared outcomes and the fourth case's openers, with the given ones counted - the closed lists. */
-function closeAccountCounts(
-  declared: Readonly<Record<string, number>> = {},
-  onSpeech: Readonly<Record<string, number>> = {},
-): TurnAccount["close"] {
-  const declaredCounts: Record<string, number> = {};
-  for (const outcome of TURN_OUTCOMES) declaredCounts[outcome] = declared[outcome] ?? 0;
-  const byOpener: Record<string, number> = {};
-  for (const opener of TURN_OPENINGS) byOpener[opener] = onSpeech[opener] ?? 0;
-  return Object.freeze({
-    declared: Object.freeze(declaredCounts),
-    completedOnSpeech: Object.freeze({
-      total: Object.values(byOpener).reduce((total, count) => total + count, 0),
-      byOpener: Object.freeze(byOpener),
-    }),
-  });
 }
 
 test("the account line reads back into the account it names", () => {
@@ -677,7 +629,6 @@ test("the account line reads back into the account it names", () => {
         }),
       ),
     }),
-    close: closeAccountCounts({ acted: 5, awaited: 2, idle: 1 }, { [TURN_OPENING.worldFact]: 3 }),
     lastDecision: undefined,
   });
   const parsed = readTurnAccountLine(turnAccountLine(account));
@@ -694,10 +645,6 @@ test("the account line reads back into the account it names", () => {
     Object.values(parsed.emptyTurns.counts).reduce((total, count) => total + count, 0),
     "the empty-turn total is the sum of its shapes, so a turn cannot be counted and then disappear from the account",
   );
-  assert.deepEqual(parsed.close.declared.counts, account.close.declared);
-  assert.equal(parsed.close.declared.total, 8, "the declared total is the sum of the three, printed beside them");
-  assert.deepEqual(parsed.close.completedOnSpeech.counts, account.close.completedOnSpeech.byOpener);
-  assert.equal(parsed.close.completedOnSpeech.total, 3);
 });
 
 test("the account line names a member that never fired, in both histograms", () => {
@@ -718,7 +665,6 @@ test("the account line names a member that never fired, in both histograms", () 
     }),
     examined: 1,
     emptyTurns: Object.freeze({ total: 0, byShape: Object.freeze(emptyTurnShapeCounts({})) }),
-    close: closeAccountCounts(),
     lastDecision: undefined,
   });
   const parsed = readTurnAccountLine(turnAccountLine(account));
@@ -730,16 +676,6 @@ test("the account line names a member that never fired, in both histograms", () 
   );
   assert.deepEqual(Object.keys(parsed.emptyTurns.counts), [...emptyTurnShapes()]);
   assert.deepEqual(Object.keys(parsed.suppressed.counts), [...TURN_SUPPRESSIONS]);
-  assert.deepEqual(
-    Object.keys(parsed.close.declared.counts),
-    [...TURN_OUTCOMES],
-    "an outcome at zero is still printed, so `nobody ever acted` and `the field was dropped` read differently",
-  );
-  assert.deepEqual(
-    Object.keys(parsed.close.completedOnSpeech.counts),
-    [...TURN_OPENINGS],
-    "and the fourth case is printed per opener, so the person's door and the clock's stay different statements",
-  );
 });
 
 test("the account line this repo printed before the change is REFUSED by the reader", () => {
@@ -749,26 +685,8 @@ test("the account line this repo printed before the change is REFUSED by the rea
     "turns opened 55 · suppressed 0 {observation_restated: 0, world_fact_restated: 0, nothing_pending: 0} · flushes examined 55";
   assert.throws(
     () => readTurnAccountLine(measured),
-    /turns opened, suppressed, flushes examined, turn_closed_without_action, turn_outcome, turn_completed_on_speech/u,
+    /turns opened, suppressed, flushes examined, turn_closed_without_action/u,
     "a line that cannot say what opened its turns is not an account, and must not read as one",
-  );
-});
-
-test("the account line that named empty turns but no close is REFUSED: a turn's ending needs its own segment", () => {
-  // THE SECOND FALSIFIER, and the one this change is for: the line `04301c28` shipped - every opener, every suppression
-  // and every empty-turn shape, and NOT ONE statement about how a turn closed. `turn_closed_without_action 41` says she
-  // spoke and did nothing; it cannot say whether the turn acted, waited, or had nothing to do. A reader handed it has no
-  // answer to "did this turn end on a line of prose", and must say so rather than infer it from the shape beside it.
-  const previous =
-    "turns opened 64 {player_input: 1, world_fact: 55, observation: 6, due: 2} · suppressed 12 {observation_restated: 6, " +
-    "world_fact_restated: 3, nothing_pending: 3} · flushes examined 76 · turn_closed_without_action 41 " +
-    "{player_input:world_stale: 0, player_input:body_held: 0, player_input:nothing_pending: 0, world_fact:world_stale: 11, " +
-    "world_fact:body_held: 9, world_fact:nothing_pending: 21, observation:world_stale: 0, observation:body_held: 0, " +
-    "observation:nothing_pending: 0, due:world_stale: 0, due:body_held: 0, due:nothing_pending: 0}";
-  assert.throws(
-    () => readTurnAccountLine(previous),
-    /turn_outcome, turn_completed_on_speech/u,
-    "`turn_closed_without_action` is a count of one shape, not a statement about how any turn closed",
   );
 });
 
@@ -940,281 +858,4 @@ test("turn_closed_without_action: a held body is its own reason, and a fresh obs
     1,
     "a current picture and a free body is `nothing_pending`, which is the shape the measurement exists to expose",
   );
-});
-
-/* ---------------------------------------------------------------------------------------------------------------- */
-/* The turn's CLOSE: what it declared, and the fourth case when it declared none.                                     */
-/* ---------------------------------------------------------------------------------------------------------------- */
-
-/**
- * A sink that changes the SHAPE of the turn it delivers, and can admit a fact while the turn is still running.
- *
- * `duringTurn` is how a receipt for an execution the pump has never seen arrives mid-delivery - which is the only way
- * `hasExecutionInFlight` can be true at settlement, because that window is emptied by the batch the turn consumed.
- */
-function closingSink(
-  pump: CompanionEventPump,
-  production: (typeof TURN_PRODUCTION)[keyof typeof TURN_PRODUCTION],
-  duringTurn: () => void = () => undefined,
-): { deliver(batch: PendingBatch): Promise<"completed"> } {
-  return {
-    async deliver() {
-      duringTurn();
-      pump.turnProduction = production;
-      return "completed" as const;
-    },
-  };
-}
-
-/** The turn `round47` spent 21 times over: a free body, a fresh reading, and one line of prose. */
-async function speechOnlyTurn(
-  pump: CompanionEventPump,
-  production: (typeof TURN_PRODUCTION)[keyof typeof TURN_PRODUCTION] = TURN_PRODUCTION.spoke,
-  duringTurn: () => void = () => undefined,
-): Promise<void> {
-  pump.enqueueFact(readingAt(14, 0, BODY_FREE));
-  pump.enqueueFact(settlementFact("program_settled_plan_r46_weed_row_1", WINDOW_AT_MS));
-  await pump.flush(closingSink(pump, production, duringTurn));
-}
-
-test("turn_outcome: a turn that spoke and nothing else declares none of the three, and is named as the fourth case", async () => {
-  // THE MEASURED SHAPE, and the one this change is for: a free body, a fresh reading, nothing in flight, and a turn that
-  // delivered one line. `turn_closed_without_action` already counted it; nothing about the turn's own CLOSE said the turn
-  // ended without declaring anything, so the account could not tell it from a turn that did work.
-  const pump = new CompanionEventPump();
-  await speechOnlyTurn(pump);
-
-  const account = pump.turnAccount;
-  assert.equal(account.close.completedOnSpeech.total, 1, "the fourth case is the one that fired");
-  assert.equal(
-    account.close.completedOnSpeech.byOpener[TURN_OPENING.worldFact],
-    1,
-    `the opener is named: ${turnCompletedOnSpeechToken(TURN_OPENING.worldFact)}`,
-  );
-  assert.deepEqual(
-    account.close.declared,
-    { acted: 0, awaited: 0, idle: 0 },
-    "and not one of the three declared outcomes is true of a turn that only spoke with the world free",
-  );
-
-  const printed = turnAccountLine(account);
-  assert.match(
-    printed,
-    /turn_completed_on_speech 1 \{player_input: 0, world_fact: 1, observation: 0, due: 0\}/u,
-    `the account names it in the spelling a run is read back in: ${printed}`,
-  );
-  assert.match(printed, /turn_outcome 0 \{acted: 0, awaited: 0, idle: 0\}/u);
-  const parsed = readTurnAccountLine(printed);
-  assert.equal(parsed.close.completedOnSpeech.counts[TURN_OPENING.worldFact], 1);
-  assert.equal(
-    parsed.close.declared.total + parsed.close.completedOnSpeech.total,
-    1,
-    "every completed turn lands in exactly one arm, so a turn cannot be counted twice or lost",
-  );
-});
-
-test("turn_outcome:acted - a turn that ran a tool declared it, and the other two arms stay empty", async () => {
-  const pump = new CompanionEventPump();
-  await speechOnlyTurn(pump, TURN_PRODUCTION.worked);
-
-  const account = pump.turnAccount;
-  assert.equal(account.close.declared.acted, 1, `the turn moved something: ${turnOutcomeToken(TURN_OUTCOME.acted)}`);
-  assert.equal(account.close.completedOnSpeech.total, 0, "a turn that acted did not complete on speech");
-  assert.equal(account.close.declared.awaited + account.close.declared.idle, 0);
-  assert.match(turnAccountLine(account), /turn_outcome 1 \{acted: 1, awaited: 0, idle: 0\}/u);
-});
-
-test("turn_outcome:awaited - a turn that ended with her own work still settling", async () => {
-  // The distinction the fourth case must not swallow: spoke, no tool of its own in this turn, and an execution she
-  // started is still running - the turn ended WAITING, not narrating.
-  const pump = new CompanionEventPump();
-  await speechOnlyTurn(pump, TURN_PRODUCTION.spoke, () => {
-    pump.enqueueFact({
-      source: "stardew_mod",
-      kind: "execution_receipt",
-      correlationId: "exec_awaited",
-      executionId: "exec_awaited",
-      revision: 15,
-      occurredAtMs: WINDOW_AT_MS + 2_000,
-      payload: { state: "running", actionId: "cut_weeds" },
-    });
-  });
-
-  const account = pump.turnAccount;
-  assert.equal(account.close.declared.awaited, 1, `something was in flight: ${turnOutcomeToken(TURN_OUTCOME.awaited)}`);
-  assert.equal(
-    account.close.completedOnSpeech.total,
-    0,
-    "a turn that waited declared its outcome and is not the fourth case",
-  );
-});
-
-test("turn_outcome:awaited - a programme the journal still shows in flight is in flight, without a receipt", async () => {
-  // The other half of "in flight", and the one no receipt can carry: a programme's nodes are in the journal ledger, not
-  // in the pump's windows, so the same reading the batch states is what the close is asked for.
-  const pump = new CompanionEventPump(() => ({
-    programmes: Object.freeze([
-      Object.freeze({
-        programId: "plan_r46_weed_row",
-        total: 2,
-        settled: 0,
-        remaining: 2,
-        readAgeMs: 500,
-        nodes: Object.freeze([]),
-        omitted: 0,
-      }),
-    ]),
-    omittedProgrammes: 0,
-  }));
-  await speechOnlyTurn(pump);
-
-  assert.equal(pump.turnAccount.close.declared.awaited, 1);
-  assert.equal(pump.turnAccount.close.completedOnSpeech.total, 0);
-});
-
-test("turn_outcome:idle - the product itself said this body could take no command", async () => {
-  // `actionable: false` is the Mod's own admission gate, so "nothing to do" is the product's statement rather than
-  // hers - the 20 of `round47`'s 41 that `pass_out` and 不可行动 account for, and the reason they are not the cause.
-  const pump = new CompanionEventPump();
-  pump.enqueueFact(readingAt(14, 0, { ...BODY_FREE, actionable: false, actorDispositionKind: "modal" }));
-  pump.enqueueFact(settlementFact("program_settled_plan_r46_weed_row_1", WINDOW_AT_MS));
-  await pump.flush(closingSink(pump, TURN_PRODUCTION.spoke));
-
-  const account = pump.turnAccount;
-  assert.equal(account.close.declared.idle, 1, `nothing could be done: ${turnOutcomeToken(TURN_OUTCOME.idle)}`);
-  assert.equal(
-    account.close.completedOnSpeech.total,
-    0,
-    "a held body IS the product saying so, so this turn declared an outcome rather than ending on prose alone",
-  );
-});
-
-test("turn_outcome: a turn that carried no text at all is idle, NOT the fourth case", async () => {
-  // THE FALSIFIER for the two assertions above. A counter that swept every non-worked turn into the fourth case would
-  // pass them and would be wrong about the one shape whose name is about SPEECH: a completed turn that delivered no
-  // text did not complete on a line of prose.
-  const pump = new CompanionEventPump();
-  await speechOnlyTurn(pump, TURN_PRODUCTION.saidNothing);
-  assert.equal(pump.turnAccount.close.completedOnSpeech.total, 0);
-  assert.equal(pump.turnAccount.close.declared.idle, 1);
-});
-
-test("turn_outcome: a turn that did not complete declares nothing, and the account says so by omission", async () => {
-  // `aborted` / `error` / `refused` / `unobserved` are endings the provider or the player chose, and `CompanionTurnOutcome`
-  // already names them. Counting one of them as a close would be the account claiming a turn that never finished;
-  // counting it as the fourth case would blame her prose for a provider that died.
-  const pump = new CompanionEventPump();
-  pump.enqueueFact(readingAt(14, 0, BODY_FREE));
-  pump.enqueueFact(settlementFact("program_settled_plan_r46_weed_row_1", WINDOW_AT_MS));
-  await pump.flush({
-    async deliver() {
-      pump.turnProduction = TURN_PRODUCTION.spoke;
-      return "aborted" as const;
-    },
-  });
-  const account = pump.turnAccount;
-  assert.equal(account.opened, 1, "the turn was opened and paid for");
-  assert.equal(account.close.declared.acted + account.close.declared.awaited + account.close.declared.idle, 0);
-  assert.equal(account.close.completedOnSpeech.total, 0);
-});
-
-/* ---------------------------------------------------------------------------------------------------------------- */
-/* The red proof, on the module that ran before the change.                                                           */
-/* ---------------------------------------------------------------------------------------------------------------- */
-
-const PRE_CHANGE_REVISION = "1c7e58f4";
-
-/** This file's own directory: `dist-test` when the suite runs compiled, `src` when it is read as source. */
-const HERE = dirname(fileURLToPath(import.meta.url));
-
-/** The host package root, one level up from either of those. */
-const HOST_ROOT = resolve(HERE, "..");
-
-/**
- * `1c7e58f4`'s `event-pump.ts`, emitted and made importable, or `undefined` when that revision is not in this clone.
- *
- * <p>
- * WHY THE REAL MODULE. A hand-written "old line" proves the reader refuses a string; it does not prove the module this
- * change edited could not answer the question. So the pre-change source is read out of git, emitted with the same
- * TypeScript the tree already compiles with, and its ONE relative imports are rewritten to this tree's siblings - the
- * module runs, composes an account, and prints it. What it prints is the reading.
- * </p>
- *
- * <p>
- * The file is written outside the repository: `dist-test` is a locked, inventoried artifact and a stray module in it
- * would be indistinguishable from a half-written build.
- * </p>
- */
-function compilePreChangePump(): string | undefined {
-  let source: string;
-  try {
-    source = execFileSync("git", ["-C", HOST_ROOT, "show", `${PRE_CHANGE_REVISION}:host/src/event-pump.ts`], {
-      encoding: "utf8",
-      maxBuffer: 8 * 1024 * 1024,
-    });
-  } catch {
-    return undefined;
-  }
-  const emitted = ts.transpileModule(source, {
-    compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
-    fileName: "event-pump.ts",
-  }).outputText;
-  const rewritten = emitted.replace(
-    /from "(\.[^"]+)"/gu,
-    (_match, specifier: string) => `from "${pathToFileURL(resolve(HERE, specifier)).href}"`,
-  );
-  const directory = mkdtempSync(join(tmpdir(), "gamebuddy-pre-change-pump-"));
-  const file = join(directory, "event-pump.pre-change.mjs");
-  writeFileSync(file, rewritten, "utf8");
-  return file;
-}
-
-test("turn_outcome: the pre-change module cannot state it, and this reader refuses the line it prints", async () => {
-  // THE RED PROOF, both directions. Before the change the account line says nothing about how a turn closed, and the
-  // reader that now asks is handed a line it must refuse rather than infer from `turn_closed_without_action` beside it.
-  const preChange = compilePreChangePump();
-  if (preChange === undefined) {
-    console.log(
-      `not_measured: the pre-change module was not compiled, so the red reading is BLOCKED - ` +
-        `${PRE_CHANGE_REVISION}:host/src/event-pump.ts is not reachable from this clone`,
-    );
-  } else {
-    const pre = (await import(pathToFileURL(preChange).href)) as {
-      CompanionEventPump: new () => CompanionEventPump;
-      turnAccountLine(account: TurnAccount): string;
-    };
-    const before = new pre.CompanionEventPump();
-    before.enqueueFact(readingAt(14, 0, BODY_FREE));
-    before.enqueueFact(settlementFact("program_settled_plan_r46_weed_row_1", WINDOW_AT_MS));
-    await before.flush(closingSink(before, TURN_PRODUCTION.spoke));
-
-    const beforeLine = pre.turnAccountLine(before.turnAccount);
-    assert.equal(
-      beforeLine.includes(TURN_OUTCOME_TOKEN),
-      false,
-      `the pre-change account printed a close it never had: ${beforeLine}`,
-    );
-    assert.equal(
-      beforeLine.includes(TURN_COMPLETED_ON_SPEECH),
-      false,
-      `and named no fourth case, which is the defect: ${beforeLine}`,
-    );
-    assert.throws(
-      () => readTurnAccountLine(beforeLine),
-      /turn_outcome, turn_completed_on_speech/u,
-      "a reader cannot answer `how did this turn end` from a line that does not carry it",
-    );
-    assert.match(beforeLine, /turn_closed_without_action 1 \{/u, "the count it DID carry, for contrast");
-  }
-
-  // The same fixture, on the module in this tree: it names the fourth case.
-  const now = new CompanionEventPump();
-  await speechOnlyTurn(now);
-  const nowLine = turnAccountLine(now.turnAccount);
-  assert.match(
-    nowLine,
-    /turn_completed_on_speech 1 \{player_input: 0, world_fact: 1, observation: 0, due: 0\}/u,
-    `the same turn, on the changed module: ${nowLine}`,
-  );
-  assert.equal(readTurnAccountLine(nowLine).close.completedOnSpeech.total, 1);
 });
