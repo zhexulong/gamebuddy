@@ -530,63 +530,32 @@ internal sealed partial class ExecutionManager
     /// <summary>Experimental native animal-product collection. Only MilkPail/Shears can start their version-locked animation and completion lifecycle.</summary>
     public LocalExecutionReceipt RequestLocalCollectAnimalProduct(string requestId, int slot, int targetX, int targetY, string expectedTargetId, long requestedDeadlineMs)
     {
-        if (this.BeginLocalExecution(requestId, out string executionId, out long nowMs) is LocalExecutionReceipt replay) return replay;
-        // Scope-bound actor proof. Authorization precedes the world/location
-        // readiness checks: a caller that is not the scope-bound actor is refused
-        // for that reason rather than for where it happens to be standing.
-        // Scope-bound actor proof. Authorization precedes the world/location
-        // readiness checks: a caller that is not the scope-bound actor is refused
-        // for that reason rather than for where it happens to be standing.
-        if (!this.TryGetBoundActor(out Farmer? boundActor, out string scopeReason) || boundActor is null)
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, scopeReason, null);
-
-        if (!Context.IsWorldReady || Game1.player?.currentLocation is null)
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "world_not_ready", null);
-        // Physical: this seam drives a real MilkPail/Shears tool through the
-        // native BeginUsingTool lifecycle. Shared mechanical admission
-        // (identity → actionability → deadline → body exclusivity); the single
-        // authority names the hold it refuses on, and slot/target identity and
-        // the postcondition stay action-specific.
-        if (this.AdmitExecution(requestId, executionId, requestedDeadlineMs, nowMs, AdmissionActionabilityProfile.Physical) is { } admissionRefusal)
-            return admissionRefusal;
-        if (slot < 0 || slot >= Game1.player.Items.Count || Game1.player.Items[slot] is not Tool tool || tool is not MilkPail and not Shears)
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "animal_product_tool_not_owned", $"slot={slot}");
-
-        StardewValley.GameLocation location = Game1.player.currentLocation;
-        // Identity-bound admission, same reasoning as RequestLocalPetAnimal: a
-        // FarmAnimal wanders inside its building, so matching its live tile to the
-        // coordinate captured at snapshot time makes the request a race.
-        // BuildAnimalProductTargetId hashes location + myID + slot + tool + produce
-        // and takes no coordinate at all, so the coordinate comparison was an
-        // extra binding that could only ever reject a legitimate request.
-        FarmAnimal? animal = ResolveAnimalProductTarget(location, slot, tool, expectedTargetId);
-        if (animal is null)
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "animal_product_target_gone", $"target={expectedTargetId}");
-        // Every position-independent precondition is validated BEFORE the geometry
-        // decision, so the actor is not sent walking for an animal it could not
-        // milk on arrival. The execution body re-validates all of it, because the
-        // animal can lose its produce, grow, or be claimed while the actor walks.
-        if (animal.currentProduce.Value is null || !animal.isAdult() || !animal.CanGetProduceWithTool(tool))
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "animal_product_target_changed", $"target={expectedTargetId}");
-        StardewValley.Object produce = ItemRegistry.Create<StardewValley.Object>("(O)" + animal.currentProduce.Value);
-        if (!Game1.player.couldInventoryAcceptThisItem(produce.QualifiedItemId, animal.hasEatenAnimalCracker.Value ? 2 : 1))
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "inventory_full",
-                $"item={produce.QualifiedItemId};stack={(animal.hasEatenAnimalCracker.Value ? 2 : 1)};space=none");
-
-        // Out of the native Chebyshev-1 radius, walk in rather than refuse -- the
-        // same 5.2 ruling the tool family follows. This used to be a bare distance
-        // check with no pathfinding, so an animal published inside the radius-6
-        // discovery window and refused past radius 1 was unreachable without the
-        // Agent moving the actor itself and re-observing between every step -- which
-        // is exactly the case a FarmAnimal (and the Pet family sharing this handler
-        // group) makes routine by wandering.
-        int animalTileX = (int)animal.Tile.X;
-        int animalTileY = (int)animal.Tile.Y;
-        if (!IsAnimalProductTargetInRange(Game1.player, animalTileX, animalTileY))
-            return this.TryBeginToolApproach(requestId, executionId, "collect_animal_product", location, animalTileX, animalTileY, expectedTargetId,
-                (arrivalExecutionId, arrivalRequestId) => this.ExecuteCollectAnimalProduct(arrivalExecutionId, arrivalRequestId, slot, expectedTargetId, requestedDeadlineMs), nowMs, requestedDeadlineMs);
-
-        return this.ExecuteCollectAnimalProduct(executionId, requestId, slot, expectedTargetId, requestedDeadlineMs);
+        // Physical: this seam drives a real MilkPail/Shears tool through the native BeginUsingTool lifecycle. The slot,
+        // the animal and its produce are the gate's business; the tool lifecycle and its postcondition are the body's.
+        return this.RequestLocalTileTarget("collect_animal_product", requestId, expectedTargetId, requestedDeadlineMs, AdmissionActionabilityProfile.Physical,
+            location =>
+            {
+                if (slot < 0 || slot >= Game1.player.Items.Count || Game1.player.Items[slot] is not Tool tool || tool is not MilkPail and not Shears)
+                    return TileTargetGate.Refused(new TileTargetRefusal("animal_product_tool_not_owned", $"slot={slot}"));
+                // Identity-bound admission, same reasoning as RequestLocalPetAnimal: a FarmAnimal wanders inside its
+                // building, so matching its live tile to the coordinate captured at snapshot time makes the request a race.
+                // BuildAnimalProductTargetId hashes location + myID + slot + tool + produce and takes no coordinate at
+                // all, so the coordinate comparison was an extra binding that could only ever reject a legitimate request.
+                FarmAnimal? animal = ResolveAnimalProductTarget(location, slot, tool, expectedTargetId);
+                if (animal is null)
+                    return TileTargetGate.Refused(new TileTargetRefusal("animal_product_target_gone", $"target={expectedTargetId}"));
+                // Every position-independent precondition is validated before the seam decides whether to walk, so the
+                // actor is not sent walking for an animal it could not milk on arrival. The execution body re-validates
+                // all of it, because the animal can lose its produce, grow, or be claimed while the actor walks.
+                if (animal.currentProduce.Value is null || !animal.isAdult() || !animal.CanGetProduceWithTool(tool))
+                    return TileTargetGate.Refused(new TileTargetRefusal("animal_product_target_changed", $"target={expectedTargetId}"));
+                StardewValley.Object produce = ItemRegistry.Create<StardewValley.Object>("(O)" + animal.currentProduce.Value);
+                int produceStack = animal.hasEatenAnimalCracker.Value ? 2 : 1;
+                if (!Game1.player.couldInventoryAcceptThisItem(produce.QualifiedItemId, produceStack))
+                    return TileTargetGate.Refused(new TileTargetRefusal("inventory_full", $"item={produce.QualifiedItemId};stack={produceStack};space=none"));
+                return TileTargetGate.Resolved((int)animal.Tile.X, (int)animal.Tile.Y);
+            },
+            (executionId, admittedRequestId) => this.ExecuteCollectAnimalProduct(executionId, admittedRequestId, slot, expectedTargetId, requestedDeadlineMs));
     }
 
     /// <summary>
@@ -698,51 +667,21 @@ internal sealed partial class ExecutionManager
     /// <summary>Experimental native pet interaction. The native Pet.checkAction path owns daily petting and friendship mutation.</summary>
     public LocalExecutionReceipt RequestLocalPetAnimal(string requestId, int targetX, int targetY, string expectedTargetId, long requestedDeadlineMs)
     {
-        if (this.BeginLocalExecution(requestId, out string executionId, out long nowMs) is LocalExecutionReceipt replay) return replay;
-        // Scope-bound actor proof. Authorization precedes the world/location
-        // readiness checks: a caller that is not the scope-bound actor is refused
-        // for that reason rather than for where it happens to be standing.
-        // Scope-bound actor proof. Authorization precedes the world/location
-        // readiness checks: a caller that is not the scope-bound actor is refused
-        // for that reason rather than for where it happens to be standing.
-        if (!this.TryGetBoundActor(out Farmer? boundActor, out string scopeReason) || boundActor is null)
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, scopeReason, null);
-
-        if (!Context.IsWorldReady || Game1.player is null || Game1.player.currentLocation is null)
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "world_not_ready", null);
-        // Shared mechanical admission (identity → actionability → deadline →
-        // body exclusivity). The single authority names the hold it refuses on;
-        // pet identity and the postcondition stay action-specific.
-        if (this.AdmitExecution(requestId, executionId, requestedDeadlineMs, nowMs, AdmissionActionabilityProfile.General) is { } admissionRefusal)
-            return admissionRefusal;
-        // Admission is identity-bound, not coordinate-bound. A Pet walks on its
-        // own -- Data/Pets gives 'Walk' WalkInDirection=true with
-        // RandomizeDirection=true, and Pet.RunState re-rolls the facing each tick
-        // -- so binding the request to the tile it occupied when the snapshot was
-        // taken makes every attempt a race. The caller means "that pet", not
-        // "whatever is standing on 26,33". BuildPetTargetId already hashes only
-        // location + petId, so the coordinate comparison was a second, redundant
-        // binding: redundant, and weaker, because it proved where the pet had been
-        // rather than where it is.
-        GameLocation location = Game1.player.currentLocation;
-        Pet? pet = ResolvePetTarget(location, expectedTargetId);
-        if (pet is null)
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "pet_target_gone", $"target={expectedTargetId}");
-        if (PetHeldItemRefusal(Game1.player, expectedTargetId) is { } heldRefusal)
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, heldRefusal.Code, heldRefusal.Detail);
-        // Out of the native Chebyshev-1 radius, walk in rather than refuse -- the
-        // same 5.2 ruling the tool family follows. This used to be a bare distance
-        // check with no pathfinding, so a pet published inside the radius-6 discovery
-        // window and refused past radius 1 was unreachable without the Agent moving
-        // the actor itself and re-observing between every step, even though a Pet's
-        // own data makes wandering the normal case rather than the exception.
-        int petTileX = (int)pet.Tile.X;
-        int petTileY = (int)pet.Tile.Y;
-        if (!IsTileWithinChebyshevRadius(Game1.player, petTileX, petTileY, 1))
-            return this.TryBeginToolApproach(requestId, executionId, "pet_animal", location, petTileX, petTileY, expectedTargetId,
-                (arrivalExecutionId, arrivalRequestId) => this.ExecutePetAnimal(arrivalExecutionId, arrivalRequestId, expectedTargetId, requestedDeadlineMs), nowMs, requestedDeadlineMs);
-
-        return this.ExecutePetAnimal(executionId, requestId, expectedTargetId, requestedDeadlineMs);
+        return this.RequestLocalTileTarget("pet_animal", requestId, expectedTargetId, requestedDeadlineMs, AdmissionActionabilityProfile.General,
+            location =>
+            {
+                // Admission is identity-bound, not coordinate-bound. A Pet walks on its own -- Data/Pets gives 'Walk'
+                // WalkInDirection=true with RandomizeDirection=true, and Pet.RunState re-rolls the facing each tick -- so
+                // binding the request to the tile it occupied when the snapshot was taken makes every attempt a race. The
+                // caller means "that pet", not "whatever is standing on 26,33": BuildPetTargetId hashes only location +
+                // petId, and the tile the seam walks to is the one the pet stands on NOW.
+                if (ResolvePetTarget(location, expectedTargetId) is not Pet pet)
+                    return TileTargetGate.Refused(new TileTargetRefusal("pet_target_gone", $"target={expectedTargetId}"));
+                if (PetHeldItemRefusal(Game1.player, expectedTargetId) is { } heldRefusal)
+                    return TileTargetGate.Refused(new TileTargetRefusal(heldRefusal.Code, heldRefusal.Detail));
+                return TileTargetGate.Resolved((int)pet.Tile.X, (int)pet.Tile.Y);
+            },
+            (executionId, admittedRequestId) => this.ExecutePetAnimal(executionId, admittedRequestId, expectedTargetId, requestedDeadlineMs));
     }
 
     /// <summary>
@@ -818,43 +757,22 @@ internal sealed partial class ExecutionManager
     /// </summary>
     public LocalExecutionReceipt RequestLocalPetFarmAnimal(string requestId, int targetX, int targetY, string expectedTargetId, long requestedDeadlineMs)
     {
-        if (this.BeginLocalExecution(requestId, out string executionId, out long nowMs) is LocalExecutionReceipt replay) return replay;
-        // Scope-bound actor proof. Authorization precedes the world/location readiness checks: a caller that is not the
-        // scope-bound actor is refused for that reason rather than for where it happens to be standing.
-        // Scope-bound actor proof. Authorization precedes the world/location readiness checks: a caller that is not the
-        // scope-bound actor is refused for that reason rather than for where it happens to be standing.
-        if (!this.TryGetBoundActor(out Farmer? boundActor, out string scopeReason) || boundActor is null)
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, scopeReason, null);
-
-        if (!Context.IsWorldReady || Game1.player is null || Game1.player.currentLocation is null)
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "world_not_ready", null);
-        // Shared mechanical admission (identity → actionability → deadline → body exclusivity). A farmer paused mid
-        // animation, eating, in a menu or in a cutscene is refused or parked HERE, which is also what closes the seam's
-        // own `who.FarmerSprite.PauseForSingleAnimation` early return (:697): that branch is reached only by an actor
-        // admission has already let through as Idle.
-        if (this.AdmitExecution(requestId, executionId, requestedDeadlineMs, nowMs, AdmissionActionabilityProfile.General) is { } admissionRefusal)
-            return admissionRefusal;
-
-        GameLocation location = Game1.player.currentLocation;
-        FarmAnimal? animal = ResolveFarmAnimalPetTarget(location, expectedTargetId);
-        if (animal is null)
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "farm_animal_target_gone", $"target={expectedTargetId}");
-        // Every position-INDEPENDENT refusal is decided BEFORE the geometry, so the actor is not sent walking to an
-        // animal it could not pet on arrival, and re-decided again in the execution body because the walk takes ticks.
-        if (FarmAnimalPetRefusal(Game1.player, animal) is { } refusal)
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, refusal, $"target={expectedTargetId};animal={animal.myID.Value};time_of_day={Game1.timeOfDay}");
-
-        // Out of the native interaction radius, walk in rather than refuse -- the same ruling the tool family and
-        // `pet_animal` follow: an animal published inside the radius-6 discovery window and refused past radius 1
-        // would be unreachable without the Agent moving the actor itself and re-observing between every step, and a
-        // barn animal wandering is the normal case rather than the exception.
-        int animalTileX = (int)animal.Tile.X;
-        int animalTileY = (int)animal.Tile.Y;
-        if (!IsTileWithinChebyshevRadius(Game1.player, animalTileX, animalTileY, 1))
-            return this.TryBeginToolApproach(requestId, executionId, "pet_farm_animal", location, animalTileX, animalTileY, expectedTargetId,
-                (arrivalExecutionId, arrivalRequestId) => this.ExecutePetFarmAnimal(arrivalExecutionId, arrivalRequestId, expectedTargetId), nowMs, requestedDeadlineMs);
-
-        return this.ExecutePetFarmAnimal(executionId, requestId, expectedTargetId);
+        // A farmer paused mid animation, eating, in a menu or in a cutscene is refused or parked by the seam's admission,
+        // which is also what closes the seam's own `who.FarmerSprite.PauseForSingleAnimation` early return (:697): that
+        // branch is reached only by an actor admission has already let through as Idle.
+        return this.RequestLocalTileTarget("pet_farm_animal", requestId, expectedTargetId, requestedDeadlineMs, AdmissionActionabilityProfile.General,
+            location =>
+            {
+                if (ResolveFarmAnimalPetTarget(location, expectedTargetId) is not FarmAnimal animal)
+                    return TileTargetGate.Refused(new TileTargetRefusal("farm_animal_target_gone", $"target={expectedTargetId}"));
+                // Every position-INDEPENDENT refusal is decided before the seam decides whether to walk, so the actor is not
+                // sent walking to an animal it could not pet on arrival, and re-decided again in the execution body
+                // because the walk takes ticks.
+                if (FarmAnimalPetRefusal(Game1.player, animal) is { } refusal)
+                    return TileTargetGate.Refused(new TileTargetRefusal(refusal, $"target={expectedTargetId};animal={animal.myID.Value};time_of_day={Game1.timeOfDay}"));
+                return TileTargetGate.Resolved((int)animal.Tile.X, (int)animal.Tile.Y);
+            },
+            (executionId, admittedRequestId) => this.ExecutePetFarmAnimal(executionId, admittedRequestId, expectedTargetId));
     }
 
     /// <summary>
@@ -942,38 +860,17 @@ internal sealed partial class ExecutionManager
     /// <summary>Experimental read-only NPC relationship inspection. It never invokes NPC interaction or creates missing friendship records.</summary>
     public LocalExecutionReceipt RequestLocalInspectNpcRelationship(string requestId, int targetX, int targetY, string expectedTargetId, long requestedDeadlineMs)
     {
-        if (this.BeginLocalExecution(requestId, out string executionId, out long nowMs) is LocalExecutionReceipt replay) return replay;
-        // Scope-bound actor proof. Authorization precedes the world/location
-        // readiness checks: a caller that is not the scope-bound actor is refused
-        // for that reason rather than for where it happens to be standing.
-        // Scope-bound actor proof. Authorization precedes the world/location
-        // readiness checks: a caller that is not the scope-bound actor is refused
-        // for that reason rather than for where it happens to be standing.
-        if (!this.TryGetBoundActor(out Farmer? boundActor, out string scopeReason) || boundActor is null)
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, scopeReason, null);
-
-        if (!Context.IsWorldReady || Game1.player is null || Game1.player.currentLocation is null)
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "world_not_ready", null);
-        // Shared mechanical admission (identity → actionability → deadline →
-        // body exclusivity). The single authority names the hold it refuses on;
-        // villager identity and the postcondition stay action-specific.
-        if (this.AdmitExecution(requestId, executionId, requestedDeadlineMs, nowMs, AdmissionActionabilityProfile.General) is { } admissionRefusal)
-            return admissionRefusal;
-        // Identity-bound admission (see BuildNpcRelationshipTargetId). A villager
-        // follows a daily schedule, so binding the request to the tile it occupied
-        // at snapshot time made every attempt a race.
-        StardewValley.GameLocation location = Game1.player.currentLocation;
-        StardewValley.NPC? npc = FindVillagerByTargetId(location, expectedTargetId);
-        if (npc is null)
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "npc_relationship_target_gone", $"target={expectedTargetId}");
-        // Range against the villager's current tile -- what the inspection needs. Out of range means
-        // walk in, like `talk_to_npc`: the villager follows a daily schedule, so a refusal here would be
-        // a race the caller cannot win by retrying. The arrival path re-resolves the NPC and refuses by
-        // name if it moved out of reach in the meantime.
-        if (!IsTileWithinChebyshevRadius(Game1.player, (int)npc.Tile.X, (int)npc.Tile.Y, 1))
-            return this.TryBeginToolApproach(requestId, executionId, "inspect_npc_relationship", location, (int)npc.Tile.X, (int)npc.Tile.Y, expectedTargetId,
-                (arrivalExecutionId, arrivalRequestId) => this.ExecuteInspectNpcRelationship(arrivalExecutionId, arrivalRequestId, expectedTargetId, requestedDeadlineMs), nowMs, requestedDeadlineMs);
-        return this.ExecuteInspectNpcRelationship(executionId, requestId, expectedTargetId, requestedDeadlineMs);
+        return this.RequestLocalTileTarget("inspect_npc_relationship", requestId, expectedTargetId, requestedDeadlineMs, AdmissionActionabilityProfile.General,
+            location =>
+            {
+                // Identity-bound admission (see BuildNpcRelationshipTargetId). A villager follows a daily schedule, so
+                // binding the request to the tile it occupied at snapshot time made every attempt a race; the tile the
+                // seam walks to is the one the villager stands on now.
+                if (FindVillagerByTargetId(location, expectedTargetId) is not StardewValley.NPC npc)
+                    return TileTargetGate.Refused(new TileTargetRefusal("npc_relationship_target_gone", $"target={expectedTargetId}"));
+                return TileTargetGate.Resolved((int)npc.Tile.X, (int)npc.Tile.Y);
+            },
+            (executionId, admittedRequestId) => this.ExecuteInspectNpcRelationship(executionId, admittedRequestId, expectedTargetId, requestedDeadlineMs));
     }
 
     /// <summary>
@@ -1041,44 +938,21 @@ internal sealed partial class ExecutionManager
     /// </summary>
     public LocalExecutionReceipt RequestLocalInteractNpcWithItem(string requestId, int slot, int targetX, int targetY, string expectedQualifiedItemId, string expectedTargetId, long requestedDeadlineMs)
     {
-        if (this.BeginLocalExecution(requestId, out string executionId, out long nowMs) is LocalExecutionReceipt replay) return replay;
-        // Scope-bound actor proof. Authorization precedes the world/location
-        // readiness checks: a caller that is not the scope-bound actor is refused
-        // for that reason rather than for where it happens to be standing.
-        // Scope-bound actor proof. Authorization precedes the world/location
-        // readiness checks: a caller that is not the scope-bound actor is refused
-        // for that reason rather than for where it happens to be standing.
-        if (!this.TryGetBoundActor(out Farmer? boundActor, out string scopeReason) || boundActor is null)
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, scopeReason, null);
-
-        if (!Context.IsWorldReady || Game1.player is null || Game1.player.currentLocation is null)
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "world_not_ready", null);
-        // Shared mechanical admission (identity → actionability → deadline →
-        // body exclusivity). The single authority names the hold it refuses on;
-        // slot/target identity and the postcondition stay action-specific.
-        if (this.AdmitExecution(requestId, executionId, requestedDeadlineMs, nowMs, AdmissionActionabilityProfile.General) is { } admissionRefusal)
-            return admissionRefusal;
-        if (slot < 0 || slot >= Game1.player.Items.Count || Game1.player.Items[slot] is not StardewValley.Object offered || offered.Stack < 1)
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "item_not_owned_in_slot", $"slot={slot}");
-        if (!string.Equals(offered.QualifiedItemId, expectedQualifiedItemId, StringComparison.Ordinal))
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "item_slot_changed", $"slot={slot}");
-
-        // Identity-bound admission (see BuildNpcRelationshipTargetId). A villager
-        // follows a daily schedule, so a request bound to the tile it occupied at
-        // snapshot time would be refused as soon as it walked, even though the
-        // caller meant that villager.
-        StardewValley.GameLocation location = Game1.player.currentLocation;
-        StardewValley.NPC? npc = FindVillagerByTargetId(location, expectedTargetId);
-        if (npc is null)
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "npc_interaction_target_gone", $"target={expectedTargetId}");
-        // Range against the villager's current tile -- what the interaction needs. Out of range means
-        // walk in, like `talk_to_npc`: a villager follows a daily schedule, so a refusal here is a race
-        // the caller cannot win by retrying. The arrival path re-resolves the NPC by name-binding and
-        // refuses by name if it moved away in the meantime.
-        if (!IsTileWithinChebyshevRadius(Game1.player, (int)npc.Tile.X, (int)npc.Tile.Y, 1))
-            return this.TryBeginToolApproach(requestId, executionId, "interact_npc_with_item", location, (int)npc.Tile.X, (int)npc.Tile.Y, expectedTargetId,
-                (arrivalExecutionId, arrivalRequestId) => this.ExecuteInteractNpcWithItem(arrivalExecutionId, arrivalRequestId, slot, targetX, targetY, expectedQualifiedItemId, expectedTargetId, requestedDeadlineMs), nowMs, requestedDeadlineMs);
-        return this.ExecuteInteractNpcWithItem(executionId, requestId, slot, targetX, targetY, expectedQualifiedItemId, expectedTargetId, requestedDeadlineMs);
+        return this.RequestLocalTileTarget("interact_npc_with_item", requestId, expectedTargetId, requestedDeadlineMs, AdmissionActionabilityProfile.General,
+            location =>
+            {
+                if (slot < 0 || slot >= Game1.player.Items.Count || Game1.player.Items[slot] is not StardewValley.Object offered || offered.Stack < 1)
+                    return TileTargetGate.Refused(new TileTargetRefusal("item_not_owned_in_slot", $"slot={slot}"));
+                if (!string.Equals(offered.QualifiedItemId, expectedQualifiedItemId, StringComparison.Ordinal))
+                    return TileTargetGate.Refused(new TileTargetRefusal("item_slot_changed", $"slot={slot}"));
+                // Identity-bound admission (see BuildNpcRelationshipTargetId): a villager follows a daily schedule, so a
+                // request bound to the tile it occupied at snapshot time would be refused as soon as it walked, even
+                // though the caller meant that villager.
+                if (FindVillagerByTargetId(location, expectedTargetId) is not StardewValley.NPC npc)
+                    return TileTargetGate.Refused(new TileTargetRefusal("npc_interaction_target_gone", $"target={expectedTargetId}"));
+                return TileTargetGate.Resolved((int)npc.Tile.X, (int)npc.Tile.Y);
+            },
+            (executionId, admittedRequestId) => this.ExecuteInteractNpcWithItem(executionId, admittedRequestId, slot, targetX, targetY, expectedQualifiedItemId, expectedTargetId, requestedDeadlineMs));
     }
 
     /// <summary>
