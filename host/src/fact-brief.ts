@@ -327,10 +327,12 @@ function formatCarrying(world: Snapshot): string {
  * `printedBy: "host/src/snapshot-hud.ts"`, a module that composed a `[State HUD: …]` block into
  * `contextProjection.hud` - and that block's only consumer in the tree was a `typeof` guard. So her own hit points
  * were composed on every turn, printed by a module, and read by nobody: the fact a mine level is spent against was the
- * one fact the gate counted as handled. (That module has since been deleted; the measurement is kept because it is why
- * this line exists.) The sentence that did the damage was the exemption's own - the prose "states the stamina a day's
- * work spends and says nothing about collapsing at zero" - which named the gap and then closed it with a rendering
- * nobody receives.
+ * one fact the gate counted as handled. That module is gone - `host/src/snapshot-hud.ts` and its suite were deleted in
+ * `90b1cabf`, the snapshot-HUD removal, which also dropped the declaration's last `unread` renderer - and the exemption
+ * was deleted in `1501a852`, the same commit that added this line; the measurement is kept because it is why the line
+ * exists. The sentence that did the damage was the exemption's own - the prose "states the stamina a day's work spends
+ * and says nothing about collapsing at zero" - which named the gap and then closed it with a rendering nobody
+ * receives.
  * </p>
  *
  * <p>
