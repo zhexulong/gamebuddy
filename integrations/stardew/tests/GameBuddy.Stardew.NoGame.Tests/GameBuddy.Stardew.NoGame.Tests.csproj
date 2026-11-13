@@ -63,6 +63,7 @@
     <Compile Include="..\GameBuddy.Stardew.Integration.Tests\BuildFarmBuildingActionSourceShapeTests.cs" Link="BuildFarmBuildingActionSourceShapeTests.cs" />
     <Compile Include="..\GameBuddy.Stardew.Integration.Tests\BuildFarmBuildingPreconditionOrderTests.cs" Link="BuildFarmBuildingPreconditionOrderTests.cs" />
     <Compile Include="..\GameBuddy.Stardew.Integration.Tests\BuildingContactWiringTests.cs" Link="BuildingContactWiringTests.cs" />
+    <Compile Include="..\GameBuddy.Stardew.Integration.Tests\ChargedFootprintDeclarationTests.cs" Link="ChargedFootprintDeclarationTests.cs" />
     <Compile Include="..\GameBuddy.Stardew.Integration.Tests\ChestRetrieveRollbackActionSourceShapeTests.cs" Link="ChestRetrieveRollbackActionSourceShapeTests.cs" />
     <Compile Include="..\GameBuddy.Stardew.Integration.Tests\ChestSeamProbe.cs" Link="ChestSeamProbe.cs" />
     <Compile Include="..\GameBuddy.Stardew.Integration.Tests\ChopTreeSwingOutcomeSourceShapeTests.cs" Link="ChopTreeSwingOutcomeSourceShapeTests.cs" />
@@ -74,6 +75,7 @@
     <Compile Include="..\GameBuddy.Stardew.Integration.Tests\EnterExitWarpActionSourceShapeTests.cs" Link="EnterExitWarpActionSourceShapeTests.cs" />
     <Compile Include="..\GameBuddy.Stardew.Integration.Tests\EnterMineLadderSourceShapeTests.cs" Link="EnterMineLadderSourceShapeTests.cs" />
     <Compile Include="..\GameBuddy.Stardew.Integration.Tests\ExecutionArgumentWireCoverageTests.cs" Link="ExecutionArgumentWireCoverageTests.cs" />
+    <Compile Include="..\GameBuddy.Stardew.Integration.Tests\FishingCatchableReaderTests.cs" Link="FishingCatchableReaderTests.cs" />
     <Compile Include="..\GameBuddy.Stardew.Integration.Tests\FixedInteractionPointWholeMapSourceShapeTests.cs" Link="FixedInteractionPointWholeMapSourceShapeTests.cs" />
     <Compile Include="..\GameBuddy.Stardew.Integration.Tests\FixtureTickGateLivenessTests.cs" Link="FixtureTickGateLivenessTests.cs" />
     <Compile Include="..\GameBuddy.Stardew.Integration.Tests\HarvestQualityAdmissionSourceShapeTests.cs" Link="HarvestQualityAdmissionSourceShapeTests.cs" />
@@ -99,6 +101,7 @@
     <Compile Include="..\GameBuddy.Stardew.Integration.Tests\SuiteRedProofTests.cs" Link="SuiteRedProofTests.cs" />
     <Compile Include="..\GameBuddy.Stardew.Integration.Tests\SyntheticEffectDeclarationTests.cs" Link="SyntheticEffectDeclarationTests.cs" />
     <Compile Include="..\GameBuddy.Stardew.Integration.Tests\ShipItemCarriedItemTests.cs" Link="ShipItemCarriedItemTests.cs" />
+    <Compile Include="..\GameBuddy.Stardew.Integration.Tests\TargetBaitRowComparisonSourceShapeTests.cs" Link="TargetBaitRowComparisonSourceShapeTests.cs" />
     <Compile Include="..\GameBuddy.Stardew.Integration.Tests\TargetPublicationOrderTests.cs" Link="TargetPublicationOrderTests.cs" />
     <Compile Include="..\GameBuddy.Stardew.Integration.Tests\TileTargetRequestSeamTests.cs" Link="TileTargetRequestSeamTests.cs" />
     <Compile Include="..\GameBuddy.Stardew.Integration.Tests\ToolApproachContractSourceShapeTests.cs" Link="ToolApproachContractSourceShapeTests.cs" />
