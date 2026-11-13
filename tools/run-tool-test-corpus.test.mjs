@@ -136,7 +136,7 @@ test("a corpus with no members is a defect, never a pass", () => {
   const run = runAggregate(root);
   assert.equal(run.status, 1);
   assert.match(run.stdout, /^corpus_population:0 members \(0 suite files\)/m);
-  assert.match(run.stdout, /^corpus_derivation:defect:2 script\(s\) the corpus does not take$/m);
+  assert.match(run.stdout, /^corpus_derivation:defect:1 script\(s\) the corpus does not take$/m);
   assert.match(run.stdout, /no members: no `test:`\/`suite:` script in package\.json runs/);
   assert.match(
     run.stdout,
@@ -182,6 +182,27 @@ test("an untaken script names the run that would take it, when one exists", () =
     "a script CI already runs is a home, and no exemption is claimed for it",
   );
   assert.doesNotMatch(run.stdout, /exemption dated/);
+});
+
+test("a named exclusion is reported, and it does not fail the step", () => {
+  const root = makeTree({
+    scripts: {
+      "test:held": "node --test tools/held.test.mjs",
+      "test:page": "cd dialogue-web && pnpm exec playwright test tests/page.spec.ts --project=chromium",
+    },
+    suites: { "tools/held.test.mjs": PASSING_SUITE },
+  });
+  const run = runAggregate(root);
+  assert.equal(run.status, 0, "a script that is not a corpus member is a reading, not a defect of the rule");
+  assert.match(run.stdout, /^corpus_derivation:ok$/m);
+  assert.match(
+    run.stdout,
+    /^corpus_untaken:1 of 2 test:\/suite: scripts nothing in this tree's CI runs; each is named below/m,
+  );
+  assert.match(
+    run.stdout,
+    /^ {2}untaken test:page: it runs playwright, not `node --test` over tools\/ files; home: none - nothing this tree's CI runs names tests\/page\.spec\.ts \(exemption dated \d{4}-\d{2}-\d{2}, expiring when an entry point or a run script names it\) \(cd dialogue-web && pnpm exec playwright test tests\/page\.spec\.ts --project=chromium\)$/m,
+  );
 });
 
 test("a suite another entry point runs is not a member", () => {

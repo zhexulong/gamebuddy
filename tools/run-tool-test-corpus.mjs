@@ -21,13 +21,15 @@
  *   corpus_population:<N> members (<F> suite files)   what the derivation found
  *   corpus_examined:<M> test:/suite: scripts            the population those members are read against
  *   corpus_derivation:ok|defect:<why>                whether the corpus itself is what it claims to be
+ *   corpus_untaken:<n> of <M>                        `test:`/`suite:` scripts nothing in CI runs, named below
  *   members_failed:<N>                               how many members are red in their own run
  *   corpus_responsible:<member,member>               the members to blame, named once each
  *   member <name> · exit <n> · <first failing line>  at most five, then a count of the rest
  *
  * A red member is never reported as a derivation defect and a derivation defect is never hidden behind member
  * failures. A red member still fails the step, and a step with no members at all is a defect, never a pass:
- * this unit changes attribution, not the verdict.
+ * this unit changes attribution, not the verdict. A script that is not a corpus member is a third reading again,
+ * and it does not fail the step - it is named, with the run that would take it.
  *
  * Suites that already need an environment prerequisite skip themselves with a named reason (`{ skip }` on the
  * test). A suite that is red for an attributed reason stays out of the run through
@@ -153,7 +155,7 @@ export function corpusMembers({ root = ROOT } = {}) {
       const owner = packageSuiteOwner({ root, command, entryPoints });
       if (owner === null) {
         // Filled in below, once every bucket is known: a home is a run that exists, not a run declared later.
-        notTaken.push({ name, command, why: null });
+        notTaken.push({ name, command, why: null, kind: "not-a-node-suite" });
         continue;
       }
       packages.push({ name, command, owner });
@@ -162,7 +164,12 @@ export function corpusMembers({ root = ROOT } = {}) {
     // `suite:` names a library's own tests, `test:` names a gate's. Both run here; only `test:` carries the
     // meta-gate's obligation to state a falsifier, which is why the two prefixes exist separately.
     if (!named) {
-      notTaken.push({ name, command, why: "it runs a `tools/` suite but is not a `test:`/`suite:` script" });
+      notTaken.push({
+        name,
+        command,
+        why: "it runs a `tools/` suite but is not a `test:`/`suite:` script",
+        kind: "suite-outside-namespace",
+      });
       continue;
     }
     members.push({ name, flags: run.flags, files: run.files });
@@ -383,14 +390,20 @@ async function main(argv) {
     .map((member) => ({ ...member, files: member.files.filter((file) => !quarantined.has(file)) }))
     .filter((member) => member.files.length > 0);
 
-  // The derivation's own verdict. An empty corpus and a `tools/` suite no member takes are defects of the
-  // rule, not debts of the members: a tree whose scripts stopped matching would otherwise report a clean run.
+  // The derivation's own verdict. An empty corpus, a `tools/` suite no member takes, and a `test:`/`suite:` script
+  // that reaches no bucket are defects of the RULE, not debts of the members: a tree whose scripts stopped matching
+  // would otherwise report a clean run. A script that is simply not a corpus member - playwright, python, a node
+  // driver, a package's own runner - is not evidence about the rule, so it is named as `corpus_untaken` and does not
+  // fail the step; otherwise a dated exemption would still red the step forever, which is not an exemption.
   const derivation = [];
   if (members.length === 0)
     derivation.push("no members: no `test:`/`suite:` script in package.json runs `node --test` over tools/ files");
-  for (const script of notTaken) derivation.push(`untaken ${script.name}: ${script.why} (${script.command})`);
+  for (const script of notTaken)
+    if (script.kind === "suite-outside-namespace")
+      derivation.push(`untaken ${script.name}: ${script.why} (${script.command})`);
   for (const name of dropped)
     derivation.push(`dropped ${name}: a \`test:\`/\`suite:\` script this derivation classified nowhere`);
+  const excused = notTaken.filter((script) => script.kind === "not-a-node-suite");
 
   process.stdout.write(
     `corpus_population:${members.length} members (${corpus.length} suite files) elsewhere:${elsewhere.length} ` +
@@ -417,6 +430,13 @@ async function main(argv) {
   else {
     process.stdout.write(`corpus_derivation:defect:${derivation.length} script(s) the corpus does not take\n`);
     for (const line of derivation) process.stdout.write(`  ${line}\n`);
+  }
+  if (excused.length > 0) {
+    process.stdout.write(
+      `corpus_untaken:${inNamespace(notTaken)} of ${namespace.length} test:/suite: scripts nothing in this ` +
+        `tree's CI runs; each is named below with the run that would take it, or with the date it was exempted\n`,
+    );
+    for (const script of excused) process.stdout.write(`  untaken ${script.name}: ${script.why} (${script.command})\n`);
   }
 
   const runs = await runMembers(runnable, root);
