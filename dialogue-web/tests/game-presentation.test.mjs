@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
+import ts from "typescript";
 import { messages } from "../src/i18n.ts";
 import {
   authorityLabel,
@@ -51,26 +52,120 @@ const INSTANCE_STATUSES = ["none", "detected", "launching", "running", "stopped"
 const COMPATIBILITY_STATUSES = ["unchecked", "compatible", "incompatible", "warning"];
 const ACTION_AUTHORITIES = ["unavailable", "active", "paused"];
 const OUTCOMES = ["none", "succeeded", "failed", "cancelled"];
-const INSTALLATION_STATES = [
-  "not_configured",
-  "loading",
-  "candidates",
-  "confirming",
-  "retrying",
-  "cancelled",
-  "source-unavailable",
-  "no-candidates",
-  "result-unavailable",
-  "mod-loader-missing",
-  "not-stardew-installation",
-  "reparse-point",
-  "selection-unavailable",
-  "confirmed",
-  "expired",
-  "error",
-];
 
 const locales = ["en", "zh-CN"];
+
+/* ========================================================================== *
+ * THE CHANNEL POPULATION, read from the declarations that own it.
+ *
+ * Three facts below - the states the panel can be in, the diagnostics a scan can report and the
+ * sources a candidate can come from - each used to be a hand list in this file. Each was correct on
+ * the day it was written and each went stale the moment a channel arrived: the Microsoft Store / PC
+ * Game Pass channel shipped with a diagnostic no list named, a state no list named and a source no
+ * list named, so its sentences were measured by nothing.
+ *
+ * A hand list can only catch the members its author remembered; that is the difference between a test
+ * and a gate. So the members are read out of the declarations - the client's `InstallationDiscoveryState`,
+ * the Host's `DiscoveryDiagnostic` and the Host's candidate `source` - and a union this reader cannot
+ * parse is a named failure rather than an empty population that agrees with itself.
+ * ========================================================================== */
+
+const TESTS_DIRECTORY = dirname(fileURLToPath(import.meta.url));
+const WEB_ROOT = join(TESTS_DIRECTORY, "..");
+const CLIENT_GAME_PRESENTATION = join(WEB_ROOT, "src", "game-presentation.ts");
+const HOST_DISCOVERY = join(WEB_ROOT, "..", "host", "src", "windows-stardew-installation-discovery", "internal.ts");
+
+/**
+ * The string-literal members of the one union `owns` names, or a failure describing what was parsed.
+ *
+ * Read as structure rather than as text: a comment that quotes a member name, or a second union in the
+ * same file, would otherwise join a population nobody meant to measure.
+ */
+function stringLiteralUnion(file, what, owns, atLeast) {
+  const sourceFile = ts.createSourceFile(file, readFileSync(file, "utf8"), ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+  const unions = [];
+  const visit = (node) => {
+    const type = ts.isTypeAliasDeclaration(node) || ts.isPropertySignature(node) ? node.type : undefined;
+    if (type !== undefined && owns(node) && ts.isUnionTypeNode(type)) {
+      const members = type.types
+        .filter((member) => ts.isLiteralTypeNode(member) && ts.isStringLiteral(member.literal))
+        .map((member) => member.literal.text);
+      if (members.length > 0) unions.push(members);
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sourceFile);
+  assert.equal(
+    unions.length,
+    1,
+    `${what}: expected exactly one string-literal union, and the reader found ${unions.length} in ${file}`,
+  );
+  assert.ok(unions[0].length >= atLeast, `${what}: derived ${unions[0].length} member(s), so the parse is wrong`);
+  return unions[0];
+}
+
+/** The states the installation panel can be in: the client's own union, not this file's memory of it. */
+function installationStates() {
+  return stringLiteralUnion(
+    CLIENT_GAME_PRESENTATION,
+    "InstallationDiscoveryState",
+    (node) => ts.isTypeAliasDeclaration(node) && node.name.text === "InstallationDiscoveryState",
+    16,
+  );
+}
+
+/** Every diagnostic the Host's scan can report. */
+function hostDiagnostics() {
+  return stringLiteralUnion(
+    HOST_DISCOVERY,
+    "DiscoveryDiagnostic",
+    (node) => ts.isTypeAliasDeclaration(node) && node.name.text === "DiscoveryDiagnostic",
+    8,
+  );
+}
+
+/** Every source a candidate can come from: the Host's candidate vocabulary. */
+function hostCandidateSources() {
+  return stringLiteralUnion(
+    HOST_DISCOVERY,
+    "the candidate's `source`",
+    (node) => ts.isPropertySignature(node) && ts.isIdentifier(node.name) && node.name.text === "source",
+    4,
+  );
+}
+
+/**
+ * The states a rejected discovery read can name, from the client's own code list.
+ *
+ * `installationDiscoveryFailureState` branches on the Host codes it declares and answers every other
+ * code with its own sentence. The codes are read out of that function and one code it does not declare
+ * is added, so the fallback's sentence is measured too.
+ */
+function rejectedReadStates() {
+  const body = readFileSync(CLIENT_GAME_PRESENTATION, "utf8").match(
+    /export function installationDiscoveryFailureState\([\s\S]*?\n\}/u,
+  )?.[0];
+  assert.notEqual(body, undefined, "installationDiscoveryFailureState must be declared in game-presentation.ts");
+  const codes = [...new Set([...body.matchAll(/code === "([a-z0-9_]+)"/gu)].map((match) => match[1]))];
+  assert.ok(codes.length >= 2, `derived ${codes.length} rejected-read code(s), so the parse is wrong`);
+  return [
+    ...codes.map((code) => installationDiscoveryFailureState(code)),
+    installationDiscoveryFailureState("a_code_this_build_does_not_declare"),
+  ];
+}
+
+/** Every state a settled or rejected discovery answer can put the panel in, from those declarations. */
+function discoveryOutcomeStates() {
+  return [
+    installationDiscoveryState(1, []),
+    installationDiscoveryState(0, []),
+    ...hostDiagnostics().map((diagnostic) => installationDiscoveryState(0, [diagnostic])),
+    ...rejectedReadStates(),
+  ];
+}
+
+/** The installation states the panel can paint, from the union that declares them. */
+const INSTALLATION_STATES = installationStates();
 
 test("every typed game fact renders a localized player outcome, never the raw enum", () => {
   for (const locale of locales) {
@@ -344,14 +439,7 @@ test("a linked folder is refused as a link, in words that name the folder to pic
  * load mods, or an absence. A new member fails here until someone decides which it is.
  */
 test("the panel knows every discovery diagnostic the Host can send, by derivation", () => {
-  const hostSource = readFileSync(
-    join(dirname(fileURLToPath(import.meta.url)), "..", "..", "host", "src", "windows-stardew-installation-discovery", "internal.ts"),
-    "utf8",
-  );
-  const union = hostSource.match(/export type DiscoveryDiagnostic =([\s\S]*?);/u);
-  assert.notEqual(union, null, "DiscoveryDiagnostic must be declared as a union literal");
-  const members = [...union[1].matchAll(/"([a-z0-9-]+)"/gu)].map((match) => match[1]);
-  assert.ok(members.length >= 8, `derived ${members.length} members; the union parse is wrong`);
+  const members = hostDiagnostics();
   // The members that describe an absence rather than a failed read. They are named here rather than
   // inferred, so a new one has to be a decision somebody makes.
   //
@@ -384,33 +472,70 @@ test("the panel knows every discovery diagnostic the Host can send, by derivatio
 });
 
 /**
- * Every source the discovery session can declare reads as a sentence, never as the member -
- * and the GOG source in particular, because the panel now receives its candidates: a row found
- * through Galaxy used to fall to the generic `other` sentence, which says less than the Host
- * knows without saying anything untrue. The list is the discovery session's own `source` union
- * (`host/src/windows-stardew-installation-discovery/internal.ts`), so a source added there is a
- * source this test asks about.
+ * The channels whose candidate row has no sentence of its own, declared so the absence is measured.
+ *
+ * The list this test used to carry was the four sources that existed when GOG was the new channel; the
+ * Store channel then arrived with a source member no list named, and its row read `Found on this
+ * computer` - the sentence for a source this build cannot name - while every test stayed green.
+ *
+ * A channel here is not exempt from being read: it is recorded because naming it needs a catalogue key
+ * in both locales and a case in `installationSourceLabel`, which is a copy decision rather than a gate.
+ * The entry fails the moment that sentence lands, and it fails if a channel joins this list without being
+ * written down - so neither direction can rot.
+ */
+const CHANNELS_WITHOUT_OWN_SENTENCE = [
+  {
+    source: "microsoft-store",
+    reason:
+      "the Store channel's rows fall back to the generic `Found on this computer` sentence, so a player cannot " +
+      "tell an Xbox-app copy from a source this build does not know",
+  },
+];
+
+/**
+ * Every source the discovery session can declare reads as a sentence, in both languages - and a channel
+ * with no sentence of its own is stated rather than silently reading as the fallback.
+ *
+ * The population is the Host's own union, so the next channel is measured on its first run instead of
+ * joining the product behind a green suite.
  */
 test("each declared discovery source reads as its own sentence in both languages", () => {
-  const SOURCES = ["steam-registry", "steam-vdf", "known-location", "gog"];
+  const sources = hostCandidateSources();
   const en = messages("en");
   const zh = messages("zh-CN");
-  for (const source of SOURCES) {
-    const value = installationSourceLabel(en, source);
-    assert.ok(value.length > 0, `en source ${source} is empty`);
-    assert.notEqual(value, source, `en source ${source} is rendered raw`);
-    assert.ok(!value.includes("_"), `en source ${source} still reads like an enumeration`);
-    assert.notEqual(
-      installationSourceLabel(zh, source),
-      value,
-      `source ${source} is not translated`,
-    );
+  const recorded = CHANNELS_WITHOUT_OWN_SENTENCE.map((entry) => entry.source);
+  const table = [];
+  const failures = [];
+  for (const source of sources) {
+    const english = installationSourceLabel(en, source);
+    const chinese = installationSourceLabel(zh, source);
+    table.push(`${source.padEnd(18)} en=${JSON.stringify(english)} zh=${JSON.stringify(chinese)}`);
+    if (english.length === 0) failures.push(`en source ${source} is empty`);
+    if (english === source) failures.push(`en source ${source} is rendered raw`);
+    if (english.includes("_")) failures.push(`en source ${source} still reads like an enumeration`);
+    if (chinese === english) failures.push(`source ${source} is not translated`);
+    // A channel recorded as having no sentence of its own must still have none, and a channel that is
+    // not recorded must name itself: the two directions are what keep this list from rotting.
+    const isFallback = english === en.gameInstallationSourceOther;
+    if (recorded.includes(source) && !isFallback)
+      failures.push(
+        `${source} is recorded as having no sentence of its own and now reads ${JSON.stringify(english)}; drop the entry`,
+      );
+    if (!recorded.includes(source) && isFallback)
+      failures.push(`${source} reads the generic sentence ${JSON.stringify(english)}; every declared channel names itself`);
   }
+  for (const source of recorded)
+    if (!sources.includes(source)) failures.push(`${source} is recorded as a nameless channel and the Host no longer declares it`);
   // The GOG sentence names the store, so a player can tell it from the Steam rows beside it.
   assert.match(installationSourceLabel(en, "gog"), /GOG/u);
   assert.match(installationSourceLabel(zh, "gog"), /GOG/u);
   // A source this build has no sentence for still describes a candidate the Host published.
   assert.equal(installationSourceLabel(en, "epic-games-store"), en.gameInstallationSourceOther);
+  console.log(
+    `[discovery sources] examined ${sources.length} source(s) x ${locales.length} locale(s), ` +
+      `${recorded.length} recorded without a sentence:\n  ${table.join("\n  ")}`,
+  );
+  assert.deepEqual(failures, [], "every declared discovery channel reads as its own sentence");
 });
 
 test("a candidate's own line carries where it is, so two installations are not one row twice", () => {
@@ -434,14 +559,39 @@ test("a candidate's own line carries where it is, so two installations are not o
   );
 });
 
-test("the four discovery outcomes are four different sentences", () => {
+/**
+ * The outcomes a discovery answer can name are different sentences, in both languages.
+ *
+ * The population used to be four states somebody listed. The fifth channel's state -
+ * `install-cannot-load-mods`, the Store copy no mod loader can run in - arrived later and was measured
+ * by nothing: it could have shipped carrying an empty scan's sentence and this test would have stayed
+ * green. The states are now derived from the declarations that decide them (the Host's diagnostics and
+ * the client's own code list), so a channel that maps to a new state is measured the day it is declared.
+ */
+test("the discovery outcomes a reply can name are distinct sentences in both languages", () => {
+  const states = [...new Set(discoveryOutcomeStates())];
+  const table = [];
+  const failures = [];
   for (const locale of locales) {
     const labels = messages(locale);
-    const sentences = ["source-unavailable", "no-candidates", "result-unavailable", "error"].map(
-      (state) => installationStateLabel(labels, state),
-    );
-    assert.equal(new Set(sentences).size, sentences.length, `${locale} collapses two discovery outcomes into one sentence`);
+    const sentences = states.map((state) => installationStateLabel(labels, state));
+    for (const [index, sentence] of sentences.entries())
+      table.push(`${locale} ${states[index].padEnd(26)} ${JSON.stringify(sentence)}`);
+    // Two outcomes a player must tell apart may not share one sentence.
+    const seen = new Map();
+    for (const [index, sentence] of sentences.entries()) {
+      if (seen.has(sentence))
+        failures.push(
+          `${locale}: ${states[seen.get(sentence)]} and ${states[index]} read the same sentence: ${JSON.stringify(sentence)}`,
+        );
+      seen.set(sentence, index);
+    }
   }
+  assert.ok(states.length >= 5, `derived ${states.length} outcome(s); the derivation is wrong`);
+  console.log(
+    `[discovery outcomes] examined ${states.length} state(s) x ${locales.length} locale(s):\n  ${table.join("\n  ")}`,
+  );
+  assert.deepEqual(failures, [], "two discovery outcomes a player must tell apart share one sentence");
 });
 
 test("the capability summary says how many capabilities are published, or says it published none", () => {
@@ -471,19 +621,22 @@ test("a candidate says whether its folder can load the companion, and ready fold
   }
 
   // Ordering: ready first, and the Host's order preserved inside each group.
-  const ordered = orderCandidatesByReadiness([
+  const input = [
     { candidateId: "a", modLoader: "missing" },
     { candidateId: "b", modLoader: "present" },
     { candidateId: "c", modLoader: null },
     { candidateId: "d", modLoader: "present" },
-  ]);
+  ];
+  const ordered = orderCandidatesByReadiness(input);
   assert.deepEqual(
     ordered.map((candidate) => candidate.candidateId),
     ["b", "d", "a", "c"],
   );
   // The input is not mutated: the panel renders a derived list, not a re-sorted value it was handed.
+  // This assertion used to compare a literal with itself, so no implementation could have reddened it.
   assert.deepEqual(
+    input.map((candidate) => candidate.candidateId),
     ["a", "b", "c", "d"],
-    ["a", "b", "c", "d"],
+    "ordering re-sorted the caller's own list",
   );
 });
