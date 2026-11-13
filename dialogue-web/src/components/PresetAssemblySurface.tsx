@@ -18,8 +18,9 @@
  *    the player about a request nobody sends. Every key gets a row, `unset` ones included - an omitted row reads as
  *    "there is no such setting" rather than "nothing is sent".
  *
- * The read is one GET on mount. A failed read says so; it never renders an empty assembly, because "no preset was
- * imported" and "the assembly could not be read" are two different facts and a player acts differently on each.
+ * The read is one GET on mount. A read that fails says which of the two things went wrong, and never renders an empty
+ * assembly: "no preset was imported", "the Host would not serve the read" and "the Host served something this build
+ * cannot read" are three different facts and a player acts differently on each.
  */
 import { ScrollText } from "lucide-react";
 import { type ReactElement, useEffect, useState } from "react";
@@ -28,14 +29,31 @@ import {
   type PresetActiveBindingV1,
   type PresetAssemblySurfaceV1,
   type PresetAssemblyReadV1,
+  PresetAssemblyProtocolError,
   readPresetAssemblySurface,
 } from "../preset-assembly-surface";
 import { SurfaceView } from "./SurfaceView";
 
 type PresetAssemblyView =
   | Readonly<{ kind: "loading" }>
+  /** The Host did not serve the read: a status that is not `200`, or a transport that never reached it. */
   | Readonly<{ kind: "failed" }>
+  /** It did answer, and the body is not the readout this build can show: a reply the mirror refuses. */
+  | Readonly<{ kind: "unreadable" }>
   | Readonly<{ kind: "ready"; read: PresetAssemblyReadV1 }>;
+
+/**
+ * Which of the two failure states a read that produced no readout is.
+ *
+ * `PresetAssemblyProtocolError` is the mirror's one "the reply is not the published readout" fact: a 200 whose body
+ * does not validate, a body that is not JSON at all. Everything else - a status the Host refused, a transport that
+ * never reached it - is a read that was not served. The two ask for opposite things, so the panel may not call the
+ * second fact by the first one's name: a refused read is answered by reading again, and a reply this build cannot
+ * read is answered by a build that knows what the Host now says, where retrying changes nothing.
+ */
+function presetAssemblyReadFailure(error: unknown): "failed" | "unreadable" {
+  return error instanceof PresetAssemblyProtocolError ? "unreadable" : "failed";
+}
 
 export function PresetAssemblySurface({ labels }: Readonly<{ labels: Messages }>): ReactElement {
   return (
@@ -54,8 +72,8 @@ function PresetAssemblyPanel({ labels }: Readonly<{ labels: Messages }>): ReactE
       try {
         const read = await readPresetAssemblySurface();
         if (live) setView({ kind: "ready", read });
-      } catch {
-        if (live) setView({ kind: "failed" });
+      } catch (error) {
+        if (live) setView({ kind: presetAssemblyReadFailure(error) });
       }
     })();
     return () => {
@@ -70,6 +88,11 @@ function PresetAssemblyPanel({ labels }: Readonly<{ labels: Messages }>): ReactE
       {view.kind === "failed" && (
         <p role="status" className="error-banner" data-preset-read-failed>
           {labels.presetReadFailed}
+        </p>
+      )}
+      {view.kind === "unreadable" && (
+        <p role="status" className="error-banner" data-preset-reply-unreadable>
+          {labels.presetReplyUnreadable}
         </p>
       )}
       {view.kind === "ready" && view.read.activePreset !== undefined && (

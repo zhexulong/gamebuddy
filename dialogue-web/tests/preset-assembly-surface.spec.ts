@@ -620,7 +620,8 @@ test("the same five facts are named at 1440x900", async ({ page }) => {
  * leaves a player with an assembly they did not choose).
  *
  * The absent case is the contract's own: the fact is `Type.Optional` on the body, so a Host that predates it still
- * reads, and this surface then claims NOTHING rather than claiming "no preset is in force".
+ * reads. It is a fourth state and says so - "this build did not report which preset is in force" - because a panel
+ * that drew nothing at all read exactly like a panel that never loaded, and only one of those is the panel's fault.
  */
 test("which preset is in force is named in all three states, and absent makes no claim", async ({ page }) => {
   const catalogue = messages("en");
@@ -647,12 +648,20 @@ test("which preset is in force is named in all three states, and absent makes no
     await stubPresetSurface(page, [SURFACE], activePreset);
     await page.reload();
     const line = surface.locator("[data-preset-active]");
+    const unreported = surface.locator("[data-preset-active-unreported]");
     if (expected === null) {
-      await expect(line, `${what}: no line is rendered`).toHaveCount(0);
+      // A body that does not carry the fact is its own state with its own sentence: a panel that drew
+      // nothing here was indistinguishable from a panel that never loaded, and a player with no
+      // line could not tell "nothing is bound" from "this build did not say".
+      await expect(line, `${what}: no preset is claimed to be in force`).toHaveCount(0);
+      await expect(unreported, `${what}: the panel says the fact was not reported`).toHaveText(
+        catalogue.presetActiveUnreported,
+      );
       continue;
     }
     await expect(line, `${what}: the state is named`).toHaveText(expected);
     await expect(line).toHaveAttribute("data-preset-active", String((activePreset as { state: string }).state));
+    await expect(unreported, `${what}: a reported binding is not also drawn as an unreported one`).toHaveCount(0);
   }
 });
 
@@ -662,7 +671,7 @@ test("which preset is in force is named in all three states, and absent makes no
  * A surface that rendered a blank region for both would let a player read "this preset does nothing" out of a Host
  * that never answered - which is the one reading the design forbids in as many words (§4: never silently empty).
  */
-test("no imported preset and an unreadable readout say different things", async ({ page }) => {
+test("no imported preset and a read the Host refused say different things", async ({ page }) => {
   const catalogue = messages("en");
   await stubPresetSurface(page, []);
   await page.goto(`/#profile=composed-reference-game&boot=${token}&panel=presets`);
@@ -680,8 +689,76 @@ test("no imported preset and an unreadable readout say different things", async 
 });
 
 /**
+ * The one read-failure banner the panel draws, by the attribute that names the fault and the sentence under it.
+ *
+ * Read as the browser laid it out rather than by selector, because the question is which of two banners appeared:
+ * asking for one attribute at a time would answer "absent" for both when the panel drew the wrong one.
+ */
+async function readFailureBanner(page: Page): Promise<Readonly<{ attribute: string | null; sentence: string }>> {
+  return await page.evaluate(() => {
+    const surface = document.querySelector<HTMLElement>('[data-testid="presets-surface"]');
+    if (surface === null) throw new Error("the preset surface is not mounted");
+    const banners = [
+      ...surface.querySelectorAll<HTMLElement>("[data-preset-read-failed], [data-preset-reply-unreadable]"),
+    ];
+    if (banners.length !== 1)
+      throw new Error(`the panel draws ${banners.length} read-failure banners, not exactly one`);
+    const banner = banners[0];
+    const attribute =
+      ["data-preset-read-failed", "data-preset-reply-unreadable"].find((name) => banner.hasAttribute(name)) ?? null;
+    return { attribute, sentence: (banner.textContent ?? "").trim() };
+  });
+}
+
+/**
+ * The Host not serving the read and the Host serving something this build cannot read are two facts, and the panel
+ * says which.
+ *
+ * Both produce no readout, and both reached the player as one sentence: a bare `catch` turned every failure into
+ * `failed`, so a Host that never answered and a reply whose body is not the published contract read exactly alike.
+ * They ask for opposite things - read again, versus a build that knows what the Host now says - which is why the
+ * companion world book's panel splits them on the client's own "the reply did not conform" fact
+ * (`6b24a0b9`), and why this panel does the same.
+ */
+test("a read the Host refused and a reply this build cannot read say different things", async ({ page }) => {
+  const catalogue = messages("en");
+  const surface = page.getByTestId("presets-surface");
+
+  // The Host does not serve the read at all: there is no reply to make sense of.
+  await stubPresetSurface(page, [SURFACE]);
+  await page.route("**/api/tavern/v1/presets", (route) =>
+    route.fulfill({ status: 500, contentType: "application/json", body: JSON.stringify({ code: "unavailable" }) }),
+  );
+  await page.goto(`/#profile=composed-reference-game&boot=${token}&panel=presets`);
+  await expect(surface).toBeVisible();
+  const refused = await readFailureBanner(page);
+  console.log(`[preset-read/host-refused] ${JSON.stringify(refused)}`);
+
+  // The Host answers, and the answer states a total that cannot be true: the read succeeded, the reply is not the
+  // readout this surface can show.
+  await page.unroute("**/api/tavern/v1/presets");
+  await stubPresetSurface(page, [{ ...SURFACE, entries: { ...SURFACE.entries, total: SURFACE.entries.total + 1 } }]);
+  await page.reload();
+  await expect(surface).toBeVisible();
+  const unreadable = await readFailureBanner(page);
+  console.log(`[preset-read/reply-unreadable] ${JSON.stringify(unreadable)}`);
+
+  expect(refused.attribute, "a read the Host refused carries the read-failed attribute").toBe(
+    "data-preset-read-failed",
+  );
+  expect(refused.sentence, "and says the assembly could not be read").toBe(catalogue.presetReadFailed);
+  expect(unreadable.attribute, "a reply this build cannot read does not borrow the Host-refusal attribute").toBe(
+    "data-preset-reply-unreadable",
+  );
+  expect(unreadable.sentence, "it says the reply was the thing that did not match").toBe(
+    catalogue.presetReplyUnreadable,
+  );
+  expect(unreadable.sentence, "the two faults cannot share one sentence").not.toBe(refused.sentence);
+});
+
+/**
  * A readout that contradicts itself, or that carries a member this surface cannot show, is refused rather than
- * rendered - and the player is told it could not be read instead of being shown a half-truth.
+ * rendered - and the player is told the reply is one this build cannot read, not that the read failed.
  *
  * Each body below is the producer's own output with exactly one thing changed, so the refusal is a fact about that
  * one member: a total that is not `enabled + disabled`, a depth count that is not the blocks beside it, a macro
@@ -751,9 +828,10 @@ test("a readout that contradicts itself is refused instead of shown", async ({ p
     // would throw its own error and be counted as a finding about the assembly.
     await expect(page.getByTestId("presets-surface")).toBeVisible();
     const surface = page.getByTestId("presets-surface");
-    await expect(surface.locator("[data-preset-read-failed]"), `${what} is not shown as the assembly's truth`).toHaveText(
-      catalogue.presetReadFailed,
-    );
+    await expect(
+      surface.locator("[data-preset-reply-unreadable]"),
+      `${what} is not shown as the assembly's truth`,
+    ).toHaveText(catalogue.presetReplyUnreadable);
     await expect(surface.locator("[data-preset-assembly]"), `${what} renders no assembly at all`).toHaveCount(0);
   }
 });
@@ -806,8 +884,8 @@ test("a preset with no composed model says the sampling was not measured", async
 /**
  * The four refusals of the sampler reading, each naming what it hit rather than "invalid body".
  *
- * They are asserted on the validator directly because the panel turns every refusal into the same banner: a reader
- * debugging a drifted Host needs to know which of the four it was, and only the message carries that.
+ * They are asserted on the validator directly because the panel draws one banner for every reply it refuses: a
+ * reader debugging a drifted Host needs to know which of the four it was, and only the message carries that.
  */
 test("each refused sampler reading is refused by the name of what it did", () => {
   const read = (sampling: unknown) =>

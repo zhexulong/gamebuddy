@@ -100,20 +100,29 @@ export type PresetAssemblyReadV1 = Readonly<{
 /** The route the readout is served on. One path, named once, so the surface and its journey cannot drift apart. */
 export const PRESET_ASSEMBLY_ROUTE = "/api/tavern/v1/presets";
 
-/** A body that is not the readout this surface can show. The message names the field that drifted. */
+/**
+ * A body that is not the readout this surface can show. The message names the field that drifted.
+ *
+ * Exported because the surface has to tell this fault from the next one: a reply the mirror refuses is a different
+ * fact from a read the Host did not serve, and the panel says which happened.
+ */
 export class PresetAssemblyProtocolError extends Error {}
+
+/** A read the Host did not serve: a status that is not `200`. Its own class, never the one above. */
+class PresetAssemblyRefusedError extends Error {}
 
 const PREREQUISITE = "is not the preset readout this surface reads";
 const MAX_PRESETS = 100;
 const MACRO_CODE = /^macro_(?:not_implemented|unknown):(.+)$/u;
 
 /**
- * The one read. A refusal is not a body: a response that is not `200` with the readout throws, and the surface
- * reports that it could not read the assembly rather than showing an empty one that looks like "no preset".
+ * The one read. A refusal is not a body: a response that is not `200` throws `PresetAssemblyRefusedError`, and a body
+ * that is not the readout throws `PresetAssemblyProtocolError` - two facts, because they are answered by opposite
+ * things. The surface reports which happened rather than showing an empty assembly that looks like "no preset".
  */
 export async function readPresetAssemblySurface(transport: typeof fetch = fetch): Promise<PresetAssemblyReadV1> {
   const response = await transport(PRESET_ASSEMBLY_ROUTE, { method: "GET", credentials: "same-origin" });
-  if (!response.ok) throw new PresetAssemblyProtocolError(`${PRESET_ASSEMBLY_ROUTE} answered ${response.status}`);
+  if (!response.ok) throw new PresetAssemblyRefusedError(`${PRESET_ASSEMBLY_ROUTE} answered ${response.status}`);
   let body: unknown;
   try {
     body = await response.json();
