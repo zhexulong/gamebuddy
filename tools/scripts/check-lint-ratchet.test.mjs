@@ -6,10 +6,11 @@
  * hold that reading against a real biome run on a throwaway tree, and hold the population to the index: an untracked
  * violation is published by name and does not count, and the same file counts the moment it is staged.
  *
- * red-proof: inject  a planted `tools/legacy.mjs` using `==` -> `lint_ratchet_failed new=1` naming it; record it ->
- *                    `lint_ratchet_ok` with the debt unchanged; write the same violation untracked -> `lint_ratchet_ok`
- *                    with `untracked_not_counted 1: tools/inflight.mjs`; `git add` it -> `lint_ratchet_failed new=1` on
- *                    the same file and no `untracked_not_counted` (tools/scripts/check-lint-ratchet.test.mjs)
+ * red-proof: inject  a planted fixture file using `==` under that fixture's own `tools/` directory ->
+ *                    `lint_ratchet_failed new=1` naming it; record it -> `lint_ratchet_ok` with the debt unchanged;
+ *                    write the same violation untracked -> `lint_ratchet_ok` with `untracked_not_counted 1: <the
+ *                    planted file>`; `git add` it -> `lint_ratchet_failed new=1` on the same file and no
+ *                    `untracked_not_counted` (tools/scripts/check-lint-ratchet.test.mjs)
  */
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";

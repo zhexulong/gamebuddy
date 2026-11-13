@@ -15,8 +15,10 @@
  * its modes - `--write` rewrites files, `--stdin-file-path=<path>` formats stdin to stdout - so a hook that goes
  * back to formatting files in the worktree fails these tests on their substance rather than on a missing feature.
  *
- * Red on the pre-fix hook, measured in a copy of this tree at `d8567157^`: with the same scenario the old hook
- * committed 210 insertions and 61 deletions (the neighbour's rewrite) where the index held 2 insertions.
+ * red-proof: history  the pre-fix hook replayed from `d8567157^` in a copy of this tree, over the same scenario,
+ *                     committed 210 insertions and 61 deletions - the neighbouring lane's whole rewrite - where the
+ *                     index held 2 insertions -> `× a commit carries the staged bytes when the worktree holds a
+ *                     foreign hunk`, exit 1 (tools/scripts/pre-commit.test.mjs)
  */
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";

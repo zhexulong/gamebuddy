@@ -3,10 +3,8 @@
   "note": "Gates measured with no red proof at this commit. A record of debt, not an acceptance of it: delete an entry by adding its proof, never by recording more gates.",
   "gates": [
     "audit:stardew-action-seam-terminals",
-    "check:code-duplication",
     "check:live-run-isolation",
     "check:sandbox-acceptance",
-    "test:format-ratchet",
     "test:sandbox-configs",
     "test:stardew-fixture-scenario-wiring",
     "test:stardew-soil-itm-canary",

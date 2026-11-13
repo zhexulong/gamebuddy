@@ -173,7 +173,7 @@
  *                    entry is removed and a later run never adds it back; a group that GREW -> its entry stays
  *                    byte-identical, `clone_group_grew` still fails the gate, and nothing is banked; no baseline file at
  *                    all -> `baseline_shrink_refused: there is no tools/duplicate-code-baseline.json to shrink`.
- * red-proof: facades  three controller partials whose methods share an envelope and one `AdmitLocalExecution(...)`
+ * red-proof: inject  three controller partials whose methods share an envelope and one `AdmitLocalExecution(...)`
  *                    delegation, with no baseline -> `clone groups 1 · of which facade-only 1 · duplication 0`, status
  *                    `passed`, and `facade-only:<hash>: 3 sites at <n> tokens :: public LocalExecutionReceipt
  *                    RequestLocal<Action>(` printed; a genuine lookup -> `revision++` -> `Guid.NewGuid` -> `nowMs`
