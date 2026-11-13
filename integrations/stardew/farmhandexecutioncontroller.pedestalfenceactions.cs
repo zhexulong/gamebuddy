@@ -8,15 +8,11 @@ internal sealed partial class ExecutionManager
 {
     public LocalExecutionReceipt RequestLocalTakePedestalItem(string requestId, int targetX, int targetY, string expectedTargetId, long requestedDeadlineMs)
     {
-        if (this.AdmitLocalExecution(requestId, requestedDeadlineMs, AdmissionActionabilityProfile.General, out string executionId, out long nowMs) is LocalExecutionReceipt admissionRejection)
-            return admissionRejection;
-        GameLocation location = Game1.player.currentLocation;
-        if (!TryGetPedestalTarget(location, targetX, targetY, expectedTargetId, out StardewValley.Objects.ItemPedestal? pedestal, out StardewValley.Object? item))
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "pedestal_target_changed", $"target={targetX},{targetY}");
-        if (!IsTileWithinChebyshevRadius(Game1.player, targetX, targetY, 1))
-            return this.TryBeginToolApproach(requestId, executionId, "take_pedestal_item", location, targetX, targetY, expectedTargetId,
-                (arrivalExecutionId, arrivalRequestId) => this.ExecuteTakePedestalItem(arrivalExecutionId, arrivalRequestId, targetX, targetY, expectedTargetId, requestedDeadlineMs), nowMs, requestedDeadlineMs);
-        return this.ExecuteTakePedestalItem(executionId, requestId, targetX, targetY, expectedTargetId, requestedDeadlineMs);
+        return this.RequestLocalTileTarget("take_pedestal_item", requestId, targetX, targetY, expectedTargetId, requestedDeadlineMs,
+            location => TryGetPedestalTarget(location, targetX, targetY, expectedTargetId, out _, out _)
+                ? null
+                : new TileTargetRefusal("pedestal_target_changed", $"target={targetX},{targetY}"),
+            (executionId, admittedRequestId) => this.ExecuteTakePedestalItem(executionId, admittedRequestId, targetX, targetY, expectedTargetId, requestedDeadlineMs));
     }
 
     private LocalExecutionReceipt ExecuteTakePedestalItem(string executionId, string requestId, int targetX, int targetY, string expectedTargetId, long deadlineMs)
@@ -95,15 +91,11 @@ internal sealed partial class ExecutionManager
 
     public LocalExecutionReceipt RequestLocalToggleFenceGate(string requestId, int targetX, int targetY, string expectedTargetId, long requestedDeadlineMs)
     {
-        if (this.AdmitLocalExecution(requestId, requestedDeadlineMs, AdmissionActionabilityProfile.General, out string executionId, out long nowMs) is LocalExecutionReceipt admissionRejection)
-            return admissionRejection;
-        GameLocation location = Game1.player.currentLocation;
-        if (!TryGetFenceGate(location, targetX, targetY, expectedTargetId, out StardewValley.Fence? fence))
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "fence_gate_target_changed", $"target={targetX},{targetY}");
-        if (!IsTileWithinChebyshevRadius(Game1.player, targetX, targetY, 1))
-            return this.TryBeginToolApproach(requestId, executionId, "toggle_fence_gate", location, targetX, targetY, expectedTargetId,
-                (arrivalExecutionId, arrivalRequestId) => this.ExecuteToggleFenceGate(arrivalExecutionId, arrivalRequestId, targetX, targetY, expectedTargetId), nowMs, requestedDeadlineMs);
-        return this.ExecuteToggleFenceGate(executionId, requestId, targetX, targetY, expectedTargetId);
+        return this.RequestLocalTileTarget("toggle_fence_gate", requestId, targetX, targetY, expectedTargetId, requestedDeadlineMs,
+            location => TryGetFenceGate(location, targetX, targetY, expectedTargetId, out _)
+                ? null
+                : new TileTargetRefusal("fence_gate_target_changed", $"target={targetX},{targetY}"),
+            (executionId, admittedRequestId) => this.ExecuteToggleFenceGate(executionId, admittedRequestId, targetX, targetY, expectedTargetId));
     }
 
     private LocalExecutionReceipt ExecuteToggleFenceGate(string executionId, string requestId, int targetX, int targetY, string expectedTargetId)

@@ -39,9 +39,11 @@ public sealed class ApproachDeclarationCoverageTests
     private const string ModDirectory = "integrations/stardew";
 
     /// <summary>
-    /// Every way a request path can begin walking the actor in. Three spellings because there are three seams, not
-    /// because the fact has three meanings: the tool family's approach leg, the building-contact form of it, and
-    /// <c>pickup_item</c>'s own debris approach, which predates both.
+    /// Every way a request path can begin walking the actor in. Four spellings because there are four seams, not
+    /// because the fact has four meanings: the tool family's approach leg, the building-contact form of it,
+    /// <c>pickup_item</c>'s own debris approach, which predates both, and the tile-target request seam the pedestal,
+    /// fence-gate, bush, fruit-tree and tree actions hand their request to. That seam begins the tool leg for all five,
+    /// and <c>TileTargetRequestSeamTests.TheSeamAdmitsResolvesWalksThenExecutesInThatOrder</c> pins that it still does.
     /// </summary>
     private static readonly string[] ApproachLegMarkers =
     {
@@ -50,6 +52,7 @@ public sealed class ApproachDeclarationCoverageTests
         "new LocalMoveSpec(",
         "new LocalApproachSpec(",
         "new LocalItemPickupSpec(",
+        "this.RequestLocalTileTarget(",
     };
 
     /// <summary>The predicates that make a handler refuse from a distance instead of walking.</summary>

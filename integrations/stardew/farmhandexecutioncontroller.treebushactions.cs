@@ -9,30 +9,26 @@ internal sealed partial class ExecutionManager
 {
     public LocalExecutionReceipt RequestLocalHarvestBush(string requestId, int targetX, int targetY, string expectedTargetId, long requestedDeadlineMs)
     {
-        if (this.AdmitLocalExecution(requestId, requestedDeadlineMs, AdmissionActionabilityProfile.General, out string executionId, out long nowMs) is LocalExecutionReceipt admissionRejection)
-            return admissionRejection;
-
-        GameLocation location = Game1.player.currentLocation;
-        if (!TryGetHarvestableBush(location, targetX, targetY, expectedTargetId, out StardewValley.TerrainFeatures.Bush? bush))
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "bush_target_changed", $"target={targetX},{targetY}");
-        // The native "you may shake now" gate, re-derived instead of assumed.
-        // Bush.shake returns immediately while the bush is still animating
-        // (Bush.cs:396-399, the private `maxShake` field), and the player's own
-        // ingress Bush.performUseAction does not even reach that call until
-        // `shakeTimer` has elapsed (Bush.cs:341-353). Only the public `shakeTimer`
-        // can be read here, so it is the half of the native gate this admission
-        // re-derives; the shake itself is then dispatched through
-        // performUseAction, which keeps the remaining private gate native rather
-        // than re-implemented. A bush that cannot be shaken right now is refused
-        // for that reason, not reported as a changed target.
-        if (bush!.shakeTimer > 0f)
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "bush_still_settling", $"target={targetX},{targetY};shake_timer={bush.shakeTimer.ToString("0.##", CultureInfo.InvariantCulture)}");
-        if (!IsTileWithinChebyshevRadius(Game1.player, targetX, targetY, 1))
-        {
-            return this.TryBeginToolApproach(requestId, executionId, "harvest_bush", location, targetX, targetY, expectedTargetId,
-                (arrivalExecutionId, arrivalRequestId) => this.ExecuteHarvestBush(arrivalExecutionId, arrivalRequestId, targetX, targetY, expectedTargetId), nowMs, requestedDeadlineMs);
-        }
-        return this.ExecuteHarvestBush(executionId, requestId, targetX, targetY, expectedTargetId);
+        return this.RequestLocalTileTarget("harvest_bush", requestId, targetX, targetY, expectedTargetId, requestedDeadlineMs,
+            location =>
+            {
+                if (!TryGetHarvestableBush(location, targetX, targetY, expectedTargetId, out StardewValley.TerrainFeatures.Bush? bush))
+                    return new TileTargetRefusal("bush_target_changed", $"target={targetX},{targetY}");
+                // The native "you may shake now" gate, re-derived instead of assumed.
+                // Bush.shake returns immediately while the bush is still animating
+                // (Bush.cs:396-399, the private `maxShake` field), and the player's own
+                // ingress Bush.performUseAction does not even reach that call until
+                // `shakeTimer` has elapsed (Bush.cs:341-353). Only the public `shakeTimer`
+                // can be read here, so it is the half of the native gate this admission
+                // re-derives; the shake itself is then dispatched through
+                // performUseAction, which keeps the remaining private gate native rather
+                // than re-implemented. A bush that cannot be shaken right now is refused
+                // for that reason, not reported as a changed target.
+                if (bush!.shakeTimer > 0f)
+                    return new TileTargetRefusal("bush_still_settling", $"target={targetX},{targetY};shake_timer={bush.shakeTimer.ToString("0.##", CultureInfo.InvariantCulture)}");
+                return null;
+            },
+            (executionId, admittedRequestId) => this.ExecuteHarvestBush(executionId, admittedRequestId, targetX, targetY, expectedTargetId));
     }
 
     private LocalExecutionReceipt ExecuteHarvestBush(string executionId, string requestId, int targetX, int targetY, string expectedTargetId)
@@ -115,15 +111,11 @@ internal sealed partial class ExecutionManager
 
     public LocalExecutionReceipt RequestLocalHarvestFruitTree(string requestId, int targetX, int targetY, string expectedTargetId, long requestedDeadlineMs)
     {
-        if (this.AdmitLocalExecution(requestId, requestedDeadlineMs, AdmissionActionabilityProfile.General, out string executionId, out long nowMs) is LocalExecutionReceipt admissionRejection)
-            return admissionRejection;
-        GameLocation location = Game1.player.currentLocation;
-        if (!TryGetHarvestableFruitTree(location, targetX, targetY, expectedTargetId, out StardewValley.TerrainFeatures.FruitTree? tree))
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "fruit_tree_target_changed", $"target={targetX},{targetY}");
-        if (!IsTileWithinChebyshevRadius(Game1.player, targetX, targetY, 1))
-            return this.TryBeginToolApproach(requestId, executionId, "harvest_fruit_tree", location, targetX, targetY, expectedTargetId,
-                (arrivalExecutionId, arrivalRequestId) => this.ExecuteHarvestFruitTree(arrivalExecutionId, arrivalRequestId, targetX, targetY, expectedTargetId), nowMs, requestedDeadlineMs);
-        return this.ExecuteHarvestFruitTree(executionId, requestId, targetX, targetY, expectedTargetId);
+        return this.RequestLocalTileTarget("harvest_fruit_tree", requestId, targetX, targetY, expectedTargetId, requestedDeadlineMs,
+            location => TryGetHarvestableFruitTree(location, targetX, targetY, expectedTargetId, out _)
+                ? null
+                : new TileTargetRefusal("fruit_tree_target_changed", $"target={targetX},{targetY}"),
+            (executionId, admittedRequestId) => this.ExecuteHarvestFruitTree(executionId, admittedRequestId, targetX, targetY, expectedTargetId));
     }
 
     private LocalExecutionReceipt ExecuteHarvestFruitTree(string executionId, string requestId, int targetX, int targetY, string expectedTargetId)
@@ -178,15 +170,11 @@ internal sealed partial class ExecutionManager
 
     public LocalExecutionReceipt RequestLocalShakeTree(string requestId, int targetX, int targetY, string expectedTargetId, long requestedDeadlineMs)
     {
-        if (this.AdmitLocalExecution(requestId, requestedDeadlineMs, AdmissionActionabilityProfile.General, out string executionId, out long nowMs) is LocalExecutionReceipt admissionRejection)
-            return admissionRejection;
-        GameLocation location = Game1.player.currentLocation;
-        if (!TryGetShakeableTree(location, targetX, targetY, expectedTargetId, out StardewValley.TerrainFeatures.Tree? tree))
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "shake_tree_target_changed", $"target={targetX},{targetY}");
-        if (!IsTileWithinChebyshevRadius(Game1.player, targetX, targetY, 1))
-            return this.TryBeginToolApproach(requestId, executionId, "shake_tree", location, targetX, targetY, expectedTargetId,
-                (arrivalExecutionId, arrivalRequestId) => this.ExecuteShakeTree(arrivalExecutionId, arrivalRequestId, targetX, targetY, expectedTargetId), nowMs, requestedDeadlineMs);
-        return this.ExecuteShakeTree(executionId, requestId, targetX, targetY, expectedTargetId);
+        return this.RequestLocalTileTarget("shake_tree", requestId, targetX, targetY, expectedTargetId, requestedDeadlineMs,
+            location => TryGetShakeableTree(location, targetX, targetY, expectedTargetId, out _)
+                ? null
+                : new TileTargetRefusal("shake_tree_target_changed", $"target={targetX},{targetY}"),
+            (executionId, admittedRequestId) => this.ExecuteShakeTree(executionId, admittedRequestId, targetX, targetY, expectedTargetId));
     }
 
     private LocalExecutionReceipt ExecuteShakeTree(string executionId, string requestId, int targetX, int targetY, string expectedTargetId)

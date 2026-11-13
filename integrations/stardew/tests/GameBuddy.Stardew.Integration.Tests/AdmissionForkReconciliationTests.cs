@@ -55,14 +55,12 @@ public sealed class AdmissionForkReconciliationTests
         ["farmhandexecutioncontroller.movementactions.cs"] = 2,
         ["farmhandexecutioncontroller.npcactions.cs"] = 1,
         ["farmhandexecutioncontroller.obeliskactions.cs"] = 1,
-        ["farmhandexecutioncontroller.pedestalfenceactions.cs"] = 2,
         ["farmhandexecutioncontroller.petbowlactions.cs"] = 1,
         ["farmhandexecutioncontroller.resourcetoolactions.cs"] = 10,
         ["farmhandexecutioncontroller.shippingactions.cs"] = 1,
         ["farmhandexecutioncontroller.silohaywithdrawactions.cs"] = 1,
         ["farmhandexecutioncontroller.slimehutchtroughactions.cs"] = 1,
         ["farmhandexecutioncontroller.transportactions.cs"] = 4,
-        ["farmhandexecutioncontroller.treebushactions.cs"] = 3,
         ["farmhandexecutioncontroller.worldobjectactions.cs"] = 4,
         ["farmhandexecutioncontroller.buildfarmbuildingactions.cs"] = 1,
         ["farmhandexecutioncontroller.nameentityactions.cs"] = 1,
@@ -74,6 +72,9 @@ public sealed class AdmissionForkReconciliationTests
         ["farmhandexecutioncontroller.colorobjectactions.cs"] = 1,
         ["farmhandexecutioncontroller.geodeactions.cs"] = 1,
         ["farmhandexecutioncontroller.furnituredecorationactions.cs"] = 4,
+        // The one seam the pedestal, fence-gate, bush, fruit-tree and tree actions admit through, so their partials reach
+        // the shared admission once instead of five times.
+        ["farmhandexecutioncontroller.tiletargetrequest.cs"] = 1,
         // The identity preamble itself, which ends in the one admission on behalf of every action that uses it.
         ["farmhandexecutioncontroller.cs"] = 1,
     };
