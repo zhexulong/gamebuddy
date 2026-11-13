@@ -137,14 +137,10 @@ export const RENDERER_TABLES = Object.freeze([
  * A fact printed into text NOBODY receives is not the player's either - which is how `health` sat exempted for a while,
  * crediting a HUD block no reader in this tree consumes.
  */
-const BODY_HELD_REASON =
-  "what is holding her body (a modal, an event, a pass-out) and whether a new command can take it over. The observation's projection states it for `stardew_observe` and the refusal receipt states it after the attempt; `<world-state>` does not, so a companion who is blocked learns it only by trying.";
 const TRUNCATION_COUNT_REASON =
   "the number of rows a Mod cap left out, paired with the family it counts. `<world-state>` prints that family, so the count beside it is the next unit: a family truncated at its cap reads as complete without it.";
 
 export const RENDERING_EXEMPTIONS = Object.freeze({
-  actorDispositionDetail: { reason: BODY_HELD_REASON, owedBy: "host/src/fact-brief.ts" },
-  actorDispositionActionOwned: { reason: BODY_HELD_REASON, owedBy: "host/src/fact-brief.ts" },
   warps: {
     reason:
       "the map's own warp table, addresses rather than places to walk to. `doorTargets` is the family `<world-state>` prints; a warp with a button tile is addressed by `move_to_tile` and read from the observation.",
@@ -245,13 +241,34 @@ export function rendersField(source, field) {
   ].some((pattern) => pattern.test(code));
 }
 
-/** The keys of one `export const <table> = Object.freeze({...})` literal, in declaration order. */
+/**
+ * The keys of one `export const <table> = Object.freeze({...})` literal, in declaration order.
+ *
+ * The slice ends at the literal's own closing brace: reading to the end of the file picked up the keys of every table
+ * declared after it, which credited a field to a table it is not in (`perTurnFamilies` read 85 "row" families where the
+ * row table declares 74, the extra eleven being the tail of the file). A reader that over-reads is the same failure as
+ * one that stops early - it answers a different question than the one it prints.
+ */
 export function tableKeys(source, table) {
   const declaration = source.indexOf(`export const ${table}`);
   if (declaration < 0) return [];
   const open = source.indexOf("{", declaration);
   if (open < 0) return [];
-  const body = withoutComments(source.slice(open));
+  const code = withoutComments(source.slice(open));
+  let depth = 0;
+  let close = -1;
+  for (let index = 0; index < code.length; index += 1) {
+    if (code[index] === "{") depth += 1;
+    else if (code[index] === "}") {
+      depth -= 1;
+      if (depth === 0) {
+        close = index;
+        break;
+      }
+    }
+  }
+  if (close < 0) return [];
+  const body = code.slice(0, close + 1);
   const keys = [];
   for (const match of body.matchAll(/^\s+(\w+):/gmu)) keys.push(match[1]);
   return keys;
@@ -294,6 +311,58 @@ const read = (root, path) => {
     return null;
   }
 };
+
+/** A table a renderer ITERATES: `Object.entries(T)`, `Object.keys(T)`, `for (const x of T)`. */
+function iterates(rendererSources, table) {
+  const pattern = new RegExp(`Object\\.(?:entries|keys)\\(\\s*${table}\\s*\\)|of\\s+${table}\\b`, "u");
+  return rendererSources.some((source) => pattern.test(withoutComments(source)));
+}
+
+/**
+ * The names `<world-state>` carries: the keys of every row table a renderer ITERATES, plus every member the renderer
+ * sources read. One set, exported so the question "does the per-turn text name this family" has one answer.
+ *
+ * WHY THIS IS HERE AND NOT IN EACH CALLER (2026-11-13). `host/src/snapshot-hud.ts` was the second authority for that
+ * question: it declared `fields` per line, and two other readers parsed that table by text. `213cde50` deleted the
+ * module, and both readers went red for a year of turns with nothing saying why - `check-stardew-observation-consumers`
+ * blocked on `missing_input`, and the observation-gap analyzer threw ENOENT inside its `loadConsumptionSources`. Two
+ * readers of one deleted file is what a second list of "what the per-turn text prints" costs, so the answer lives with
+ * the renderer declaration it is derived from and everyone imports it.
+ *
+ * A table is included only when a renderer iterates it. `NON_ROW_FAMILIES` is declared here and is not one: it says
+ * which families the row line does NOT print, so reading it as a per-turn source would turn its reasons into claims.
+ *
+ * `problems` is never silently empty: a table that is iterated but unreadable, a renderer that is gone, and zero rows
+ * are all reported, because a set that shrinks to nothing agrees with every question asked of it.
+ */
+export function perTurnFamilies({ root = REPOSITORY_ROOT, renderers: declared = RENDERER_SOURCES } = {}) {
+  const rendererSources = [];
+  const problems = [];
+  for (const renderer of declared) {
+    const source = read(root, renderer.path);
+    if (source === null) {
+      problems.push(`per_turn_renderer_missing:${renderer.path}`);
+      continue;
+    }
+    rendererSources.push(source);
+  }
+  const rows = new Set();
+  for (const entry of RENDERER_TABLES) {
+    if (!iterates(rendererSources, entry.table)) continue;
+    const source = read(root, entry.source);
+    const keys = source === null ? [] : tableKeys(source, entry.table);
+    if (keys.length === 0) {
+      problems.push(`per_turn_table_unread:${entry.source}#${entry.table}`);
+      continue;
+    }
+    for (const key of keys) rows.add(key);
+  }
+  const mentioned = new Set();
+  for (const source of rendererSources)
+    for (const match of withoutComments(source).matchAll(/\.([A-Za-z][A-Za-z0-9]*)/gu)) mentioned.add(match[1]);
+  if (rows.size === 0) problems.push("per_turn_rows_empty:no renderer iterates a row table");
+  return { rows, mentioned, families: new Set([...rows, ...mentioned]), problems };
+}
 
 /**
  * What is wrong with one exemption: no owner, no reason, or a `player_only` claim that does not hold.

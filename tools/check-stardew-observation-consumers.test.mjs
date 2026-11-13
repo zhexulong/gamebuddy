@@ -3,7 +3,9 @@
 //
 // The gate answers one question per (action, family) pair: can the model ASK about this family, or must it pay a whole
 // `stardew_observe`? Its population comes from the surface's own `targetFamily` entries and its channels come from the
-// sources that answer questions (`host/src/game-lookup.ts`, `host/src/snapshot-hud.ts`, the Mod's scene affordances).
+// sources that answer questions (`host/src/game-lookup.ts`, the per-turn `<world-state>` text, the Mod's scene
+// affordances). The per-turn text is derived by `perTurnFamilies` in the field-rendering gate, which owns the renderer
+// declaration: the `[State HUD: …]` block that used to answer it was deleted in `213cde50`.
 //
 // Every guard here is proven red before it is trusted: each `no_channel`, `stale_baseline_entry`, `baseline_entry_*`
 // and `blocked` case is driven by a planted defect, because a suite that only re-runs the gate on a green tree proves
@@ -12,7 +14,7 @@
 // red-proof: inject  with the baseline emptied, the gate failed on
 //   70 `observation_consumers_no_channel` pairs (`rotate_furniture -> worldObjectTargets` first of them, `travel ->
 //   warps` beside it) and exited 1; this suite then fails on
-//   "a target-bearing action with no channel reds" with the planted pair, on the stale-entry case when the HUD line is
+//   "a target-bearing action with no channel reds" with the planted pair, on the stale-entry case when a family is
 //   widened, and on the unaskable-after-removal case when a look_up subject's case is deleted.
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
@@ -24,8 +26,6 @@ import {
   auditConsumers,
   auditTree,
   BASELINE,
-  hudChannels,
-  HUD_SOURCE,
   lookupChannels,
   LOOKUP_SOURCE,
   MOD_ENTRY,
@@ -36,6 +36,7 @@ import {
   sceneActions,
   targetBearingPairs,
 } from "./check-stardew-observation-consumers.mjs";
+import { perTurnFamilies, tableKeys } from "./check-snapshot-field-rendering.mjs";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const read = (file) => readFileSync(resolve(ROOT, file), "utf8");
@@ -43,7 +44,7 @@ const read = (file) => readFileSync(resolve(ROOT, file), "utf8");
 const TREE = {
   surface: JSON.parse(read(SURFACE)),
   lookupSource: read(LOOKUP_SOURCE),
-  hudSource: read(HUD_SOURCE),
+  perTurn: perTurnFamilies({ root: ROOT }),
   modEntrySource: read(MOD_ENTRY),
   // The snapshot's declared keys are the population for the generic family door; without them every family looks
   // undeclared, which would make the suite measure the fixture rather than the tool.
@@ -82,11 +83,13 @@ test("every advertised look_up subject has a case, and every case answers from a
   assert.deepEqual(lookupChannels(synthetic).problems, ["lookup_subject_reads_nothing:hollow(hollow)"]);
 });
 
-test("the State HUD declares at least one family, and every line it declares is read", () => {
-  const { lines, problems } = hudChannels(TREE.hudSource);
-  assert.deepEqual(problems, [], "a HUD line that declares no field cannot be a channel");
-  assert.ok(lines.length > 0, "the HUD block reads at least one family; zero lines would be a blocked measurement");
-  for (const line of lines) assert.notEqual(line.name.trim(), "", "a HUD line without a name cannot be reported");
+test("the per-turn text names families, and the derivation says which half named them", () => {
+  const { rows, mentioned, families, problems } = TREE.perTurn;
+  assert.deepEqual(problems, [], "a renderer or row table this gate cannot read is a broken channel, not an empty one");
+  assert.ok(families.size > 0, "zero names would be a blocked measurement");
+  assert.ok(rows.has("shopTargets"), "the row table is what prints a shop counter: `商店`");
+  assert.ok(mentioned.has("villagerWhereabouts"), "a family the composer reads by name is named per turn too");
+  for (const name of families) assert.notEqual(name.trim(), "", "an empty name cannot be reported");
 });
 
 // The falsifier for "the family -> channel map is derived": delete one subject from the switch and the pairs it used
@@ -103,39 +106,50 @@ test("removing a look_up subject's case makes its pairs unaskable, so the map co
     after.blocked.includes("lookup_subject_without_case:crops"),
     `an advertised subject with no case is blocked by name, got ${JSON.stringify(after.blocked)}`,
   );
-  // The shaped subject is gone, and the family is still askable by name - that is the generic door doing its job, and
-  // it must be the door, not a stale mapping, that answers: the channel names the family.
-  assert.equal(pairOf(after, "water_crop -> cropTargets").channel, "look_up:cropTargets");
+  // The shaped subject is gone, and the per-turn text names the family - so the free channel is the one that answers it,
+  // and the claim names the family rather than a subject that no longer has a case.
+  assert.equal(pairOf(after, "water_crop -> cropTargets").classification, "world_state");
+  assert.equal(pairOf(after, "water_crop -> cropTargets").channel, "world_state:cropTargets");
 
-  // Close the generic door the honest way: rename the function the generic branch calls, so the source no longer
-  // accepts a family by name. Now nothing can answer the family, and the pair must become a finding.
+  // Close every remaining channel the honest way. The generic door goes by renaming the function its branch calls, so the
+  // source no longer accepts a family by name; the per-turn set goes by removing the family from it, which is the edit a
+  // renderer change would make. Now nothing can answer the family, and the pair must become a finding.
   const withoutDoor = withoutCrops.replaceAll("familyRows(", "familyRowsClosed(");
   assert.notEqual(withoutDoor, withoutCrops, "the planted edit must actually close the generic door");
-  const closed = withSources({ lookupSource: withoutDoor });
+  const closed = withSources({
+    lookupSource: withoutDoor,
+    perTurn: {
+      ...TREE.perTurn,
+      families: new Set([...TREE.perTurn.families].filter((family) => family !== "cropTargets")),
+    },
+  });
   assert.equal(pairOf(closed, "water_crop -> cropTargets").classification, "no_channel");
 });
 
-// The same falsifier for the HUD channel: give the HUD line one more family and the pairs that family answers stop
+// The same falsifier for the per-turn channel: name one more family in it and the pairs that family answers stop
 // being findings - and their baseline entries become stale, which is the ratchet working.
-test("a HUD line that declares a family answers it, and its baseline entries become stale", () => {
-  const widened = TREE.hudSource.replace('fields: ["timeOfDay"]', 'fields: ["timeOfDay", "warps"]');
-  assert.notEqual(widened, TREE.hudSource, "the planted edit must actually widen a HUD line");
-  const result = withSources({ hudSource: widened });
-  assert.equal(pairOf(result, "travel -> warps").classification, "hud_line");
-  // `enter_exit -> warps` is answered by the Mod's Door affordance and is not a baseline entry at all - a widening of
-  // the HUD can only make the pairs that were findings stop being findings.
+test("a family the per-turn text names answers its pairs, and their baseline entries become stale", () => {
+  const widened = { ...TREE.perTurn, families: new Set([...TREE.perTurn.families, "warps"]) };
+  assert.ok(
+    !TREE.perTurn.families.has("warps"),
+    "the planted edit must actually add a name the composer does not print",
+  );
+  const result = withSources({ perTurn: widened });
+  assert.equal(pairOf(result, "travel -> warps").classification, "world_state");
+  // `enter_exit -> warps` is answered by the Mod's Door affordance and is not a baseline entry at all - widening the
+  // per-turn set can only make the pairs that were findings stop being findings.
   const stale = result.findings.filter((finding) => finding.code === "stale_baseline_entry").map((f) => f.pair);
   // The real baseline no longer lists `travel -> warps` (the generic door answers it), so the ratchet is proven on a
-  // baseline that still names the pair: widening the HUD must make THAT entry stale by name.
+  // baseline that still names the pair: widening the per-turn set must make THAT entry stale by name.
   const withEntry = withSources({
-    hudSource: widened,
+    perTurn: widened,
     baseline: {
       ...TREE.baseline,
       entries: [
         {
           kind: "no_channel",
           id: "travel -> warps",
-          reason: "planted: the baseline names a pair the widened HUD line now answers, so the entry must go stale",
+          reason: "planted: the baseline names a pair the widened per-turn set now answers, so the entry must go stale",
         },
       ],
     },
@@ -182,14 +196,22 @@ test("a target-bearing action with no channel reds, naming the action, the famil
   assert.match(text, /observation_consumers: failed/u);
 });
 
-// The legitimate classes must stay legitimate: a pair answered by a HUD line and a pair answered by a scene affordance
-// are not findings, and a gate that reds them would be wrong about the product.
-test("hud_line and scene answers are classified, not reddened", () => {
+// The legitimate classes must stay legitimate: a pair answered by the per-turn text and a pair answered by a scene
+// affordance are not findings, and a gate that reds them would be wrong about the product.
+test("world_state and scene answers are classified, not reddened", () => {
   const result = auditTree();
-  assert.equal(pairOf(result, "shop_purchase -> shopTargets").classification, "hud_line");
-  assert.equal(pairOf(result, "chop_tree -> treeChopSourceTargets").classification, "scene");
+  assert.equal(pairOf(result, "shop_purchase -> shopTargets").classification, "world_state");
+  assert.equal(pairOf(result, "enter_exit -> warps").classification, "scene");
   assert.equal(pairOf(result, "chest_store -> chests").classification, "queryable");
-  for (const id of ["shop_purchase -> shopTargets", "chop_tree -> treeChopSourceTargets", "chest_store -> chests"])
+  // The felled-tree rows are printed every turn, so this pair is answered by the free channel now; filing it under
+  // `scene` was the expensive answer and would have understated what she already has.
+  assert.equal(pairOf(result, "chop_tree -> treeChopSourceTargets").classification, "world_state");
+  for (const id of [
+    "shop_purchase -> shopTargets",
+    "chop_tree -> treeChopSourceTargets",
+    "enter_exit -> warps",
+    "chest_store -> chests",
+  ])
     assert.ok(!result.findings.some((finding) => finding.pair === id), `${id} is answered and must not be a finding`);
 });
 
@@ -202,9 +224,9 @@ test("the tree at HEAD passes, and the population is a measurement rather than a
   assert.deepEqual(result.findings, [], `HEAD must be green, findings: ${JSON.stringify(result.findings)}`);
   assert.equal(result.status, "passed");
   assert.ok(result.pairs > 50, `examined ${result.pairs} pairs: a population this small would not be a reading`);
-  assert.ok(result.lookupVocabulary.length > 0 && result.hudLines > 0);
+  assert.ok(result.lookupVocabulary.length > 0 && result.worldStateNames > 0);
   assert.equal(
-    result.counts.queryable + result.counts.hud_line + result.counts.scene + result.counts.no_channel,
+    result.counts.queryable + result.counts.world_state + result.counts.scene + result.counts.no_channel,
     result.pairs,
     "every pair is classified exactly once",
   );
@@ -232,7 +254,7 @@ test("a baseline entry for a pair that now has a channel is stale, not satisfiab
       {
         kind: "opaque_identity_unaskable",
         id: "shop_purchase -> shopTargets",
-        reason: "a planted entry naming an action and a family that a HUD line already answers",
+        reason: "a planted entry naming an action and a family the per-turn text already names",
       },
     ],
   };
@@ -241,7 +263,7 @@ test("a baseline entry for a pair that now has a channel is stale, not satisfiab
   const stale = result.findings.find((finding) => finding.code === "stale_baseline_entry");
   assert.ok(stale, "an entry whose family gained a channel must be deleted");
   assert.equal(stale.pair, "shop_purchase -> shopTargets");
-  assert.match(stale.detail, /now hud_line through hud:shop/u);
+  assert.match(stale.detail, /now world_state through world_state:shopTargets/u);
 });
 
 test("a baseline entry for a pair the surface no longer declares is reported, not ignored", () => {
@@ -280,7 +302,10 @@ test("each zero population blocks by name instead of passing", () => {
   const cases = [
     [{ surface: { actions: [] } }, "surface_declares_no_target_family"],
     [{ lookupSource: "" }, "lookup_subjects_unread"],
-    [{ hudSource: "" }, "hud_lines_unread"],
+    [
+      { perTurn: { rows: new Set(), mentioned: new Set(), families: new Set(), problems: [] } },
+      "world_state_families_unread",
+    ],
     [{ modEntrySource: "" }, "scene_affordances_unread"],
   ];
   for (const [overrides, reason] of cases) {
@@ -316,4 +341,33 @@ test("scene affordances are read from the Mod, and an empty parse is a problem r
   assert.ok(hinted.size > 0, "the Mod publishes affordances; zero would mean the parse stopped matching");
   assert.deepEqual([...sceneActions("", known)], []);
   assert.ok(hinted.has("chop_tree"), "the Tree affordance names chop_tree");
+});
+
+test("the per-turn derivation reports a renderer that is gone instead of an empty channel", () => {
+  const broken = perTurnFamilies({
+    root: ROOT,
+    renderers: [{ path: "host/src/not-a-renderer.ts", audience: "companion" }],
+  });
+  assert.deepEqual(broken.problems, [
+    "per_turn_renderer_missing:host/src/not-a-renderer.ts",
+    "per_turn_rows_empty:no renderer iterates a row table",
+  ]);
+  assert.deepEqual(
+    broken.families,
+    new Set(),
+    "a renderer set that cannot be read names nothing, which the gate blocks on rather than passing",
+  );
+});
+
+test("a row table is read to its own closing brace, so a later table's keys are not called printed", () => {
+  // The population is the vocabulary's own declaration: `NON_ROW_FAMILIES` exists to say which families the row line
+  // does NOT print, and it is declared immediately after the row table. A reader that ran to the end of the file
+  // therefore credited its keys - and the keys of every later literal - as printed rows, which is a channel claimed for
+  // a fact that never arrives. Measured: 85 "rows" for a 74-key table.
+  const vocabulary = read("host/src/game-world-vocabulary.ts");
+  const notPrinted = tableKeys(vocabulary, "NON_ROW_FAMILIES");
+  assert.ok(notPrinted.length > 0, "the non-row table declares families; zero entries would make this guard vacuous");
+  for (const family of notPrinted)
+    assert.ok(!TREE.perTurn.rows.has(family), `${family} is declared NOT printed as a row, so it cannot be a row`);
+  assert.ok(TREE.perTurn.rows.has("shopTargets"), "and the table's own keys are still read");
 });
