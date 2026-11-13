@@ -23,7 +23,7 @@ export const CHAT_MUTATION_KINDS = [
 export type ChatMutationKind = (typeof CHAT_MUTATION_KINDS)[number];
 
 /** The facts a press sends, taken from the view it was admitted against. */
-export type MessageMutationAdmission = Readonly<{ selectionGeneration: number; csrfToken: string }>;
+type MessageMutationAdmission = Readonly<{ selectionGeneration: number; csrfToken: string }>;
 
 /**
  * What one press did, in the three states a caller can tell apart.
@@ -41,7 +41,7 @@ export type MessageMutationOutcome =
   | Readonly<{ kind: "failed"; error: unknown }>;
 
 /** One press: what it is, what it names, what it admits first and what it sends. */
-export type MessageMutationRequest = Readonly<{
+type MessageMutationRequest = Readonly<{
   kind: ChatMutationKind;
   /** The message the press names, as the row rendered it. */
   handle: string;

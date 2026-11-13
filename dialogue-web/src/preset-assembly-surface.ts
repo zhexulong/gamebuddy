@@ -32,19 +32,19 @@
  * body that omits it makes the surface report that the fact was not sent, never that no preset is in force.
  */
 
-export type PresetAssemblyMacroV1 = Readonly<{
+type PresetAssemblyMacroV1 = Readonly<{
   /** `macro_not_implemented:<name>` or `macro_unknown:<name>`. */
   code: string;
   name: string;
   entries: readonly string[];
 }>;
 
-export type PresetAssemblyDepthBlockV1 = Readonly<{ identifier: string; depth: number }>;
+type PresetAssemblyDepthBlockV1 = Readonly<{ identifier: string; depth: number }>;
 
 /** Which layer decided a sampler key's value. Mirrors the Host's `SamplingSource`. */
-export const PRESET_SAMPLING_SOURCES = Object.freeze(["preset", "model", "thinking-level", "unset"] as const);
+const PRESET_SAMPLING_SOURCES = Object.freeze(["preset", "model", "thinking-level", "unset"] as const);
 
-export type PresetSamplingSourceV1 = (typeof PRESET_SAMPLING_SOURCES)[number];
+type PresetSamplingSourceV1 = (typeof PRESET_SAMPLING_SOURCES)[number];
 
 /**
  * One sampler key's effective value and its layer, on the wire.
@@ -52,7 +52,7 @@ export type PresetSamplingSourceV1 = (typeof PRESET_SAMPLING_SOURCES)[number];
  * `value` is `null` exactly when `source` is `unset`; JSON cannot carry `undefined`, and a row that lost its value
  * that way would be an omitted row on the wire, which reads as "there is no such setting".
  */
-export type PresetSamplingRowV1 = Readonly<{ key: string; value: number | null; source: PresetSamplingSourceV1 }>;
+type PresetSamplingRowV1 = Readonly<{ key: string; value: number | null; source: PresetSamplingSourceV1 }>;
 
 /**
  * Why no sampler reading could be taken. A closed set, one member per fact, so a reason this surface has no line
@@ -61,12 +61,12 @@ export type PresetSamplingRowV1 = Readonly<{ key: string; value: number | null; 
  * `no_composed_model` is the whole of it today: the reading is taken against the composed model the adapter will
  * send, and nothing binds a preset to the runtime yet.
  */
-export const PRESET_SAMPLING_UNAVAILABLE_REASONS = Object.freeze(["no_composed_model"] as const);
+const PRESET_SAMPLING_UNAVAILABLE_REASONS = Object.freeze(["no_composed_model"] as const);
 
-export type PresetSamplingUnavailableReasonV1 = (typeof PRESET_SAMPLING_UNAVAILABLE_REASONS)[number];
+type PresetSamplingUnavailableReasonV1 = (typeof PRESET_SAMPLING_UNAVAILABLE_REASONS)[number];
 
 /** The named absence: no rows exist, and this says why. Never accompanied by rows. */
-export type PresetSamplingUnavailableV1 = Readonly<{ unavailable: PresetSamplingUnavailableReasonV1 }>;
+type PresetSamplingUnavailableV1 = Readonly<{ unavailable: PresetSamplingUnavailableReasonV1 }>;
 
 export type PresetAssemblySurfaceV1 = Readonly<{
   presetId: string;
@@ -98,7 +98,7 @@ export type PresetAssemblyReadV1 = Readonly<{
 }>;
 
 /** The route the readout is served on. One path, named once, so the surface and its journey cannot drift apart. */
-export const PRESET_ASSEMBLY_ROUTE = "/api/tavern/v1/presets";
+const PRESET_ASSEMBLY_ROUTE = "/api/tavern/v1/presets";
 
 /**
  * A body that is not the readout this surface can show. The message names the field that drifted.

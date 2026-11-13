@@ -53,7 +53,7 @@ export type ChatSendGate =
  * row lands. `idempotencyKey` is the submission's own identity and the pending row is keyed by it
  * (`Timeline`), which is why the line travels as a pair rather than as bare text.
  */
-export type ChatPendingLine = Readonly<{ idempotencyKey: string; text: string }>;
+type ChatPendingLine = Readonly<{ idempotencyKey: string; text: string }>;
 
 /** The facts that are true of the surface whichever phase it is in. */
 type ChatUIFacts = Readonly<{

@@ -4,8 +4,7 @@ import { readChatSnapshotPair } from "../chat-snapshot-pair";
 import {
   declaredProblemSentence,
   composedProblemView as problemView,
-  problemDrawsOwnRead,
-  problemStepLine,
+  problemStepPresentation,
 } from "../composed-problem-view";
 import type { ComposedReferenceGameBrowserRootV1 } from "../composed-reference-game-browser-api";
 import {
@@ -1399,6 +1398,10 @@ export function ComposedReferenceGameApp() {
     [PRESETS_PANEL]: { open: openPresets, ref: presetsEntryRef },
   };
 
+  // The step's sentence and the card's own control are one decision, so they are read once and cannot
+  // disagree: a card drawing both would name two different steps for the same refusal.
+  const problemCard = view.kind === "problem" ? problemStepPresentation(view.step, labels()) : null;
+
   return (
     // One draft store for every surface: the shell is the only thing that outlives them.
     <SurfaceDrafts>
@@ -1411,12 +1414,12 @@ export function ComposedReferenceGameApp() {
             </div>
           </main>
         )}
-        {view.kind === "problem" && (
+        {view.kind === "problem" && problemCard !== null && (
           <ProblemView
             title={view.title}
             detail={view.detail}
-            stepLine={problemStepLine(view.step, labels())}
-            action={problemDrawsOwnRead(view.step) ? { label: labels().problemRetryRead, run: retryProblemView } : null}
+            stepLine={problemCard.stepLine}
+            action={problemCard.drawsOwnRead ? { label: labels().problemRetryRead, run: retryProblemView } : null}
           />
         )}
         {view.kind === "ready" && view.session.snapshot.chat !== null && (

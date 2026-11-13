@@ -43,7 +43,7 @@
  */
 
 /** How the bubble draws a construct. */
-export type ReplyPaint = "speech" | "action-beat" | "prosody-badge" | "shape";
+type ReplyPaint = "speech" | "action-beat" | "prosody-badge" | "shape";
 
 /** Whose text a construct may appear in. */
 export type ReplySpeaker = "both" | "companion" | "player";

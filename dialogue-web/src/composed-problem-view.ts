@@ -115,18 +115,33 @@ const HOST_RETRIES: ProblemStep = { kind: "self_heals", because: "host_retries" 
 const NEXT_READ: ProblemStep = { kind: "self_heals", because: "next_read" };
 
 /**
- * The step's sentence, or null when the card draws the step's own control instead.
+ * What the card shows for this step: its sentence, or its own control - never both.
  *
  * It is here rather than in `ProblemView` because "which of the four kinds is this, and what does the
- * player read for it" is a fact about the refusal vocabulary. The card is a props-driven primitive
- * in the shared-UI layer and may not import a surface's model.
+ * player read for it" is a fact about the refusal vocabulary; the card is a props-driven primitive in
+ * the shared-UI layer and may not import a surface's model.
+ *
+ * One function returns both facts, because they are one decision: a card that drew its button AND the
+ * "that button is elsewhere" sentence would be naming two different steps for the same refusal. The
+ * own read is the only control this whole-window card can perform; `control` also names controls it
+ * cannot draw (`message-delete`, `new-chat`, `game-stop`), and those get the sentence that says where
+ * the step is rather than a button that is not it.
  */
-export function problemStepLine(step: ProblemStep, labels: Messages): string | null {
+export function problemStepPresentation(
+  step: ProblemStep,
+  labels: Messages,
+): Readonly<{ stepLine: string | null; drawsOwnRead: boolean }> {
+  return {
+    stepLine: stepSentence(step, labels),
+    drawsOwnRead: step.kind === "control" && step.id === PROBLEM_RETRY_READ,
+  };
+}
+
+/** The sentence for every step the card cannot draw a control for. */
+function stepSentence(step: ProblemStep, labels: Messages): string {
   switch (step.kind) {
     case "control":
-      // The control is a real one the player can press - on the surface the sentence beside this
-      // line names. The card draws only its own read, so it says where the step is rather than
-      // offering a second control that is not it.
+      // A real control the player can press - on the surface the sentence names, not on this card.
       return labels.problemStepElsewhere;
     case "outside_surface":
       return {
@@ -149,16 +164,6 @@ export function problemStepLine(step: ProblemStep, labels: Messages): string | n
     default:
       return assertNever(step);
   }
-}
-
-/**
- * True when the step names the shell's own read, so the card draws exactly that control.
- *
- * `control` also covers controls this whole-window card cannot draw (`message-delete`, `new-chat`,
- * `game-stop`): those are read by `problemStepLine` and get the sentence instead.
- */
-export function problemDrawsOwnRead(step: ProblemStep): boolean {
-  return step.kind === "control" && step.id === PROBLEM_RETRY_READ;
 }
 
 /** One player-facing sentence pair, shared by every code whose fact and next step are the same. */

@@ -27,10 +27,10 @@ export type AppearanceChoice = "system" | "light" | "dark";
 export type Appearance = "light" | "dark";
 
 /** The attribute the stylesheet's second token root reads. */
-export const APPEARANCE_ATTRIBUTE = "data-theme";
+const APPEARANCE_ATTRIBUTE = "data-theme";
 
 /** True when the operating system is asking for the light appearance. */
-export const SYSTEM_LIGHT_QUERY = "(prefers-color-scheme: light)";
+const SYSTEM_LIGHT_QUERY = "(prefers-color-scheme: light)";
 
 export function isAppearanceChoice(value: unknown): value is AppearanceChoice {
   return value === "system" || value === "light" || value === "dark";

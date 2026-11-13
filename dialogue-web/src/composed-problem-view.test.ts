@@ -8,6 +8,7 @@ import {
   observedProblemCause,
   observedProblemCode,
   PROBLEM_RETRY_READ,
+  problemStepPresentation,
   problemTextWithCode,
 } from "./composed-problem-view";
 import {
@@ -143,6 +144,41 @@ test("the retry-read step is the output's own constant, not a second spelling", 
     kind: "control",
     id: PROBLEM_RETRY_READ,
   });
+});
+
+/**
+ * The card draws the step's sentence or its own control, never both.
+ *
+ * Both halves used to be decided in `ProblemView`, one line apart: `stepText` returned a sentence for
+ * every `control` step and the button was drawn for this one, so the two agreed only because of the
+ * `ownControl === null` in front of the sentence. Moving that decision here moved the agreement too,
+ * and the first version of the move drew the button and the "that button is elsewhere" sentence
+ * together - a card naming two different steps for one refusal, and invisible to every static gate
+ * because nothing ran this file. `problemStepPresentation` returns both facts from one decision and
+ * this asserts the pairing on every kind the vocabulary has.
+ */
+test("the card's step line and its own control are one decision, never both", () => {
+  const labels = messages("en");
+  const ownRead = problemStepPresentation({ kind: "control", id: PROBLEM_RETRY_READ }, labels);
+  assert.deepEqual(ownRead, { stepLine: null, drawsOwnRead: true });
+
+  // A control this whole-window card cannot draw: the sentence names it, and no button is offered.
+  const elsewhere = problemStepPresentation({ kind: "control", id: "message-delete" }, labels);
+  assert.equal(elsewhere.drawsOwnRead, false);
+  assert.equal(elsewhere.stepLine, labels.problemStepElsewhere);
+
+  for (const step of [
+    { kind: "outside_surface", step: "open_settings" },
+    { kind: "self_heals", because: "host_retries" },
+    { kind: "no_step", because: "already_true" },
+  ] as const) {
+    const presentation = problemStepPresentation(step, labels);
+    assert.equal(presentation.drawsOwnRead, false, `${step.kind} must not offer the card's own control`);
+    assert.ok(
+      presentation.stepLine !== null && presentation.stepLine.length > 0,
+      `${step.kind} owes the player a sentence`,
+    );
+  }
 });
 
 test("an unnamed failure is a diagnostic, and a retryable one says so", () => {
