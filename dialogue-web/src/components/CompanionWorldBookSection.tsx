@@ -183,8 +183,9 @@ function companionWorldBookRefusal(labels: CharacterLabels, error: unknown, prob
  * book came back - and each renders its own line with the read again, because collapsing either into
  * `absent` made a read the Host never answered look exactly like a companion who has no world book:
  * the block simply was not there, and nothing on the surface said why. `failed` is the Host not
- * serving the read; `unreadable` is a reply the client mirror refuses, which `failed`'s sentence
- * cannot say without sending the player to retry a read that had already succeeded. A book that
+ * serving the read; `unreadable` is a reply the client mirror refuses - a condition the button under
+ * it does not clear - so the two are told apart in the words AND in the weight of the line, which is
+ * what a player reads; the `data-` attributes are what a journey reads. A book that
  * exists is editable even when it carries no entries: an empty book is exactly the one a player has
  * to be able to add to.
  *
@@ -333,8 +334,10 @@ export function CompanionWorldBookSection({
 
   if (view.kind === "failed" || view.kind === "unreadable") {
     // One shell for both, because both offer the same one action - the read again - and two facts,
-    // because the player needs to know which side broke. The attribute and the sentence are the
-    // whole of the difference, and they are the difference a journey can read.
+    // because the player needs to know which side broke. Each sentence carries its own next action,
+    // and the one the button beneath it does not clear is said in the louder face: a weight step is
+    // the only channel here that means what it is ("read this first") rather than a colour invented
+    // to stand for a state.
     const unreadable = view.kind === "unreadable";
     return (
       <section
@@ -345,7 +348,13 @@ export function CompanionWorldBookSection({
       >
         <h3>{labels.companionWorldBookTitle}</h3>
         <p className="management-settings-hint">{labels.companionWorldBookHint}</p>
-        <p>{unreadable ? labels.companionWorldBookReplyUnreadable : labels.companionWorldBookReadFailed}</p>
+        <p>
+          {unreadable ? (
+            <strong>{labels.companionWorldBookReplyUnreadable}</strong>
+          ) : (
+            labels.companionWorldBookReadFailed
+          )}
+        </p>
         <button type="button" className="small-button" data-companion-world-book-retry onClick={reload}>
           {problemLabels.problemRetryRead}
         </button>

@@ -2372,7 +2372,7 @@ const ROLE_GROUPS: readonly RoleGroup[] = [
         // The Host answered and the answer is not this build's contract: no press clears it.
         name: "the reply is not this build's contract",
         mount: { kind: "companion-world-book-read", failure: "unreadable" },
-        role: "[data-companion-world-book-unreadable] > p:not(.management-settings-hint)",
+        role: "[data-companion-world-book-unreadable] > p:not(.management-settings-hint) > strong",
       },
     ],
     // Measured in the mounted shell: `text` (each sentence names its own next action) and
