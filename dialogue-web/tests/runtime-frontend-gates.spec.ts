@@ -97,9 +97,22 @@ type FixtureOptions = Readonly<{
   /**
    * The settled turn the surface reports, when a gate needs the notice line a terminal
    * turn earns. `cancelled` is the one state whose sentence is a fixed string rather than
-   * a provider's own words, so a gate can read it without depending on a failure cause.
+   * a provider's own words, so a gate can read it without depending on a failure cause;
+   * `failed` is the Host's own refusal, worded from the class it named.
+   *
+   * `truncated` is the other fact a settled turn carries: the generation stopped at the
+   * model's ceiling, so the reply on screen is a prefix. The surface says that on the row
+   * it describes, beside the Host's sentence about the turn - two different problems that
+   * a reader must not have to read twice to tell apart.
    */
-  turn?: Readonly<{ handle: string; state: "cancelled"; projectionRevision: number; canCancel: boolean }>;
+  turn?: Readonly<{
+    handle: string;
+    state: "cancelled" | "failed";
+    projectionRevision: number;
+    canCancel: boolean;
+    providerFailure?: "endpoint_unreachable";
+    truncated?: true;
+  }>;
 }>;
 
 function handleFor(index: number): string {
@@ -2120,6 +2133,18 @@ const ROLE_PAIRS: readonly (MeasuredRolePair | AbsentRolePair)[] = [
   },
   {
     kind: "measured",
+    name: "reply we could not read vs the Host's refusal",
+    reason:
+      "one is this app's own statement that the reply stopped at the model's ceiling, the other is the Host's sentence about why the turn failed - a reader can meet both on one page and must not have to read them twice to tell which side broke",
+    scope: '[data-testid="chat-surface"]',
+    a: ".message-truncated",
+    b: "p.reference-turn-notice:not([data-testid])",
+    // Both are quiet 12-13 px secondary copy, so neither is a tone apart: what separates
+    // them is the words and the accent bar the Host's own sentence wears.
+    channels: { atLeast: 2, of: ["text", "edge", "colour", "size", "weight", "tracking", "opacity"] },
+  },
+  {
+    kind: "measured",
     name: "disabled vs available control",
     reason:
       "a control the player cannot press must not look like one they can, and the pager's arrow with nowhere to go sits beside the one that goes somewhere",
@@ -2149,8 +2174,7 @@ const ROLE_PAIRS: readonly (MeasuredRolePair | AbsentRolePair)[] = [
   {
     kind: "absent",
     name: "unread vs read indicator",
-    reason:
-      "a conversation the player has not read must not look like one they have, so the pair belongs on the Chats list - and it is not there at all: no row, badge or dot in this build carries an unread state",
+    reason: "a conversation the player has not read must not look like one they have, so the pair belongs on the Chats list - and it is not there at all: no row, badge or dot in this build carries an unread state",
     witness: [
       "[data-unread]",
       '[data-testid*="unread"]',
@@ -2159,6 +2183,89 @@ const ROLE_PAIRS: readonly (MeasuredRolePair | AbsentRolePair)[] = [
       ".chat-item-unread",
     ],
     attributes: [/unread/iu],
+  },
+  {
+    kind: "absent",
+    name: "memory count: not measured vs measured zero",
+    reason:
+      "a count the Host has not measured must never look like a count of zero, so the notebook's line has to say which one it is - and it is not on this page at all: the memory surface is not mounted by this gate, so the pair cannot be measured here and must not be called measured",
+    witness: [
+      "[data-memory-count]",
+      '[data-memory-state="unavailable"]',
+      '[data-memory-state="loading"]',
+      '[data-memory-state="error"]',
+      ".memory-notebook-count",
+    ],
+    attributes: [/data-memory-(count|state)/iu],
+  },
+];
+
+/**
+ * A set of roles that must be told apart from EACH OTHER.
+ *
+ * "Three distinct problems must not share one heading" is not expressible as one pair: it is
+ * pairwise over three. A group is therefore declared with every member, and the gate compares
+ * each member against each other one instead of naming the pairs somebody thought of.
+ */
+type RoleGroup = Readonly<{
+  kind: "group";
+  name: string;
+  reason: string;
+  /**
+   * Every member, and what puts it on the page: the composed boundary's answer to the
+   * bootstrap read, which is the one failure the whole-window card is drawn for.
+   */
+  members: readonly Readonly<{
+    name: string;
+    refusal: Readonly<{ status: number; body: string }>;
+    /** The element the member's own fact is drawn in. */
+    role: string;
+  }>[];
+  /** Channels any two members must differ by. */
+  channels: ChannelFloor;
+}>;
+
+/**
+ * The role groups this product has.
+ *
+ * One, and it is the problem card. `i18n.ts` says it in the catalogue's own words: three
+ * faults a player meets while a chat cannot be read, and three headings, because "the card's
+ * `<h1>` is what a player reads first and compares between two failures, so a heading it shares
+ * with another fault is the card saying nothing where it must say what". The three are the
+ * retryable refusal that clears itself, the reconciliation that needs the read taken again, and
+ * the internal fault with a code in the detail - three facts, one card.
+ *
+ * Rendered, all three go through `ProblemView`'s `<h1>`, so the ONLY channel between them is the
+ * words. That is what `text` is for, and it is why the gate compares the heading each one draws
+ * rather than assuming the catalogue still says three different things.
+ */
+const ROLE_GROUPS: readonly RoleGroup[] = [
+  {
+    kind: "group",
+    name: "three problems, three headings",
+    reason:
+      "a player compares the card's heading between two failures, so two different faults that print the same heading are the card saying nothing where it must say what",
+    members: [
+      {
+        // The Host refused with a code it declares: the reconciliation fact.
+        name: "the chat could not be reconciled",
+        refusal: { status: 503, body: JSON.stringify({ code: "state_reconciliation_required" }) },
+        role: ".problem-card h1",
+      },
+      {
+        // A refusal the client can retry but cannot name: it clears itself.
+        name: "the read can be taken again",
+        refusal: { status: 503, body: JSON.stringify({ code: "gate_not_a_declared_code" }) },
+        role: ".problem-card h1",
+      },
+      {
+        // A body the client mirror refuses: this build's own fault, with a code in the detail.
+        name: "this build could not read the Host",
+        refusal: { status: 200, body: "not a composed state document" },
+        role: ".problem-card h1",
+      },
+    ],
+    channels: { atLeast: 1, of: ["text"] },
   },
 ];
 
@@ -2184,10 +2291,12 @@ const ROLE_REPLY = {
   en: {
     companion: "*nods slowly*\n\nShe looks up from the ledger.",
     player: "*taps the map*\n\nLet us take the north road.",
+    afterCut: "The north road it is, then.",
   },
   "zh-CN": {
     companion: "*轻轻点头*\n\n她从账本上抬起头。",
     player: "*敲了敲地图*\n\n我们走北边那条路。",
+    afterCut: "那就走北边。",
   },
 } as const;
 
@@ -2319,14 +2428,27 @@ for (const locale of ROLE_LOCALES) {
         transcript: [
           { role: "companion", text: reply.companion },
           { role: "player", text: reply.player },
+          // A third row so the transcript ENDS on a companion message: that is the row the
+          // "stopped at the ceiling" note is drawn on (Timeline's `truncatedHandle`), and it
+          // carries no beat, so the beat pair's population is unchanged.
+          { role: "companion", text: reply.afterCut },
         ],
         // The greeting set is open on the first message, so its pager is a real control
         // pair in one strip: the arrow with nowhere to go beside the one that goes
         // somewhere. That is the product's own disabled state, not a styled div.
         opening: true,
         // A settled turn is what earns the surface's own notice line - the one sentence
-        // on this page that the product says rather than the player.
-        turn: { handle: handleFor(1), state: "cancelled", projectionRevision: 7, canCancel: false },
+        // on this page that the product says rather than the player. It failed for a cause
+        // the Host named, AND its reply stopped at the model's ceiling: the two facts the
+        // "could not read the reply" pair is about, on one page.
+        turn: {
+          handle: handleFor(1),
+          state: "failed",
+          projectionRevision: 7,
+          canCancel: false,
+          providerFailure: "endpoint_unreachable",
+          truncated: true,
+        },
       }),
     });
     if (locale === "zh-CN") await expect(page.locator("html")).toHaveAttribute("lang", "zh-CN");
@@ -2337,6 +2459,7 @@ for (const locale of ROLE_LOCALES) {
     await expect(page.locator("li.message.companion em.message-action")).toHaveCount(1);
     await expect(page.locator("li.message.player em.message-action")).toHaveCount(1);
     await expect(page.locator("p.reference-turn-notice:not([data-testid])")).toHaveCount(1);
+    await expect(page.locator(".message-truncated")).toHaveCount(1);
     await expect(page.locator(".swipe-controls")).toHaveCount(1);
 
     const measured = ROLE_PAIRS.filter((pair): pair is MeasuredRolePair => pair.kind === "measured");
@@ -2444,4 +2567,69 @@ for (const locale of ROLE_LOCALES) {
         .toEqual([]);
     }
   });
+}
+
+/* ========================================================================== *
+ * Gate 17, the group half: three distinct problems are three distinct headings.
+ *
+ * The pairs above ask whether two roles can be told apart on ONE page. This asks the
+ * other shape the audit found: three different faults that each get the whole-window
+ * card, one at a time, and must still be three different headings - because the card's
+ * `<h1>` is what a player compares between two failures.
+ *
+ * The population is the declaration: every member is mounted, and every pair of members
+ * is compared. A member that draws the same heading as another is the collapse, and the
+ * failure names which two members and what they both said.
+ * ========================================================================== */
+for (const locale of ROLE_LOCALES) {
+  test(`gate 17: every declared role group is told apart member by member (${locale})`, async ({ page }) => {
+    if (locale === "zh-CN") await page.addInitScript(() => localStorage.setItem("gamebuddy.tavern.ui-locale", "zh-CN"));
+    const failures: string[] = [];
+    for (const group of ROLE_GROUPS) {
+      const readings: { member: string; reading: RoleReading }[] = [];
+      for (const member of group.members) {
+        // The failure that puts this member's own fact on the page: the composed
+        // boundary's answer to the read that opens the shell. The later handler wins,
+        // so each member re-answers the same route.
+        await page.route("**/api/composed-reference-game/v1/bootstrap", (route) =>
+          route.fulfill({ status: member.refusal.status, contentType: "application/json", body: member.refusal.body }),
+        );
+        // A real load per member: a same-document hash change would keep the first
+        // member's failure on screen and make all three read alike, which is exactly the
+        // false collapse this gate must not report.
+        await page.goto("about:blank");
+        await page.goto(`/#profile=composed-reference-game&boot=${token}`);
+        await expect(page.locator(".problem-card")).toBeVisible();
+        await freezeTransitions(page);
+        const reading = await page.locator(member.role).evaluate(roleReadingOf);
+        readings.push({ member: member.name, reading });
+      }
+      const table = readings
+        .map(({ member, reading }) => `${member}: h1{${roleVoice(reading)}}`)
+        .join("\n");
+      record(`gate-17 ${group.name}`, `\n${table}`);
+      // Every ordered pair of members, so "two of the three are the same" cannot hide
+      // behind which two somebody remembered to name.
+      for (const [index, left] of readings.entries()) {
+        for (const right of readings.slice(index + 1)) {
+          const channels = distinguishingChannels(left.reading, right.reading, group.channels.of);
+          if (channels.length < group.channels.atLeast) {
+            failures.push(
+              `${group.name} (${locale}): "${left.member}" and "${right.member}" draw the same heading ` +
+                `"${left.reading.text}" - ${channels.length} channel(s) [${channels.join(", ") || "none"}] of ` +
+                `[${group.channels.of.join(", ")}], ${group.channels.atLeast} required`,
+            );
+          }
+        }
+      }
+    }
+    expect.soft(failures, `the declared role groups are not told apart\n\n${recordingsFor(ROLE_GROUPS)}`).toEqual([]);
+  });
+}
+
+/** The groups, as a failure message can carry them: every member and the words it is meant to say. */
+function recordingsFor(groups: readonly RoleGroup[]): string {
+  return groups
+    .map((group) => `${group.name}: ${group.reason}\n${group.members.map((member) => `  - ${member.name}`).join("\n")}`)
+    .join("\n\n");
 }
