@@ -235,7 +235,7 @@ test("with GIT_INDEX_FILE the hook formats that index and leaves the shared one 
   assert.equal(readFileSync(join(root, SCENARIO), "utf8"), foreignBytes);
 });
 test("the marker characters of a staged blob survive the hook", () => {
-  const { root, write, git, ok } = fixture();
+  const { write, git, ok } = fixture();
   const staged = "// red: \u2716 a gate prints this, and \u2714 marks a pass\nconst lane = {p:8};\n";
   write(SCENARIO, staged);
   ok(["add", "--", SCENARIO]);

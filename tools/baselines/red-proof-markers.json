@@ -1,0 +1,445 @@
+{
+  "why": "Red-proof markers corrupted at the commit this gate was introduced, recorded so the gate can be wired before the files are fixed. Each entry is one file and one line's exact text; fixing the line makes the entry stale and a stale entry fails the gate until it is deleted, which is what keeps this list from outliving the damage. Delete entries as the waves are repaired; do not re-record over them.",
+  "entries": [
+    {
+      "path": "integrations/stardew/action-development/src/analysis/stardew-remaining-actions-report.mjs",
+      "text": " *   `× 三档计数之和等于未匹配候选总数（总数来自 candidates 产物）` with"
+    },
+    {
+      "path": "package.json",
+      "text": "    \"test:dialogue-web\": \"external pnpm --filter @gamebuddy/dialogue-web test:static — a hard-coded prose aria-label in a component is `× raw-text.2`, exit 1\","
+    },
+    {
+      "path": "package.json",
+      "text": "    \"test:stardew-action-candidates\": \"inject the rejected units' predicate list emptied in the action-candidates derivation — `× 被拒单元都带可追溯的理由（谓词或 no_branch）` + `AssertionError: AddSpecialOrder@Event 必须有被拒谓词、no_branch 或提取错误`, exit 1 (integrations/stardew/action-development/tests/stardew-action-candidates.test.mjs)\","
+    },
+    {
+      "path": "package.json",
+      "text": "    \"test:stardew-action-inventory-reconciliation\": \"inject completeness rule 3's missing-tier-B set emptied in the inventory reconciliation — `× 完备性②：B 档有单元没有裁定 → tier_b_unit_without_verdict` + `AssertionError: Missing expected exception.`, exit 1 (integrations/stardew/action-development/tests/stardew-action-inventory-reconciliation.test.mjs)\","
+    },
+    {
+      "path": "package.json",
+      "text": "    \"test:stardew-action-seam-terminals\": \"inject seam_not_terminal folded into seam_ok in the seam terminal audit — `× 审计覆盖全部「已注册但九谓词全拒」的 seam，每个都落到一个已知判据`, exit 1 (integrations/stardew/action-development/tests/stardew-action-seam-terminals-audit.test.mjs)\","
+    },
+    {
+      "path": "package.json",
+      "text": "    \"test:stardew-branch-writeset\": \"inject P4_terminalWrite forced false in the branch writeset reader — `× refill_watering_can：终态直写，产出候选分支` + `AssertionError: refill 应有且仅有一个候选分支`, exit 1 (integrations/stardew/action-development/tests/stardew-branch-writeset.test.mjs)\","
+    },
+    {
+      "path": "package.json",
+      "text": "    \"test:stardew-method-resolution\": \"inject the delegation chain's depth cap narrowed from 5 to 2 — `× the chain is bounded by depth and does not loop forever` + `AssertionError: third hop is within the bound`, exit 1 (integrations/stardew/action-development/tests/stardew-method-resolution.test.mjs)\","
+    },
+    {
+      "path": "package.json",
+      "text": "    \"test:stardew-player-reachable-exits\": \"inject STARDEW_ROUTING_LAYER_SHAPE so no Check* router matches — `× 深度 1 的出口必须包含输入根的直接 gameplay 分派` + `AssertionError: pressActionButton → CheckPetAnimal（路由层真实入口，未进 register）`, exit 1 (integrations/stardew/action-development/tests/stardew-player-reachable-exits.test.mjs)\","
+    },
+    {
+      "path": "package.json",
+      "text": "    \"test:stardew-reachable-exits-reconciliation\": \"inject both shop-opener entries removed from STARDEW_MENU_OPENERS — `× R4：菜单绑定必须捕获无 Menu 后缀的开放器`, exit 1 (integrations/stardew/action-development/tests/stardew-reachable-exit-reconciliation.test.mjs)\","
+    },
+    {
+      "path": "package.json",
+      "text": "    \"test:stardew-remaining-actions\": \"inject tier C's branch writing tier B in the remaining-actions report — `× 三档计数之和等于未匹配候选总数（总数来自 candidates 产物）` + `AssertionError: C_non_gameplay_writes 不应为空`, exit 1 (integrations/stardew/action-development/tests/stardew-remaining-actions-report.test.mjs)\","
+    },
+    {
+      "path": "package.json",
+      "text": "    \"test:stardew-tile-action-selectors\": \"inject the menu priority replaced by the dialogue/event priority in the tile action selector classifier — `× 连续 case 标签是别名：kitchen/Kitchen 共享同一 body` + `AssertionError: 别名共享 body：ActivateKitchen 是菜单开放器`, exit 1 (integrations/stardew/action-development/tests/stardew-tile-action-selectors.test.mjs)\","
+    },
+    {
+      "path": "package.json",
+      "text": "    \"test:stardew-uncovered-exit-expansion\": \"inject INTERPRETER_SELECTOR_THRESHOLD raised from 8 to 800 — `× 解释器形态被识别（selector 数超阈值）`, exit 1 (integrations/stardew/action-development/tests/stardew-uncovered-exit-expansion.test.mjs)\","
+    },
+    {
+      "path": "package.json",
+      "text": "    \"test:stardew-uncovered-exit-table\": \"inject the pipe escape removed from the table cell writer — `× 表单元格里的反斜杠必须转义,不能与管道符转义互相干扰`, exit 1 (integrations/stardew/action-development/tests/stardew-uncovered-exit-table.test.mjs)\","
+    },
+    {
+      "path": "tools/audit-gate-red-proofs.test.mjs",
+      "text": " *                    `× a marker on a code line is not a marker, so a gate cannot satisfy itself` (with five more),"
+    },
+    {
+      "path": "tools/audit-stardew-admission-fork-delta.test.mjs",
+      "text": "//  -> `× the detector still finds a fork in all three spellings, and names the handler` (`two triple spellings plus the split one`), exit 1"
+    },
+    {
+      "path": "tools/gate-falsifier-decisions.md",
+      "text": "× a proof's pointer is executed when a runner names the file or the project directory it sits in"
+    },
+    {
+      "path": "tools/gate-falsifier-decisions.md",
+      "text": "| `catalogRegistrationsFor` supplies `descriptor: { watchdogMs: 60_000 }` for an action the catalog declares no window for | `× an advertised action the catalog declares no window for is still refused by name` + `AssertionError … Expected values to be strictly deep-equal` | 1 |"
+    },
+    {
+      "path": "tools/gate-falsifier-decisions.md",
+      "text": "| `check:production-pack-load` + `test:production-pack-load` | `tools/check-production-pack-load.test.mjs` | `× negative: transitive module broken in the loaded closure` (verdict `passed` where `blocked` was expected), exit 1 |"
+    },
+    {
+      "path": "tools/gate-falsifier-decisions.md",
+      "text": "| `check:publint` | the pre-fix tolerance branch restored (`blocked.length === 0 && activeGaps.length > 0`) | `× an unexplained non-zero exit is a failure, not a tolerated gap`, `'passed' !== 'failed'` | 1 |"
+    },
+    {
+      "path": "tools/gate-falsifier-decisions.md",
+      "text": "| `check:stardew-gameplay-completeness` + `test:stardew-gameplay-completeness` | `tools/check-stardew-gameplay-completeness.test.mjs` | `× source-derived bridge equivalence gaps fail the completeness gate`, exit 1 |"
+    },
+    {
+      "path": "tools/gate-falsifier-decisions.md",
+      "text": "| `check:stardew-native-pathfinder-source` + `test:stardew-native-pathfinder-source` | `tools/check-stardew-native-pathfinder-source.test.mjs` | `× mutation: handing the coordinate goal to the native pathfinder is rejected`, exit 1 |"
+    },
+    {
+      "path": "tools/gate-falsifier-decisions.md",
+      "text": "| `check:tavern-release-prerequisites` + `test:tavern-release-prerequisites` | `tools/check-tavern-release-prerequisites.test.mjs` | `× Tavern prerequisite checker fails closed for malformed, timed-out, stderr, and nonzero live-gate results`, exit 1 |"
+    },
+    {
+      "path": "tools/gate-falsifier-decisions.md",
+      "text": "| `report:stardew-remaining-actions` | **proven, `inject`** | tier C's branch assigned `B_no_catalog_intent` in `stardew-remaining-actions-report.mjs` → `× 三档计数之和等于未匹配候选总数（总数来自 candidates 产物）` with `AssertionError [ERR_ASSERTION]: C_non_gameplay_writes 不应为空`, `× B 档有 gameplay 写入但无 intent 引用` beside it, exit 1. Re-derived here rather than trusted: the suite is 7/7 green in the copy before the injection and 2 failing after it |"
+    },
+    {
+      "path": "tools/gate-falsifier-decisions.md",
+      "text": "| `test:chat-conversational-quality-gate` | `× Prefix Bit-Stability: passes when M0 is 100% byte-for-byte identical across all turns` | `tools/check-chat-conversational-quality-gate.mjs` |"
+    },
+    {
+      "path": "tools/gate-falsifier-decisions.md",
+      "text": "| `test:complexity-gate` | `tools/scripts/check-file-complexity-gate.test.mjs` | `× verdict.2:` — a file exactly at its extension's ceiling reported over it, exit 1 |"
+    },
+    {
+      "path": "tools/gate-falsifier-decisions.md",
+      "text": "| `test:dialogue-web-boundaries` (added by the seventh batch) | exit 1: `× every dialogue-web/src file belongs to exactly one golden zone` — `AssertionError: file appearance.ts matches 0 zones:` | its own hand-written `ZONES` manifest, which is the population it is named for. The gate is doing its job: `dialogue-web/src/appearance.ts` landed in `8711b9af` and the manifest was never told about it, so this is shape 1 of the four the batch watches for — **a population keyed by a name that drifted**, here caught rather than passed. It was recorded as “moved out for another lane” by the third batch; the truth is that it is red at HEAD, and it belongs in this table |"
+    },
+    {
+      "path": "tools/gate-falsifier-decisions.md",
+      "text": "| `test:dialogue-web-boundaries` | `× every dialogue-web/src file belongs to exactly one golden zone` — `file appearance.ts matches 0 zones:` | the third batch moved this row out as \"red for a reason that is not its own rule\". Measured now, it is its own rule firing on a hand-written `ZONES` list that was never told about `dialogue-web/src/appearance.ts` (committed in `8711b9af`) — shape 1, the population keyed by a name that drifted, **caught** rather than passed |"
+    },
+    {
+      "path": "tools/gate-falsifier-decisions.md",
+      "text": "| `test:dialogue-web-boundaries` | `import \"./components/ChatSurface\"` added to `game-lifecycle-controls.ts` | `× current cross-surface drift is exactly the documented ledger`, `found: no-module-to-surface\\|dialogue-web/src/game-lifecycle-controls.ts\\|…ChatSurface.tsx` | 1 |"
+    },
+    {
+      "path": "tools/gate-falsifier-decisions.md",
+      "text": "| `test:dialogue-web` | **external** | command `pnpm --filter @gamebuddy/dialogue-web test:static`, demonstrated: a hard-coded prose `aria-label` in `dialogue-web/src/components/CharactersPanel.tsx` → `× raw-text.2: a user-visible attribute literal is not a written-out sentence` (76 files, 3 literals, 1 prose), exit 1 |"
+    },
+    {
+      "path": "tools/gate-falsifier-decisions.md",
+      "text": "| `test:frontend-turn-gate` | `\\|\\| uiState.streaming` added to the send button's `disabled` in `Composer.tsx` | `× the gate reads the composer's two Host-owned refusals, and the send button's terms are exactly those plus an empty field` — \"the send button refuses on sendRefused(uiState.send) \\|\\| !value.trim() \\|\\| uiState.streaming; … any other term is a refusal it cannot see\" | 1 |"
+    },
+    {
+      "path": "tools/gate-falsifier-decisions.md",
+      "text": "| `test:gameplay-capability-catalog` | one published primitive action with no catalog row pushed into `action-surface.v1.json` | `× catalog seed covers every published registry action without claiming completeness`, `Published registry actions missing covered catalog rows: probe_uncovered_action.` | 1 |"
+    },
+    {
+      "path": "tools/gate-falsifier-decisions.md",
+      "text": "| `test:gameplay-capability-catalog` | the suite on a clean HEAD copy | `× catalog seed covers every published registry action without claiming completeness` — red for a reason that is not its rule, so no baseline exists to redden |"
+    },
+    {
+      "path": "tools/gate-falsifier-decisions.md",
+      "text": "| `test:production-pack-load` | `× negative: transitive module broken in the loaded closure` | `check:production-pack-load` |"
+    },
+    {
+      "path": "tools/gate-falsifier-decisions.md",
+      "text": "| `test:stardew-action-candidates` | the rejected units' predicate list emptied | `× 被拒单元都带可追溯的理由（谓词或 no_branch）` + `AssertionError: AddSpecialOrder@Event 必须有被拒谓词、no_branch 或提取错误` | `gateRedProofs` |"
+    },
+    {
+      "path": "tools/gate-falsifier-decisions.md",
+      "text": "| `test:stardew-action-gate-descriptors` | `tools/stardew-action-gate-descriptors.test.mjs` | `× published action descriptors are complete, unique, and point to declared runner contracts` — the deep-equal prints `- travel`, exit 1 |"
+    },
+    {
+      "path": "tools/gate-falsifier-decisions.md",
+      "text": "| `test:stardew-action-gates-batch` | `tools/run-stardew-action-gates-batch.test.mjs` | `× a gate missing either half of its evidence is missing, never a pass` (actual `{ state: 'passed', reasonCode: 'gate_passed' }`), exit 1 |"
+    },
+    {
+      "path": "tools/gate-falsifier-decisions.md",
+      "text": "| `test:stardew-action-inventory-reconciliation` | completeness rule 3's missing-tier-B set emptied | `× 完备性②：B 档有单元没有裁定 → tier_b_unit_without_verdict` + `AssertionError: Missing expected exception.` | `gateRedProofs` |"
+    },
+    {
+      "path": "tools/gate-falsifier-decisions.md",
+      "text": "| `test:stardew-action-seam-terminals` | `seam_not_terminal` folded into `seam_ok` | `× 审计覆盖全部「已注册但九谓词全拒」的 seam，每个都落到一个已知判据` | `gateRedProofs` |"
+    },
+    {
+      "path": "tools/gate-falsifier-decisions.md",
+      "text": "| `test:stardew-admission-fork-delta` | `tools/audit-stardew-admission-fork-delta.test.mjs` | `× the detector still finds a fork in all three spellings, and names the handler` (`two triple spellings plus the split one`), exit 1 |"
+    },
+    {
+      "path": "tools/gate-falsifier-decisions.md",
+      "text": "| `test:stardew-admission-hold-codes` | `tools/lib/stardew-admission-hold-codes.test.mjs` | `× the list carries nothing the Mod cannot return` + `the list claims actor_held_by_non_existent_state, which the Mod's source does not mint`, exit 1 |"
+    },
+    {
+      "path": "tools/gate-falsifier-decisions.md",
+      "text": "| `test:stardew-automation-cadence` | `tools/run-stardew-automation-cadence.test.mjs` | `× a block is blocked on a timeout, …` (actual `cadence_block_exit:none`, expected `cadence_block_timeout`) and `× a harness timeout is a blocked block, never a product verdict`, exit 1 |"
+    },
+    {
+      "path": "tools/gate-falsifier-decisions.md",
+      "text": "| `test:stardew-branch-writeset` | `P4_terminalWrite` forced false | `× refill_watering_can：终态直写，产出候选分支` + `AssertionError: refill 应有且仅有一个候选分支` | `gateRedProofs` |"
+    },
+    {
+      "path": "tools/gate-falsifier-decisions.md",
+      "text": "| `test:stardew-clear-fish-pond-runner` | `tools/run-stardew-native-local-player-clear-fish-pond-smoke.test.mjs` | `× a pond still advertised after the clear fails: the published fact must change`, exit 1 |"
+    },
+    {
+      "path": "tools/gate-falsifier-decisions.md",
+      "text": "| `test:stardew-dialogue-stream-runner` | `tools/run-stardew-native-local-player-dialogue-stream-smoke.test.mjs` | `× one page is BLOCKED, not passed: the claim is that the pager advanced`, exit 1 |"
+    },
+    {
+      "path": "tools/gate-falsifier-decisions.md",
+      "text": "| `test:stardew-dialogue-stream` | `tools/check-stardew-dialogue-stream.test.mjs` | `× a pager that only read the current page is caught` (actual `passed`, expected `blocked`), exit 1 |"
+    },
+    {
+      "path": "tools/gate-falsifier-decisions.md",
+      "text": "| `test:stardew-fixture-action-coverage` | `tools/lib/fixture-action-coverage.test.mjs` | `× a lane that grants an unpublished action is a named violation`, exit 1 |"
+    },
+    {
+      "path": "tools/gate-falsifier-decisions.md",
+      "text": "| `test:stardew-fixture-profile` | `tools/stardew-fixture-profile.test.mjs` | `× every managed fixture target has a distinct backup identity` (`target names must be unique`: 28 against 40), exit 1 |"
+    },
+    {
+      "path": "tools/gate-falsifier-decisions.md",
+      "text": "| `test:stardew-fixture-scenario-resolution` | `tools/stardew-fixture-scenario-resolution.test.mjs` | `× every action-keyed fixture scenario is reachable through its action set`, naming all 23 hijacked keys, exit 1 |"
+    },
+    {
+      "path": "tools/gate-falsifier-decisions.md",
+      "text": "| `test:stardew-fixture-scenario-wiring` | `× the real repository wiring is consistent` and the two real-tree allowlist cases (`the real config gate accepts navigation_read_only_v1`), exit 1 | the fixture scenario wiring and allowlist the gate reads; the whole synthetic half of the suite is green, so the gate is doing its job and the tree is not |"
+    },
+    {
+      "path": "tools/gate-falsifier-decisions.md",
+      "text": "| `test:stardew-fixture-scenario-wiring` | exit 1: `× the real repository wiring is consistent` (`actual: 'failed', expected: 'passed'`), `× the real allowlist contains the scenarios whose runners exist`, `× the real config gate accepts navigation_read_only_v1` | the scenario wiring/allowlist it reads; the gate is doing its job, the tree is not |"
+    },
+    {
+      "path": "tools/gate-falsifier-decisions.md",
+      "text": "| `test:stardew-fixture-transaction-inspector` | `tools/stardew-fixture-transaction-inspector.test.mjs` | `× transaction inspector is read-only and reports ambiguous recoverable backups` (actual `idle`, expected `ambiguous_backups`), exit 1 |"
+    },
+    {
+      "path": "tools/gate-falsifier-decisions.md",
+      "text": "| `test:stardew-formal-action-gate` | `tools/stardew-formal-action-gate.test.mjs` | `× nonterminal states are not terminal` and `× does not mistake accepted initial response for a terminal receipt`, exit 1 |"
+    },
+    {
+      "path": "tools/gate-falsifier-decisions.md",
+      "text": "| `test:stardew-gameplay-surface-rules` | `tools/stardew-gameplay-surface-rules.test.mjs` | `× content classification collapses localized copies and preserves logical operation domains` (actual `Data/Events/Town.zh-CN.xnb`), exit 1 |"
+    },
+    {
+      "path": "tools/gate-falsifier-decisions.md",
+      "text": "| `test:stardew-gameplay-surface-selector` | `tools/stardew-gameplay-surface-selector.test.mjs` | `× extracts nested literal case and comparison selectors without treating strings in comments as operations` — `commented_out`, taken from a `//` comment, appears in the actual selector list, exit 1 |"
+    },
+    {
+      "path": "tools/gate-falsifier-decisions.md",
+      "text": "| `test:stardew-lifecycle-cold-session` | `tools/run-stardew-lifecycle-cold-session.test.mjs` | `× a stage that produced no evidence is never a pass` (`actual: { state: 'blocked', reasonCode: 'admission_refused' }`, `expected: … 'lifecycle_stage_evidence_missing:admission'`), exit 1 |"
+    },
+    {
+      "path": "tools/gate-falsifier-decisions.md",
+      "text": "| `test:stardew-loop-closure` | `tools/check-stardew-loop-closure.test.mjs` | `× an anchor with no File.cs:line hop is reported, not skipped`, exit 1 |"
+    },
+    {
+      "path": "tools/gate-falsifier-decisions.md",
+      "text": "| `test:stardew-method-resolution` | the chain's depth cap narrowed 5 → 2 | `× the chain is bounded by depth and does not loop forever` + `AssertionError: third hop is within the bound` | `gateRedProofs` |"
+    },
+    {
+      "path": "tools/gate-falsifier-decisions.md",
+      "text": "| `test:stardew-native-completion-event-register` | `tools/stardew-native-completion-event-register.test.mjs` | `× fails closed for missing local Poll` + `Missing expected exception` against `{ code: 'completion_event_register_wiring_missing' }`, exit 1 |"
+    },
+    {
+      "path": "tools/gate-falsifier-decisions.md",
+      "text": "| `test:stardew-native-event-continuation-trace` | `tools/stardew-native-event-continuation-trace.test.mjs` | `× fails closed for a registration that does not bind the event to its handler` + `Missing expected exception` against `native_event_trace_registration_missing`, exit 1 |"
+    },
+    {
+      "path": "tools/gate-falsifier-decisions.md",
+      "text": "| `test:stardew-native-farmer-sprite-callback-boundary` | `tools/stardew-native-farmer-sprite-callback-boundary.test.mjs` | `× fails closed for stale callback locator`, `actual: Error: Callback store must assign endOfAnimationFunction.` where `farmer_sprite_callback_locator_stale` was expected, exit 1 |"
+    },
+    {
+      "path": "tools/gate-falsifier-decisions.md",
+      "text": "| `test:stardew-native-field-continuation-trace` | `tools/stardew-native-field-continuation-trace.test.mjs` | `× fails closed if a supposed consumer does not reference field` + `Missing expected exception` against `field_continuation_callsite_invalid`, exit 1 |"
+    },
+    {
+      "path": "tools/gate-falsifier-decisions.md",
+      "text": "| `test:stardew-native-local-runner-contract` | `tools/audit-stardew-native-local-runner-contract.test.mjs` | `× regressing a baseline-conforming runner back to the retired shape is a finding` + `audit must report the regression` (`actual: 0`, `expected: 1`); `× a NEW runner written in the retired shape is a finding …` also fired, exit 1 |"
+    },
+    {
+      "path": "tools/gate-falsifier-decisions.md",
+      "text": "| `test:stardew-native-local-runner-entry` | `tools/stardew-native-local-runner-entry.test.mjs` | `× every registered gate runner declares a CLI entry point`, `actual: [ 'run-stardew-native-local-player-body-owner-hold-smoke.mjs' ]` against `[]`, exit 1 |"
+    },
+    {
+      "path": "tools/gate-falsifier-decisions.md",
+      "text": "| `test:stardew-native-mechanism-family-register` | `tools/stardew-native-mechanism-family-register.test.mjs` | `× family register partitions every raw syntax match exactly once without action semantics`, exit 1 |"
+    },
+    {
+      "path": "tools/gate-falsifier-decisions.md",
+      "text": "| `test:stardew-native-mechanism-review-register` | `tools/stardew-native-mechanism-review-register.test.mjs` | `× requires exactly one non-semantic disposition for every exact discovered mechanism` + `Missing expected exception` against `mechanism_review_register_unreviewed`, exit 1 |"
+    },
+    {
+      "path": "tools/gate-falsifier-decisions.md",
+      "text": "| `test:stardew-native-multiplayer-sensitivity` (added by the sixth batch) | exit 1: `× the committed register derives cleanly against the exact decompiled source` with `code: 'mp_sensitivity_classification_drift'`, `details: { actionId: 'use_mine_ladder', file: 'StardewValley.Locations/MineShaft.cs', sensitivity: 'mp-insensitive', decisiveTokens: [ 'IsLocalPlayer' ] }` | the same register as the `check:` row above: this suite runs that register over the committed tree, so it inherits the drift rather than contributing one. **What it adds to the census:** a gate can be red at HEAD because another gate's population is red, and the two share one defect — the ledger should name both, not count two findings |"
+    },
+    {
+      "path": "tools/gate-falsifier-decisions.md",
+      "text": "| `test:stardew-native-multiplayer-sensitivity` | the same register row | `× the committed register derives cleanly against the exact decompiled source`, `code: 'mp_sensitivity_classification_drift'` | 1 |"
+    },
+    {
+      "path": "tools/gate-falsifier-decisions.md",
+      "text": "| `test:stardew-native-normal-player-ingress-register` | `tools/stardew-native-normal-player-ingress-register.test.mjs` | `× requires the partial inventory gap to be exactly router-anchored and rejects a gap on exhaustive inventory` + `Missing expected exception` against `normal_player_ingress_exhaustive_inventory_has_gap`, exit 1 |"
+    },
+    {
+      "path": "tools/gate-falsifier-decisions.md",
+      "text": "| `test:stardew-native-router-invocation-inventory` | `tools/stardew-native-router-invocation-inventory.test.mjs` | `× fails closed for a non-unique source router signature` + `Missing expected rejection` against `router_inventory_method_anchor_missing`, exit 1 |"
+    },
+    {
+      "path": "tools/gate-falsifier-decisions.md",
+      "text": "| `test:stardew-native-source-closure` | `tools/stardew-native-source-closure.test.mjs` | `× fails closed for unknown completion, unmodeled runtime edges, and post-source vocabulary` + `Missing expected exception` against `/unknown blocking edges/`, exit 1 |"
+    },
+    {
+      "path": "tools/gate-falsifier-decisions.md",
+      "text": "| `test:stardew-native-state-machine-family-register` | `tools/stardew-native-state-machine-family-register.test.mjs` | `× fails closed for omitted partial-family gap, stale anchor, and missing owner` + `Missing expected exception` against `state_machine_family_gap_missing`, exit 1 |"
+    },
+    {
+      "path": "tools/gate-falsifier-decisions.md",
+      "text": "| `test:stardew-native-tool-owner-slice` | `tools/stardew-native-tool-owner-slice.test.mjs` | `× fails closed for omitted invocation or an unanchored dynamic gap` + `Missing expected exception` against `tool_owner_slice_unclassified`, exit 1 |"
+    },
+    {
+      "path": "tools/gate-falsifier-decisions.md",
+      "text": "| `test:stardew-native-tool-update-dispatch-boundary` | `tools/stardew-native-tool-update-dispatch-boundary.test.mjs` | `× fails closed for source parsing gaps inside the exact Tool.Update body` + `Missing expected exception` against `tool_update_dispatch_parse_gap`, exit 1 |"
+    },
+    {
+      "path": "tools/gate-falsifier-decisions.md",
+      "text": "| `test:stardew-native-transition-family-universe` | `tools/stardew-native-transition-family-universe.test.mjs` | `× forbids product vocabulary and non-neutral family identities`, exit 1 |"
+    },
+    {
+      "path": "tools/gate-falsifier-decisions.md",
+      "text": "| `test:stardew-native-transition-ledger` | `tools/stardew-native-transition-ledger.test.mjs` | `× rejects empty routers, missing continuation registration/resume, and partial exits without a gap` + `Missing expected exception` against `transition_ledger_partial_exit_without_gap`, exit 1 |"
+    },
+    {
+      "path": "tools/gate-falsifier-decisions.md",
+      "text": "| `test:stardew-native-virtual-member-invocation-register` | `tools/stardew-native-virtual-member-invocation-register.test.mjs` | `× fails closed when an exact implementation inventory becomes stale` + `Missing expected rejection` against `virtual_member_invocation_register_stale`, exit 1 |"
+    },
+    {
+      "path": "tools/gate-falsifier-decisions.md",
+      "text": "| `test:stardew-native-virtual-receiver-register` | `tools/stardew-native-virtual-receiver-register.test.mjs` | `× forbids primitive or action vocabulary`, exit 1 |"
+    },
+    {
+      "path": "tools/gate-falsifier-decisions.md",
+      "text": "| `test:stardew-player-command-equivalence-audit` | `tools/stardew-player-command-equivalence-audit.test.mjs` | `× reports a bridge equivalence gap when a required human-path guard is absent` (`actual: 'source_guard_equivalence_candidate'`, `expected: 'bridge_equivalence_gap'`), exit 1 |"
+    },
+    {
+      "path": "tools/gate-falsifier-decisions.md",
+      "text": "| `test:stardew-player-command-graph` | `tools/stardew-player-command-graph.test.mjs` | `× classifies only known continuous helpers as supporting and retains unknown calls unresolved`, plus `× reports command roots as pending candidates …` and `× extracts direct calls as candidate edges …`, exit 1 |"
+    },
+    {
+      "path": "tools/gate-falsifier-decisions.md",
+      "text": "| `test:stardew-player-reachable-exits` | `STARDEW_ROUTING_LAYER_SHAPE` so no `Check*` router matches | `× 深度 1 的出口必须包含输入根的直接 gameplay 分派` + `AssertionError: pressActionButton → CheckPetAnimal（路由层真实入口，未进 register）` | `gateRedProofs` |"
+    },
+    {
+      "path": "tools/gate-falsifier-decisions.md",
+      "text": "| `test:stardew-reachable-exits-reconciliation` | both shop-opener entries removed from `STARDEW_MENU_OPENERS` | `× R4：菜单绑定必须捕获无 Menu 后缀的开放器` | `gateRedProofs` |"
+    },
+    {
+      "path": "tools/gate-falsifier-decisions.md",
+      "text": "| `test:stardew-receipt-attribution` | `tools/check-stardew-receipt-attribution.test.mjs` | `× mutation: removing the measurement from a producer is blocked`, exit 1 |"
+    },
+    {
+      "path": "tools/gate-falsifier-decisions.md",
+      "text": "| `test:stardew-remaining-actions` | tier C's branch writing tier B | `× 三档计数之和等于未匹配候选总数（总数来自 candidates 产物）` + `AssertionError: C_non_gameplay_writes 不应为空` | `gateRedProofs` |"
+    },
+    {
+      "path": "tools/gate-falsifier-decisions.md",
+      "text": "| `test:stardew-scaffold` | `tools/verify-stardew-scaffold.test.mjs` | `× scaffold checker rejects forbidden embodiment surfaces anywhere in the Mod source tree`, exit 1 — the `new Farmer` term dropped from the scaffold verifier's exact-text list |"
+    },
+    {
+      "path": "tools/gate-falsifier-decisions.md",
+      "text": "| `test:stardew-state-coverage` | `tools/audit-stardew-state-coverage.test.mjs` | `× an engine state with no row is named`, exit 1 — the population check's \"a guard with no row\" rule disabled in `tools/audit-stardew-state-coverage.mjs`, so a synthetic `isRafting` state went unreported |"
+    },
+    {
+      "path": "tools/gate-falsifier-decisions.md",
+      "text": "| `test:stardew-static-companion-admission` | `tools/lib/stardew-companion-production-admission.test.mjs` | `× production admission is Windows-only and accepts only canonical drive absolute grammar`, exit 1 — the canonical-drive-absolute grammar disabled in the production-admission module, so `/admission_path_not_absolute/` stopped throwing |"
+    },
+    {
+      "path": "tools/gate-falsifier-decisions.md",
+      "text": "| `test:stardew-static-companion-evidence` | `tools/lib/stardew-companion-live-evidence.test.mjs` | `× rejects tampering and fails closed when a STOP has no authoritative body settled fact`, exit 1 — the body-settled rule disabled in the live-evidence module, so `production_live_body_settle_evidence_unavailable` is no longer in the code list |"
+    },
+    {
+      "path": "tools/gate-falsifier-decisions.md",
+      "text": "| `test:stardew-static-companion-fixture` | `tools/stardew-companion-live-scenario.test.mjs` | `× rejects structural fixture mutations`, exit 1 — the phrase-manifest integrity comparison disabled in the live-scenario module, so a `sha256:deadbeef` integrity is accepted |"
+    },
+    {
+      "path": "tools/gate-falsifier-decisions.md",
+      "text": "| `test:stardew-tile-action-selectors` | the menu priority replaced by the dialogue/event priority | `× 连续 case 标签是别名：kitchen/Kitchen 共享同一 body` + `AssertionError: 别名共享 body：ActivateKitchen 是菜单开放器` | `gateRedProofs` |"
+    },
+    {
+      "path": "tools/gate-falsifier-decisions.md",
+      "text": "| `test:stardew-tool-family-stamina-evidence` | `tools/check-stardew-tool-family-stamina-evidence.test.mjs` | `× a seam that drops the lastClick reset is reported` + `expected a lastClick failure, got []`, exit 1 |"
+    },
+    {
+      "path": "tools/gate-falsifier-decisions.md",
+      "text": "| `test:stardew-uncovered-exit-expansion` | `INTERPRETER_SELECTOR_THRESHOLD` raised 8 → 800 | `× 解释器形态被识别（selector 数超阈值）` | `gateRedProofs` |"
+    },
+    {
+      "path": "tools/gate-falsifier-decisions.md",
+      "text": "| `test:stardew-uncovered-exit-table` | the pipe escape removed from the cell writer | `× 表单元格里的反斜杠必须转义,不能与管道符转义互相干扰` | `gateRedProofs` |"
+    },
+    {
+      "path": "tools/gate-falsifier-decisions.md",
+      "text": "| `test:tavern-release-prerequisites` | `× Tavern prerequisite checker fails closed for malformed, timed-out, stderr, and nonzero live-gate results` | `check:tavern-release-prerequisites` |"
+    },
+    {
+      "path": "tools/gate-falsifier-decisions.md",
+      "text": "| `test:test-store-teardown` | `tools/check-test-store-teardown.test.mjs` | `× does not count a construction whose throw is the assertion`, exit 1 |"
+    },
+    {
+      "path": "tools/gate-falsifier-decisions.md",
+      "text": "| `test:tool-corpus` (added by the seventh batch) | exit 1: `tool_test_corpus suites=235 quarantined=0` then 85 failing of 2506, of which the decisive one is a gate already red at HEAD — `× the committed register derives cleanly against the exact decompiled source`, `code: 'mp_sensitivity_classification_drift'`, naming `use_mine_ladder` | the corpus runs `tools/**`'s own suites, so it inherits every red member. Its row left the fourth table for the same reason the `mp-sensitivity` suite's did: a proof needs a green baseline, and its population contains a suite that is red at HEAD. **The aggregate inherits its members' debt** — the third gate in this table whose red is somebody else's defect |"
+    },
+    {
+      "path": "tools/gate-falsifier-decisions.md",
+      "text": "| `test:tool-corpus` | `tool_test_corpus suites=235 quarantined=0` then `× the committed register derives cleanly against the exact decompiled source` — 85 failing of 2506 on a tree whose only modifications were this batch's own injections | the corpus is derived from `package.json` and green when every member is; one red member makes it red. It inherits `test:stardew-native-multiplayer-sensitivity`'s drift, so it belongs beside that row |"
+    },
+    {
+      "path": "tools/gate-falsifier-decisions.md",
+      "text": "| `tools/audit-stardew-nogame-subset.test.mjs` | `× the project compiles exactly the headless files that read no gitignored input`, `× no game-free file is left out of the no-game lane` |"
+    },
+    {
+      "path": "tools/gate-falsifier-decisions.md",
+      "text": "| `tools/check-chat-conversational-quality-gate.mjs` + `test:chat-conversational-quality-gate` | `tools/check-chat-conversational-quality-gate.test.mjs` | `× Prefix Bit-Stability: passes when M0 is 100% byte-for-byte identical across all turns` (19 pass, 4 fail), exit 1 |"
+    },
+    {
+      "path": "tools/gate-falsifier-decisions.md",
+      "text": "| `tools/check-refusal-informativeness.test.mjs` | `× every reason family the tree emits is classified, and the verdict follows the findings` |"
+    },
+    {
+      "path": "tools/gate-falsifier-decisions.md",
+      "text": "| `tools/check-stardew-snapshot-family-bounds.test.mjs` | `× every shipped snapshot family's producer ceiling is readable and within the Host's cap` |"
+    },
+    {
+      "path": "tools/gate-falsifier-decisions.md",
+      "text": "| `tools/check-terminal-commit-single-entry.test.mjs` | `× the converted bus family reaches the ledger through the seam` — also the one file no reachable command names |"
+    },
+    {
+      "path": "tools/gate-falsifier-decisions.md",
+      "text": "| `tools/derive-stardew-action-cancellation.test.mjs` | `× delegation is followed and inline slots are seen` |"
+    },
+    {
+      "path": "tools/gate-falsifier-decisions.md",
+      "text": "| `tools/run-tavern-management-operation-evidence.test.mjs` | `× the producer exercises every operation the mounted profile declares` |"
+    },
+    {
+      "path": "tools/gate-falsifier-decisions.md",
+      "text": "| `tools/run-tavern-narrative-gate.test.mjs` | `× Reference live runner stays on the composition bootstrap and authenticated Chat API and never opens SQLite or auto-promotes` |"
+    },
+    {
+      "path": "tools/gate-falsifier-decisions.md",
+      "text": "| `tools/stardew-native-local-player-fixture.test.mjs` | `× a fixture whose mod has no config yet still prepares, and the config it writes is complete` |"
+    },
+    {
+      "path": "tools/gate-falsifier-decisions.md",
+      "text": "| measured on a clean HEAD copy | — | `× the gate reads the composer's two Host-owned refusals, and the send button's terms are exactly those plus an empty field`, `AssertionError: … sendRefused(uiState.send) \\|\\| !value.trim()` |"
+    },
+    {
+      "path": "tools/gate-falsifier-decisions.md",
+      "text": "| red at HEAD, so no green baseline to redden | **6** | `check:stardew-native-multiplayer-sensitivity` and `test:stardew-native-multiplayer-sensitivity` (`mp_sensitivity_classification_drift` on `use_mine_ladder`, measured at exit 2 and exit 1 again this batch), `test:gameplay-capability-catalog` (`Published registry actions missing covered catalog rows: fish_here.`), `test:frontend-turn-gate` (expects `sendUnavailable`, the product spells `sendRefused(uiState.send)`), `test:sandbox-configs` (`FAIL gamebuddy-sandbox.wsb: not valid XML`), `test:stardew-fixture-scenario-wiring` (`× the real config gate accepts navigation_read_only_v1`) |"
+    },
+    {
+      "path": "tools/gate-falsifier-decisions.md",
+      "text": "| the derivation returns the default for every row instead of resolving the row's own window | `× the watchdog is each registration's own declared window, never one constant` + `× the real catalog publishes the window the live defect was measured against` + `× one action declaring two different windows is refused rather than last-wins` | 1 |"
+    },
+    {
+      "path": "tools/gate-falsifier-decisions.md",
+      "text": "| the marker's own words (`tools/lib/multiday-loop.test.mjs`) | \"the rollover-menu branch answering `dismiss` where the loop must wait\" | `× a menu with no audited handling stops the run by name instead of timing out` |"
+    },
+    {
+      "path": "tools/lib/multiday-loop.test.mjs",
+      "text": "//                    `× a menu with no audited handling stops the run by name instead of timing out`, exit 1; the"
+    }
+  ]
+}

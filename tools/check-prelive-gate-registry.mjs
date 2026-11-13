@@ -549,6 +549,17 @@ export const EXEMPTIONS = Object.freeze([
     runsIn: "pnpm check:publint",
   },
   {
+    path: "tools/check-red-proof-markers.mjs",
+    reason:
+      "elsewhere: a static scan of the tracked files that hold the red-proof marker for a U+00D7 where the marker's " +
+      "glyph belongs, so it needs no install, no build and no run; it runs on every push in the derived CI gates job " +
+      "through `pnpm check:red-proof-markers`. What it reports today is carried in `tools/baselines/red-proof-markers.json` " +
+      "because it is owed to the lanes that own those files, and an entry whose line is repaired reds the gate until it is " +
+      "deleted, so the record cannot outlive the damage · measured examined 116 file(s), corrupted 110 marker line(s) in 6 " +
+      "file(s), baselined 110, violations 0, stale 0",
+    runsIn: "pnpm check:red-proof-markers",
+  },
+  {
     path: "tools/check-refusal-informativeness.mjs",
     reason:
       "debt: measured red at HEAD (exit 1, `unclassified_reason_code " +
