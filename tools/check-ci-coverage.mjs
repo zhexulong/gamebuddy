@@ -206,6 +206,12 @@ const REGISTER = Object.freeze([
     detail: "measured red at HEAD: committed C# files under desktop/ are missing a final newline",
   },
   {
+    script: "check:source-shape-readers",
+    reason: "debt",
+    detail:
+      "measured red at HEAD on 2026-11-14: `every_match_reads_the_normalised_shape` failed - 2 of 136 matches read the raw bytes of host/src/bootstrap entry tests - so adopting it in the `gates` job needs the fix, not the wiring; it is registered here so the derived set does not run a standing red on every push, and tools/check-local-ci-parity.mjs carries the same member as a `debt` row",
+  },
+  {
     script: "check:tools-boundaries",
     reason: "debt",
     detail: "measured 37 dependency violations (25 errors) over tools/ at HEAD",
