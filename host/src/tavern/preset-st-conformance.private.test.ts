@@ -122,7 +122,7 @@ function repositoryRoot(start: string): string {
 const REPOSITORY_ROOT = repositoryRoot(dirname(fileURLToPath(import.meta.url)));
 
 /** The assembly's own facts: the companion card and the bound world book, as one Chat would supply them. */
-const MACROS: MacroContext = {
+const MACROS = {
   char: "琥珀",
   user: "阿远",
   description: "琥珀，24 岁，在星谷接手了祖传农场，手上总带着泥。",
@@ -130,7 +130,7 @@ const MACROS: MacroContext = {
   scenario: "夏末的傍晚，两人刚收完最后一筐防风草。",
   persona: "自小一起长大的发小。",
   itemId: "st-conformance",
-};
+} satisfies MacroContext;
 
 /**
  * The slot contents, i.e. what `openai.js:1374-1386` puts into the marker entries.

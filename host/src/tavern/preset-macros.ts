@@ -20,10 +20,19 @@
 export type MacroContext = {
   char: string;
   user: string;
+  /** The card's own `description` field; empty when the card wrote none. */
   description: string;
+  /** The card's own `personality` field; empty when the card wrote none. */
   personality: string;
-  scenario: string;
-  persona: string;
+  /**
+   * The bound scenario's text, or `null` when this assembly was not handed one.
+   *
+   * `null` is "not given to this assembly", which is a different fact from an empty field: the token stays in the
+   * text and its name is reported, so a preset whose `{{scenario}}` had no source never reads as a blank line.
+   */
+  scenario: string | null;
+  /** The bound user persona's description, with the same `null` rule as `scenario`. */
+  persona: string | null;
   /** Stable identity of the preset entry being rendered; seeds content-addressed picks. */
   itemId: string;
 };
@@ -96,12 +105,22 @@ function presetMacroFamily(
  * absent here is a name the gate reports as unknown rather than one that silently renders empty.
  */
 export const PRESET_MACROS: readonly PresetMacroTableEntry[] = Object.freeze([
-  presetMacro("char", true, "any", "The companion's name, taken from the assembly context."),
-  presetMacro("user", true, "any", "The player's name, taken from the assembly context."),
-  presetMacro("description", true, "any", "The character description field the assembly was given."),
-  presetMacro("personality", true, "any", "The personality field the assembly was given."),
-  presetMacro("scenario", true, "any", "The scenario field the assembly was given."),
-  presetMacro("persona", true, "any", "The player persona field the assembly was given."),
+  presetMacro("char", true, "any", "The companion's name, from the identity profile's `identity.name`."),
+  presetMacro("user", true, "any", "The bound persona's name, else the locale's own word for the player."),
+  presetMacro("description", true, "any", "The companion's `persona.core`, which carries the card's `description`."),
+  presetMacro("personality", true, "any", "The companion's `persona.interactionStyle`, the card's `personality`."),
+  presetMacro(
+    "scenario",
+    true,
+    "any",
+    "The scenario the chat bound; kept literal and reported when the assembly was handed none.",
+  ),
+  presetMacro(
+    "persona",
+    true,
+    "any",
+    "The bound user persona's description; kept literal and reported when the assembly was handed none.",
+  ),
   presetMacro("trim", true, "any", "Renders nothing and removes the whitespace around the entry it appears in."),
   presetMacro("newline", true, "any", "Renders one newline."),
   presetMacro(
@@ -473,9 +492,9 @@ function applyMacro(
     case "personality":
       return ctx.personality;
     case "scenario":
-      return ctx.scenario;
+      return ctx.scenario ?? record(state.unresolved, name, raw);
     case "persona":
-      return ctx.persona;
+      return ctx.persona ?? record(state.unresolved, name, raw);
     case "newline":
       return "\n";
     case "trim":

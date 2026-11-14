@@ -8,6 +8,7 @@ import { ModelRuntime } from "@earendil-works/pi-coding-agent";
 import { __gamebuddyReadPresetSegments, publishGameBuddyPresetSegments } from "@cortexkit/pi-magic-context/tavern";
 
 import { bindWindowsStaleLockReclaimer } from "../path-lock.js";
+import type { IdentityProfile } from "../identity-profile.js";
 import { canonicalTestRoot } from "../test-support/canonical-test-root.test-support.js";
 import { createBuildWindowsStaleLockReclaimer } from "../windows-stale-lock-reclaimer/index.js";
 import { createPresetAssemblyRead } from "./preset-assembly-read.js";
@@ -23,6 +24,7 @@ import {
 import { createPresetStore, type PresetStore } from "./preset-store.js";
 import { mergeModelProviderEntry, type PiProviderEntry } from "./pi-provider-store.js";
 import { type PresetSamplingValues, withPresetSampling } from "./preset-sampling.js";
+import type { Scenario, UserPersona } from "./types.js";
 
 bindWindowsStaleLockReclaimer(createBuildWindowsStaleLockReclaimer());
 
@@ -76,6 +78,68 @@ const PRESET = Object.freeze({
 
 const MODEL_ID = "request-fixture-model";
 
+/** The companion these requests render for: a card that wrote all three of its own fields. */
+const PROFILE: IdentityProfile = Object.freeze({
+  schemaVersion: 1,
+  profileId: "lane-macros.companion",
+  revision: 1,
+  identity: Object.freeze({
+    name: "Mira",
+    role: "the player's companion",
+    continuity: "Keep one continuous shared experience with the player.",
+  }),
+  persona: Object.freeze({
+    core: "DESCRIPTION-SENTINEL-1a2b. Keeps a lighthouse nobody visits.",
+    interactionStyle: "PERSONALITY-SENTINEL-3c4d. Blunt, and kind about it.",
+    expressionStyle: "Short spoken turns.",
+  }),
+});
+
+/** The player's persona a chat bound: A4 §7.2's `{{user}}` is this name and `{{persona}}` its description. */
+const PLAYER_PERSONA: UserPersona = Object.freeze({
+  schemaVersion: 1,
+  personaId: "lane-macros.player",
+  revision: 1,
+  name: "USER-SENTINEL-5e6f",
+  description: "PERSONA-SENTINEL-7a8b, who keeps the lighthouse too.",
+});
+
+/** The scenario a chat bound: A4 §7.2's `{{scenario}}`. */
+const BOUND_SCENARIO: Scenario = Object.freeze({
+  schemaVersion: 1,
+  scenarioId: "lane-macros.scenario",
+  revision: 1,
+  text: "SCENARIO-SENTINEL-9c0d, {{char}} and {{user}} on a grey morning.",
+  provenance: "imported",
+  owner: "companion_default",
+});
+
+/**
+ * One preset whose Main entry spells exactly the five macros A4 §7.2 calls load-bearing, each wrapped in brackets so a
+ * rendered value and an absent one read differently in one assertion.
+ */
+const MACRO_PRESET = Object.freeze({
+  name: "Macro Fixture",
+  prompts: [
+    {
+      identifier: "main",
+      name: "Main",
+      role: "system",
+      content: "[{{char}}|{{user}}|{{description}}|{{personality}}|{{scenario}}|{{persona}}]",
+    },
+    { identifier: "chatHistory", name: "Chat History", marker: true },
+  ],
+  prompt_order: [
+    {
+      character_id: 100000,
+      order: [
+        { identifier: "main", enabled: true },
+        { identifier: "chatHistory", enabled: true },
+      ],
+    },
+  ],
+});
+
 type Bound = Readonly<{
   root: string;
   projectDir: string;
@@ -83,12 +147,16 @@ type Bound = Readonly<{
   binding: PresetBindingStore;
 }>;
 
-async function withBoundPreset(work: (bound: Bound) => Promise<void>, bound = true): Promise<void> {
+async function withBoundPreset(
+  work: (bound: Bound) => Promise<void>,
+  bound = true,
+  document: unknown = PRESET,
+): Promise<void> {
   const root = await canonicalTestRoot("preset-request-");
   try {
     const playerRoot = join(root, "tavern", "v1", "players", "player");
     const presets = createPresetStore({ runtimeRoot: root, playerRoot });
-    await presets.import({ presetId: "fixture", document: PRESET });
+    await presets.import({ presetId: "fixture", document });
     // A second stored preset that is never bound: it is what makes "only the preset in force has a composed model"
     // observable, because the runtime composes `models.json` from the bound one and from nothing else.
     await presets.import({ presetId: "other", document: { ...PRESET, name: "Other", temperature: 0.77 } });
@@ -100,7 +168,7 @@ async function withBoundPreset(work: (bound: Bound) => Promise<void>, bound = tr
   }
 }
 
-const publish = (bound: Bound, macros: MacroContext = presetRequestMacros("Mira")) =>
+const publish = (bound: Bound, macros: MacroContext = presetRequestMacros({ profile: PROFILE })) =>
   publishPresetRequestSegments({
     projectDir: bound.projectDir,
     presets: bound.presets,
@@ -205,6 +273,114 @@ test("a marker with no source and a macro this product will not evaluate are rep
 });
 
 /**
+ * A4 §7.2's five load-bearing macros, through the real publication: each one renders the field that owns it.
+ *
+ * This is the assertion the finding was missing. All five are `implemented: true`, so before this the evaluator returned
+ * the empty string for each of them and `unresolved` stayed empty: a preset's Main Prompt arrived as
+ * `[Mira|||||]` and no channel said a word about it.
+ */
+test("the five load-bearing macros render the fields that own them, never an empty string", async () => {
+  await withBoundPreset(
+    async (bound) => {
+      const assembly = await publish(
+        bound,
+        presetRequestMacros({ profile: PROFILE, persona: PLAYER_PERSONA, scenario: BOUND_SCENARIO }),
+      );
+      assert.ok(assembly !== null);
+      assert.equal(
+        assembly.segments.before[0],
+        [
+          "[Mira",
+          // `{{user}}` is the bound persona's name, chosen by `macro-engine.ts`'s one player-reference rule.
+          "USER-SENTINEL-5e6f",
+          "DESCRIPTION-SENTINEL-1a2b. Keeps a lighthouse nobody visits.",
+          "PERSONALITY-SENTINEL-3c4d. Blunt, and kind about it.",
+          // A scenario is authored text like any other, so it renders through the same table the authored context
+          // renders it with: its own `{{char}}`/`{{user}}` resolve instead of reaching the model as placeholders.
+          "SCENARIO-SENTINEL-9c0d, Mira and USER-SENTINEL-5e6f on a grey morning.",
+          "PERSONA-SENTINEL-7a8b, who keeps the lighthouse too.]",
+        ].join("|"),
+      );
+      assert.deepEqual(assembly.pass.unresolved, [], "every macro was answerable, so none is reported");
+    },
+    true,
+    MACRO_PRESET,
+  );
+});
+
+/**
+ * The other half of the same rule: a macro this assembly was NOT handed keeps its token and is reported by name.
+ *
+ * "Not given to this assembly" and "the field is empty" are different facts, and only the second may render as nothing.
+ * A literal `{{persona}}` beside `preset_unresolved_macros:` tells the player the preset's sentence lost something; an
+ * empty string tells them the preset wrote a shorter sentence than it did.
+ */
+test("a macro this assembly was not handed keeps its token and is reported by name", async () => {
+  await withBoundPreset(
+    async (bound) => {
+      const written: string[] = [];
+      const write = process.stderr.write.bind(process.stderr);
+      process.stderr.write = ((chunk: string | Uint8Array) => {
+        written.push(String(chunk));
+        return true;
+      }) as typeof process.stderr.write;
+      let before: string | undefined;
+      try {
+        const assembly = await publish(bound);
+        assert.ok(assembly !== null);
+        before = assembly.segments.before[0];
+        assert.deepEqual(assembly.pass.unresolved, [
+          { name: "persona", entries: ["main"] },
+          { name: "scenario", entries: ["main"] },
+        ]);
+      } finally {
+        process.stderr.write = write;
+      }
+      assert.equal(
+        before,
+        // No persona is bound here, so `{{user}}` is the locale's own word for the player - this run's default
+        // (`macro-engine.ts`), not an empty slot. The profile's own two fields still render.
+        "[Mira|User|DESCRIPTION-SENTINEL-1a2b. Keeps a lighthouse nobody visits.|PERSONALITY-SENTINEL-3c4d. Blunt, and kind about it.|{{scenario}}|{{persona}}]",
+      );
+      const unresolved = written.find((line) => line.startsWith(PRESET_UNRESOLVED_MACROS_PREFIX));
+      assert.ok(unresolved !== undefined, "an unanswerable macro must be printed");
+      assert.match(unresolved, /persona\(main\)/);
+      assert.match(unresolved, /scenario\(main\)/);
+    },
+    true,
+    MACRO_PRESET,
+  );
+});
+
+/**
+ * Empty is an answer only when the authority says the field is empty: a companion whose card wrote no description has
+ * no description, and that must not be dressed up as `{{description}}` - a token would claim this assembly could not
+ * read a profile it is holding.
+ */
+test("a field the companion genuinely has not renders empty, and is not reported as unresolved", async () => {
+  const bare: IdentityProfile = Object.freeze({
+    schemaVersion: 1,
+    profileId: "lane-macros.bare",
+    revision: 1,
+    identity: Object.freeze({ name: "Mira", role: "the player's companion", continuity: "Keep one story." }),
+  });
+  await withBoundPreset(
+    async (bound) => {
+      const assembly = await publish(bound, presetRequestMacros({ profile: bare }));
+      assert.ok(assembly !== null);
+      assert.equal(assembly.segments.before[0], "[Mira|User|||{{scenario}}|{{persona}}]");
+      assert.deepEqual(
+        assembly.pass.unresolved.map((macro) => macro.name),
+        ["persona", "scenario"],
+        "only the two values this assembly was not handed are reported",
+      );
+    },
+    true,
+    MACRO_PRESET,
+  );
+});
+
+/**
  * The sampler half, through the product's own chain: the bound document's values, the provider entry, and the model the
  * real runtime composes from `models.json`. `model.samplingParams` is the bag the `openai-completions` adapter merges
  * into the request body LAST (design §5), so this reading is the value the wire carries.
@@ -257,7 +433,7 @@ test("the panel read carries a sampling reading for the bound row only, and stil
     const read = createPresetAssemblyRead({
       store: bound.presets,
       binding: bound.binding,
-      macros: presetRequestMacros("Mira"),
+      macros: presetRequestMacros({ profile: PROFILE }),
       markers: Object.freeze({}),
       sampling: async () => ({ model: { samplingParams: { temperature: 0.42, top_p: 0.93 } }, thinkingLevel: "off" }),
     });
@@ -280,7 +456,7 @@ test("the panel read carries a sampling reading for the bound row only, and stil
     const unboundRead = createPresetAssemblyRead({
       store: bound.presets,
       binding: bound.binding,
-      macros: presetRequestMacros("Mira"),
+      macros: presetRequestMacros({ profile: PROFILE }),
       markers: Object.freeze({}),
       sampling: async () => ({ model: { samplingParams: {} }, thinkingLevel: "off" }),
     });
@@ -295,7 +471,7 @@ test("the panel read carries a sampling reading for the bound row only, and stil
     const stale = createPresetAssemblyRead({
       store: bound.presets,
       binding: bound.binding,
-      macros: presetRequestMacros("Mira"),
+      macros: presetRequestMacros({ profile: PROFILE }),
       markers: Object.freeze({}),
       sampling: async () => ({ model: { samplingParams: { temperature: 0.1 } }, thinkingLevel: "off" }),
     });

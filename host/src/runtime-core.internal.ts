@@ -1376,7 +1376,13 @@ export async function createRuntimeWithFixedToolsCore(
             projectDir: chatPreset.projectDir,
             presets: chatPreset.presets,
             binding: chatPreset.binding,
-            macros: presetRequestMacros(profile.identity.name),
+            // The player-facing half of the preset's macros is the profile and the locale - the two authorities a
+            // runtime mount holds. The chat thread's bound persona and scenario are not reachable from here
+            // (`preset-request-segments.ts` states which macros therefore keep their token and are reported).
+            macros: presetRequestMacros({
+              profile,
+              ...(presentation?.profile.locale === undefined ? {} : { locale: presentation.profile.locale }),
+            }),
             // No marker content is supplied yet: the companion card's fields and the bound world book are the Chat
             // pipeline's to hand over, and until they are, `unfilled` names every slot that stayed empty
             // (`preset-request-segments.ts` prints them) instead of the request carrying a blank region.

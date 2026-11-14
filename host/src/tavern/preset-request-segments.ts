@@ -39,11 +39,14 @@ import {
   publishGameBuddyPresetSegments,
 } from "@cortexkit/pi-magic-context/tavern";
 
+import type { IdentityProfile } from "../identity-profile.js";
+import { macroTable, renderMacros } from "./macro-engine.js";
 import type { MacroContext } from "./preset-macros.js";
 import type { PresetBindingStore } from "./preset-binding.js";
 import { type PresetSamplingValues, presetSamplingParams } from "./preset-sampling.js";
 import { type PresetPass, renderPresetPass } from "./preset-segments.js";
 import type { PresetStore } from "./preset-store.js";
+import type { Scenario, UserPersona } from "./types.js";
 
 /** The prefixes of the two lines a runtime prints when the bound preset could not be carried whole. */
 export const PRESET_UNFILLED_MARKERS_PREFIX = "preset_unfilled_markers:";
@@ -64,20 +67,54 @@ export type PresetRequestAssembly = Readonly<{
 }>;
 
 /**
- * The macro context one Chat request renders its preset with.
+ * The authorities one Chat request may read for its preset's macros, and nothing else.
  *
- * `char` is the companion's own name, which the identity profile owns. `user` is empty because this runtime holds no
- * player-name authority: a preset's `{{user}}` therefore renders empty, which is a content gap named here rather than
- * a macro this product declines (that distinction belongs to `PRESET_MACROS`).
+ * The set is CLOSED on purpose. A preset is third-party text: every value reachable from this table is one the model
+ * is already being served elsewhere in the same request (the profile's own fields, the player's persona, the bound
+ * scenario), so a macro can re-state character context but can never reach host secrets, paths, credentials, settings
+ * or arbitrary host state. Adding a member here is a product decision, not a plumbing convenience.
+ *
+ * `persona` and `scenario` are optional because they are the CHAT THREAD's bindings (`chat-thread-store.ts`), and a
+ * caller that does not hold the thread cannot honestly answer for them. `undefined` is not "empty" - see
+ * `presetRequestMacros`.
  */
-export function presetRequestMacros(companionName: string): MacroContext {
+export type PresetMacroSources = Readonly<{
+  profile: IdentityProfile;
+  locale?: string | undefined;
+  /** The `UserPersona` the chat bound: A4 §7.2 makes `{{user}}` its name and `{{persona}}` its description. */
+  persona?: UserPersona | undefined;
+  /** The `Scenario` the chat bound: A4 §7.2's `{{scenario}}`. */
+  scenario?: Scenario | undefined;
+}>;
+
+/**
+ * The macro context one Chat request renders its preset with, read from the authorities that own each value.
+ *
+ * WHERE EACH VALUE COMES FROM (A4 §7.2 is the naming authority; the field mapping is `st-card-import.ts`'s):
+ *
+ *  - `{{char}}` / `{{user}}` are `macroTable`'s, the one place this product chooses the player reference: the bound
+ *    persona's NAME, else the locale's own word for the player. Not a fallback spelled a second time here.
+ *  - `{{description}}` / `{{personality}}` are the companion's own fields - the card's `description` and
+ *    `personality`, carried as `persona.core` and `persona.interactionStyle`. Empty when the card wrote none: that
+ *    field genuinely has no value, and a preset that prints a heading expects nothing under it.
+ *  - `{{persona}}` / `{{scenario}}` are the user persona's description and the bound scenario, rendered through the
+ *    same table the authored context renders them with. `null` when this assembly was handed neither: "not given to
+ *    this assembly" is NOT the same fact as "the value is empty", and the evaluator keeps the token and reports its
+ *    name instead of substituting nothing (`preset-macros.ts`).
+ *
+ * The values are per MOUNT, never per turn: a persona or scenario edit mints a new artifact revision and the thread
+ * rebinds, so none of these macros rewrites the stable prefix on its own.
+ */
+export function presetRequestMacros(sources: PresetMacroSources): MacroContext {
+  const profile = sources.profile;
+  const table = macroTable({ char: profile.identity.name, user: sources.persona?.name, locale: sources.locale });
   return Object.freeze({
-    char: companionName,
-    user: "",
-    description: "",
-    personality: "",
-    scenario: "",
-    persona: "",
+    char: table.char,
+    user: table.user,
+    description: profile.persona?.core ?? "",
+    personality: profile.persona?.interactionStyle ?? "",
+    scenario: sources.scenario === undefined ? null : renderMacros(sources.scenario.text, table),
+    persona: sources.persona === undefined ? null : (sources.persona.description ?? ""),
     itemId: "",
   });
 }

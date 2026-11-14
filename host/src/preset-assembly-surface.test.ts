@@ -34,7 +34,7 @@ import { PRESET_SAMPLING_KEYS } from "./tavern/preset-sampling.js";
  *                    green.
  */
 
-const MACROS: MacroContext = {
+const MACROS = {
   char: "Mira",
   user: "the player",
   description: "Mira tends the greenhouse at the edge of Pelican Town.",
@@ -42,7 +42,7 @@ const MACROS: MacroContext = {
   scenario: "A late-summer evening in the valley.",
   persona: "A neighbour with a spare hour.",
   itemId: "assembly",
-};
+} satisfies MacroContext;
 
 /**
  * A realistic chat-completion preset: markers this product supplies, an authored post-history tail, two depth
