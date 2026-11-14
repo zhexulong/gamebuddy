@@ -6,7 +6,7 @@ import { dirname, join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
-import { corpusFiles, corpusMembers } from "./run-tool-test-corpus.mjs";
+import { MEMBER_DETAIL_LIMIT, corpusFiles, corpusMembers } from "./run-tool-test-corpus.mjs";
 
 // red-proof: inject  a failing assertion into one member's suite in a copy of the tree -> `members_failed:1`,
 //                    `corpus_responsible:<that member>` and one `member … · exit 1 · <U+2716> <test>` line, with
@@ -53,6 +53,12 @@ function runAggregate(root) {
 
 const lines = (text) => text.split("\n").filter((line) => line !== "");
 
+/** The member names the printer's `  member <name> · <detail>` lines carry, in print order. */
+const printedMemberNames = (text) =>
+  lines(text)
+    .filter((line) => line.startsWith("  member "))
+    .map((line) => line.slice("  member ".length, line.indexOf(" · ")));
+
 test.after(() => {
   for (const root of roots) rmSync(root, { recursive: true, force: true });
 });
@@ -97,9 +103,12 @@ test("a red member fails the step and is named once, with the derivation still o
   assert.match(run.stdout, /^corpus_derivation:ok$/m);
   assert.match(run.stdout, /^members_failed:1$/m);
   assert.match(run.stdout, /^corpus_responsible:test:broken$/m);
-  const details = lines(run.stdout).filter((line) => line.startsWith("  member test:broken · "));
-  assert.equal(details.length, 1, "the responsible member is named once, not once per failing test");
-  assert.match(details[0], /exit 1 · \u2716 the injected suite breaks$/);
+  assert.deepEqual(
+    printedMemberNames(run.stdout),
+    ["test:broken"],
+    "the responsible member is named once, not once per failing test",
+  );
+  assert.match(run.stdout, /^ {2}member test:broken · exit 1 · \u2716 the injected suite breaks$/m);
   assert.doesNotMatch(run.stdout, /corpus_derivation:defect/);
 });
 
@@ -233,7 +242,12 @@ test("five member details are printed and the rest are counted", () => {
   assert.equal(run.status, 1);
   assert.match(run.stdout, /^members_failed:7$/m);
   assert.match(run.stdout, /^corpus_responsible:(test:broken-\d,){6}test:broken-\d$/m);
-  assert.equal(lines(run.stdout).filter((line) => line.startsWith("  member ")).length, 5);
+  assert.equal(MEMBER_DETAIL_LIMIT, 5, "the cap is published as five details, and the rest are counted");
+  assert.deepEqual(
+    printedMemberNames(run.stdout),
+    ["test:broken-0", "test:broken-1", "test:broken-2", "test:broken-3", "test:broken-4"],
+    "five of the seven failing members are printed by name",
+  );
   assert.match(run.stdout, /^ {2}… and 2 more members failed, run them individually$/m);
 });
 

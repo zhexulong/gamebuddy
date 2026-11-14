@@ -56,7 +56,8 @@ const MEMBER_TIMEOUT_MS = 5 * 60_000;
 // child per file - `availableParallelism() - 1` of them. A member pool of the same width keeps that wall time,
 // and still gives each member its own run to read.
 const MEMBER_CONCURRENCY = Math.max(2, availableParallelism() - 1);
-const MEMBER_DETAIL_LIMIT = 5;
+/** How many failing members the aggregate prints in full before it counts the rest. */
+export const MEMBER_DETAIL_LIMIT = 5;
 const QUARANTINE_PATH = "tools/tool-test-corpus-quarantine.json";
 /** The `package.json` scripts treated as entry points: a script they name is a run that already happens. */
 const ENTRY_POINT_SCRIPTS = Object.freeze(["test", "test:all", "test:dialogue-web", "typecheck"]);

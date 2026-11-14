@@ -616,24 +616,6 @@
       "reason": "[not-a-population] a guard collecting the operations whose block asserts nothing (`if (assertions.length === 0) bare.push(...)`), which `deepEqual(bare, [])` then reads."
     },
     {
-      "file": "tools/run-tool-test-corpus.test.mjs",
-      "authority": "details",
-      "literal": "1",
-      "shape": "unresolved",
-      "sites": 1,
-      "line": 101,
-      "reason": "[derivable-now] `details` is the printed member line; `deepEqual(details.length, 1)` becomes `deepEqual(details.map((line) => line.replace(/ · .*$/, \"\")), [\"  member test:broken\"])`, and `the responsible member is named once` is the member not the count."
-    },
-    {
-      "file": "tools/run-tool-test-corpus.test.mjs",
-      "authority": "lines(run.stdout).filter((line) => line.startsWith(\"  member \"))",
-      "literal": "5",
-      "shape": "call_result",
-      "sites": 1,
-      "line": 163,
-      "reason": "[derivable-now] seven members fail and the printer caps at five; the five names are deterministic (`test:broken-0` .. `test:broken-4`), so the member list is nameable and the `… and 2 more` line below already states the rest."
-    },
-    {
       "file": "tools/stardew-humanlike-target-version-characterization.test.mjs",
       "authority": "m.parameters",
       "literal": "1",
