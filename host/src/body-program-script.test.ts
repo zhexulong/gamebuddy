@@ -2460,7 +2460,16 @@ test("stardew_plan_work teaches submit-then-end-the-turn, and names what wakes t
     /each step's receipt arrives later as a new message/u,
     "naming the fact that wakes the companion instead of a tool it would have to call",
   );
-  assert.match(planWork, /end your turn and speak to the player/u, "so the turn it should take is stated too");
+  assert.match(
+    planWork,
+    /end your turn; speak to the player when there is something to coordinate or share, or keep focused on the work/u,
+    "so the turn it should take is stated too without forcing chatter on every turn",
+  );
+  assert.match(
+    planWork,
+    /builder\.sleep\(\); \/\/ End the day from inside the farmhouse \(no arguments\)/u,
+    "teaches builder.sleep() syntax in sequential steps example",
+  );
   assert.match(
     planWork,
     /stardew_action_program_status is for a plan that is not moving, not a progress bar/u,
