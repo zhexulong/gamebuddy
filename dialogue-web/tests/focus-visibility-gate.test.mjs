@@ -43,6 +43,16 @@
  *    lookalike `.surface-header h2:focus-visible`;
  *  - the parent (`:focus-within`) form is verified against the JSX rather than
  *    inferred from the class names, which is what keeps the rule deterministic.
+ *
+ * AND A SHADOW IS NOT A RING THE PLATFORM KEEPS
+ *
+ * `focus.1` accepts a `box-shadow` as the replacement ring, which is right in the ordinary
+ * appearance and wrong under Windows High Contrast: `forced-colors: active` drops shadows entirely and
+ * forces every colour, so a control whose only ring is a shadow is left with no focus indicator at
+ * all - measured on this stylesheet: `box-shadow: none` and `outline-style: none` on a focused field.
+ * `focus.7` holds the other half of the promise: a focus rule that draws its ring with a box-shadow
+ * must also declare an outline, because the outline is the one ring the platform keeps (its colour is
+ * forced to a system one, so `2px solid transparent` paints nothing here and is visible there).
  */
 import assert from "node:assert/strict";
 import { readFileSync, readdirSync, statSync } from "node:fs";
@@ -457,4 +467,75 @@ test("focus.6: the subject set is derived from the JSX, and the heading is outsi
     `focus.6: ${subject.tags.size} control tag(s), ${subject.classes.size} control class(es); ` +
       `${interactive.length} site(s) on controls, ${scopedOut.length} scoped out`,
   );
+});
+
+/**
+ * The ring a focus rule draws with a shadow, and the ring the platform keeps when it takes shadows
+ * away, are two different questions. This is the population of the second one: every focus rule that
+ * paints a `box-shadow`, read out of the sheet rather than listed, and each one has to declare an
+ * outline as well. The outline's own colour is not asserted here (a `transparent` outline is the
+ * point - the platform forces it); what is asserted is that one exists, so the platform has something
+ * to force.
+ */
+export function shadowOnlyRingRules(css) {
+  return rules(css)
+    .filter((rule) => isFocusRule(rule.selector))
+    .map((rule) => ({
+      selector: rule.selector,
+      line: rule.line,
+      shadow: rule.declarations.find(([property, value]) => property === "box-shadow" && !/^none\b/u.test(value)),
+      outline: rule.declarations.find(
+        ([property, value]) => property === "outline" && !/^(none|0)\b/u.test(value) && !/^\s*0\s*(solid)?\s*$/u.test(value),
+      ),
+    }))
+    .filter((rule) => rule.shadow !== undefined);
+}
+
+test("focus.7: a ring drawn with a box-shadow also declares the outline the platform keeps", (t) => {
+  const css = readFileSync(STYLESHEET, "utf8");
+  const shadowRings = shadowOnlyRingRules(css);
+  const failures = shadowRings
+    .filter((rule) => rule.outline === undefined)
+    .map(
+      (rule) =>
+        `${rule.selector} draws its focus ring with \`box-shadow: ${rule.shadow[1]}\` and declares no outline - ` +
+        "`forced-colors: active` drops the shadow and forces every colour, so add `outline: 2px solid transparent` " +
+        "(with an offset) beside it",
+    );
+  t.diagnostic(
+    `focus.7: ${shadowRings.length} box-shadow focus ring(s) examined, ` +
+      `${shadowRings.length - failures.length} keeping an outline, ${failures.length} shadow-only: ` +
+      shadowRings.map((rule) => rule.selector).join(", "),
+  );
+  assert.ok(
+    shadowRings.length > 0,
+    "blocked: no focus rule draws a box-shadow ring, so this gate has nothing to hold and cannot pass",
+  );
+  assert.deepEqual(failures, [], "a focus ring the platform drops is not a focus ring");
+});
+
+test("focus.8 (mutation): the shadow-only rule is reported, and the paired one is not", (t) => {
+  const shadowOnly =
+    ".gate-probe-field:focus {\n  border-color: var(--focus-ring);\n  box-shadow: 0 0 0 1px var(--focus-ring);\n}\n";
+  assert.deepEqual(
+    shadowOnlyRingRules(shadowOnly).map((rule) => rule.selector),
+    [".gate-probe-field:focus"],
+    "a box-shadow ring with no outline is in the population and has no outline",
+  );
+  assert.equal(shadowOnlyRingRules(shadowOnly)[0].outline, undefined);
+
+  const paired = [
+    ".gate-probe-field:focus {",
+    "  border-color: var(--focus-ring);",
+    "  box-shadow: 0 0 0 1px var(--focus-ring);",
+    "  outline: 2px solid transparent;",
+    "  outline-offset: 2px;",
+    "}",
+    "",
+  ].join("\n");
+  assert.notEqual(shadowOnlyRingRules(paired)[0]?.outline, undefined, "the paired outline is found");
+
+  const outlineOnly = ".gate-probe-summary:focus-visible {\n  outline: 2px solid var(--focus-ring);\n}\n";
+  assert.deepEqual(shadowOnlyRingRules(outlineOnly), [], "an outline ring is not this gate's population");
+  t.diagnostic("focus.8: a shadow-only ring is reported, a paired ring is not, an outline ring is out of population");
 });
