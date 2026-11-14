@@ -49,7 +49,7 @@
  *   * tokens a theme does not restate. A light block that omits a colour token inherits the dark literal, which is a
  *     real defect and invisible here: this gate measures the pairs it is given, and a pair whose ink and surface both
  *     survive unchanged reads as a pass. The light set is held to the dark set's names by
- *     `dialogue-web/tests/style-tokens-gate.test.mjs`, not by this tool.
+ *     `dialogue-web/tests/theme-roots-gate.test.mjs`, not by this tool.
  *
  * Output: `contrast_tokens: examined N pair(s) in M token(s) over K theme(s)`, one line per theme and pair
  * (`<theme> <label> fg=#rrggbb bg=#rrggbb ratio=17.33 min=4.5 verdict=pass|fail|unreadable`), and one JSON verdict line
