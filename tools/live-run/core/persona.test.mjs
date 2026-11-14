@@ -1,6 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { glob } from "node:fs/promises";
+import { glob, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -9,8 +8,12 @@ import { pathToFileURL } from "node:url";
 import {
   assertLiveRunPersonaMounted,
   LIVE_RUN_PERSONA_DIR,
+  LIVE_RUN_SURFACE,
+  liveRunPersonaPaths,
   provisionLiveRunPersona,
   readLiveRunPersonaIdentity,
+  readPresetDeclarations,
+  resolveLiveRunGenerationPreset,
   resolveLiveRunHostBuildRoot,
 } from "./persona.mjs";
 
@@ -57,6 +60,77 @@ test("the canonical live-run card is present and identified", async () => {
   assert.ok(canonical.macroTokens > 0, "the reviewed card carries authored templating; that is recorded, not refused");
   // The card is the live-run persona by decision; a silently different directory is a change of subject.
   assert.ok(LIVE_RUN_PERSONA_DIR.endsWith(path.join("assets", "tavern", "presets", "default-companion")));
+});
+
+test("the generation preset is the one whose own declaration is this surface's - not a file named here", () => {
+  // The defect this replaces: the binding was the literal `amber-deepseek-v4.1.json`, whose declaration reads
+  // 「琥珀 · DeepSeek-V4.1 星露谷伴侣预设」 - a model, not a surface. Every Game run mounted it, and the preset that
+  // declares itself the Game surface's never reached a run. So the binding is READ OUT OF THE DECLARATIONS, and this
+  // test asserts the property rather than the file name: the run mounts the unique preset that declares its surface.
+  const declarations = readPresetDeclarations();
+  assert.ok(
+    declarations.length > 0,
+    "an empty preset population agrees with itself; the binding must be read from real declarations",
+  );
+  const declaring = declarations.filter((entry) => entry.surfaces.includes(LIVE_RUN_SURFACE));
+  assert.equal(
+    declaring.length,
+    1,
+    `examined ${declarations.length} preset(s): ${declaring.length} declare ${LIVE_RUN_SURFACE}`,
+  );
+  const resolved = resolveLiveRunGenerationPreset();
+  assert.equal(resolved.file, declaring[0].file);
+  assert.equal(resolved.surface, LIVE_RUN_SURFACE);
+  // The file provisioning copies IS the resolved one - the same fact, read through the path the run uses.
+  assert.equal(path.basename(liveRunPersonaPaths().presetPath), resolved.file);
+  // A preset that names no surface must exist in the population, and must not be the binding: that pairing is the
+  // whole unit, and without it this test would pass on a directory where every preset declared the same thing.
+  assert.ok(
+    declarations.some((entry) => entry.surfaces.length === 0),
+    `examined ${declarations.length} preset(s) and found none that declares no surface, so the model-named case this \
+unit was built for is no longer represented`,
+  );
+  assert.ok(
+    declarations.some((entry) => entry.surfaces.length > 0 && !entry.surfaces.includes(LIVE_RUN_SURFACE)),
+    "another surface must be declared by some preset, or telling the two apart proves nothing",
+  );
+});
+
+test("the binding refuses a directory where its surface is declared twice, and one where it is declared nowhere", async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), "persona-presets-"));
+  const write = (name, document) => writeFile(path.join(dir, name), JSON.stringify(document), "utf8");
+  const preset = (name) => ({ name, description: "", prompts: [], prompt_order: [] });
+  try {
+    await write("game-a.json", preset("琥珀 (Game Surface)"));
+    await write("game-b.json", preset("第二版 (Game Surface)"));
+    assert.throws(
+      () => resolveLiveRunGenerationPreset({ presetsDir: dir }),
+      (error) => {
+        assert.equal(error.code, "live_run_generation_preset_ambiguous");
+        // The refusal names both claimants; "ambiguous" alone sends the reader to the directory to re-derive which.
+        assert.match(error.message, /game-a\.json,game-b\.json/u);
+        return true;
+      },
+    );
+    await rm(path.join(dir, "game-b.json"));
+    await rm(path.join(dir, "game-a.json"));
+    // A preset that names a model and a preset that declares the other surface: the run's surface is declared nowhere.
+    await write("chat.json", preset("琥珀 (Chat Surface)"));
+    await write("amber-deepseek-v4.1.json", preset("琥珀 · DeepSeek-V4.1 星露谷伴侣预设"));
+    assert.throws(
+      () => resolveLiveRunGenerationPreset({ presetsDir: dir }),
+      (error) => {
+        assert.equal(error.code, "live_run_generation_preset_missing");
+        // Every preset is named WITH what it declares, so the model-named file and the other surface's file are both
+        // visible in the refusal rather than left for the reader to look up.
+        assert.match(error.message, /chat\.json declares Chat Surface/u);
+        assert.match(error.message, /amber-deepseek-v4\.1\.json declares no surface/u);
+        return true;
+      },
+    );
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
 });
 
 test(

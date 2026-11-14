@@ -35,6 +35,9 @@
  *
  * This module is the one place that knows:
  *   - WHICH card (the reviewed live-run card, `assets/tavern/presets/default-companion`),
+ *   - WHICH generation preset (the one that DECLARES itself this surface's - see
+ *     `resolveLiveRunGenerationPreset`; never a file named here, because the binding was
+ *     `amber-deepseek-v4.1.json` and that preset declares a model, not a surface),
  *   - that the card itself is copied **byte for byte, with no modification or preprocessing** (the
  *     operator's rule: load it directly; if that fails, the failure is a system problem, not a reason
  *     to rewrite the card),
@@ -44,12 +47,17 @@
  *     silent, generic-sounding companion.
  */
 
-import { existsSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { copyFile, readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 const REPOSITORY_ROOT = path.resolve(fileURLToPath(new URL("../../..", import.meta.url)));
+
+/** `<repo>/assets/tavern/presets` - the one directory the surface declarations live in. */
+export const LIVE_RUN_PRESETS_DIR = path.resolve(
+  fileURLToPath(new URL("../../../assets/tavern/presets", import.meta.url)),
+);
 
 /** `<repo>/assets/tavern/presets/default-companion` — resolved from this module, never from a caller's cwd. */
 export const LIVE_RUN_PERSONA_DIR = path.resolve(
@@ -60,28 +68,111 @@ export const LIVE_RUN_PERSONA_DIR = path.resolve(
 export const LIVE_RUN_PERSONA_FILES = Object.freeze(["card.json", "worldbook.json"]);
 
 /**
- * The companion's GENERATION preset, and the name it is mounted under.
+ * The companion's GENERATION preset, DERIVED from the presets' own declarations and never named here.
  *
- * It travels with the persona because it is the same reviewed bundle (`assets/tavern/presets/`) and it is what the
+ * It travels with the persona because it is the same reviewed bundle (`assets/tavern/presets/`), and it is what the
  * Game surface assembles a request from: its sampler values, its `main` system entry and its post-history entry. It is
  * mounted as `preset.json` in the runtime cwd - the same file convention as `card.json` and `worldbook.json`, read
  * back by `host/src/tavern/preset-game-session.ts` - rather than passed as a parameter, so a run and a player's root
  * read the same file the same way.
  *
+ * WHY DERIVED. The binding used to be the literal `amber-deepseek-v4.1.json`, and that file's own declaration reads
+ * 「琥珀 · DeepSeek-V4.1 星露谷伴侣预设」: it names a MODEL, not a surface. So every Game live run applied a
+ * model-specific preset whose `main` entry even carries the other surface's instruction ("独立聊天界面（Chat Surface）：
+ * 解除严格字数压制，放宽至 50~100 字"), while `amber-game.json` - the preset that declares itself
+ * 「琥珀 · 星露谷游戏伴玩专精预设 (Game Surface)」 - never reached a run at all. A run that measures naturalness against a preset it did not
+ * mount cannot be attributed to that preset, so the file is now READ OUT OF THE DECLARATION: exactly one preset must
+ * declare `LIVE_RUN_SURFACE`, and zero or two is a refusal by name rather than a default.
+ *
  * A run whose review asks "did the preset shape this session?" needs the file to be THERE: absence is reported as
  * `generation: null` in the run's bundle, and this harness refuses to start without it.
  */
-export const LIVE_RUN_GENERATION_PRESET = Object.freeze({
-  file: "amber-deepseek-v4.1.json",
-  target: "preset.json",
-});
+
+/** The surface this harness runs, in the spelling the presets declare themselves with. */
+export const LIVE_RUN_SURFACE = "Game Surface";
+
+/** The name provisioning mounts the generation preset under, beside `card.json` and `worldbook.json`. */
+export const LIVE_RUN_PRESET_TARGET = "preset.json";
+
+/**
+ * The surface a preset declares itself with: a capitalised phrase ending in `Surface` in its `name` or
+ * `description` - `(Game Surface)`, `(Chat Surface)`. Read from the document's own text, never from its file name:
+ * the file name is what this module used to trust, and `amber-deepseek-v4.1.json` is what that produced.
+ */
+const declaredSurfaces = (text) => [
+  ...new Set([...text.matchAll(/\b((?:[A-Z][A-Za-z0-9]+\s+)+Surface)\b/gu)].map((match) => match[1])),
+];
+
+/** A refusal a caller can branch on without parsing prose: the code is the message's own prefix too. */
+const refusal = (code, detail) => Object.assign(new Error(`${code}:${detail}`), { code });
+
+/**
+ * Every preset under `presetsDir`, classified by its own declaration. A world book is not a preset (`entries`, no
+ * `prompts`) and is not in this population; a file that cannot be parsed is refused by name rather than skipped.
+ */
+export function readPresetDeclarations({ presetsDir = LIVE_RUN_PRESETS_DIR } = {}) {
+  if (!existsSync(presetsDir)) throw refusal("live_run_presets_dir_missing", presetsDir);
+  const declarations = [];
+  for (const file of readdirSync(presetsDir)
+    .filter((name) => name.endsWith(".json"))
+    .sort()) {
+    let document;
+    try {
+      document = JSON.parse(readFileSync(path.join(presetsDir, file), "utf8"));
+    } catch {
+      throw refusal("live_run_preset_unreadable", file);
+    }
+    if (!Array.isArray(document?.prompts)) continue;
+    const name = typeof document.name === "string" ? document.name : null;
+    const text = [name, document.description].filter((part) => typeof part === "string").join("\n");
+    declarations.push(Object.freeze({ file, name, surfaces: Object.freeze(declaredSurfaces(text)) }));
+  }
+  return Object.freeze(declarations);
+}
+
+/** One declaration, spelled so a refusal shows what the file says about itself. */
+const declarationText = (entry) =>
+  entry.surfaces.length === 0
+    ? `${entry.file} declares no surface (name ${JSON.stringify(entry.name)})`
+    : `${entry.file} declares ${entry.surfaces.join("+")}`;
+
+/**
+ * The preset the live run mounts: the one preset whose declaration says `LIVE_RUN_SURFACE`.
+ *
+ * Exactly one is required. None means the prompt the run would measure has no declaration this harness can trust;
+ * two means the run has no single answer to "which preset am I measuring" - and both refusals name every preset with
+ * what it declares, so the file that names a model is visible in the refusal rather than inferred from it.
+ */
+export function resolveLiveRunGenerationPreset({ presetsDir = LIVE_RUN_PRESETS_DIR } = {}) {
+  const declarations = readPresetDeclarations({ presetsDir });
+  const candidates = declarations.filter((entry) => entry.surfaces.includes(LIVE_RUN_SURFACE));
+  if (candidates.length === 1) {
+    const { file, surfaces } = candidates[0];
+    return Object.freeze({
+      file,
+      path: path.join(presetsDir, file),
+      surface: LIVE_RUN_SURFACE,
+      surfaces,
+      target: LIVE_RUN_PRESET_TARGET,
+    });
+  }
+  const declared = declarations.map(declarationText).join("; ");
+  if (candidates.length > 1)
+    throw refusal(
+      "live_run_generation_preset_ambiguous",
+      `${LIVE_RUN_SURFACE}:${candidates.map((entry) => entry.file).join(",")} - ${declared}`,
+    );
+  throw refusal("live_run_generation_preset_missing", `${LIVE_RUN_SURFACE} - ${declared}`);
+}
 
 export function liveRunPersonaPaths({ dir = LIVE_RUN_PERSONA_DIR } = {}) {
+  const preset = resolveLiveRunGenerationPreset({ presetsDir: path.resolve(dir, "..") });
   return Object.freeze({
     dir,
     cardPath: path.join(dir, "card.json"),
     worldbookPath: path.join(dir, "worldbook.json"),
-    presetPath: path.resolve(dir, "..", LIVE_RUN_GENERATION_PRESET.file),
+    presetPath: preset.path,
+    generationPreset: preset,
   });
 }
 
@@ -352,12 +443,12 @@ export async function provisionLiveRunPersona(
   { dir = LIVE_RUN_PERSONA_DIR, hostBuildRoot, identity, root, wireSentinels } = {},
 ) {
   if (typeof runtimeCwd !== "string" || runtimeCwd.length === 0) throw new Error("live_run_persona_cwd_invalid");
-  const { cardPath, worldbookPath, presetPath } = liveRunPersonaPaths({ dir });
+  const { cardPath, worldbookPath, presetPath, generationPreset } = liveRunPersonaPaths({ dir });
   const identityFacts = await readLiveRunPersonaIdentity({ dir });
   for (const [source, name] of [
     [cardPath, "card.json"],
     [worldbookPath, "worldbook.json"],
-    [presetPath, LIVE_RUN_GENERATION_PRESET.target],
+    [presetPath, LIVE_RUN_PRESET_TARGET],
   ]) {
     await copyFile(source, path.join(runtimeCwd, name));
   }
@@ -383,6 +474,7 @@ export async function provisionLiveRunPersona(
     cardPath,
     worldbookPath,
     presetPath,
+    generationPreset,
     profile,
     greeting,
     scenario,
@@ -478,7 +570,7 @@ export async function assertLiveRunPersonaMounted(runtimeCwd, { identity, root, 
   // an ordinary state (the Host assembles the floor alone and publishes `generation: null`), so its absence is not a
   // broken PERSONA. What a run must not do is leave the question unanswerable, which is why the facts go back to the
   // caller instead of being dropped.
-  const presetPath = path.join(runtimeCwd, LIVE_RUN_GENERATION_PRESET.target);
+  const presetPath = path.join(runtimeCwd, LIVE_RUN_PRESET_TARGET);
   let presetPrompts = 0;
   let presetEnabled = 0;
   if (existsSync(presetPath)) {
@@ -494,8 +586,7 @@ export async function assertLiveRunPersonaMounted(runtimeCwd, { identity, root, 
   }
   const profilePath = path.join(runtimeCwd, "identity-profile.json");
   let profileName = null;
-  if (!existsSync(profilePath)) problems.push("identity_profile_absent");
-  else {
+  if (existsSync(profilePath)) {
     try {
       const profile = JSON.parse(await readFile(profilePath, "utf8"));
       profileName = typeof profile?.identity?.name === "string" ? profile.identity.name : null;
@@ -508,7 +599,7 @@ export async function assertLiveRunPersonaMounted(runtimeCwd, { identity, root, 
     } catch {
       problems.push("identity_profile_unparseable");
     }
-  }
+  } else problems.push("identity_profile_absent");
   let greeting = null;
   let scenario = null;
   if (identity !== undefined && typeof root === "string" && root.length > 0) {
