@@ -29,7 +29,7 @@
  * `null` and `0` stay different: a table this machine could not answer is `unverifiable`, never "none left".
  */
 import { mkdirSync, writeFileSync } from "node:fs";
-import { processTable, processesWithCommandLine } from "./process-table.mjs";
+import { processesWithCommandLine, processTable } from "./process-table.mjs";
 
 /** The prefix of every line this ledger prints, so the run's terminal has one handle for it. */
 export const LEDGER_PREFIX = "PROCESS-LEDGER";
@@ -286,7 +286,7 @@ export function closeProcessLedger(
           // this run's window rather than about two moments taken by different probes.
           vanished: [...beforePids].filter((pid) => !after.pids.has(pid)).length,
           vanishedOwned: [...beforePids].filter((pid) => !after.pids.has(pid) && entryPids.has(pid)).length,
-          vanishedUnowned: [...beforePids].filter((pid) => !after.pids.has(pid) && !entryPids.has(pid)).length,
+          vanishedUnowned: [...beforePids].filter((pid) => !(after.pids.has(pid) || entryPids.has(pid))).length,
           endedByRun: endedByRun.length,
           // The one assertion: everything this run ended was its own.
           endedByRunUnowned: endedByRun.filter((pid) => !entryPids.has(pid)).length,
@@ -318,8 +318,6 @@ export function writeProcessLedger(paths, reading) {
   mkdirSync(paths.stateDir, { recursive: true });
   writeFileSync(paths.processLedgerFile, `${JSON.stringify(reading, null, 1)}\n`, "utf8");
 }
-
-const sortPids = (pids) => [...new Set(pids)].sort((left, right) => left - right);
 
 /**
  * The ledger's own lines. Every one of them prints its population: `examined N run-owned, leftovers 0` is a
