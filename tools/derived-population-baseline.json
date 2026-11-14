@@ -417,14 +417,6 @@
       "line": 1123
     },
     {
-      "file": "tools/check-code-duplication.test.mjs",
-      "authority": "groups",
-      "literal": "1",
-      "shape": "unresolved",
-      "sites": 2,
-      "line": 151
-    },
-    {
       "file": "tools/check-crash-report-containment.test.mjs",
       "authority": "reports(cwd)",
       "literal": "1",
@@ -623,14 +615,6 @@
       "shape": "call_result",
       "sites": 1,
       "line": 99
-    },
-    {
-      "file": "tools/run-stardew-native-local-player-color-placed-object-smoke.test.mjs",
-      "authority": "EXPECTED_EVIDENCE_KEYS",
-      "literal": "7",
-      "shape": "declaration_site",
-      "sites": 1,
-      "line": 127
     },
     {
       "file": "tools/run-stardew-native-local-player-dialogue-stream-smoke.test.mjs",

@@ -148,8 +148,11 @@ const threeCopies = () =>
 
 test("a site named by several pairs is one group, and one site is counted once", () => {
   const groups = threeCopies();
-  assert.equal(groups.length, 1);
-  assert.equal(groups[0].hash, groupHash(FRAGMENT));
+  assert.deepEqual(
+    groups.map((group) => group.hash),
+    [groupHash(FRAGMENT)],
+    "the three sites are one group, identified by the fragment they all carry",
+  );
   assert.deepEqual(
     groups[0].sites.map((site) => site.file),
     ["host/src/a.ts", "host/src/b.ts", "host/src/c.ts"],
@@ -361,8 +364,11 @@ test("the same tree passes once its group is baselined, and a fourth copy is red
   );
   assert.match(grown.findings[0].detail, /host\/src\/Delta\.cs:\d+/);
   const groups = groupClones(runJscpd({ root, trees, formats }).report.duplicates, root);
-  assert.equal(groups.length, 1);
-  assert.equal(groups[0].sites.length, 4);
+  assert.deepEqual(
+    groups.map((group) => group.sites.length),
+    [4],
+    "Delta joined the baselined group: one group, now four copies",
+  );
 });
 
 test("a fourth copy in the worktree but not in the index is reported, and only counts once staged", () => {

@@ -124,7 +124,11 @@ test("an observation surface with no colour reports not_checked, NEVER a pass", 
 });
 
 test("the evidence shape is exactly the seven frozen keys, in order", () => {
-  assert.equal(EXPECTED_EVIDENCE_KEYS.length, 7);
+  assert.deepEqual(
+    [...EXPECTED_EVIDENCE_KEYS],
+    Object.keys(EVIDENCE),
+    "the runner's key table is the evidence this test writes, in order",
+  );
   assert.equal(judge().evidenceShapeExact, true);
   // A missing key.
   assert.equal(judge({ detail: DETAIL.replace(";color_changed=true", "") }).evidenceShapeExact, false);
