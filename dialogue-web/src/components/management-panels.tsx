@@ -1008,7 +1008,7 @@ export function ConnectionRow({
          */}
         {connection.modelIds !== null && (
           <>
-            <label className="visually-hidden-input-label" htmlFor={`connection-model-${connection.connectionId}`}>
+            <label className="visually-hidden" htmlFor={`connection-model-${connection.connectionId}`}>
               {labels.connectionModel}
             </label>
             <select
@@ -1026,7 +1026,7 @@ export function ConnectionRow({
             </select>
           </>
         )}
-        <label className="visually-hidden-input-label" htmlFor={`connection-level-${connection.connectionId}`}>
+        <label className="visually-hidden" htmlFor={`connection-level-${connection.connectionId}`}>
           {/* This select writes one saved connection's own level, so its label names that
               connection rather than restating the bare field word the two profile editors and
               this row were all announcing. */}
