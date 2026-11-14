@@ -6,6 +6,13 @@
  *                   `a code with no family is a missing member, printed as a difference` fails and the
 gate reports
  *                   it (`8 pass / 1 fail`); restoring the file leaves `git diff` empty
+ * red-proof: history  the tree before the zombie-turn fix (`69b7a244^`) - the pre-change gate reported
+ *                   `"status":"passed"` over 13 `self_heals` codes, certifying "the Host is working, and
+ *                   it ends its own work" for a turn a crashed Host left `running` with nothing to settle
+ *                   it; this gate reports `self_heals_without_evidence` naming `tavern/turn_busy` and the
+ *                   missing durable reread, exit 1. Reproduced with `git archive 69b7a244^`, the same
+ *                   `node tools/check-fail-closed-forward-path.mjs` invocation, and a junction for each
+ *                   `node_modules` the archived tree needs; the injected copy below asserts the same shape.
  *
  * Each case turns one of the gate's findings red on a real violation, by pointing one source at a
  * throwaway copy of the product's own file with exactly one defect injected. The gate's readers run
@@ -22,7 +29,13 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { after, describe, test } from "node:test";
 import { fileURLToPath } from "node:url";
-import { checkForwardPath, checkForwardPathOf, SOURCES } from "./check-fail-closed-forward-path.mjs";
+import {
+  checkForwardPath,
+  checkForwardPathOf,
+  selfHealsEvidence,
+  SOURCES,
+  turnStates,
+} from "./check-fail-closed-forward-path.mjs";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const WEB_ROOT = join(ROOT, "dialogue-web");
@@ -154,6 +167,65 @@ describe("check-fail-closed-forward-path", () => {
     });
     assert.equal(verdict.status, "blocked", JSON.stringify(verdict.findings));
     assert.ok(verdict.findings.some((entry) => entry.code === "population_empty"));
+  });
+
+  test("a `self_heals` step whose reason the Host does not perform is named, with what is missing", () => {
+    // The zombie turn, as the shape the gate can read: the turn is no longer reread durably, so nothing
+    // settles a turn whose owner died, and "the Host is working, and it ends its own work" is an alibi.
+    const turnRecovery = mutated(SOURCES.turnRecovery, "recovery.ts", [
+      "  readTurn: () => Promise<ChatTurnLedger | null>,",
+      "  readTurn: () => Promise<unknown>,",
+    ]);
+    const verdict = checkForwardPathOf({ turnRecovery });
+    const finding = verdict.findings.find(
+      (entry) => entry.code === "self_heals_without_evidence" && entry.detail.includes("tavern/turn_busy"),
+    );
+    assert.ok(finding, JSON.stringify(verdict.findings, null, 2));
+    assert.match(finding.detail, /stillRunning/u, "the family that owns the sentence is named");
+    assert.match(finding.detail, /no settlement rereads the turn durably/u, "the missing evidence is named");
+    assert.equal(verdict.selfHeals.settlements.length, 0);
+  });
+
+  test("a reason this gate cannot read fails closed rather than passing on union membership", () => {
+    const problemView = mutated(SOURCES.problemView, "unread-reason.ts", [
+      'const NEXT_READ: ProblemStep = { kind: "self_heals", because: "next_read" };',
+      'const NEXT_READ: ProblemStep = { kind: "self_heals", because: "stream_resumes" };',
+    ]);
+    const findings = checkForwardPathOf({ problemView }).findings;
+    assert.ok(
+      findings.some(
+        (entry) =>
+          entry.code === "self_heals_without_evidence" &&
+          entry.detail.includes("stream_resumes") &&
+          entry.detail.includes("reads no event-stream resume path"),
+      ),
+      JSON.stringify(findings),
+    );
+  });
+
+  test("a holding turn status with no reachable terminal is named", () => {
+    const turnLedger = mutated(SOURCES.turnLedger, "ledger.ts", [
+      "export type ChatTurnLedger =\n  | AcceptedQueuedTurn",
+      'export type StrandedTurn = Readonly<{ turnId: string; status: "awaiting_provider"; }>;\n' +
+        "export type ChatTurnLedger =\n  | StrandedTurn\n  | AcceptedQueuedTurn",
+    ]);
+    const verdict = checkForwardPathOf({ turnLedger });
+    const finding = verdict.findings.find((entry) => entry.code === "hold_without_reachable_release");
+    assert.ok(finding, JSON.stringify(verdict.findings, null, 2));
+    assert.match(finding.detail, /turn_status\/awaiting_provider/u);
+    assert.deepEqual(verdict.selfHeals.states.reaches.get("awaiting_provider"), []);
+  });
+
+  test("the states come from the union, and the split from the product's own terminal predicate", () => {
+    const states = turnStates();
+    assert.deepEqual(states.terminal, ["completed", "cancelled", "failed"]);
+    assert.ok(states.holding.includes("running"), states.holding.join(","));
+    for (const status of states.holding)
+      assert.ok(states.reaches.get(status).length > 0, `${status} reaches no terminal`);
+    // The twelve `host_retries` codes and the two `next_read` ones are each held to their own evidence,
+    // so a reader that stopped finding the settlement cannot leave both silently green.
+    assert.ok(selfHealsEvidence().evidence.has("host_retries"));
+    assert.ok(selfHealsEvidence().evidence.has("next_read"));
   });
 
   test("a Game phase whose derivation offers nothing to press is named", () => {

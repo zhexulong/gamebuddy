@@ -35,13 +35,26 @@
  *   5. every phase of `GAME_SESSION_PHASES` (sixteen of them) still offers at least one forward
  *      action, and every action it offers is a member of the declared `GameSessionForwardAction`
  *      union - the same zero-forward-path rule, read off the derivation's own `build(...)` calls.
+ *   6. a `self_heals` step's REASON is held to its own evidence. Union membership is not evidence: the
+ *      reason is a claim about the Host ("it ends its own work", "the next read shows the state owed",
+ *      "the stream catches the page up") and a claim nobody can read is the alibi this item exists for.
+ *      So `host_retries` is accepted only when the Chat turn ledger really does reach a terminal from a
+ *      level where no live turn is held - a settlement that rereads the turn durably and names the
+ *      holding statuses - and `next_read` only when the state a page reads carries the turn status.
+ *      Absent evidence is `self_heals_without_evidence`, naming the step and the thing not found. This
+ *      was the hole that certified two shipped defects: `turn_busy` said "the Host is working, and it
+ *      ends its own work" over a crashed turn nothing settled, and the gate printed `passed`.
+ *   7. every non-terminal `ChatTurnLedger["status"]` has a reachable terminal in the same population
+ *      (`hold_without_reachable_release`). A holding state whose only release is a transition no code
+ *      performs is the zombie turn; prose about it is not a release.
  *
- * THE POPULATION IS DERIVED, all five parts, from declarations the product already owns:
+ * THE POPULATION IS DERIVED, all six parts, from declarations the product already owns:
  * `PROBLEM_CODES` (the browser mirror of the tavern contract's closed union), `GAME_PROBLEM_CODES`,
- * the turn's `TURN_PROBLEM_CODES`, the classifier's `PROVIDER_FAILURES`, and `GAME_SESSION_PHASES`.
- * A code added anywhere joins this gate without an edit here; `examined 109` is printed with the
- * per-axis counts, and an empty population is `blocked` with exit 1 - a gate that examined nothing
- * has not passed.
+ * the turn's `TURN_PROBLEM_CODES`, the classifier's `PROVIDER_FAILURES`, `GAME_SESSION_PHASES`, and the
+ * members of the `ChatTurnLedger` union (their `status` literals, split into terminal and holding by the
+ * product's own `isTerminalTurnStatus`). A code or a turn status added anywhere joins this gate without
+ * an edit here; the counts are printed per axis, and an empty population is `blocked` with exit 1 - a
+ * gate that examined nothing has not passed.
  *
  * WHAT IT DOES NOT ASSERT, stated so a green run is not read as more than it is: that a named control
  * is *enabled* in the state the sentence describes, and that pressing it reaches the Host. Both need a
@@ -49,6 +62,12 @@
  * `dialogue-web/tests/first-viewport-forward-path.spec.ts`, which mounts every tavern code at 400x800
  * and requires either an enabled control or a step sentence inside the first viewport. The Game
  * surface's controls are measured there too.
+ *
+ * Nor does it assert that a release it found is the one the player's situation takes: the ledger graph
+ * says a terminal is reachable from a holding status, not that every refusal path leads there. The
+ * reason `stream_resumes` has no reader here is stated rather than papered over: a step that waits on
+ * the event stream is `self_heals_without_evidence` until this gate learns to read a resume path,
+ * because an unread reason must fail closed rather than pass on a union.
  *
  * red-proof: inject  a family loses its step argument (`sentence(title, detail)`) -> the typecheck
  *                    reports `TS2554: Expected 3 arguments, but got 2` in
@@ -65,6 +84,7 @@ import { fileURLToPath } from "node:url";
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const WEB_ROOT = join(ROOT, "dialogue-web");
 const SRC_ROOT = join(WEB_ROOT, "src");
+const HOST_SRC = join(ROOT, "host", "src");
 /** The TypeScript compiler the web workspace builds with: the same parser, not a second spelling of it. */
 const typescript = createRequire(join(WEB_ROOT, "package.json"))("typescript");
 
@@ -76,6 +96,13 @@ export const SOURCES = {
   lifecycle: join(SRC_ROOT, "game-lifecycle-controls.ts"),
   catalogue: join(SRC_ROOT, "i18n.ts"),
   srcRoot: SRC_ROOT,
+  // The Chat turn's own state machine: the ledger whose `status` the twelve refusals above wait on.
+  turnLedger: join(HOST_SRC, "tavern", "chat-thread-store.ts"),
+  turnRecovery: join(
+    HOST_SRC,
+    "continuity-semantic-production-coordinator",
+    "continuity-semantic-production-coordinator.internal.ts",
+  ),
 };
 
 /**
@@ -99,6 +126,17 @@ const STEP_KINDS = Object.freeze(["control", "outside_surface", "self_heals", "n
 const OUTSIDE_SURFACE_STEPS = Object.freeze(["open_settings", "retry_bootstrap", "restart_gamebuddy"]);
 const SELF_HEALS_REASONS = Object.freeze(["host_retries", "next_read", "stream_resumes"]);
 const NO_STEP_REASONS = Object.freeze(["over_a_ceiling", "already_true", "not_this_artifact"]);
+
+/**
+ * What each reason owes, in the words of the failure a missing one is. A reason absent here has no
+ * reader in this gate at all, and a step waiting on it fails closed - see `selfHealsEvidence`.
+ */
+const MISSING_EVIDENCE = Object.freeze({
+  host_retries:
+    "no settlement rereads the turn durably and names a holding status, so nothing the Host does ends a turn whose owner is gone",
+  next_read: "the state a page reads carries no turn status, so its next read cannot show the state it is owed",
+  stream_resumes: "this gate reads no event-stream resume path, so the claim cannot be checked here",
+});
 
 // ---------------------------------------------------------------------------------------------------
 // TypeScript reading: declarations, not text
@@ -402,6 +440,259 @@ function unionTypeMembers(sourceFile, name) {
   return found;
 }
 
+// ---------------------------------------------------------------------------------------------------
+// The Chat turn's state machine: the states the two shipped defects lived in
+// ---------------------------------------------------------------------------------------------------
+
+/**
+ * `ChatTurnLedger` is a union of member types, and each member declares its own `status` literal. The
+ * states therefore come from the type rather than from a list here: a status added to a member joins
+ * the population of its own accord, and one whose member type is deleted leaves it.
+ */
+function turnStates() {
+  const file = parseFile(SOURCES.turnLedger);
+  const members = typeAliasTypes(file);
+  const states = [];
+  for (const name of typeReferenceNames(unionTypeMembers(file, "ChatTurnLedger"))) {
+    const status = statusLiteralOf(members.get(name));
+    if (status !== null) states.push(status);
+  }
+  const holding = states.filter((status) => !isTerminal(file, status));
+  const releases = releaseGraph(file, states);
+  return {
+    states,
+    holding,
+    terminal: states.filter((status) => isTerminal(file, status)),
+    reaches: new Map(holding.map((status) => [status, reachableTerminals(status, releases, file)])),
+  };
+}
+
+/** Every type alias in a file, by name, as its right-hand type. */
+function typeAliasTypes(sourceFile) {
+  const aliases = new Map();
+  const visit = (node) => {
+    if (typescript.isTypeAliasDeclaration(node)) aliases.set(node.name.text, node.type);
+    typescript.forEachChild(node, visit);
+  };
+  visit(sourceFile);
+  return aliases;
+}
+
+/** The type names a node refers to, in source order: a union's members, a wrapper's argument. */
+function typeReferenceNames(node) {
+  const names = [];
+  const visit = (current) => {
+    if (typescript.isTypeReferenceNode(current)) names.push(current.typeName.getText());
+    typescript.forEachChild(current, visit);
+  };
+  visit(node);
+  return names;
+}
+
+/** The `status: "<literal>"` a member type declares, wherever it sits in that member's own type. */
+function statusLiteralOf(node) {
+  if (node === undefined) return null;
+  let found = null;
+  const visit = (current) => {
+    if (
+      typescript.isPropertySignature(current) &&
+      current.name !== undefined &&
+      current.name.getText() === "status" &&
+      current.type !== undefined &&
+      typescript.isLiteralTypeNode(current.type) &&
+      typescript.isStringLiteral(current.type.literal)
+    )
+      found = current.type.literal.text;
+    typescript.forEachChild(current, visit);
+  };
+  visit(node);
+  return found;
+}
+
+/**
+ * Whether the product calls this status terminal, by asking the function that says so.
+ *
+ * `isTerminalTurnStatus` is the one place the answer lives - it decides which transitions the store
+ * refuses to make - so the split between holding and terminal is read from its body rather than
+ * restated here. A status the predicate does not name is holding, which is the safe direction: it owes
+ * a release until the product says otherwise.
+ */
+function isTerminal(sourceFile, status) {
+  let body = null;
+  const visit = (node) => {
+    if (typescript.isFunctionDeclaration(node) && node.name !== undefined && node.name.text === "isTerminalTurnStatus")
+      body = node.body;
+    typescript.forEachChild(node, visit);
+  };
+  visit(sourceFile);
+  return body !== null && stringLiterals(body).includes(status);
+}
+
+const isFunctionLike = (node) =>
+  typescript.isFunctionDeclaration(node) ||
+  typescript.isFunctionExpression(node) ||
+  typescript.isArrowFunction(node) ||
+  typescript.isMethodDeclaration(node) ||
+  typescript.isGetAccessorDeclaration(node);
+
+/**
+ * One function's own body, with nested functions left out.
+ *
+ * A site is the smallest function that contains the write: reading a store factory's whole body would
+ * make every status mention every other one through its methods, and a graph where everything reaches
+ * everything agrees with itself. This is the same defect the gate exists for, one level down.
+ */
+function ownBody(node) {
+  const statuses = { written: [], named: [] };
+  const visit = (current) => {
+    if (typescript.isPropertyAssignment(current)) {
+      const name = current.name;
+      const key = typescript.isIdentifier(name) || typescript.isStringLiteral(name) ? name.text : null;
+      const value = unwrap(current.initializer);
+      if (key === "status" && typescript.isStringLiteral(value)) statuses.written.push(value.text);
+    }
+    typescript.forEachChild(current, (child) => {
+      if (!isFunctionLike(child)) visit(child);
+    });
+  };
+  if (node.body !== undefined) {
+    visit(node.body);
+    const literals = [];
+    const collect = (current) => {
+      if (typescript.isStringLiteral(current)) literals.push(current.text);
+      typescript.forEachChild(current, (child) => {
+        if (!isFunctionLike(child)) collect(child);
+      });
+    };
+    collect(node.body);
+    statuses.named = literals;
+  }
+  return statuses;
+}
+
+function functionLikeNodes(sourceFile) {
+  const nodes = [];
+  const visit = (node) => {
+    if (isFunctionLike(node)) nodes.push(node);
+    typescript.forEachChild(node, visit);
+  };
+  visit(sourceFile);
+  return nodes;
+}
+
+/**
+ * The release graph: `from -> to` when one site both names `from` and writes `to`.
+ *
+ * This is the only mechanical reading of "a transition exists" available without running the store:
+ * a function that checks a holding status and writes a terminal is a release, and one that names a
+ * holding status while writing another holding status is the step before it.
+ */
+function releaseGraph(sourceFile, states) {
+  const edges = new Map(states.map((status) => [status, new Set()]));
+  for (const node of functionLikeNodes(sourceFile)) {
+    const { written, named } = ownBody(node);
+    const from = named.filter((value) => states.includes(value));
+    const to = written.filter((value) => states.includes(value));
+    if (to.length === 0) continue;
+    for (const source of from) for (const target of to) if (source !== target) edges.get(source).add(target);
+  }
+  return { edges };
+}
+
+function lineOf(sourceFile, node) {
+  return sourceFile.getLineAndCharacterOfPosition(node.getStart()).line + 1;
+}
+
+/** Every terminal reachable from one holding status by following written transitions. */
+function reachableTerminals(start, releases, sourceFile) {
+  const terminals = [];
+  const seen = new Set([start]);
+  const queue = [start];
+  while (queue.length > 0) {
+    const current = queue.shift();
+    for (const next of releases.edges.get(current) ?? []) {
+      if (seen.has(next)) continue;
+      seen.add(next);
+      if (isTerminal(sourceFile, next)) terminals.push(next);
+      queue.push(next);
+    }
+  }
+  return terminals;
+}
+
+/**
+ * A release that does not need the process that wrote the turn: a settlement that REREADS it.
+ *
+ * The distinguishing shape is the parameter, not the name: a callback that returns the ledger is the
+ * only way to close a turn whose in-memory owner no longer exists. `settleAbandonedChatTurnOnStartup`
+ * has it (`readTurn: () => Promise<ChatTurnLedger | null>`) and takes the holding statuses from the
+ * durable row it read; the pre-fix tree had no such function, which is exactly the zombie turn this
+ * evidence requirement was written for.
+ */
+function durableTurnRereadSettlements(sourceFile, holding) {
+  const settlements = [];
+  for (const node of functionLikeNodes(sourceFile)) {
+    if (!typescript.isFunctionDeclaration(node) || node.name === undefined) continue;
+    const rereads = node.parameters.some(
+      (parameter) =>
+        parameter.type !== undefined &&
+        typescript.isFunctionTypeNode(parameter.type) &&
+        parameter.type.type.getText().includes("ChatTurnLedger"),
+    );
+    if (!rereads) continue;
+    const closed = ownBody(node).named.filter((value) => holding.includes(value));
+    if (closed.length === 0) continue;
+    settlements.push({ site: node.name.text, line: lineOf(sourceFile, node), statuses: closed });
+  }
+  return settlements;
+}
+
+/**
+ * The read a page takes: `ChatThreadState.turnLedger`, typed by the same union as the ledger itself.
+ *
+ * `next_read` says the page is simply behind and its next read is the state it is owed. That is true
+ * only while the read carries the turn status, so the property is what the reason is held to.
+ */
+function stateReadCarriesTurn(sourceFile) {
+  let carries = false;
+  const visit = (node) => {
+    if (
+      typescript.isPropertySignature(node) &&
+      node.name !== undefined &&
+      node.name.getText() === "turnLedger" &&
+      node.type !== undefined &&
+      node.type.getText().includes("ChatTurnLedger")
+    )
+      carries = true;
+    typescript.forEachChild(node, visit);
+  };
+  visit(typeAliasTypes(sourceFile).get("ChatThreadState") ?? sourceFile);
+  return carries;
+}
+
+/**
+ * What each `self_heals` reason is worth, read from the tree rather than from the reason's wording.
+ *
+ * A reason in the union with no reader here is absent from the map on purpose: a step that waits on it
+ * fails closed with the gap named, because a reason this gate cannot read is a reason it cannot certify.
+ */
+function selfHealsEvidence() {
+  const states = turnStates();
+  const settlements = durableTurnRereadSettlements(parseFile(SOURCES.turnRecovery), states.holding);
+  const evidence = new Map();
+  const released = states.holding.filter((status) => states.reaches.get(status).length > 0);
+  if (settlements.length > 0 && released.length > 0)
+    evidence.set(
+      "host_retries",
+      `${settlements.map((entry) => `${entry.site}:${entry.line}`).join(", ")} rereads the turn durably and settles ` +
+        `${settlements.flatMap((entry) => entry.statuses).join("/")}; ${released.length} of ${states.holding.length} holding ` +
+        `statuses reach a terminal (${states.states.length} states read)`,
+    );
+  if (stateReadCarriesTurn(parseFile(SOURCES.turnLedger)))
+    evidence.set("next_read", "ChatThreadState.turnLedger carries the turn status a fresh read returns");
+  return { states, settlements, evidence };
+}
+
 /**
  * Every marker the web sources put on an element: `data-testid="x"`, `data-x`, and
  * `data-testid={CONST}` where `CONST` is a string literal declared anywhere in the sources.
@@ -493,12 +784,30 @@ export function checkForwardPath() {
   const catalogues = readCatalogues();
   const defaultCatalogue = catalogues.values().next().value ?? new Map();
   const phases = phaseMembers();
-  const members = [...tavernMembers(), ...gameMembers(), ...turnMembers(), ...phases.members];
+  const selfHeals = selfHealsEvidence();
+  const members = [
+    ...tavernMembers(),
+    ...gameMembers(),
+    ...turnMembers(),
+    ...phases.members,
+    ...turnStateMembers(selfHeals.states),
+  ];
 
   if (markers.size === 0)
     findings.push(finding("no_control_markers", "no data-testid or data-* marker was read from dialogue-web/src"));
   for (const name of unread)
     console.log(`[forward-path] unread marker: data-testid={${name}} is not a string constant`);
+  for (const status of selfHeals.states.holding) {
+    const reaches = selfHeals.states.reaches.get(status) ?? [];
+    if (reaches.length === 0)
+      findings.push(
+        finding(
+          "hold_without_reachable_release",
+          `turn_status/${status} is not a terminal, and no site both names it and writes a terminal, so a turn in ` +
+            `this state has no release in the tree`,
+        ),
+      );
+  }
 
   const answerable = [];
   const answered = [];
@@ -511,13 +820,14 @@ export function checkForwardPath() {
           findings.push(finding("phase_action_not_declared", `${label} offers "${action}"`));
       continue;
     }
+    if (member.axis === "turn_status") continue;
     answerable.push(label);
     if (member.step === null) {
       findings.push(finding("step_missing", `${label} (${member.family ?? "no family"}) has no step`));
       continue;
     }
     answered.push(label);
-    checkStep(member, label, { findings, markers, defaultCatalogue, catalogues });
+    checkStep(member, label, { findings, markers, defaultCatalogue, catalogues, evidence: selfHeals.evidence });
   }
 
   if (members.length === 0 || answerable.length === 0)
@@ -531,6 +841,7 @@ export function checkForwardPath() {
       ],
       examined: members.length,
       difference: "",
+      selfHeals,
     };
 
   return {
@@ -538,11 +849,23 @@ export function checkForwardPath() {
     findings,
     examined: members.length,
     difference: difference(answered, answerable),
+    selfHeals,
   };
 }
 
+/** One member per Chat turn state: it owes a release, not a step, and the loop above holds it to that. */
+function turnStateMembers(states) {
+  return states.states.map((status) => ({
+    axis: "turn_status",
+    member: status,
+    family: `ChatTurnLedger ${status}`,
+    detailKey: null,
+    step: null,
+  }));
+}
+
 /** Every per-member question, in one place, so the loop above reads as the list of them. */
-function checkStep(member, label, { findings, markers, defaultCatalogue, catalogues }) {
+function checkStep(member, label, { findings, markers, defaultCatalogue, catalogues, evidence }) {
   const step = member.step;
   if (!STEP_KINDS.includes(step.kind)) {
     findings.push(finding("step_kind_unknown", `${label} has step kind "${String(step.kind)}"`));
@@ -559,6 +882,15 @@ function checkStep(member, label, { findings, markers, defaultCatalogue, catalog
   if (step.kind === "no_step" && !NO_STEP_REASONS.includes(step.because))
     findings.push(
       finding("step_vocabulary", `${label} no_step.because "${String(step.because)}" is not a declared member`),
+    );
+  // A reason is a claim about the Host, so it is read against the Host: union membership alone told the
+  // player to wait for a turn nothing would end, and printed `passed`.
+  if (step.kind === "self_heals" && SELF_HEALS_REASONS.includes(step.because) && !evidence.has(step.because))
+    findings.push(
+      finding(
+        "self_heals_without_evidence",
+        `${label} (${member.family ?? "no family"}) waits on self_heals:${step.because}, and ${MISSING_EVIDENCE[step.because]}`,
+      ),
     );
   if (step.kind !== "control") return;
 
@@ -599,7 +931,7 @@ function readCatalogues() {
   return catalogues();
 }
 
-export { controlMarkers, phaseMembers, tavernMembers, gameMembers, turnMembers };
+export { controlMarkers, phaseMembers, tavernMembers, gameMembers, turnMembers, turnStates, selfHealsEvidence };
 
 // ---------------------------------------------------------------------------------------------------
 // The run
@@ -625,8 +957,21 @@ function main() {
   ).length;
   console.log(
     `[forward-path] examined ${verdict.examined} (tavern ${count("tavern")}, game ${count("game")}, ` +
-      `turn ${count("turn")}, provider ${count("provider")}, game phases ${count("phase")})`,
+      `turn ${count("turn")}, provider ${count("provider")}, game phases ${count("phase")}, ` +
+      `chat turn states ${verdict.selfHeals.states.states.length})`,
   );
+  const { holding, reaches } = verdict.selfHeals.states;
+  console.log(
+    `[forward-path] chat turn states: holding ${holding.length} (` +
+      `${holding.map((status) => `${status}->${reaches.get(status).join("/") || "NOTHING"}`).join(", ")}), ` +
+      `terminal ${verdict.selfHeals.states.terminal.join("/")}`,
+  );
+  for (const because of SELF_HEALS_REASONS) {
+    const held = verdict.selfHeals.evidence.get(because);
+    console.log(
+      `[forward-path] self_heals ${because}: ${held === undefined ? `NO EVIDENCE - ${MISSING_EVIDENCE[because]}` : held}`,
+    );
+  }
   console.log(
     `[forward-path] codes: control ${kinds.control}, control+elsewhere ${kinds.elsewhere}, ` +
       `outside_surface ${kinds.outside_surface}, self_heals ${kinds.self_heals}, no_step ${kinds.no_step}`,
@@ -657,6 +1002,11 @@ function main() {
         { id: "control_id_names_a_control", status: failed("control_id_not_a_control") ? "failed" : "passed" },
         { id: "said_as_is_in_the_sentence", status: failedWithPrefix("said_as") ? "failed" : "passed" },
         { id: "phase_forward_action", status: failedWithPrefix("phase_") ? "failed" : "passed" },
+        { id: "self_heals_evidence", status: failed("self_heals_without_evidence") ? "failed" : "passed" },
+        {
+          id: "turn_status_release",
+          status: failed("hold_without_reachable_release") ? "failed" : "passed",
+        },
       ],
       findings: verdict.findings,
     }),
