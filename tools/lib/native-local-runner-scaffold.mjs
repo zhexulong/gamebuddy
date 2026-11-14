@@ -27,21 +27,33 @@
  *   5. the evidence parse and the stale reread (`evidence`, `reread`)
  *   6. the bootstrap, the print and the exit code (`runSmokeScenarioMain`)
  *
- * WHICH OF THE SIX A DEFINITION MAY SKIP. Exactly one, and only by declaration: the NEGATIVE case after the positive one -
- * a re-send against the post-run observation that the Mod must refuse, and a re-read that proves the refusal did not move
- * the world. A definition declares either `negative` (the hook) or `negativeOmittedBecause` (the reason its action has no
- * identity to re-send); declaring neither throws `native_local_scenario_definition_invalid:negative` at import, and the
- * result publishes which one happened as `negative: "measured:<code>"` or `negative: "not_declared:<reason>"`. The other
- * five steps cannot be skipped: a definition that omits `prepare`, `request`, `assertPostcondition` or `successCode` fails
- * the same way at import, before a live run can spend 40 seconds finding out.
+ * WHICH OF THE SIX A DEFINITION MAY SKIP. Two, and only by declaration.
+ *
+ *   1. the fixture-config refusal. Half the copies refused an invalid fixture config themselves and half never read one
+ *      at all, and a template that refused on their behalf would change the behaviour of the half that did not - measured
+ *      2026-11-14 on `craft_item`, which `run-native-action-slice.test.mjs` drives with `{}` and which blocked
+ *      `native_local_craft_item_fixture_config_invalid` where the copy ran. So `refusesConfig` is a REQUIRED boolean and
+ *      step 1 runs only when it is `true`. It is not a default: a default is what makes the template tighten for every
+ *      future definition without anybody deciding to. `requiredActions` and `experimentalActions` are required exactly
+ *      when it is `true`, because that is the only reader they have.
+ *
+ *   2. the NEGATIVE case after the positive one - a re-send against the post-run observation that the Mod must refuse,
+ *      and a re-read that proves the refusal did not move the world. A definition declares either `negative` (the hook)
+ *      or `negativeOmittedBecause` (the reason its action has no identity to re-send); declaring neither throws
+ *      `native_local_scenario_definition_invalid:negative` at import, and the result publishes which one happened as
+ *      `negative: "measured:<code>"` or `negative: "not_declared:<reason>"`.
+ *
+ * The other four steps cannot be skipped: a definition that omits `prepare`, `request`, `assertPostcondition` or
+ * `successCode` fails the same way at import, before a live run can spend 40 seconds finding out.
  *
  * THE DEFINITION, and what each field is for:
  *
  *   action                 the catalog action under test; also the refusal prefix (`native_local_<action>_...`)
  *   fixtureScenario        the one `NativeLocalPlayerFixture.FixtureScenario` this gate arms
+ *   refusesConfig          whether the copy this replaced refused an invalid fixture config before its first request
  *   requiredCapabilities   what the observation must advertise before anything is sent
- *   requiredActions        the actions the fixture's derived policy must not deny (fed to the harness's own validator)
- *   experimentalActions    the actions the fixture may legitimately opt in
+ *   requiredActions        the actions the fixture's derived policy must not deny (only read when `refusesConfig`)
+ *   experimentalActions    the actions the fixture may legitimately opt in (only read when `refusesConfig`)
  *   successCode            the terminal `reasonCode` the Mod's own success word is
  *   projection             which snapshot collections the blocked report publishes (`?? []` defaults)
  *   prepare({..})          action-specific work before the request -> `{ snapshot, plan }`
@@ -302,7 +314,9 @@ function requireField(definition, field, kind) {
       ? typeof value === "function"
       : kind === "string"
         ? typeof value === "string" && value.length > 0
-        : value !== undefined;
+        : kind === "boolean"
+          ? typeof value === "boolean"
+          : value !== undefined;
   if (!ok) throw new Error(`native_local_scenario_definition_invalid:${field}`);
   return value;
 }
@@ -325,8 +339,9 @@ export function defineSmokeScenario(definition) {
   const fixtureScenario = requireField(definition, "fixtureScenario", "string");
   const successCode = requireField(definition, "successCode", "string");
   const requiredCapabilities = requireList(definition, "requiredCapabilities");
-  const requiredActions = requireList(definition, "requiredActions");
-  const experimentalActions = requireList(definition, "experimentalActions");
+  const refusesConfig = requireField(definition, "refusesConfig", "boolean");
+  const requiredActions = refusesConfig ? requireList(definition, "requiredActions") : Object.freeze([]);
+  const experimentalActions = refusesConfig ? requireList(definition, "experimentalActions") : Object.freeze([]);
   const prepare = requireField(definition, "prepare", "function");
   const request = requireField(definition, "request", "function");
   const assertPostcondition = requireField(definition, "assertPostcondition", "function");
@@ -352,7 +367,8 @@ export function defineSmokeScenario(definition) {
     const startedAt = Date.now();
     let lastSnapshot = null;
     try {
-      validateRunnerConfig(config, { action, fixtureScenario, requiredActions, experimentalActions });
+      if (refusesConfig)
+        validateRunnerConfig(config, { action, fixtureScenario, requiredActions, experimentalActions });
 
       let snapshot = await observeFresh(client, { actionable: true });
       lastSnapshot = snapshot;
