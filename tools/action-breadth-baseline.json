@@ -34,19 +34,19 @@
   "exclusions": [
     {
       "actionId": "select_mine_elevator_floor",
-      "reason": "elevator-floor action: the floor set is not a client-supplied range, it is what `MineElevatorMenu` displays (integrations/stardew/src/Core/Models/BridgeProtocolModels.cs:483-497), so a fixture that has never descended a mine publishes no floor to select and the current floor is a native no-op"
+      "reason": "elevator-floor action: the floor set is not a client-supplied range, it is what `MineElevatorMenu` displays (integrations/stardew/src/Core/Models/BridgeProtocolModels.cs:614-630), so a fixture that has never descended a mine publishes no floor to select and the current floor is a native no-op"
     },
     {
       "actionId": "send_multiplayer_chat",
-      "reason": "multiplayer-only: the one social act that is not about an NPC in front of the actor, sent to the whole lobby through `Multiplayer.sendChatMessage` (integrations/stardew/src/Core/Policy/FarmhandActionDefinitions.cs:586-589); a native-local farm fixture has one farmhand and no peer to reach"
+      "reason": "multiplayer-only: the one social act that is not about an NPC in front of the actor, sent to the whole lobby through `Multiplayer.sendChatMessage` (integrations/stardew/src/Core/Policy/FarmhandActionDefinitions.cs:882-885); a native-local farm fixture has one farmhand and no peer to reach"
     },
     {
       "actionId": "use_raft",
-      "reason": "needs a Raft in a tool slot (integrations/stardew/src/Core/Policy/FarmhandActionDefinitions.cs:285, `ToolResource(\"raft\", ...)`) and open water beside it; the native-local fixture's player starts with no raft and no farm day places one"
+      "reason": "needs a Raft in a tool slot (integrations/stardew/src/Core/Policy/FarmhandActionDefinitions.cs:528, `ToolResource(\"raft\", ...)`) and open water beside it; the native-local fixture's player starts with no raft and no farm day places one"
     },
     {
       "actionId": "ride_bus",
-      "reason": "targets the Bus Stop ticket machine of the current location (integrations/stardew/src/Core/Protocol/BridgeProtocol.cs:2094-2096) and drives `BusStop.checkAction+answerDialogue` (FarmhandActionDefinitions.cs:272-283); the bus is out of order until the Vault repair, which a fixture that starts a fresh farm has not done"
+      "reason": "targets the Bus Stop ticket machine of the current location (integrations/stardew/src/Core/Protocol/BridgeProtocol.cs:2394-2396) and drives `BusStop.checkAction+answerDialogue` (integrations/stardew/src/Core/Policy/FarmhandActionDefinitions.cs:515-526); the bus is out of order until the Vault repair, which a fixture that starts a fresh farm has not done"
     }
   ]
 }
