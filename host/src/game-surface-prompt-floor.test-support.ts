@@ -196,6 +196,8 @@ export const GAME_SURFACE_PROMPT_FLOOR: PromptFloorReading = Object.freeze({
       "The `<player-note>` block is GONE, so the delivery-block rule no longer names five blocks. The player's words are now the head of the turn, verbatim and outside every block (`fact-brief.ts#composeFactBrief`), and the rule says so positionally instead of naming a block that holds them - the block, its two labels and the attribution rule that filled them (`player-note.ts`) were deleted with it. Measured by the test against the product's builder: `systemChars` 11,102 and the conduct slice 7,270 - both +6, and the two deltas AGREE because the edit is inside the one rule and nowhere else (the removed gloss and the rewritten sentence are both ASCII, so the JSON-escaped delta and the UTF-8 byte delta are both 6). The share is re-derived as 7,270 / 11,102 = 0.6548. `not_derived` from the builder: `envelopeChars` and `envelopeBytes`, whose tool array comes from a materialized session - they follow the system string by its own delta (+6: 26,392 -> 26,398, 35,701 -> 35,707) under the convention `remeasured_2026_11_05` states, and the recorded -1 from `remeasured_2026_11_12` and the two-tool under-count from `remeasured_2026_11_13` are inherited unchanged. The TOKEN columns are again carried unchanged.",
     remeasured_2026_11_15:
       "WHEN she speaks left the floor for the preset, so four conduct clauses went with it: rule 3's tail ('say it as you begin a stretch of work, then work quietly until you are done'), rule 5's ', and stop', rule 7's ', so say one thing per reply and stop when it has been said', and rule 8's opening 'One utterance per reply.' The preset already states every one of them (`amber-deepseek-v4.1.json`: `说清就停`, `连续劳作专注干活`, `单条回复…8~30 字`), which is what makes this a deletion of duplicates rather than a loss; `host/src/conversational-stance-gate.test.ts` is what keeps them from returning to this floor. Measured by the test against the product's builder: `systemChars` 10,934 and the conduct slice 7,102 - both -168, and the two deltas AGREE because the edit is inside the conduct block and nowhere else; the removed text is ASCII, so the JSON-escaped delta and the UTF-8 byte delta are both -168. The share is re-derived as 7,102 / 10,934 = 0.6495. `not_derived` from the builder: `envelopeChars`/`envelopeBytes` follow the system string by its own delta (26,398 -> 26,230, 35,707 -> 35,539) under `remeasured_2026_11_05`'s convention, and the recorded -1 and the two-tool under-count are inherited unchanged. NOT IN THIS READING'S COLUMNS: the plan tool's description lost the same kind of clause ('so end your turn and speak to the player' -> 'so end your turn'), 24 chars that no column here counts - the tool rows are the 2026-10-31 materialized-session measurement and already an under-count. The TOKEN columns are again carried unchanged.",
+    remeasured_2026_11_21:
+      "The delivery-block rule stopped asserting a premise the delivery contradicts, and the grounding rule stopped commanding speech on every turn, so every column that counts them moved. Measured 2026-11-21 (`round56`, 32 delivered batches): 29 began with `<world-state>` and 3 with the partner's own words, because `composeFactBrief` can emit only those two heads - so 'A turn's message opens with your partner's own words ... answer what your partner said at the top of the message' was false on 90% of the turns that ran. The rule now states both shapes (`fact-brief`'s two heads) and says of the no-speech one only that there is nobody at the top to answer, so nothing about WHEN she speaks enters the floor. `tangible_specifics`'s 'Say what is happening right in front of you and deliver your first reaction' became 'When you speak, say what is happening right in front of you: your first reaction, never a summary of the situation' - an unconditional speech command is the same false premise wearing an imperative. Measured by the test against the product's builder: `systemChars` 10,923 and the conduct slice 7,420, and the two deltas AGREE against HEAD (+271 both) because both edits are inside the conduct block and nowhere else; the added and removed text is ASCII, so the JSON-escaped delta and the UTF-8 byte delta are both +271. THE +271 IS NOT THE WHOLE DELTA FROM THE LAST RECORDING, and the rest is RECORDED HERE RATHER THAN ABSORBED SILENTLY: at HEAD (9b71de46) this tree's builder already produced `systemChars` 10,652 against the recorded 10,934 -282, and a conduct slice of 7,149 against the recorded 7,102 +47, which is a card/persona-side loss of 329 chars and a conduct gain of 47 that no entry above names. The share is re-derived from the CURRENT pair, as 7,420 / 10,923 = 0.6793, not from the recorded pair: the previous entry's 0.6495 divided two numbers that no longer describe either side. `not_derived` from the builder: `envelopeChars`/`envelopeBytes` follow the system string by this change's own delta (+271: 26,230 -> 26,501, 35,539 -> 35,810) under `remeasured_2026_11_05`'s convention; the inherited -282 and -1 are NOT in those two numbers, so both are now under-counts of a prompt 283 chars longer than the one that ships, and the two-tool under-count from `remeasured_2026_11_13` is inherited unchanged. The TOKEN columns are again carried unchanged and are a larger under-count still.",
   }),
   floor: Object.freeze({
     // The plan-builder-only measurement: 14 tools. The surface a Game session is handed now carries 16, because the two
@@ -203,25 +205,26 @@ export const GAME_SURFACE_PROMPT_FLOOR: PromptFloorReading = Object.freeze({
     // `remeasured_2026_11_13`, which records that this column is an under-count of the surface rather than a second
     // reading of it.
     toolCount: 14,
-    // Re-derived from the product's builder by the test itself: 10,934 at `remeasured_2026_11_15` (11,102 less the 168
-    // chars of stance the four conduct clauses gave up). The token column below is the 2026-11-05 MEASUREMENT, an
-    // under-count of a shorter prompt that is no longer this one.
-    systemChars: 10934,
+    // Re-derived from the product's builder by the test itself: 10,923 at `remeasured_2026_11_21` (10,652 at HEAD, less
+    // a pre-existing -282 that entry records, plus this change's own +271). The token column below is the 2026-11-05
+    // MEASUREMENT, an under-count of a shorter prompt that is no longer this one.
+    systemChars: 10923,
     systemTokens: 5119,
     toolsTokens: 3552,
-    // The recorded envelope plus this change's own JSON-escaped delta (-168): the tool array and the empty message list
-    // are unchanged, so the system string is the whole of it. Not re-measured - see `remeasured_2026_11_15`.
-    envelopeChars: 26230,
-    // The same -168 in UTF-8 bytes: the removed text is ASCII.
-    envelopeBytes: 35539,
+    // The recorded envelope plus this change's own JSON-escaped delta (+271): the tool array and the empty message list
+    // are unchanged, so the system string is the whole of it. Not re-measured - see `remeasured_2026_11_21`, which also
+    // records the pre-existing -282 this number does not carry.
+    envelopeChars: 26501,
+    // The same +271 in UTF-8 bytes: the added and removed text is ASCII.
+    envelopeBytes: 35810,
     envelopeTokens: 8787,
   }),
   conductBlock: Object.freeze({
-    chars: 7102,
+    chars: 7420,
     tokens: 1227,
-    // The measured slice over the measured prompt: 7,102 / 10,934. Recorded as the quotient, not as a share typed
+    // The measured slice over the measured prompt: 7,420 / 10,923. Recorded as the quotient, not as a share typed
     // separately from the two numbers it divides - an earlier recording carried 0.655 against 7,268/11,101.
-    charShareOfSystemPrompt: 0.6495,
+    charShareOfSystemPrompt: 0.6793,
     tokenShareOfSystemPrompt: 0.24,
   }),
   denominator: Object.freeze([

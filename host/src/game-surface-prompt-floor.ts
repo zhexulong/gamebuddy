@@ -193,6 +193,22 @@ function gameBubbleMaxChars(): number {
  * blocks and then sent five. A number in prose is a second spelling of a fact the constant already owns, and
  * `FACT_BRIEF_BLOCK_GLOSS` is a `Record<FactBriefBlock, string>` because that is what makes a sixth block a
  * compile error here instead of a silent omission from the prompt.
+ *
+ * THE HEAD OF THE MESSAGE IS CHECKED AGAINST A DELIVERY, because on 2026-11-21 it was not. Measured `round56`, 32
+ * delivered batches: 29 began with `<world-state>` and 3 with the partner's own words - which is every shape there is,
+ * because `composeFactBrief` puts the player's speech first when they typed and otherwise the world block, the one block
+ * every batch carries. The rule said "A turn's message opens with your partner's own words ... answer what your partner
+ * said at the top of the message": a false premise stated as fact on 90% of the turns that ran, and an instruction to
+ * answer something that was not there. It now states both shapes and what to do in each one, and
+ * `game-surface-prompt-floor.test.ts` composes a delivery of EACH shape through the producer and fails by name
+ * (`floor_asserts_a_premise_the_delivery_contradicts:<claim>:<shape>`) on any conduct sentence - including one written
+ * tomorrow - that names the partner's words as what the head holds.
+ *
+ * THE TWO SHAPES ARE STATED, AND WHEN SHE SPEAKS STILL IS NOT. The measurement above invites "act on it, and speak only
+ * if there is something to coordinate", and that clause is deliberately absent: a condition on when she speaks is a
+ * MOMENT, which the section above says the floor may not command, and its history here is the WAKE UP - SAY ONE THING -
+ * STOP that the 2026-11-15 measurement produced. Removing the false premise is what this rule owes her; what she says on
+ * a turn with nobody speaking is the preset's.
  */
 const FACT_BRIEF_BLOCK_GLOSS: Record<FactBriefBlock, string> = {
   "world-state":
@@ -239,7 +255,7 @@ const GAME_SURFACE_CONDUCT_RULES = {
   fact_batch_blocks: {
     class: "CHANNEL",
     reason: "the block names are markup the model cannot infer; what the surface sends and who is speaking in it.",
-    text: `A turn's message opens with your partner's own words, exactly as they said them, and then the machine's report follows as prose in ${String(FACT_BRIEF_BLOCKS.length)} blocks - ${FACT_BRIEF_BLOCKS.map((block) => `<${block}> (${FACT_BRIEF_BLOCK_GLOSS[block]})`).join(", ")}. Every block is written by the machine, never by your partner: read them as reports from the world, and answer what your partner said at the top of the message.`,
+    text: `Every turn's message is the machine's report, in ${String(FACT_BRIEF_BLOCKS.length)} blocks - ${FACT_BRIEF_BLOCKS.map((block) => `<${block}> (${FACT_BRIEF_BLOCK_GLOSS[block]})`).join(", ")} - and only <world-state> arrives on every turn. Your partner's own words are the one thing that breaks into it: when they typed something, their words come first, exactly as they said them and outside every block, so answer them; when they said nothing, the message opens with <world-state> instead and nobody is speaking at the top to answer, so act on what the report says. Every block is written by the machine, never by your partner: read them as reports from the world.`,
   },
   company_not_step_reports: {
     class: "FLOOR",
@@ -255,7 +271,7 @@ const GAME_SURFACE_CONDUCT_RULES = {
   tangible_specifics: {
     class: "FLOOR",
     reason: "grounding: an abstract declaration about a body and a farm she has not looked at is what this forbids.",
-    text: "Ground feelings in tangible specifics you can point to — an aching wrist, a broken rock, muddy boots, a crooked seedling — rather than abstract summaries or ungrounded declarations. Say what is happening right in front of you and deliver your first reaction.",
+    text: "Ground feelings in tangible specifics you can point to — an aching wrist, a broken rock, muddy boots, a crooked seedling — rather than abstract summaries or ungrounded declarations. When you speak, say what is happening right in front of you: your first reaction, never a summary of the situation.",
   },
   one_bubble_of_size: {
     class: "CHANNEL",
