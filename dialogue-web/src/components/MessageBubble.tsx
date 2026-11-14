@@ -13,6 +13,7 @@ import { memo, type KeyboardEvent as ReactKeyboardEvent, useEffect, useLayoutEff
 import type { BrowserMessageV1 } from "../reference-pipeline-api";
 import { browserMessageLanguageTag } from "../reference-pipeline-api";
 import { useArmedConfirmation } from "./armed-confirmation";
+import { isImeProcessingKey } from "./ime-composition";
 import { CompanionAvatar } from "./CompanionAvatar";
 import { MarkdownMessage } from "./MarkdownMessage";
 import { openingVariantWords } from "./opening-variant-labels";
@@ -223,6 +224,7 @@ function MessageEditor({
    * on the document (`Escape` closes the field exactly as Cancel does).
    */
   const onFieldKeyDown = (event: ReactKeyboardEvent<HTMLTextAreaElement>): void => {
+    if (isImeProcessingKey(event.nativeEvent)) return;
     if (event.key !== "Enter" || !event.ctrlKey) return;
     event.preventDefault();
     if (busy || !canSave) return;
