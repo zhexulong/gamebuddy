@@ -700,11 +700,20 @@
     padding: 0 16px;
   }
 
+  /* The transcript grows while the player is reading it: the companion's reply
+   arrives token by token, crosses the viewport height mid-stream, and a classic
+   scrollbar then takes its own width out of the reading column - every bubble
+   above it re-wraps, and the text jumps under the reader for the rest of the
+   reply. `scrollbar-gutter: stable` reserves that strip while the transcript is
+   still short, so both states lay their content out in the same width. Measured
+   in a 400 px frame: the short state reserves 15 px and lays its row out in
+   385 px, and the overflowing state keeps exactly those 385 px. */
   .timeline {
     flex: 1 1 0%;
     min-height: 0;
     overflow-y: auto;
     overflow-x: hidden;
+    scrollbar-gutter: stable;
     padding: 20px 0;
     display: flex;
     flex-direction: column;
@@ -1628,9 +1637,13 @@
     background-color: var(--surface-canvas);
   }
 
+  /* The same reservation one panel over, for the same reason: a section that
+   opens or a list that arrives mid-use would otherwise move the whole drawer
+   body sideways. (`.timeline` above carries the measurement.) */
   .drawer-content {
     flex: 1 1 0%;
     overflow-y: auto;
+    scrollbar-gutter: stable;
     padding: 16px;
     display: flex;
     flex-direction: column;
@@ -2330,22 +2343,11 @@
     color: var(--danger);
   }
 
-  /* The two selects below carry labels whose class names them visually hidden, and no rule
-   implemented it: measured at 400x800 they laid out in the strip as two lines of body text,
-   58 px of the row's height, and pushed the row's next action to bottom 836. The recipe keeps
-   them in the accessibility tree, which is what names their selects; it only takes them out of
-   the flow and out of the paint. */
-  .connection-row .visually-hidden-input-label {
-    position: absolute;
-    width: 0;
-    height: 0;
-    margin: 0;
-    padding: 0;
-    border: 0;
-    overflow: hidden;
-    clip-path: inset(50%);
-    white-space: nowrap;
-  }
+  /* The two selects below carry labels hidden by the sheet's one `.visually-hidden`
+   utility (its own block further down, beside the card-import recipe it shares a shape
+   with). They used to carry a class of their own, and nothing implemented it: measured at
+   400x800 they laid out as two lines of body text, 58 px of the row's height, and pushed
+   the row's next action to bottom 836. Nothing is left to declare here. */
 
   /* --- Model profiles (design/28 §2.3) --- */
   .model-profile-editor {
@@ -4103,10 +4105,15 @@
     letter-spacing: 0.01em;
   }
 
+  /* A management surface's content arrives in pieces - a list resolves, a section
+   expands, a confirmation opens - so it crosses its own height mid-use exactly as
+   the transcript does, and it takes the same reserved gutter (`.timeline` carries
+   the measurement). */
   .surface-content {
     flex: 1 1 0%;
     min-height: 0;
     overflow-y: auto;
+    scrollbar-gutter: stable;
     display: flex;
     flex-direction: column;
     gap: 12px;
@@ -4154,9 +4161,15 @@
   }
 
   /* The conversation is a surface like the others, but its transcript scrolls
-   above a composer that stays at the bottom, so it manages its own scrolling. */
+   above a composer that stays at the bottom, so it manages its own scrolling.
+   It must give the reserved gutter back: `overflow: hidden` still creates a
+   scroll container, so it would inherit `scrollbar-gutter: stable` from the
+   shared `.surface-content` rule and spend 15 px of the column on a scrollbar it
+   can never draw - while the transcript inside it reserves its own (measured:
+   `overflow: hidden` + `stable` reserves the 15 px exactly like `auto` does). */
   .surface-conversation .surface-content {
     overflow: hidden;
+    scrollbar-gutter: auto;
     gap: 0;
     padding-bottom: 0;
   }
@@ -5594,6 +5607,35 @@
       animation: none;
     }
   }
+  /* ==========================================================================
+   The one "rendered, not drawn" utility
+
+   Four things the product renders have to stay in the accessibility tree and out
+   of the player's way, and they are one fact, so they are one rule: the two
+   labels that name the saved-connection row's selects (`.connection-row`), and
+   the timeline's live region, which exists only to be spoken (`Timeline`).
+   Before it there were three scoped copies of these declarations; the two rules
+   below keep only what is theirs on top of this recipe.
+
+   `clip-path: inset(50%)` rather than the classic `width: 1px; height: 1px`
+   recipe: the 1 px box still lays its content out, and it was measured as an
+   overflowing control - a 1 px-high file input reporting `overX 139`. A
+   zero-sized box clips the paint and leaves the words in the tree, where the
+   labels' own text is what names their selects.
+   ========================================================================== */
+
+  .visually-hidden {
+    position: absolute;
+    width: 0;
+    height: 0;
+    margin: 0;
+    padding: 0;
+    border: 0;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+
   /* ==========================================================================
    The card-import file control (character-import lane block)
 
