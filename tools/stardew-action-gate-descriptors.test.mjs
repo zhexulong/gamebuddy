@@ -34,10 +34,11 @@ test("published action gate rows are complete, unique, and each resolves to a ga
   // stopping the run at the first ENOENT.
   const routes = resolveStardewActionGateRoutes(gateActionIds);
   assert.equal(routes.length, gates.length, "the resolver dropped rows, which would narrow every check below");
+  const unresolved = describeGateRouteProblems(routes);
   assert.deepEqual(
-    describeGateRouteProblems(routes),
+    unresolved,
     [],
-    "these gate rows do not resolve to a gate artifact that exists:\n" + describeGateRouteProblems(routes).join("\n"),
+    `these gate rows do not resolve to a gate artifact that exists:\n${unresolved.join("\n")}`,
   );
 
   for (const [index, gate] of gates.entries()) {
@@ -177,7 +178,7 @@ test("every published gate resolves to the native-local artifact for its route k
   assert.deepEqual(
     problems,
     [],
-    "gate routes that do not resolve to the native-local artifact for their route kind:\n" + problems.join("\n"),
+    `gate routes that do not resolve to the native-local artifact for their route kind:\n${problems.join("\n")}`,
   );
   // A population of zero agrees with itself, so state what was examined - and keep the runner half honest, because a
   // table that drifted to all contracts would leave the runner rules above with nothing left to check.

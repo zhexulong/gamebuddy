@@ -44,7 +44,7 @@ function routeScripts() {
 
 test("every gate route's script declares a CLI entry point", () => {
   const { scripts, broken } = routeScripts();
-  assert.deepEqual(broken, [], "a route that does not resolve cannot be checked here:\n" + broken.join("\n"));
+  assert.deepEqual(broken, [], `a route that does not resolve cannot be checked here:\n${broken.join("\n")}`);
   const missing = [];
   for (const script of scripts) {
     const source = readFileSync(path.join(ROOT, script), "utf8");

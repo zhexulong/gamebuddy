@@ -30,15 +30,15 @@
 import assert from "node:assert/strict";
 import { readdirSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { fileURLToPath } from "node:url";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 
-import { configureNativeLocalPlayer, fixtureActions } from "./lib/stardew-native-local-player-fixture.mjs";
 import {
   describeGateRouteProblems,
   namedRunner,
   resolveStardewActionGateRoutes,
 } from "./lib/stardew-action-gate-route.mjs";
+import { configureNativeLocalPlayer, fixtureActions } from "./lib/stardew-native-local-player-fixture.mjs";
 import { readExperimentalStardewActionIds } from "./lib/stardew-published-action-registry.mjs";
 import {
   STARDEW_EXPERIMENTAL_ACTION_RUNNERS,
@@ -367,7 +367,7 @@ test("every gate row resolves to a gate artifact that exists", () => {
   // row whose route is missing is named. This used to accept only a runner file, which made every runner permanent.
   const routes = resolveStardewActionGateRoutes(STARDEW_PUBLISHED_ACTION_GATES.map((gate) => gate.actionId));
   const problems = describeGateRouteProblems(routes);
-  assert.deepEqual(problems, [], "gate rows whose live gate does not resolve:\n" + problems.join("\n"));
+  assert.deepEqual(problems, [], `gate rows whose live gate does not resolve:\n${problems.join("\n")}`);
   assert.equal(routes.length, STARDEW_PUBLISHED_ACTION_GATES.length, "the resolver dropped rows");
 });
 
