@@ -400,15 +400,6 @@
       "reason": "[not-a-population] a guard collecting the seams that resolved to nothing (`if (methods.length === 0) failures.push(...)`), which the `deepEqual(failures, [])` at the end reads."
     },
     {
-      "file": "integrations/stardew/action-development/tests/static-verifier-contract.test.mjs",
-      "authority": "INTEGRATION_REQUIREMENTS",
-      "literal": "3",
-      "shape": "declaration_site",
-      "sites": 1,
-      "line": 63,
-      "reason": "[derivable-now] the two tables above it are `deepEqual`d against their declarations verbatim; the same shape for this import (`deepEqual(INTEGRATION_REQUIREMENTS.map((entry) => entry.id), [...])`) is what the file already does elsewhere."
-    },
-    {
       "file": "tools/audit-stardew-decision-closure.test.mjs",
       "authority": "admitted",
       "literal": "0",

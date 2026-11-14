@@ -60,7 +60,11 @@ test("freezes the exact versioned capability contract identity", () => {
     { id: "capability-publication-contract", relativePath: "FarmhandCapabilityPublicationProjection.Contract.dll", required: true },
   ]);
   assert.deepEqual(STATIC_CHECKS, [{ id: "target-assembly-availability", kind: "target_assembly_availability", required: true }]);
-  assert.equal(INTEGRATION_REQUIREMENTS.length, 3);
+  assert.deepEqual(INTEGRATION_REQUIREMENTS, [
+    "wire the package verifier into the package portfolio without changing the existing manifest in this migration slice",
+    "supply the independently published target assembly artifact root and preserve its provenance at integration time",
+    "add the later package workflow/CI invocation only after package parity review",
+  ]);
 });
 
 test("accepts only the exact committed producer fixtures as validated input", async () => {
