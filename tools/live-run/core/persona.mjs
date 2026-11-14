@@ -80,9 +80,10 @@ export const LIVE_RUN_PERSONA_FILES = Object.freeze(["card.json", "worldbook.jso
  * 「琥珀 · DeepSeek-V4.1 星露谷伴侣预设」: it names a MODEL, not a surface. So every Game live run applied a
  * model-specific preset whose `main` entry even carries the other surface's instruction ("独立聊天界面（Chat Surface）：
  * 解除严格字数压制，放宽至 50~100 字"), while `amber-game.json` - the preset that declares itself
- * 「琥珀 · 星露谷游戏伴玩专精预设 (Game Surface)」 - never reached a run at all. A run that measures naturalness against a preset it did not
- * mount cannot be attributed to that preset, so the file is now READ OUT OF THE DECLARATION: exactly one preset must
- * declare `LIVE_RUN_SURFACE`, and zero or two is a refusal by name rather than a default.
+ * 「琥珀 · 星露谷游戏伴玩专精预设 (Game Surface)」 - never reached a run at all. A run that measures naturalness
+ * against a preset it did not mount cannot be attributed to that preset, so the file is now READ OUT OF THE
+ * DECLARATION: exactly one preset must declare `LIVE_RUN_SURFACE`, and zero or two is a refusal by name rather than a
+ * default.
  *
  * A run whose review asks "did the preset shape this session?" needs the file to be THERE: absence is reported as
  * `generation: null` in the run's bundle, and this harness refuses to start without it.
