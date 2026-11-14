@@ -42,11 +42,22 @@ export default tseslint.config(
     rules: {
       // A scrollable region that can take focus is the accepted fix for axe's
       // `scrollable-region-focusable`; each of these carries its own accessible
-      // name, and `region` is the role a named <section> already has.
-      "jsx-a11y/no-noninteractive-tabindex": ["error", { tags: ["section", "pre"], roles: ["region"] }],
-      // A modal `<aside role="dialog">` handling Escape is a legitimate key
-      // interaction; the rule flags it because `aside` is a non-interactive tag.
-      "jsx-a11y/no-noninteractive-element-interactions": ["error", { aside: ["onKeyDown"] }],
+      // name, and `region` is the role a named <section> already has. A `<ul>` that scrolls itself is a tab
+      // stop for the same reason, and it cannot take `region`: the role would replace the list semantics its
+      // rows are read through, so the tag is named here rather than the role.
+      "jsx-a11y/no-noninteractive-tabindex": ["error", { tags: ["section", "pre", "ul"], roles: ["region"] }],
+      // A modal dialog handling Escape is a legitimate key interaction; the rule flags it because `dialog` and
+      // `aside` are non-interactive tags. A `<form>` carries `preventImeFormSubmit` because an input method's
+      // confirming Enter must not submit the form (`ime-enter-gate`), and an `<img>` is here for `onError`,
+      // which this rule counts among image events: a failed load is the boundary's answer, not a player's press.
+      "jsx-a11y/no-noninteractive-element-interactions": [
+        "error",
+        { aside: ["onKeyDown"], dialog: ["onClick", "onKeyDown"], form: ["onKeyDown"], img: ["onError"] },
+      ],
+      // `role="list"` is the one redundant role this product spells out: `list-style: none` drops the list
+      // semantics in Safari, and the explicit role is the only thing that restores them. Both reports in
+      // `CharacterCardImport` state that reason at the element.
+      "jsx-a11y/no-redundant-roles": ["error", { ul: ["list"] }],
     },
   },
 );
