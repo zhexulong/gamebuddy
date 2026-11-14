@@ -228,9 +228,21 @@ public sealed class ShopSaleReachTests : IDisposable
     }
 
     /// <summary>
-    /// The refusal the inventory owes the caller when it genuinely cannot take the goods: every slot is full of
-    /// something the purchase does not stack with, so no slot is answered and the reason NAMES the item that is
-    /// stranded.
+    /// A purchase the pack cannot hold is refused BEFORE the purse pays: the goods no slot could take are what the
+    /// player's own path refuses to close on, never something it deletes.
+    ///
+    /// <para>
+    /// THIS TEST USED TO PIN THE LOSS. It drove the engine's click, saw the goods stranded on the cursor, and asserted
+    /// the refusal text beside a purse that had already paid - the exact defect: `ShopPurchaseCapacity` had no inventory
+    /// term, so the click charged 20g (ShopMenu.cs:1364) and the handler's own `Game1.exitActiveMenu()` then dropped the
+    /// <c>ShopMenu</c> that held the stack (Game1.cs:6128-6131), destroying it. The player's own path does the opposite:
+    /// `ShopMenu.readyToClose` answers false while goods are held (ShopMenu.cs:1255-1262) and the menu key hands them to
+    /// <c>Utility.CollectOrDrop</c> (:965-978 -> Utility.cs:2092-2112), which puts them in the pack or on the ground.
+    /// </para>
+    /// <para>
+    /// So this asserts the refusal at admission, from the engine's own count of what the pack can hold, and that no
+    /// click happened - the purse is exactly what it was.
+    /// </para>
     /// </summary>
     [Fact]
     public void AnInventoryThatCannotTakeTheGoodsIsRefusedByItem()
@@ -240,18 +252,267 @@ public sealed class ShopSaleReachTests : IDisposable
             bag.Add(new StardewValley.Object { ParentSheetIndex = 300 + slot });
 
         using var shop = new ShopView("SeedShop", saleCount: 2, Rows, bag);
-        BindPlayer(money: 500, bag);
+        Farmer player = BindPlayer(money: 500);
         SaleItem goods = shop.Sales[0];
         goods.ItemId = "472";
+        goods.Stack = 1;
+        Item pricey = (Item)goods.GetSalableInstance();
 
-        shop.Confirm(ExecutionManager.ShopSaleRowInView(shop.Menu, 0, out _));
+        // The pack's own answer, from the engine's own arithmetic (Utility.cs:6283-6302): every slot holds something
+        // these goods do not stack with, so there is no room for one unit.
+        int room = ExecutionManager.ShopPackPurchases(
+            bag!, bag!.Count, pricey, unitsPerPurchase: 1, consumedByThePurchase: false);
+        room.Should().Be(0, "no slot is empty and none stacks with the purchase, so the pack can take none of it");
 
-        Item held = (Item)shop.Menu.heldItem!;
-        ExecutionManager.ShopDropSlot(bag!, held).Should().Be(-1, "no slot can take it: none is empty, none stacks");
-        ExecutionManager.ShopInventoryRefusal(held).Should().Be(
+        (long affordable, int purchasable) = ExecutionManager.ShopPurchaseCapacity(
+            shop.Menu.itemPriceAndStock[goods], currencyHeld: player.Money, requestedQuantity: 1, packPurchases: room);
+
+        affordable.Should().Be(25, "the purse could pay for twenty-five at the fixture's 20g price - money is not the reason");
+        purchasable.Should().Be(0, "the pack is what refuses it, and the term that says so is part of the one count");
+        player.Money.Should().Be(500, "nothing was clicked, so nothing was charged: the refusal is at admission");
+        ExecutionManager.ShopInventoryRefusal(pricey).Should().Be(
             "inventory_cannot_accept:(O)472",
-            "the refusal names the goods, because the purse already paid for them and the caller cannot act on "
-            + "\"the purchase failed\"");
+            "the refusal names the goods, because the caller has to know WHICH stack the pack cannot take");
+
+        // The player's own path, as the reference for why refusing is the right answer rather than closing anyway:
+        // the engine will not close this menu while it holds goods, which is the same stack the old path destroyed.
+        shop.Confirm(ExecutionManager.ShopSaleRowInView(shop.Menu, 0, out _));
+        shop.Menu.heldItem.Should().NotBeNull("the engine leaves the purchase on the cursor (ShopMenu.cs:1352)");
+        shop.Menu.readyToClose().Should().BeFalse(
+            "a real player's menu refuses to close on held goods (ShopMenu.cs:1255-1262) - it never deletes them");
+    }
+
+    /// <summary>
+    /// THE GATE'S POPULATION, produced rather than listed: every receipt this suite can mint is written to
+    /// <c>tools/fixtures/stardew-shop-purchase-receipts.json</c>, and
+    /// <c>tools/check-stardew-shop-purchase-pays-for-goods.mjs</c> asserts over all of them that money left the purse only
+    /// when goods arrived or a tool was upgraded.
+    ///
+    /// <para>
+    /// Each receipt is the MOD's own text: the outcome comes from <c>ShopPurchaseOutcomeFor</c>, the detail from
+    /// <c>ShopPurchaseReceipt</c>, the pack answer from <c>ShopPackPurchases</c> and the refusal from
+    /// <c>ShopPackRefusalEvidence</c> - the same calls the handler makes, in the same order, with the real engine charging
+    /// the real purse through <c>receiveLeftClick</c>. What the harness replaces is only the opening of the menu, which
+    /// needs a mounted world.
+    /// </para>
+    /// <para>
+    /// The scenarios are a table, so a purchase shape added here enters the gate without an edit on the Node side; the
+    /// gate refuses to pass on an empty corpus, so a table that stops producing receipts is red rather than green.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void EveryPurchaseReceiptTheSuiteProducesPaysForItsGoods()
+    {
+        List<(string Scenario, string Detail)> receipts = ProducePurchaseReceipts();
+
+        receipts.Select(receipt => receipt.Scenario).Should().OnlyHaveUniqueItems("each scenario is named once");
+        receipts.Should().HaveCountGreaterThanOrEqualTo(5, "the corpus is the gate's population; a thin corpus proves little");
+
+        string corpusPath = Path.Combine(
+            RepositoryRoot(), "tools", "fixtures", "stardew-shop-purchase-receipts.json");
+        string entries = string.Join(
+            ",\n",
+            receipts.Select(receipt =>
+                "    {\"scenario\": " + Json(receipt.Scenario) + ", \"detail\": " + Json(receipt.Detail) + "}"));
+        string corpus =
+            "{\n"
+            + "  \"note\": \"Purchase receipts the Stardew Integration suite produces. Regenerate by running "
+            + "ShopSaleReachTests.EveryPurchaseReceiptTheSuiteProducesPaysForItsGoods; the gate "
+            + "tools/check-stardew-shop-purchase-pays-for-goods.mjs reads it.\",\n"
+            + "  \"receipts\": [\n"
+            + entries
+            + "\n  ]\n}\n";
+        File.WriteAllText(corpusPath, corpus);
+
+        // The corpus names the goods it judged, so a reader can tell a purchase receipt from a receipt of something else.
+        foreach ((string scenario, string detail) in receipts)
+            detail.Should().Contain("money_before=", $"{scenario} states the purse it started from");
+    }
+
+    /// <summary>
+    /// The purchase decision sequence of the handler, replayed where a world cannot be mounted: the pack count, the one
+    /// capacity, the refusal, the engine's click, the engine's drop, the decider and the receipt. The order is pinned by
+    /// <see cref="ThePackIsJudgedBeforeTheClickThatChargesThePurse"/>, so this cannot silently drift from the handler.
+    /// </summary>
+    private static List<(string Scenario, string Detail)> ProducePurchaseReceipts()
+    {
+        var produced = new List<(string, string)>
+        {
+            Purchase("bag_has_room", Bag(12), money: 500),
+            Purchase("bag_full_of_other_goods", FullBag(), money: 500),
+            Purchase("bag_merges_into_a_partial_stack", PartialStackBag(), money: 500),
+            Purchase("bag_absorbs_a_multi_unit_quantity", Bag(12, occupied: 9), money: 500, quantity: 5),
+            Purchase("tool_upgrade_needs_no_room", FullBag(), money: 5000, price: 5000,
+                shopId: "ClintUpgrade", consumeOnPurchase: true, requiredToolId: "(T)CopperHoe"),
+        };
+        return produced;
+    }
+
+    /// <summary>
+    /// One purchase, end to end: the production seam decides whether the click may happen, the ENGINE charges and hands
+    /// the goods over, the production drop puts them away, and the receipt is the producer's own text.
+    /// </summary>
+    private static (string Scenario, string Detail) Purchase(
+        string scenario,
+        List<Item?> bag,
+        int money,
+        int quantity = 1,
+        int price = Price,
+        string shopId = "SeedShop",
+        bool consumeOnPurchase = false,
+        string? requiredToolId = null)
+    {
+        using var shop = new ShopView(shopId, saleCount: 1, Rows, bag);
+        Farmer player = BindPlayer(money);
+        SaleItem sale = shop.Sales[0];
+        sale.ItemId = "472";
+        sale.Stack = 1;
+        sale.ConsumeOnPurchase = consumeOnPurchase;
+        // Infinite stock: the finite-stock path decrements through `Farmer.team.synchronizedShopStock`
+        // (ShopMenu.cs:1398-1405), a multiplayer object this fixture cannot build - and stock is not what any of these
+        // scenarios is about. The purse, the pack and the engine's own hook are.
+        shop.Menu.itemPriceAndStock[sale] = new ItemStockInformation(price, int.MaxValue);
+
+        Item goods = (Item)sale.GetSalableInstance();
+        long currencyHeld = player.Money;
+        bool consumed = ExecutionManager.ShopPurchaseConsumesTheEntry(sale, shopId, requiredToolId);
+        int packPurchases = ExecutionManager.ShopPackPurchases(
+            bag!, bag!.Count, goods, unitsPerPurchase: 1, consumedByThePurchase: consumed);
+        (long affordable, int purchasable) = ExecutionManager.ShopPurchaseCapacity(
+            shop.Menu.itemPriceAndStock[sale], currencyHeld, quantity, packPurchases);
+
+        long currencyBefore = player.Money;
+        int ownedBefore = Owned(bag, "(O)472");
+        int stockBefore = shop.Menu.itemPriceAndStock[sale].Stock;
+
+        if (affordable < 1)
+        {
+            return (scenario, ExecutionManager.ShopPurchaseAffordabilityEvidence(
+                shopId, "(O)472", price, shopCurrency: 0, currencyHeld));
+        }
+        if (packPurchases < 1)
+        {
+            return (scenario, ExecutionManager.ShopPackRefusalEvidence(
+                shopId, "(O)472", quantity, price, shopCurrency: 0, currencyHeld, int.MaxValue, packPurchases, ownedBefore));
+        }
+
+        var clicks = new List<string>();
+        var drops = new List<string>();
+        string? refusal = null;
+        for (int bought = 0; bought < purchasable; bought++)
+        {
+            int row = ExecutionManager.ShopSaleRowInView(shop.Menu, 0, out _);
+            shop.Confirm(row);
+            clicks.Add($"click{bought}:row={row}|cursor={shop.Menu.currentItemIndex}|held_after={shop.Menu.heldItem?.QualifiedItemId ?? "none"}");
+
+            if (shop.Menu.heldItem is not Item held)
+                continue;
+            int slot = ExecutionManager.ShopDropSlot(bag!, held);
+            if (slot >= 0)
+                shop.Place(slot);
+            drops.Add($"drop{bought}:slot={slot}|held={held.QualifiedItemId}->{shop.Menu.heldItem?.QualifiedItemId ?? "none"}");
+            if (shop.Menu.heldItem is Item stranded)
+            {
+                refusal = ExecutionManager.ShopInventoryRefusal(stranded);
+                break;
+            }
+        }
+
+        int ownedAfter = Owned(bag, "(O)472");
+        string? upgradedTool = consumeOnPurchase ? goods.QualifiedItemId : null;
+        var facts = new ExecutionManager.ShopPurchaseReceiptFacts(
+            ShopId: shopId,
+            OwnerName: "Pierre",
+            TileOpened: false,
+            ItemId: "(O)472",
+            Requested: quantity,
+            Purchased: purchasable,
+            UnitPrice: price,
+            CurrencyBefore: currencyBefore,
+            CurrencyAfter: player.Money,
+            OwnedBefore: ownedBefore,
+            OwnedAfter: ownedAfter,
+            StockBefore: stockBefore,
+            StockAfter: shop.Menu.itemPriceAndStock[sale].Stock,
+            CounterX: 5,
+            CounterY: 16,
+            MenuClosed: true,
+            Clicks: clicks,
+            Drops: drops,
+            UpgradedToolId: upgradedTool,
+            DaysLeftForToolUpgrade: consumeOnPurchase ? 2 : 0,
+            RequiredToolQualifiedId: requiredToolId ?? string.Empty,
+            RequiredToolBefore: requiredToolId is null ? 0 : 1,
+            RequiredToolAfter: requiredToolId is null ? 0 : 0,
+            PurchaseDialogue: consumeOnPurchase ? "closed" : "none");
+        return (scenario, ExecutionManager.ShopPurchaseReceipt(facts));
+    }
+
+    private static List<Item?> Bag(int slots, int occupied = 0)
+    {
+        var bag = new List<Item?>();
+        for (int slot = 0; slot < slots; slot++)
+            bag.Add(slot < occupied ? new StardewValley.Object { ParentSheetIndex = 300 + slot } : null);
+        return bag;
+    }
+
+    private static List<Item?> FullBag()
+    {
+        var bag = new List<Item?>();
+        for (int slot = 0; slot < 12; slot++)
+            bag.Add(new StardewValley.Object { ParentSheetIndex = 300 + slot });
+        return bag;
+    }
+
+    private static List<Item?> PartialStackBag()
+    {
+        var bag = new List<Item?> { new SaleItem { ItemId = "472", Stack = 3 } };
+        for (int slot = 1; slot < 12; slot++)
+            bag.Add(new StardewValley.Object { ParentSheetIndex = 300 + slot });
+        return bag;
+    }
+
+    private static int Owned(List<Item?> bag, string qualifiedItemId) =>
+        bag.Where(item => item is not null && item.QualifiedItemId == qualifiedItemId).Sum(item => item!.Stack);
+
+    private static string Json(string value) =>
+        $"\"{value.Replace("\\", "\\\\", StringComparison.Ordinal).Replace("\"", "\\\"", StringComparison.Ordinal)}\"";
+
+    /// <summary>
+    /// The handler's order, which the harness above replays: the pack is counted and folded into the ONE capacity BEFORE
+    /// the click that charges the purse. A harness that kept the old order would still pass its own assertions while the
+    /// product charged for goods it could not hold.
+    /// </summary>
+    [Fact]
+    public void ThePackIsJudgedBeforeTheClickThatChargesThePurse()
+    {
+        string code = ReadRepositoryFile(Path.Combine("integrations", "stardew", "farmhandexecutioncontroller.shopactions.cs"));
+        int pack = code.IndexOf("ShopPackPurchases(", StringComparison.Ordinal);
+        int capacity = code.IndexOf(
+            "ShopPurchaseCapacity(charged, currencyHeld, quantity, packPurchases)", StringComparison.Ordinal);
+        int click = code.IndexOf("menu.receiveLeftClick(clickX, clickY", StringComparison.Ordinal);
+
+        pack.Should().BeGreaterThan(0, "the handler asks the pack its own question");
+        capacity.Should().BeGreaterThan(pack, "the pack count feeds the one capacity, rather than a second check beside it");
+        click.Should().BeGreaterThan(capacity, "and both are decided before the click that charges the purse");
+    }
+
+    private static string ReadRepositoryFile(string relative) =>
+        File.ReadAllText(Path.Combine(RepositoryRoot(), relative));
+
+    private static string RepositoryRoot()
+    {
+        foreach (string start in new[] { AppContext.BaseDirectory, Environment.CurrentDirectory })
+        {
+            DirectoryInfo? directory = new(start);
+            for (int depth = 0; directory is not null && depth < 12; depth++, directory = directory.Parent)
+            {
+                if (Directory.Exists(Path.Combine(directory.FullName, "integrations", "stardew")))
+                    return directory.FullName;
+            }
+        }
+
+        throw new DirectoryNotFoundException("repository root not found from " + AppContext.BaseDirectory);
     }
 
     /// <summary>

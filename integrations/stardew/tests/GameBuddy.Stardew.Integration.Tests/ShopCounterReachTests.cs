@@ -249,9 +249,18 @@ public sealed class ShopCounterReachTests
         body.Should().Contain(
             "ShopCounterReachEvidence(",
             "the no-owner refusal renders its comparison through that one producer");
-        Occurrences(body, "ShopPurchaseAffordabilityEvidence(").Should().Be(
-            Occurrences(body, "price="),
-            "every refusal whose evidence names a price renders it through the one producer that adds held=/short=");
+        // One RENDERER per token, now that two refusals name a price: the purse refusal goes through
+        // `ShopPurchaseAffordabilityEvidence` (held=/short=) and the full-pack refusal through `ShopPackRefusalEvidence`
+        // (room=). Neither spelling may appear in the body itself, which is what the count below says.
+        body.Should().NotContain(
+            "price=",
+            "a refusal's price is rendered by its producer, never spelled in the request body");
+        body.Should().Contain(
+            "ShopPurchaseAffordabilityEvidence(",
+            "the affordability refusal renders its comparison through that one producer");
+        body.Should().Contain(
+            "ShopPackRefusalEvidence(",
+            "and the purchase the pack cannot hold renders ITS comparison through its own producer, before the purse pays");
     }
 
     /// <summary>How far the closure follows producers: request body, the producer it calls, and the one that calls.</summary>
