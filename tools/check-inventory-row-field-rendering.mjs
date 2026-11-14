@@ -3,59 +3,66 @@
  * The gate for "an action asks for a field of the pack row that the text she reads never printed".
  *
  * WHY (measured 2026-11-23, the 7-dimension review of this tree). `inventoryItemFacts` is the Mod's own bounded
- * inventory publication: 36 rows of `{slot, qualifiedItemId, displayName, stack}`. `<world-state>` printed each row as
- * `12 份 石头` - the name and the count - and dropped the SLOT. Three actions address a pack row by that number and by
- * nothing else:
+ * inventory publication: 36 rows of `{slot, qualifiedItemId, displayName, stack}`. Both renderers of that family printed
+ * the count and the name and dropped the SLOT:
  *
- *   open_geode               slot + expectedQualifiedItemId (`host/src/protocol.ts`, EXECUTION_REQUEST_ARGUMENT_RULES)
- *   deposit_silo_hay         slot
- *   put_item_in_fish_tank    slot
+ *   host/src/fact-brief.ts        `<world-state>`: `12 份 石头`
+ *   host/src/snapshot-projection.ts  the per-turn fact block: `Carrying: 12x Stone`
  *
- * so the companion was asked for a number she had never been shown, and her only route to it was a `stardew_observe`
- * round trip whose necessity nothing stated. The one field that was dropped is the instance; the class is that no
- * check related the fields a row CARRIES to the fields an action DEMANDS.
+ * Three actions address a pack row by that number and by nothing else - `open_geode` takes `slot` plus
+ * `expectedQualifiedItemId`, `deposit_silo_hay` and `put_item_in_fish_tank` take `slot` - so the companion was asked
+ * for a number she had never been shown, and her only route to it was a `stardew_observe` round trip whose necessity
+ * nothing stated. The one field was the instance; the class is that no check related the fields a row CARRIES to the
+ * fields an action DEMANDS, per renderer, in the family's own terms.
  *
- * THE POPULATION IS TWO AUTHORITIES CROSSED, never a list here:
+ * THE POPULATION IS THREE AUTHORITIES, none of them a list here:
  *
  *   carried fields   `protocol/bridge-v1.schema.json`: the `$defs.snapshot.properties.inventoryItemFacts.items.$ref`
- *                    record's own property names. Fixing one row field is a schema edit, and this gate follows it.
+ *                    record's own property names. A row field added to the Mod joins this gate by existing.
  *   demanded names   `host/src/protocol.ts`'s `EXECUTION_REQUEST_ARGUMENT_RULES`, read through the reader
- *                    `tools/check-action-surface-parity.mjs` already owns (the `exactArgs([...])` rows, `argumentNames`
- *                    as data). One reader, two gates - a second parse of the same table would be a second spelling.
+ *                    `tools/check-action-surface-parity.mjs` already owns (the `exactArgs([...])` rows, where
+ *                    `argumentNames` is data). One reader, two gates - a second parse of the same table would be a
+ *                    second spelling.
+ *   the readers      every module under `READER_ROOTS` that reads the family in field position
+ *                    (`.inventoryItemFacts`), with comments stripped. A renderer that is not listed here is found by
+ *                    the scan, not by memory: the sibling above stayed green precisely because the one renderer its
+ *                    author knew about was the one being checked.
  *
- * A carried field is DEMANDED when an action argument names it, either literally (`slot`) or through the
- * `expected<Field>` spelling the Host uses for a value it checks against the row (`expectedQualifiedItemId` names
- * `qualifiedItemId`). That spelling is not cosmetic: `open_geode` refuses a stale copy, so the pair is the argument.
+ * A carried field is DEMANDED when an action argument names it, literally (`slot`) or through the `expected<Field>`
+ * spelling the Host uses for a value it checks against the row (`expectedQualifiedItemId` names `qualifiedItemId`).
  *
- * THE PROPERTY. A renderer that publishes this family as text must INTERPOLATE every demanded field inside the
- * function that composes the sentence. Reading the field to decide something else does not count - `formatCarrying`
- * filtered rows on `row.qualifiedItemId` and still printed no id, and a check that counted any read as a rendering
- * would have been green on the exact defect this file exists for.
+ * THE PROPERTY, in three parts:
  *
- * WHAT THIS GATE CANNOT SEE, said rather than implied. It is a static read of the composer, so it proves the field
- * reaches a template in that function: it cannot prove the template is the one the build ships, that the number is the
- * row's own rather than a default, or that the line stays readable. Those are the renderer's own tests' job -
- * `host/src/fact-brief.private.test.ts` drives the real composer and asserts the row's own slot appears, that a second
- * world's slot replaces it, and that a truncated list names the reading which carries the slots it dropped.
+ *   inventory_row_field_dropped:<field>:<renderer>   a renderer of the family does not interpolate a demanded field into
+ *                                                    the sentence it composes. Every renderer owes it: reading a field
+ *                                                    to filter on it is not printing it (the composer filtered rows on
+ *                                                    `row.qualifiedItemId` and printed no id), and a sentence the model
+ *                                                    reads every turn is not made whole by its sibling sentence.
+ *   inventory_row_field_nowhere_delivered:<field>     the backstop for a family with no renderer at all: nothing in the
+ *                                                    configuration interpolates the field while an action demands it.
+ *   inventory_row_field_reader_undeclared:<path>      a module reads the family and this gate has no disposition for it:
+ *                                                    a renderer (named, checked) or a consumer that quotes the whole
+ *                                                    row (with the reason it cannot drop a field).
  *
- * FINDINGS, each naming the member that broke and what would have to change:
- *   inventory_row_field_dropped:<field>:<renderer>     a demanded field reaches no template in that renderer
- *   inventory_row_field_renderer_missing:<renderer>    the declared composer is gone (a premise, not a pass)
- *   inventory_row_field_vocabulary_unreadable:<why>    the row record or the argument table could not be read
- *   inventory_row_field_population_empty               nothing was crossed - BLOCKED, exit 2, never green
+ * WHAT THIS GATE CANNOT SEE, said rather than implied. It reads source, so it proves a demanded field reaches a
+ * template in a named function: not that the build ships that function, not that the value is the row's own rather than
+ * a default, not that the line stays readable. Those are the renderers' own suites' job -
+ * `host/src/fact-brief.private.test.ts` and `host/src/snapshot-projection-consumed-fields.test.ts` drive the real
+ * composers and assert each row's own slot appears and that another world's slot replaces it.
  *
  * Usage:
  *   node tools/check-inventory-row-field-rendering.mjs                  # the gate; exit 1 on a finding, 2 on no population
  *   node tools/check-inventory-row-field-rendering.mjs --json           # the crossed population, machine-readable
  *   node tools/check-inventory-row-field-rendering.mjs --root <dir>      # the gate's own fixture (a copied tree)
  *
- * red-proof: history  the commit before this unit's fix — `formatCarrying` mapped rows to `{name, stack}` — exits 1
- *            with `inventory_row_field_dropped:slot:formatCarrying` and `…:qualifiedItemId:formatCarrying`, and the
- *            delivered line was `身上带着 12 份 石头`.
- * red-proof: inject  the slot interpolation deleted from the composer in a copied tree -> exit 1,
- *            `inventory_row_field_dropped:slot:formatCarrying` (tools/check-inventory-row-field-rendering.test.mjs)
- * red-proof: inject  a row field ADDED to the schema fixture and named by an action argument -> the gate demands it with
- *            no edit here, so the population is derived rather than remembered (the same suite).
+ * red-proof: history  the commit before this unit's fix - `formatCarrying` mapped rows to `{name, stack}` and
+ *            `carryingText` printed `Nx label` - exits 1 with
+ *            `inventory_row_field_dropped:slot:formatCarrying`, `...:qualifiedItemId:formatCarrying`,
+ *            `...:slot:carryingText` and `...:qualifiedItemId:carryingText`.
+ * red-proof: inject  the slot interpolation deleted from either composer in a copied tree -> exit 1, the field and the
+ *            renderer named (tools/check-inventory-row-field-rendering.test.mjs).
+ * red-proof: inject  a new module reading `.inventoryItemFacts` appears -> `inventory_row_field_reader_undeclared`, so
+ *            the population cannot fall behind the code (the same suite).
  */
 
 export const gateDeclaration = {
@@ -65,8 +72,8 @@ export const gateDeclaration = {
   kind: "totality",
 };
 
-import { readFileSync } from "node:fs";
-import { dirname, resolve } from "node:path";
+import { readdirSync, readFileSync, statSync } from "node:fs";
+import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { readWireSurface } from "./check-action-surface-parity.mjs";
@@ -74,24 +81,39 @@ import { readWireSurface } from "./check-action-surface-parity.mjs";
 const REPOSITORY_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
 /** The wire document: the row shape the Mod publishes and the Host validates. */
-const WIRE_SCHEMA = "protocol/bridge-v1.schema.json";
-
-/** The family whose rows an action addresses one row at a time. */
-const FAMILY = "inventoryItemFacts";
+export const WIRE_SCHEMA = "protocol/bridge-v1.schema.json";
 
 /** The Host validator: the one authority on which argument names an action demands. */
-const ARGUMENT_SOURCE = "host/src/protocol.ts";
+export const ARGUMENT_SOURCE = "host/src/protocol.ts";
+
+/** The family whose rows an action addresses one row at a time. */
+export const FAMILY = "inventoryItemFacts";
+
+/** Where the readers of that family live. A reader outside these roots is a scan that lost the code, not a pass. */
+export const READER_ROOTS = Object.freeze(["host/src"]);
 
 /**
- * The composers that publish this family as text to the model, and the function each one composes it in.
+ * Every module that reads the family, and what it does with the rows.
  *
- * A renderer is a member because it TURNS the rows into the sentence the companion reads. The consumer-side
- * projections (`host/src/load-...`, the lookup tools) quote the row verbatim and are not sentences, so they are not
- * members: adding one would credit reads as renderings, which is the failure mode this gate was written against.
+ * `renderer` names the function that composes the sentence, because that is what is checked. `verbatim` is a consumer
+ * that hands the whole row on - it cannot drop a field, so it owes a reason rather than a function. An entry EXPIRES:
+ * a module that stops reading the family is `inventory_row_field_reader_stale`, and a module that starts reading it with
+ * no entry is `inventory_row_field_reader_undeclared`.
  */
-export const CARRYING_RENDERERS = Object.freeze([
-  { path: "host/src/fact-brief.ts", fn: "formatCarrying", publishes: "the `<world-state>` pack sentence" },
-]);
+export const READER_DISPOSITIONS = Object.freeze({
+  "host/src/fact-brief.ts": { kind: "renderer", fn: "formatCarrying", composes: "the `<world-state>` pack sentence" },
+  "host/src/snapshot-projection.ts": {
+    kind: "renderer",
+    fn: "carryingText",
+    composes: "the per-turn fact block's `- Carrying:` line",
+  },
+  "host/src/game-lookup.ts": {
+    kind: "verbatim",
+    reason:
+      "answers `inventory` by handing the published rows on whole (`rows: bounded.rows`), so every field a row carries " +
+      "reaches the answer; it composes no sentence of its own and drops nothing",
+  },
+});
 
 const read = (root, path) => {
   try {
@@ -108,6 +130,43 @@ function withoutComments(source) {
     .split("\n")
     .map((line) => line.replace(/^\s*\/\/.*$/u, ""))
     .join("\n");
+}
+
+/** Every non-test `.ts` module under a root directory. */
+function modulesUnder(root, directory) {
+  const found = [];
+  const base = resolve(root, directory);
+  let entries;
+  try {
+    entries = readdirSync(base, { withFileTypes: true });
+  } catch {
+    return found;
+  }
+  for (const entry of entries) {
+    const absolute = join(base, entry.name);
+    if (entry.isDirectory()) {
+      if (entry.name === "node_modules" || entry.name === "dist" || entry.name === "dist-test") continue;
+      found.push(...modulesUnder(root, relative(root, absolute).split("\\").join("/")));
+      continue;
+    }
+    if (!entry.name.endsWith(".ts")) continue;
+    if (/\.(?:private\.)?test\.ts$/u.test(entry.name) || /\.test-support\.ts$/u.test(entry.name)) continue;
+    found.push(relative(root, absolute).split("\\").join("/"));
+  }
+  return found;
+}
+
+/** The modules that read the family in field position (`.inventoryItemFacts`), comments already stripped. */
+export function familyReaders(root) {
+  const pattern = new RegExp(`\\.${FAMILY}\\b`, "u");
+  const readers = [];
+  for (const directory of READER_ROOTS)
+    for (const path of modulesUnder(root, directory)) {
+      const source = read(root, path);
+      if (source === null) continue;
+      if (pattern.test(withoutComments(source))) readers.push(path);
+    }
+  return readers.sort();
 }
 
 /**
@@ -198,7 +257,12 @@ export function printsField(body, field) {
   return interpolations(body).some((expression) => pattern.test(expression));
 }
 
-/** The reading: which carried field each renderer fails to deliver. */
+/** Whether a composer reads a field at all - the read that must become a print. */
+export function readsField(body, field) {
+  return new RegExp(`\\.${field}\\b`, "u").test(body);
+}
+
+/** The reading: the crossed population, and every renderer that drops a field an action demands. */
 export function auditInventoryRowFields({ root = REPOSITORY_ROOT } = {}) {
   const schemaSource = read(root, WIRE_SCHEMA);
   const protocolSource = read(root, ARGUMENT_SOURCE);
@@ -222,9 +286,26 @@ export function auditInventoryRowFields({ root = REPOSITORY_ROOT } = {}) {
     };
   }
 
-  const renderers = CARRYING_RENDERERS.map((renderer) => ({ ...renderer, source: read(root, renderer.path) }));
-  const missing = renderers.filter((renderer) => renderer.source === null).map((renderer) => renderer.path);
-  if (missing.length > 0) return { status: "blocked", violations: [], unreadable: missing, examined: carried.length };
+  const readers = familyReaders(root);
+  const violations = [];
+  for (const path of readers) {
+    const disposition = READER_DISPOSITIONS[path];
+    if (disposition !== undefined) continue;
+    violations.push({
+      code: `inventory_row_field_reader_undeclared:${path}`,
+      detail:
+        "this module reads `.inventoryItemFacts` and READER_DISPOSITIONS says nothing about it: declare it as a " +
+        "renderer (with the function that composes its sentence) or as a verbatim consumer with the reason it cannot " +
+        "drop a field",
+    });
+  }
+  for (const [path, disposition] of Object.entries(READER_DISPOSITIONS)) {
+    if (readers.includes(path)) continue;
+    violations.push({
+      code: `inventory_row_field_reader_stale:${path}`,
+      detail: `this module no longer reads the family, so its ${disposition.kind} disposition exempts nothing and must be deleted`,
+    });
+  }
 
   // A CROSSING THAT EXAMINED NOTHING AGREES WITH ITSELF. Zero demanded fields means the row fields and the argument
   // names met nowhere - a schema or a validator this reader can no longer read - and it is blocked rather than green.
@@ -232,46 +313,57 @@ export function auditInventoryRowFields({ root = REPOSITORY_ROOT } = {}) {
     return {
       status: "blocked",
       violations: [
+        ...violations,
         {
           code: "inventory_row_field_population_empty",
           detail:
             `none of the ${String(carried.length)} carried field(s) (${carried.join(", ")}) is named by an action ` +
-            `argument, so no row field can be judged: the schema and the validator disagree about the pack row`,
+            "argument, so no row field can be judged: the schema and the validator disagree about the pack row",
         },
       ],
       examined: 0,
       carried,
       demanded,
-      renderers: renderers.length,
+      readers,
     };
 
-  const violations = [];
+  const renderers = Object.entries(READER_DISPOSITIONS).filter(([, disposition]) => disposition.kind === "renderer");
   const examined = [];
+  const delivered = new Set();
   let rendererMissing = false;
-  for (const renderer of renderers) {
-    const body = functionBody(renderer.source, renderer.fn);
+  for (const [path, disposition] of renderers) {
+    const source = read(root, path);
+    const body = source === null ? null : functionBody(source, disposition.fn);
     if (body === null) {
       rendererMissing = true;
       violations.push({
-        code: `inventory_row_field_renderer_missing:${renderer.fn}`,
-        detail: `${renderer.path} declares no \`function ${renderer.fn}\`: the ${renderer.publishes} it owns cannot be read`,
+        code: `inventory_row_field_renderer_missing:${disposition.fn}`,
+        detail: `${path} declares no \`function ${disposition.fn}\`: the ${disposition.composes} it owns cannot be read`,
       });
       continue;
     }
     for (const field of demanded) {
-      const dropped = !printsField(body, field);
-      examined.push({ field, renderer: renderer.fn, dropped });
-      if (dropped)
-        violations.push({
-          code: `inventory_row_field_dropped:${field}:${renderer.fn}`,
-          detail:
-            `an action argument demands \`${field}\` and ${renderer.path}'s \`${renderer.fn}\` composes ` +
-            `${renderer.publishes} without it: print the row's own value, or drop the action argument that demands it`,
-        });
+      const prints = printsField(body, field);
+      if (prints) delivered.add(field);
+      examined.push({ field, renderer: disposition.fn, reads: readsField(body, field), prints });
+      if (prints) continue;
+      violations.push({
+        code: `inventory_row_field_dropped:${field}:${disposition.fn}`,
+        detail:
+          `\`${disposition.fn}\` composes ${disposition.composes} without \`${field}\`: an action argument demands that ` +
+          "field, so print the row's own value here",
+      });
     }
   }
+  for (const field of demanded) {
+    if (delivered.has(field)) continue;
+    violations.push({
+      code: `inventory_row_field_nowhere_delivered:${field}`,
+      detail: `no renderer of the family interpolates \`${field}\`, and an action argument demands it: the turn carries rows whose address cannot be named from any of it`,
+    });
+  }
 
-  const dropped = examined.filter((entry) => entry.dropped).length;
+  const dropped = examined.filter((entry) => !entry.prints).length;
   return {
     // A MISSING COMPOSER IS A PREMISE, NOT A FAILING FIELD: the gate could not read what it judges, and the difference
     // is the difference between "this field is dropped" and "this reader is blind here".
@@ -279,6 +371,7 @@ export function auditInventoryRowFields({ root = REPOSITORY_ROOT } = {}) {
     examined: examined.length,
     carried,
     demanded,
+    readers,
     renderers: renderers.length,
     dropped,
     examinedRows: examined,
@@ -298,6 +391,7 @@ function main(argv) {
     examined: reading.examined ?? 0,
     carriedFields: reading.carried ?? [],
     demandedFields: reading.demanded ?? [],
+    readers: reading.readers ?? [],
     renderers: reading.renderers ?? 0,
     dropped: reading.dropped ?? 0,
     checks: [
@@ -305,6 +399,11 @@ function main(argv) {
         id: "demanded_field_population",
         status: (reading.demanded ?? []).length === 0 ? "blocked" : "passed",
         detail: `${String((reading.demanded ?? []).length)} row field(s) an action argument names`,
+      },
+      {
+        id: "every_reader_declared",
+        status: (reading.readers ?? []).length === 0 ? "blocked" : "passed",
+        detail: `${String((reading.readers ?? []).length)} module(s) read the family`,
       },
       {
         id: "every_demanded_field_printed",
@@ -318,7 +417,8 @@ function main(argv) {
   } else {
     process.stdout.write(
       `inventory row fields carried ${String(report.carriedFields.length)} · demanded ${String(report.demandedFields.length)} ` +
-        `(${report.demandedFields.join(", ") || "none"}) · renderers ${String(report.renderers)} · ` +
+        `(${report.demandedFields.join(", ") || "none"}) · readers ${String(report.readers.length)} ` +
+        `(${report.readers.join(", ") || "none"}) · renderers ${String(report.renderers)} · ` +
         `crossed ${String(report.examined)} · dropped ${String(report.dropped)} · status ${report.status}\n`,
     );
     for (const line of reading.unreadable) process.stderr.write(`inventory_row_field_unreadable: ${line}\n`);
