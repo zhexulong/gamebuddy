@@ -1,119 +1,98 @@
-import {
-  assertRequiredCapabilities,
-  connectNativeLocalClient,
-  executeFresh,
-  observeFresh,
-  readNativeClientConfig,
-  summarizeReceipt,
-  waitForTerminal,
-} from "./lib/stardew-native-smoke-harness-v1.mjs";
-import { loadHostTestModule } from "./lib/host-test-module.mjs";
+// Stardew-local name_entity smoke.
+//
+// The lifecycle - the fixture-config refusal, observe-fresh and the capability check, the requestId mint and the
+// execute, the terminal wait and its identity, the evidence parse and the stale reread, the stale re-send, the
+// bootstrap and the exit code - is `tools/lib/native-local-runner-scaffold.mjs`. What is left here is what is
+// actually about naming an entity.
+//
+// The receipt is not the proof. The terminal of this action is the STORED NAME, and the only place
+// it can be read back is the world: after the call the named horse must be published by the Mod's
+// own horse projection under exactly the requested name. Three things are observed directly, and
+// the first is the one the action exists for:
+//
+//   1. the stored name is read back FROM THE ENTITY — the `horseTargets` projection of a FRESH
+//      snapshot, in which the horse this run just named appears carrying the requested name. An
+//      unnamed horse is never advertised at all (the projection exists for `mount_transport`, which
+//      may only mount a named horse), so the entry appearing at all is itself the change;
+//   2. the receipt's two halves agree with what the world says: `name_before=none` and `name_after`
+//      equal to the requested name, against the value the projection reports;
+//   3. the negative case: SUBMITTING THE SAME REQUEST AGAIN is refused by name
+//      (`name_entity_target_already_named`) and moves nothing — the world must still advertise the
+//      name the first call stored. A horse that already carries a name is exactly what the native
+//      prompt's own gate excludes (Horse.cs:622), so an action that reported a second success there
+//      would be renaming an entity the game would not have offered.
+//
+// The projection field is `horseTargets` — `{ targetId, x, y, name }` (host/src/protocol.ts:586).
+// When the surface does not carry it at all, the read-back is reported as `not_checked`, which the
+// contract treats as a FAILURE: "I could not look" must never read as "the name is there".
+//
+// NOTE ON THE DEPENDENCY: `horseTargets` is published while `mount_transport` is advertised
+// (farmhandexecutioncontroller.cs, the snapshot composition). In a native-local run that action is
+// LiveVerified and therefore on the surface, which is what makes the read-back possible. A policy
+// that denies `mount_transport` would make this runner report `not_checked` rather than pass.
+
+import { defineSmokeScenario, runSmokeScenarioMain } from "./lib/native-local-runner-scaffold.mjs";
 
 const ACTION = "name_entity";
+/** The action's own success word (`ExecuteNameEntity`: the horse's name is the requested text). */
+const SUCCESS_CODE = "entity_named";
+/** The one `NativeLocalPlayerFixture.FixtureScenario` this gate arms (gate descriptor `native_name_entity_v1`). */
+const FIXTURE_SCENARIO = "native_name_entity_v1";
 const REQUIRED_CAPABILITIES = ["cancel_active_execution", "inspect_self", ACTION];
-
-/**
- * name_entity live contract.
- *
- * The receipt is not the proof. The terminal of this action is the STORED NAME, and the only place
- * it can be read back is the world: after the call the named horse must be published by the Mod's
- * own horse projection under exactly the requested name. Three things are observed directly, and
- * the first is the one the action exists for:
- *
- *   1. the stored name is read back FROM THE ENTITY — the `horseTargets` projection of a FRESH
- *      snapshot, in which the horse this run just named appears carrying the requested name. An
- *      unnamed horse is never advertised at all (the projection exists for `mount_transport`, which
- *      may only mount a named horse), so the entry appearing at all is itself the change;
- *   2. the receipt's two halves agree with what the world says: `name_before=none` and `name_after`
- *      equal to the requested name, against the value the projection reports;
- *   3. the negative case: SUBMITTING THE SAME REQUEST AGAIN is refused by name
- *      (`name_entity_target_already_named`) and moves nothing. A horse that already carries a name
- *      is exactly what the native prompt's own gate excludes (Horse.cs:622), so an action that
- *      reported a second success there would be renaming an entity the game would not have offered;
- *      and the advertised name must be UNCHANGED after the refusal, so "refused" and "silently
- *      renamed anyway" cannot read the same.
- *
- * The projection field is `horseTargets` — `{ targetId, x, y, name }` (host/src/protocol.ts:586).
- * When the surface does not carry it at all, the read-back is reported as `not_checked`, which the
- * caller treats as a FAILURE: "I could not look" must never read as "the name is there".
- *
- * NOTE ON THE DEPENDENCY: `horseTargets` is published while `mount_transport` is advertised
- * (farmhandexecutioncontroller.cs, the snapshot composition). In a native-local run that action is
- * LiveVerified and therefore on the surface, which is what makes the read-back possible. A policy
- * that denies `mount_transport` would make this runner report `not_checked` rather than pass.
- */
-export async function runNameEntitySmoke(
-  client,
-  receipts,
-  _config,
-  { terminalTimeoutMs = 5_000, requestedName = DEFAULT_REQUESTED_NAME } = {},
-) {
-  const trace = [];
-  const snapshot = await observeFresh(client, { actionable: true });
-  assertRequiredCapabilities(snapshot, REQUIRED_CAPABILITIES);
-
-  const requestId = `native_local_name_entity_${Date.now()}`;
-  const accepted = await executeFresh(client, {
-    requestId,
-    idempotencyKey: `${requestId}_idem`,
-    action: ACTION,
-    args: { text: requestedName },
-    snapshot,
-    timeoutMs: 30_000,
-  });
-  trace.push({ step: "name", action: ACTION, requested: requestedName, receipt: summarizeReceipt(accepted) });
-  const terminal = await waitForTerminal(receipts, accepted, terminalTimeoutMs);
-  if (terminal.requestId !== requestId || terminal.executionId !== accepted.executionId)
-    throw new Error("name_entity terminal does not belong to this request");
-  if (terminal.state !== "succeeded" || terminal.reasonCode !== "entity_named")
-    throw new Error(
-      `name_entity did not name the entity: state=${terminal.state};reason=${terminal.reasonCode};evidence=${terminal.evidence ?? ""}`,
-    );
-
-  const evidence = parseEvidence(terminal.evidence);
-  const after = await observeFresh(client, { actionable: true });
-  const targets = horseTargets(after);
-
-  const checks = assertNameEntityPostconditions({ requestedName, evidence, horseTargets: targets });
-  trace.push({ step: "observed", advertisedHorses: targets === null ? null : targets.length, evidence, checks });
-
-  // The negative case: the same request again, against a world in which the horse now HAS a name.
-  const repeatId = `native_local_name_entity_repeat_${Date.now()}`;
-  const repeat = await executeFresh(client, {
-    requestId: repeatId,
-    idempotencyKey: `${repeatId}_idem`,
-    action: ACTION,
-    args: { text: requestedName },
-    snapshot: after,
-    timeoutMs: 30_000,
-  });
-  const repeatTerminal = await waitForTerminal(receipts, repeat, terminalTimeoutMs);
-  trace.push({ step: "repeat", receipt: summarizeReceipt(repeatTerminal) });
-  checks.alreadyNamedRefused =
-    repeatTerminal.state === "rejected" && repeatTerminal.reasonCode === "name_entity_target_already_named";
-
-  // "Refused" and "renamed anyway" must not read the same: re-read the world after the refusal.
-  const afterRepeat = await observeFresh(client, { actionable: true });
-  const repeatTargets = horseTargets(afterRepeat);
-  checks.refusalMovedNothing =
-    repeatTargets === null ? "not_checked" : repeatTargets.some((entry) => entry?.name === requestedName);
-  trace.push({
-    step: "observed_repeat",
-    advertisedHorses: repeatTargets === null ? null : repeatTargets.length,
-    checks,
-  });
-
-  const failures = Object.entries(checks)
-    .filter(([, ok]) => ok === false || ok === "not_checked")
-    .map(([name]) => name);
-  if (failures.length > 0)
-    throw new Error(`name_entity live contract failed: ${failures.join(",")};trace=${JSON.stringify(trace)}`);
-
-  return { state: "passed", reasonCode: "entity_named", trace, checks, evidence };
-}
 
 /** The name a run asks for. Not the game's own default and not any fixture-side name. */
 export const DEFAULT_REQUESTED_NAME = "GameBuddyNamedHorse";
+
+const scenario = defineSmokeScenario({
+  action: ACTION,
+  fixtureScenario: FIXTURE_SCENARIO,
+  successCode: SUCCESS_CODE,
+  requiredCapabilities: REQUIRED_CAPABILITIES,
+  requiredActions: [ACTION],
+  experimentalActions: [ACTION],
+  projection: { collections: ["horseTargets"] },
+
+  /** Nothing to prepare: the horse is the one the fixture stabled for this action. */
+  prepare: ({ snapshot }) => ({ snapshot, plan: { requestedName: DEFAULT_REQUESTED_NAME } }),
+
+  describePlan: ({ requestedName }) => ({ requestedName }),
+
+  request: ({ requestedName }) => ({ args: { text: requestedName } }),
+
+  /**
+   * The negative case, declared to the template: the same request again, against a world in which the horse now HAS
+   * a name. "Refused" and "renamed anyway" must not read the same, so the settled world must still advertise the name
+   * the first call stored.
+   */
+  negative: {
+    args: ({ requestedName }) => ({ text: requestedName }),
+    refusedCodes: ["name_entity_target_already_named"],
+    unchanged: ({ after }) => {
+      const named = horseTargets(after);
+      if (named === null) return "horse_targets_not_published";
+      return named.some((entry) => entry?.name === DEFAULT_REQUESTED_NAME)
+        ? null
+        : "the name the first call stored is no longer advertised";
+    },
+  },
+
+  async assertPostcondition({ evidence, plan, after }) {
+    const { requestedName } = plan;
+    const targets = horseTargets(after);
+    const checks = assertNameEntityPostconditions({ requestedName, evidence, horseTargets: targets });
+    const failures = Object.entries(checks)
+      .filter(([, ok]) => ok === false || ok === "not_checked")
+      .map(([name]) => name);
+    if (failures.length > 0)
+      throw new Error(`name_entity live contract failed: ${failures.join(",")};checks=${JSON.stringify(checks)}`);
+    return { checks, advertisedHorses: targets.length, evidence };
+  },
+});
+
+export const runNameEntitySmoke = (client, receipts, config, options) =>
+  scenario.run(client, receipts, config, options);
+
+if (import.meta.main) await runSmokeScenarioMain(scenario);
 
 /**
  * The live contract's judgement, as a PURE function so it can be tested without a transport: the
@@ -147,28 +126,4 @@ export function assertNameEntityPostconditions({ requestedName, evidence, horseT
 function horseTargets(snapshot) {
   const targets = snapshot?.horseTargets;
   return Array.isArray(targets) ? targets : null;
-}
-
-/** `key=value;key=value` — the Mod's evidence shape. */
-function parseEvidence(evidence) {
-  const text = typeof evidence === "string" ? evidence : (evidence?.detail ?? "");
-  const values = {};
-  for (const field of String(text).split(";")) {
-    const at = field.indexOf("=");
-    if (at <= 0) continue;
-    values[field.slice(0, at)] = field.slice(at + 1);
-  }
-  return values;
-}
-
-if (import.meta.main) {
-  const config = await readNativeClientConfig();
-  const session = await connectNativeLocalClient(config, { loadModule: loadHostTestModule });
-  try {
-    const result = await runNameEntitySmoke(session.client, session.receipts, config);
-    console.log(JSON.stringify(result));
-    if (result.state !== "passed") process.exitCode = 2;
-  } finally {
-    session.close();
-  }
 }

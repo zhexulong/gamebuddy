@@ -253,10 +253,6 @@
       "reason": "predates_the_template"
     },
     {
-      "file": "tools/run-stardew-native-local-player-name-entity-smoke.mjs",
-      "reason": "predates_the_template"
-    },
-    {
       "file": "tools/run-stardew-native-local-player-navigation-mutation-smoke.mjs",
       "reason": "predates_the_template"
     },
