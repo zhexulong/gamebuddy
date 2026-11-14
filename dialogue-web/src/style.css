@@ -1617,29 +1617,45 @@
    Full Context Drawers & Management Panels
    ========================================================================== */
 
-  .backdrop-overlay {
-    position: fixed;
-    inset: 0;
-    background-color: rgba(0, 0, 0, 0.65);
-    backdrop-filter: blur(2px);
-    z-index: 100;
-    animation: backdrop-in var(--motion-duration-fast) var(--motion-ease-out);
-  }
-
+  /* The drawer is the platform's modal dialog (`ContextDrawer` calls `showModal()`),
+   so its box is a box reset of the UA's `dialog` rule rather than an overlay placed
+   by hand: `inset` anchors it to the right edge, `margin: 0` replaces the UA's
+   centring `auto`, `height: auto` and `max-height: none` replace its
+   `fit-content` sizing (measured: with `fit-content` a long drawer grew past the
+   viewport and its own content could not be scrolled to), `padding: 0` and
+   `border: 0` its defaults, and `color` its black on white. `overflow: hidden`
+   keeps `.drawer-content` the one scroller in the panel. Nothing here needs a
+   `z-index`: a top-layer dialog is painted above every stacking context on the page. */
   .context-panel {
     position: fixed;
-    top: 0;
-    right: 0;
-    bottom: 0;
+    inset: 0 0 0 auto;
+    margin: 0;
+    padding: 0;
     width: 100%;
+    height: auto;
     max-width: var(--drawer-max-width);
+    max-height: none;
+    overflow: hidden;
     background-color: var(--surface-panel);
+    color: var(--text-primary);
+    border: 0;
     border-left: 1px solid var(--border-subtle);
     display: flex;
     flex-direction: column;
-    z-index: 101;
     box-shadow: -10px 0 30px rgba(0, 0, 0, 0.5);
     animation: drawer-in var(--motion-duration-normal) var(--motion-ease-drawer);
+  }
+
+  /* The scrim: 72% black with a 4 px blur, replacing the documented `#0007` with no
+   blur (design/26 §4.2, §6.1). At 47% black a roster card's own text stayed legible
+   through the scrim, and while the drawer slid in over the cards it read as one line
+   sliced lengthwise. It is the platform's `::backdrop` now rather than a div behind
+   the panel, so it cannot be ordered wrong against the panel and it is covered by the
+   same modality that makes the page behind inert. */
+  .context-panel::backdrop {
+    background-color: rgba(0, 0, 0, 0.72);
+    backdrop-filter: blur(4px);
+    animation: backdrop-in var(--motion-duration-fast) var(--motion-ease-out);
   }
 
   .drawer-header {
@@ -1676,6 +1692,9 @@
   .drawer-content {
     flex: 1 1 0%;
     overflow-y: auto;
+    /* The panel is modal, so a scroller that ran on would move the page behind it.
+     The scroll chaining stops here. */
+    overscroll-behavior: contain;
     scrollbar-gutter: stable;
     padding: 16px;
     display: flex;
@@ -2693,7 +2712,7 @@
 
    The Game surface is the shell's single contextual drawer, not an inline
    status block (design/26 §4.2, design/104 §2). It reuses the shared drawer
-   primitive - `.context-panel` at `min(420px, 100vw)`, `.backdrop-overlay`,
+   primitive - `.context-panel` at `min(420px, 100vw)`, its `::backdrop`,
    `.drawer-header` - and only the panel body is described here.
 
    The body is four labelled groups in one scrolling column: connection facts,
@@ -2708,17 +2727,6 @@
    CSS layer the spec depends on, and no rule changes a role or an accessible
    name.
    ========================================================================== */
-
-  /* The scrim: 72% black with a 4 px blur, replacing the documented `#0007` with no
-   blur (design/26 §4.2, §6.1). At 47% black a roster card's own text stayed legible
-   through the scrim, and while the drawer slid in over the cards it read as one line
-   sliced lengthwise. The shared `.backdrop-overlay` is another surface's primitive,
-   so the composed drawer sets its own value instead of changing it under a different
-   lane. */
-  .composed-drawer-backdrop {
-    background-color: rgba(0, 0, 0, 0.72);
-    backdrop-filter: blur(4px);
-  }
 
   /* Exactly one drawer at a time, anchored right, full height, safe-area aware. */
   .composed-game-panel {
@@ -3432,7 +3440,7 @@
       animation: none;
     }
 
-    .backdrop-overlay {
+    .context-panel::backdrop {
       animation: none;
     }
   }
