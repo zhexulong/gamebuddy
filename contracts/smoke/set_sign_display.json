@@ -1,0 +1,19 @@
+{
+  "schema": "stardew-action-smoke-contract/v1",
+  "action": "set_sign_display",
+  "discovery": {
+    "source": "signTargets",
+    "cardinality": "at_least_one",
+    "select": "first",
+    "requiredFields": [
+      "targetId",
+      "x",
+      "y"
+    ]
+  },
+  "args": {
+    "x": "$target.x",
+    "y": "$target.y",
+    "expectedTargetId": "$target.targetId"
+  }
+}

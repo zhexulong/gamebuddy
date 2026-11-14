@@ -108,7 +108,6 @@ const CONFIG_DRIVER_ACTION = Object.freeze({
   // Loop-closure wave (2026-10-04): the 14 lane smoke runners are fixture-family
   // drivers keyed on the action they exercise, matching the gate table entries.
   "run-stardew-native-local-player-clear-cask-smoke.mjs": "clear_cask",
-  "run-stardew-native-local-player-deposit-silo-hay-smoke.mjs": "deposit_silo_hay",
   // 2026-10-06: the two facility/transport actions wired this session. Same rule as the wave
   // above — keyed on the action the runner exercises.
   "run-stardew-native-local-player-withdraw-silo-hay-smoke.mjs": "withdraw_silo_hay",
@@ -126,14 +125,12 @@ const CONFIG_DRIVER_ACTION = Object.freeze({
   "run-stardew-native-local-player-talk-to-npc-smoke.mjs": "talk_to_npc",
   "run-stardew-native-local-player-use-obelisk-smoke.mjs": "use_obelisk",
   "run-stardew-native-local-player-dress-mannequin-smoke.mjs": "dress_mannequin",
-  "run-stardew-native-local-player-enter-mine-smoke.mjs": "enter_mine",
   "run-stardew-native-local-player-harvest-bush-smoke.mjs": "harvest_bush",
   "run-stardew-native-local-player-harvest-fruit-tree-smoke.mjs": "harvest_fruit_tree",
   "run-stardew-native-local-player-mount-transport-smoke.mjs": "mount_transport",
   "run-stardew-native-local-player-equip-wearable-smoke.mjs": "equip_wearable",
   "run-stardew-native-local-player-unequip-wearable-smoke.mjs": "unequip_wearable",
   "run-stardew-native-local-player-dismount-transport-smoke.mjs": "dismount_transport",
-  "run-stardew-native-local-player-set-sign-display-smoke.mjs": "set_sign_display",
   "run-stardew-native-local-player-shake-tree-smoke.mjs": "shake_tree",
   "run-stardew-native-local-player-take-pedestal-item-smoke.mjs": "take_pedestal_item",
   "run-stardew-native-local-player-toggle-fence-gate-smoke.mjs": "toggle_fence_gate",
