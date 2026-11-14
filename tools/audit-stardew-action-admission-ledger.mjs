@@ -197,6 +197,15 @@ const drift = Object.entries(DOCUMENTED).filter(([key, value]) => {
   const actual = derived[key] ?? report.actionableGuardProfiles[key];
   return actual !== value;
 });
+// A revision holding no Mod source derives every value as zero, which is a report over nothing rather than a ledger
+// of the current tree - the one reading this audit must never publish as if it were the tree's.
+if (report.fileCount === 0) {
+  console.error(
+    `stardew_action_admission_ledger: blocked - examined 0 Mod source file(s) at ${report.rev}, so no ledger value ` +
+      "was derived",
+  );
+  process.exit(2);
+}
 
 console.log(JSON.stringify(report, null, 2));
 if (drift.length > 0) {

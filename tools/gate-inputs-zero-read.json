@@ -897,20 +897,6 @@
       "because": "`readdirSync(directory)` in `walk` (tools/audit-preset-macro-frequency.mjs) reads whatever the caller hands it: the census names the parameter and not one member of the set, so a root that moved reads as a green over nothing."
     },
     {
-      "gate": "tools/audit-stardew-action-admission-ledger.mjs",
-      "class": "unguarded-population",
-      "area": "stardew",
-      "guard": "must print `examined 0` and exit 2 when the index names no file in its scope",
-      "because": "tools/audit-stardew-action-admission-ledger.mjs enumerates a committed source tree it scans and reports the same green over nine hundred members as over none: a filter or a root that moved is indistinguishable from a clean run. The census sees the population and the gate has no zero branch."
-    },
-    {
-      "gate": "tools/audit-stardew-admission-fork-delta.mjs",
-      "class": "unguarded-population",
-      "area": "stardew",
-      "guard": "must print `examined 0` and exit 2 when its scan finds no file: the population is a committed source tree, so zero means the root or the filter moved",
-      "because": "tools/audit-stardew-admission-fork-delta.mjs enumerates a committed source tree it scans and reports the same green over nine hundred members as over none: a filter or a root that moved is indistinguishable from a clean run. The census sees the population and the gate has no zero branch."
-    },
-    {
       "gate": "tools/audit-stardew-handler-actor-guard.mjs",
       "class": "unguarded-population",
       "area": "stardew",

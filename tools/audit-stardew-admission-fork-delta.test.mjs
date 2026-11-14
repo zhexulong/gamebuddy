@@ -138,14 +138,20 @@ test("a source root that is not there is an error, not an empty worklist", () =>
   assert.throws(() => measure(["--source-root", "docs"]), /stardew_source_root_missing/);
 });
 
-test("a tree with no Mod sources reports zero rather than a default list", () => {
-  // An existing directory that simply has no farmhandexecutioncontroller*.cs files IS an empty worklist.
+test("a tree with no Mod source is a blocked reading, never a clean worklist", () => {
+  // An existing directory whose scan matches no `farmhandexecutioncontroller*.cs` is the root or the glob having moved.
+  // `passed - every handler routes through the authority` over no handler at all is the reading this worklist exists to
+  // stop, so the tool refuses it instead of reporting zero.
   const empty = mkdtempSync(join(tmpdir(), "fork-delta-"));
   mkdirSync(join(empty, "integrations", "stardew"), { recursive: true });
   try {
-    const report = measure(["--source-root", empty]);
-    assert.equal(report.siteCount, 0);
-    assert.deepEqual(report.sites, []);
+    const out = spawnSync(
+      process.execPath,
+      ["tools/audit-stardew-admission-fork-delta.mjs", "--json", "--source-root", empty],
+      { cwd: REPO, encoding: "utf8", maxBuffer: 64 * 1024 * 1024 },
+    );
+    assert.equal(out.status, 2, `${out.stdout}${out.stderr}`);
+    assert.match(`${out.stdout}${out.stderr}`, /stardew_admission_fork_delta: blocked - examined 0 source file\(s\)/u);
   } finally {
     rmSync(empty, { recursive: true, force: true });
   }

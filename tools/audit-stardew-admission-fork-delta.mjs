@@ -161,6 +161,14 @@ try {
   process.exit(2);
 }
 const { fileCount, sites, splitCount } = scanned;
+// Zero files is the root or the glob having moved: `passed - every handler routes through the authority` over no handler
+// at all is the green reading this worklist exists to prevent.
+if (fileCount === 0) {
+  console.log(
+    `stardew_admission_fork_delta: blocked - examined 0 source file(s) under ${sourceRoot}, so no handler's admission was read`,
+  );
+  process.exit(2);
+}
 const exactTriple = sites.filter((site) => site.spelling === "exact triple").length;
 
 const report = {
