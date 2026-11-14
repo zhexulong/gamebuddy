@@ -22,16 +22,20 @@ function runProbe(args) {
   );
   if (result.error !== undefined || result.status !== 0) return null;
   const rows = [];
+  let examined = null;
   for (const line of String(result.stdout ?? "").split("\n")) {
     const text = line.trim();
     if (text.length === 0) continue;
+    let parsed;
     try {
-      rows.push(JSON.parse(text));
+      parsed = JSON.parse(text);
     } catch {
       return null;
     }
+    if (parsed?.examined !== undefined) examined = parsed.examined;
+    else rows.push(parsed);
   }
-  return rows;
+  return { rows, examined };
 }
 
 const answered = (args) => (process.platform === "win32" ? runProbe(args) : null);
@@ -39,15 +43,19 @@ const answered = (args) => (process.platform === "win32" ? runProbe(args) : null
 /** One process row `{ pid, name, commandLine }`, or `null` when it is gone / the machine cannot answer. */
 export function processRow(pid) {
   if (!Number.isSafeInteger(pid) || pid <= 0) return null;
-  const rows = answered(["-ProcessId", String(pid)]);
-  const row = rows?.find((entry) => entry.pid === pid);
+  const measured = answered(["-ProcessId", String(pid)]);
+  const row = measured?.rows.find((entry) => entry.pid === pid);
   return row === undefined
     ? null
     : { pid: row.pid, name: String(row.name ?? ""), commandLine: String(row.commandLine ?? "") };
 }
 
 /**
- * Every process whose command line CONTAINS `text`. `null` means the machine could not be asked.
+ * Every process whose command line CONTAINS `text`, as `{ rows, examined }` - `examined` being how many
+ * processes the query looked at, so a reading prints its population instead of an unqualified zero.
+ *
+ * `null` means the machine could not be asked, and a whole-table query that examined nothing is `null`
+ * too: an empty answer is a probe that broke, not a machine running no processes.
  *
  * The command line is the only fact that ties a process to a run directory: the launch driver is
  * `node …/phases/launch.mjs <stage>/state/run.json` and the browser is `msedge … --user-data-dir=<stage>/browser-profile`,
@@ -55,10 +63,12 @@ export function processRow(pid) {
  */
 export function processesWithCommandLine(text) {
   if (typeof text !== "string" || text.length === 0) return null;
-  const rows = answered(["-CommandLineLike", text]);
-  if (rows === null) return null;
-  return (
-    rows
+  const measured = answered(["-CommandLineLike", text]);
+  if (measured === null) return null;
+  if (!Number.isSafeInteger(measured.examined) || measured.examined <= 0) return null;
+  return {
+    examined: measured.examined,
+    rows: measured.rows
       .map((row) => ({
         pid: row.pid,
         name: String(row.name ?? ""),
@@ -67,16 +77,16 @@ export function processesWithCommandLine(text) {
       // The query names the text in ITS OWN command line, so the probe matches itself; the caller is
       // looking for the processes that REFER to the text, and a self-match would be reported as a
       // leftover on every run.
-      .filter((row) => row.pid !== process.pid && !row.commandLine.includes(PROBE_SCRIPT))
-  );
+      .filter((row) => row.pid !== process.pid && !row.commandLine.includes(PROBE_SCRIPT)),
+  };
 }
 
 /** Who holds a TCP port: `{ status: "listening", pid }`, `{ status: "free" }`, or `{ status: "unavailable" }`. */
 export function portListener(port) {
   if (!Number.isSafeInteger(port) || port <= 0) return { status: "unavailable" };
-  const rows = answered(["-ListenerPort", String(port)]);
-  if (rows === null) return { status: "unavailable" };
-  const pid = rows[0]?.pid;
+  const measured = answered(["-ListenerPort", String(port)]);
+  if (measured === null) return { status: "unavailable" };
+  const pid = measured.rows[0]?.pid;
   return Number.isSafeInteger(pid) ? { status: "listening", pid } : { status: "free" };
 }
 

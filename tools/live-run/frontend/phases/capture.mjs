@@ -8,6 +8,7 @@ import { appendFileSync } from "node:fs";
 import { mkdir, access, writeFile, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { runPaths, loadRunConfig, REPO_ROOT, KIT_ROOT } from "../lib/config.mjs";
+import { registerRunProcess } from "../lib/run-owner.mjs";
 import { DRIVERS } from "./drivers.mjs";
 
 /* The roster lives in one module because the report reconciles the same list (drivers.mjs). */
@@ -133,6 +134,9 @@ function runDriver(driver, { port, cdpPort, run, paths, log }) {
         GB_SHOTS_TAG: run.tag,
       },
     });
+    // Recorded with the run's owner: a driver that outlives this phase whose command line names no
+    // stage path is otherwise invisible to the run's teardown and to its post-run assertion.
+    registerRunProcess(paths, { pid: proc.pid, role: `capture:${driver.key}` });
     let buffer = "";
     const onData = (chunk) => {
       buffer += chunk.toString("utf8");

@@ -206,10 +206,14 @@ async function main() {
     process.exit(2);
   }
 
-  // The port is the run's one claim: waiting runs print the holder by name, a dead holder's browser
-  // fails the run closed. Only reached after this phase owns the port does anything get launched.
+  // The port is the run's one claim: a held port is refused by name - the pid and the run directory
+  // read from the holder's own command line - unless this run was told to wait (`--wait-for-cdp`), and
+  // then the wait prints the holder and the whole budget. Only reached after this phase owns the port
+  // does anything get launched.
+  const cdpWaitMs = Math.max(0, Number(run.cdpWaitMs ?? 0));
+  say("cdp wait budget:", `${Math.round(cdpWaitMs / 1000)}s`);
   try {
-    await acquireCdpPortLock({ port: cdpPort, say });
+    await acquireCdpPortLock({ port: cdpPort, say, waitMs: cdpWaitMs });
   } catch (error) {
     const detail = String(error?.message ?? error);
     say("CDP PORT LOCK REFUSED:", detail);

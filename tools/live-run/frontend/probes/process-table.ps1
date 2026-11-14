@@ -1,4 +1,6 @@
-# Probe: the process table, read-only. One JSON object per line on stdout.
+# Probe: the process table, read-only. One JSON object per line on stdout, and - for the whole-table
+# query - a last `{ examined: N }` line: how many processes the query looked at, so a reading can print
+# its population instead of an unqualified zero.
 #
 # Modes (exactly one is meaningful):
 #   -ProcessId <n>            the row for that pid (nothing when it is gone)
@@ -25,6 +27,7 @@ if ($ListenerPort -gt 0) {
   exit 0
 }
 
+$examined = 0
 $rows = if ($ProcessId -gt 0) {
   Get-CimInstance -ClassName Win32_Process -Filter ('ProcessId = ' + $ProcessId) -ErrorAction SilentlyContinue
 } else {
@@ -32,8 +35,10 @@ $rows = if ($ProcessId -gt 0) {
 }
 foreach ($row in @($rows)) {
   if ($null -eq $row) { continue }
+  $examined += 1
   $commandLine = [string]$row.CommandLine
   if ($CommandLineLike -ne '' -and $commandLine.IndexOf($CommandLineLike, [System.StringComparison]::OrdinalIgnoreCase) -lt 0) { continue }
   Emit ([pscustomobject]@{ pid = [int]$row.ProcessId; name = [string]$row.Name; commandLine = $commandLine })
 }
+if ($ProcessId -le 0) { Emit ([pscustomobject]@{ examined = $examined }) }
 exit 0

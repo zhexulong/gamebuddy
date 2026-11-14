@@ -58,6 +58,14 @@ export function runPaths(run) {
      * never inherits a source from the wrong line (`core/recording-provider-proxy.mjs`).
      */
     wireRequestsFile: join(stage, "state", "wire-requests.jsonl"),
+    /*
+     * The processes this run started, one JSON line per pid (`lib/run-owner.mjs`). Separate from
+     * `launch.json` because the launch driver and the capture drivers are different processes: this is
+     * the handle list the run's teardown reads on the way out, whichever phase failed.
+     */
+    runProcessesFile: join(stage, "state", "run-processes.jsonl"),
+    /* The post-run assertion's reading: what was still alive, and who held the CDP port, after teardown. */
+    leftoversFile: join(stage, "state", "leftovers.json"),
     stopFlag: join(stage, "state", "stop.flag"),
     launchLog: join(stage, "logs", "launch.log"),
     buildLog: join(stage, "logs", "build.log"),

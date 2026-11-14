@@ -19,7 +19,14 @@
 //
 // Key flags: --commit (required for a full run), --out (deliverable set root), --stage (default
 // <out>.stage), --runtime (dir that DIRECTLY contains node.exe; else discovered), --game-dir,
-// --edge, --cdp-port, --force (re-run finished capture drivers), --driver=a,b (capture subset).
+// --edge, --cdp-port, --wait-for-cdp=<seconds> (default 0: a held port is refused by name at once),
+// --force (re-run finished capture drivers), --driver=a,b (capture subset).
+//
+// Whatever way this process leaves - a phase that failed, a full run that finished, or an abnormal
+// exit - the run closes through one owner (`lib/run-owner.mjs`): every process the run started is
+// terminated, its CDP lock is released, and what remained is printed as `LEFTOVERS:`. The one
+// exception is a STEPWISE run that succeeded: a mounted session is the next phase's input, so it is
+// kept and named; `cleanup` is the operator's stop.
 import { spawn, spawnSync } from "node:child_process";
 import { createWriteStream, mkdirSync, writeFileSync, readFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
@@ -33,6 +40,15 @@ import {
   KIT_ROOT,
 } from "./lib/config.mjs";
 import { cleanOutputLines } from "../../lib/subprocess-output.mjs";
+import {
+  describeLeftovers,
+  describeTeardown,
+  inspectRunLeftovers,
+  registerRunProcess,
+  registeredRunProcesses,
+  teardownRun,
+  writeLeftoversReading,
+} from "./lib/run-owner.mjs";
 
 const PHASES = ["check", "pin", "build", "launch", "capture", "cleanup", "report"];
 const POWER = "powershell.exe";
@@ -128,6 +144,9 @@ function prepareRun(paths, values) {
     edgeExe:
       values.edge ?? process.env.GB_SHOTS_EDGE ?? "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe",
     cdpPort: Number(values["cdp-port"] ?? process.env.GB_SHOTS_CDP_PORT ?? prior?.cdpPort ?? 9341),
+    // 0 is the default: a held port is refused by name at once. A caller that knows a sibling run is
+    // finishing may ask to wait, and the wait prints the holder and the whole budget.
+    cdpWaitMs: Math.max(0, Number(values["wait-for-cdp"] ?? process.env.GB_SHOTS_CDP_WAIT_MS ?? 0) * 1000),
     homeLocalAppData: process.env.LOCALAPPDATA ?? "C:\\Users\\long\\AppData\\Local",
     credentialPresent: typeof process.env.CPA_OAI_API_KEY === "string" && process.env.CPA_OAI_API_KEY.length > 0,
   };
@@ -263,6 +282,7 @@ async function phaseLaunch(paths, run) {
   });
   mkdirSync(paths.stateDir, { recursive: true });
   writeFileSync(join(paths.stateDir, "launch-driver.pid"), String(driverPid), "utf8");
+  registerRunProcess(paths, { pid: driverPid, role: "launch-driver" });
   console.log(`LAUNCH: spawn driver pid=${driverPid}; waiting for mount (log ${paths.launchLog})`);
   const deadline = Date.now() + 360_000;
   while (Date.now() < deadline) {
@@ -372,6 +392,37 @@ async function main() {
     return result;
   };
 
+  // One owner for the whole run, opened once and closed once, whichever way this process leaves.
+  // `kill` terminates every process this run started, releases its CDP lock and asserts what remained;
+  // `keep` is the stepwise `launch`/`capture` contract - a mounted session is the next phase's input, so
+  // it survives and says so. Only a FAILED phase, a full run's end, or `cleanup` stops anything, which
+  // is why a stepwise session is never pulled out from under the operator by a re-run of one phase.
+  let closed = false;
+  const close = ({ code, reason, teardown }) => {
+    if (closed) return code;
+    closed = true;
+    if (teardown === "keep") {
+      const kept = registeredRunProcesses(paths);
+      if (kept.length > 0)
+        console.log(
+          `RUN-CLEANUP(${reason}): stepwise mode leaves this run's processes running for the next phase [${kept
+            .map((record) => `${record.pid}(${record.role})`)
+            .join(" ")}] - the \`cleanup\` phase stops them`,
+        );
+      return code;
+    }
+    const teardownReport = teardownRun({ paths, run, reason });
+    console.log(describeTeardown(teardownReport));
+    const leftovers = inspectRunLeftovers({ paths, run });
+    writeLeftoversReading(paths, leftovers);
+    console.log(describeLeftovers(leftovers, run));
+    // A run that leaves its own processes alive did not finish, whatever its phase said.
+    return code !== 0 || leftovers.status === "ours_remain" ? Math.max(code, 1) : code;
+  };
+  process.once("exit", () => close({ code: 1, reason: "abnormal_exit", teardown: "kill" }));
+  // The stepwise path that kills: `cleanup` is the operator's stop, so it reports what it stopped.
+  const stepwise = phase === "cleanup" || fullMode ? "kill" : "keep";
+
   try {
     if (fullMode) {
       await runner("check", () => phaseCheck(paths, run));
@@ -382,11 +433,11 @@ async function main() {
       await runner("cleanup", () => phaseCleanup(paths, run));
       await runner("report", () => phaseReport(paths, run));
       console.log("DONE-FULL-RUN");
-      process.exit(0);
+      process.exit(close({ code: 0, reason: "run_complete", teardown: "kill" }));
     }
     switch (phase) {
       case "check":
-        process.exit(await phaseCheck(paths, run));
+        process.exit(close({ code: await phaseCheck(paths, run), reason: "phase_check", teardown: "keep" }));
         break;
       case "pin":
         await runner("pin", () => phasePin(paths, run));
@@ -409,9 +460,10 @@ async function main() {
       default:
         throw new Error(`no phase selected (expected one of ${PHASES.join(", ")})`);
     }
+    process.exit(close({ code: 0, reason: `phase_${phase}_complete`, teardown: stepwise }));
   } catch (error) {
     console.error(String(error));
-    process.exit(1);
+    process.exit(close({ code: 1, reason: "phase_failure", teardown: "kill" }));
   }
 }
 
