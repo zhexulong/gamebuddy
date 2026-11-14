@@ -41,24 +41,32 @@ export async function runProbe(client, receipts) {
 `);
 
 /** The same runner with one argument chosen at run time: the contract cannot carry the number. */
-const WITH_HELD_SLOT = RUNNER(`
+const HELD_SLOT = ({ action, family, successCode }) =>
+  RUNNER(`
 import { executeFresh, waitForTerminal } from "./lib/stardew-native-smoke-harness-v1.mjs";
 export async function runProbe(client, receipts) {
   const snapshot = await observeFresh(client, { actionable: true });
-  const target = (snapshot.caskTargets ?? []).find((entry) => entry.targetId);
+  const target = (snapshot.${family} ?? []).find((entry) => entry.targetId);
   const slot = (snapshot.toolSlots ?? []).find((entry) => entry.label === "(T)Axe").slot;
   const request = await executeFresh(client, {
     requestId: "probe",
     idempotencyKey: "probe_idem",
-    action: "clear_cask",
+    action: "${action}",
     args: { slot: slot, x: target.x, y: target.y, expectedTargetId: target.targetId },
     snapshot,
   });
   const terminal = await waitForTerminal(receipts, request, 1_000);
-  if (terminal.state !== "succeeded" || terminal.reasonCode !== "cask_cleared")
+  if (terminal.state !== "succeeded" || terminal.reasonCode !== "${successCode}")
     throw new Error("probe_failed");
 }
 `);
+
+const WITH_HELD_SLOT = HELD_SLOT({ action: "clear_cask", family: "caskTargets", successCode: "cask_cleared" });
+const WITH_HELD_SLOT_ELSEWHERE = HELD_SLOT({
+  action: "clear_debris",
+  family: "debrisTargets",
+  successCode: "debris_cleared",
+});
 
 function toolsDirectory(files) {
   const root = mkdtempSync(join(tmpdir(), "draft-tools-"));
@@ -113,12 +121,56 @@ test("a field the converter cannot read is refused by name, and the mode exits n
   assert.match(slot.why, /computed at run time/u, "the refusal says why");
 });
 
+test("an argument the request sends is refused once, and never also as one the runner omits", () => {
+  const name = "run-stardew-native-local-player-clear-cask-smoke.mjs";
+  const draft = draftContract(join(toolsDirectory({ [name]: WITH_HELD_SLOT }), name));
+  const refusals = draft.fields.filter((field) => field.field === "args.slot" && !field.ok);
+  assert.equal(refusals.length, 1, `one argument is one refusal: ${refusals.map((entry) => entry.why).join(" | ")}`);
+  assert.doesNotMatch(
+    refusals[0].why,
+    /never sends/u,
+    "the request sends `slot`; what the reader cannot read is the value it sends",
+  );
+  assert.match(refusals[0].why, /computed at run time/u, "the refusal names the real reason");
+});
+
+/**
+ * A SHARED TEMPLATE'S REQUEST IS STILL A REQUEST: `request: ({ stance }) => ({ args: { x: ..., y: ... } })`.
+ *
+ * The action is named once at the definition's top level and never beside the arguments, so the value-matching scan
+ * found no site at all and reported "no request in the runner dispatches ... with an argument object" - a statement
+ * about the runner that the runner contradicts four lines above it.
+ */
+const TEMPLATE_REQUEST = RUNNER(`
+import { defineSmokeScenario } from "./lib/native-local-runner-scaffold.mjs";
+const scenario = defineSmokeScenario({
+  action: "sweep_scythe",
+  request: ({ stance }) => ({ args: { x: stance.named.x, y: stance.named.y } }),
+});
+export const runSweepScytheSmoke = (client, receipts, config, options) => scenario.run(client, receipts, config, options);
+`);
+
+test("a request a shared template builds is refused argument by argument, not reported as absent", () => {
+  const name = "run-stardew-native-local-player-sweep-scythe-smoke.mjs";
+  const draft = draftContract(join(toolsDirectory({ [name]: TEMPLATE_REQUEST }), name));
+  assert.equal(
+    draft.fields.some((field) => field.field === "args" && !field.ok),
+    false,
+    "the request is there; only its values are not data",
+  );
+  for (const field of ["args.x", "args.y"]) {
+    const refusal = refused(draft, field);
+    assert.match(refusal.why, /stance\.named/u, `the refusal names the expression it could not read: ${refusal.why}`);
+  }
+});
+
 test("the frequency table counts a field once per runner that hit it, so one field can justify a schema kind", async () => {
   const toolsRoot = toolsDirectory({
     "run-stardew-native-local-player-clear-cask-smoke.mjs": WITH_HELD_SLOT,
-    "run-stardew-native-local-player-clear-cask-again-smoke.mjs": WITH_HELD_SLOT,
+    "run-stardew-native-local-player-clear-debris-smoke.mjs": WITH_HELD_SLOT_ELSEWHERE,
   });
-  // Both files name the same action, which is the point: the count is per RUNNER, not per action.
+  // Two RUNNERS that hit the same field, not one runner that mentions it twice: the count is the number of runners a
+  // schema kind would unblock, and a converter that reports one field twice per runner doubles the evidence for it.
   const outDir = mkdtempSync(join(tmpdir(), "draft-out-"));
   const reading = await draftAll({ toolsRoot, outDir });
   const slot = reading.byField.find((entry) => entry.field === "args.slot");
@@ -315,12 +367,63 @@ export async function runProbe(client) {
 test("two dispatches whose argument objects differ are refused by name, with every site", () => {
   const name = "run-stardew-native-local-player-water-crop-smoke.mjs";
   const draft = draftContract(join(toolsDirectory({ [name]: TWO_REQUESTS }), name));
-  const refusal = refused(draft, "args");
+  // Named for the class, not for the field: 15 runners dispatch one action from two or more sites whose argument
+  // objects differ, and a frequency table that counts them as `args` beside the reader gaps says the format needs
+  // something it does not - a contract states one request, so what these runners need is a decision, not a reader.
+  const refusal = refused(draft, "args:multiple_requests");
   assert.match(refusal.why, /2 sites whose argument objects differ/u, "a contract states one request");
   assert.deepEqual(
     [...refusal.why.matchAll(/runner:(\d+)/gu)].map((match) => match[1]).length,
     2,
     `both dispatch sites are named: ${refusal.why}`,
+  );
+});
+
+/**
+ * A NEGATIVE PROBE THAT SPREADS THE POSITIVE REQUEST IS STILL TWO REQUESTS, and the class name has to survive it.
+ *
+ * `executeNegative(client, receipts, args, expectedTargetId)` re-sends the slice's own arguments with a different
+ * expected id; read literally the spread is not an object this converter resolves, and reporting the runner as
+ * `spreads ...args` hid that the positive request above it was perfectly readable.
+ */
+const POSITIVE_THEN_SPREAD = RUNNER(`
+import { executeFresh } from "./lib/stardew-native-smoke-harness-v1.mjs";
+const ACTION = "dye_clothing_with_item";
+export async function runProbe(client, receipts) {
+  const snapshot = await observeFresh(client, { actionable: true });
+  const target = (snapshot.tailoringTargets ?? []).find((entry) => entry.targetId);
+  const args = { leftSlot: target.leftSlot, rightSlot: target.rightSlot, expectedTargetId: target.targetId };
+  const accepted = await executeFresh(client, {
+    requestId: "probe",
+    idempotencyKey: "probe_idem",
+    action: ACTION,
+    args,
+    snapshot,
+  });
+  const refused = await executeNegative(client, receipts, args, target.targetId, target);
+  return [accepted, refused];
+}
+
+async function executeNegative(client, receipts, args, expectedTargetId, target) {
+  return executeFresh(client, {
+    requestId: "negative",
+    idempotencyKey: "negative_idem",
+    action: ACTION,
+    args: { ...args, expectedTargetId },
+    snapshot: target,
+  });
+}
+`);
+
+test("a negative probe that spreads the positive request is a second request, not a spread the reader could not read", () => {
+  const name = "run-stardew-native-local-player-dye-clothing-with-item-smoke.mjs";
+  const draft = draftContract(join(toolsDirectory({ [name]: POSITIVE_THEN_SPREAD }), name));
+  const refusal = refused(draft, "args:multiple_requests");
+  assert.match(refusal.why, /2 sites whose argument objects differ/u, `the class is named: ${refusal.why}`);
+  assert.equal(
+    draft.fields.some((field) => field.field === "args" && !field.ok),
+    false,
+    "the same fact is not also reported as a plain reader gap",
   );
 });
 
@@ -366,6 +469,128 @@ test("delta is derived from the three shapes the format carries, each read throu
     ],
     "a sum, an equality and a lower bound - one entry each, no shape counted twice",
   );
+});
+
+/**
+ * THE RECEIPT ARITHMETIC THE INVENTORY RUNNERS ACTUALLY WRITE.
+ *
+ * Eleven runners are blocked on `evidence.inventory_before`/`_after`, and what blocked them was not one shape. A key
+ * compared to a NUMBER is a claim the format carries (`evidence.x.equals`), a sum with a NEGATIVE bound is a delta with
+ * that bound, and a sum whose bound is ANOTHER RECEIPT KEY is a relation the format cannot state - which is a refusal,
+ * never a zero. `Number(evidence.inventory_after) === Number(evidence.inventory_before) + delivered` was read as
+ * `inventory_before+0` in four runners of this tree before this reading existed: a contract claiming the pack did not
+ * change, drafted from a runner asserting it grew by the number of items delivered.
+ */
+const RECEIPT_ARITHMETIC = (body) =>
+  RUNNER(`
+import { executeFresh, waitForTerminal } from "./lib/stardew-native-smoke-harness-v1.mjs";
+export async function runProbe(client, receipts) {
+  const accepted = await executeFresh(client, {
+    requestId: "probe",
+    idempotencyKey: "probe_idem",
+    action: "ride_bus",
+    args: {},
+    snapshot,
+  });
+  const terminal = await waitForTerminal(receipts, accepted, 1_000);
+  const evidence = parseEvidence(terminal.evidence);
+  if (terminal.state !== "succeeded" || terminal.reasonCode !== "bus_arrived")
+    throw new Error("probe_failed");
+  ${body}
+}
+`);
+
+const RIDE_BUS_RUNNER = "run-stardew-native-local-player-ride-bus-smoke.mjs";
+const draftOf = (body) =>
+  draftContract(join(toolsDirectory({ [RIDE_BUS_RUNNER]: RECEIPT_ARITHMETIC(body) }), RIDE_BUS_RUNNER));
+
+test("a receipt key compared to a number is that number, and an ordering of the same key is still refused", () => {
+  const draft = draftOf(
+    "const passed = Number(evidence.inventory_before) === 1 && Number(evidence.inventory_after) === 0;",
+  );
+  assert.deepEqual(
+    draft.contract.evidence,
+    { inventory_before: { equals: "1" }, inventory_after: { equals: "0" } },
+    "the number the receipt must carry, in the form the format states a value in",
+  );
+  assert.equal(
+    validateSmokeContract(draft.contract).evidence.inventory_before.equals,
+    "1",
+    "the format's own validator reads the entry back as the value it was derived from",
+  );
+  // The falsifier: a numeric comparison that is NOT an equality must not become an `equals` entry. `health > 0` is a
+  // range the format states as a `delta` bound, and a reader that turned it into `equals: "0"` would pin the opposite.
+  const ordered = draftOf("const passed = Number(evidence.health) > 0;");
+  assert.equal(
+    ordered.contract.evidence?.health,
+    undefined,
+    "an ordering is not an equality, whatever number sits on its right",
+  );
+});
+
+test("a sum with a negative bound keeps the sign instead of being read as a change of zero", () => {
+  const spent = draftOf("const passed = Number(evidence.inventory_after) === Number(evidence.inventory_before) - 1;");
+  assert.deepEqual(
+    spent.contract.delta,
+    [{ from: "inventory_before", to: "inventory_after", equals: -1 }],
+    "- 1 is read as -1",
+  );
+  // The falsifier: the same expression with `+` must read `+1`, so the assertion above is about the SIGN being carried
+  // rather than about a pattern that happens to accept any arithmetic.
+  const gained = draftOf("const passed = Number(evidence.inventory_after) === Number(evidence.inventory_before) + 1;");
+  assert.deepEqual(gained.contract.delta, [{ from: "inventory_before", to: "inventory_after", equals: 1 }]);
+  assert.notDeepEqual(spent.contract.delta, gained.contract.delta, "the two directions are not one answer");
+});
+
+test("a sum whose bound is another receipt key is refused by name, never read as a change of zero", () => {
+  const draft = draftOf(
+    "const passed = Number(evidence.inventory_after) === Number(evidence.inventory_before) + Number(evidence.delivered);",
+  );
+  assert.equal(draft.contract.delta, undefined, "the format's delta carries an integer bound, not a key");
+  for (const field of ["evidence.inventory_before", "evidence.inventory_after"]) {
+    const refusal = refused(draft, field);
+    assert.match(refusal.why, /delivered/u, `the refusal names the bound it could not resolve: ${refusal.why}`);
+  }
+});
+
+test("a relation inside a throwing condition is not read, because there its true value means the branch is taken", () => {
+  const outside = draftOf(`
+    const carriedBefore = Number(evidence.inventory_before);
+    const carriedAfter = Number(evidence.inventory_after);
+    const passed = carriedAfter > carriedBefore;`);
+  assert.deepEqual(
+    outside.contract.delta,
+    [{ from: "inventory_before", to: "inventory_after", atLeast: 1 }],
+    "the same comparison outside a condition is the runner's own claim",
+  );
+  // The falsifier, and the defect it was written for: `if (!Number.isFinite(after) || after > before) throw` asserts
+  // that after is NOT above before, and `run-stardew-native-local-player-remove-fence-smoke.mjs:119` says exactly that.
+  const guard = draftOf(`
+    const carriedBefore = Number(evidence.inventory_before);
+    const carriedAfter = Number(evidence.inventory_after);
+    if (!Number.isFinite(carriedBefore) || !Number.isFinite(carriedAfter) || carriedAfter > carriedBefore)
+      throw new Error("probe_failed");`);
+  assert.equal(guard.contract.delta, undefined, "the branch's polarity is not the expression's");
+  for (const field of ["evidence.inventory_before", "evidence.inventory_after"]) refused(guard, field);
+});
+
+test("a relation between two locals that hold receipt keys is the relation between those keys", () => {
+  const draft = draftOf(`
+    const carriedBefore = Number(evidence.inventory_before);
+    const carriedAfter = Number(evidence.inventory_after);
+    const passed = carriedAfter > carriedBefore;`);
+  assert.deepEqual(
+    draft.contract.delta,
+    [{ from: "inventory_before", to: "inventory_after", atLeast: 1 }],
+    "after > before, stated as the smallest difference integers allow",
+  );
+  // The falsifier: two locals that hold no receipt key are not a relation over receipt keys, and inventing one from
+  // their names would be the guess this converter exists to refuse.
+  const unrelated = draftOf(`
+    const before = snapshot.counts;
+    const after = snapshot.counts;
+    const passed = after.total > before.total;`);
+  assert.equal(unrelated.contract.delta, undefined, "a local that holds an observation says nothing about the receipt");
 });
 
 /** An action whose declaration names no target (`ride_bus`) and one whose declaration names a family (`water_crop`). */

@@ -347,6 +347,21 @@ function argumentSites(code, actionId) {
   return sites;
 }
 
+/**
+ * The request a shared template builds: `request: ({ stance }) => ({ args: { x: ..., y: ... } })`.
+ *
+ * `sweep_scythe` names its action once at the definition's top level and never beside the arguments, so the value-
+ * matching scan above finds no site at all - and the refusal it produced said "no request in the runner dispatches
+ * ... with an argument object", which the runner contradicts four lines above it. The object is the slice's own
+ * request; only its values are chosen from the plan at run time, and that is a refusal per argument.
+ */
+function templateArgumentSites(code) {
+  const match = /\brequest\s*:\s*(?:async\s+)?(?:\([^)]*\)|[A-Za-z_$][\w$]*)\s*=>\s*\(?\s*\{\s*args\s*:/u.exec(code);
+  if (match === null) return [];
+  const start = match.index + match[0].length;
+  return [{ start, expression: code.slice(start).trimStart() }];
+}
+
 const ARGUMENT_RESOLUTION_DEPTH = 4;
 
 /** The object literal a site's expression names, or the reason it cannot be read as one. */
@@ -386,54 +401,74 @@ function stringConstant(code, name) {
 
 function deriveArgs(code, facts) {
   const sites = argumentSites(code, facts.actionId);
-  if (sites.length === 0)
+  const all = sites.length === 0 ? templateArgumentSites(code) : sites;
+  if (all.length === 0)
     return {
       value: null,
       fields: [
         refusedField(
           "args",
-          `no request in the runner dispatches '${facts.actionId}' with an argument object (no \`executeFresh(client, { action, args })\` object and no local helper taking \`args\`)`,
+          `no request in the runner dispatches '${facts.actionId}' with an argument object (no \`executeFresh(client, { action, args })\` object, no local helper taking \`args\`, no template \`request\` callback)`,
         ),
       ],
     };
-  const readings = sites.map((site) => {
-    const found = argumentObject(code, site);
-    if (found.object === undefined) return { why: found.why, start: site.start };
-    const properties = objectProperties(code, found.object);
-    const spread = properties.find((property) => property.key === null);
-    if (spread !== undefined)
-      return { why: `the request's argument object spreads \`${spread.value}\``, start: spread.start };
-    return { entries: properties, start: found.object.start };
-  });
+  // A helper's body is read by the object scan AND reached by each of its call sites; when both readings name the same
+  // object at the same place, it is one request, and counting it twice would make one runner look like two.
+  const readingsSeen = new Set();
+  const readings = all
+    .map((site) => {
+      const found = argumentObject(code, site);
+      if (found.object === undefined) return { why: found.why, start: site.start };
+      const properties = objectProperties(code, found.object);
+      const spread = properties.find((property) => property.key === null);
+      if (spread !== undefined)
+        return { why: `the request's argument object spreads \`${spread.value}\``, start: spread.start };
+      return { entries: properties, start: found.object.start };
+    })
+    .filter((reading) => {
+      const key = `${reading.start}`;
+      if (readingsSeen.has(key)) return false;
+      readingsSeen.add(key);
+      return true;
+    });
+  // Two readings of one action's request are two requests, whatever stopped this reader inside them. Reporting the
+  // spread first and the disagreement never said that the actor of these runners is the FORMAT's single-request
+  // shape, not a reader gap: a contract states one request, so these runners need a decision, not a fix here.
+  const shapes = new Set(
+    readings.map((reading) =>
+      reading.why === undefined
+        ? JSON.stringify(reading.entries.map((entry) => [entry.key, entry.value]))
+        : `unreadable:${reading.why}`,
+    ),
+  );
+  if (readings.length > 1 && shapes.size > 1) {
+    const where = readings.map((reading) => `runner:${lineOf(code, reading.start)}`).join(", ");
+    return {
+      value: null,
+      fields: [
+        refusedField(
+          "args:multiple_requests",
+          `the runner dispatches '${facts.actionId}' from ${readings.length} sites whose argument objects differ (${where}); a contract states one request`,
+        ),
+      ],
+    };
+  }
   const unreadable = readings.find((reading) => reading.why !== undefined);
   if (unreadable !== undefined)
     return {
       value: null,
       fields: [refusedField("args", unreadable.why, `runner:${lineOf(code, unreadable.start)}`)],
     };
-  const shapes = new Set(
-    readings.map((reading) => JSON.stringify(reading.entries.map((entry) => [entry.key, entry.value]))),
-  );
-  if (shapes.size > 1) {
-    const where = readings.map((reading) => `runner:${lineOf(code, reading.start)}`).join(", ");
-    return {
-      value: null,
-      fields: [
-        refusedField(
-          "args",
-          `the runner dispatches '${facts.actionId}' from ${readings.length} sites whose argument objects differ (${where}); a contract states one request`,
-        ),
-      ],
-    };
-  }
   const fields = [];
   const args = {};
+  const named = new Set();
   const declared = facts.argumentSchema;
   for (const entry of readings[0].entries) {
     const name = entry.key;
     const raw = entry.value.trim();
     const line = lineOf(code, entry.start);
     if (declared[name] === undefined) continue;
+    named.add(name);
     if (args[name] !== undefined) {
       fields.push(refusedField(`args.${name}`, "the runner's argument object names this key twice", `runner:${line}`));
       continue;
@@ -469,7 +504,9 @@ function deriveArgs(code, facts) {
       ),
     );
   }
-  const missing = Object.keys(declared).filter((name) => args[name] === undefined);
+  // A key the request SENT is not also a key the runner never sent: the refusal above already says what could not be
+  // read about it, and the second one contradicted the runner's own source (`{ slot }` is a sent argument).
+  const missing = Object.keys(declared).filter((name) => args[name] === undefined && !named.has(name));
   for (const name of missing)
     fields.push(refusedField(`args.${name}`, "the runner never sends this declared argument"));
   return { value: args, fields };
@@ -579,14 +616,28 @@ function deriveReasonCode(code, facts) {
   return { value: word, fields: [derived("expectedReasonCode", word, `runner:${lineOf(code, match.index)}`)] };
 }
 
+/** `evidence.<key>`, or a local proven to hold exactly one. */
+const KEY_SIDE = String.raw`(?:evidence\.[a-z][a-z0-9_]*|[A-Za-z_$][\w$]*)`;
+
 const EVIDENCE_EQUALS =
   /(?:assertEvidence\(\s*evidence\s*,\s*"([a-z0-9_]+)"\s*,\s*"([^"]*)"\s*\)|evidence\.([a-z0-9_]+)\s*===\s*"([^"]*)")/gu;
 const EVIDENCE_TARGET =
   /(?:assertEvidence\(\s*evidence\s*,\s*"([a-z0-9_]+)"\s*,\s*target\.([A-Za-z][A-Za-z0-9_]*)\s*\)|evidence\.([a-z0-9_]+)\s*===\s*String\(target\.([A-Za-z][A-Za-z0-9_]*)\)|evidence\.([a-z0-9_]+)\s*===\s*target\.([A-Za-z][A-Za-z0-9_]*)(?![.\w(]))/gu;
 
-function deriveEvidence(code, deltaClaimed = new Set()) {
+/**
+ * A receipt key compared to a NUMBER - `Number(evidence.inventory_before) === 1`.
+ *
+ * The format states a value as a string, because that is what a receipt carries, so the number on the right is the
+ * value the entry pins (`equals: "1"`). Reading `Number(...)` is the whole point: eleven runners narrow the key and
+ * compare a number, and the pattern that required a string literal beside the key read none of them.
+ */
+const EVIDENCE_NUMBER = new RegExp(`(${KEY_SIDE})\\s*===\\s*(-?\\d+)(?![\\w.])`, "gud");
+
+function deriveEvidence(code, { claimed = new Set(), notes = [] } = {}) {
   const fields = [];
   const evidence = {};
+  const aliases = evidenceAliases(code);
+  const conditions = conditionSpans(code);
   for (const match of code.matchAll(EVIDENCE_EQUALS)) {
     const key = match[1] ?? match[3];
     const value = match[2] ?? match[4];
@@ -599,10 +650,23 @@ function deriveEvidence(code, deltaClaimed = new Set()) {
     evidence[key] = { equalsTarget: targetField };
     fields.push(derived(`evidence.${key}`, `$target.${targetField}`, `runner:${lineOf(code, match.index)}`));
   }
-  const known = new Set([...Object.keys(evidence), "detail"]);
+  for (const match of withoutNarrowing(code).matchAll(EVIDENCE_NUMBER)) {
+    if (insideCondition(conditions, match.index)) continue;
+    if (!(startsOperand(code, match.indices[1][0]) && endsOperand(code, match.index + match[0].length))) continue;
+    const key = keyOfSide(aliases, match[1]);
+    if (key === null || claimed.has(key) || evidence[key] !== undefined) continue;
+    evidence[key] = { equals: match[2] };
+    fields.push(derived(`evidence.${key}`, match[2], `runner:${lineOf(code, match.index)}`));
+  }
+  // A relation the format cannot state is refused against BOTH keys it was read from, with the bound it could not
+  // resolve: the naive scan below would say "compares this key to something data cannot carry" about each half.
+  for (const note of notes)
+    if (evidence[note.key] === undefined)
+      fields.push(refusedField(`evidence.${note.key}`, note.why, `runner:${note.line}`));
+  const known = new Set([...Object.keys(evidence), "detail", ...notes.map((note) => note.key)]);
   for (const match of code.matchAll(/evidence\.([a-z0-9_]+)/gu)) {
     const key = match[1];
-    if (known.has(key) || deltaClaimed.has(key)) continue;
+    if (known.has(key) || claimed.has(key)) continue;
     const line = lineOf(code, match.index);
     const lineText = code.split("\n")[line - 1] ?? "";
     if (!lineText.includes(`evidence.${key}`)) continue;
@@ -729,52 +793,218 @@ function deriveStale(code) {
  * wrapper leaves one spelling of each comparison.
  */
 function withoutNarrowing(code) {
-  return code.replace(
-    /Number\(\s*(evidence\.[a-z0-9_]+)\s*\)/gu,
-    (match, key) => `${key}${" ".repeat(match.length - key.length)}`,
-  );
+  return code
+    .replace(
+      /Number\(\s*(evidence\.[a-z0-9_]+)\s*\)/gu,
+      (match, key) => `${key}${" ".repeat(match.length - key.length)}`,
+    )
+    .replace(
+      /Number\(\s*([A-Za-z_$][\w$]*)\s*\)/gu,
+      (match, name) => `${name}${" ".repeat(match.length - name.length)}`,
+    );
 }
 
-const DELTA_SUM = /evidence\.([a-z0-9_]+)\s*===\s*evidence\.([a-z0-9_]+)\s*\+\s*(\d+)/gu;
-// The lookahead keeps an equality from claiming the left half of a sum as a relation of its own: `a === b + 1` is one
-// entry, not a `b === a` entry beside it.
-const DELTA_EQUAL = /evidence\.([a-z0-9_]+)\s*===\s*evidence\.([a-z0-9_]+)(?![\w.])(?!\s*[+-]\s*\d)/gu;
-const DELTA_AT_LEAST = /evidence\.([a-z0-9_]+)\s*>=\s*(\d+)\b/gu;
+/**
+ * A runner parses a receipt key before comparing it as a number, and then compares the LOCAL.
+ *
+ * `const carriedBefore = Number(evidence.inventory_before)` followed by `carriedAfter !== carriedBefore + 1` is the
+ * same relation as writing the keys out, and five of the eleven runners blocked on `inventory_before`/`_after` write
+ * it this way. The wrappers below are the ones that only narrow; anything that transforms the value further
+ * (`inventoryAfter - inventoryBefore`) is not the key.
+ */
+const HELD_EVIDENCE_KEY =
+  /^(?:evidence\.([a-z][a-z0-9_]*)|(?:Number|Number\.parseInt|Number\.parseFloat|parseSafeInteger|parseInt|integerEvidence)\(\s*evidence\.([a-z][a-z0-9_]*)\s*(?:,\s*10\s*)?\))$/u;
 
 /**
- * The `delta` entries a runner's arithmetic asks for, and the keys those entries answer for.
+ * The local names that hold exactly one receipt key, so a comparison between locals is a comparison between keys.
  *
- * Three shapes only, because those are the three the format carries: a sum (`to === from + n`), an equality
- * (`to === from`) and a bare lower bound (`to >= n`). All three read the key through an optional `Number(...)`,
- * because that is how a runner writes it: `Number(evidence.swings) >= 1` appears in
- * `run-stardew-native-local-player-break-resource-clump-smoke.mjs:175`, and the unwrapped pattern this converter
- * shipped read none of it - the lower-bound shape was declared by it and never once derived. Anything else stays a
- * refusal, so the frequency table keeps naming what the schema still cannot say.
+ * A name is proven only when EVERY initializer it has is the key or a parse of it: the same rule `holdsTargetRow`
+ * applies to the target row, for the same reason - two initializers that disagree prove nothing, and one name reused
+ * in two scopes is not one value.
+ */
+function evidenceAliases(code) {
+  const found = new Map();
+  for (const match of code.matchAll(/\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*/gu)) {
+    const name = match[1];
+    const from = match.index + match[0].length;
+    const held = HELD_EVIDENCE_KEY.exec(code.slice(from, statementEnd(code, from)).trim());
+    const keys = found.get(name) ?? [];
+    keys.push(held === null ? null : (held[1] ?? held[2]));
+    found.set(name, keys);
+  }
+  const aliases = new Map();
+  for (const [name, keys] of found)
+    if (keys.every((key) => key !== null) && new Set(keys).size === 1) aliases.set(name, keys[0]);
+  return aliases;
+}
+
+/** The receipt key one side of a comparison names, or null when it names no receipt key this reader can prove. */
+function keyOfSide(aliases, text) {
+  const direct = /^evidence\.([a-z][a-z0-9_]*)$/u.exec(text.trim());
+  return direct === null ? (aliases.get(text.trim()) ?? null) : direct[1];
+}
+
+/**
+ * Whether the two ends of a comparison are whole operands, or the head/tail of a larger expression.
+ *
+ * `sweepable + clear > tiles` contains the text `clear > tiles`, and reading THAT as "clear is at least one more than
+ * tiles" is the opposite of what the runner asserts (``sweepable + clear <= tiles``). So the left side must not follow
+ * an arithmetic operator, and the right side of the comparison must not be followed by one - `a === b - 1` is a sum
+ * whose right side continues into its own operator, and it is read as a sum rather than as `a === b`.
+ */
+function startsOperand(code, start) {
+  return !/[-+*/%!]/u.test(code.slice(0, start).trimEnd().at(-1) ?? "");
+}
+
+function endsOperand(code, end) {
+  return !/[-+*/%]/u.test(code.slice(end).trimStart().at(0) ?? "");
+}
+
+/**
+ * The spans of every `if (...)` condition, where a true comparison means the branch is TAKEN.
+ *
+ * `if (!Number.isFinite(after) || after > before) throw` asserts that `after` is NOT above `before`; reading the same
+ * text as "after is above before" inverts a runner's own guard, which is the one thing a draft must never do. So no
+ * comparison inside a condition is read at all - the polarity there belongs to the branch, not to the expression - and
+ * the keys fall back to the reader's refusal.
+ */
+function conditionSpans(code) {
+  const spans = [];
+  for (const match of code.matchAll(/\bif\s*\(/gu)) {
+    const open = match.index + match[0].length - 1;
+    const end = endOfBracket(code, open);
+    if (end > 0) spans.push([open, end]);
+  }
+  return spans;
+}
+
+function insideCondition(spans, index) {
+  return spans.some(([open, end]) => index > open && index < end);
+}
+
+/** One `[+-] <bound>` arithmetic comparison of two receipt keys: the operator and the bound as written. */
+const RECEIPT_ARITHMETIC = new RegExp(`(${KEY_SIDE})\\s*===\\s*(${KEY_SIDE})\\s*([+-])\\s*([\\w.]+)`, "gud");
+// The lookahead keeps an equality from claiming the left half of a sum as a relation of its own: `a === b + 1` is one
+// entry, not a `b === a` entry beside it. It has to stop at ANY operator, not only a digit: the version that stopped at
+// digits read `a === b + delivered` as `a === b` and drafted "the count did not change" from a runner asserting it did.
+const DELTA_EQUAL = new RegExp(`(${KEY_SIDE})\\s*===\\s*(${KEY_SIDE})(?![\\w.])(?!\\s*[+-])`, "gud");
+const DELTA_ORDER = new RegExp(`(${KEY_SIDE})\\s*(>=|>)\\s*(${KEY_SIDE})(?![\\w.])`, "gud");
+const DELTA_AT_LEAST = new RegExp(`(${KEY_SIDE})\\s*(>=|>)\\s*(-?\\d+)(?![\\w.])`, "gud");
+
+/** The integer a bound is written as, including `_` separators, or null when it is not an integer at all. */
+function integerBound(text) {
+  return /^-?\d[\d_]*$/u.test(text) ? Number(text.replaceAll("_", "")) : null;
+}
+
+/** The integer constants `const DELIVERY_QUEST_NUMBER = 1;`, each proven the same way a held key is. */
+function integerConstants(code) {
+  const constants = new Map();
+  const names = new Set([...code.matchAll(/\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*/gu)].map((m) => m[1]));
+  for (const name of names) {
+    const values = initializers(code, name).map((entry) => integerBound(entry.text.trim()));
+    if (values.every((value) => value !== null) && new Set(values).size === 1) constants.set(name, values[0]);
+  }
+  return constants;
+}
+
+/**
+ * The `delta` entries a runner's arithmetic asks for, the keys those entries answer for, and the relations the format
+ * cannot state.
+ *
+ * Four shapes, because those are what the runners write and what the format carries: a sum (`to === from + n`, and
+ * `- n` which is the same entry with a negative bound), an equality (`to === from`), an ordering between two keys
+ * (`to > from`, which for integers is the smallest difference the format's `atLeast` can state) and a bare bound
+ * (`to >= n`). Every side may be written as the key or as a local proven to hold it.
+ *
+ * The bound must be an INTEGER the runner writes. When it is another receipt key - `after === before + delivered` in
+ * four runners of this tree - the format's delta cannot say it, because its bound is a number and not a key. That case
+ * is refused against both keys by name; reading it as an equality was a silent zero, and a contract claiming the pack
+ * did not change is worse than no contract at all.
  */
 function deriveDelta(code) {
+  const aliases = evidenceAliases(code);
+  const constants = integerConstants(code);
   const fields = [];
+  const notes = [];
   const entries = [];
   const claimed = new Set();
   const bare = withoutNarrowing(code);
-  for (const match of bare.matchAll(DELTA_SUM)) {
-    entries.push({ from: match[2], to: match[1], equals: Number(match[3]) });
-    claimed.add(match[1]);
-    claimed.add(match[2]);
-    fields.push(derived(`delta.${match[1]}`, `${match[2]}+${match[3]}`, `runner:${lineOf(code, match.index)}`));
+  const conditions = conditionSpans(code);
+  const note = (key, why, index) => notes.push({ key, why, line: lineOf(code, index) });
+  for (const match of bare.matchAll(RECEIPT_ARITHMETIC)) {
+    if (insideCondition(conditions, match.index)) continue;
+    if (!(startsOperand(code, match.indices[1][0]) && startsOperand(code, match.indices[2][0]))) continue;
+    if (!endsOperand(code, match.index + match[0].length)) continue;
+    const to = keyOfSide(aliases, match[1]);
+    const from = keyOfSide(aliases, match[2]);
+    if (to === null || from === null || to === from) continue;
+    const written = integerBound(match[4]) ?? constants.get(match[4]) ?? null;
+    if (written === null) {
+      const bound = keyOfSide(aliases, match[4]);
+      const why =
+        bound === null
+          ? `the runner relates this key to \`${match[2]} ${match[3]} ${match[4]}\`, whose bound is not a number this reader can resolve; the format's delta carries an integer bound`
+          : `the runner relates this key to \`${match[2]} ${match[3]} ${match[4]}\`, whose bound is the receipt key '${bound}'; the format's delta carries an integer bound, not a key`;
+      note(to, why, match.index);
+      note(from, why, match.index);
+      continue;
+    }
+    const equals = match[3] === "-" ? -written : written;
+    entries.push({ from, to, equals });
+    claimed.add(to);
+    claimed.add(from);
+    fields.push(
+      derived(`delta.${to}`, `${from}${equals < 0 ? "" : "+"}${equals}`, `runner:${lineOf(code, match.index)}`),
+    );
   }
   for (const match of bare.matchAll(DELTA_EQUAL)) {
-    if (match[1] === match[2]) continue;
-    entries.push({ from: match[2], to: match[1], equals: 0 });
-    claimed.add(match[1]);
-    claimed.add(match[2]);
-    fields.push(derived(`delta.${match[1]}`, `${match[2]}+0`, `runner:${lineOf(code, match.index)}`));
+    if (insideCondition(conditions, match.index)) continue;
+    if (!(startsOperand(code, match.indices[1][0]) && endsOperand(code, match.indices[2][1]))) continue;
+    const to = keyOfSide(aliases, match[1]);
+    const from = keyOfSide(aliases, match[2]);
+    if (to === null || from === null || to === from) continue;
+    entries.push({ from, to, equals: 0 });
+    claimed.add(to);
+    claimed.add(from);
+    fields.push(derived(`delta.${to}`, `${from}+0`, `runner:${lineOf(code, match.index)}`));
+  }
+  for (const match of bare.matchAll(DELTA_ORDER)) {
+    if (insideCondition(conditions, match.index)) continue;
+    if (!(startsOperand(code, match.indices[1][0]) && startsOperand(code, match.indices[3][0]))) continue;
+    if (!endsOperand(code, match.index + match[0].length)) continue;
+    const to = keyOfSide(aliases, match[1]);
+    const from = keyOfSide(aliases, match[3]);
+    if (to === null || from === null || to === from) continue;
+    const atLeast = match[2] === ">" ? 1 : 0;
+    entries.push({ from, to, atLeast });
+    claimed.add(to);
+    claimed.add(from);
+    fields.push(derived(`delta.${to}`, `${from}>=${atLeast}`, `runner:${lineOf(code, match.index)}`));
   }
   for (const match of bare.matchAll(DELTA_AT_LEAST)) {
-    entries.push({ to: match[1], atLeast: Number(match[2]) });
-    claimed.add(match[1]);
-    fields.push(derived(`delta.${match[1]}`, `>=${match[2]}`, `runner:${lineOf(code, match.index)}`));
+    if (insideCondition(conditions, match.index)) continue;
+    if (!startsOperand(code, match.indices[1][0])) continue;
+    if (!endsOperand(code, match.index + match[0].length)) continue;
+    const to = keyOfSide(aliases, match[1]);
+    const written = integerBound(match[3]) ?? constants.get(match[3]) ?? null;
+    if (to === null || written === null) continue;
+    // For integers `to > n` is `to - 0 >= n + 1`, the same entry the `>=` spelling makes.
+    const bound = match[2] === ">" ? written + 1 : written;
+    entries.push({ to, atLeast: bound });
+    claimed.add(to);
+    fields.push(derived(`delta.${to}`, `>=${bound}`, `runner:${lineOf(code, match.index)}`));
   }
-  return { value: entries, claimed, fields };
+  // One relation, one entry: a runner that writes the same sum twice (a `passed` conjunction beside a guard) has said
+  // one thing, and two identical entries would be two answers to "what does this receipt promise".
+  const unique = [...new Map(entries.map((entry) => [JSON.stringify(entry), entry])).values()];
+  const uniqueFields = [];
+  const seen = new Set();
+  for (const field of fields) {
+    if (seen.has(field.field)) continue;
+    seen.add(field.field);
+    uniqueFields.push(field);
+  }
+  return { value: unique, claimed, fields: uniqueFields, notes };
 }
 
 /** The draft contract plus the provenance of every field in it. */
@@ -792,7 +1022,7 @@ export function draftContract(runnerPath, { facts = null } = {}) {
   const args = deriveArgs(code, actionFacts);
   const discovery = deriveDiscovery(code, actionFacts, args.value ?? {});
   const delta = deriveDelta(code);
-  const evidence = deriveEvidence(code, delta.claimed);
+  const evidence = deriveEvidence(code, { claimed: delta.claimed, notes: delta.notes });
   const worldAfter = deriveWorldAfter(code);
   const stale = deriveStale(code);
 
