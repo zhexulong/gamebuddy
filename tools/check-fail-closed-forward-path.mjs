@@ -452,18 +452,19 @@ function unionTypeMembers(sourceFile, name) {
 function turnStates() {
   const file = parseFile(SOURCES.turnLedger);
   const members = typeAliasTypes(file);
+  const terminal = terminalStatuses(file);
   const states = [];
   for (const name of typeReferenceNames(unionTypeMembers(file, "ChatTurnLedger"))) {
     const status = statusLiteralOf(members.get(name));
     if (status !== null) states.push(status);
   }
-  const holding = states.filter((status) => !isTerminal(file, status));
+  const holding = states.filter((status) => !terminal.has(status));
   const releases = releaseGraph(file, states);
   return {
     states,
     holding,
-    terminal: states.filter((status) => isTerminal(file, status)),
-    reaches: new Map(holding.map((status) => [status, reachableTerminals(status, releases, file)])),
+    terminal: states.filter((status) => terminal.has(status)),
+    reaches: new Map(holding.map((status) => [status, reachableTerminals(status, releases, terminal)])),
   };
 }
 
@@ -510,14 +511,14 @@ function statusLiteralOf(node) {
 }
 
 /**
- * Whether the product calls this status terminal, by asking the function that says so.
+ * The statuses the product calls terminal, by asking the function that says so.
  *
  * `isTerminalTurnStatus` is the one place the answer lives - it decides which transitions the store
  * refuses to make - so the split between holding and terminal is read from its body rather than
  * restated here. A status the predicate does not name is holding, which is the safe direction: it owes
  * a release until the product says otherwise.
  */
-function isTerminal(sourceFile, status) {
+function terminalStatuses(sourceFile) {
   let body = null;
   const visit = (node) => {
     if (typescript.isFunctionDeclaration(node) && node.name !== undefined && node.name.text === "isTerminalTurnStatus")
@@ -525,7 +526,7 @@ function isTerminal(sourceFile, status) {
     typescript.forEachChild(node, visit);
   };
   visit(sourceFile);
-  return body !== null && stringLiterals(body).includes(status);
+  return new Set(body === null ? [] : stringLiterals(body));
 }
 
 const isFunctionLike = (node) =>
@@ -604,7 +605,7 @@ function lineOf(sourceFile, node) {
 }
 
 /** Every terminal reachable from one holding status by following written transitions. */
-function reachableTerminals(start, releases, sourceFile) {
+function reachableTerminals(start, releases, terminal) {
   const terminals = [];
   const seen = new Set([start]);
   const queue = [start];
@@ -613,7 +614,7 @@ function reachableTerminals(start, releases, sourceFile) {
     for (const next of releases.edges.get(current) ?? []) {
       if (seen.has(next)) continue;
       seen.add(next);
-      if (isTerminal(sourceFile, next)) terminals.push(next);
+      if (terminal.has(next)) terminals.push(next);
       queue.push(next);
     }
   }
