@@ -283,8 +283,10 @@ public sealed class ToolApproachContractSourceShapeTests
     [Fact]
     public void DeadlineExpiry_SettlesTheApproach_ExactlyOnce()
     {
-        string controller = Read("integrations/stardew/farmhandexecutioncontroller.cs");
-        string body = MethodBody(controller, "if (this.activeToolApproach is { } settledToolApproach)");
+        // The deadline pass is the frame loop's, so it is read from whichever partial declares Update rather than
+        // from a path: a path turns a move into a red gate here.
+        string loop = ControllerPartials.Declaring("Update");
+        string body = MethodBody(loop, "if (this.activeToolApproach is { } settledToolApproach)");
 
         body.Should().Contain("tool_approach_deadline_expired");
         body.Should().Contain("ExecutionState.Expired");
