@@ -1,0 +1,27 @@
+{
+  "schema": "stardew-action-smoke-contract/v1",
+  "action": "accept_daily_quest",
+  "discovery": {
+    "cardinality": "exactly_one",
+    "requiredFields": ["targetId"]
+  },
+  "args": {
+    "expectedTargetId": "$target.targetId"
+  },
+  "evidence": {
+    "accepted_after": "true",
+    "accepted_daily_after": "true",
+    "quest_log_before": "0",
+    "quest_log_after": "1",
+    "daily_after": "true",
+    "can_be_cancelled_after": "true",
+    "days_left_after": "2"
+  },
+  "worldAfter": [
+    { "field": "dailyQuestTargets", "excludesTarget": true },
+    { "field": "acceptedDailyQuest", "equals": true }
+  ],
+  "stale": {
+    "refusedWith": ["daily_quest_already_accepted", "daily_quest_target_moved", "daily_quest_unavailable"]
+  }
+}

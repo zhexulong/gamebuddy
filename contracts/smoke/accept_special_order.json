@@ -1,0 +1,31 @@
+{
+  "schema": "stardew-action-smoke-contract/v1",
+  "action": "accept_special_order",
+  "discovery": {
+    "cardinality": "exactly_one",
+    "requiredFields": ["targetId", "questKey"]
+  },
+  "args": {
+    "expectedTargetId": "$target.targetId"
+  },
+  "evidence": {
+    "board_marker_before": "false",
+    "board_marker_after": "true",
+    "order_present_after": "true",
+    "order_in_progress_after": "true",
+    "quest_key": { "equalsTarget": "questKey" }
+  },
+  "worldAfter": [
+    { "field": "specialOrderTargets", "excludesTarget": true },
+    { "field": "specialOrderTargets", "size": 0 },
+    { "field": "activeSpecialOrderKeys", "includesTargetField": "questKey" }
+  ],
+  "stale": {
+    "refusedWith": [
+      "special_order_already_active",
+      "special_order_board_already_used",
+      "special_order_target_moved",
+      "special_order_unavailable"
+    ]
+  }
+}
