@@ -36,9 +36,10 @@ const reading = (overrides) => ({
 
 test("a ratio outside its band is a finding that names the case, both sizes and the band", () => {
   const findings = evaluateScaling([{ file: "tools/perf/case.bench.mjs", readings: [reading({ ratio: 4.01 })] }]);
-  assert.equal(findings.length, 1);
-  assert.equal(findings[0].code, "ratio_out_of_band");
-  assert.equal(findings[0].case, "case.under.test");
+  assert.deepEqual(
+    findings.map((finding) => [finding.code, finding.case]),
+    [["ratio_out_of_band", "case.under.test"]],
+  );
   assert.match(findings[0].detail, /2x items cost 4\.01x the per-op time, outside the declared band \[1\.2, 3\.2\]/u);
   assert.match(findings[0].detail, /doubling the input must cost less than 3\.2x/u);
 });
@@ -140,7 +141,9 @@ test("a quadratic path on the measured axis reads outside the band, and a linear
   assert.ok(linear.ratio > 1.2 && linear.ratio < 3.2, `a linear path read ${linear.ratio}x, expected ~2x`);
   // Quadratic in the input: the ratio is the multiple SQUARED, which is what the band exists to refuse.
   assert.ok(quadratic.ratio > 3.2, `a quadratic path read ${quadratic.ratio}x, expected ~4x`);
-  assert.equal(findings.length, 1, "only the quadratic pair may be reported");
-  assert.equal(findings[0].code, "ratio_out_of_band");
-  assert.equal(findings[0].case, "quadratic.path");
+  assert.deepEqual(
+    findings.map((finding) => [finding.code, finding.case]),
+    [["ratio_out_of_band", "quadratic.path"]],
+    "only the quadratic pair may be reported",
+  );
 });

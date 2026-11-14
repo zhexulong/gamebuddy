@@ -147,10 +147,12 @@ test("a dead bridge is answered from the journal, and the run is not scored as h
     },
     journal: createBodyProgramJournalFallback(written),
   });
-  assert.equal(records.length, 1);
+  assert.deepEqual(
+    records.map((record) => [record.source, record.dispatched]),
+    [["journal", 2]],
+    "one record, evidenced by the journal, carrying both dispatches",
+  );
   assert.equal(records[0].observed, true, "the journal proved the program ran, so it is not unobserved");
-  assert.equal(records[0].source, "journal", "and it says the evidence came from the file, not the live Mod");
-  assert.equal(records[0].dispatched, 2, "two native_dispatch events are two executions");
   assert.deepEqual(records[0].executions, [
     { nodeId: "n01", nodeAttempt: 1, cursor: 3, atMs: 1200, settledAtMs: 1450 },
     { nodeId: "n02", nodeAttempt: 1, cursor: 5, atMs: 1500, settledAtMs: 1700 },

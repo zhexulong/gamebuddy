@@ -107,10 +107,11 @@ test("a declared reader whose file is gone fails the gate naming that entry", ()
     ],
   };
   const { findings } = auditParserAgreement({ root: treeWith(macroEngineSource), vocabularies: [renamed] });
-  assert.equal(findings.length, 1, `findings were ${JSON.stringify(findings)}`);
-  assert.equal(findings[0].code, "reader_missing");
-  assert.equal(findings[0].vocabulary, "tavern-macro");
-  assert.equal(findings[0].reader, "macroKey");
+  assert.deepEqual(
+    findings.map((finding) => [finding.code, finding.vocabulary, finding.reader]),
+    [["reader_missing", "tavern-macro", "macroKey"]],
+    `findings were ${JSON.stringify(findings)}`,
+  );
   assert.match(findings[0].detail, /renamed-macro-engine\.ts, which is not on disk/u);
 });
 
@@ -211,8 +212,11 @@ test("the printed sample names every macro the two readers disagreed about", () 
 test("a vocabulary with fewer than two readers cannot compare, and says so", () => {
   const single = { ...macroVocabulary, readers: [macroVocabulary.readers[1]] };
   const { readings, findings } = auditParserAgreement({ root: treeWith(macroEngineSource), vocabularies: [single] });
-  assert.equal(findings.length, 1, `findings were ${JSON.stringify(findings)}`);
-  assert.equal(findings[0].code, "readers_unpaired");
+  assert.deepEqual(
+    findings.map((finding) => finding.code),
+    ["readers_unpaired"],
+    `findings were ${JSON.stringify(findings)}`,
+  );
   assert.match(findings[0].detail, /no comparison was made/u);
   assert.equal(readings[0].compared, false);
 });

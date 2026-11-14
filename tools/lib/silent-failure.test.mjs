@@ -1,4 +1,4 @@
-// red-proof: inject  dropping the witness-staleness arm from checkSilentFailures -> `✖ a declaration whose witness
+// red-proof: inject  dropping the witness-staleness arm from checkSilentFailures -> `× a declaration whose witness
 //   no longer matches the code is stale, not silently applied` (tools/lib/silent-failure.test.mjs)
 import assert from "node:assert/strict";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
@@ -30,9 +30,10 @@ test("an empty catch with no declaration is a finding", async () => {
   });
   try {
     const findings = findSilentFailures(root);
-    assert.equal(findings.length, 1);
-    assert.equal(findings[0].kind, "silent-catch");
-    assert.equal(findings[0].symbol, "reportLoad");
+    assert.deepEqual(
+      findings.map((finding) => [finding.kind, finding.symbol]),
+      [["silent-catch", "reportLoad"]],
+    );
     const verdict = checkSilentFailures(root, []);
     assert.equal(verdict.findings.length, 1, "undeclared silence must still be reported");
   } finally {
@@ -113,8 +114,10 @@ test("an early return before the function reported anything is a finding of its 
   });
   try {
     const findings = findSilentFailures(root);
-    assert.equal(findings.length, 1);
-    assert.equal(findings[0].kind, "early-return");
+    assert.deepEqual(
+      findings.map((finding) => finding.kind),
+      ["early-return"],
+    );
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -125,7 +128,7 @@ test("a catch that propagates is not a finding", async () => {
     "src/c.ts": "export function probeThing() {\n  try { return g(); } catch (error) { throw error; }\n}\n",
   });
   try {
-    assert.equal(findSilentFailures(root).length, 0);
+    assert.deepEqual(findSilentFailures(root), []);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -137,7 +140,7 @@ test("the gate does not scan its own machinery or test files", async () => {
     "src/x.test.ts": "test('a', () => { try { g(); } catch {} });\n",
   });
   try {
-    assert.equal(findSilentFailures(root).length, 0);
+    assert.deepEqual(findSilentFailures(root), []);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

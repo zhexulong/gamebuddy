@@ -80,8 +80,11 @@ test("the owner file is exempt", () => {
     "src/other.mjs": 'export const other = "sentinel-value";\n',
   });
   const findings = findDuplicatedAuthorities(root, SYNTHETIC);
-  assert.equal(findings.length, 1);
-  assert.ok(findings.every((finding) => finding.path !== "src/owner.mjs"));
+  assert.deepEqual(
+    findings.map((finding) => finding.path),
+    ["src/other.mjs"],
+    "the owner file is exempt",
+  );
 });
 
 test("a literal in a comment is not a finding", () => {
@@ -164,7 +167,6 @@ test("the published-action-id-list rule catches a hand-written id list, not a si
     findings.map((finding) => finding.path),
     ["tools/probe.mjs"],
   );
-  assert.equal(findings.length, 1);
 });
 
 test("the provider-id rule catches a harness literal and exempts a test that asserts on it", () => {

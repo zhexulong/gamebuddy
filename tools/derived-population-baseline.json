@@ -457,46 +457,6 @@
       "line": 540
     },
     {
-      "file": "tools/check-perf-scaling.test.mjs",
-      "authority": "findings",
-      "literal": "1",
-      "shape": "unresolved",
-      "sites": 2,
-      "line": 39
-    },
-    {
-      "file": "tools/check-refusal-informativeness.test.mjs",
-      "authority": "priced",
-      "literal": "1",
-      "shape": "unresolved",
-      "sites": 1,
-      "line": 334
-    },
-    {
-      "file": "tools/check-stardew-dialogue-stream.test.mjs",
-      "authority": "found",
-      "literal": "1",
-      "shape": "unresolved",
-      "sites": 1,
-      "line": 102
-    },
-    {
-      "file": "tools/lib/duplicated-authority.test.mjs",
-      "authority": "findings",
-      "literal": "1",
-      "shape": "unresolved",
-      "sites": 2,
-      "line": 83
-    },
-    {
-      "file": "tools/lib/evidence-bundle.test.mjs",
-      "authority": "validateActionTraceEntry(null)",
-      "literal": "1",
-      "shape": "call_result",
-      "sites": 1,
-      "line": 415
-    },
-    {
       "file": "tools/lib/live-run-teardown.test.mjs",
       "authority": "JSON.parse(readFileSync(resultPath, \"utf8\")).reclamation.steps",
       "literal": "5",
@@ -513,38 +473,6 @@
       "line": 62
     },
     {
-      "file": "tools/lib/parser-agreement.test.mjs",
-      "authority": "findings",
-      "literal": "1",
-      "shape": "unresolved",
-      "sites": 2,
-      "line": 110
-    },
-    {
-      "file": "tools/lib/silent-failure.test.mjs",
-      "authority": "findings",
-      "literal": "1",
-      "shape": "unresolved",
-      "sites": 2,
-      "line": 33
-    },
-    {
-      "file": "tools/lib/silent-failure.test.mjs",
-      "authority": "findSilentFailures(root)",
-      "literal": "0",
-      "shape": "call_result",
-      "sites": 2,
-      "line": 128
-    },
-    {
-      "file": "tools/live-run/frontend/capture/capability.test.mjs",
-      "authority": "surplus",
-      "literal": "1",
-      "shape": "unresolved",
-      "sites": 1,
-      "line": 192
-    },
-    {
       "file": "tools/live-run/frontend/capture/injection-claims.test.mjs",
       "authority": "history",
       "literal": "0",
@@ -559,22 +487,6 @@
       "shape": "unresolved",
       "sites": 1,
       "line": 119
-    },
-    {
-      "file": "tools/live-run/game/execution-trace.test.mjs",
-      "authority": "twoPrograms",
-      "literal": "2",
-      "shape": "unresolved",
-      "sites": 1,
-      "line": 311
-    },
-    {
-      "file": "tools/live-run/game/program-outcome-journal-fallback.test.mjs",
-      "authority": "records",
-      "literal": "1",
-      "shape": "unresolved",
-      "sites": 1,
-      "line": 150
     },
     {
       "file": "tools/live-run/round-verdict.test.mjs",

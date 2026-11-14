@@ -308,7 +308,14 @@ test("no execution is counted twice: an event read twice is one row, a retried n
     observedProgram("p1", [{ nodeId: "a", nodeAttempt: 1, cursor: 1 }]),
     observedProgram("p2", [{ nodeId: "a", nodeAttempt: 1, cursor: 1 }]),
   ]);
-  assert.equal(twoPrograms.length, 2);
+  assert.deepEqual(
+    twoPrograms.map((row) => [row.programId, row.cursor]),
+    [
+      ["p1", 1],
+      ["p2", 1],
+    ],
+    "both programs are in the trace, each identified by the program id that separates them",
+  );
 });
 
 test("a program whose executions were lost on the way into the trace fails the identity loudly", () => {

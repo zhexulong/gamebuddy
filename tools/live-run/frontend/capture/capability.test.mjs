@@ -189,8 +189,11 @@ test("a declared removal is not a lost row, and an undeclared one still is", () 
       removedHandles: ["c1"],
     },
   ]);
-  assert.equal(surplus.length, 1, "a declared removal does not license a second row to disappear");
-  assert.equal(surplus[0].code, "row_lost");
+  assert.deepEqual(
+    surplus.map((finding) => finding.code),
+    ["row_lost"],
+    "a declared removal does not license a second row to disappear",
+  );
   assert.match(surplus[0].message, /"p2"/u);
 });
 

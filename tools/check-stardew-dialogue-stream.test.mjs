@@ -1,5 +1,5 @@
 // red-proof: inject  `const g2 = maxPages >= 2 || chain >= 2` replaced by `const g2 = true` in judgeDialogueStream
-//  -> `✖ a pager that only read the current page is caught` (actual 'passed', expected 'blocked'), exit 1
+//  -> `× a pager that only read the current page is caught` (actual 'passed', expected 'blocked'), exit 1
 import assert from "node:assert/strict";
 import test from "node:test";
 
@@ -99,8 +99,11 @@ test("dialogueFacts ignores other world facts and other fact types", () => {
     { type: "execution_receipt", action: "move_to_tile", reasonCode: "target_reached" },
   ];
   const found = dialogueFacts(result(mixed));
-  assert.equal(found.length, 1);
-  assert.equal(found[0].eventId, "npc_dialogue_900_1");
+  assert.deepEqual(
+    found.map((fact) => fact.eventId),
+    ["npc_dialogue_900_1"],
+    "only the dialogue fact is a dialogue fact",
+  );
 });
 
 test("the live wire shape is read too: content arrives as payloadJson, a string", () => {

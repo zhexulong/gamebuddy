@@ -331,8 +331,11 @@ test("every shipped refusal that names a price names the balance beside it", () 
   // minecart fare alone and the site the check was written for would be invisible.
   const { sites } = extractModReceiptSites({ [SHOP_ACTIONS]: read(SHOP_ACTIONS) });
   const priced = priceRefusalSites(sites);
-  assert.equal(priced.length, 1, "shop_purchase's insufficient_money refusal must be a price refusal");
-  assert.equal(priced[0].code, "insufficient_money");
+  assert.deepEqual(
+    priced.map((site) => site.code),
+    ["insufficient_money"],
+    "shop_purchase's insufficient_money refusal must be a price refusal",
+  );
   assert.match(priced[0].evidence.expanded, /;currency=\{ShopCurrencyName\(shopCurrency\)\}/u);
   assert.match(priced[0].evidence.expanded, /;held=\{currencyHeld\}/u);
 });
