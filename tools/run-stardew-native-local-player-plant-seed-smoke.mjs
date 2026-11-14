@@ -13,6 +13,7 @@ import {
   waitForTerminal,
 } from "./lib/stardew-native-smoke-harness-v1.mjs";
 import { loadHostTestModule } from "./lib/host-test-module.mjs";
+import { sameTile, validFixtureSlotRelationship } from "./lib/native-local-runner-primitives.mjs";
 
 const SCENARIO = "native_plant_seed_v1";
 const EXPECTED_ACTIONS = ["move_to_tile", "travel", "plant_seed"];
@@ -290,15 +291,6 @@ function validateNativeLocalFixtureConfig(value) {
   validateNativeLocalFixturePolicy(value, { requiredActions: EXPECTED_ACTIONS });
 }
 
-function validFixtureSlotRelationship(logicalName, observedSlot) {
-  return (
-    typeof logicalName === "string" &&
-    /^GameBuddyFixture[A-Za-z0-9]{0,64}$/.test(logicalName) &&
-    typeof observedSlot === "string" &&
-    new RegExp(`^${logicalName}_[0-9]{1,32}$`).test(observedSlot)
-  );
-}
-
 function resolveFarmWarp(snapshot) {
   const matches = Array.isArray(snapshot.warps)
     ? snapshot.warps.filter(
@@ -333,17 +325,6 @@ function parseEvidence(evidence) {
   if (JSON.stringify(Object.keys(result).sort()) !== JSON.stringify(EXPECTED_EVIDENCE_KEYS))
     throw new Error("plant_seed_evidence_keys_mismatch");
   return result;
-}
-
-function sameTile(left, right) {
-  return (
-    Number.isInteger(left?.x) &&
-    Number.isInteger(left?.y) &&
-    Number.isInteger(right?.x) &&
-    Number.isInteger(right?.y) &&
-    left.x === right.x &&
-    left.y === right.y
-  );
 }
 
 function adjacent(left, right) {

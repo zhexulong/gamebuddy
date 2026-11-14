@@ -759,11 +759,6 @@
     },
     {
       "file": "tools/run-stardew-native-local-player-fertilize-tile-smoke.mjs",
-      "primitive": "validFixtureSlotRelationship",
-      "reason": "predates_the_primitives"
-    },
-    {
-      "file": "tools/run-stardew-native-local-player-fertilize-tile-smoke.mjs",
       "primitive": "parseEvidence",
       "reason": "predates_the_primitives"
     },
@@ -794,17 +789,7 @@
     },
     {
       "file": "tools/run-stardew-native-local-player-harvest-inventory-full-recovery-chain-smoke.mjs",
-      "primitive": "sameTile",
-      "reason": "predates_the_primitives"
-    },
-    {
-      "file": "tools/run-stardew-native-local-player-harvest-inventory-full-recovery-chain-smoke.mjs",
       "primitive": "validateNativeLocalFixtureConfig",
-      "reason": "predates_the_primitives"
-    },
-    {
-      "file": "tools/run-stardew-native-local-player-harvest-inventory-full-recovery-chain-smoke.mjs",
-      "primitive": "validFixtureSlotRelationship",
       "reason": "predates_the_primitives"
     },
     {
@@ -1019,17 +1004,7 @@
     },
     {
       "file": "tools/run-stardew-native-local-player-plant-seed-smoke.mjs",
-      "primitive": "validFixtureSlotRelationship",
-      "reason": "predates_the_primitives"
-    },
-    {
-      "file": "tools/run-stardew-native-local-player-plant-seed-smoke.mjs",
       "primitive": "parseEvidence",
-      "reason": "predates_the_primitives"
-    },
-    {
-      "file": "tools/run-stardew-native-local-player-plant-seed-smoke.mjs",
-      "primitive": "sameTile",
       "reason": "predates_the_primitives"
     },
     {
@@ -1129,17 +1104,7 @@
     },
     {
       "file": "tools/run-stardew-native-local-player-stamina-recovery-chain-smoke.mjs",
-      "primitive": "sameTile",
-      "reason": "predates_the_primitives"
-    },
-    {
-      "file": "tools/run-stardew-native-local-player-stamina-recovery-chain-smoke.mjs",
       "primitive": "validateNativeLocalFixtureConfig",
-      "reason": "predates_the_primitives"
-    },
-    {
-      "file": "tools/run-stardew-native-local-player-stamina-recovery-chain-smoke.mjs",
-      "primitive": "validFixtureSlotRelationship",
       "reason": "predates_the_primitives"
     },
     {
@@ -1164,22 +1129,12 @@
     },
     {
       "file": "tools/run-stardew-native-local-player-till-soil-smoke.mjs",
-      "primitive": "sameTile",
-      "reason": "predates_the_primitives"
-    },
-    {
-      "file": "tools/run-stardew-native-local-player-till-soil-smoke.mjs",
       "primitive": "parseStrictEvidence",
       "reason": "predates_the_primitives"
     },
     {
       "file": "tools/run-stardew-native-local-player-till-soil-smoke.mjs",
       "primitive": "validateNativeLocalFixtureConfig",
-      "reason": "predates_the_primitives"
-    },
-    {
-      "file": "tools/run-stardew-native-local-player-till-soil-smoke.mjs",
-      "primitive": "validFixtureSlotRelationship",
       "reason": "predates_the_primitives"
     },
     {
@@ -1200,11 +1155,6 @@
     {
       "file": "tools/run-stardew-native-local-player-tool-recovery-chain-smoke.mjs",
       "primitive": "validateNativeLocalFixtureConfig",
-      "reason": "predates_the_primitives"
-    },
-    {
-      "file": "tools/run-stardew-native-local-player-tool-recovery-chain-smoke.mjs",
-      "primitive": "validFixtureSlotRelationship",
       "reason": "predates_the_primitives"
     },
     {
@@ -1279,17 +1229,7 @@
     },
     {
       "file": "tools/run-stardew-native-local-player-water-crop-resource-recovery-chain-smoke.mjs",
-      "primitive": "sameTile",
-      "reason": "predates_the_primitives"
-    },
-    {
-      "file": "tools/run-stardew-native-local-player-water-crop-resource-recovery-chain-smoke.mjs",
       "primitive": "validateNativeLocalFixtureConfig",
-      "reason": "predates_the_primitives"
-    },
-    {
-      "file": "tools/run-stardew-native-local-player-water-crop-resource-recovery-chain-smoke.mjs",
-      "primitive": "validFixtureSlotRelationship",
       "reason": "predates_the_primitives"
     },
     {
@@ -1300,11 +1240,6 @@
     {
       "file": "tools/run-stardew-native-local-player-water-crop-smoke.mjs",
       "primitive": "validFixtureSlotRelationship",
-      "reason": "predates_the_primitives"
-    },
-    {
-      "file": "tools/run-stardew-native-local-player-water-crop-smoke.mjs",
-      "primitive": "sameTile",
       "reason": "predates_the_primitives"
     },
     {
@@ -1323,11 +1258,6 @@
       "reason": "predates_the_primitives"
     },
     {
-      "file": "tools/run-stardew-native-local-player-water-pet-bowl-smoke.mjs",
-      "primitive": "sameTile",
-      "reason": "predates_the_primitives"
-    },
-    {
       "file": "tools/run-stardew-native-local-player-water-slime-hutch-trough-smoke.mjs",
       "primitive": "parseEvidence",
       "reason": "predates_the_primitives"
@@ -1335,11 +1265,6 @@
     {
       "file": "tools/run-stardew-native-local-player-water-slime-hutch-trough-smoke.mjs",
       "primitive": "tilesNeighbouring",
-      "reason": "predates_the_primitives"
-    },
-    {
-      "file": "tools/run-stardew-native-local-player-water-slime-hutch-trough-smoke.mjs",
-      "primitive": "sameTile",
       "reason": "predates_the_primitives"
     },
     {
@@ -1425,11 +1350,6 @@
     {
       "file": "tools/run-stardew-native-local-player-wia-passout-smoke.mjs",
       "primitive": "tilesAdjacent",
-      "reason": "predates_the_primitives"
-    },
-    {
-      "file": "tools/run-stardew-native-local-player-wia-passout-smoke.mjs",
-      "primitive": "sameTile",
       "reason": "predates_the_primitives"
     },
     {

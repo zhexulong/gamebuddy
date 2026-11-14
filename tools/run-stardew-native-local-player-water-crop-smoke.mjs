@@ -13,6 +13,7 @@ import {
   waitForTerminal,
 } from "./lib/stardew-native-smoke-harness-v1.mjs";
 import { loadHostTestModule } from "./lib/host-test-module.mjs";
+import { sameTile } from "./lib/native-local-runner-primitives.mjs";
 
 const SCENARIO = "native_water_crop_v1";
 const EXPECTED_ACTIONS = ["move_to_tile", "travel", "equip_tool", "water_crop"];
@@ -403,10 +404,6 @@ function validateNativeLocalConfig(value) {
     )
   )
     throw new Error("invalid_client_config");
-}
-
-function sameTile(left, right) {
-  return Number.isInteger(left?.x) && Number.isInteger(left?.y) && left.x === right?.x && left.y === right?.y;
 }
 
 function adjacent(left, right) {
