@@ -836,6 +836,7 @@ export const EMITTED_FIELDS = Object.freeze([
   "action",
   "fixtureScenario",
   "successCode",
+  "refusesConfig",
   "requiredCapabilities",
   "requiredActions",
   "experimentalActions",
@@ -878,6 +879,7 @@ export function planMigration(source, { scenario, templateSource }) {
   const statements = body.statements.map((entry) => ({ ...entry, flat: normalizeCode(entry.code) }));
   const bodyText = statements.map((entry) => entry.raw).join("\n");
   const inherited = [];
+  const findings = [];
   /** The helper a statement hands the config to, when that helper really refuses the fixture topology. */
   const configRefusal = (entry) => {
     const call = /^(?:const\s+([A-Za-z_$][\w$]*)\s*=\s*)?([A-Za-z_$][\w$]*)\(\s*config\s*\);$/u.exec(
@@ -916,10 +918,10 @@ export function planMigration(source, { scenario, templateSource }) {
     take();
   }
   if (inherited.length === 0)
-    return refuse(
-      "config_refusal_missing: the template's step 1 refuses a fixture config this copy accepted, so a caller that " +
-        "drives it with any other config would now block before its first request - measured on craft_item, which " +
-        "run-native-action-slice.test.mjs drives with {} and which the migrated runner refused",
+    findings.push(
+      "config_refusal_missing: this copy never read its fixture config, so the definition declares " +
+        "refusesConfig: false and the template runs no refusal - a caller that hands it an invalid config gets the " +
+        "copy's behaviour, which is that nothing checks one",
     );
 
   const observed = /^(?:const|let)\s+([A-Za-z_$][\w$]*)\s*=\s*await\s+observeFresh\(client,/u.exec(peek()?.code ?? "");
@@ -1158,6 +1160,8 @@ export function planMigration(source, { scenario, templateSource }) {
     scenario,
     scenarioConstant,
     negativeOmittedBecause: "no_stale_re_send_in_the_hand_written_copy_this_migrated",
+    refusesConfig: inherited.length > 0,
+    findings,
     capabilitiesText,
     prepareText,
     planned,
@@ -1216,6 +1220,7 @@ async function main() {
     }
     const before = source.split("\n").length;
     const after = result.output.split("\n").length;
+    for (const finding of result.findings ?? []) process.stdout.write(`finding:${file}:${finding}\n`);
     if (write) {
       writeFileSync(resolve(ROOT, file), result.output, "utf8");
       process.stdout.write(`migrated:${file}:${before}->${after}\n`);
@@ -1318,6 +1323,13 @@ export function renderMigratedSource(source, plan, { templateModule = TEMPLATE_I
 
   const destructure = (names) => (names.length === 0 ? [] : [`    const { ${names.join(", ")} } = plan;`]);
   const plannedNames = [...plan.planned];
+  // The judgement names its own parameters. Emitting all of them would leave unused bindings in every migrated file,
+  // and emitting a fixed four is what made a verdict that reads `terminal.revision` throw `terminal is not defined`.
+  const postText = plan.postText.join("\n");
+  const measuredText = plan.measured.map((entry) => `${entry.key}: ${entry.value}`).join(", ");
+  const postParameters = ["client", "receipts", "evidence", "terminal", "before", "after", "plan", "trace"]
+    .filter((name) => name === "plan" || mentions(postText, name) || mentions(measuredText, name))
+    .join(", ");
   const definition = [
     "const scenario = defineSmokeScenario({",
     "  action: ACTION,",
@@ -1325,9 +1337,9 @@ export function renderMigratedSource(source, plan, { templateModule = TEMPLATE_I
       ? "  fixtureScenario: FIXTURE_SCENARIO,"
       : `  fixtureScenario: ${plan.scenarioConstant},`,
     "  successCode: SUCCESS_CODE,",
+    `  refusesConfig: ${plan.refusesConfig},`,
     `  requiredCapabilities: ${plan.capabilitiesText},`,
-    "  requiredActions: [ACTION],",
-    "  experimentalActions: [ACTION],",
+    ...(plan.refusesConfig ? ["  requiredActions: [ACTION],", "  experimentalActions: [ACTION],"] : []),
     `  negativeOmittedBecause: ${JSON.stringify(plan.negativeOmittedBecause)},`,
     "",
     "  prepare: ({ snapshot }) => {",
@@ -1346,7 +1358,7 @@ export function renderMigratedSource(source, plan, { templateModule = TEMPLATE_I
           "  },",
         ]),
     "",
-    "  async assertPostcondition({ evidence, before, after, plan }) {",
+    `  async assertPostcondition({ ${postParameters} }) {`,
     ...destructure(plan.postUsed),
     ...plan.postText.map((line) => `    ${line}`),
     ...(plan.passVariable === null
@@ -1480,5 +1492,5 @@ export function migrateSource(source, { file, templateSource }) {
   const after = exportedNames(rendered.output);
   if (before.join(",") !== after.join(","))
     return refuse(`exports_would_change:${before.join(",")}->${after.join(",")}`);
-  return { ok: true, alreadyMigrated: false, output: rendered.output, plan };
+  return { ok: true, alreadyMigrated: false, output: rendered.output, plan, findings: plan.findings };
 }

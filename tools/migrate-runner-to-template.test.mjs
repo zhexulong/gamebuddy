@@ -169,6 +169,8 @@ test("the codemod lifts the judgement verbatim and replaces the lifecycle", () =
   assert.match(rendered.output, /evidence\.moved === "true"/u);
   assert.match(rendered.output, /if \(!\(passed\)\) throw new Error\("shape_example_postcondition_mismatch"\);/u);
   assert.match(rendered.output, /const \{ target \} = plan;/u);
+  assert.match(rendered.output, /  refusesConfig: true,/u);
+  assert.match(rendered.output, /  requiredActions: \[ACTION\],/u);
   assert.deepEqual(exportedNames(rendered.output), exportedNames(SHAPED));
   assert.equal(rendered.output.includes("waitForTerminal("), false, "the wait belongs to the template now");
 });
@@ -203,12 +205,18 @@ test("the codemod refuses when the copy's own SCENARIO disagrees with the action
   assert.match(result.why, /^fixture_scenario_disagrees:native_something_else_v1:native_shape_example_v1/u);
 });
 
-test("the codemod refuses a copy that never refused its own fixture config", () => {
+test("the codemod declares refusesConfig: false and reports it when the copy never read its config", () => {
   const source = SHAPED.replace("  validateFixtureConfig(config);\n", "");
   assert.notEqual(source, SHAPED, "the injection point moved; update this falsifier with the fixture");
   const result = plan(source);
-  assert.equal(result.ok, false);
-  assert.match(result.why, /^config_refusal_missing:/u);
+  assert.equal(result.ok, true, result.why);
+  assert.equal(result.refusesConfig, false);
+  assert.equal(result.findings.length, 1);
+  assert.match(result.findings[0], /^config_refusal_missing:/u);
+  const rendered = renderMigratedSource(source, result);
+  assert.equal(rendered.ok, true, rendered.why);
+  assert.match(rendered.output, /  refusesConfig: false,/u);
+  assert.equal(rendered.output.includes("requiredActions"), false, "a field with no reader is not written");
 });
 
 test("the codemod is a no-op on a runner that is already on the template", () => {
@@ -279,7 +287,14 @@ function snapshot(revision, extra) {
     revision,
     location: "FarmHouse",
     tile: { x: 5, y: 5 },
-    capabilities: ["cancel_active_execution", "inspect_self", "craft_item", "cook_recipe", "collect_crab_pot_output"],
+    capabilities: [
+      "cancel_active_execution",
+      "inspect_self",
+      "craft_item",
+      "cook_recipe",
+      "collect_crab_pot_output",
+      "config_probe",
+    ],
     actionable: true,
     activeExecution: null,
     ...extra,
@@ -290,7 +305,14 @@ function session({ before, after, evidence, reasonCode }) {
   const receipts = [];
   let observations = 0;
   const client = {
-    state: { catalogRegistrations: publishedActionRegistrations(), snapshot: before, latestReceipt: null },
+    state: {
+      catalogRegistrations: [
+        ...publishedActionRegistrations(),
+        { actionId: "config_probe", descriptor: { watchdogMs: 30_000 } },
+      ],
+      snapshot: before,
+      latestReceipt: null,
+    },
     async observe() {
       observations++;
       const answer = observations === 1 ? before : after;
@@ -402,4 +424,71 @@ test("crab_pot_collect: the migrated runner passes when the pot left the mature 
   const blocked = await runCrabPotCollectSmoke(wrong.client, wrong.receipts, CONFIG("native_crab_pot_collect_v1"));
   assert.equal(blocked.state, "blocked");
   assert.equal(blocked.reasonCode, "crab_pot_collect_postcondition_mismatch");
+});
+
+/* ---------------------------------------------------------------------------------------------------------------
+ * THE DECLARATION, FALSIFIED BOTH WAYS ON THE TEMPLATE ITSELF.
+ *
+ * Step 1 is the one step that is not shape-neutral: half the copies refused an invalid fixture config and half never
+ * read one. `refusesConfig` records which, and these two cases hold each answer to its own behaviour - one definition
+ * over the same empty config, and the only difference in the result is which step stopped it.
+ * ------------------------------------------------------------------------------------------------------------- */
+
+const configProbe = (refusesConfig) => ({
+  action: "config_probe",
+  fixtureScenario: "native_config_probe_v1",
+  successCode: "config_probe_done",
+  refusesConfig,
+  requiredCapabilities: ["cancel_active_execution", "inspect_self", "config_probe"],
+  ...(refusesConfig ? { requiredActions: ["config_probe"], experimentalActions: ["config_probe"] } : {}),
+  prepare: ({ snapshot }) => ({ snapshot, plan: {} }),
+  request: () => ({ args: {} }),
+  negativeOmittedBecause: "config_probe_has_no_identity_to_re_send",
+  assertPostcondition: () => ({}),
+});
+
+test("refusesConfig: true runs the copy's own config refusal, so an empty config is refused", async () => {
+  const { defineSmokeScenario } = await import("./lib/native-local-runner-scaffold.mjs");
+  const scenario = defineSmokeScenario(configProbe(true));
+  const { client, receipts } = session({
+    before: snapshot(3, {}),
+    after: snapshot(5, {}),
+    evidence: "ok=1",
+    reasonCode: "config_probe_done",
+  });
+  const result = await scenario.run(client, receipts, {}, { terminalTimeoutMs: 1_000 });
+  assert.equal(result.state, "blocked");
+  assert.equal(result.reasonCode, "native_local_config_probe_fixture_config_invalid");
+});
+
+test("refusesConfig: false never reads the config, so the same empty config changes nothing", async () => {
+  const { defineSmokeScenario } = await import("./lib/native-local-runner-scaffold.mjs");
+  const scenario = defineSmokeScenario(configProbe(false));
+  const { client, receipts } = session({
+    before: snapshot(3, {}),
+    after: snapshot(5, {}),
+    evidence: "ok=1",
+    reasonCode: "config_probe_done",
+  });
+  const result = await scenario.run(client, receipts, {}, { terminalTimeoutMs: 1_000 });
+  assert.equal(result.state, "passed");
+  assert.equal(result.reasonCode, "config_probe_done");
+});
+
+test("craft_item declares refusesConfig: false, and is driven with {} exactly as its copy was", async () => {
+  const { runCraftItemSmoke } = await import("./run-stardew-native-local-player-craft-item-smoke.mjs");
+  const evidence =
+    "disposition=added_to_inventory;materials_consumed_exactly=true;inventory_postcondition=true;count_postcondition=true;" +
+    "native_menu_opened=false;count_before=7;count_after=8";
+  const { client, receipts } = session({
+    before: snapshot(3, {}),
+    after: snapshot(5, {}),
+    evidence,
+    reasonCode: "crafted_item_created",
+  });
+  // The exact configuration `run-native-action-slice.test.mjs` drives every contract-adjacent runner with.
+  const result = await runCraftItemSmoke(client, receipts, {}, { terminalTimeoutMs: 1_000 });
+  assert.equal(result.state, "passed");
+  assert.equal(result.reasonCode, "crafted_item_created");
+  assert.equal(result.recipe, "Wood_Fence");
 });
