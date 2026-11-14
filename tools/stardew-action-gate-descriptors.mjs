@@ -333,15 +333,10 @@ export const STARDEW_PUBLISHED_ACTION_GATES = Object.freeze([
   // The elevator's floor selection only exists inside MineElevatorMenu's click
   // handler, so it is its own action rather than an `enter_mine` argument (Lane L3
   // card 3.7: a level-taking enter_mine would bypass lowestLevelReached). The
-  // runner proves the terminal, the world arriving on the requested LEVEL, and the
-  // floor-set projection following. Live evidence: fixtures/stardew/RUNBOOK.md 36.
-  gate(
-    "toggle_animal_door",
-    1,
-    "run-stardew-native-local-player-toggle-animal-door-smoke.mjs",
-    "animal_door_toggled",
-    "native_toggle_animal_door_v1",
-  ),
+  // contract proves the terminal, the world arriving on the requested LEVEL, the
+  // floor-set projection following, and the door the refusal left open. Promoted
+  // 2026-11-14 after a live slice passed every check, `afterStale` included.
+  gate("toggle_animal_door", 1, null, "animal_door_toggled", "native_toggle_animal_door_v1", "contract"),
   gate(
     "select_mine_elevator_floor",
     1,
@@ -501,13 +496,7 @@ export const STARDEW_PUBLISHED_ACTION_GATES = Object.freeze([
     "entity_named",
     "native_name_entity_v1",
   ),
-  gate(
-    "accept_daily_quest",
-    1,
-    "run-stardew-native-local-player-accept-daily-quest-smoke.mjs",
-    "daily_quest_accepted",
-    "native_accept_daily_quest_v1",
-  ),
+  gate("accept_daily_quest", 1, null, "daily_quest_accepted", "native_accept_daily_quest_v1", "contract"),
   // Promoted to live-verified: its native-local gate passed and its receipt is a real world change.
   gate(
     "accept_special_order",

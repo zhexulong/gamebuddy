@@ -14,13 +14,15 @@ import {
 } from "./lib/stardew-action-smoke-contract.mjs";
 import { publishedActionRegistrations } from "./lib/stardew-native-smoke-harness-v1.mjs";
 import { chooseTarget, judgeSlice, runActionSlice } from "./run-native-action-slice.mjs";
-import { runAcceptDailyQuestSmoke } from "./run-stardew-native-local-player-accept-daily-quest-smoke.mjs";
 import { runAcceptSpecialOrderSmoke } from "./run-stardew-native-local-player-accept-special-order-smoke.mjs";
-import { runToggleAnimalDoorSmoke } from "./run-stardew-native-local-player-toggle-animal-door-smoke.mjs";
 import { STARDEW_PUBLISHED_ACTION_GATES } from "./stardew-action-gate-descriptors.mjs";
 
 /**
- * The engine and the three hand-written runners it must agree with.
+ * The engine and every hand-written runner it still stands beside.
+ *
+ * The population is the runners that are STILL on disk: `accept_daily_quest` and `toggle_animal_door` were retired
+ * into their contracts after a live slice passed, so there is no second implementation of those two left to compare
+ * against - and comparing the engine with itself would be a reading that agrees with itself.
  *
  * THE AGREEMENT IS THE POINT. Each case below builds ONE fake world, drives the hand-written runner over it, then
  * drives the contract engine over an identical world, and asserts the two verdicts are the same - so the day a
@@ -246,12 +248,8 @@ function answer(kind, client, request) {
 }
 
 const HANDS_WRITTEN = Object.freeze({
-  accept_daily_quest: (client, receipts) =>
-    runAcceptDailyQuestSmoke(client, receipts, {}, { terminalTimeoutMs: 1_000 }),
   accept_special_order: (client, receipts) =>
     runAcceptSpecialOrderSmoke(client, receipts, {}, { terminalTimeoutMs: 1_000 }),
-  toggle_animal_door: (client, receipts) =>
-    runToggleAnimalDoorSmoke(client, receipts, {}, { terminalTimeoutMs: 1_000 }),
 });
 
 const contractOf = (actionId) => loadSmokeContractFile(join(CONTRACTS_DIR, `${actionId}.json`));

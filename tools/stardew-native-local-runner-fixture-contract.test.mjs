@@ -88,7 +88,6 @@ const CONFIG_DRIVER_ACTION = Object.freeze({
   // A synchronous name write with no target id: the subject is the actor's own horse, so the
   // fixture scenario is keyed on the action alone.
   "run-stardew-native-local-player-name-entity-smoke.mjs": "name_entity",
-  "run-stardew-native-local-player-accept-daily-quest-smoke.mjs": "accept_daily_quest",
   "run-stardew-native-local-player-accept-special-order-smoke.mjs": "accept_special_order",
   "run-stardew-native-local-player-claim-museum-reward-smoke.mjs": "claim_museum_reward",
   // A synchronous public-call-sequence write with no target id: the subject is the actor's own ticket
@@ -113,7 +112,6 @@ const CONFIG_DRIVER_ACTION = Object.freeze({
   // 2026-10-06: the two facility/transport actions wired this session. Same rule as the wave
   // above — keyed on the action the runner exercises.
   "run-stardew-native-local-player-withdraw-silo-hay-smoke.mjs": "withdraw_silo_hay",
-  "run-stardew-native-local-player-toggle-animal-door-smoke.mjs": "toggle_animal_door",
   // 2026-10-07 item/tile lane. Same rule as the wave above -- keyed on the action the runner
   // exercises.
   "run-stardew-native-local-player-use-warp-item-smoke.mjs": "use_warp_item",

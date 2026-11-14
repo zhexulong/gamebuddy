@@ -9,10 +9,6 @@
       "reason": "predates_the_template"
     },
     {
-      "file": "tools/run-stardew-native-local-player-accept-daily-quest-smoke.mjs",
-      "reason": "predates_the_template"
-    },
-    {
       "file": "tools/run-stardew-native-local-player-accept-special-order-smoke.mjs",
       "reason": "predates_the_template"
     },
@@ -394,10 +390,6 @@
     },
     {
       "file": "tools/run-stardew-native-local-player-till-soil-smoke.mjs",
-      "reason": "predates_the_template"
-    },
-    {
-      "file": "tools/run-stardew-native-local-player-toggle-animal-door-smoke.mjs",
       "reason": "predates_the_template"
     },
     {
