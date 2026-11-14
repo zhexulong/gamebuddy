@@ -602,6 +602,14 @@ const GATES_WITH_FALSIFIER = Object.freeze([
   // `gate_measured_nothing` when it finds no receipt builder or no transition field, so its default run is the report
   // this suite reads. It joined the judged set on 2026-11-13 with the `(check|audit)-*.mjs` widening.
   "audit-stardew-receipt-transition-fields.mjs",
+  // Prints `presets examined N · declare a surface M · declare none K`, the findings, a verdict line and
+  // `{"gate":"live_run_preset_surface/v1","status":"passed","population":N,"checks":[...]}`, whose entries are the
+  // six rules it can report red - so its default run is the report this suite reads, and a zero population is BLOCKED
+  // rather than passed. Its falsifier is tools/live-run/core/persona.test.mjs: the shipped literal binding
+  // `amber-deepseek-v4.1.json` (a model-named preset, refused by name), a bound preset declaring the other surface, two
+  // presets claiming one surface, a directory declaring the run's surface nowhere, one preset that declares two, a bound
+  // world book that is not a preset at all, and a directory with no presets (blocked, exit 2).
+  "check-live-run-preset-surface.mjs",
 ]);
 
 /** How long a gate's default run may take before it is reported as having printed nothing. */
