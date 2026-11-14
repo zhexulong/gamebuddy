@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { appendFileSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -200,7 +200,14 @@ describe("behind is decided by patch equivalence, not by commit identity", () =>
     assert.equal(assessment.status, "behind");
     const finding = assessment.findings.find((entry) => entry.path === REAL_RED_PATH);
     assert.ok(finding, `expected ${REAL_RED_PATH} among ${assessment.findings.map((entry) => entry.path).join(",")}`);
-    assert.equal(finding.count, 2);
+    // The count is the number of subjects, not a branch measured once: `main` keeps moving, and this assertion used to
+    // read `2` - the number of persona commits it held when this test was written - which went stale the moment two
+    // more landed. The durable claim is the one the report is read for: every subject counted is a subject named.
+    assert.equal(
+      finding.count,
+      finding.subjects.length,
+      `count ${finding.count} against ${finding.subjects.length} subject(s)`,
+    );
     // `%h %s`: the short hash is what the operator pastes into `git show`, the subject is what they read.
     for (const message of REAL_RED_SUBJECTS)
       assert.ok(
@@ -209,7 +216,7 @@ describe("behind is decided by patch equivalence, not by commit identity", () =>
       );
     const refusal = promptSurfaceRefusal(assessment);
     assert.ok(
-      refusal.includes(`live_run_prompt_surface_behind:${REAL_RED_PATH}:2 commits`),
+      refusal.includes(`live_run_prompt_surface_behind:${REAL_RED_PATH}:${finding.count} commits`),
       `the failure code must name the path and the count; got:\n${refusal}`,
     );
     for (const message of REAL_RED_SUBJECTS)
@@ -467,5 +474,259 @@ describe("the gate refuses before the launch starts, at the outermost layer", ()
       ladder.includes("[run] prompt surface current: ${promptSurface.examined} path(s) against"),
       "a launch that passed the gate must say what it examined",
     );
+  });
+});
+
+/**
+ * THE COST IS PART OF THE GATE. A check nobody can afford is moved, weakened or skipped, and this one was on the
+ * critical path of every launch: `git log --cherry-pick --right-only` per differing path per ref hashes a patch for
+ * every commit in the symmetric difference, whatever the pathspec says. Measured 2026-11-14 on this repository with a
+ * SINGLE differing population path: 32,779 ms for the implementation this file protects, against 548-677 ms for the
+ * one in the tree now - 46,767 ms between `launcher_start` and `prompt_surface_checked` on the tree a launch was
+ * actually measured from. The reading that decides whether a run starts must not cost more than the run's first
+ * minute, so the check reports its own terms and the suite refuses a report that is missing, fabricated or unbounded.
+ *
+ * WHAT THE ORACLE IS. `git log --cherry-pick --right-only` is git's own answer to "does this ref hold work this
+ * revision lacks", and it stays in this file as the authority the fast implementation is checked against: the cheap
+ * path computes patch ids per commit rather than per range, and a second hand-written copy of what "the same patch"
+ * means would agree today and disagree later.
+ */
+const MODULE = "tools/live-run/core/prompt-surface-freshness.mjs";
+const CHECK_LINE = "prompt_surface_check ";
+const COST_BUDGET_MS = 5_000;
+
+const runCheckModule = (repositoryRootArg, revision = "HEAD") =>
+  spawnSync(
+    process.execPath,
+    [join(repositoryRoot, MODULE), "--repository-root", repositoryRootArg, "--revision", revision],
+    {
+      cwd: repositoryRoot,
+      encoding: "utf8",
+      maxBuffer: 1 << 26,
+    },
+  );
+
+const reportedTimings = (result) => {
+  const line = result.stderr.split("\n").find((entry) => entry.startsWith(CHECK_LINE));
+  assert.notEqual(line, undefined, `the check printed no ${CHECK_LINE}line; stderr was:\n${result.stderr}`);
+  return JSON.parse(line.slice(CHECK_LINE.length));
+};
+
+describe("the check reports its own cost, and that cost is bounded", () => {
+  test("the gate prints its per-term timings, and the report is the check's measurement of this tree", () => {
+    const population = promptSurfacePopulation({ repositoryRoot });
+    const startedAt = performance.now();
+    const result = runCheckModule(repositoryRoot);
+    const wallClockMs = performance.now() - startedAt;
+    const timings = reportedTimings(result);
+    // The population, not a constant: a number that does not follow the tree it read is a number nobody can use.
+    assert.equal(
+      timings.paths,
+      population.length,
+      `the report claims ${timings.paths} path(s) for ${population.length}`,
+    );
+    for (const term of ["resolveMs", "lsTreeMs", "historyMs", "patchIdMs", "diffMs"])
+      assert.equal(typeof timings[term], "number", `the report has no ${term}`);
+    assert.ok(timings.gitCalls > 0, "a check that ran no git process cannot have read this tree");
+    assert.ok(timings.totalMs > 0, "the report claims the check took no time at all");
+    // The terms ARE the total, and the total is inside the wall clock: a report that outlives the process that printed
+    // it, or that leaves an unnamed remainder, is not a measurement.
+    const named = ["resolveMs", "lsTreeMs", "historyMs", "patchIdMs", "diffMs"].reduce(
+      (sum, term) => sum + timings[term],
+      0,
+    );
+    assert.ok(
+      Math.abs(named - timings.totalMs) <= 5,
+      `the terms (${named} ms) do not add up to the reported total (${timings.totalMs} ms)`,
+    );
+    assert.ok(
+      wallClockMs >= timings.totalMs,
+      `the check reports ${timings.totalMs} ms but the run that printed it took ${Math.round(wallClockMs)} ms`,
+    );
+    // The falsifier for `paths` being a constant: a fixture whose population is one path must say one path.
+    const dir = makeRepo();
+    write(dir, PRESET, preset("first"));
+    commit(dir, "base");
+    assert.equal(reportedTimings(runCheckModule(dir)).paths, 1, "the report does not follow the tree it read");
+  });
+
+  test("a path only one side changed is answered without hashing a patch; a path both sides changed is not", () => {
+    // Nothing differs anywhere: no history walk at all.
+    const identical = makeRepo();
+    write(identical, PRESET, preset("first"));
+    commit(identical, "base");
+    const settled = assessPromptSurfaceFreshness({ repositoryRoot: identical });
+    assert.equal(settled.status, "current");
+    assert.equal(settled.timings.historyMs, 0, "a tree whose prompt content matches paid for a history walk");
+    assert.equal(settled.timings.patchIdMs, 0, "a tree whose prompt content matches hashed a patch");
+
+    // Only the branch changed the path: one history walk answers it, and no patch identity is needed - no commit of
+    // the revision touches the path, so no patch of the revision's can be a copy.
+    const branchOnly = makeRepo();
+    write(branchOnly, PRESET, preset("first"));
+    commit(branchOnly, "base");
+    git(branchOnly, ["checkout", "-q", "-b", "feature"]);
+    write(branchOnly, PRESET, preset("second"));
+    commit(branchOnly, "the branch's own edit");
+    const ahead = assessPromptSurfaceFreshness({ repositoryRoot: branchOnly, revision: "feature" });
+    assert.equal(ahead.status, "current");
+    assert.ok(ahead.timings.historyMs > 0, "the branch's change was never asked about");
+    assert.equal(ahead.timings.patchIdMs, 0, "a one-sided change was priced as a patch-equivalence question");
+
+    // Both sides changed it: now, and only now, the patches have to be hashed. Built from its own base, because a
+    // cherry-pick onto a path already edited on the same line conflicts and a conflicted fixture proves nothing.
+    const bothSides = makeRepo();
+    write(bothSides, PRESET, preset("first"));
+    const forkPoint = commit(bothSides, "base");
+    write(bothSides, PRESET, preset("the product branch's fix"));
+    const productFix = commit(bothSides, "the product branch's edit");
+    git(bothSides, ["checkout", "-q", "-b", "feature", forkPoint]);
+    // The branch needs its own commits before the pick, or the pick reproduces main's commit object and proves nothing.
+    write(bothSides, "host/src/zz-unrelated-plumbing.ts", "export const plumbing = 1;\n");
+    commit(bothSides, "the branch's own unrelated work");
+    git(bothSides, ["cherry-pick", productFix]);
+    write(bothSides, PRESET, preset("the product branch's fix, and the feature's own ending"));
+    commit(bothSides, "the feature's own edit on top of the copied fix");
+    assert.notEqual(blobAt(bothSides, "feature", PRESET), blobAt(bothSides, "main", PRESET));
+    const ambiguous = assessPromptSurfaceFreshness({ repositoryRoot: bothSides, revision: "feature" });
+    assert.equal(ambiguous.status, "current", promptSurfaceRefusal(ambiguous));
+    assert.ok(ambiguous.timings.patchIdMs > 0, "two edits to one path were decided without comparing their patches");
+  });
+
+  test("the check stays inside its budget on this repository", () => {
+    // 32,779 ms is what the `--cherry-pick` implementation cost on this tree with ONE differing path, and 46,767 ms
+    // is what a launch spent on a tree that passed. The budget is 7x the new cost, so it is a ceiling on the shape of
+    // the work rather than a stopwatch on the machine.
+    const timings = reportedTimings(runCheckModule(repositoryRoot));
+    assert.ok(
+      timings.totalMs < COST_BUDGET_MS,
+      `the check took ${timings.totalMs} ms of its own clock (budget ${COST_BUDGET_MS} ms): ${JSON.stringify(timings)}`,
+    );
+  });
+
+  test("the check runs a fixed number of git processes, not one per population path per ref", () => {
+    // The population-scaled ceiling: the tree reads are per revision, the history walks are per ref, and only a path
+    // that both sides changed costs a second history walk. Three processes per path per ref is the shape this guard
+    // exists for - 48 of them on a sixteen-path population, before the history walk that dominated them.
+    const timings = reportedTimings(runCheckModule(repositoryRoot));
+    const ceiling = 10 + timings.paths;
+    assert.ok(
+      timings.gitCalls <= ceiling,
+      `the check ran ${timings.gitCalls} git process(es) for ${timings.paths} path(s), ceiling ${ceiling}`,
+    );
+  });
+});
+
+/**
+ * The fast answer and git's own answer, on real trees. Each case is a tree the cheap algorithm could plausibly get
+ * wrong: a real branch divergence with twelve missing prompt commits across five paths, a cherry-picked copy whose
+ * content matches under a new hash, a later edit on top of that copy, a revision that is ahead, and a path both sides
+ * changed where exactly one of the two branch commits is present.
+ */
+const blobAt = (dir, revision, path) => {
+  try {
+    return git(dir, ["rev-parse", "--verify", `${revision}:${path}`]);
+  } catch {
+    return null;
+  }
+};
+
+const oracleFindings = ({ dir, revision, refs }) => {
+  const commit = git(dir, ["rev-parse", "--verify", `${revision}^{commit}`]);
+  const findings = [];
+  for (const path of promptSurfacePopulation({ repositoryRoot: dir, revision: commit })) {
+    const launched = blobAt(dir, commit, path);
+    const holders = refs.filter((ref) => blobAt(dir, ref, path) !== launched);
+    if (holders.length === 0) continue;
+    const subjects = [];
+    for (const ref of holders) {
+      const found = git(dir, [
+        "log",
+        "--no-merges",
+        "--cherry-pick",
+        "--right-only",
+        "--format=%h %s",
+        `${commit}...${ref}`,
+        "--",
+        path,
+      ])
+        .split("\n")
+        .filter((line) => line.length > 0);
+      for (const subject of found) if (!subjects.includes(subject)) subjects.push(subject);
+    }
+    if (subjects.length > 0) findings.push({ path, count: subjects.length, subjects });
+  }
+  return findings;
+};
+
+const behindShape = (assessment) =>
+  assessment.findings
+    .filter((finding) => finding.kind === "behind")
+    .map((finding) => ({ path: finding.path, count: finding.count, subjects: [...finding.subjects] }));
+
+const assertMatchesPatchEquivalence = ({ dir, revision = "HEAD", refs = ["main"] }) => {
+  const assessment = assessPromptSurfaceFreshness({ repositoryRoot: dir, revision, productRefs: refs });
+  assert.deepEqual(
+    behindShape(assessment),
+    oracleFindings({ dir, revision: assessment.revision, refs }),
+    `the check's findings differ from git's own patch equivalence on ${dir} at ${assessment.revision}`,
+  );
+  return assessment;
+};
+
+describe("the verdict is git's own patch equivalence, computed more cheaply", () => {
+  test("the tree rounds 47 and 48 were launched from: every path, every missing commit", (t) => {
+    if (!gitOk(repositoryRoot, ["cat-file", "-e", `${REAL_RED_REVISION}:${REAL_RED_PATH}`])) {
+      t.skip(`not measured: shallow_clone or missing history - ${REAL_RED_REVISION} is not in this object database`);
+      return;
+    }
+    // Five population paths and twelve missing commits on that tree: the case a per-path-only comparison, or a blob
+    // comparison without the history, gets wrong in both directions.
+    assertMatchesPatchEquivalence({ dir: repositoryRoot, revision: REAL_RED_REVISION, refs: ["main"] });
+  });
+
+  test("a cherry-picked copy is current, and an edit on top of the copy is still current", () => {
+    const dir = makeRepo();
+    write(dir, PRESET, preset("第一拍本能接话"));
+    const base = commit(dir, "base");
+    write(dir, PRESET, preset("搭档优先"));
+    const fixed = commit(dir, "withdraw the chatter forcing");
+    git(dir, ["checkout", "-q", "-b", "feature", base]);
+    write(dir, "host/src/zz-unrelated-plumbing.ts", "export const plumbing = 1;\n");
+    commit(dir, "the branch's own unrelated work");
+    git(dir, ["cherry-pick", fixed]);
+    assert.equal(
+      blobAt(dir, "feature", PRESET),
+      blobAt(dir, "main", PRESET),
+      "the copy must carry the branch's content",
+    );
+    assert.equal(assertMatchesPatchEquivalence({ dir, revision: "feature" }).status, "current");
+
+    write(dir, PRESET, preset("搭档优先，再说一句"));
+    commit(dir, "a later edit on top of the copied fix");
+    assert.notEqual(
+      blobAt(dir, "feature", PRESET),
+      blobAt(dir, "main", PRESET),
+      "the content must differ for this case",
+    );
+    assert.equal(assertMatchesPatchEquivalence({ dir, revision: "feature" }).status, "current");
+  });
+
+  test("both sides edited: the carried commit is silent and the missing one is named", () => {
+    const dir = makeRepo();
+    write(dir, PRESET, preset("first"));
+    const base = commit(dir, "base");
+    write(dir, PRESET, preset("second"));
+    const carried = commit(dir, "the branch's first edit");
+    write(dir, PRESET, preset("third"));
+    commit(dir, "the branch's second edit");
+    git(dir, ["checkout", "-q", "-b", "feature", base]);
+    git(dir, ["cherry-pick", carried]);
+    write(dir, PRESET, preset("the feature's own further edit"));
+    commit(dir, "the feature's own further edit");
+    const assessment = assertMatchesPatchEquivalence({ dir, revision: "feature" });
+    assert.equal(assessment.findings.length, 1, promptSurfaceRefusal(assessment));
+    assert.equal(assessment.findings[0].subjects.length, 1, "the carried copy must not be counted as missing");
+    assert.match(assessment.findings[0].subjects[0], /the branch's second edit/u);
   });
 });
