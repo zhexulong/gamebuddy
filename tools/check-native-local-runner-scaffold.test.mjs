@@ -28,7 +28,13 @@ import {
   BASELINE_REASON,
   blocked,
   checkRunnerScaffold,
+  detectPrimitiveCopies,
+  localFunctions,
+  PRIMITIVE_BASELINE_REASON,
+  PRIMITIVES_FILE,
   readBaseline,
+  readPrimitiveBaseline,
+  readPrimitiveExports,
   readRunner,
   readTemplateExports,
   recordShrinks,
@@ -38,15 +44,13 @@ import {
   TEMPLATE_FILE,
   TEMPLATE_EXPORTS,
 } from "./check-native-local-runner-scaffold.mjs";
-import {
-  defineSmokeScenario,
-  parseEvidence,
-  projectSnapshotForBlockedReport,
-} from "./lib/native-local-runner-scaffold.mjs";
+import { defineSmokeScenario, projectSnapshotForBlockedReport } from "./lib/native-local-runner-scaffold.mjs";
+import { parseEvidence } from "./lib/native-local-runner-primitives.mjs";
 
 const REPOSITORY_ROOT = resolve(import.meta.dirname, "..");
 const MIGRATED = "tools/run-stardew-native-local-player-sweep-scythe-smoke.mjs";
 const templateSource = () => readFileSync(resolve(REPOSITORY_ROOT, TEMPLATE_FILE), "utf8");
+const primitivesSource = () => readFileSync(resolve(REPOSITORY_ROOT, PRIMITIVES_FILE), "utf8");
 
 /**
  * The runner as it was before the migration, read out of the revision that shipped it.
@@ -77,8 +81,20 @@ function assertFinding(report, pattern) {
 }
 
 /** A tree of runners and a baseline, so a falsifier drives the real rule without touching this repository. */
-function judge({ runners, baseline = [], template = templateSource() }) {
-  return checkRunnerScaffold({ runners, baseline, templateSource: template });
+function judge({
+  runners,
+  baseline = [],
+  template = templateSource(),
+  primitiveCopies = [],
+  primitives = primitivesSource(),
+}) {
+  return checkRunnerScaffold({
+    runners,
+    baseline,
+    templateSource: template,
+    primitiveCopies,
+    primitivesSource: primitives,
+  });
 }
 
 const importLine =
@@ -291,6 +307,163 @@ test("readRunner reads code, not comments: a comment describing the old bootstra
   assert.deepEqual(readRunner(`${importLine}\n${definitionLine}\nconnectWithRetry(config);\n`).reasons, [
     "hand_written_bootstrap:connectWithRetry",
   ]);
+});
+
+/* ---------------------------------------------------------------------------------------------------------------
+ * THE PRIMITIVE CENSUS
+ * ------------------------------------------------------------------------------------------------------------- */
+
+/** A private copy of `parseEvidence`, exactly as 19 runners still spell it. */
+const privateEvidence = `function parseEvidence(evidence) {
+  const detail = typeof evidence?.detail === "string" ? evidence.detail : "";
+  if (detail.length === 0) throw new Error("native_local_evidence_empty");
+  return Object.fromEntries(
+    detail.split(";").map((pair) => {
+      const index = pair.indexOf("=");
+      return index > 0 ? [pair.slice(0, index), pair.slice(index + 1)] : null;
+    }).filter(Boolean),
+  );
+}`;
+
+/** The same refusal under ANOTHER name - the `validateConfig` copies - which a name check cannot see. */
+const renamedFixtureRefusal = `function validateConfig(value) {
+  const fixture = value?.NativeLocalPlayerFixture;
+  if (fixture?.Enable !== true || fixture.Bootstrap?.Enable === true || fixture.FixtureScenario !== SCENARIO)
+    throw new Error("native_local_x_fixture_config_invalid");
+  if (
+    value.Portfolio?.Enable === true ||
+    value.HostAutomation?.Enable === true ||
+    value.HostFarmhandProvisioning?.Enable === true ||
+    value.FarmhandProvisioner?.Enable === true
+  )
+    throw new Error("native_local_x_action_policy_invalid");
+  validateNativeLocalFixturePolicy(value, { requiredActions: EXPECTED_ACTIONS });
+}`;
+
+const copyRunner = { file: "tools/run-stardew-native-local-player-copied-smoke.mjs" };
+const copyFinding = (file, primitive) => `runner_reimplements_a_scaffold_primitive:${file}:${primitive}`;
+
+test("the primitive population is the module's own exports, and a namesake local function is a finding", () => {
+  const exports = readPrimitiveExports(primitivesSource());
+  // The list is read, not remembered: every export the module has is in it, and nothing else is.
+  assert.ok(exports.includes("parseEvidence") && exports.includes("tilesAdjacent"), exports.join(","));
+  assert.deepEqual(detectPrimitiveCopies(privateEvidence, exports), ["parseEvidence"]);
+
+  const report = judge({ runners: [{ file: copyRunner.file, source: privateEvidence }] });
+  assert.equal(report.ok, false);
+  assert.equal(report.privateCopies, 1);
+  assert.ok(report.findings.includes(copyFinding(copyRunner.file, "parseEvidence")), report.findings.join("\n"));
+  assert.match(renderScaffoldReport(report)[1], /^runners examined 1 · private copies 1 · importing 0$/u);
+});
+
+test("a copy under another name is still a finding, because the reading is structural", () => {
+  const report = judge({ runners: [{ file: copyRunner.file, source: renamedFixtureRefusal }] });
+  assert.ok(
+    report.findings.includes(copyFinding(copyRunner.file, "validateNativeLocalFixtureConfig")),
+    report.findings.join("\n"),
+  );
+  // And the file imports nothing: the finding is the copy, not the absence of an import.
+  assert.equal(report.importing, 0);
+});
+
+test("a body that is not the primitive is not a finding: a target picker reads .x/.y and is left alone", () => {
+  const picker = `function chooseAdjacentWeedTarget(snapshot, target) {
+  return snapshot.weedTargets
+    .filter((entry) => Math.abs(entry.x - target.x) <= 1 && Math.abs(entry.y - target.y) <= 1)
+    .sort((left, right) => left.x - right.x)[0];
+}`;
+  const report = judge({ runners: [{ file: copyRunner.file, source: onTheTemplate(picker) }] });
+  assert.equal(report.privateCopies, 0, report.findings.join("\n"));
+  assert.equal(report.ok, true);
+  // The same shape as a two-argument predicate IS the tile primitive: the difference is the shape, not the file.
+  const predicate = `function samePoint(left, right) {\n  return left.x === right.x && left.y === right.y;\n}`;
+  assert.deepEqual(detectPrimitiveCopies(predicate, readPrimitiveExports(primitivesSource())), ["sameTile"]);
+});
+
+/** A runner whose lifecycle conforms, so a primitive finding is the only finding in the report. */
+const onTheTemplate = (body) => `${importLine}\n${definitionLine}\n${body}\n`;
+
+test("the primitive baseline excuses a recorded copy and nothing else, and a stale entry is a finding", () => {
+  const recorded = [{ file: copyRunner.file, primitive: "parseEvidence", reason: PRIMITIVE_BASELINE_REASON }];
+  assert.equal(
+    judge({ runners: [{ file: copyRunner.file, source: onTheTemplate(privateEvidence) }], primitiveCopies: recorded })
+      .ok,
+    true,
+  );
+
+  // The copy is migrated: the entry is now stale and the gate says so by name, in the same direction as the lifecycle.
+  const migrated = judge({
+    runners: [
+      {
+        file: copyRunner.file,
+        source: onTheTemplate(`import { parseEvidence } from "./lib/native-local-runner-primitives.mjs";`),
+      },
+    ],
+    primitiveCopies: recorded,
+  });
+  assert.equal(migrated.ok, false);
+  assert.ok(
+    migrated.findings.includes(
+      `stale_primitive_copy:${copyRunner.file}:parseEvidence: the runner no longer spells it, or is gone - delete the entry`,
+    ),
+    migrated.findings.join("\n"),
+  );
+  assert.equal(migrated.importing, 1);
+
+  // A reason that is not the one this baseline may carry is a silencer with a nicer name.
+  const unreasoned = judge({
+    runners: [{ file: copyRunner.file, source: onTheTemplate(privateEvidence) }],
+    primitiveCopies: [{ file: copyRunner.file, primitive: "parseEvidence", reason: "because" }],
+  });
+  assert.ok(
+    unreasoned.findings.some((line) => line.startsWith("primitive_copy_without_a_reason:")),
+    unreasoned.findings.join("\n"),
+  );
+});
+
+test("--record-shrinks deletes a stale copy entry and keeps every live entry, in both sections", () => {
+  const real = readBaseline({ root: REPOSITORY_ROOT });
+  const realCopies = readPrimitiveBaseline({ root: REPOSITORY_ROOT });
+  const doomed = realCopies[0];
+  const shrink = recordShrinks({
+    root: REPOSITORY_ROOT,
+    stale: [`stale_primitive_copy:${doomed.file}:${doomed.primitive}: synthetic`],
+  });
+  assert.deepEqual(shrink.removed, [], "a stale copy is not a stale lifecycle entry");
+  assert.equal(shrink.kept.length, real.length);
+  assert.equal(shrink.keptCopies.length, realCopies.length - 1);
+  assert.deepEqual(shrink.removedCopies, [`${doomed.file}:${doomed.primitive}`]);
+});
+
+test("an export with no detector, and a detector with no export, are blocked readings", () => {
+  const extras = judge({
+    runners: [{ file: copyRunner.file, source: privateEvidence }],
+    primitives: `${primitivesSource()}\nexport function parseSomethingNew(evidence) { return evidence; }\n`,
+  });
+  assert.equal(extras.blocked, "primitive_without_a_detector:parseSomethingNew");
+  assert.equal(renderScaffoldReport(extras)[0], "not_measured:primitive_without_a_detector:parseSomethingNew");
+
+  const missing = judge({
+    runners: [{ file: copyRunner.file, source: privateEvidence }],
+    primitives: primitivesSource().replace(
+      "export async function waitForNavigationTerminal(",
+      "async function waitForNavigationTerminal(",
+    ),
+  });
+  assert.equal(missing.blocked, "detector_without_a_primitive:waitForNavigationTerminal");
+});
+
+test("the real tree: the recorded copies are exactly the detected ones", () => {
+  const { report } = runScaffoldGate({ root: REPOSITORY_ROOT });
+  assert.equal(report.blocked, null, `blocked: ${report.blocked}`);
+  assert.equal(report.ok, true, report.findings.join("\n"));
+  const recorded = new Set(
+    readPrimitiveBaseline({ root: REPOSITORY_ROOT }).map((entry) => `${entry.file}:${entry.primitive}`),
+  );
+  const detected = new Set(report.primitiveCopies.map((entry) => `${entry.file}:${entry.primitive}`));
+  assert.deepEqual([...detected].sort(), [...recorded].sort(), "the baseline describes the tree exactly");
+  assert.ok(report.privateCopies > 0, "a population of zero copies would agree with itself");
+  assert.match(renderScaffoldReport(report)[1], /^runners examined \d+ · private copies \d+ · importing \d+$/u);
 });
 
 test("the extracted pieces keep the rules the copies had", () => {

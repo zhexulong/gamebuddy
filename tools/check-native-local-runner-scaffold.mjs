@@ -50,6 +50,10 @@
  * VERDICT. `runners examined N · on the template M · hand-written K · baselined B`, then one line per finding.
  * Exit 0 every runner conforms or is baselined, 1 a finding, 2 blocked.
  *
+ * THE SECOND VERDICT LINE, for L1: `runners examined N · private copies M · importing K`. M counts (runner, primitive)
+ * pairs whose body duplicates an export of `native-local-runner-primitives.mjs`, and K counts the runners that import that
+ * module at all. Both are printed because "no findings" and "no population" must not read the same.
+ *
  * red-proof: inject  a runner that reads its own `readNativeClientConfig()` beside the template import ->
  *   `runner_reimplements_the_scaffold:<injected runner>:hand_written_bootstrap:readNativeClientConfig`
  *   (tools/check-native-local-runner-scaffold.test.mjs)
@@ -62,6 +66,19 @@
  *   `stale_baseline:<file>` twice, and `--record-shrinks` deletes both
  *   (tools/check-native-local-runner-scaffold.test.mjs)
  * red-proof: inject  an empty population and an unreadable template -> `not_measured:*` at exit 2
+ *   (tools/check-native-local-runner-scaffold.test.mjs)
+ *
+ * THE SECOND LAYER's red proofs, in the same file:
+ *
+ * red-proof: inject  a runner that spells `parseEvidence` privately ->
+ *   `runner_reimplements_a_scaffold_primitive:<injected runner>:parseEvidence`
+ * red-proof: inject  the fixture-config refusal under the name `validateConfig` ->
+ *   `runner_reimplements_a_scaffold_primitive:<injected runner>:validateNativeLocalFixtureConfig`
+ *   (the copy a name check would miss)
+ * red-proof: inject  a baseline entry for a copy that has been migrated -> `stale_primitive_copy:<file>:<primitive>`,
+ *   and `--record-shrinks` deletes exactly it while keeping every lifecycle entry
+ * red-proof: inject  an export with no detector, and a detector with no export ->
+ *   `not_measured:primitive_without_a_detector:<name>`, `not_measured:detector_without_a_primitive:<name>`
  *   (tools/check-native-local-runner-scaffold.test.mjs)
  *
  * USAGE
@@ -87,6 +104,12 @@ const ROOT = resolve(import.meta.dirname, "..");
 
 /** The template's one path. A runner imports the lifecycle from it, or it owns the lifecycle. */
 export const TEMPLATE_FILE = "tools/lib/native-local-runner-scaffold.mjs";
+
+/** L1's one path. Every primitives a runner must not spell for itself is an export of this module. */
+export const PRIMITIVES_FILE = "tools/lib/native-local-runner-primitives.mjs";
+
+/** The one reason a primitive-copy baseline entry may carry. */
+export const PRIMITIVE_BASELINE_REASON = "predates_the_primitives";
 
 /** The template's exports a runner cannot do without: the definition and the bootstrap. */
 export const TEMPLATE_EXPORTS = Object.freeze(["defineSmokeScenario", "runSmokeScenarioMain"]);
@@ -125,6 +148,129 @@ export function stripComments(source) {
 }
 
 /**
+ * THE SECOND LAYER: does this runner spell one of L1's primitives for itself?
+ *
+ * WHY A SECOND LAYER. `runner_reimplements_the_scaffold` above asks about the LIFECYCLE, and 87 of 110 runners answered
+ * "no" to it. Most of those noes were about how many frames a runner sends, which has nothing to do with the fact that
+ * `parseEvidence` was spelled privately in 49 of them, `parseStrictEvidence` in 32, the fixture-config refusal in 29 (under
+ * three names) and the tile predicates in 37+14. Measuring the duplication against the lifecycle question under-reported
+ * it: the shared plumbing is re-implemented in every runner, whatever its shape.
+ *
+ * THE PRIMITIVE LIST IS THE MODULE'S OWN EXPORTS, not a list kept here. `readPrimitiveExports` reads
+ * `native-local-runner-primitives.mjs`, and a detector for a name it does not carry - or an export with no detector - is
+ * `not_measured`, not a silent pass: an export added tomorrow would otherwise be invisible to this gate forever.
+ *
+ * DETECTION IS STRUCTURAL, NOT TEXTUAL, and that is the whole design. A name check misses the copies that were renamed:
+ * `validateNativeLocalConfig` (5) and `validateConfig` (11) are the fixture refusal under other names, `parseDetailEntries`
+ * is the strict evidence parse, `samePoint` is `sameTile`. So a copy is recognised by what its body DOES - the grammar it
+ * reads, the calls it is allowed to make - under any name, and a body that does anything else (a target picker, a run
+ * function, a topology classifier) is not a copy and is not a finding.
+ */
+export function readPrimitiveExports(source) {
+  const names = [];
+  for (const match of String(source ?? "").matchAll(/export\s+(?:async\s+)?function\s+([A-Za-z_$][\w$]*)\s*\(/gu))
+    names.push(match[1]);
+  return names;
+}
+
+/** The calls a pure tile predicate is allowed to make. A picker calls `filter`/`find`/`map`/`sort` and is not one. */
+const TILE_CALLS = new Set(["abs", "max", "isInteger", "isSafeInteger", "isFinite", "Number", "Boolean"]);
+/** The calls a fixture-config refusal is allowed to make - the harness's policy and topology readings included. */
+const FIXTURE_CALLS = new Set([
+  "Error",
+  "RegExp",
+  "test",
+  "stringify",
+  "some",
+  "every",
+  "keys",
+  "isArray",
+  "hasOwn",
+  "String",
+  "Boolean",
+  "Number",
+  "validateNativeLocalFixturePolicy",
+  "validFixtureSlotRelationship",
+  "validFixtureBinding",
+  "classifyTopology",
+]);
+
+/**
+ * A tile predicate: two tile-shaped parameters and nothing but coordinate arithmetic in the body.
+ *
+ * The `calls` restriction separates the duplicated predicates from the fifty target PICKERS that also read `.x`/`.y`
+ * (`chooseAdjacentWeedTarget` and its siblings call `filter`/`find`/`sort`), and the parameter count separates them from
+ * one-argument validators (`validItemTarget`) that merely look at a coordinate.
+ */
+function tilePredicate({ body, calls, params }) {
+  return (
+    params === 2 &&
+    /\.x\b/u.test(body) &&
+    /\.y\b/u.test(body) &&
+    calls.every((name) => TILE_CALLS.has(name)) &&
+    /Math\.(?:abs|max)\(|===/u.test(body) &&
+    !/\b(?:for|while|switch)\b/u.test(body)
+  );
+}
+
+/** How many `Math.abs(`/`Math.max(` a body makes, for telling the five predicates apart. */
+const countOf = (body, call) => (body.match(new RegExp(`Math\\.${call}\\(`, "gu")) ?? []).length;
+
+/**
+ * The five tile primitives share ONE shape (two tiles, coordinate arithmetic) and differ in the comparison, so each
+ * detector reads the comparison. Reporting them all as one name would be the same defect as reporting none: a migration
+ * that replaced a Chebyshev distance with an adjacency test would compile.
+ */
+const TILE_KINDS = Object.freeze({
+  // `Math.max(abs, abs)` with no comparison is the distance itself; with `=== 1` it is "exactly one step" (the 2 copies).
+  tileChebyshevDistance: ({ body, params, calls }) =>
+    tilePredicate({ body, params, calls }) &&
+    countOf(body, "max") > 0 &&
+    !/Math\.max\([^\n]*\)\s*(?:===|<=|>=)/u.test(body),
+  tilesNeighbouring: ({ body, params, calls }) =>
+    tilePredicate({ body, params, calls }) && countOf(body, "max") > 0 && /Math\.max\([^\n]*\)\s*===\s*1/u.test(body),
+  // `abs(x)+abs(y) === 1` is the Manhattan (cardinal) predicate: the 5 `cardinalAdjacent` copies.
+  tilesCardinallyAdjacent: ({ body, params, calls }) =>
+    tilePredicate({ body, params, calls }) &&
+    countOf(body, "max") === 0 &&
+    /Math\.abs\([^\n]*\)\s*\+\s*Math\.abs\(/u.test(body),
+  // Two `abs(...) <= 1` comparisons: adjacency including the tile itself.
+  tilesAdjacent: ({ body, params, calls }) =>
+    tilePredicate({ body, params, calls }) && countOf(body, "max") === 0 && /Math\.abs\([^\n]*\)\s*<=\s*1/u.test(body),
+  // Coordinate equality with no distance at all.
+  sameTile: ({ body, params, calls }) =>
+    tilePredicate({ body, params, calls }) &&
+    countOf(body, "max") === 0 &&
+    countOf(body, "abs") === 0 &&
+    /\.x\s*===\s*[\w$.?]+\.x/u.test(body),
+});
+
+/** The names a local function's body is allowed to call for each family, and the shape each family has. */
+export const PRIMITIVE_DETECTORS = Object.freeze({
+  // The three evidence grammars all split `a=1;b=2`; what separates them is what they do with a pair they cannot read.
+  parseEvidence: ({ grammar, body }) => grammar && !/return \{\}/u.test(body) && !/hasOwn\(|!== undefined/u.test(body),
+  parseStrictEvidence: ({ grammar, body }) =>
+    grammar && !/return \{\}/u.test(body) && /hasOwn\(|!== undefined/u.test(body),
+  parseCompleteEvidence: ({ grammar, body }) => grammar && /return \{\}/u.test(body),
+  validateNativeLocalFixtureConfig: ({ body, calls }) =>
+    /NativeLocalPlayerFixture/u.test(body) &&
+    /Portfolio/u.test(body) &&
+    /HostAutomation/u.test(body) &&
+    calls.every((name) => FIXTURE_CALLS.has(name)),
+  validFixtureSlotRelationship: ({ body }) => /GameBuddyFixture/u.test(body) && /\.test\(/u.test(body),
+  sameTile: TILE_KINDS.sameTile,
+  tilesAdjacent: TILE_KINDS.tilesAdjacent,
+  tilesNeighbouring: TILE_KINDS.tilesNeighbouring,
+  tilesCardinallyAdjacent: TILE_KINDS.tilesCardinallyAdjacent,
+  tileChebyshevDistance: TILE_KINDS.tileChebyshevDistance,
+  connectWithRetry: ({ body }) => /connectNativeLocalClient/u.test(body) && /ENOENT/u.test(body),
+  waitForNavigationTerminal: ({ body, calls }) =>
+    /waitForTerminal\(/u.test(body) &&
+    /waitForFreshSnapshot\(/u.test(body) &&
+    calls.every((name) => ["waitForTerminal", "waitForFreshSnapshot", "Error"].includes(name)),
+});
+
+/**
  * What one runner file does about the template: imports it, defines against it, and whether it still starts its own
  * process. Every reason is a finding on its own, because they are different mistakes with different fixes.
  */
@@ -158,6 +304,90 @@ export function runnerFiles({ root = ROOT, directory = SCAN_ROOT } = {}) {
   return found.sort();
 }
 
+/**
+ * Every local function definition in a runner, with the body a detector reads.
+ *
+ * Function declarations only: a copy spelled as an arrow (`const parseEvidence = (e) => ...`) is not read here, and that
+ * is stated rather than guessed. Measured on the tree at `3f660c7e`: every one of the 110 copies that exist is a
+ * declaration, so the blind spot is real but empty today, and the diff of a future arrow copy is a line this gate would
+ * miss - which is why the population line prints `private copies M` rather than a bare pass.
+ */
+export function localFunctions(source) {
+  const text = stripComments(source);
+  const found = [];
+  const declaration = /(?:export\s+)?(?:async\s+)?function\s+([A-Za-z_$][\w$]*)\s*\(([^)]*)\)\s*\{/gu;
+  let match;
+  while ((match = declaration.exec(text)) !== null) {
+    let index = match.index + match[0].length;
+    let depth = 1;
+    while (index < text.length && depth > 0) {
+      const char = text[index];
+      if (char === "{") depth++;
+      else if (char === "}") depth--;
+      index++;
+    }
+    const body = text.slice(match.index, index);
+    found.push({
+      name: match[1],
+      params: match[2].split(",").filter((entry) => entry.trim().length > 0).length,
+      body,
+      calls: callsIn(body, match[1]),
+    });
+  }
+  return found;
+}
+
+/** The names `text` calls, minus `self` (a declaration names itself) and minus keywords that look like calls. */
+function callsIn(text, self) {
+  const keywords = new Set(["if", "for", "while", "switch", "catch", "function", "return", "typeof", "await"]);
+  return [
+    ...new Set(
+      [...text.matchAll(/([A-Za-z_$][\w$]*)\s*\(/gu)]
+        .map((match) => match[1])
+        .filter((name) => name !== self && !keywords.has(name)),
+    ),
+  ];
+}
+
+/**
+ * The primitives ONE runner spells for itself.
+ *
+ * `exports` is the L1 module's own export list. A local function whose name is one of them reports under that name even
+ * when its body is the other grammar (`parseStrictEvidence` copying the lenient parse), because the finding is about what
+ * the runner has to delete, and a migrated call site is renamed either way.
+ */
+export function detectPrimitiveCopies(source, exports) {
+  const copies = [];
+  for (const entry of localFunctions(source)) {
+    const named = exports.includes(entry.name) ? entry.name : null;
+    // A local function with a primitive's NAME is a copy whatever its body says: the runner owns that spelling.
+    if (named !== null) {
+      copies.push(named);
+      continue;
+    }
+    const grammar = evidenceGrammar(entry.body);
+    const matched = exports.filter((primitive) => PRIMITIVE_DETECTORS[primitive]({ ...entry, grammar }));
+    // A tile body matches all five tile detectors (they share one shape); report the family once, under its own name.
+    const distinct = matched.filter((primitive) => !TILE_DETECTORS.has(primitive));
+    if (distinct.length > 0) copies.push(distinct[0]);
+    else if (matched.length > 0) copies.push(matched[0]);
+  }
+  return [...new Set(copies)];
+}
+
+const TILE_DETECTORS = new Set([
+  "sameTile",
+  "tilesAdjacent",
+  "tilesNeighbouring",
+  "tilesCardinallyAdjacent",
+  "tileChebyshevDistance",
+]);
+
+/** The one grammar all three evidence primitives read: `a=1;b=2`. */
+function evidenceGrammar(body) {
+  return /\.split\(";"\)/u.test(body) && /indexOf\("="\)/u.test(body);
+}
+
 /** The template's own exports, read from its source so a missing one is blocked rather than assumed. */
 export function readTemplateExports(source) {
   const missing = TEMPLATE_EXPORTS.filter(
@@ -175,8 +405,12 @@ export function blocked(reason) {
     conforming: 0,
     handWritten: 0,
     baselined: 0,
+    privateCopies: 0,
+    importing: 0,
     untracked: Object.freeze([]),
     rows: Object.freeze([]),
+    primitiveCopies: Object.freeze([]),
+    primitiveRows: Object.freeze([]),
     findings: Object.freeze([]),
     stale: Object.freeze([]),
     ok: false,
@@ -187,9 +421,17 @@ export function blocked(reason) {
  * The verdict: every runner in the population, and what its baseline entry does or does not excuse.
  *
  * `runners` is `[{ file, source }]` and `baseline` is `[{ file, reason }]`. Both are handed in so a falsifier drives the
- * real rule over a synthetic tree instead of editing this repository.
+ * real rule over a synthetic tree instead of editing this repository. `primitiveCopies` is the second baseline section,
+ * `[{ file, primitive, reason }]`, and `primitivesSource` is L1's own source: the primitive list is read from it, never
+ * passed as a list of names this gate happened to remember.
  */
-export function checkRunnerScaffold({ runners, baseline, templateSource }) {
+export function checkRunnerScaffold({
+  runners,
+  baseline,
+  templateSource,
+  primitiveCopies = [],
+  primitivesSource = null,
+}) {
   const template = readTemplateExports(templateSource);
   if (!template.ok) return blocked(`template_export_missing:${template.missing.join(",")}`);
   if (runners.length === 0) return blocked("runner_population_empty");
@@ -232,6 +474,12 @@ export function checkRunnerScaffold({ runners, baseline, templateSource }) {
     stale.push(`stale_baseline:${file}: no runner of that name is in the tree - delete the entry`);
   }
 
+  const census =
+    primitivesSource === null
+      ? { blocked: "primitives_source_absent", findings: [], stale: [], copies: [], rows: [] }
+      : countPrimitiveCopies({ runners, primitiveCopies, primitivesSource });
+  if (census.blocked !== null) return blocked(census.blocked);
+
   return Object.freeze({
     schema: "gamebuddy-native-local-runner-scaffold/v1",
     blocked: null,
@@ -241,10 +489,70 @@ export function checkRunnerScaffold({ runners, baseline, templateSource }) {
     baselined: rows.filter((row) => row.baselined).length,
     untracked: Object.freeze([]),
     rows: Object.freeze(rows.map((row) => Object.freeze(row))),
-    findings: Object.freeze([...findings, ...stale]),
-    stale: Object.freeze(stale),
-    ok: findings.length === 0 && stale.length === 0,
+    primitiveCopies: Object.freeze(census.copies),
+    primitiveRows: Object.freeze(census.rows),
+    privateCopies: census.copies.length,
+    importing: census.importing,
+    findings: Object.freeze([...findings, ...stale, ...census.findings, ...census.stale]),
+    stale: Object.freeze([...stale, ...census.stale]),
+    ok: findings.length === 0 && stale.length === 0 && census.findings.length === 0 && census.stale.length === 0,
   });
+}
+
+/**
+ * The primitive census: which runners still spell an L1 export for themselves, and which of those are excused.
+ *
+ * Same two rules as the lifecycle baseline, in the same direction: a copy with no entry is a finding, and an entry whose
+ * copy is gone is stale and must be deleted by `--record-shrinks`. The baseline has no writer that adds one, so a new copy
+ * cannot be laundered through it.
+ */
+function countPrimitiveCopies({ runners, primitiveCopies, primitivesSource }) {
+  const exports = readPrimitiveExports(primitivesSource);
+  const missingDetector = exports.filter((name) => PRIMITIVE_DETECTORS[name] === undefined);
+  const extraDetector = Object.keys(PRIMITIVE_DETECTORS).filter((name) => !exports.includes(name));
+  // An export with no detector would be duplicated forever and never named; a detector with no export would fire on a
+  // primitive that no longer exists. Both are readings that cannot be made, not passes.
+  if (missingDetector.length > 0) return { blocked: `primitive_without_a_detector:${missingDetector.join(",")}` };
+  if (extraDetector.length > 0) return { blocked: `detector_without_a_primitive:${extraDetector.join(",")}` };
+  if (runners.length === 0) return { blocked: "runner_population_empty" };
+
+  const recorded = new Map();
+  const findings = [];
+  for (const entry of primitiveCopies) {
+    const key = `${entry.file}:${entry.primitive}`;
+    if (recorded.has(key)) {
+      findings.push(`primitive_copy_recorded_twice:${key}: two entries name one copy, delete one`);
+      continue;
+    }
+    recorded.set(key, entry);
+    if (entry.reason !== PRIMITIVE_BASELINE_REASON)
+      findings.push(
+        `primitive_copy_without_a_reason:${key}: reason "${entry.reason ?? ""}" is not ${PRIMITIVE_BASELINE_REASON}`,
+      );
+  }
+
+  const IMPORTS_PRIMITIVES = /from\s+["'][^"']*native-local-runner-primitives\.mjs["']/u;
+  const rows = [];
+  const copies = [];
+  const stale = [];
+  let importing = 0;
+  const live = new Set();
+  for (const runner of runners) {
+    const spelled = detectPrimitiveCopies(runner.source, exports);
+    if (IMPORTS_PRIMITIVES.test(stripComments(runner.source))) importing++;
+    rows.push({ file: runner.file, copies: spelled, imports: IMPORTS_PRIMITIVES.test(stripComments(runner.source)) });
+    for (const primitive of spelled) {
+      const key = `${runner.file}:${primitive}`;
+      live.add(key);
+      copies.push({ file: runner.file, primitive });
+      if (!recorded.has(key)) findings.push(`runner_reimplements_a_scaffold_primitive:${key}`);
+    }
+  }
+  for (const key of [...recorded.keys()].sort()) {
+    if (live.has(key)) continue;
+    stale.push(`stale_primitive_copy:${key}: the runner no longer spells it, or is gone - delete the entry`);
+  }
+  return { blocked: null, rows, copies, importing, findings, stale };
 }
 
 export function renderScaffoldReport(report) {
@@ -253,11 +561,13 @@ export function renderScaffoldReport(report) {
     `runners examined ${report.examined} · on the template ${report.conforming} · ` +
       `hand-written ${report.handWritten} · baselined ${report.baselined}` +
       (report.untracked.length > 0 ? ` · untracked not counted ${describeUntracked(report.untracked)}` : ""),
+    `runners examined ${report.examined} · private copies ${report.privateCopies} · importing ${report.importing}`,
   ];
   for (const finding of report.findings) lines.push(finding);
   lines.push(
     report.ok
-      ? `  green: every runner either imports the template or is a recorded ${BASELINE_REASON} entry`
+      ? `  green: every runner either imports the template or is a recorded ${BASELINE_REASON} entry, and no runner ` +
+          `spells an L1 primitive that is not a recorded ${PRIMITIVE_BASELINE_REASON} entry`
       : `  ${report.findings.length} finding(s)`,
   );
   return lines;
@@ -270,11 +580,20 @@ export function readBaseline({ root = ROOT } = {}) {
   return parsed.entries;
 }
 
+/** The baseline's second section: the private copies of L1 primitives that predate the module. */
+export function readPrimitiveBaseline({ root = ROOT } = {}) {
+  const parsed = JSON.parse(readFileSync(resolve(root, BASELINE_PATH), "utf8"));
+  if (!Array.isArray(parsed.primitiveCopies)) throw new Error("baseline has no `primitiveCopies` array");
+  return parsed.primitiveCopies;
+}
+
 /** The whole run over the real tree: the index decides the population, the scan decides what exists. */
 export function runScaffoldGate({ root = ROOT, withIndex = true } = {}) {
   let templateSource;
+  let primitivesSource;
   try {
     templateSource = readFileSync(resolve(root, TEMPLATE_FILE), "utf8");
+    primitivesSource = readFileSync(resolve(root, PRIMITIVES_FILE), "utf8");
   } catch (error) {
     return { report: blocked(`template_unreadable:${error?.code ?? error}`), untracked: [] };
   }
@@ -291,16 +610,44 @@ export function runScaffoldGate({ root = ROOT, withIndex = true } = {}) {
   const indexed = onDisk.filter((file) => !untracked.includes(file));
   const runners = indexed.map((file) => ({ file, source: readFileSync(resolve(root, file), "utf8") }));
   const baseline = readBaseline({ root });
-  const report = checkRunnerScaffold({ runners, baseline, templateSource });
+  let primitiveCopies;
+  try {
+    primitiveCopies = readPrimitiveBaseline({ root });
+  } catch (error) {
+    return { report: blocked(`primitive_baseline_unreadable:${String(error?.message ?? error)}`), untracked: [] };
+  }
+  const report = checkRunnerScaffold({ runners, baseline, templateSource, primitiveCopies, primitivesSource });
   return { report: Object.freeze({ ...report, untracked: Object.freeze(untracked) }), untracked };
 }
 
-/** Delete exactly the entries the report calls stale, and nothing else. The baseline has no other writer. */
-export function recordShrinks({ root = ROOT, stale, entries = readBaseline({ root }) }) {
-  const doomed = new Set(stale.map((line) => /^stale_baseline:([^:]+):/u.exec(line)?.[1]).filter(Boolean));
-  const kept = entries.filter((entry) => !doomed.has(entry.file));
-  const removed = entries.filter((entry) => doomed.has(entry.file)).map((entry) => entry.file);
-  return { path: resolve(root, BASELINE_PATH), kept, removed };
+/**
+ * Delete exactly the entries the report calls stale, in both sections, and nothing else.
+ *
+ * The primitive entries are keyed `file:primitive` while the lifecycle entries are keyed by file, so the two sections
+ * cannot be shrunk by one regex: a lifecycle `stale_baseline:<file>` line and a `stale_primitive_copy:<file>:<primitive>`
+ * line are different keys, and deleting one must never delete the other.
+ */
+export function recordShrinks({
+  root = ROOT,
+  stale,
+  entries = readBaseline({ root }),
+  primitiveCopies = readPrimitiveBaseline({ root }),
+}) {
+  const doomedFiles = new Set(stale.map((line) => /^stale_baseline:([^:]+):/u.exec(line)?.[1]).filter(Boolean));
+  const doomedCopies = new Set(
+    stale.map((line) => /^stale_primitive_copy:([^:]+:[a-zA-Z_$][\w$]*):/u.exec(line)?.[1]).filter(Boolean),
+  );
+  const kept = entries.filter((entry) => !doomedFiles.has(entry.file));
+  const keptCopies = primitiveCopies.filter((entry) => !doomedCopies.has(`${entry.file}:${entry.primitive}`));
+  return {
+    path: resolve(root, BASELINE_PATH),
+    kept,
+    keptCopies,
+    removed: entries.filter((entry) => doomedFiles.has(entry.file)).map((entry) => entry.file),
+    removedCopies: primitiveCopies
+      .filter((entry) => doomedCopies.has(`${entry.file}:${entry.primitive}`))
+      .map((entry) => `${entry.file}:${entry.primitive}`),
+  };
 }
 
 async function main() {
@@ -311,15 +658,16 @@ async function main() {
       process.exitCode = 2;
       return;
     }
-    const { path, kept, removed } = recordShrinks({ stale: report.stale });
-    if (removed.length === 0) {
+    const { path, kept, keptCopies, removed, removedCopies } = recordShrinks({ stale: report.stale });
+    if (removed.length === 0 && removedCopies.length === 0) {
       process.stdout.write("record_shrinks: the baseline already describes the tree, nothing to delete\n");
       return;
     }
     const { writeFileSync } = await import("node:fs");
-    writeFileSync(path, `${JSON.stringify({ entries: kept }, null, 2)}\n`, "utf8");
-    process.stdout.write(`record_shrinks: deleted ${removed.length} entr(y|ies)\n`);
+    writeFileSync(path, `${JSON.stringify({ entries: kept, primitiveCopies: keptCopies }, null, 2)}\n`, "utf8");
+    process.stdout.write(`record_shrinks: deleted ${removed.length + removedCopies.length} entr(y|ies)\n`);
     for (const file of removed) process.stdout.write(`  ${file}\n`);
+    for (const copy of removedCopies) process.stdout.write(`  ${copy}\n`);
     return;
   }
 
