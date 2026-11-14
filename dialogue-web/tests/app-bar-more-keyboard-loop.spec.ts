@@ -112,27 +112,30 @@ test("the collapsed menu takes focus in, wraps Tab and Escape, and Escape return
 
   const entered = await focused(page);
   expect(entered.inMenu, "opening the panel moves focus into it").toBe(true);
-  expect(entered.name, "onto its first entry").toBe(catalogue.chatsPanel);
+  // The peers are the panel's own rows, so the loop below is measured against whatever the bar
+  // folds - a peer added to or taken out of the bar joins this reading without an edit here.
+  const peers = await page
+    .locator(".app-bar-more-menu .nav-button")
+    .evaluateAll((nodes) => nodes.map((node) => node.getAttribute("aria-label") ?? ""));
+  expect(peers.length, "the collapsed panel really carries peers").toBeGreaterThan(1);
+  expect(entered.name, "onto its first entry").toBe(peers[0]);
 
   // Backwards from the first entry wraps to the last, and forwards from the last wraps back, so
   // the panel is a loop in both directions rather than a corridor with two exits.
   await page.keyboard.press("Shift+Tab");
   const backwards = await focused(page);
   expect(backwards.inMenu, "Shift+Tab from the first entry stays in the panel").toBe(true);
-  expect(backwards.name).toBe(catalogue.presetsPanel);
+  expect(backwards.name).toBe(peers[peers.length - 1]);
 
   const walk: Array<Readonly<{ name: string | null; inMenu: boolean }>> = [];
-  for (let press = 0; press < 5; press += 1) {
+  for (let press = 0; press < peers.length; press += 1) {
     await page.keyboard.press("Tab");
     walk.push(await focused(page));
   }
-  expect(walk.map((stop) => stop.name), "Tab walks the same five peers, and the sixth press is a wrap").toEqual([
-    catalogue.chatsPanel,
-    catalogue.charactersPanel,
-    catalogue.settingsPanel,
-    catalogue.memoryPanel,
-    catalogue.presetsPanel,
-  ]);
+  expect(
+    walk.map((stop) => stop.name),
+    "Tab walks the same peers in order from the last one, and the press after it is a wrap",
+  ).toEqual(peers);
   expect(
     walk.filter((stop) => !stop.inMenu),
     "no Tab press lands on a control outside the open panel",

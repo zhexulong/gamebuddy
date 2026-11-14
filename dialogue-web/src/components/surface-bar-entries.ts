@@ -1,13 +1,4 @@
-import {
-  Brain,
-  Gamepad2,
-  type LucideIcon,
-  MessageSquare,
-  MessagesSquare,
-  ScrollText,
-  Settings,
-  Users,
-} from "lucide-react";
+import { Brain, Gamepad2, type LucideIcon, MessageSquare, MessagesSquare, Settings, Users } from "lucide-react";
 import type { RefObject } from "react";
 import {
   CHARACTERS_PANEL,
@@ -15,7 +6,6 @@ import {
   CHATS_PANEL,
   GAME_PANEL,
   MEMORY_PANEL,
-  PRESETS_PANEL,
   SETTINGS_PANEL,
 } from "../composed-surface-route";
 import type { Messages } from "../i18n";
@@ -42,6 +32,12 @@ export type SurfaceEntryOpener = Readonly<{ open: () => void; ref: RefObject<HTM
  * before the first one are the leading pair: `fold` keeps exactly those visible on a narrow window
  * and collapses the rest behind one disclosure, so the split is read from this table rather than
  * repeated as a number at the call site.
+ *
+ * 预设装配 (the preset assembly readout) is deliberately NOT a row here. It renders macros, depth
+ * injection and per-entry switches - a developer's reading of how a preset assembles a request, not
+ * a place in a player's day - so a first-level bar entry handed that screen to whoever pressed it.
+ * It lives behind the Settings surface's own disclosure instead (`SettingsSurface`), which is where
+ * the product keeps the other read-only inspection surfaces.
  */
 const SURFACE_ENTRIES = [
   // 聊天 and 会话 are two destinations - the conversation open now, and the list of every
@@ -55,7 +51,6 @@ const SURFACE_ENTRIES = [
   { id: CHARACTERS_PANEL, label: "charactersPanel", icon: Users, management: true },
   { id: SETTINGS_PANEL, label: "settingsPanel", icon: Settings, management: true },
   { id: MEMORY_PANEL, label: "memoryPanel", icon: Brain, management: true },
-  { id: PRESETS_PANEL, label: "presetsPanel", icon: ScrollText, management: true },
 ] as const satisfies readonly Readonly<{
   id: string;
   label: keyof Messages;

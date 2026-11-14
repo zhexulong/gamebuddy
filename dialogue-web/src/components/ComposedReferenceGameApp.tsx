@@ -222,7 +222,12 @@ export function ComposedReferenceGameApp() {
     setAvatarDigests((previous) => (previous[handle] === digest ? previous : { ...previous, [handle]: digest }));
   }, []);
   const settingsEntryRef = useRef<HTMLButtonElement>(null);
-  const presetsEntryRef = useRef<HTMLButtonElement>(null);
+  /**
+   * The control that opens the preset assembly, which is no longer a bar entry: it is the button in
+   * the Settings surface's disclosure (`SettingsSurface`). `openPanelOf` hands focus back to it when
+   * the player leaves that surface, so it is the button itself rather than a bar entry.
+   */
+  const presetsOpenRef = useRef<HTMLButtonElement>(null);
   const memoryEntryRef = useRef<HTMLButtonElement>(null);
   const modelPopoutEntryRef = useRef<HTMLButtonElement>(null);
   /**
@@ -1419,7 +1424,7 @@ export function ComposedReferenceGameApp() {
   const openChats = openPanelOf(CHATS_PANEL, chatsEntryRef);
   const openCharacters = openPanelOf(CHARACTERS_PANEL, charactersEntryRef);
   const openSettings = openPanelOf(SETTINGS_PANEL, settingsEntryRef);
-  const openPresets = openPanelOf(PRESETS_PANEL, presetsEntryRef);
+  const openPresets = openPanelOf(PRESETS_PANEL, presetsOpenRef);
   const openMemory = openPanelOf(MEMORY_PANEL, memoryEntryRef);
   // Each peer surface's opener, with the button a closed drawer restores focus to. Keyed by the
   // bar table's own ids, so a surface the bar lists without an opener is a type error
@@ -1431,7 +1436,6 @@ export function ComposedReferenceGameApp() {
     [CHARACTERS_PANEL]: { open: openCharacters, ref: charactersEntryRef },
     [SETTINGS_PANEL]: { open: openSettings, ref: settingsEntryRef },
     [MEMORY_PANEL]: { open: openMemory, ref: memoryEntryRef },
-    [PRESETS_PANEL]: { open: openPresets, ref: presetsEntryRef },
   };
 
   // The step's sentence and the card's own control are one decision, so they are read once and cannot
@@ -1594,6 +1598,7 @@ export function ComposedReferenceGameApp() {
                   uiLocale={view.locale}
                   onSelectUiLocale={adoptUiLocale}
                   onSelectAppearance={appearance.choose}
+                  presets={{ open: openPresets, ref: presetsOpenRef }}
                   restoreFocusTo={settingsEntryRef}
                 />
               )}

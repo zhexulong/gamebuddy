@@ -914,6 +914,13 @@ const en = {
   // Preset surface (design/architecture/tavern-preset-compatibility.md §2.1, §2.5, §4). A preset is
   // read-only, so every line here states a fact about the assembly rather than offering a control.
   presetsPanel: "Preset assembly",
+  /**
+   * The control that opens the readout, which is no longer a bar entry: it sits in the Settings
+   * surface's disclosure. It carries the destination's own name so the button and the page it
+   * opens are one fact, with a verb in front because a button that repeats a heading beside that
+   * heading names nothing it does.
+   */
+  presetsOpen: "Open the preset assembly",
   presetReadOnlyHint:
     "A preset is imported once and read from then on, so this surface shows what the assembly does with it and changes nothing.",
   presetEntriesLine: "Entries: {{total}} · {{enabled}} enabled · {{disabled}} disabled",
@@ -1952,6 +1959,8 @@ const zh: Messages = {
 
   // 预设面（design/architecture/tavern-preset-compatibility.md §2.1、§2.5、§4）。预设只读，因此这里的每一行都是关于装配的事实，而不是控件。
   presetsPanel: "预设装配",
+  // 打开只读页面的控件（英文目录同名字段的说明）：它带着目的地的名字，前面加动词，因为紧挨着同名标题的按钮什么也没说。
+  presetsOpen: "查看预设装配",
   presetReadOnlyHint: "预设只导入一次，之后只读；这个页面显示装配如何使用它，不会改动它。",
   presetEntriesLine: "条目：{{total}} · {{enabled}} 启用 · {{disabled}} 关闭",
   presetDisabledTitle: "已关闭",

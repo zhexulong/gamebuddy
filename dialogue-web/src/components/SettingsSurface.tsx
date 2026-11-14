@@ -1,4 +1,4 @@
-import { Settings } from "lucide-react";
+import { ScrollText, Settings } from "lucide-react";
 import type { RefObject } from "react";
 import type { AppearanceChoice } from "../appearance";
 import type { Locale, Messages } from "../i18n";
@@ -14,6 +14,12 @@ import { SurfaceView } from "./SurfaceView";
  * The interface's own display language is the shell's, not this panel's (the
  * shell persists it and applies the document locale), so `uiLocale` and
  * `onSelectUiLocale` are the only language facts it takes.
+ *
+ * The preset assembly readout is not a peer surface's entry in the bar: it is the
+ * disclosure below the settings groups, and `presets` is the control that opens the
+ * read-only page. A player who wants to know how a preset assembles a request comes
+ * through Settings, which is where the product's other read-only inspection surfaces
+ * are reached from, and the bar keeps one control per place a player goes on purpose.
  */
 export function SettingsSurface({
   api,
@@ -22,6 +28,7 @@ export function SettingsSurface({
   uiLocale,
   onSelectUiLocale,
   onSelectAppearance,
+  presets,
   restoreFocusTo,
 }: {
   api: ManagementPipelineApi;
@@ -30,6 +37,8 @@ export function SettingsSurface({
   uiLocale: Locale;
   onSelectUiLocale: (locale: Locale) => void;
   onSelectAppearance: (appearance: AppearanceChoice) => void;
+  /** Opens the preset readout, and the button focus returns to when it is left. */
+  presets: Readonly<{ open: () => void; ref: RefObject<HTMLButtonElement | null> }>;
   restoreFocusTo: RefObject<HTMLElement | null>;
 }) {
   return (
@@ -48,6 +57,18 @@ export function SettingsSurface({
         onSelectUiLocale={onSelectUiLocale}
         onSelectAppearance={onSelectAppearance}
       />
+      <details className="custom-disclosure" data-settings-presets-disclosure>
+        <summary>
+          <ScrollText size={16} aria-hidden="true" />
+          {labels.presetsPanel}
+        </summary>
+        <p className="management-settings-hint">{labels.presetReadOnlyHint}</p>
+        <div className="composer-actions">
+          <button type="button" className="small-button" ref={presets.ref} onClick={presets.open}>
+            {labels.presetsOpen}
+          </button>
+        </div>
+      </details>
     </SurfaceView>
   );
 }
