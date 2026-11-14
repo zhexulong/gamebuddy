@@ -33,9 +33,10 @@ public sealed class BreakResourceClumpRegistrationTests
         registration.HandlerGroup.Should().Be(FarmhandActionHandlerGroup.ResourceTools);
         // The same family `clear_debris` publishes: one clump is one published row, however it is cleared.
         registration.Descriptor!.TargetFamily.Should().Be("debrisTargets");
-        // A gate descriptor is a promise that the action has its own live-run gate, so it needs at least `published`.
-        // This action has no live gate yet, and the rung says so instead of implying one.
-        registration.Lifecycle.Should().Be(FarmhandActionLifecycle.Experimental);
+        // Not a restated rung: `ComputeEnabledActions` is the one place that decides which rungs reach the Agent
+        // (`ModConfig.EnabledActionSet`), so a demotion fails here without a second copy of the promotion fact.
+        ActionPolicyEngine.ComputeEnabledActions(new ActionPolicyOptions())
+            .Should().Contain("break_resource_clump", "a promoted action is on the Agent surface with no opt-in");
     }
 
     [Fact]
