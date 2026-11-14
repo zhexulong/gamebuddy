@@ -216,6 +216,7 @@ export type CharacterLabels = Readonly<{
   openingHint: string;
   openingLabel: string;
   openingVariantText: string;
+  openingVariants: string;
   openingAdd: string;
   openingAbsent: string;
   openingSave: string;
@@ -587,6 +588,7 @@ const en: CharacterLabels = Object.freeze({
   openingHint: "The first message this character can open a chat with. You choose one when a chat starts.",
   openingLabel: "Opening label",
   openingVariantText: "Opening text",
+  openingVariants: "Opening variants",
   openingAdd: "Add opening",
   openingAbsent: "No opening saved yet.",
   openingSave: "Save opening",
@@ -885,6 +887,7 @@ const zh: CharacterLabels = Object.freeze({
   openingHint: "该角色用于开始对话的第一句话；开始新对话时你可以选择其中一个。",
   openingLabel: "开场白标签",
   openingVariantText: "开场白文本",
+  openingVariants: "开场白变体",
   openingAdd: "添加开场白",
   openingAbsent: "还没有保存开场白。",
   openingSave: "保存开场白",

@@ -1047,7 +1047,12 @@ export function CharactersPanel({
                     maxLength={128}
                     onChange={(event) => openingLabel.type(event.target.value)}
                   />
-                  <div className="opening-variants" data-opening-variants tabIndex={0}>
+                  <section
+                    className="opening-variants"
+                    data-opening-variants
+                    tabIndex={0}
+                    aria-label={labels.openingVariants}
+                  >
                     {openingVariants.value.map((variant, index) => (
                       <div key={`${variant.label}\u0000${index}`} className="opening-variant-row">
                         <label className="management-settings-label" htmlFor={`opening-variant-${index}-text`}>
@@ -1081,7 +1086,7 @@ export function CharactersPanel({
                         </div>
                       </div>
                     ))}
-                  </div>
+                  </section>
                   <div className="composer-actions">
                     <button
                       type="button"
