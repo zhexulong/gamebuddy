@@ -167,6 +167,12 @@
      that paints a beat opens the same amount. */
   --beat-tracking: 0.1em;
   --drawer-max-width: 420px;
+  /* The character sheet's column track, and the space between two of them. The panel's own
+     `columns` declaration reads these, and the two forced column breaks are this width's
+     arithmetic - so the fact has one spelling and the query thresholds are pinned to it by
+     `tests/character-columns-queries-are-the-declared-width.test.mjs`. */
+  --characters-column-width: 420px;
+  --characters-column-gap: 12px;
   --touch-target-min: 44px;
   --row-min-height: 52px;
   /* The press beat's own geometry: how far a held control travels. One token, so
@@ -5987,14 +5993,21 @@
    independent of any card's height: measured, growing any single card by up to
    700 px moves no card into another column. */
   [data-characters-panel] {
+    /* The panel is its own container. `columns` resolves against this box, so this is the box a
+       column count is a function of - not the window, and not an ancestor with a scrollbar between
+       the two (`style.css`'s app bar reads its parent for the same reason; here the panel IS the
+       box, so a query on it needs no offset at all). `contain: inline-size` cannot make the panel
+       shrink-to-fit: it is a block filling its parent, which the reading in this file's own
+       two-frame gate confirms. */
+    container-type: inline-size;
     display: block;
-    columns: 420px;
-    column-gap: 12px;
+    columns: var(--characters-column-width);
+    column-gap: var(--characters-column-gap);
   }
 
   [data-characters-panel] > section {
     break-inside: avoid;
-    margin: 0 0 12px;
+    margin: 0 0 var(--characters-column-gap);
   }
 
   /* The last card's margin would be canvas below it rather than between it and
@@ -6004,10 +6017,24 @@
   }
 
   /* One card starts each column after the first, and which one it is depends on
-     how many 420 px columns the room holds: at 1284 px of panel (3*420 + 2*12)
-     the third column begins at 开场白, and at 852 px (2*420 + 12) the second
-     begins at 场景. The media queries carry those panel widths plus the 32 px
-     the surface gives the panel either side, so 1316 and 884.
+     how many columns the PANEL holds. The two thresholds are the declared column
+     width's own arithmetic and nothing else: three columns need 3*420 + 2*12 = 1284 px
+     and two need 2*420 + 12 = 852 px. They are written as literals because a
+     `@container` condition cannot take a custom property, and they are pinned to the
+     token they were derived from by `tests/character-columns-queries-are-the-declared-width.test.mjs`,
+     which fails and names the drifting pair if the column width moves.
+
+     WHAT WAS WRONG, and why these are `@container` and not `@media`: the two rules used
+     to be `@media (min-width: 1316px)` and `@media (min-width: 884px) and (max-width:
+     1315px)` - the same panel widths plus 32 px for the surface's padding, which is a
+     VIEWPORT fact. A 400 px shell docked beside the game inside a 1440 px window then
+     took the WIDE rule while the panel it governs was 358 px, and the forced break
+     manufactured three columns the panel had no room for: measured in a dock, columns
+     [0,0,0,1,1,2] where the same 358 px panel in a 400 px window reads [0,0,0,0,0,0].
+     The arithmetic was also 10 px short even in the frame it was written for - the
+     panel is the region minus its padding AND the stable scrollbar gutter, 42 px at
+     both declared wide cells - which the token-derived thresholds below do not need to
+     know: they are the panel's own width.
 
      They are scoped because a forced break always begins a new column: unscoped,
      the two breaks below manufacture three columns at 400 px and overflow the
@@ -6015,14 +6042,14 @@
      section that is not mounted (a failed read) must not be the one carried a
      break - 演出指导 simply joins the column above it instead of leaving an
      empty one. */
-  @media (min-width: 1316px) {
+  @container (min-width: 1284px) {
     [data-characters-panel] > [data-persona-editor],
     [data-characters-panel] > [data-opening-editor] {
       break-before: column;
     }
   }
 
-  @media (min-width: 884px) and (max-width: 1315px) {
+  @container (min-width: 852px) and (max-width: 1283px) {
     [data-characters-panel] > [data-scenario-editor] {
       break-before: column;
     }
