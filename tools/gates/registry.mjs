@@ -3,9 +3,9 @@
  *
  * WHY (measured 2026-11-14). Eight readings called themselves "the gates" and each built its number from its own glob
  * or regex over file names: `invoked 26 · ci-coverage scripts 133 · corpus names 184 · census scripts 354 · gate files
- * 148 · prelive members 152 · census gates 395 · register members 159` (`tools/check-gate-population-agreement.mjs`).
+ * 148 · prelive members 152 · census gates 395 · register members 159` (`tools/gates/meta/check-gate-population-agreement.mjs`).
  * Two of them spelled the same rule twice - `tools/lib/gate-population.mjs` as `GATE_FILE` and
- * `tools/check-prelive-gate-registry.mjs` as its own `include` - so the day one of them learns a suffix the other keeps
+ * `tools/gates/meta/check-prelive-gate-registry.mjs` as its own `include` - so the day one of them learns a suffix the other keeps
  * its old answer. That is why `tools/` cannot be reorganised while this stands: move a gate out of the directory a
  * scanner globs and that scanner silently stops seeing it, which is a gate that stops running with no symptom.
  *
@@ -115,7 +115,7 @@ const directoryOf = (path) => normalize(path).replace(/\/[^/]*$/u, "");
 /**
  * The domain a gate's own directory files it under, or `null` when the gate sits directly in `tools/`.
  *
- * `tools/gates/meta/check-diff.mjs` is filed under `meta`. `tools/check-diff.mjs` is filed under nothing, because the
+ * `tools/gates/meta/check-diff.mjs` is filed under `meta`. A gate still at `tools/<name>.mjs` is filed under nothing, because the
  * unsorted half of the population has no domain directory and its declaration is the only word on the subject.
  */
 export function directoryDomain(path) {

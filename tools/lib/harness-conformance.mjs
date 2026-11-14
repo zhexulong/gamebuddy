@@ -28,7 +28,7 @@
  * `checks` answers a different question - a comment satisfies either one - which is why neither is matched here.
  *
  * THE POPULATION IS NOT THIS FILE'S (measured 2026-11-20): this suite used to scan `tools/check-*.mjs` for its own
- * count of gates (106) while `tools/audit-gate-red-proofs.mjs` derived its own (330), so "how many gates are there, and
+ * count of gates (106) while `tools/gates/meta/audit-gate-red-proofs.mjs` derived its own (330), so "how many gates are there, and
  * how many have been seen red" had two answers and 203 gates without a red case were invisible here. Both tools now
  * read `tools/lib/gate-population.mjs`, this suite judges the members it can execute, and the census prints the bucket
  * it excluded, the reason, and the two numbers that make a pass honest: gates nobody declared, and gates whose report
@@ -366,7 +366,7 @@ const GATES_WITH_FALSIFIER = Object.freeze([
   // Prints `gates examined N · with a population line M · without K · unreadable R` plus a `checks[]` verdict whose last
   // entry is the baseline ratchet, so its default run is the report this suite reads - and its `examined` is judged by
   // `tools/lib/assert-non-vacuous.mjs`, the same rule it applies to every other gate, which is how the answer to "would
-  // this gate catch itself" is a measurement. Its falsifier is tools/check-gate-populations.test.mjs: the pre-fix publint
+  // this gate catch itself" is a measurement. Its falsifier is tools/gates/meta/check-gate-populations.test.mjs: the pre-fix publint
   // source is `gate_without_population`, the pre-fix soil-itm suite is `gate_skip_can_pass`, the wire parity gate's
   // pre-fix verdict is `gate_pairs_a_subset_and_passes`, each fixed shape is clean, a subset word inside a string is not
   // a count, and the CLI over a throwaway root goes blocked (no baseline) -> `--update` -> green -> red for a new silent
@@ -569,7 +569,7 @@ const GATES_WITH_FALSIFIER = Object.freeze([
   // Prints `gate populations: invoked N · ci-coverage scripts N · corpus names N · census scripts N · gate files N ·
   // prelive members N · census gates N · register members N` and a one-line `{"gate":"gate_population_agreement/v1",
   // "population":N,"checks":[...]}` report whose four entries are the four ways a member can fail to be accounted for,
-  // so its default run is the report this suite reads. Its falsifier is tools/check-gate-population-agreement.test.mjs:
+  // so its default run is the report this suite reads. Its falsifier is tools/gates/meta/check-gate-population-agreement.test.mjs:
   // a falsifier inside a consumer's population, a gate file no consumer reads, an invoked script no consumer reads, a
   // register naming a member that is not a gate, an untracked gate published rather than named, and the real tree
   // agreeing - and its own red proof is the reading that preceded its fix (one mutation driver in prelive's 143).
@@ -607,7 +607,7 @@ function runGateDefault(path, { spawn = spawnSync, timeoutMs = GATE_RUN_TIMEOUT_
  *
  * `population` is the report judged by `tools/lib/assert-non-vacuous.mjs`, the ONE rule for a gate that measured
  * nothing: a gate whose report states how many objects it examined has that number read here, so `passed` beside a
- * zero is not accepted as a measurement. The judge is shared with `tools/check-ci-coverage.mjs` rather than restated,
+ * zero is not accepted as a measurement. The judge is shared with `tools/gates/meta/check-ci-coverage.mjs` rather than restated,
  * and a gate that already handles its empty population keeps its own answer - a stated `allowEmpty` reason stays
  * `not_measured`, and a report that names no population at all stays unjudged.
  */
@@ -649,7 +649,7 @@ function describeRun(result) {
 
 /**
  * The sixteen `tools/audit-*.mjs` gates half B began scanning on 2026-11-13, when `tools/lib/gate-population.mjs`'s
- * gate-file rule became `(check|audit)-*.mjs` - the rule `tools/check-prelive-gate-registry.mjs` already used, so the 17
+ * gate-file rule became `(check|audit)-*.mjs` - the rule `tools/gates/meta/check-prelive-gate-registry.mjs` already used, so the 17
  * `audit-*.mjs` gates that were in nobody's census became members of this one. Each prints what it found as lines, not as
  * the `{gate, checks[]}` report `checkGateFalsifiers` reads, so each is declared with one reason rather than run.
  * `audit-stardew-receipt-transition-fields.mjs` is the exception and lives in `GATES_WITH_FALSIFIER`: its default run
@@ -676,7 +676,7 @@ const AUDIT_WITHOUT_SELF_REPORT = Object.freeze([
 const AUDIT_WITHOUT_SELF_REPORT_REASON =
   "an audit: its default run prints what it found as lines rather than a `{gate, checks[]}` self-verification report, " +
   "so this suite does not execute it; its falsifier is the `red-proof:` marker the gate's own file carries, which " +
-  "tools/audit-gate-red-proofs.mjs reads and counts as proven (and fails on when it is unreadable)";
+  "tools/gates/meta/audit-gate-red-proofs.mjs reads and counts as proven (and fails on when it is unreadable)";
 
 /**
  * Gates that do NOT print a self-verification report in their default run. Each names why; a gate whose falsifier
@@ -693,7 +693,7 @@ const GATES_WITHOUT_FALSIFIER = Object.freeze([
     gate: "check-ci-coverage.mjs",
     reason:
       "compares two inventories (gate scripts vs workflow invocation). Its falsifier exists - " +
-      "tools/check-ci-coverage.test.mjs, 21 cases that drive real subprocess gates in a temporary workspace and " +
+      "tools/gates/meta/check-ci-coverage.test.mjs, 21 cases that drive real subprocess gates in a temporary workspace and " +
       "carry four red-proof markers - so the earlier 'needs synthetic inventories, real work not done yet' reason " +
       "had stopped being true and was replaced by this one rather than kept as a comfortable excuse",
   },
@@ -742,7 +742,7 @@ const GATES_WITHOUT_FALSIFIER = Object.freeze([
     gate: "check-workflow-expressions.mjs",
     reason:
       "reads every workflow's `${{ }}` expressions against the contexts GitHub allows in that position; its " +
-      "falsifier is tools/check-workflow-expressions.test.mjs, whose case 'a key re-exporting itself through " +
+      "falsifier is tools/gates/meta/check-workflow-expressions.test.mjs, whose case 'a key re-exporting itself through " +
       "the env context is blocking, because it can only be empty' plants the always-empty shape and requires " +
       "it to be reported, alongside a clean workflow that must report nothing - so neither the blocking nor " +
       "the silent branch is untested",
@@ -751,7 +751,7 @@ const GATES_WITHOUT_FALSIFIER = Object.freeze([
     gate: "check-ci-dead-conditions.mjs",
     reason:
       "reads every workflow's `if:` expressions against every writer of the variables they name; its falsifier is " +
-      "tools/check-ci-dead-conditions.test.mjs, which plants a `if: env.NEVER_SET != ''` in a throwaway workflow and " +
+      "tools/gates/meta/check-ci-dead-conditions.test.mjs, which plants a `if: env.NEVER_SET != ''` in a throwaway workflow and " +
       "then proves the five sanctioned writer shapes silence it",
   },
   { gate: "check-chat-conversational-quality-gate.mjs", reason: "requires --transcript/--db run input" },
@@ -846,7 +846,7 @@ const GATES_WITHOUT_FALSIFIER = Object.freeze([
   {
     gate: "check-spec-reachability.mjs",
     reason:
-      "static wiring gate; its falsifier (tools/check-spec-reachability.test.mjs) drives a synthetic checkout through a\n" +
+      "static wiring gate; its falsifier (tools/gates/meta/check-spec-reachability.test.mjs) drives a synthetic checkout through a\n" +
       "       suite no reachable command names, a spec the config's testIgnore excludes, a deleted mounted step and a missing\n" +
       "       config, and requires each to be named",
   },
@@ -971,7 +971,7 @@ const GATES_WITHOUT_FALSIFIER = Object.freeze([
   {
     gate: "check-prelive-gate-registry.mjs",
     reason:
-      "the register itself; its falsifier is tools/check-prelive-gate-registry.test.mjs, which plants a forgotten gate, a " +
+      "the register itself; its falsifier is tools/gates/meta/check-prelive-gate-registry.test.mjs, which plants a forgotten gate, a " +
       "stale exemption, a dangling runsIn and a wired-but-absent gate and asserts each is named by file, and which " +
       "also builds a throwaway repository whose worktree package.json has lost a script its commit declares, so a " +
       "script only HEAD has is not reported as unknown (measured 2026-11-09: exempt_runs_in_unknown_script on a gate " +
@@ -1025,10 +1025,10 @@ const GATES_WITHOUT_FALSIFIER = Object.freeze([
       "checkGateFalsifiers",
   },
   // The sixteen audits half B began scanning on 2026-11-13, when `tools/lib/gate-population.mjs`'s gate-file rule became
-  // `(check|audit)-*.mjs` - the rule `tools/check-prelive-gate-registry.mjs` already used, so 17 `tools/audit-*.mjs`
+  // `(check|audit)-*.mjs` - the rule `tools/gates/meta/check-prelive-gate-registry.mjs` already used, so 17 `tools/audit-*.mjs`
   // gates that were in nobody's census became members of this one. Each prints what it found as lines, not as a
   // `{gate, checks[]}` report this suite can read, so each is declared with the same reason rather than run; the
-  // falsifier is the `red-proof:` marker in the gate's own file, which `tools/audit-gate-red-proofs.mjs` reads and
+  // falsifier is the `red-proof:` marker in the gate's own file, which `tools/gates/meta/audit-gate-red-proofs.mjs` reads and
   // reports as proven. `tools/audit-stardew-receipt-transition-fields.mjs` is the exception and lives in
   // `GATES_WITH_FALSIFIER` instead: its default run prints `{gate, population: 443, status}`.
   {
@@ -1055,7 +1055,7 @@ export function harnessGateNames(toolsDir) {
 /**
  * The red-proof ledger, read ONCE per run: what the other half of this population has declared about itself.
  *
- * `tools/audit-gate-red-proofs.mjs` owns that question - has this gate been seen red on a real injected violation - and
+ * `tools/gates/meta/audit-gate-red-proofs.mjs` owns that question - has this gate been seen red on a real injected violation - and
  * answers it with a proof marker or a recorded gap. This suite does not restate the reading: it consumes it, so both
  * tools publish the same `gates examined N` and `with a red proof M`, and `undeclared` here is exactly the set the audit
  * reports as a new gap (no proof, and no baseline record saying one is owed).

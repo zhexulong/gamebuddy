@@ -1,7 +1,7 @@
 /**
  * The ONE gate population this repository has, derived once and read by both gate-meta tools:
  *
- *   - `tools/audit-gate-red-proofs.mjs` asks "has this gate been seen red?"
+ *   - `tools/gates/meta/audit-gate-red-proofs.mjs` asks "has this gate been seen red?"
  *   - `tools/lib/harness-conformance.mjs` asks "does this gate's default run print a self-verification report, and
  *     if not, has someone said why?"
  *
@@ -14,7 +14,7 @@
  * THE DERIVATION is a union of two halves, neither of them a hand-written list:
  *
  *   A. every `package.json` script in the gate namespace (`audit:` / `check:` / `test:`), with the files its command
- *      runs as that gate's entry points. This is the population CI actually runs: `tools/check-ci-coverage.mjs`
+ *      runs as that gate's entry points. This is the population CI actually runs: `tools/gates/meta/check-ci-coverage.mjs`
  *      derives the `gates` job from the same namespace, so a script is a gate by being named like one.
  *   B. every gate FILE no script names - a gate that exists on disk and that nobody types. This is the half a script
  *      list cannot see, and it is mandatory: a gate nothing runs is the one that stops working without a symptom.

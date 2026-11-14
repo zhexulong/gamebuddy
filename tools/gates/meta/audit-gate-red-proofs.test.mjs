@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * The falsifiers for `tools/audit-gate-red-proofs.mjs` - the gate that asks whether every other gate has
+ * The falsifiers for `tools/gates/meta/audit-gate-red-proofs.mjs` - the gate that asks whether every other gate has
  * been seen red. Each test here injects the defect the audit exists to name and requires the audit to
  * name it, because a coverage gate that cannot go red is the illusion it was written to remove.
  *
