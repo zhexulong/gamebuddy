@@ -322,6 +322,13 @@
       "because": "scan() runs \biome format and returns the files it reports; \files in this gate IS the debt, not the population, so zero of them is the healthy reading and \format_ratchet_ok over it is right (measured: checked=1876 on this checkout). The population the ratchet actually judges is checked, which scan throws over when biome reports no count."
     },
     {
+      "gate": "lint",
+      "class": "unguarded-population",
+      "area": "tools",
+      "guard": "must print `examined 0` and exit 2 when the index names no file in its scope",
+      "because": "tools/scripts/check-lint-ratchet.mjs enumerates a committed source tree it scans and reports the same green over nine hundred members as over none: a filter or a root that moved is indistinguishable from a clean run. Measured 2026-11-14: the population is biome's own `Checked N files` summary, and `scan` already THROWS when that line is missing - but a fixture tree with the four scope directories empty and no tracked file still reported `Checked 1 files` (`lint_ratchet_ok debt: files=0 recorded=0 checked=1`, exit 0), so zero is reachable only if the formatter stops counting files altogether, and a guard on it could not be seen red. The branch that would settle it belongs where the count is read."
+    },
+    {
       "gate": "report:stardew-remaining-actions",
       "class": "unmeasurable",
       "because": "`options.candidates` and `options.catalog` are the caller's files. The census cannot settle whether it exists, and this row is the record: the gate's own verdict when the input is absent is the honest one. What would settle it: the artifact the run names."

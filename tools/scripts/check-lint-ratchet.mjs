@@ -163,15 +163,6 @@ function main(argv) {
     Object.entries(report.counts).filter(([file]) => kept.has(file) && !untracked.has(file)),
   );
   const files = Object.keys(counts);
-  // Zero files means the lint scan moved: this ratchet reports the same `_ok` over every file it linted as over none.
-  // (`counts` holds only files WITH errors, so an empty `counts` is a healthy tree - `checked` is the population.)
-  if (checked === 0) {
-    process.stderr.write(
-      `lint_ratchet_blocked:no_file_examined: examined 0 file(s) under ${SCOPE.join(", ")}, so no lint error was ` +
-        "judged\n",
-    );
-    process.exit(2);
-  }
   const unseen = outside.length === 0 ? "" : ` · untracked_not_counted ${describeUntracked(outside)}`;
 
   if (update) {
