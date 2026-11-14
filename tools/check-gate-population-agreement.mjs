@@ -144,7 +144,18 @@ export function registerMembers({ root, exemptions }) {
  * derives, and `declared` is the gates in that population that carry a `gateDeclaration`. Everything here is a set
  * comparison, so the test can drive it with synthetic trees without touching the repository.
  */
-export function agree({ root, invoked, scripts, disk, census, prelive, corpus, registers, declared = [], untracked = [] }) {
+export function agree({
+  root,
+  invoked,
+  scripts,
+  disk,
+  census,
+  prelive,
+  corpus,
+  registers,
+  declared = [],
+  untracked = [],
+}) {
   const findings = [];
   const censusFiles = new Set(census.records.flatMap((record) => record.entryFiles));
   const censusScripts = new Set(census.records.filter((record) => scripts[record.id] !== undefined).map((r) => r.id));

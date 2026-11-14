@@ -271,11 +271,7 @@ export async function readDeclarations({ root = REPOSITORY_ROOT, files } = {}) {
 
 /** The self-verification report: one entry per rule this registry can report red. */
 export function buildReport({ examined, declared, undeclared, findings }) {
-  const checks = [
-    "gate_without_a_declaration",
-    "gate_id_collision",
-    "gate_declaration_invalid",
-  ].map((code) => ({
+  const checks = ["gate_without_a_declaration", "gate_id_collision", "gate_declaration_invalid"].map((code) => ({
     id: code,
     status: findings.some((finding) => finding.code === code) ? "failed" : "passed",
     detail: `${findings.filter((finding) => finding.code === code).length} member(s)`,
@@ -310,7 +306,9 @@ async function main(argv) {
     return reading.findings.length === 0 ? 0 : 1;
   }
 
-  process.stdout.write(`gate files examined ${report.examined} · declared ${report.declared} · undeclared ${report.undeclared}\n`);
+  process.stdout.write(
+    `gate files examined ${report.examined} · declared ${report.declared} · undeclared ${report.undeclared}\n`,
+  );
   for (const finding of reading.findings) process.stdout.write(`${finding.code}: ${finding.id} - ${finding.detail}\n`);
   process.stdout.write(
     reading.findings.length === 0

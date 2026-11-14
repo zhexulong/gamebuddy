@@ -131,22 +131,24 @@ test("FALSIFIER a domain outside the closed set is invalid, and names the field"
       findingFor(reading, "gate_declaration_invalid").map((finding) => finding.id),
       ["tools/check-a.mjs:domain"],
     );
-    assert.match(findingFor(reading, "gate_declaration_invalid")[0].detail, /gameplay.*not one of product \| data \| arch \| stardew \| meta/u);
+    assert.match(
+      findingFor(reading, "gate_declaration_invalid")[0].detail,
+      /gameplay.*not one of product \| data \| arch \| stardew \| meta/u,
+    );
     assert.deepEqual(reading.undeclared, ["tools/check-a.mjs"]);
   });
 });
 
 test("FALSIFIER a tier and a kind outside their closed sets are invalid, each naming its field", async () => {
-  await withTree(
-    [gate("check-a", declaration({ id: "check-a", tier: "l3", kind: "spot-check" }))],
-    async (root) => {
-      const reading = await readDeclarations({ root });
-      assert.deepEqual(
-        findingFor(reading, "gate_declaration_invalid").map((finding) => finding.id).sort(),
-        ["tools/check-a.mjs:kind", "tools/check-a.mjs:tier"],
-      );
-    },
-  );
+  await withTree([gate("check-a", declaration({ id: "check-a", tier: "l3", kind: "spot-check" }))], async (root) => {
+    const reading = await readDeclarations({ root });
+    assert.deepEqual(
+      findingFor(reading, "gate_declaration_invalid")
+        .map((finding) => finding.id)
+        .sort(),
+      ["tools/check-a.mjs:kind", "tools/check-a.mjs:tier"],
+    );
+  });
 });
 
 test("FALSIFIER an id that is not the file's own slug is invalid, so a rename cannot leave it behind", async () => {
@@ -174,7 +176,9 @@ test("FALSIFIER a declaration that is not a literal object is invalid, so a comp
     async (root) => {
       const reading = await readDeclarations({ root });
       assert.deepEqual(
-        findingFor(reading, "gate_declaration_invalid").map((finding) => finding.id).sort(),
+        findingFor(reading, "gate_declaration_invalid")
+          .map((finding) => finding.id)
+          .sort(),
         [
           "tools/check-computed.mjs:shape",
           "tools/check-missing-field.mjs:kind",
@@ -189,8 +193,8 @@ test("FALSIFIER a declaration that is not a literal object is invalid, so a comp
 
 test("FALSIFIER a declaration mentioned only in prose is not a declaration", async () => {
   const body = [
-    "// The tree writes: export const gateDeclaration = { id: \"check-a\", domain: \"meta\", tier: \"l0\", kind: \"contract\" };",
-    "/* export const gateDeclaration = { id: \"check-a\" }; */",
+    '// The tree writes: export const gateDeclaration = { id: "check-a", domain: "meta", tier: "l0", kind: "contract" };',
+    '/* export const gateDeclaration = { id: "check-a" }; */',
     "const declaration = 'export const gateDeclaration = { id: \"check-a\" };';",
     "export { declaration };",
     "",
