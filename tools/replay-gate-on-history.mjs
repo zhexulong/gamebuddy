@@ -68,11 +68,13 @@
  * USAGE
  *
  *   node tools/replay-gate-on-history.mjs --gate tools/check-spec-waiver-comments.mjs \
- *     --at be55c772^ --at be55c772 --expect fired@be55c772^ --expect did-not-fire@be55c772
+ *     --at 930a031e^ --at 930a031e --expect fired@930a031e^ --expect did-not-fire@930a031e
  *   node tools/replay-gate-on-history.mjs --gate tools/check-spec-waiver-comments.mjs \
- *     --rev-range be55c772^..be55c772          # the same two revisions; both endpoints are measured
+ *     --rev-range 930a031e^..930a031e        # the same two revisions; both endpoints are measured
  *   node tools/replay-gate-on-history.mjs --gate dialogue-web/tests/selector-producer-gate.test.mjs \
- *     --at 294d22ab --out .tmp/replay          # keep the captured stdout/stderr per revision
+ *     --at 294d22ab --out .tmp/replay        # keep the captured stdout/stderr per revision
+ *
+ * `pnpm replay:gate-on-history` is the same command, registered in package.json.
  *
  * `--gate` may be repeated (the check script and its test file); `--expect` then needs one gate, because
  * an expectation about two gates at one revision is an expectation about nothing.
