@@ -513,6 +513,14 @@ export const EXEMPTIONS = Object.freeze([
     runsIn: "pnpm check:live-run-isolation",
   },
   {
+    path: "tools/check-local-ci-parity.mjs",
+    reason:
+      "elsewhere: reads `package.json`'s `quality:check` ladder and `.github/workflows/*.yml` and nothing else, so it " +
+      "runs on every push in the CI `gates` job beside `check-ci-coverage`, where the workflows it judges exist; a " +
+      "prelive rung would judge an empty CI side and BLOCK on `local_ci_parity_workflow_unread` rather than pass",
+    runsIn: "pnpm check:local-ci-parity",
+  },
+  {
     path: "tools/check-live-run-multiday-baseline.mjs",
     reason: "elsewhere: static comparison against the recorded multi-day baseline, runs on every push",
     runsIn: "pnpm check:live-run-multiday-baseline",
