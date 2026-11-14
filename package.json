@@ -291,6 +291,7 @@
     "test:stardew-native-local-runner-contract": "node --test tools/audit-stardew-native-local-runner-contract.test.mjs",
     "test:stardew-native-local-runner-entry": "node --test tools/stardew-native-local-runner-entry.test.mjs",
     "test:stardew-action-slice": "node --test tools/run-native-action-slice.test.mjs",
+    "test:stardew-native-local-runner-scaffold": "node --test tools/check-native-local-runner-scaffold.test.mjs",
     "test:stardew-native-local-runner-fixture-contract": "node --test tools/stardew-native-local-runner-fixture-contract.test.mjs",
     "test:stardew-native-mechanism-family-register": "node --test tools/stardew-native-mechanism-family-register.test.mjs",
     "test:stardew-native-mechanism-review-register": "node --test tools/stardew-native-mechanism-review-register.test.mjs",

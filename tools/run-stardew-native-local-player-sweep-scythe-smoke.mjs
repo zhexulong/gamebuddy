@@ -1,17 +1,9 @@
-import { loadHostTestModule } from "./lib/host-test-module.mjs";
+import { observeFresh } from "./lib/stardew-native-smoke-harness-v1.mjs";
 import {
-  assertRequiredCapabilities,
-  connectNativeLocalClient,
-  delay,
-  executeFresh,
-  NativeSmokeHarnessError,
-  observeFresh,
-  readNativeClientConfig,
-  summarizeReceipt,
-  validateNativeLocalFixturePolicy,
-  waitForFreshSnapshot,
-  waitForTerminal,
-} from "./lib/stardew-native-smoke-harness-v1.mjs";
+  defineSmokeScenario,
+  runSmokeScenarioMain,
+  waitForNavigationTerminal,
+} from "./lib/native-local-runner-scaffold.mjs";
 
 const ACTION = "sweep_scythe";
 /** The action's own success word (`ExecuteSweepScythe`: `scythe_sweep_cut` only when the named tile AND every sweepable moved). */
@@ -25,6 +17,7 @@ const SUCCESS_CODE = "scythe_sweep_cut";
  */
 const FIXTURE_SCENARIO = "native_cut_weeds_v1";
 const REQUIRED_CAPABILITIES = ["cancel_active_execution", "inspect_self", "move_to_tile", "travel", ACTION];
+const NAVIGATION_TIMEOUT_MS = 55_000;
 
 /**
  * How far from the ACTOR the engine's arc can reach, in tiles, as a conservative envelope.
@@ -50,7 +43,12 @@ const ARC_FACING_SLACK = 2;
 const FACING_NAMES = Object.freeze({ 0: "up", 1: "right", 2: "down", 3: "left" });
 
 /**
- * Execute the sweep_scythe contract against an already-connected bridge session.
+ * The `sweep_scythe` contract, as the shared template's definition.
+ *
+ * The template owns the lifecycle - the fixture-config refusal, observe-fresh and the capability check, the requestId mint
+ * and the execute, the terminal wait and its identity, the evidence parse and the stale reread, the bootstrap and the exit
+ * code. What is left here is what is actually about a scythe: where to stand, what the arc must have been, and what the
+ * swing must not have paid for.
  *
  * The facts this proves, in the order they can be wrong:
  *   1. the named tile MOVED, read from the live observation rather than from the receipt's own claim;
@@ -62,170 +60,78 @@ const FACING_NAMES = Object.freeze({ 0: "up", 1: "right", 2: "down", 3: "left" }
  *      ready/dead crop as what the swing is FOR) or still be standing afterwards;
  *   4. the swing was free (`stamina_delta` 0 against `expected_stamina_cost` 0) and the actor's own tool selection is back.
  */
-export async function runSweepScytheSmoke(
-  client,
-  receipts,
-  config,
-  { terminalTimeoutMs = 5_000, postconditionTimeoutMs = 5_000, navigationTimeoutMs = 55_000 } = {},
-) {
-  const trace = [];
-  const startedAt = Date.now();
-  let lastSnapshot = null;
-  try {
-    validateConfig(config);
-    let snapshot = await observeFresh(client, { actionable: true });
-    lastSnapshot = snapshot;
-    assertRequiredCapabilities(snapshot, REQUIRED_CAPABILITIES);
+const scenario = defineSmokeScenario({
+  action: ACTION,
+  fixtureScenario: FIXTURE_SCENARIO,
+  successCode: SUCCESS_CODE,
+  requiredCapabilities: REQUIRED_CAPABILITIES,
+  requiredActions: ["move_to_tile", "travel", ACTION],
+  experimentalActions: [ACTION],
+  projection: { collections: ["weedTargets", "grassTargets", "cropTargets", "scytheCropTargets"] },
 
-    snapshot = await ensureOnFarm(client, receipts, trace, snapshot, navigationTimeoutMs);
-    lastSnapshot = snapshot;
-    const plan = chooseStance(snapshot);
-    trace.push({ phase: "stance_planned", plan: describePlan(plan) });
-    snapshot = await approachStance(client, receipts, trace, snapshot, plan, navigationTimeoutMs);
-    lastSnapshot = snapshot;
-
+  /** Get onto the Farm, pick the stance, walk onto it, and re-read the plan against where the body actually is. */
+  async prepare({ client, receipts, trace, snapshot, options, execute }) {
+    const navigationTimeoutMs = options.navigationTimeoutMs ?? NAVIGATION_TIMEOUT_MS;
+    const reached = await ensureOnFarm(client, receipts, trace, snapshot, execute, navigationTimeoutMs);
+    const plan = chooseStance(reached);
+    const arrived = await approachStance(client, receipts, trace, reached, plan, execute, navigationTimeoutMs);
     // The stance and the arc are re-read from the post-arrival snapshot: a walk takes ticks, and the observation that
     // justified the plan is not the one the request may be sent against.
-    const stance = revalidateStance(snapshot, plan);
-    const requestId = `native_local_sweep_scythe_${Date.now()}`;
-    const accepted = await executeFresh(client, {
-      requestId,
-      idempotencyKey: `${requestId}_idem`,
-      action: ACTION,
-      // x,y name the tile the actor must FACE. No target id: one swing covers a set of tiles engine-side.
-      args: { x: stance.named.x, y: stance.named.y },
-      snapshot,
-      timeoutMs: 30_000,
-    });
-    trace.push({
-      action: ACTION,
-      named: stance.named,
-      actor: stance.actor,
-      facing: FACING_NAMES[stance.facing],
-      receipt: summarizeReceipt(accepted),
-    });
+    return { snapshot: arrived, plan: { candidate: plan, stance: revalidateStance(arrived, plan) } };
+  },
 
-    const terminal = await waitForTerminal(receipts, accepted, terminalTimeoutMs);
-    if (terminal.executionId !== accepted.executionId || terminal.requestId !== requestId)
-      throw new Error("sweep_scythe_terminal_identity_mismatch");
-    if (terminal.state !== "succeeded" || terminal.reasonCode !== SUCCESS_CODE)
-      throw new Error(`sweep_scythe_terminal:${terminal.state}:${terminal.reasonCode}`);
+  describePlan: ({ candidate, stance }) => describePlan(candidate, stance),
 
-    const evidence = parseStrictEvidence(terminal.evidence);
-    const after = await waitForFreshSnapshot(client, {
-      minRevision: terminal.revision,
-      timeoutMs: postconditionTimeoutMs,
-      requireActionable: true,
-    });
-    lastSnapshot = after;
-    assertRequiredCapabilities(after, REQUIRED_CAPABILITIES);
+  // x,y name the tile the actor must FACE. No target id: one swing covers a set of tiles engine-side.
+  request: ({ stance }) => ({ args: { x: stance.named.x, y: stance.named.y } }),
 
+  /**
+   * The action has no stale identity to re-send, and saying so is the declaration the template requires.
+   *
+   * `sweep_scythe` is addressed by the TILE to face, not by a published target id, so a second send is a second legitimate
+   * swing over whatever now stands there - there is nothing for the Mod to refuse by identity. The direction that a
+   * negative case would cover (a swing that destroys something nobody reported) is the `lostBehindTheArc` arm below,
+   * which is measured against the world rather than against a second receipt.
+   */
+  negativeOmittedBecause: "sweep_scythe_names_a_tile_not_a_target_identity",
+
+  async assertPostcondition({ evidence, before, after, plan }) {
+    const { candidate, stance } = plan;
     const arc = measureArc({ evidence, stance });
     const changed = parseChangedTiles(evidence.changed);
     assertReceiptCounts({ evidence, arc, changed });
     const destructive = assertNoCropMoved({ changed });
-    const worldLoss = assertNothingLostBehindTheArc({ before: snapshot, after, changed, actor: stance.actor });
-    const namedMovedInWorld = namedTileMoved({ before: snapshot, after, named: stance.named });
+    const worldLoss = assertNothingLostBehindTheArc({ before, after, changed, actor: stance.actor });
+    const namedMovedInWorld = namedTileMoved({ before, after, named: stance.named });
     if (!namedMovedInWorld) throw new Error(`sweep_scythe_named_tile_unmoved:${stance.named.x},${stance.named.y}`);
 
     const receiptAgrees = changed.some((tile) => tile.x === stance.named.x && tile.y === stance.named.y);
     if (!receiptAgrees) throw new Error(`sweep_scythe_receipt_disagrees_with_world:${evidence.changed}`);
 
     return {
-      state: "passed",
-      topology: "native_local_player_fixture",
-      reasonCode: SUCCESS_CODE,
       named: stance.named,
       actor: stance.actor,
       facing: FACING_NAMES[stance.facing],
       arc,
       changed,
       destructiveArm:
-        plan.destructiveInEnvelope.length === 0
+        candidate.destructiveInEnvelope.length === 0
           ? "not_measured:sweep_scythe:no_destructive_object_in_the_arc"
           : "measured",
-      destructiveInEnvelope: plan.destructiveInEnvelope,
+      destructiveInEnvelope: candidate.destructiveInEnvelope,
       cropGuard: destructive,
       lostBehindTheArc: worldLoss,
-      receipt: summarizeReceipt(terminal),
-      evidence,
-      trace,
-      durationMs: Date.now() - startedAt,
     };
-  } catch (error) {
-    return {
-      state: "blocked",
-      topology: "native_local_player_fixture",
-      reasonCode: String(error instanceof Error ? error.message : error).slice(0, 256),
-      latestReceipt: summarizeReceipt(client.state?.latestReceipt),
-      trace,
-      lastSnapshot: lastSnapshot
-        ? {
-            revision: lastSnapshot.revision,
-            location: lastSnapshot.location,
-            tile: lastSnapshot.tile,
-            capabilities: lastSnapshot.capabilities,
-            weedTargets: lastSnapshot.weedTargets ?? [],
-            grassTargets: lastSnapshot.grassTargets ?? [],
-            cropTargets: lastSnapshot.cropTargets ?? [],
-            scytheCropTargets: lastSnapshot.scytheCropTargets ?? [],
-          }
-        : null,
-      durationMs: Date.now() - startedAt,
-    };
-  }
-}
+  },
+});
 
-if (import.meta.main) {
-  const config = await readNativeClientConfig();
-  const session = await connectWithRetry(config, 15_000);
-  try {
-    const result = await runSweepScytheSmoke(session.client, session.receipts, config);
-    if (result.state === "passed") console.log(JSON.stringify(result));
-    else console.error(JSON.stringify(result));
-    if (result.state !== "passed") process.exitCode = 2;
-  } finally {
-    session.close();
-  }
-}
+export const runSweepScytheSmoke = (client, receipts, config, options) =>
+  scenario.run(client, receipts, config, options);
 
-/** The game creates its named pipe asynchronously after launch; retry ENOENT within a bounded window. */
-async function connectWithRetry(config, timeoutMs) {
-  const deadline = Date.now() + timeoutMs;
-  let lastError;
-  while (Date.now() < deadline) {
-    try {
-      return await connectNativeLocalClient(config, { loadModule: loadHostTestModule });
-    } catch (error) {
-      lastError = error;
-      if (!(error && typeof error === "object" && error.code === "ENOENT")) throw error;
-      await delay(250);
-    }
-  }
-  throw lastError ?? new Error("native_local_bridge_connect_timeout");
-}
-
-function validateConfig(value) {
-  const fixture = value?.NativeLocalPlayerFixture;
-  if (fixture?.Enable !== true || fixture.Bootstrap?.Enable === true || fixture.FixtureScenario !== FIXTURE_SCENARIO)
-    throw new Error("native_local_sweep_scythe_fixture_config_invalid");
-  if (
-    value.Portfolio?.Enable === true ||
-    value.HostAutomation?.Enable === true ||
-    value.HostFarmhandProvisioning?.Enable === true ||
-    value.FarmhandProvisioner?.Enable === true
-  )
-    throw new Error("native_local_sweep_scythe_policy_invalid");
-  // `sweep_scythe` was an Experimental registration when this runner was written; a later promotion simply stops the
-  // fixture from opting it in, and this declaration still names the only action a fixture may opt in for this slice.
-  validateNativeLocalFixturePolicy(value, {
-    requiredActions: ["move_to_tile", "travel", ACTION],
-    experimentalActions: [ACTION],
-  });
-}
+if (import.meta.main) await runSmokeScenarioMain(scenario);
 
 /** Leave FarmHouse for the Farm through the one warp the observation publishes. */
-async function ensureOnFarm(client, receipts, trace, snapshot, navigationTimeoutMs) {
+async function ensureOnFarm(client, receipts, trace, snapshot, execute, navigationTimeoutMs) {
   if (snapshot.location === "Farm") return snapshot;
   const warps = (snapshot.warps ?? []).filter(
     (entry) => entry?.targetLocation === "Farm" && validTile(entry.sourceX) && validTile(entry.sourceY),
@@ -240,9 +146,10 @@ async function ensureOnFarm(client, receipts, trace, snapshot, navigationTimeout
       snapshot,
       { x: warp.sourceX, y: warp.sourceY },
       "move_to_farm_warp",
+      execute,
       navigationTimeoutMs,
     );
-  const accepted = await execute(client, trace, "travel", "travel", { x: warp.sourceX, y: warp.sourceY }, snapshot);
+  const accepted = await execute("travel", "travel", { x: warp.sourceX, y: warp.sourceY }, snapshot);
   if (accepted.state !== "accepted") throw new Error(`travel_not_accepted:${accepted.reasonCode}`);
   const completion = await waitForNavigationTerminal(
     client,
@@ -306,11 +213,20 @@ function chooseStance(snapshot) {
  * tile for a destination it cannot stand on, which is a legitimate answer to a different request - so the runner reads
  * where the body actually is and re-plans around it instead of trusting the plan.
  */
-async function approachStance(client, receipts, trace, snapshot, plan, navigationTimeoutMs) {
+async function approachStance(client, receipts, trace, snapshot, plan, execute, navigationTimeoutMs) {
   if (sameTile(snapshot.tile, plan.stance)) return snapshot;
   let latest = snapshot;
   try {
-    latest = await move(client, receipts, trace, latest, plan.stance, "move_to_sweep_stance", navigationTimeoutMs);
+    latest = await move(
+      client,
+      receipts,
+      trace,
+      latest,
+      plan.stance,
+      "move_to_sweep_stance",
+      execute,
+      navigationTimeoutMs,
+    );
   } catch (error) {
     const reason = String(error instanceof Error ? error.message : error);
     if (
@@ -323,7 +239,16 @@ async function approachStance(client, receipts, trace, snapshot, plan, navigatio
   if (sameTile(latest.tile, plan.stance)) return latest;
   // The body stopped somewhere else (a substituted approach, or a route the planner took differently). Move once more to
   // the exact tile, and if that still lands elsewhere, say where she is rather than swinging from an unplanned stance.
-  latest = await move(client, receipts, trace, latest, plan.stance, "move_to_sweep_stance_exact", navigationTimeoutMs);
+  latest = await move(
+    client,
+    receipts,
+    trace,
+    latest,
+    plan.stance,
+    "move_to_sweep_stance_exact",
+    execute,
+    navigationTimeoutMs,
+  );
   if (!sameTile(latest.tile, plan.stance))
     throw new Error(
       `sweep_scythe_stance_not_reached:${latest.tile.x},${latest.tile.y}:${plan.stance.x},${plan.stance.y}`,
@@ -547,72 +472,19 @@ function namedTileMoved({ before, after, named }) {
   return now.health < was.health;
 }
 
-async function move(client, receipts, trace, snapshot, target, phase, navigationTimeoutMs) {
-  const accepted = await execute(client, trace, phase, "move_to_tile", target, snapshot);
+async function move(client, receipts, trace, snapshot, target, phase, execute, navigationTimeoutMs) {
+  const accepted = await execute(phase, "move_to_tile", target, snapshot);
   if (accepted.state !== "accepted") throw new Error(`${phase}_not_accepted:${accepted.reasonCode}`);
   const completion = await waitForNavigationTerminal(client, receipts, accepted, () => true, navigationTimeoutMs);
   return completion.snapshot;
 }
 
-/** Terminal wait with the harness's exact identity, then a fresh post-terminal observation. */
-async function waitForNavigationTerminal(client, receipts, accepted, predicate, timeoutMs) {
-  let terminal;
-  try {
-    terminal = await waitForTerminal(receipts, accepted, timeoutMs);
-  } catch (error) {
-    if (error instanceof NativeSmokeHarnessError) throw new Error(`navigation_timeout:${accepted.executionId}`);
-    throw error;
-  }
-  if (terminal.state !== "succeeded") throw new Error(`navigation_failed:${terminal.reasonCode}`);
-  let snapshot;
-  try {
-    snapshot = await waitForFreshSnapshot(client, {
-      minRevision: terminal.revision,
-      timeoutMs,
-      requireActionable: true,
-      check: predicate,
-    });
-  } catch (error) {
-    if (error instanceof NativeSmokeHarnessError) throw new Error(`navigation_timeout:${accepted.executionId}`);
-    throw error;
-  }
-  return { receipt: terminal, snapshot };
-}
-
-async function execute(client, trace, phase, action, args, snapshot) {
-  if (!snapshot.actionable || snapshot.activeExecution != null) throw new Error(`${phase}_player_not_actionable`);
-  const requestId = `native_local_sweep_scythe_${phase}_${Date.now()}_${trace.length}`;
-  const receipt = await executeFresh(client, {
-    requestId,
-    idempotencyKey: `${requestId}_idem`,
-    action,
-    args,
-    snapshot,
-    timeoutMs: 30_000,
-  });
-  trace.push({ phase, action, args, receipt: summarizeReceipt(receipt) });
-  return receipt;
-}
-
-function parseStrictEvidence(evidence) {
-  const detail = typeof evidence?.detail === "string" ? evidence.detail : "";
-  if (detail.length === 0) throw new Error("native_local_evidence_empty");
-  return Object.fromEntries(
-    detail
-      .split(";")
-      .map((pair) => {
-        const index = pair.indexOf("=");
-        return index > 0 ? [pair.slice(0, index), pair.slice(index + 1)] : null;
-      })
-      .filter(Boolean),
-  );
-}
-
-function describePlan(plan) {
+function describePlan(plan, stance) {
   return {
-    named: plan.named,
-    stance: plan.stance,
-    facing: FACING_NAMES[plan.facing],
+    named: stance.named,
+    actor: stance.actor,
+    facing: FACING_NAMES[stance.facing],
+    stanceTile: plan.stance,
     destructiveInEnvelope: plan.destructiveInEnvelope,
     cropsInEnvelope: plan.crops,
     distance: plan.distance,
