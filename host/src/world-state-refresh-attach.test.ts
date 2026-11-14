@@ -96,8 +96,8 @@ function movedFact(revision: number, index: number): WorldFact {
  * One delivered turn, admitted the way the Host admits it: the fact, then whatever the pump minted for it.
  *
  * `say` is the person's own words, and it is what makes the first turn DELIVER: a snapshot alone opens nothing
- * (`#snapshotAdvanced` has no delivered predecessor at attach), so a fixture that never speaks ages nothing and would
- * prove nothing about the cure.
+ * (`TURN_OPENING`: a reading is standing state), so a fixture that never speaks ages nothing and would prove nothing about
+ * the cure.
  */
 async function deliverTurn(pump: CompanionEventPump, fact: WorldFact, say = false): Promise<void> {
   pump.enqueueFact(fact);

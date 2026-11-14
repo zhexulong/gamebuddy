@@ -248,14 +248,20 @@ test("a fresh observation is the end of the staleness, not a second warning abou
   await deliverTurn(pump, snapshotFact(352));
   for (let turn = 1; turn <= WORLD_STATE_STALE_TURNS + 1; turn++)
     await deliverTurn(pump, worldFact("time_milestone", "1200", turn));
-  // The world is observed again, and that observation is itself a member of the closed list: it opens the very turn
-  // that delivers it (`TURN_OPENING.observation`), so the age of the reading is measured from here. The observation MOVES
-  // the clock, because a reading is its content: a re-observation that only bumped the revision says nothing new and the
-  // age would run from the reading she already had.
+  // The world is observed again. The observation itself opens no turn (`TURN_OPENING`), so it is delivered by the FIRST
+  // turn that opens for another reason - here the next milestone - and the age of the reading is measured from that turn.
+  // The observation MOVES the clock, because a reading is its content: a re-observation that only bumped the revision is
+  // the reading she already had, and the age would keep running from the one she was shown.
   await deliverTurn(pump, snapshotFact(400, { ...STUCK_READING, revision: 400, timeOfDay: 640 } as Snapshot));
   const after: WorldFact[] = [];
-  for (let turn = 1; turn <= WORLD_STATE_STALE_TURNS - 1; turn++) {
+  for (let turn = 1; turn <= WORLD_STATE_STALE_TURNS; turn++) {
     const batch = await deliverTurn(pump, worldFact("time_milestone", "1300", 100 + turn));
+    if (turn === 1)
+      assert.equal(
+        batch?.broughtObservation,
+        true,
+        "the first turn after the observation is the one that carries it, and says so in the block",
+      );
     after.push(...staleFactsOf(batch));
   }
   assert.deepEqual(after, [], "the reading was one turn old again, so there is nothing stale to name");

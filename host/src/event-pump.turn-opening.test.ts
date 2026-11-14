@@ -195,12 +195,9 @@ function turnWithoutNewContent(
   const violations = turns
     .filter((turn) => turn.inputs === 0 && !turn.observationAdvanced && turn.freshFacts === 0)
     .map((turn) => {
-      const reason =
-        turn.inputs > 0
-          ? TURN_SUPPRESSION.observationRestated
-          : turn.revision >= 0
-            ? TURN_SUPPRESSION.worldFactRestated
-            : TURN_SUPPRESSION.nothingPending;
+      // The population is filtered to batches no person opened, so the only question left is whether the batch carried a
+      // fact she had already received or nothing at all. A reading cannot be the answer any more: it opens no turn.
+      const reason = turn.revision >= 0 ? TURN_SUPPRESSION.worldFactRestated : TURN_SUPPRESSION.nothingPending;
       return `${TURN_WITHOUT_NEW_CONTENT}:#${String(turn.index)}:${reason}:${String(turn.revision)}:${String(turn.ageMs)}`;
     });
   return Object.freeze({ examined: turns.length, violations: Object.freeze(violations), blocked: null });
@@ -343,7 +340,7 @@ test("suppressed_turn_is_named: every examined flush is either an opened turn or
   pump.enqueueFact(milestoneFact(600, WINDOW_AT_MS));
   await step(); // the world-fact member, carrying the first reading
   pump.enqueueFact(readingFact(1, 14));
-  await step(); // the same revision again: suppressed, and named
+  await step(); // the reading re-stated and nothing else: suppressed, and named as state
   pump.enqueueFact(settlementFact("program_settled_plan_r46_weed_row_1", WINDOW_AT_MS));
   await step(); // the world-fact member again
   pump.enqueueFact(settlementFact("program_settled_plan_r46_weed_row_2", WINDOW_AT_MS + 1_000));
@@ -351,7 +348,7 @@ test("suppressed_turn_is_named: every examined flush is either an opened turn or
 
   const account = pump.turnAccount;
   assert.equal(account.suppressed[TURN_SUPPRESSION.nothingPending], 1);
-  assert.equal(account.suppressed[TURN_SUPPRESSION.observationRestated], 1);
+  assert.equal(account.suppressed[TURN_SUPPRESSION.observationIsState], 1);
   assert.equal(account.suppressed[TURN_SUPPRESSION.worldFactRestated], 1);
   assert.equal(account.opened, 2, "two turns: the first reading and the settlement");
 });
@@ -389,8 +386,10 @@ test("the closed list is what opens turns: every member has a producer, and noth
   factPump.enqueueFact(milestoneFact(1200, WINDOW_AT_MS));
   await open(factPump, recorder.sink);
 
-  // observation: a reading that says something the delivered one did not. The revision is not the authority - the reading
-  // is identified by its content (`readingContentIdentity`), so this fixture moves the world (the clock) and not the echo.
+  // A READING IS NOT AN OPENER. The same world moved (a clock, a location, a new revision) and the flush is suppressed,
+  // because the snapshot is the `<world-state>` block that every turn re-states: `round55` paid 90 model turns for these
+  // and 87 of them ended with speech and no action. The population below is `TURN_OPENINGS` itself, so a reading that
+  // crept back in as a fifth member would fail here by name.
   const observationPump = new CompanionEventPump();
   observationPump.enqueueFact(readingFact(0, 14));
   observationPump.enqueueFact(milestoneFact(600, WINDOW_AT_MS));
@@ -398,10 +397,14 @@ test("the closed list is what opens turns: every member has a producer, and noth
   observationPump.enqueueFact(readingFact(1, 15, { location: "Farm", gameTime: "0750" }));
   await open(observationPump, recorder.sink);
   assert.deepEqual(observationPump.turnAccount.lastDecision, {
-    kind: "opened",
-    index: 2,
-    reason: TURN_OPENING.observation,
+    kind: "suppressed",
+    reason: TURN_SUPPRESSION.observationIsState,
   });
+  assert.equal(
+    observationPump.turnAccount.opened,
+    1,
+    "the reading it held opened nothing, because the milestone already had",
+  );
 
   // due: a Host-owned schedule coming due - the stall watch's own fact.
   const duePump = new CompanionEventPump();
@@ -687,11 +690,10 @@ test("the account line reads back into the account it names", () => {
     byReason: Object.freeze({
       [TURN_OPENING.playerInput]: 2,
       [TURN_OPENING.worldFact]: 7,
-      [TURN_OPENING.observation]: 2,
-      [TURN_OPENING.due]: 1,
+      [TURN_OPENING.due]: 3,
     }),
     suppressed: Object.freeze({
-      [TURN_SUPPRESSION.observationRestated]: 3,
+      [TURN_SUPPRESSION.observationIsState]: 3,
       [TURN_SUPPRESSION.worldFactRestated]: 4,
       [TURN_SUPPRESSION.nothingPending]: 5,
     }),
@@ -749,11 +751,10 @@ test("the account line names a member that never fired, in both histograms", () 
     byReason: Object.freeze({
       [TURN_OPENING.playerInput]: 1,
       [TURN_OPENING.worldFact]: 0,
-      [TURN_OPENING.observation]: 0,
       [TURN_OPENING.due]: 0,
     }),
     suppressed: Object.freeze({
-      [TURN_SUPPRESSION.observationRestated]: 0,
+      [TURN_SUPPRESSION.observationIsState]: 0,
       [TURN_SUPPRESSION.worldFactRestated]: 0,
       [TURN_SUPPRESSION.nothingPending]: 0,
     }),
@@ -1077,10 +1078,10 @@ test("turn_settled_silent: a receipt batch that carried no speech is named, with
   );
 });
 
-test("turn_settled_silent: an observation refresh that found nothing to say is counted under its own opener", async () => {
-  // The other opener the brief names. `#snapshotAdvanced` decides it: a revision she has not been shown, delivered alone,
-  // with no tool run and no speech. The counter must name `observation`, not `world_fact`, or the histogram says the Host
-  // owed every silent turn when half of them were the world.
+test("turn_settled_silent: a due wake that found nothing to say is counted under its own opener", async () => {
+  // The other opener the closed list names. A Host-owned schedule coming due (`HOST_MINTED_WAKE_KINDS`) is not a receipt
+  // and not a person: the counter must name `due`, or the histogram says the world owed every silent turn when a third of
+  // them were her own schedule. The reading rides along and decides nothing, as it does on every turn.
   const pump = new CompanionEventPump();
   pump.enqueueFact(readingAt(14, 0, BODY_FREE));
   pump.enqueueFact(settlementFact("program_settled_plan_r47_refresh", WINDOW_AT_MS + 1_000));
@@ -1088,12 +1089,19 @@ test("turn_settled_silent: an observation refresh that found nothing to say is c
   assert.equal(pump.turnAccount.silentSettled.total, 0, "the first turn spoke, so nothing is counted yet");
 
   pump.enqueueFact(readingAt(15, 1, { ...BODY_FREE, gameTime: "0741" }));
+  pump.enqueueFact({
+    ...settlementFact("execution_stalled_exec_r47_1", WINDOW_AT_MS + 2_000),
+    semanticKind: EXECUTION_STALL_SEMANTIC_KIND,
+    correlationId: "exec_r47",
+    executionId: "exec_r47",
+    payload: { kind: EXECUTION_STALL_SEMANTIC_KIND, executionId: "exec_r47", elapsedMs: 120_000, stallFactsSoFar: 1 },
+  });
   await pump.flush(settledSink(pump, TURN_PRODUCTION.saidNothing));
 
   const account = pump.turnAccount;
   assert.equal(account.opened, 2);
   assert.equal(account.silentSettled.total, 1);
-  assert.equal(account.silentSettled.byOpener[TURN_OPENING.observation], 1);
+  assert.equal(account.silentSettled.byOpener[TURN_OPENING.due], 1);
   assert.equal(account.silentSettled.byOpener[TURN_OPENING.worldFact], 0);
   assert.equal(
     account.emptyTurns.total,

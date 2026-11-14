@@ -144,8 +144,8 @@ const AGED_TURN_INPUT = Object.freeze({ text: "早上了，去把鸡喂了。" }
 /**
  * The session's first turn: the reading the Mod admitted, carried by a turn the person opened.
  *
- * A snapshot alone opens nothing (`#snapshotAdvanced` has no delivered predecessor at attach), which is the session-start
- * behaviour this unit does not touch - so the fixture opens its first turn the way a real session does, with a message.
+ * A snapshot alone opens nothing (`TURN_OPENING`: a reading is standing state), which is the session-start behaviour this
+ * unit does not touch - so the fixture opens its first turn the way a real session does, with a message.
  */
 async function openSession(pump: CompanionEventPump): Promise<Delivery | undefined> {
   return await deliverTurn(pump, [snapshotFact(352, 0)], FIRST_TURN_INPUT);

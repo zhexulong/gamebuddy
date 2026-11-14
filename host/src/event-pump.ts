@@ -92,10 +92,29 @@ export type TurnProduction = (typeof TURN_PRODUCTION)[keyof typeof TURN_PRODUCTI
  * The closed list of things that make a batch worth a turn, and the whole population of the opening decision.
  *
  * <p>
- * THE INVARIANT: a turn opens only when the batch carries at least one thing she did not have and that can change what
- * she does next. Everything outside this list does not open one - in particular a snapshot that says what the delivered
- * one said (however much its revision moved), a programme still in flight with no state change, and an event that only
- * re-states a fact already delivered.
+ * THE INVARIANT: a turn opens only when something NEEDS A DECISION now. Everything outside this list does not open one -
+ * in particular a programme still in flight with no state change, an event that only re-states a fact already delivered,
+ * and THE READING ITSELF.
+ * </p>
+ * <p>
+ * THE READING IS STANDING STATE, AND IT TOOK TWO PATHS. A snapshot is the `<world-state>` block: `takeBatch` renders the
+ * last reading into every delivery (`#worldStateReading`), and `fact-brief.ts` prints nothing for a snapshot fact ("The
+ * snapshot is the state block, not news"). The opener asked the opposite question - does this reading differ from the one
+ * she was last shown - so it opened turns for a paragraph the next turn would have carried anyway.
+ * </p>
+ * <p>
+ * MEASURED 2026-11-15 (`round55`, `tools/_multiday_routine-round55-live-runner.log`): 120 turns opened, 115 of them
+ * `observation`, and 86 of those closed `turn_closed_without_action {observation:nothing_pending}`. The run's bridge
+ * traffic says why: of its 131 examined flushes, 90 carried no fact at all - no receipt, no semantic event, no world fact,
+ * no lifecycle, no player word - only a snapshot, and 87 of those 90 turns ended with speech and no action. The other 41
+ * windows carried a fact, and 28 of those turns acted. At about three per action turn, those 90 were the observations her
+ * own tool calls left in the pump, re-stated by `HostService.#restateWorldSnapshot` and turned into a new turn.
+ * </p>
+ * <p>
+ * NOTHING SHE SEES IS LOST, and the forward path is the facts: a person's words, an outcome, a clock mark, a due wake.
+ * Each of those opens the turn it needs and carries the freshest reading with the header `刚刚更新`, so the reading is
+ * delivered by the turn that has something to decide. A suppressed flush still ASKS the world about an aged reading
+ * (`#beginAgedReadingAsk`), which is the refresh the run's `auto_observe_on_stale` already measured as working.
  * </p>
  * <p>
  * MEASURED 2026-11-11 (`round46b`, `2026-11-11T07-25-22-940Z_01a1c97f`): two consecutive prompt turns,
@@ -110,8 +129,6 @@ export const TURN_OPENING = Object.freeze({
   playerInput: "player_input",
   /** A fact whose content she has not received before: a settlement, a refusal, a notice, a clock mark. */
   worldFact: "world_fact",
-  /** A snapshot that says something the one she was last shown did not (see `readingContentIdentity`). */
-  observation: "observation",
   /** A Host-owned schedule came due: the stall watch, a stale reading, a narration run (`HOST_MINTED_WAKE_KINDS`). */
   due: "due",
 });
@@ -123,17 +140,21 @@ export type TurnOpening = (typeof TURN_OPENINGS)[number];
 /**
  * Why a flush that was EXAMINED opened no turn. Closed, so "fewer turns" and "lost turns" are distinguishable.
  *
- * The two re-statement reasons are derived from the member they answer: a batch whose only pending content is the
- * `observation` member saying what the delivered reading said (`readingContentIdentity`), or `world_fact` members she
- * already received. A fact whose content is a MOMENT rather than a statement is never a re-statement
- * (`DAY_BOUNDARY_SEMANTIC_KINDS`), so `due` needs no reason of its own: a Host-minted wake fact carries its re-arm counter
- * in its content, and a clock or day fact is news every time.
+ * A batch whose only pending content is a `world_fact` she already received is the re-statement reason. A fact whose
+ * content is a MOMENT rather than a statement is never a re-statement (`DAY_BOUNDARY_SEMANTIC_KINDS`), so `due` needs no
+ * reason of its own: a Host-minted wake fact carries its re-arm counter in its content, and a clock or day fact is news
+ * every time.
+ *
+ * `observation_is_state` is the flush that held a reading and nothing else: the world was observed, the observation opens
+ * no turn (see `TURN_OPENING`), and the next turn states it. It is named rather than folded into `nothing_pending` because
+ * a run has to be able to tell "a reading arrived and decided nothing" from "nothing arrived" - `round55` printed
+ * `observation: 115` with no suppression at all, which is the reading this reason replaces.
  *
  * `nothing_pending` is not a lost turn: there was nothing to deliver, and counting it keeps the arithmetic closed
  * (`examined === opened + every suppressed reason`).
  */
 export const TURN_SUPPRESSION = Object.freeze({
-  observationRestated: `${TURN_OPENING.observation}_restated`,
+  observationIsState: "observation_is_state",
   worldFactRestated: `${TURN_OPENING.worldFact}_restated`,
   nothingPending: "nothing_pending",
 });
@@ -194,9 +215,9 @@ export function turnWithoutActionToken(opener: TurnOpening, reason: TurnWithoutA
  * Turns that delivered speech, ran no action, and closed - counted by BOTH halves of the shape.
  *
  * The opener is half of it because the two mean different things: a `player_input` turn that spoke and did nothing was
- * an answer to the person, while a `due` or `observation` turn that spoke and did nothing is the robot narrating to
- * itself. `total` is counted beside the shapes so the two can be checked against each other, and the shape population is
- * the product of the two closed lists so a new opener or reason cannot go unreported.
+ * an answer to the person, while a `due` turn that spoke and did nothing is the robot narrating to itself. `total` is
+ * counted beside the shapes so the two can be checked against each other, and the shape population is the product of the
+ * two closed lists so a new opener or reason cannot go unreported.
  */
 export type TurnWithoutActionResult = Readonly<{
   total: number;
@@ -336,8 +357,8 @@ export const SILENT_SETTLED_OPENINGS = Object.freeze(
 /**
  * Turns that delivered no speech, ran no action and closed with nothing of hers still settling, counted by opener.
  *
- * The opener is half of it for the reason the empty-turn counter gives: receipts arriving is a turn the HOST owed, an
- * observation refresh is a turn the WORLD owed, and a due wake is a turn her own schedule owed - three different
+ * The opener is half of it for the reason the empty-turn counter gives: a fact arriving is a turn the HOST owed, the
+ * world's own clock or notice is a turn the WORLD owed, and a due wake is a turn her own schedule owed - three different
  * statements about why a companion had a turn and used it for nothing.
  */
 export type TurnSettledSilentResult = Readonly<{
@@ -1064,13 +1085,12 @@ export class CompanionEventPump {
   readonly #openedByReason: Record<TurnOpening, number> = {
     [TURN_OPENING.playerInput]: 0,
     [TURN_OPENING.worldFact]: 0,
-    [TURN_OPENING.observation]: 0,
     [TURN_OPENING.due]: 0,
   };
   #openedTurns = 0;
   /** Examined flushes that opened no turn, one count per `TURN_SUPPRESSIONS` member. */
   readonly #suppressedByReason: Record<TurnSuppression, number> = {
-    [TURN_SUPPRESSION.observationRestated]: 0,
+    [TURN_SUPPRESSION.observationIsState]: 0,
     [TURN_SUPPRESSION.worldFactRestated]: 0,
     [TURN_SUPPRESSION.nothingPending]: 0,
   };
@@ -1765,11 +1785,11 @@ export class CompanionEventPump {
    * Why this flush would open a turn, or `undefined` when everything waiting is something she already has.
    *
    * ONE place: `hasPendingDelivery`, `flush` and the account all ask this, so "is a turn owed" and "was one taken"
-   * cannot disagree.
+   * cannot disagree. The snapshot slot is deliberately not asked: a reading is standing state (`TURN_OPENING`), so the
+   * flush that holds only a reading suppresses and names it (`TURN_SUPPRESSION.observationIsState`).
    */
   #opening(): TurnOpening | undefined {
     if (this.#inputs.length > 0) return TURN_OPENING.playerInput;
-    if (this.#snapshotAdvanced()) return TURN_OPENING.observation;
     for (const fact of this.#ordinaryFacts()) {
       if (isHeldFact(fact) || this.#isRestatement(fact)) continue;
       return isDueFact(fact) ? TURN_OPENING.due : TURN_OPENING.worldFact;
@@ -1787,12 +1807,12 @@ export class CompanionEventPump {
   }
 
   /**
-   * Whether a reading says something other than the one she was shown: the ONE comparison the suppressor, the header and
-   * the composition's cure are all derived from.
+   * Whether a reading says something other than the one she was shown: the ONE comparison the block's header and the
+   * composition's cure are both derived from.
    *
    * <p>
    * `undefined` is not a "no": before the first delivery there is nothing to compare against, and the two callers want
-   * different answers to that - a session's first picture must not open a turn (attachment already asks for one), while a
+   * different answers to that - a session's first picture is not a re-statement (attachment already carries it), while a
    * block that HAS never been shown is news by definition. Keeping the third answer here is what stops either caller from
    * inventing its own reading of "nothing delivered yet".
    * </p>
@@ -1802,18 +1822,6 @@ export class CompanionEventPump {
     const shown = this.#lastSnapshotDeliveredIdentity;
     if (shown === undefined) return undefined;
     return readingContentIdentity(fact) !== shown;
-  }
-
-  /**
-   * Whether the held snapshot says something she has not read.
-   *
-   * A reading with no DELIVERED predecessor is not one: the membership is "says something the last one delivered did not",
-   * and the session's first picture is carried by the turn that attachment itself asks for (`host-service.ts` states it in
-   * the arrival fact and re-states it before every turn). Counting the first reading as an opening would turn every
-   * session's attach into a turn of its own, which is a session-start behaviour this gate has no business changing.
-   */
-  #snapshotAdvanced(): boolean {
-    return this.#readingIsNews(this.#snapshot) === true;
   }
 
   /** Every fact waiting in an ordinary window: the population the fact members of the closed list are read from. */
@@ -1830,14 +1838,14 @@ export class CompanionEventPump {
    * Which member a suppressed flush was answered by absence of.
    *
    * An ordinary fact that is waiting but NOT an opening one is a fact whose content she already received (`#opening`
-   * skipped it for that reason); a snapshot waiting with the content she was shown is the observation member re-stated.
-   * `nothing_pending` is the rest - including a FIRST reading, which no turn opens for because nothing in it says
-   * anything the delivered one did not.
+   * skipped it for that reason). A snapshot slot holding a reading - new or re-stated - is `observation_is_state`: the
+   * reading is standing state, so nothing in it was pending, and naming it keeps "a reading arrived" apart from "nothing
+   * did". `nothing_pending` is the rest.
    */
   #suppressionReason(): TurnSuppression {
     if (this.#ordinaryFacts().some((fact) => !isHeldFact(fact) && this.#isRestatement(fact)))
       return TURN_SUPPRESSION.worldFactRestated;
-    if (this.#readingIsNews(this.#snapshot) === false) return TURN_SUPPRESSION.observationRestated;
+    if (this.#snapshot !== undefined) return TURN_SUPPRESSION.observationIsState;
     return TURN_SUPPRESSION.nothingPending;
   }
 
@@ -2830,9 +2838,9 @@ export function factContentIdentity(fact: WorldFact): string {
  * </p>
  *
  * <p>
- * ONE spelling, used by the three questions that are really one: does this reading open a turn (`#snapshotAdvanced`),
- * is the block's header allowed to say `本轮无新观察` (`#worldStateReading`), and has the probe budget for this reading
- * been spent (`#worldStateRefreshFor`).
+ * ONE spelling, used by the two questions that are really one: is the block's header allowed to say `本轮无新观察`
+ * (`#worldStateReading`), and has the probe budget for this reading been spent (`#worldStateRefreshFor`). The third
+ * question this used to answer - does the reading open a turn - is gone with the opener: a reading is standing state.
  * </p>
  */
 export function readingContentIdentity(fact: WorldFact): string {

@@ -48,12 +48,6 @@ import {
  * </p>
  */
 
-/**
- * The suppression reason this unit introduces, spelled here as the wire token rather than imported: the red proof has to
- * compile against the module BEFORE it, and a constant that does not exist yet cannot be the expectation it is red on.
- */
-const READING_IS_STATE = "observation_is_state";
-
 /** The reading the Mod admitted: a free body in the farmhouse at 06:00 (the `round53` fixture, field for field). */
 const READING = Object.freeze({
   revision: 352,
@@ -187,7 +181,7 @@ test("the reading alone opens no turn: round55's 90 snapshot-only flushes are st
   );
   assert.deepEqual(
     pump.turnAccount.lastDecision,
-    Object.freeze({ kind: "suppressed", reason: READING_IS_STATE }),
+    Object.freeze({ kind: "suppressed", reason: TURN_SUPPRESSION.observationIsState }),
     "and the flush names what it was holding rather than claiming nothing arrived",
   );
   assert.equal(pump.turnAccount.opened, 1, "no turn was opened for it");
@@ -259,7 +253,7 @@ async function row(payload: Readonly<Record<string, unknown>>, revision: number)
   await pump.flush(sink(batches));
   assert.deepEqual(
     pump.turnAccount.lastDecision,
-    Object.freeze({ kind: "suppressed", reason: READING_IS_STATE }),
+    Object.freeze({ kind: "suppressed", reason: TURN_SUPPRESSION.observationIsState }),
     "the reading alone opens nothing, whatever field moved",
   );
 
@@ -295,7 +289,10 @@ test("content matrix: an identical payload with a new revision is still state, a
   pump.enqueueFact(reading(353, READING, 1));
   await pump.flush(sink(batches));
   assert.equal(batches.length, 1);
-  assert.deepEqual(pump.turnAccount.lastDecision, Object.freeze({ kind: "suppressed", reason: READING_IS_STATE }));
+  assert.deepEqual(
+    pump.turnAccount.lastDecision,
+    Object.freeze({ kind: "suppressed", reason: TURN_SUPPRESSION.observationIsState }),
+  );
 });
 
 /**
@@ -331,7 +328,10 @@ function answeringPort(
 test("an aged reading still asks the world first, and the ask itself opens no turn", async () => {
   const pump = new CompanionEventPump();
   const batches: PendingBatch[] = [];
-  const { port, asked } = answeringPort(pump, () => reading(353, Object.freeze({ ...READING, timeOfDay: 640 }), 1));
+  // The answer must carry a revision NEWER than the reading the pump is holding: the Mod's own admission keeps the
+  // greatest revision (`enqueueFact`), so an answer that arrived behind the held one would be dropped rather than
+  // admitted, and the fixture would be measuring the admission rule instead of the cure.
+  const { port, asked } = answeringPort(pump, () => reading(355, Object.freeze({ ...READING, timeOfDay: 640 }), 3));
   pump.attachWorldStateRefresh(port);
 
   pump.enqueueFact(reading(352, READING, 0));
@@ -342,7 +342,11 @@ test("an aged reading still asks the world first, and the ask itself opens no tu
   // A reading alone: suppressed, and the cure still runs - the world is asked about the aged reading without paying a turn.
   pump.enqueueFact(reading(354, READING, 2));
   await pump.flush(sink(batches));
-  assert.equal(pump.turnAccount.lastDecision?.kind, "suppressed");
+  assert.deepEqual(
+    pump.turnAccount.lastDecision,
+    Object.freeze({ kind: "suppressed", reason: TURN_SUPPRESSION.observationIsState }),
+    "the answer to the ask is a reading, so it opens no turn either",
+  );
   assert.equal(asked.length, 1, "the flush asked the world about the reading it could not use");
   assert.equal(
     pump.turnAccount.autoObserve.refreshed,
@@ -396,7 +400,7 @@ test("the flush that holds only a reading is counted against the reading, never 
   await pump.flush(sink(batches));
   assert.deepEqual(
     pump.turnAccount.lastDecision,
-    Object.freeze({ kind: "suppressed", reason: READING_IS_STATE }),
+    Object.freeze({ kind: "suppressed", reason: TURN_SUPPRESSION.observationIsState }),
     "a reading that arrived and decided nothing is its own named condition",
   );
   const line = turnAccountLine(pump.turnAccount);
