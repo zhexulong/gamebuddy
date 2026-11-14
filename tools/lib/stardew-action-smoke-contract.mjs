@@ -69,6 +69,7 @@ const CONTRACT_KEYS = Object.freeze([
   "evidence",
   "worldAfter",
   "stale",
+  "delta",
   "unasserted",
 ]);
 /** Keys a contract may not carry because the action's own declaration (or the engine) already answers them. */
@@ -89,7 +90,6 @@ const INEXPRESSIBLE_KEYS = Object.freeze({
   chain: "a chain of actions is a program, not a slice: write a runner",
   sequence: "a chain of actions is a program, not a slice: write a runner",
   arithmetic: "a computed postcondition cannot be expressed as data: write a runner",
-  delta: "a difference between two postcondition numbers cannot be expressed as data: write a runner",
   express: "a computed quantity cannot be expressed as data: write a runner",
   setup: "a spatial or inventory precondition beyond the fixture scenario: write a runner",
   prerequisites: "a chain of prerequisite actions is a program, not a slice: write a runner",
@@ -105,6 +105,19 @@ const WORLD_AFTER_KEYS = Object.freeze([
   "rowAtTargetTile",
 ]);
 const STALE_KEYS = Object.freeze(["args", "refusedWith"]);
+
+/**
+ * The flat comparison forms a receipt key may carry.
+ *
+ * WHY THESE AND NOT A LANGUAGE. Measured over the 126 hand-written runners (795 postcondition assertions), the
+ * comparison shapes recur across many actions and every one is a single comparison of one receipt key against one
+ * operand: a literal, one field of the discovered target, or another key of the same receipt. A flat entry per key
+ * carries the first two, and the `delta` list below carries the third, so the format states them without loops,
+ * conditionals or nesting - the things that would make it a DSL.
+ */
+const EVIDENCE_FORM_KEYS = Object.freeze(["equals", "equalsTarget"]);
+/** One relation between two receipt keys, or between one key and a bound: flat, and never an expression. */
+const DELTA_KEYS = Object.freeze(["from", "to", "equals", "atLeast"]);
 
 const CARDINALITIES = Object.freeze(["exactly_one", "at_least_one"]);
 const SELECTORS = Object.freeze(["only", "first"]);
@@ -344,7 +357,7 @@ function validateEvidence(evidence) {
       continue;
     }
     if (!isPlainObject(expectation)) fail("evidence_expectation_invalid", key);
-    assertKeys(expectation, ["equals", "equalsTarget"], `evidence.${key}`);
+    assertKeys(expectation, EVIDENCE_FORM_KEYS, `evidence.${key}`);
     const keys = Object.keys(expectation);
     if (keys.length !== 1) fail("evidence_expectation_invalid", key);
     if (keys[0] === "equals" && typeof expectation.equals !== "string") fail("evidence_expectation_invalid", key);
@@ -353,6 +366,36 @@ function validateEvidence(evidence) {
     normalised[key] = Object.freeze({ [keys[0]]: expectation[keys[0]] });
   }
   return Object.freeze(normalised);
+}
+
+/**
+ * The `delta` list: `to` minus `from` equals - or is at least - the bound, and `from` may be absent for a plain bound.
+ *
+ * One entry per relation, four scalars at most, no nesting and no expression: `{ "from": "count_before", "to":
+ * "count_after", "equals": 1 }` is `count_after = count_before + 1` as data. Naming `from` and `to` explicitly rather
+ * than hanging the relation off one key is what keeps it flat: the relation belongs to a pair, and a pair is two
+ * strings, not a path.
+ */
+function validateDelta(delta) {
+  if (delta === undefined) return Object.freeze([]);
+  if (!Array.isArray(delta) || delta.length === 0) fail("delta_invalid");
+  return Object.freeze(
+    delta.map((entry) => {
+      if (!isPlainObject(entry)) fail("delta_invalid");
+      assertKeys(entry, DELTA_KEYS, "delta[]");
+      if (!isNonEmptyString(entry.to)) fail("delta_key_missing", "to");
+      if (entry.from !== undefined && !isNonEmptyString(entry.from)) fail("delta_key_invalid", entry.to);
+      if (entry.from === entry.to) fail("delta_from_equals_to", entry.to);
+      const bounds = ["equals", "atLeast"].filter((key) => entry[key] !== undefined);
+      if (bounds.length !== 1) fail("delta_bound_invalid", `${entry.to}:${bounds.join("+") || "none"}`);
+      if (!Number.isInteger(entry[bounds[0]])) fail("delta_bound_invalid", `${entry.to}:${bounds[0]}`);
+      return Object.freeze({
+        to: entry.to,
+        from: entry.from ?? null,
+        bound: Object.freeze({ form: bounds[0], value: entry[bounds[0]] }),
+      });
+    }),
+  );
 }
 
 function validateWorldAfter(worldAfter) {
@@ -493,6 +536,7 @@ export function validateSmokeContract(raw, { facts = null, surface = null, proto
   const evidence = validateEvidence(raw.evidence);
   const worldAfter = validateWorldAfter(raw.worldAfter);
   const stale = validateStale(raw.stale, args);
+  const delta = validateDelta(raw.delta);
   const unasserted = validateUnasserted(raw.unasserted);
 
   return Object.freeze({
@@ -505,6 +549,7 @@ export function validateSmokeContract(raw, { facts = null, surface = null, proto
     evidence,
     worldAfter,
     stale,
+    delta,
     unasserted,
     derived: Object.freeze({
       lifecycle: resolvedFacts.lifecycle,
@@ -568,6 +613,7 @@ export function adHocContract({ action, args, expectReasonCode = null }, options
     evidence: Object.freeze({}),
     worldAfter: Object.freeze([]),
     stale: null,
+    delta: Object.freeze([]),
     unasserted: Object.freeze({}),
     derived: Object.freeze({
       lifecycle: facts.lifecycle,
@@ -774,6 +820,7 @@ function runnerAssertions(root, { families }) {
   const sinks = {
     world: new Set(),
     evidence: new Map(),
+    relations: new Map(),
     states: new Set(),
     reasonCodes: new Set(),
     staleTerminal: false,
@@ -796,6 +843,7 @@ function runnerAssertions(root, { families }) {
   return Object.freeze({
     clauses: Object.freeze(clauseNames(sinks, dispatchSites.length)),
     evidence: sinks.evidence,
+    relations: sinks.relations,
     world: sinks.world,
     states: sinks.states,
     reasonCodes: sinks.reasonCodes,
@@ -835,8 +883,12 @@ function noteComparison(sinks, node, scope, index) {
   noteClause(sinks, right, left, operator);
   // Every OTHER key the comparison reads is a comparison the format cannot write down: the arithmetic under
   // `Number(evidence.count_after) === Number(evidence.count_before) + 1` reads count_before, and a contract that never
-  // names it has dropped the half of the relation that says what the first half was measured against.
-  for (const key of evidenceKeysIn(node)) if (left.key !== key && right.key !== key) noteEvidence(sinks, key, "other");
+  // names it has dropped the half of the relation that says what the first half was measured against. The pair is
+  // recorded, not just the keys: a `delta` entry states ONE relation between TWO keys, and coverage has to be able to
+  // ask whether the contract named that relation rather than merely mentioning the keys.
+  const keysIn = [...evidenceKeysIn(node)];
+  for (const key of keysIn) if (left.key !== key && right.key !== key) noteEvidence(sinks, key, "other");
+  for (const key of keysIn) for (const partner of keysIn) if (partner !== key) notePartner(sinks, key, partner);
 }
 
 /** One scope per set of arguments a local helper was called with, so its reads are read in its caller's terms. */
@@ -869,6 +921,13 @@ function noteEvidence(sinks, key, form) {
   if (form === "other") forms.other = true;
   else if (form.equals !== undefined) forms.equals.add(form.equals);
   else forms.equalsTarget.add(form.equalsTarget);
+}
+
+/** The other receipt keys one comparison reads beside this one. */
+function notePartner(sinks, key, partner) {
+  const partners = sinks.relations.get(key) ?? new Set();
+  if (!sinks.relations.has(key)) sinks.relations.set(key, partners);
+  partners.add(partner);
 }
 
 function noteClause(sinks, side, other, operator) {
@@ -993,16 +1052,26 @@ export function runnerFileName(actionId) {
   return `${RUNNER_PREFIX}${actionId.replaceAll("_", "-")}-smoke.mjs`;
 }
 
-/** Whether the contract carries the clause, in the form the runner demands where the format can express it. */
+/**
+ * Whether the contract carries the clause, in the form the runner demands where the format can express it.
+ *
+ * A receipt key whose runner comparisons are relations - `count_after === count_before + 1`, `mail_flags_after >
+ * mail_flags_before`, `rewards_before >= 1` - is covered by a `delta` entry that names the SAME relation, and by
+ * nothing less: the entry must name this key, it must name every key this one was compared against, and a bound with
+ * no partner needs an entry with no `from`. A value the format can state (`count_after: "3"`) never covers a relation:
+ * it pins today's answer in place of the relation, which is the defect this whole format exists to stop.
+ */
 function contractCovers(clause, contract, runner) {
   if (clause.startsWith(`${EVIDENCE_OBJECT}.`)) {
     const key = clause.slice(EVIDENCE_OBJECT.length + 1);
     const forms = runner.evidence.get(key);
+    if (forms === undefined) return false;
     const assertion = contract.evidence[key];
-    if (forms === undefined || assertion === undefined) return false;
-    // A comparison the format cannot write down is never covered by a value it can: `count_after = count_before + 1`
-    // is a relation between two numbers, and `count_after: "3"` pins today's answer instead of the relation.
-    if (forms.other) return false;
+    if (forms.other) {
+      if (assertion !== undefined) return false;
+      return deltaCovers(contract.delta, key, runner.relations.get(key) ?? new Set());
+    }
+    if (assertion === undefined) return false;
     if (forms.equals.size > 0 && !forms.equals.has(assertion.equals)) return false;
     if (forms.equalsTarget.size > 0 && !forms.equalsTarget.has(assertion.equalsTarget)) return false;
     return forms.equals.size > 0 || forms.equalsTarget.size > 0;
@@ -1018,6 +1087,22 @@ function contractCovers(clause, contract, runner) {
   if (clause === "terminal.stale") return contract.stale !== null;
   if (clause === "dispatch.2") return contract.stale !== null;
   return false;
+}
+
+/**
+ * The `delta` list against one key's own relations.
+ *
+ * Every key this one was compared against must be the other side of an entry naming it, and a bound compared with no
+ * other key (`rewards_before >= 1`) needs an entry that names this key as `to` with no `from`. Requiring both is what
+ * keeps the coverage reading from passing a contract that states half the relation.
+ */
+function deltaCovers(entries, key, partners) {
+  const naming = entries.filter((entry) => entry.to === key || entry.from === key);
+  if (naming.length === 0) return false;
+  for (const partner of partners)
+    if (!naming.some((entry) => (entry.to === key ? entry.from : entry.to) === partner)) return false;
+  if (partners.size === 0) return naming.some((entry) => entry.to === key && entry.from === null);
+  return true;
 }
 
 /**

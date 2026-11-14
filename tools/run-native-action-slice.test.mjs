@@ -462,11 +462,14 @@ test("a contract may not restate what the declaration already owns", () => {
     { discovery: { cardinality: "exactly_one", source: "specialOrderTargets" } },
     /smoke_contract_discovery_source_disagrees_with_declaration/u,
   );
-  // The three shapes the format exists to keep OUT of data, each refused with the place it has to live.
+  // The shapes the format exists to keep OUT of data, each refused with the place it has to live. `delta` is a
+  // supported list now, so what is refused is a delta that is not one relation: the entry below carries two bounds,
+  // which no single flat entry can mean.
   refuses(
-    { delta: { from: "orders_before", to: "orders_after", equals: 1 } },
-    /smoke_contract_not_expressible:contract\.delta/u,
+    { delta: [{ from: "orders_before", to: "orders_after", equals: 1, atLeast: 1 }] },
+    /smoke_contract_delta_bound_invalid/u,
   );
+  refuses({ delta: [{ from: "orders_before", equals: 1 }] }, /smoke_contract_delta_key_missing/u);
   refuses({ steps: [] }, /smoke_contract_not_expressible:contract\.steps/u);
   refuses({ arithmetic: {} }, /smoke_contract_not_expressible:contract\.arithmetic/u);
 });
@@ -531,6 +534,56 @@ test("the judgement is pure: it takes facts and returns a check per assertion", 
   });
   assert.equal(red["world.animalDoorTargets.excludesTarget"], false);
   assert.equal(red["world.animalDoorTargets.rowAtTargetTile"], false);
+});
+
+test("a delta entry is judged as the relation it states, and both numbers appear when it fails", () => {
+  // The one kind that replaced nine hand-written declarations across three runners: `count_after = count_before + 1`
+  // and `mail_flags_after > mail_flags_before`. Written once here, judged once here, and no receipt is involved.
+  const contract = {
+    expectedState: "succeeded",
+    expectedReasonCode: "crafted_item_created",
+    evidence: {},
+    worldAfter: [],
+    stale: null,
+    delta: [
+      { to: "count_after", from: "count_before", bound: { form: "equals", value: 1 } },
+      { to: "mail_flags_after", from: "mail_flags_before", bound: { form: "atLeast", value: 1 } },
+      { to: "rewards_before", from: null, bound: { form: "atLeast", value: 1 } },
+    ],
+  };
+  const judge = (fields) =>
+    judgeSlice({
+      contract,
+      target: null,
+      terminal: { state: "succeeded", reasonCode: "crafted_item_created" },
+      after: {},
+      evidence: new Map(Object.entries(fields)),
+      staleTerminal: null,
+    });
+  const same = { count_before: "2", mail_flags_before: "0", mail_flags_after: "1", rewards_before: "1" };
+
+  const green = judge({ ...same, count_after: "3" });
+  assert.equal(green["delta.count_after"], true);
+  assert.equal(green["delta.mail_flags_after"], true);
+  assert.equal(green["delta.rewards_before"], true);
+
+  // Falsifier: the same relation one short, one not greater, and an absolute bound of zero.
+  const red = judge({
+    count_before: "2",
+    count_after: "2",
+    mail_flags_before: "1",
+    mail_flags_after: "1",
+    rewards_before: "0",
+  });
+  assert.equal(red["delta.count_after"], false);
+  assert.equal(red["delta.mail_flags_after"], false);
+  assert.equal(red["delta.rewards_before"], false);
+
+  // A receipt that does not carry one side fails the relation instead of crashing or reading NaN.
+  const missing = judge(same);
+  assert.equal(missing["delta.count_after"], false);
+  const notANumber = judge({ ...same, count_before: "two", count_after: "3" });
+  assert.equal(notANumber["delta.count_after"], false);
 });
 
 test("the contract schema string is the one the files carry", () => {

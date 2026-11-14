@@ -431,6 +431,24 @@ const REFUSAL_PROBES = Object.freeze([
         unasserted: { "evidence.probe": "the runner compares two receipt numbers with each other here" },
       }),
   },
+  { code: "delta_invalid", probe: () => validate({ ...GENERIC_CONTRACT, delta: [] }) },
+  {
+    code: "delta_key_missing",
+    probe: () => validate({ ...GENERIC_CONTRACT, delta: [{ from: "probe_before", equals: 1 }] }),
+  },
+  {
+    code: "delta_key_invalid",
+    probe: () => validate({ ...GENERIC_CONTRACT, delta: [{ from: 7, to: "probe_after", equals: 1 }] }),
+  },
+  {
+    code: "delta_from_equals_to",
+    probe: () => validate({ ...GENERIC_CONTRACT, delta: [{ from: "probe_after", to: "probe_after", equals: 1 }] }),
+  },
+  {
+    code: "delta_bound_invalid",
+    probe: () =>
+      validate({ ...GENERIC_CONTRACT, delta: [{ from: "probe_before", to: "probe_after", equals: 1, atLeast: 1 }] }),
+  },
 ]);
 /**
  * One probe per refusal the COVERAGE gate can make.

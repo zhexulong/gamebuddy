@@ -243,12 +243,6 @@ export function buildRequestArgs(contract, target) {
   return built;
 }
 
-/**
- * The judgement, as a PURE function so it can be driven without a transport.
- *
- * `not_checked` is a distinct value from `false` and from `true`: a surface that does not carry the field, and an
- * absence that reads as "nothing was there", must never look the same. The caller fails on both.
- */
 export function judgeSlice({ contract, target, terminal, after, evidence, staleTerminal }) {
   const checks = {};
   checks.terminalStateExpected = terminal?.state === contract.expectedState;
@@ -256,6 +250,9 @@ export function judgeSlice({ contract, target, terminal, after, evidence, staleT
   checks.evidenceParsed = evidence !== null;
   for (const [key, expectation] of Object.entries(contract.evidence)) {
     checks[`evidence.${key}`] = judgeEvidence(key, expectation, evidence, target);
+  }
+  for (const relation of contract.delta) {
+    checks[`delta.${relation.to}`] = judgeDelta(relation, evidence);
   }
   for (const assertion of contract.worldAfter) {
     checks[`world.${assertion.field}.${assertion.form}`] = judgeWorldAfter(assertion, after, target);
@@ -265,6 +262,28 @@ export function judgeSlice({ contract, target, terminal, after, evidence, staleT
       staleTerminal?.state === "rejected" && contract.stale.refusedWith.includes(staleTerminal?.reasonCode);
   }
   return checks;
+}
+
+/** A receipt number, or null when the receipt does not carry one. Never `NaN` compared to a number. */
+function integer(value) {
+  return typeof value === "string" && /^-?\d+$/u.test(value) ? Number(value) : null;
+}
+
+/**
+ * One `delta` entry: `to` minus `from` equals - or is at least - the bound. `from` may be null, which makes the entry
+ * a plain bound on `to`.
+ *
+ * An absent or non-numeric receipt key answers `false`, not `not_checked`: the contract named the keys, so a key the
+ * receipt does not carry is the receipt failing to answer, not the surface failing to publish.
+ */
+function judgeDelta(relation, evidence) {
+  if (evidence === null) return "not_checked";
+  const to = integer(evidence.get(relation.to));
+  if (to === null) return false;
+  const from = relation.from === null ? 0 : integer(evidence.get(relation.from));
+  if (from === null) return false;
+  const difference = to - from;
+  return relation.bound.form === "equals" ? difference === relation.bound.value : difference >= relation.bound.value;
 }
 
 function judgeEvidence(key, expectation, evidence, target) {
@@ -377,8 +396,13 @@ export async function runActionSlice({
     const checks = judgeSlice({ contract, target: discovery.chosen, terminal, after, evidence, staleTerminal });
     trace.push({ step: "observed", checks, evidence: evidence === null ? null : Object.fromEntries(evidence) });
     const failed = Object.keys(checks).filter((name) => checks[name] === false || checks[name] === "not_checked");
-    const unassertedEvidence =
-      evidence === null ? [] : [...evidence.keys()].filter((key) => contract.evidence[key] === undefined).sort();
+    // A key the contract states - through a literal, a target field, or either side of a `delta` entry - is asserted;
+    // the rest are printed so a reader sees what the run measured and the contract did not claim.
+    const asserted = new Set([
+      ...Object.keys(contract.evidence),
+      ...contract.delta.flatMap((relation) => (relation.from === null ? [relation.to] : [relation.to, relation.from])),
+    ]);
+    const unassertedEvidence = evidence === null ? [] : [...evidence.keys()].filter((key) => !asserted.has(key)).sort();
     timings.totalMs = Date.now() - startedAt;
     const base = {
       topology: TOPOLOGY,
@@ -426,6 +450,14 @@ function failureReason(name, terminal, checks, evidence, contract) {
     return `slice_terminal_not_expected:${String(terminal?.state)}:${String(terminal?.reasonCode)}`;
   if (name === "evidenceParsed")
     return `slice_evidence_unreadable:${String(terminal?.evidence?.detail ?? terminal?.evidence ?? "none").slice(0, 160)}`;
+  if (name.startsWith("delta.")) {
+    const relation = contract.delta.find((entry) => entry.to === name.slice("delta.".length));
+    const detail = relation.from === null ? "" : `:from=${String(evidence?.get(relation.from))}`;
+    return (
+      `slice_delta_mismatch:${relation.to}=${String(evidence?.get(relation.to))}${detail}` +
+      `:${relation.bound.form}=${relation.bound.value}`
+    );
+  }
   if (name.startsWith("evidence.")) {
     const key = name.slice("evidence.".length);
     const expectation = contract.evidence[key];
