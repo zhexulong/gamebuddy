@@ -291,7 +291,11 @@ test("the account is extended by the process that measured the next step, and st
       "one record, extended in the order the unwind performed it",
     );
     assert.equal(extended.record.state, "clean");
-    assert.equal(JSON.parse(readFileSync(resultPath, "utf8")).reclamation.steps.length, 5);
+    assert.deepEqual(
+      JSON.parse(readFileSync(resultPath, "utf8")).reclamation.steps.map((entry) => entry.step),
+      extended.record.steps.map((entry) => entry.step),
+      "the persisted account carries the same steps, in the same order, as the record it was stamped from",
+    );
     // The gate: the steps a finished run owes that this account never measured, named one by one.
     assert.deepEqual(missingReclamationSteps(extended.record), []);
     assert.deepEqual(

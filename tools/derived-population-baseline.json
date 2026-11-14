@@ -14,7 +14,8 @@
       "literal": "0",
       "shape": "call_result",
       "sites": 1,
-      "line": 119
+      "line": 119,
+      "reason": "[not-a-population] the size of a DOMRectList inside a predicate copied from the touch-floor gate. There is no declared member set to name and no product edit that can grow it; a rect list's emptiness is a layout fact the browser reports."
     },
     {
       "file": "dialogue-web/tests/draft-declaration-coverage.spec.ts",
@@ -22,7 +23,8 @@
       "literal": "0",
       "shape": "unresolved",
       "sites": 1,
-      "line": 279
+      "line": 279,
+      "reason": "[not-a-population] a control-flow guard inside the paging loop (`if (appeared.length === 0) continue`), not an assertion. The empty case is the condition that skips to the next opener."
     },
     {
       "file": "dialogue-web/tests/draft-declaration-coverage.spec.ts",
@@ -30,7 +32,8 @@
       "literal": "0",
       "shape": "unresolved",
       "sites": 1,
-      "line": 341
+      "line": 341,
+      "reason": "[not-a-population] the same loop's guard deciding whether to record the `(no text field)` row. A guard's zero is a branch, not a frozen count."
     },
     {
       "file": "dialogue-web/tests/first-viewport-forward-path.spec.ts",
@@ -38,7 +41,8 @@
       "literal": "0",
       "shape": "declaration_site",
       "sites": 1,
-      "line": 661
+      "line": 661,
+      "reason": "[not-a-population] an anti-vacuity guard: it throws, naming the contract file, when the imported availability table declares nothing. The emptiness IS the condition being rejected, and the value is already the import."
     },
     {
       "file": "host/src/approach-requirement-pipeline.test.ts",
@@ -46,7 +50,8 @@
       "literal": "0",
       "shape": "declaration_site",
       "sites": 1,
-      "line": 45
+      "line": 45,
+      "reason": "[not-a-population] a character count of `process.env.GAMEBUDDY_STARDEW_GAME_PATH`; it asks whether an environment variable is set, and a string has no members for `new Set(actual)` to name."
     },
     {
       "file": "host/src/body-program-for-each.test.ts",
@@ -54,7 +59,8 @@
       "literal": "3",
       "shape": "unresolved",
       "sites": 1,
-      "line": 179
+      "line": 179,
+      "reason": "[derivable-now] the `assert.deepEqual(rules.map((rule) => rule.do), [three entries])` two lines below already pins the cardinality. Deleting this count loses nothing; it is the `redundant-count` shape closed three times tonight."
     },
     {
       "file": "host/src/body-program-for-each.test.ts",
@@ -62,7 +68,8 @@
       "literal": "1",
       "shape": "call_result",
       "sites": 1,
-      "line": 200
+      "line": 200,
+      "reason": "[derivable-now] inside a loop over the two parsed nodes: `deepEqual(forEachRules(loopOf(node)).map((rule) => rule.do), [<the one rule>])` names the rule per node, which is the fact the count restates."
     },
     {
       "file": "host/src/bootstrap/entry/desktop-host-entry.internal.test.ts",
@@ -70,7 +77,8 @@
       "literal": "0",
       "shape": "unresolved",
       "sites": 1,
-      "line": 351
+      "line": 351,
+      "reason": "[not-a-population] a character count of one stdout line (`line.length === 0` skips the blank)."
     },
     {
       "file": "host/src/companion-control-server.private.test.ts",
@@ -78,7 +86,8 @@
       "literal": "0",
       "shape": "unresolved",
       "sites": 1,
-      "line": 72
+      "line": 72,
+      "reason": "[not-a-population] the same blank-line skip over a stdin frame's text."
     },
     {
       "file": "host/src/companion-presentation-callers.test.ts",
@@ -86,7 +95,8 @@
       "literal": "1",
       "shape": "unresolved",
       "sites": 1,
-      "line": 190
+      "line": 190,
+      "reason": "[derivable-now] the audit's findings for one injected third caller: `deepEqual(thirdCaller.map((finding) => finding.match(/somewhere-else\\.ts/)), ...)` names the caller instead of counting findings. Host suite, not runnable in this lane."
     },
     {
       "file": "host/src/composition/companion-library-list.test.ts",
@@ -94,7 +104,8 @@
       "literal": "1",
       "shape": "call_result",
       "sites": 1,
-      "line": 29
+      "line": 29,
+      "reason": "[derivable-now] the two companions are written inline above the assertion; `deepEqual(list.map((entry) => entry.handle), [\"handle-companion_01\", \"handle-companion_02\"])` derives both this row and the next from them."
     },
     {
       "file": "host/src/composition/companion-library-list.test.ts",
@@ -102,7 +113,8 @@
       "literal": "2",
       "shape": "unresolved",
       "sites": 1,
-      "line": 30
+      "line": 30,
+      "reason": "[derivable-now] same two companions, same derivation: the list's members ARE the input the test declares."
     },
     {
       "file": "host/src/composition/stardew/stardew-native-role-launch-plan.private.test.ts",
@@ -110,7 +122,8 @@
       "literal": "36",
       "shape": "unresolved",
       "sites": 1,
-      "line": 40
+      "line": 40,
+      "reason": "[not-a-population] a character count of a minted GUID; the regex one line above already pins the exact 36-character form and its grouping."
     },
     {
       "file": "host/src/composition/stardew/stardew-native-role-launch-plan.private.test.ts",
@@ -118,7 +131,8 @@
       "literal": "1",
       "shape": "call_result",
       "sites": 1,
-      "line": 62
+      "line": 62,
+      "reason": "[derivable-now] the `deepEqual(Object.keys(plan).sort(), [...])` three lines above is the same fact: the frozen key list already carries exactly one `planId`."
     },
     {
       "file": "host/src/declaration-agreement.test.ts",
@@ -126,7 +140,8 @@
       "literal": "0",
       "shape": "unresolved",
       "sites": 1,
-      "line": 302
+      "line": 302,
+      "reason": "[not-a-population] anti-vacuity guard in the gate's own helper: an empty reader set is the finding it reports, not a population it froze."
     },
     {
       "file": "host/src/declaration-agreement.test.ts",
@@ -134,7 +149,8 @@
       "literal": "0",
       "shape": "unresolved",
       "sites": 1,
-      "line": 446
+      "line": 446,
+      "reason": "[not-a-population] the same anti-vacuity guard (`the Mod declares no scalar member: the population is unreadable`)."
     },
     {
       "file": "host/src/declaration-agreement.test.ts",
@@ -142,7 +158,8 @@
       "literal": "0",
       "shape": "unresolved",
       "sites": 1,
-      "line": 450
+      "line": 450,
+      "reason": "[not-a-population] the same anti-vacuity guard for the `...Omitted` members."
     },
     {
       "file": "host/src/farmhand-companion-preview.test.ts",
@@ -150,7 +167,8 @@
       "literal": "1",
       "shape": "call_result",
       "sites": 4,
-      "line": 483
+      "line": 483,
+      "reason": "[not-a-population] `uncertain` is `() => coordinator.uncertainDispatches()` on the coordinator `gameRuntimeWithCoordinator` builds in this file and seeds with exactly one uncertain dispatch. The count is the fixture's, and it asserts the relaunch did not consume that dispatch; four copies, each with its own failure message."
     },
     {
       "file": "host/src/farmhand-companion-preview.test.ts",
@@ -158,7 +176,8 @@
       "literal": "0",
       "shape": "call_result",
       "sites": 1,
-      "line": 583
+      "line": 583,
+      "reason": "[not-a-population] the same seeded recorder, asserting the recovered receipt consumed the dispatch: the fixture's size is zero after the recovery, not a product population."
     },
     {
       "file": "host/src/game-integration-adapter.private.test.ts",
@@ -166,7 +185,8 @@
       "literal": "0",
       "shape": "unresolved",
       "sites": 1,
-      "line": 105
+      "line": 105,
+      "reason": "[not-a-population] a string emptiness check inside a fixture's `assertIdentityBinding`, rejecting a blank companion id."
     },
     {
       "file": "host/src/game-tools-dispatch-args.test.ts",
@@ -174,7 +194,8 @@
       "literal": "0",
       "shape": "unresolved",
       "sites": 1,
-      "line": 82
+      "line": 82,
+      "reason": "[not-a-population] a guard: `if (declared!.length === 0) continue` skips a mount block the catalog declares no arguments for."
     },
     {
       "file": "host/src/games/stardew/lifecycle/stardew-private-bootstrap-composer.private.test.ts",
@@ -182,7 +203,8 @@
       "literal": "1",
       "shape": "call_result",
       "sites": 3,
-      "line": 2375
+      "line": 2375,
+      "reason": "[not-a-population] `results` is `await Promise.allSettled([...])` over the test's own two promises. The walk answers a call from its receiver, and `Promise` is not a declaration this file binds, so it read the standard combinator as a product. Three copies, each asserting exactly one of the two owned operations succeeded."
     },
     {
       "file": "host/src/games/stardew/lifecycle/stardew-private-bootstrap-composer.private.test.ts",
@@ -190,7 +212,8 @@
       "literal": "1",
       "shape": "call_result",
       "sites": 1,
-      "line": 2418
+      "line": 2418,
+      "reason": "[not-a-population] the other half of the same `Promise.allSettled`: exactly one of the two operations was refused."
     },
     {
       "file": "host/src/native-companion-pacing-delivery.test.ts",
@@ -198,7 +221,8 @@
       "literal": "1",
       "shape": "unresolved",
       "sites": 2,
-      "line": 130
+      "line": 130,
+      "reason": "[derivable-now] `finals` carries the committed reply the test passed in as `reply`: `deepEqual(finals, [reply])` is the fact, and the count restates it. Two copies."
     },
     {
       "file": "host/src/native-companion-split-commit.test.ts",
@@ -206,7 +230,8 @@
       "literal": "1",
       "shape": "unresolved",
       "sites": 1,
-      "line": 116
+      "line": 116,
+      "reason": "[derivable-now] the test asserts `squash(committed[0])` equals `squash(LONG_REPLY)`; `deepEqual(committed, [LONG_REPLY])` pins the same thing and also refuses a second identical commit."
     },
     {
       "file": "host/src/pi-magic-context-chapter-fold.private.test.ts",
@@ -214,7 +239,8 @@
       "literal": "0",
       "shape": "call_result",
       "sites": 1,
-      "line": 472
+      "line": 472,
+      "reason": "[derivable-now] the gate's own prescription: `deepEqual(that filter, [], \"a removed chapter must not be shown as live history\")` prints the chapter that came back."
     },
     {
       "file": "host/src/run-trace-waits.private.test.ts",
@@ -222,7 +248,8 @@
       "literal": "1",
       "shape": "unresolved",
       "sites": 2,
-      "line": 19
+      "line": 19,
+      "reason": "[derivable-now] each of these four counts is followed by field-by-field assertions on `waits[0]`/`waits[1]`; one `deepEqual(waits, [{ startMs, endMs, contested }])` states the members once. Two copies of this literal share the entry."
     },
     {
       "file": "host/src/run-trace-waits.private.test.ts",
@@ -230,7 +257,8 @@
       "literal": "0",
       "shape": "call_result",
       "sites": 1,
-      "line": 36
+      "line": 36,
+      "reason": "[derivable-now] `deepEqual(uncontestedModelWaits(waits), [])` names the projection instead of counting it."
     },
     {
       "file": "host/src/run-trace-waits.private.test.ts",
@@ -238,7 +266,8 @@
       "literal": "0",
       "shape": "unresolved",
       "sites": 1,
-      "line": 53
+      "line": 53,
+      "reason": "[derivable-now] nested actions invent no gap: `deepEqual(waits, [])`."
     },
     {
       "file": "host/src/run-trace-waits.private.test.ts",
@@ -246,7 +275,8 @@
       "literal": "2",
       "shape": "unresolved",
       "sites": 1,
-      "line": 65
+      "line": 65,
+      "reason": "[derivable-now] the mixed trace produces two gaps whose `contested` flags the next two lines assert individually; naming the two objects carries both."
     },
     {
       "file": "host/src/runtime-identity.test.ts",
@@ -254,7 +284,8 @@
       "literal": "64",
       "shape": "unresolved",
       "sites": 1,
-      "line": 51
+      "line": 51,
+      "reason": "[not-a-population] a character count of `identityKey(...)`: a hex digest, and its length is a format fact rather than a member count."
     },
     {
       "file": "host/src/schema-contract.test.ts",
@@ -262,7 +293,8 @@
       "literal": "0",
       "shape": "unresolved",
       "sites": 1,
-      "line": 1608
+      "line": 1608,
+      "reason": "[not-a-population] a guard inside a validator's quantifier parser (`if (witnesses.length === 0) return null`)."
     },
     {
       "file": "host/src/stardew-game-install/desktop-entry-mod-deployment.test.ts",
@@ -270,7 +302,8 @@
       "literal": "1",
       "shape": "unresolved",
       "sites": 1,
-      "line": 101
+      "line": 101,
+      "reason": "[derivable-now] the next three lines read `inputs[0].installRoot`, `inputs[0].package` and `inputs[0].allowReplaceDifferentVersion`; `deepEqual(inputs, [{ ... }])` is the same assertion with the member visible."
     },
     {
       "file": "host/src/stardew-humanlike-action-projection.test.ts",
@@ -278,7 +311,8 @@
       "literal": "0",
       "shape": "unresolved",
       "sites": 1,
-      "line": 515
+      "line": 515,
+      "reason": "[derivable-now] `deepEqual(visible, [], \"Incomplete candidate descriptors must be excluded from visible actions\")` names the descriptor that leaked."
     },
     {
       "file": "host/src/stardew-observation-budget-reachability.test.ts",
@@ -286,7 +320,8 @@
       "literal": "0",
       "shape": "unresolved",
       "sites": 1,
-      "line": 231
+      "line": 231,
+      "reason": "[not-a-population] a guard in the reachability predicate (`if (kept.length === 0) return false`), not an assertion."
     },
     {
       "file": "host/src/tavern/chat-thread-store.private.test.ts",
@@ -294,7 +329,8 @@
       "literal": "1",
       "shape": "unresolved",
       "sites": 1,
-      "line": 556
+      "line": 556,
+      "reason": "[not-a-population] `Promise.allSettled([op1, op2])` over the test's own two CAS operations; the standard combinator reads as a product call to this walk. Exactly one must win."
     },
     {
       "file": "host/src/tavern/chat-thread-store.private.test.ts",
@@ -302,7 +338,8 @@
       "literal": "1",
       "shape": "unresolved",
       "sites": 1,
-      "line": 557
+      "line": 557,
+      "reason": "[not-a-population] the same `Promise.allSettled`: exactly one must lose with `chat_thread_management_revision_conflict`, asserted on the next line."
     },
     {
       "file": "host/src/tavern/p4-provider-start-execution.test.ts",
@@ -310,7 +347,8 @@
       "literal": "1",
       "shape": "unresolved",
       "sites": 1,
-      "line": 456
+      "line": 456,
+      "reason": "[derivable-now] inside a fixture's `assertInstall(turnId, refs, volatileRefs)`: `deepEqual(refs, [<the one durable ref>])` names what the pipeline passed instead of how many."
     },
     {
       "file": "host/src/tavern/preset-placement.private.test.ts",
@@ -318,7 +356,8 @@
       "literal": "0",
       "shape": "call_result",
       "sites": 1,
-      "line": 120
+      "line": 120,
+      "reason": "[derivable-now] the two lines above compare other segments with `deepEqual(identifiers(placements, segment), [...])`; the unplaced segment should read `deepEqual(..., [])` in the same shape."
     },
     {
       "file": "host/src/tavern/preset-placement.private.test.ts",
@@ -326,7 +365,8 @@
       "literal": "1",
       "shape": "call_result",
       "sites": 1,
-      "line": 281
+      "line": 281,
+      "reason": "[derivable-now] `PRESET_MARKERS` is the table the test reads; naming the marker it holds (`deepEqual(entries.filter(([, kind]) => kind === \"cut\").map(([name]) => name), [<name>])`) is the fact."
     },
     {
       "file": "host/src/tavern/preset-st-conformance.private.test.ts",
@@ -334,7 +374,8 @@
       "literal": "9",
       "shape": "unresolved",
       "sites": 1,
-      "line": 519
+      "line": 519,
+      "reason": "[needs-a-decision] the assertion is a re-measurement tripwire on a real user document outside the repo (`amber's row count this suite was measured against has changed`). Reading A, the gate's: a frozen count of a population this file did not declare. Reading B, the test's: a tripwire that must fire when the corpus changes, whose 9 row identifiers are not the test's to restate. Naming the 9 identifiers would duplicate a user's preset in the suite; leaving the count keeps a literal as the expected side of a population."
     },
     {
       "file": "host/src/tavern/reference-pipeline-state.test.ts",
@@ -342,7 +383,8 @@
       "literal": "10",
       "shape": "unresolved",
       "sites": 1,
-      "line": 247
+      "line": 247,
+      "reason": "[derivable-now] the rows are one per matrix entry the file declares, so `assert.equal(results.length, MATRIX.length)` names an authority on both sides - the shape the gate's own docblock calls fine."
     },
     {
       "file": "host/src/voice-gateway-client.test.ts",
@@ -350,7 +392,8 @@
       "literal": "0",
       "shape": "unresolved",
       "sites": 1,
-      "line": 91
+      "line": 91,
+      "reason": "[not-a-population] the blank-line skip over a socket chunk's text."
     },
     {
       "file": "host/src/world-state-stale-publication.test.ts",
@@ -358,7 +401,8 @@
       "literal": "1",
       "shape": "unresolved",
       "sites": 1,
-      "line": 342
+      "line": 342,
+      "reason": "[derivable-now] `silent` is the test's own `ACCOUNTED` table filtered by a `SILENT:` prefix; `deepEqual(silent.map(([signature]) => signature), [\"...currentSnapshot\"])` names the one silent bump site the assertion is about."
     },
     {
       "file": "integrations/stardew/action-development/tests/stardew-branch-writeset.test.mjs",
@@ -366,7 +410,8 @@
       "literal": "0",
       "shape": "unresolved",
       "sites": 1,
-      "line": 86
+      "line": 86,
+      "reason": "[not-a-population] a guard collecting the seams that resolved to nothing (`if (methods.length === 0) failures.push(...)`), which the `deepEqual(failures, [])` at the end reads."
     },
     {
       "file": "integrations/stardew/action-development/tests/stardew-branch-writeset.test.mjs",
@@ -374,7 +419,8 @@
       "literal": "1",
       "shape": "unresolved",
       "sites": 1,
-      "line": 210
+      "line": 210,
+      "reason": "[derivable-now] `deepEqual(methods.map((method) => method.memberName), [member])` names the seam that was resolved, which is what `must exist` means."
     },
     {
       "file": "integrations/stardew/action-development/tests/stardew-observation-gap.test.mjs",
@@ -382,7 +428,8 @@
       "literal": "1",
       "shape": "call_result",
       "sites": 1,
-      "line": 198
+      "line": 198,
+      "reason": "[derivable-now] the next line already `deepEqual`s every id; `deepEqual(that filter.map((entry) => entry.id), [\"objects\"])` states one row per collection, which is the assertion's own comment."
     },
     {
       "file": "integrations/stardew/action-development/tests/stardew-rejected-layer-verdicts.test.mjs",
@@ -390,7 +437,8 @@
       "literal": "1",
       "shape": "unresolved",
       "sites": 1,
-      "line": 67
+      "line": 67,
+      "reason": "[derivable-now] the three lines below read `rows[0].group`, `rows[0].actionIds` and `rows[0].reason`; one `deepEqual(rows, [{ ... }])` carries all of it and counts as well."
     },
     {
       "file": "integrations/stardew/action-development/tests/static-verifier-contract.test.mjs",
@@ -398,15 +446,8 @@
       "literal": "3",
       "shape": "declaration_site",
       "sites": 1,
-      "line": 63
-    },
-    {
-      "file": "tools/audit-preset-macro-frequency.test.mjs",
-      "authority": "shorthandFamily",
-      "literal": "3",
-      "shape": "unresolved",
-      "sites": 1,
-      "line": 96
+      "line": 63,
+      "reason": "[derivable-now] the two tables above it are `deepEqual`d against their declarations verbatim; the same shape for this import (`deepEqual(INTEGRATION_REQUIREMENTS.map((entry) => entry.id), [...])`) is what the file already does elsewhere."
     },
     {
       "file": "tools/audit-stardew-decision-closure.test.mjs",
@@ -414,7 +455,8 @@
       "literal": "0",
       "shape": "unresolved",
       "sites": 1,
-      "line": 1123
+      "line": 1123,
+      "reason": "[not-a-population] a guard inside a drift helper (`admitted.length === names.length || admitted.length === 0`) deciding whether the sites split; the split is what it reports on, not a population it froze."
     },
     {
       "file": "tools/check-crash-report-containment.test.mjs",
@@ -422,7 +464,8 @@
       "literal": "1",
       "shape": "call_result",
       "sites": 1,
-      "line": 245
+      "line": 245,
+      "reason": "[not-a-population] `reports` is a local arrow over `readdirSync(directory)` - a directory listing of a throwaway root a spawned child wrote into, whose report file name carries the child's pid and a timestamp. The set is the child's, and no member list can be named for it."
     },
     {
       "file": "tools/check-crash-report-containment.test.mjs",
@@ -430,7 +473,8 @@
       "literal": "0",
       "shape": "call_result",
       "sites": 1,
-      "line": 246
+      "line": 246,
+      "reason": "[not-a-population] the same listing, asserting nothing landed in the contained directory."
     },
     {
       "file": "tools/check-crash-report-containment.test.mjs",
@@ -438,7 +482,8 @@
       "literal": "0",
       "shape": "call_result",
       "sites": 1,
-      "line": 255
+      "line": 255,
+      "reason": "[not-a-population] the same listing after the contained child ran: nothing inside the tree."
     },
     {
       "file": "tools/check-crash-report-containment.test.mjs",
@@ -446,7 +491,8 @@
       "literal": "1",
       "shape": "call_result",
       "sites": 1,
-      "line": 256
+      "line": 256,
+      "reason": "[not-a-population] the same listing: exactly one report in the contained directory, whose name the child chose."
     },
     {
       "file": "tools/check-credential-export-isolation.test.mjs",
@@ -454,23 +500,8 @@
       "literal": "2",
       "shape": "unresolved",
       "sites": 1,
-      "line": 540
-    },
-    {
-      "file": "tools/lib/live-run-teardown.test.mjs",
-      "authority": "JSON.parse(readFileSync(resultPath, \"utf8\")).reclamation.steps",
-      "literal": "5",
-      "shape": "call_result",
-      "sites": 1,
-      "line": 294
-    },
-    {
-      "file": "tools/lib/parser-agreement.test.mjs",
-      "authority": "readings",
-      "literal": "1",
-      "shape": "unresolved",
-      "sites": 1,
-      "line": 62
+      "line": 540,
+      "reason": "[not-a-population] `credentialPopulation(root)` reads the throwaway tree this test just wrote from its own `fixture({})`; the two credentials are the fixture's, and the walk lost the fixture because it arrives as a parameter."
     },
     {
       "file": "tools/live-run/frontend/capture/injection-claims.test.mjs",
@@ -478,7 +509,8 @@
       "literal": "0",
       "shape": "unresolved",
       "sites": 1,
-      "line": 90
+      "line": 90,
+      "reason": "[not-a-population] a ternary in a fixture builder choosing the empty-session-history block, over a `history` string parameter - a character count, not a member count."
     },
     {
       "file": "tools/live-run/frontend/capture/observation.test.mjs",
@@ -486,7 +518,8 @@
       "literal": "1",
       "shape": "unresolved",
       "sites": 1,
-      "line": 119
+      "line": 119,
+      "reason": "[derivable-now] the whole pair is asserted field by field on the next lines; `deepEqual(pairs, [{ surface, startMs, durationMs }])` carries the count and the members in one reading."
     },
     {
       "file": "tools/live-run/round-verdict.test.mjs",
@@ -494,7 +527,8 @@
       "literal": "0",
       "shape": "unresolved",
       "sites": 1,
-      "line": 54
+      "line": 54,
+      "reason": "[not-a-population] a ternary in a fixture builder that omits an empty field from the answer object."
     },
     {
       "file": "tools/promote-stardew-action.test.mjs",
@@ -502,7 +536,8 @@
       "literal": "6",
       "shape": "declaration_site",
       "sites": 1,
-      "line": 147
+      "line": 147,
+      "reason": "[needs-a-decision] the count and the two endpoints (`[0]`, `[5]`) pin the tool's published header, `the header's six responsibilities are declared in promotion order`. Reading A, the gate's: a frozen count of an imported table. Reading B, the test's: the published list is the contract, and restating all six would make the test a second copy of it. Naming the members is the only derivation, and it replaces one copy with another."
     },
     {
       "file": "tools/run-stardew-native-local-player-accept-daily-quest-smoke.test.mjs",
@@ -510,7 +545,8 @@
       "literal": "1",
       "shape": "call_result",
       "sites": 2,
-      "line": 108
+      "line": 108,
+      "reason": "[derivable-now] the line above names the check (`checks.offerNoLongerAdvertised === \"not_checked\"`); `deepEqual(failingChecks(checks), [\"offerNoLongerAdvertised\"])` says `on exactly this check` as a member. Two copies, one entry."
     },
     {
       "file": "tools/run-stardew-native-local-player-build-farm-building-smoke.test.mjs",
@@ -518,7 +554,8 @@
       "literal": "2",
       "shape": "call_result",
       "sites": 1,
-      "line": 168
+      "line": 168,
+      "reason": "[derivable-now] the two `not_checked` checks are named one and two lines above the count; the member list states `on exactly these two checks`."
     },
     {
       "file": "tools/run-stardew-native-local-player-clear-fish-pond-smoke.test.mjs",
@@ -526,7 +563,8 @@
       "literal": "1",
       "shape": "call_result",
       "sites": 1,
-      "line": 99
+      "line": 99,
+      "reason": "[derivable-now] `checks.fishEjected === \"not_checked\"` is asserted one line above; the failing member is the same fact."
     },
     {
       "file": "tools/run-stardew-native-local-player-dialogue-stream-smoke.test.mjs",
@@ -534,7 +572,8 @@
       "literal": "2",
       "shape": "call_result",
       "sites": 1,
-      "line": 70
+      "line": 70,
+      "reason": "[derivable-now] `deepEqual(pages.map((page) => page.text), [...])` pins the two pages the pager emitted, and `observed.pagedAs` one line above already names the paging."
     },
     {
       "file": "tools/run-stardew-native-local-player-equip-wearable-smoke.test.mjs",
@@ -542,7 +581,8 @@
       "literal": "16",
       "shape": "unresolved",
       "sites": 1,
-      "line": 40
+      "line": 40,
+      "reason": "[not-a-population] a character count of the hex digest inside a wearable target id, guarded beside `/^[0-9a-f]+$/`."
     },
     {
       "file": "tools/run-stardew-native-local-player-multiplayer-live-loop-smoke.test.mjs",
@@ -550,7 +590,8 @@
       "literal": "2",
       "shape": "unresolved",
       "sites": 1,
-      "line": 159
+      "line": 159,
+      "reason": "[derivable-now] the next four lines read `archived[0].bytes`, `archived[0].destination`, `archived[1].destination` and `archived[1].reason`; one `deepEqual` over the two entries states them once."
     },
     {
       "file": "tools/run-stardew-native-local-player-multiplayer-live-loop-smoke.test.mjs",
@@ -558,7 +599,8 @@
       "literal": "2",
       "shape": "unresolved",
       "sites": 1,
-      "line": 199
+      "line": 199,
+      "reason": "[derivable-now] the two texts are `deepEqual`d on the next two lines; `deepEqual(turns.map((turn) => turn.text), [first, second])` is one reading."
     },
     {
       "file": "tools/run-stardew-native-local-player-name-entity-smoke.test.mjs",
@@ -566,7 +608,8 @@
       "literal": "2",
       "shape": "call_result",
       "sites": 1,
-      "line": 102
+      "line": 102,
+      "reason": "[derivable-now] the two `not_checked` checks are named immediately above; the member list is `on exactly these two checks`."
     },
     {
       "file": "tools/run-stardew-native-local-player-unequip-wearable-smoke.test.mjs",
@@ -574,7 +617,8 @@
       "literal": "16",
       "shape": "unresolved",
       "sites": 1,
-      "line": 28
+      "line": 28,
+      "reason": "[not-a-population] the same hex-digest character count in the unequip runner's target-id parser."
     },
     {
       "file": "tools/run-tavern-management-operation-evidence.test.mjs",
@@ -582,7 +626,8 @@
       "literal": "0",
       "shape": "unresolved",
       "sites": 1,
-      "line": 95
+      "line": 95,
+      "reason": "[not-a-population] a guard collecting the operations whose block asserts nothing (`if (assertions.length === 0) bare.push(...)`), which `deepEqual(bare, [])` then reads."
     },
     {
       "file": "tools/run-tool-test-corpus.test.mjs",
@@ -590,7 +635,8 @@
       "literal": "1",
       "shape": "unresolved",
       "sites": 1,
-      "line": 101
+      "line": 101,
+      "reason": "[derivable-now] `details` is the printed member line; `deepEqual(details.length, 1)` becomes `deepEqual(details.map((line) => line.replace(/ · .*$/, \"\")), [\"  member test:broken\"])`, and `the responsible member is named once` is the member not the count."
     },
     {
       "file": "tools/run-tool-test-corpus.test.mjs",
@@ -598,7 +644,8 @@
       "literal": "5",
       "shape": "call_result",
       "sites": 1,
-      "line": 163
+      "line": 163,
+      "reason": "[derivable-now] seven members fail and the printer caps at five; the five names are deterministic (`test:broken-0` .. `test:broken-4`), so the member list is nameable and the `… and 2 more` line below already states the rest."
     },
     {
       "file": "tools/stardew-humanlike-target-version-characterization.test.mjs",
@@ -606,7 +653,8 @@
       "literal": "1",
       "shape": "unresolved",
       "sites": 2,
-      "line": 257
+      "line": 257,
+      "reason": "[not-a-population] two guards inside `.find` predicates over a decompiled signature (`m.parameters?.length === 1 && m.parameters[0].name === ...`), selecting the method rather than counting a population. Two sites, one entry."
     },
     {
       "file": "tools/stardew-soil-itm-canary-gate.test.mjs",
@@ -614,7 +662,8 @@
       "literal": "0",
       "shape": "call_result",
       "sites": 1,
-      "line": 35
+      "line": 35,
+      "reason": "[not-a-population] a module-level boolean the suite uses to decide whether the witness root is measured at all; it is a skip condition, not an assertion."
     },
     {
       "file": "tools/stardew-soil-itm-canary.test.mjs",
@@ -622,7 +671,8 @@
       "literal": "0",
       "shape": "declaration_site",
       "sites": 1,
-      "line": 35
+      "line": 35,
+      "reason": "[not-a-population] a ternary producing the suite's skip reason from the same missing-witness reading."
     }
   ]
 }

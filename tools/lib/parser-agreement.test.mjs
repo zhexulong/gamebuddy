@@ -59,8 +59,11 @@ test.after(() => {
 test("the two macro readers agree on the repository's own grammar", () => {
   const { readings, findings } = auditParserAgreement();
   assert.deepEqual(findings, []);
-  assert.equal(readings.length, 1);
-  assert.equal(readings[0].vocabulary, "tavern-macro");
+  assert.deepEqual(
+    readings.map((reading) => reading.vocabulary),
+    ["tavern-macro"],
+    "the repository's own grammar is one vocabulary, read by both readers",
+  );
   assert.equal(readings[0].readers.length, 2);
   assert.ok(readings[0].members > 100, `the probe corpus measured ${readings[0].members} members`);
 });

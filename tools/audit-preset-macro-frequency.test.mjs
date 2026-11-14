@@ -93,7 +93,11 @@ test("a nested macro keeps the outer name, and the {{#if}} spelling names if", (
 test("a shorthand is keyed by the family entry the table declares", () => {
   const census = censusReading([preset([{ content: "{{.mood}} {{.my-var}} {{$gold}}" }])], { table: PRESET_MACROS });
   const shorthandFamily = PRESET_MACROS.filter((entry) => entry.family !== undefined);
-  assert.equal(shorthandFamily.length, 3, "the table is the authority for which sigils are families");
+  assert.deepEqual(
+    shorthandFamily.map((entry) => entry.name),
+    [".varName", ".varName = value", "$varName"],
+    "the table is the authority for which sigils are families",
+  );
   assert.deepEqual(
     census.names.map((row) => [row.name, row.occurrences]),
     [
