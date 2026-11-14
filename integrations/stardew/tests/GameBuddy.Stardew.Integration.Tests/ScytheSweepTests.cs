@@ -18,6 +18,7 @@ namespace GameBuddy.Stardew.Integration.Tests;
 /// here.
 /// </para>
 /// </summary>
+// MIXED SHAPE AND BEHAVIOUR: the three tests that drive `FarmhandActionCatalog` and the transition table exercise real objects, while the two that read the shipped Mod sources pin the actor-state restoration on every exit and the arc read that must precede the swing - neither of which can be driven without a game thread, so they are asserted on the text that would have to change.
 public sealed class ScytheSweepTests
 {
     private const string ModRoot = "integrations/stardew";

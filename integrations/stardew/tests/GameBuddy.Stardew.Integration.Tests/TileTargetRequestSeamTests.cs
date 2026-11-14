@@ -31,6 +31,7 @@ namespace GameBuddy.Stardew.Integration.Tests;
 /// location, or that grows an admission or an authorization of its own, fails here and names itself.
 /// </para>
 /// </summary>
+// MIXED SHAPE AND BEHAVIOUR: the five pins read the seam's own source because the collapse they guard against compiles and only misbehaves on a live game thread (another action's wire identity, another executor, arguments in the wrong order), while the one behaviour test drives the real catalogue to prove every authorizing site names one of the seam's proofs.
 public sealed class TileTargetRequestSeamTests
 {
     private const string SeamFile = "farmhandexecutioncontroller.tiletargetrequest.cs";

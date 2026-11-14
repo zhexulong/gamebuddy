@@ -22,8 +22,7 @@ namespace GameBuddy.Stardew.Integration.Tests;
 /// asserted against the real catalog objects and the wire side against the Mod's own request parser.
 /// The live numbers belong to a live gate, which this lane deliberately did not run.
 /// </summary>
-// MIXED SHAPE AND BEHAVIOUR: the pins here assert on repository source text because the native seam they cover cannot load in a headless runner, while the registration pins read the real catalog objects; keeping both in one file keeps each pin beside the behaviour it protects.
-[Trait("kind", "source-shape")]
+// MIXED SHAPE AND BEHAVIOUR: the pins here assert on repository source text because the native seam they cover cannot load in a headless runner, while the registration pins read the real catalog objects; keeping both in one file keeps each pin beside the behaviour it protects. The trait is not on this class: it would tell `--filter kind=source-shape` that all eight tests pin text, and the wire test drives the Mod's own parser instead.
 public sealed class OpenGeodeActionSourceShapeTests
 {
     private const string HandlerFile = "farmhandexecutioncontroller.geodeactions.cs";

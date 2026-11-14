@@ -28,8 +28,15 @@ import { after, test } from "node:test";
 
 import { MIXED_MARKER, auditStardewTestShape } from "./audit-stardew-test-shape.mjs";
 
-/** The two files whose marker placement this suite was written for, in the real population. */
-const REAL_FILES = ["RefusalLayerNamingTests.cs", "ToolPreconditionUniformityTests.cs"];
+/**
+ * The real files whose marker placement this suite was written for. No longer a hand-written list: the population is
+the files whose own class-comment block carries the marker, so a file that starts stating its mix is covered the moment
+it does, and one that stops is not silently exempt. `RefusalLayerNamingTests.cs` became `ambiguous` when its
+`RefusalNamingRatchet` began asserting a derived count rather than the text itself - the gate reports such a file and
+leaves it alone, which is why a pinned `kind` broke while the placement rule it was watching held.
+ */
+const rowsStatingTheirMix = (report) =>
+  report.rows.filter((row) => row.classComments.some((comment) => comment.startsWith(MIXED_MARKER)));
 
 /** Enough of a why, by the gate's own 80-character bar. */
 const WHY =
@@ -122,20 +129,18 @@ test("a marker attached to the class clears the finding", () => {
   assert.deepEqual(rules(audit("attached")), []);
 });
 
-test("the two real mixed files attach the marker to their class and produce no finding", () => {
+test("every real file that states its mix above the class is accepted for it", () => {
   const report = auditStardewTestShape();
-  for (const file of REAL_FILES) {
-    const row = report.rows.find((candidate) => candidate.file === file);
-    assert.ok(row, `${file} is part of the audited population`);
-    assert.equal(row.kind, "mixed", `${file} holds both kinds`);
-    assert.ok(
-      row.classComments.some((comment) => comment.startsWith(MIXED_MARKER)),
-      `${file} carries ${MIXED_MARKER} in the comment block above its class`,
-    );
+  const stating = rowsStatingTheirMix(report);
+  assert.ok(
+    stating.length > 0,
+    `no file in the population carries ${MIXED_MARKER} in its class block, so the placement this suite exists for is no longer exercised against the real tree`,
+  );
+  for (const row of stating) {
     assert.deepEqual(
-      report.findings.filter((finding) => finding.file === file),
+      report.findings.filter((finding) => finding.file === row.file),
       [],
-      `${file} produces no finding`,
+      `${row.file} states its mix in the comment block above its class, so it must produce no finding`,
     );
   }
 });
