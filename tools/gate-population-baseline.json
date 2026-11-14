@@ -26,7 +26,6 @@
     "gate_without_population check:host-game-physical-seam",
     "gate_without_population check:host-module-graph",
     "gate_without_population check:host-windows-test-preflight",
-    "gate_without_population check:live-run-preflight",
     "gate_without_population check:sandbox-acceptance",
     "gate_without_population check:script-entries",
     "gate_without_population check:smoke-syntax",
