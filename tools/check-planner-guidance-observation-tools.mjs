@@ -416,8 +416,10 @@ export function numericConstants(...sources) {
  * The places the plan surface publishes prose to the model, each with the literals it is made of.
  *
  * Two sources, and neither is a list of sentences: the planner's guidance is the whole body of the function that builds
- * it, and the tool module is read at every `description:` key it declares. A `description:` whose value is not a literal
- * is a place this gate could not read, which is `plan_node_limit_place_unreadable` rather than a place it skipped.
+ * it, and the tool module is read at every `description:` key it declares. The plan tool's own `description:` is that same
+ * guidance, so the call to its builder is the place already counted rather than a second text. Any other `description:`
+ * whose value is not a literal is a place this gate could not read, which is `plan_node_limit_place_unreadable` rather
+ * than a place it skipped.
  */
 export function planTextPlaces({ guidanceSource, toolsSource }) {
   const places = [];
