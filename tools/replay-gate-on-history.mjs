@@ -101,6 +101,8 @@ import { tmpdir } from "node:os";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { containedChildEnvironment } from "./lib/crash-report-containment.mjs";
+
 const REPOSITORY_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const BUILTINS = new Set(builtinModules);
 const SOURCE_SUFFIX = /\.(?:[cm]?[jt]sx?)$/iu;
@@ -347,7 +349,7 @@ function provisionGate(treeDir, gateFiles, extraModules = [], baseDir = ".") {
   const linked = [];
   const missing = [];
   const seen = new Set();
-  const queue = gateFiles.map((gateRel) => resolveGatePath(gateRel));
+  const queue = gateFiles.map((gate) => gate.replace(/\\/gu, "/"));
   while (queue.length > 0) {
     const repoRelative = queue.shift();
     if (seen.has(repoRelative)) continue;
@@ -395,9 +397,8 @@ function linkPackage(treeDir, fromDir, packageName, linked, missing) {
 }
 
 function resolveGatePath(gate) {
-  const absolute = resolve(process.cwd(), gate);
-  const repoRelative = relative(REPOSITORY_ROOT, absolute);
-  return repoRelative.startsWith("..") ? gate : repoRelative.replace(/\\/gu, "/");
+  const repoRelative = relative(REPOSITORY_ROOT, resolve(process.cwd(), gate)).replace(/\\/gu, "/");
+  return repoRelative.startsWith("..") ? null : repoRelative;
 }
 
 /** The modules a registered command loads through its own flags (`--import tsx`, `--require x`). */
@@ -661,9 +662,9 @@ export function readTestRunVerdict({ exitCode, stdout, stderr }) {
   return { verdict: "fired", findings: details.length, population: tests, details, reportLine: null, readings };
 }
 
-/** The environment the gate runs in: the repository's own, minus the test-runner context. */
+/** The environment the gate runs in: the repository's own, with Node's crash reporter contained. */
 function childEnvironment() {
-  const environment = { ...process.env };
+  const environment = containedChildEnvironment();
   // A `node --test` child that inherits NODE_TEST_CONTEXT writes nothing and exits 0, so a replay started
   // from inside a suite would read an empty run as a clean one.
   delete environment.NODE_TEST_CONTEXT;
@@ -868,7 +869,15 @@ async function main(argv) {
     usage(revisionProblem);
     return;
   }
-  const gates = options.gates.map((gate) => resolveGatePath(gate));
+  const gates = [];
+  for (const gate of options.gates) {
+    const relativeGate = resolveGatePath(gate);
+    if (relativeGate === null) {
+      usage(`--gate ${gate} is not inside this repository`);
+      return;
+    }
+    gates.push(relativeGate);
+  }
   const outDir = options.out === null ? null : resolve(process.cwd(), options.out);
   process.stdout.write(`replay-gate-on-history  ${gates.join(", ")}\n`);
   for (const gate of gates) {

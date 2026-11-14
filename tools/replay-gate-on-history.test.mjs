@@ -16,6 +16,8 @@ import { dirname, join, resolve } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
+import { containedChildEnvironment } from "./lib/crash-report-containment.mjs";
+
 import {
   readReportVerdict,
   readTestRunVerdict,
@@ -32,14 +34,14 @@ const TOOL = join(REPOSITORY_ROOT, "tools", "replay-gate-on-history.mjs");
 const TEMP_PREFIX = "gamebuddy-gate-replay-";
 
 function childEnvironment() {
-  const environment = { ...process.env };
+  const environment = containedChildEnvironment();
   delete environment.NODE_TEST_CONTEXT;
   return environment;
 }
 
-function replay(arguments_) {
+function replay(arguments_, cwd = REPOSITORY_ROOT) {
   const result = spawnSync(process.execPath, [TOOL, ...arguments_], {
-    cwd: REPOSITORY_ROOT,
+    cwd,
     encoding: "utf8",
     timeout: 300_000,
     env: childEnvironment(),
@@ -273,7 +275,10 @@ test(
     const replayed = replay(["--gate", "dialogue-web/tests/selector-producer-gate.test.mjs", "--at", "294d22ab"]);
     assert.equal(replayed.status, 0, replayed.output);
     const after = readdirSync(tmpdir()).filter((name) => name.startsWith(TEMP_PREFIX)).length;
-    assert.equal(after, before, "the archive tree is removed once its verdict is read");
+    // Other lanes may be replaying at the same time, so this run's own share is what it can promise: it adds
+    // none. Its verdict line names a kept tree when it keeps one, which is the reading below.
+    assert.ok(after <= before, `the archive tree is removed once its verdict is read (${before} -> ${after})`);
+    assert.doesNotMatch(replayed.output, /kept:/u);
     assert.ok(
       existsSync(join(REPOSITORY_ROOT, "dialogue-web", "node_modules", "typescript", "package.json")),
       "a linked package is a link to the worktree's copy, never a move of it",
@@ -310,4 +315,22 @@ test("the command line refuses what it cannot measure honestly", () => {
   ]);
   assert.equal(twoGates.status, 2, twoGates.output);
   assert.match(twoGates.output, /--expect needs one --gate/u);
+
+  const outside = replay(["--gate", join(tmpdir(), "not-in-this-repository.mjs"), "--at", "930a031e"]);
+  assert.equal(outside.status, 2, outside.output);
+  assert.match(outside.output, /is not inside this repository/u);
 });
+
+test(
+  "an absolute gate path from another directory is resolved once, not against that directory twice",
+  HISTORY_ABSENT,
+  () => {
+    const replayed = replay(
+      ["--gate", join(REPOSITORY_ROOT, "tools", "check-spec-waiver-comments.mjs"), "--at", "930a031e"],
+      tmpdir(),
+    );
+    assert.equal(replayed.status, 0, replayed.output);
+    assert.match(replayed.output, /verdict: did-not-fire/u);
+    assert.doesNotMatch(replayed.output, /dependencies_absent/u);
+  },
+);
