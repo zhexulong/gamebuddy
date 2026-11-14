@@ -1,8 +1,8 @@
 {
   "note": "Repo-relative paths biome's linter reports errors in, and how many errors each carries, recorded from the committed tree. Recorded so the lint gate can ratchet: it fails on a file that newly joins this set or whose error count grows, and never on the set itself. Update deliberately, in its own commit, when a change removes errors from it.",
-  "revision": "87d89442",
-  "errors": 84,
-  "warnings": 1905,
+  "revision": "aba22f30",
+  "errors": 83,
+  "warnings": 1951,
   "files": {
     "dialogue-web/src/components/MarkdownMessage.tsx": 1,
     "dialogue-web/src/components/management-panels.tsx": 1,
@@ -11,7 +11,6 @@
     "host/src/stardew-recovery-integration.private.test.ts": 1,
     "tools/ab-historian-voice.mjs": 1,
     "tools/audit-stardew-admission-fork-delta.mjs": 1,
-    "tools/check-dialogue-web-boundaries.test.mjs": 1,
     "tools/check-production-pack-load.test.mjs": 2,
     "tools/check-stardew-actor-admissibility.mjs": 1,
     "tools/check-stardew-loop-closure.mjs": 1,
