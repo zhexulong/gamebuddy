@@ -2732,7 +2732,11 @@ test("stardew_plan_work teaches submit-then-end-the-turn, and names what wakes t
     /each step's receipt arrives later as a new message/u,
     "naming the fact that wakes the companion instead of a tool it would have to call",
   );
-  assert.match(planWork, /end your turn and speak to the player/u, "so the turn it should take is stated too");
+  assert.match(planWork, /so end your turn\b/u, "so the turn it should take is stated too");
+  // Whether she says anything with that turn is the preset's (`说清就停`), not the tool's: a description says how to
+  // call the tool. Removed 2026-11-15 - "...so end your turn and speak to the player" made every settled plan owe a
+  // bubble, and `conversational-stance-gate.test.ts` is what keeps it out.
+  assert.doesNotMatch(planWork, /speak to the player/u, "and the description leaves speaking to the preset");
   assert.match(
     planWork,
     /stardew_action_program_status is for a plan that is not moving, not a progress bar/u,

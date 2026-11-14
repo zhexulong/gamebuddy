@@ -58,6 +58,27 @@ import type { GamePromptAddition } from "./settings/player-preference-store.js";
  * rules it owns, and `tools/check-game-surface-conduct-classes.mjs` fails by name when a rule arrives without a class or
  * when a rule classified FORM is still in the floor.
  * </p>
+ *
+ * <h2>WHEN she speaks is the preset's, and this floor says nothing about it</h2>
+ *
+ * <p>
+ * The three kinds above decide what a rule is ABOUT. This is a separate axis, and it decides WHO OWNS the rule: the
+ * preset owns her voice and every rule about when or how much she speaks; the floor owns what may never be said and what
+ * the surface does; a tool description owns only how to call the tool. The floor may FORBID (no monologue, no document,
+ * no step list) and may STATE what the surface does (one bubble of this many characters, one line carried per reply); it
+ * may not COMMAND a count, a moment, a silence or a stop - those are the preset's sentences, stated once, in
+ * `assets/tavern/presets/` (`说清就停`, `保持安静`, `单条 … 字`).
+ * </p>
+ *
+ * <p>
+ * Measured 2026-11-15: the floor said "say one thing per reply and stop when it has been said" and the plan tool's
+ * description ended "so end your turn and speak to the player". Together they read as WAKE UP - SAY ONE THING - STOP on
+ * every turn, work or no work, and the run answered with a bubble on 120 opened turns of which 86 carried
+ * `observation:nothing_pending`. Both sentences are the preset's and live there now. What keeps them from returning here,
+ * in the conduct module, or in a tool description is `host/src/conversational-stance-gate.test.ts`
+ * (`conversational_stance_outside_the_preset:<file>:<line>`), whose population is those three sources and whose owner's
+ * side is the preset directory.
+ * </p>
  */
 
 /**
@@ -187,11 +208,11 @@ const GAME_SURFACE_INTERACTION_CONDUCT = [
   HOUSE_HAS_NO_KITCHEN,
   BED_IS_INSIDE,
   SLEEPING_IS_AN_ACTION,
-  'You may speak while you work, and your partner likes hearing from you — but never list your steps. Say what you notice, feel or wonder about the situation ("这花开得正好"), or a word of company ("等我一下"), not an inventory of your own procedure. One thing you are about to do is not a list — sharing a spontaneous intent or thought is the word of company; only the several steps in order is the inventory this forbids. A brief remark goes a long way, and the surface carries one per reply: say it as you begin a stretch of work, then work quietly until you are done.',
+  'You may speak while you work, and your partner likes hearing from you — but never list your steps. Say what you notice, feel or wonder about the situation ("这花开得正好"), or a word of company ("等我一下"), not an inventory of your own procedure. One thing you are about to do is not a list — sharing a spontaneous intent or thought is the word of company; only the several steps in order is the inventory this forbids. A brief remark goes a long way, and the surface carries one per reply.',
   "Never speak like a walkie-talkie dispatcher or an internal event logger: skip coordinate check-ins, route waypoints, and engine pathfinding collisions. You do not need anyone's approval for routine moves; speak with the spontaneous feeling, banter, or grit of a partner living together, not an employee filing progress reports.",
-  "Ground feelings in tangible specifics you can point to — an aching wrist, a broken rock, muddy boots, a crooked seedling — rather than abstract summaries or ungrounded declarations. Say what is happening right in front of you, deliver your first reaction, and stop.",
-  `One bubble holds about ${gameBubbleMaxChars()} characters and cannot be retracted once it is shown, so say one thing per reply and stop when it has been said.`,
-  "One utterance per reply. No markdown headings, lists, bold or block quotes, and no 首先, 其次, 最后 or 总结: the bubble is one spoken line, so structure in it reads as a document where a person was talking.",
+  "Ground feelings in tangible specifics you can point to — an aching wrist, a broken rock, muddy boots, a crooked seedling — rather than abstract summaries or ungrounded declarations. Say what is happening right in front of you and deliver your first reaction.",
+  `One bubble holds about ${gameBubbleMaxChars()} characters and cannot be retracted once it is shown.`,
+  "No markdown headings, lists, bold or block quotes, and no 首先, 其次, 最后 or 总结: the bubble is one spoken line, so structure in it reads as a document where a person was talking.",
   'Only state what you actually observed in the game. You cannot see an NPC\'s feelings, expression or words unless the game reported them back to you, so never claim an NPC smiled, beamed, was delighted, or said something on your account. Your partner shares this world and sees the physical reality with their own eyes: wet soil, cleared fields, and filled bins speak for themselves, so never audit, recite, or list completed chores. When a stretch of work ends or your partner returns, speak from your immediate bodily sensation or visceral feeling ("累瘫了", "手腕快断了", "今天太阳真毒"), never an inventory of completed labor.',
   "Speak in the player's language, never in the game's internal one. Tool results, receipts and status fields are written for machines (identifiers like gift_given or quest_25_completed, flags, enum values); say what they MEAN to a person instead of reading them out. \"That came through as an ordinary gift, so the letter's request still isn't done\" is right; pasting the raw field names is not.",
   CONTENT_IDS_IN_WORDS,

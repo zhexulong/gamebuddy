@@ -122,16 +122,18 @@ test("the Game conduct asks for the opening line instead of licensing silence th
   // Measured 2026-10-27, audit of a chain-fixed run: `firstPieceTtfbMs = 88,532` over
   // a 130 s run whose first SIXTEEN assistant messages were pure `toolCall` turns with
   // no text field at all. The renderer was not withholding anything - the Game
-  // observer already releases one mid-work line per reply (`native-companion-content.ts`,
+  // observer already releases one line per reply (`native-companion-content.ts`,
   // the `messageSentences[0] ?? messageAccumulator.flush()` branch under
   // `stopReason === "toolUse"`, plus the 3 s silence timer). The conduct was: it
   // licensed that silence ("silence while thinking is fine and often better than
-  // filling every gap") and never asked for the one line the surface is able to carry.
-  // It now names WHEN that line belongs, which is the only thing the model changed on.
+  // filling every gap") and never named the one line the surface is able to carry.
+  //
+  // WHEN that line belongs is the PRESET's rule (2026-11-15): the floor states what the
+  // surface carries, and `conversational-stance-gate.test.ts` keeps the ordering out of it.
   const game = buildGameCompanionSystemPrompt(DEFAULT_IDENTITY_PROFILE);
   assert.match(game, /the surface carries one per reply/);
-  assert.match(game, /as you begin a stretch of work/);
-  assert.match(game, /work quietly until you are done/);
+  assert.doesNotMatch(game, /say it as you begin a stretch of work/);
+  assert.doesNotMatch(game, /work quietly until you are done/);
   // The licence is exactly what the sixteen silent messages followed; it must not return.
   assert.doesNotMatch(game, /silence while thinking is fine/);
   assert.doesNotMatch(game, /better than filling every gap/);
@@ -148,13 +150,14 @@ test("the step-list ban names the one thing it does not forbid, so a plan is not
   // tool instead. The permission above grants only what she has already noticed, felt or been told, while the
   // ban's own example describes the only forward-looking thing she has before she starts: the plan. The
   // boundary now sits inside that rule - one intent is company, the sequence is the inventory - and the ban
-  // itself is untouched. The tail still licenses quiet between remarks, so this is not a per-turn obligation.
+  // itself is untouched. The tail that licensed quiet between remarks is the preset's (2026-11-15), so this is
+  // not a per-turn obligation there either.
   const game = buildGameCompanionSystemPrompt(DEFAULT_IDENTITY_PROFILE);
   assert.match(game, /One thing you are about to do is not a list/);
   assert.match(game, /is the inventory this forbids/);
   assert.match(game, /never list your steps/);
   assert.match(game, /not an inventory of your own procedure/);
-  assert.match(game, /work quietly until you are done/);
+  assert.doesNotMatch(game, /work quietly until you are done/);
 });
 
 test("the Game conduct does not command speech before every action, so the card keeps the turn's form", () => {
@@ -163,12 +166,14 @@ test("the Game conduct does not command speech before every action, so the card 
   // turns - 90 of them standalone speech with no tool call in the same message, one every 16 seconds. How often she
   // speaks while working is the card's own form (`default-companion/card.json`: 收放自如), which the doctrine in
   // `game-surface-prompt-floor.ts` says the prompt never governs. What stays on the floor is the person-facing half
-  // (answer your partner's words first) and the surface's own delivery unit (one utterance per reply).
+  // (answer your partner's words first) and the surface's own delivery unit (the bubble's size, 2026-11-15: the
+  // per-reply count it used to state is the preset's).
   const game = buildGameCompanionSystemPrompt(DEFAULT_IDENTITY_PROFILE);
   assert.doesNotMatch(game, /Speak before you act/);
   assert.doesNotMatch(game, /Never run tools in total silence/);
   assert.match(game, /land your first reaction on what they said/);
-  assert.match(game, /One utterance per reply/);
+  assert.match(game, /One bubble holds about \d+ characters/);
+  assert.doesNotMatch(game, /One utterance per reply/);
 });
 
 test("the Game conduct names how a day ends, so going to bed is an act rather than a guess at an action id", () => {
@@ -314,9 +319,11 @@ test("the Game conduct fits one spoken turn inside the bubble the player reads f
     game.includes(`One bubble holds about ${budget.maxChars} characters`),
     `the conduct must state the ${budget.maxChars}-character bubble it is spoken into`,
   );
-  assert.match(game, /say one thing per reply/);
-  // Structure is what makes a short line read as a document instead of as speech.
   assert.match(game, /No markdown headings, lists, bold or block quotes/);
+  // How MANY utterances one reply carries is the preset's (2026-11-15): the floor states the box, and
+  // `conversational-stance-gate.test.ts` refuses a count here.
+  assert.doesNotMatch(game, /say one thing per reply/);
+  assert.doesNotMatch(game, /stop when it has been said/);
   assert.match(game, /首先/);
   assert.match(game, /总结/);
   // A bracketed beat is never a body: the parenthesis becomes audio the voice
