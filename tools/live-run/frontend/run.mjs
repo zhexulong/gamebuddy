@@ -50,6 +50,14 @@ import {
   writeLeftoversReading,
 } from "./lib/run-owner.mjs";
 import { describePhaseFailure } from "./lib/phase-failure.mjs";
+import {
+  closeProcessLedger,
+  collectProcessLedger,
+  deliberatelyKept,
+  describeProcessLedger,
+  openProcessLedger,
+  writeProcessLedger,
+} from "./lib/process-ledger.mjs";
 
 const PHASES = ["check", "pin", "build", "launch", "capture", "cleanup", "report"];
 const POWER = "powershell.exe";
@@ -312,6 +320,20 @@ async function phaseLaunch(paths, run) {
   return { code: 2 };
 }
 
+/**
+ * The pid of the Host child this run launched, read from the launch state (`<stage>/state/launch.json` ->
+ * `childPid`). `null` before a mount: the ledger then carries no host or guardian marker, and the collect on
+ * the way out is what resolves them from the table.
+ */
+function readHostPid(paths) {
+  try {
+    const state = JSON.parse(readFileSync(paths.launchStateFile, "utf8"));
+    return Number.isSafeInteger(state?.childPid) && state.childPid > 0 ? state.childPid : null;
+  } catch {
+    return null;
+  }
+}
+
 async function probesUp(url) {
   try {
     const response = await fetch(url);
@@ -410,11 +432,26 @@ async function main() {
   // it survives and says so. Only a FAILED phase, a full run's end, or `cleanup` stops anything, which
   // is why a stepwise session is never pulled out from under the operator by a re-run of one phase.
   let closed = false;
+  /*
+   * The ledger is opened here and closed on the way out, around the same teardown: its "before" snapshot has
+   * to predate the first process this invocation creates, and its "after" snapshot has to follow the last one
+   * it stops. A ledger opened inside `close()` would have nothing to compare.
+   */
+  const ledger = openProcessLedger({ stageRoot: paths.stageRoot, gameDir: run.gameDir });
   const close = ({ code, reason, teardown }) => {
     if (closed) return code;
     closed = true;
+    const collected = collectProcessLedger(ledger, {
+      registry: registeredRunProcesses(paths),
+      hostPid: readHostPid(paths),
+    });
     if (teardown === "keep") {
       const kept = registeredRunProcesses(paths);
+      const reading = closeProcessLedger(ledger, collected, {
+        keptAlive: deliberatelyKept(collected.entries, { stepwise: true }),
+      });
+      writeProcessLedger(paths, reading);
+      for (const line of describeProcessLedger(reading)) console.log(line);
       if (kept.length > 0)
         console.log(
           `RUN-CLEANUP(${reason}): stepwise mode leaves this run's processes running for the next phase [${kept
@@ -425,11 +462,20 @@ async function main() {
     }
     const teardownReport = teardownRun({ paths, run, reason });
     console.log(describeTeardown(teardownReport));
+    const reading = closeProcessLedger(ledger, collected, {
+      endedByRun: teardownReport.killed.map((entry) => entry.pid),
+      keptAlive: deliberatelyKept(collected.entries),
+    });
+    writeProcessLedger(paths, reading);
+    for (const line of describeProcessLedger(reading)) console.log(line);
     const leftovers = inspectRunLeftovers({ paths, run });
     writeLeftoversReading(paths, leftovers);
     console.log(describeLeftovers(leftovers, run));
-    // A run that leaves its own processes alive did not finish, whatever its phase said.
-    return code !== 0 || leftovers.status === "ours_remain" ? Math.max(code, 1) : code;
+    // A run that leaves its own processes alive did not finish, whatever its phase said - and so did a run that
+    // ended a process it did not own, or whose ledger could not account for the pids it registered.
+    const ledgerFailed =
+      reading.leftovers.length > 0 || reading.population === "unmeasured" || reading.collateral?.endedByRunUnowned > 0;
+    return code !== 0 || leftovers.status === "ours_remain" || ledgerFailed ? Math.max(code, 1) : code;
   };
   process.once("exit", () => close({ code: 1, reason: "abnormal_exit", teardown: "kill" }));
   // The stepwise path that kills: `cleanup` is the operator's stop, so it reports what it stopped.

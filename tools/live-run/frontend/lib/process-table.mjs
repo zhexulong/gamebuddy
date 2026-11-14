@@ -40,14 +40,44 @@ function runProbe(args) {
 
 const answered = (args) => (process.platform === "win32" ? runProbe(args) : null);
 
-/** One process row `{ pid, name, commandLine }`, or `null` when it is gone / the machine cannot answer. */
+/** One row's fields, without the probe's own envelope: `startTime` and `parentPid` travel on every row. */
+const shape = (row) => ({
+  pid: row.pid,
+  parentPid: Number.isSafeInteger(row.parentPid) ? row.parentPid : null,
+  name: String(row.name ?? ""),
+  startTime: typeof row.startTime === "string" ? row.startTime : null,
+  commandLine: String(row.commandLine ?? ""),
+});
+
+/**
+ * The whole process table, without any command line: `{ examined, rows: [{ pid, parentPid, name, startTime }] }`,
+ * or `null` when this machine could not be asked.
+ *
+ * Two questions need exactly this and neither needs a command line: whether a pid that existed before a run
+ * still exists after it (the ledger's collateral reading), and which processes descend from one role (the
+ * guardian's own tree, resolved from `parentPid` rather than from a list of image names).
+ */
+export function processTable() {
+  const measured = answered(["-Table"]);
+  if (measured === null) return null;
+  if (!Number.isSafeInteger(measured.examined) || measured.examined <= 0) return null;
+  return {
+    examined: measured.examined,
+    rows: measured.rows.map((row) => ({
+      pid: row.pid,
+      parentPid: Number.isSafeInteger(row.parentPid) ? row.parentPid : null,
+      name: String(row.name ?? ""),
+      startTime: typeof row.startTime === "string" ? row.startTime : null,
+    })),
+  };
+}
+
+/** One process row `{ pid, parentPid, name, startTime, commandLine }`, or `null` when it is gone / the machine cannot answer. */
 export function processRow(pid) {
   if (!Number.isSafeInteger(pid) || pid <= 0) return null;
   const measured = answered(["-ProcessId", String(pid)]);
   const row = measured?.rows.find((entry) => entry.pid === pid);
-  return row === undefined
-    ? null
-    : { pid: row.pid, name: String(row.name ?? ""), commandLine: String(row.commandLine ?? "") };
+  return row === undefined ? null : shape(row);
 }
 
 /**
@@ -69,11 +99,7 @@ export function processesWithCommandLine(text) {
   return {
     examined: measured.examined,
     rows: measured.rows
-      .map((row) => ({
-        pid: row.pid,
-        name: String(row.name ?? ""),
-        commandLine: String(row.commandLine ?? ""),
-      }))
+      .map(shape)
       // The query names the text in ITS OWN command line, so the probe matches itself; the caller is
       // looking for the processes that REFER to the text, and a self-match would be reported as a
       // leftover on every run.

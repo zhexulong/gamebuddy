@@ -66,6 +66,12 @@ export function runPaths(run) {
     runProcessesFile: join(stage, "state", "run-processes.jsonl"),
     /* The post-run assertion's reading: what was still alive, and who held the CDP port, after teardown. */
     leftoversFile: join(stage, "state", "leftovers.json"),
+    /*
+     * The run's process ledger: a scoped record of only the processes this run created or touched, each with
+     * the ownership marker that claimed it (`lib/process-ledger.mjs`). Written on every way out, whichever
+     * phase failed, because the processes are the run's until its teardown has proved otherwise.
+     */
+    processLedgerFile: join(stage, "state", "process-ledger.json"),
     stopFlag: join(stage, "state", "stop.flag"),
     launchLog: join(stage, "logs", "launch.log"),
     buildLog: join(stage, "logs", "build.log"),

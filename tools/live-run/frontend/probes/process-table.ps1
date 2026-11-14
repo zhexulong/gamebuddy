@@ -1,4 +1,4 @@
-# Probe: the process table, read-only. One JSON object per line on stdout, and - for the whole-table
+# Probe: the process table, read-only. One JSON object per line on stdout, and - for a whole-table
 # query - a last `{ examined: N }` line: how many processes the query looked at, so a reading can print
 # its population instead of an unqualified zero.
 #
@@ -7,14 +7,22 @@
 #   -CommandLineLike <text>   every row whose command line CONTAINS <text>, compared ordinally - a path
 #                             containing `[` is a path, not a wildcard pattern
 #   -ListenerPort <n>         the pid LISTENING on that TCP port, as `{ listenerPort, pid }`
+#   -Table                    every process, WITHOUT its command line: `{ pid, parentPid, name, startTime }`.
+#                             The run's ledger needs the whole pid set and the parent relation twice per
+#                             run (before, and after teardown) and needs neither command line for it.
+#
+# `parentPid` and `startTime` travel on every row: they are what tells a pid that the ledger recorded
+# from a pid the OS handed to an unrelated process after the fact (`startTime` is the OS's creation
+# time), and what resolves a role's own tree (the guardian's descendants) without a name list.
 #
 # This exists because the kit must name a process it did not start - the holder of a contended CDP
-# port, and the survivors of a failed phase - and the only authority for that is the OS. Reading it
+# port, the survivors of a failed phase - and the only authority for that is the OS. Reading it
 # through a file here (rather than an inline `-Command` string) is the kit's rule for shell logic.
 param(
   [int]$ProcessId = 0,
   [string]$CommandLineLike = '',
-  [int]$ListenerPort = 0
+  [int]$ListenerPort = 0,
+  [switch]$Table
 )
 $ErrorActionPreference = 'Continue'
 
@@ -25,6 +33,13 @@ if ($ListenerPort -gt 0) {
     Select-Object -First 1
   if ($connection) { Emit ([pscustomobject]@{ listenerPort = $ListenerPort; pid = [int]$connection.OwningProcess }) }
   exit 0
+}
+
+# `CreationDate` arrives as a CIM datetime (a `DateTime` under Get-CimInstance); it is rendered into
+# one ISO-8601 spelling here so a reader never has to know which shape it got.
+function StartTime($row) {
+  if ($null -eq $row.CreationDate) { return $null }
+  try { return ([datetime]$row.CreationDate).ToString('o') } catch { return ([string]$row.CreationDate) }
 }
 
 $examined = 0
@@ -38,7 +53,22 @@ foreach ($row in @($rows)) {
   $examined += 1
   $commandLine = [string]$row.CommandLine
   if ($CommandLineLike -ne '' -and $commandLine.IndexOf($CommandLineLike, [System.StringComparison]::OrdinalIgnoreCase) -lt 0) { continue }
-  Emit ([pscustomobject]@{ pid = [int]$row.ProcessId; name = [string]$row.Name; commandLine = $commandLine })
+  if ($Table) {
+    Emit ([pscustomobject]@{
+      pid = [int]$row.ProcessId
+      parentPid = [int]$row.ParentProcessId
+      name = [string]$row.Name
+      startTime = (StartTime $row)
+    })
+    continue
+  }
+  Emit ([pscustomobject]@{
+    pid = [int]$row.ProcessId
+    parentPid = [int]$row.ParentProcessId
+    name = [string]$row.Name
+    startTime = (StartTime $row)
+    commandLine = $commandLine
+  })
 }
 if ($ProcessId -le 0) { Emit ([pscustomobject]@{ examined = $examined }) }
 exit 0
