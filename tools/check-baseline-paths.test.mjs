@@ -10,16 +10,21 @@
  * `git init` in a temporary directory is the fixture, not a mock: the question is precisely "what does the index carry",
  * so the double for the index would be the thing under test.
  *
- * One copied constant, and it expires: `RETIRED_RUNNERS` is the debt today's tree carries. When
- * `tools/prelive-l3-baseline.json` drops its two entries, this suite's real-tree assertion becomes `[]` and the
- * population checks above it carry the verdict - the constant is a record of a defect with an owner, not a licence.
+ * The real-tree expectation was a snapshot of today's tree - "these two findings and no third" - and it expired the
+ * moment the owning tool recorded them away (`acc31e18`, `node tools/prelive.mjs --record-shrinks`): it reads `[]` now
+ * and the population checks above carry the verdict. That is exactly why the red proof below is a HISTORY replay and not
+ * a working-tree reading. A test pinned to "the defect is still here" has to be edited by hand the moment the defect is
+ * fixed, and it will be forgotten exactly once.
  *
  * No `t.skip()` here on purpose: a suite whose file mentions `.skip(` is `gate_skip_can_pass` in
  * `tools/check-gate-populations.mjs`, and a suite that can skip every test is a suite that can go green having measured
  * nothing. The history replay below therefore states its own not-measured reading in an assertion instead.
  *
- * red-proof: history  the index and the baselines at `b6128a58`, the commit that retired six runners ->
- *   `baseline_names_a_file_that_does_not_exist:tools/prelive-l3-baseline.json:...shake-tree...` and `...take-pedestal...`
+ * red-proof: history  THE RED PROOF, and the only one on a real repository: the index and the baselines at
+ *   `b6128a58`, the commit that retired six runners ->
+ *   `baseline_names_a_file_that_does_not_exist:tools/prelive-l3-baseline.json:...shake-tree...` and `...take-pedestal...`.
+ *   Replayed from `git show` at that revision, so it fires whatever the working tree has since become - which the
+ *   working-tree reading could not do once the fix landed.
  * red-proof: inject  a fabricated path added to a baseline in a fixture repository ->
  *   `baseline_names_a_file_that_does_not_exist:<baseline>:tools/fabricated-missing.mjs`, exactly one finding
  * red-proof: inject  a file written to the fixture's working tree and not added -> still one finding; `git add` -> green
@@ -128,41 +133,17 @@ test("the real tree: the population is the index's baselines and no finding name
   assert.match(renderBaselinePathsReport(report)[0], /^baselines examined \d+ · path references \d+ · dangling \d+$/u);
 });
 
-test("red (today's tree): the two runners one retirement commit deleted are named, with no third finding", () => {
+test("the real tree: no baseline names a file the index does not carry", () => {
   const report = runBaselinePathsGate({ root: REPOSITORY_ROOT });
+  // `RETIRED_FINDINGS` - today's two dangling references - was here until `node tools/prelive.mjs --record-shrinks`
+  // recorded their removal, which is what this expectation expiring looks like. It is `[]` now and it reds the moment a
+  // baseline names a path git does not carry; whose job the removal is, the finding itself says.
   assert.deepEqual(
     report.findings,
-    RETIRED_FINDINGS,
-    `the recorded debt changed.${"\n"}  If a runner was restored, this is a real finding. If the two entries were ` +
-      `deleted from ${RETIRED}, this constant must become [] - the population checks above then carry the verdict.`,
+    [],
+    "a baseline names a file the index does not carry - the tool that owns that baseline records the shrink " +
+      "(`node tools/prelive.mjs --record-shrinks` for prelive's L3), never a hand edit",
   );
-  // The same reading with the two entries removed in memory: the gate goes green without the file being touched, which
-  // is what tells the owner the fix is the entry and nothing else.
-  const baselines = baselinePopulation({ index: readIndex({ root: REPOSITORY_ROOT }) }).map((file) => ({
-    file,
-    parsed: JSON.parse(readFileSync(resolve(REPOSITORY_ROOT, file), "utf8")),
-  }));
-  const recorded = baselines.find((entry) => entry.file === RETIRED);
-  const repaired = checkBaselinePaths({
-    baselines: baselines.map((entry) =>
-      entry.file === RETIRED
-        ? {
-            file: entry.file,
-            parsed: {
-              ...entry.parsed,
-              knownSites: entry.parsed.knownSites.filter((site) => !RETIRED_RUNNERS.includes(site.file)),
-            },
-          }
-        : entry,
-    ),
-    index: readIndex({ root: REPOSITORY_ROOT }),
-  });
-  assert.ok(
-    recorded.parsed.knownSites.some((site) => site.file === RETIRED_RUNNERS[0]),
-    "the entries are there to remove",
-  );
-  assert.deepEqual(repaired.findings, [], "removing the two entries is what makes the gate green");
-  assert.equal(repaired.ok, true);
 });
 
 test("red (history): the commit that retired the runners is caught, replaying its index and its baselines", () => {
