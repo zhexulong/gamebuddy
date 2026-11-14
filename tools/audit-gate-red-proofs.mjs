@@ -363,10 +363,11 @@ function proofExecution({ root, record }) {
     const shared = [...vocabulary].filter((code) => asserted.has(code));
     return { ...proof, asserted: named[0] ?? shared[0] ?? null, executable: named.length > 0 || shared.length > 0 };
   });
+  const verdict = suites.length === 0 ? "no_suite" : "prose";
   return {
     suites,
     claims,
-    verdict: suites.length === 0 ? "no_suite" : claims.some((claim) => claim.executable) ? "executable" : "prose",
+    verdict: verdict === "prose" && claims.some((claim) => claim.executable) ? "executable" : verdict,
   };
 }
 
@@ -817,7 +818,7 @@ export function readExecutionBaseline(root) {
   const text = read(join(root, EXECUTION_BASELINE_PATH));
   if (text === null) return { prose: [], unexecuted: [] };
   const parsed = JSON.parse(text);
-  if (!Array.isArray(parsed.prose) || !Array.isArray(parsed.unexecuted))
+  if (!(Array.isArray(parsed.prose) && Array.isArray(parsed.unexecuted)))
     throw new Error("gate_red_proof_execution_baseline_malformed:prose,unexecuted");
   return { prose: parsed.prose, unexecuted: parsed.unexecuted };
 }
