@@ -10,14 +10,12 @@ import {
   NARRATIVE_RUN_PLAN,
   NARRATIVE_RUN_POSITIONS,
   parseArguments,
-  runNarrativeProcess,
   runTavernReleaseLiveGate,
   runTavernReleaseLiveOrchestrator,
   validateMountedProfileOperationEvidence,
 } from "./run-tavern-release-live-gate.mjs";
 import { prepareReportTarget, writeReport } from "./run-tavern-narrative-gate.mjs";
 
-const sha = "a".repeat(64);
 const token = (value) => value.toString(16).padStart(16, "0");
 const passingPrerequisites = async () => ({ verdict: "passed" });
 const mappingBlocker = MOUNTED_PROFILE_MAPPING_BLOCKER.detail;

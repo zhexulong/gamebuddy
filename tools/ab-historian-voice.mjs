@@ -26,10 +26,6 @@ const repo = resolve(fileURLToPath(new URL(".", import.meta.url)), "..");
 const vendor = join(repo, "vendor/magic-context");
 const promptPath = "packages/plugin/src/hooks/magic-context/ongoing-interaction-historian-prompt.source.md";
 const promptFile = join(vendor, promptPath);
-const generatedFile = join(
-  vendor,
-  "packages/plugin/src/hooks/magic-context/ongoing-interaction-historian-prompt.generated.ts",
-);
 const VOICE_COMMIT = "37bc69238";
 const THRESHOLD_TOKENS = "4000";
 const PROTECTED_TOKENS = "4000";

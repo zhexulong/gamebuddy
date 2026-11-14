@@ -1,5 +1,5 @@
 // red-proof: inject  the `if (!loadOk)` failure push deleted from the gate -> the negative fixture generation loads
-//                    with verdict `passed` and the suite answers `✖ negative: transitive module broken in the
+//                    with verdict `passed` and the suite answers `× negative: transitive module broken in the
 //                    loaded closure`; the unmodified pair runs 8 tests green
 //
 // Tests for tools/check-production-pack-load.mjs.
@@ -20,15 +20,11 @@
 
 import assert from "node:assert/strict";
 import { after, before, describe, test } from "node:test";
-import { copyFileSync, existsSync } from "node:fs";
+import { copyFileSync } from "node:fs";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { join } from "node:path";
 import { checkProductionPackLoad } from "./check-production-pack-load.mjs";
-
-const scriptDir = dirname(fileURLToPath(import.meta.url));
-const realDistRoot = resolve(scriptDir, "..", "host", "dist");
 
 let distRoot;
 let nodeBin;

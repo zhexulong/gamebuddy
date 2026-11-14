@@ -35,12 +35,6 @@ const EXPECTED_FIXTURE = "native_wia_modal_dismiss_chain_v1";
 const PINNED_PROMPT_HASH = process.env.GAMEBUDDY_WIA_PROMPT_SHA256 ?? null;
 
 /** Action ids / coordinate patterns / sequence words / interruption terms a pure player-goal must NOT contain. */
-const IMPURE = [
-  /[a-z]+_[a-z_]{3,}/,
-  /\d+\s*,\s*\d+/,
-  /先|然后|接着|最后/,
-  /弹窗|对话框|挡住|中断|恢复|recover|dismiss/i,
-];
 
 export function judgeWiaLoop(
   result,

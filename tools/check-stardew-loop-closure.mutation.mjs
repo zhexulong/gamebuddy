@@ -11,7 +11,7 @@
  *                    entry as callable` + `SOME MUTATIONS SURVIVED`, exit 1; restored -> `all mutations caught`, exit 0
  */
 import { execFile } from "node:child_process";
-import { cp, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -72,7 +72,7 @@ try {
       console.log(`STILL GREEN           ${m.name}`);
       allCaught = false;
     } else {
-      const failed = (r.out.match(/^✖ (?!failing)/gm) ?? []).length;
+      const failed = (r.out.match(/^× (?!failing)/gm) ?? []).length;
       console.log(`CAUGHT (${failed} failing)   ${m.name}`);
     }
     await writeFile(GATE, original);

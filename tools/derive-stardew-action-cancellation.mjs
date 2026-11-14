@@ -8,7 +8,6 @@ import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const INTEGRATIONS = resolve(fileURLToPath(new URL("../integrations/stardew", import.meta.url)));
-const CONTROLLER_DIR = resolve(INTEGRATIONS, "farmhandexecutioncontroller.cs");
 const PARTIAL_DIR = INTEGRATIONS;
 
 /** Lanes the ExecutionManager.Cancel() method actually checks. */

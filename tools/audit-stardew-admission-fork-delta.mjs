@@ -29,7 +29,7 @@
  */
 
 import { existsSync, readFileSync, readdirSync } from "node:fs";
-import { join, basename } from "node:path";
+import { join } from "node:path";
 
 const TRIPLE = "Game1.activeClickableMenu is not null || Game1.eventUp || !Game1.player.CanMove";
 const TRIPLE_ACTOR = "Game1.activeClickableMenu is not null || Game1.eventUp || !actor.CanMove";

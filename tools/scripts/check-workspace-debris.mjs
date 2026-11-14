@@ -5,7 +5,7 @@
 //                    `检测到未跟踪/未提交残留文件` naming `?? diag-read-runs.mjs`, exit 1
 //                    (tools/scripts/check-workspace-debris.mjs, this file)
 import { execFileSync } from "node:child_process";
-import { join, dirname, resolve } from "node:path";
+import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");

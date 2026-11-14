@@ -52,31 +52,6 @@ function fail(code, message) {
   throw new Missing(code, message);
 }
 
-/** Balanced-brace extraction of the first method body matching `member`. */
-function methodBody(src, member) {
-  const re = new RegExp(
-    `(?:public|private|protected|internal)(?:\\s+(?:static|virtual|override|abstract|sealed|async|extern|unsafe|new|readonly))*\\s+[\\w<>,\\[\\].\\s?]+?\\s+${member}\\s*\\([^)]*\\)\\s*(?:=>)?\\s*\\{`,
-    "g",
-  );
-  const m = re.exec(src);
-  if (!m) return null;
-  const open = src.indexOf("{", m.index + m[0].length - 1);
-  if (open < 0) return null;
-  let depth = 0;
-  let inStr = false;
-  for (let j = open; j < src.length; j++) {
-    const ch = src[j];
-    if (ch === '"' && src[j - 1] !== "\\") inStr = !inStr;
-    if (inStr) continue;
-    if (ch === "{") depth++;
-    else if (ch === "}") {
-      depth--;
-      if (depth === 0) return { body: src.slice(open, j + 1), decl: src.slice(m.index, open).trim() };
-    }
-  }
-  return null;
-}
-
 /** The native effect signals, aligned with the extractor vocabulary. */
 const SIGNALS = {
   realtime:
