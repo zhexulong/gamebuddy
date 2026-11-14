@@ -2,37 +2,57 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  AUTO_OBSERVE_ON_STALE,
   AUTO_OBSERVE_UNAVAILABLE,
   CompanionEventPump,
   type PendingBatch,
+  turnAccountLine,
   TURN_OPENING,
   TURN_SUPPRESSION,
-  type TurnDecision,
-  turnAccountLine,
   type WorldFact,
   type WorldStateRefreshPort,
 } from "./event-pump.js";
 
 /**
- * WHAT THE SUPPRESSOR COMPARES, read off the real pump.
+ * THE READING IS STANDING STATE, NOT NEWS.
  *
  * <p>
- * `observation_restated` decides whether a flush that carries an observation is worth a turn, and until this unit it asked
- * its question of the snapshot's `revision`. That number is the Mod's action-echo counter: it moves inside action handlers
- * (`farmhandexecutioncontroller.cs:1779`, `:348`) and not when the world does - a time milestone is published as its own
- * fact carrying the UNCHANGED revision (`StardewSalientEventHooks.cs:196-207`). So the predicate was blind in both
- * directions, and both were measured (`round53`, `round46b`): a reading whose clock walked 06:10 -> 11:30, whose location
- * changed, whose stamina fell to 41 and whose weather turned to rain was suppressed as a re-statement because no action
- * had run, while a byte-identical payload carrying a bumped revision opened a turn to say what the previous turn had
- * already said - the exact defect the suppression list exists to close.
+ * ONE OBSERVATION, TWO PATHS, and they disagreed. The snapshot has always been the `<world-state>` block: `takeBatch`
+ * renders the last reading into every delivery (`event-pump.ts#worldStateReading`), and `fact-brief.ts` refuses to print
+ * the same payload a second time as news (`factLine`: "The snapshot is the state block, not news"). The OPENER, however,
+ * asked a different question - does this reading's content differ from the one she was last shown - so a reading whose
+ * clock had moved opened a turn to deliver a paragraph the next turn would have carried anyway.
  * </p>
  *
  * <p>
- * The property this file asserts is a comparison of CONTENT: a flush opens a turn when the reading says something the one
- * she was shown did not, and stays shut when it does not, whatever the counter says. Each row is the same pump with one
- * field of the reading changed, and the expectation is in the test's name.
+ * MEASURED 2026-11-15 (`round55`, `tools/_multiday_routine-round55-live-runner.log`): 120 turns opened, 115 of them
+ * `observation`, and 86 of those closed `turn_closed_without_action {observation:nothing_pending}`. The run's own bridge
+ * traffic says where they came from: of its 131 examined flushes, 90 carried no fact at all - no receipt, no semantic
+ * event, no world fact, no lifecycle, no player word - only a snapshot. Every one of those 90 opened a turn, and 87 of
+ * them ended with speech and no action. The other 41 windows carried a fact, and 28 of those turns acted.
+ * </p>
+ *
+ * <p>
+ * The shape is structural rather than accidental: a turn that runs a tool leaves the observations its tools produced in
+ * the pump, `HostService` re-states the latest reading before the next flush, and the opener turned that leftover into a
+ * new turn - about three per action turn, which is exactly the 90/29 the run shows. Nothing was decided in those turns
+ * and nothing had to be: the work they described had already run.
+ * </p>
+ *
+ * <p>
+ * THE RULE THIS FILE PINS. Standing state owns "what the world is" and opens nothing; a turn opener owns "something needs
+ * a decision now" - a person's words, an outcome, a due wake. So the reading is delivered by whatever turn comes next,
+ * with the header that says whether that turn brought it, and a flush that holds only a reading is a suppressed flush
+ * that names its reason. The round53 property is kept and re-asserted here in both directions: the block's header and
+ * the paragraph beside it can never disagree, because `#readingIsNews` is still the one comparison behind both.
  * </p>
  */
+
+/**
+ * The suppression reason this unit introduces, spelled here as the wire token rather than imported: the red proof has to
+ * compile against the module BEFORE it, and a constant that does not exist yet cannot be the expectation it is red on.
+ */
+const READING_IS_STATE = "observation_is_state";
 
 /** The reading the Mod admitted: a free body in the farmhouse at 06:00 (the `round53` fixture, field for field). */
 const READING = Object.freeze({
@@ -73,6 +93,21 @@ function reading(revision: number, payload: Readonly<Record<string, unknown>>, t
   });
 }
 
+/** A fact the world really published: the clock reaching a milestone. It is news, so it opens the turn it needs. */
+function milestoneFact(index: number, occurredAtMs: number): WorldFact {
+  return Object.freeze({
+    source: "stardew_mod",
+    kind: "world_fact" as const,
+    eventId: `time_milestone_${String(index)}`,
+    correlationId: `time_milestone_${String(index)}`,
+    revision: 1,
+    observedTick: index,
+    occurredAtMs,
+    semanticKind: "time_milestone",
+    payload: Object.freeze({ kind: "time_milestone", milestone: 1200 }),
+  });
+}
+
 const FIRST_INPUT = Object.freeze({
   source: "player_text",
   inputId: "player_input_content_first",
@@ -105,7 +140,7 @@ function worldStateBlock(text: string): Readonly<{ header: string; body: string 
   return Object.freeze({ header, body: rest.join("\n") });
 }
 
-/** The two markers `fact-brief.ts` prints, so a row's expectation can be stated as one of them. */
+/** The two markers `fact-brief.ts` prints, so an expectation can be stated as one of them. */
 const FRESH = "刚刚更新";
 const RESTATED = "本轮无新观察";
 
@@ -125,23 +160,94 @@ function worldOnly(body: string): string {
   return [aged ? parts.slice(1).join("；") : parts.join("；"), ...rest].join("\n");
 }
 
-type Row = Readonly<{
-  /** What the second flush - the one carrying the observation - decided. */
-  decision: TurnDecision;
-}>;
+/**
+ * The red case, in the run's own shape: one delivered turn, then the reading alone.
+ *
+ * `round55` opened 90 such turns and closed 87 of them with speech and nothing done, because the reading is re-stated by
+ * the next turn whether or not this one exists. The flush is examined exactly once and says so by name.
+ */
+test("the reading alone opens no turn: round55's 90 snapshot-only flushes are standing state", async () => {
+  const pump = new CompanionEventPump();
+  const batches: PendingBatch[] = [];
+
+  pump.enqueueFact(reading(352, READING, 0));
+  pump.enqueuePlayerInput(FIRST_INPUT);
+  await pump.flush(sink(batches));
+  assert.equal(batches.length, 1, "the person spoke, so the first turn is owed whatever else is pending");
+
+  // The turn that ran a tool leaves its own observations behind; `HostService.#restateWorldSnapshot` hands them back.
+  pump.enqueueFact(reading(400, Object.freeze({ ...READING, timeOfDay: 700, stamina: 240 }), 1));
+  await pump.flush(sink(batches));
+
+  assert.equal(
+    batches.length,
+    1,
+    "a reading is standing state: the next turn states it whether or not a turn is opened for it, so this flush owes " +
+      "no model round-trip",
+  );
+  assert.deepEqual(
+    pump.turnAccount.lastDecision,
+    Object.freeze({ kind: "suppressed", reason: READING_IS_STATE }),
+    "and the flush names what it was holding rather than claiming nothing arrived",
+  );
+  assert.equal(pump.turnAccount.opened, 1, "no turn was opened for it");
+  assert.equal(
+    pump.turnAccount.emptyTurns.total,
+    0,
+    "and no empty turn was counted: the shape this run spent 86 turns on cannot be reached",
+  );
+  assert.match(
+    turnAccountLine(pump.turnAccount),
+    /turns opened 1 \{player_input: 1, world_fact: 0, due: 0\}/u,
+    "the account's opener population is the closed list, which no longer has a reading member",
+  );
+});
 
 /**
- * The row fixture: one delivered turn, then the reading under test alone, then the person's own turn.
+ * THE FALSIFIER, and the forward path: the same reading beside a fact that needs a decision opens the turn - as
+ * `world_fact`, because the reading is what rides along, not what asked.
+ *
+ * Before this unit the identical fixture answered `observation`: the snapshot was checked first, so a turn owed by a
+ * clock milestone, a receipt or a refusal was filed under the reading it carried.
+ */
+test("a fact beside the reading opens the turn, and the reading rides along as state", async () => {
+  const pump = new CompanionEventPump();
+  const batches: PendingBatch[] = [];
+
+  pump.enqueueFact(reading(352, READING, 0));
+  pump.enqueuePlayerInput(FIRST_INPUT);
+  await pump.flush(sink(batches));
+
+  pump.enqueueFact(reading(400, Object.freeze({ ...READING, timeOfDay: 1130, stamina: 240 }), 1));
+  pump.enqueueFact(milestoneFact(1200, 1_790_000_002_000));
+  await pump.flush(sink(batches));
+
+  assert.equal(batches.length, 2, "the milestone is news, so it opens the turn it needs");
+  assert.deepEqual(
+    pump.turnAccount.lastDecision,
+    Object.freeze({ kind: "opened", index: 2, reason: TURN_OPENING.worldFact }),
+    "and the opener names the fact, not the reading it carries",
+  );
+  const block = worldStateBlock(batches[1]?.text ?? "");
+  assert.equal(
+    block.header.includes(FRESH),
+    true,
+    `the turn states the reading it was composed from, so nothing she would have seen is lost: ${block.header}`,
+  );
+  assert.match(block.body, /11:30/u, "and the paragraph is the clock the world reported, not the one it was holding");
+});
+
+/**
+ * The matrix, inverted: each row changes ONE field of the reading and opens no turn - and the next turn that opens for
+ * another reason states the changed paragraph under `刚刚更新`.
  *
  * <p>
- * The third flush is not decoration. A suppressed flush opens nothing, so the only way to see what the block WOULD have
- * said about that reading is the next turn that opens for another reason - which is exactly how `round53` printed
- * `11:30（上午）· 天气：雨天 · 位置: 镇上 · 体力: 41` under a header reading `本轮无新观察`. The header and the paragraph
- * are then compared against the paragraph she was last shown, so the assertion is about the two texts rather than about
- * a flag beside them.
+ * This keeps the property `round53` was about (a block whose paragraph changed cannot say `本轮无新观察`) while removing
+ * the premise the old matrix asserted (that the change was worth a turn). Each row is the same pump with one field moved,
+ * so a rule that let any of them open a turn again fails here by name.
  * </p>
  */
-async function row(payload: Readonly<Record<string, unknown>>, revision: number, news: boolean): Promise<Row> {
+async function row(payload: Readonly<Record<string, unknown>>, revision: number): Promise<void> {
   const pump = new CompanionEventPump();
   const batches: PendingBatch[] = [];
 
@@ -151,8 +257,11 @@ async function row(payload: Readonly<Record<string, unknown>>, revision: number,
 
   pump.enqueueFact(reading(revision, payload, 1));
   await pump.flush(sink(batches));
-  const decision = pump.turnAccount.lastDecision;
-  assert.ok(decision !== undefined, "an examined flush always states its decision");
+  assert.deepEqual(
+    pump.turnAccount.lastDecision,
+    Object.freeze({ kind: "suppressed", reason: READING_IS_STATE }),
+    "the reading alone opens nothing, whatever field moved",
+  );
 
   pump.enqueuePlayerInput(SECOND_INPUT);
   await pump.flush(sink(batches));
@@ -160,78 +269,33 @@ async function row(payload: Readonly<Record<string, unknown>>, revision: number,
   // THE HEADER MUST AGREE WITH THE PARAGRAPH BESIDE IT, on every batch she was handed: a block whose paragraph differs
   // from the one before it is news whatever the revision says, and a block whose paragraph is the one she already read is
   // a re-statement whatever the revision says. Neither direction is allowed to be a lie.
-  const blocks = batches.map((batch) => worldStateBlock(batch.text));
-  assert.equal(blocks.length >= 2, true, "the fixture delivered at least the reading under test and the person's turn");
-  let differing = 0;
-  for (let index = 1; index < blocks.length; index += 1) {
-    const previous = blocks[index - 1];
-    const current = blocks[index];
-    assert.ok(previous !== undefined && current !== undefined);
-    const changed = worldOnly(current.body) !== worldOnly(previous.body);
-    if (changed) differing += 1;
-    assert.equal(
-      current.header.includes(RESTATED),
-      !changed,
-      changed
-        ? `the block's own paragraph changed and its header still said ${RESTATED}: ${current.header} / ${current.body}`
-        : `the block re-stated the paragraph she already read and its header claimed news: ${current.header}`,
-    );
-    assert.equal(
-      current.header.includes(FRESH),
-      changed,
-      `the header states freshness in one of the two words: ${current.header}`,
-    );
-  }
-  assert.equal(
-    differing > 0,
-    news,
-    news
-      ? "the fixture's changed field never reached a paragraph, so the header comparison would prove nothing"
-      : "the fixture's reading reached a paragraph as news, so this row is not the re-statement it claims to be",
-  );
-  return Object.freeze({ decision });
+  const before = worldStateBlock(batches[0]?.text ?? "");
+  const after = worldStateBlock(batches[1]?.text ?? "");
+  const changed = worldOnly(after.body) !== worldOnly(before.body);
+  assert.equal(changed, true, `the row's field never reached a paragraph, so nothing is being proven: ${after.body}`);
+  assert.equal(after.header.includes(FRESH), true, `the block states the reading it brought: ${after.header}`);
+  assert.equal(after.header.includes(RESTATED), false, `and does not also deny it: ${after.header}`);
 }
 
-test("content matrix: a clock that moved and nothing else OPENS a turn", async () => {
-  // The measured suppression. `round53` read `06:10` at revision 5 and then `11:30` at revision 5, and the second one was
-  // called a re-statement: 320 game minutes, five hours of villager schedules and shop hours, dropped because no action
-  // had run. The revision is deliberately the SAME here, so nothing but the reading's own content can open the turn.
-  const result = await row(Object.freeze({ ...READING, timeOfDay: 1130 }), 352, true);
-  assert.deepEqual(result.decision, Object.freeze({ kind: "opened", index: 2, reason: TURN_OPENING.observation }));
+test("content matrix: a clock that moved, a location that changed, stamina, weather and a held body open no turn", async () => {
+  await row(Object.freeze({ ...READING, timeOfDay: 1130 }), 352);
+  await row(Object.freeze({ ...READING, location: "Town" }), 353);
+  await row(Object.freeze({ ...READING, stamina: 41 }), 354);
+  await row(Object.freeze({ ...READING, weather: "rain" }), 355);
+  await row(Object.freeze({ ...READING, actionable: false, actorDispositionKind: "modal" }), 356);
 });
 
-test("content matrix: a location that changed OPENS a turn", async () => {
-  const result = await row(Object.freeze({ ...READING, location: "Town" }), 352, true);
-  assert.deepEqual(result.decision, Object.freeze({ kind: "opened", index: 2, reason: TURN_OPENING.observation }));
-});
+test("content matrix: an identical payload with a new revision is still state, and opens nothing", async () => {
+  const pump = new CompanionEventPump();
+  const batches: PendingBatch[] = [];
+  pump.enqueueFact(reading(352, READING, 0));
+  pump.enqueuePlayerInput(FIRST_INPUT);
+  await pump.flush(sink(batches));
 
-test("content matrix: a stamina that dropped OPENS a turn", async () => {
-  const result = await row(Object.freeze({ ...READING, stamina: 41 }), 352, true);
-  assert.deepEqual(result.decision, Object.freeze({ kind: "opened", index: 2, reason: TURN_OPENING.observation }));
-});
-
-test("content matrix: a weather that turned OPENS a turn", async () => {
-  const result = await row(Object.freeze({ ...READING, weather: "rain" }), 352, true);
-  assert.deepEqual(result.decision, Object.freeze({ kind: "opened", index: 2, reason: TURN_OPENING.observation }));
-});
-
-test("content matrix: an identical payload with a NEW revision is SUPPRESSED", async () => {
-  // `round46b`'s shape, and the reason a revision cannot be the suppressor's authority: the Mod's counter moved (an action
-  // ran) and the reading says exactly what she already read. Two consecutive turns with byte-identical content is the
-  // defect this list exists to close, and the counter-based rule reopened it.
-  const result = await row(Object.freeze({ ...READING }), 353, false);
-  assert.deepEqual(
-    result.decision,
-    Object.freeze({ kind: "suppressed", reason: TURN_SUPPRESSION.observationRestated }),
-  );
-});
-
-test("content matrix: an identical payload with an UNCHANGED revision is SUPPRESSED", async () => {
-  const result = await row(Object.freeze({ ...READING }), 352, false);
-  assert.deepEqual(
-    result.decision,
-    Object.freeze({ kind: "suppressed", reason: TURN_SUPPRESSION.observationRestated }),
-  );
+  pump.enqueueFact(reading(353, READING, 1));
+  await pump.flush(sink(batches));
+  assert.equal(batches.length, 1);
+  assert.deepEqual(pump.turnAccount.lastDecision, Object.freeze({ kind: "suppressed", reason: READING_IS_STATE }));
 });
 
 /**
@@ -254,114 +318,87 @@ function answeringPort(
   return { port, asked };
 }
 
-test("the suppressed flush ASKS the world first, and the answer is what opens the turn", async () => {
-  // THE CLOSED LOOP this unit exists to break. A suppressed flush returned before the cure could be reached
-  // (`event-pump.ts:1679-1682`), and the cure's own answer re-entered the same counter predicate, so no turn opened →
-  // nothing acted → the revision never moved → nothing could ever open. Measured (`.tmp/audit/probe-refresh-loop.mjs`):
-  // nine clock-only suppressions made ZERO probes.
+/**
+ * THE STALE PATH, BOTH DIRECTIONS - it is a refresh, not a turn.
+ *
+ * <p>
+ * `auto_observe_on_stale 16 {ageTurns: 1}` was the one thing in `round55` that worked as designed, and this unit must not
+ * buy its turns back by breaking it. So: a flush whose reading is one she has already been shown still ASKS the world
+ * before it decides, and the answer is what the turn it opens is composed from - and the ask itself opens nothing. The
+ * turn is owed by the person's words; the reading it carries is the answer.
+ * </p>
+ */
+test("an aged reading still asks the world first, and the ask itself opens no turn", async () => {
   const pump = new CompanionEventPump();
   const batches: PendingBatch[] = [];
-  const { port, asked } = answeringPort(pump, () => reading(352, { ...READING, timeOfDay: 1130 }, 1));
+  const { port, asked } = answeringPort(pump, () => reading(353, Object.freeze({ ...READING, timeOfDay: 640 }), 1));
   pump.attachWorldStateRefresh(port);
 
   pump.enqueueFact(reading(352, READING, 0));
   pump.enqueuePlayerInput(FIRST_INPUT);
   await pump.flush(sink(batches));
+  assert.deepEqual(asked, [], "the turn brought its own reading, so there was nothing to cure");
 
-  pump.enqueueFact(reading(352, READING, 2));
+  // A reading alone: suppressed, and the cure still runs - the world is asked about the aged reading without paying a turn.
+  pump.enqueueFact(reading(354, READING, 2));
+  await pump.flush(sink(batches));
+  assert.equal(pump.turnAccount.lastDecision?.kind, "suppressed");
+  assert.equal(asked.length, 1, "the flush asked the world about the reading it could not use");
+  assert.equal(
+    pump.turnAccount.autoObserve.refreshed,
+    1,
+    "and the answer is counted as a refresh, which costs one pipe round-trip and no model turn",
+  );
+
+  // The person speaks: the turn carries the reading the answer made current, and says so.
+  pump.enqueuePlayerInput(SECOND_INPUT);
+  await pump.flush(sink(batches));
+  assert.equal(batches.length, 2, "the person's turn is the second turn, and the only other one");
+  const block = worldStateBlock(batches[1]?.text ?? "");
+  assert.equal(block.header.includes(FRESH), true, `the turn was composed from the freshest reading: ${block.header}`);
+  assert.match(block.body, /06:40/u, "which is the clock the world reported");
+  assert.match(
+    turnAccountLine(pump.turnAccount),
+    new RegExp(`${AUTO_OBSERVE_ON_STALE} 1`, "u"),
+    "and the run's account still prints the refresh it made",
+  );
+});
+
+test("a pump with no way to ask declines by name, and the turn it could not cure still opens", async () => {
+  // THE OTHER DIRECTION: the cure is an improvement to a turn, never a gate on one. A pump nobody wired must compose the
+  // aged reading exactly as before and say why it could not ask.
+  const pump = new CompanionEventPump();
+  const batches: PendingBatch[] = [];
+  pump.enqueueFact(reading(352, READING, 0));
+  pump.enqueuePlayerInput(FIRST_INPUT);
   await pump.flush(sink(batches));
 
-  assert.deepEqual(asked, [1], "the flush that would have been suppressed asked the world once, before deciding");
+  pump.enqueuePlayerInput(SECOND_INPUT);
+  await pump.flush(sink(batches));
+  assert.equal(batches.length, 2, "a person's turn is owed even when the world cannot be asked");
+  assert.equal(pump.turnAccount.autoObserve.unavailable[AUTO_OBSERVE_UNAVAILABLE.noBridge], 1);
+  assert.match(worldStateBlock(batches[1]?.text ?? "").header, new RegExp(RESTATED, "u"));
+});
+
+test("the flush that holds only a reading is counted against the reading, never as nothing pending", async () => {
+  // A run's account has to tell "a reading arrived and needed no decision" from "nothing arrived at all", or the next
+  // reader cannot see this rule working: `round55` printed `observation: 115` with no suppression at all.
+  const pump = new CompanionEventPump();
+  const batches: PendingBatch[] = [];
+  await pump.flush(sink(batches));
   assert.deepEqual(
     pump.turnAccount.lastDecision,
-    Object.freeze({ kind: "opened", index: 2, reason: TURN_OPENING.observation }),
-    "and the reading the answer brought carries the SAME revision - which is why the turn could never open before",
-  );
-  const block = worldStateBlock(batches[1]?.text ?? "");
-  assert.equal(block.header.includes(FRESH), true, `the turn states the answer it was composed from: ${block.header}`);
-  assert.match(block.body, /11:30/u, "and the paragraph is the clock the world reported, not the one it was holding");
-});
-
-test("a world that answers with the reading it already gave is NOT a cure, and the budget stops the fourth ask", async () => {
-  // The other half: an ask that returns the same reading changes nothing, so the flush stays suppressed - and the budget
-  // is what keeps that from becoming a poll. The answer carries a BUMPED revision on every ask, so a budget re-armed by
-  // the counter would ask forever while a budget re-armed by the reading spends three probes and says so.
-  const pump = new CompanionEventPump();
-  const batches: PendingBatch[] = [];
-  let answer = 352;
-  const { port, asked } = answeringPort(pump, () => reading((answer += 1), READING, answer));
-  pump.attachWorldStateRefresh(port);
-
-  pump.enqueueFact(reading(352, READING, 0));
-  pump.enqueuePlayerInput(FIRST_INPUT);
-  await pump.flush(sink(batches));
-
-  for (let attempt = 1; attempt <= 5; attempt += 1) {
-    pump.enqueueFact(reading(400 + attempt, READING, 100 + attempt));
-    await pump.flush(sink(batches));
-    assert.deepEqual(
-      pump.turnAccount.lastDecision,
-      Object.freeze({ kind: "suppressed", reason: TURN_SUPPRESSION.observationRestated }),
-      `attempt ${String(attempt)}: the reading she was shown is the reading this one states, so no turn is owed`,
-    );
-  }
-
-  assert.equal(
-    asked.length,
-    3,
-    `five suppressions of one reading asked ${String(asked.length)} times; the budget is three`,
-  );
-  const account = pump.turnAccount.autoObserve;
-  assert.equal(account.refreshed, 3, "the served asks are the refreshes");
-  assert.equal(
-    account.unavailable[AUTO_OBSERVE_UNAVAILABLE.attemptsSpent],
-    2,
-    "and the flushes past the budget say so instead of asking again",
-  );
-  assert.match(turnAccountLine(pump.turnAccount), /refresh_attempts_spent: 2/u);
-});
-
-test("a REFUSED probe on the suppressed path is recorded, and its refusal reaches the model", async () => {
-  // A probe the route would not serve must be as visible as the stale reading it could not replace, from the suppressed
-  // path as much as from an opening one - otherwise "the bridge is down" and "the world did not move" are one silence.
-  const pump = new CompanionEventPump();
-  const batches: PendingBatch[] = [];
-  const published: WorldFact[] = [];
-  pump.attachWorldStateRefresh(
-    Object.freeze({
-      observe: () => Promise.reject(new Error("bridge_not_authenticated")),
-      publish: (fact: WorldFact) => {
-        published.push(fact);
-        pump.enqueueFact(fact);
-      },
-    }),
+    Object.freeze({ kind: "suppressed", reason: TURN_SUPPRESSION.nothingPending }),
+    "an empty pump has nothing pending, and no reading to blame",
   );
 
   pump.enqueueFact(reading(352, READING, 0));
-  pump.enqueuePlayerInput(FIRST_INPUT);
   await pump.flush(sink(batches));
-
-  pump.enqueueFact(reading(352, READING, 2));
-  await pump.flush(sink(batches));
-  assert.equal(pump.worldStateRefresh.probes, 1, "the suppressed flush asked, and the ask was refused");
-  assert.equal(published.length, 1, "the refusal is published once for this reading");
-  assert.equal(published[0]?.payload.code, "world_state_refresh_refused:bridge_not_authenticated");
-  assert.equal(pump.turnAccount.autoObserve.unavailable[AUTO_OBSERVE_UNAVAILABLE.refused], 1);
-
-  // The refusal is a Host-minted fact, so it opens the next turn and reaches the model in words - and that turn's flush
-  // asks again, because the reading is still the one she was shown. The STATEMENT is published once; the ASKS are one per
-  // examined flush, which is the accounting the account line prints.
-  await pump.flush(sink(batches));
-  assert.match(batches[1]?.text ?? "", /world_state_refresh_refused:bridge_not_authenticated/u);
-  const account = pump.turnAccount.autoObserve;
-  assert.equal(pump.worldStateRefresh.probes, 2, "the flush the refusal opened asked too, on the same reading");
-  assert.equal(published.length, 1, "...and the reading's refusal was still said once");
-  const declined = Object.values(account.unavailable).reduce((total, count) => total + count, 0);
-  assert.equal(
-    account.refreshed + declined,
-    account.agedTurns,
-    "every aged reading is settled or declined, never neither",
+  assert.deepEqual(
+    pump.turnAccount.lastDecision,
+    Object.freeze({ kind: "suppressed", reason: READING_IS_STATE }),
+    "a reading that arrived and decided nothing is its own named condition",
   );
   const line = turnAccountLine(pump.turnAccount);
-  assert.match(line, /auto_observe_unavailable 2 \{no_bridge: 0, refresh_attempts_spent: 0, refresh_refused: 2\}/u);
+  assert.match(line, /suppressed 2 \{observation_is_state: 1, world_fact_restated: 0, nothing_pending: 1\}/u, line);
 });
