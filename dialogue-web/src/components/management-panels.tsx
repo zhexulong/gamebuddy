@@ -3,6 +3,7 @@ import { assertNever } from "../assert-never";
 import { type AppearanceChoice, isAppearanceChoice } from "../appearance";
 import { problemTextWithCode } from "../composed-problem-view";
 import { type Locale, messages, recordLabel } from "../i18n";
+import { fieldError } from "./field-error";
 import { memoryNotebookLabels, type MemoryNotebookLabels } from "./memory-notebook-labels";
 import {
   CONNECTION_API_SHAPES,
@@ -1591,6 +1592,9 @@ export function MemoryPanel({
               // union, so a corrected chapter could only render as "corrected" and no longer showed that it
               // was a chapter she had written at all: the correction had overwritten the lifecycle.
               const lifecycle = chapter.status === "deleted" ? labels.memoryChapterDeleted : labels.memoryChapterSealed;
+              // One correction per row: the message id names the row's own handle, so two chapters refused
+              // together do not both describe the first one.
+              const correctionError = fieldError(chapterRefusal, `memory-chapter-refusal-${chapter.handle}`);
               return (
                 <li key={chapter.handle} className="memory-chapter" data-memory-chapter={chapter.status}>
                   <div className="memory-chapter-head">
@@ -1616,6 +1620,8 @@ export function MemoryPanel({
                       <textarea
                         className="form-textarea"
                         aria-label={labels.memoryChapterEdit}
+                        aria-invalid={correctionError.invalid}
+                        aria-describedby={correctionError.describedBy}
                         value={chapterDraft.value}
                         onChange={(event) => chapterDraft.type(event.target.value)}
                         rows={3}
@@ -1623,7 +1629,7 @@ export function MemoryPanel({
                       {/* The refusal sits under the draft it is about: the words stay in the
                             field, and the correction closes only once the Host kept it. */}
                       {chapterRefusal !== null && (
-                        <p role="status" className="error-banner" data-memory-chapter-refusal>
+                        <p role="status" className="error-banner" id={correctionError.id} data-memory-chapter-refusal>
                           {chapterRefusal}
                         </p>
                       )}
@@ -1842,17 +1848,20 @@ export function MemoryCreateForm({
   const content = useDraft("memory.new-content", "");
   const [refusal, setRefusal] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const refusalError = fieldError(refusal, "memory-create-refusal");
   return (
     <div className="composer-actions">
       <textarea
         aria-label={contentLabel}
         className="form-textarea"
+        aria-invalid={refusalError.invalid}
+        aria-describedby={refusalError.describedBy}
         value={content.value}
         onChange={(event) => content.type(event.target.value)}
         rows={2}
       />
       {refusal !== null && (
-        <p role="status" className="error-banner" data-memory-create-refusal>
+        <p role="status" className="error-banner" id={refusalError.id} data-memory-create-refusal>
           {refusal}
         </p>
       )}
@@ -1922,6 +1931,7 @@ export function MemoryRow({
   // fact about one request, not the player's words, so it stays with the mount.
   const [refusal, setRefusal] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const refusalError = fieldError(refusal, `memory-item-refusal-${item.handle}`);
   const beginEditing = (): void => {
     setRefusal(null);
     editing.type(true);
@@ -1941,6 +1951,8 @@ export function MemoryRow({
         <textarea
           aria-label={`${labels.memoryContent}: ${item.title}`}
           className="form-textarea"
+          aria-invalid={refusalError.invalid}
+          aria-describedby={refusalError.describedBy}
           value={content.value}
           onChange={(event) => content.type(event.target.value)}
           rows={2}
@@ -1949,7 +1961,7 @@ export function MemoryRow({
         <p>{item.content}</p>
       )}
       {editing.value && refusal !== null && (
-        <p role="status" className="error-banner" data-memory-item-refusal>
+        <p role="status" className="error-banner" id={refusalError.id} data-memory-item-refusal>
           {refusal}
         </p>
       )}
