@@ -63,7 +63,7 @@ export const gateDeclaration = {
 };
 
 import { existsSync, readFileSync, readdirSync } from "node:fs";
-import { basename, dirname, join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { publishedRowFields } from "../integrations/stardew/action-development/src/analysis/stardew-action-inventory-reconciliation.mjs";
@@ -204,7 +204,7 @@ export function switchDomains(text, declaredNames) {
       .replace(/^base\./u, "")
       .replace(/\.Value$/u, "");
     const member = raw.includes(".") ? raw.slice(raw.lastIndexOf(".") + 1) : raw;
-    if (!/^[A-Za-z_]\w*$/u.test(member) || !declaredNames.has(member)) continue;
+    if (!(/^[A-Za-z_]\w*$/u.test(member) && declaredNames.has(member))) continue;
     const labels = domains.get(member) ?? new Set();
     const open = text.indexOf("{", match.index + match[0].length - 1);
     if (open >= 0)
@@ -541,6 +541,112 @@ export function instanceCase(property, { families = new Map(), tiles = new Map()
 }
 
 /**
+ * A `published` verdict, checked against the three places the claim can be false.
+ *
+ * The wire (does the row type declare the field), the Mod's record (does the record declare it), the builder (does the
+ * expression the verdict names actually land there), and the entity's own row families (is this row even about this
+ * entity). A verdict that names a field the wire does not carry is the defect this half exists for.
+ */
+export function judgePublishedVerdict({ property, entry, rows, records, declaredEntities, builders }) {
+  const findings = [];
+  const [family, name] = typeof entry.field === "string" ? String(entry.field).split(".") : [null, null];
+  const row = family === null ? undefined : rows.get(family);
+  if (row === undefined || name === undefined)
+    return [
+      {
+        code: "verdict_field_not_on_the_wire",
+        property: property.key,
+        detail: `published as \`${String(entry.field)}\`, and no snapshot family carries a row by that name`,
+      },
+    ];
+  if (!(declaredEntities.get(property.entity) ?? []).includes(family))
+    findings.push({
+      code: "verdict_field_outside_entity_rows",
+      property: property.key,
+      detail: `published as \`${entry.field}\`, but ${property.entity} declares no \`${family}\` row - a field on another entity's row is not this property's row`,
+    });
+  if (!row.fields.includes(name))
+    return [
+      ...findings,
+      {
+        code: "verdict_field_not_on_the_wire",
+        property: property.key,
+        detail: `published as \`${entry.field}\`, and ${OBSERVATION_SCHEMA_PATH} gives \`${family}\` rows [${row.fields.join(", ")}]`,
+      },
+    ];
+  const record = recordFor(records, row.definition, row.fields);
+  if (record.fields === null)
+    findings.push({
+      code: "verdict_field_not_on_the_mod_record",
+      property: property.key,
+      detail: `published as \`${entry.field}\`, and ${OBSERVATION_MODELS_PATH} ${record.finding}`,
+    });
+  else if (!record.fields.some((declared) => declared.toLowerCase() === name.toLowerCase()))
+    findings.push({
+      code: "verdict_field_not_on_the_mod_record",
+      property: property.key,
+      detail: `published as \`${entry.field}\`, and \`${record.name}\` declares [${record.fields.join(", ")}]`,
+    });
+  findings.push(...judgeWitness({ property, entry, name, record, builders }));
+  return findings;
+}
+
+/** The builder half: the witness the verdict names has to appear in the argument, or in the method that builds the row. */
+export function judgeWitness({ property, entry, name, record, builders }) {
+  const witness = typeof entry.witness === "string" ? entry.witness.trim() : "";
+  if (witness.length === 0)
+    return [
+      {
+        code: "verdict_field_without_witness",
+        property: property.key,
+        detail: `published as \`${entry.field}\` with no \`witness\`; name the expression the builder passes for that field, so a reader can find it`,
+      },
+    ];
+  if (record.fields === null) return [];
+  const found = builderArguments({ sources: builders, record, field: name });
+  if (found.some((candidate) => candidate.argument.includes(witness) || candidate.method.includes(witness))) return [];
+  const seen = [...new Set(found.map((candidate) => candidate.argument))].slice(0, 3).join(" | ");
+  return [
+    {
+      code: "verdict_field_without_witness",
+      property: property.key,
+      detail: `published as \`${entry.field}\` witnessed by \`${witness}\`, and no \`${record.name}\` construction passes it there or reads it in the method that builds the row (${found.length === 0 ? "no construction found" : seen})`,
+    },
+  ];
+}
+
+/** A `deliberately_absent` verdict: an absence has to argue, and its argument has to expire. */
+export function judgeAbsentVerdict({ property, entry, rows }) {
+  if (typeof entry.reason !== "string" || entry.reason.trim().length === 0)
+    return [
+      {
+        code: "absent_entry_unexplained",
+        property: property.key,
+        detail: "deliberately_absent with no reason; an absence with no argument is a silent drop",
+      },
+    ];
+  const expiry =
+    typeof entry.expires === "string" ? /^row_field:([A-Za-z]\w*)\.([A-Za-z]\w*)$/u.exec(entry.expires) : null;
+  if (expiry === null)
+    return [
+      {
+        code: "absent_entry_without_expiry",
+        property: property.key,
+        detail: `\`${String(entry.expires)}\` is not an expiry this gate checks; declare \`row_field:<family>.<field>\` - the fact whose arrival ends the absence`,
+      },
+    ];
+  if (rows.get(expiry[1])?.fields.includes(expiry[2]))
+    return [
+      {
+        code: "absent_entry_expired",
+        property: property.key,
+        detail: `excused until \`${entry.expires}\`, and \`${expiry[1]}\` rows now carry \`${expiry[2]}\` - the absence is over, verdict it again`,
+      },
+    ];
+  return [];
+}
+
+/**
  * The verdict table judged against the derived population and against the wire.
  *
  * Every finding names the property, because a table that drifts silently is the defect this file replaces: a verdict
@@ -564,7 +670,7 @@ export function judgeVerdicts({
       findings.push({
         code: "verdict_entry_invalid",
         property: String(entry?.property ?? "unknown"),
-        detail: "a verdict entry needs `property` (EngineType.member) and one of " + VERDICTS.join(", "),
+        detail: `a verdict entry needs \`property\` (EngineType.member) and one of ${VERDICTS.join(", ")}`,
       });
       continue;
     }
@@ -597,96 +703,15 @@ export function judgeVerdicts({
       continue;
     }
     counts[entry.verdict] += 1;
-    if (entry.verdict === "published") {
-      const row = typeof entry.field === "string" ? rows.get(String(entry.field).split(".")[0]) : undefined;
-      const [family, name] = typeof entry.field === "string" ? String(entry.field).split(".") : [null, null];
-      if (row === undefined || name === undefined) {
-        findings.push({
-          code: "verdict_field_not_on_the_wire",
-          property: property.key,
-          detail: `published as \`${String(entry.field)}\`, and no snapshot family carries a row by that name`,
-        });
-        continue;
-      }
-      const families = declaredEntities.get(property.entity) ?? [];
-      if (!families.includes(family))
-        findings.push({
-          code: "verdict_field_outside_entity_rows",
-          property: property.key,
-          detail: `published as \`${entry.field}\`, but ${property.entity} declares no \`${family}\` row - a field on another entity's row is not this property's row`,
-        });
-      if (!row.fields.includes(name)) {
-        findings.push({
-          code: "verdict_field_not_on_the_wire",
-          property: property.key,
-          detail: `published as \`${entry.field}\`, and ${OBSERVATION_SCHEMA_PATH} gives \`${family}\` rows [${row.fields.join(", ")}]`,
-        });
-        continue;
-      }
-      const record = recordFor(records, row.definition, row.fields);
-      if (record.fields === null)
-        findings.push({
-          code: "verdict_field_not_on_the_mod_record",
-          property: property.key,
-          detail: `published as \`${entry.field}\`, and ${OBSERVATION_MODELS_PATH} ${record.finding}`,
-        });
-      else if (!record.fields.some((declared) => declared.toLowerCase() === name.toLowerCase()))
-        findings.push({
-          code: "verdict_field_not_on_the_mod_record",
-          property: property.key,
-          detail: `published as \`${entry.field}\`, and \`${record.name}\` declares [${record.fields.join(", ")}]`,
-        });
-      const witness = typeof entry.witness === "string" ? entry.witness.trim() : "";
-      if (witness.length === 0)
-        findings.push({
-          code: "verdict_field_without_witness",
-          property: property.key,
-          detail: `published as \`${entry.field}\` with no \`witness\`; name the expression the builder passes for that field, so a reader can find it`,
-        });
-      else if (record.fields !== null) {
-        const argumentsFound = builderArguments({ sources: builders, record, field: name });
-        if (!argumentsFound.some((found) => found.argument.includes(witness) || found.method.includes(witness)))
-          findings.push({
-            code: "verdict_field_without_witness",
-            property: property.key,
-            detail: `published as \`${entry.field}\` witnessed by \`${witness}\`, and no \`${record.name}\` construction passes it there or reads it in the method that builds the row (${argumentsFound.length === 0 ? "no construction found" : [...new Set(argumentsFound.map((found) => found.argument))].slice(0, 3).join(" | ")})`,
-          });
-      }
-      continue;
-    }
-    if (entry.verdict === "deliberately_absent") {
-      if (typeof entry.reason !== "string" || entry.reason.trim().length === 0) {
-        findings.push({
-          code: "absent_entry_unexplained",
-          property: property.key,
-          detail: "deliberately_absent with no reason; an absence with no argument is a silent drop",
-        });
-        continue;
-      }
-      const expiry =
-        typeof entry.expires === "string" ? /^row_field:([A-Za-z]\w*)\.([A-Za-z]\w*)$/u.exec(entry.expires) : null;
-      if (expiry === null) {
-        findings.push({
-          code: "absent_entry_without_expiry",
-          property: property.key,
-          detail: `\`${String(entry.expires)}\` is not an expiry this gate checks; declare \`row_field:<family>.<field>\` - the fact whose arrival ends the absence`,
-        });
-        continue;
-      }
-      const now = rows.get(expiry[1]);
-      if (now !== undefined && now.fields.includes(expiry[2]))
-        findings.push({
-          code: "absent_entry_expired",
-          property: property.key,
-          detail: `excused until \`${entry.expires}\`, and \`${expiry[1]}\` rows now carry \`${expiry[2]}\` - the absence is over, verdict it again`,
-        });
-      continue;
-    }
-    findings.push({
-      code: "property_not_published",
-      property: property.key,
-      detail: `${instanceCase(property, witnesses)} has no row carrying ${property.member}`,
-    });
+    if (entry.verdict === "published")
+      findings.push(...judgePublishedVerdict({ property, entry, rows, records, declaredEntities, builders }));
+    else if (entry.verdict === "deliberately_absent") findings.push(...judgeAbsentVerdict({ property, entry, rows }));
+    else
+      findings.push({
+        code: "property_not_published",
+        property: property.key,
+        detail: `${instanceCase(property, witnesses)} has no row carrying ${property.member}`,
+      });
   }
   for (const [property] of verdicts)
     if (!population.has(property))
@@ -890,7 +915,9 @@ function main(argv) {
   );
   for (const finding of findings) process.stdout.write(`${finding.code}:${finding.property}:${finding.detail}\n`);
   const checks = buildChecks({ ...measured, findings });
-  const status = measured.properties.size === 0 ? "blocked" : findings.length === 0 ? "passed" : "failed";
+  let status = "failed";
+  if (measured.properties.size === 0) status = "blocked";
+  else if (findings.length === 0) status = "passed";
   process.stdout.write(
     `${JSON.stringify({ gate: "stardew_instance_property_coverage/v1", status, population: measured.properties.size, checks })}\n`,
   );
