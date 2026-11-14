@@ -1408,7 +1408,7 @@ export function ComposedReferenceGameApp() {
       <div className="tavern-app-shell" data-profile="composed-reference-game">
         <SkipLink label={labels().skipToChat} />
         {view.kind === "loading" && (
-          <main id="main-content" className="app-main-content">
+          <main id="main-content" className="app-main-content" tabIndex={-1}>
             <div className="state-placeholder">
               <p className="loading-text">{labels().openingChat}</p>
             </div>
@@ -1435,7 +1435,7 @@ export function ComposedReferenceGameApp() {
               entries={surfaceBarEntries(labels(), shownSurface, managementPanelsAvailable, entryOpeners)}
               fold={{ from: LEADING_SURFACE_COUNT, label: labels().appBarMore }}
             />
-            <main id="main-content" className="app-main-content">
+            <main id="main-content" className="app-main-content" tabIndex={-1}>
               {/* Every surface is a peer: it takes this region in full, none of them
                 covers another, and the conversation is simply the default one
                 (design/104 §2). The URL names the selected surface, so Back

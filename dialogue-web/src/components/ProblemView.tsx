@@ -38,7 +38,7 @@ export function ProblemView({
   action: ProblemViewAction | null;
 }) {
   return (
-    <main className="problem-view" id="main-content">
+    <main className="problem-view" id="main-content" tabIndex={-1}>
       <section className="problem-card" role="alert">
         <h1>{title}</h1>
         <p>{detail}</p>
