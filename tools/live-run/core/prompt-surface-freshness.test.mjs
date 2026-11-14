@@ -609,14 +609,15 @@ describe("the check reports its own cost, and that cost is bounded", () => {
   });
 
   test("the check runs a fixed number of git processes, not one per population path per ref", () => {
-    // The population-scaled ceiling: the tree reads are per revision, the history walks are per ref, and only a path
-    // that both sides changed costs a second history walk. Three processes per path per ref is the shape this guard
-    // exists for - 48 of them on a sixteen-path population, before the history walk that dominated them.
+    // The ceiling is the worst case of the shape this guard protects, term by term: resolving the root, the revision
+    // and the refs; one tree read per revision; one history walk per ref, and a second only for a path it found work
+    // on; two patch-id reads for a path both sides changed; the worktree comparison. Three processes per path per ref
+    // is the shape this guard exists for - 48 of them on a sixteen-path population, before the history walk on top.
     const timings = reportedTimings(runCheckModule(repositoryRoot));
-    const ceiling = 10 + timings.paths;
+    const ceiling = 6 + 2 * timings.refs + 2 * timings.paths;
     assert.ok(
       timings.gitCalls <= ceiling,
-      `the check ran ${timings.gitCalls} git process(es) for ${timings.paths} path(s), ceiling ${ceiling}`,
+      `the check ran ${timings.gitCalls} git process(es) for ${timings.paths} path(s) and ${timings.refs} ref(s), ceiling ${ceiling}`,
     );
   });
 });

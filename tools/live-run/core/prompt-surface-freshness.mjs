@@ -236,11 +236,11 @@ const createClock = () => {
         terms[term] += performance.now() - startedAt;
       }
     },
-    report(paths) {
+    report(paths, refs) {
       const rounded = {};
       for (const [term, ms] of Object.entries(terms)) rounded[term] = Math.round(ms);
       const totalMs = Math.round(Object.values(terms).reduce((sum, ms) => sum + ms, 0));
-      return Object.freeze({ ...rounded, gitCalls, paths, totalMs });
+      return Object.freeze({ ...rounded, gitCalls, paths, refs, totalMs });
     },
   };
 };
@@ -257,7 +257,7 @@ const createClock = () => {
  *   reason: string | null,
  *   findings: readonly {kind: "behind" | "dirty", path: string, count: number, subjects: readonly string[]}[],
  *   timings: {lsTreeMs: number, historyMs: number, patchIdMs: number, diffMs: number, resolveMs: number,
- *             gitCalls: number, paths: number, totalMs: number},
+ *             gitCalls: number, paths: number, refs: number, totalMs: number},
  * }}
  */
 export function assessPromptSurfaceFreshness({ repositoryRoot, revision = "HEAD", productRefs = PRODUCT_REFS }) {
@@ -273,7 +273,12 @@ export function assessPromptSurfaceFreshness({ repositoryRoot, revision = "HEAD"
     findings: Object.freeze([]),
   };
   const notMeasured = (reason) =>
-    Object.freeze({ ...state, status: "not_measured", reason, timings: clock.report(state.examined) });
+    Object.freeze({
+      ...state,
+      status: "not_measured",
+      reason,
+      timings: clock.report(state.examined, state.refs.length),
+    });
 
   let root;
   try {
@@ -392,7 +397,7 @@ export function assessPromptSurfaceFreshness({ repositoryRoot, revision = "HEAD"
     status,
     reason: null,
     findings: Object.freeze(findings),
-    timings: clock.report(population.length),
+    timings: clock.report(population.length, refs.length),
   });
 }
 
