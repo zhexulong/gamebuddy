@@ -44,7 +44,13 @@ if (Test-Path $Worktree) {
   # remedy. Prune the record, and if the directory really is still there, say so instead of adding.
   git -C $Repo worktree prune 2>&1 | ForEach-Object { Log ("  | prune: " + $_) }
   if (Test-Path $Worktree) {
-    Log "  pin_worktree_not_removed: $Worktree survived `worktree remove --force` and `worktree prune`; this --out cannot be reused, so pass a fresh one"
+    # Named as a REFUSAL, with the remedy on the same line: the measured run that died here read
+    # `DONE-PIN-FAIL (previous worktree could not be cleared)` in the log and `phase pin failed (exit 1)`
+    # in the operator's terminal, so the two facts an operator needs - which path, and what to do - were
+    # in neither place. A locked file inside the old worktree (a survivor of the previous run) is the
+    # usual cause, which is why the run's own teardown now terminates that run's processes.
+    Log ("  previous_worktree_not_cleared:" + $Worktree)
+    Log "  remedy: pass a FRESH --out (this --out's stage root still holds its previous worktree); pin has no --reuse, it always re-creates the worktree"
     Log "DONE-PIN-FAIL (previous worktree could not be cleared)"
     exit 1
   }
@@ -52,7 +58,12 @@ if (Test-Path $Worktree) {
 }
 
 git -C $Repo worktree add --detach $Worktree $Commit 2>&1 | ForEach-Object { Log ("  | " + $_) }
-if ($LASTEXITCODE -ne 0) { Log "  DONE-PIN-FAIL (worktree add failed)"; exit 1 }
+if ($LASTEXITCODE -ne 0) {
+  Log ("  previous_worktree_not_cleared:" + $Worktree + " (git kept a record or a directory this run could not replace)")
+  Log "  remedy: pass a FRESH --out; pin has no --reuse, it always re-creates the worktree"
+  Log "  DONE-PIN-FAIL (worktree add failed)"
+  exit 1
+}
 Log ("  worktree HEAD=" + (git -C $Worktree rev-parse HEAD))
 if ((git -C $Worktree rev-parse HEAD) -ne $resolved) { Log "  HEAD MISMATCH"; Log "DONE-PIN-FAIL"; exit 1 }
 

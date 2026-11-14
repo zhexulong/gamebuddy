@@ -49,6 +49,7 @@ import {
   teardownRun,
   writeLeftoversReading,
 } from "./lib/run-owner.mjs";
+import { describePhaseFailure } from "./lib/phase-failure.mjs";
 
 const PHASES = ["check", "pin", "build", "launch", "capture", "cleanup", "report"];
 const POWER = "powershell.exe";
@@ -384,11 +385,22 @@ async function main() {
   const paths = runPaths({ outRoot: values.out, stageRoot: values.stage ?? defaultStageFor(values.out) });
   const run = prepareRun(paths, values);
 
+  // Each phase writes its own log, and a failed one almost always named its cause there. The operator
+  // reads the terminal, so that line carries the refusal instead of a phase name and a number.
+  const PHASE_LOGS = {
+    pin: "pinLog",
+    build: "buildLog",
+    launch: "launchLog",
+    capture: "captureLog",
+    cleanup: "cleanupLog",
+    report: "reportLog",
+  };
   const runner = async (name, fn) => {
     console.log(`== phase ${name} ==`);
     const result = await fn();
     const code = typeof result === "object" && result !== null ? result.code : result;
-    if (code !== 0) throw new Error(`phase ${name} failed (exit ${code})`);
+    if (code !== 0)
+      throw new Error(describePhaseFailure({ phase: name, code, logPath: paths[PHASE_LOGS[name]] ?? paths.runLog }));
     return result;
   };
 
