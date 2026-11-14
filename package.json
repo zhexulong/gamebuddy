@@ -283,6 +283,7 @@
     "test:stardew-loop-closure-mutation": "node tools/check-stardew-loop-closure.mutation.mjs",
     "test:stardew-method-resolution": "node --test integrations/stardew/action-development/tests/stardew-method-resolution.test.mjs",
     "test:stardew-method-resolution-mutation": "node integrations/stardew/action-development/tests/stardew-method-resolution.mutation.mjs",
+    "test:stardew-live-runner-coverage": "node --test tools/check-stardew-live-runner-coverage.test.mjs",
     "test:stardew-native-completion-event-register": "node --test tools/stardew-native-completion-event-register.test.mjs",
     "test:stardew-native-event-continuation-trace": "node --test tools/stardew-native-event-continuation-trace.test.mjs",
     "test:stardew-native-farmer-sprite-callback-boundary": "node --test tools/stardew-native-farmer-sprite-callback-boundary.test.mjs",
