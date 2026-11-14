@@ -69,11 +69,11 @@ const REFERENCE_SHAPE = "small-button";
 
 const CELLS = ["dark", "light"] as const;
 
-/** One declaration block of the stylesheet: the selector as written, and the declarations inside it. */
-type Rule = Readonly<{ selector: string; body: string }>;
+/** One declaration block of the stylesheet is read for its selector: the shape it paints. */
+type Rule = Readonly<{ selector: string }>;
 
 /**
- * Every innermost `selector { ... }` block of the sheet, with comments removed.
+ * Every innermost `selector { ... }` block of the sheet, with comments removed, in source order.
  *
  * The sheet nests its rules inside `@layer` and `@media`; an innermost block is exactly one selector
  * and its declarations, which is the unit a shape is read from. A block whose body holds another
@@ -83,7 +83,7 @@ type Rule = Readonly<{ selector: string; body: string }>;
 function rulesOf(css: string): readonly Rule[] {
   const text = css.replace(/\/\*[\s\S]*?\*\//gu, " ");
   return [...text.matchAll(/([^{}]+)\{([^{}]*)\}/gu)]
-    .map((match) => ({ selector: match[1].trim(), body: match[2] }))
+    .map((match) => ({ selector: match[1].trim() }))
     .filter((rule) => !rule.selector.startsWith("@"));
 }
 
@@ -399,12 +399,13 @@ test.describe("a disabled control is quieter than an enabled one", () => {
           );
       }
 
-      assert.deepEqual(
+      // The harness's own matcher, not `assert`: this is the claim the file's title makes, and the reader
+      // three gates share reads `expect` matchers - a node assertion here is a claim nothing reads.
+      expect(
         violations,
-        [],
         `every disabled ${appearance}-appearance control is quieter than an enabled one, and wears no more ` +
           "chrome than the plain enabled control",
-      );
+      ).toEqual([]);
     });
   }
 });
