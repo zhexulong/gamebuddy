@@ -80,20 +80,19 @@
  *   node tools/check-derived-population.mjs --json      # the reading, machine-readable, including every site
  *   node tools/check-derived-population.mjs --root <dir>  # the gate's own fixture
  *
- * red-proof: `assert.equal(list.length, 15)` injected in a test file ->
- *            `literal_population_assertion:<file>:<line>:15 - use list.length or assert.deepEqual(...)`
+ * red-proof: inject  `const SURFACES = ["water_crop", "cut_weeds"]` with `assert.equal(SURFACES.length, 2)` appended to
+ *            tools/check-refusal-informativeness.test.mjs, the file that consumes the derived surface, read
+ *            `literal_population_assertion:tools/check-refusal-informativeness.test.mjs:584:2 — use SURFACES.length or`
+ *            `assert.deepEqual(new Set(actual), new Set(AUTHORITY))` (shape `declaration_site`) with `status failed`
+ *            and `examined 997`; removed, the same command reads `findings 1`, that one being
+ *            `tools/check-spec-waiver-comments.test.mjs:110:1` - a site the injection did not create. Measured
+ *            2026-11-13 on this checkout.
  *
- * red-proof: measured on this tree 2026-11-13, after the predicate went green (`findings 0`): a fresh hand-written
- *            population appended to `tools/check-refusal-informativeness.test.mjs`, the file that consumes the derived
- *            surface - `const SURFACES = ["water_crop", "cut_weeds"]` with `assert.equal(SURFACES.length, 2)` - read
- *            `sites 111 findings 27 status failed` and
- *            `literal_population_assertion:tools/check-refusal-informativeness.test.mjs:585:2 — use SURFACES.length or
- *            assert.deepEqual(new Set(actual), new Set(AUTHORITY))`; removed, `findings 0` again.
- *
- * Also injected, each seen red once (tools/check-derived-population.test.mjs): the same literal on the left of the
- * assertion, a bare `list.length === 15`, two derived sides reported as a literal, every file in a directory treated as
- * a test, an unsorted member diff, an empty population treated as a pass, a raw-text sweep in place of the syntax tree,
- * a count of a test's own recorder, a count of a string, a new site, and a stale baseline entry.
+ * Also injected, each seen red once (tools/check-derived-population.test.mjs): `assert.equal(list.length, 15)` on a
+ * test file's own array, the same literal on the left of the assertion, a bare `list.length === 15`, two derived sides
+ * reported as a literal, every file in a directory treated as a test, an unsorted member diff, an empty population
+ * treated as a pass, a raw-text sweep in place of the syntax tree, a count of a test's own recorder, a count of a
+ * string, a new site, and a stale baseline entry.
  */
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
