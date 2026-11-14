@@ -90,6 +90,21 @@ export const GAME_BROWSER_PROBLEM_CODES_V1 = Object.freeze([
   // missing registration is the installation step, a held one is "close the game and this
   // GameBuddy session". It names the CONDITION only - which attempt holds it travels in no field.
   "stardew_bootstrap_registration_held",
+  // The create whose world is the player's own. The save slot the new world would be registered on
+  // already binds the world an earlier session created and the recovery deliberately preserved, so
+  // this create refuses instead of taking it over (`STARDEW_GAME_CREATE_WORLD_HELD_BY_PLAYER_RESUME_REQUIRED`,
+  // stardew-production-lifecycle-coordinator.internal.ts:969-970). Its fix is the opposite of the
+  // generic `state_unavailable`'s: retrying create on the same slot fails identically, and the world
+  // the player already has is resumed, never recreated. It names the CONDITION only - which session
+  // holds the world travels in no field.
+  "stardew_game_create_world_held_by_player",
+  // The create whose slot an earlier GameBuddy attempt still holds. That attempt's lease was not
+  // proven gone, so nothing was finalized and nothing released
+  // (`STARDEW_GAME_CREATE_SLOT_HOLDER_NOT_PROVEN_GONE`, stardew-production-lifecycle-coordinator.internal.ts:950).
+  // Its own code rather than the one above because the two facts have opposite fixes: there the
+  // world is the player's and is resumed, here a leftover attempt of this product is what has to be
+  // closed out. It names the CONDITION only - which attempt holds it travels in no field.
+  "stardew_game_create_slot_held_by_earlier_attempt",
 ] as const);
 
 const GameProblemCode = Type.Union([
@@ -122,6 +137,8 @@ const GameProblemCode = Type.Union([
   Type.Literal("stardew_player_host_exited"),
   Type.Literal("stardew_player_host_cabin_missing"),
   Type.Literal("stardew_bootstrap_registration_held"),
+  Type.Literal("stardew_game_create_world_held_by_player"),
+  Type.Literal("stardew_game_create_slot_held_by_earlier_attempt"),
 ]);
 
 // ─── Redacted read projections ──────────────────────────────────────────────

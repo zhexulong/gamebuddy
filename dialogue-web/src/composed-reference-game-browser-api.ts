@@ -142,6 +142,8 @@ export const GAME_PROBLEM_CODES = [
   "stardew_player_host_exited",
   "stardew_player_host_cabin_missing",
   "stardew_bootstrap_registration_held",
+  "stardew_game_create_world_held_by_player",
+  "stardew_game_create_slot_held_by_earlier_attempt",
 ] as const;
 export type GameProblemCode = (typeof GAME_PROBLEM_CODES)[number];
 

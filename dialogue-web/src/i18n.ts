@@ -841,6 +841,16 @@ const en = {
   gameProblemRegistrationHeldDetail:
     "GameBuddy could not start a new session because the previous one still holds this game. If Stardew Valley is still running, close it. Close GameBuddy completely, open it again, then play with your companion.",
 
+  // The two `game.create` refusals the player can answer. Both used to arrive as
+  // `state_unavailable`, i.e. as "reload and try again" - and retrying the create fails
+  // identically for both, so each names the fix that can work instead.
+  gameProblemCreateWorldHeldTitle: "This farm already has your world",
+  gameProblemCreateWorldHeldDetail:
+    "GameBuddy did not make a second farm here: the save in this slot holds the world you already played, and it was kept rather than replaced. Resume game continues it.",
+  gameProblemCreateSlotHeldTitle: "An earlier GameBuddy attempt still holds this farm",
+  gameProblemCreateSlotHeldDetail:
+    "GameBuddy could not start the new farm because an earlier attempt of its own still holds this world's slot, and it could not prove that attempt had ended. Close GameBuddy completely, open it again, then start the new game.",
+
   // Characters (design/28 §2) — companion library + persona/scenario/greeting
   charactersTitle: "Characters",
   charactersUnavailable: "Character management is unavailable in this profile.",
@@ -1869,6 +1879,15 @@ const zh: Messages = {
   gameProblemRegistrationHeldTitle: "上一次 GameBuddy 会话仍占着这个游戏",
   gameProblemRegistrationHeldDetail:
     "GameBuddy 无法开始新的会话，因为上一次会话仍占着这个游戏。如果《星露谷物语》还在运行，请先关闭它。请完全关闭 GameBuddy，重新打开，然后再启动伴玩。",
+
+  // 两条玩家可以自己处理的 `game.create` 拒绝。它们以前都落在 `state_unavailable`，
+  // 也就是“重新加载再试一次”—— 而两条都重试创建只会得到同样的结果，所以各自说出真正能解决的那一步。
+  gameProblemCreateWorldHeldTitle: "这个农场已经有你的世界了",
+  gameProblemCreateWorldHeldDetail:
+    "GameBuddy 没有在这里再建一个农场：这个存档里的世界是你已经玩过的那个，所以它被保留下来，没有被替换。用“恢复游戏连接”继续它。",
+  gameProblemCreateSlotHeldTitle: "上一次 GameBuddy 尝试仍占着这个农场",
+  gameProblemCreateSlotHeldDetail:
+    "GameBuddy 无法开始新农场，因为它自己上一次的尝试仍占着这个世界的槽位，而且无法确认那次尝试已经结束。请完全关闭 GameBuddy，重新打开，再开始新游戏。",
 
   // Characters (design/28 §2)
   charactersTitle: "角色",

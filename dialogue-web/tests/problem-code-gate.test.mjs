@@ -509,8 +509,13 @@ test("problem-code.5: the authorities and the sender signatures are read, not as
   // cabin this companion may use), moved it 25 to 26. The registration an earlier attempt still
   // holds (`stardew_bootstrap_registration_held`, the activation route's own answer where the
   // generic `state_unavailable` used to stand for both that and a missing installation) moved it
-  // 26 to 27.
-  assert.equal(game.size, 27, `the game problem union should have 27 members, read ${game.size}`);
+  // 26 to 27, and the two `game.create` refusals a player can answer - the world a new farm would
+  // take over being the player's own (`stardew_game_create_world_held_by_player`, resumed rather than
+  // recreated) and the world's slot being held by an earlier attempt of this product's own
+  // (`stardew_game_create_slot_held_by_earlier_attempt`, closed out by a fresh GameBuddy) - were named
+  // instead of falling through to `state_unavailable`, whose "try again" is false advice for both,
+  // moving it 27 to 29.
+  assert.equal(game.size, 29, `the game problem union should have 29 members, read ${game.size}`);
   assert.equal(turn.size, 4, `the turn's problemCode union should have 4 members, read ${turn.size}`);
   assert.deepEqual([...transport], ["payload_too_large"], "the transport extra is the ProblemCode alias literal");
   const { findings, examined, senders } = unreadCodeArguments(

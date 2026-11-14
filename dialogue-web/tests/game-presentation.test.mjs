@@ -712,3 +712,63 @@ test("the cabin read's exit refusal reaches the player as the ending it is, not 
     );
   }
 });
+
+/**
+ * The create the player can answer: the world a new farm would be registered on is the player's own,
+ * kept rather than replaced. The refusal used to arrive as `state_unavailable`, i.e. as "reload and
+ * try again" - advice that fails identically on that slot. Its step is the one that can work: the
+ * resume control, which is why the said_as phrase is that control's own label.
+ */
+test("a create whose world is already the player's names the resume step, not a retry", (t) => {
+  for (const locale of locales) {
+    const labels = messages(locale);
+    // The negative half of the distinction: a create that could not happen (the composition has no
+    // world-creation seam) keeps the generic sentence, so the two facts cannot read alike.
+    const unavailable = composedProblemView(
+      new ComposedReferenceGameProblemError("state_unavailable", 409, "request-1", "stardew_game_world_creation_unavailable"),
+      labels,
+    );
+    assert.equal(unavailable.title, labels.gameProblemStateUnavailableTitle, `${locale} moved the generic sentence`);
+
+    const held = () => new ComposedReferenceGameProblemError("stardew_game_create_world_held_by_player", 409);
+    const view = composedProblemView(held(), labels);
+    assert.equal(view.kind, "problem");
+    assert.equal(view.title, labels.gameProblemCreateWorldHeldTitle, `${locale} words the refusal twice`);
+    assert.equal(view.detail, labels.gameProblemCreateWorldHeldDetail, `${locale} words the refusal twice`);
+    assert.ok(!view.detail.includes("stardew_game_create_world_held_by_player"), `${locale} prints the raw code`);
+    assert.notEqual(view.title, unavailable.title, `${locale} reads "the world is yours" and "unavailable" the same way`);
+    // It is a refusal - the Host stated no world was created - and its step is the resume control,
+    // which this card cannot draw, so the detail names it.
+    assert.deepEqual(gameOperationFailure(held(), labels), { kind: "refused", sentence: view.detail });
+    assert.equal(view.step.kind, "control");
+    assert.equal(view.step.id, "game-resume");
+    assert.ok(view.detail.includes(labels.gameResume), `${locale} does not name the control the step is`);
+    t.diagnostic(`${locale}: ${view.title} | ${view.detail}`);
+  }
+});
+
+/**
+ * The create whose slot an earlier attempt of this product's own still holds. Nothing was finalized
+ * and nothing released, so the leftover attempt is what has to end - the same step as the
+ * registration an earlier attempt still holds, and a different one from the world above.
+ */
+test("a create whose slot an earlier attempt holds names the restart step, not the resume one", (t) => {
+  for (const locale of locales) {
+    const labels = messages(locale);
+    const held = () => new ComposedReferenceGameProblemError("stardew_game_create_slot_held_by_earlier_attempt", 409);
+    const view = composedProblemView(held(), labels);
+    assert.equal(view.kind, "problem");
+    assert.equal(view.title, labels.gameProblemCreateSlotHeldTitle, `${locale} words the refusal twice`);
+    assert.equal(view.detail, labels.gameProblemCreateSlotHeldDetail, `${locale} words the refusal twice`);
+    assert.ok(!view.detail.includes("stardew_game_create_slot_held_by_earlier_attempt"), `${locale} prints the raw code`);
+    assert.deepEqual(gameOperationFailure(held(), labels), { kind: "refused", sentence: view.detail });
+    assert.equal(view.step.kind, "outside_surface");
+    assert.equal(view.step.step, "restart_gamebuddy");
+    // The two create refusals are two sentences with two steps: one asks the player to resume the
+    // world they already have, the other to close out an attempt of GameBuddy's own.
+    const other = composedProblemView(new ComposedReferenceGameProblemError("stardew_game_create_world_held_by_player", 409), labels);
+    assert.notEqual(view.title, other.title, `${locale} reads both create refusals the same way`);
+    assert.notEqual(view.detail, other.detail, `${locale} reads both create refusals the same way`);
+    t.diagnostic(`${locale}: ${view.title} | ${view.detail}`);
+  }
+});

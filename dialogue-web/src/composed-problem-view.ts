@@ -667,6 +667,28 @@ const gameCabinMissing: ProblemSentence = (labels) =>
  */
 const gameRegistrationHeld: ProblemSentence = (labels) =>
   sentence(labels.gameProblemRegistrationHeldTitle, labels.gameProblemRegistrationHeldDetail, RESTART_GAMEBUDDY);
+/**
+ * The create whose world is the player's own. The slot a new world would be registered on already
+ * holds the world an earlier session created and the Host deliberately preserved, so this create
+ * kept it instead of taking it over - the world is the player's, and the session that owns it is
+ * what continues. Its step is the panel's resume control, named by the label that control carries,
+ * because retrying the create on the same slot is the one thing that cannot work.
+ */
+const gameCreateWorldHeldByPlayer: ProblemSentence = (labels) =>
+  sentence(labels.gameProblemCreateWorldHeldTitle, labels.gameProblemCreateWorldHeldDetail, {
+    kind: "control",
+    id: "game-resume",
+    elsewhere: { said_as: "Resume game" },
+  });
+/**
+ * The create whose slot an earlier attempt of this product still holds and could not prove gone.
+ * Nothing was finalized and nothing released, so the leftover attempt is what has to end first -
+ * the same step, and the same sentence shape, as the registration an earlier attempt still holds.
+ * It is not the code above: there the world is the player's and is resumed, here a GameBuddy
+ * attempt of the player's own is standing in the way of this one.
+ */
+const gameCreateSlotHeldByEarlierAttempt: ProblemSentence = (labels) =>
+  sentence(labels.gameProblemCreateSlotHeldTitle, labels.gameProblemCreateSlotHeldDetail, RESTART_GAMEBUDDY);
 
 /**
  * Every member of the game contract's `GameProblemCode` union, and what the player reads for it.
@@ -717,6 +739,8 @@ const GAME_PROBLEM_VIEWS: Readonly<Record<GameProblemCode, GameProblemView>> = {
   stardew_player_host_exited: refused(gamePlayerHostExited),
   stardew_player_host_cabin_missing: refused(gameCabinMissing),
   stardew_bootstrap_registration_held: refused(gameRegistrationHeld),
+  stardew_game_create_world_held_by_player: refused(gameCreateWorldHeldByPlayer),
+  stardew_game_create_slot_held_by_earlier_attempt: refused(gameCreateSlotHeldByEarlierAttempt),
 };
 
 /** The codes the game contract declares, for the untyped boundary below the map. */
