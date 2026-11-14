@@ -15,7 +15,6 @@ import { test } from "node:test";
 
 import {
   DEFAULT_CONNECT_TIMEOUT_MS,
-  FIXTURE_VOCABULARIES,
   parseCompleteEvidence,
   parseEvidence,
   parseStrictEvidence,
@@ -132,112 +131,118 @@ const fixtureConfig = {
   },
 };
 
-test("the fixture refusal speaks all three measured vocabularies and refuses the same configs in each", () => {
-  assert.deepEqual([...FIXTURE_VOCABULARIES].sort(), ["action_prefixed", "config_invalid", "enabled"]);
-  const refusals = {
-    enabled: ["native_local_fixture_not_enabled", "native_local_fixture_topology_not_isolated"],
-    config_invalid: ["native_local_fixture_config_invalid", "native_local_fixture_topology_not_isolated"],
-    action_prefixed: ["native_local_x1_fixture_config_invalid", "native_local_x1_action_policy_invalid"],
-  };
-  for (const vocabulary of FIXTURE_VOCABULARIES) {
-    const options = { vocabulary, action: "x1" };
-    assert.deepEqual(validateNativeLocalFixtureConfig(fixtureConfig, options), undefined, vocabulary);
-    assert.throws(() => validateNativeLocalFixtureConfig({}, options), { message: refusals[vocabulary][0] });
-    assert.throws(() => validateNativeLocalFixtureConfig({ ...fixtureConfig, Portfolio: { Enable: true } }, options), {
-      message: refusals[vocabulary][1],
-    });
-  }
+test("the refusal names the ACTION, because one run's log carries every runner's words", () => {
+  // The 51 copies spoke three vocabularies; the tree's own answer is the action prefix, which the template's 12 runners
+  // already used, so a runner that later moves onto the template does not change its refusal word.
+  assert.throws(() => validateNativeLocalFixtureConfig({}, { action: "x1" }), {
+    message: "native_local_x1_fixture_config_invalid",
+  });
+  assert.throws(
+    () => validateNativeLocalFixtureConfig({ ...fixtureConfig, Portfolio: { Enable: true } }, { action: "x1" }),
+    {
+      message: "native_local_x1_action_policy_invalid",
+    },
+  );
+  // The two words stay distinct: a shared feature is a policy refusal, not a broken fixture section.
+  assert.equal(validateNativeLocalFixtureConfig(fixtureConfig, { action: "x1" }), undefined);
 });
 
-test("the vocabulary is required: no default picks one of three refusal words on every future runner's behalf", () => {
+test("the action is required and has no default", () => {
   assert.throws(() => validateNativeLocalFixtureConfig(fixtureConfig, {}), {
-    message: "native_local_fixture_config_vocabulary_invalid:undefined",
+    message: "native_local_fixture_config_action_missing:undefined",
   });
-  assert.throws(() => validateNativeLocalFixtureConfig(fixtureConfig, { vocabulary: "whatever" }), {
-    message: "native_local_fixture_config_vocabulary_invalid:whatever",
-  });
-  assert.throws(() => validateNativeLocalFixtureConfig(fixtureConfig, { vocabulary: "action_prefixed" }), {
-    message: "native_local_fixture_config_vocabulary_invalid:action",
+  assert.throws(() => validateNativeLocalFixtureConfig(fixtureConfig, { action: "" }), {
+    message: "native_local_fixture_config_action_missing:",
   });
 });
 
 test("the scenario is checked only when a runner arms one, and the mismatch names the scenario it found", () => {
-  const options = { vocabulary: "enabled" };
-  // The 7 `enter-exit` copies never armed a scenario: a config with any scenario is valid for them.
-  assert.deepEqual(
+  // 39 of the 51 copies never read a scenario: a config with any scenario is valid for them.
+  assert.equal(
     validateNativeLocalFixtureConfig(
       { NativeLocalPlayerFixture: { Enable: true, FixtureScenario: "anything" } },
-      options,
+      { action: "x1" },
     ),
     undefined,
   );
-  assert.throws(() => validateNativeLocalFixtureConfig(fixtureConfig, { ...options, fixtureScenario: "native_y_v1" }), {
-    message: "native_local_fixture_scenario_mismatch:native_x_v1",
-  });
+  assert.throws(
+    () => validateNativeLocalFixtureConfig(fixtureConfig, { action: "x1", fixtureScenario: "native_y_v1" }),
+    { message: "native_local_x1_fixture_scenario_mismatch:native_x_v1" },
+  );
   assert.throws(
     () =>
       validateNativeLocalFixtureConfig(
         { NativeLocalPlayerFixture: { Enable: true } },
-        { ...options, fixtureScenario: "native_y_v1" },
+        { action: "x1", fixtureScenario: "native_y_v1" },
       ),
-    { message: "native_local_fixture_scenario_mismatch:missing" },
+    { message: "native_local_x1_fixture_scenario_mismatch:missing" },
   );
 });
 
-test("the bootstrap check belongs to the shape vocabularies, as the copies had it", () => {
+test("the bootstrap check is the title-screen phase's own refusal, and it is always read", () => {
+  // Eight copies never looked at it. The observed-phase config never carries the key at all
+  // (`configureNativeLocalPlayer` replaces the whole section), and the fixture module refuses the same config with the
+  // same test, so the check refuses nothing a real run produces.
   const withBootstrap = {
     NativeLocalPlayerFixture: { ...fixtureConfig.NativeLocalPlayerFixture, Bootstrap: { Enable: true } },
   };
-  // "enabled" never read Bootstrap; the other two fold it into their shape word.
-  assert.deepEqual(validateNativeLocalFixtureConfig(withBootstrap, { vocabulary: "enabled" }), undefined);
-  assert.throws(() => validateNativeLocalFixtureConfig(withBootstrap, { vocabulary: "config_invalid" }), {
-    message: "native_local_fixture_config_invalid",
+  assert.throws(() => validateNativeLocalFixtureConfig(withBootstrap, { action: "x1" }), {
+    message: "native_local_x1_fixture_config_invalid",
   });
-  assert.throws(
-    () => validateNativeLocalFixtureConfig(withBootstrap, { vocabulary: "action_prefixed", action: "x1" }),
-    {
-      message: "native_local_x1_fixture_config_invalid",
-    },
-  );
+  // A Bootstrap section that is off, or present with no Enable key, is not the bootstrap phase.
+  for (const Bootstrap of [{ Enable: false }, {}])
+    assert.equal(
+      validateNativeLocalFixtureConfig(
+        { NativeLocalPlayerFixture: { ...fixtureConfig.NativeLocalPlayerFixture, Bootstrap } },
+        { action: "x1" },
+      ),
+      undefined,
+    );
 });
 
-test("the slot relationship is what `validFixtureSlotRelationship` means, and only the shape vocabularies read it", () => {
+test("the slot relationship is read only when a runner asks for it", () => {
   assert.equal(validFixtureSlotRelationship("GameBuddyFixtureA", "GameBuddyFixtureA_1"), true);
-  assert.equal(validFixtureSlotRelationship("GameBuddyFixtureA", "Other_1"), false, "the slot names its logical save");
-  assert.equal(validFixtureSlotRelationship("FixtureA", "FixtureA_1"), false, "the fixture prefix is required");
   assert.equal(validFixtureSlotRelationship("GameBuddyFixtureA", "GameBuddyFixtureA_x"), false);
-  assert.equal(validFixtureSlotRelationship(undefined, undefined), false);
-
   const broken = {
     NativeLocalPlayerFixture: { ...fixtureConfig.NativeLocalPlayerFixture, ObservedSaveSlot: "Other_1" },
   };
-  assert.deepEqual(validateNativeLocalFixtureConfig(broken, { vocabulary: "enabled" }), undefined, "not read here");
+  assert.equal(validateNativeLocalFixtureConfig(broken, { action: "x1" }), undefined, "not read by default");
+  assert.throws(() => validateNativeLocalFixtureConfig(broken, { action: "x1", slotRelationship: true }), {
+    message: "native_local_x1_fixture_config_invalid",
+  });
+});
+
+test("the order is shape, scenario, topology, policy - and the two orderings the copies used refuse alike", () => {
+  const shared = { ...fixtureConfig, Portfolio: { Enable: true } };
+  assert.throws(() => validateNativeLocalFixtureConfig({ Portfolio: { Enable: true } }, { action: "x1" }), {
+    message: "native_local_x1_fixture_config_invalid",
+  });
+  assert.throws(() => validateNativeLocalFixtureConfig(shared, { action: "x1" }), {
+    message: "native_local_x1_action_policy_invalid",
+  });
   assert.throws(
-    () => validateNativeLocalFixtureConfig(broken, { vocabulary: "config_invalid", slotRelationship: true }),
-    {
-      message: "native_local_fixture_config_invalid",
-    },
+    () =>
+      validateNativeLocalFixtureConfig(
+        { ...shared, DeniedActions: ["travel"], DeniedActionFamilies: [], ExperimentalActions: [] },
+        { action: "x1", requiredActions: ["travel"] },
+      ),
+    { message: "native_local_x1_action_policy_invalid" },
   );
 });
 
 test("requiredActions are asserted through the harness's own policy validator, not re-derived here", () => {
-  // The harness owns the deny-by-exception reading, so it is driven rather than copied: the refusal it produces is the
-  // one a runner sees today, and a config that denies an action the runner needs refuses before the run starts.
+  // The harness owns the deny-by-exception reading, so it is driven rather than copied: the refusal a runner sees is the
+  // harness's, and a config that denies an action the runner needs refuses before the run starts.
   const policy = { DeniedActions: ["travel"], DeniedActionFamilies: [], ExperimentalActions: [] };
   assert.throws(
     () =>
-      validateNativeLocalFixtureConfig(
-        { ...fixtureConfig, ...policy },
-        { vocabulary: "enabled", requiredActions: ["travel"] },
-      ),
-    {
-      message: "native_fixture_policy_denies_required:travel",
-    },
+      validateNativeLocalFixtureConfig({ ...fixtureConfig, ...policy }, { action: "x1", requiredActions: ["travel"] }),
+    { message: "native_fixture_policy_denies_required:travel" },
   );
-  assert.deepEqual(
+  assert.equal(
     validateNativeLocalFixtureConfig(
       { ...fixtureConfig, ...policy },
-      { vocabulary: "enabled", requiredActions: ["move_to_tile"] },
+      { action: "x1", requiredActions: ["move_to_tile"] },
     ),
     undefined,
   );
@@ -246,7 +251,7 @@ test("requiredActions are asserted through the harness's own policy validator, n
     () =>
       validateNativeLocalFixtureConfig(
         { ...fixtureConfig, ...policy, ExperimentalActions: ["sweep_scythe"] },
-        { vocabulary: "enabled", requiredActions: [], experimentalActions: [] },
+        { action: "x1", requiredActions: [], experimentalActions: [] },
       ),
     { message: "native_fixture_policy_illegal_opt_in:sweep_scythe" },
   );

@@ -68,6 +68,7 @@ import {
 } from "./stardew-action-gate-descriptors.mjs";
 import { fixtureActions, fixtureScenario } from "./lib/stardew-native-local-player-fixture.mjs";
 import {
+  PRIMITIVE_DETECTORS,
   localFunctions,
   readBaseline,
   readPrimitiveExports,
@@ -75,6 +76,13 @@ import {
   runnerFiles,
 } from "./check-native-local-runner-scaffold.mjs";
 import * as PRIMITIVE_MODULE from "./lib/native-local-runner-primitives.mjs";
+import {
+  fixtureConfigProbes,
+  fixtureConfigVerdict,
+  fixtureCopyParameterisations,
+  fixtureCopyRunner,
+  ADOPTED_FIXTURE_PROBES,
+} from "./lib/native-local-runner-primitives-corpus.mjs";
 
 const ROOT = resolve(import.meta.dirname, "..");
 
@@ -1298,6 +1306,133 @@ export function evaluateFunction(body, name) {
   }
 }
 
+/** The fixture-config copy one runner carries, found the way the gate finds it: by name, or by body. */
+export function fixtureConfigCopyIn(source) {
+  const primitiveExports = readPrimitiveExports(
+    readFileSync(resolve(ROOT, "tools/lib/native-local-runner-primitives.mjs"), "utf8"),
+  );
+  const detector = PRIMITIVE_DETECTORS.validateNativeLocalFixtureConfig;
+  for (const entry of localFunctions(source)) {
+    const named = primitiveExports.includes(entry.name);
+    if (named ? entry.name !== "validateNativeLocalFixtureConfig" : !detector({ ...entry, grammar: undefined }))
+      continue;
+    return { entry };
+  }
+  return undefined;
+}
+
+/**
+ * THE FIXTURE-CONFIG COPY: the one primitive a runner may spell under a name that is not its own.
+ *
+ * 33 of the 51 copies were called `validateConfig`, `validateFixtureConfig`, `validateNativeLocalConfig`,
+ * `assertNativeLocalFixtureConfig` or a per-action variant, so a planner that looked only for a primitive's own name never
+ * saw them - the gate did, by the structural detector, which is why the census said 51 while this tool said 0. The copy is
+ * therefore found the way the gate finds it (`detectPrimitiveCopies`), and what proves it is the primitive is the corpus:
+ * the copy is RUN and its answers are compared, probe by probe, with `validateNativeLocalFixtureConfig` under a
+ * parameterisation. The parameterisation that agrees on every probe IS the options object the migration writes, so the
+ * rewrite is derived from the behaviour rather than from a reading of the body.
+ *
+ * The action in the refusal word comes from the runner, in this order: its own `ACTION` constant, the published gate row,
+ * the experimental runner map, the file name. Two of those are the tree's single authorities for "which action does this
+ * runner run", and the file name is the last resort for the 17 runners neither table names.
+ */
+function fixtureConfigAction(file, { action, texts }) {
+  if (typeof action === "string" && action.length > 0) return texts.action ?? JSON.stringify(action);
+  const runner = basename(file);
+  const gateRow = STARDEW_PUBLISHED_ACTION_GATES.find((row) => row.runner === runner);
+  if (gateRow !== undefined) return JSON.stringify(gateRow.actionId);
+  const experimental = Object.entries(STARDEW_EXPERIMENTAL_ACTION_RUNNERS).find(([, at]) => at === runner);
+  if (experimental !== undefined) return JSON.stringify(experimental[0]);
+  return JSON.stringify(
+    basename(runner)
+      .replace(/^run-stardew-native-local-player-/u, "")
+      .replace(/-smoke\.mjs$/u, "")
+      .replaceAll("-", "_"),
+  );
+}
+
+/** The options text for one parameterisation, in the order the primitive's own signature reads them. */
+function fixtureConfigOptionsText(parameterisation, { scope, file }) {
+  const fields = [`action: ${fixtureConfigAction(file, scope)}`];
+  if (parameterisation.options.fixtureScenario !== undefined)
+    fields.push(`fixtureScenario: ${scope.texts.scenario ?? JSON.stringify(scope.scenario)}`);
+  if (parameterisation.options.slotRelationship === true) fields.push("slotRelationship: true");
+  if (parameterisation.options.requiredActions !== undefined)
+    fields.push(`requiredActions: ${scope.texts.requiredActions ?? JSON.stringify(scope.requiredActions)}`);
+  if (parameterisation.options.experimentalActions !== undefined)
+    fields.push(`experimentalActions: ${scope.texts.experimentalActions ?? JSON.stringify(scope.experimentalActions)}`);
+  return `{ ${fields.join(", ")} }`;
+}
+
+export function planFixtureConfigMigration(source, { file }) {
+  const found = fixtureConfigCopyIn(source);
+  if (found === undefined) return null;
+  const { entry } = found;
+  const scope = fixtureCopyRunner({
+    source,
+    body: entry.body,
+    name: entry.name,
+    localFunctions,
+    params: entry.params,
+  });
+  if (!scope.ok) return { entry, findings: [`fixture_config_copy_cannot_be_probed:${entry.name}:${scope.why}`] };
+  const action = scope.action ?? "probe_action";
+  const probes = fixtureConfigProbes({ scenario: scope.scenario, action });
+  const actual = probes.map((probe) => fixtureConfigVerdict(scope.fn, probe.config));
+  const decision = (verdict) => verdict.split(":")[0];
+  let best = null;
+  for (const parameterisation of fixtureCopyParameterisations({
+    action,
+    scenario: scope.scenario,
+    requiredActions: scope.requiredActions,
+    experimentalActions: scope.experimentalActions,
+  })) {
+    const differing = probes.filter(
+      (probe, at) =>
+        decision(
+          fixtureConfigVerdict(
+            (value) => PRIMITIVE_MODULE.validateNativeLocalFixtureConfig(value, parameterisation.options),
+            probe.config,
+          ),
+        ) !== decision(actual[at]),
+    );
+    if (differing.length === 0) {
+      best = parameterisation;
+      break;
+    }
+    if (best === null || differing.length < best.differing)
+      best = { ...parameterisation, differing: differing.length, probes: differing.map((probe) => probe.name) };
+  }
+  if (best.differing !== undefined) {
+    const adopted = best.probes.filter((probe) => Object.hasOwn(ADOPTED_FIXTURE_PROBES, probe));
+    if (adopted.length !== best.probes.length)
+      return {
+        entry,
+        findings: [
+          `fixture_config_copy_behaviour_differs:${entry.name}:${best.probes
+            .filter((probe) => !adopted.includes(probe))
+            .slice(0, 6)
+            .join(",")}`,
+        ],
+      };
+    return {
+      entry,
+      removal: { name: "validateNativeLocalFixtureConfig", start: entry.start, end: entry.end },
+      optionsText: fixtureConfigOptionsText(best, { scope, file }),
+      scenarioFromArgument: entry.params > 1,
+      adopted,
+      findings: [],
+    };
+  }
+  return {
+    entry,
+    removal: { name: "validateNativeLocalFixtureConfig", start: entry.start, end: entry.end },
+    optionsText: fixtureConfigOptionsText(best, { scope, file }),
+    scenarioFromArgument: entry.params > 1,
+    findings: [],
+  };
+}
+
 /**
  * The plan for ONE runner: which private copies can be deleted in favour of an L1 import, and which cannot.
  *
@@ -1306,12 +1441,15 @@ export function evaluateFunction(body, name) {
  *   * it is not exported, so no sibling suite imports it through the runner;
  *   * its answers are identical to the primitive's on every probe.
  */
-export function planPrimitiveMigration(source, { primitives, exports }) {
+export function planPrimitiveMigration(source, { primitives, exports, file = "" }) {
   const removals = [];
   const findings = [];
   const defined = new Set(localFunctions(source).map((entry) => entry.name));
   for (const entry of localFunctions(source)) {
     if (!exports.includes(entry.name)) continue;
+    // The fixture-config refusal has its own plan below: its options are read from the corpus rather than from the name,
+    // and its call sites are rewritten rather than renamed, so it is not a member of the flat probe-corpus loop.
+    if (entry.name === "validateNativeLocalFixtureConfig") continue;
     if (typeof primitives[entry.name] !== "function") continue;
     if (entry.exported) {
       findings.push(`primitive_copy_exported:${entry.name}`);
@@ -1360,6 +1498,22 @@ export function planPrimitiveMigration(source, { primitives, exports }) {
     }
     removals.push({ name: entry.name, start: entry.start, end: entry.end });
   }
+  // The fixture-config refusal is the one primitive a runner spells under a name that is not the primitive's, so it is
+  // planned separately. It never shares a file with another copy in this tree, so a plan for it is the whole plan.
+  const fixture = planFixtureConfigMigration(source, { file });
+  if (fixture !== null) {
+    if (fixture.removal !== undefined) {
+      // An EXPORTED copy is migrated too: the export existed so the runner's own suite could drive the refusal directly,
+      // and that suite is rewritten to import the primitive with the same options. The plan says so, because a runner
+      // whose export disappears without its suite being rewritten breaks at import rather than at the refusal.
+      removals.push({
+        ...fixture.removal,
+        optionsText: fixture.optionsText,
+        scenarioFromArgument: fixture.scenarioFromArgument,
+        wasExported: fixture.entry.exported,
+      });
+    } else findings.push(...fixture.findings);
+  }
   return { removals, findings };
 }
 
@@ -1384,10 +1538,23 @@ export function withPrimitiveImport(source, names) {
   return `${source.slice(0, at)}\n${line}${source.slice(at)}`;
 }
 
-/** Remove the planned declarations, back to front so the offsets stay valid, then add the import. */
+/**
+ * Remove the planned declarations, back to front so the offsets stay valid, rewrite the fixture-config call sites, and
+ * add the import.
+ *
+ * The fixture-config copy is the one plan that rewrites ARGUMENTS as well as a name: the primitive takes as options what
+ * the copy read from the runner's constants, so a call left with one argument would refuse every run with
+ * `native_local_fixture_config_action_missing`. The second argument, where the copy had one, IS the expected scenario,
+ * so it moves into the options instead of being dropped.
+ */
 export function applyPrimitiveMigration(source, { removals }) {
   let output = source;
+  for (const removal of removals.filter((entry) => entry.optionsText !== undefined)) {
+    output = `${output.slice(0, removal.start)}${output.slice(removal.end)}`;
+    output = rewriteFixtureConfigCalls(output, removal);
+  }
   for (const removal of [...removals].sort((left, right) => right.start - left.start)) {
+    if (removal.optionsText !== undefined) continue;
     output = `${output.slice(0, removal.start)}${output.slice(removal.end)}`;
   }
   for (const removal of removals) {
@@ -1399,6 +1566,17 @@ export function applyPrimitiveMigration(source, { removals }) {
     output,
     removals.map((removal) => removal.name),
   );
+}
+
+/** The fixture-config primitive's call, with the options its copy read from the runner's constants. */
+function rewriteFixtureConfigCalls(source, removal) {
+  return source.replace(/(?<![\w$.])([A-Za-z_$][\w$]*)\s*\(([^()]*)\)/gu, (whole, name, args) => {
+    if (name !== "validateNativeLocalFixtureConfig") return whole;
+    const pieces = args.split(",");
+    const extra =
+      removal.scenarioFromArgument && pieces.length > 1 ? `, fixtureScenario: ${pieces.slice(1).join(",").trim()}` : "";
+    return `validateNativeLocalFixtureConfig(${pieces[0].trim()}, ${removal.optionsText.replace(/ \}$/u, `${extra} }`)})`;
+  });
 }
 
 /** Every runner that carries a private copy of an L1 primitive, with what this pass would do about it. */

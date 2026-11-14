@@ -183,82 +183,76 @@ export function validFixtureSlotRelationship(logicalName, observedSaveSlot) {
 }
 
 /**
- * The fixture-config refusal.
+ * The fixture-config refusal: ONE vocabulary, and it names the action.
  *
- * THREE VOCABULARIES, because the tree has three and each is asserted by tests that were written against it:
+ * WHAT IT REPLACES, measured. 51 runners spelled this refusal privately under three vocabularies and, for the shared
+ * topology, five spellings of the same fact:
  *
- *   "enabled"          `Enable !== true` refuses `native_local_fixture_not_enabled`; a shared topology feature refuses
- *                      `native_local_fixture_topology_not_isolated`; a scenario that is not the one armed refuses
- *                      `native_local_fixture_scenario_mismatch:<scenario|missing>`. 19 copies
- *                      (`enter-exit`, `chop-tree-source`, `enter-mine-ladder`, `ride-bus`, `shop-purchase`).
- *   "config_invalid"   the whole fixture SHAPE - enable, bootstrap, scenario, slot relationship - refuses
- *                      `native_local_fixture_config_invalid` in one word, and a shared topology feature refuses
- *                      `native_local_fixture_topology_not_isolated`. 8 copies (`craft-partial-recovery-chain`,
- *                      `plant-seed`, `machine-ab`, `machine-inspect`, `tool-recovery-chain`).
- *   "action_prefixed"  the two words the template's own `validateRunnerConfig` and the 14 `validateConfig` copies used,
- *                      with the action spliced in: `native_local_<action>_fixture_config_invalid` for the shape and
- *                      `native_local_<action>_action_policy_invalid` for a shared topology feature
- *                      (`break-resource-clump`, `break-rock-source`, `clear-debris`, `navigation-read-only`).
+ *   native_local_fixture_not_enabled                                          the 19 `enabled` copies
+ *   native_local_fixture_config_invalid                                       the 8 `config_invalid` copies
+ *   native_local_<action>_fixture_config_invalid                              the 14 `action_prefixed` copies and the
+ *                                                                             template's own 12 runners
+ *   native_local_fixture_topology_not_isolated[:<json>]                       35 copies
+ *   native_local_<action>_topology_invalid / _action_policy_invalid            11 copies
  *
- * `vocabulary` has NO default. Whichever value were the default would be the one every future runner inherits without
- * deciding, and the three refuse the same config with three different words - which is exactly the drift that made 51
- * copies refuse three ways in the first place.
+ * The three vocabularies were kept as an option while the copies existed, because a migration that changed a word
+ * changed a live report. They are one vocabulary now, and the decision is the tree's own: a refusal has to name the
+ * ACTION, because one blocked run's log carries the words of every runner the launcher touched, and
+ * `native_local_fixture_config_invalid` alone cannot say which of them refused. The template's runners already spoke
+ * that way, so the copies moved onto it rather than the other way round, and the three cause words stay distinct where
+ * the cause is actionable:
  *
- * `fixtureScenario: null` means "this runner arms no scenario of its own" - the 7 `enter-exit` copies never read one, and
- * checking a scenario they never armed would refuse configurations that work today. `requiredActions: null` means the
- * copy made no policy assertion.
+ *   native_local_<action>_fixture_config_invalid                          the fixture section is not a usable fixture
+ *   native_local_<action>_fixture_scenario_mismatch:<found|missing>       the armed world is not the one asserted
+ *   native_local_<action>_action_policy_invalid                          a shared topology feature is on
  *
- * `slotRelationship` is `"config_invalid"`-only: the `enabled` copies never read the save names, and the ones that did
- * folded the mismatch into their shape refusal.
+ * The policy itself refuses in the harness's own words (`native_fixture_policy_denies_required:<action>` and
+ * `native_fixture_policy_illegal_opt_in:<action>`), because that validator is the fixture's single authority for what a
+ * derived policy means and a second copy of its decision is the defect this module exists to prevent.
  *
- * NOTHING IS DEFAULTED TO STRICTER THAN EVERY CALLER: `enter-exit`'s `{ Enable: true }`-only config is a valid config
- * today and stays one, which is why `fixtureScenario` defaults to null rather than to a scenario this module invented.
+ * THE ORDER is shape, scenario, topology, policy. The 51 copies used two orders - 16 asserted the policy before the
+ * topology, 35 after - and the two answer differently only for a config broken in two ways at once (`policy_before_topology`
+ * in the corpus). Both refuse such a config; the order decides only which word is reported, so this is a wording
+ * unification rather than a change of acceptance. The shape is read first because everything else is about a fixture the
+ * shape already rejected, and the scenario before the topology because a wrong world is the more specific finding.
+ *
+ * `action` has NO default. It is the refusal's subject, and a default would be a word every future runner inherits
+ * without deciding.
+ *
+ * `fixtureScenario: null` means "this runner arms no scenario of its own" - 39 of the copies never read one, and checking
+ * a scenario they never armed would refuse configurations that work today. `requiredActions: null` means the copy made no
+ * policy assertion: the 8 `enabled` copies and the two navigation runners made none.
+ *
+ * `slotRelationship` reads the logical-save/slot relationship 6 copies read; `validFixtureSlotRelationship` is that rule's
+ * one spelling.
+ *
+ * THE BOOTSTRAP IS ALWAYS CHECKED, and that is the one place this primitive is STRICTER than eight of the copies it
+ * replaced. `Bootstrap.Enable === true` is the title-screen bootstrap phase's own config - the phase in which no bridge
+ * is opened - so an observed run that accepts it asserts postconditions against a world that has not been loaded. The
+ * fixture's observed-phase config never carries the key at all (`configureNativeLocalPlayer` replaces the whole
+ * `NativeLocalPlayerFixture` section), and `stardew-native-local-player-fixture.mjs` already refuses the same config with
+ * the same test, so the check refuses nothing a real run produces.
  */
-/** The three refusal vocabularies above; a fourth spelling is a refusal, not a new default. */
-export const FIXTURE_VOCABULARIES = Object.freeze(["enabled", "config_invalid", "action_prefixed"]);
-
 export function validateNativeLocalFixtureConfig(
   value,
-  {
-    vocabulary,
-    action = null,
-    fixtureScenario = null,
-    requiredActions = null,
-    experimentalActions = null,
-    slotRelationship = false,
-  } = {},
+  { action, fixtureScenario = null, slotRelationship = false, requiredActions = null, experimentalActions = null } = {},
 ) {
-  if (!FIXTURE_VOCABULARIES.includes(vocabulary))
-    throw new Error(`native_local_fixture_config_vocabulary_invalid:${String(vocabulary)}`);
-  if (vocabulary === "action_prefixed" && (typeof action !== "string" || action.length === 0))
-    throw new Error("native_local_fixture_config_vocabulary_invalid:action");
+  if (typeof action !== "string" || action.length === 0)
+    throw new Error(`native_local_fixture_config_action_missing:${String(action)}`);
   const fixture = value?.NativeLocalPlayerFixture;
+  const shapeOk =
+    fixture?.Enable === true &&
+    fixture.Bootstrap?.Enable !== true &&
+    (slotRelationship !== true || validFixtureSlotRelationship(fixture.LogicalSaveName, fixture.ObservedSaveSlot));
+  if (!shapeOk) throw new Error(`native_local_${action}_fixture_config_invalid`);
+  if (fixtureScenario !== null && fixture.FixtureScenario !== fixtureScenario)
+    throw new Error(`native_local_${action}_fixture_scenario_mismatch:${fixture.FixtureScenario ?? "missing"}`);
   const topologyShared =
     value?.Portfolio?.Enable === true ||
     value?.HostAutomation?.Enable === true ||
     value?.HostFarmhandProvisioning?.Enable === true ||
     value?.FarmhandProvisioner?.Enable === true;
-  if (vocabulary === "action_prefixed") {
-    const shapeOk =
-      fixture?.Enable === true &&
-      fixture.Bootstrap?.Enable !== true &&
-      (fixtureScenario === null || fixture.FixtureScenario === fixtureScenario);
-    if (!shapeOk) throw new Error(`native_local_${action}_fixture_config_invalid`);
-    if (topologyShared) throw new Error(`native_local_${action}_action_policy_invalid`);
-  } else if (vocabulary === "config_invalid") {
-    const shapeOk =
-      fixture?.Enable === true &&
-      fixture.Bootstrap?.Enable !== true &&
-      (fixtureScenario === null || fixture.FixtureScenario === fixtureScenario) &&
-      (slotRelationship !== true || validFixtureSlotRelationship(fixture.LogicalSaveName, fixture.ObservedSaveSlot));
-    if (!shapeOk) throw new Error("native_local_fixture_config_invalid");
-    if (topologyShared) throw new Error("native_local_fixture_topology_not_isolated");
-  } else {
-    if (fixture?.Enable !== true) throw new Error("native_local_fixture_not_enabled");
-    if (topologyShared) throw new Error("native_local_fixture_topology_not_isolated");
-    if (fixtureScenario !== null && fixture.FixtureScenario !== fixtureScenario)
-      throw new Error(`native_local_fixture_scenario_mismatch:${fixture.FixtureScenario ?? "missing"}`);
-  }
+  if (topologyShared) throw new Error(`native_local_${action}_action_policy_invalid`);
   if (requiredActions !== null || experimentalActions !== null)
     validateNativeLocalFixturePolicy(value, {
       requiredActions: requiredActions ?? [],

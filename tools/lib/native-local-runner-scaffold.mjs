@@ -228,7 +228,6 @@ export function defineSmokeScenario(definition) {
     try {
       if (refusesConfig)
         validateNativeLocalFixtureConfig(config, {
-          vocabulary: "action_prefixed",
           action,
           fixtureScenario,
           requiredActions,
