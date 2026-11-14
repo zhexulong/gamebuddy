@@ -92,9 +92,9 @@ function publishedRegistrations(): readonly Record<string, unknown>[] {
 const ACTIONS = planActionsFromRegistrations(publishedRegistrations() as never);
 const DESCRIPTION = planWorkDescription(ACTIONS);
 
-/** The description names an action id, and not merely as a substring of a longer id. */
+/** The description names an action id as the builder method it is: `id(` - and not merely as a substring of a longer id. */
 function names(actionId: string): boolean {
-  return new RegExp(`(^|[\\s:,])${actionId}([\\s,]|$)`, "u").test(DESCRIPTION);
+  return new RegExp(`(^|[\\s:,])${actionId}(\\(|[\\s,]|$)`, "u").test(DESCRIPTION);
 }
 
 test("the plan builder still names every plannable action the Mod publishes", () => {
@@ -148,7 +148,7 @@ test("a builder method the model is told about actually exists on every mount", 
   for (const actionId of named) {
     assert.match(
       DESCRIPTION,
-      new RegExp(`(^|[\\s:,])${actionId}([\\s,]|$)`, "u"),
+      new RegExp(`(^|[\\s:,])${actionId}(\\(|[\\s,]|$)`, "u"),
       `${actionId} is a plannable action but the description does not carry it`,
     );
   }

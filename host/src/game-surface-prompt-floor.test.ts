@@ -177,9 +177,9 @@ test("the reading's premise about the plan builder still holds: the flat per-act
 /** The description the Game prompt hands the model for `stardew_plan_work`, built from the surface exactly as the mount does. */
 const PLAN_WORK_DESCRIPTION = planWorkDescription(planActionsFromRegistrations(ADVERTISED));
 
-/** The description names the action as a builder method, and not merely as a substring of a longer id. */
+/** The description names the action as a builder method (`id(`), and not merely as a substring of a longer id. */
 function namesBuilderMethod(actionId: string): boolean {
-  return new RegExp(`(^|[\\s:,])${actionId}([\\s,]|$)`, "u").test(PLAN_WORK_DESCRIPTION);
+  return new RegExp(`(^|[\\s:,])${actionId}(\\(|[\\s,]|$)`, "u").test(PLAN_WORK_DESCRIPTION);
 }
 
 test("every action the surface admits to a plan is a builder method the prompt names", () => {

@@ -910,7 +910,18 @@ function planExampleCharge(action: "till_soil" | "water_crop"): string {
 }
 
 /**
- * The `stardew_plan_work` description: what the tool does, and the builder methods it exposes, named.
+ * The most characters the `stardew_plan_work` description may occupy.
+ *
+ * A BUDGET, not a measurement: the block is handed to the model on every Game turn, so every sentence in it spends the
+ * context a plan is written in. Each change that adds prose pays for it here, the number may only fall, and the gate that
+ * reads it (`body-program-script.test.ts`) refuses an overrun by name
+ * (`plan_description_exceeds_budget:<chars>:<budget>`) instead of leaving the cost to be noticed in a transcript.
+ */
+export const PLAN_WORK_DESCRIPTION_BUDGET_CHARS = 9261;
+
+/**
+ * The `stardew_plan_work` description: what the tool does, and the builder methods it exposes, named and taking the
+ * arguments they declare.
  *
  * The names belong HERE, in the description the companion already holds, rather than one tool call away behind
  * `stardew_plan_shape`. Measured 2026-10-28 (`round6`): a run reached 22:00 without ever dispatching `advance_day`,
@@ -920,8 +931,8 @@ function planExampleCharge(action: "till_soil" | "water_crop"): string {
  * remove.
  *
  * The vocabulary is the actions handed in - the same `PublishedPlanAction[]` `planShape` answers from - so there is no
- * hand-maintained list to drift from the Mod's catalog. Every id is printed once, under the family the Mod declared it
- * in; nothing else in the block is prose, because the block is read as a vocabulary.
+ * hand-maintained list to drift from the Mod's catalog. Every action is printed once, under the family the Mod declared
+ * it in, as the call it is: its declared argument names in parentheses, `sleep()` for the five that declare none.
  *
  * The other thing it has to teach is SUBMIT, THEN END THE TURN. `plan_work` returns as soon as the Mod accepts, because a
  * held call makes `stop`, `append` and a player's steering unreachable exactly while they matter. The wake is not
@@ -936,6 +947,11 @@ function planExampleCharge(action: "till_soil" | "water_crop"): string {
  * change the sentence's MEANING without changing the reader and the two disagree silently, which is how a form ends up
  * named in the description and absent from the tool it names.
  *
+ * EVERY ROW IT PRINTS IS A CALL THE DECLARATION ALREADY ANSWERS. `planActionVocabularyText` renders the arguments from
+ * `PublishedPlanAction.arguments`, the same field `planShape` reads, so a row and a shape answer cannot disagree - and the
+ * prose that used to explain the argument rules paid for them: the for_each paragraph states what a step must carry in one
+ * sentence per refusal instead of re-teaching the rule beside each spelling.
+ *
  * THE ROW THAT USED TO SIT BESIDE THE SEQUENCE IS GONE, and the reason is the route's: `express_emote` was taught here as
  * one example builder call (`c63a5763`), and it is no longer a builder method at all - expression reaches the actor
  * through its own mounted tool (`EXPRESSION_ONLY_ACTION_IDS`), so an example here would teach a call the compiler now
@@ -943,12 +959,12 @@ function planExampleCharge(action: "till_soil" | "water_crop"): string {
  */
 export function planWorkDescription(actions: readonly PublishedPlanAction[]): string {
   return (
-    "Write one script over the current snapshot and the builder, one builder.<actionId>({...}) call per step; the host compiles it into a single plan the Mod runs in the game and advances itself. The call returns as soon as the plan is accepted: do NOT poll it - each step's receipt arrives later as a new message, so end your turn and speak to the player. Every answer carries `nodes`: one row per node you wrote, at its own `index`, with the Mod's `state` (`succeeded` when the step did the thing and its receipt proved it, `rejected`/`failed`/`cancelled` when it did not, `pending`/`running` when it has not stopped yet), a `reasonCode` when it did not succeed, and the `tile` it named - plus `settled`, true only when every node has stopped, and `remaining`, how many have not. stardew_action_program_status is for a plan that is not moving, not a progress bar. Every action below is a builder method, grouped by the family the Mod declared, with no per-action tool beside them; ask stardew_plan_shape ONCE for every action the script will call - it takes a list - and every argument it lists is required. A piece of work with a SHAPE - a 3-wide 20-long strip, the row along a fence, the 5x5 around the shed - is one RECTANGLE to query, not a reason to observe again: stardew_observe shows only a square window around you, stardew_inspect_tiles answers exactly the rectangle you name, and stardew_look_up answers what this session already holds with no round trip; all three are reads, so asking costs the plan no node, and each one's own description says what it takes. One call the compiler refuses voids the whole plan - nothing runs - and the answer names which calls were dropped beside which ones compiled, so repair that step and resend the same piece of work. Stop when builder.isFull() is true and plan the rest in the next call, in this shape:\n" +
+    "Write one script over the current snapshot and the builder, one builder.<actionId>({...}) call per step; the host compiles it into a single plan the Mod runs in the game and advances itself. The call returns as soon as the plan is accepted: do NOT poll it - each step's receipt arrives later as a new message, so end your turn and speak to the player. Every answer carries `nodes`: one row per node you wrote, with the Mod's `state` (`succeeded` only when its receipt proved it, `rejected`/`failed`/`cancelled` when it did not, `pending`/`running` before it stopped), a `reasonCode` when it did not succeed, and its `tile` - plus `settled` (true only when every node has stopped) and `remaining`. stardew_action_program_status is for a plan that is not moving, not a progress bar. Every action below is a builder method, grouped by the family the Mod declared and printing the arguments each declares - `sleep()` takes none - so one row is the whole call; ask stardew_plan_shape for their types and closed sets, once for every action the script will call. A SHAPE - a 3-wide 20-long strip, the row along a fence - is one RECTANGLE to query, not a reason to observe: stardew_observe shows only a square window, stardew_inspect_tiles answers exactly the rectangle you name, stardew_look_up answers what the session holds, and all three are reads that cost the plan no node. One call the compiler refuses voids the whole plan - nothing runs - and the answer names the dropped calls beside the compiled ones, so repair and resend. Stop when builder.isFull() is true and plan the rest in the next call, in this shape:\n" +
     `${planActionVocabularyText(actions)}\n` +
     "// Sequential steps - one call per step, in order:\n" +
     "builder.move_to_tile({ x: 10, y: 20 });\n" +
     "builder.enter_exit({ x: 10, y: 20 });\n" +
-    "// Or ONE LOOP over a collection of live world rows, expanded by the Mod on the game thread:\n" +
+    "// Or ONE LOOP over live world rows, expanded by the Mod on the game thread:\n" +
     "builder.for_each({\n" +
     "  source: { area: { x: 60, y: 18, w: 20, h: 3 } },\n" +
     '  where: [{ occupant: "none" }, { field: "tillable", in: [true] }],\n' +
@@ -956,7 +972,7 @@ export function planWorkDescription(actions: readonly PublishedPlanAction[]): st
     planExampleCharge("till_soil") +
     " }\n" +
     "});\n" +
-    "// A tile's work is a CHAIN when one action does not finish it - till, then sow, in this order:\n" +
+    "// Or a CHAIN, when one action does not finish a tile:\n" +
     "builder.for_each({\n" +
     "  source: { area: { x: 60, y: 18, w: 20, h: 3 } },\n" +
     '  do: [{ action: "till_soil", ' +
@@ -971,19 +987,19 @@ export function planWorkDescription(actions: readonly PublishedPlanAction[]): st
     "}\n" +
     "builder.for_each({ " +
     PLAN_FOR_EACH_LOOP_KEYS.join(", ") +
-    ' }) is ONE loop over a collection of live world rows, expanded by the Mod on the game thread: `source` names the live tiles whose rows the pass reads; `where` is a list of tests on ONE row, and EVERY test must hold - the list is a CONJUNCTION, never a choice, and each predicate is exactly ONE test: what stands on the tile ({ occupant: "weed" }, in the engine\'s own words: weed, stone, crop, tree, tree_stump, grass, object, terrain, none), or a field the row reports ({ field: "kind", in: ["weed"] }, where `in` is the one comparison and takes the list of accepted values). So `where: [{ occupant: "none" }, { field: "tillable", in: [true] }]` claims the rows that are BOTH empty and tillable - which is how a `till_soil` pass avoids tilling the grass - and two tests inside ONE predicate object is refused rather than read as either; a word the grammar does not have is refused as for_each_where_unrecognised:<given>;allowed=<the words it does have>. The filter is what makes a rectangle a row SET: without it every tile is a row, and the tiles you meant to leave alone are worked or refused one by one. `do` is an ORDERED CHAIN of steps worked on ONE tile - each step an action from the list above with its own arguments, at most ' +
+    " }) is ONE loop over live world rows, expanded by the Mod on the game thread: `where` a CONJUNCTION of single tests on ONE row, `do` an ORDERED CHAIN of steps on ONE tile - each an action from the list above with its own arguments, at most " +
     String(MAX_FOR_EACH_STEPS) +
-    " of them, or a single action (the chain of length one), or null for a row left deliberately alone (a path). EACH for_each CALL IS ITS OWN NODE, in the order you write them: a patch needing two actions is two calls over the same rectangle, one per action. The caller needs no observation first - no target id, no per-tile coordinate - because the rows are read live. " +
+    ' of them, or one action, or null to leave the row alone. EACH for_each CALL IS ITS OWN NODE, in the order written. A predicate is ONE test: what stands on the tile ({ occupant: "weed" } - weed, stone, crop, tree, tree_stump, grass, object, terrain, none) or a field the row reports ({ field: "kind", in: ["weed"] }, `in` the one comparison, over accepted values); the pair in the example above claims the rows BOTH empty and tillable, two tests in ONE object is refused, and a word it lacks is refused as for_each_where_unrecognised:<given>;allowed=<its words>. Without it every tile in the rectangle is a row. ' +
     forEachRowIdentityText() +
-    "A row no predicate claims is reported rather than skipped: ONE code for the whole patch when NO row matched it (no_row_matched_where:<field>_<test>_<value>:<the occupants the tiles carry>), and one per tile (no_rule_matched:<kind>@<x>,<y>) when some rows did. One loop addresses at most " +
+    "Unclaimed rows are REPORTED - no_row_matched_where:<field>_<test>_<value>:<the occupants> when NO row matched, no_rule_matched:<kind>@<x>,<y> when some did; at most " +
     String(MAX_FOR_EACH_ROWS) +
-    " rows, and a loop inside a loop is refused by name. The Mod EXECUTES the loop: each row is decided against the world as it is at that moment and dispatched through the same action path a single step takes, so the node's answer carries `succeeded`/`failed`/`refused`/`left_alone`/`not_matched`/`deferred` counts and ONE ROW PER TILE with its own action, state and reasonCode - and a row worked as a chain also carries its `steps` in the order it took them, plus `stopped_at=<step>:<reasonCode>` when it stopped before its last step, so a tile that stopped half-done says where. A tile that is not on the farm (not_on_farm), a kind `by_kind` cannot resolve (no_action_for_kind:<kind>), an action the live policy disables (row_action_not_enabled:<actionId>) and an argument the action declares that the loop cannot supply (row_argument_missing:<name>) are each NAMED PER ROW rather than skipped - a skipped row reads as a cleared patch. THE ARGUMENTS A STEP MAY CARRY ARE THAT ACTION'S OWN (its `argumentSchema`): row_argument_missing:<name> means the action declares `name` and your step left it out, and a name the action does NOT declare is row_argument_unknown:<name> - `slot` belongs to `cut_weeds`, not to `till_soil`, so one action's argument list is never another's. A STEP THAT LEAVES OUT AN ARGUMENT ONLY THE CALLER CAN SUPPLY IS REFUSED AT COMPILE TIME (loop_do_argument_missing:<name>:declared=[<the action's arguments>]) rather than per row, so one wrong step costs one repair and not a whole pass: fresh ground is tilled with `{ action: \"till_soil\", " +
+    ' rows per loop, and a nested loop is refused by name. The Mod EXECUTES the loop against the world as it stands: the answer carries per-tile counts, ONE ROW PER TILE with its action, state and reasonCode, `steps` and stopped_at=<step>:<reasonCode> on a chain, and not_on_farm, row_action_not_enabled:<actionId>, no_action_for_kind:<kind> named per row. A step carries its action\'s declared arguments - the list beside it above: row_argument_missing:<name>, row_argument_unknown:<name> - and one only you can supply is refused at compile time (loop_do_argument_missing:<name>:declared=[<its arguments>]): fresh ground is tilled with `{ action: "till_soil", ' +
     planExampleCharge("till_soil") +
-    " }` - the range's own minimum is the one named tile - so a step always DECLARES a charge. What that value does NOT decide is the footprint of a packable AREA: the rectangle names the tiles, the held tool's whole footprint covers them, and the compiler emits those native uses at the charge that footprint needs. The one value that is not the compiler's is a charge ABOVE the held tool, which leaves the loop alone for the Mod to refuse by name (charge_exceeds_tool_upgrade:<asked>:<ceiling>); a charge at or below it does not bound the footprint either. `by_kind` covers only the kinds whose work needs no per-action argument. " +
+    " }`, the range's own minimum, so a step always DECLARES a charge; one ABOVE the held tool leaves the loop for the Mod to refuse by name (charge_exceeds_tool_upgrade:<asked>:<ceiling>). `by_kind` covers only kinds whose work takes no per-action argument. " +
     forEachSourceText() +
-    " And one loop document may be at most " +
+    " One loop document is at most " +
     String(MAX_FOR_EACH_LOOP_DOCUMENT_CHARS) +
-    " characters - the wire's own bound on the string the loop travels in - so a longer one is refused by the compiler with its own count rather than by the bridge."
+    " characters - the wire's bound on the string it travels in."
   );
 }
 
@@ -997,7 +1013,7 @@ export function planWorkDescription(actions: readonly PublishedPlanAction[]): st
  */
 function forEachSourceText(): string {
   const shapes = PLAN_FOR_EACH_SOURCES.map((source) => `{ ${source}: { x, y, w, h } }`).join(", ");
-  return `\`source\` is exactly one of ${shapes} - an existing rectangle of live map tiles whose rows the pass reads, so the shape of the work is a rectangle to read rather than a reason to observe again - and a source word the form does not have is refused as ${FOR_EACH_SOURCE_UNRECOGNISED}:<given>;allowed=${PLAN_FOR_EACH_SOURCES.join(",")}.`;
+  return `\`source\` is exactly one of ${shapes}, and a source word the form lacks is refused as ${FOR_EACH_SOURCE_UNRECOGNISED}:<given>;allowed=${PLAN_FOR_EACH_SOURCES.join(",")}.`;
 }
 
 /**
@@ -1008,18 +1024,30 @@ function forEachSourceText(): string {
  * shape of the same fact - a row the world cannot name is a row that does not run, and it says which action and family.
  */
 function forEachRowIdentityText(): string {
-  return `\`expectedTargetId\` is FILLED BY THE MOD for each row from the live tile, by the family that action's own descriptor declares, so never write one yourself: a \`do\` carrying it is refused as ${PLAN_FOR_EACH_ROW_IDENTITY_REFUSAL}, and an action whose family cannot name that tile answers row_target_identity_unavailable:<actionId>:<family> for that row instead of running. `;
+  return `\`expectedTargetId\` is FILLED BY THE MOD per row, by the family its descriptor declares, so never write one: a \`do\` carrying it is refused as ${PLAN_FOR_EACH_ROW_IDENTITY_REFUSAL}, and a family that cannot name the tile answers row_target_identity_unavailable:<actionId>:<family>. `;
 }
 
-/** One line per family, its members comma-separated, in the order the surface declared them. */
+/**
+ * One line per family, its members printed as the calls they are, in the order the surface declared them.
+ *
+ * THE PARENTHESES ARE THE DECLARATION, NOT THIS FUNCTION'S. The names come from `PublishedPlanAction.arguments` - the
+ * same field `planShape` answers from - so a row cannot print an argument list the compiler does not enforce, and an
+ * action added to the Mod's catalog arrives with its arguments in the same edit that names it.
+ *
+ * AN ACTION THAT TAKES NOTHING PRINTS EMPTY PARENS. Measured `round54`: her own thinking read "Sleep action is
+ * world_lifecycle builder.sleep - args? Probably x,y? ... that costs a turn ... Simpler: speak", and twelve turns of
+ * speech followed by a 02:00 pass-out. The declaration said `sleep` takes no arguments; a bare `sleep` beside `till_soil`
+ * read as an action whose arguments were simply not printed, and only one tool call could tell her which it was.
+ */
 function planActionVocabularyText(actions: readonly PublishedPlanAction[]): string {
   const families = new Map<string, string[]>();
   for (const action of actions) {
+    const row = `${action.actionId}(${action.arguments.map((argument) => argument.name).join(",")})`;
     const members = families.get(action.familyId);
-    if (members === undefined) families.set(action.familyId, [action.actionId]);
-    else members.push(action.actionId);
+    if (members === undefined) families.set(action.familyId, [row]);
+    else members.push(row);
   }
-  return [...families].map(([familyId, actionIds]) => `${familyId}: ${actionIds.join(", ")}`).join("\n");
+  return [...families].map(([familyId, rows]) => `${familyId}: ${rows.join(", ")}`).join("\n");
 }
 
 /**

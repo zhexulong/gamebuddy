@@ -12,6 +12,7 @@ import {
   MAX_PLAN_NODES,
   MODAL_CLEARING_PLAN_ACTION_IDS,
   PLAN_SCRIPT_BUDGET_MS,
+  PLAN_WORK_DESCRIPTION_BUDGET_CHARS,
   type PublishedPlanAction,
   planActionsFromRegistrations,
   planProgramId,
@@ -2355,17 +2356,43 @@ const CATALOG_REGISTRATIONS: readonly ActionRegistration[] = SURFACE.map((action
 const CATALOG_ACTIONS = planActionsFromRegistrations(CATALOG_REGISTRATIONS);
 
 /**
- * The vocabulary block read back out of the description: `family: action, action` per line, in the order it prints.
- * Only a line that starts with one family id and a colon is a vocabulary line, so neither the prose nor the script
- * example - both of which end a sentence and then a colon - can be mistaken for one.
+ * One row of the vocabulary block: the action id and the argument names printed beside it, or `undefined` when the row
+ * carries no argument list at all.
  */
-function describedVocabulary(description: string): ReadonlyMap<string, readonly string[]> {
-  const vocabulary = new Map<string, readonly string[]>();
+type DescribedRow = Readonly<{ actionId: string; arguments: readonly string[] | undefined }>;
+
+/**
+ * The vocabulary block read back out of the description: `family: id(args), id(args)` per line, in the order it prints.
+ *
+ * Only a line that starts with one family id and a colon is a vocabulary line, so neither the prose nor the script
+ * example - both of which end a sentence and then a colon - can be mistaken for one. A row WITHOUT parentheses is parsed
+ * rather than skipped: that shape is the defect the argument gate is written for, and a parser that demanded parentheses
+ * would report it as a missing action instead of a row that says nothing about what it takes.
+ */
+function describedVocabulary(description: string): ReadonlyMap<string, readonly DescribedRow[]> {
+  const vocabulary = new Map<string, readonly DescribedRow[]>();
   for (const line of description.split("\n")) {
     const match = /^([a-z][a-z0-9_]*): (.+)$/u.exec(line);
     if (match?.[1] === undefined || match[2] === undefined) continue;
     assert.equal(vocabulary.has(match[1]), false, `the description lists the family ${match[1]} twice`);
-    vocabulary.set(match[1], match[2].split(/,\s*/u));
+    const rows: DescribedRow[] = [];
+    for (const row of match[2].matchAll(/([a-z][a-z0-9_]*)(?:\(([^)]*)\))?/gu))
+      rows.push(
+        Object.freeze({
+          actionId: row[1]!,
+          arguments: row[2] === undefined ? undefined : Object.freeze(row[2] === "" ? [] : row[2].split(",")),
+        }),
+      );
+    // A row this reader cannot put back together is a row it would silently stop covering, so the whole line must be the
+    // list of calls it was read as - the same `id(a,b), id2()` the renderer prints.
+    assert.equal(
+      rows
+        .map((row) => (row.arguments === undefined ? row.actionId : `${row.actionId}(${row.arguments.join(",")})`))
+        .join(", "),
+      match[2],
+      `${match[1]}'s vocabulary line is not the list of builder calls this gate reads`,
+    );
+    vocabulary.set(match[1], Object.freeze(rows));
   }
   return vocabulary;
 }
@@ -2376,7 +2403,7 @@ test("the plan description names every action this session publishes, under the 
   assert.ok(described.size > 0, "the description carries the action vocabulary at all");
 
   const published = new Set(CATALOG_ACTIONS.map((action) => action.actionId));
-  const describedIds = new Set([...described.values()].flat());
+  const describedIds = new Set([...described.values()].flat().map((row) => row.actionId));
 
   // Direction 1: a published action the description never names. This is the `advance_day` defect - the companion held
   // a description that claimed the whole surface and could not read a single name out of it.
@@ -2401,12 +2428,108 @@ test("the plan description names every action this session publishes, under the 
   );
   for (const [familyId, members] of described)
     assert.deepEqual(
-      [...members].sort(),
+      members.map((row) => row.actionId).sort(),
       CATALOG_ACTIONS.filter((action) => action.familyId === familyId)
         .map((action) => action.actionId)
         .sort(),
       `${familyId} lists exactly its own actions`,
     );
+});
+
+/**
+ * Why one vocabulary row does not say what its action takes: `[]` when it does.
+ *
+ * THE POPULATION IS THE DECLARATION and the reading is the RENDERED TEXT, which is what makes this a gate rather than a
+ * registration step: `planActionVocabularyText` and `stardew_plan_shape` answer from the same `PublishedPlanAction`, so a
+ * row that prints fewer arguments than its action declares means the two routes to one fact have drifted apart - and the
+ * companion spends a turn on `plan_shape` to find out what the row did not say.
+ *
+ * Measured `round54`: her own thinking held "Sleep action is world_lifecycle builder.sleep - args? Probably x,y? ... that
+ * costs a turn ... Simpler: speak", and twelve turns of speech plus a 02:00 pass-out followed. Earlier rounds did sleep
+ * when they asked (`round41` executed `sleep` 43 times, `pass_out 0`), so the fact was in the declaration all along and
+ * only the turn was missing.
+ */
+function vocabularyRowsMissingArguments(
+  rendered: readonly PublishedPlanAction[],
+  declaration: readonly PublishedPlanAction[],
+): readonly string[] {
+  const described = describedVocabulary(planWorkDescription(rendered));
+  const rows = new Map([...described.values()].flat().map((row) => [row.actionId, row] as const));
+  const findings: string[] = [];
+  for (const action of declaration) {
+    const row = rows.get(action.actionId);
+    const declared = action.arguments.map((argument) => argument.name);
+    if (row === undefined) {
+      findings.push(`action_row_missing:${action.actionId}`);
+      continue;
+    }
+    // An action that takes nothing still prints empty parentheses, so a bare id is a row that never said so.
+    if (row.arguments === undefined) {
+      findings.push(`action_row_omits_argument_list:${action.actionId}`);
+      continue;
+    }
+    for (const argument of declared)
+      if (!row.arguments.includes(argument))
+        findings.push(`action_row_omits_declared_arguments:${action.actionId}:${argument}`);
+    for (const argument of row.arguments)
+      if (!declared.includes(argument))
+        findings.push(`action_row_names_undeclared_argument:${action.actionId}:${argument}`);
+    if (
+      row.arguments.some((argument, index) => argument !== declared[index]) &&
+      row.arguments.length === declared.length
+    )
+      findings.push(
+        `action_row_reorders_declared_arguments:${action.actionId}:declared=[${declared.join(",")}]:row=[${row.arguments.join(",")}]`,
+      );
+  }
+  return findings;
+}
+
+test("every vocabulary row carries the arguments its own declaration gives it", () => {
+  const described = describedVocabulary(planWorkDescription(CATALOG_ACTIONS));
+  const rows = [...described.values()].flat();
+  const withArguments = CATALOG_ACTIONS.filter((action) => action.arguments.length > 0);
+  const withoutArguments = CATALOG_ACTIONS.filter((action) => action.arguments.length === 0);
+  // Zero population is BLOCKED rather than green: both shapes have to be in the population, or a renderer that printed
+  // `()` for everything would pass this gate by agreeing with an empty set.
+  assert.ok(rows.length > 0, "blocked: the description carries no vocabulary row, so this gate examined nothing");
+  assert.ok(
+    withArguments.length > 0,
+    "blocked: no plannable action declares an argument, so a row that omits one could not be named here",
+  );
+  assert.ok(
+    withoutArguments.length > 0,
+    "blocked: no plannable action takes nothing, so the empty-parentheses case is not in this population",
+  );
+  assert.deepEqual(
+    vocabularyRowsMissingArguments(CATALOG_ACTIONS, CATALOG_ACTIONS),
+    [],
+    `these rows do not print the arguments their declaration carries (${String(rows.length)} rows examined, ` +
+      `${String(withArguments.length)} actions with arguments, ${String(withoutArguments.length)} with none)`,
+  );
+});
+
+/**
+ * A DECLARATION THAT DECLARES AN ARGUMENT THE ROW DOES NOT PRINT is what this gate exists to name - so the falsifier feeds
+ * it one: a synthetic action is added to the declaration carrying an argument, and its row is rendered from a vocabulary
+ * whose copy of that action lost the argument. The gate must name that action and that argument, and nothing else.
+ */
+test("the argument-row gate names a declaration whose row drops the argument it declares", () => {
+  const patched: PublishedPlanAction = Object.freeze({
+    ...CATALOG_ACTIONS[0]!,
+    actionId: "patch_soil",
+    arguments: Object.freeze([{ name: "patchWidth", type: "integer", required: true as const }]),
+  });
+  const declared = Object.freeze([...CATALOG_ACTIONS, patched]);
+  const lossy = declared.map((action) =>
+    action.actionId === "patch_soil" ? Object.freeze({ ...action, arguments: Object.freeze([]) }) : action,
+  );
+  const findings = vocabularyRowsMissingArguments(lossy, declared);
+  assert.deepEqual(
+    findings,
+    ["action_row_omits_declared_arguments:patch_soil:patchWidth"],
+    "the gate reads the DECLARATION's arguments against the RENDERED row, so an argument only the declaration carries is named",
+  );
 });
 
 test("the description's example uses a published action and that action's own declared argument names", () => {
@@ -2419,6 +2542,56 @@ test("the description's example uses a published action and that action's own de
     [...(call[2] as string).matchAll(/([A-Za-z0-9_]+):/gu)].map((match) => match[1]),
     Object.keys(action.argumentSchema ?? {}),
     "the example's argument names are that action's declared ones, in order",
+  );
+});
+
+/**
+ * The one reading of the description budget, so the gate and its falsifier take the same predicate.
+ *
+ * The budget is `PLAN_WORK_DESCRIPTION_BUDGET_CHARS` - a declared constant in the product, not a number written here - and
+ * the answer names the size and the budget because that is the whole correction a later prose change needs.
+ */
+function descriptionOverBudget(actions: readonly PublishedPlanAction[]): string | undefined {
+  const description = planWorkDescription(actions);
+  return description.length <= PLAN_WORK_DESCRIPTION_BUDGET_CHARS
+    ? undefined
+    : `plan_description_exceeds_budget:${String(description.length)}:${String(PLAN_WORK_DESCRIPTION_BUDGET_CHARS)}`;
+}
+
+test("the plan description fits the budget its own constant declares", () => {
+  assert.ok(PLAN_WORK_DESCRIPTION_BUDGET_CHARS > 0, "the budget must be a size, not a placeholder");
+  assert.equal(
+    descriptionOverBudget(CATALOG_ACTIONS),
+    undefined,
+    "every Game turn hands this description to the model, so a description over budget spends the context a plan is written in",
+  );
+});
+
+/**
+ * A vocabulary whose rows are longer must be refused by the SAME predicate - otherwise the budget only measures today's
+ * catalog and stops meaning anything the first time an action declares a long argument.
+ */
+test("the budget gate turns red when a vocabulary outgrows the declared budget", () => {
+  // The population is sized so that even a vocabulary printing bare ids would exceed the budget: the falsifier must be red
+  // for the CONSTANT, not for whatever the renderer happens to print today.
+  const args = Object.freeze(
+    Array.from({ length: 40 }, (_, index) => `veryLongArgumentName${String(index)}`).map((name) =>
+      Object.freeze({ name, type: "integer", required: true as const }),
+    ),
+  );
+  const heavy = Object.freeze(
+    Array.from({ length: 160 }, (_, index) =>
+      Object.freeze({
+        ...CATALOG_ACTIONS[0]!,
+        actionId: `heavy_action_${String(index)}`,
+        arguments: args,
+      }),
+    ),
+  );
+  assert.match(
+    descriptionOverBudget(heavy) ?? "",
+    new RegExp(`^plan_description_exceeds_budget:\\d+:${String(PLAN_WORK_DESCRIPTION_BUDGET_CHARS)}$`, "u"),
+    "a description over the declared budget is refused by name, with its size and the budget it met",
   );
 });
 
