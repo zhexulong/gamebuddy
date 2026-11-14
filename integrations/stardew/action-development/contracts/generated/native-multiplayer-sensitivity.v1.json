@@ -1955,7 +1955,7 @@
     },
     {
       "actionId": "open_geode",
-      "lifecycle": "experimental",
+      "lifecycle": "live_verified",
       "seams": [
         {
           "kind": "native",

@@ -59,31 +59,29 @@ function experimentalCatalogRows(source) {
   return [...source.matchAll(row)].map((match) => ({ actionId: match[1], lifecycle: match[2], at: match.index }));
 }
 
-/** The experimental runner map's entries, read as data: the case needs the runner string the finding must quote. */
-function experimentalRunners(source) {
-  const table = /STARDEW_EXPERIMENTAL_ACTION_RUNNERS\s*=\s*Object\.freeze\(\{([\s\S]*?)\n\}\);/u.exec(source);
-  assert.ok(table !== null, "the experimental runner map must still parse");
-  const entry = /^[ \t]*([a-z][a-z0-9_]*)[ \t]*:[ \t]*(?:\r?\n[ \t]*)?"([a-z0-9-]+\.mjs)",/gmu;
-  return new Map([...table[1].matchAll(entry)].map((match) => [match[1], match[2]]));
-}
-
 /**
- * The first catalog row that is `Experimental` AND still has an entry in the experimental runner map.
+ * The catalog's experimental rows, and the one this case mutates: the FIRST of them.
  *
- * Both halves have to be observable for the case to mean anything, so a tree with no such row is a loud failure
- * rather than a case that asserts a one-sided finding and calls it the half-write.
+ * THE SUBJECT IS DERIVED, never named. It used to be `rotate_furniture` - "experimental today" - and when that row
+ * was promoted on 2026-11-14 the case's non-greedy anchor slid into the NEXT Experimental row, so it kept passing
+ * while asserting about a different action. Deriving it means the case survives any promotion; the injection below
+ * supplies the second half itself, so the case no longer depends on the tree already holding a half-write.
  */
-const FIRST_EXPERIMENTAL_WITH_RUNNER = (() => {
-  const runners = experimentalRunners(gateDescriptorSource);
-  const row = experimentalCatalogRows(catalogSource).find(
-    (candidate) => candidate.lifecycle === "Experimental" && runners.has(candidate.actionId),
-  );
+const FIRST_EXPERIMENTAL_ROW = (() => {
+  const row = experimentalCatalogRows(catalogSource).find((candidate) => candidate.lifecycle === "Experimental");
   assert.ok(
     row !== undefined,
-    "no Experimental catalog action still carries an experimental runner entry: this case cannot state the half-write",
+    "no Experimental catalog action is left, so this case cannot construct the half-write it asserts about",
   );
-  return Object.freeze({ actionId: row.actionId, runner: runners.get(row.actionId) });
+  return Object.freeze({ actionId: row.actionId });
 })();
+
+/** A well-formed runner name for the synthetic experimental entry, derived from the subject so it cannot be mistaken
+ * for a runner this tree really ships. */
+const SYNTHETIC_EXPERIMENTAL_RUNNER = `run-stardew-native-local-player-${FIRST_EXPERIMENTAL_ROW.actionId.replaceAll("_", "-")}-smoke.mjs`;
+
+/** The experimental runner map's opening line: the anchor the synthetic entry is injected after. */
+const EXPERIMENTAL_MAP_ANCHOR = "STARDEW_EXPERIMENTAL_ACTION_RUNNERS = Object.freeze({";
 
 /** Replace the lifecycle token of ONE row, located from that row's own start, without touching any other row. */
 function spliceRowLifecycle(source, actionId, lifecycle) {
@@ -161,19 +159,22 @@ test("a gate row naming a scenario the Mod does not declare is named, even when 
 });
 
 test("an experimental action that already carries a gate row is named", () => {
-  // The subject is DERIVED from the catalog, never named here. It used to read
-  // `E("rotate_furniture"[\s\S]*?FarmhandActionLifecycle\.)Experimental`, and on 2026-11-14 that action was
-  // promoted: the non-greedy gap then slid past the row it was written for and mutated the NEXT Experimental row
-  // instead, so the case kept passing while asserting about a different action. A fixture anchored on a row whose
-  // lifecycle someone else will change is a fixture that silently re-targets, so the anchor is now whatever the
-  // catalog says is Experimental today.
-  const subject = FIRST_EXPERIMENTAL_WITH_RUNNER;
+  // BOTH HALVES ARE INJECTED, because neither belongs in a tree whose promotions are complete: the catalog rung is
+  // promoted here, and the runner entry this case must see is inserted into the experimental map (a half-write no
+  // promotion tool can produce, which is exactly what a hand edit leaves behind).
+  const subject = FIRST_EXPERIMENTAL_ROW;
   const catalog = spliceRowLifecycle(catalogSource, subject.actionId, "LiveVerified");
   assert.notEqual(catalog, catalogSource, "the mutation must actually apply");
-  const report = check({ catalog });
+  const gates = replaceOnce(
+    gateDescriptorSource,
+    EXPERIMENTAL_MAP_ANCHOR,
+    `${EXPERIMENTAL_MAP_ANCHOR}\n  ${subject.actionId}: "${SYNTHETIC_EXPERIMENTAL_RUNNER}",`,
+  );
+  assert.notEqual(gates, gateDescriptorSource, "the runner entry must actually be injected");
+  const report = check({ catalog, gates });
   // Both halves of the half-write are named: no gate row appeared, and the runner never left the map.
   assert.deepEqual(report.findings, [
-    `promotion_places_disagree:${subject.actionId}:catalog=live_verified;gate=absent;experimental=present:${subject.runner}`,
+    `promotion_places_disagree:${subject.actionId}:catalog=live_verified;gate=absent;experimental=present:${SYNTHETIC_EXPERIMENTAL_RUNNER}`,
   ]);
 });
 

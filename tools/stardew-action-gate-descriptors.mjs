@@ -675,6 +675,7 @@ export const STARDEW_PUBLISHED_ACTION_GATES = Object.freeze([
     "fence_removed",
     "native_remove_fence_v1",
   ),
+  gate("open_geode", 1, "run-stardew-native-local-player-open-geode-smoke.mjs", "geode_opened", "native_open_geode_v1"),
 ]);
 
 /**
@@ -850,7 +851,6 @@ export const STARDEW_EXPERIMENTAL_ACTION_RUNNERS = Object.freeze({
   // geode cracked at Clint's own counter through `GeodeMenu`'s own click, animation and delivery,
   // with the menu closed before the receipt is written. The fixture supplies the geode and the
   // exit that leads to the shop; reaching the counter and the crack are production actions.
-  open_geode: "run-stardew-native-local-player-open-geode-smoke.mjs",
   // The SAME published shop_purchase action over the fixture's blacksmith counter: the tool-upgrade entry, whose goods
   // never enter the pack - the engine records the upgrade in `Farmer.toolBeingUpgraded` and discards the entry it
   // charged for (`Tool.cs:875-895`, `ShopMenu.cs:1369-1378`). One runner, two worlds, because no single world stands in

@@ -105,31 +105,55 @@ export async function runOpenGeodeSmoke(
     lastSnapshot = snapshot;
     const target = chooseGeode(snapshot);
 
-    const requestId = `native_local_open_geode_${Date.now()}`;
-    const accepted = await executeFresh(client, {
-      requestId,
-      idempotencyKey: `${requestId}_idem`,
-      action: ACTION,
-      // No coordinate: the counter is Clint's own dialogue case, and the Mod re-reads the
-      // shop, the owner and the reach itself at admission.
-      args: { slot: target.slot, expectedQualifiedItemId: target.qualifiedItemId },
-      snapshot,
-      timeoutMs: 30_000,
-    });
-    trace.push({ phase: ACTION, action: ACTION, target, receipt: summarizeReceipt(accepted) });
+    // A `transient_busy` REJECTION is the Mod saying the world is mid-transition, and it carries the window it
+    // suggests (`retry_window_ms`). A rejected request was never dispatched, so re-sending it after that window is
+    // not a retry of an unknown side effect - it is the recovery the refusal's own evidence advertises, and the
+    // geode is only ever consumed by an ACCEPTED request. Bounded to three attempts, then the refusal stands and
+    // names itself: measured 2026-11-14, the first request after the fixture warp answered
+    // `rejected/transient_busy (transient_kind=freezePause)` and the run reported
+    // `open_geode_terminal_mismatch` without ever having dispatched the action.
+    const TRANSIENT_ATTEMPT_LIMIT = 3;
+    let attempt = 0;
+    let terminal;
+    let evidence;
+    for (;;) {
+      attempt += 1;
+      const requestId = `native_local_open_geode_${Date.now()}_${attempt}`;
+      const accepted = await executeFresh(client, {
+        requestId,
+        idempotencyKey: `${requestId}_idem`,
+        action: ACTION,
+        // No coordinate: the counter is Clint's own dialogue case, and the Mod re-reads the
+        // shop, the owner and the reach itself at admission.
+        args: { slot: target.slot, expectedQualifiedItemId: target.qualifiedItemId },
+        snapshot,
+        timeoutMs: 30_000,
+      });
+      trace.push({ attempt, phase: ACTION, action: ACTION, target, receipt: summarizeReceipt(accepted) });
 
-    const terminal = await waitForTerminal(receipts, accepted, terminalTimeoutMs);
-    if (terminal.executionId !== accepted.executionId || terminal.requestId !== requestId)
-      throw new Error("open_geode_terminal_identity_mismatch");
-
-    const evidence = parseStrictEvidence(terminal.evidence);
-    trace.push({
-      phase: "observed_evidence",
-      action: ACTION,
-      state: terminal.state,
-      reasonCode: terminal.reasonCode,
-      evidence,
-    });
+      terminal = await waitForTerminal(receipts, accepted, terminalTimeoutMs);
+      if (terminal.executionId !== accepted.executionId || terminal.requestId !== requestId)
+        throw new Error("open_geode_terminal_identity_mismatch");
+      evidence = parseStrictEvidence(terminal.evidence);
+      trace.push({
+        attempt,
+        phase: "observed_evidence",
+        action: ACTION,
+        state: terminal.state,
+        reasonCode: terminal.reasonCode,
+        evidence,
+      });
+      if (terminal.state !== "rejected" || terminal.reasonCode !== "transient_busy") break;
+      if (attempt >= TRANSIENT_ATTEMPT_LIMIT) break;
+      const retryWindowMs = Number(evidence.retry_window_ms);
+      await delay(Number.isFinite(retryWindowMs) && retryWindowMs > 0 ? retryWindowMs : 2_000);
+      snapshot = await waitForFreshSnapshot(client, {
+        minRevision: terminal.revision,
+        timeoutMs: postconditionTimeoutMs,
+        requireActionable: true,
+      });
+      lastSnapshot = snapshot;
+    }
 
     // The receipt is judged AFTER its evidence is on the trace, so a refusal reports what
     // the menu and the pack actually did instead of only its reasonCode.
