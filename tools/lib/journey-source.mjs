@@ -10,9 +10,15 @@
  * first time either was edited.
  *
  * The parse is deliberately shallow: a test is its title plus the body between its braces, and an
- * assertion is the `expect(...)` call with the matcher chained to it. That is enough to answer all
- * three questions mechanically, and it does not need a TypeScript parse: a spec's assertions are
- * calls in its own text, and the gates judge those calls, not a type.
+ * assertion is the `expect(...)` call with the matcher chained to it, or a `node:assert` call. That is
+ * enough to answer all three questions mechanically, and it does not need a TypeScript parse: a spec's
+ * assertions are calls in its own text, and the gates judge those calls, not a type.
+ *
+ * BOTH SPELLINGS COUNT. A chain that breaks the line after `expect` (`await expect`, then `.poll(...)`,
+ * then `.toBe(...)`) and a claim written in node's own idiom (`assert.deepEqual(violations, [])`) are
+ * assertions exactly as a single-line matcher is, and reading only the single-line `expect` chain
+ * graded one of the three styles - so a spec's whole claim could be invisible to the gates above it.
+ * Nothing is loosened by counting them: the matcher a call names is still what decides its substance.
  *
  * UNTRACKED FILES ARE NOT PART OF THE COMMIT. A worktree where several lanes run holds specs
  * somebody is still writing; judging one would fail another lane's in-flight work, and letting one
@@ -170,18 +176,74 @@ function callEnd(source, open) {
   return source.length;
 }
 
-/** `expect(` / `expect.soft(` / `expect.poll(`, with the index of the call's own `(`. */
-const EXPECT = /\bexpect(?:\.\w+)?\s*\(/gu;
+/** `expect(` / `expect.soft(` / `expect.poll(`: the chain may break the line before its own call. */
+const EXPECT = /\bexpect\s*(?:\.\s*\w+\s*)?\(/gu;
 /** The matcher chained to a resolved `expect(...)`, allowing `.not`, `.resolves` and `.rejects`. */
 const MATCHER = /^\s*(?:\.\s*(?:not|resolves|rejects)\s*)*\.\s*(to[A-Za-z]+)\s*\(/u;
+
+/** No `node:assert` in this spec, so no call in its body is read as one. */
+const NO_NODE_ASSERT = Object.freeze({ namespaces: [], methods: [] });
+
+/**
+ * The local names a spec binds `node:assert` to, so the calls it makes through them can be read.
+ *
+ * A spec that judges a value in node's idiom asserts as much as one that chains a matcher, and the
+ * gates above were reading none of it. WHICH call is a node assertion comes from the file's own
+ * import rather than from a list of method names, so the reading cannot drift from node: a namespace
+ * (`import assert from "node:assert/strict"`, `import * as assert`) makes every `<name>.<method>(` an
+ * assertion, and a destructured import makes that bare name one. A method node adds in a later release
+ * is read without editing this file, and a spec's own helper named `match` is not read at all.
+ */
+const NODE_ASSERT_IMPORT = /^[ \t]*import\s+([^;]*?)\s*from\s*["']node:assert(?:\/strict)?["']/gmu;
+
+export function nodeAssertBindings(source) {
+  const namespaces = new Set();
+  const methods = new Set();
+  for (const match of source.matchAll(NODE_ASSERT_IMPORT)) {
+    const clause = match[1].trim();
+    const braces = clause.indexOf("{");
+    const outside = (braces === -1 ? clause : clause.slice(0, braces)).replace(/,\s*$/u, "").trim();
+    if (outside) namespaces.add(outside.replace(/^\*\s+as\s+/u, "").trim());
+    if (braces === -1) continue;
+    for (const part of clause.slice(braces + 1, clause.lastIndexOf("}")).split(",")) {
+      const [imported, local] = part.split(/\s+as\s+/u).map((each) => each.trim());
+      if (!imported) continue;
+      if (imported === "strict") namespaces.add(local ?? imported);
+      else methods.add(local ?? imported);
+    }
+  }
+  return { namespaces: [...namespaces], methods: [...methods] };
+}
+
+/** Every `node:assert` call in a body: where it starts, the method it names, and its own `(`. */
+function nodeAssertCalls(body, { namespaces, methods }) {
+  const calls = [];
+  for (const namespace of namespaces) {
+    const pattern = new RegExp(`\\b${namespace}\\s*\\.\\s*(\\w+)\\s*\\(`, "gu");
+    for (const match of body.matchAll(pattern))
+      calls.push({ start: match.index, method: match[1], open: match.index + match[0].length - 1 });
+  }
+  for (const method of methods) {
+    const pattern = new RegExp(`(^|[^.\\w$])${method}\\s*\\(`, "gu");
+    for (const match of body.matchAll(pattern))
+      calls.push({
+        start: match.index + match[1].length,
+        method,
+        open: match.index + match[0].length - 1,
+      });
+  }
+  return calls;
+}
 
 /**
  * Every assertion in a body: the matcher's name, whether it was negated, and the whole call's text.
  *
- * `text` runs from `expect` to the end of the matcher's own call, because that is the span that names
- * the control, the text and the matcher together - the unit the three gates above judge.
+ * `text` runs from `expect` (or the assert call) to the end of the matcher's own call, because that is
+ * the span that names the control, the text and the matcher together - the unit the three gates above
+ * judge. A node assertion names its method where an `expect` chain names a matcher, so `deepEqual`
+ * and `toEqual` are two spellings the classification above weighs by the same rule.
  */
-export function assertionsOf(body) {
+export function assertionsOf(body, { nodeAssert = NO_NODE_ASSERT } = {}) {
   const assertions = [];
   for (const match of body.matchAll(EXPECT)) {
     const openParen = match.index + match[0].length - 1;
@@ -189,12 +251,21 @@ export function assertionsOf(body) {
     const chained = MATCHER.exec(body.slice(closeParen));
     if (chained === null) continue;
     const matcherOpen = closeParen + chained[0].length - 1;
-    const matcherClose = callEnd(body, matcherOpen);
     assertions.push({
+      index: match.index,
       matcher: chained[1],
       negated: /\.\s*not\s*\./u.test(chained[0]),
-      text: body.slice(match.index, matcherClose),
+      text: body.slice(match.index, callEnd(body, matcherOpen)),
     });
   }
-  return assertions;
+  for (const call of nodeAssertCalls(body, nodeAssert))
+    assertions.push({
+      index: call.start,
+      matcher: call.method,
+      negated: call.method.startsWith("not"),
+      text: body.slice(call.start, callEnd(body, call.open)),
+    });
+  return assertions
+    .sort((left, right) => left.index - right.index)
+    .map(({ index, matcher, negated, text }) => ({ matcher, negated, text }));
 }

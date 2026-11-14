@@ -26,6 +26,13 @@
  * A test with NO assertions is the same defect one step further and is named separately, because a
  * journey that asserts nothing at all is worse than one that asserts too little.
  *
+ * WHAT IT READS (corrected 2026-11-14). Every assertion a journey makes, in all of the spellings its
+ * harness offers: an `expect(...)` chain, however it breaks its lines, and a `node:assert` call bound by
+ * the spec's own import. Before this the reading saw one of the three styles - `await expect` on its own
+ * line before `.poll(...)`, and every `assert.deepEqual(...)`, were invisible - so a verdict was a
+ * ceiling rather than a measurement: 29 of the corpus's 4507 assertions went ungraded, and two specs had
+ * already bent their writing around the hole (`a node assertion here is a claim nothing reads`).
+ *
  * THE BASELINE. This is red at HEAD by 7 journeys. Strengthening one means deciding what the player
  * should SEE, and only the journey's owner can make that claim truthfully: an assertion written to
  * satisfy a gate pins whatever the implementation does today, which is the illusion this gate exists to
@@ -44,14 +51,17 @@
  *            control -> `journey_asserts_only_existence` names it, while the same journey with one
  *            `toHaveText` beside it is green (tools/check-assertion-substance.test.mjs). Also injected:
  *            a journey with no assertion at all (`journey_asserts_nothing`), a `toHaveCount(1)` title
- *            (the count shape the defect is named after), and a journey that only exists in the
- *            baseline (`baseline_entry_stale` once it asserts something).
+ *            (the count shape the defect is named after), a journey that only exists in the
+ *            baseline (`baseline_entry_stale` once it asserts something), and the two styles the
+ *            reader could not see - `assert.ok(await control.isVisible())` (`ok`) and an existence
+ *            claim whose chain breaks the line after `expect` (`toBeVisible`) - each named rather than
+ *            read as a journey that asserts nothing.
  */
 import { readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { assertionsOf, journeySpecs, parseTests } from "./lib/journey-source.mjs";
+import { assertionsOf, journeySpecs, nodeAssertBindings, parseTests } from "./lib/journey-source.mjs";
 
 const REPOSITORY_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const BASELINE_PATH = "tools/assertion-substance-baseline.json";
@@ -65,6 +75,12 @@ export const EXISTENCE_MATCHERS = Object.freeze([
   "toBeDefined",
   "toBeUndefined",
   "toBeEmpty",
+  // node's spelling of the same claim, now that the reader counts `node:assert`: `assert.ok(await
+  // control.isVisible())` and `assert.exists(node)` say a thing is there and nothing more, exactly as
+  // `toBeVisible` does. Every other node method - `deepEqual`, `equal`, `throws`, `match` - is a claim
+  // about a value, a state or a request, and is substantive by the same rule as its `expect` twin.
+  "ok",
+  "exists",
 ]);
 
 const EXISTENCE = new Set(EXISTENCE_MATCHERS);
@@ -82,8 +98,9 @@ export function auditAssertionSubstance({ root = REPOSITORY_ROOT } = {}) {
   const specs = journeySpecs({ root });
   const tests = [];
   for (const spec of specs) {
+    const nodeAssert = nodeAssertBindings(spec.source);
     for (const entry of parseTests(spec.source)) {
-      const assertions = assertionsOf(entry.body);
+      const assertions = assertionsOf(entry.body, { nodeAssert });
       const matchers = [...new Set(assertions.map((assertion) => assertion.matcher))].sort();
       const substantive = matchers.filter((matcher) => !EXISTENCE.has(matcher));
       tests.push({

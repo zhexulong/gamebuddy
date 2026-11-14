@@ -26,15 +26,18 @@ function makeTree(specs) {
   return root;
 }
 
-const journey = (body) =>
+const journey = (body, { imports = "" } = {}) =>
   [
     `import { expect, test } from "./frontend-coverage";`,
+    ...(imports === "" ? [] : [imports]),
     "",
     `test("a journey", async ({ page }) => {`,
     body,
     "});",
     "",
   ].join("\n");
+
+const NODE_ASSERT = 'import assert from "node:assert/strict";';
 
 const codes = (findings) => findings.map((finding) => finding.code);
 const reading = (specs) => auditAssertionSubstance({ root: makeTree(specs) });
@@ -73,6 +76,74 @@ test("the count shape the defect is named after is the same finding", () => {
   assert.deepEqual(
     measured.findings.map((entry) => [entry.verdict, entry.matchers]),
     [["existence_only", ["toHaveCount"]]],
+  );
+});
+
+test("a chain that breaks the line after `expect` is read, not skipped", () => {
+  const measured = reading({
+    "multiline.spec.ts": journey(
+      [
+        "  await expect",
+        '    .soft(page.getByTestId("game-endgame-open"), "the control is offered")',
+        "    .toBeVisible();",
+      ].join("\n"),
+    ),
+  });
+  assert.equal(measured.tests[0].assertions, 1);
+  assert.deepEqual(
+    measured.findings.map((entry) => [entry.verdict, entry.matchers]),
+    [["existence_only", ["toBeVisible"]]],
+  );
+});
+
+test("a poll chain written one call per line carries its matcher", () => {
+  const measured = reading({
+    "poll.spec.ts": journey(["  await expect", "    .poll(async () => 1)", "    .toBe(1);"].join("\n")),
+  });
+  assert.equal(measured.tests[0].assertions, 1);
+  assert.deepEqual(measured.tests[0].matchers, ["toBe"]);
+  assert.deepEqual(measured.findings, []);
+});
+
+test("a node assertion is an assertion: `assert.deepEqual` beside a visibility check is substantive", () => {
+  const measured = reading({
+    "judged.spec.ts": journey(
+      ["  assert.deepEqual(violations, []);", '  await expect(page.getByTestId("a")).toBeVisible();'].join("\n"),
+      { imports: NODE_ASSERT },
+    ),
+  });
+  assert.equal(measured.tests[0].assertions, 2);
+  assert.deepEqual(measured.tests[0].matchers, ["deepEqual", "toBeVisible"]);
+  assert.deepEqual(measured.findings, []);
+});
+
+test("a node assertion that claims only presence is the same finding as `toBeVisible`", () => {
+  const measured = reading({
+    "presence.spec.ts": journey('  assert.ok(await page.getByTestId("a").isVisible(), "it is offered");', {
+      imports: NODE_ASSERT,
+    }),
+  });
+  const { findings } = evaluate({ reading: measured, baseline: { entries: [] } });
+  assert.deepEqual(codes(findings), ["journey_asserts_only_existence"]);
+  assert.deepEqual(measured.findings[0].matchers, ["ok"]);
+});
+
+test("a node assertion counts by the name its import binds, and no other bare call counts", () => {
+  const destructured = reading({
+    "named.spec.ts": journey(["  deepEqual(violations, []);", "  recorded(1);"].join("\n"), {
+      imports: 'import { deepEqual } from "node:assert/strict";',
+    }),
+  });
+  assert.equal(destructured.tests[0].assertions, 1);
+  assert.deepEqual(destructured.tests[0].matchers, ["deepEqual"]);
+
+  const unimported = reading({
+    "assumed.spec.ts": journey('  assert.ok(await page.getByTestId("a").isVisible());'),
+  });
+  assert.equal(unimported.tests[0].assertions, 0);
+  assert.deepEqual(
+    unimported.findings.map((entry) => entry.verdict),
+    ["asserts_nothing"],
   );
 });
 
