@@ -1,43 +1,44 @@
 #!/usr/bin/env node
 /**
- * WHICH CATALOG ACTIONS CAN ACTUALLY BE DRIVEN, AND WHICH HAVE NO LIVE RUNNER.
+ * WHICH CATALOG ACTIONS HAVE A LIVE GATE, AND WHICH HAVE NONE.
  *
- * WHY. `tools/resolve-stardew-action-gate-runner.mjs` turns an action id into the one runner file the launcher drives it
- * with, and `tools/live-action.mjs` imports that file. Two gates read those tables and both check AGREEMENT, never
- * COVERAGE: `check-stardew-action-promotion.mjs` checks that a table row's runner exists ON DISK (and only for the
- * published table), and `check-stardew-promotion-parity.mjs` checks the four promotion places agree - which it can do
- * while an action has no runner at all, because a runner entry is legal-but-not-required for an experimental action.
+ * WHY. `tools/lib/stardew-action-gate-route.mjs` answers, for any action id, the one artifact its live gate lives in: a
+ * `tools/<runner>` shared-harness runner, or a `contracts/smoke/<actionId>.json` contract run by
+ * `tools/run-native-action-slice.mjs`. Two other gates read the same tables and both check AGREEMENT, never COVERAGE:
+ * `check-stardew-action-promotion.mjs` checks that a row's runner exists ON DISK (published rows only) and
+ * `check-stardew-promotion-parity.mjs` checks that the four promotion places agree - which it can do while an action has
+ * no gate at all, because a runner entry is legal-but-not-required for an experimental action.
  *
- * Measured 2026-11-14 on this tree, 103 executable registrations:
- *   - `put_item_in_fish_tank` and `place_item_on_pedestal` are registered `experimental` with no table entry anywhere,
- *     so `resolveStardewActionGateRunner` throws `unknown_stardew_action_id` and `live-action` refuses the action; both
- *     gates above are green about it because a missing runner entry is not what either of them reads.
- *   - `sweep_scythe` has a map entry (`STARDEW_EXPERIMENTAL_ACTION_RUNNERS`) naming a runner the tree does not carry, so
- *     resolution succeeds and `live-action.mjs`'s `import()` fails with a module-not-found - a symptom that names no
- *     action. The promotion gate cannot see it: its `gate_runner_missing` reads the published table only.
- * So the population question has never been asked of the whole catalog. This gate asks it once.
+ * Measured 2026-11-14 on this tree: `put_item_in_fish_tank` and `place_item_on_pedestal` are registered executable with
+ * no gate row, no runner entry and no contract, so the route resolver refuses both with
+ * `stardew_action_gate_route_absent` and `live-action` refuses the action. Both gates above are green about it because a
+ * missing gate is not what either of them reads. Those two are the findings this gate has always reported; everything
+ * else is now routed.
  *
  * THE POPULATION comes from the Mod catalog, never from a list here: every registration `parseModRegistrations` finds -
- * the same parser `check-stardew-promotion-parity.mjs` uses, so the two gates cannot disagree about what an action is.
- * That helper matches `E(...)`, which the catalog declares for `FarmhandOperationKind.Execution`; the read-only `R(...)`
+ * the same parser `check-stardew-promotion-parity.mjs` uses, so the gates cannot disagree about what an action is. That
+ * helper matches `E(...)`, which the catalog declares for `FarmhandOperationKind.Execution`; the read-only `R(...)`
  * registrations are counted separately and printed as excluded, because a read-only action has no execution to drive and
- * a runner for one would be evidence of nothing. The catalog's own registration-level calls are attributed to a helper
+ * a gate for one would be evidence of nothing. The catalog's own registration-level calls are attributed to a helper
  * first, and a helper this gate does not know is a finding rather than a silent narrowing of the population: `E` and `R`
  * are the two the catalogue uses, and a third would otherwise drop out of coverage without a word.
  *
- * THE AUTHORITY for "who runs this action" is `resolveStardewActionGateRunner` - the launcher's own answer - so this
- * gate cannot invent a route, and a table edit moves both the launcher and this gate at once.
+ * THE AUTHORITY for "where does this action's gate live" is `resolveStardewActionGateRoute` - the launcher's and the
+ * gate suites' own answer - so this gate cannot invent a route, and a table edit moves every reader at once. A gate row
+ * that is the action's CONTRACT is covered here: it is a live gate that outlives the runner that first proved it, and the
+ * route says how it runs. Counting only runners is what made six contract rows read as unrouted (`null` was reported as
+ * `runner_name_is_not_a_runner:<action>:null`), which is a measurement that names the wrong fact.
  *
- * THE RUNNER MUST BE IN THE INDEX, not merely on disk. `tools/lib/indexed-sources.mjs` states the rule and the reason:
- * a file that is not in the index is not yet anyone's, and an untracked runner is another lane's work in flight. It is
- * also the honest reading of "has a live runner": a runner that is not committed cannot be re-run by the next reader,
- * which is the same standard `check-stardew-action-promotion.mjs` applies when it refuses to read untracked dumps as
- * evidence. The census line publishes the files this reading dropped, so a green line and a stale lane cannot be
+ * THE GATE ARTIFACT MUST BE IN THE INDEX, not merely on disk. `tools/lib/indexed-sources.mjs` states the rule and the
+ * reason: a file that is not in the index is not yet anyone's, and an untracked artifact is another lane's work in
+ * flight. It is also the honest reading of "has a live gate": a gate that is not committed cannot be re-run by the next
+ * reader, which is the same standard `check-stardew-action-promotion.mjs` applies when it refuses to read untracked dumps
+ * as evidence. The census line publishes the files this reading dropped, so a green line and a stale lane cannot be
  * confused: `untracked not counted 1: tools/run-...-sweep-scythe-smoke.mjs`. A file that is untracked today is a
  * one-commit-away route, and the finding names the commit that would close it, not a defect in the mapping.
  *
  * ZERO POPULATION IS BLOCKED, NEVER GREEN. No catalog read, an empty registration list, a catalog smaller than the
- * recorded floor, or a runner file census git refuses to answer all print `not_measured:<why>` and exit 2.
+ * recorded floor, or a runner-file census git refuses to answer all print `not_measured:<why>` and exit 2.
  *
  * THE DUPLICATION CENSUS is informational and NEVER sets the exit code. It exists because the next decision - whether a
  * shared runner harness is worth building - needs a number instead of an impression. For each of the three steps every
@@ -45,27 +46,33 @@
  * the evidence bundle it prints) it counts how many distinct spellings the tree carries and names the two largest
  * groups. Its readings are structural, so they are a CEILING on distinctness, not a floor: a step built through a
  * variable or a spread is read as the same spelling as another that does the same, and the count cannot see a
- * difference in behaviour that leaves these markers alone.
+ * difference in behaviour that leaves these markers alone. It reads RUNNER sources only: a contract route already has
+ * no code to duplicate.
  *
  * WHAT THIS GATE DOES NOT SEE, said out loud so a green run is not read as more than it is:
- *   - whether the runner drives THAT action. A runner that resolves and exists is a route, not a proof; the live run
- *     and its receipt are the proof, and `check-stardew-action-promotion.mjs` owns the receipt question.
- *   - whether the runner is still runnable (a broken import, a stale fixture scenario). `node --check` owns syntax and
- *     the run itself owns the rest.
+ *   - whether the gate drives THAT action, or asserts as much as the runner it replaced. A route that resolves is a
+ *     route, not a proof; the live run and its receipt are the proof, and `check-stardew-action-promotion.mjs` owns the
+ *     receipt question.
+ *   - whether the gate is still runnable (a broken import, a stale fixture scenario, a contract the slice driver cannot
+ *     derive). `node --check` owns syntax and the run itself owns the rest.
  *   - the evidence direction. A `live_verified` action with no succeeded receipt in either durable store is NOT a
  *     finding here: measured 2026-11-14, 70 of the 94 live_verified/published actions have none, and the promotion gate
  *     reads evidence only for the opposite lag (`experimental_action_has_live_evidence`). That gap is real and is
  *     reported, not closed, by this file.
  *
- * VERDICT. `actions examined N · with a runner M · without K`, then the K by name, then the runner-file census, then one
- * line per finding. Exit 0 covered, 1 an action without a live runner, 2 blocked.
+ * VERDICT. `actions examined N · with a live gate G · runner M · contract K · without J`, then the J by name, then the
+ * artifact census, then one line per finding. Every examined action is counted once: `M + K === G` and `G + J === N`.
+ * Exit 0 covered, 1 an action with no live gate, 2 blocked.
  *
- * red-proof: inject  a catalog registration with no runner entry -> `action_without_a_live_runner:<action>`
+ * red-proof: inject  a catalog registration with no route anywhere -> `action_without_a_live_gate:<action>`
  *   (tools/check-stardew-live-runner-coverage.test.mjs)
- * red-proof: inject  one action removed from the resolver's tables -> `action_without_a_live_runner:use_mine_ladder`
+ * red-proof: inject  one action removed from the route resolver's tables -> `action_without_a_live_gate:use_mine_ladder`
  *   (tools/check-stardew-live-runner-coverage.test.mjs)
  * red-proof: inject  an index that does not carry a resolved runner file ->
  *   `runner_file_missing:sweep_scythe:run-stardew-native-local-player-sweep-scythe-smoke.mjs`
+ *   (tools/check-stardew-live-runner-coverage.test.mjs)
+ * red-proof: inject  an index that does not carry a contract-route action's contract ->
+ *   `contract_file_missing:harvest_bush:contracts/smoke/harvest_bush.json`
  *   (tools/check-stardew-live-runner-coverage.test.mjs)
  * red-proof: inject  an empty catalog -> `not_measured:catalog_unreadable`, exit 2
  *   (tools/check-stardew-live-runner-coverage.test.mjs)
@@ -78,14 +85,21 @@ import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
 import { describeUntracked, untrackedSources } from "./lib/indexed-sources.mjs";
+import {
+  CONTRACT_ROUTE,
+  RUNNER_ROUTE,
+  SMOKE_CONTRACT_DIRECTORY,
+  resolveStardewActionGateRoute,
+} from "./lib/stardew-action-gate-route.mjs";
 import { parseModRegistrations } from "./promote-stardew-action.mjs";
-import { resolveStardewActionGateRunner } from "./resolve-stardew-action-gate-runner.mjs";
 
 const ROOT = resolve(import.meta.dirname, "..");
 
+const TOOLS_DIRECTORY = "tools";
+
 export const CATALOG_PATH = "integrations/stardew/src/Core/Policy/FarmhandActionDefinitions.cs";
 
-/** The one name shape a runner the launcher can import has. A table entry naming anything else is its own finding. */
+/** The one name shape a runner the launcher can import has. A runner route naming anything else is its own finding. */
 export const RUNNER_FILE_PATTERN = /^run-stardew-native-local-player-[a-z0-9-]+-smoke\.mjs$/u;
 
 /** A scan that found less than this measured nothing, and must not read as covered. */
@@ -93,7 +107,6 @@ export const MINIMUM_CATALOG_ACTIONS = 90;
 
 /** The catalog's registration-level helpers, each with the operation kind it declares. */
 export const REGISTRATION_HELPERS = Object.freeze({ E: "execution", R: "read_only" });
-
 const REGISTRATIONS_BODY = /\bRegistrations\b\s*=\s*Array\.AsReadOnly\(new\[\]\s*\{([\s\S]*?)\}\);/u;
 const REGISTRATION_CALL = /(?:^|[\s;{])([A-Z])\(\s*"([a-z][a-z0-9_]*)"\s*,\s*"([a-z][a-z0-9_]*)"/gu;
 
@@ -112,13 +125,6 @@ export function readCatalogRegistrationCalls(catalogSource) {
   return calls;
 }
 
-/**
- * The runner files this tree carries, split by whether the index holds them.
- *
- * The directory scan is the population and the index subtracts from it, which is `indexed-sources.mjs`'s reading: the
- * untracked names are published rather than swallowed, because a runner another lane has not staged is exactly the
- * case a green census would otherwise hide.
- */
 export function runnerFilesInIndex({ root = ROOT, toolsDirectory = "tools" } = {}) {
   const onDisk = readdirSync(resolve(root, toolsDirectory))
     .filter((name) => RUNNER_FILE_PATTERN.test(name))
@@ -131,15 +137,46 @@ export function runnerFilesInIndex({ root = ROOT, toolsDirectory = "tools" } = {
 }
 
 /**
- * The coverage verdict: one row per executable catalog registration, and the findings that say which has no route.
+ * The GATE ARTIFACTS this tree carries, split by whether the index holds them: the runner files and the smoke contracts.
  *
- * `resolveRunner` is injected so a falsifier can delete one mapping without editing the launcher's tables; its default
- * is the launcher's own resolver, so the real run reads the one authority.
+ * Both shapes are one population because a route may name either, and a census that counted only runners would report a
+ * contract-routed action as missing the artifact it does not have. The directory scan is the population and the index
+ * subtracts from it, which is `indexed-sources.mjs`'s reading: the untracked names are published rather than swallowed,
+ * because a gate another lane has not staged is exactly the case a green census would otherwise hide.
+ */
+export function gateArtifactsInIndex({
+  root = ROOT,
+  toolsDirectory = TOOLS_DIRECTORY,
+  contractDirectory = SMOKE_CONTRACT_DIRECTORY,
+} = {}) {
+  const runnersOnDisk = readdirSync(resolve(root, toolsDirectory))
+    .filter((name) => RUNNER_FILE_PATTERN.test(name))
+    .sort();
+  const contractsOnDisk = readdirSync(resolve(root, contractDirectory))
+    .filter((name) => name.endsWith(".json"))
+    .sort()
+    .map((name) => `${contractDirectory}/${name}`);
+  const untracked = untrackedSources({ root, roots: [toolsDirectory, contractDirectory] });
+  const runnerPaths = runnersOnDisk.map((name) => `${toolsDirectory}/${name}`);
+  return {
+    runners: runnersOnDisk.filter((name) => !untracked.has(`${toolsDirectory}/${name}`)),
+    contracts: contractsOnDisk.filter((path) => !untracked.has(path)),
+    untracked: [...runnerPaths, ...contractsOnDisk].filter((path) => untracked.has(path)),
+    onDisk: { runners: runnersOnDisk, contracts: contractsOnDisk },
+  };
+}
+
+/**
+ * The coverage verdict: one row per executable catalog registration, and the findings that say which has no live gate.
+ *
+ * `resolveRoute` is injected so a falsifier can delete one route without editing the launcher's tables; its default is
+ * the one resolver the launcher and the gate suites also read, so the real run cannot disagree with them. `artifacts`
+ * is what the index carries, in the two shapes a route can name.
  */
 export function checkLiveRunnerCoverage({
   catalogSource,
-  runnerFiles,
-  resolveRunner = resolveStardewActionGateRunner,
+  artifacts,
+  resolveRoute = resolveStardewActionGateRoute,
   minimumActions = MINIMUM_CATALOG_ACTIONS,
 }) {
   const calls = readCatalogRegistrationCalls(catalogSource);
@@ -159,52 +196,74 @@ export function checkLiveRunnerCoverage({
   if (registrations.length < minimumActions)
     return blocked(`catalog_population_too_small:${registrations.length}<${minimumActions}`);
 
-  const indexed = new Set(runnerFiles);
+  const indexedRunners = new Set(artifacts.runners);
+  const indexedContracts = new Set(artifacts.contracts);
   const findings = [];
   const rows = [];
   for (const registration of registrations) {
     const actionId = registration.actionId;
-    let runner = null;
-    try {
-      runner = resolveRunner(actionId);
-    } catch (error) {
-      const reason = String(error?.message ?? error);
+    const route = resolveRoute(actionId);
+    if (route.route === null) {
+      findings.push(`action_without_a_live_gate:${actionId}`);
+      rows.push({ actionId, route: null, gate: null, finding: "no_route" });
+      continue;
+    }
+    if (route.problem !== null) {
+      // The route exists in the table and its artifact cannot be used: the contract is absent or unreadable, or the row
+      // disagrees with it. The resolver names the action, the code and the path, so this finding names all three.
       findings.push(
-        reason === "unknown_stardew_action_id"
-          ? `action_without_a_live_runner:${actionId}`
-          : `runner_resolution_failed:${actionId}:${reason}`,
+        `gate_route_refused:${actionId}:${route.problem.code}${
+          route.problem.detail === null ? "" : ` ${route.problem.detail}`
+        }`,
       );
-      rows.push({ actionId, runner: null, finding: "no_runner" });
+      rows.push({ actionId, route: route.route, gate: route.gate, finding: "route_refused" });
       continue;
     }
-    if (typeof runner !== "string" || !RUNNER_FILE_PATTERN.test(runner)) {
-      findings.push(`runner_name_is_not_a_runner:${actionId}:${String(runner)}`);
-      rows.push({ actionId, runner, finding: "not_a_runner_name" });
+    if (route.route === CONTRACT_ROUTE) {
+      if (!indexedContracts.has(route.gate)) {
+        findings.push(`contract_file_missing:${actionId}:${route.gate}`);
+        rows.push({ actionId, route: CONTRACT_ROUTE, gate: route.gate, finding: "contract_file_missing" });
+        continue;
+      }
+      rows.push({ actionId, route: CONTRACT_ROUTE, gate: route.gate, finding: null });
       continue;
     }
-    if (!indexed.has(runner)) {
+    const runner = route.gate.startsWith(`${TOOLS_DIRECTORY}/`)
+      ? route.gate.slice(TOOLS_DIRECTORY.length + 1)
+      : route.gate;
+    if (!RUNNER_FILE_PATTERN.test(runner)) {
+      findings.push(`gate_is_not_a_runner:${actionId}:${String(route.gate)}`);
+      rows.push({ actionId, route: RUNNER_ROUTE, gate: route.gate, finding: "not_a_runner_name" });
+      continue;
+    }
+    if (!indexedRunners.has(runner)) {
       findings.push(`runner_file_missing:${actionId}:${runner}`);
-      rows.push({ actionId, runner, finding: "runner_file_missing" });
+      rows.push({ actionId, route: RUNNER_ROUTE, gate: route.gate, finding: "runner_file_missing" });
       continue;
     }
-    rows.push({ actionId, runner, finding: null });
+    rows.push({ actionId, route: RUNNER_ROUTE, gate: route.gate, finding: null });
   }
 
   const routed = rows.filter((row) => row.finding === null);
   const unrouted = rows.filter((row) => row.finding !== null);
-  const routedFiles = new Set(routed.map((row) => row.runner));
-  const orphanRunners = [...indexed].filter((file) => !routedFiles.has(file)).sort();
+  const runnerRouted = routed.filter((row) => row.route === RUNNER_ROUTE);
+  const contractRouted = routed.filter((row) => row.route === CONTRACT_ROUTE);
+  const routedRunnerFiles = new Set(runnerRouted.map((row) => row.gate.slice(`${TOOLS_DIRECTORY}/`.length)));
+  const orphanRunners = [...indexedRunners].filter((file) => !routedRunnerFiles.has(file)).sort();
   return Object.freeze({
-    schema: "gamebuddy-stardew-live-runner-coverage/v1",
+    schema: "gamebuddy-stardew-live-runner-coverage/v2",
     blocked: null,
     examined: rows.length,
-    withRunner: routed.length,
+    routed: routed.length,
+    runnerRouted: runnerRouted.length,
+    contractRouted: contractRouted.length,
     without: unrouted.length,
     readOnlyExcluded: readOnly.length,
-    indexedRunners: indexed.size,
+    indexedRunners: indexedRunners.size,
+    indexedContracts: indexedContracts.size,
     orphanRunners,
     unrouted: Object.freeze(
-      unrouted.map((row) => Object.freeze({ actionId: row.actionId, runner: row.runner, finding: row.finding })),
+      unrouted.map((row) => Object.freeze({ actionId: row.actionId, gate: row.gate, finding: row.finding })),
     ),
     findings: Object.freeze(findings),
     ok: findings.length === 0,
@@ -214,13 +273,16 @@ export function checkLiveRunnerCoverage({
 /** A reading that could not be made. Blocked, exit 2, with the reason - not an empty population that agrees with itself. */
 export function blocked(reason) {
   return Object.freeze({
-    schema: "gamebuddy-stardew-live-runner-coverage/v1",
+    schema: "gamebuddy-stardew-live-runner-coverage/v2",
     blocked: reason,
     examined: 0,
-    withRunner: 0,
+    routed: 0,
+    runnerRouted: 0,
+    contractRouted: 0,
     without: 0,
     readOnlyExcluded: 0,
     indexedRunners: 0,
+    indexedContracts: 0,
     orphanRunners: Object.freeze([]),
     unrouted: Object.freeze([]),
     findings: Object.freeze([]),
@@ -430,22 +492,22 @@ export function renderCoverage({ report, duplication = null, census = null }) {
     return lines;
   }
   lines.push(
-    `actions examined ${report.examined} · with a runner ${report.withRunner} · without ${report.without}` +
+    `actions examined ${report.examined} · with a live gate ${report.routed} · runner ${report.runnerRouted} · ` +
+      `contract ${report.contractRouted} · without ${report.without}` +
       (report.readOnlyExcluded > 0 ? ` · read-only excluded ${report.readOnlyExcluded}` : ""),
   );
   if (report.unrouted.length > 0) {
     lines.push(
       `  without: ${report.unrouted
-        .map((entry) => `${entry.actionId} (${entry.finding === "no_runner" ? "no runner entry" : entry.finding})`)
+        .map((entry) => `${entry.actionId} (${entry.gate === null ? "no route" : entry.finding})`)
         .join(", ")}`,
     );
   }
   if (census !== null) {
     lines.push(
-      `runner files: ${census.onDisk.length} on disk · ${census.indexed.length} in the index` +
-        (census.untracked.length > 0
-          ? ` · untracked not counted ${describeUntracked(census.untracked.map((name) => `tools/${name}`))}`
-          : ""),
+      `gate artifacts: ${census.onDisk.runners.length} runners on disk · ${census.runners.length} in the index · ` +
+        `${census.onDisk.contracts.length} contracts on disk · ${census.contracts.length} in the index` +
+        (census.untracked.length > 0 ? ` · untracked not counted ${describeUntracked(census.untracked)}` : ""),
     );
     lines.push(`  indexed runners no catalog action resolves to: ${report.orphanRunners.length}`);
   }
@@ -460,8 +522,8 @@ export function renderCoverage({ report, duplication = null, census = null }) {
   for (const finding of report.findings) lines.push(finding);
   lines.push(
     report.ok
-      ? "  green: every executable catalog action resolves to a runner the index carries"
-      : `  ${report.findings.length} action(s) without a live runner`,
+      ? "  green: every executable catalog action resolves to a live gate the index carries"
+      : `  ${report.findings.length} action(s) without a live gate`,
   );
   return lines;
 }
@@ -469,23 +531,23 @@ export function renderCoverage({ report, duplication = null, census = null }) {
 /**
  * The whole run, pure over what it was handed, so a falsifier drives the real verdict and the real exit code.
  *
- * `runnerCensus` is where the runner files come from; it throws when git cannot answer, and that is blocked rather than
- * an empty census that reads as covered.
+ * `census` is where the gate artifacts come from; it throws when git cannot answer, and that is blocked rather than an
+ * empty census that reads as covered.
  */
 export function runCoverage({
   catalogSource,
-  runnerCensus,
-  resolveRunner = resolveStardewActionGateRunner,
+  census: censusOf,
+  resolveRoute = resolveStardewActionGateRoute,
   runners = null,
   withDuplication = true,
 }) {
   let census;
   try {
-    census = runnerCensus();
+    census = censusOf();
   } catch (error) {
-    return { exitCode: 2, lines: [`not_measured:runner_index_unreadable:${String(error?.message ?? error)}`] };
+    return { exitCode: 2, lines: [`not_measured:gate_artifact_index_unreadable:${String(error?.message ?? error)}`] };
   }
-  const report = checkLiveRunnerCoverage({ catalogSource, runnerFiles: census.indexed, resolveRunner });
+  const report = checkLiveRunnerCoverage({ catalogSource, artifacts: census, resolveRoute });
   const duplication = withDuplication && runners !== null ? measureRunnerDuplication({ runners }) : null;
   const lines = renderCoverage({ report, duplication, census });
   if (report.blocked !== null) return { exitCode: 2, lines };
@@ -507,16 +569,18 @@ async function main() {
   }
   let census;
   try {
-    census = runnerFilesInIndex({ root: ROOT });
+    census = gateArtifactsInIndex({ root: ROOT });
   } catch (error) {
-    process.stdout.write(`not_measured:runner_index_unreadable:${String(error?.message ?? error)}\n`);
+    process.stdout.write(`not_measured:gate_artifact_index_unreadable:${String(error?.message ?? error)}\n`);
     process.exitCode = 2;
     return;
   }
-  const report = checkLiveRunnerCoverage({ catalogSource, runnerFiles: census.indexed });
-  const duplication = measureRunnerDuplication({ runners: readRunnerSources({ names: census.indexed }) });
+  const report = checkLiveRunnerCoverage({ catalogSource, artifacts: census });
+  const duplication = measureRunnerDuplication({ runners: readRunnerSources({ names: census.runners }) });
   for (const line of renderCoverage({ report, duplication, census })) process.stdout.write(`${line}\n`);
   process.exitCode = report.blocked !== null ? 2 : Number(!report.ok);
 }
+
+if (import.meta.url === pathToFileURL(process.argv[1]).href) await main();
 
 if (import.meta.url === pathToFileURL(process.argv[1]).href) await main();
