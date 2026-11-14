@@ -7,9 +7,19 @@
 //   register the installation  -> `game_browser_api/v1` prerequisites: met
 //   activate the lifecycle     -> POST /lifecycle/activate  (reserves and stages the owned Player Host)
 //   launch the game            -> POST /game/launch        (arms and launches through the Guardian session)
+//   choose the cabin           -> `cabin_read` then `cabin_confirm` from the guide's own third step,
+//                                 which is the only path to the AI-client profile and the attachment
+//                                 (`host/src/stardew-production-lifecycle-coordinator.internal.ts:2082-2152`)
 //   say one line               -> the Game surface's own composer
 //   read the reply             -> its own transcript, while the attachment is `attached`
 //   stop the game              -> POST /game/stop          (so no game process is left behind)
+//
+// WAITING IS MEASURED, NOT ENOUGH. The launch wait prints the product's own state every few seconds and
+// ends on a named plateau as well as on a budget, because "slow" and "stuck" are different findings:
+// measured 2026-11-15, the launch chain took 9 s and the state then stayed
+// `instance=launching/attachment=none` for 4 min 51 s because the cabin step had not been sent. The
+// budget is named and overridable (`GAMEBUDDY_LIVE_RUN_LAUNCH_BUDGET_MS`) so a run can buy more time
+// without editing a number nobody can see.
 //
 // WHAT THIS DRIVER DOES NOT DO. It never launches Stardew itself, never spawns SMAPI, never writes the
 // Mod, and never kills anything: the game process is the Host's, started and contained by its Guardian
@@ -47,7 +57,7 @@
 //   companion_silent_after:<ms>
 //   game_launch_unavailable:<code>[:<cause>]
 const path = require("node:path");
-const { existsSync, readFileSync, readdirSync } = require("node:fs");
+const { closeSync, existsSync, fstatSync, openSync, readFileSync, readSync, readdirSync, statSync } = require("node:fs");
 const { execFileSync } = require("node:child_process");
 const { pathToFileURL } = require("node:url");
 const {
@@ -63,11 +73,14 @@ const {
 } = require("./common.cjs");
 const {
   GAME_LAUNCH_PREFIX,
+  LAUNCH_PLATEAU_MS,
   LAUNCH_STEPS,
   VERDICTS,
   classifyLaunchRefusal,
   classifySilentLaunch,
   describeGameState,
+  describeLaunchPlateau,
+  describeLaunchProgress,
   notMeasuredLine,
   readinessOf,
 } = require("./game-launch-verdict.mjs");
@@ -75,14 +88,41 @@ const {
 /** The line the player says into the game surface. One line, in the language the product is set to. */
 const PLAYER_LINE = "你好，你在我旁边吗？";
 
+/**
+ * The launch wait, by name and overridable per run.
+ *
+ * The Host arms the Guardian, starts SMAPI and waits for the Mod's world; the surface then waits for the
+ * cabin step this driver drives below. The default is the same 300 s the driver has always waited; a run
+ * that suspects a slower machine than the one measured on 2026-11-15 asks for more by name and the number
+ * it used is printed in the report, so no wait in the log is an unnamed constant.
+ */
+function launchBudgetMs() {
+  const raw = process.env.GAMEBUDDY_LIVE_RUN_LAUNCH_BUDGET_MS;
+  if (raw === undefined || raw.trim().length === 0) return 300_000;
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed) || parsed < 10_000)
+    throw new Error(
+      `GAMEBUDDY_LIVE_RUN_LAUNCH_BUDGET_MS must be a whole number of milliseconds >= 10000; read ${JSON.stringify(raw)}`,
+    );
+  return Math.floor(parsed);
+}
+
 const BUDGET = Object.freeze({
   /** The panel's own first read; the discovery scan is a Host filesystem walk. */
   discoveryMs: 90_000,
   /** A lifecycle control that the panel draws from a fresh Game read, after the fact behind it landed. */
   controlMs: 30_000,
   activationMs: 120_000,
-  /** The Host arms the Guardian, starts SMAPI, waits for the Mod's bridge and the attachment. */
-  launchMs: 300_000,
+  /** The launch request's own wait: see `launchBudgetMs` for the default and the override. */
+  launchMs: launchBudgetMs(),
+  /** How often the launch wait prints the product's own state and the game's last log line. */
+  progressMs: 5_000,
+  /** An unchanged launch state for this long is a plateau, not a slow launch. */
+  plateauMs: LAUNCH_PLATEAU_MS,
+  /** How long the guide's third step is given to offer a cabin before the run names the refusal. */
+  cabinReadMs: 120_000,
+  /** The cabin confirmation itself: the Mod provisions a farmhand and the Host admits its signed manifest. */
+  cabinConfirmMs: 180_000,
   /** One real provider turn, the same budget driver F gives its reply. */
   replyMs: 240_000,
   stopMs: 120_000,
@@ -167,6 +207,49 @@ const readLifecycleControls = () => {
     launch: of("game-launch"),
     stop: of("game-stop"),
     arrivalNotice: arrival === null ? null : (arrival.textContent ?? "").trim(),
+  };
+};
+
+/**
+ * The guide's third step as the player reads it: the cabin the Host offers, and the one control that can
+ * ask again.
+ *
+ * The shapes are the panel's own (`dialogue-web/src/components/GameStatePanel.tsx:944-1029`): the section,
+ * the choice list with one confirm per cabin, and - in every state that has no choice to offer - the
+ * single secondary control `deriveCabinHandoffActions` says is the step (`read_cabins_again` for a
+ * read that returned nothing, `read_game_again` after an unconfirmed confirmation). The driver names what
+ * it sees instead of deciding what the panel meant.
+ */
+const readCabinHandoff = () => {
+  const surface = document.querySelector('[data-testid="game-surface"]');
+  const handoff = surface === null ? null : surface.querySelector("section.stardew-cabin-handoff");
+  if (handoff === null) return { present: false, choices: [], secondary: [], sentences: [] };
+  const list = handoff.querySelector('[data-testid="cabin-choice-list"]');
+  const describeButton = (button) => {
+    const rect = button.getBoundingClientRect();
+    return {
+      name: (button.getAttribute("aria-label") ?? button.textContent ?? "").replace(/\s+/gu, " ").trim(),
+      disabled: button.disabled === true || button.getAttribute("aria-disabled") === "true",
+      visible: rect.width > 0 && rect.height > 0 && getComputedStyle(button).visibility !== "hidden",
+    };
+  };
+  const choices =
+    list === null
+      ? []
+      : [...list.querySelectorAll("li.game-choice")].map((row) => {
+          const button = row.querySelector("button");
+          return {
+            label: (row.querySelector(".game-choice-label")?.textContent ?? "").trim(),
+            confirm: button === null ? null : describeButton(button),
+          };
+        });
+  return {
+    present: true,
+    choices,
+    secondary: [...handoff.querySelectorAll("button.game-secondary-action")].map(describeButton),
+    sentences: [...handoff.querySelectorAll(".game-status, .game-subpanel-note")]
+      .map((node) => (node.textContent ?? "").replace(/\s+/gu, " ").trim())
+      .filter((text) => text.length > 0),
   };
 };
 
@@ -294,7 +377,42 @@ function runLaunchDriverPid(launchStatePath) {
   }
 }
 
+/**
+ * The launched game's own last word, read from SMAPI's own log.
+ *
+ * The Mod writes it (`%APPDATA%\StardewValley\ErrorLogs\SMAPI-latest.txt`), so a wait that stops moving can
+ * be attributed to a game that is idle rather than to a Host still working. Read-only, bounded to the tail,
+ * and the file's mtime travels with the line because the log outlives the process that wrote it.
+ */
+function lastSmapiLine(budgetBytes = 16_384) {
+  const appData = process.env.APPDATA;
+  if (typeof appData !== "string" || appData.length === 0) return null;
+  const file = path.join(appData, "StardewValley", "ErrorLogs", "SMAPI-latest.txt");
+  try {
+    const fd = openSync(file, "r");
+    try {
+      const size = fstatSync(fd).size;
+      const length = Math.max(0, Math.min(budgetBytes, size));
+      const buffer = Buffer.alloc(length);
+      const read = readSync(fd, buffer, 0, length, size - length);
+      const lines = buffer.toString("utf8", 0, read).split(/\r?\n/gu).filter((line) => line.trim().length > 0);
+      const salient = [...lines].reverse().find((line) => line.includes("GameBuddy")) ?? lines[lines.length - 1] ?? null;
+      return { line: salient, writtenAtMs: statSync(file).mtimeMs };
+    } finally {
+      closeSync(fd);
+    }
+  } catch {
+    return null;
+  }
+}
+
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/** The tuple a launch wait is waiting to see move: a change in any of these is a step that happened. */
+const stateKey = (state) =>
+  state?.ok !== true
+    ? `unreadable:${String(state?.status)}`
+    : `${String(state.instanceStatus)}/${String(state.attachmentStatus)}/${String(state.instanceGeneration)}/${String(state.latestOutcome)}`;
 
 /** Whether the Host that serves the product page still answers, asked from Node rather than from the page. */
 async function hostAnswers(port) {
@@ -402,7 +520,7 @@ async function hostAnswers(port) {
     if (frame === page.mainFrame()) pageEvents.push({ kind: "navigated", url: frame.url().slice(0, 200) });
   });
   page.on("response", (response) => {
-    const match = /\/(lifecycle\/activate|game\/launch|game\/stop|game\/installation\/discovery\/confirm)$/u.exec(response.url());
+    const match = /\/(lifecycle\/activate|game\/launch|game\/stop|game\/stardew\/cabins|game\/stardew\/cabins\/confirm|game\/installation\/discovery\/confirm)$/u.exec(response.url());
     if (match === null || response.status() < 400) return;
     const route = match[1];
     response
@@ -452,6 +570,153 @@ async function hostAnswers(port) {
       await sleep(500);
       controls = await page.evaluate(readLifecycleControls);
     }
+  };
+
+  /**
+   * The guide's third step, driven through the panel's own controls.
+   *
+   * `game_browser_api_v1` has exactly one path from a launched Player Host to an attached companion: the
+   * cabin read, then the confirmed choice. The confirmation is what materialises the AI-client profile,
+   * launches that role and takes its bridge, and it is the only caller of
+   * `materializeAiClientProfileAfterManifestAdmission`
+   * (`host/src/stardew-production-lifecycle-coordinator.internal.ts:2082-2152`; the staging it performs is
+   * `host/src/games/stardew/lifecycle/stardew-private-bootstrap-composer.core.internal.ts:2397-2457`).
+   *
+   * The panel reads the handoff ONCE, when the surface mounts, and never again after a launch
+   * (`dialogue-web/src/components/GameSurface.tsx:228-231`, next to the launch handler at `:467-509`), so the
+   * player's own refresh press is what asks the Host again - and in the `launching` phase that press is the
+   * only control on the panel that can change anything. This drives that press, then the choice the Host
+   * offers, and records every reading: what the step cost is the measurement.
+   */
+  const driveCabinHandoff = async () => {
+    const began = Date.now();
+    const reads = [];
+    const fingerprint = (handoff) =>
+      JSON.stringify({
+        choices: handoff.choices.map((choice) => choice.label),
+        secondary: handoff.secondary.map((control) => control.name),
+        sentences: handoff.sentences,
+      });
+    let handoff = await page.evaluate(readCabinHandoff);
+    /* Ask the panel's own refresh control until the Host offers a cabin, or the step's budget ends. */
+    while (handoff.present === true && handoff.choices.length === 0 && Date.now() - began < BUDGET.cabinReadMs) {
+      const refresh = handoff.secondary.find((control) => control.visible === true && control.disabled !== true) ?? null;
+      if (refresh === null) return { outcome: "no_control", reads, handoff, elapsedMs: Date.now() - began };
+      const before = fingerprint(handoff);
+      await page.locator('[data-testid="game-surface"] section.stardew-cabin-handoff button.game-secondary-action').first().click();
+      reads.push({ pressed: refresh.name, at: Date.now() - began });
+      /*
+       * The press only asks; the answer is a later render. A state without a choice and without a control is
+       * the panel's `loading`, so the read has not answered yet; a state with a control is an answer, and it
+       * counts as the answer to THIS press only once it differs from what was on screen before it.
+       */
+      const pressedAt = Date.now();
+      let answeredAt = null;
+      while (Date.now() - pressedAt < BUDGET.controlMs) {
+        await sleep(250);
+        const next = await page.evaluate(readCabinHandoff);
+        handoff = next;
+        const answered = next.present !== true || next.choices.length > 0 || next.secondary.length > 0;
+        if (!answered) {
+          answeredAt = null;
+          continue;
+        }
+        if (next.present !== true || next.choices.length > 0 || fingerprint(next) !== before) break;
+        if (answeredAt === null) answeredAt = Date.now();
+        if (Date.now() - answeredAt >= 2000) break;
+      }
+      if (handoff.choices.length > 0 || handoff.present !== true) break;
+      await sleep(1000);
+    }
+    if (handoff.present !== true) return { outcome: "no_handoff", reads, handoff, elapsedMs: Date.now() - began };
+    if (handoff.choices.length === 0)
+      return {
+        outcome: "no_choices",
+        reads,
+        handoff,
+        elapsedMs: Date.now() - began,
+        problems: [...problems.entries()],
+      };
+
+    /*
+     * One press per attempt, and a second attempt only for the one failure a press can have silently: a
+     * choice handle expires with the advertisement beat it was read from
+     * (`stardew-private-bootstrap-composer.core.internal.ts:2282`), and the panel then re-reads instead of
+     * confirming (`GameSurface.tsx:263-268`). "Admitted" is read from the panel's own shapes - the list in
+     * `confirming` (every confirm disabled), or no list at all.
+     */
+    const presses = [];
+    let inFlight = false;
+    for (let attempt = 1; attempt <= 3 && !inFlight; attempt += 1) {
+      presses.push({ attempt, choices: handoff.choices.map((choice) => choice.label), confirm: handoff.choices[0]?.confirm?.name ?? null });
+      await page.locator('[data-testid="cabin-choice-list"] li.game-choice button').first().click();
+      const pressedAt = Date.now();
+      let goneForMs = 0;
+      while (Date.now() - pressedAt < 15_000) {
+        await sleep(250);
+        const next = await page.evaluate(readCabinHandoff);
+        handoff = next;
+        const confirming = next.choices.length > 0 && next.choices.every((choice) => choice.confirm === null || choice.confirm.disabled === true);
+        if (confirming) {
+          inFlight = true;
+          break;
+        }
+        const offeredAgain = next.choices.some((choice) => choice.confirm !== null && choice.confirm.disabled !== true);
+        if (offeredAgain) {
+          // The panel re-read instead of confirming: this press was not the one that counted.
+          goneForMs = 0;
+          continue;
+        }
+        if (next.choices.length === 0) goneForMs += 250;
+        else goneForMs = 0;
+        if (goneForMs >= 2000) {
+          inFlight = true;
+          break;
+        }
+      }
+    }
+    if (!inFlight)
+      return {
+        outcome: "not_admitted",
+        reads,
+        presses,
+        handoff,
+        elapsedMs: Date.now() - began,
+        problems: [...problems.entries()],
+      };
+
+    /* The confirmation is in flight: the Mod provisions the farmhand and the Host admits its manifest. */
+    say(`the cabin choice was confirmed; waiting up to ${String(BUDGET.cabinConfirmMs)}ms for the attachment`);
+    const attachBegan = Date.now();
+    let attached = await page.evaluate(readGameState);
+    let attachProgressAt = attachBegan;
+    while (Date.now() - attachBegan < BUDGET.cabinConfirmMs) {
+      if (attached.ok === true && attached.attachmentStatus === "attached") break;
+      if (Date.now() - attachProgressAt >= BUDGET.progressMs) {
+        attachProgressAt = Date.now();
+        say(
+          describeLaunchProgress({
+            elapsedMs: Date.now() - attachBegan,
+            state: attached,
+            problems: [...problems.entries()],
+            game: lastSmapiLine(),
+          }),
+        );
+      }
+      await sleep(1000);
+      attached = await page.evaluate(readGameState);
+    }
+    return {
+      outcome: attached.ok === true && attached.attachmentStatus === "attached" ? "attached" : "not_attached",
+      reads,
+      presses,
+      handoff: await page.evaluate(readCabinHandoff),
+      state: attached,
+      elapsedMs: Date.now() - began,
+      confirmMs: Date.now() - attachBegan,
+      problems: [...problems.entries()],
+      gameLog: lastSmapiLine(),
+    };
   };
 
   // ---- the Game surface ----
@@ -554,45 +819,141 @@ async function hostAnswers(port) {
     );
   const controls = launchReady.controls;
   const launchBegan = Date.now();
+  say(`launch budget: ${String(BUDGET.launchMs)}ms, plateau named after ${String(BUDGET.plateauMs)}ms, progress every ${String(BUDGET.progressMs)}ms`);
   await page.locator('[data-testid="game-launch"]').first().click();
   say(`launch requested through the product's own control (${JSON.stringify(controls.launch.name)})`);
   /*
-   * The launch is waited for by NAME, and it gives up in two ways rather than one: the readiness it asked
-   * for (`readinessOf`), or a state read that stopped answering for five consecutive seconds - the shape a
-   * Host that died under the launch request leaves. Waiting the whole launch budget for a page that cannot
-   * reach its Host turns a named failure into a timeout, which is what this driver exists to avoid.
+   * The launch is waited for by NAME, and it gives up in three ways rather than one: the readiness it asked
+   * for (`readinessOf`), a state read that stopped answering for five consecutive seconds - the shape a
+   * Host that died under the launch request leaves - or a state that has not changed for the plateau window.
+   * The third is the one that turns a silent wait into a finding: the launch chain and the cabin step after
+   * it are different steps, and a tuple that stops moving while the game is visibly up is the state waiting
+   * for a step nobody sent, not a launch that is slow. Waiting the whole budget for it is what turned a
+   * named step into a 300 s timeout on 2026-11-15.
    */
   let launched = await page.evaluate(readGameState);
   let unreachable = launched.ok === true ? 0 : 1;
+  let plateaued = false;
+  let unchangedForMs = 0;
+  let unchangedSince = Date.now();
+  let unchangedKey = stateKey(launched);
+  let lastProgressAt = launchBegan;
   while (Date.now() - launchBegan < BUDGET.launchMs) {
     if (readinessOf(launched) !== "pending" || unreachable >= 5) break;
+    const key = stateKey(launched);
+    if (key !== unchangedKey) {
+      unchangedKey = key;
+      unchangedSince = Date.now();
+    }
+    unchangedForMs = Date.now() - unchangedSince;
+    if (unchangedForMs >= BUDGET.plateauMs) {
+      plateaued = true;
+      break;
+    }
+    if (Date.now() - lastProgressAt >= BUDGET.progressMs) {
+      lastProgressAt = Date.now();
+      say(
+        describeLaunchProgress({
+          elapsedMs: Date.now() - launchBegan,
+          state: launched,
+          problems: [...problems.entries()],
+          game: lastSmapiLine(),
+        }),
+      );
+    }
     await sleep(1000);
     launched = await page.evaluate(readGameState);
     unreachable = launched.ok === true ? 0 : unreachable + 1;
   }
+  const launchElapsedMs = Date.now() - launchBegan;
+  if (plateaued)
+    say(
+      describeLaunchPlateau({
+        elapsedMs: launchElapsedMs,
+        unchangedForMs,
+        state: launched,
+        game: lastSmapiLine(),
+      }),
+    );
   record("launch", {
     settled: readinessOf(launched) !== "pending",
-    elapsedMs: Date.now() - launchBegan,
+    plateaued,
+    elapsedMs: launchElapsedMs,
+    unchangedForMs,
+    budgetMs: BUDGET.launchMs,
     state: launched,
     preconditions: { controls, guardian },
     problems: [...problems.entries()],
+    gameLog: lastSmapiLine(),
     hostAnswers: await hostAnswers(launch.state?.port),
     pageEvents: pageEvents.slice(-12),
   });
   const launchProblem = problems.get("game/launch") ?? null;
   if (launchProblem !== null) return await refuse(browser, LAUNCH_STEPS.launch, { code: launchProblem.code, cause: launchProblem.cause, guardian });
+
+  /*
+   * ---- 4. the guide's third step. Reached whenever the launch has not already produced an attachment:
+   * a launch that settled without one, and a launch that plateaued without one, are the same state from
+   * here - a Player Host world waiting for the cabin choice - and the step is the same step. ----
+   */
+  let cabin = null;
+  if (launched.ok === true && launched.attachmentStatus !== "attached" && readinessOf(launched) !== "failed") {
+    cabin = await driveCabinHandoff();
+    record("cabin handoff", cabin);
+    if (cabin.state !== undefined) launched = cabin.state;
+    else launched = await page.evaluate(readGameState);
+    if (cabin.outcome === "no_handoff")
+      return await notMeasured(
+        browser,
+        "cabin_handoff_not_offered",
+        `the launch produced ${describeGameState(launched)} and the Game surface drew no cabin handoff section at all, so the guide's third step had no control to press (${JSON.stringify(cabin.handoff)})`,
+      );
+    if (cabin.outcome === "no_control")
+      return await notMeasured(
+        browser,
+        "cabin_handoff_not_offered",
+        `the cabin handoff was drawn with no pressable control in ${String(cabin.elapsedMs)}ms: ${JSON.stringify(cabin.handoff)}`,
+      );
+  }
+
+  /*
+   * The pair the driver calls ready is `running` + `attached`, and the instance word is published by the
+   * coordinator's own projection of its launch state (`host/src/stardew-role-lifecycle-projection.internal.ts:44-45`
+   * -> `host/src/game-browser/game-browser-state-provider.ts:167-172`). An attachment that lands while that
+   * word reads `launching` is therefore a fact about the projection rather than about the launch, and the
+   * rest of the chain - a player line, the companion's reply - can still be measured. It is measured here
+   * and the verdict is still a failure, because a run that reported a pass would be calling a state the
+   * product does not publish "ready".
+   */
+  let instanceWordLagsAttachment = false;
   if (readinessOf(launched) !== "ready") {
     const host = await hostAnswers(launch.state?.port);
     const stateText = launched.ok === true ? describeGameState(launched) : `state_unreadable:${String(launched.status)}`;
-    const observed = `the launch was requested through the product's own control (${JSON.stringify(controls.launch.name)}) and the surface then answered ${stateText}; the Host answers its own port: ${JSON.stringify(host)}; the page's own events: ${JSON.stringify(pageEvents.slice(-4))}`;
+    const cabinText = cabin === null ? "the cabin step was not reached" : `the cabin step read ${JSON.stringify(cabin)}`;
+    const observed = `the launch was requested through the product's own control (${JSON.stringify(controls.launch.name)}) and the surface then answered ${stateText}; ${cabinText}; the Host answers its own port: ${JSON.stringify(host)}; the page's own events: ${JSON.stringify(pageEvents.slice(-4))}`;
     /*
      * Two shapes, and they are not interchangeable. A Host that answered a bounded problem is classified
      * from that problem. A Host that stopped answering at all is the same missing prerequisite reached
      * through the transport when nothing bound can arm - and the Host's own failure when something can.
      */
     const reading = launched.ok === true ? null : classifySilentLaunch({ guardian, detail: observed });
-    facts.detail = reading === null ? `${observed}; the surface never reached instance=running/attachment=attached within ${String(BUDGET.launchMs)}ms` : reading.detail;
+    instanceWordLagsAttachment = launched.ok === true && launched.attachmentStatus === "attached" && launched.instanceStatus !== "running";
+    if (reading === null && !instanceWordLagsAttachment) {
+      facts.detail = `${observed}; the surface never reached instance=running/attachment=attached within ${String(BUDGET.launchMs)}ms`;
+      const cabinProblem = problems.get("game/stardew/cabins") ?? problems.get("game/stardew/cabins/confirm") ?? null;
+      const code =
+        cabin === null
+          ? `game_never_reached_ready:${stateText}`
+          : cabin.outcome === "no_choices"
+            ? `cabin_handoff_no_cabin:${stateText}${cabinProblem === null ? "" : `:${String(cabinProblem.code ?? cabinProblem.status)}`}`
+            : cabin.outcome === "not_admitted"
+              ? `cabin_handoff_not_admitted:${stateText}`
+              : `cabin_handoff_did_not_attach:${stateText}`;
+      say(`FAILED: ${code}`);
+      return await conclude(browser, { verdict: VERDICTS.failed, code, exit: 1 });
+    }
     if (reading !== null) {
+      facts.detail = reading.detail;
       say(`refusal classification: ${JSON.stringify(reading)}`);
       return await conclude(browser, {
         verdict: reading.verdict === VERDICTS.notMeasured ? VERDICTS.notMeasured : VERDICTS.failed,
@@ -600,14 +961,16 @@ async function hostAnswers(port) {
         exit: reading.verdict === VERDICTS.failed ? 1 : 0,
       });
     }
-    const code = `game_never_reached_ready:${stateText}`;
-    say(`FAILED: ${code}`);
-    return await conclude(browser, { verdict: VERDICTS.failed, code, exit: 1 });
+    say(
+      `the attachment landed (${stateText}) while the instance word reads ${String(launched.instanceStatus)}: the launch produced the companion, and the state read has not published running. Measuring the rest of the chain; the verdict stays a failure.`,
+    );
+    facts.detail = `${observed}; the attachment landed and the instance word never left ${String(launched.instanceStatus)}`;
+  } else {
+    say(`the game reached ready: ${describeGameState(launched)} after ${String(Date.now() - launchBegan)}ms`);
   }
-  say(`the game reached ready: ${describeGameState(launched)} after ${String(Date.now() - launchBegan)}ms`);
   await shot(page, "91-game-ready.png");
 
-  // ---- 4. one player line, in the game surface ----
+  // ---- 5. one player line, in the game surface ----
   const turnGate = await canStartTurn(page);
   const transcriptBefore = await page.evaluate(readGameTranscript);
   record("composer", { turnGate, settledBefore: transcriptBefore.settled.length, surfacePresent: transcriptBefore.surfacePresent });
@@ -657,13 +1020,15 @@ async function hostAnswers(port) {
   );
   if (stateAfterReply.instanceStatus !== "running" || stateAfterReply.attachmentStatus !== "attached") {
     const code = `game_never_reached_ready:${describeGameState(stateAfterReply)}`;
-    facts.detail = `the reply settled while the Host reported ${describeGameState(stateAfterReply)}, so it is not a reply from an attached game`;
+    facts.detail = instanceWordLagsAttachment
+      ? `the companion's reply settled while the Host reported ${describeGameState(stateAfterReply)}: the attachment landed, and the instance word the coordinator projects from its launch state (\`stardew-role-lifecycle-projection.internal.ts:44-45\`) never left it, so the game surface cannot say running`
+      : `the reply settled while the Host reported ${describeGameState(stateAfterReply)}, so it is not a reply from an attached game`;
     say(`FAILED: ${code}`);
     return await conclude(browser, { verdict: VERDICTS.failed, code, exit: 1 });
   }
   await observe(page, say, "w", { sinceMs: observationFrom });
 
-  // ---- 5. stop the game this driver asked the product to start ----
+  // ---- 6. stop the game this driver asked the product to start ----
   const stopControl = await page.evaluate(readLifecycleControls);
   record("stop control", stopControl);
   if (stopControl.stop !== null && stopControl.stop.visible === true) {

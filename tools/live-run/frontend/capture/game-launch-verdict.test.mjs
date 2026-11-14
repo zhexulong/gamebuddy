@@ -18,11 +18,14 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import {
+  LAUNCH_PLATEAU_MS,
   LAUNCH_STEPS,
   VERDICTS,
   classifyLaunchRefusal,
   classifySilentLaunch,
   describeGameState,
+  describeLaunchPlateau,
+  describeLaunchProgress,
   guardianCanArm,
   notMeasuredLine,
   readinessOf,
@@ -90,7 +93,10 @@ test("guardianCanArm reads the population and the peer's own armability, not a f
   assert.equal(guardianCanArm(REAL_SUPERVISOR), true);
   assert.equal(guardianCanArm({ endpoints: undefined, onlyRunOwnGatePeer: false }), false);
   // A caller that does not say which peer it bound cannot claim the peer is unable to arm.
-  assert.equal(guardianCanArm({ endpoints: ["GameBuddy.HostGuardian.0123456789abcdef"], onlyRunOwnGatePeer: true }), false);
+  assert.equal(
+    guardianCanArm({ endpoints: ["GameBuddy.HostGuardian.0123456789abcdef"], onlyRunOwnGatePeer: true }),
+    false,
+  );
 });
 
 test("the earlier links of the chain name themselves", () => {
@@ -179,4 +185,39 @@ test("the not-measured line round-trips, and a driver that measured reads as nul
     reason: "guardian_pipe_unreachable",
     detail: "",
   });
+});
+
+test("a launch wait prints the state, the refusals, and the launched game's own last line", () => {
+  const line = describeLaunchProgress({
+    elapsedMs: 45_400,
+    state: { ok: true, instanceStatus: "launching", attachmentStatus: "none" },
+    problems: [["game/launch", { status: 409, code: "game_prerequisites_missing" }]],
+    game: { line: "[06:59:53 TRACE GameBuddy] GameBuddy observed the created Player Host world slot", writtenAtMs: 0 },
+  });
+  assert.match(line, /elapsed=45s/u);
+  assert.match(line, /instance=launching\/attachment=none/u);
+  assert.match(line, /game\/launch=game_prerequisites_missing/u);
+  assert.match(line, /world slot/u);
+  // A route that answered with no bounded code is still named, and an absent log is a fact, not a blank.
+  assert.match(
+    describeLaunchProgress({
+      elapsedMs: 1000,
+      state: { ok: false, status: "unreachable:ECONNREFUSED" },
+      problems: [["game/stardew/cabins", { status: 404 }]],
+      game: null,
+    }),
+    /state_unreadable:unreachable:ECONNREFUSED .*cabins=404 .*no SMAPI log read/u,
+  );
+});
+
+test("a plateau names the unchanged tuple, its age, and the game's last word", () => {
+  const line = describeLaunchPlateau({
+    elapsedMs: 130_000,
+    unchangedForMs: 120_000,
+    state: { ok: true, instanceStatus: "launching", attachmentStatus: "none" },
+    game: { line: "salient event TimeMilestone skipped: bridge session unavailable.", writtenAtMs: 0 },
+  });
+  assert.match(line, /^PLATEAU: instance=launching\/attachment=none unchanged for 120s \(elapsed=130s\)/u);
+  assert.match(line, /bridge session unavailable/u);
+  assert.equal(LAUNCH_PLATEAU_MS >= 60_000, true);
 });

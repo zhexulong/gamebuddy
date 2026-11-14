@@ -198,3 +198,51 @@ export function readinessOf({ instanceStatus, attachmentStatus }) {
 export function describeGameState({ instanceStatus, attachmentStatus }) {
   return `instance=${instanceStatus ?? "unobserved"}/attachment=${attachmentStatus ?? "unobserved"}`;
 }
+
+/**
+ * How long an unchanged launch state is read as "waiting for a step" rather than "still moving".
+ *
+ * Measured 2026-11-15 (`SMAPI-latest.txt`): the launch chain itself - Guardian role, SMAPI, Mod, loaded
+ * world, built cabin - took 9 s from the launch request. After that the state stayed exactly
+ * `instance=launching/attachment=none` for the remaining 4 min 51 s of a 300 s budget because the
+ * product's third step (the cabin handoff, `stardew-production-lifecycle-coordinator.internal.ts:2082-2152`)
+ * had not been sent, and no amount of waiting sends it. So a window that long with nothing moving is
+ * the finding, not a reason to wait longer: the driver reports the plateau and drives the next step.
+ */
+export const LAUNCH_PLATEAU_MS = 120_000;
+
+/** One line of the launch wait: what the state says, what the routes said, and the game's own last word. */
+export function describeLaunchProgress({ elapsedMs, state, problems = [], game = null }) {
+  const refusals = Array.isArray(problems)
+    ? problems.map(([route, problem]) => `${String(route)}=${String(problem?.code ?? problem?.status ?? "unreadable")}`)
+    : [];
+  const seconds = Math.round(Number(elapsedMs) / 1000);
+  return [
+    `launch progress: elapsed=${String(seconds)}s`,
+    state?.ok === true ? describeGameState(state) : `state_unreadable:${String(state?.status)}`,
+    `problems=${refusals.length === 0 ? "none" : refusals.join(",")}`,
+    `game=${describeGameLog(game)}`,
+  ].join(" ");
+}
+
+/**
+ * The plateau sentence: what the state was, how long it stayed that way, and the launched game's own
+ * last line. Repeated every window, because a state that stops moving and one that moves slowly print
+ * different lines and only the timeline separates them.
+ */
+export function describeLaunchPlateau({ elapsedMs, unchangedForMs, state, game = null }) {
+  const unchanged = Math.round(Number(unchangedForMs) / 1000);
+  const elapsed = Math.round(Number(elapsedMs) / 1000);
+  return `PLATEAU: ${describeGameState(state)} unchanged for ${String(unchanged)}s (elapsed=${String(elapsed)}s); the launched game's own last line: ${describeGameLog(game)}`;
+}
+
+/** The launched game's last line as `{ line, writtenAtMs }`, or the fact that there was none to read. */
+function describeGameLog(game) {
+  if (game === null || game === undefined) return "no SMAPI log read";
+  const line = typeof game.line === "string" && game.line.length > 0 ? game.line : "no line";
+  const writtenAt =
+    typeof game.writtenAtMs === "number" && Number.isFinite(game.writtenAtMs)
+      ? new Date(game.writtenAtMs).toISOString()
+      : "with no mtime";
+  return `${JSON.stringify(line)} (SMAPI-latest.txt written ${writtenAt})`;
+}
