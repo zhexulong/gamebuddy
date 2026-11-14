@@ -112,7 +112,7 @@ public sealed class MachineLoadMachineDataSourceShapeTests
             "LoadInputStack = requirement.ConsumedCount",
             "the published stack is the machine's own consumption, not the carried stack");
 
-        string execute = MethodBody(Read(MachineActions), "private LocalExecutionReceipt ExecuteLoadMachineInput(");
+        string execute = MethodBody(Read(MachineActions), "private LocalExecutionReceipt ExecuteMachineLoad(");
         execute.Should().Contain(
             "TryReadMachineLoadRequirement(machine, input, Game1.player, location, out MachineLoadRequirement requirement)",
             "the action must derive the count from the same helper the row used");

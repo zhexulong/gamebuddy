@@ -13,36 +13,25 @@ namespace GameBuddy.Stardew;
 // FarmhandExecutionController game-thread ledger, receipt store, snapshot, and cancel state.
 internal sealed partial class ExecutionManager
 {
-    public LocalExecutionReceipt RequestLocalLoadMachineInput(string requestId, int slot, int targetX, int targetY, string expectedQualifiedItemId, string expectedTargetId, long requestedDeadlineMs)
-    {
-        if (this.AdmitLocalExecution(requestId, requestedDeadlineMs, AdmissionActionabilityProfile.Physical, out string executionId, out long nowMs) is LocalExecutionReceipt admissionRejection)
-            return admissionRejection;
-        if (ResolveLoadInput(slot, expectedQualifiedItemId) is not StardewValley.Object input)
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "machine_load_input_not_in_slot", $"slot={slot};expected={expectedQualifiedItemId}");
-        if (MachineLoadRefusal(targetX, targetY, expectedTargetId, input) is { } machineRefusal)
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, machineRefusal.ReasonCode, machineRefusal.Detail);
-
-        // 5.2: out of the native radius, walk in rather than refuse. The input stack and the
-        // machine are validated above; both are re-checked after the walk inside the closure,
-        // because `location.checkAction` is a real player input path whose outcome depends on
-        // the world at the moment it runs.
-        if (!IsTileWithinChebyshevRadius(Game1.player, targetX, targetY, 1))
-        {
-            return this.TryBeginToolApproach(
-                requestId,
-                executionId,
-                "machine_load",
-                Game1.player.currentLocation,
-                targetX,
-                targetY,
-                expectedTargetId,
-                (arrivalExecutionId, arrivalRequestId) => this.ExecuteLoadMachineInput(arrivalExecutionId, arrivalRequestId, slot, targetX, targetY, expectedQualifiedItemId, expectedTargetId),
-                nowMs,
-                requestedDeadlineMs);
-        }
-
-        return this.ExecuteLoadMachineInput(executionId, requestId, slot, targetX, targetY, expectedQualifiedItemId, expectedTargetId);
-    }
+    public LocalExecutionReceipt RequestLocalLoadMachineInput(string requestId, int slot, int targetX, int targetY, string expectedQualifiedItemId, string expectedTargetId, long requestedDeadlineMs) =>
+        this.RequestLocalTileTarget(
+            "machine_load", requestId, targetX, targetY, expectedTargetId, requestedDeadlineMs,
+            AdmissionActionabilityProfile.Physical,
+            authorize: null,
+            gate: _ =>
+            {
+                // Ask before walking: the input stack and the machine are the gate's business, so a load that could not
+                // land is refused rather than walked to. Both are re-checked after the walk inside the body, because
+                // `location.checkAction` is a real player input path whose outcome depends on the world at the moment it
+                // runs.
+                if (ResolveLoadInput(slot, expectedQualifiedItemId) is not StardewValley.Object input)
+                    return new TileTargetRefusal("machine_load_input_not_in_slot", $"slot={slot};expected={expectedQualifiedItemId}");
+                return MachineLoadRefusal(targetX, targetY, expectedTargetId, input) is { } machineRefusal
+                    ? new TileTargetRefusal(machineRefusal.ReasonCode, machineRefusal.Detail)
+                    : null;
+            },
+            inReach: IsTileWithinNativeReach,
+            execute: (executionId, admittedRequestId) => this.ExecuteMachineLoad(executionId, admittedRequestId, slot, targetX, targetY, expectedQualifiedItemId, expectedTargetId));
 
     /// <summary>What the machine's OWN data declares for one input: how many items it consumes, and the processing
     /// window when the rows state one. Discovery and the load postcondition read this one derivation, so the stack the
@@ -166,7 +155,7 @@ internal sealed partial class ExecutionManager
     /// admission because an approach leg may have taken several ticks. Shared by the in-range path and the
     /// post-approach path.
     /// </summary>
-    private LocalExecutionReceipt ExecuteLoadMachineInput(string executionId, string requestId, int slot, int targetX, int targetY, string expectedQualifiedItemId, string expectedTargetId)
+    private LocalExecutionReceipt ExecuteMachineLoad(string executionId, string requestId, int slot, int targetX, int targetY, string expectedQualifiedItemId, string expectedTargetId)
     {
         if (ResolveLoadInput(slot, expectedQualifiedItemId) is not StardewValley.Object input)
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "machine_load_input_not_in_slot", $"slot={slot};expected={expectedQualifiedItemId}");
@@ -252,32 +241,20 @@ internal sealed partial class ExecutionManager
     /// Collect a ready machine's output, when the native machine time lifecycle has already made it ready. Like loading,
     /// this enters through GameLocation.checkAction; it never clears held output or adds to the inventory itself.
     /// </summary>
-    public LocalExecutionReceipt RequestLocalCollectMachineOutput(string requestId, int targetX, int targetY, string expectedTargetId, long requestedDeadlineMs)
-    {
-        if (this.AdmitLocalExecution(requestId, requestedDeadlineMs, AdmissionActionabilityProfile.Physical, out string executionId, out long nowMs) is LocalExecutionReceipt admissionRejection)
-            return admissionRejection;
-        if (MachineCollectRefusal(targetX, targetY, expectedTargetId) is { } refusal)
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, refusal.ReasonCode, refusal.Detail);
-        // 5.2: out of the native radius, walk in rather than refuse. The ready machine is
-        // validated above; it is re-checked after the walk inside the closure, because a
-        // harvest can be claimed by the world while the actor is still walking.
-        if (!IsTileWithinChebyshevRadius(Game1.player, targetX, targetY, 1))
-        {
-            return this.TryBeginToolApproach(
-                requestId,
-                executionId,
-                "machine_collect_output",
-                Game1.player.currentLocation,
-                targetX,
-                targetY,
-                expectedTargetId,
-                (arrivalExecutionId, arrivalRequestId) => this.ExecuteCollectMachineOutput(arrivalExecutionId, arrivalRequestId, targetX, targetY, expectedTargetId),
-                nowMs,
-                requestedDeadlineMs);
-        }
-
-        return this.ExecuteCollectMachineOutput(executionId, requestId, targetX, targetY, expectedTargetId);
-    }
+    public LocalExecutionReceipt RequestLocalCollectMachineOutput(string requestId, int targetX, int targetY, string expectedTargetId, long requestedDeadlineMs) =>
+        this.RequestLocalTileTarget(
+            "machine_collect_output", requestId, targetX, targetY, expectedTargetId, requestedDeadlineMs,
+            AdmissionActionabilityProfile.Physical,
+            authorize: null,
+            gate: _ =>
+                // The ready machine is the gate's business, so a machine with nothing to give is refused rather than
+                // walked to. It is re-checked after the walk inside the body, because a harvest can be claimed by the
+                // world while the actor is still walking.
+                MachineCollectRefusal(targetX, targetY, expectedTargetId) is { } refusal
+                    ? new TileTargetRefusal(refusal.ReasonCode, refusal.Detail)
+                    : null,
+            inReach: IsTileWithinNativeReach,
+            execute: (executionId, admittedRequestId) => this.ExecuteMachineCollectOutput(executionId, admittedRequestId, targetX, targetY, expectedTargetId));
 
     /// <summary>
     /// Why this machine's output cannot be collected right now, or null when it can. The ready state is the machine's own
@@ -306,7 +283,7 @@ internal sealed partial class ExecutionManager
     /// Executes machine_collect_output against the current world, re-validating the ready machine because an approach leg
     /// may have taken several ticks. Shared by the in-range path and the post-approach path.
     /// </summary>
-    private LocalExecutionReceipt ExecuteCollectMachineOutput(string executionId, string requestId, int targetX, int targetY, string expectedTargetId)
+    private LocalExecutionReceipt ExecuteMachineCollectOutput(string executionId, string requestId, int targetX, int targetY, string expectedTargetId)
     {
         if (MachineCollectRefusal(targetX, targetY, expectedTargetId) is { } refusal)
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, refusal.ReasonCode, refusal.Detail);
@@ -336,47 +313,19 @@ internal sealed partial class ExecutionManager
         who.Items.OfType<StardewValley.Object>().Where(item => string.Equals(item.QualifiedItemId, qualifiedItemId, StringComparison.Ordinal)).Sum(item => item.Stack);
 
     /// <summary>Published read-only machine inspection. It reads only the live machine object and never invokes the interaction menu or mutates machine state.</summary>
-    public LocalExecutionReceipt RequestLocalInspectMachine(string requestId, int targetX, int targetY, string expectedTargetId, long requestedDeadlineMs)
-    {
-        if (this.BeginLocalExecution(requestId, out string executionId, out long nowMs) is LocalExecutionReceipt replay) return replay;
-        // Scope-bound actor proof. Authorization precedes the world/location
-        // readiness checks: a caller that is not the scope-bound actor is refused
-        // for that reason rather than for where it happens to be standing.
-        // Scope-bound actor proof. Authorization precedes the world/location
-        // readiness checks: a caller that is not the scope-bound actor is refused
-        // for that reason rather than for where it happens to be standing.
-        if (!this.TryGetBoundActor(out Farmer? boundActor, out string scopeReason) || boundActor is null)
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, scopeReason, null);
-
-        if (!Context.IsWorldReady || Game1.player is null || Game1.player.currentLocation is null)
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "world_not_ready", null);
-        // Shared mechanical admission (identity → actionability → deadline →
-        // body exclusivity). The single authority names the hold it refuses on;
-        // geometry, target identity and the postcondition stay action-specific.
-        if (this.AdmitExecution(requestId, executionId, requestedDeadlineMs, nowMs, AdmissionActionabilityProfile.General) is { } admissionRefusal)
-            return admissionRefusal;
-        if (!IsMachineTargetInRange(Game1.player, targetX, targetY))
-        {
+    public LocalExecutionReceipt RequestLocalInspectMachine(string requestId, int targetX, int targetY, string expectedTargetId, long requestedDeadlineMs) =>
+        this.RequestLocalTileTarget(
+            "machine_inspect", requestId, targetX, targetY, expectedTargetId, requestedDeadlineMs,
+            AdmissionActionabilityProfile.General,
+            authorize: this.AuthorizeActorOnReadyWorld,
+            gate: null,
             // Out of the native interaction radius: walk in and then inspect, like `harvest_crop` in
-            // `farmhandexecutioncontroller.farmingconstructionactions.cs`. Refusing gave the Agent
-            // `target=x,y` as its only evidence.
-            return this.TryBeginToolApproach(
-                requestId,
-                executionId,
-                "machine_inspect",
-                Game1.player.currentLocation,
-                targetX,
-                targetY,
-                expectedTargetId,
-                (arrivalExecutionId, arrivalRequestId) => this.ExecuteInspectMachine(arrivalExecutionId, arrivalRequestId, targetX, targetY, expectedTargetId, requestedDeadlineMs),
-                nowMs,
-                requestedDeadlineMs);
-        }
+            // `farmhandexecutioncontroller.farmingconstructionactions.cs`. Refusing gave the Agent `target=x,y` as its
+            // only evidence.
+            inReach: IsMachineTargetInRange,
+            execute: (executionId, admittedRequestId) => this.ExecuteMachineInspect(executionId, admittedRequestId, targetX, targetY, expectedTargetId, requestedDeadlineMs));
 
-        return this.ExecuteInspectMachine(executionId, requestId, targetX, targetY, expectedTargetId, requestedDeadlineMs);
-    }
-
-    private LocalExecutionReceipt ExecuteInspectMachine(string executionId, string requestId, int targetX, int targetY, string expectedTargetId, long requestedDeadlineMs)
+    private LocalExecutionReceipt ExecuteMachineInspect(string executionId, string requestId, int targetX, int targetY, string expectedTargetId, long requestedDeadlineMs)
     {
 
         StardewValley.GameLocation location = Game1.player.currentLocation;
