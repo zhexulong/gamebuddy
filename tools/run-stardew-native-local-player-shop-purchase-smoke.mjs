@@ -60,6 +60,18 @@ const TARGET_ITEM_ID = null;
 const QUANTITY = 1;
 
 /**
+ * The sale this case buys, as an index into the shop's advertised stock.
+ *
+ * THE FIFTH, not the first, and that is the point. `ShopMenu` draws four rows at a time and resolves a clicked button
+ * as `forSale[currentItemIndex + k]` (ShopMenu.cs:1096-1102), so a sale at index four is the first one that only exists
+ * once the menu's own pager has moved the cursor - `receiveScrollWheelAction(-1)` (:933-951). Measured 2026-11-13: the
+ * translation without the pager refused every purchase past the fourth with `button=-1`. Buying `stockItemIds[0]` -
+ * what this runner used to do - never pressed that pager, so no live run could tell the paging half from the half that
+ * already worked.
+ */
+export const PAGER_SALE_INDEX = 4;
+
+/**
  * The runner's entry: pick the case this launch armed, run it, and report the whole tally beside its verdict.
  *
  * A case that is not armed is NAMED with the scenario it needs rather than quietly absent, and the run is still
@@ -165,7 +177,11 @@ async function runItemPurchaseCase(client, config, { timeoutMs = 30_000 } = {}) 
         `shop_owner_out_of_reach:${shops.map((s) => `${s.shopId}@${s.ownerTileX},${s.ownerTileY}`).join("/")}`,
       );
 
-    const targetItemId = TARGET_ITEM_ID ?? shop.stockItemIds[0];
+    const targetItemId = TARGET_ITEM_ID ?? shop.stockItemIds?.[PAGER_SALE_INDEX];
+    if (typeof targetItemId !== "string" || targetItemId.length === 0)
+      throw new Error(
+        `shop_pager_sale_not_advertised:stock=${shop.stockItemIds?.length ?? 0};need_at_least=${PAGER_SALE_INDEX + 1}`,
+      );
     const requestId = `native_local_shop_purchase_${Date.now()}`;
     const receipt = await executeFresh(client, {
       requestId,
@@ -235,6 +251,7 @@ async function runItemPurchaseCase(client, config, { timeoutMs = 30_000 } = {}) 
       ownedAfter,
       targetItemId,
       gained: Number.parseInt(evidence.gained ?? "", 10),
+      pager: clickRows(evidence).at(-1) ?? null,
       ownerTile: evidence.owner_tile ?? null,
       menuClosed: evidence.menu_closed === "true",
       shopTargetsBefore: shops.map((s) => s.shopId).join("/"),
@@ -463,6 +480,11 @@ export function assertShopPurchasePostconditions(detail) {
     throw new Error(`shop_goods_not_received:${detail.ownedBefore}->${detail.ownedAfter} for ${detail.purchased}`);
   if (detail.gained !== detail.purchased) throw new Error(`shop_gained_mismatch:${detail.gained}!=${detail.purchased}`);
 
+  // The pager half: the sale this case bought only exists once the menu's own cursor moved, and the receipt states the
+  // row it clicked and the cursor the page started at. A receipt whose sale index is still inside the first page means
+  // this run never exercised the paging the action needs to reach the fifth sale at all.
+  assertPagerSaleWasReached(detail.pager);
+
   // The body must be free afterwards, so the next action can run.
   if (detail.menuClosed !== true) throw new Error("shop_menu_left_open");
   if (!detail.shopId) throw new Error("shop_id_missing");
@@ -471,7 +493,44 @@ export function assertShopPurchasePostconditions(detail) {
   return detail;
 }
 
-/** Only a scenario this runner declares, and only an isolated topology. */
+/**
+ * The clicks a receipt's `clicks=` diagnostic records, as row/cursor pairs.
+ *
+ * The Mod emits ONE field whose entries are separated by `||` and whose parts are separated by `|`
+ * (farmhandexecutioncontroller.shopactions.cs, the `clicks={count}[{...}]` field), so this reads the same text a live run
+ * prints rather than a second, friendlier spelling of it.
+ */
+export function clickRows(evidence) {
+  const raw = evidence?.clicks;
+  if (typeof raw !== "string") return [];
+  const inside = raw.slice(raw.indexOf("[") + 1, raw.lastIndexOf("]"));
+  if (inside.length === 0) return [];
+  return inside.split("||").map((entry) => ({
+    row: Number.parseInt(/row=(-?\d+)/u.exec(entry)?.[1] ?? "", 10),
+    cursor: Number.parseInt(/cursor=(-?\d+)/u.exec(entry)?.[1] ?? "", 10),
+  }));
+}
+
+/**
+ * The purchase reached the sale that only a paged menu can show.
+ *
+ * A sale index is `cursor + row`: the engine resolves a clicked button as `forSale[currentItemIndex + k]`
+ * (ShopMenu.cs:1096-1102), so the same sale has a different row at every scroll position and the ROW alone cannot say
+ * which sale was bought. `cursor > 0` is therefore the direct witness that the pager really moved, and the index it adds
+ * up to is the sale the receipt claims.
+ */
+export function assertPagerSaleWasReached(click) {
+  if (click === null || click === undefined) throw new Error("shop_pager_click_missing");
+  if (!Number.isSafeInteger(click.row) || !Number.isSafeInteger(click.cursor))
+    throw new Error(`shop_pager_click_malformed:row=${click.row};cursor=${click.cursor}`);
+  if (click.cursor <= 0) throw new Error(`shop_pager_not_exercised:row=${click.row};cursor=${click.cursor}`);
+  if (click.cursor + click.row < PAGER_SALE_INDEX)
+    throw new Error(
+      `shop_pager_sale_not_reached:sale=${click.cursor + click.row};row=${click.row};cursor=${click.cursor}`,
+    );
+  return click;
+}
+
 export function validateNativeLocalFixtureConfig(config, expectedScenario = SCENARIO) {
   if (config?.NativeLocalPlayerFixture?.Enable !== true) throw new Error("native_local_fixture_not_enabled");
   if (
