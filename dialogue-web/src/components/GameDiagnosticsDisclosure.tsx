@@ -1,5 +1,4 @@
 import { ChevronRight } from "lucide-react";
-import { useState } from "react";
 import type { GameBrowserStateV1 } from "../composed-reference-game-browser-api";
 import type { Messages } from "../i18n";
 
@@ -21,22 +20,20 @@ import type { Messages } from "../i18n";
  * spellings). When the Host publishes nothing for this profile there is no dump
  * to show, and the panel says that plainly rather than rendering an empty box.
  *
- * The dump is mounted only while the disclosure is open. A collapsed `<details>`
- * that hides its children still keeps them in the document, where the layout walks
- * them and an assistive technology reaches them; the browser's own `toggle` event is
- * what decides, so the element stays the one authority for whether it is open.
+ * The dump is in the document whether the disclosure is open or shut, and no React
+ * state decides that: a closed `<details>` keeps its content in the document and only
+ * takes it out of the box tree, so the browser's own find-in-page reaches this JSON and
+ * reveals it through `beforematch`. Unmounting the dump while closed - the shape this
+ * panel used to have, gated on an `open` flag - deletes the text from the document, and
+ * the player who is trying to find the JSON while reporting a bug gets no hit at all.
+ * The element's own `[open]` is therefore the one authority, and nothing here follows it.
  */
 export function GameDiagnosticsDisclosure({
   game,
   labels,
 }: Readonly<{ game: GameBrowserStateV1 | null; labels: Messages }>) {
-  const [open, setOpen] = useState(false);
   return (
-    <details
-      className="game-diagnostics custom-disclosure"
-      data-testid="game-diagnostics-disclosure"
-      onToggle={(event) => setOpen(event.currentTarget.open)}
-    >
+    <details className="game-diagnostics custom-disclosure" data-testid="game-diagnostics-disclosure">
       <summary className="game-diagnostics-summary">
         <ChevronRight className="game-diagnostics-chevron" size={16} aria-hidden="true" />
         {labels.gameDiagnostics}
@@ -50,17 +47,17 @@ export function GameDiagnosticsDisclosure({
               dump: only the nested game projection crosses, so no credential or
               session secret is renderable here. `tabIndex` because a scrollable
               region that cannot take focus is unreachable for a keyboard-only
-              player (axe: scrollable-region-focusable). */}
-          {open ? (
-            <pre
-              className="game-diagnostics-json"
-              data-testid="game-diagnostics-json"
-              aria-label={labels.gameDiagnosticsJson}
-              tabIndex={0}
-            >
-              <code>{JSON.stringify(game.game, null, 2)}</code>
-            </pre>
-          ) : null}
+              player (axe: scrollable-region-focusable); while the disclosure is
+              shut the browser does not paint or focus it, so it is not a tab stop
+              until the player opens the disclosure. */}
+          <pre
+            className="game-diagnostics-json"
+            data-testid="game-diagnostics-json"
+            aria-label={labels.gameDiagnosticsJson}
+            tabIndex={0}
+          >
+            <code>{JSON.stringify(game.game, null, 2)}</code>
+          </pre>
         </>
       )}
     </details>

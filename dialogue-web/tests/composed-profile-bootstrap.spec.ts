@@ -6,7 +6,7 @@
  * not turn into invented state. The Stardew handoff's two rereads sit here because the
  * handoff itself is a field of that same document.
  */
-import { expect, test } from "./frontend-coverage";
+import { type Page, expect, test } from "./frontend-coverage";
 import {
   token,
   characterHandle,
@@ -19,6 +19,51 @@ import {
   root,
   openGameDrawer,
 } from "./composed-reference-game-fixtures";
+
+/**
+ * Every closed `<details>` in the document, read by the browser: its name, the body it holds
+ * while closed, and the body it holds once opened - then closed again.
+ *
+ * The two readings are the whole check. A disclosure that keeps its content in the document
+ * returns the same body both times; one that mounts the body on `open` returns an empty (or
+ * shorter) body while closed, and that difference is the defect: the text is not in the
+ * document, so the browser's find-in-page cannot reach it. The DOM is the population, so any
+ * disclosure anyone renders joins the check by existing, and the name says which one broke it.
+ */
+async function readClosedDisclosures(
+  page: Page,
+): Promise<{ examined: number; closed: string[]; findings: string[] }> {
+  return page.evaluate(async () => {
+    const settled = (): Promise<void> =>
+      new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+    const disclosures = Array.from(document.querySelectorAll("details"));
+    const closed: string[] = [];
+    const findings: string[] = [];
+    for (const disclosure of disclosures) {
+      if (disclosure.open) continue;
+      const summary = disclosure.querySelector(":scope > summary");
+      const name =
+        disclosure.dataset.testid ||
+        disclosure.getAttribute("class") ||
+        summary?.textContent?.trim() ||
+        "(unidentified disclosure)";
+      closed.push(name);
+      const shut = disclosure.innerHTML;
+      disclosure.open = true;
+      await settled();
+      const open = disclosure.innerHTML;
+      disclosure.open = false;
+      await settled();
+      if (shut === open) continue;
+      findings.push(
+        `${name}: its body is rendered on open rather than revealed - closed it holds ${String(shut.length)} ` +
+          `character(s) of markup, open it holds ${String(open.length)}. Render the body unconditionally so the ` +
+          "browser's find-in-page can reach it while the disclosure is closed",
+      );
+    }
+    return { examined: disclosures.length, closed, findings };
+  });
+}
 
 test("composed profile redeems once, renders nested Chat and redacted Game, then reloads from composed state", async ({ page }) => {
   let bootstrapRequests = 0;
@@ -142,10 +187,11 @@ test("composed profile redeems once, renders nested Chat and redacted Game, then
  * disclosure renders exactly that, collapsed, and nothing else.
  *
  * The failures this catches: a disclosure that starts open (a debug box pushing
- * the panel's own facts down the surface), a body that is placeholder text
- * rather than the Host's own response (the assertions read fixture values this
- * test chose), and a dump that leaks a session secret (the CSRF token never
- * crosses into it).
+ * the panel's own facts down the surface), a closed disclosure whose dump is not in
+ * the document at all (a player cannot find-in-page the JSON they are reporting a
+ * bug about), a body that is placeholder text rather than the Host's own response
+ * (the assertions read fixture values this test chose), and a dump that leaks a
+ * session secret (the CSRF token never crosses into it).
  */
 test("the Game data disclosure is closed by default and reveals the Host's own published projection", async ({ page }) => {
   const published = {
@@ -173,15 +219,60 @@ test("the Game data disclosure is closed by default and reveals the Host's own p
 
   const disclosure = page.getByTestId("game-diagnostics-disclosure");
   await expect(disclosure).toBeVisible();
-  // Closed by default: the dump is not part of the panel's reading order until
-  // the player asks for it.
+  // The summary is the player-facing name of the dump and stays the catalogue's: the
+  // disclosure is the element's own, and nothing about it moved into a rendered body.
+  await expect(disclosure.locator("> summary")).toHaveText("Game data and diagnostics");
+  // Closed by default: the panel's reading order is unchanged until the player asks
+  // for it.
   expect(await disclosure.evaluate((node) => (node as HTMLDetailsElement).open)).toBe(false);
-  // Closed, the dump's own DOM is not mounted at all: a collapsed disclosure that
-  // keeps a few hundred lines of JSON in the document is still a node the layout
-  // walks and an assistive technology can reach.
-  expect(await disclosure.evaluate((node) => node.querySelector("pre") === null)).toBe(true);
+  // Closed is a rendering state, not a removal. A `<details>` takes its content out of
+  // the box tree and leaves it in the document, which is what lets the browser's own
+  // find-in-page reach text inside closed content and reveal it (`beforematch`). Gating
+  // the mount on the open state deletes the text instead, so Ctrl+F cannot find the JSON
+  // a player is looking at while reporting a bug - and that is exactly what this reads.
+  const closedReading = await disclosure.evaluate((node) => {
+    const pre = node.querySelector("pre");
+    return {
+      dumps: node.querySelectorAll("pre").length,
+      text: pre?.textContent ?? "",
+      rendered: pre === null ? null : (pre as HTMLElement).checkVisibility(),
+    };
+  });
+  console.log(
+    `[closed-disclosure] dumps in the document while closed: ${closedReading.dumps}; ` +
+      `player-visible: ${String(closedReading.rendered)}`,
+  );
+  expect(closedReading.dumps, "the closed disclosure keeps its dump in the document").toBe(1);
+  expect(closedReading.text, "the closed dump carries the Host's own values, so find-in-page can reach them").toContain(
+    '"generation": 7',
+  );
+  expect(closedReading.text).toContain('"count": 42');
+  // Present but not painted: the disclosure is still closed as far as the player can see.
+  await expect(page.getByTestId("game-diagnostics-json")).toBeHidden();
+  // ...and not a tab stop either. The browser will not focus content it does not paint, so
+  // the panel's keyboard walk is exactly the one it had while the dump was mounted on
+  // demand - a find-in-page hit is the only thing that reaches the shut dump, and the
+  // summary is still the disclosure's one stop.
+  const keyboard = await disclosure.evaluate((node) => {
+    const summary = node.querySelector(":scope > summary") as HTMLElement | null;
+    const pre = node.querySelector("pre");
+    (pre as HTMLElement | null)?.focus();
+    const dumpTookFocus = document.activeElement === pre;
+    summary?.focus();
+    return {
+      dumpTookFocus,
+      summaryTabIndex: summary?.tabIndex ?? -1,
+      summaryTookFocus: document.activeElement === summary,
+    };
+  });
+  expect(keyboard.dumpTookFocus, "the shut dump is not reachable by Tab").toBe(false);
+  expect(keyboard.summaryTookFocus, "the summary is still the disclosure's one tab stop").toBe(true);
+  expect(keyboard.summaryTabIndex).toBe(0);
 
-  await disclosure.locator("summary").click();
+  // Opened from the keyboard: `<summary>` toggles natively on Enter and Space, and that is
+  // what the element supplies now that no React handler is involved.
+  await disclosure.locator("summary").focus();
+  await page.keyboard.press("Enter");
   const dump = page.getByTestId("game-diagnostics-json");
   await expect(dump).toBeVisible();
   const text = (await dump.textContent()) ?? "";
@@ -196,10 +287,66 @@ test("the Game data disclosure is closed by default and reveals the Host's own p
   // localized player outcomes and never as the Host's raw enum spellings.
   const panelText = await page.getByTestId("game-state-panel").innerText();
   expect(panelText).not.toContain("connected_idle");
-  // Closing it again takes the dump back out of the document, so the mount follows
-  // the open state and is not a one-way flag.
+  // Closing it again hides the dump without unmounting it: whether it is open is the
+  // browser's `[open]`, never the presence of the node.
   await disclosure.locator("summary").click();
-  await expect(page.getByTestId("game-diagnostics-json")).toHaveCount(0);
+  await expect(disclosure).not.toHaveAttribute("open", "");
+  await expect(page.getByTestId("game-diagnostics-json")).toHaveCount(1);
+  await expect(page.getByTestId("game-diagnostics-json")).toBeHidden();
+});
+
+/**
+ * The class the Game data disclosure belongs to: **a closed disclosure hides its
+ * content, it does not delete it.**
+ *
+ * A disclosure whose body is conditionally mounted - `{open ? <pre/> : null}`, the
+ * shape this panel used to have - keeps its content out of the document while it is
+ * closed, and the one reader that depends on the content being there is the one no
+ * test can see directly: the browser's find-in-page, which reaches text in closed
+ * content and opens the disclosure with `beforematch`.
+ *
+ * The population is the document's own `<details>` elements, so any disclosure anyone
+ * renders joins the gate by existing, and the reading names the one that broke the rule
+ * by its `data-testid`, its class or its summary.
+ */
+test("a closed disclosure keeps its content in the document", async ({ page }) => {
+  await page.route("**/api/composed-reference-game/v1/bootstrap", (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(root) }),
+  );
+  await page.route("**/api/composed-reference-game/v1/game/stardew/cabins", (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ apiVersion: 1, choices: [] }) }),
+  );
+  await page.route("**/api/tavern/v1/draft", (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(draft) }),
+  );
+
+  await page.goto(`/#profile=composed-reference-game&boot=${token}`);
+  await openGameDrawer(page);
+
+  const reading = await readClosedDisclosures(page);
+  console.log(
+    `[closed-disclosure-population] ${reading.examined} disclosure(s) examined, ${reading.closed.length} closed ` +
+      `(${reading.closed.join(", ")}), ${reading.findings.length} finding(s)`,
+  );
+  expect(reading.closed.length, "blocked: no closed disclosure is rendered, so this gate holds nothing").toBeGreaterThan(0);
+  expect(reading.findings, reading.findings.join("\n")).toEqual([]);
+
+  // Proved red on a real injected violation: the same reading, over a disclosure that mounts
+  // its body on `open` - the mechanism this gate exists for. A detector that cannot name this
+  // one agrees with itself on the tree above.
+  await page.evaluate(() => {
+    const injected = document.createElement("details");
+    injected.innerHTML = "<summary>a probe that mounts its body on open</summary>";
+    injected.addEventListener("toggle", (event) => {
+      const target = event.currentTarget;
+      if (target instanceof HTMLDetailsElement && target.open && target.children.length === 1) {
+        target.insertAdjacentHTML("beforeend", "<p>the body the probe only renders once it is open</p>");
+      }
+    });
+    document.body.append(injected);
+  });
+  const mutated = await readClosedDisclosures(page);
+  expect(mutated.findings.join("\n")).toContain("a probe that mounts its body on open");
 });
 
 
