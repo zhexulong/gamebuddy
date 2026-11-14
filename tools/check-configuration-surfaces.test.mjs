@@ -91,6 +91,21 @@ test("every operation named somewhere in the web tree passes, and the counts are
   }
 });
 
+test("a contract that declares operations over a web tree this gate read no file of blocks, naming the tree", () => {
+  const root = tree({ ids: ["chat.submit"] });
+  try {
+    const result = run(root);
+    assert.equal(result.status, "blocked");
+    assert.deepEqual(
+      result.violations.map((violation) => violation.code),
+      ["no_web_source_examined"],
+      "zero files read is the scan that broke, not every operation being unreachable",
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("a contract with no operation union blocks rather than passing", () => {
   const root = tree({ ids: [] });
   try {

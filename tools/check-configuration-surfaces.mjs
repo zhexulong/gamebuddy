@@ -26,7 +26,7 @@
  * with `contract_operation_ids_not_found` rather than passing.
  */
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 
 /**
  * Resolved from THIS FILE, not from `process.cwd()`.
@@ -45,7 +45,7 @@ const SPECS = "dialogue-web/tests";
 /** A problem-code table: a module that lists refusal codes and never calls anything. */
 const CODE_TABLE = /chat-model-route\.ts$/u;
 export function contractOperationIds(contractPath = CONTRACT) {
-  const source = readFileSync(join(ROOT, contractPath), "utf8");
+  const source = readFileSync(resolve(ROOT, contractPath), "utf8");
   const union = /const OperationId = Type\.Union\(\[([\s\S]*?)\]\)/u.exec(source);
   if (union === null) return null;
   const ids = [...union[1].matchAll(/Type\.Literal\("([^"]+)"\)/gu)].map((match) => match[1]);
@@ -58,18 +58,23 @@ function walk(directory, out = []) {
   //
   // `directory` stays RELATIVE while the fs calls are rooted: recursing with an absolute path would prefix ROOT twice,
   // which is the same defect one level down (`tools/dialogue-web/...` inside a run started from `tools/`).
-  const rooted = join(ROOT, directory);
+  // `resolve`, not `join`: a caller may hand an absolute tree (the sibling test's fixture), and `join(ROOT, absolute)`
+  // concatenates the two roots into a path that exists nowhere - which is how this gate read zero file for a fixture
+  // that was there. `directory` stays RELATIVE while the fs calls are rooted: recursing with an absolute path would
+  // prefix ROOT twice, which is the same defect one level down (`tools/dialogue-web/...` inside a run started from
+  // `tools/`).
+  const rooted = resolve(ROOT, directory);
   if (!existsSync(rooted)) return out;
   for (const entry of readdirSync(rooted)) {
     const relative = join(directory, entry);
-    if (statSync(join(ROOT, relative)).isDirectory()) walk(relative, out);
+    if (statSync(resolve(ROOT, relative)).isDirectory()) walk(relative, out);
     else if (/\.(ts|tsx)$/u.test(relative)) out.push(relative.replaceAll("\\", "/"));
   }
   return out;
 }
 
 function load(directory) {
-  return walk(directory).map((file) => ({ file, text: readFileSync(join(ROOT, file), "utf8") }));
+  return walk(directory).map((file) => ({ file, text: readFileSync(resolve(ROOT, file), "utf8") }));
 }
 
 function firstMention(sources, needle, { skipCodeTables = false } = {}) {
@@ -107,6 +112,17 @@ export function checkConfigurationSurfaces({ contractPath = CONTRACT, web = WEB,
   );
   const controlSources = webSources.filter((source) => source.file.endsWith(".tsx"));
   const specSources = load(specs);
+  // A web walk that read no file has not shown whether a module names an operation: the same `unreachable:web` over
+  // every id is a scan that broke, reported as a defect. An empty spec walk is a different fact - a tree with no spec
+  // directory is reported as `noSpecNamesTheId` and judged nothing.
+  if (webSources.length === 0) {
+    return {
+      gate: "configuration-surfaces",
+      examined: 0,
+      violations: [{ code: "no_web_source_examined" }],
+      status: "blocked",
+    };
+  }
   const violations = [];
   const rows = [];
   for (const id of ids) {
@@ -166,7 +182,7 @@ const main = () => {
   const result = checkConfigurationSurfaces();
   report(result);
   const failing = process.argv.includes("--fail");
-  if (result.status === "blocked") return 1;
+  if (result.status === "blocked") return 2;
   return failing && result.status === "failed" ? 1 : 0;
 };
 

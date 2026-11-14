@@ -22,6 +22,17 @@ export async function checkHostWindowsTestPreflight({ root = repositoryRoot } = 
     .flat()
     .sort();
   const violations = [];
+  // Zero test files is the root or the filter having moved: the same `passed` verdict this gate prints over every host
+  // test it did read would say nothing had been checked.
+  if (inspectedFiles.length === 0) {
+    return Object.freeze({
+      gate,
+      verdict: "blocked",
+      blocked: [`host_windows_test_preflight_read_nothing: examined 0 test file(s) under ${TEST_ROOTS.join(", ")}`],
+      inspectedFiles: [],
+      violations: [],
+    });
+  }
   for (const relativePath of inspectedFiles) {
     const source = await readFile(path.join(root, relativePath), "utf8");
     violations.push(...inspectPosixFixtureParents(relativePath, source));
@@ -190,5 +201,5 @@ function tokenize(source) {
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const report = await checkHostWindowsTestPreflight();
   process.stdout.write(`${JSON.stringify(report)}\n`);
-  process.exitCode = report.verdict === "passed" ? 0 : 1;
+  process.exitCode = report.blocked?.length > 0 ? 2 : report.verdict === "passed" ? 0 : 1;
 }

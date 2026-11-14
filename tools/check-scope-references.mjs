@@ -106,6 +106,14 @@ async function main() {
   for (const target of options.paths) await collectFiles(path.resolve(REPO_ROOT, target), options.extensions, files);
 
   const ordered = [...files].sort();
+  // A scan that matched no file has not shown anything: `0 findings` over an empty scope is a reading of nothing.
+  if (ordered.length === 0) {
+    process.stderr.write(
+      `scope_reference_gate_blocked:no_file_examined: examined 0 files under ${options.paths.join(", ")}, so no ` +
+        "binding's scope was read\n",
+    );
+    process.exit(2);
+  }
   const typescriptFiles = ordered.filter((file) => [".cts", ".mts", ".ts", ".tsx"].includes(path.extname(file)));
   if (typescriptFiles.length > 0) {
     // The TS grammar has not been classified for type positions, so its findings are

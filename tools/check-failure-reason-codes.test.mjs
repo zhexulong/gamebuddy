@@ -171,6 +171,14 @@ test("the CLI names the file and exits 1, and exits 0 on the same tree once the 
   });
 });
 
+test("a scan over no source file is blocked, never a clean tree", async () => {
+  await withFixtureTree({}, async (root) => {
+    const empty = await runScanner([root]);
+    assert.equal(empty.code, 2, empty.stdout + empty.stderr);
+    assert.match(empty.stderr, /failure_reason_codes_blocked:no_source_file_examined: examined 0 files/u);
+  });
+});
+
 test("the repository's own live-run tree is clean, and the scan actually read its sites", async () => {
   const result = await runScanner(["--json"]);
   assert.equal(result.code, 0, result.stdout);

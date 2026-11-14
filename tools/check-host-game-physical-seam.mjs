@@ -263,6 +263,18 @@ export function checkHostGamePhysicalSeam({ root = repositoryRoot } = {}) {
   // names several of them as producers that must not reach registration core or
   // `containment/runtime/core`. Placement is still checked separately below.
   const productionFiles = allFiles.filter((path) => !isTest(path));
+  // A walk that read no production module has not shown that a seam is clean: `passed` over zero files is the same
+  // verdict this gate would print over nine hundred, and the root or the filter having moved would be invisible.
+  if (productionFiles.length === 0 && integrity.length === 0) {
+    return Object.freeze({
+      verdict: "blocked",
+      blocked: [
+        `host_game_physical_seam_read_nothing: examined 0 production module(s) under ${shown(actualSourceRoot, root)}`,
+      ],
+      inspectedFiles: [],
+      violations: [],
+    });
+  }
   const violations = integrity.map(({ path, detail }) =>
     violation("unsafe_source_path", path, null, null, 0, detail, root),
   );
@@ -505,5 +517,5 @@ if (process.argv[1] && resolve(process.argv[1]) === resolve(fileURLToPath(import
   const report = checkHostGamePhysicalSeam();
   if (report.verdict !== "passed") console.error(JSON.stringify(report, null, 2));
   else console.log(`host game physical seam: passed (${report.inspectedFiles.length} production files)`);
-  process.exitCode = report.verdict === "passed" ? 0 : 1;
+  process.exitCode = report.verdict === "passed" ? 0 : (report.blocked?.length ?? 0) > 0 ? 2 : 1;
 }

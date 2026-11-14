@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// red-proof: inject  disabling the out_of_scope_reference arm in the scope analysis -> `✖ a catch block reading a
+// red-proof: inject  disabling the out_of_scope_reference arm in the scope analysis -> `× a catch block reading a
 //   try-scoped binding is reported` (tools/check-scope-references.test.mjs)
 /**
  * Tests for the scope-reference gate (`check-scope-references.mjs` +
@@ -338,4 +338,15 @@ test("the CLI rejects an unknown extension instead of silently skipping files", 
   const result = await runChecker(["tools/live-run", "--ext", ".coffee"]);
   assert.equal(result.code, 1);
   assert.match(`${result.stdout}${result.stderr}`, /no grammar for extension/u);
+});
+
+test("the CLI refuses a scope holding no file, instead of reporting zero findings", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "scope-refs-empty-"));
+  try {
+    const result = await runChecker([root]);
+    assert.equal(result.code, 2, result.stdout + result.stderr);
+    assert.match(result.stderr, /scope_reference_gate_blocked:no_file_examined: examined 0 files/u);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });

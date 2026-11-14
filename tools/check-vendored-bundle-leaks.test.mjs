@@ -1,9 +1,13 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 import { checkVendoredBundleLeaks, inspectBundleText, isBuildMachinePath } from "./check-vendored-bundle-leaks.mjs";
+
+const GATE = fileURLToPath(new URL("./check-vendored-bundle-leaks.mjs", import.meta.url));
 
 /**
  * The gate is only worth its lines if it finds the real defect and nothing else. Both directions are measured here, because
@@ -107,6 +111,26 @@ test("the gate itself stays quiet on a bundle tree holding no build-machine path
     const result = await checkVendoredBundleLeaks({ roots: [bundleRoot] });
     assert.equal(result.examined, 1, JSON.stringify(result));
     assert.deepEqual(result.blocking, []);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("a vendor tree holding no bundle is a blocked run, not a clean one", () => {
+  const root = mkdtempSync(join(tmpdir(), "gb-vendored-blocked-"));
+  try {
+    assert.throws(
+      () =>
+        execFileSync(process.execPath, [GATE, root], {
+          encoding: "utf8",
+          stdio: "pipe",
+        }),
+      (error) => {
+        assert.equal(error.status, 2, String(error.stdout) + String(error.stderr));
+        assert.match(String(error.stderr), /vendored_bundle_leaks_blocked:no_bundle_file_examined: examined 0 /u);
+        return true;
+      },
+    );
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

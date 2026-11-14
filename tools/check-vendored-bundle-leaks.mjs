@@ -172,7 +172,13 @@ async function main() {
   }
 
   // An empty scan agrees with itself: zero population is a blocked reading, not a pass.
-  if (result.examined === 0) fail("no_bundle_files_examined");
+  if (result.examined === 0) {
+    process.stderr.write(
+      `vendored_bundle_leaks_blocked:no_bundle_file_examined: examined 0 bundle file(s) in ` +
+        `${result.roots.length} dist root(s), so no shipped path was read\n`,
+    );
+    process.exit(2);
+  }
 
   if (result.blocking.length > 0) {
     process.stdout.write(`\n${result.blocking.length} build-machine path(s) in a shipped bundle:\n`);

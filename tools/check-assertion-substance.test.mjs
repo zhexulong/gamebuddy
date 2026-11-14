@@ -1,10 +1,14 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 
 import { auditAssertionSubstance, evaluate, EXISTENCE_MATCHERS } from "./check-assertion-substance.mjs";
+
+const GATE = fileURLToPath(new URL("./check-assertion-substance.mjs", import.meta.url));
 
 // red-proof: inject  a journey added to a synthetic tree whose only assertion is `toBeVisible()` on a
 //            control -> `journey_asserts_only_existence` names it, while the same journey with one
@@ -210,4 +214,22 @@ test("no journey at all is a reading that says so, not a clean run", () => {
   const measured = reading({});
   assert.equal(measured.tests.length, 0);
   assert.match(measured.unassessed[0], /^unassessed: dialogue-web\/tests - no mounted journey found/u);
+});
+
+// The CLI is the layer CI runs, and a tree that yields no test must refuse there: `--update` over it would write an
+// empty baseline over the recorded debt.
+test("the CLI refuses a tree whose journeys yield no test, instead of reporting a clean run", () => {
+  const root = makeTree({});
+  assert.throws(
+    () =>
+      execFileSync(process.execPath, [GATE, "--root", root], {
+        encoding: "utf8",
+        stdio: "pipe",
+      }),
+    (error) => {
+      assert.equal(error.status, 2, String(error.stdout) + String(error.stderr));
+      assert.match(String(error.stderr), /assertion_substance_blocked:no_test_examined: examined 0 test/u);
+      return true;
+    },
+  );
 });

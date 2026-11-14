@@ -107,7 +107,14 @@ async function main() {
   const root = process.argv[2] === undefined ? workflowsRoot : resolve(process.argv[2]);
   const result = await checkWorkflowExpressions({ root });
   process.stdout.write(`examined ${result.examined} workflow file(s)\n`);
-  if (result.examined === 0) fail("no_workflow_files_examined");
+  // An empty scan agrees with itself: zero workflow files is the root or the filter having moved, not a clean tree.
+  if (result.examined === 0) {
+    process.stderr.write(
+      `workflow_expressions_blocked:no_workflow_file_examined: examined 0 workflow file(s) under ${root}, so no ` +
+        "if: condition or env: entry was read\n",
+    );
+    process.exit(2);
+  }
   if (result.blocking.length > 0) {
     process.stdout.write(`\n${result.blocking.length} expression defect(s):\n`);
     for (const finding of result.blocking) process.stdout.write(`  ${describe(finding)}\n`);

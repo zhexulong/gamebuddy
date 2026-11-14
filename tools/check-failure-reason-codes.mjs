@@ -226,6 +226,14 @@ async function main() {
   for (const target of options.paths) await collectFiles(path.resolve(REPOSITORY_ROOT, target), files);
 
   const ordered = [...files].sort();
+  // Zero files is the scan having broken, not a clean tree: `0 findings` over no source says nothing.
+  if (ordered.length === 0) {
+    process.stderr.write(
+      `failure_reason_codes_blocked:no_source_file_examined: examined 0 files under ${options.paths.join(", ")}, ` +
+        "so no reasonCode value was read\n",
+    );
+    process.exit(2);
+  }
   const findings = [];
   let reasonCodeSites = 0;
   const unparsed = [];

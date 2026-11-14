@@ -74,13 +74,6 @@
       "because": "tools/check-action-surface-parity.mjs enumerates a committed source tree it scans and reports the same green over nine hundred members as over none: a filter or a root that moved is indistinguishable from a clean run. The census sees the population and the gate has no zero branch."
     },
     {
-      "gate": "check:assertion-substance",
-      "class": "unguarded-population",
-      "area": "tools",
-      "guard": "must print `examined 0` and exit 2 when its scan finds no file: the population is a committed source tree, so zero means the root or the filter moved",
-      "because": "tools/check-assertion-substance.mjs enumerates a committed source tree it scans and reports the same green over nine hundred members as over none: a filter or a root that moved is indistinguishable from a clean run. The census sees the population and the gate has no zero branch."
-    },
-    {
       "gate": "check:catalog-fact-ownership",
       "class": "reader-blind",
       "blind": "root",
@@ -97,13 +90,6 @@
       "class": "reader-blind",
       "blind": "root",
       "because": "`readdirSync(directory)` in `walk` (tools/check-cognitive-complexity.mjs) reads whatever the caller hands it: the census names the parameter and not one member of the set, so a root that moved reads as a green over nothing."
-    },
-    {
-      "gate": "check:configuration-surfaces",
-      "class": "unguarded-population",
-      "area": "tools",
-      "guard": "must print `examined 0` and exit 2 when its scan finds no file: the population is a committed source tree, so zero means the root or the filter moved",
-      "because": "tools/check-configuration-surfaces.mjs enumerates a committed source tree it scans and reports the same green over nine hundred members as over none: a filter or a root that moved is indistinguishable from a clean run. The census sees the population and the gate has no zero branch."
     },
     {
       "gate": "check:contrast-tokens",
@@ -143,13 +129,6 @@
       "because": "one fixed input (`package.json`), read directly: a missing one fails the read or the pointer rather than printing a green over nothing, so the green-over-zero case cannot be constructed. What would settle it: delete the input and watch the gate refuse."
     },
     {
-      "gate": "check:failure-reason-codes",
-      "class": "unguarded-population",
-      "area": "tools",
-      "guard": "must print `examined 0` and exit 2 when its scan finds no file: the population is a committed source tree, so zero means the root or the filter moved",
-      "because": "tools/check-failure-reason-codes.mjs enumerates a committed source tree it scans and reports the same green over nine hundred members as over none: a filter or a root that moved is indistinguishable from a clean run. The census sees the population and the gate has no zero branch."
-    },
-    {
       "gate": "check:game-historian-rubric",
       "class": "reader-blind",
       "blind": "root",
@@ -163,25 +142,11 @@
       "because": "tools/check-host-diagnostic-output.mjs enumerates a committed source tree it scans and reports the same green over nine hundred members as over none: a filter or a root that moved is indistinguishable from a clean run. The census sees the population and the gate has no zero branch."
     },
     {
-      "gate": "check:host-game-physical-seam",
-      "class": "unguarded-population",
-      "area": "tools",
-      "guard": "must print `examined 0` and exit 2 when its scan finds no file: the population is a committed source tree, so zero means the root or the filter moved",
-      "because": "tools/check-host-game-physical-seam.mjs enumerates a committed source tree it scans and reports the same green over nine hundred members as over none: a filter or a root that moved is indistinguishable from a clean run. The census sees the population and the gate has no zero branch."
-    },
-    {
       "gate": "check:host-production-import-boundary",
       "class": "unguarded-population",
       "area": "tools",
       "guard": "must print `examined 0` and exit 2 when its scan finds no file: the population is a committed source tree, so zero means the root or the filter moved",
       "because": "tools/check-host-production-import-boundary.mjs enumerates a committed source tree it scans and reports the same green over nine hundred members as over none: a filter or a root that moved is indistinguishable from a clean run. The census sees the population and the gate has no zero branch."
-    },
-    {
-      "gate": "check:host-windows-test-preflight",
-      "class": "unguarded-population",
-      "area": "tools",
-      "guard": "must print `examined 0` and exit 2 when its scan finds no file: the population is a committed source tree, so zero means the root or the filter moved",
-      "because": "tools/check-host-windows-test-preflight.mjs enumerates a committed source tree it scans and reports the same green over nine hundred members as over none: a filter or a root that moved is indistinguishable from a clean run. The census sees the population and the gate has no zero branch."
     },
     {
       "gate": "check:live-run-isolation",
@@ -219,13 +184,6 @@
       "gate": "check:sbom",
       "class": "unmeasurable",
       "because": "`loadPolicy(root, policyPath, read = readFile)` reads a descriptor the caller passes. The census cannot settle whether it exists, and this row is the record: the gate's own verdict when the input is absent is the honest one. What would settle it: the artifact the run names."
-    },
-    {
-      "gate": "check:scope-references",
-      "class": "unguarded-population",
-      "area": "tools",
-      "guard": "must print `examined 0` and exit 2 when its scan finds no file: the population is a committed source tree, so zero means the root or the filter moved",
-      "because": "tools/check-scope-references.mjs enumerates a committed source tree it scans and reports the same green over nine hundred members as over none: a filter or a root that moved is indistinguishable from a clean run. The census sees the population and the gate has no zero branch."
     },
     {
       "gate": "check:silent-failure",
@@ -354,37 +312,14 @@
       "because": "tools/check-vendor-build-artifacts.mjs enumerates a committed source tree it scans and reports the same green over nine hundred members as over none: a filter or a root that moved is indistinguishable from a clean run. The census sees the population and the gate has no zero branch."
     },
     {
-      "gate": "check:vendored-bundle-leaks",
-      "class": "unguarded-population",
-      "area": "tools",
-      "guard": "must print `examined 0` and exit 2 when its scan finds no file: the population is a committed source tree, so zero means the root or the filter moved",
-      "because": "tools/check-vendored-bundle-leaks.mjs enumerates a committed source tree it scans and reports the same green over nine hundred members as over none: a filter or a root that moved is indistinguishable from a clean run. The census sees the population and the gate has no zero branch."
-    },
-    {
-      "gate": "check:workflow-expressions",
-      "class": "unguarded-population",
-      "area": "tools",
-      "guard": "must print `examined 0` and exit 2 when its scan finds no file: the population is a committed source tree, so zero means the root or the filter moved",
-      "because": "tools/check-workflow-expressions.mjs enumerates a committed source tree it scans and reports the same green over nine hundred members as over none: a filter or a root that moved is indistinguishable from a clean run. The census sees the population and the gate has no zero branch."
-    },
-    {
       "gate": "dependency-audit",
       "class": "unmeasurable",
       "because": "`loadPolicy(root, policyPath, read = readFile)` reads a descriptor the caller passes. The census cannot settle whether it exists, and this row is the record: the gate's own verdict when the input is absent is the honest one. What would settle it: the artifact the run names."
     },
     {
       "gate": "format:check",
-      "class": "unguarded-population",
-      "area": "tools",
-      "guard": "must print `examined 0` and exit 2 when the index names no file in its scope",
-      "because": "tools/scripts/check-format-ratchet.mjs enumerates a committed source tree it scans and reports the same green over nine hundred members as over none: a filter or a root that moved is indistinguishable from a clean run. The census sees the population and the gate has no zero branch."
-    },
-    {
-      "gate": "lint",
-      "class": "unguarded-population",
-      "area": "tools",
-      "guard": "must print `examined 0` and exit 2 when the index names no file in its scope",
-      "because": "tools/scripts/check-lint-ratchet.mjs enumerates a committed source tree it scans and reports the same green over nine hundred members as over none: a filter or a root that moved is indistinguishable from a clean run. The census sees the population and the gate has no zero branch."
+      "class": "empty-is-correct",
+      "because": "scan() runs \biome format and returns the files it reports; \files in this gate IS the debt, not the population, so zero of them is the healthy reading and \format_ratchet_ok over it is right (measured: checked=1876 on this checkout). The population the ratchet actually judges is checked, which scan throws over when biome reports no count."
     },
     {
       "gate": "report:stardew-remaining-actions",
@@ -397,13 +332,6 @@
       "area": "tools",
       "guard": "must print `examined 0` and exit 2 when the index names no file in its scope",
       "because": "tools/check-action-surface-parity.test.mjs enumerates a committed source tree it scans and reports the same green over nine hundred members as over none: a filter or a root that moved is indistinguishable from a clean run. The census sees the population and the gate has no zero branch."
-    },
-    {
-      "gate": "test:assertion-substance",
-      "class": "unguarded-population",
-      "area": "tools",
-      "guard": "must print `examined 0` and exit 2 when its scan finds no file: the population is a committed source tree, so zero means the root or the filter moved",
-      "because": "tools/check-assertion-substance.test.mjs enumerates a committed source tree it scans and reports the same green over nine hundred members as over none: a filter or a root that moved is indistinguishable from a clean run. The census sees the population and the gate has no zero branch."
     },
     {
       "gate": "test:audit-totality",
@@ -442,13 +370,6 @@
       "because": "one fixed input (`cognitive-complexity-baseline.json`), read directly: a missing one fails the read or the pointer rather than printing a green over nothing, so the green-over-zero case cannot be constructed. What would settle it: delete the input and watch the gate refuse."
     },
     {
-      "gate": "test:configuration-surfaces",
-      "class": "unguarded-population",
-      "area": "tools",
-      "guard": "must print `examined 0` and exit 2 when its scan finds no file: the population is a committed source tree, so zero means the root or the filter moved",
-      "because": "tools/check-configuration-surfaces.test.mjs enumerates a committed source tree it scans and reports the same green over nine hundred members as over none: a filter or a root that moved is indistinguishable from a clean run. The census sees the population and the gate has no zero branch."
-    },
-    {
       "gate": "test:dependency-risk",
       "class": "unguarded-population",
       "area": "tools",
@@ -479,13 +400,6 @@
       "because": "one fixed input (`package.json`), read directly: a missing one fails the read or the pointer rather than printing a green over nothing, so the green-over-zero case cannot be constructed. What would settle it: delete the input and watch the gate refuse."
     },
     {
-      "gate": "test:failure-reason-codes",
-      "class": "unguarded-population",
-      "area": "tools",
-      "guard": "must print `examined 0` and exit 2 when its scan finds no file: the population is a committed source tree, so zero means the root or the filter moved",
-      "because": "tools/check-failure-reason-codes.test.mjs enumerates a committed source tree it scans and reports the same green over nine hundred members as over none: a filter or a root that moved is indistinguishable from a clean run. The census sees the population and the gate has no zero branch."
-    },
-    {
       "gate": "test:format-ratchet",
       "class": "unguarded-population",
       "area": "tools",
@@ -496,20 +410,6 @@
       "gate": "test:frontend-capability",
       "class": "unmeasurable",
       "because": "`worldbookPath` is the capture run's own artifact. The census cannot settle whether it exists, and this row is the record: the gate's own verdict when the input is absent is the honest one. What would settle it: the artifact the run names."
-    },
-    {
-      "gate": "test:host-game-physical-seam",
-      "class": "unguarded-population",
-      "area": "tools",
-      "guard": "must print `examined 0` and exit 2 when its scan finds no file: the population is a committed source tree, so zero means the root or the filter moved",
-      "because": "tools/check-host-game-physical-seam.test.mjs enumerates a committed source tree it scans and reports the same green over nine hundred members as over none: a filter or a root that moved is indistinguishable from a clean run. The census sees the population and the gate has no zero branch."
-    },
-    {
-      "gate": "test:host-windows-test-preflight",
-      "class": "unguarded-population",
-      "area": "tools",
-      "guard": "must print `examined 0` and exit 2 when its scan finds no file: the population is a committed source tree, so zero means the root or the filter moved",
-      "because": "tools/check-host-windows-test-preflight.test.mjs enumerates a committed source tree it scans and reports the same green over nine hundred members as over none: a filter or a root that moved is indistinguishable from a clean run. The census sees the population and the gate has no zero branch."
     },
     {
       "gate": "test:lane-diagnosis",
@@ -984,25 +884,11 @@
       "because": "tools/check-vendor-build-artifacts.test.mjs enumerates `dist/index.d.ts`, `dist/index.js`, `dist/tavern/index.d.ts` and reports the same green over nine hundred members as over none: a filter or a root that moved is indistinguishable from a clean run. The census sees the population and the gate has no zero branch."
     },
     {
-      "gate": "test:vendored-bundle-leaks",
-      "class": "unguarded-population",
-      "area": "tools",
-      "guard": "must print `examined 0` and exit 2 when its scan finds no file: the population is a committed source tree, so zero means the root or the filter moved",
-      "because": "tools/check-vendored-bundle-leaks.test.mjs enumerates a committed source tree it scans and reports the same green over nine hundred members as over none: a filter or a root that moved is indistinguishable from a clean run. The census sees the population and the gate has no zero branch."
-    },
-    {
       "gate": "test:windows-process-tree",
       "class": "unguarded-population",
       "area": "tools",
       "guard": "must refuse when none of the paths it wrote down exists, and name them",
       "because": "tools/lib/windows-process-tree.test.mjs enumerates `secret.txt`, `sentinel.txt` and reports the same green over nine hundred members as over none: a filter or a root that moved is indistinguishable from a clean run. The census sees the population and the gate has no zero branch."
-    },
-    {
-      "gate": "test:workflow-expressions",
-      "class": "unguarded-population",
-      "area": "tools",
-      "guard": "must print `examined 0` and exit 2 when its scan finds no file: the population is a committed source tree, so zero means the root or the filter moved",
-      "because": "tools/check-workflow-expressions.test.mjs enumerates a committed source tree it scans and reports the same green over nine hundred members as over none: a filter or a root that moved is indistinguishable from a clean run. The census sees the population and the gate has no zero branch."
     },
     {
       "gate": "tools/audit-preset-macro-frequency.mjs",

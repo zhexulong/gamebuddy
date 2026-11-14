@@ -1,9 +1,13 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 import { checkWorkflowExpressions, inspectWorkflow } from "./check-workflow-expressions.mjs";
+
+const GATE = fileURLToPath(new URL("./check-workflow-expressions.mjs", import.meta.url));
 
 /**
  * Both cases are real: each shipped in one commit and was caught by nothing until a human read the file. The gate is only worth
@@ -110,6 +114,23 @@ test("the gate itself examines only yaml files and says so when a directory hold
     const result = await checkWorkflowExpressions({ root });
     assert.equal(result.examined, 0, JSON.stringify(result));
     assert.deepEqual(result.blocking, []);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("a workflows directory holding no yaml is a blocked run, not a clean one", () => {
+  const root = mkdtempSync(join(tmpdir(), "gb-workflow-blocked-"));
+  try {
+    writeFileSync(join(root, "notes.txt"), "if: ${{ secrets.X }}\n", "utf8");
+    assert.throws(
+      () => execFileSync(process.execPath, [GATE, root], { encoding: "utf8", stdio: "pipe" }),
+      (error) => {
+        assert.equal(error.status, 2, String(error.stdout) + String(error.stderr));
+        assert.match(String(error.stderr), /workflow_expressions_blocked:no_workflow_file_examined: examined 0 /u);
+        return true;
+      },
+    );
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

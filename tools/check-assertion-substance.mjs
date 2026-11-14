@@ -196,6 +196,15 @@ function main(argv) {
   const root =
     rootIndex >= 0 && typeof argv[rootIndex + 1] === "string" ? resolve(argv[rootIndex + 1]) : REPOSITORY_ROOT;
   const reading = auditAssertionSubstance({ root });
+  // Zero tests is the tree having moved, not every journey asserting well: `--update` over it would also write
+  // an empty baseline and erase the recorded debt.
+  if (reading.tests.length === 0) {
+    process.stderr.write(
+      `assertion_substance_blocked:no_test_examined: examined 0 test(s) over ${reading.journeys} journey file(s) ` +
+        `under ${root}, so no assertion was read\n`,
+    );
+    process.exit(2);
+  }
   if (argv.includes("--update")) {
     const entries = reading.findings
       .map((entry) => ({ file: entry.file, title: entry.title }))

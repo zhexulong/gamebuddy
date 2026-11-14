@@ -1,4 +1,4 @@
-// red-proof: inject  removing containment from the game-free generic layer set -> `✖ reports exact generic-to-game and
+// red-proof: inject  removing containment from the game-free generic layer set -> `× reports exact generic-to-game and
 //   Stardew raw-module violations` (tools/check-host-game-physical-seam.test.mjs)
 import assert from "node:assert/strict";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
@@ -36,6 +36,14 @@ test("passes the relocated production graph and allows the narrow Stardew contai
   const report = checkHostGamePhysicalSeam();
   assert.equal(report.verdict, "passed");
   assert.equal(report.violations.length, 0);
+});
+
+test("a host/src holding no production module is blocked, never passed over zero files", async () => {
+  await withFixture({ "host/src/app.test.ts": "export const value = 1;\n" }, (root) => {
+    const report = checkHostGamePhysicalSeam({ root });
+    assert.equal(report.verdict, "blocked");
+    assert.match(report.blocked[0], /host_game_physical_seam_read_nothing: examined 0 production module/u);
+  });
 });
 
 test("allows the Stardew lifecycle process owner and approved provenance contract", async () => {

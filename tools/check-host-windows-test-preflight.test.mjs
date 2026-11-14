@@ -1,4 +1,4 @@
-// red-proof: inject  making the POSIX-literal reader answer false for every parent -> `✖ detects only direct POSIX
+// red-proof: inject  making the POSIX-literal reader answer false for every parent -> `× detects only direct POSIX
 //   mkdtemp parents` (tools/check-host-windows-test-preflight.test.mjs)
 import assert from "node:assert/strict";
 import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
@@ -66,6 +66,20 @@ test("produces the frozen deterministic report for regular test sources", async 
         { path: "host/src/example.test.ts", line: 1, code: "posix_fixture_parent_on_windows" },
       ],
     });
+  } finally {
+    await (await import("node:fs/promises")).rm(root, { recursive: true, force: true });
+  }
+});
+
+test("a tree whose host test roots hold no test file is blocked, never passed over zero files", async () => {
+  const root = await mkdtemp(join(tmpdir(), "host-windows-preflight-empty-"));
+  try {
+    await mkdir(join(root, "host/scripts"), { recursive: true });
+    await mkdir(join(root, "host/src"), { recursive: true });
+    const report = await checkHostWindowsTestPreflight({ root });
+    assert.equal(report.verdict, "blocked");
+    assert.deepEqual(report.inspectedFiles, []);
+    assert.match(report.blocked[0], /host_windows_test_preflight_read_nothing: examined 0 test file/u);
   } finally {
     await (await import("node:fs/promises")).rm(root, { recursive: true, force: true });
   }
