@@ -19,7 +19,7 @@ function gate(): Readonly<{ wait: Promise<void>; open: () => void }> {
   return { wait, open };
 }
 
-test("a drain slower than the fill still runs every task, in order", async () => {
+void test("a drain slower than the fill still runs every task, in order", async () => {
   const failed: string[] = [];
   const drain = createSerialDrain(() => failed.push("failed"));
   const steps: string[] = [];
@@ -44,7 +44,7 @@ test("a drain slower than the fill still runs every task, in order", async () =>
   assert.deepEqual(failed, []);
 });
 
-test("a rejected task is reported and the drain keeps running", async () => {
+void test("a rejected task is reported and the drain keeps running", async () => {
   const failed: string[] = [];
   const drain = createSerialDrain(() => failed.push("failed"));
   const steps: string[] = [];
@@ -60,7 +60,7 @@ test("a rejected task is reported and the drain keeps running", async () => {
   assert.deepEqual(failed, ["failed"]);
 });
 
-test("a failing handler does not stop the drain either", async () => {
+void test("a failing handler does not stop the drain either", async () => {
   const drain = createSerialDrain(() => {
     throw new Error("the recovery itself threw");
   });
@@ -75,7 +75,7 @@ test("a failing handler does not stop the drain either", async () => {
   assert.deepEqual(steps, ["second"]);
 });
 
-test("a task pushed from inside a task is queued behind the rest", async () => {
+void test("a task pushed from inside a task is queued behind the rest", async () => {
   const drain = createSerialDrain(() => undefined);
   const steps: string[] = [];
   drain.push(async () => {

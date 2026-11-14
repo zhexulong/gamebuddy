@@ -26,25 +26,25 @@ const COMMA = Object.freeze({
 /** A fullwidth colon: a character beside a key that is not a separator. */
 const COLON = String.fromCharCode(0xff1a);
 
-test("every comma shape a player types separates keys", () => {
+void test("every comma shape a player types separates keys", () => {
   assert.deepEqual(parseTriggerWords(`greenhouse${COMMA.ascii}fountain`), ["greenhouse", "fountain"]);
   assert.deepEqual(parseTriggerWords(`greenhouse${COMMA.fullwidth}fountain`), ["greenhouse", "fountain"]);
   assert.deepEqual(parseTriggerWords(`greenhouse${COMMA.ideographic}fountain`), ["greenhouse", "fountain"]);
 });
 
-test("the shapes mix in one field, because a player types what her keyboard offers", () => {
+void test("the shapes mix in one field, because a player types what her keyboard offers", () => {
   assert.deepEqual(
     parseTriggerWords(`greenhouse${COMMA.fullwidth}fountain${COMMA.ideographic}notice board${COMMA.ascii}mail`),
     ["greenhouse", "fountain", "notice board", "mail"],
   );
 });
 
-test("whitespace around a key is trimmed, and whitespace inside it is kept", () => {
+void test("whitespace around a key is trimmed, and whitespace inside it is kept", () => {
   assert.deepEqual(parseTriggerWords(` greenhouse ${COMMA.ascii}\tfountain\n`), ["greenhouse", "fountain"]);
   assert.deepEqual(parseTriggerWords("the town square"), ["the town square"]);
 });
 
-test("an empty segment is dropped rather than kept as an empty key", () => {
+void test("an empty segment is dropped rather than kept as an empty key", () => {
   assert.deepEqual(parseTriggerWords("greenhouse,,fountain"), ["greenhouse", "fountain"]);
   assert.deepEqual(parseTriggerWords("greenhouse, ,fountain"), ["greenhouse", "fountain"]);
   assert.deepEqual(parseTriggerWords(`greenhouse${COMMA.ideographic}`), ["greenhouse"]);
@@ -52,6 +52,6 @@ test("an empty segment is dropped rather than kept as an empty key", () => {
   assert.deepEqual(parseTriggerWords("   "), []);
 });
 
-test("a key keeps every character that is not a separator", () => {
+void test("a key keeps every character that is not a separator", () => {
   assert.deepEqual(parseTriggerWords(`note${COLON}{{user}}`), [`note${COLON}{{user}}`]);
 });

@@ -17,7 +17,7 @@ import { isImeProcessingKey, preventImeFormSubmit } from "./ime-composition";
  * filter, and a guard that refuses ordinary Enters would break sending for everyone else.
  */
 
-test("a key the input method is still composing is never the field's Enter", () => {
+void test("a key the input method is still composing is never the field's Enter", () => {
   assert.equal(isImeProcessingKey({ isComposing: true, keyCode: 229 }), true, "the Chromium ordering");
   assert.equal(isImeProcessingKey({ isComposing: true, keyCode: 13 }), true, "composition, reported key");
   assert.equal(
@@ -27,13 +27,13 @@ test("a key the input method is still composing is never the field's Enter", () 
   );
 });
 
-test("a plain Enter stays a plain Enter", () => {
+void test("a plain Enter stays a plain Enter", () => {
   assert.equal(isImeProcessingKey({ isComposing: false, keyCode: 13 }), false, "a real Enter");
   assert.equal(isImeProcessingKey({ isComposing: false, keyCode: 0 }), false, "an engine that reports no code");
   assert.equal(isImeProcessingKey({}), false, "a key event with neither fact");
 });
 
-test("a form's implicit submission is suppressed only while the input method owns the key", () => {
+void test("a form's implicit submission is suppressed only while the input method owns the key", () => {
   const submitted = (facts: Readonly<{ isComposing?: boolean; keyCode?: number }>): boolean => {
     let prevented = false;
     const event = {

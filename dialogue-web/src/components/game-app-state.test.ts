@@ -78,7 +78,7 @@ const EDGES: readonly (readonly [
   ["stopping", { type: "not_staged" }, null] as const,
 ];
 
-test("the legal edges, and the illegal ones that must not move the state", () => {
+void test("the legal edges, and the illegal ones that must not move the state", () => {
   for (const [phase, event, expected] of EDGES) {
     const state = PHASES[phase];
     const next = reduceGameAttachment(state, event);
@@ -120,7 +120,7 @@ function legacyCells() {
   };
 }
 
-test("before: two presses admit two commands and two spinners; after: the second is refused", () => {
+void test("before: two presses admit two commands and two spinners; after: the second is refused", () => {
   const legacy = legacyCells();
   legacy.press("stop");
   legacy.press("disconnect");
@@ -139,7 +139,7 @@ test("before: two presses admit two commands and two spinners; after: the second
   );
 });
 
-test("before: a refusal outlives its attempt; after: the next attempt supersedes it", () => {
+void test("before: a refusal outlives its attempt; after: the next attempt supersedes it", () => {
   const legacy = legacyCells();
   legacy.press("stop");
   legacy.refuse("stop", REFUSED);
@@ -164,7 +164,7 @@ test("before: a refusal outlives its attempt; after: the next attempt supersedes
   assert.equal(rows.stop.failure, null);
 });
 
-test("before: a late refusal paints a sentence after the attempt ended; after: it is dropped", () => {
+void test("before: a late refusal paints a sentence after the attempt ended; after: it is dropped", () => {
   const legacy = legacyCells();
   legacy.press("disconnect");
   legacy.settle("disconnect");
@@ -180,7 +180,7 @@ test("before: a late refusal paints a sentence after the attempt ended; after: i
   assert.equal(gameAttachmentRows(late).disconnect.failure, null);
 });
 
-test("every phase of the union has a busy answer and a row, so a new phase cannot read as idle", () => {
+void test("every phase of the union has a busy answer and a row, so a new phase cannot read as idle", () => {
   const documented: Record<GameAttachmentState["phase"], GameAttachmentOperation | null> = {
     attached: null,
     connecting: "launch",

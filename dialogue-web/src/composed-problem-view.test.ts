@@ -48,7 +48,7 @@ function gameProblem(code: string, causeCode: string | null = null): ComposedRef
 
 const LOCALES = ["en", "zh-CN"] as const;
 
-test("a code reaches the player only when it is a bounded token", () => {
+void test("a code reaches the player only when it is a bounded token", () => {
   assert.equal(observedProblemCode(tavernProblem("turn_busy")), "turn_busy");
   assert.equal(observedProblemCode(gameProblem("game_unavailable")), "game_unavailable");
   assert.equal(observedProblemCode(new ComposedReferenceGameProtocolError("snapshot_shape")), "snapshot_shape");
@@ -64,7 +64,7 @@ test("a code reaches the player only when it is a bounded token", () => {
   }
 });
 
-test("a coordinator cause is read only from the error that carries one", () => {
+void test("a coordinator cause is read only from the error that carries one", () => {
   assert.equal(
     observedProblemCause(gameProblem("stardew_manifest_handoff_uncertain", "stardew_bridge_timeout")),
     "stardew_bridge_timeout",
@@ -74,7 +74,7 @@ test("a coordinator cause is read only from the error that carries one", () => {
   assert.equal(observedProblemCause(new Error("plain")), null);
 });
 
-test("every declared tavern code earns a sentence that is not itself", () => {
+void test("every declared tavern code earns a sentence that is not itself", () => {
   const labels = messages("en");
   const findings: string[] = [];
   const sentences = new Set<string>();
@@ -92,7 +92,7 @@ test("every declared tavern code earns a sentence that is not itself", () => {
   assert.ok(sentences.size > PROBLEM_CODES.length / 2, `${sentences.size} sentences for ${PROBLEM_CODES.length} codes`);
 });
 
-test("a refusal this build does not know leaves the caller's own sentence in place", () => {
+void test("a refusal this build does not know leaves the caller's own sentence in place", () => {
   const labels = messages("en");
   const unknown = gameProblem("a_code_from_a_future_host");
   assert.equal(declaredProblemSentence(unknown, labels), null);
@@ -111,7 +111,7 @@ test("a refusal this build does not know leaves the caller's own sentence in pla
   );
 });
 
-test("the game's own refusals are read against the game's vocabulary first", () => {
+void test("the game's own refusals are read against the game's vocabulary first", () => {
   const labels = messages("en");
   // `game_unavailable` is templated on the bounded coordinator cause the shell named.
   const withCause = declaredProblemSentence(gameProblem("game_unavailable", "stardew_bridge_timeout"), labels);
@@ -120,7 +120,7 @@ test("the game's own refusals are read against the game's vocabulary first", () 
   assert.equal(declaredProblemSentence(gameProblem("game_unavailable"), labels), labels.gameProblemUnavailableDetail);
 });
 
-test("every named refusal becomes a card with words and a way out", () => {
+void test("every named refusal becomes a card with words and a way out", () => {
   for (const locale of LOCALES) {
     const labels = messages(locale);
     for (const code of PROBLEM_CODES) {
@@ -138,7 +138,7 @@ test("every named refusal becomes a card with words and a way out", () => {
   }
 });
 
-test("the retry-read step is the output's own constant, not a second spelling", () => {
+void test("the retry-read step is the output's own constant, not a second spelling", () => {
   const labels = messages("en");
   assert.deepEqual(composedProblemView(tavernProblem("state_reconciliation_required"), labels).step, {
     kind: "control",
@@ -157,7 +157,7 @@ test("the retry-read step is the output's own constant, not a second spelling", 
  * because nothing ran this file. `problemStepPresentation` returns both facts from one decision and
  * this asserts the pairing on every kind the vocabulary has.
  */
-test("the card's step line and its own control are one decision, never both", () => {
+void test("the card's step line and its own control are one decision, never both", () => {
   const labels = messages("en");
   const ownRead = problemStepPresentation({ kind: "control", id: PROBLEM_RETRY_READ }, labels);
   assert.deepEqual(ownRead, { stepLine: null, drawsOwnRead: true });
@@ -181,7 +181,7 @@ test("the card's step line and its own control are one decision, never both", ()
   }
 });
 
-test("an unnamed failure is a diagnostic, and a retryable one says so", () => {
+void test("an unnamed failure is a diagnostic, and a retryable one says so", () => {
   const labels = messages("en");
   const internal = composedProblemView(gameProblem("a_code_from_a_future_host"), labels);
   assert.equal(internal.title, labels.problemInternalErrorTitle);
@@ -196,7 +196,7 @@ test("an unnamed failure is a diagnostic, and a retryable one says so", () => {
   assert.equal(retryable.detail, labels.problemTemporarilyUnavailableDetail);
 });
 
-test("a game operation's failure line is the refusal's words, or the uncertainty", () => {
+void test("a game operation's failure line is the refusal's words, or the uncertainty", () => {
   const labels = messages("en");
   // The panel's own sentence for an operation whose effect the Host did not state.
   const uncertain = labels.gameActivationFailed;

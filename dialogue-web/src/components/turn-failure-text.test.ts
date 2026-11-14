@@ -28,14 +28,14 @@ const PROVIDER_FAILURES = [
   "endpoint_unreachable",
 ] as const;
 
-test("a failed turn with no code says only that it failed", () => {
+void test("a failed turn with no code says only that it failed", () => {
   for (const locale of LOCALES) {
     const labels = messages(locale);
     assert.equal(turnFailureText(undefined, labels), labels.chatFailed);
   }
 });
 
-test("each problem code reaches the player as its own sentence, never as the code", () => {
+void test("each problem code reaches the player as its own sentence, never as the code", () => {
   for (const locale of LOCALES) {
     const labels = messages(locale);
     const sentences = PROBLEM_CODES.map((code) => {
@@ -51,7 +51,7 @@ test("each problem code reaches the player as its own sentence, never as the cod
   }
 });
 
-test("a classified provider cause words its own sentence, and no cause inherits the paragraph", () => {
+void test("a classified provider cause words its own sentence, and no cause inherits the paragraph", () => {
   for (const locale of LOCALES) {
     const labels = messages(locale);
     const sentences = PROVIDER_FAILURES.map((providerFailure) => {
@@ -75,7 +75,7 @@ test("a classified provider cause words its own sentence, and no cause inherits 
   }
 });
 
-test("a cause never rewrites another code's sentence", () => {
+void test("a cause never rewrites another code's sentence", () => {
   const labels = messages("en");
   for (const code of ["interrupted", "no_visible_presentation", "storage_unavailable"] as const)
     assert.equal(
@@ -88,7 +88,7 @@ test("a cause never rewrites another code's sentence", () => {
   assert.equal(turnFailureText("runtime_unavailable", labels), labels.chatFailedRuntimeUnavailable);
 });
 
-test("a cause this build does not classify falls back to the refusal's own sentence", () => {
+void test("a cause this build does not classify falls back to the refusal's own sentence", () => {
   // The untyped boundary: the value arrives off the wire, and the wire validator refuses
   // an unknown class before it reaches here - so this is a build-time guard, not a path.
   const unclassified = "vendor_specific_refusal" as unknown as NonNullable<BrowserTurnV1["providerFailure"]>;

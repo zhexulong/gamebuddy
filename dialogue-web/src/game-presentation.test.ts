@@ -64,7 +64,7 @@ const INSTALLATION_STATES: readonly InstallationDiscoveryState[] = [
   "error",
 ];
 
-test("an empty scan says a source could not be read when a diagnostic names one", () => {
+void test("an empty scan says a source could not be read when a diagnostic names one", () => {
   // A scan that read everything and found nothing says exactly that.
   assert.equal(installationDiscoveryState(0, []), "no-candidates");
   assert.equal(installationDiscoveryState(0, ["no-candidates"]), "no-candidates");
@@ -75,7 +75,7 @@ test("an empty scan says a source could not be read when a diagnostic names one"
   assert.equal(installationDiscoveryState(0, ["no-candidates", "registry-unavailable"]), "source-unavailable");
 });
 
-test("a copy the player has is named ahead of a channel that failed beside it", () => {
+void test("a copy the player has is named ahead of a channel that failed beside it", () => {
   // The ordinary answer on a Windows machine with no GOG Galaxy: its config file is absent, so the
   // GOG channel reports `gog-metadata-unreadable` (`stardew-game-install/gog-source.ts`) beside
   // whatever the Store channel found. A Game Pass player's copy in the layout without mod support
@@ -98,14 +98,14 @@ test("a copy the player has is named ahead of a channel that failed beside it", 
   );
 });
 
-test("a reply that carries a candidate is a candidate whatever else it reported", () => {
+void test("a reply that carries a candidate is a candidate whatever else it reported", () => {
   for (const candidateCount of [1, 2, 9]) {
     assert.equal(installationDiscoveryState(candidateCount, []), "candidates");
     assert.equal(installationDiscoveryState(candidateCount, ["registry-unavailable", "gog-unavailable"]), "candidates");
   }
 });
 
-test("a rejected read blames the search only for the codes that say the search could not run", () => {
+void test("a rejected read blames the search only for the codes that say the search could not run", () => {
   assert.equal(installationDiscoveryFailureState("game_unavailable"), "source-unavailable");
   assert.equal(installationDiscoveryFailureState("source_unavailable"), "source-unavailable");
   // The Host refused to produce the result: a genuine search failure, not an unreadable one.
@@ -124,7 +124,7 @@ test("a rejected read blames the search only for the codes that say the search c
     assert.equal(installationDiscoveryFailureState(unknownCode), "result-unavailable", String(unknownCode));
 });
 
-test("a candidate's mod-loader state reads as itself, and `null` says nothing at all", () => {
+void test("a candidate's mod-loader state reads as itself, and `null` says nothing at all", () => {
   for (const locale of LOCALES) {
     const labels = messages(locale);
     // A reported state that produced no sentence reads as empty, which is what these assert.
@@ -139,7 +139,7 @@ test("a candidate's mod-loader state reads as itself, and `null` says nothing at
   }
 });
 
-test("ready folders come first, and the Host's order survives inside each group", () => {
+void test("ready folders come first, and the Host's order survives inside each group", () => {
   type Candidate = Readonly<{ candidateId: string; modLoader: "present" | "missing" | null }>;
   const hostOrder: readonly Candidate[] = [
     { candidateId: "missing-1", modLoader: "missing" },
@@ -169,7 +169,7 @@ test("ready folders come first, and the Host's order survives inside each group"
   assert.deepEqual(ids(orderCandidatesByReadiness([{ candidateId: "only", modLoader: null }])), ["only"]);
 });
 
-test("the Host's own note becomes the player's sentence, never the Host's English", () => {
+void test("the Host's own note becomes the player's sentence, never the Host's English", () => {
   const labels = messages("en");
   assert.equal(installationHintLabel(labels, null), null);
   // A note is the fact that the redacted path is not shown; the Host's wording is not republished.
@@ -178,7 +178,7 @@ test("the Host's own note becomes the player's sentence, never the Host's Englis
   assert.equal(installationHintLabel(labels, "another producer sentence"), sentence);
 });
 
-test("the capability board states the published facts, and waits when nothing is published", () => {
+void test("the capability board states the published facts, and waits when nothing is published", () => {
   const labels = messages("en");
   const projection = (available: boolean, count: number, companionName: string | null) => ({
     prerequisites: { status: "met" as const, detectedGame: null, missingItems: [] },
@@ -214,7 +214,7 @@ test("the capability board states the published facts, and waits when nothing is
   assert.notEqual(unpublished.cards[1].detail, published.cards[1].detail);
 });
 
-test("every installation state reaches the player as a sentence, in both catalogues", () => {
+void test("every installation state reaches the player as a sentence, in both catalogues", () => {
   const sentencesPerLocale = new Map<string, string[]>();
   for (const locale of LOCALES) {
     const labels = messages(locale);
@@ -236,7 +236,7 @@ test("every installation state reaches the player as a sentence, in both catalog
   );
 });
 
-test("the states the two mappers can produce all have a player sentence", () => {
+void test("the states the two mappers can produce all have a player sentence", () => {
   // Derived from the mappers rather than listed: a state they can return but the
   // catalogue has no words for would reach the player as its own token.
   const produced = new Set<InstallationDiscoveryState>();
