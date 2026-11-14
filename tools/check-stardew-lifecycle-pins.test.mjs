@@ -6,6 +6,16 @@
  * leaves alone, the declaration it accepts, and the population it refuses to pass over. The one that matters most is
  * `a literal pin of one action's rung is named`: it is the class both Core failures of 2026-11-14 belonged to, and it
  * is red on the shape that shipped twice that day.
+ *
+ * red-proof: inject  a synthetic test pinning `cut_weeds` to `LiveVerified` -> `✖
+ *                    lifecycle_literal_pinned_in_a_test:SyntheticActionTests.cs:cut_weeds:LiveVerified`, and deleting
+ *                    that pin's baseline entry -> `✖ lifecycle_pin_baseline_entry_stale:...`; a synthetic tree of ONE
+ *                    test file with `--tests-root` -> `✖ stardew_lifecycle_pins_no_population:<dir>`, exit 2 (this
+ *                    file, run by `test:stardew-lifecycle-pins`)
+ * red-proof: history  `834cab0e~1` through `--tests-root`/`--definitions` -> 373 test files examined, 54 pins, exit 1,
+ *                    naming `BreakResourceClumpRegistrationTests.cs:break_resource_clump:Experimental` and
+ *                    `OpenGeodeWireContractTests.cs:open_geode:Experimental` - green then, red now that the pin is
+ *                    the only thing asked about
  */
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
