@@ -346,6 +346,16 @@ const MAX_CARRYING_ROWS = 8;
  * `formatHeldSeeds`, which states the count AND the one thing this list cannot - that a measured empty one means she can
  * sow nothing. One count in two sentences would be two readings of one fact, and the seed half has a consumer (the tilled
  * ground waiting for it) this list does not serve.
+ *
+ * THE SLOT AND THE ID ARE THE ADDRESS, AND BOTH ARE PRINTED. `slot` and `expectedQualifiedItemId` are the pair
+ * `open_geode` demands (`host/src/protocol.ts:3748`), `slot` alone is what `deposit_silo_hay` and
+ * `put_item_in_fish_tank` demand - and this line used to drop the slot it was handed, so the number she is asked for was
+ * a number she was never shown. The row's `displayName` is the label and cannot substitute: two stacks of the same item
+ * share a name, and no action accepts a name. Both are the wire's own values, printed unmodified.
+ *
+ * THE CAP NAMES WHERE THE REST IS. A truncated row cannot be addressed from here, so the sentence says which reading
+ * carries the slots this bound dropped (`stardew_observe` publishes the whole family) rather than counting them into a
+ * silence.
  */
 function formatCarrying(world: Snapshot): string {
   const rows = world.inventoryItemFacts;
@@ -354,14 +364,21 @@ function formatCarrying(world: Snapshot): string {
   const named = rows
     .filter((row) => typeof row?.displayName === "string" && row.displayName.trim() !== "")
     .filter((row) => !seeds.has(row.qualifiedItemId))
+    // THE MAPPED ROW KEEPS THE WIRE'S OWN NAMES. An alias (`name: row.displayName`) is how the drop this function is
+    // written against became invisible: a reader of the map saw `name` and `stack` and could not see that the slot had
+    // been left behind. `tools/check-inventory-row-field-rendering.mjs` reads these names against the schema's own.
     .map((row) => ({
-      name: row.displayName.trim(),
+      displayName: row.displayName.trim(),
+      qualifiedItemId: row.qualifiedItemId,
+      slot: row.slot,
       stack: Number.isFinite(row.stack) ? Number(row.stack) : 1,
     }));
   if (named.length === 0) return "身上没有别的东西";
-  const shown = named.slice(0, MAX_CARRYING_ROWS).map((row) => `${String(row.stack)} 份 ${row.name}`);
+  const shown = named
+    .slice(0, MAX_CARRYING_ROWS)
+    .map((row) => `${String(row.stack)} 份 ${row.displayName} ${row.qualifiedItemId} [槽 ${String(row.slot)}]`);
   const rest = named.length - shown.length;
-  return `身上带着 ${shown.join("、")}${rest > 0 ? ` 其余 ${String(rest)} 种未列出` : ""}`;
+  return `身上带着 ${shown.join("、")}${rest > 0 ? ` 其余 ${String(rest)} 种未列出（全都要看用 stardew_observe，那里的每一行都带槽号）` : ""}`;
 }
 
 /**

@@ -23,7 +23,7 @@ import {
 import { buildGameCompanionSystemPrompt } from "./game-surface-prompt-floor.js";
 import { DEFAULT_IDENTITY_PROFILE } from "./identity-profile.js";
 import { createProgramProgressObserver } from "./program-status-wait.js";
-import { SNAPSHOT_KEYS, type Snapshot } from "./protocol.js";
+import { EXECUTION_REQUEST_ARGUMENT_RULES, SNAPSHOT_KEYS, type Snapshot } from "./protocol.js";
 
 /**
  * THE FOUR BLOCKS, AS GATES RATHER THAN AS SHAPES SOMEONE REMEMBERED.
@@ -390,6 +390,73 @@ test("can_water_beside_the_held_tool: the can's own water reaches the prose, and
   assert.equal(/壶里的水/u.test(ambiguous), false, `two unheld cans print no figure: ${ambiguous}`);
 });
 
+test("pack_rows_name_the_slot_and_the_id_an_action_argument_demands", () => {
+  // THE POPULATION IS TWO AUTHORITIES CROSSED, never today's line. The row's fields are the wire document's own
+  // (`$defs.inventoryItemFact.properties`) and the names an action DEMANDS are the Host validator's own
+  // (`EXECUTION_REQUEST_ARGUMENT_RULES`, whose `exactArgs` rows carry `argumentNames` as data). `expected<Field>` counts
+  // as naming `<Field>`, because that is the pair `open_geode` refuses a stale copy of.
+  const demanded = arguedInventoryRowFields();
+  assert.ok(
+    demanded.length > 0,
+    "the schema's row fields and the validator's argument names crossed to nothing, so this test would assert nothing",
+  );
+
+  /** The one sentence of `<world-state>` that answers "what is in my pack". */
+  const packSentence = (snapshot: Snapshot): string =>
+    composeWorldState({ snapshot, revision: 1, ageTurns: 0, ageMs: 0 })
+      .split("\n")
+      .flatMap((line) => line.split("；"))
+      .find((part) => part.includes("身上带着")) ?? "";
+
+  const withSlot = (slot: number): string =>
+    packSentence({
+      ...world,
+      inventoryItemFacts: [{ slot, qualifiedItemId: "(O)378", displayName: "铜矿石", stack: 5 }],
+    } as unknown as Snapshot);
+
+  // THE ROW'S OWN VALUES, one per demanded field, chosen so no one of them contains another: 23 is not inside
+  // `(O)378`, `铜矿石` carries no digit, and the stack is a single digit the slot cannot hide behind.
+  const values: Readonly<Record<string, string>> = Object.freeze({
+    slot: "23",
+    qualifiedItemId: "(O)378",
+    displayName: "铜矿石",
+    stack: "5",
+  });
+  const sentence = withSlot(23);
+  const dropped = demanded.filter((field) => !sentence.includes(values[field] ?? "\u0000"));
+  assert.deepEqual(
+    dropped,
+    [],
+    `these row fields are demanded by an action argument and do not reach the pack line: ${dropped.join(", ")} | ${sentence}`,
+  );
+
+  // A PRINTED CONSTANT IS NOT THE ROW'S SLOT. The same pack at another slot must read differently and must not still
+  // say 23: a renderer that printed the first slot it ever saw, or a `0` default, passes the assertion above and fails
+  // this one.
+  const elsewhere = withSlot(41);
+  assert.notEqual(elsewhere, sentence, `two different slots render the same pack line: ${elsewhere}`);
+  assert.equal(
+    /(?<!\d)23(?!\d)/u.test(elsewhere),
+    false,
+    `the pack line still names the slot it was not given: ${elsewhere}`,
+  );
+  assert.match(elsewhere, /(?<!\d)41(?!\d)/u, `and it names the one it was: ${elsewhere}`);
+
+  // A TRUNCATED LIST STILL SAYS WHERE THE SLOTS ARE. The bound drops rows, and a dropped row cannot be addressed from
+  // this sentence at all, so the sentence has to name the reading that carries the whole family.
+  const crowded = packSentence({
+    ...world,
+    inventoryItemFacts: Array.from({ length: 12 }, (_, index) => ({
+      slot: 30 + index,
+      qualifiedItemId: `(O)${String(400 + index)}`,
+      displayName: `矿石${String(index)}`,
+      stack: 1,
+    })),
+  } as unknown as Snapshot);
+  assert.match(crowded, /其余 4 种未列出/u, `the bound states what it left out: ${crowded}`);
+  assert.match(crowded, /stardew_observe/u, `and names the reading that publishes the slots it dropped: ${crowded}`);
+});
+
 test("a reading that has not changed is one line, not the whole world again", () => {
   const answer = unchangedWorldAnswer(1205);
   assert.equal(answer, "自 revision 1205 以来世界没有变化");
@@ -488,6 +555,33 @@ type WireRecord = Readonly<{ properties?: Readonly<Record<string, unknown>> }>;
  * while it reported green. `x`/`y` is not a spelling, it is the shape this composer prints, and a family added tomorrow is
  * judged by the same property with no edit here.
  */
+/** The `inventoryItemFact` row's field names, from the wire document: what a row the Mod publishes carries. */
+function inventoryRowFields(): readonly string[] {
+  const schema = JSON.parse(readFileSync(WIRE_SCHEMA_PATH, "utf8")) as Readonly<{
+    $defs?: Readonly<Record<string, WireRecord>>;
+  }>;
+  const fields = schema.$defs?.inventoryItemFact?.properties;
+  if (fields === undefined)
+    throw new Error("the wire schema declares no `$defs.inventoryItemFact.properties`: this gate reads it by shape");
+  return Object.keys(fields);
+}
+
+/**
+ * The row fields some action argument DEMANDS: `slot` by its own name, `qualifiedItemId` through
+ * `expectedQualifiedItemId`.
+ */
+function arguedInventoryRowFields(): readonly string[] {
+  const argumentNames = new Set(
+    Object.values(EXECUTION_REQUEST_ARGUMENT_RULES).flatMap((rows) =>
+      rows.flatMap((row) => (row.argumentNames === undefined ? [] : [...row.argumentNames])),
+    ),
+  );
+  return inventoryRowFields().filter(
+    (field) =>
+      argumentNames.has(field) || argumentNames.has(`expected${field.charAt(0).toUpperCase()}${field.slice(1)}`),
+  );
+}
+
 function wireTileFamilies(): readonly string[] {
   const schema = JSON.parse(readFileSync(WIRE_SCHEMA_PATH, "utf8")) as Readonly<{
     $defs?: Readonly<Record<string, WireRecord>>;
