@@ -134,7 +134,6 @@ node tools/live-run/frontend/run.mjs --check --commit HEAD --out D:\gb-modcheck\
 
 Resumable stepwise mode (each phase is separately runnable; capture skips drivers that already wrote
 their per-driver fact file unless `--force`):
-
 ```text
 node tools/live-run/frontend/run.mjs pin   --out D:\gb-modcheck\shots-final14 --commit HEAD
 node tools/live-run/frontend/run.mjs build --out D:\gb-modcheck\shots-final14 --runtime D:\gb-art\diag1\generations\<id>\runtime
@@ -146,6 +145,9 @@ node tools/live-run/frontend/run.mjs report …
 
 `--check` reads only presence facts and prints **present|absent + length only** for the credential —
 the value never enters a command line, a log, or this README.
+
+`--wait-for-cdp=<seconds>` (default `0`) is the only way to wait for a held CDP port instead of being
+refused by name; `GB_SHOTS_CDP_WAIT_MS` is the same budget from the environment.
 
 ## The four worktree prerequisites (each one bit a lane)
 
@@ -187,7 +189,11 @@ commit whose launcher lacks the exports the kit uses), never rewrites it, and
 - runs `launch.measureRunRoots()` (declared AND resolved) and `assertDesktopCompositionRunRoots`
   after launch and after the run;
 - never deletes `%LOCALAPPDATA%\GameBuddy`;
-- **keeps the run root** `<out>.stage\root` until the report is accepted (cleanup never touches it).
+- **keeps the run root** `<out>.stage\root` until the report is accepted (cleanup never touches it);
+- refuses a held CDP port **before** importing the launcher or spawning Edge, naming the holder's pid
+  and run directory; `--wait-for-cdp=<seconds>` is an explicit budget the operator prints, never a
+  default (the default was once an hour of silent waiting, which is how a sibling's orphan burned two
+  whole runs).
 
 ## Capture
 
@@ -213,11 +219,52 @@ facts, `measureRunRoots` both halves, measurements per driver) and `REPORT.txt` 
 surface + width, the resolved-probes section, what is right, and a plain *"I am reporting computed
 facts, not pixels"* statement).
 
-## Cleanup
+## Cleanup, and what a failed phase leaves behind
 
-`cleanup` writes the stop flag, waits for `DONE-LAUNCH`, sweeps guardian orphan processes (the
-`\\?\`-prefixed family), kills only this lane's own processes, verifies the ports are closed,
-verifies the run wrote **no tracked file change** in the main checkout, and reports the KEPT run root.
+A run owns every process it starts, on **both** exits. `run.mjs` opens one owner
+(`lib/run-owner.mjs`) and closes it once, whichever way the process leaves - a phase that failed, a
+full run that finished, or an abnormal exit: the union of the pids the run RECORDED
+(`<stage>/state/run-processes.jsonl`: the launch driver and each capture driver, whose command lines
+name no stage path) and the live processes whose command line names this run's stage root (the
+browser's `--user-data-dir=<stage>/browser-profile`, and anything the driver spawned) is terminated
+by exact PID and its own tree, never by image name. The CDP lock is released when its owner is one
+of the pids just killed - a force-killed process runs no exit hook, so nobody else was going to.
+
+Then it measures what remained, and the reading is written to `<stage>/state/leftovers.json`:
+
+```text
+RUN-CLEANUP(phase_failure) recorded=2 sweep=347 examined killed=2 [32740(launch-driver) 44088(browser)] already-gone=0 could-not-kill=0 cdp-lock=released
+LEFTOVERS: none (examined 347 processes; cdp port 9341 free)
+```
+
+`LEFTOVERS:` has four answers and they are not interchangeable: `none`, `ours_remain` (named by pid -
+this run did not clean up after itself, and the run's exit code says so), `port_held_by_another` (a
+sibling, which the next run refuses by name rather than joins), and `unverifiable` (this machine
+could not be asked what is alive; an unread table is never reported as an empty one).
+
+A **stepwise** run that succeeded is the one exception: a mounted session is the next phase's input,
+so `launch` and `capture` keep it and print `RUN-CLEANUP(phase_complete): stepwise mode leaves this
+run's processes running for the next phase […]`. Only a failed phase, a full run's end, or `cleanup`
+stops anything.
+
+`cleanup` still does its own work: it writes the stop flag, waits for `DONE-LAUNCH`, sweeps guardian
+orphan processes (the `\\?\`-prefixed family), verifies the ports are closed, and verifies the run
+wrote **no tracked file change** in the main checkout.
+
+## The three refusals an operator reads
+
+Each names its cause and its remedy on one line, because the measurement that produced them was five
+runs in one night where three died to the harness and the terminal said only `phase launch failed
+(exit 2)` or `phase pin failed (exit 1)`.
+
+| refusal | means | what to do |
+|---|---|---|
+| `cdp_port_held_by_pid:<pid>:<owning run dir>` | the CDP port is held, by the pid and run directory read from that process's own command line | stop the run at that directory (`taskkill /PID <pid> /T /F` when it is orphaned), then re-run; `--wait-for-cdp=<seconds>` waits for it instead, and prints the budget |
+| `previous_worktree_not_cleared:<path>` | this `--out`'s stage root still holds its previous run's worktree | pass a **fresh** `--out`; pin has no `--reuse`, it always re-creates the worktree |
+| `phase <name> failed (exit <n>) - <code>:<detail>` | the phase named its own refusal in its own log | open that log; the refusal is printed with it |
+
+A failed phase's line is assembled by `lib/phase-failure.mjs` from the phase's own log: the LAST
+refusal it named, never a drive letter and never a sentence.
 
 ## Hard rules the kit enforces
 
