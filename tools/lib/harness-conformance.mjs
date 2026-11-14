@@ -789,12 +789,14 @@ const GATES_WITHOUT_FALSIFIER = Object.freeze([
   {
     gate: "check-action-surface-parity.mjs",
     reason:
-      "static source gate: the catalog crossed with the six surfaces that must carry each action, read from each " +
-      "surface's own declaration - no install, no build, no run. Its default run prints the population line and one " +
-      "line per finding rather than a JSON report, so this suite reads its own falsifier instead: " +
-      "tools/check-action-surface-parity.test.mjs replays two real commits (pre-0d4ce1b2 and pre-8c53105e) out of " +
-      "this repository into a copy under the OS temp directory, and injects a dropped argument, a dropped wire key, a " +
-      "dropped Mod arm, an extra grammar skip, an unenumerable `toArgs` and an empty tree",
+      "static source gate: the catalog crossed with the six argument surfaces that must carry each action, plus the " +
+      "Host's own action tables (adapters, tool names, descriptor-derived, expression-only) crossed with the same " +
+      "catalog - each read from its own declaration, no install, no build, no run. Its default run prints the " +
+      "population line and one line per finding rather than a JSON report, so this suite reads its own falsifier " +
+      "instead: tools/check-action-surface-parity.test.mjs replays two real commits (pre-0d4ce1b2 and pre-8c53105e) " +
+      "out of this repository into a copy under the OS temp directory, and injects a dropped argument, a dropped wire " +
+      "key, a dropped Mod arm, an extra grammar skip, an unenumerable `toArgs`, an empty tree, and a Host-published " +
+      "action id the Mod never declared in each of the three tables that names one",
   },
   {
     gate: "check-live-run-isolation.mjs",

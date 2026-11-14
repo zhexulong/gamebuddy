@@ -533,6 +533,93 @@ test("red proof (inject): an argument deleted from the forwarded table is a find
   assertFinding(report, new RegExp(`^${CODES.refuses}:harvest_bush:expectedTargetId:tool-args:[a-z-]+$`, "u"));
 });
 
+// ---------------------------------------------------------------------------
+// The Host's OWN action tables. Six surfaces were crossed with the catalog and none of them was the one the Host
+// publishes a name FROM: `STARDEW_ACTION_ADAPTERS` and the three tables that project it. A name that only ever existed
+// in one of those was an offer -- the model could be told the action exists -- with nothing in the tree asking whether
+// the Mod had ever declared it.
+// ---------------------------------------------------------------------------
+
+test("every action the Host publishes is one the Mod declares, and the census prints both sides", () => {
+  const report = readActionSurfaceParity();
+  assert.deepEqual(report.blocked, []);
+  assert.deepEqual(report.hostActions.namedNowhere, [], "a Host action name the Mod never declared");
+  // Both sides of the crossing, derived: the Host's tables against the Mod's published surface, whose population this
+  // gate already states as `catalog`. A hand-written pair of counts here would be the disagreement, not the check.
+  assert.equal(report.hostActions.declaredInMod, report.populations.catalog);
+  for (const [surfaceId, named] of Object.entries(report.hostActions.bySurface))
+    assert.ok(named > 0, `${surfaceId} named no action, so its crossing examined nothing`);
+  // The adapter table and the tool-name table are the same action set - `STARDEW_ACTION_TOOL_NAMES` is typed against
+  // `StardewActionId`, which IS the adapter table - and both are the Mod's execution actions, which the wire and the
+  // Mod's own reader already count. Three independent readings of one number.
+  assert.equal(report.hostActions.bySurface["host-adapters"], report.hostActions.bySurface["host-tool-names"]);
+  assert.equal(report.hostActions.bySurface["host-adapters"], report.populations.mod);
+  assert.equal(report.hostActions.named, report.populations.mod);
+});
+
+test("red proof (inject): the phantom the brief names is caught in the adapter table, with its surface", () => {
+  const read = sources();
+  read.argumentDeclarations = read.argumentDeclarations.replace(
+    "export const STARDEW_ACTION_ADAPTERS = Object.freeze([",
+    'export const STARDEW_ACTION_ADAPTERS = Object.freeze([\n  actionAdapter(\n    "place_decor_or_furniture",\n' +
+      '    "Place decor",\n    "Place one piece of furniture.",\n    ["world_object"],\n  ),',
+  );
+  const report = checkActionSurfaceParity(read);
+  assert.equal(report.status, "blocked");
+  assert.ok(
+    report.blocked.includes("action_not_in_catalog:place_decor_or_furniture:host-adapters"),
+    report.blocked.join("\n"),
+  );
+  assert.deepEqual(report.hostActions.namedNowhere, ["place_decor_or_furniture"]);
+});
+
+test("red proof (inject): a descriptor-derived id the Mod never declared is named by ITS table", () => {
+  const read = sources();
+  read.argumentDeclarations = read.argumentDeclarations.replace(
+    '  "place_owned_object",\n  "remove_placed_item",',
+    '  "place_owned_object",\n  "tool_transform_object",\n  "remove_placed_item",',
+  );
+  const report = checkActionSurfaceParity(read);
+  assert.equal(report.status, "blocked");
+  assert.ok(
+    report.blocked.includes("action_not_in_catalog:tool_transform_object:host-descriptor-derived"),
+    report.blocked.join("\n"),
+  );
+});
+
+test("red proof (inject): a tool-name table that publishes a name for nothing is caught", () => {
+  const read = sources();
+  read.argumentDeclarations = read.argumentDeclarations.replace(
+    "export const STARDEW_ACTION_TOOL_NAMES = {",
+    'export const STARDEW_ACTION_TOOL_NAMES = {\n  place_tapper: "stardew_place_tapper",',
+  );
+  const report = checkActionSurfaceParity(read);
+  assert.equal(report.status, "blocked");
+  assert.ok(report.blocked.includes("action_not_in_catalog:place_tapper:host-tool-names"), report.blocked.join("\n"));
+});
+
+test("red proof (inject): a Host action table this reader cannot find BLOCKS, never reads as `no names`", () => {
+  const read = sources();
+  read.argumentDeclarations = read.argumentDeclarations.replace(
+    "export const STARDEW_ACTION_ADAPTERS",
+    "export const STARDEW_ACTION_ADAPTERS_RENAMED",
+  );
+  const report = checkActionSurfaceParity(read);
+  assert.equal(report.status, "blocked");
+  assert.ok(report.blocked.includes("host_action_table_unreadable:host-adapters"), report.blocked.join("\n"));
+});
+
+test("red proof (inject): a Host action table that names nothing is BLOCKED, not a clean crossing", () => {
+  const read = sources();
+  const start = read.argumentDeclarations.indexOf("export const STARDEW_ACTION_ADAPTERS");
+  const end = read.argumentDeclarations.indexOf("satisfies readonly StardewActionAdapter[]");
+  assert.ok(start > 0 && end > start);
+  read.argumentDeclarations = `${read.argumentDeclarations.slice(0, start)}export const STARDEW_ACTION_ADAPTERS = Object.freeze([\n${read.argumentDeclarations.slice(end)}`;
+  const report = checkActionSurfaceParity(read);
+  assert.equal(report.status, "blocked");
+  assert.ok(report.blocked.includes("host_action_table_empty:host-adapters"), report.blocked.join("\n"));
+});
+
 test("red proof (inject): a forwarded table the declarations do not carry is BLOCKED by name", () => {
   const read = sources();
   read.toolSchema = read.toolSchema.replace(

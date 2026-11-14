@@ -162,9 +162,10 @@ export const PATHS = Object.freeze({
   planGrammar: "host/src/body-program-script.ts",
   toolSchema: "host/src/game-tools.ts",
   mod: "integrations/stardew/src/Core/Protocol/BridgeProtocol.cs",
-  // Not surfaces: the declarations a mounted tool FORWARDS by name, and the two files that decide which of the built
-  // tools the live Game surface really DELIVERS. Read because `tool-args` must follow the declaration a mount names, and
-  // because a tool that is built and never mounted is not a face the model can be handed.
+  // Not an ARGUMENT surface: the declarations a mounted tool FORWARDS by name, the two files that decide which of the
+  // built tools the live Game surface really DELIVERS, and the Host's own action tables. Read because `tool-args` must
+  // follow the declaration a mount names, because a tool that is built and never mounted is not a face the model can be
+  // handed, and because the ids the Host PUBLISHES are compared with the catalog below rather than trusted.
   actionRegistry: "host/src/action-registry.ts",
   planSurfaceComposition:
     "host/src/continuity-semantic-game-runtime-materializer/continuity-semantic-game-runtime-materializer.ts",
@@ -182,6 +183,7 @@ export const CODES = Object.freeze({
   disagrees: "tool_args_disagrees_with_declaration",
   noRoute: "action_has_no_route",
   notMeasured: "plan_surface_delivery_not_measured",
+  notDeclared: "action_not_in_catalog",
 });
 
 // ---------------------------------------------------------------------------
@@ -505,6 +507,76 @@ export function readPlanGrammarSurface(source, catalog, expressionOnly) {
 export function readExpressionOnlyIds(source) {
   const names = frozenStringArray(stripComments(source ?? ""), "EXPRESSION_ONLY_ACTION_IDS");
   return names === null || names.length === 0 ? null : names;
+}
+
+/**
+ * The Host's OWN action tables: the names this build publishes, and the one crossing nothing made.
+ *
+ * WHY. Six surfaces were crossed with the catalog and every one of them was a surface that CARRIES an action some other
+ * declaration already named - the wire, the plan grammar, the tool schema, the projector, the Mod's reader. The tables
+ * the Host publishes a name FROM were not among them: `STARDEW_ACTION_ADAPTERS` states which Mod action this build has a
+ * concrete adapter for, `STARDEW_ACTION_TOOL_NAMES` is typed against it, `STARDEW_DESCRIPTOR_DERIVED_ACTION_IDS` decides
+ * which actions take their schema from the Mod's descriptor, and `EXPRESSION_ONLY_ACTION_IDS` decides which ones keep
+ * their own tool. A name in any of them is an offer - the model can be told the action exists - and the tree never asked
+ * whether the Mod declared it. This gate's own header said why not: the registry "carries no actions of its own, so it
+ * adds no population", which was the premise that made the crossing look complete.
+ *
+ * THE PROPERTY, per (table, id): every id a Host action table publishes is one the Mod declares -
+ * `action_not_in_catalog:<id>:<table>` - read from each table's own declaration and compared with the same catalog the
+ * other six surfaces are crossed with. A table this reader cannot find, and a table that names nothing, are BLOCKED: the
+ * first would otherwise read as "no names", and the second agrees with itself.
+ */
+const declarationBlock = (source, startMarker, endMarker) => {
+  const start = new RegExp(`${startMarker}\\b`, "u").exec(source);
+  if (start === null) return null;
+  const end = source.indexOf(endMarker, start.index + start[0].length);
+  return end < 0 ? null : source.slice(start.index, end);
+};
+
+/** One reader per table, each from that table's own syntax; null when the table is not where it belongs. */
+const HOST_ACTION_TABLES = Object.freeze([
+  [
+    "host-adapters",
+    (text) => {
+      const block = declarationBlock(
+        text,
+        "export const STARDEW_ACTION_ADAPTERS",
+        "satisfies readonly StardewActionAdapter[]",
+      );
+      return block === null ? null : [...block.matchAll(/actionAdapter\(\s*"([a-z0-9_]+)"/gu)].map((match) => match[1]);
+    },
+  ],
+  [
+    "host-tool-names",
+    (text) => {
+      const block = declarationBlock(
+        text,
+        "export const STARDEW_ACTION_TOOL_NAMES",
+        "} as const satisfies Record<StardewActionId",
+      );
+      return block === null ? null : [...block.matchAll(/^ {2}([a-z0-9_]+):\s*"stardew_/gmu)].map((match) => match[1]);
+    },
+  ],
+  ["host-descriptor-derived", (text) => frozenStringArray(text, "STARDEW_DESCRIPTOR_DERIVED_ACTION_IDS")],
+  ["host-expression-only", (text) => readExpressionOnlyIds(text)],
+]);
+
+/** Every Host action table, its ids, and the tables this reader could not read or found empty. */
+export function readHostActionSurfaces(source) {
+  const text = stripComments(source ?? "");
+  const tables = new Map();
+  const problems = [];
+  for (const [surfaceId, readTable] of HOST_ACTION_TABLES) {
+    const ids = readTable(text);
+    if (ids === null) {
+      problems.push(`host_action_table_unreadable:${surfaceId}`);
+      continue;
+    }
+    const named = new Set(ids);
+    if (named.size === 0) problems.push(`host_action_table_empty:${surfaceId}`);
+    tables.set(surfaceId, named);
+  }
+  return { tables, problems };
 }
 
 /**
@@ -937,8 +1009,10 @@ function verdictOf({ findings, problems, blocks }) {
  *
  * `sources` is the files' text plus the parsed catalog, so the falsifier injects a violation into a real declaration
  * instead of rewriting the reader. `argumentDeclarations` is `host/src/action-registry.ts`, read for the frozen argument
- * tables a mount forwards by name and for the expression declaration the plan vocabulary excludes; it carries no actions
- * of its own, so it adds no population. `planSurfaceComposition` and `planSurfaceFilter` are the two files that decide
+ * tables a mount forwards by name, for the expression declaration the plan vocabulary excludes, AND for the Host's own
+ * action tables - the last of which DOES add a population: those ids were once believed to carry no actions of their own
+ * (see `readHostActionSurfaces`), which is the premise that let a name nothing declares sit in the adapter table.
+ * `planSurfaceComposition` and `planSurfaceFilter` are the two files that decide
  * which of the BUILT tools the live Game surface really mounts. `examined` is the number of actions any surface names,
  * `pairs` is the number of (action, argument) cells those actions contribute - the two numbers a zero can hide behind.
  */
@@ -956,6 +1030,15 @@ export function checkActionSurfaceParity(sources) {
   });
   const reading = deliveredReading(delivery, toolSurface, grammarSurface, actionIds);
   const findings = projectionDisagreements(toolSurface.forwarded, catalogSurface.actions);
+  const hostActions = readHostActionSurfaces(sources.argumentDeclarations ?? "");
+  problems.push(...hostActions.problems);
+  const namedNowhere = [];
+  for (const [surfaceId, named] of hostActions.tables)
+    for (const actionId of named)
+      if (!catalogSurface.actions.has(actionId)) {
+        namedNowhere.push(actionId);
+        blocks.push(`${CODES.notDeclared}:${actionId}:${surfaceId}`);
+      }
   // A composition that declares the plan surface and a filter this reader cannot classify is not a passing reading: the
   // gate cannot say what the model is handed, so it names the reason instead of vouching for the built set.
   for (const problem of delivery.problems) findings.push(`${CODES.notMeasured}:${problem}`);
@@ -988,6 +1071,14 @@ export function checkActionSurfaceParity(sources) {
     surfaces: SURFACE_IDS.length,
     pairs,
     populations,
+    hostActions: Object.freeze({
+      named: new Set([...hostActions.tables.values()].flatMap((named) => [...named])).size,
+      declaredInMod: catalogSurface.actions.size,
+      namedNowhere: Object.freeze([...new Set(namedNowhere)].sort()),
+      bySurface: Object.freeze(
+        Object.fromEntries([...hostActions.tables].map(([surfaceId, named]) => [surfaceId, named.size])),
+      ),
+    }),
     routes: { reachable: actionIds.length - reading.unrouted.length, unreachable: reading.unrouted },
     delivery: {
       declared: delivery.declared,
@@ -1052,7 +1143,7 @@ function readSurfaces({ catalog, wire, planGrammar, toolSchema, mod, argumentDec
   if (actionIds.length === 0) blocks.push("action_surface_population_empty");
   for (const [surfaceId, actions] of carried)
     for (const actionId of actions.keys())
-      if (!catalogSurface.actions.has(actionId)) blocks.push(`action_not_in_catalog:${actionId}:${surfaceId}`);
+      if (!catalogSurface.actions.has(actionId)) blocks.push(`${CODES.notDeclared}:${actionId}:${surfaceId}`);
   return { catalogSurface, toolSurface, grammarSurface, carried, populations, actionIds, problems, blocks };
 }
 
@@ -1147,6 +1238,12 @@ export function describeReport(report) {
   const lines = [
     `actions examined ${report.examined} · surfaces ${report.surfaces} · pairs checked ${report.pairs}`,
     `population per authority: ${SURFACE_IDS.map((id) => `${id} ${report.populations[id]}`).join(" · ")}`,
+    // Both sides of the crossing this gate did not make until now: the names the Host PUBLISHES, against the surface
+    // the Mod declares. A non-zero third number is the finding; a zero population is a blocked reading above.
+    `host action ids ${report.hostActions.named} (${Object.entries(report.hostActions.bySurface)
+      .map(([surfaceId, named]) => `${surfaceId.replace(/^host-/u, "")} ${named}`)
+      .join(" · ")}) · declared in the Mod ${report.hostActions.declaredInMod} · named nowhere ` +
+      `${report.hostActions.namedNowhere.length}`,
     `actions with a route ${report.routes.reachable} · with no route ${report.routes.unreachable.length}`,
     `omission declarations: ${
       Object.keys(report.declarations).length === 0
