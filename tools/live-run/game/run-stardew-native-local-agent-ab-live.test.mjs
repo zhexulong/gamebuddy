@@ -4028,6 +4028,10 @@ const instrumentGlobals = Object.freeze({
   }),
   summarizeHostMemory,
   RESULT_FILE: "/tmp/gb-runner-result.json",
+  // The input manifest. Its own suite drives the real builder against a real session record; here the call is recorded,
+  // because a test that assembles a result does not own the directory the manifest would be written to.
+  writeInputManifest: (call) =>
+    Object.freeze({ state: "written", reasonCode: null, path: call.resultPath, sections: 1, bytes: 1 }),
   // The world's own clock, as the run sampled it, and the facts it recorded over that span. Both are read by
   // `buildRunResult` on every path, so a test that assembles a result has to supply them: the sampler here is MEASURED
   // (two readings, the clock between them), so a fixture that does not care about the clock is not blocked by it.

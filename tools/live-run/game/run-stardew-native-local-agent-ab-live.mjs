@@ -146,6 +146,7 @@ import { seedMemoriesViaManagementSurface } from "../memory/run-memory-live-loop
 import { assessIdentityProfile } from "../core/content-gate.mjs";
 import { explainAuthorityIdentityMismatch } from "../core/authority-identity.mjs";
 import { openLiveRunCapture, resolveLiveRunRoot } from "../core/capture.mjs";
+import { writeInputManifest } from "../core/input-manifest.mjs";
 import { buildFailureSnapshot, buildReproPlan, classifyFailure } from "../../lib/failure-dump.mjs";
 import {
   actionBreadthClause,
@@ -6903,6 +6904,14 @@ async function buildRunResult({
   // Close the capture: keep the runtime root's evidence, record the result JSON itself, and surface any capture
   // failure on the result.
   result.capture = await closeCapture(capture, runtimeRoot, result);
+  // THE INPUT THIS RUN HANDED THE MODEL, written beside the result. A behavioural difference between two runs is
+  // attributable to an input difference only when the input is on disk and diffable (`tools/compare-run-inputs.mjs`),
+  // and until this existed the input was reconstructible only by hand from the session record - which produced three
+  // wrong causes in one day (measured 2026-11-14). Read from THIS run's own session record, the runtime's account of
+  // what it delivered, and written on EVERY path through here: a blocked run was handed its input just the same. A
+  // record that cannot be bound is answered by name (`session_record_not_bound`), never as an empty manifest.
+  result.inputManifest = writeInputManifest({ sessionPath: runSessionRecord.path ?? null, resultPath: RESULT_FILE });
+  console.error("INPUT_MANIFEST", JSON.stringify(result.inputManifest));
   // Write the machine-readable result to a dedicated file so stdout logs (e.g. native chat ingress traces) can never
   // corrupt JSON parsing of the result. The path is module scope because the TEARDOWN account is stamped into this same
   // file after the unwind, and a second derivation of the name is how the two writers would come to disagree.
