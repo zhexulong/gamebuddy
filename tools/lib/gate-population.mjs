@@ -16,17 +16,22 @@
  *   A. every `package.json` script in the gate namespace (`audit:` / `check:` / `test:`), with the files its command
  *      runs as that gate's entry points. This is the population CI actually runs: `tools/check-ci-coverage.mjs`
  *      derives the `gates` job from the same namespace, so a script is a gate by being named like one.
- *   B. every `tools/check-*.mjs` file no script names - a gate that exists on disk and that nobody types. This is the
- *      half a script list cannot see, and it is mandatory: a gate nothing runs is the one that stops working without
- *      a symptom.
+ *   B. every gate FILE no script names - a gate that exists on disk and that nobody types. This is the half a script
+ *      list cannot see, and it is mandatory: a gate nothing runs is the one that stops working without a symptom.
+ *
+ * Half B is not derived here. `tools/gates/registry.mjs` owns the gate-file population - which directories a gate may
+ * live in and which names make one - because a file-name rule restated beside the file it reads stops matching the day
+ * the directory moves. Measured 2026-11-14: `tools/lib/gate-population.mjs` and `tools/check-prelive-gate-registry.mjs`
+ * each spelled `^(?:check|audit)-.*\.mjs$`, so `tools/` could not be reorganised without one of them silently narrowing.
  *
  * The halves are merged on the entry file, so a gate both a script and a file name is ONE record, whose id is the
  * script - what an operator types and what CI's derived job step names.
  */
-import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { GATE_NAME as CI_COVERAGE_NAMESPACE } from "../check-ci-coverage.mjs";
+import { gateFiles, isGateFile } from "../gates/registry.mjs";
 
 /**
  * A `package.json` script named like a gate: the union of the two namespaces that name gates.
@@ -44,10 +49,6 @@ const GATE_SCRIPT = CI_COVERAGE_NAMESPACE;
  * beside the two: only `test:` carries the meta-gate's obligation to state a falsifier.
  */
 const TEST_SCRIPT = /^test:/u;
-/** A gate file: `tools/check-*.mjs` or `tools/audit-*.mjs`, minus its own falsifiers, which are not gates. */
-const GATE_FILE = /^(?:check|audit)-.*\.mjs$/u;
-/** A falsifier that lives beside its gate: the project rule is "the falsifier is part of the gate's own test". */
-const SIBLING_FALSIFIER = /\.(?:test\.mjs|test\.ts|mutation\.mjs)$/u;
 /** A path a command runs: that gate's entry points. Longest extension first, or `main.tsx` resolves to `main.ts`. */
 const COMMAND_PATH = /[\w.-]+(?:\/[\w.-]+)+\.(?:mjs|tsx|ts|cjs|js|ps1|py)/gu;
 /** A command may change directory first; its paths then resolve from there, not from the repository root. */
@@ -81,31 +82,23 @@ function declaredGateScripts(root) {
     });
 }
 
-/** Half B: every `tools/check-*.mjs` gate file, minus its own falsifiers, which are not gates. */
+/** Half B: every gate FILE the registry finds, minus its own falsifiers, which the registry's rule already excludes. */
 function unwiredGateFiles(root) {
-  const toolsDir = join(root, "tools");
-  if (!existsSync(toolsDir)) return [];
-  return readdirSync(toolsDir)
-    .filter((name) => isGateFile(name))
-    .sort()
-    .map((name) => ({
-      id: `tools/${name}`,
-      kind: "gate-file",
-      command: `node tools/${name}`,
-      entryFiles: [`tools/${name}`],
-    }));
+  return gateFiles({ root }).map((file) => ({
+    id: file,
+    kind: "gate-file",
+    command: `node ${file}`,
+    entryFiles: [file],
+  }));
 }
 
 /**
- * The one rule for "this path is a gate, not a falsifier": `tools/check-*.mjs` minus `.test.mjs` / `.mutation.mjs`.
+ * The one rule for "this path is a gate, not a falsifier", re-exported from the registry that owns it.
  *
- * Exported because the conformance suite asks the same question of a record's entry file when it decides what it can
- * run, and two spellings of this rule disagree the first time one of them learns about a new suffix.
+ * Callers keep importing it from here because this is the module that has always answered; there is one definition,
+ * in `tools/gates/registry.mjs`, so the conformance suite and the census cannot learn different suffixes.
  */
-export function isGateFile(path) {
-  const name = path.replace(/^tools\//u, "");
-  return GATE_FILE.test(name) && !SIBLING_FALSIFIER.test(name);
-}
+export { isGateFile };
 
 /**
  * The population: `{ gates, scripts, gateFiles, unclaimedByScript }`, where `gates` is the merged union sorted by id

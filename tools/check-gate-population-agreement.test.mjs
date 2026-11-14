@@ -125,10 +125,15 @@ test("zero on both halves is blocked, never green", () => {
   assert.equal(report.status, "blocked");
 });
 
-test("the real tree agrees: no member is unread, invented, or a falsifier counted as a gate", () => {
-  const { findings, counts, coverage } = readAgreement();
+test("the real tree agrees: no member is unread, invented, or a falsifier counted as a gate", async () => {
+  const { findings, counts, coverage } = await readAgreement();
   assert.ok(counts.gateScripts > 0 && counts.diskFiles > 0, "a half of the authority measured nothing");
   assert.ok(counts.censusGates >= counts.diskFiles, "the census cannot read fewer gates than the files it enumerates");
+  assert.equal(
+    counts.declaredGates + counts.undeclaredGates,
+    counts.diskFiles,
+    "every gate file is either declared or counted as undeclared",
+  );
   assert.deepEqual(coverage.unreadScripts, []);
   assert.deepEqual(coverage.unreadFiles, []);
   assert.deepEqual(findings, []);

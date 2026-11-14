@@ -61,6 +61,14 @@
  *
  * No game, no network, no model. It reads files and four export functions.
  */
+
+export const gateDeclaration = {
+  id: "check-gate-population-agreement",
+  domain: "meta",
+  tier: "l1",
+  kind: "totality",
+};
+
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -68,6 +76,7 @@ import { fileURLToPath } from "node:url";
 import { auditGateRedProofs } from "./audit-gate-red-proofs.mjs";
 import { deriveCiCoverage, GATE_NAME } from "./check-ci-coverage.mjs";
 import { derivePopulation, EXEMPTIONS } from "./check-prelive-gate-registry.mjs";
+import { gateFiles, readDeclarations } from "./gates/registry.mjs";
 import { deriveGatePopulation, isGateFile } from "./lib/gate-population.mjs";
 import { corpusMembers } from "./run-tool-test-corpus.mjs";
 
@@ -131,10 +140,11 @@ export function registerMembers({ root, exemptions }) {
  * The reading, from readings rather than from the file system: the consumers' own answers plus the three surfaces.
  *
  * `census` is `auditGateRedProofs`'s result, `prelive` is `derivePopulation()`'s list, `corpus` is `corpusMembers`'s
- * result (`{members, notTaken}` - its whole shape), and `disk` is the gate files on disk. Everything here is a set
+ * result (`{members, notTaken}` - its whole shape), `disk` is the gate-file population `tools/gates/registry.mjs`
+ * derives, and `declared` is the gates in that population that carry a `gateDeclaration`. Everything here is a set
  * comparison, so the test can drive it with synthetic trees without touching the repository.
  */
-export function agree({ root, invoked, scripts, disk, census, prelive, corpus, registers, untracked = [] }) {
+export function agree({ root, invoked, scripts, disk, census, prelive, corpus, registers, declared = [], untracked = [] }) {
   const findings = [];
   const censusFiles = new Set(census.records.flatMap((record) => record.entryFiles));
   const censusScripts = new Set(census.records.filter((record) => scripts[record.id] !== undefined).map((r) => r.id));
@@ -159,7 +169,7 @@ export function agree({ root, invoked, scripts, disk, census, prelive, corpus, r
       });
 
   for (const member of prelive)
-    if (member.startsWith("tools/") && !isGateFile(member.replace(/^tools\//u, "")))
+    if (member.startsWith("tools/") && !isGateFile(member))
       findings.push({
         code: "gate_population_reads_a_falsifier",
         id: `check-prelive-gate-registry.mjs:${member}`,
@@ -188,6 +198,8 @@ export function agree({ root, invoked, scripts, disk, census, prelive, corpus, r
       preliveMembers: prelive.length,
       censusGates: census.records.length,
       registers: registers.length,
+      declaredGates: declared.length,
+      undeclaredGates: disk.length - declared.length,
     },
     coverage: {
       unreadScripts: invoked.filter((name) => !ciNames.has(name) && !corpusNames.has(name) && !censusScripts.has(name)),
@@ -197,7 +209,7 @@ export function agree({ root, invoked, scripts, disk, census, prelive, corpus, r
 }
 
 /** Read the real tree: the consumers through their own entry points, the surfaces through their own files. */
-export function readAgreement({ root = REPOSITORY_ROOT } = {}) {
+export async function readAgreement({ root = REPOSITORY_ROOT } = {}) {
   const packageText = read(join(root, "package.json"));
   if (packageText === null) throw new Error("gate_population_agreement_package_json_missing");
   const scripts = JSON.parse(packageText).scripts ?? {};
@@ -214,13 +226,16 @@ export function readAgreement({ root = REPOSITORY_ROOT } = {}) {
   const untracked = population.gateFiles
     .map((file) => file.entryFiles[0])
     .filter((file) => !census.records.some((record) => record.entryFiles.includes(file)));
+  // The population and the declarations are the registry's reading, not a second filter over the same directory: a
+  // glob here beside the registry's rule is the drift this gate exists to catch.
+  const disk = gateFiles({ root });
+  const declarations = await readDeclarations({ root, files: disk });
   return agree({
     root,
     invoked: invokedGateScripts({ scripts, workflowTexts }),
     scripts,
-    disk: population.gateFiles
-      .map((file) => file.entryFiles[0])
-      .filter((file) => isGateFile(file.replace(/^tools\//u, ""))),
+    disk,
+    declared: declarations.declared,
     census: { ...census, ciGateScripts: ci.gateScripts.map((gate) => gate.name ?? gate) },
     prelive: derivePopulation(),
     corpus: corpusMembers({ root }),
@@ -251,10 +266,10 @@ export function buildReport({ counts, findings }) {
   };
 }
 
-function main(argv) {
+async function main(argv) {
   const rootIndex = argv.indexOf("--root");
   const root = rootIndex < 0 ? REPOSITORY_ROOT : resolve(argv[rootIndex + 1] ?? "");
-  const { findings, counts, coverage } = readAgreement({ root });
+  const { findings, counts, coverage } = await readAgreement({ root });
   const report = buildReport({ counts, findings });
 
   if (argv.includes("--json")) {
@@ -263,7 +278,7 @@ function main(argv) {
   }
 
   process.stdout.write(
-    `gate populations: invoked ${counts.invoked} · ci-coverage scripts ${counts.gateScripts} · corpus names ${counts.corpusScripts} · census scripts ${counts.censusScripts} · gate files ${counts.diskFiles} · prelive members ${counts.preliveMembers} · census gates ${counts.censusGates} · register members ${counts.registers}\n`,
+    `gate populations: invoked ${counts.invoked} · ci-coverage scripts ${counts.gateScripts} · corpus names ${counts.corpusScripts} · census scripts ${counts.censusScripts} · gate files ${counts.diskFiles} · declared gates ${counts.declaredGates} · undeclared gates ${counts.undeclaredGates} · prelive members ${counts.preliveMembers} · census gates ${counts.censusGates} · register members ${counts.registers}\n`,
   );
   process.stdout.write(
     `gate_population_agreement coverage: scripts every consumer reads ${counts.invoked - coverage.unreadScripts.length} of ${counts.invoked} · gate files ${counts.diskFiles - coverage.unreadFiles.length} of ${counts.diskFiles}\n`,
@@ -280,5 +295,5 @@ function main(argv) {
 }
 
 if (process.argv[1] !== undefined && resolve(process.argv[1]) === resolve(fileURLToPath(import.meta.url))) {
-  process.exitCode = main(process.argv.slice(2));
+  process.exitCode = await main(process.argv.slice(2));
 }

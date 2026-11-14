@@ -64,33 +64,39 @@
  * red-proof: inject  reading `HEAD`'s script table from the file on disk -> `{}` where the commit's table was
  *   expected, and the disagreement between the two trees went unprinted
  */
+
+export const gateDeclaration = {
+  id: "check-prelive-gate-registry",
+  domain: "meta",
+  tier: "l2",
+  kind: "ratchet",
+};
+
 import { spawnSync } from "node:child_process";
 import { readdirSync, readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { deriveCiCoverage } from "./check-ci-coverage.mjs";
+import { isGateFile } from "./gates/registry.mjs";
 import { PRELUDE_RUNGS } from "./prelive.mjs";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const STARDEW_TESTS = "integrations/stardew/action-development/tests";
 const WORKFLOW_DIR = ".github/workflows";
 
-/** The derivation, as data: one entry per scan, each with what it includes and what it deliberately leaves out. */
+/**
+ * The derivation, as data: one entry per scan, each with what it includes and what it deliberately leaves out.
+ *
+ * The `tools` scan's `include` is the registry's own rule, not a regex restated here. A `.test.mjs` and a `.mutation.mjs`
+ * are the gate's falsifiers, not gates - counting them asks the red-proof census for a proof of the proof - and that
+ * exclusion, with the directories a gate may live in, is one definition in `tools/gates/registry.mjs`. Measured
+ * 2026-11-14: this file and `tools/lib/gate-population.mjs` each spelled `^(?:check|audit)-.*\.mjs$`, so a gate file
+ * moved into a subdirectory kept its obligations in one reader and lost them in the other.
+ */
 export const POPULATION_SCAN = Object.freeze([
-  {
-    dir: "tools",
-    include: /^(?:check|audit)-.*\.mjs$/u,
-    // A `.test.mjs` and a `.mutation.mjs` are the gate's falsifiers, not gates: counting them asks the red-proof census
-    // for a proof of the proof. The census's own rule is `tools/lib/gate-population.mjs`'s `isGateFile`, which excludes
-    // both; `tools/check-gate-population-agreement.mjs` is what holds the two spellings to one set.
-    exclude: [/\.test\.mjs$/u, /\.mutation\.mjs$/u],
-  },
-  {
-    dir: STARDEW_TESTS,
-    include: /(?:-drift|-reconciliation)\.test\.mjs$/u,
-    exclude: [],
-  },
+  { dir: "tools", include: (name) => isGateFile(`tools/${name}`) },
+  { dir: STARDEW_TESTS, include: (name) => /(?:-drift|-reconciliation)\.test\.mjs$/u.test(name) },
 ]);
 
 /** Why a gate in the population does not run in prelive, as closed classes so the count is a measurement. */
@@ -787,11 +793,7 @@ export const EXEMPTIONS = Object.freeze([
 export function derivePopulation({ list = (dir) => readdirSync(resolve(ROOT, dir)) } = {}) {
   const members = [];
   for (const scan of POPULATION_SCAN) {
-    for (const name of list(scan.dir).sort()) {
-      if (!scan.include.test(name)) continue;
-      if (scan.exclude.some((pattern) => pattern.test(name))) continue;
-      members.push(`${scan.dir}/${name}`);
-    }
+    for (const name of list(scan.dir).sort()) if (scan.include(name)) members.push(`${scan.dir}/${name}`);
   }
   return members;
 }
