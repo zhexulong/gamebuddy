@@ -15,11 +15,14 @@
 //   stop the game              -> POST /game/stop          (so no game process is left behind)
 //
 // WAITING IS MEASURED, NOT ENOUGH. The launch wait prints the product's own state every few seconds and
-// ends on a named plateau as well as on a budget, because "slow" and "stuck" are different findings:
-// measured 2026-11-15, the launch chain took 9 s and the state then stayed
-// `instance=launching/attachment=none` for 4 min 51 s because the cabin step had not been sent. The
-// budget is named and overridable (`GAMEBUDDY_LIVE_RUN_LAUNCH_BUDGET_MS`) so a run can buy more time
-// without editing a number nobody can see.
+// ends on a named plateau as well as on a budget, because "slow" and "stuck" are different findings.
+// Measured 2026-11-15 (`.live-runs/gamewait2`, 600 s budget): the launch chain took 9 s to a loaded world,
+// the tuple then held `instance=launching/attachment=none` for the whole 120 s plateau, the panel's own
+// cabin refresh answered with the cabin in 45 ms, and the confirmation stopped at the Mod's farmhand
+// provisioning (`stardew-attachment-response.json`: `awaiting_save`/`binding_persist_pending`) until the
+// Host's 60 s window ended `stardew_manifest_handoff_uncertain`. The budget is named and overridable
+// (`GAMEBUDDY_LIVE_RUN_LAUNCH_BUDGET_MS`) so a run can buy more time without editing a number nobody can
+// see.
 //
 // WHAT THIS DRIVER DOES NOT DO. It never launches Stardew itself, never spawns SMAPI, never writes the
 // Mod, and never kills anything: the game process is the Host's, started and contained by its Guardian
