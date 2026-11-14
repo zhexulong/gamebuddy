@@ -365,9 +365,20 @@ export const STARDEW_PUBLISHED_ACTION_GATES = Object.freeze([
     "mannequin_dressed",
     "native_dress_mannequin_v1",
   ),
-  gate("set_sign_display", 1, null, "sign_display_set", "native_set_sign_display_v1", "contract"),
-  // A deposit is one frame: the contract states the target, the request and the terminal, and the slice drives it.
-  gate("deposit_silo_hay", 1, null, "silo_hay_deposited", "native_deposit_silo_hay_v1", "contract"),
+  gate(
+    "set_sign_display",
+    1,
+    "run-stardew-native-local-player-set-sign-display-smoke.mjs",
+    "sign_display_set",
+    "native_set_sign_display_v1",
+  ),
+  gate(
+    "deposit_silo_hay",
+    1,
+    "run-stardew-native-local-player-deposit-silo-hay-smoke.mjs",
+    "silo_hay_deposited",
+    "native_deposit_silo_hay_v1",
+  ),
   gate(
     "toggle_tool_light",
     1,
@@ -377,7 +388,7 @@ export const STARDEW_PUBLISHED_ACTION_GATES = Object.freeze([
   ),
   gate("use_raft", 1, "run-stardew-native-local-player-use-raft-smoke.mjs", "raft_launched", "native_use_raft_v1"),
   gate("mount_transport", 1, null, "horse_mounted", "native_mount_transport_v1", "contract"),
-  gate("enter_mine", 1, null, "mine_entered", "native_enter_mine_v1", "contract"),
+  gate("enter_mine", 1, "run-stardew-native-local-player-enter-mine-smoke.mjs", "mine_entered", "native_enter_mine_v1"),
   // WIA §4.2: the two modal-handling primitives. Promoted to live_verified on owner ruling
   // (2026-10-06) after both crossed the live gate: a real native-local run each, with its own
   // receipt (RUNBOOK 32 dismiss-chain, 33 answer-question). They stay Experimental in name

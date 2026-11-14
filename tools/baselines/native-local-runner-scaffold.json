@@ -121,6 +121,10 @@
       "reason": "predates_the_template"
     },
     {
+      "file": "tools/run-stardew-native-local-player-deposit-silo-hay-smoke.mjs",
+      "reason": "predates_the_template"
+    },
+    {
       "file": "tools/run-stardew-native-local-player-dialogue-stream-smoke.mjs",
       "reason": "predates_the_template"
     },
@@ -150,6 +154,10 @@
     },
     {
       "file": "tools/run-stardew-native-local-player-enter-mine-ladder-smoke.mjs",
+      "reason": "predates_the_template"
+    },
+    {
+      "file": "tools/run-stardew-native-local-player-enter-mine-smoke.mjs",
       "reason": "predates_the_template"
     },
     {
@@ -354,6 +362,10 @@
     },
     {
       "file": "tools/run-stardew-native-local-player-send-multiplayer-chat-smoke.mjs",
+      "reason": "predates_the_template"
+    },
+    {
+      "file": "tools/run-stardew-native-local-player-set-sign-display-smoke.mjs",
       "reason": "predates_the_template"
     },
     {
