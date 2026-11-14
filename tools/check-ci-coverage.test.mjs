@@ -100,14 +100,14 @@ test("a step that runs the file a script wraps covers the script", () => {
   assert.deepEqual(result.derived, []);
 });
 
-test("naming gates inside another script is not coverage - no job runs quality:check", () => {
+test("naming gates inside another script is not coverage - no job runs an aggregate chain", () => {
   const result = coverage({
     scripts: {
       "lint:eslint": "eslint dialogue-web/src",
-      "quality:check": "pnpm lint:eslint && pnpm lint",
+      "aggregate:check": "pnpm lint:eslint && pnpm lint",
     },
     // The comment names the gate; a comment is not a step.
-    workflow: "      # quality:check runs lint:eslint\n      - run: pnpm check:knip",
+    workflow: "      # aggregate:check runs lint:eslint\n      - run: pnpm check:knip",
   });
   assert.deepEqual(result.derived, ["lint:eslint"]);
 });

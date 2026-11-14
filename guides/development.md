@@ -41,7 +41,7 @@ Host 的本地 bootstrap 是显式、绑定身份的：缺少或非法的 bridge
 ## 测试与门禁
 
 ```bash
-pnpm quality:check     # 格式、lint、类型、边界、C# Core 与 Integration
+pnpm prelive           # 本地分层门禁：契约三连、动作树、linkage、部署隔离、编译与人口一致、runner 形状（无游戏、无网络、无模型）
 pnpm typecheck
 pnpm --dir host test   # Host 编译产物测试（Node runner）
 ```
@@ -89,7 +89,7 @@ pnpm test:sandbox-wiring
 
 ## 提交前
 
-1. `pnpm quality:check` 通过；
+1. `pnpm prelive` 通过（第一个红灯的 rung 就是原因）；格式、lint、类型、C# Core/Integration 与边界检查在 CI 的 `host` 与 `gates` job 上跑，本地按需单跑；
 2. 相关 live/sandbox 门禁有对应证据（或明确记录为 blocked，而不是假称通过）；
 3. 变更说明写清楚“改了什么层、为什么是这个层、如何验证”；
 4. 只提交本次变更的路径，不夹带其他 lane 的未提交工作。

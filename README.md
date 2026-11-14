@@ -98,7 +98,7 @@ pnpm run:sandbox-level3 -- --setup desktop/dist/setup/GameBuddy.Setup.exe
 
 ---
 
-## 🛠️ 从源码运行
+## 🛠 从源码运行
 
 适合想改代码、跑测试或做游戏集成的贡献者。
 
@@ -122,15 +122,15 @@ pnpm build
 pnpm build:desktop-launcher
 pnpm build:player-distribution
 
-# 质量门禁（格式、lint、类型、边界、C# 核心与集成测试）
-pnpm quality:check
+# 本地分层门禁（无游戏、无网络、无模型；第一个红灯的 rung 就是原因）
+pnpm prelive
 ```
 
 更细的开发流程、测试调用方式、live-run 与沙盒工具索引，见 **[开发指南](guides/development.md)**；提交与评审约定见 **[CONTRIBUTING.md](CONTRIBUTING.md)**。
 
 ---
 
-## 🏛️ 架构
+## 🏛 架构
 
 ```mermaid
 flowchart TB
@@ -201,7 +201,7 @@ ai-game-companion/
 
 ---
 
-## 🗺️ 路线图
+## 🗺 路线图
 
 - [x] **Stardew 具身与可信行动（能力层）**
   - [x] 命名管道 Bridge、Farmhand 生命周期与原生行动

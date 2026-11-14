@@ -8,7 +8,7 @@
  *
  * The corpus is DERIVED from package.json on every run, never pinned: a new `test:`/`suite:` script over a
  * `tools/` suite is wired in by existing. Scripts that another entry point already runs (`ci.yml`,
- * `release-windows.yml`, `quality:check`, `test`, `test:all`, `test:dialogue-web`, `typecheck`) are not this
+ * `release-windows.yml`, `test`, `test:all`, `test:dialogue-web`, `typecheck`) are not this
  * step's business, and neither are the `integrations/stardew/action-development` suites, which `ci.yml`'s
  * stardew-scaffold job runs through its own package.
  *
@@ -59,7 +59,7 @@ const MEMBER_CONCURRENCY = Math.max(2, availableParallelism() - 1);
 const MEMBER_DETAIL_LIMIT = 5;
 const QUARANTINE_PATH = "tools/tool-test-corpus-quarantine.json";
 /** The `package.json` scripts treated as entry points: a script they name is a run that already happens. */
-const ENTRY_POINT_SCRIPTS = Object.freeze(["quality:check", "test", "test:all", "test:dialogue-web", "typecheck"]);
+const ENTRY_POINT_SCRIPTS = Object.freeze(["test", "test:all", "test:dialogue-web", "typecheck"]);
 /** The date the `untaken` exemption was recorded. Its EXPIRY is not the date: it is the claim, read on every run. */
 const UNCLAIMED_EXEMPTION_DATED = "2026-11-14";
 const ENTRY_POINT_FILES = Object.freeze([".github/workflows/ci.yml", ".github/workflows/release-windows.yml"]);
@@ -119,7 +119,7 @@ function memberCommand(command) {
  * member of this population by its NAME (that prefix is the claim that it runs), and it lands in exactly one of:
  *
  *   members    this corpus runs it, one child per script
- *   elsewhere  an entry point names it (`ci.yml`, `release-windows.yml`, `quality:check`, `test`, `test:all`,
+ *   elsewhere  an entry point names it (`ci.yml`, `release-windows.yml`, `test`, `test:all`,
  *              `test:dialogue-web`, `typecheck`), so this step would be a second copy of a run that already happens
  *   package    its files all live under a package's `tests/` directory, that package declares a `test` script, and an
  *              entry point runs it - the package's own runner derives the directory, so a new suite file joins by

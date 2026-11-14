@@ -12,7 +12,7 @@
 
 ## 提 PR 之前
 
-- `pnpm quality:check` 通过；相关 live / sandbox 门禁有证据，或明确记录为 blocked。
+- `pnpm prelive` 通过（本地分层门禁：契约三连、动作树、linkage、部署隔离、编译与人口一致、runner 形状）；相关 live / sandbox 门禁有证据，或明确记录为 blocked。
 - 新增断言先在真实注入的违规上看到失败（红），再修到通过（绿）。
 - 变更只包含本次工作涉及的路径，不夹带其他 lane 的未提交内容。
 - 不提交 API key、完整存档、私密角色卡内容或包含个人路径的运行日志。

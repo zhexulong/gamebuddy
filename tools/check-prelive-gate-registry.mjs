@@ -515,7 +515,7 @@ export const EXEMPTIONS = Object.freeze([
   {
     path: "tools/check-local-ci-parity.mjs",
     reason:
-      "elsewhere: reads `package.json`'s `quality:check` ladder and `.github/workflows/*.yml` and nothing else, so it " +
+      "elsewhere: reads `tools/prelive.mjs`'s own member declarations and `.github/workflows/*.yml` and nothing else, so it " +
       "runs on every push in the CI `gates` job beside `check-ci-coverage`, where the workflows it judges exist; a " +
       "prelive rung would judge an empty CI side and BLOCK on `local_ci_parity_workflow_unread` rather than pass",
     runsIn: "pnpm check:local-ci-parity",

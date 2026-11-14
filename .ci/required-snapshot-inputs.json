@@ -44,7 +44,7 @@
           "marker": "gamebuddy-snapshot-input:tools/check-text-hygiene.test.mjs"
         }
       ],
-      "referenceRequirement": "host CI quality:check runs the repository-owned text hygiene test closure"
+      "referenceRequirement": "the repository-owned text hygiene test closure runs in CI through the `test:tool-corpus` step (its `test:text-hygiene` member)"
     },
     {
       "path": "tools/ci-snapshot-lib.mjs",
