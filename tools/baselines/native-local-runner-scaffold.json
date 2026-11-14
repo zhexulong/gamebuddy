@@ -37,10 +37,6 @@
       "reason": "predates_the_template"
     },
     {
-      "file": "tools/run-stardew-native-local-player-build-farm-building-smoke.mjs",
-      "reason": "predates_the_template"
-    },
-    {
       "file": "tools/run-stardew-native-local-player-chest-retrieve-smoke.mjs",
       "reason": "predates_the_template"
     },
@@ -313,10 +309,6 @@
       "reason": "predates_the_template"
     },
     {
-      "file": "tools/run-stardew-native-local-player-prize-ticket-smoke.mjs",
-      "reason": "predates_the_template"
-    },
-    {
       "file": "tools/run-stardew-native-local-player-refill-watering-can-smoke.mjs",
       "reason": "predates_the_template"
     },
@@ -470,10 +462,6 @@
     },
     {
       "file": "tools/run-stardew-native-local-player-wia-tool-approach-smoke.mjs",
-      "reason": "predates_the_template"
-    },
-    {
-      "file": "tools/run-stardew-native-local-player-withdraw-silo-hay-smoke.mjs",
       "reason": "predates_the_template"
     },
     {

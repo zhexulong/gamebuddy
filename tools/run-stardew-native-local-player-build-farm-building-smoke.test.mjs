@@ -1,7 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { assertBuildFarmBuildingPostconditions } from "./run-stardew-native-local-player-build-farm-building-smoke.mjs";
+import {
+  assertBuildFarmBuildingPostconditions,
+  runBuildFarmBuildingSmoke,
+} from "./run-stardew-native-local-player-build-farm-building-smoke.mjs";
+import { publishedActionRegistrations } from "./lib/stardew-native-smoke-harness-v1.mjs";
 
 /**
  * The build_farm_building live judgement, tested DIRECTLY.
@@ -169,4 +173,142 @@ test("an observation surface with no built entries reports not_checked, NEVER a 
     2,
     "the run must fail, on exactly these two checks",
   );
+});
+
+/**
+ * THE RUNNER ITSELF, driven end to end through the shared template.
+ *
+ * The judgement above is pure, so it cannot see the lifecycle: whether the unarmed config is refused, whether the
+ * request carries the published building type and site id, and - the half the pure function never judged - whether the
+ * STALE RE-SEND is refused and moves nothing.
+ */
+const RUNNER_CAPABILITIES = ["cancel_active_execution", "inspect_self", "build_farm_building"];
+
+function validConfig() {
+  return {
+    DeniedActions: [],
+    DeniedActionFamilies: [],
+    ExperimentalActions: [],
+    NativeLocalPlayerFixture: {
+      Enable: true,
+      Bootstrap: { Enable: false },
+      FixtureScenario: "native_build_farm_building_v1",
+    },
+  };
+}
+
+const SITE = { ...TARGET };
+
+function evidenceDetail(overrides = {}) {
+  const fields = { ...EVIDENCE, ...overrides };
+  return {
+    detail: Object.entries(fields)
+      .map(([key, value]) => `${key}=${value}`)
+      .join(";"),
+  };
+}
+
+function snapshotWith(targets, revision = 1) {
+  return {
+    revision,
+    location: "Farm",
+    tile: { x: 39, y: 20 },
+    actionable: true,
+    activeExecution: null,
+    capabilities: RUNNER_CAPABILITIES,
+    farmBuildingTargets: targets,
+  };
+}
+
+/**
+ * A fake Mod. The first request places the structure and moves the world to the built projection; the second is the
+ * stale re-send, answered by `negative`.
+ */
+function createFakeClient({
+  negative = { state: "rejected", reasonCode: "build_farm_building_site_blocked" },
+  negativeWorld = null,
+} = {}) {
+  const receipts = [];
+  let executions = 0;
+  const client = {
+    state: {
+      catalogRegistrations: publishedActionRegistrations(),
+      snapshot: snapshotWith([SITE]),
+      latestReceipt: null,
+    },
+    observe: async () => client.state.snapshot,
+    execute: async (request) => {
+      executions += 1;
+      const current = client.state.snapshot;
+      const accepted = {
+        requestId: request.requestId,
+        executionId: `build-farm-building-execution-${executions}`,
+        state: "accepted",
+        reasonCode: "accepted",
+        revision: current.revision,
+      };
+      if (executions === 1) {
+        assert.deepEqual(request.args, {
+          buildingType: SITE.buildingType,
+          x: SITE.x,
+          y: SITE.y,
+          expectedTargetId: SITE.targetId,
+        });
+        client.state.snapshot = snapshotWith([{ ...BUILT }], current.revision + 1);
+        receipts.push({
+          ...accepted,
+          state: "succeeded",
+          reasonCode: "farm_building_built",
+          revision: client.state.snapshot.revision,
+          evidence: evidenceDetail(),
+        });
+        return accepted;
+      }
+      if (negative.state === "rejected") {
+        if (negativeWorld !== null) client.state.snapshot = snapshotWith(negativeWorld, current.revision + 1);
+        receipts.push({ ...accepted, ...negative, revision: current.revision });
+        return accepted;
+      }
+      client.state.snapshot = snapshotWith([{ ...BUILT }], current.revision + 1);
+      receipts.push({ ...accepted, ...negative, revision: client.state.snapshot.revision });
+      return accepted;
+    },
+  };
+  return { client, receipts };
+}
+
+test("build-farm-building runner: the template refuses an unarmed fixture config before anything is sent", async () => {
+  const { client, receipts } = createFakeClient();
+  const result = await runBuildFarmBuildingSmoke(client, receipts, {}, { terminalTimeoutMs: 1_000 });
+  assert.equal(result.state, "blocked");
+  assert.equal(result.reasonCode, "native_local_build_farm_building_fixture_config_invalid");
+});
+
+test("build-farm-building runner: the structure is read back from the world and the stale site is refused", async () => {
+  const { client, receipts } = createFakeClient();
+  const result = await runBuildFarmBuildingSmoke(client, receipts, validConfig(), { terminalTimeoutMs: 1_000 });
+  assert.equal(result.state, "passed", result.reasonCode);
+  assert.equal(result.reasonCode, "farm_building_built");
+  assert.equal(result.target, SITE.targetId);
+  assert.equal(result.buildingType, "Coop");
+  assert.deepEqual(Object.values(result.checks), [true, true, true, true, true, true]);
+  assert.equal(result.negative, "measured:build_farm_building_site_blocked");
+});
+
+test("build-farm-building runner: a stale re-send that SUCCEEDS fails the run", async () => {
+  // THE FALSIFIER FOR THE NEGATIVE ARM: the tile now holds the building, so a second success is a second structure (or
+  // a silent no-op reported as one).
+  const { client, receipts } = createFakeClient({
+    negative: { state: "succeeded", reasonCode: "farm_building_built" },
+  });
+  const result = await runBuildFarmBuildingSmoke(client, receipts, validConfig(), { terminalTimeoutMs: 1_000 });
+  assert.equal(result.state, "blocked");
+  assert.equal(result.reasonCode, "build_farm_building_negative_not_refused:succeeded/farm_building_built");
+});
+
+test("build-farm-building runner: a refusal that re-advertised the consumed site fails the run", async () => {
+  const { client, receipts } = createFakeClient({ negativeWorld: [SITE, { ...BUILT }] });
+  const result = await runBuildFarmBuildingSmoke(client, receipts, validConfig(), { terminalTimeoutMs: 1_000 });
+  assert.equal(result.state, "blocked");
+  assert.equal(result.reasonCode, `build_farm_building_negative_moved_world:sites:->${SITE.targetId}`);
 });
