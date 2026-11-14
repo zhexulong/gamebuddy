@@ -25,7 +25,7 @@ import {
 import type { ExecutionWake, IntegrationLaunchHandle } from "./integration-launcher.js";
 import type { StardewBridgeConnection } from "./game-connection.js";
 import { LocalStardewBridgeClient } from "./local-stardew-bridge.js";
-import type { Scope } from "./protocol.js";
+import type { ActionRegistration, Scope } from "./protocol.js";
 import { createStardewIntegrationLaunchHandleFromAuthenticatedBridge } from "./stardew-integration-launcher.js";
 import type { RuntimePaths } from "./runtime.js";
 
@@ -395,7 +395,7 @@ type MutableIntegrationState = {
   connected: boolean;
   sessionId: string | null;
   capabilities: string[];
-  catalogRegistrations: readonly import("./protocol.js").ActionRegistration[];
+  catalogRegistrations: readonly ActionRegistration[];
   snapshot: any;
   latestReceipt: any;
   latestReasonCode: string | null;

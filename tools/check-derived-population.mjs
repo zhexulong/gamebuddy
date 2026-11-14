@@ -52,10 +52,10 @@
  *
  * THE RESIDUAL IS RECORDED, NOT SILENCED (measured 2026-11-15, this tree):
  *
- *   examined 1001 · sites 82 · findings 0 · baseline 73 entries · unread 1
+ *   examined 1001 · sites 82 · findings 0 · baseline 73 entries · unread 0
  *   residual by shape: 5 declaration_site · 30 call_result · 47 unresolved
  *   residual by verdict: 34 derivable-now · 39 not-a-population · 0 needs-a-decision
- *   set aside: 1106 test-built · 24 not-members
+ *   set aside: 1114 test-built · 24 not-members
  *
  * Each shape is closeable, and each failure message says which one it is:
  *
@@ -83,11 +83,13 @@
  * `literal_population_baseline_stale` and fails. Identity is file + authority + literal, never the line, so a reformat
  * is the same site - a line-numbered identity reports a change that did not happen.
  *
- * THE `unread 1` IS A GRAMMAR GAP, named rather than hidden: `host/src/gameplay-task-subagent.private.test.ts` declares
- * `catalogRegistrations: readonly import("./protocol.js").ActionRegistration[]` in a type alias, and the typescript wasm
- * this seam loads rejects the inline import type - the tree carries one ERROR node at the closing brace of that alias, so
- * every comparison in the file is invisible to this gate (including any frozen count). It is not a cleared residual: the
- * file is reported as unread on every run, at HEAD as well as in the worktree, until the grammar reads that shape.
+ * THE `unread` ROW READ ONE FILE UNTIL THIS LANE, and the file was closed rather than the reading: it declared
+ * `catalogRegistrations: readonly import("./protocol.js").ActionRegistration[]`, and the typescript wasm this seam loads
+ * (0.3.1, the newest published build of that package) leaves one ERROR node at the alias's closing brace for a `readonly`
+ * import type - one node, and the file's 8 comparisons were invisible. The grammar cannot be taught that shape from here,
+ * so the file names the type through `import type { ActionRegistration }`, the form every other reader of `./protocol.js`
+ * already uses; the new reading adds no finding, because all 8 counts belong to the fixture the test builds itself. A file
+ * the grammar still cannot read is named on stderr, never counted as a clean file.
  *
  * WHAT IS READ, and why syntax rather than a grep: this file's own fixtures spell the defect inside string and template
  * literals, and a comment could spell it too. A line scanner cannot tell those from code, so the reading is the syntax
