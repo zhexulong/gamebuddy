@@ -72,6 +72,24 @@ public sealed class HoldWaitGateTests
             Enum.GetNames<ActorDispositionKind>(),
             "the hold vocabulary and the admission projection are one closed set; a member on one side only means a condition whose code and wait disagree");
 
+        // THE CLASSIFICATION IS A DECISION, NOT A DEFAULT, so the gate states it with its reason: flipping one of these
+        // is then a change made here with a sentence beside it, not a drift the rest of this test silently follows (found
+        // the hard way - "park a modal too" passed every consistency check below, because they only compare the
+        // admission with the table).
+        var declared = new (ExecutionManager.LocalDispositionKind Kind, BodyHoldWait? Wait, string Reason)[]
+        {
+            (ExecutionManager.LocalDispositionKind.Idle, null, "an idle body is not a hold"),
+            (ExecutionManager.LocalDispositionKind.Transient, BodyHoldWait.RetryWindow, "the engine releases the lock inside WorldModel.TransientRetryWindowMs, which is what that window is for"),
+            (ExecutionManager.LocalDispositionKind.Event, BodyHoldWait.RequestDeadline, "an event advances itself or the player advances it, so the bound is the deadline the request itself declared"),
+            (ExecutionManager.LocalDispositionKind.Modal, null, "a modal is cleared by an action (the catalog's modal-resolving family) or by the player, never by waiting"),
+            (ExecutionManager.LocalDispositionKind.PassOut, null, "the day ending clears it on its own, but in minutes - past any deadline a request may declare"),
+        };
+        declared.Select(row => row.Kind).Should().BeEquivalentTo(
+            Enum.GetValues<ExecutionManager.LocalDispositionKind>(),
+            "every kind has a stated reason; a member without one is a condition nobody decided whether to wait for");
+        foreach ((ExecutionManager.LocalDispositionKind kind, BodyHoldWait? wait, string reason) in declared)
+            ExecutionManager.HoldWait(kind).Should().Be(wait, $"{kind}: {reason}");
+
         var rows = new List<(string Kind, string? Code, BodyHoldWait? Wait, string Outcome)>();
         foreach (ExecutionManager.LocalDispositionKind kind in Enum.GetValues<ExecutionManager.LocalDispositionKind>())
         {
