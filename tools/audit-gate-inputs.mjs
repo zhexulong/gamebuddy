@@ -22,7 +22,12 @@
  *
  *   a. `reads`      the paths the gate's own code names in a read position, collected from the entry file and the
  *                   relative imports it reads through (depth 2, bounded) - so a gate whose reading lives in
- *                   `tools/lib/x.mjs` is read as one that reads what that module reads.
+ *                   `tools/lib/x.mjs` is read as one that reads what that module reads. A read call is recognised by
+ *                   the name it is CALLED by, which is not always the name it is imported under: `read = readFile`
+ *                   (a parameter default), `const list = readdirSync` and `import { readFile as read }` all arrive
+ *                   under another name, and `await import(url)` / `require(path)` load a file with no read call at
+ *                   all. Both are followed here, because a gate that reaches its population that way reads it just
+ *                   as much as one that names `readFileSync`.
  *   b. `source`     `authority` (a directory scan, the index through `git`, a glob, or a path built from a name the
  *                   gate does not declare) · `hand-listed` (every path it reads is a literal in its own closure) ·
  *                   `external` (the command names no file here, or runs a program whose reading this repository does
@@ -52,6 +57,10 @@
  *   - a zero-guard found in a dead branch reads the same as one on the verdict path, and a population computed under a
  *     name this reading does not model (`runsJudged`) is not seen. Both are why the members are printed rather than
  *     merely counted: each finding is a gate to inspect, not a proven defect.
+ *   - a read that takes its path from a function parameter (`readdirSync(directory)` inside `walk`, a walker a lib
+ *     exports) is NAMED in `because` (`root is directory, a parameter of walk`) and its path list stays empty. This
+ *     reading carries no call graph, so it cannot hand the walker its argument; saying which parameter it stopped at
+ *     is the difference between a measured blind spot and an empty list that looks like one.
  *
  * USAGE:
  *   node tools/audit-gate-inputs.mjs             # the reading and the gate; exit 1 on an unrecorded/stale member
@@ -111,8 +120,24 @@ const SCAN_CALLS = new Set(["glob", "globSync", "opendirSync", "readdir", "readd
 /** Calls that hand the reading to another program. */
 const SPAWN_CALLS = new Set(["execFile", "execFileSync", "execSync", "spawn", "spawnSync"]);
 
+/**
+ * Calls that LOAD a file into this process instead of reading its bytes: `await import(url)`, `require(path)`.
+ *
+ * A module loaded this way is read as surely as one opened with `readFileSync` - a gate that inspects what
+ * `dist/index.js` exports has that file as its population - and it was the one call style through which a gate that
+ * reads real files was reported as reading nothing at all. `node:` specifiers are excluded where the load is recorded:
+ * a built-in is not a file this repository carries.
+ */
+const LOAD_CALLS = new Set(["require"]);
+
+/** Every call that reaches a file or a other program by name: the names an alias in the source can stand for. */
+const READER_CALLS = new Set([...READ_CALLS, ...SCAN_CALLS, ...SPAWN_CALLS]);
+
 /** Programs whose reading of this tree IS a derived population: `git` reads the index and the tree. */
 const INDEX_PROGRAMS = new Set(["git"]);
+
+/** The runtimes that execute this repository's own gate scripts: a command naming one of these is read by its file. */
+const JAVASCRIPT_RUNTIMES = new Set(["node", "node.exe", "bun", "bun.exe", "deno", "deno.exe"]);
 
 /** Node types whose text is data, not code: descending into them is how a gate starts reading prose. */
 const OPAQUE = new Set(["comment", "string", "template_string", "regex"]);
@@ -197,6 +222,48 @@ function calleeName(node) {
   return null;
 }
 
+/** `true` for `await import(url)`: the one call whose callee is a keyword, so it has no identifier to match a set on. */
+const isDynamicImport = (node) => node.childForFieldName("function")?.type === "import";
+
+/** The reader a value expression stands for: `readFileSync`, `fs.readFileSync`, or `null` for anything else. */
+function readerNamed(node) {
+  if (node === null) return null;
+  if (node.type === "identifier") return READER_CALLS.has(node.text) ? node.text : null;
+  const property = node.type === "member_expression" ? node.childForFieldName("property")?.text : null;
+  return property !== null && property !== undefined && READER_CALLS.has(property) ? property : null;
+}
+
+/**
+ * The names this file calls a reader by, mapped to the reader: `import { readFile as read }`, `const list =
+ * readdirSync`, `async function load(p, read = readFile)`. A gate does not have to spell the imported name at the call
+ * site, and two of them (`tools/generate-sbom.mjs`, `tools/audit-preset-macro-frequency.mjs`) read their whole
+ * population through a name bound this way - which the reading called `no_file_read_reachable` until it was followed.
+ */
+function readerAliases(tree) {
+  const aliases = new Map();
+  const visit = (node) => {
+    if (node.type === "import_specifier") {
+      const name = node.childForFieldName("name")?.text;
+      const alias = node.childForFieldName("alias")?.text;
+      if (name !== undefined && alias !== undefined && READER_CALLS.has(name)) aliases.set(alias, name);
+    } else if (
+      node.type === "variable_declarator" ||
+      node.type === "assignment_pattern" ||
+      node.type === "object_assignment_pattern"
+    ) {
+      const local = node.childForFieldName(node.type === "variable_declarator" ? "name" : "left");
+      const reader = readerNamed(node.childForFieldName("value") ?? node.childForFieldName("right"));
+      // `{ read = readFile } = {}` binds the reader as a destructured default: a dependency-injected reader, which is
+      // the same alias under a shaping node this reading has to name separately.
+      const bindsName = local?.type === "identifier" || local?.type === "shorthand_property_identifier_pattern";
+      if (bindsName && reader !== null) aliases.set(local.text, reader);
+    }
+    for (const child of node.namedChildren) visit(child);
+  };
+  visit(tree.rootNode);
+  return aliases;
+}
+
 /** The path-shaped literals inside an argument list, in source order, deduplicated. */
 function pathLiterals(argument, extensions) {
   const found = new Set();
@@ -243,6 +310,7 @@ async function evidenceIn({ root, file, extensions }) {
     reads: [],
     scans: [],
     spawns: [],
+    loads: [],
     tables: [],
     imports: [],
     programFiles: [],
@@ -253,12 +321,13 @@ async function evidenceIn({ root, file, extensions }) {
   const imports = importedNames(source);
   reading.imports = relativeImports(source);
   const tree = await parseJavaScript(source, file);
+  const aliases = readerAliases(tree);
   const comments = [];
   // A population written down as a table (`const FILES = ["a", "b"]`) is hand-listed even when the read call that
   // consumes it names a loop variable: only a MODULE-LEVEL table counts, because one inside a function body is that
   // function's own list and says nothing about what the gate reads.
   let inBody = 0;
-  const visit = (node, depth = 0) => {
+  const visit = (node, depth = 0, enclosing = null) => {
     if (node.type === "comment") {
       comments.push([node.startIndex, node.endIndex]);
       return;
@@ -277,35 +346,66 @@ async function evidenceIn({ root, file, extensions }) {
     }
     if (FUNCTION_BODIES.has(node.type)) {
       inBody += 1;
-      for (const child of node.namedChildren) visit(child, depth + 1);
+      const frame = functionFrame(node) ?? enclosing;
+      for (const child of node.namedChildren) visit(child, depth + 1, frame);
       inBody -= 1;
       return;
     }
+    // An arrow function assigned to a name takes that name: `const walk = (directory) => …` is the `walk` a caller
+    // hands its root to, so the frame is resolved here and its body visited under it.
+    const declaredFrame = node.type === "variable_declarator" ? functionFrame(node) : null;
+    const frame = declaredFrame ?? enclosing;
+    if (declaredFrame !== null) {
+      for (const child of node.childForFieldName("value").namedChildren) visit(child, depth + 1, frame);
+      return;
+    }
     if (node.type === "call_expression") {
-      const name = calleeName(node);
+      const named = calleeName(node);
       const argument = node.childForFieldName("arguments")?.text ?? "";
-      if (name !== null && SCAN_CALLS.has(name))
-        reading.scans.push({ file, call: name, argument, literals: pathLiterals(argument, extensions) });
+      // The reader the source CALLS may be a name it bound to the reader: `read(p)` where `read = readFile`.
+      const via = named === null ? undefined : aliases.get(named);
+      const name = READER_CALLS.has(named) ? named : (via ?? null);
+      const literals = pathLiterals(argument, extensions);
+      // The name the source CALLED the reader by, when it was not the reader's own: `read(p)` for `readFile`.
+      const calledAs = named !== name ? named : null;
+      // A read whose directory is the function's own parameter: named, so a reader can see what this cannot follow.
+      const first = node.childForFieldName("arguments")?.namedChildren[0];
+      const parameterRoot =
+        first?.type === "identifier" && frame?.parameters.includes(first.text) === true
+          ? { parameter: first.text, owner: frame.name }
+          : null;
+      if (isDynamicImport(node) || (name === null && LOAD_CALLS.has(named))) {
+        // A built-in is loaded by name, not read: `await import("node:fs/promises")` reaches no file here.
+        const [specifier] = quotedLiterals(argument);
+        if (specifier?.startsWith("node:") !== true)
+          reading.loads.push({
+            file,
+            call: isDynamicImport(node) ? "import" : named,
+            argument,
+            literals: literals.filter((path) => !path.startsWith("node:")),
+          });
+      } else if (name !== null && SCAN_CALLS.has(name))
+        reading.scans.push({ file, call: name, via: calledAs, argument, literals, root: parameterRoot });
       else if (name !== null && READ_CALLS.has(name))
         reading.reads.push({
           file,
           call: name,
+          via: calledAs,
           argument,
-          literals: pathLiterals(argument, extensions),
+          literals,
+          root: parameterRoot,
           fromImport: mentionedNames(argument).filter((word) => imports.has(word)),
         });
       else if (name !== null && SPAWN_CALLS.has(name)) {
         // The program is the first quoted string, whatever its shape: `spawnSync("git", …)` names a program, not a path.
         const [program] = quotedLiterals(argument);
-        reading.spawns.push({ file, call: name, argument, program: program ?? null });
+        reading.spawns.push({ file, call: name, via: calledAs, argument, program: program ?? null });
         // A program in this repository is a delegated reader, not a different reading: follow the file it runs.
-        const script = pathLiterals(argument, extensions).find(
-          (path) => existsSync(join(root, path)) && grammarWasmFor(path) !== null,
-        );
+        const script = literals.find((path) => existsSync(join(root, path)) && grammarWasmFor(path) !== null);
         if (script !== undefined) reading.programFiles.push(script);
       }
     }
-    for (const child of node.namedChildren) visit(child, depth + 1);
+    for (const child of node.namedChildren) visit(child, depth + 1, frame);
   };
   visit(tree.rootNode);
   reading.flags = zeroReadFlags(blankRanges(source, comments));
@@ -314,6 +414,26 @@ async function evidenceIn({ root, file, extensions }) {
 
 /** Node types that open a body: an array inside one is that function's own list, not the file's population. */
 const FUNCTION_BODIES = new Set(["arrow_function", "function", "function_expression", "method_definition"]);
+
+/**
+ * The name and parameters of the function a node sits in, for the one read shape this reading cannot follow: a walker
+ * that takes its directory as an argument. `readdirSync(directory)` inside `listSources(root)` reads whatever the gate
+ * hands `listSources`, and this reading does not carry a call graph to hand it anything - so it says which parameter it
+ * stopped at instead of printing a path list that is empty for 154 of the 381 gates. Measured 2026-11-16.
+ */
+function functionFrame(node) {
+  const declared = node.type === "variable_declarator" ? node.childForFieldName("name")?.text : undefined;
+  const body = node.type === "variable_declarator" ? node.childForFieldName("value") : node;
+  if (body === null || body === undefined || !FUNCTION_BODIES.has(body.type)) return null;
+  const parameters = body
+    .childForFieldName("parameters")
+    ?.namedChildren.filter((child) => child.type === "identifier")
+    .map((child) => child.text);
+  return {
+    name: body.childForFieldName("name")?.text ?? declared ?? null,
+    parameters: parameters ?? [],
+  };
+}
 
 /** The flags the zero-read verdict is read from, in the three shapes the repository already uses. */
 function emptyFlags() {
@@ -366,7 +486,7 @@ function resolveSpecifier({ root, file, specifier }) {
 async function closureEvidence({ root, entry, cache, extensions }) {
   const seen = new Set([entry]);
   const queue = [{ file: entry, depth: 0 }];
-  const reading = { files: [], reads: [], scans: [], spawns: [], tables: [], flags: emptyFlags() };
+  const reading = { files: [], reads: [], scans: [], spawns: [], loads: [], tables: [], flags: emptyFlags() };
   while (queue.length > 0 && seen.size <= MAX_CLOSURE_FILES) {
     const { file, depth } = queue.shift();
     if (!cache.has(file)) cache.set(file, await evidenceIn({ root, file, extensions }));
@@ -376,6 +496,7 @@ async function closureEvidence({ root, entry, cache, extensions }) {
     reading.reads.push(...evidence.reads);
     reading.scans.push(...evidence.scans);
     reading.spawns.push(...evidence.spawns);
+    reading.loads.push(...evidence.loads);
     reading.tables.push(...evidence.tables);
     for (const [key, value] of Object.entries(evidence.flags)) reading.flags[key] = reading.flags[key] || value;
     if (depth >= MAX_IMPORT_DEPTH) continue;
@@ -397,20 +518,35 @@ function namedPaths(entries) {
 }
 
 /**
+ * The suffix that says a call resolved its reader or its root through another name: `(as read)` for an alias, `(root
+ * is a parameter: listSources(root))` for a walker this reading cannot hand anything to. Silence when it resolved both.
+ */
+function describeRoot(entry) {
+  const parts = [];
+  if (entry.via) parts.push(`as ${entry.via}`);
+  if (entry.root)
+    parts.push(`root is ${entry.root.parameter}, a parameter of ${entry.root.owner ?? "an anonymous function"}`);
+  return parts.length === 0 ? "" : ` (${parts.join("); ")})`;
+}
+
+/**
  * Where the population comes from, for one set of evidence. `null` means this set names no read at all, so a caller
  * can fall back to the wider closure instead of calling the gate `unknown` for having delegated its reading.
  *
- * `authority`   a scan or an index read, or a path the file does not name itself (an imported table, a descriptor).
+ * `authority`   a scan or an index read, a path the file does not name itself (an imported table, a descriptor), or
+ *               a module it loads with `import()`/`require()`.
  * `hand-listed` every path it reads is a literal in its own closure.
  * `external`    the reading is a program this repository does not carry (`knip`, `eslint`, `dotnet test`, `jscpd`).
  */
 export function classifyReading(reading) {
-  if (reading.scans.length > 0)
+  if (reading.scans.length > 0) {
+    const [scan] = reading.scans;
     return {
       source: "authority",
-      because: `directory_scan:${reading.scans[0].file}:${reading.scans[0].call}`,
+      because: `directory_scan:${scan.file}:${scan.call}${describeRoot(scan)}`,
       reads: namedPaths(reading.scans),
     };
+  }
   const index = reading.spawns.find((spawn) => INDEX_PROGRAMS.has(spawn.program ?? ""));
   if (index !== undefined)
     return { source: "authority", because: `index_read:${index.file}:${index.call}(${index.program})`, reads: [] };
@@ -442,7 +578,7 @@ export function classifyReading(reading) {
   if (reading.reads.length > 0)
     return {
       source: "authority",
-      because: `path_not_written_in_this_reading:${reading.reads[0].file}:${reading.reads[0].call}`,
+      because: `path_not_written_in_this_reading:${reading.reads[0].file}:${reading.reads[0].call}${describeRoot(reading.reads[0])}`,
       reads: [],
     };
   if (reading.spawns.length > 0) {
@@ -461,6 +597,11 @@ export function classifyReading(reading) {
       reads: [],
     };
   }
+  // A file loaded into this process rather than opened: the exports of `dist/index.js` ARE the population of a gate
+  // that asserts what that barrel exports, and this is the call through which such a gate was read as reading nothing.
+  const loads = reading.loads ?? [];
+  if (loads.length > 0)
+    return { source: "authority", because: `module_load:${loads[0].file}:${loads[0].call}`, reads: namedPaths(loads) };
   return { source: "unknown", because: "no_file_read_reachable", reads: [] };
 }
 
@@ -497,6 +638,24 @@ async function judgeGate({ root, gate, cache, extensions }) {
   // delegates its reading to a module: a shared helper's scan must not relabel a gate that reads a table of its own.
   const own = classifyReading(reading.entry ?? reading);
   const classified = own.source === "unknown" ? classifyReading(reading) : own;
+  // `depcruise --config … host/src/main.ts` names a file here, and that file decides nothing: the gate's verdict is the
+  // published program's. A command whose program is not a JavaScript runtime is decided elsewhere however many of its
+  // arguments exist in this repository, so a reading that reached no file through the script is `external`, not
+  // `unknown`. The program is the first word of the last chained segment: `cd host && bun test …` is `bun`.
+  const program = gate.command
+    .split(/(?:&&|\|\||[;|])/u)
+    .map((segment) => segment.trim().split(/\s+/u)[0])
+    .filter((word) => word !== undefined && word !== "")
+    .at(-1);
+  if (classified.source === "unknown" && !JAVASCRIPT_RUNTIMES.has(program))
+    return {
+      ...base,
+      closure: reading.files,
+      source: "external",
+      because: `runs_a_program_this_repository_does_not_carry:${program}`,
+      reads: [],
+      zeroRead: "unseen",
+    };
   return {
     ...base,
     closure: reading.files,

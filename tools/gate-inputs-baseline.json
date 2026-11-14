@@ -9,6 +9,7 @@
     "test:stardew-fixture-profile :: .stardew-fixture-profile.lock, transaction.json",
     "test:stardew-fixture-roots :: launch-ladder-live.mjs, launch-stardew-navigation-fixture.ps1, start-farmhand-launcher.ps1",
     "test:stardew-fixture-transaction-inspector :: .stardew-fixture-profile.lock, transaction.json",
+    "test:stardew-static-companion-fixture :: phrases.zh-CN.v1.json, scenarios.v1.json",
     "test:stardew-test-shape :: RefusalLayerNamingTests.cs, ToolPreconditionUniformityTests.cs",
     "test:stardew-wire-agreement :: bridge-v1.schema.json, integrations/stardew/action-development/contracts/generated/action-surface.v1.json",
     "test:vendor-build-artifacts :: dist/index.d.ts, dist/index.js, dist/tavern/index.d.ts, dist/tavern/index.js",

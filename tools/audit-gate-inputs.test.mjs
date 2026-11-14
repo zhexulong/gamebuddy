@@ -19,7 +19,12 @@
  *   3. the pair that cannot tell "nothing to check" from "all good" is the worst class, its baseline row names the
  *      population the gate hand-lists, and the ratchet turns in both directions;
  *   4. the CLI: a new member of that class exits 1 and names it, a recorded one exits 0, a stale row exits 1, and a tree
- *      with no gate in it exits 2 rather than passing.
+ *      with no gate in it exits 2 rather than passing;
+ *   5. the reader is not always called by the name it was imported under, and it is not always a reader: `read =`
+ *      `readFile` (injected or aliased), `await import(url)` (loaded, not opened), and a command whose program this
+ *      repository does not carry (`depcruise`) - each of which was measured as reading NOTHING before this case
+ *      existed, and each of which the real tree uses today (`tools/generate-sbom.mjs`, `tools/check-dist-runtime-
+ *      exports.mjs`, `check:host-module-graph`).
  */
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
@@ -349,4 +354,111 @@ test("the two gates the red-proof ledger calls unassessed are external here, nev
     assert.equal(gate.source, "external", `${id} is external`);
     assert.equal(gate.zeroRead, "unseen", `${id} is unseen rather than green-with-zero`);
   }
+});
+
+test("a reader the gate binds to another name is read through the name it calls", async (t) => {
+  const root = fixtureTree(t, {
+    "package.json": scripts([
+      ["check:injected", "node tools/check-injected.mjs"],
+      ["check:aliased-import", "node tools/check-aliased-import.mjs"],
+      ["check:loaded", "node tools/check-loaded.mjs"],
+      ["check:builtin", "node tools/check-builtin.mjs"],
+    ]),
+    "host/src/a.ts": "export const a = 1;\n",
+    // A reader injected as a destructured parameter default: the call site says `read`, the reader is `readFile`.
+    "tools/check-injected.mjs": `import { readFile } from "node:fs/promises";
+async function load(path, { read = readFile } = {}) {
+  return read(path, "utf8");
+}
+const source = await load("host/src/a.ts");
+process.stdout.write(JSON.stringify({ gate: "injected", examined: source.length }) + "\\n");
+`,
+    // The same, imported under another name.
+    "tools/check-aliased-import.mjs": `import { readFileSync as slurp } from "node:fs";
+const source = slurp("host/src/a.ts", "utf8");
+process.stdout.write(JSON.stringify({ gate: "aliased-import", examined: source.length }) + "\\n");
+`,
+    // A module LOADED rather than opened: what `host/src/a.ts` exports is the population.
+    "tools/check-loaded.mjs": `import { pathToFileURL } from "node:url";
+const loaded = await import(pathToFileURL("host/src/a.ts").href);
+process.stdout.write(JSON.stringify({ gate: "loaded", examined: Object.keys(loaded).length }) + "\\n");
+`,
+    // A built-in loaded by name reaches no file here, so this gate still reads nothing.
+    "tools/check-builtin.mjs": `const { readFile } = await import("node:fs/promises");
+process.stdout.write(JSON.stringify({ gate: "builtin", examined: typeof readFile }) + "\\n");
+`,
+  });
+  const { byId } = await readingOf(root);
+
+  // Namespace ignored: the reader is the reader, and the verdict is `green-with-zero` about a population this reading
+  // now names, not about an empty set of nothing.
+  assert.equal(byId.get("check:injected").source, "authority");
+  assert.equal(
+    byId.get("check:injected").because,
+    "path_not_written_in_this_reading:tools/check-injected.mjs:readFile (as read)",
+  );
+  assert.equal(byId.get("check:injected").zeroRead, "green-with-zero");
+
+  assert.equal(byId.get("check:aliased-import").source, "authority");
+  assert.deepEqual(byId.get("check:aliased-import").reads, ["host/src/a.ts"]);
+
+  // A load is a read: this gate reports a population of one file's exports, and before this case it reported nothing.
+  assert.equal(byId.get("check:loaded").source, "authority");
+  assert.equal(byId.get("check:loaded").because, "module_load:tools/check-loaded.mjs:import");
+
+  assert.equal(byId.get("check:builtin").source, "unknown");
+  assert.equal(byId.get("check:builtin").because, "no_file_read_reachable");
+});
+
+test("a scan whose root is a parameter names the parameter instead of naming nothing", async (t) => {
+  const root = fixtureTree(t, {
+    "package.json": scripts([["check:walker", "node tools/check-walker.mjs"]]),
+    "host/src/a.ts": "export const a = 1;\n",
+    // The shape 21 gates in this tree use: an exported walker whose directory arrives as an argument.
+    "tools/check-walker.mjs": `import { readdirSync } from "node:fs";
+export function listSources(root) {
+  const files = [];
+  const walk = (directory) => {
+    for (const entry of readdirSync(directory, { withFileTypes: true })) files.push(entry.name);
+  };
+  walk(root);
+  return files;
+}
+const files = listSources("host/src");
+process.stdout.write(JSON.stringify({ gate: "walker", examined: files.length }) + "\\n");
+`,
+  });
+  const { byId } = await readingOf(root);
+  const gate = byId.get("check:walker");
+
+  assert.equal(gate.source, "authority");
+  assert.equal(gate.zeroRead, "green-with-zero");
+  // The reading says where it stopped rather than printing an empty path list that reads like a gate over nothing.
+  assert.match(
+    gate.because,
+    /^directory_scan:tools\/check-walker\.mjs:readdirSync \(root is directory, a parameter of walk\)$/u,
+  );
+  assert.deepEqual(gate.reads, []);
+});
+
+test("a command decided by a program this repository does not carry is external, not unknown", async (t) => {
+  const root = fixtureTree(t, {
+    "package.json": scripts([
+      ["check:cruise", "depcruise --config .dependency-cruiser.cjs host/src/main.ts"],
+      ["check:chained", "cd host && node --test src/a.test.mjs"],
+    ]),
+    "host/src/main.ts": "export const main = 1;\n",
+    "host/src/a.test.mjs": "process.stdout.write('a test that reads no file\\n');\n",
+  });
+  const { byId } = await readingOf(root);
+
+  // The named files are arguments to `depcruise`: its verdict is the published program's, so the reading says so
+  // instead of calling a gate over four files a gate that reads nothing.
+  assert.equal(byId.get("check:cruise").source, "external");
+  assert.equal(byId.get("check:cruise").because, "runs_a_program_this_repository_does_not_carry:depcruise");
+  assert.equal(byId.get("check:cruise").zeroRead, "unseen");
+
+  // `cd host && node --test …` is `node` running this repository's own file: the chain is a shell detail, not a program.
+  assert.equal(byId.get("check:chained").source, "unknown");
+  assert.equal(byId.get("check:chained").because, "no_file_read_reachable");
 });
