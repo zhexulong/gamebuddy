@@ -59,14 +59,6 @@
 /* Layer 1: Primitive Tokens */
 :root,
 :root[data-theme="dark"] {
-  /* The appearance the platform draws its own widgets in - an `<option>` popup, a scrollbar, a
-   date picker's calendar - for the widgets no rule of ours reaches. It is stated per token root
-   rather than once as `light dark` because this product's appearance is `data-theme`, not
-   `prefers-color-scheme`: `light dark` defers the choice to the media query, so a player who picks
-   the light appearance on a machine set to dark gets a dark popup on a light page (measured: the
-   document then reports `light dark` in both cells). `appearance.ts` resolves the choice and writes
-   the attribute; these two roots state what follows from it. */
-  color-scheme: dark;
   --motion-ease-out: cubic-bezier(0.23, 1, 0.32, 1);
   --motion-ease-drawer: cubic-bezier(0.32, 0.72, 0, 1);
   /* The plan's own motion: 150-200 ms, one spring-like ease, native CSS only. */
@@ -213,8 +205,6 @@
    light theme's token table and holds every pair to the same AA floor as the
    dark set. */
 :root[data-theme="light"] {
-  /* The platform's own widgets, in the appearance this root paints. */
-  color-scheme: light;
   --surface-canvas: #e9e2d6;
   --surface-panel: #f6f1e9;
   --surface-card: #fdfaf4;
@@ -342,6 +332,22 @@
     -moz-osx-font-smoothing: grayscale;
     font-synthesis: none;
     text-rendering: optimizeLegibility;
+  }
+
+  /* The appearance the platform draws its OWN widgets in - an `<option>` popup, a scrollbar, a
+   date picker's calendar - for the widgets no rule of ours reaches. It follows `data-theme`
+   rather than stating `light dark`: this product's appearance is decided by `appearance.ts`, which
+   resolves the player's choice against the system's answer and writes the attribute, so a player
+   who picks the light appearance on a machine set to dark must not get a dark popup. Measured:
+   `light dark` reports itself in both cells and leaves the platform to decide. It is written in
+   this layer rather than on the unlayered token roots above, because it is not a token: those
+   roots stay custom properties only. */
+  :root {
+    color-scheme: dark;
+  }
+
+  :root[data-theme="light"] {
+    color-scheme: light;
   }
 
   /* The mount frame, and the first link of the height chain.
