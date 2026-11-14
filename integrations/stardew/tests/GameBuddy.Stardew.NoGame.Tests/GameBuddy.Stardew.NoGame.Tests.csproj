@@ -75,6 +75,7 @@
     <Compile Include="..\GameBuddy.Stardew.Integration.Tests\DispositionProjectionSourceShapeTests.cs" Link="DispositionProjectionSourceShapeTests.cs" />
     <Compile Include="..\GameBuddy.Stardew.Integration.Tests\EnterExitWarpActionSourceShapeTests.cs" Link="EnterExitWarpActionSourceShapeTests.cs" />
     <Compile Include="..\GameBuddy.Stardew.Integration.Tests\EnterMineLadderSourceShapeTests.cs" Link="EnterMineLadderSourceShapeTests.cs" />
+    <Compile Include="..\GameBuddy.Stardew.Integration.Tests\EngineParityHarness.cs" Link="EngineParityHarness.cs" />
     <Compile Include="..\GameBuddy.Stardew.Integration.Tests\ExecutionArgumentWireCoverageTests.cs" Link="ExecutionArgumentWireCoverageTests.cs" />
     <Compile Include="..\GameBuddy.Stardew.Integration.Tests\FishingCatchableReaderTests.cs" Link="FishingCatchableReaderTests.cs" />
     <Compile Include="..\GameBuddy.Stardew.Integration.Tests\FixedInteractionPointWholeMapSourceShapeTests.cs" Link="FixedInteractionPointWholeMapSourceShapeTests.cs" />

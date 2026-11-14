@@ -76,6 +76,9 @@ DoorTargetsInteriorExitTests.cs	game	Xna, Netcode, StardewValley, GameLocation
 EdgeExitWarpSourceTests.cs	game	StardewValley
 EnterExitAdjacentExitRefusalTests.cs	game	Xna, Netcode, StardewModdingAPI, StardewValley, Game1, Farmer, LocationRequest, GameLocation
 EnterExitDoorGateTests.cs	mod-assembly	Handlers
+EngineParityCandidateScan.cs	game	Microsoft.Xna.Framework (Xna, from typeof(Point) in the offset-table reflection over the Mod's assemblies)
+EngineParityHarnessTests.cs	game	EngineParityRegistry, EngineParityCandidateScan (both rows below; the registry holds the entries this gate runs)
+EngineParityRegistry.cs	game	Microsoft.Xna.Framework (Xna), StardewValley (GameData.Locations, Tools), SpawnFishData, Vector2, Farmer, Tool, Hoe
 ExecutionIdempotencyIdentityTests.cs	mod-assembly	Netcode, StardewValley, BridgeHello, ExecutionManager, BridgeSession
 ExecutionIdentityLineageTests.cs	mod-assembly	ExecutionManager, IModGlobalDataPersistence, FarmhandExecutionJournalState
 ExecutionReceiptStoreIdlePublicationTests.cs	mod-assembly	ExecutionReceiptStore
@@ -88,6 +91,7 @@ FarmhandForEachFamilyDriftTests.cs	mod-assembly	TargetFamilyCompletenessTests@Ta
 FarmhandTypedReceiptContractTests.cs	mod-assembly	Handlers
 FeedTroughTargetCompositionTests.cs	mod-assembly	Netcode, StardewValley, Farmer, Game1, AnimalHouse, ExecutionManager, xTile
 FishingActionTests.cs	mod-assembly	Handlers, Netcode, StardewValley, Farmer, Tool
+FishingCatchableOverrideClassificationTests.cs	game	StardewValley (typeof(StardewValley.GameLocation) at :60 - the population is the engine's own location classes)
 FixedInteractionPointMineMappingTests.cs	reference-tree	StardewValleyDecompiled (MineShaft.cs :3057 switch (getTileIndexAt(tileLocation, "Buildings", "mine")), the only authority for which mine tile index is a fixed interaction point); /ref/ is gitignored, so a hosted checkout has no reference tree
 FixedInteractionPointMineTileSourceShapeTests.cs	reference-tree	StardewValleyDecompiled (MineShaft.cs :3053-3124, the checkAction switch); /ref/ is gitignored, so a hosted checkout has no reference tree
 FixedInteractionPointSnapshotTests.cs	mod-assembly	ExecutionManager, Farmer, GameLocation, Game1, Netcode, Xna, xTile
@@ -220,6 +224,7 @@ ReturnedReceiptIdentityTests.cs	mod-assembly	ExecutionManager, TargetFamilyWorld
 TerminalIdlePublicationTests.cs	mod-assembly	ExecutionManager, ExecutionTrace, FarmhandCapabilityPublication
 TerminalReceiptObservabilityTests.cs	mod-assembly	BridgeHello, BridgeSession, ExecutionManager
 TileAreaQueryTests.cs	game	Xna, StardewValley
+TileOccupantVocabularyTests.cs	game	StardewValley (using at :7, Game1.floorPathData and TerrainFeatures.ResourceClump at :129/:157), TargetFamilyCompletenessTests@TargetFamilyCompletenessTests.cs (:117/:160)
 TileOpenedShopTests.cs	mod-assembly	ExecutionManager
 TileTargetSeamBranchTests.cs	mod-assembly	ExecutionManager
 TillSoilRefusalNamingTests.cs	mod-assembly	Xna, ExecutionManager, Farmer, Game1, GameLocation, Netcode, StardewValley, Tool, FarmhandCapabilityPublication
