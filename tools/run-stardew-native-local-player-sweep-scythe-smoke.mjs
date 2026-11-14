@@ -1,9 +1,6 @@
 import { observeFresh } from "./lib/stardew-native-smoke-harness-v1.mjs";
-import {
-  defineSmokeScenario,
-  runSmokeScenarioMain,
-  waitForNavigationTerminal,
-} from "./lib/native-local-runner-scaffold.mjs";
+import { defineSmokeScenario, runSmokeScenarioMain } from "./lib/native-local-runner-scaffold.mjs";
+import { waitForNavigationTerminal } from "./lib/native-local-runner-primitives.mjs";
 
 const ACTION = "sweep_scythe";
 /** The action's own success word (`ExecuteSweepScythe`: `scythe_sweep_cut` only when the named tile AND every sweepable moved). */

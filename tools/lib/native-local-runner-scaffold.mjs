@@ -20,12 +20,19 @@
  *
  * THE SIX STEPS THE TEMPLATE OWNS, in the order every copy performed them:
  *
- *   1. the fixture-config refusal           (`validateRunnerConfig`)
+ *   1. the fixture-config refusal           (`validateNativeLocalFixtureConfig`, from the primitives module)
  *   2. observe-fresh + required capabilities (`observe`)
  *   3. the requestId mint and the execute    (`submit`)
  *   4. the terminal wait and its identity    (`settle`)
- *   5. the evidence parse and the stale reread (`evidence`, `reread`)
+ *   5. the evidence parse and the stale reread (`parseEvidence`, from the primitives module; `reread`)
  *   6. the bootstrap, the print and the exit code (`runSmokeScenarioMain`)
+ *
+ * TWO LAYERS, and this file is only the second (measured 2026-11-15). Asking every runner "does your WHOLE lifecycle match
+ * this template?" got 87 noes out of 110 - and most of those noes were about how many frames a runner sends, which has
+ * nothing to do with the fact that `parseEvidence` was spelled privately in 49 of them, `parseStrictEvidence` in 32 and the
+ * fixture-config refusal in 29. Those three, the tile predicates and the connect/navigation wait are L1:
+ * `native-local-runner-primitives.mjs`, imported by every runner whether or not its lifecycle matches this file. What is
+ * left here is L2 - the single-shot executor - and a definition supplies only what is about its action.
  *
  * WHICH OF THE SIX A DEFINITION MAY SKIP. Two, and only by declaration.
  *
@@ -67,62 +74,25 @@
  */
 import {
   assertRequiredCapabilities,
-  connectNativeLocalClient,
-  delay,
   executeFresh,
-  NativeSmokeHarnessError,
   observeFresh,
   readNativeClientConfig,
   summarizeReceipt,
-  validateNativeLocalFixturePolicy,
   waitForFreshSnapshot,
   waitForTerminal,
 } from "./stardew-native-smoke-harness-v1.mjs";
-import { loadHostTestModule } from "./host-test-module.mjs";
+import {
+  connectWithRetry,
+  DEFAULT_CONNECT_TIMEOUT_MS,
+  parseEvidence,
+  validateNativeLocalFixtureConfig,
+} from "./native-local-runner-primitives.mjs";
 
 /** The topology every native-local smoke run reports, spelled once. */
 export const NATIVE_LOCAL_TOPOLOGY = "native_local_player_fixture";
 
 /** The window every copy of `execute` passed to `executeFresh`, and the harness's published watchdog caps it. */
 export const REQUEST_TIMEOUT_MS = 30_000;
-
-/** The game creates its named pipe asynchronously after launch, so a first connect legitimately fails with ENOENT. */
-export const DEFAULT_CONNECT_TIMEOUT_MS = 15_000;
-
-/**
- * `pair.indexOf("=")` evidence parsing, verbatim from the six copies that spell it
- * (`a349cc48b39c`; e.g. `run-stardew-native-local-player-enter-exit-warp-action-smoke.mjs:220`):
- *
- *     function parseEvidence(evidence) {
- *       const detail = typeof evidence?.detail === "string" ? evidence.detail : "";
- *       if (detail.length === 0) throw new Error("native_local_evidence_empty");
- *       return Object.fromEntries(
- *         detail
- *           .split(";")
- *           .map((pair) => {
- *             const index = pair.indexOf("=");
- *             return index > 0 ? [pair.slice(0, index), pair.slice(index + 1)] : null;
- *           })
- *           .filter(Boolean),
- *       );
- *     }
- *
- * `index > 0` is the rule that matters and is kept as it was: a leading `=` produces a pair with no name, which is a
- * malformed detail rather than a field called "".
- */
-export function parseEvidence(evidence) {
-  const detail = typeof evidence?.detail === "string" ? evidence.detail : "";
-  if (detail.length === 0) throw new Error("native_local_evidence_empty");
-  return Object.fromEntries(
-    detail
-      .split(";")
-      .map((pair) => {
-        const index = pair.indexOf("=");
-        return index > 0 ? [pair.slice(0, index), pair.slice(index + 1)] : null;
-      })
-      .filter(Boolean),
-  );
-}
 
 /**
  * The blocked report's snapshot projection, from the copies that spell it by hand (`34af36fc0abf`; e.g.
@@ -154,38 +124,6 @@ export function projectSnapshotForBlockedReport(snapshot, { collections = [], sc
   for (const name of scalars) projection[name] = snapshot[name] ?? null;
   for (const name of collections) projection[name] = snapshot[name] ?? [];
   return projection;
-}
-
-/**
- * The fixture-config refusal, from the group `02a75fa47719` grew (`run-stardew-native-local-player-clear-hoedirt-smoke.mjs:169`,
- * `run-stardew-native-local-player-sweep-scythe-smoke.mjs:211`, and seventeen more):
- *
- *     const fixture = value?.NativeLocalPlayerFixture;
- *     if (fixture?.Enable !== true || fixture.Bootstrap?.Enable === true || fixture.FixtureScenario !== SCENARIO)
- *       throw new Error("native_local_<action>_fixture_config_invalid");
- *     if (
- *       value.Portfolio?.Enable === true ||
- *       value.HostAutomation?.Enable === true ||
- *       value.HostFarmhandProvisioning?.Enable === true ||
- *       value.FarmhandProvisioner?.Enable === true
- *     )
- *       throw new Error("native_local_<action>_action_policy_invalid");
- *
- * The two refusal codes keep the spelling the majority of the nineteen copies use; one copy abbreviated the second to
- * `_policy_invalid`, which is the kind of drift a shared refusal cannot express and therefore cannot keep making.
- */
-export function validateRunnerConfig(value, { action, fixtureScenario, requiredActions, experimentalActions }) {
-  const fixture = value?.NativeLocalPlayerFixture;
-  if (fixture?.Enable !== true || fixture.Bootstrap?.Enable === true || fixture.FixtureScenario !== fixtureScenario)
-    throw new Error(`native_local_${action}_fixture_config_invalid`);
-  if (
-    value.Portfolio?.Enable === true ||
-    value.HostAutomation?.Enable === true ||
-    value.HostFarmhandProvisioning?.Enable === true ||
-    value.FarmhandProvisioner?.Enable === true
-  )
-    throw new Error(`native_local_${action}_action_policy_invalid`);
-  validateNativeLocalFixturePolicy(value, { requiredActions, experimentalActions });
 }
 
 /**
@@ -225,85 +163,6 @@ async function submit(client, trace, prefix, phase, action, args, snapshot, time
   });
   trace.push({ phase, action, args, receipt: summarizeReceipt(receipt) });
   return receipt;
-}
-
-/**
- * Connect-with-retry, from `e7992f0a75cc` (`run-stardew-native-local-player-open-geode-smoke.mjs:228` and three more):
- *
- *     async function connectWithRetry(config, timeoutMs) {
- *       const deadline = Date.now() + timeoutMs;
- *       let lastError;
- *       while (Date.now() < deadline) {
- *         try {
- *           return await connectNativeLocalClient(config, { loadModule: loadHostTestModule });
- *         } catch (error) {
- *           lastError = error;
- *           if (!(error && typeof error === "object" && error.code === "ENOENT")) throw error;
- *           await delay(250);
- *         }
- *       }
- *       throw lastError ?? new Error("native_local_bridge_connect_timeout");
- *     }
- */
-export async function connectWithRetry(config, timeoutMs = DEFAULT_CONNECT_TIMEOUT_MS) {
-  const deadline = Date.now() + timeoutMs;
-  let lastError;
-  while (Date.now() < deadline) {
-    try {
-      return await connectNativeLocalClient(config, { loadModule: loadHostTestModule });
-    } catch (error) {
-      lastError = error;
-      if (!(error && typeof error === "object" && error.code === "ENOENT")) throw error;
-      await delay(250);
-    }
-  }
-  throw lastError ?? new Error("native_local_bridge_connect_timeout");
-}
-
-/**
- * The navigation wait a `prepare` step needs, from the three copies that spell it
- * (`run-stardew-native-local-player-break-resource-clump-smoke.mjs:345`,
- * `run-stardew-native-local-player-clear-debris-smoke.mjs:303`, and the sweep-scythe runner this template was extracted
- * from):
- *
- *     async function waitForNavigationTerminal(client, receipts, accepted, predicate, timeoutMs) {
- *       let terminal;
- *       try {
- *         terminal = await waitForTerminal(receipts, accepted, timeoutMs);
- *       } catch (error) {
- *         if (error instanceof NativeSmokeHarnessError) throw new Error(`navigation_timeout:${accepted.executionId}`);
- *         throw error;
- *       }
- *       if (terminal.state !== "succeeded") throw new Error(`navigation_failed:${terminal.reasonCode}`);
- *       snapshot = await waitForFreshSnapshot(client, { minRevision: terminal.revision, timeoutMs, requireActionable: true, check: predicate });
- *       return { receipt: terminal, snapshot };
- *     }
- *
- * The harness's own timeout codes are mapped back to the runner's navigation vocabulary, so a caller's bounded
- * fixture-approach fallback keeps its decision surface instead of learning a second set of error names.
- */
-export async function waitForNavigationTerminal(client, receipts, accepted, predicate, timeoutMs) {
-  let terminal;
-  try {
-    terminal = await waitForTerminal(receipts, accepted, timeoutMs);
-  } catch (error) {
-    if (error instanceof NativeSmokeHarnessError) throw new Error(`navigation_timeout:${accepted.executionId}`);
-    throw error;
-  }
-  if (terminal.state !== "succeeded") throw new Error(`navigation_failed:${terminal.reasonCode}`);
-  let snapshot;
-  try {
-    snapshot = await waitForFreshSnapshot(client, {
-      minRevision: terminal.revision,
-      timeoutMs,
-      requireActionable: true,
-      check: predicate,
-    });
-  } catch (error) {
-    if (error instanceof NativeSmokeHarnessError) throw new Error(`navigation_timeout:${accepted.executionId}`);
-    throw error;
-  }
-  return { receipt: terminal, snapshot };
 }
 
 /** A definition that would fail at live time is refused at import time, naming the field. */
@@ -368,7 +227,13 @@ export function defineSmokeScenario(definition) {
     let lastSnapshot = null;
     try {
       if (refusesConfig)
-        validateRunnerConfig(config, { action, fixtureScenario, requiredActions, experimentalActions });
+        validateNativeLocalFixtureConfig(config, {
+          vocabulary: "action_prefixed",
+          action,
+          fixtureScenario,
+          requiredActions,
+          experimentalActions,
+        });
 
       let snapshot = await observeFresh(client, { actionable: true });
       lastSnapshot = snapshot;
