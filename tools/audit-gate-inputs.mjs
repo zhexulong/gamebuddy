@@ -194,9 +194,6 @@ const INDEX_PROGRAMS = new Set(["git"]);
 /** The runtimes that execute this repository's own gate scripts: a command naming one of these is read by its file. */
 const JAVASCRIPT_RUNTIMES = new Set(["node", "node.exe", "bun", "bun.exe", "deno", "deno.exe"]);
 
-/** Node types whose text is data, not code: descending into them is how a gate starts reading prose. */
-const OPAQUE = new Set(["comment", "string", "template_string", "regex"]);
-
 /** A file whose evidence is folded into a gate's reading: the entry file plus its relative imports. */
 const MAX_CLOSURE_FILES = 24;
 const MAX_IMPORT_DEPTH = 2;
