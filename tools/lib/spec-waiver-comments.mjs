@@ -175,7 +175,7 @@ export function commentBlocksOf(source) {
         lines: text.split("\n").length,
         text: text.trim(),
       });
-      index = stop + 1;
+      index = stop + 2;
     } else {
       index = pastNonComment(source, index);
     }

@@ -114,6 +114,16 @@ test("the two halves of a multi-line waiver are one comment, which is the only w
   assert.equal(classifyComment("drops focus to <body>").isWaiver, false, "a denial alone is not a waiver");
 });
 
+test("an inline block comment does not swallow the rest of its line", () => {
+  const body =
+    '  const bound = 1 /* skip link */ + document.querySelectorAll(".nav-button").length + 1 /* the transcript region */;';
+  assert.deepEqual(
+    commentBlocksOf(journey(body)).map((block) => block.text),
+    ["skip link", "the transcript region"],
+    "the `/` that closes the first comment is not the start of a regex literal",
+  );
+});
+
 test("a declared waiver whose product code is still there is held, not reported", () => {
   const measured = reading(
     withDrawer(
