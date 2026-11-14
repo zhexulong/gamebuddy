@@ -549,8 +549,7 @@ internal sealed partial class ExecutionManager
                 + $"pan_output_overflow={overflowPending.ToString().ToLowerInvariant()};"
                 + $"inventory_slots_before={occupiedBefore.ToString(CultureInfo.InvariantCulture)};inventory_slots_after={occupiedAfter.ToString(CultureInfo.InvariantCulture)};"
                 + $"inventory_units_before={unitsBefore.ToString(CultureInfo.InvariantCulture)};inventory_units_after={unitsAfter.ToString(CultureInfo.InvariantCulture)}";
-            state = panned ? ExecutionState.Succeeded : ExecutionState.Uncertain;
-            reasonCode = panned ? "ore_panned" : "pan_postcondition_unavailable";
+            (state, reasonCode) = PostconditionVerdict(panned, "ore_panned", "pan_postcondition_unavailable");
         }
         finally
         {
@@ -882,12 +881,7 @@ internal sealed partial class ExecutionManager
             + $"mail_salvage_debris_units={salvagedToDebrisUnits.ToString(CultureInfo.InvariantCulture)};"
             + $"inventory_slots_before={occupiedBefore.ToString(CultureInfo.InvariantCulture)};inventory_slots_after={occupiedAfter.ToString(CultureInfo.InvariantCulture)};"
             + $"inventory_units_before={unitsBefore.ToString(CultureInfo.InvariantCulture)};inventory_units_after={unitsAfter.ToString(CultureInfo.InvariantCulture)}";
-        return this.RememberTerminal(
-            requestId,
-            executionId,
-            claimed ? ExecutionState.Succeeded : ExecutionState.Uncertain,
-            claimed ? "mail_claimed" : "mail_claim_not_observed",
-            evidence);
+        return this.SettlePostcondition(requestId, executionId, claimed, "mail_claimed", "mail_claim_not_observed", evidence);
     }
 
     /// <summary>

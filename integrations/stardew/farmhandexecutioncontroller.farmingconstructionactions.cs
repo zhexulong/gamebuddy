@@ -84,8 +84,7 @@ internal sealed partial class ExecutionManager
             int after = wateringCan.WaterLeft;
             bool succeeded = ReferenceEquals(Game1.player.Items[selection.Slot], wateringCan) && before < max && after == max;
             evidence = $"target={expectedTargetId};can={wateringCan.QualifiedItemId};water_before={before};water_after={after};water_max={max};stamina_before={staminaBefore.ToString("0.####", CultureInfo.InvariantCulture)};stamina_after={staminaAfter.ToString("0.####", CultureInfo.InvariantCulture)};stamina_delta={staminaDelta.ToString("0.####", CultureInfo.InvariantCulture)};expected_stamina_cost={expectedStaminaCost.ToString("0.####", CultureInfo.InvariantCulture)}";
-            state = succeeded ? ExecutionState.Succeeded : ExecutionState.Uncertain;
-            reasonCode = succeeded ? "watering_can_refilled" : "watering_can_refill_postcondition_unavailable";
+            (state, reasonCode) = PostconditionVerdict(succeeded, "watering_can_refilled", "watering_can_refill_postcondition_unavailable");
         }
         finally
         {
@@ -553,8 +552,6 @@ internal sealed partial class ExecutionManager
         bool inventoryDecremented = afterCount == beforeCount - 1;
         bool validFenceHealth = float.IsFinite(health) && float.IsFinite(maxHealth) && health > 0f && maxHealth >= health;
         bool succeeded = placementHandled && sourceEmptyBefore && isFence && !isGate && validFenceHealth && inventoryDecremented;
-        ExecutionState state = succeeded ? ExecutionState.Succeeded : ExecutionState.Uncertain;
-        string reasonCode = succeeded ? "wood_fence_placed" : "wood_fence_postcondition_unavailable";
         if (succeeded)
         {
             this.woodFenceResultTarget = new BridgeWoodFenceResultTarget(expectedTargetId, specification.Location, slot, targetX, targetY, "(O)322", RequireDisplayName("(O)322"), IsFence: true, IsGate: false, health, maxHealth);
@@ -564,7 +561,7 @@ internal sealed partial class ExecutionManager
             this.woodFenceResultDay = Game1.Date.TotalDays;
         }
         string evidence = $"source=(O)322;location={specification.Location};x={targetX};y={targetY};target={expectedTargetId};item=(O)322;slot={slot};source_empty_before={sourceEmptyBefore.ToString().ToLowerInvariant()};is_fence={isFence.ToString().ToLowerInvariant()};is_gate={isGate.ToString().ToLowerInvariant()};health={health.ToString(CultureInfo.InvariantCulture)};max_health={maxHealth.ToString(CultureInfo.InvariantCulture)};inventory_before={beforeCount};inventory_after={afterCount}";
-        return this.RememberTerminal(requestId, executionId, state, reasonCode, evidence);
+        return this.SettlePostcondition(requestId, executionId, succeeded, "wood_fence_placed", "wood_fence_postcondition_unavailable", evidence);
     }
 
     public LocalExecutionReceipt RequestLocalPlaceCrabPot(string requestId, int slot, int targetX, int targetY, string expectedQualifiedItemId, string expectedTargetId, long requestedDeadlineMs) =>
@@ -636,8 +633,6 @@ internal sealed partial class ExecutionManager
             : BuildCrabPotOverlayFacts(crabPot);
         bool succeeded = placementHandled && crabPot is not null && crabPot.QualifiedItemId == "(O)710"
             && crabPot.owner.Value == Game1.player.UniqueMultiplayerID && validOffset && afterCount == beforeCount - 1;
-        ExecutionState state = succeeded ? ExecutionState.Succeeded : ExecutionState.Uncertain;
-        string reasonCode = succeeded ? "crab_pot_placed" : "crab_pot_postcondition_unavailable";
         if (succeeded)
         {
             this.crabPotResultTarget = new BridgeCrabPotResultTarget(expectedTargetId, specification.Location, slot, targetX, targetY, "(O)710", RequireDisplayName("(O)710"), crabPot!.owner.Value, crabPot.directionOffset.Value.X, crabPot.directionOffset.Value.Y, overlayTiles);
@@ -647,7 +642,7 @@ internal sealed partial class ExecutionManager
             this.crabPotResultDay = Game1.Date.TotalDays;
         }
         string evidence = $"source=(O)710;location={specification.Location};x={targetX};y={targetY};target={expectedTargetId};item=(O)710;slot={slot};source_empty_before=true;is_crab_pot={(crabPot is not null).ToString().ToLowerInvariant()};owner={crabPot?.owner.Value ?? 0};offset_x={crabPot?.directionOffset.Value.X.ToString(CultureInfo.InvariantCulture) ?? "none"};offset_y={crabPot?.directionOffset.Value.Y.ToString(CultureInfo.InvariantCulture) ?? "none"};overlay_tiles={string.Join("|", overlayTiles.Select(tile => $"{tile.X},{tile.Y}:{tile.Count}"))};inventory_before={beforeCount};inventory_after={afterCount}";
-        return this.RememberTerminal(requestId, executionId, state, reasonCode, evidence);
+        return this.SettlePostcondition(requestId, executionId, succeeded, "crab_pot_placed", "crab_pot_postcondition_unavailable", evidence);
     }
 
     public LocalExecutionReceipt RequestLocalBaitCrabPot(string requestId, int slot, int targetX, int targetY, string expectedQualifiedItemId, string expectedTargetId, long requestedDeadlineMs) =>
@@ -693,11 +688,9 @@ internal sealed partial class ExecutionManager
         finally { player.CurrentToolIndex = previousSlot; }
         int afterCount = CountQualifiedItem(player, expectedQualifiedItemId);
         bool succeeded = handled && crabPot.bait.Value?.QualifiedItemId == expectedQualifiedItemId && crabPot.owner.Value == player.UniqueMultiplayerID && afterCount == beforeCount - 1;
-        ExecutionState state = succeeded ? ExecutionState.Succeeded : ExecutionState.Uncertain;
-        string reasonCode = succeeded ? "crab_pot_baited" : "bait_crab_pot_postcondition_unavailable";
         if (succeeded) { this.baitCrabPotResultTarget = new BridgeBaitCrabPotResultTarget(expectedTargetId, location.NameOrUniqueName, slot, targetX, targetY, "(O)710", RequireDisplayName("(O)710"), expectedQualifiedItemId, crabPot.owner.Value.ToString(System.Globalization.CultureInfo.InvariantCulture), 1); this.baitCrabPotResultExecutionId = executionId; this.baitCrabPotResultRequestId = requestId; this.baitCrabPotResultRevision = this.revision; this.baitCrabPotResultDay = Game1.Date.TotalDays; }
         string evidence = $"source={expectedQualifiedItemId};location={location.NameOrUniqueName};x={targetX};y={targetY};target={expectedTargetId};pot=(O)710;slot={slot};owner={crabPot.owner.Value};bait_before=none;bait_after={crabPot.bait.Value?.QualifiedItemId ?? "none"};inventory_before={beforeCount};inventory_after={afterCount};actionable={(player.CanMove && Game1.activeClickableMenu is null && !Game1.eventUp).ToString().ToLowerInvariant()};active_execution=null";
-        return this.RememberTerminal(requestId, executionId, state, reasonCode, evidence);
+        return this.SettlePostcondition(requestId, executionId, succeeded, "crab_pot_baited", "bait_crab_pot_postcondition_unavailable", evidence);
     }
 
     public LocalExecutionReceipt RequestLocalFertilizeTile(string requestId, int slot, int targetX, int targetY, string expectedQualifiedItemId, string expectedTargetId, long requestedDeadlineMs) =>
@@ -986,11 +979,12 @@ internal sealed partial class ExecutionManager
         // that state is non-terminal to the Body Program router, which keeps the node bound-Running and replays the
         // same receipt for the same RequestId for ever. "I could not finish this" is a fact the caller can act on;
         // "still running" is a hang.
-        return this.RememberTerminal(
+        return this.SettlePostcondition(
             requestId,
             executionId,
-            cleared ? ExecutionState.Succeeded : ExecutionState.Uncertain,
-            cleared ? "debris_cleared" : "debris_not_cleared",
+            cleared,
+            "debris_cleared",
+            "debris_not_cleared",
             cleared
                 ? $"location={location.NameOrUniqueName};target={expectedTargetId};tile={targetX},{targetY};parent={parentSheetIndex};tool={toolKind};required_upgrade={requiredUpgrade};health_before={healthBefore:0.##};health_after={healthAfter:0.##};swings={swingCount};clump_removed=true;stamina_before={staminaBefore.ToString("0.####", CultureInfo.InvariantCulture)};stamina_after={staminaAfter.ToString("0.####", CultureInfo.InvariantCulture)};stamina_delta={staminaDelta.ToString("0.####", CultureInfo.InvariantCulture)};expected_stamina_cost={expectedStaminaCost.ToString("0.####", CultureInfo.InvariantCulture)}"
                 // The failure path is not Host-pinned, so it carries the lease's own report: what was still in the
@@ -1140,8 +1134,7 @@ internal sealed partial class ExecutionManager
             evidence["stamina_after"] = staminaAfter.ToString("0.####", CultureInfo.InvariantCulture);
             evidence["stamina_delta"] = staminaDelta.ToString("0.####", CultureInfo.InvariantCulture);
             evidence["expected_stamina_cost"] = (perSwingStaminaCost * swingCount).ToString("0.####", CultureInfo.InvariantCulture);
-            state = succeeded ? ExecutionState.Succeeded : ExecutionState.Uncertain;
-            reasonCode = succeeded ? "clump_broken" : "postcondition_not_observed";
+            (state, reasonCode) = PostconditionVerdict(succeeded, "clump_broken", "postcondition_not_observed");
         }
         finally
         {

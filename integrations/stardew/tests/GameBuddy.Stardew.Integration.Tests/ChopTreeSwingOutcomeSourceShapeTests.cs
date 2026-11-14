@@ -63,7 +63,9 @@ public sealed class ChopTreeSwingOutcomeSourceShapeTests
         body.Should().Contain("tree_changed_during_swings", "a tree replaced mid-loop is not the tree that was asked for");
         body.Should().Contain("tool_no_longer_satisfies", "and a tool that stopped damaging the source must say so");
         body.Should().Contain("stamina_exhausted_after_", "a stamina stop names the swing it happened on");
-        body.Should().Contain("ExecutionState.Uncertain", "a stop after some swings is never reported as complete");
+        body.Should().Contain(
+            "PostconditionVerdict(felled, \"tree_source_chopped\", stoppedBy ?? \"tree_source_chop_postcondition_unavailable\")",
+            "a stop after some swings is never reported as complete: the unobserved half of the verdict is Uncertain");
     }
 
     private static string WithoutComments(string source) =>

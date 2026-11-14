@@ -64,8 +64,7 @@ internal sealed partial class ExecutionManager
         bool droppedInFrame = debrisAfter > debrisBefore
             && location.debris.Skip(debrisBefore).Any(entry => entry?.item is not null);
         string evidence = $"target={expectedTargetId};tile={targetX},{targetY};ready_for_harvest_before={readyBefore.ToString().ToLowerInvariant()};ready_for_harvest_after={readyAfter.ToString().ToLowerInvariant()};debris_before={debrisBefore};debris_after={debrisAfter};item_dropped_in_frame={droppedInFrame.ToString().ToLowerInvariant()}";
-        return this.RememberTerminal(requestId, executionId, harvested ? ExecutionState.Succeeded : ExecutionState.Uncertain,
-            harvested ? "bush_harvested" : "bush_harvest_postcondition_unavailable", evidence);
+        return this.SettlePostcondition(requestId, executionId, harvested, "bush_harvested", "bush_harvest_postcondition_unavailable", evidence);
     }
 
     private static bool TryGetHarvestableBush(GameLocation location, int x, int y, string expectedTargetId, out StardewValley.TerrainFeatures.Bush? bush)
@@ -136,8 +135,7 @@ internal sealed partial class ExecutionManager
         int debrisAfter = location.debris.Count;
         bool fruitDropped = debrisAfter > debrisBefore && location.debris.Skip(debrisBefore).Any(entry => entry?.item is not null);
         string evidence = $"target={expectedTargetId};tile={targetX},{targetY};debris_before={debrisBefore};debris_after={debrisAfter};fruit_dropped={fruitDropped.ToString().ToLowerInvariant()}";
-        return this.RememberTerminal(requestId, executionId, fruitDropped ? ExecutionState.Succeeded : ExecutionState.Uncertain,
-            fruitDropped ? "fruit_tree_harvested" : "fruit_tree_harvest_postcondition_unavailable", evidence);
+        return this.SettlePostcondition(requestId, executionId, fruitDropped, "fruit_tree_harvested", "fruit_tree_harvest_postcondition_unavailable", evidence);
     }
 
     private static bool TryGetHarvestableFruitTree(GameLocation location, int x, int y, string expectedTargetId, out StardewValley.TerrainFeatures.FruitTree? tree)
@@ -203,8 +201,7 @@ internal sealed partial class ExecutionManager
         bool shakenAfter = tree.wasShakenToday.Value;
         bool succeeded = !seedAfter && shakenAfter;
         string evidence = $"target={expectedTargetId};tile={targetX},{targetY};has_seed_before={seedBefore.ToString().ToLowerInvariant()};has_seed_after={seedAfter.ToString().ToLowerInvariant()};shaken_today={shakenAfter.ToString().ToLowerInvariant()}";
-        return this.RememberTerminal(requestId, executionId, succeeded ? ExecutionState.Succeeded : ExecutionState.Uncertain,
-            succeeded ? "tree_shaken" : "tree_shake_postcondition_unavailable", evidence);
+        return this.SettlePostcondition(requestId, executionId, succeeded, "tree_shaken", "tree_shake_postcondition_unavailable", evidence);
     }
 
     private static bool TryGetShakeableTree(GameLocation location, int x, int y, string expectedTargetId, out StardewValley.TerrainFeatures.Tree? tree)

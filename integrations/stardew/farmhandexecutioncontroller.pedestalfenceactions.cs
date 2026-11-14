@@ -124,8 +124,7 @@ internal sealed partial class ExecutionManager
         int after = fence.gatePosition.Value;
         bool succeeded = (before == 0 && after == 88) || (before == 88 && after == 0);
         string evidence = $"target={expectedTargetId};tile={targetX},{targetY};gate_position_before={before};gate_position_after={after};is_open={(after == 88).ToString().ToLowerInvariant()}";
-        return this.RememberTerminal(requestId, executionId, succeeded ? ExecutionState.Succeeded : ExecutionState.Uncertain,
-            succeeded ? "fence_gate_toggled" : "fence_gate_postcondition_unavailable", evidence);
+        return this.SettlePostcondition(requestId, executionId, succeeded, "fence_gate_toggled", "fence_gate_postcondition_unavailable", evidence);
     }
 
     private static bool TryGetFenceGate(GameLocation location, int x, int y, string expectedTargetId, out StardewValley.Fence? fence)

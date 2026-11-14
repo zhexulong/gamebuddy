@@ -183,8 +183,7 @@ internal sealed partial class ExecutionManager
             evidence = $"target={expectedTargetId};tool=axe;tree={treeType};health_before={before.ToString("0.##", CultureInfo.InvariantCulture)};health_after={healthAfterText};stump_before={stumpBefore.ToString().ToLowerInvariant()};stump_after={stumpAfter.ToString().ToLowerInvariant()};source_transformed={felled.ToString().ToLowerInvariant()};swings={swingCount.ToString(CultureInfo.InvariantCulture)};stamina_before={staminaBefore.ToString("0.####", CultureInfo.InvariantCulture)};stamina_after={staminaAfter.ToString("0.####", CultureInfo.InvariantCulture)};stamina_delta={staminaDelta.ToString("0.####", CultureInfo.InvariantCulture)};expected_stamina_cost={(perSwingStaminaCost * swingCount).ToString("0.####", CultureInfo.InvariantCulture)}";
             if (stoppedBy is not null)
                 evidence += $";stopped_by={stoppedBy};{stopEvidence}";
-            state = felled ? ExecutionState.Succeeded : ExecutionState.Uncertain;
-            reasonCode = felled ? "tree_source_chopped" : stoppedBy ?? "tree_source_chop_postcondition_unavailable";
+            (state, reasonCode) = PostconditionVerdict(felled, "tree_source_chopped", stoppedBy ?? "tree_source_chop_postcondition_unavailable");
         }
         finally
         {
@@ -270,8 +269,7 @@ internal sealed partial class ExecutionManager
             // tree path carried (1786682c), and it is repaired the same way - one dispatch is one swing, and the plan
             // decides whether to swing again.
             bool succeeded = RockSourceSwing.MadeProgress(before, after);
-            state = succeeded ? ExecutionState.Succeeded : ExecutionState.Uncertain;
-            reasonCode = succeeded ? (removed ? "rock_source_broken" : "rock_source_damaged") : "rock_source_postcondition_unavailable";
+            (state, reasonCode) = PostconditionVerdict(succeeded, removed ? "rock_source_broken" : "rock_source_damaged", "rock_source_postcondition_unavailable");
         }
         finally
         {
@@ -374,8 +372,7 @@ internal sealed partial class ExecutionManager
                 this.artifactSpotResultDay = Game1.Date.TotalDays;
             }
             evidence = $"location={location.NameOrUniqueName};target={expectedTargetId};result_target={resultTargetId ?? "none"};tile={targetX},{targetY};tool=hoe;stamina_before={staminaBefore.ToString("0.####", CultureInfo.InvariantCulture)};stamina_after={staminaAfter.ToString("0.####", CultureInfo.InvariantCulture)};stamina_delta={staminaDelta.ToString("0.####", CultureInfo.InvariantCulture)};expected_stamina_cost={expectedStaminaCost.ToString("0.####", CultureInfo.InvariantCulture)};qualified_item_id={artifactSpot.QualifiedItemId};source_present_before={sourcePresentBefore.ToString().ToLowerInvariant()};source_present_after={sourcePresentAfter.ToString().ToLowerInvariant()};hoedirt_present_before={hoeDirtPresentBefore.ToString().ToLowerInvariant()};hoedirt_present_after={hoeDirtPresentAfter.ToString().ToLowerInvariant()};source_removed={(!sourcePresentAfter).ToString().ToLowerInvariant()}";
-            state = succeeded ? ExecutionState.Succeeded : ExecutionState.Uncertain;
-            reasonCode = succeeded ? "artifact_spot_dug" : "artifact_spot_postcondition_unavailable";
+            (state, reasonCode) = PostconditionVerdict(succeeded, "artifact_spot_dug", "artifact_spot_postcondition_unavailable");
         }
         finally
         {
@@ -440,8 +437,7 @@ internal sealed partial class ExecutionManager
             bool hoeDirtPresentAfter = location.terrainFeatures.TryGetValue(tile, out StardewValley.TerrainFeatures.TerrainFeature? afterFeature) && afterFeature is StardewValley.TerrainFeatures.HoeDirt;
             bool removed = !hoeDirtPresentAfter;
             evidence = $"location={location.NameOrUniqueName};target={expectedTargetId};tile={targetX},{targetY};tool=pickaxe;crop_before=false;hoedirt_present_before=true;hoedirt_present_after={hoeDirtPresentAfter.ToString().ToLowerInvariant()};removed={removed.ToString().ToLowerInvariant()};stamina_before={staminaBefore.ToString("0.####", CultureInfo.InvariantCulture)};stamina_after={staminaAfter.ToString("0.####", CultureInfo.InvariantCulture)};stamina_delta={staminaDelta.ToString("0.####", CultureInfo.InvariantCulture)};expected_stamina_cost={expectedStaminaCost.ToString("0.####", CultureInfo.InvariantCulture)}";
-            state = removed ? ExecutionState.Succeeded : ExecutionState.Uncertain;
-            reasonCode = removed ? "hoedirt_cleared" : "clear_hoedirt_postcondition_unavailable";
+            (state, reasonCode) = PostconditionVerdict(removed, "hoedirt_cleared", "clear_hoedirt_postcondition_unavailable");
         }
         finally
         {
@@ -605,8 +601,7 @@ internal sealed partial class ExecutionManager
             evidence["window"] = AreaToolFootprint.Window(targetX, targetY);
             evidence["tiles_changed"] = changed.Count.ToString(CultureInfo.InvariantCulture);
             evidence["changed"] = AreaToolFootprint.Format(changed);
-            state = tilled ? ExecutionState.Succeeded : ExecutionState.Uncertain;
-            reasonCode = tilled ? "soil_tilled" : "soil_postcondition_unavailable";
+            (state, reasonCode) = PostconditionVerdict(tilled, "soil_tilled", "soil_postcondition_unavailable");
         }
         finally
         {
@@ -1170,8 +1165,7 @@ internal sealed partial class ExecutionManager
                     ? afterTree.health.Value.ToString("0.##", CultureInfo.InvariantCulture)
                     : "missing";
             evidence = $"target={expectedTargetId};type=tree_stump;tree={treeType};tool=axe;tool_level={axeLevel};health_before={before.ToString("0.##", CultureInfo.InvariantCulture)};health_after={healthAfterText};swings={swingCount};stump_removed={(removed || terrainGone).ToString().ToLowerInvariant()};stamina_before={staminaBefore.ToString("0.####", CultureInfo.InvariantCulture)};stamina_after={staminaAfter.ToString("0.####", CultureInfo.InvariantCulture)};stamina_delta={staminaDelta.ToString("0.####", CultureInfo.InvariantCulture)};expected_stamina_cost={expectedStaminaCost.ToString("0.####", CultureInfo.InvariantCulture)}";
-            state = removed || terrainGone ? ExecutionState.Succeeded : ExecutionState.Uncertain;
-            reasonCode = removed || terrainGone ? "stump_cleared" : "stump_clear_postcondition_unavailable";
+            (state, reasonCode) = PostconditionVerdict(removed || terrainGone, "stump_cleared", "stump_clear_postcondition_unavailable");
         }
         finally
         {
@@ -1341,8 +1335,7 @@ internal sealed partial class ExecutionManager
             evidence["stamina_after"] = staminaAfter.ToString("0.####", CultureInfo.InvariantCulture);
             evidence["stamina_delta"] = staminaDelta.ToString("0.####", CultureInfo.InvariantCulture);
             evidence["expected_stamina_cost"] = expectedStaminaCost.ToString("0.####", CultureInfo.InvariantCulture);
-            state = removed ? ExecutionState.Succeeded : ExecutionState.Uncertain;
-            reasonCode = removed ? "grass_cut" : "grass_cut_postcondition_unavailable";
+            (state, reasonCode) = PostconditionVerdict(removed, "grass_cut", "grass_cut_postcondition_unavailable");
         }
         finally
         {
@@ -1623,8 +1616,7 @@ internal sealed partial class ExecutionManager
             evidence["stamina_after"] = staminaAfter.ToString("0.####", CultureInfo.InvariantCulture);
             evidence["stamina_delta"] = staminaDelta.ToString("0.####", CultureInfo.InvariantCulture);
             evidence["expected_stamina_cost"] = expectedStaminaCost.ToString("0.####", CultureInfo.InvariantCulture);
-            state = handled && removed ? ExecutionState.Succeeded : ExecutionState.Uncertain;
-            reasonCode = handled && removed ? "weeds_cut" : "weed_cut_postcondition_unavailable";
+            (state, reasonCode) = PostconditionVerdict(handled && removed, "weeds_cut", "weed_cut_postcondition_unavailable");
         }
         finally
         {

@@ -197,7 +197,7 @@ internal sealed partial class ExecutionManager
         bool readinessAgrees = machine.readyForHarvest.Value == (machine.MinutesUntilReady == 0);
         bool succeeded = nativeHandled && consumedTheDeclaredCount && machineRecordedTheInput && held is not null && windowAgrees && readinessAgrees;
         string evidence = $"location={location.NameOrUniqueName};target={expectedTargetId};tile={targetX},{targetY};machine={machine.QualifiedItemId};slot={slot};input={expectedQualifiedItemId};input_stack_before={stackBefore};input_consumed={requirement.ConsumedCount};input_stack_after={stackAfter};last_input={lastInput ?? "none"};held={held ?? "none"};ready_for_harvest={machine.readyForHarvest.Value.ToString().ToLowerInvariant()};minutes_until_ready={machine.MinutesUntilReady};expected_minutes_until_ready={(requirement.ProcessingMinutes is int derivedMinutes ? derivedMinutes.ToString(CultureInfo.InvariantCulture) : "unavailable")};native_check_action={nativeHandled.ToString().ToLowerInvariant()}";
-        return this.RememberTerminal(requestId, executionId, succeeded ? ExecutionState.Succeeded : ExecutionState.Uncertain, succeeded ? "machine_coffee_loaded" : "machine_coffee_load_postcondition_unavailable", evidence);
+        return this.SettlePostcondition(requestId, executionId, succeeded, "machine_coffee_loaded", "machine_coffee_load_postcondition_unavailable", evidence);
     }
 
     /// <summary>
@@ -304,7 +304,7 @@ internal sealed partial class ExecutionManager
             && machine.MinutesUntilReady <= 0
             && outputAfter == outputBefore + output.Stack;
         string evidence = $"location={location.NameOrUniqueName};target={expectedTargetId};tile={targetX},{targetY};machine={machine.QualifiedItemId};output={output.QualifiedItemId};output_stack={output.Stack};input={(machine.lastInputItem.Value?.QualifiedItemId ?? "none")};ready_before=true;minutes_until_ready_before=0;inventory_output_before={outputBefore};inventory_output_after={outputAfter};held_after={(machine.heldObject.Value?.QualifiedItemId ?? "none")};ready_after={machine.readyForHarvest.Value.ToString().ToLowerInvariant()};native_check_action={nativeHandled.ToString().ToLowerInvariant()}";
-        return this.RememberTerminal(requestId, executionId, succeeded ? ExecutionState.Succeeded : ExecutionState.Uncertain, succeeded ? "machine_coffee_collected" : "machine_coffee_collect_postcondition_unavailable", evidence);
+        return this.SettlePostcondition(requestId, executionId, succeeded, "machine_coffee_collected", "machine_coffee_collect_postcondition_unavailable", evidence);
     }
 
     /// <summary>How many of one qualified item id the actor carries, across every stack: the native collection adds to an
@@ -471,8 +471,7 @@ internal sealed partial class ExecutionManager
             && string.Equals(placed.QualifiedItemId, "(O)178", StringComparison.Ordinal);
         bool hayConsumed = hayAfter == hayBefore - 1;
         bool succeeded = nativeHandled && troughFilled && hayConsumed;
-        return this.RememberTerminal(requestId, executionId, succeeded ? ExecutionState.Succeeded : ExecutionState.Uncertain,
-            succeeded ? "hay_placed_in_trough" : "feed_trough_postcondition_unavailable",
+        return this.SettlePostcondition(requestId, executionId, succeeded, "hay_placed_in_trough", "feed_trough_postcondition_unavailable",
             $"location={location.NameOrUniqueName};target={expectedTargetId};tile={targetX},{targetY};slot={slot};native_handled={nativeHandled.ToString().ToLowerInvariant()};trough_filled={troughFilled.ToString().ToLowerInvariant()};hay_before={hayBefore};hay_after={hayAfter};hay_consumed={hayConsumed.ToString().ToLowerInvariant()}");
     }
 

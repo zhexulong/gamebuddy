@@ -189,7 +189,7 @@ internal sealed partial class ExecutionManager
             && crabPot.bait.Value is null
             && delivered is >= 1 and <= 2;
         string evidence = $"location={location.NameOrUniqueName};target={expectedTargetId};tile={targetX},{targetY};pot=(O)710;owner={crabPot.owner.Value};output={outputQualifiedItemId};stack_delivered={delivered.ToString(CultureInfo.InvariantCulture)};inventory_before={inventoryBefore};inventory_after={inventoryAfter};held_after={(crabPot.heldObject.Value?.QualifiedItemId ?? "none")};ready_after={crabPot.readyForHarvest.Value.ToString().ToLowerInvariant()};tile_index_after={crabPot.tileIndexToShow};bait_after={(crabPot.bait.Value?.QualifiedItemId ?? "none")};pot_retained={potRetained.ToString().ToLowerInvariant()};native_handled={nativeHandled.ToString().ToLowerInvariant()};native_entry=GameLocation.checkAction;CrabPot.checkForAction;fishing_experience_before={fishingExperienceBefore};fishing_experience_after={fishingExperienceAfter}";
-        return this.RememberTerminal(requestId, executionId, collected ? ExecutionState.Succeeded : ExecutionState.Uncertain, collected ? "crab_pot_output_collected" : "crab_pot_output_collect_postcondition_unavailable", evidence);
+        return this.SettlePostcondition(requestId, executionId, collected, "crab_pot_output_collected", "crab_pot_output_collect_postcondition_unavailable", evidence);
     }
 
     /// <summary>

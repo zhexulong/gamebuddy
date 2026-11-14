@@ -206,7 +206,7 @@ internal sealed partial class ExecutionManager
             int inventoryAfter = CountQualifiedItem(Game1.player, expectedQualifiedItemId);
             bool retrieved = leftover is null && chestStackAfter == chestStackBefore - target.Stack && inventoryAfter == inventoryBefore + target.Stack;
             string evidence = $"location={location.NameOrUniqueName};target={chestId};tile={targetX},{targetY};container={(resolved.IsFridge ? "fridge" : "chest")};item={expectedQualifiedItemId};chest_stack_before={chestStackBefore};chest_stack_after={chestStackAfter};inventory_before={inventoryBefore};inventory_after={inventoryAfter};leftover_returned={leftoverReturned.ToString().ToLowerInvariant()};native_menu_opened={(menuAfter && !menuBefore).ToString().ToLowerInvariant()}";
-            return this.RememberTerminal(requestId, executionId, retrieved ? ExecutionState.Succeeded : ExecutionState.Uncertain, retrieved ? "chest_retrieved" : "chest_retrieve_postcondition_unavailable", evidence);
+            return this.SettlePostcondition(requestId, executionId, retrieved, "chest_retrieved", "chest_retrieve_postcondition_unavailable", evidence);
         }
         finally
         {

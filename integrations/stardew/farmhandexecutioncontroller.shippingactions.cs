@@ -161,7 +161,7 @@ internal sealed partial class ExecutionManager
             && binCountAfter == binCountBefore + stackShipped
             && lastItemShippedMatches;
         string evidence = $"location={bin.LocationName};target={expectedTargetId};bin={bin.TileX},{bin.TileY};tile={targetX},{targetY};item={expectedQualifiedItemId};slot={slot};stack={stackShipped};inventory_before={inventoryCountBefore};inventory_after={inventoryCountAfter};bin_before={binCountBefore};bin_after={binCountAfter};last_item_shipped_matched={lastItemShippedMatches.ToString().ToLowerInvariant()};native_menu_opened={(menuAfter && !menuBefore).ToString().ToLowerInvariant()}";
-        return this.RememberTerminal(requestId, executionId, succeeded ? ExecutionState.Succeeded : ExecutionState.Uncertain, succeeded ? "item_shipped" : "item_shipped_postcondition_unavailable", evidence);
+        return this.SettlePostcondition(requestId, executionId, succeeded, "item_shipped", "item_shipped_postcondition_unavailable", evidence);
     }
 
     /// <summary>
