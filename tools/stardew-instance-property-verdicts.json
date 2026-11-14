@@ -1,0 +1,1818 @@
+{
+  "schema": "gamebuddy-stardew-instance-property-verdicts/v1",
+  "note": "One verdict per engine instance property, at the level where a drop happens. The population is derived from the decompiled engine (a Net*/[XmlElement] member is state the game stores per instance; a member the engine switches on is a closed discriminator) for the entities a live run touches, plus the engine bases those chains reach. `published` names the row family and field that carries the property, and the gate checks both against protocol/bridge-v1.schema.json and the Mod's Bridge record. `deliberately_absent` carries the reason and an expiry the gate evaluates. `not_measured` is a finding, never a pass: this table is a ledger of what the observation has decided, and the properties without a verdict are the work.",
+  "entities": [
+    {
+      "entity": "Furniture",
+      "root": true,
+      "why": "the player's house and every cabin is furnished with it, and no snapshot family publishes a furniture instance",
+      "families": [
+        "worldObjectTargets",
+        "mannequinTargets",
+        "signTargets",
+        "siloTargets",
+        "caskTargets"
+      ]
+    },
+    {
+      "entity": "Object",
+      "root": true,
+      "why": "the ground object: forage, machines, chests' base, rocks, seeds, fertilizer, debris-adjacent props",
+      "families": [
+        "forageTargets",
+        "itemTargets",
+        "machineTargets",
+        "worldObjectTargets",
+        "rockSourceTargets",
+        "artifactSpotTargets",
+        "crabPotTargets",
+        "seedTargets",
+        "fertilizerTargets",
+        "shippingBinTargets",
+        "pedestalTargets",
+        "minecartTargets",
+        "foodTargets",
+        "lanternSlots",
+        "warpItemTargets",
+        "cookingStationTargets",
+        "caskTargets",
+        "signTargets",
+        "siloTargets",
+        "mannequinTargets",
+        "crabPotResultTargets"
+      ]
+    },
+    {
+      "entity": "Chest",
+      "root": true,
+      "why": "every cabin and house holds chests, and `chests` is a published family whose rows a run acts on",
+      "families": [
+        "chests",
+        "buildingChestTargets",
+        "colorTargets"
+      ]
+    },
+    {
+      "entity": "StorageFurniture",
+      "root": true,
+      "why": "the fridge and dresser are StorageFurniture, published as `chests` rows with `isFridge`",
+      "families": [
+        "chests"
+      ]
+    },
+    {
+      "entity": "HoeDirt",
+      "root": true,
+      "why": "tilling, watering, planting and fertilizing all address a HoeDirt tile",
+      "families": [
+        "soilTiles",
+        "cropTargets",
+        "fertilizerTargets",
+        "clearHoeDirtTargets"
+      ]
+    },
+    {
+      "entity": "Crop",
+      "root": true,
+      "why": "plant/water/harvest are the demo's core loop",
+      "families": [
+        "cropTargets",
+        "harvestTargets",
+        "scytheCropTargets"
+      ]
+    },
+    {
+      "entity": "Tree",
+      "root": true,
+      "why": "chopping, tapping, stumping and shaking trees are actions the runs perform",
+      "families": [
+        "treeChopSourceTargets",
+        "treeChopResultTargets",
+        "treeStumpTargets",
+        "shakeTreeTargets"
+      ]
+    },
+    {
+      "entity": "Bush",
+      "root": true,
+      "why": "berry bushes and the farm's fruit trees are Bush",
+      "families": [
+        "bushTargets",
+        "fruitTreeTargets",
+        "shakeTreeTargets"
+      ]
+    },
+    {
+      "entity": "Grass",
+      "root": true,
+      "why": "scything and weeding address grass tiles",
+      "families": [
+        "grassTargets",
+        "weedTargets"
+      ]
+    },
+    {
+      "entity": "ResourceClump",
+      "root": true,
+      "why": "boulders, stumps and logs are ResourceClump and are broken with the pickaxe or axe",
+      "families": [
+        "rockSourceTargets",
+        "woodFenceResultTargets",
+        "treeStumpTargets",
+        "debrisTargets"
+      ]
+    },
+    {
+      "entity": "Building",
+      "root": true,
+      "why": "the farm's coop, barn and shipping bin; `farmBuildingTargets` publishes them",
+      "families": [
+        "farmBuildingTargets",
+        "animalDoorTargets",
+        "buildingChestTargets",
+        "fishPondTargets",
+        "obeliskTargets",
+        "siloTargets"
+      ]
+    },
+    {
+      "entity": "NPC",
+      "root": true,
+      "why": "talking to a villager is the companion's daily act",
+      "families": [
+        "villagerWhereabouts",
+        "npcRelationshipTargets"
+      ]
+    },
+    {
+      "entity": "FarmAnimal",
+      "root": true,
+      "why": "petting, feeding and collecting produce address a FarmAnimal",
+      "families": [
+        "farmAnimalPetTargets",
+        "animalProductTargets"
+      ]
+    },
+    {
+      "entity": "GameLocation",
+      "root": true,
+      "why": "every row is a fact about a location's contents; the location itself is published as each row's `location`",
+      "families": [
+        "warps",
+        "doorTargets",
+        "fixedInteractionPoints",
+        "soilTiles",
+        "forageTargets",
+        "machineTargets",
+        "chests",
+        "farmBuildingTargets",
+        "panSites",
+        "mineEntranceTargets",
+        "mineElevatorFloorTargets",
+        "grassTargets",
+        "bushTargets",
+        "treeChopSourceTargets",
+        "weedTargets",
+        "artifactSpotTargets",
+        "rockSourceTargets",
+        "crabPotTargets",
+        "worldObjectTargets",
+        "farmAnimalPetTargets",
+        "villagerWhereabouts",
+        "fishPondTargets",
+        "mailboxTargets",
+        "shippingBinTargets",
+        "pedestalTargets",
+        "caskTargets",
+        "signTargets",
+        "siloTargets",
+        "mannequinTargets",
+        "lanternSlots",
+        "obeliskTargets",
+        "cropTargets",
+        "debrisTargets",
+        "scytheCropTargets",
+        "harvestTargets",
+        "seedTargets",
+        "fertilizerTargets",
+        "treeStumpTargets",
+        "fruitTreeTargets",
+        "shakeTreeTargets",
+        "buildingChestTargets",
+        "cookingStationTargets",
+        "warpItemTargets",
+        "horseTargets",
+        "npcRelationshipTargets",
+        "treeChopResultTargets",
+        "clearHoeDirtTargets",
+        "refillWateringCanTargets",
+        "resourceClumpsTargets"
+      ]
+    },
+    {
+      "entity": "Item",
+      "root": false,
+      "why": "every Object and Furniture row's identity is an Item identity",
+      "families": [
+        "inventoryItemFacts",
+        "toolSlots",
+        "forageTargets",
+        "itemTargets",
+        "seedTargets",
+        "fertilizerTargets",
+        "foodTargets",
+        "shippingBinTargets",
+        "pedestalTargets",
+        "warpItemTargets",
+        "machineTargets",
+        "crabPotTargets",
+        "worldObjectTargets"
+      ]
+    },
+    {
+      "entity": "TerrainFeature",
+      "root": false,
+      "why": "the base of HoeDirt, Crop-holding soil, Bush, Grass, Tree and ResourceClump",
+      "families": [
+        "soilTiles",
+        "cropTargets",
+        "grassTargets",
+        "bushTargets",
+        "treeChopSourceTargets",
+        "treeStumpTargets",
+        "weedTargets",
+        "shakeTreeTargets",
+        "fruitTreeTargets",
+        "clearHoeDirtTargets",
+        "scytheCropTargets"
+      ]
+    },
+    {
+      "entity": "LargeTerrainFeature",
+      "root": false,
+      "why": "the base of Bush: a bush is a large terrain feature",
+      "families": [
+        "bushTargets",
+        "fruitTreeTargets",
+        "shakeTreeTargets"
+      ]
+    },
+    {
+      "entity": "Character",
+      "root": false,
+      "why": "the base of NPC and FarmAnimal: a position, a facing and a sprite",
+      "families": [
+        "villagerWhereabouts",
+        "farmAnimalPetTargets",
+        "animalProductTargets",
+        "petTargets",
+        "horseTargets",
+        "npcRelationshipTargets"
+      ]
+    }
+  ],
+  "verdicts": [
+    {
+      "property": "Furniture.furniture_type",
+      "verdict": "not_measured"
+    },
+    {
+      "property": "Furniture.rotations",
+      "verdict": "published",
+      "field": "worldObjectTargets.rotations",
+      "witness": "piece.rotations.Value"
+    },
+    {
+      "property": "Furniture.currentRotation",
+      "verdict": "published",
+      "field": "worldObjectTargets.rotation",
+      "witness": "piece.currentRotation.Value"
+    },
+    {
+      "property": "Furniture.sourceIndexOffset",
+      "verdict": "deliberately_absent",
+      "reason": "a sprite-sheet offset inside the furniture's own sheet; the row publishes the qualified item id and the client resolves the sheet from it",
+      "expires": "row_field:worldObjectTargets.sourceIndexOffset"
+    },
+    {
+      "property": "Furniture.drawPosition",
+      "verdict": "deliberately_absent",
+      "reason": "the pixel offset the piece is drew at inside its tile; a placement fact, not a world fact an action chooses from",
+      "expires": "row_field:worldObjectTargets.drawPosition"
+    },
+    {
+      "property": "Furniture.sourceRect",
+      "verdict": "deliberately_absent",
+      "reason": "the sprite rectangle currently drawn for the piece, recomputed from its item data and rotation on every draw",
+      "expires": "row_field:worldObjectTargets.sourceRect"
+    },
+    {
+      "property": "Furniture.defaultSourceRect",
+      "verdict": "deliberately_absent",
+      "reason": "the sprite rectangle the piece has at rotation zero, a client-side default the row's rotation already implies",
+      "expires": "row_field:worldObjectTargets.defaultSourceRect"
+    },
+    {
+      "property": "Furniture.defaultBoundingBox",
+      "verdict": "deliberately_absent",
+      "reason": "the collision rectangle of the piece at rotation zero; the row addresses the tile the piece stands on and the footprint is re-read from the live object when placement is decided",
+      "expires": "row_field:worldObjectTargets.boundingBox"
+    },
+    {
+      "property": "Furniture.drawHeldObjectLow",
+      "verdict": "deliberately_absent",
+      "reason": "whether the piece draws a held object behind itself: draw order",
+      "expires": "row_field:worldObjectTargets.drawHeldObjectLow"
+    },
+    {
+      "property": "Furniture.sittingFarmers",
+      "verdict": "deliberately_absent",
+      "reason": "which multiplayer farmers are seated on this piece right now; transient attachment state with no world fact in it",
+      "expires": "row_field:worldObjectTargets.sittingFarmers"
+    },
+    {
+      "property": "Object.tileLocation",
+      "verdict": "published",
+      "field": "worldObjectTargets.x",
+      "witness": "(int)tile.X"
+    },
+    {
+      "property": "Object.owner",
+      "verdict": "published",
+      "field": "crabPotResultTargets.ownerId",
+      "witness": "crabPot!.owner.Value"
+    },
+    {
+      "property": "Object.type",
+      "verdict": "deliberately_absent",
+      "reason": "the engine's coarse category string for an object; the rows publish the concrete qualified id and the family the Mod selected the object into",
+      "expires": "row_field:machineTargets.type"
+    },
+    {
+      "property": "Object.canBeSetDown",
+      "verdict": "deliberately_absent",
+      "reason": "a placement permission read on the held item before it is placed; no row addresses a placed instance",
+      "expires": "row_field:worldObjectTargets.canBeSetDown"
+    },
+    {
+      "property": "Object.canBeGrabbed",
+      "verdict": "deliberately_absent",
+      "reason": "the same placement permission for pickup; a placed instance's row already states whether an action addresses it",
+      "expires": "row_field:worldObjectTargets.canBeGrabbed"
+    },
+    {
+      "property": "Object.isSpawnedObject",
+      "verdict": "not_measured"
+    },
+    {
+      "property": "Object.questItem",
+      "verdict": "not_measured"
+    },
+    {
+      "property": "Object.questId",
+      "verdict": "not_measured"
+    },
+    {
+      "property": "Object.isOn",
+      "verdict": "not_measured"
+    },
+    {
+      "property": "Object.fragility",
+      "verdict": "not_measured"
+    },
+    {
+      "property": "Object.price",
+      "verdict": "not_measured"
+    },
+    {
+      "property": "Object.edibility",
+      "verdict": "published",
+      "field": "foodTargets.edibility",
+      "witness": "food.Edibility"
+    },
+    {
+      "property": "Object.bigCraftable",
+      "verdict": "not_measured"
+    },
+    {
+      "property": "Object.setOutdoors",
+      "verdict": "deliberately_absent",
+      "reason": "a restriction on where the held item may be placed; it is never a fact about a placed instance",
+      "expires": "row_field:worldObjectTargets.setOutdoors"
+    },
+    {
+      "property": "Object.setIndoors",
+      "verdict": "deliberately_absent",
+      "reason": "the indoor half of the same placement restriction",
+      "expires": "row_field:worldObjectTargets.setIndoors"
+    },
+    {
+      "property": "Object.readyForHarvest",
+      "verdict": "published",
+      "field": "machineTargets.readyForHarvest",
+      "witness": "machine.readyForHarvest.Value"
+    },
+    {
+      "property": "Object.showNextIndex",
+      "verdict": "deliberately_absent",
+      "reason": "an animation frame flag the engine toggles while a machine works",
+      "expires": "row_field:machineTargets.showNextIndex"
+    },
+    {
+      "property": "Object.flipped",
+      "verdict": "deliberately_absent",
+      "reason": "the drawn mirror flag of a placed object",
+      "expires": "row_field:worldObjectTargets.flipped"
+    },
+    {
+      "property": "Object.isLamp",
+      "verdict": "deliberately_absent",
+      "reason": "the Mod selects lamps by this flag in the game thread and publishes the ones it addresses as lantern slots, so the fact is carried by the row's existence rather than by a field",
+      "expires": "row_field:lanternSlots.isLamp"
+    },
+    {
+      "property": "Object.heldObject",
+      "verdict": "published",
+      "field": "caskTargets.heldQualifiedItemId",
+      "witness": "cask.heldObject.Value?.QualifiedItemId"
+    },
+    {
+      "property": "Object.lastOutputRuleId",
+      "verdict": "deliberately_absent",
+      "reason": "the machine output rule that produced the last collect, kept for the engine's own bookkeeping",
+      "expires": "row_field:machineTargets.lastOutputRuleId"
+    },
+    {
+      "property": "Object.lastInputItem",
+      "verdict": "published",
+      "field": "machineTargets.lastInputQualifiedItemId",
+      "witness": "lastInputItem"
+    },
+    {
+      "property": "Object.minutesUntilReady",
+      "verdict": "published",
+      "field": "machineTargets.minutesUntilReady",
+      "witness": "machine.MinutesUntilReady"
+    },
+    {
+      "property": "Object.boundingBox",
+      "verdict": "deliberately_absent",
+      "reason": "the pixel collision rectangle, derived from the item's sprite and re-read from the live object when an action is decided",
+      "expires": "row_field:worldObjectTargets.boundingBox"
+    },
+    {
+      "property": "Object.uses",
+      "verdict": "not_measured"
+    },
+    {
+      "property": "Object.netLightSource",
+      "verdict": "deliberately_absent",
+      "reason": "the light the object emits, rebuilt by the location's light map on every update",
+      "expires": "row_field:lanternSlots.lightSource"
+    },
+    {
+      "property": "Object.netDisplayNameFormat",
+      "verdict": "not_measured"
+    },
+    {
+      "property": "Object._destroyOvernight",
+      "verdict": "deliberately_absent",
+      "reason": "an engine flag that marks a temporary prop for removal at day end",
+      "expires": "row_field:worldObjectTargets.destroyOvernight"
+    },
+    {
+      "property": "Object.signText",
+      "verdict": "not_measured"
+    },
+    {
+      "property": "Object.orderData",
+      "verdict": "not_measured"
+    },
+    {
+      "property": "Object.preserve",
+      "verdict": "deliberately_absent",
+      "reason": "the preserve kind (jelly, pickle, wine) is folded into the item's qualified id, which every row that carries an item publishes",
+      "expires": "row_field:foodTargets.preserve"
+    },
+    {
+      "property": "Object.preservedParentSheetIndex",
+      "verdict": "deliberately_absent",
+      "reason": "the parent sheet index of the preserved item, part of the identity the qualified id already carries",
+      "expires": "row_field:foodTargets.preservedParentSheetIndex"
+    },
+    {
+      "property": "Object.obsolete_honeyType",
+      "verdict": "deliberately_absent",
+      "reason": "an obsolete save field the engine still deserialises and no code writes",
+      "expires": "row_field:worldObjectTargets.honeyType"
+    },
+    {
+      "property": "Item.specialVariable",
+      "verdict": "not_measured"
+    },
+    {
+      "property": "Item.category",
+      "verdict": "not_measured"
+    },
+    {
+      "property": "Item.hasbeenInInventory",
+      "verdict": "deliberately_absent",
+      "reason": "a one-way bookkeeping flag the engine sets when an item first enters a pack; it describes history, not the item",
+      "expires": "row_field:inventoryItemFacts.hasBeenInInventory"
+    },
+    {
+      "property": "Item.netName",
+      "verdict": "published",
+      "field": "forageTargets.displayName",
+      "witness": "RequireDisplayName(pair.Value.QualifiedItemId)"
+    },
+    {
+      "property": "Item.parentSheetIndex",
+      "verdict": "deliberately_absent",
+      "reason": "the sprite sheet index of the item, a client-side lookup from the qualified id every row publishes",
+      "expires": "row_field:forageTargets.parentSheetIndex"
+    },
+    {
+      "property": "Item.itemId",
+      "verdict": "published",
+      "field": "forageTargets.qualifiedItemId",
+      "witness": "pair.Value.QualifiedItemId"
+    },
+    {
+      "property": "Item.isRecipe",
+      "verdict": "not_measured"
+    },
+    {
+      "property": "Item.quality",
+      "verdict": "not_measured"
+    },
+    {
+      "property": "Item.stack",
+      "verdict": "published",
+      "field": "forageTargets.stack",
+      "witness": "pair.Value.Stack"
+    },
+    {
+      "property": "Chest.startingLidFrame",
+      "verdict": "deliberately_absent",
+      "reason": "the animation frame the lid starts at for this chest's craftable kind",
+      "expires": "row_field:chests.startingLidFrame"
+    },
+    {
+      "property": "Chest.lidFrameCount",
+      "verdict": "deliberately_absent",
+      "reason": "how many frames the lid animation has",
+      "expires": "row_field:chests.lidFrameCount"
+    },
+    {
+      "property": "Chest.currentLidFrame",
+      "verdict": "deliberately_absent",
+      "reason": "the lid animation's current frame, advanced by the engine's update loop",
+      "expires": "row_field:chests.currentLidFrame"
+    },
+    {
+      "property": "Chest.frameCounter",
+      "verdict": "deliberately_absent",
+      "reason": "the lid animation's frame clock",
+      "expires": "row_field:chests.frameCounter"
+    },
+    {
+      "property": "Chest.netItems",
+      "verdict": "published",
+      "field": "chests.items",
+      "witness": "items"
+    },
+    {
+      "property": "Chest.separateWalletItems",
+      "verdict": "deliberately_absent",
+      "reason": "the wallet item inventory a chest keeps apart from its contents; a chest row publishes the contents the actor can reach",
+      "expires": "row_field:chests.separateWalletItems"
+    },
+    {
+      "property": "Chest.tint",
+      "verdict": "deliberately_absent",
+      "reason": "the colour tint the chest is drawn with",
+      "expires": "row_field:chests.tint"
+    },
+    {
+      "property": "Chest.playerChoiceColor",
+      "verdict": "published",
+      "field": "colorTargets.color",
+      "witness": "chest!.playerChoiceColor.Value"
+    },
+    {
+      "property": "Chest.playerChest",
+      "verdict": "deliberately_absent",
+      "reason": "whether a player placed the chest; it gates removal, which the Mod decides against the live chest",
+      "expires": "row_field:chests.playerChest"
+    },
+    {
+      "property": "Chest.fridge",
+      "verdict": "published",
+      "field": "chests.isFridge",
+      "witness": "isFridge"
+    },
+    {
+      "property": "Chest.giftbox",
+      "verdict": "not_measured"
+    },
+    {
+      "property": "Chest.giftboxIndex",
+      "verdict": "not_measured"
+    },
+    {
+      "property": "Chest.giftboxIsStarterGift",
+      "verdict": "deliberately_absent",
+      "reason": "which winter-star gift box this is and whether it is the starter gift; the row publishes the contents",
+      "expires": "row_field:chests.giftboxIsStarterGift"
+    },
+    {
+      "property": "Chest.bigCraftableSpriteIndex",
+      "verdict": "deliberately_absent",
+      "reason": "the sprite index the chest is drawn with for its craftable kind",
+      "expires": "row_field:chests.bigCraftableSpriteIndex"
+    },
+    {
+      "property": "Chest.dropContents",
+      "verdict": "deliberately_absent",
+      "reason": "whether the chest spills its contents when broken: an engine behaviour flag, not a fact an action chooses from",
+      "expires": "row_field:chests.dropContents"
+    },
+    {
+      "property": "Chest.synchronized",
+      "verdict": "deliberately_absent",
+      "reason": "a multiplayer bookkeeping flag for the chest's inventory sync",
+      "expires": "row_field:chests.synchronized"
+    },
+    {
+      "property": "Chest.kickStartTile",
+      "verdict": "deliberately_absent",
+      "reason": "the tile the engine syncs the chest's lid from",
+      "expires": "row_field:chests.kickStartTile"
+    },
+    {
+      "property": "Chest.openChestEvent",
+      "verdict": "deliberately_absent",
+      "reason": "the event the engine fires when the lid opens",
+      "expires": "row_field:chests.openChestEvent"
+    },
+    {
+      "property": "Chest.specialChestType",
+      "verdict": "not_measured"
+    },
+    {
+      "property": "Chest.globalInventoryId",
+      "verdict": "not_measured"
+    },
+    {
+      "property": "Chest.mutex",
+      "verdict": "deliberately_absent",
+      "reason": "the multiplayer mutex that serialises chest access; a lock, not a fact",
+      "expires": "row_field:chests.mutex"
+    },
+    {
+      "property": "StorageFurniture.heldItems",
+      "verdict": "published",
+      "field": "chests.items",
+      "witness": "items"
+    },
+    {
+      "property": "StorageFurniture.mutex",
+      "verdict": "deliberately_absent",
+      "reason": "the multiplayer mutex that serialises storage access",
+      "expires": "row_field:chests.mutex"
+    },
+    {
+      "property": "HoeDirt.netCrop",
+      "verdict": "published",
+      "field": "cropTargets.cropId",
+      "witness": "cropId"
+    },
+    {
+      "property": "HoeDirt.state",
+      "verdict": "not_measured"
+    },
+    {
+      "property": "HoeDirt.fertilizer",
+      "verdict": "not_measured"
+    },
+    {
+      "property": "HoeDirt.c",
+      "verdict": "deliberately_absent",
+      "reason": "the tint colour the tilled soil is drawn with",
+      "expires": "row_field:soilTiles.tint"
+    },
+    {
+      "property": "HoeDirt.nearWaterForPaddy",
+      "verdict": "deliberately_absent",
+      "reason": "a cached answer to whether this tile is near water for a paddy; the engine recomputes it from the terrain",
+      "expires": "row_field:soilTiles.nearWaterForPaddy"
+    },
+    {
+      "property": "Crop.phaseDays",
+      "verdict": "deliberately_absent",
+      "reason": "the per-phase growth schedule; the row publishes daysToHarvest, which is that schedule's sum",
+      "expires": "row_field:cropTargets.phaseDays"
+    },
+    {
+      "property": "Crop.rowInSpriteSheet",
+      "verdict": "deliberately_absent",
+      "reason": "which sprite row the crop's current phase draws from, derived from its seed id",
+      "expires": "row_field:cropTargets.rowInSpriteSheet"
+    },
+    {
+      "property": "Crop.phaseToShow",
+      "verdict": "deliberately_absent",
+      "reason": "the growth phase the sprite is drawn at",
+      "expires": "row_field:cropTargets.phaseToShow"
+    },
+    {
+      "property": "Crop.currentPhase",
+      "verdict": "deliberately_absent",
+      "reason": "how far through its schedule the crop is; the row publishes the days remaining, which is the same fact measured from the other end",
+      "expires": "row_field:cropTargets.currentPhase"
+    },
+    {
+      "property": "Crop.indexOfHarvest",
+      "verdict": "not_measured"
+    },
+    {
+      "property": "Crop.dayOfCurrentPhase",
+      "verdict": "deliberately_absent",
+      "reason": "the day count inside the current phase, folded into the row's daysToHarvest",
+      "expires": "row_field:cropTargets.dayOfCurrentPhase"
+    },
+    {
+      "property": "Crop.whichForageCrop",
+      "verdict": "not_measured"
+    },
+    {
+      "property": "Crop.replaceWithObjectOnFullGrown",
+      "verdict": "not_measured"
+    },
+    {
+      "property": "Crop.tintColor",
+      "verdict": "deliberately_absent",
+      "reason": "the colour the crop is drawn with",
+      "expires": "row_field:cropTargets.tintColor"
+    },
+    {
+      "property": "Crop.flip",
+      "verdict": "deliberately_absent",
+      "reason": "the drawn mirror flag of the crop",
+      "expires": "row_field:cropTargets.flipped"
+    },
+    {
+      "property": "Crop.fullyGrown",
+      "verdict": "published",
+      "field": "cropTargets.fullyGrown",
+      "witness": "crop.fullyGrown.Value"
+    },
+    {
+      "property": "Crop.raisedSeeds",
+      "verdict": "not_measured"
+    },
+    {
+      "property": "Crop.programColored",
+      "verdict": "deliberately_absent",
+      "reason": "whether the crop's colour is programmatic rather than from data; a drawing rule",
+      "expires": "row_field:cropTargets.programColored"
+    },
+    {
+      "property": "Crop.dead",
+      "verdict": "published",
+      "field": "scytheCropTargets.dead",
+      "witness": "dead"
+    },
+    {
+      "property": "Crop.forageCrop",
+      "verdict": "published",
+      "field": "harvestTargets.forageCrop",
+      "witness": "crop.forageCrop.Value"
+    },
+    {
+      "property": "Crop.netSeedIndex",
+      "verdict": "published",
+      "field": "harvestTargets.cropId",
+      "witness": "crop.netSeedIndex.Value"
+    },
+    {
+      "property": "Crop.overrideTexturePath",
+      "verdict": "deliberately_absent",
+      "reason": "the alternate sprite sheet the crop is drawn from",
+      "expires": "row_field:cropTargets.overrideTexturePath"
+    },
+    {
+      "property": "Tree.growthStage",
+      "verdict": "published",
+      "field": "treeChopSourceTargets.growthStage",
+      "witness": "tree.growthStage.Value"
+    },
+    {
+      "property": "Tree.treeType",
+      "verdict": "published",
+      "field": "treeChopSourceTargets.treeType",
+      "witness": "tree.treeType.Value"
+    },
+    {
+      "property": "Tree.health",
+      "verdict": "published",
+      "field": "treeChopSourceTargets.health",
+      "witness": "tree.health.Value"
+    },
+    {
+      "property": "Tree.flipped",
+      "verdict": "deliberately_absent",
+      "reason": "the drawn mirror flag of the tree",
+      "expires": "row_field:treeChopSourceTargets.flipped"
+    },
+    {
+      "property": "Tree.stump",
+      "verdict": "published",
+      "field": "treeChopSourceTargets.stump",
+      "witness": "tree.stump.Value"
+    },
+    {
+      "property": "Tree.tapped",
+      "verdict": "published",
+      "field": "treeChopSourceTargets.tapped",
+      "witness": "tree.tapped.Value"
+    },
+    {
+      "property": "Tree.hasSeed",
+      "verdict": "not_measured"
+    },
+    {
+      "property": "Tree.hasMoss",
+      "verdict": "published",
+      "field": "treeChopSourceTargets.moss",
+      "witness": "tree.hasMoss.Value"
+    },
+    {
+      "property": "Tree.isTemporaryGreenRainTree",
+      "verdict": "deliberately_absent",
+      "reason": "a weather bookkeeping flag; the row's treeType already names the green-rain tree",
+      "expires": "row_field:treeChopSourceTargets.temporaryGreenRainTree"
+    },
+    {
+      "property": "Tree.wasShakenToday",
+      "verdict": "not_measured"
+    },
+    {
+      "property": "Tree.fertilized",
+      "verdict": "not_measured"
+    },
+    {
+      "property": "Tree.shakeLeft",
+      "verdict": "deliberately_absent",
+      "reason": "how much shake animation the tree has left",
+      "expires": "row_field:treeChopSourceTargets.shakeLeft"
+    },
+    {
+      "property": "Tree.falling",
+      "verdict": "deliberately_absent",
+      "reason": "whether the tree is mid-fall",
+      "expires": "row_field:treeChopSourceTargets.falling"
+    },
+    {
+      "property": "Tree.destroy",
+      "verdict": "deliberately_absent",
+      "reason": "an engine flag that marks the tree for destruction at the end of the tick",
+      "expires": "row_field:treeChopSourceTargets.destroy"
+    },
+    {
+      "property": "Tree.lastPlayerToHit",
+      "verdict": "deliberately_absent",
+      "reason": "which multiplayer farmer struck the tree last: attribution the engine keeps for drop placement",
+      "expires": "row_field:treeChopSourceTargets.lastPlayerToHit"
+    },
+    {
+      "property": "Tree.stopGrowingMoss",
+      "verdict": "deliberately_absent",
+      "reason": "an engine flag that stops moss growing back on this tree",
+      "expires": "row_field:treeChopSourceTargets.stopGrowingMoss"
+    },
+    {
+      "property": "Bush.size",
+      "verdict": "not_measured"
+    },
+    {
+      "property": "Bush.datePlanted",
+      "verdict": "not_measured"
+    },
+    {
+      "property": "Bush.tileSheetOffset",
+      "verdict": "deliberately_absent",
+      "reason": "the sprite-sheet offset the bush variant is drawn from",
+      "expires": "row_field:bushTargets.tileSheetOffset"
+    },
+    {
+      "property": "Bush.flipped",
+      "verdict": "deliberately_absent",
+      "reason": "the drawn mirror flag of the bush",
+      "expires": "row_field:bushTargets.flipped"
+    },
+    {
+      "property": "Bush.townBush",
+      "verdict": "not_measured"
+    },
+    {
+      "property": "Bush.inPot",
+      "verdict": "not_measured"
+    },
+    {
+      "property": "Bush.drawShadow",
+      "verdict": "deliberately_absent",
+      "reason": "whether the bush draws a shadow",
+      "expires": "row_field:bushTargets.drawShadow"
+    },
+    {
+      "property": "Bush.sourceRect",
+      "verdict": "deliberately_absent",
+      "reason": "the sprite rectangle drawn for the bush's current size and season",
+      "expires": "row_field:bushTargets.sourceRect"
+    },
+    {
+      "property": "Bush.uniqueSpawnMutex",
+      "verdict": "deliberately_absent",
+      "reason": "a multiplayer mutex that makes a spawned bush unique per save",
+      "expires": "row_field:bushTargets.uniqueSpawnMutex"
+    },
+    {
+      "property": "Grass.grassType",
+      "verdict": "published",
+      "field": "grassTargets.grassType",
+      "witness": "grass.grassType.Value"
+    },
+    {
+      "property": "Grass.numberOfWeeds",
+      "verdict": "published",
+      "field": "grassTargets.numberOfWeeds",
+      "witness": "grass.numberOfWeeds.Value"
+    },
+    {
+      "property": "Grass.grassSourceOffset",
+      "verdict": "deliberately_absent",
+      "reason": "the sprite-sheet offset the grass variant is drawn from",
+      "expires": "row_field:grassTargets.grassSourceOffset"
+    },
+    {
+      "property": "ResourceClump.width",
+      "verdict": "not_measured"
+    },
+    {
+      "property": "ResourceClump.height",
+      "verdict": "not_measured"
+    },
+    {
+      "property": "ResourceClump.parentSheetIndex",
+      "verdict": "published",
+      "field": "debrisTargets.parentSheetIndex",
+      "witness": "clump.parentSheetIndex.Value"
+    },
+    {
+      "property": "ResourceClump.textureName",
+      "verdict": "deliberately_absent",
+      "reason": "the sprite sheet the clump is drawn from, selected by its sheet index",
+      "expires": "row_field:rockSourceTargets.textureName"
+    },
+    {
+      "property": "ResourceClump.health",
+      "verdict": "published",
+      "field": "debrisTargets.health",
+      "witness": "(int)clump.health.Value"
+    },
+    {
+      "property": "ResourceClump.netTile",
+      "verdict": "published",
+      "field": "rockSourceTargets.x",
+      "witness": "pair.Key.X"
+    },
+    {
+      "property": "LargeTerrainFeature.netTilePosition",
+      "verdict": "published",
+      "field": "bushTargets.x",
+      "witness": "(int)tile.X"
+    },
+    {
+      "property": "Building.id",
+      "verdict": "published",
+      "field": "farmBuildingTargets.buildingId",
+      "witness": "building.id.Value.ToString(\"D\")"
+    },
+    {
+      "property": "Building.skinId",
+      "verdict": "not_measured"
+    },
+    {
+      "property": "Building.indoors",
+      "verdict": "not_measured"
+    },
+    {
+      "property": "Building.nonInstancedIndoorsName",
+      "verdict": "deliberately_absent",
+      "reason": "the indoor map a building whose interior is shared opens into; the row publishes the location the building stands in and an actor reaches the interior by travelling there",
+      "expires": "row_field:farmBuildingTargets.nonInstancedIndoorsName"
+    },
+    {
+      "property": "Building.tileX",
+      "verdict": "published",
+      "field": "farmBuildingTargets.x",
+      "witness": "building.tileX.Value"
+    },
+    {
+      "property": "Building.tileY",
+      "verdict": "published",
+      "field": "farmBuildingTargets.y",
+      "witness": "building.tileY.Value"
+    },
+    {
+      "property": "Building.tilesWide",
+      "verdict": "not_measured"
+    },
+    {
+      "property": "Building.tilesHigh",
+      "verdict": "not_measured"
+    },
+    {
+      "property": "Building.maxOccupants",
+      "verdict": "not_measured"
+    },
+    {
+      "property": "Building.currentOccupants",
+      "verdict": "not_measured"
+    },
+    {
+      "property": "Building.daysOfConstructionLeft",
+      "verdict": "published",
+      "field": "farmBuildingTargets.daysOfConstructionLeft",
+      "witness": "building.daysOfConstructionLeft.Value"
+    },
+    {
+      "property": "Building.daysUntilUpgrade",
+      "verdict": "not_measured"
+    },
+    {
+      "property": "Building.upgradeName",
+      "verdict": "not_measured"
+    },
+    {
+      "property": "Building.buildingType",
+      "verdict": "published",
+      "field": "farmBuildingTargets.buildingType",
+      "witness": "building.buildingType.Value"
+    },
+    {
+      "property": "Building.netBuildingPaintColor",
+      "verdict": "deliberately_absent",
+      "reason": "the paint the building is drawn with",
+      "expires": "row_field:farmBuildingTargets.paintColor"
+    },
+    {
+      "property": "Building.hayCapacity",
+      "verdict": "not_measured"
+    },
+    {
+      "property": "Building.buildingChests",
+      "verdict": "published",
+      "field": "buildingChestTargets.targetId",
+      "witness": "declared.Id"
+    },
+    {
+      "property": "Building.parentLocationName",
+      "verdict": "published",
+      "field": "farmBuildingTargets.location",
+      "witness": "location.NameOrUniqueName"
+    },
+    {
+      "property": "Building.humanDoor",
+      "verdict": "not_measured"
+    },
+    {
+      "property": "Building.animalDoor",
+      "verdict": "not_measured"
+    },
+    {
+      "property": "Building.animalDoorOpen",
+      "verdict": "not_measured"
+    },
+    {
+      "property": "Building.magical",
+      "verdict": "not_measured"
+    },
+    {
+      "property": "Building.fadeWhenPlayerIsBehind",
+      "verdict": "deliberately_absent",
+      "reason": "whether the building fades when the player walks behind it: a draw-order rule",
+      "expires": "row_field:farmBuildingTargets.fadeWhenPlayerIsBehind"
+    },
+    {
+      "property": "Building.owner",
+      "verdict": "deliberately_absent",
+      "reason": "the multiplayer farmer who owns the building, used for building permissions the Mod decides against the live object",
+      "expires": "row_field:farmBuildingTargets.owner"
+    },
+    {
+      "property": "Building.newConstructionTimer",
+      "verdict": "deliberately_absent",
+      "reason": "the construction animation's timer",
+      "expires": "row_field:farmBuildingTargets.newConstructionTimer"
+    },
+    {
+      "property": "NPC.isWalkingTowardPlayer",
+      "verdict": "deliberately_absent",
+      "reason": "an AI runtime predicate the engine evaluates every tick",
+      "expires": "row_field:villagerWhereabouts.isWalkingTowardPlayer"
+    },
+    {
+      "property": "NPC.birthday_Season",
+      "verdict": "not_measured"
+    },
+    {
+      "property": "NPC.birthday_Day",
+      "verdict": "not_measured"
+    },
+    {
+      "property": "NPC.age",
+      "verdict": "not_measured"
+    },
+    {
+      "property": "NPC.manners",
+      "verdict": "deliberately_absent",
+      "reason": "a dialogue personality trait; the villager's description is owned by the persona and world book, not by a target row",
+      "expires": "row_field:npcRelationshipTargets.manners"
+    },
+    {
+      "property": "NPC.socialAnxiety",
+      "verdict": "deliberately_absent",
+      "reason": "a dialogue personality trait, owned by the same layer as manners",
+      "expires": "row_field:npcRelationshipTargets.socialAnxiety"
+    },
+    {
+      "property": "NPC.optimism",
+      "verdict": "deliberately_absent",
+      "reason": "a dialogue personality trait, owned by the same layer as manners",
+      "expires": "row_field:npcRelationshipTargets.optimism"
+    },
+    {
+      "property": "NPC.gender",
+      "verdict": "deliberately_absent",
+      "reason": "a dialogue and marriage rule; the relationship row publishes the friendship the villager has with the farmer",
+      "expires": "row_field:npcRelationshipTargets.gender"
+    },
+    {
+      "property": "NPC.breather",
+      "verdict": "deliberately_absent",
+      "reason": "whether the villager's idle animation breathes",
+      "expires": "row_field:villagerWhereabouts.breather"
+    },
+    {
+      "property": "NPC.isSleeping",
+      "verdict": "not_measured"
+    },
+    {
+      "property": "NPC.sleptInBed",
+      "verdict": "deliberately_absent",
+      "reason": "an engine flag for whether the villager slept in a bed last night",
+      "expires": "row_field:villagerWhereabouts.sleptInBed"
+    },
+    {
+      "property": "NPC.hideShadow",
+      "verdict": "deliberately_absent",
+      "reason": "whether the villager's shadow is drawn",
+      "expires": "row_field:villagerWhereabouts.hideShadow"
+    },
+    {
+      "property": "NPC.isInvisible",
+      "verdict": "deliberately_absent",
+      "reason": "whether the villager is drawn at all",
+      "expires": "row_field:villagerWhereabouts.isInvisible"
+    },
+    {
+      "property": "NPC.lastSeenMovieWeek",
+      "verdict": "deliberately_absent",
+      "reason": "the last week the villager was taken to a movie: engine bookkeeping for a scene the companion does not drive",
+      "expires": "row_field:npcRelationshipTargets.lastSeenMovieWeek"
+    },
+    {
+      "property": "NPC.datable",
+      "verdict": "deliberately_absent",
+      "reason": "whether the villager can be dated; the relationship row publishes the friendship status that decides whether dating is reachable",
+      "expires": "row_field:npcRelationshipTargets.datable"
+    },
+    {
+      "property": "NPC.defaultPosition",
+      "verdict": "deliberately_absent",
+      "reason": "the fallback position the engine resets a villager to; the row publishes where the villager actually is",
+      "expires": "row_field:villagerWhereabouts.defaultPosition"
+    },
+    {
+      "property": "NPC.defaultMap",
+      "verdict": "deliberately_absent",
+      "reason": "the fallback map the engine resets a villager to",
+      "expires": "row_field:villagerWhereabouts.defaultMap"
+    },
+    {
+      "property": "NPC.moveTowardPlayerThreshold",
+      "verdict": "deliberately_absent",
+      "reason": "the distance at which the villager's AI starts walking toward the farmer",
+      "expires": "row_field:villagerWhereabouts.moveTowardPlayerThreshold"
+    },
+    {
+      "property": "NPC.hasSaidAfternoonDialogue",
+      "verdict": "deliberately_absent",
+      "reason": "whether the villager already said their afternoon line today",
+      "expires": "row_field:villagerWhereabouts.hasSaidAfternoonDialogue"
+    },
+    {
+      "property": "NPC.currentMarriageDialogue",
+      "verdict": "deliberately_absent",
+      "reason": "the marriage dialogue the villager is in the middle of",
+      "expires": "row_field:npcRelationshipTargets.currentMarriageDialogue"
+    },
+    {
+      "property": "NPC.hasBeenKissedToday",
+      "verdict": "deliberately_absent",
+      "reason": "a spouse-only daily flag; the relationship row publishes the friendship the kiss would change",
+      "expires": "row_field:npcRelationshipTargets.hasBeenKissedToday"
+    },
+    {
+      "property": "NPC.marriageDefaultDialogue",
+      "verdict": "deliberately_absent",
+      "reason": "the dialogue a married villager falls back to",
+      "expires": "row_field:npcRelationshipTargets.marriageDefaultDialogue"
+    },
+    {
+      "property": "NPC.shouldSayMarriageDialogue",
+      "verdict": "deliberately_absent",
+      "reason": "whether the engine should speak a marriage line this tick",
+      "expires": "row_field:npcRelationshipTargets.shouldSayMarriageDialogue"
+    },
+    {
+      "property": "NPC.removeHenchmanEvent",
+      "verdict": "deliberately_absent",
+      "reason": "the event the engine fires when a henchman is removed",
+      "expires": "row_field:villagerWhereabouts.removeHenchmanEvent"
+    },
+    {
+      "property": "NPC.shouldPlayRobinHammerAnimation",
+      "verdict": "deliberately_absent",
+      "reason": "an animation cue for one villager's scripted scene",
+      "expires": "row_field:villagerWhereabouts.shouldPlayRobinHammerAnimation"
+    },
+    {
+      "property": "NPC.shouldPlaySpousePatioAnimation",
+      "verdict": "deliberately_absent",
+      "reason": "an animation cue for the spouse patio scene",
+      "expires": "row_field:villagerWhereabouts.shouldPlaySpousePatioAnimation"
+    },
+    {
+      "property": "NPC.shouldWearIslandAttire",
+      "verdict": "deliberately_absent",
+      "reason": "whether the villager wears island clothing on the island",
+      "expires": "row_field:villagerWhereabouts.shouldWearIslandAttire"
+    },
+    {
+      "property": "NPC.isMovingOnPathFindPath",
+      "verdict": "deliberately_absent",
+      "reason": "whether the villager is currently walking a pathfind route",
+      "expires": "row_field:villagerWhereabouts.isMovingOnPathFindPath"
+    },
+    {
+      "property": "NPC.doingEndOfRouteAnimation",
+      "verdict": "deliberately_absent",
+      "reason": "the end-of-route animation the villager is playing",
+      "expires": "row_field:villagerWhereabouts.doingEndOfRouteAnimation"
+    },
+    {
+      "property": "NPC.goingToDoEndOfRouteAnimation",
+      "verdict": "deliberately_absent",
+      "reason": "the end-of-route animation the villager is about to play",
+      "expires": "row_field:villagerWhereabouts.goingToDoEndOfRouteAnimation"
+    },
+    {
+      "property": "NPC.endOfRouteMessage",
+      "verdict": "deliberately_absent",
+      "reason": "the line the villager says at the end of a route",
+      "expires": "row_field:villagerWhereabouts.endOfRouteMessage"
+    },
+    {
+      "property": "NPC.dayScheduleName",
+      "verdict": "deliberately_absent",
+      "reason": "the schedule key the engine walks the villager along; the row publishes where the villager actually is",
+      "expires": "row_field:villagerWhereabouts.dayScheduleName"
+    },
+    {
+      "property": "NPC.islandScheduleName",
+      "verdict": "deliberately_absent",
+      "reason": "the island half of the same schedule key",
+      "expires": "row_field:villagerWhereabouts.islandScheduleName"
+    },
+    {
+      "property": "NPC.endOfRouteBehaviorName",
+      "verdict": "deliberately_absent",
+      "reason": "the behaviour the villager performs at the end of a route",
+      "expires": "row_field:villagerWhereabouts.endOfRouteBehaviorName"
+    },
+    {
+      "property": "Character.hideFromAnimalSocialMenu",
+      "verdict": "deliberately_absent",
+      "reason": "whether the character is hidden from the animal social menu: a menu rule",
+      "expires": "row_field:villagerWhereabouts.hideFromAnimalSocialMenu"
+    },
+    {
+      "property": "Character.sprite",
+      "verdict": "deliberately_absent",
+      "reason": "the animated sprite the character is drawn with",
+      "expires": "row_field:villagerWhereabouts.sprite"
+    },
+    {
+      "property": "Character.position",
+      "verdict": "published",
+      "field": "villagerWhereabouts.x",
+      "witness": "(int)villager.Tile.X"
+    },
+    {
+      "property": "Character.netSpeed",
+      "verdict": "deliberately_absent",
+      "reason": "the character's movement speed",
+      "expires": "row_field:villagerWhereabouts.speed"
+    },
+    {
+      "property": "Character.netAddedSpeed",
+      "verdict": "deliberately_absent",
+      "reason": "a temporary movement-speed bonus on the character",
+      "expires": "row_field:villagerWhereabouts.addedSpeed"
+    },
+    {
+      "property": "Character.facingDirection",
+      "verdict": "not_measured"
+    },
+    {
+      "property": "Character.faceTowardFarmerEvent",
+      "verdict": "deliberately_absent",
+      "reason": "the event the engine fires to make a character face the farmer",
+      "expires": "row_field:villagerWhereabouts.faceTowardFarmerEvent"
+    },
+    {
+      "property": "Character.faceTowardFarmerRadius",
+      "verdict": "deliberately_absent",
+      "reason": "the radius inside which a character turns to face the farmer",
+      "expires": "row_field:villagerWhereabouts.faceTowardFarmerRadius"
+    },
+    {
+      "property": "Character.simpleNonVillagerNPC",
+      "verdict": "deliberately_absent",
+      "reason": "the engine's kind flag for a character that is not a full villager",
+      "expires": "row_field:villagerWhereabouts.simpleNonVillagerNpc"
+    },
+    {
+      "property": "Character.name",
+      "verdict": "published",
+      "field": "villagerWhereabouts.npcName",
+      "witness": "villager.Name"
+    },
+    {
+      "property": "Character.forceOneTileWide",
+      "verdict": "deliberately_absent",
+      "reason": "a collision rule for wide characters",
+      "expires": "row_field:villagerWhereabouts.forceOneTileWide"
+    },
+    {
+      "property": "Character.faceAwayFromFarmer",
+      "verdict": "deliberately_absent",
+      "reason": "whether the character turns away from the farmer",
+      "expires": "row_field:villagerWhereabouts.faceAwayFromFarmer"
+    },
+    {
+      "property": "Character.facingDirectionBeforeSpeakingToPlayer",
+      "verdict": "deliberately_absent",
+      "reason": "the facing the character had before it turned to the speaker: dialogue bookkeeping",
+      "expires": "row_field:villagerWhereabouts.facingDirectionBeforeSpeakingToPlayer"
+    },
+    {
+      "property": "Character.scale",
+      "verdict": "deliberately_absent",
+      "reason": "the drawn scale of the character",
+      "expires": "row_field:villagerWhereabouts.scale"
+    },
+    {
+      "property": "Character.swimming",
+      "verdict": "not_measured"
+    },
+    {
+      "property": "Character.netEventActor",
+      "verdict": "deliberately_absent",
+      "reason": "whether the character is acting inside an event",
+      "expires": "row_field:villagerWhereabouts.eventActor"
+    },
+    {
+      "property": "Character.collidesWithOtherCharacters",
+      "verdict": "deliberately_absent",
+      "reason": "whether the character collides with other characters: a movement rule",
+      "expires": "row_field:villagerWhereabouts.collidesWithOtherCharacters"
+    },
+    {
+      "property": "Character.whoToFace",
+      "verdict": "deliberately_absent",
+      "reason": "which farmer the character is turned toward",
+      "expires": "row_field:villagerWhereabouts.whoToFace"
+    },
+    {
+      "property": "Character._willDestroyObjectsUnderfoot",
+      "verdict": "deliberately_absent",
+      "reason": "an engine flag for whether walking destroys objects underfoot",
+      "expires": "row_field:villagerWhereabouts.willDestroyObjectsUnderfoot"
+    },
+    {
+      "property": "Character.currentLocationRef",
+      "verdict": "published",
+      "field": "villagerWhereabouts.location",
+      "witness": "location.NameOrUniqueName"
+    },
+    {
+      "property": "FarmAnimal.isSwimming",
+      "verdict": "not_measured"
+    },
+    {
+      "property": "FarmAnimal.currentProduce",
+      "verdict": "published",
+      "field": "animalProductTargets.qualifiedProduceItemId",
+      "witness": "animal.currentProduce.Value"
+    },
+    {
+      "property": "FarmAnimal.friendshipTowardFarmer",
+      "verdict": "published",
+      "field": "farmAnimalPetTargets.friendship",
+      "witness": "animal.friendshipTowardFarmer.Value"
+    },
+    {
+      "property": "FarmAnimal.skinID",
+      "verdict": "deliberately_absent",
+      "reason": "which skin the animal is drawn with",
+      "expires": "row_field:farmAnimalPetTargets.skinId"
+    },
+    {
+      "property": "FarmAnimal.age",
+      "verdict": "not_measured"
+    },
+    {
+      "property": "FarmAnimal.daysOwned",
+      "verdict": "deliberately_absent",
+      "reason": "how many days the animal has been owned: purchase bookkeeping",
+      "expires": "row_field:farmAnimalPetTargets.daysOwned"
+    },
+    {
+      "property": "FarmAnimal.health",
+      "verdict": "not_measured"
+    },
+    {
+      "property": "FarmAnimal.produceQuality",
+      "verdict": "not_measured"
+    },
+    {
+      "property": "FarmAnimal.daysSinceLastLay",
+      "verdict": "not_measured"
+    },
+    {
+      "property": "FarmAnimal.happiness",
+      "verdict": "not_measured"
+    },
+    {
+      "property": "FarmAnimal.fullness",
+      "verdict": "not_measured"
+    },
+    {
+      "property": "FarmAnimal.wasAutoPet",
+      "verdict": "not_measured"
+    },
+    {
+      "property": "FarmAnimal.wasPet",
+      "verdict": "not_measured"
+    },
+    {
+      "property": "FarmAnimal.allowReproduction",
+      "verdict": "deliberately_absent",
+      "reason": "whether the animal may reproduce; no row addresses breeding",
+      "expires": "row_field:farmAnimalPetTargets.allowReproduction"
+    },
+    {
+      "property": "FarmAnimal.type",
+      "verdict": "published",
+      "field": "farmAnimalPetTargets.animalType",
+      "witness": "animal.type.Value"
+    },
+    {
+      "property": "FarmAnimal.buildingTypeILiveIn",
+      "verdict": "not_measured"
+    },
+    {
+      "property": "FarmAnimal.myID",
+      "verdict": "not_measured"
+    },
+    {
+      "property": "FarmAnimal.ownerID",
+      "verdict": "deliberately_absent",
+      "reason": "which multiplayer farmer owns the animal; ownership decides who may pet it, which the Mod checks against the live animal",
+      "expires": "row_field:farmAnimalPetTargets.ownerId"
+    },
+    {
+      "property": "FarmAnimal.parentId",
+      "verdict": "deliberately_absent",
+      "reason": "the animal's parent, kept for breeding bookkeeping",
+      "expires": "row_field:farmAnimalPetTargets.parentId"
+    },
+    {
+      "property": "FarmAnimal.netHomeInterior",
+      "verdict": "deliberately_absent",
+      "reason": "the interior the animal returns to at night",
+      "expires": "row_field:farmAnimalPetTargets.homeInterior"
+    },
+    {
+      "property": "FarmAnimal.hasEatenAnimalCracker",
+      "verdict": "not_measured"
+    },
+    {
+      "property": "FarmAnimal.moodMessage",
+      "verdict": "deliberately_absent",
+      "reason": "the HUD message the engine prints about the animal's mood; the petting row publishes the friendship the message explains",
+      "expires": "row_field:farmAnimalPetTargets.moodMessage"
+    },
+    {
+      "property": "FarmAnimal.isEating",
+      "verdict": "deliberately_absent",
+      "reason": "whether the animal is in its eating animation",
+      "expires": "row_field:farmAnimalPetTargets.isEating"
+    },
+    {
+      "property": "FarmAnimal.doFarmerPushEvent",
+      "verdict": "deliberately_absent",
+      "reason": "the event the engine fires when the animal pushes the farmer",
+      "expires": "row_field:farmAnimalPetTargets.farmerPushEvent"
+    },
+    {
+      "property": "FarmAnimal.doBuildingPokeEvent",
+      "verdict": "deliberately_absent",
+      "reason": "the event the engine fires when the animal pokes its building",
+      "expires": "row_field:farmAnimalPetTargets.buildingPokeEvent"
+    },
+    {
+      "property": "FarmAnimal.doDiveEvent",
+      "verdict": "deliberately_absent",
+      "reason": "the event the engine fires when the animal dives",
+      "expires": "row_field:farmAnimalPetTargets.diveEvent"
+    },
+    {
+      "property": "GameLocation.animals",
+      "verdict": "published",
+      "field": "farmAnimalPetTargets.targetId",
+      "witness": "animal"
+    },
+    {
+      "property": "GameLocation.piecesOfHay",
+      "verdict": "published",
+      "field": "siloTargets.hay",
+      "witness": "location.piecesOfHay.Value"
+    },
+    {
+      "property": "GameLocation.parentLocationName",
+      "verdict": "deliberately_absent",
+      "reason": "the interior's parent location name, which the engine uses to group interiors",
+      "expires": "row_field:warps.parentLocationName"
+    },
+    {
+      "property": "GameLocation.isAlwaysActive",
+      "verdict": "deliberately_absent",
+      "reason": "whether the engine updates this location while the farmer is elsewhere",
+      "expires": "row_field:warps.isAlwaysActive"
+    },
+    {
+      "property": "GameLocation.mapPath",
+      "verdict": "deliberately_absent",
+      "reason": "the map asset the location is drawn from",
+      "expires": "row_field:warps.mapPath"
+    },
+    {
+      "property": "GameLocation.characters",
+      "verdict": "published",
+      "field": "villagerWhereabouts.targetId",
+      "witness": "villager"
+    },
+    {
+      "property": "GameLocation.netObjects",
+      "verdict": "published",
+      "field": "machineTargets.targetId",
+      "witness": "machine"
+    },
+    {
+      "property": "GameLocation.objects",
+      "verdict": "published",
+      "field": "worldObjectTargets.targetId",
+      "witness": "placed"
+    },
+    {
+      "property": "GameLocation.mapSeats",
+      "verdict": "deliberately_absent",
+      "reason": "where a villager may sit; no action addresses a seat, and the sitting position is not a world fact an action chooses from",
+      "expires": "row_field:fixedInteractionPoints.mapSeats"
+    },
+    {
+      "property": "GameLocation.warps",
+      "verdict": "published",
+      "field": "warps.targetX",
+      "witness": "warp.TargetX"
+    },
+    {
+      "property": "GameLocation.doors",
+      "verdict": "published",
+      "field": "doorTargets.targetX",
+      "witness": "warp.TargetX"
+    },
+    {
+      "property": "GameLocation.projectiles",
+      "verdict": "deliberately_absent",
+      "reason": "the projectiles in flight; they move every tick and no action addresses one",
+      "expires": "row_field:warps.projectiles"
+    },
+    {
+      "property": "GameLocation.resourceClumps",
+      "verdict": "published",
+      "field": "debrisTargets.health",
+      "witness": "location.resourceClumps"
+    },
+    {
+      "property": "GameLocation.largeTerrainFeatures",
+      "verdict": "published",
+      "field": "bushTargets.targetId",
+      "witness": "bush"
+    },
+    {
+      "property": "GameLocation.terrainFeatures",
+      "verdict": "published",
+      "field": "cropTargets.targetId",
+      "witness": "crop"
+    },
+    {
+      "property": "GameLocation.debris",
+      "verdict": "published",
+      "field": "debrisTargets.targetId",
+      "witness": "debris"
+    },
+    {
+      "property": "GameLocation.fishSplashPoint",
+      "verdict": "deliberately_absent",
+      "reason": "where a fish is splashing: fishing state, and no family in the capability surface addresses a splash point",
+      "expires": "row_field:warps.fishSplashPoint"
+    },
+    {
+      "property": "GameLocation.fishFrenzyFish",
+      "verdict": "deliberately_absent",
+      "reason": "which fish a frenzy is spawning: fishing state",
+      "expires": "row_field:warps.fishFrenzyFish"
+    },
+    {
+      "property": "GameLocation.orePanPoint",
+      "verdict": "published",
+      "field": "panSites.x",
+      "witness": "orePanPoint"
+    },
+    {
+      "property": "GameLocation.uniqueName",
+      "verdict": "deliberately_absent",
+      "reason": "the internal name a location is keyed by for mod data; the rows publish the name a player knows the place by",
+      "expires": "row_field:warps.uniqueName"
+    },
+    {
+      "property": "GameLocation.name",
+      "verdict": "published",
+      "field": "grassTargets.location",
+      "witness": "location.NameOrUniqueName"
+    },
+    {
+      "property": "GameLocation.waterColor",
+      "verdict": "deliberately_absent",
+      "reason": "the colour the water is drawn in",
+      "expires": "row_field:warps.waterColor"
+    },
+    {
+      "property": "GameLocation.lightLevel",
+      "verdict": "deliberately_absent",
+      "reason": "the ambient light level the location is drawn at",
+      "expires": "row_field:warps.lightLevel"
+    },
+    {
+      "property": "GameLocation.isFarm",
+      "verdict": "not_measured"
+    },
+    {
+      "property": "GameLocation.isOutdoors",
+      "verdict": "not_measured"
+    },
+    {
+      "property": "GameLocation.isGreenhouse",
+      "verdict": "not_measured"
+    },
+    {
+      "property": "GameLocation.isStructure",
+      "verdict": "deliberately_absent",
+      "reason": "the engine's structural classification of a location, used while loading it",
+      "expires": "row_field:warps.isStructure"
+    },
+    {
+      "property": "GameLocation.ignoreDebrisWeather",
+      "verdict": "deliberately_absent",
+      "reason": "a weather rule that suppresses debris sprites in this location",
+      "expires": "row_field:warps.ignoreDebrisWeather"
+    },
+    {
+      "property": "GameLocation.ignoreOutdoorLighting",
+      "verdict": "deliberately_absent",
+      "reason": "a lighting rule for the location's draw pass",
+      "expires": "row_field:warps.ignoreOutdoorLights"
+    },
+    {
+      "property": "GameLocation.ignoreLights",
+      "verdict": "deliberately_absent",
+      "reason": "the second half of the same lighting rule",
+      "expires": "row_field:warps.ignoreLights"
+    },
+    {
+      "property": "GameLocation.treatAsOutdoors",
+      "verdict": "deliberately_absent",
+      "reason": "a weather rule the crop rows already answer with watered and fullyGrown",
+      "expires": "row_field:warps.treatAsOutdoors"
+    },
+    {
+      "property": "GameLocation.miniJukeboxCount",
+      "verdict": "deliberately_absent",
+      "reason": "how many jukeboxes are playing in the location: music state",
+      "expires": "row_field:warps.miniJukeboxCount"
+    },
+    {
+      "property": "GameLocation.miniJukeboxTrack",
+      "verdict": "deliberately_absent",
+      "reason": "the track the jukeboxes play: music state",
+      "expires": "row_field:warps.miniJukeboxTrack"
+    },
+    {
+      "property": "GameLocation.randomMiniJukeboxTrack",
+      "verdict": "deliberately_absent",
+      "reason": "the jukebox's random track choice: music state",
+      "expires": "row_field:warps.randomMiniJukeboxTrack"
+    },
+    {
+      "property": "GameLocation.netAudio",
+      "verdict": "deliberately_absent",
+      "reason": "the location's audio context",
+      "expires": "row_field:warps.audio"
+    },
+    {
+      "property": "GameLocation.sharedLights",
+      "verdict": "deliberately_absent",
+      "reason": "the light sources the location's light map holds",
+      "expires": "row_field:lanternSlots.sharedLights"
+    },
+    {
+      "property": "GameLocation.removeTemporarySpritesWithIDEvent",
+      "verdict": "deliberately_absent",
+      "reason": "the event the engine fires to clear temporary sprites",
+      "expires": "row_field:warps.removeTemporarySpritesEvent"
+    },
+    {
+      "property": "GameLocation.rumbleAndFadeEvent",
+      "verdict": "deliberately_absent",
+      "reason": "the screen-rumble and fade event the engine fires",
+      "expires": "row_field:warps.rumbleAndFadeEvent"
+    },
+    {
+      "property": "GameLocation.damagePlayersEvent",
+      "verdict": "deliberately_absent",
+      "reason": "the event the engine fires to damage players in a hazardous location",
+      "expires": "row_field:warps.damagePlayersEvent"
+    },
+    {
+      "property": "GameLocation.lightGlows",
+      "verdict": "deliberately_absent",
+      "reason": "the glow overlay the engine blends light sprites with",
+      "expires": "row_field:lanternSlots.lightGlows"
+    },
+    {
+      "property": "GameLocation.furnitureToRemove",
+      "verdict": "deliberately_absent",
+      "reason": "the multiplayer queue of furniture ids pending removal",
+      "expires": "row_field:worldObjectTargets.furnitureToRemove"
+    },
+    {
+      "property": "GameLocation.Animals",
+      "verdict": "deliberately_absent",
+      "reason": "the capitalised alias of the same farm-animal dictionary the animals entry publishes",
+      "expires": "row_field:farmAnimalPetTargets.animals"
+    },
+    {
+      "property": "GameLocation.Root",
+      "verdict": "deliberately_absent",
+      "reason": "the Netcode root pointer the location's sync graph hangs from",
+      "expires": "row_field:warps.netRoot"
+    }
+  ]
+}
