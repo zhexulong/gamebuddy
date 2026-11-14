@@ -740,6 +740,7 @@ export const MessageBubble = memo(function MessageBubble({
       className="message-confirm"
       data-testid="message-swipe-remove-confirm"
       onKeyDown={swipeRemovePair.onConfirmKeyDown}
+      role="group"
     >
       <p className="message-confirm-prompt" role="status">
         {labels.swipeRemoveConfirmPrompt}
@@ -810,7 +811,12 @@ export const MessageBubble = memo(function MessageBubble({
    * rendered beside Save and Cancel is a mis-click waiting to happen.
    */
   const rewindConfirmation = rewindArmed ? (
-    <div className="message-confirm" data-testid="message-rewind-confirm" onKeyDown={rewindPair.onConfirmKeyDown}>
+    <div
+      className="message-confirm"
+      data-testid="message-rewind-confirm"
+      onKeyDown={rewindPair.onConfirmKeyDown}
+      role="group"
+    >
       <p className="message-confirm-prompt" role="status">
         {labels.rewindConfirmPrompt}
       </p>
@@ -1212,6 +1218,7 @@ export const MessageBubble = memo(function MessageBubble({
               className="message-confirm"
               data-testid="message-delete-confirm"
               onKeyDown={deletePair.onConfirmKeyDown}
+              role="group"
             >
               <p className="message-confirm-prompt" role="status">
                 {labels.deleteConfirmPrompt}

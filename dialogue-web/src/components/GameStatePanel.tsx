@@ -657,6 +657,7 @@ export function GameStatePanel({
                     className="game-endgame-confirm"
                     data-testid="game-endgame-confirm"
                     onKeyDown={endgamePair.onConfirmKeyDown}
+                    role="group"
                   >
                     <p className="game-status" data-tone="danger" role="status">
                       {labels.gameEndgameConfirm}

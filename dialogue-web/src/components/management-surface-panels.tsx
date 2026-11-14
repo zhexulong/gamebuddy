@@ -959,7 +959,7 @@ export function ChatsSurfacePanel({
                 onClick={rowSelects ? () => selectChat(chat.handle) : undefined}
               >
                 {editingHere ? (
-                  <div data-testid="chat-rename" onKeyDown={renameKeyDown}>
+                  <div data-testid="chat-rename" onKeyDown={renameKeyDown} role="group">
                     <input
                       type="text"
                       className="form-input"
@@ -1103,6 +1103,7 @@ export function ChatsSurfacePanel({
                         className="chat-item-confirm"
                         data-testid="chat-retention-confirm"
                         onKeyDown={armedPair.onConfirmKeyDown}
+                        role="group"
                       >
                         <p className="chat-item-confirm-prompt" role="status">
                           {confirmation.operation === "archive"

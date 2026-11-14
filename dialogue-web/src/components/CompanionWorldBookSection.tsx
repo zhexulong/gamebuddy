@@ -644,7 +644,7 @@ function CompanionWorldBookEntryRemove({
 }>): ReactElement {
   const pair = useArmedConfirmation(armed, onCancel);
   return armed ? (
-    <div data-companion-world-book-remove-confirm onKeyDown={pair.onConfirmKeyDown}>
+    <div data-companion-world-book-remove-confirm onKeyDown={pair.onConfirmKeyDown} role="group">
       <p role="status" data-companion-world-book-remove-prompt>
         {labels.companionWorldBookRemoveConfirm.replace("{{title}}", title)}
       </p>

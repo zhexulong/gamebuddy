@@ -751,7 +751,7 @@ function WorldBookItemRow({
           steps aside: the confirmation is the row's only action until it is
           answered, and it never shares a line with the controls it replaces. */}
       {isArmed ? (
-        <div data-world-book-confirm onKeyDown={removal.onConfirmKeyDown}>
+        <div data-world-book-confirm onKeyDown={removal.onConfirmKeyDown} role="group">
           <p role="status" data-world-book-confirm-prompt>
             {labels.worldBookDeleteConfirm.replace("{{title}}", item.title)}
           </p>

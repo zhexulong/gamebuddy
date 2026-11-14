@@ -50,9 +50,18 @@ export default tseslint.config(
       // `aside` are non-interactive tags. A `<form>` carries `preventImeFormSubmit` because an input method's
       // confirming Enter must not submit the form (`ime-enter-gate`), and an `<img>` is here for `onError`,
       // which this rule counts among image events: a failed load is the boundary's answer, not a player's press.
+      // `div` is the confirmation shape: `useArmedConfirmation` puts Escape on the element that holds the
+      // pair's two answers, and that element is a `group` of them. A pointer handler on a `<div>` is still
+      // reported - the exception names one handler on one tag, which is what makes it an exception.
       "jsx-a11y/no-noninteractive-element-interactions": [
         "error",
-        { aside: ["onKeyDown"], dialog: ["onClick", "onKeyDown"], form: ["onKeyDown"], img: ["onError"] },
+        {
+          aside: ["onKeyDown"],
+          dialog: ["onClick", "onKeyDown"],
+          div: ["onKeyDown"],
+          form: ["onKeyDown"],
+          img: ["onError"],
+        },
       ],
       // `role="list"` is the one redundant role this product spells out: `list-style: none` drops the list
       // semantics in Safari, and the explicit role is the only thing that restores them. Both reports in

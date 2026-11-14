@@ -394,7 +394,7 @@ function CompanionRemovalSection({
       <h3>{labels.companionDeleteTitle}</h3>
       <p className="management-settings-hint">{labels.companionDeleteHint}</p>
       {armed ? (
-        <div data-companion-removal-confirm onKeyDown={pair.onConfirmKeyDown}>
+        <div data-companion-removal-confirm onKeyDown={pair.onConfirmKeyDown} role="group">
           <p role="status">{labels.companionDeleteConfirm.replace("{{name}}", companion.name)}</p>
           <div className="composer-actions">
             <button
