@@ -544,24 +544,6 @@
       "reason": "[not-a-population] a character count of the hex digest inside a wearable target id, guarded beside `/^[0-9a-f]+$/`."
     },
     {
-      "file": "tools/run-stardew-native-local-player-multiplayer-live-loop-smoke.test.mjs",
-      "authority": "archived",
-      "literal": "2",
-      "shape": "unresolved",
-      "sites": 1,
-      "line": 159,
-      "reason": "[derivable-now] the next four lines read `archived[0].bytes`, `archived[0].destination`, `archived[1].destination` and `archived[1].reason`; one `deepEqual` over the two entries states them once."
-    },
-    {
-      "file": "tools/run-stardew-native-local-player-multiplayer-live-loop-smoke.test.mjs",
-      "authority": "turns",
-      "literal": "2",
-      "shape": "unresolved",
-      "sites": 1,
-      "line": 199,
-      "reason": "[derivable-now] the two texts are `deepEqual`d on the next two lines; `deepEqual(turns.map((turn) => turn.text), [first, second])` is one reading."
-    },
-    {
       "file": "tools/run-stardew-native-local-player-unequip-wearable-smoke.test.mjs",
       "authority": "digest",
       "literal": "16",

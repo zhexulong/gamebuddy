@@ -156,11 +156,11 @@ test("both game logs are archived, and an unreadable one is named rather than th
       aiLogPath: join(dir, "absent.txt"),
       targetDir: join(dir, "smapi"),
     });
-    assert.equal(archived.length, 2);
-    assert.equal(archived[0].bytes, "host narration\n".length);
+    assert.deepEqual(archived, [
+      { label: "host", destination: join(dir, "smapi", "host.log"), bytes: "host narration\n".length },
+      { label: "ai-client", destination: null, bytes: 0, reason: "log_unreadable" },
+    ]);
     assert.equal(readFileSync(archived[0].destination, "utf8"), "host narration\n");
-    assert.equal(archived[1].destination, null);
-    assert.equal(archived[1].reason, "log_unreadable");
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -196,9 +196,10 @@ test("the rubric grades the AGENT's turns, and an absent transcript measures not
     );
     const turns = readAgentTurnsFromSession(session);
     // Only the assistant's TEXT is speech: the player's line and the tool_use part are not.
-    assert.equal(turns.length, 2);
-    assert.equal(turns[0].text, "我先去看看东边那块地。");
-    assert.equal(turns[1].text, "收完了，要不要一起去河边？");
+    assert.deepEqual(
+      turns.map((turn) => turn.text),
+      ["我先去看看东边那块地。", "收完了，要不要一起去河边？"],
+    );
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
