@@ -358,7 +358,7 @@ public sealed class FarmhandBodyProgramController
             if (this.HoldOf is { } hold && hold(ActionIdOf(current, node.NodeId)) is { } met)
             {
                 // A HOLD THAT CLEARS ON ITS OWN IS WAITED OUT, not spent. See `WaitOutTheHold`.
-                if (met.Wait == BodyProgramHoldWait.Watchdog && this.WaitOutTheHold(programId, node, met)) return;
+                if (met.Wait == BodyHoldWait.RequestDeadline && this.WaitOutTheHold(programId, node, met)) return;
                 string deferralKey = AttemptKey(programId, node.NodeId, node.NodeAttempt);
                 int deferred = this.cadenceDeferrals.TryGetValue(deferralKey, out int seen) ? seen : 0;
                 if (deferred < this.MaxCadenceDeferrals)
@@ -476,7 +476,7 @@ public sealed class FarmhandBodyProgramController
     }
 
     /// <summary>
-    /// Waits out a hold declared <see cref="BodyProgramHoldWait.Watchdog"/> for as long as this node's own watchdog
+    /// Waits out a hold declared <see cref="BodyHoldWait.RequestDeadline"/> for as long as this node's own watchdog
     /// still allows the dispatch. True means the node was left waiting (or settled because the watchdog ran out).
     ///
     /// <para>

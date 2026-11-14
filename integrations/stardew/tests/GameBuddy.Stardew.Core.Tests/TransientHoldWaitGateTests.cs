@@ -26,7 +26,7 @@ namespace GameBuddy.Stardew.Core.Tests;
 /// </para>
 /// <para>
 /// THE PROPERTY. Every hold the gate reports is classified exactly once, as a hold that clears inside the flat
-/// admission's retry window or as one that clears only when the world says so (<see cref="BodyProgramHoldWait"/>), and
+/// admission's retry window or as one that clears only when the world says so (<see cref="BodyHoldWait"/>), and
 /// a node that meets the second kind is neither dispatched nor settled until its own watchdog runs out. A code whose
 /// own evidence says "wait for the world" and which the pump still spends is the failure this gate names:
 /// <c>transient_condition_consumed_a_plan:&lt;reason&gt;:&lt;nodes&gt;</c>.
@@ -85,7 +85,7 @@ public sealed class TransientHoldWaitGateTests
         string[] actions = CatalogActions();
         actions.Should().NotBeEmpty("the population is the published catalog; an empty one examines nothing and agrees with itself");
 
-        var byCode = new Dictionary<string, (BodyProgramHoldWait Wait, string Shape)>(StringComparer.Ordinal);
+        var byCode = new Dictionary<string, (BodyHoldWait Wait, string Shape)>(StringComparer.Ordinal);
         int examined = 0;
         var transient = new List<string>();
         var terminal = new List<string>();
@@ -115,7 +115,7 @@ public sealed class TransientHoldWaitGateTests
             code.Should().NotBeNull($"a_hold_that_names_nobody_is_a_refusal_nobody_can_act_on:{actionId}:{shape}");
 
             // ONE FACT, ONE SPELLING: the same code may not be declared both ways because a different modal was mounted.
-            if (byCode.TryGetValue(code!, out (BodyProgramHoldWait Wait, string Shape) seen))
+            if (byCode.TryGetValue(code!, out (BodyHoldWait Wait, string Shape) seen))
                 seen.Wait.Should().Be(hold.Value.Wait, $"one_code_one_classification:{code}:{shape} vs {seen.Shape}");
             else
                 byCode[code!] = (hold.Value.Wait, shape);
@@ -123,14 +123,14 @@ public sealed class TransientHoldWaitGateTests
             if (!held.Contains(code!)) held.Add(code!);
         }
 
-        foreach ((string code, (BodyProgramHoldWait wait, string shape)) in byCode.OrderBy(pair => pair.Key, StringComparer.Ordinal))
+        foreach ((string code, (BodyHoldWait wait, string shape)) in byCode.OrderBy(pair => pair.Key, StringComparer.Ordinal))
         {
             BodyProgramHold sample = BodyProgramDispatchGate.HoldOf(actions[0], shape == "cutscene", ModalFor(shape), false)!.Value;
             bool saysWait = EvidenceSaysWaitForTheWorld(sample.Evidence);
-            (wait == BodyProgramHoldWait.Watchdog).Should().Be(
+            (wait == BodyHoldWait.RequestDeadline).Should().Be(
                 saysWait,
                 $"the classification and the evidence are two readings of one fact, so a code whose evidence tells the reader to wait for the world must be waited out and no other may be:{code}:{sample.Evidence}");
-            if (wait == BodyProgramHoldWait.Watchdog) transient.Add(code);
+            if (wait == BodyHoldWait.RequestDeadline) transient.Add(code);
             else terminal.Add(code);
         }
 

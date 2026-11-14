@@ -511,6 +511,42 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
     internal void SetHeldRequestResolver(HeldRequestResolver? resolver) => this.admission.SetHeldRequestResolver(resolver);
 
     /// <summary>
+    /// HOW LONG the hold the admission projected may be waited out, or null when it may not be waited out at all.
+    ///
+    /// <para>
+    /// It is the second question about the SAME projection <see cref="ProjectAdmissionDisposition"/> produces, asked
+    /// once here so the flat admission and the body-program pump cannot hold opposite beliefs about one world: the pump
+    /// already names its deferral with the same <see cref="BodyHoldWait"/> values
+    /// (<see cref="GameBuddy.Stardew.Core.BodyPrograms.BodyProgramDispatchGate"/>).
+    /// </para>
+    /// <para>
+    /// THE TWO WAITS ARE TWO WORLD FACTS. <see cref="LocalDispositionKind.Transient"/> is a lock the engine releases
+    /// inside <c>WorldModel.TransientRetryWindowMs</c> - a tool swing, an eating pause, a warp fade - which is exactly
+    /// what that window is for. <see cref="LocalDispositionKind.Event"/> is an ENGINE-OWNED condition: a running event
+    /// advances itself or the player advances it, and the measured case (`round56`: the furnace cutscene, 19:55:53 to
+    /// 19:55:59) outlived the retry window by 2.4 s while a request it held was refused `cutscene_active`. Its bound is
+    /// therefore the deadline the request itself declared, which is the instant its admission can no longer be consumed
+    /// at all - the same bound the pump derives from a node's own watchdog.
+    /// </para>
+    /// <para>
+    /// THE REST ARE NOT WAITED OUT, and each for its own reason. A modal is cleared by an ACTION (the catalog's own
+    /// modal-resolving family) or by the player, never by waiting. A pass-out is the day ending: it clears on its own,
+    /// but in minutes, so no deadline a request may declare can outlast it. An idle body is not a hold.
+    /// </para>
+    /// </summary>
+    internal static BodyHoldWait? HoldWait(LocalDispositionKind kind) => kind switch
+    {
+        LocalDispositionKind.Transient => BodyHoldWait.RetryWindow,
+        LocalDispositionKind.Event => BodyHoldWait.RequestDeadline,
+        LocalDispositionKind.Idle => null,
+        LocalDispositionKind.Modal => null,
+        LocalDispositionKind.PassOut => null,
+        // Total on purpose, the way `WorldModel.KindForWire` is: a kind nobody classified must fail loudly instead of
+        // silently becoming a refusal of the world's own condition.
+        _ => throw new ArgumentOutOfRangeException(nameof(kind), kind, "no wait is declared for this disposition"),
+    };
+
+    /// <summary>
     /// The admission projection of a disposition: the closed kind, plus the <c>!CanMove</c> tail that keeps
     /// a movement lock (eating / knockback / warp transition) non-Idle for the body-owning profiles.
     ///

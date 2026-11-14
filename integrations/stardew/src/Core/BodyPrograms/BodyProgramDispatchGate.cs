@@ -49,31 +49,9 @@ public readonly record struct BodyProgramModalFact(BodyProgramModalKind Kind, st
 /// <see cref="Wait"/> is where the two are told apart.
 /// </para>
 /// </summary>
-public readonly record struct BodyProgramHold(BodyProgramModalKind Modal, string Evidence, BodyProgramHoldWait Wait = BodyProgramHoldWait.RetryWindow)
+public readonly record struct BodyProgramHold(BodyProgramModalKind Modal, string Evidence, BodyHoldWait Wait = BodyHoldWait.RetryWindow)
 {
     public bool IsModal => this.Modal != BodyProgramModalKind.None;
-}
-
-/// <summary>
-/// HOW LONG a hold must be waited out before a dispatch into it is the right answer.
-///
-/// <para>
-/// The two numbers are not a preference, they are two different world facts, and one window for both is the defect
-/// this type exists to state: `transient_busy` is an animation cooldown that ends inside the flat admission's own
-/// parking window, so a node deferred for exactly that window and dispatched meets a free body; a CUTSCENE is not,
-/// and the same window spends the node on `cutscene_active` four seconds before the event ends (measured `round56`).
-/// </para>
-/// </summary>
-public enum BodyProgramHoldWait
-{
-    /// <summary>The flat admission's own parking window (`WorldModel.TransientRetryWindowMs`); the pump's cadence budget.</summary>
-    RetryWindow,
-
-    /// <summary>
-    /// As long as the node's own watchdog allows a dispatch at all (<c>BodyProgramJournalNode.DerivedDeadlineMs</c>).
-    /// A cutscene advances itself, or the player advances it, and no shorter bound is honest about that.
-    /// </summary>
-    Watchdog,
 }
 
 /// <summary>
@@ -126,13 +104,13 @@ public static class BodyProgramDispatchGate
         // A cutscene outranks a mounted modal: the flat admission refuses the modal family on the same fact
         // (`ExecutionManager.AdmitExecution`: the Modal profile's only refusal is Event / eventUp).
         if (cutsceneUp)
-            return new BodyProgramHold(BodyProgramModalKind.None, "held_by=cutscene_active;next_step=wait_for_event_to_end", BodyProgramHoldWait.Watchdog);
+            return new BodyProgramHold(BodyProgramModalKind.None, "held_by=cutscene_active;next_step=wait_for_event_to_end", BodyHoldWait.RequestDeadline);
         // An open modal is the working precondition of the family that resolves it, and a hold against everything else.
         if (modal.IsMounted)
             return FarmhandActionCatalog.IsModalResolving(actionId) ? null : new BodyProgramHold(modal.Kind, ModalHold(modal));
         return actorCanMove
             ? null
-            : new BodyProgramHold(BodyProgramModalKind.None, "held_by=transient_busy;next_step=wait_for_retry_window", BodyProgramHoldWait.RetryWindow);
+            : new BodyProgramHold(BodyProgramModalKind.None, "held_by=transient_busy;next_step=wait_for_retry_window", BodyHoldWait.RetryWindow);
     }
 
     /// <summary>Whether the action may run now. The one-word form of <see cref="HoldOf"/> for a caller that needs no name.</summary>
