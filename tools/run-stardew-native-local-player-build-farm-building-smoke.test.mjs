@@ -164,9 +164,11 @@ test("an observation surface with no built entries reports not_checked, NEVER a 
   });
   assert.equal(checks.buildingPresentAtTile, "not_checked");
   assert.equal(checks.receiptNamesTheBuilding, "not_checked");
-  assert.equal(
-    Object.entries(checks).filter(([, ok]) => ok === false || ok === "not_checked").length,
-    2,
+  assert.deepEqual(
+    Object.entries(checks)
+      .filter(([, ok]) => ok === false || ok === "not_checked")
+      .map(([name]) => name),
+    ["buildingPresentAtTile", "receiptNamesTheBuilding"],
     "the run must fail, on exactly these two checks",
   );
 });

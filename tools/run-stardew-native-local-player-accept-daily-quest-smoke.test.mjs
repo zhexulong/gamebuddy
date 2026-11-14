@@ -104,9 +104,11 @@ test("a world that does not report the daily quest as accepted fails", () => {
 test("a surface with no dailyQuestTargets reports not_checked, NEVER a pass", () => {
   const checks = assertAcceptDailyQuestPostconditions({ ...PASSING, targetsAfter: null });
   assert.equal(checks.offerNoLongerAdvertised, "not_checked");
-  assert.equal(
-    Object.entries(checks).filter(([, ok]) => ok === false || ok === "not_checked").length,
-    1,
+  assert.deepEqual(
+    Object.entries(checks)
+      .filter(([, ok]) => ok === false || ok === "not_checked")
+      .map(([name]) => name),
+    ["offerNoLongerAdvertised"],
     "the run must fail, on exactly this check",
   );
 });
@@ -114,9 +116,11 @@ test("a surface with no dailyQuestTargets reports not_checked, NEVER a pass", ()
 test("a surface with no acceptedDailyQuest field reports not_checked, NEVER a pass", () => {
   const checks = assertAcceptDailyQuestPostconditions({ ...PASSING, acceptedDailyQuestAfter: undefined });
   assert.equal(checks.worldReportsAccepted, "not_checked");
-  assert.equal(
-    Object.entries(checks).filter(([, ok]) => ok === false || ok === "not_checked").length,
-    1,
+  assert.deepEqual(
+    Object.entries(checks)
+      .filter(([, ok]) => ok === false || ok === "not_checked")
+      .map(([name]) => name),
+    ["worldReportsAccepted"],
     "the run must fail, on exactly this check",
   );
 });

@@ -95,9 +95,11 @@ test("an observation surface with no debris reports not_checked, NEVER a pass", 
   // runner treats `not_checked` as a failure, so a surface that cannot show debris cannot silently bless a run.
   const checks = assertClearFishPondPostconditions({ target: TARGET, evidence: EVIDENCE, survivors: [], debris: null });
   assert.equal(checks.fishEjected, "not_checked");
-  assert.equal(
-    Object.entries(checks).filter(([, ok]) => ok === false || ok === "not_checked").length,
-    1,
+  assert.deepEqual(
+    Object.entries(checks)
+      .filter(([, ok]) => ok === false || ok === "not_checked")
+      .map(([name]) => name),
+    ["fishEjected"],
     "the run must fail, on exactly this check",
   );
 });
