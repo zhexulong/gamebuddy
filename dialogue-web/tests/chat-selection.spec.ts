@@ -740,9 +740,10 @@ test("clicking another chat while a turn generates aborts that turn and switches
   await expect(surface.getByTestId("chat-item")).toHaveCount(2);
 
   const target = surface.getByTestId("chat-item").nth(1).getByTestId("chat-select");
-  // Nothing is greyed out and no "stop first" reason is posted: the gesture is available.
+  // Nothing is greyed out: the gesture is available while a turn generates, which is the
+  // fact `toBeEnabled` reads. The refusal this replaced was a separate "stop first" notice;
+  // there is no such element in the product, so the enabled read is the whole claim.
   await expect(target).toBeEnabled();
-  await expect(surface.getByTestId("chat-select-blocked")).toHaveCount(0);
 
   await target.click();
   // The click is acknowledged while the request is out - a request, never a refusal.

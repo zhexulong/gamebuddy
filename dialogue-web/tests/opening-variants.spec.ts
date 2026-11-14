@@ -6,8 +6,19 @@
  * chips and does not read the card's record, and a card with no opening material shows no chip
  * rather than an invented one.
  */
-import { expect, test } from "./frontend-coverage";
+import { expect, test, type Locator } from "./frontend-coverage";
 import { token, draft, chat, root, jsonOk } from "./composed-reference-game-fixtures";
+
+/**
+ * The words the composer band prints.
+ *
+ * The path these specs replace was a row of chips inside the composer, each labelled
+ * with a line the player had not typed and submitting it as their own; a composer that
+ * offers opening material says so in its own words, and one that does not says nothing.
+ */
+async function composerWords(surface: Locator): Promise<string> {
+  return (await surface.locator(".composer-section").innerText()).trim();
+}
 
 /**
  * The first screen only: a conversation that has already started offers no
@@ -39,8 +50,11 @@ test("a conversation with a message offers no opening chips and does not read th
   const surface = page.getByTestId("chat-surface");
   await expect(surface).toBeVisible();
   await expect(surface.locator(".message-list > li")).toHaveCount(1);
-  await expect(surface.locator(".composer-chip")).toHaveCount(0);
-  await expect(surface.locator(".composer-chips-row")).toHaveCount(0);
+  // No opening row: the composer prints none of the words the card's record holds, so
+  // nothing inside it can submit a line the player did not type.
+  expect(await composerWords(surface), "the composer offers none of her opening").not.toContain(
+    "The lantern over the porch is still lit.",
+  );
   await expect(surface.locator("[data-empty-anchor]")).toHaveCount(0);
   expect(greetingReads, "a started conversation asks for no opening material").toBe(0);
 });
@@ -81,8 +95,12 @@ test("a card with no opening material shows no chip and invents none", async ({ 
   await page.goto(`/#profile=composed-reference-game&boot=${token}`);
   const surface = page.getByTestId("chat-surface");
   await expect(surface.locator("[data-empty-anchor]")).toBeVisible();
-  await expect(surface.locator(".composer-chip")).toHaveCount(0);
-  await expect(surface.locator(".composer-chips-row")).toHaveCount(0);
+  // The zero state is the surface's only invitation: the composer repeats none of it,
+  // because an invitation inside the band that submits the player's own words is the
+  // inverted path this replaces.
+  const invitation = (await surface.locator(".empty-state-opening").innerText()).trim();
+  expect(invitation.length, "the zero state names the companion").toBeGreaterThan(0);
+  expect(await composerWords(surface), "the composer invents no second invitation").not.toContain(invitation);
   // The first screen is still the conversation's own, with a usable composer.
   await expect(surface.locator(".composer-textarea")).toBeEnabled();
 });
@@ -164,10 +182,13 @@ test("the opening's variant switcher lives on the opening bubble, and the compos
   await expect(surface.locator(".message-list > li")).toHaveCount(1);
   await expect(surface.locator("[data-empty-anchor]")).toHaveCount(0);
 
-  // ... and choosing among the variants is the opening bubble's own control, not
-  // a composer row: the message carries the Host's unlocked switcher, worded with
-  // the Host's own label for the committed variant and its position in the set.
-  await expect(surface.locator(".composer-chip, .composer-chips-row")).toHaveCount(0);
+  // ... and choosing among the variants is the opening bubble's own control, not a
+  // composer row: the message carries the Host's unlocked switcher, worded with the
+  // Host's own label for the committed variant and its position in the set, and the
+  // composer band offers none of the variants' text of its own.
+  const offered = await composerWords(surface);
+  for (const variant of openings)
+    expect(offered, `the composer offers no variant of the opening (${variant.label})`).not.toContain(variant.text);
   const opening = surface.locator(".message.companion").first();
   await expect(opening.locator(".swipe-indicator")).toHaveText("Default 1/2");
   await expect(opening.locator(".swipe-btn")).toHaveCount(2);
@@ -237,8 +258,11 @@ test("the opening's variant switcher is sealed once a player message follows the
   const surface = page.getByTestId("chat-surface");
   await expect(surface).toBeVisible();
   await expect(surface.locator(".message-list > li")).toHaveCount(2);
-  await expect(surface.locator(".composer-chip")).toHaveCount(0);
-  await expect(surface.locator(".composer-chips-row")).toHaveCount(0);
+  // ... and the composer offers none of them either: the sealed opening cannot be
+  // reached from the band that submits the player's own words.
+  const offered = await composerWords(surface);
+  for (const variant of openings)
+    expect(offered, `the composer offers no variant of the sealed opening (${variant.label})`).not.toContain(variant.text);
   // The opening is sealed once the player has spoken, so its own variant
   // switcher is gone too: the choice cannot be reopened behind the transcript.
   await expect(surface.locator(".swipe-controls")).toHaveCount(0);

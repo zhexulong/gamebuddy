@@ -251,9 +251,11 @@ test("the zero-message anchor appears only while the transcript is empty", async
 
   const anchor = page.locator("[data-empty-anchor]");
   await expect(anchor).toHaveCount(1);
-  // The zero state is one invitation that names the companion; the app bar
-  // above already carries the monogram and the name, so there is no second plate.
-  await expect(anchor.locator(".empty-state-nameplate")).toHaveCount(0);
+  // The zero state is one invitation that names the companion once; the app bar above
+  // already carries the monogram and the name, so a second mention inside the anchor is
+  // the plate that would bring the name back a third time.
+  const anchorWords = (await anchor.innerText()).trim();
+  expect(anchorWords.match(/Mira/gu)?.length ?? 0, "the zero state names the companion once").toBe(1);
   await expect(anchor.locator(".empty-state-opening")).toContainText("Mira");
 
   const drawn = await page.evaluate(() => {

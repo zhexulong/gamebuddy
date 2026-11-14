@@ -196,8 +196,9 @@ test("a card whose lorebook entries import produces them on the character's own 
   await expect(ownEntries).toHaveCount(2);
   await expect(ownEntries.first()).toContainText("Always with her");
   await expect(ownEntries.nth(1)).toContainText("Trigger words: comet");
-  // ... and it is no longer a peer surface of the shell.
-  await expect(page.getByTestId("world-info-surface")).toHaveCount(0);
+  // ... and it is no longer a peer surface of the shell: no navigation entry offers
+  // World Info, which is the fact the shell's own surface roster can state. The test id
+  // this used to read was deleted with the surface, so it named nothing.
   await expect(page.getByRole("button", { name: "World Info", exact: true })).toHaveCount(0);
 });
 

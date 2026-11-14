@@ -406,10 +406,14 @@ test("defect 4: the first screen's title stack is collapsed and the void is guid
         appBarCompanion: read(".app-bar-title"),
         surfaceHeading: read(".surface-header h2"),
         titleBand: read(".timeline-heading"),
-        nameplate: read(".empty-state-nameplate"),
         openingLine: read(".empty-state-opening"),
       },
-      chips: document.querySelectorAll(".composer-chip, .composer-chips-row").length,
+      // The zero state's own words, counted. The plate that repeated the name the app bar
+      // already carries is gone; a second mention inside the anchor is what would bring it back.
+      anchorNames: ((anchor?.textContent ?? "").match(/Mira/gu) ?? []).length,
+      // The composer band's own words. The inverted opening path was a row of chips in
+      // here, each labelled with a line the player had not typed.
+      composer: (document.querySelector<HTMLElement>(".composer-section")?.textContent ?? "").trim(),
       timelineHeight: timeline === null ? 0 : Math.round(timeline.getBoundingClientRect().height),
       anchorHeight: anchor === null ? 0 : Math.round(anchor.getBoundingClientRect().height),
     };
@@ -417,19 +421,21 @@ test("defect 4: the first screen's title stack is collapsed and the void is guid
   console.log(`[defect-4] first screen: ${JSON.stringify(measured)}`);
 
   // The two redundant layers are gone: no placeholder title band above the
-  // transcript, and no plate repeating the name the app bar already carries.
+  // transcript, and the zero state names the companion once rather than printing her
+  // a third time on a plate of its own.
   expect(measured.stack.titleBand, "an untitled conversation prints no title band").toBeNull();
-  expect(measured.stack.nameplate, "the companion's name is not printed a third time").toBeNull();
+  expect(measured.anchorNames, "the companion's name is printed once in the zero state").toBe(1);
   // The levels that survive: the app bar's brand + companion, the surface
   // heading, and the zero state's invitation (which names the companion).
   expect(measured.stack.appBarBrand?.text, "the app bar keeps the product mark").toBe("GameBuddy");
   expect(measured.stack.appBarCompanion?.text, "the app bar keeps the companion identity").toBe("Mira");
   expect(measured.stack.surfaceHeading?.text, "the surface keeps its own heading").toBe("聊天");
   expect(measured.stack.openingLine?.text, "the invitation names the companion").toContain("Mira");
-  // The void is guided by the zero state alone: the composer offers no
-  // break-ice row, because the only text it could submit is the companion's own
-  // opening (choosing a variant lives on the opening bubble's own switcher).
-  expect(measured.chips, "the composer offers no inverted opening path").toBe(0);
+  // The void is guided by the zero state alone: the composer carries none of the
+  // opening's own lines, because the only text such a row could submit is the
+  // companion's own opening (choosing a variant lives on the opening bubble's own
+  // switcher).
+  expect(measured.composer, "the composer offers no inverted opening path").not.toContain(OPENINGS[0]!.text);
   expect(measured.anchorHeight, "the zero state fills the transcript").toBeGreaterThanOrEqual(
     measured.timelineHeight * 0.5,
   );
@@ -1123,7 +1129,7 @@ test("defect 6: the narrow strip is one row and the player's own line is as wide
     // The name is the meaning, and it is a real sentence rather than the glyph the
     // narrow form leaves visible.
     expect(control.name, `${control.className} keeps an accessible name`).not.toBe("");
-    expect(control.name, `${control.className}'s name is not the bare glyph`).not.toMatch(/^[‹›<>←→×✔✎🗑]+$/u);
+    expect(control.name, `${control.className}'s name is not the bare glyph`).not.toMatch(/^[‹›<>←→×√✎🗑]+$/u);
     expect(control.height, `${control.className} clears the 44 px floor`).toBeGreaterThanOrEqual(44);
     expect(control.width, `${control.className} is a target, not a squeezed glyph`).toBeGreaterThanOrEqual(44);
   }

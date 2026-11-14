@@ -527,8 +527,9 @@ test("the product Characters surface owns the world book and binds through world
   const surface = page.getByTestId("characters-surface");
   await expect(surface).toBeVisible();
   // The world book is a section of the Characters surface, and the World Info
-  // peer surface (with its own nav entry) no longer exists.
-  await expect(page.getByTestId("world-info-surface")).toHaveCount(0);
+  // peer surface (with its own nav entry) no longer exists: no navigation entry offers
+  // it, which is the fact the shell's surface roster can state. The test id this used to
+  // read was deleted with the surface, so it named nothing.
   await expect(page.getByRole("button", { name: "World Info", exact: true })).toHaveCount(0);
   const binding = surface.locator("[data-world-book]");
   await expect(binding.getByText("Pelican Town", { exact: true })).toBeVisible();
@@ -2611,6 +2612,7 @@ test("the empty World Info library says so and offers create, and the created it
           publicTitle: "The square",
           summary: "Benches, a fountain, and the notice board.",
           keys: ["square", "fountain"],
+          enabled: true,
         },
       ],
     },
@@ -2725,7 +2727,12 @@ test("editing a World Info item saves through the item's own revision and re-ren
       publicTitle: "Pelican Town, revisited",
       summary: "A valley town, and the people in it.",
       entries: [
-        { scope: "setting", publicTitle: "The square", summary: "Benches, a fountain, and the notice board." },
+        {
+          scope: "setting",
+          publicTitle: "The square",
+          summary: "Benches, a fountain, and the notice board.",
+          enabled: true,
+        },
       ],
       // The item's own revision, read from `world-info.detail`, is the CAS.
       expectedRevision: 3,
@@ -2797,6 +2804,7 @@ test("the entry editor shows and saves the second condition words and their mode
     keys: ["afternoon"],
     secondaryKeys: ["mood:quiet"],
     selectiveLogic: 3,
+    enabled: true,
   });
 
   // Reopening reads the saved revision back, so the store - not the form - is the authority.
@@ -2819,7 +2827,11 @@ test("the entry editor shows and saves the second condition words and their mode
   const created = library.requests.creates[0] as {
     item: { entries: readonly Record<string, unknown>[] };
   };
-  expect(Object.keys(created.item.entries[0]!).sort()).toEqual(["publicTitle", "scope", "summary"]);
+  // The entry's own on/off switch is always named (the library's entry carries `enabled`, absent
+  // meaning enabled), and the two GATE fields are still absent when the player set no gate - which is
+  // what this negative is about.
+  expect(Object.keys(created.item.entries[0]!).sort()).toEqual(["enabled", "publicTitle", "scope", "summary"]);
+  expect(created.item.entries[0]!.enabled).toBe(true);
 });
 
 test("deleting a World Info item arms first, sends nothing, and names the item it removes", async ({ page }) => {
