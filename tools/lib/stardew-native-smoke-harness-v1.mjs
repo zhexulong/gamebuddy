@@ -354,24 +354,6 @@ export function classifyTopology(config) {
 }
 
 /**
- * Assert the capabilities a contract requires for one specific topology.
- *
- * - `native_local_player_fixture` keeps exact equality, which additionally
- *   proves the isolated fixture publication leaked no other action.
- * - `shared_world_farmhand` needs required-subset, because that topology
- *   legitimately publishes the whole consented surface and the runner cannot
- *   narrow it. Equality would fail for a reason the action cannot fix.
- *
- * Both modes still prove the action under test and every precondition it
- * depends on are advertised and executable by this exact live publication.
- */
-function assertTopologyCapabilities(snapshot, topology, requiredCapabilities) {
-  if (topology === "shared_world_farmhand") return assertRequiredCapabilities(snapshot, requiredCapabilities);
-  if (topology === "native_local_player_fixture") return assertExactCapabilities(snapshot, requiredCapabilities);
-  throw new NativeSmokeHarnessError("unknown_topology");
-}
-
-/**
  * Observe the opening snapshot of a contract under a known topology.
  *
  * - `native_local_player_fixture` uses the strict form: its isolated fixture

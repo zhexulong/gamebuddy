@@ -133,7 +133,7 @@ test("the probe question never echoes a required keyword (the audit's zero-memor
   // reply that merely mentioned the thing being asked about scored a hit WITHOUT
   // remembering anything. A question must not supply the tokens that a correct
   // answer is supposed to contribute from memory.
-  for (const [probeId, replies] of Object.entries(EXPECTED_REPLIES)) {
+  for (const probeId of Object.keys(EXPECTED_REPLIES)) {
     const manifest = await loadFixture(`${probeId.replace("p-", "")}.json`);
     const step = manifest.probes[0].steps.find((candidate) => candidate.kind === "probe");
     const questionLower = step.text.toLowerCase();
@@ -156,7 +156,7 @@ test("the required keywords are recallable from the seeds at the declared thresh
   // (ceil(len * minHitRate)). p-turn-short is the instructive case: "mail" is a
   // synonym, not a seed token, but "postman" alone clears ceil(2*0.5)=1, so the
   // fixture is honest at its declared threshold.
-  for (const [probeId, replies] of Object.entries(EXPECTED_REPLIES)) {
+  for (const probeId of Object.keys(EXPECTED_REPLIES)) {
     const manifest = await loadFixture(`${probeId.replace("p-", "")}.json`);
     const probe = manifest.probes[0];
     const step = probe.steps.find((candidate) => candidate.kind === "probe");

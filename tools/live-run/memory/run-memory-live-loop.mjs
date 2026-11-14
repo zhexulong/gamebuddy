@@ -40,11 +40,11 @@
 import { spawn } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
-import { copyFile, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 
 import { launchDesktopCompositionGateChild } from "../../desktop-composition-launch.mjs";
 import { checkHistorianRubric, identifyHistorianPrompt, readCompartments } from "../../lib/historian-rubric.mjs";
@@ -59,7 +59,6 @@ import {
 import {
   evaluateProbeReply,
   loadProbeManifest,
-  openEventStream,
   probeTurnCommittedGate,
   probeVerdict,
 } from "../chat/run-chat-live-audit.mjs";
@@ -657,8 +656,6 @@ async function readTurnOutcome(origin, client, streamTerminal, companionBefore) 
     committedText: typeof reply?.text === "string" ? reply.text : undefined,
   });
 }
-
-const noopRecorder = Object.freeze({ record() {} });
 
 /**
  * Seed memory facts through a REAL management-surface child and return the

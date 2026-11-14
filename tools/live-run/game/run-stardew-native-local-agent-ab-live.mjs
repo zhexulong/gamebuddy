@@ -1705,25 +1705,6 @@ function newStallFacts() {
   return readStallWatch(lines.join("\n")).facts;
 }
 
-/**
- * The Host's world-stale facts that have arrived since the last look.
- *
- * Same cursor, same channel, same parser shape as `newStallFacts`, because it is the same defect family: the pump owns
- * the bound (`WORLD_STATE_STALE_TURNS`), the Host publishes one line per arming, and the loop only reads whether one
- * arrived. MEASURED 2026-11-10 (`round45`): the world block froze at `revision 352` for fifty turns, every turn was
- * issued as `continuation`, and nothing in the loop could have known - so she carried on from a day-old picture and
- * dispatched nothing for the last thirty minutes.
- */
-const worldStateStaleReadCursor = { chunk: 0, carry: "" };
-function newWorldStateStaleFacts() {
-  if (worldStateStaleReadCursor.chunk >= hostLogChunks.length) return [];
-  const text = worldStateStaleReadCursor.carry + hostLogChunks.slice(worldStateStaleReadCursor.chunk).join("");
-  worldStateStaleReadCursor.chunk = hostLogChunks.length;
-  const lines = text.split("\n");
-  worldStateStaleReadCursor.carry = lines.pop() ?? "";
-  return readWorldStateStaleFacts(lines.join("\n")).facts;
-}
-
 // Actions that MOVE the actor, LOOK at the world, or change only the actor's own gear.
 // A play session that did nothing but these has not played: run H attempted 14 actions,
 // got 14 refusals and one successful walk, harvested nothing, and still reported `passed`

@@ -81,28 +81,3 @@ export function readMountedTavernManagementProfile() {
 }
 
 export const MOUNTED_TAVERN_MANAGEMENT_OPERATION_IDS = Object.freeze(readMountedTavernManagementOperationIds());
-
-const KNOWN = new Set(MOUNTED_TAVERN_MANAGEMENT_OPERATION_IDS);
-
-/**
- * True when every id the profile declares is in the shared vocabulary. Kept as
- * a guard for callers that hold a profile object already read from disk; a
- * `false` result means the profile on disk and the profile source disagree,
- * which must fail closed rather than drop the unknown id.
- */
-function declaresOnlyKnownOperations(profile) {
-  return (
-    Array.isArray(profile?.operationIds) &&
-    profile.operationIds.length > 0 &&
-    profile.operationIds.every((id) => typeof id === "string" && KNOWN.has(id))
-  );
-}
-
-/**
- * The route each operation is served by. The mounted profile serves every
- * operation through the route of the same id, which is what the browser
- * contract declares for the settings surfaces.
- */
-const MOUNTED_TAVERN_MANAGEMENT_OPERATION_ROUTES = Object.freeze(
-  Object.fromEntries(MOUNTED_TAVERN_MANAGEMENT_OPERATION_IDS.map((id) => [id, id])),
-);

@@ -215,7 +215,7 @@ export async function ensureStandingTile(
   const usable = new Map(standingTiles(snapshot).map((tile) => [`${tile.x},${tile.y}`, tile]));
   if (usable.size === 0) throw new Error("no_usable_standing_tile");
   if (usable.has(`${snapshot.tile.x},${snapshot.tile.y}`)) return { snapshot, trace };
-  for (const [key, tile] of usable) {
+  for (const tile of usable.values()) {
     const terminal = await moveToTile(client, receipts, tile, trace, { timeoutMs });
     if (terminal === null) continue;
     const after = await freshActionable(client, timeoutMs);
