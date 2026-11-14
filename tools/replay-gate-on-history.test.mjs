@@ -93,6 +93,17 @@ test("the registered invocation is the one the repository runs, narrowed to the 
   );
 });
 
+test("a gate a script runs through another runner is named, not translated", () => {
+  const [bun] = registeredInvocations("host/src/stardew-completion-evidence-coverage.test.ts");
+  assert.equal(bun.script, "test:stardew-completion-evidence");
+  assert.equal(
+    bun.runner,
+    "bun",
+    "`cd host && bun test src/...` names its file relative to the `cd`, and it is no node run",
+  );
+  assert.equal(bun.cwdDir, "host");
+});
+
 test("a gate no script names has no invocation, so there is nothing to run", () => {
   assert.deepEqual(registeredInvocations("dialogue-web/tests/surface-navigation.spec.ts"), []);
 });

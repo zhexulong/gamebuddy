@@ -197,10 +197,10 @@ function commandSegments(command) {
  * dropped. `null` when the segment does not name this gate; `{ runner }` alone when it names it through a
  * runner this tool cannot read.
  */
-function narrowInvocation(segment, gateToken) {
+function narrowInvocation(segment, gatePaths) {
   const parts = segment.split(/\s+/u).filter((part) => part !== "");
   const unquote = (token) => token.replace(/^["']|["']$/gu, "").replace(/\\/gu, "/");
-  const gateIndex = parts.findIndex((part) => unquote(part) === gateToken);
+  const gateIndex = parts.findIndex((part) => gatePaths.includes(unquote(part)));
   if (gateIndex < 0) return null;
   const runner = unquote(parts[0]);
   if (runner !== "node" && runner !== "nodejs") return { runner: parts[0] };
@@ -222,26 +222,43 @@ function narrowInvocation(segment, gateToken) {
   return { runner, argv };
 }
 
-/** Every registered way this gate is run, narrowest first. */
+/**
+ * Every registered way this gate is run, narrowest first. A command names its file relative to one of
+ * three places - the repository root, the `package.json` that owns the script, or the directory a `cd`
+ * puts the run in (`cd host && bun test src/x.test.ts`) - so all three are read, and the run's own
+ * directory travels with the invocation.
+ */
 export function registeredInvocations(gateRel) {
   const found = [];
   for (const packageDir of registrationFiles(gateRel)) {
     const packageFile = join(packageDir, "package.json");
     const manifest = JSON.parse(readFileSync(join(REPOSITORY_ROOT, packageFile), "utf8"));
-    const gateToken = relative(packageDir, gateRel).replace(/\\/gu, "/");
     for (const [script, command] of Object.entries(manifest.scripts ?? {})) {
+      let cwdSuffix = "";
       for (const segment of commandSegments(command)) {
-        const invocation = narrowInvocation(segment, gateToken);
+        const cd = /^cd\s+(\S+)$/u.exec(segment);
+        if (cd !== null) {
+          cwdSuffix = cd[1].replace(/\\/gu, "/");
+          continue;
+        }
+        const cwdDir = relative(".", join(packageDir, cwdSuffix)).replace(/\\/gu, "/").replace(/^\.$/u, ".");
+        const gatePaths = [
+          gateRel,
+          relative(packageDir, gateRel).replace(/\\/gu, "/"),
+          relative(join(packageDir, cwdSuffix), gateRel).replace(/\\/gu, "/"),
+        ];
+        const invocation = narrowInvocation(segment, gatePaths);
         if (invocation === null) continue;
         found.push({
           packageDir,
+          cwdDir: cwdDir === "" ? "." : cwdDir,
           packageFile: packageFile === "." ? "package.json" : `${packageFile.replace(/\\/gu, "/")}`,
           script,
           command,
           segment,
           runner: invocation.runner,
           argv: invocation.argv ?? null,
-          dropped: invocation.argv === null ? 0 : segment.split(/\s+/u).length - invocation.argv.length,
+          dropped: Array.isArray(invocation.argv) ? segment.split(/\s+/u).length - invocation.argv.length : 0,
         });
       }
     }
@@ -652,7 +669,7 @@ function childEnvironment() {
 }
 
 function runGate(treeDir, invocation) {
-  const cwd = join(treeDir, invocation.packageDir);
+  const cwd = join(treeDir, invocation.cwdDir);
   const result = spawnSync(process.execPath, invocation.argv.slice(1), {
     cwd,
     encoding: "utf8",
@@ -702,7 +719,7 @@ function printVerdict(result, gate) {
   for (const line of (reading.readings ?? []).slice(0, READING_LINES)) lines.push(`   reading: ${line}`);
   for (const line of (reading.details ?? []).slice(0, REPORT_LINES)) lines.push(`   finding: ${line}`);
   if (artifacts !== null && artifacts !== undefined) lines.push(`   captured: ${artifacts}`);
-  if (treeDir !== null) lines.push(`   kept: ${treeDir}`);
+  if (treeDir !== null && treeDir !== undefined) lines.push(`   kept: ${treeDir}`);
   process.stdout.write(`${lines.join("\n")}\n`);
 }
 
@@ -727,7 +744,7 @@ async function replayRevision({ revision, gateRel, keep, outDir }) {
   const created = { packages: [] };
   try {
     await extractArchive(revision, treeDir);
-    const provisioned = provisionGate(treeDir, [gateRel], flaggedModules(invocation.argv), invocation.packageDir);
+    const provisioned = provisionGate(treeDir, [gateRel], flaggedModules(invocation.argv), invocation.cwdDir);
     created.packages = provisioned.linked;
     let run = runGate(treeDir, invocation);
     let reading = invocation.argv.includes("--test") ? readTestRunVerdict(run) : readReportVerdict(run);
@@ -739,12 +756,12 @@ async function replayRevision({ revision, gateRel, keep, outDir }) {
       if (absent === null || run.timedOut) break;
       const moduleName = packageNameOf(absent[1]);
       if (!/^(?:@[\w.-]+\/)?[\w.-]+$/u.test(moduleName)) break;
-      if (!linkPackage(treeDir, invocation.packageDir, moduleName, created.packages, [])) break;
+      if (!linkPackage(treeDir, invocation.cwdDir, moduleName, created.packages, [])) break;
       provisioned.late.push(moduleName);
       run = runGate(treeDir, invocation);
       reading = invocation.argv.includes("--test") ? readTestRunVerdict(run) : readReportVerdict(run);
     }
-    run.command = `${invocation.argv[0]} ${invocation.argv.slice(1).join(" ")}   (cwd ${invocation.packageDir}, registration ${invocation.script})`;
+    run.command = `${invocation.argv[0]} ${invocation.argv.slice(1).join(" ")}   (cwd ${invocation.cwdDir}, registration ${invocation.script})`;
     if (run.timedOut) reading = { verdict: "not_measured", reason: "run_timeout", details: [] };
     const artifacts = outDir === null ? null : writeArtifacts(outDir, revision, gateRel, { run, reading, invocation });
     return { revision, invocation, run, reading, artifacts, provisioned, treeDir: keep ? treeDir : null };
