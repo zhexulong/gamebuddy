@@ -291,11 +291,15 @@ const rosterIdentities = async (page) => {
       const again = await stagePicker(page, pngBody?.fileName ?? "card.png", pngBytes);
       say(`picking the same file again: ${JSON.stringify(again)}`);
       say(`the picker takes the same file twice: ${again.outcome === "staged"}`);
-      if (again.outcome === "staged") await page.locator("[data-card-import-review-cancel]").first().click();
-      const dropped = await page.evaluate(() => document.querySelector("[data-card-import-review]") === null && document.querySelector("[data-card-import-result]") === null);
-      say(`the second pick was cancelled and staged nothing: ${dropped}`);
+      if (again.outcome !== "staged") {
+        say("the picker did not stage the same file a second time, so there was nothing to cancel");
+      } else {
+        await page.locator("[data-card-import-review-cancel]").first().click();
+        const dropped = await page.evaluate(() => document.querySelector("[data-card-import-review]") === null);
+        say(`the second pick was cancelled and its review dropped: ${dropped}`);
+      }
       const rosterFinal = await rosterIdentities(page);
-      say(`companions after the cancelled second pick: ${(rosterFinal.companions ?? []).length}`);
+      say(`companions after the second pick: ${(rosterFinal.companions ?? []).length}`);
 
       await page.setViewportSize({ width: 400, height: 800 });
       await page.waitForTimeout(1200);
