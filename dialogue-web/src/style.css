@@ -4122,19 +4122,20 @@
      player types a whole instruction into was the one field on the surface that did
      not keep the column every other field keeps. It takes the same measure as its
      siblings; at 400x800 the region is already narrower than the measure, so nothing
-     moves there (measured: 368 px before, 368 px after). */
+     moves there (measured: 368 px before, 368 px after).
+
+     The profile-backup block is the last one appended to this surface after that move, and it was the
+     last one missing the measure: measured at 1440x900, it spanned 16..1414 inside a 1408 px region
+     while the five groups above it sat at 395..1035 - one surface, two columns, and a section title
+     with its own button at opposite ends of the window. It takes the same measure as its siblings
+     (`tests/profile-backup-keeps-the-management-measure.spec.ts` asserts the shared edges). */
   [data-language-settings],
   [data-voice-settings],
   [data-connection-settings],
   [data-model-profiles],
   [data-game-prompt-addition],
-  /* The profile-backup block is the last one appended to this surface after the move, and it was the
-     last one missing the measure: measured at 1440x900, it spanned 16..1414 inside a 1408 px region
-     while the five groups above it sat at 395..1035 - one surface, two columns, and a section title
-     with its own button at opposite ends of the window. It takes the same measure as its siblings
-     (`tests/profile-backup-keeps-the-management-measure.spec.ts` asserts the shared edges). */
-    [data-profile-backup-section],
-  .surface-content > .button-group {
+  .surface-content > .button-group,
+  [data-profile-backup-section] {
     width: 100%;
     max-width: var(--management-form-measure);
     margin-inline: auto;
