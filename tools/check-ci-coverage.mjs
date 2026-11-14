@@ -229,7 +229,7 @@ function readScripts(root) {
 }
 
 /** A `#` comment is a YAML comment only at line start or after whitespace. */
-function stripYamlComments(text) {
+export function stripYamlComments(text) {
   return text
     .split("\n")
     .map((line) => (/^\s*#/u.test(line) ? "" : line.replace(/\s#.*$/u, "")))
@@ -257,6 +257,20 @@ function entryFiles(command) {
 }
 
 /**
+ * The scripts a workflow step covers: it names the script, or it names a file the script's command runs.
+ *
+ * Exported because `tools/check-local-ci-parity.mjs` asks the same question of the SAME `run:` lines - two
+ * spellings of "which step covers this script" disagree the first time one of them learns a shape.
+ */
+export function workflowCoveredScripts({ scripts, workflowText: text }) {
+  const tokens = workflowTokens(text);
+  const covered = new Set();
+  for (const [name, command] of Object.entries(scripts))
+    if (tokens.has(name) || entryFiles(command).some((path) => tokens.has(path))) covered.add(name);
+  return covered;
+}
+
+/**
  * Split the gate scripts into what a workflow runs, what the derived job must run, and what is
  * registered, and report every register entry that no longer earns its place.
  */
@@ -265,7 +279,8 @@ export function deriveCiCoverage({ scripts, workflowText: text, register = REGIS
   const gateScripts = Object.keys(scripts)
     .filter((name) => GATE_NAME.test(name))
     .sort();
-  const runsInWorkflow = (name) => tokens.has(name) || entryFiles(scripts[name] ?? "").some((path) => tokens.has(path));
+  const covered = workflowCoveredScripts({ scripts, workflowText: text });
+  const runsInWorkflow = (name) => covered.has(name);
   const registered = new Map(register.map((entry) => [entry.script, entry]));
   const workflow = [];
   const derived = [];
