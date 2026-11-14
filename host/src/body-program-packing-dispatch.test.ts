@@ -14,7 +14,7 @@ import {
   toolChargeCeilingForClaim,
 } from "./body-program-packing.js";
 import { type CompiledPlan, compilePlanScript, planActionsFromRegistrations } from "./body-program-script.js";
-import { type ActionRegistration, type Snapshot } from "./protocol.js";
+import type { ActionRegistration, Snapshot } from "./protocol.js";
 
 /**
  * THE LOOP IS BYPASSED, NOT TAUGHT TO PACK.
