@@ -48,6 +48,7 @@ import {
   summarizeReceipt,
   waitForTerminal,
 } from "./lib/stardew-native-smoke-harness-v1.mjs";
+import { parseEvidence } from "./lib/native-local-runner-primitives.mjs";
 
 const ACTION = "fish_here";
 const REQUIRED_CAPABILITIES = ["cancel_active_execution", "inspect_self", ACTION];
@@ -264,20 +265,6 @@ function assertEvidence(evidence, key, expected) {
 function summarizeEvidence(evidence) {
   const detail = typeof evidence?.detail === "string" ? evidence.detail : "";
   return detail.length > 0 ? detail : "no_evidence";
-}
-
-function parseEvidence(evidence) {
-  const detail = typeof evidence?.detail === "string" ? evidence.detail : "";
-  if (detail.length === 0) throw new Error("native_local_evidence_empty");
-  return Object.fromEntries(
-    detail
-      .split(";")
-      .map((pair) => {
-        const index = pair.indexOf("=");
-        return index > 0 ? [pair.slice(0, index), pair.slice(index + 1)] : null;
-      })
-      .filter(Boolean),
-  );
 }
 
 /**

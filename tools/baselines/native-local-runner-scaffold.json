@@ -558,11 +558,6 @@
       "reason": "predates_the_primitives"
     },
     {
-      "file": "tools/run-stardew-native-local-player-claim-mail-attachment-smoke.mjs",
-      "primitive": "parseEvidence",
-      "reason": "predates_the_primitives"
-    },
-    {
       "file": "tools/run-stardew-native-local-player-claim-museum-reward-smoke.mjs",
       "primitive": "parseEvidence",
       "reason": "predates_the_primitives"
@@ -620,11 +615,6 @@
     {
       "file": "tools/run-stardew-native-local-player-clear-hoedirt-smoke.mjs",
       "primitive": "tilesAdjacent",
-      "reason": "predates_the_primitives"
-    },
-    {
-      "file": "tools/run-stardew-native-local-player-collect-building-chest-output-smoke.mjs",
-      "primitive": "parseEvidence",
       "reason": "predates_the_primitives"
     },
     {
@@ -695,11 +685,6 @@
     {
       "file": "tools/run-stardew-native-local-player-enter-exit-warp-action-smoke.mjs",
       "primitive": "tilesAdjacent",
-      "reason": "predates_the_primitives"
-    },
-    {
-      "file": "tools/run-stardew-native-local-player-enter-exit-warp-action-smoke.mjs",
-      "primitive": "parseEvidence",
       "reason": "predates_the_primitives"
     },
     {
@@ -783,11 +768,6 @@
       "reason": "predates_the_primitives"
     },
     {
-      "file": "tools/run-stardew-native-local-player-fish-here-smoke.mjs",
-      "primitive": "parseEvidence",
-      "reason": "predates_the_primitives"
-    },
-    {
       "file": "tools/run-stardew-native-local-player-harvest-crop-smoke.mjs",
       "primitive": "parseEvidence",
       "reason": "predates_the_primitives"
@@ -830,11 +810,6 @@
     {
       "file": "tools/run-stardew-native-local-player-interact-npc-with-item-smoke.mjs",
       "primitive": "parseStrictEvidence",
-      "reason": "predates_the_primitives"
-    },
-    {
-      "file": "tools/run-stardew-native-local-player-load-building-chest-smoke.mjs",
-      "primitive": "parseEvidence",
       "reason": "predates_the_primitives"
     },
     {
@@ -885,11 +860,6 @@
     {
       "file": "tools/run-stardew-native-local-player-move-placed-furniture-smoke.mjs",
       "primitive": "tileChebyshevDistance",
-      "reason": "predates_the_primitives"
-    },
-    {
-      "file": "tools/run-stardew-native-local-player-move-placed-furniture-smoke.mjs",
-      "primitive": "parseEvidence",
       "reason": "predates_the_primitives"
     },
     {
@@ -945,11 +915,6 @@
     {
       "file": "tools/run-stardew-native-local-player-open-geode-smoke.mjs",
       "primitive": "tilesAdjacent",
-      "reason": "predates_the_primitives"
-    },
-    {
-      "file": "tools/run-stardew-native-local-player-pan-ore-smoke.mjs",
-      "primitive": "parseEvidence",
       "reason": "predates_the_primitives"
     },
     {
@@ -1028,11 +993,6 @@
       "reason": "predates_the_primitives"
     },
     {
-      "file": "tools/run-stardew-native-local-player-place-owned-object-smoke.mjs",
-      "primitive": "parseEvidence",
-      "reason": "predates_the_primitives"
-    },
-    {
       "file": "tools/run-stardew-native-local-player-place-wood-fence-smoke.mjs",
       "primitive": "validateNativeLocalFixtureConfig",
       "reason": "predates_the_primitives"
@@ -1094,17 +1054,7 @@
     },
     {
       "file": "tools/run-stardew-native-local-player-remove-fence-smoke.mjs",
-      "primitive": "parseEvidence",
-      "reason": "predates_the_primitives"
-    },
-    {
-      "file": "tools/run-stardew-native-local-player-remove-fence-smoke.mjs",
       "primitive": "validateNativeLocalFixtureConfig",
-      "reason": "predates_the_primitives"
-    },
-    {
-      "file": "tools/run-stardew-native-local-player-remove-placed-item-smoke.mjs",
-      "primitive": "parseEvidence",
       "reason": "predates_the_primitives"
     },
     {
@@ -1130,11 +1080,6 @@
     {
       "file": "tools/run-stardew-native-local-player-ride-minecart-smoke.mjs",
       "primitive": "validateNativeLocalFixtureConfig",
-      "reason": "predates_the_primitives"
-    },
-    {
-      "file": "tools/run-stardew-native-local-player-rotate-furniture-smoke.mjs",
-      "primitive": "parseEvidence",
       "reason": "predates_the_primitives"
     },
     {
@@ -1210,11 +1155,6 @@
     {
       "file": "tools/run-stardew-native-local-player-talk-to-npc-smoke.mjs",
       "primitive": "tileChebyshevDistance",
-      "reason": "predates_the_primitives"
-    },
-    {
-      "file": "tools/run-stardew-native-local-player-talk-to-npc-smoke.mjs",
-      "primitive": "parseEvidence",
       "reason": "predates_the_primitives"
     },
     {
@@ -1319,11 +1259,6 @@
     },
     {
       "file": "tools/run-stardew-native-local-player-use-raft-smoke.mjs",
-      "primitive": "parseEvidence",
-      "reason": "predates_the_primitives"
-    },
-    {
-      "file": "tools/run-stardew-native-local-player-use-warp-item-smoke.mjs",
       "primitive": "parseEvidence",
       "reason": "predates_the_primitives"
     },

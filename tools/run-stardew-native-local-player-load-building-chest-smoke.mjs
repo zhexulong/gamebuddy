@@ -8,6 +8,7 @@ import {
   waitForTerminal,
 } from "./lib/stardew-native-smoke-harness-v1.mjs";
 import { loadHostTestModule } from "./lib/host-test-module.mjs";
+import { parseEvidence } from "./lib/native-local-runner-primitives.mjs";
 
 const ACTION = "load_building_chest";
 const REQUIRED_CAPABILITIES = ["cancel_active_execution", "inspect_self", ACTION];
@@ -258,20 +259,6 @@ function positiveInteger(value, key) {
   const parsed = integer(value, key);
   if (parsed < 1) throw new Error(`building_chest_evidence_${key}:${value}`);
   return parsed;
-}
-
-function parseEvidence(evidence) {
-  const detail = typeof evidence?.detail === "string" ? evidence.detail : "";
-  if (detail.length === 0) throw new Error("native_local_evidence_empty");
-  return Object.fromEntries(
-    detail
-      .split(";")
-      .map((pair) => {
-        const index = pair.indexOf("=");
-        return index > 0 ? [pair.slice(0, index), pair.slice(index + 1)] : null;
-      })
-      .filter(Boolean),
-  );
 }
 
 if (import.meta.main) {
