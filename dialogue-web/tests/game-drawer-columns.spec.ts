@@ -208,7 +208,16 @@ test("the empty capability board does not occupy half the drawer alone", async (
 
   expect(wide.board, "the empty board renders").not.toBeNull();
   // Two columns at 1440 - the drawer's own panes, unchanged; this is the cell the board sits in.
-  expect(wide.columns, "the desktop drawer is still two columns").toBe("694px 694px");
+  // The claim is the SHAPE, not today's number: the surface now reserves a scrollbar gutter
+  // (`scrollbar-gutter: stable` on `.surface-content`), which took 15 px off the drawer and 5 px off
+  // each track when it landed. A literal here would report that as a defect every time a column is
+  // re-measured, which is what this assertion is not about.
+  const tracks = wide.columns.split(" ").map((track) => Number.parseFloat(track));
+  expect(tracks, `the desktop drawer is two panes: ${wide.columns}`).toHaveLength(2);
+  expect(
+    Math.abs(tracks[0]! - tracks[1]!),
+    `the two panes are equal halves: ${wide.columns}`,
+  ).toBeLessThanOrEqual(1);
 
   // The defect: the board's own column carried 448 px of blank under a 74 px board.
   expect(
