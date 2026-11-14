@@ -1,4 +1,4 @@
-// red-proof: inject  removing containment from the game-free generic layer set -> `× reports exact generic-to-game and
+// red-proof: inject  removing containment from the game-free generic layer set -> `✖ reports exact generic-to-game and
 //   Stardew raw-module violations` (tools/check-host-game-physical-seam.test.mjs)
 import assert from "node:assert/strict";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";

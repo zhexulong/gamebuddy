@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// red-proof: inject  disabling the out_of_scope_reference arm in the scope analysis -> `× a catch block reading a
+// red-proof: inject  disabling the out_of_scope_reference arm in the scope analysis -> `✖ a catch block reading a
 //   try-scoped binding is reported` (tools/check-scope-references.test.mjs)
 /**
  * Tests for the scope-reference gate (`check-scope-references.mjs` +

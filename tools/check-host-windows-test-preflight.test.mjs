@@ -1,4 +1,4 @@
-// red-proof: inject  making the POSIX-literal reader answer false for every parent -> `× detects only direct POSIX
+// red-proof: inject  making the POSIX-literal reader answer false for every parent -> `✖ detects only direct POSIX
 //   mkdtemp parents` (tools/check-host-windows-test-preflight.test.mjs)
 import assert from "node:assert/strict";
 import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
