@@ -199,8 +199,13 @@ public sealed class RedeemPrizeTicketActionTests
     {
         string runner = ReadRepositoryFile(Path.Combine("tools", RunnerFile));
 
-        // The capability surface is checked with the required-subset helper, not the exact-surface one.
-        runner.Should().Contain("assertRequiredCapabilities");
+        // The capability surface is checked with the required-subset helper, not the exact-surface
+        // one - and the check is the template's now, driven by what the runner DECLARES.
+        runner.Should().Contain("const REQUIRED_CAPABILITIES = [\"cancel_active_execution\", \"inspect_self\", ACTION];");
+        runner.Should().Contain("requiredCapabilities: REQUIRED_CAPABILITIES");
+        string scaffold = ReadRepositoryFile(Path.Combine("tools", "lib", "native-local-runner-scaffold.mjs"));
+        scaffold.Should().Contain("assertRequiredCapabilities(snapshot, requiredCapabilities)");
+        scaffold.Should().Contain("assertRequiredCapabilities(after, requiredCapabilities)");
         runner.Should().NotContain("assertTopologyCapabilities");
         runner.Should().Contain("inventoryItemFacts", "both halves are read from the pack facts the snapshot carries");
         runner.Should().Contain("\"prize_ticket_redeemed\"");

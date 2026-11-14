@@ -168,7 +168,15 @@ public sealed class NameEntityActionTests
         string suite = ReadRepositoryFile(Path.Combine("tools", RunnerSuiteFile));
 
         runner.Should().Contain("const ACTION = \"name_entity\";");
-        runner.Should().Contain("assertRequiredCapabilities");
+        // The capability check is the template's now (tools/lib/native-local-runner-scaffold.mjs):
+        // the runner DECLARES the subset it requires and the scaffold asserts it against the
+        // pre-request and the post-terminal observation. Pinning the declaration and the
+        // scaffold's use of it keeps the fact without pinning a call site's spelling.
+        runner.Should().Contain("const REQUIRED_CAPABILITIES = [\"cancel_active_execution\", \"inspect_self\", ACTION];");
+        runner.Should().Contain("requiredCapabilities: REQUIRED_CAPABILITIES");
+        string scaffold = ReadRepositoryFile(Path.Combine("tools", "lib", "native-local-runner-scaffold.mjs"));
+        scaffold.Should().Contain("assertRequiredCapabilities(snapshot, requiredCapabilities)");
+        scaffold.Should().Contain("assertRequiredCapabilities(after, requiredCapabilities)");
         runner.Should().Contain("args: { text: requestedName }");
         runner.Should().Contain("entity_named");
         runner.Should().Contain("name_entity_target_already_named");

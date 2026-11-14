@@ -146,9 +146,14 @@ public sealed class WithdrawSiloHayActionTests
         runner.Should().Contain("carriedHay(after)");
         runner.Should().Contain("siloHayAfter !== target.hay - 1");
         runner.Should().Contain("carriedAfter !== carriedBefore + 1");
-        // And the negative attempt re-reads the world to prove nothing moved.
-        runner.Should().Contain("silo_withdraw_empty_not_refused");
-        runner.Should().Contain("silo_withdraw_empty_moved_world");
+        // And the negative attempt re-reads the world to prove nothing moved. The template owns that
+        // second request and both of its failure modes; the runner DECLARES them, and the scaffold
+        // fails the run as `<action>_negative_not_refused` / `<action>_negative_moved_world`.
+        runner.Should().Contain("refusedCodes: [\"silo_empty\"]");
+        runner.Should().Contain("unchanged: ({ before, after }) =>");
+        string scaffold = ReadRepositoryFile(Path.Combine("tools", "lib", "native-local-runner-scaffold.mjs"));
+        scaffold.Should().Contain("if (!refused) throw new Error(`${action}_negative_not_refused:");
+        scaffold.Should().Contain("if (drift != null) throw new Error(`${action}_negative_moved_world:");
         // The receipt's evidence is checked as evidence, separately from the world.
         runner.Should().Contain("silo_hay_decreased");
         runner.Should().Contain("carried_hay_increased");

@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Text.Json;
 using FluentAssertions;
 using GameBuddy.Stardew.Core.Models;
 using GameBuddy.Stardew.Core.Policy;
@@ -36,7 +37,8 @@ public sealed class ToggleAnimalDoorActionTests
 {
     private const string HandlerFile = "farmhandexecutioncontroller.animaldooractions.cs";
     private const string FixtureFile = "ModEntry.Fixtures.ToggleAnimalDoor.cs";
-    private const string RunnerFile = "run-stardew-native-local-player-toggle-animal-door-smoke.mjs";
+    private const string ContractFile = "toggle_animal_door.json";
+    private const string GateDescriptorsFile = "stardew-action-gate-descriptors.mjs";
 
     /// <summary>
     /// Every failure mode this action can produce has its own terminal code, so a receipt
@@ -164,31 +166,63 @@ public sealed class ToggleAnimalDoorActionTests
     }
 
     [Fact]
-    public void Runner_AssertsTheObservedFlipAndTheStaleTargetNegativeCase()
+    public void Contract_StatesTheObservedFlipAndTheStaleTargetNegativeCase()
     {
-        string runner = ReadRepositoryFile(Path.Combine("tools", RunnerFile));
+        // This action's gate is its CONTRACT, not a runner: `contracts/smoke/toggle_animal_door.json`
+        // is what tools/run-native-action-slice.mjs executes, and the gate row names `contract` with a
+        // null runner. So the facts the retired runner pinned are read from that definition.
+        ReadRepositoryFile(Path.Combine("tools", GateDescriptorsFile))
+            .Should().Contain(
+                "gate(\"toggle_animal_door\", 1, null, \"animal_door_toggled\", \"native_toggle_animal_door_v1\", \"contract\")",
+                "the row must route this action to its contract, name no runner, and keep the terminal and fixture descriptor it had");
 
-        // The action under test, and the required-subset capability mode a new runner owes.
-        runner.Should().Contain("const ACTION = \"toggle_animal_door\";");
-        runner.Should().Contain("assertRequiredCapabilities");
-        runner.Should().NotContain("assertExactCapabilities");
+        JsonElement contract = JsonDocument.Parse(
+            ReadRepositoryFile(Path.Combine("contracts", "smoke", ContractFile))).RootElement;
+
+        contract.GetProperty("action").GetString().Should().Be("toggle_animal_door");
 
         // The world change is read from a FRESH observation after the terminal, not from the
         // receipt's own evidence, and the identity must have moved with the state.
-        runner.Should().Contain("animalDoorAt(after, target.x, target.y)");
-        runner.Should().Contain("toggled.isOpen !== true");
-        runner.Should().Contain("animal_door_world_unchanged");
-        runner.Should().Contain("animal_door_world_identity_stale");
+        List<string> worldAfter = WorldClauses(contract.GetProperty("worldAfter"));
+        worldAfter.Should().NotBeEmpty("a contract that asserts no world change has no postcondition");
+        worldAfter.Should().Contain("animalDoorTargets:excludesTarget", "the closed-door identity must be gone after the flip");
+        worldAfter.Should().Contain("animalDoorTargets:rowAtTargetTile.isOpen", "the same tile must advertise an OPEN door");
 
-        // The negative case: the stale closed-door id must be refused and must not move the
-        // world, and a success on it must fail the run.
-        runner.Should().Contain("animal_door_target_changed");
-        runner.Should().Contain("animal_door_stale_target_not_refused");
-        runner.Should().Contain("animal_door_stale_target_moved_world");
+        // The negative case: the stale closed-door id must be REFUSED by name, and the world must
+        // not move - the same clauses, read again after the refusal.
+        contract.GetProperty("stale").GetProperty("refusedWith").EnumerateArray().Select(code => code.GetString())
+            .Should().Contain("animal_door_target_changed");
+        WorldClauses(contract.GetProperty("afterStale")).Should().BeEquivalentTo(
+            worldAfter, "a refused stale target may not move what the accepted flip moved");
 
         // The evidence is checked as evidence, separately from the world.
-        runner.Should().Contain("animal_door_open_changed");
-        runner.Should().Contain("animal_door_toggled");
+        JsonElement evidence = contract.GetProperty("evidence");
+        evidence.GetProperty("animal_door_open_before").GetString().Should().Be("false");
+        evidence.GetProperty("animal_door_open_after").GetString().Should().Be("true");
+        evidence.GetProperty("animal_door_open_changed").GetString().Should().Be("true");
+
+        // The door this run is handed is CLOSED: a door already open is not a flip, and the stale
+        // negative above is only a negative against the state the accepted call left.
+        contract.GetProperty("discovery").GetProperty("require").GetProperty("isOpen").GetBoolean()
+            .Should().BeFalse("the discovery filter must hand the run a closed door");
+    }
+
+    /// <summary>The clauses a contract's world assertion holds, as `field:assertion` strings.</summary>
+    private static List<string> WorldClauses(JsonElement assertions)
+    {
+        var described = new List<string>();
+        foreach (JsonElement clause in assertions.EnumerateArray())
+        {
+            if (!clause.TryGetProperty("field", out JsonElement field)) continue;
+            if (clause.TryGetProperty("excludesTarget", out JsonElement excludes) && excludes.ValueKind == JsonValueKind.True)
+                described.Add($"{field.GetString()}:excludesTarget");
+            if (clause.TryGetProperty("rowAtTargetTile", out JsonElement row)
+                && row.TryGetProperty("isOpen", out JsonElement open)
+                && open.ValueKind == JsonValueKind.True)
+                described.Add($"{field.GetString()}:rowAtTargetTile.isOpen");
+        }
+
+        return described;
     }
 
     [Fact]
