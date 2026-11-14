@@ -314,6 +314,21 @@ test("the detectors turn red on the two sentences that proved the defect, and on
     "the plan tool's 'speak after every plan' is a finding",
   );
   assert.notDeepEqual(
+    flagged("You must tell the player what the plan did."),
+    [],
+    "a mandate laid on a speech act needs no turn boundary to be a mandate: the obligation is what makes it one",
+  );
+  assert.notDeepEqual(
+    flagged("Make sure to say something once the receipt arrives."),
+    [],
+    "and the same rule reached from the other side - an instruction to remember - is the class, not the instance",
+  );
+  assert.notDeepEqual(
+    flagged("Speak to the player."),
+    [],
+    "the bare directive: it announces no condition, so it requires speech at every point it names",
+  );
+  assert.notDeepEqual(
     flagged("Give your partner one remark per reply and nothing more."),
     [],
     "a sentence nobody has written yet - the class, not the instance",
@@ -323,6 +338,50 @@ test("the detectors turn red on the two sentences that proved the defect, and on
     flagged("说清就停：一句家常话收住。"),
     [],
     "the preset's own Chinese form is readable by the same reader",
+  );
+});
+
+/**
+ * THE MANDATE BOUNDARY. Two of our own commits landed nineteen minutes apart on the same sentence and neither was
+ * stale: `88b08d6a` (02:53) deleted "and speak to the player" so the plan tool's description ends at "so end your
+ * turn", and `a214d190` (03:12, main) put back "speak to the player when there is something to coordinate or share,
+ * or keep focused on the work". They are not one sentence in two spellings - the first MANDATED speech and the second
+ * permits silence - and the difference is the layer, not the wording:
+ *
+ *   "so end your turn"                                  structural - what the call does, so the description's.
+ *   "speak when there is something to coordinate or
+ *    share, or keep focused on the work"                 stance    - when she talks, so the preset's.
+ *
+ * The property this gate holds is the first half's absence: a description may not TELL HER TO SPEAK. It may say what
+ * the turn does, and it may mention the player. So the detector reads a mandate - an obligation or a directive with no
+ * condition on it - and not the presence of a speech verb. Before it did, it flagged the conditional clause above (a
+ * stance sentence, yes, but not a mandate) while passing "Make sure to say something once the receipt arrives" (a
+ * mandate with no turn in it). A detector that cannot tell those apart cannot say which layer a sentence belongs to,
+ * which is the only thing this gate is for.
+ *
+ * Where the conditional half lives is asserted, not assumed: `amber-deepseek-v4.1.json` - the Game surface's preset -
+ * already carries both halves ("连续干活时保持专注，无需每一步都解说" for staying on the work, "若需要开口，用一句极简大白话向搭档同步
+ * 意图或回应" for speaking when there is something to coordinate), so nothing was moved into it and nothing is duplicated.
+ */
+test("a description that ends the turn and says nothing about her talking is not a finding", () => {
+  assert.deepEqual(
+    stanceConcepts(
+      "The call returns as soon as the plan is accepted: do NOT poll it - each step's receipt arrives later as a new message, so end your turn.",
+    ),
+    [],
+    "the sentence this tree ships: the turn's end is the tool fact, and it says nothing about whether she talks",
+  );
+  assert.deepEqual(
+    stanceConcepts("End your turn and the result comes back next turn."),
+    [],
+    "the structural clause reached from the other side - what comes back is the receipt, not a word she owes",
+  );
+  assert.deepEqual(
+    stanceConcepts(
+      "so end your turn; speak to the player when there is something to coordinate or share, or keep focused on the work.",
+    ),
+    [],
+    "a conditional clause permits silence, so it is not a mandate - but it is still stance, and stance is the preset's (amber-deepseek-v4.1.json states both halves); this gate is what keeps a MANDATE out, not every mention of the player",
   );
 });
 
