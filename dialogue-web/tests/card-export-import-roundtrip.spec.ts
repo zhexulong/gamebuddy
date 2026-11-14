@@ -283,9 +283,13 @@ test("the same card imports twice in a row", async ({ page }) => {
   const picker = surface.locator("[data-card-import-file]");
   const file = { name: `${EXPORTED_CARD.data.name}.png`, mimeType: "image/png", buffer: pngBytes };
 
-  // The same File twice: the input resets `value` inside onChange so the second pick still
-  // fires `change`. Without that reset the browser sees an unchanged file list and stages
-  // nothing - a player who wants the same card again would press the picker and get silence.
+  // The same File twice. The browser fires `change` only when the input's own value changed, so
+  // an input still holding this file would take the second pick as no choice at all - a player
+  // who wants the same card again would press the picker and get silence. That is what the
+  // `value` reset inside `onChange` is for, and the reset's effect is the assertion below: the
+  // picker keeps NO file after a pick. It cannot be asserted through the event, because an
+  // injected file (`setInputFiles`, and the chooser's `setFiles`) dispatches `input` and `change`
+  // unconditionally - the browser's own "unchanged value, no event" rule is not on that path.
   for (const pick of ["first", "second"] as const) {
     await picker.setInputFiles(file);
     await expect(
@@ -295,6 +299,10 @@ test("the same card imports twice in a row", async ({ page }) => {
     await expect.poll(() => stageBodies.length, { message: `the ${pick} pick reached the Host` }).toBe(
       pick === "first" ? 1 : 2,
     );
+    expect(
+      await picker.evaluate((node) => (node as HTMLInputElement).files?.length ?? -1),
+      `after the ${pick} pick the input keeps no file, so picking it again is a change`,
+    ).toBe(0);
     await surface.locator("[data-card-import-review-cancel]").click();
     await expect(surface.locator("[data-card-import-review]"), "the staged card was dropped").toHaveCount(0);
   }
