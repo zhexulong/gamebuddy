@@ -63,6 +63,21 @@ test("the most recent attempt's refusal is the one reported", () => {
   }
 });
 
+test("a three-letter first segment is a code, not a shortening of one", () => {
+  // Measured on a real launch refusal: `cdp_port_held_by_pid:<pid>:<dir>`. The first segment is `cdp`,
+  // and a word boundary never appears inside the identifier, so a rule needing four characters before
+  // the first underscore read the whole line as naming nothing.
+  const log = logWith([
+    "CDP PORT LOCK REFUSED: cdp_port_held_by_pid:41152:E:\\gb\\shots.stage: cdp port 9345 is held by pid 41152",
+    "DONE-LAUNCH-FAILED",
+  ]);
+  try {
+    assert.match(String(lastNamedRefusal(log.path)), /^cdp_port_held_by_pid:41152:/u);
+  } finally {
+    log.cleanup();
+  }
+});
+
 test("a log that cannot be read is not a refusal", () => {
   assert.equal(lastNamedRefusal(join(tmpdir(), "gb-no-such-phase.log")), null);
   assert.equal(describePhaseFailure({ phase: "build", code: 1, logPath: null }), "phase build failed (exit 1)");

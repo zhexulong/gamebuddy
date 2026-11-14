@@ -8,8 +8,14 @@
 // the phase's OWN log and puts it on the line the operator actually sees.
 import { readFileSync } from "node:fs";
 
-/** A refusal code is a snake_case word and its colon; a path's drive letter or a sentence cannot match. */
-const NAMED_REFUSAL = /\b[a-z][a-z0-9]{3,}(?:_[a-z0-9]+)+:/u;
+/**
+ * A refusal code is a snake_case word and its colon. Three characters is the shortest first segment the
+ * kit uses (`cdp_port_held_by_pid`, `run_config_unreadable`, `pin_worktree_not_removed`), and a word
+ * boundary never appears inside the identifier - so the rule is anchored on the START of the code and
+ * not on a segment in its middle. A drive letter (`E:`), a `remedy:` sentence and a dashed flag carry no
+ * underscore before their colon and cannot match.
+ */
+const NAMED_REFUSAL = /\b[a-z][a-z0-9]{2,}(?:_[a-z0-9]+)+:/u;
 
 /**
  * The last refusal a phase log names, from its code to the end of that line, or `null`.
