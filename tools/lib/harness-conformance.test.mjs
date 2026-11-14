@@ -16,6 +16,7 @@ import {
   checkLiveRunPreflight,
   checkRunnerResolution,
   checkScenarioAcceptance,
+  declarationKeyCollisions,
   describeGateFalsifierCensus,
   gateFalsifierCensus,
   gateRedProofLedger,
@@ -193,6 +194,52 @@ test("gate check judges a gate by its NAME, so filing a domain in a directory do
     }).map((entry) => [entry.code, entry.detail]),
     [["gate_without_falsifier", "gates/meta/check-a-gate-nobody-classified.mjs"]],
   );
+});
+
+// The other half of the same key: it is derived from the path, and the registry is what keeps it equal to the
+// declaration's `id`. A key two files share is therefore a relation rather than an identity - the shape a half-finished
+// domain move leaves behind, where the copy lands before the original is deleted - and the pre-fix suite judged both
+// files by one ledger row without naming either of them.
+test("two files deriving one classification key are named, not judged by one ledger row", () => {
+  const paths = ["check-a-gate.mjs", "gates/meta/check-a-gate.mjs"];
+  assert.deepEqual(declarationKeyCollisions(paths), [["check-a-gate.mjs", paths]]);
+  assert.deepEqual(
+    checkGateFalsifiers({
+      gateNames: paths,
+      withFalsifier: [],
+      withoutFalsifier: [{ gate: "check-a-gate.mjs", reason: "a report, not a gate" }],
+      toolsDir,
+      run: () => ({ status: 0, stdout: "" }),
+    }).map((entry) => [entry.code, entry.detail]),
+    [
+      [
+        "gate_key_collision",
+        "check-a-gate.mjs: check-a-gate.mjs and gates/meta/check-a-gate.mjs derive one classification key, so one " +
+          "ledger row judges both and neither is named",
+      ],
+    ],
+  );
+  // The control: two files, two keys is the ordinary population, so the case above is about the shared key and not
+  // about a gate living in a directory.
+  assert.deepEqual(declarationKeyCollisions(["check-a.mjs", "gates/meta/check-b.mjs"]), []);
+  assert.deepEqual(declarationKeyCollisions(harnessGateNames(toolsDir)), [], "the real tree derives 149 distinct keys");
+});
+
+// The moved domain, read as a population rather than as one gate at a time. This is the reading that was 14 + 14: with
+// the path compared against the ledger, every `tools/gates/<domain>/` gate was `gate_without_falsifier` AND every ledger
+// row for one was `falsifier_entry_stale`. Two of the fourteen were in neither table at all, so the classification was
+// only half the fix - the rows for them are the other half.
+test("the fourteen gates filed under a domain directory are classified, and no row for them is stale", () => {
+  const names = harnessGateNames(toolsDir);
+  const moved = names.filter((name) => name.startsWith("gates/"));
+  assert.equal(moved.length, 14, "the `meta` domain's gates");
+  const report = '{"gate":"stub","status":"passed","examined":1,"checks":[{"id":"a","status":"passed"}]}';
+  assert.deepEqual(
+    checkGateFalsifiers({ gateNames: moved, toolsDir, run: () => ({ status: 0, stdout: report }) }),
+    [],
+    "every moved gate is in exactly one table, so none of the fourteen is gate_without_falsifier",
+  );
+  assert.deepEqual(checkGateRegistry({ gateNames: names }), [], "and no ledger row names a gate that is not there");
 });
 
 test("gate check reports a gate that neither self-reports nor is declared", () => {

@@ -74,14 +74,37 @@ import { fixtureActions, fixtureScenario } from "./stardew-native-local-player-f
 const finding = (code, detail) => ({ code, detail });
 
 /**
- * The name a gate is DECLARED under: its file's own name, with no directory.
+ * The key a gate is CLASSIFIED under: its declaration's name, which is its file's own name with no directory.
  *
- * A gate is run from a path relative to `tools/` (`gates/meta/check-diff.mjs`) and declared by a name
+ * A gate is run from a path relative to `tools/` (`gates/meta/check-diff.mjs`) and declares itself by a name
  * (`check-diff.mjs`), because a gate keeps its name when its domain files it in a directory. Comparing the path
  * against the ledger read every sorted gate as undeclared - measured on the `meta` pilot, all 14 at once, while the
  * ledger held all 14 entries.
+ *
+ * It is the declaration that names the gate, not the path: `tools/gates/registry.mjs` refuses an `id` that is not the
+ * file's slug and refuses two files claiming one `id`, so the declaration's name is an identity rather than a suffix a
+ * reader chose. The name is still DERIVED from the path here - the registry is what keeps the two equal - which is why
+ * `declarationKeyCollisions` exists: a derived key that maps two files to one row is a relation, and the second file would
+ * be judged by the first file's classification with neither named.
  */
 const declaredNameOf = (path) => String(path).replace(/^.*\//u, "");
+
+/**
+ * The keys two or more gate files claim for themselves.
+ *
+ * The incident: a domain move whose copy is committed before the original is deleted, or a rebase that resurrects the
+ * old path, leaves `check-diff.mjs` and `gates/meta/check-diff.mjs` in one population. Both derive one key, so the
+ * ledger row for `check-diff.mjs` classifies both, `unlisted` stays empty, and the file the row was not written for is
+ * never judged - a population that silently collapsed from two gates to one answer. Reported rather than absorbed.
+ */
+export function declarationKeyCollisions(gateNames) {
+  const byKey = new Map();
+  for (const path of gateNames) {
+    const key = declaredNameOf(path);
+    byKey.set(key, [...(byKey.get(key) ?? []), path]);
+  }
+  return [...byKey].filter(([, paths]) => paths.length > 1);
+}
 
 /** Actions whose scenario/runner wiring decides whether a harness run can start at all. */
 const HARNESS_ACTIONS = Object.freeze([
@@ -1044,6 +1067,89 @@ const GATES_WITHOUT_FALSIFIER = Object.freeze([
       "same file with a per-row argument is clean. The gate is red at HEAD on three declared entries with no parity " +
       "test; the `red-proof:` markers in its own file are what this suite audits it by",
   },
+  // The nine gates nothing classified when the meta domain moved (measured 2026-11-15, at `819c44e7`): the census
+  // printed `unlisted 9` and this suite's own `census.unlisted` assertion was red, so "a gate in neither table" was a
+  // fact the ledger published without anyone owning it. Each was RUN before it was written down here, and each prints
+  // its reading as lines - or as a `{gate, status, examined}` summary with no per-rule `checks[]` - so this suite can
+  // read no verdict off it. Two of them are the `meta` gates the move filed in `tools/gates/meta/`.
+  {
+    gate: "check-assertion-hooks.mjs",
+    reason:
+      "prints `hooks examined N · test files N · findings N` and one line per finding, not a `{gate, checks[]}` report; " +
+      "its falsifier is tools/check-assertion-hooks.test.mjs, which drives throwaway directories through a hook that " +
+      "imports, a dynamic import, one that awaits without saying so, one taking two parameters or none, one answering a " +
+      "non-list, one throwing on a world it cannot know, a second exported function, a hook with no declared clause, and a " +
+      "directory with no hook in it (blocked, never green)",
+  },
+  {
+    gate: "check-baseline-paths.mjs",
+    reason:
+      "prints `baselines examined 25 · path references 366 · dangling 0`, so the reading is a census and not a report; " +
+      "its falsifier is tools/check-baseline-paths.test.mjs: the commit that retired the runners replayed from its own " +
+      "index, a fabricated path in a baseline named as exactly one finding, a file on disk git does not track, and a root " +
+      "with no baseline or an unparseable one blocked rather than green",
+  },
+  {
+    gate: "check-native-local-runner-scaffold.mjs",
+    reason:
+      "prints `runners examined 122 · on the template 12 · hand-written 110 · baselined 110`, so the reading is a census; " +
+      "its falsifier is tools/check-native-local-runner-scaffold.test.mjs: the pre-migration sweep-scythe runner replayed, " +
+      "a runner that imports the template and still starts its own process, a definition the import never provides, a " +
+      "deleted runner that must leave the baseline, an entry with no reason, two entries for one runner, and an empty " +
+      "population blocked rather than green",
+  },
+  {
+    gate: "check-stardew-lifecycle-pins.mjs",
+    reason:
+      "prints a `{gate, status, examined, pins, declared, unrecorded}` summary but no per-rule `checks[]`, so a `passed` " +
+      "in it names no rule this suite can read; its falsifier is tools/check-stardew-lifecycle-pins.test.mjs: a literal " +
+      "pin of one action's rung, the deriving form that pin becomes, a pin three lines above a declaration, an unreasoned " +
+      "declaration, a pin the reader cannot attribute, the ratchet in both directions, a baseline keyed by content so a " +
+      "pin moved down a file is the same pin, and a run over no test file blocked rather than green",
+  },
+  {
+    gate: "check-stardew-live-runner-coverage.mjs",
+    reason:
+      "prints `actions examined 103 · with a live gate 101 · runner 92 · contract 9 · without 2 · read-only excluded 3` " +
+      "and the two uncovered actions by name, so its verdict is lines and not a `{gate, checks[]}` report; its falsifier " +
+      "is tools/check-stardew-live-runner-coverage.test.mjs: a catalog action with no route, an action deleted from the " +
+      "resolver's tables, a resolved runner the index does not carry, the pre-fcc2c1b7 sweep_scythe reading replayed " +
+      "from history, an unreadable catalog and a shrunken population blocked",
+  },
+  {
+    gate: "check-stardew-shop-purchase-pays-for-goods.mjs",
+    reason:
+      "prints `purchases examined 5 · spent without goods 0 · judged 5 · unjudged 0` and one line per loss; its " +
+      "falsifier is tools/check-stardew-shop-purchase-pays-for-goods.test.mjs: the loss named with its purse and " +
+      "scenario, a tool upgrade whose goods are the farmer's field, a `tool_upgraded` the Mod does not spell, a purchase " +
+      "that paid nothing, a receipt that states no purse (unjudged and printed, never silently passed), a renamed money " +
+      "field as a hole in the population, and an absent corpus blocked",
+  },
+  {
+    gate: "check-viewport-population.mjs",
+    reason:
+      "prints `{gate, status, examined, examinedFiles, findings[]}` with no per-rule `checks[]`, and a line per spec cell " +
+      "it read; its falsifier is tools/check-viewport-population.test.mjs: a spec spelling a partial list of the declared " +
+      "sizes, a newly declared cell that a hand-written spec owes, a config leaving the inherited cell to the device, an " +
+      "exemption that matches no site, and a reading over no spec blocked rather than passed",
+  },
+  {
+    gate: "check-gate-premises.mjs",
+    reason:
+      "prints `gate_premises: gates examined N · inputs checked N · missing N` and one line per finding, so its reading " +
+      "is lines; its falsifier is tools/gates/meta/check-gate-premises.test.mjs: the deletion commit's own gate text " +
+      "replayed from git (both gates named), a declared path that is not on disk, a gate that declares no input, a gate " +
+      "that is gone, a glob matching nothing, and an empty registry blocked",
+  },
+  {
+    gate: "check-red-proof-markers.mjs",
+    reason:
+      "prints `red_proof_markers: examined 121 file(s) · corrupted 0 marker line(s) …` and one line per offending marker, " +
+      "so its reading is a census; its falsifier is tools/gates/meta/check-red-proof-markers.test.mjs: a marker position " +
+      "reported where a multiplication is not, the population as every file carrying either glyph, a baseline entry that " +
+      "excuses its own line, a repaired entry that is stale, the same tree read from its commit still firing, and a tree " +
+      "holding neither glyph blocked rather than passed",
+  },
   ...AUDIT_WITHOUT_SELF_REPORT.map((gate) => ({ gate, reason: AUDIT_WITHOUT_SELF_REPORT_REASON })),
 ]);
 
@@ -1143,6 +1249,14 @@ export function checkGateFalsifiers({
   const findings = [];
   if (gateNames.length === 0)
     findings.push(finding("gate_population_empty", "no tools/check-*.mjs gate was enumerated, so no report was read"));
+  for (const [key, paths] of declarationKeyCollisions(gateNames))
+    findings.push(
+      finding(
+        "gate_key_collision",
+        `${key}: ${paths.join(" and ")} derive one classification key, so one ledger row judges both and ` +
+          "neither is named",
+      ),
+    );
   for (const name of gateNames) {
     const selfReports = withSet.has(declaredName(name));
     const declaredExcept = declared.has(declaredName(name));
