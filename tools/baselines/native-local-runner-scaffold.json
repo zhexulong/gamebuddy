@@ -458,11 +458,6 @@
       "reason": "predates_the_primitives"
     },
     {
-      "file": "tools/run-stardew-native-local-player-advance-day-smoke.mjs",
-      "primitive": "parseStrictEvidence",
-      "reason": "predates_the_primitives"
-    },
-    {
       "file": "tools/run-stardew-native-local-player-body-owner-hold-smoke.mjs",
       "primitive": "sameTile",
       "reason": "predates_the_primitives"
@@ -480,11 +475,6 @@
     {
       "file": "tools/run-stardew-native-local-player-break-resource-clump-smoke.mjs",
       "primitive": "waitForNavigationTerminal",
-      "reason": "predates_the_primitives"
-    },
-    {
-      "file": "tools/run-stardew-native-local-player-break-resource-clump-smoke.mjs",
-      "primitive": "parseStrictEvidence",
       "reason": "predates_the_primitives"
     },
     {
@@ -510,21 +500,6 @@
     {
       "file": "tools/run-stardew-native-local-player-break-rock-source-smoke.mjs",
       "primitive": "parseEvidence",
-      "reason": "predates_the_primitives"
-    },
-    {
-      "file": "tools/run-stardew-native-local-player-chest-retrieve-smoke.mjs",
-      "primitive": "parseStrictEvidence",
-      "reason": "predates_the_primitives"
-    },
-    {
-      "file": "tools/run-stardew-native-local-player-chest-store-smoke.mjs",
-      "primitive": "parseStrictEvidence",
-      "reason": "predates_the_primitives"
-    },
-    {
-      "file": "tools/run-stardew-native-local-player-chop-stump-smoke.mjs",
-      "primitive": "parseStrictEvidence",
       "reason": "predates_the_primitives"
     },
     {
@@ -560,11 +535,6 @@
     {
       "file": "tools/run-stardew-native-local-player-claim-museum-reward-smoke.mjs",
       "primitive": "parseEvidence",
-      "reason": "predates_the_primitives"
-    },
-    {
-      "file": "tools/run-stardew-native-local-player-clear-cask-smoke.mjs",
-      "primitive": "parseStrictEvidence",
       "reason": "predates_the_primitives"
     },
     {
@@ -635,16 +605,6 @@
     {
       "file": "tools/run-stardew-native-local-player-craft-partial-recovery-chain-smoke.mjs",
       "primitive": "validateNativeLocalFixtureConfig",
-      "reason": "predates_the_primitives"
-    },
-    {
-      "file": "tools/run-stardew-native-local-player-cut-grass-smoke.mjs",
-      "primitive": "parseStrictEvidence",
-      "reason": "predates_the_primitives"
-    },
-    {
-      "file": "tools/run-stardew-native-local-player-cut-weeds-smoke.mjs",
-      "primitive": "parseStrictEvidence",
       "reason": "predates_the_primitives"
     },
     {
@@ -793,11 +753,6 @@
       "reason": "predates_the_primitives"
     },
     {
-      "file": "tools/run-stardew-native-local-player-interact-npc-with-item-smoke.mjs",
-      "primitive": "parseStrictEvidence",
-      "reason": "predates_the_primitives"
-    },
-    {
       "file": "tools/run-stardew-native-local-player-machine-ab-smoke.mjs",
       "primitive": "validateNativeLocalFixtureConfig",
       "reason": "predates_the_primitives"
@@ -894,11 +849,6 @@
     },
     {
       "file": "tools/run-stardew-native-local-player-open-geode-smoke.mjs",
-      "primitive": "parseStrictEvidence",
-      "reason": "predates_the_primitives"
-    },
-    {
-      "file": "tools/run-stardew-native-local-player-open-geode-smoke.mjs",
       "primitive": "tilesAdjacent",
       "reason": "predates_the_primitives"
     },
@@ -925,11 +875,6 @@
     {
       "file": "tools/run-stardew-native-local-player-pet-farm-animal-smoke.mjs",
       "primitive": "validateNativeLocalFixtureConfig",
-      "reason": "predates_the_primitives"
-    },
-    {
-      "file": "tools/run-stardew-native-local-player-pet-farm-animal-smoke.mjs",
-      "primitive": "parseStrictEvidence",
       "reason": "predates_the_primitives"
     },
     {
@@ -989,11 +934,6 @@
     },
     {
       "file": "tools/run-stardew-native-local-player-place-wood-fence-smoke.mjs",
-      "primitive": "parseStrictEvidence",
-      "reason": "predates_the_primitives"
-    },
-    {
-      "file": "tools/run-stardew-native-local-player-plant-sapling-smoke.mjs",
       "primitive": "parseStrictEvidence",
       "reason": "predates_the_primitives"
     },
@@ -1068,17 +1008,7 @@
       "reason": "predates_the_primitives"
     },
     {
-      "file": "tools/run-stardew-native-local-player-scythe-crop-smoke.mjs",
-      "primitive": "parseStrictEvidence",
-      "reason": "predates_the_primitives"
-    },
-    {
       "file": "tools/run-stardew-native-local-player-send-multiplayer-chat-smoke.mjs",
-      "primitive": "parseStrictEvidence",
-      "reason": "predates_the_primitives"
-    },
-    {
-      "file": "tools/run-stardew-native-local-player-ship-item-smoke.mjs",
       "primitive": "parseStrictEvidence",
       "reason": "predates_the_primitives"
     },

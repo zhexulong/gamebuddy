@@ -36,6 +36,7 @@ import {
   waitForTerminal,
 } from "./lib/stardew-native-smoke-harness-v1.mjs";
 import { loadHostTestModule } from "./lib/host-test-module.mjs";
+import { parseEvidence } from "./lib/native-local-runner-primitives.mjs";
 
 const ACTION = "pet_farm_animal";
 /** The action's own success word (`ExecutePetFarmAnimal`: succeeded only when the seam set `wasPet` and the floor was met). */
@@ -125,7 +126,7 @@ export async function runPetFarmAnimalSmoke(
     if (terminal.executionId !== accepted.executionId || terminal.requestId !== requestId)
       throw new Error("pet_farm_animal_terminal_identity_mismatch");
 
-    const evidence = parseStrictEvidence(terminal.evidence);
+    const evidence = parseEvidence(terminal.evidence);
     trace.push({
       phase: "observed_evidence",
       action: ACTION,
@@ -186,7 +187,7 @@ export async function runPetFarmAnimalSmoke(
       action: ACTION,
       target: target.targetId,
       receipt: summarizeReceipt(secondTerminal),
-      evidence: parseStrictEvidence(secondTerminal.evidence),
+      evidence: parseEvidence(secondTerminal.evidence),
     });
     if (secondTerminal.executionId !== secondAccepted.executionId || secondTerminal.requestId !== secondRequestId)
       throw new Error("pet_farm_animal_second_terminal_identity_mismatch");
@@ -194,7 +195,7 @@ export async function runPetFarmAnimalSmoke(
       secondTerminal.state === "rejected" &&
       secondTerminal.reasonCode === ALREADY_PETTED_CODE &&
       // The refusal names the SAME native animal, so the code cannot be satisfied by an animal that merely resembles it.
-      parseStrictEvidence(secondTerminal.evidence).animal === evidence.animal;
+      parseEvidence(secondTerminal.evidence).animal === evidence.animal;
     if (!alreadyPettedRefused)
       throw new Error(
         `pet_farm_animal_second_attempt_not_refused_by_name:state=${secondTerminal.state}` +
@@ -432,20 +433,6 @@ function integerField(evidence, key) {
   if (typeof raw !== "string" || !/^\d{1,4}$/.test(raw))
     throw new Error(`pet_farm_animal_evidence_${key}_invalid:${String(raw)}`);
   return Number(raw);
-}
-
-function parseStrictEvidence(evidence) {
-  const detail = typeof evidence?.detail === "string" ? evidence.detail : "";
-  if (detail.length === 0) throw new Error("native_local_evidence_empty");
-  return Object.fromEntries(
-    detail
-      .split(";")
-      .map((pair) => {
-        const index = pair.indexOf("=");
-        return index > 0 ? [pair.slice(0, index), pair.slice(index + 1)] : null;
-      })
-      .filter(Boolean),
-  );
 }
 
 function postconditionReason({ friendship, worldAgrees, alreadyPettedRefused, sameAnimal, survived }) {

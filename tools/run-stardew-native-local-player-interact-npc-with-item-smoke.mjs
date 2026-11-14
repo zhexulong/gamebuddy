@@ -10,6 +10,7 @@ import {
   waitForTerminal,
 } from "./lib/stardew-native-smoke-harness-v1.mjs";
 import { loadHostTestModule } from "./lib/host-test-module.mjs";
+import { parseEvidence } from "./lib/native-local-runner-primitives.mjs";
 
 const ACTION = "interact_npc_with_item";
 const SCENARIO = "native_interact_npc_with_item_v1";
@@ -94,7 +95,7 @@ export async function runInteractNpcWithItemSmoke(
       throw new Error("npc_offer_terminal_identity_mismatch");
     if (terminal.state !== "succeeded" || terminal.reasonCode !== "quest_item_delivered")
       throw new Error(`npc_offer_failed:${terminal.state}:${terminal.reasonCode}`);
-    const evidence = parseStrictEvidence(terminal.evidence);
+    const evidence = parseEvidence(terminal.evidence);
     const after = await waitForFreshSnapshot(client, {
       minRevision: terminal.revision,
       timeoutMs: postconditionTimeoutMs,
@@ -338,20 +339,6 @@ function nearestCardinalApproach(tile, target) {
 
 function adjacent(left, right) {
   return Math.max(Math.abs(left.x - right.x), Math.abs(left.y - right.y)) <= 1;
-}
-
-function parseStrictEvidence(evidence) {
-  const detail = typeof evidence?.detail === "string" ? evidence.detail : "";
-  if (detail.length === 0) throw new Error("native_local_evidence_empty");
-  return Object.fromEntries(
-    detail
-      .split(";")
-      .map((pair) => {
-        const index = pair.indexOf("=");
-        return index > 0 ? [pair.slice(0, index), pair.slice(index + 1)] : null;
-      })
-      .filter(Boolean),
-  );
 }
 
 if (import.meta.main) {

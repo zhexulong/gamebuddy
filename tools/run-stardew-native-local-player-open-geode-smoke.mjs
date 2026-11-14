@@ -33,6 +33,7 @@ import {
   waitForTerminal,
 } from "./lib/stardew-native-smoke-harness-v1.mjs";
 import { loadHostTestModule } from "./lib/host-test-module.mjs";
+import { parseEvidence } from "./lib/native-local-runner-primitives.mjs";
 
 const ACTION = "open_geode";
 /** The action's own success word (`ExecuteOpenGeode`: succeeded only when the delivery and the fee both landed). */
@@ -134,7 +135,7 @@ export async function runOpenGeodeSmoke(
       terminal = await waitForTerminal(receipts, accepted, terminalTimeoutMs);
       if (terminal.executionId !== accepted.executionId || terminal.requestId !== requestId)
         throw new Error("open_geode_terminal_identity_mismatch");
-      evidence = parseStrictEvidence(terminal.evidence);
+      evidence = parseEvidence(terminal.evidence);
       trace.push({
         attempt,
         phase: "observed_evidence",
@@ -443,21 +444,6 @@ function chooseGeode(snapshot) {
     before: rows[0].stack,
     displayName: rows[0].displayName,
   };
-}
-
-function parseStrictEvidence(evidence) {
-  const detail = typeof evidence?.detail === "string" ? evidence.detail : "";
-  if (detail.length === 0) throw new Error("native_local_evidence_empty");
-  const fields = Object.fromEntries(
-    detail
-      .split(";")
-      .map((pair) => {
-        const index = pair.indexOf("=");
-        return index > 0 ? [pair.slice(0, index), pair.slice(index + 1)] : null;
-      })
-      .filter(Boolean),
-  );
-  return fields;
 }
 
 function postconditionReason({ geodeConsumed, treasureArrived, noMenuOpen, receiptMatchesWorld }) {

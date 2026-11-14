@@ -8,6 +8,7 @@ import {
   waitForTerminal,
 } from "./lib/stardew-native-smoke-harness-v1.mjs";
 import { loadHostTestModule } from "./lib/host-test-module.mjs";
+import { parseEvidence } from "./lib/native-local-runner-primitives.mjs";
 
 const ACTION = "cut_grass";
 const REQUIRED_CAPABILITIES = ["cancel_active_execution", "inspect_self", "equip_tool", ACTION];
@@ -68,7 +69,7 @@ export async function runCutgrassSmoke(
       throw new Error("cut_grass_terminal_identity_mismatch");
     if (terminal.state !== "succeeded" || terminal.reasonCode !== "grass_cut")
       throw new Error(`cut_grass_failed:${terminal.reasonCode}`);
-    const evidence = parseStrictEvidence(terminal.evidence);
+    const evidence = parseEvidence(terminal.evidence);
     const after = await observeFresh(client, { actionable: true, minRevision: terminal.revision });
     assertRequiredCapabilities(after, REQUIRED_CAPABILITIES);
     const passed =
@@ -104,21 +105,6 @@ function chooseToolSlot(snapshot, label) {
   const matches = (snapshot.toolSlots ?? []).filter((entry) => Number.isInteger(entry?.slot) && entry.label === label);
   if (matches.length !== 1) throw new Error(matches.length ? "ambiguous_tool_slot" : `no_tool_slot_${label}`);
   return matches[0].slot;
-}
-
-function parseStrictEvidence(evidence) {
-  const detail = typeof evidence?.detail === "string" ? evidence.detail : "";
-  if (detail.length === 0) throw new Error("native_local_evidence_empty");
-  const fields = Object.fromEntries(
-    detail
-      .split(";")
-      .map((pair) => {
-        const index = pair.indexOf("=");
-        return index > 0 ? [pair.slice(0, index), pair.slice(index + 1)] : null;
-      })
-      .filter(Boolean),
-  );
-  return fields;
 }
 
 function chooseAdjacentGrassTarget(snapshot) {

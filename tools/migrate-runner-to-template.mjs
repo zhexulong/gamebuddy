@@ -1306,10 +1306,10 @@ export function evaluateFunction(body, name) {
 export function planPrimitiveMigration(source, { primitives, exports }) {
   const removals = [];
   const findings = [];
+  const defined = new Set(localFunctions(source).map((entry) => entry.name));
   for (const entry of localFunctions(source)) {
     if (!exports.includes(entry.name)) continue;
-    const parse = primitives[entry.name];
-    if (typeof parse !== "function") continue;
+    if (typeof primitives[entry.name] !== "function") continue;
     if (entry.exported) {
       findings.push(`primitive_copy_exported:${entry.name}`);
       continue;
@@ -1320,9 +1320,8 @@ export function planPrimitiveMigration(source, { primitives, exports }) {
       findings.push(`primitive_copy_async_not_probed:${entry.name}`);
       continue;
     }
-    const probes = PROBE_CORPUS[entry.name];
     // A primitive with no corpus cannot be compared, and a comparison that cannot fail is not a comparison.
-    if (probes === undefined) {
+    if (PROBE_CORPUS[entry.name] === undefined) {
       findings.push(`primitive_copy_no_probe_corpus:${entry.name}`);
       continue;
     }
@@ -1331,9 +1330,29 @@ export function planPrimitiveMigration(source, { primitives, exports }) {
       findings.push(`primitive_copy_${local.why}`);
       continue;
     }
-    const differing = probes.filter((probe) => answer(local.value, probe) !== answer(parse, probe));
-    if (differing.length > 0) {
+    // WHICH primitive this copy is. Its own name first - a copy named `parseStrictEvidence` that reads the lenient grammar
+    // is one L1 primitive under another's name, and 28 runners still spell that - then, only if the name cannot be the
+    // answer, the primitives that read the same corpus.
+    const candidates = [entry.name, ...Object.keys(PROBE_CORPUS).filter((name) => name !== entry.name)];
+    const matched = candidates.find((name) =>
+      PROBE_CORPUS[name].every((probe) => answer(local.value, probe) === answer(primitives[name], probe)),
+    );
+    if (matched === undefined) {
+      const differing = PROBE_CORPUS[entry.name].filter(
+        (probe) => answer(local.value, probe) !== answer(primitives[entry.name], probe),
+      );
       findings.push(`primitive_copy_behaviour_differs:${entry.name}:${differing.length} probe(s)`);
+      continue;
+    }
+    if (matched !== entry.name) {
+      // A rename is a call-site rewrite: refuse when any call site passes a second argument (the copy's extra parameter
+      // would be dropped silently) or when the target name is already spoken for in this file.
+      const takesMore = new RegExp(`\\b${entry.name}\\s*\\([^()]*,[^()]*\\)`, "u").test(source);
+      if (takesMore || defined.has(matched)) {
+        findings.push(`primitive_copy_rename_unsafe:${entry.name}->${matched}`);
+        continue;
+      }
+      removals.push({ name: matched, renameFrom: entry.name, start: entry.start, end: entry.end });
       continue;
     }
     removals.push({ name: entry.name, start: entry.start, end: entry.end });
@@ -1367,6 +1386,10 @@ export function applyPrimitiveMigration(source, { removals }) {
   let output = source;
   for (const removal of [...removals].sort((left, right) => right.start - left.start)) {
     output = `${output.slice(0, removal.start)}${output.slice(removal.end)}`;
+  }
+  for (const removal of removals) {
+    if (removal.renameFrom === undefined) continue;
+    output = output.replace(new RegExp(`\\b${removal.renameFrom}\\b`, "gu"), removal.name);
   }
   output = output.replace(/\n{3,}/gu, "\n\n");
   return withPrimitiveImport(

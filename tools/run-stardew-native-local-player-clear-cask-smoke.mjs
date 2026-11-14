@@ -8,6 +8,7 @@ import {
   waitForTerminal,
 } from "./lib/stardew-native-smoke-harness-v1.mjs";
 import { loadHostTestModule } from "./lib/host-test-module.mjs";
+import { parseEvidence } from "./lib/native-local-runner-primitives.mjs";
 
 const ACTION = "clear_cask";
 const REQUIRED_CAPABILITIES = ["cancel_active_execution", "inspect_self", "equip_tool", ACTION];
@@ -54,7 +55,7 @@ export async function runClearCaskSmoke(client, receipts, config, { terminalTime
     if (terminal.state !== "succeeded" || terminal.reasonCode !== "cask_cleared")
       throw new Error(`clear_cask_failed:${terminal.reasonCode}`);
 
-    const evidence = parseStrictEvidence(terminal.evidence);
+    const evidence = parseEvidence(terminal.evidence);
     const after = await observeFresh(client, { actionable: true, minRevision: terminal.revision });
     assertRequiredCapabilities(after, REQUIRED_CAPABILITIES);
     const passed =
@@ -106,20 +107,6 @@ function chooseAdjacentCaskTarget(snapshot) {
   );
   if (adjacent.length === 0) throw new Error("clear_cask_no_adjacent_target");
   return adjacent[0];
-}
-
-function parseStrictEvidence(evidence) {
-  const detail = typeof evidence?.detail === "string" ? evidence.detail : "";
-  if (detail.length === 0) throw new Error("native_local_evidence_empty");
-  return Object.fromEntries(
-    detail
-      .split(";")
-      .map((pair) => {
-        const index = pair.indexOf("=");
-        return index > 0 ? [pair.slice(0, index), pair.slice(index + 1)] : null;
-      })
-      .filter(Boolean),
-  );
 }
 
 if (import.meta.main) {
