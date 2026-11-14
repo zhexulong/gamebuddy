@@ -41,9 +41,8 @@ const scenario = defineSmokeScenario({
   action: ACTION,
   fixtureScenario: FIXTURE_SCENARIO,
   successCode: SUCCESS_CODE,
+  refusesConfig: false,
   requiredCapabilities: REQUIRED_CAPABILITIES,
-  requiredActions: [ACTION],
-  experimentalActions: [ACTION],
   projection: { collections: ["inventoryItemFacts"] },
 
   /** The declared Given: exactly one ticket in the pack, so one redemption spends it. */

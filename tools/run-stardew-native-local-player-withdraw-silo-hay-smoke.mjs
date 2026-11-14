@@ -32,9 +32,8 @@ const scenario = defineSmokeScenario({
   action: ACTION,
   fixtureScenario: FIXTURE_SCENARIO,
   successCode: SUCCESS_CODE,
+  refusesConfig: false,
   requiredCapabilities: REQUIRED_CAPABILITIES,
-  requiredActions: [ACTION],
-  experimentalActions: [ACTION],
   projection: { collections: ["siloTargets", "inventoryItemFacts"] },
 
   /** Read the advertised silo and the pack's own carried Hay before anything is sent. */

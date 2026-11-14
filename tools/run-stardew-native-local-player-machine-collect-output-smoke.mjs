@@ -30,6 +30,7 @@ const scenario = defineSmokeScenario({
   action: ACTION,
   fixtureScenario: FIXTURE_SCENARIO,
   successCode: SUCCESS_CODE,
+  refusesConfig: true,
   requiredCapabilities: REQUIRED_CAPABILITIES,
   requiredActions: [ACTION_LOAD, ACTION],
   experimentalActions: [ACTION],

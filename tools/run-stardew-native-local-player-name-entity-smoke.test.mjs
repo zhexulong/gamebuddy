@@ -214,11 +214,11 @@ function createFakeClient({
   return { client, receipts };
 }
 
-test("name-entity runner: the template refuses an unarmed fixture config before anything is sent", async () => {
+test("name-entity runner: an empty config is ignored, exactly as the copy ignored it", async () => {
   const { client, receipts } = createFakeClient();
   const result = await runNameEntitySmoke(client, receipts, {}, { terminalTimeoutMs: 1_000 });
-  assert.equal(result.state, "blocked");
-  assert.equal(result.reasonCode, "native_local_name_entity_fixture_config_invalid");
+  assert.equal(result.state, "passed");
+  assert.equal(result.reasonCode, "entity_named");
 });
 
 test("name-entity runner: the name written by the call is read back, and the stale re-send is refused", async () => {

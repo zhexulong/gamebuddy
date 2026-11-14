@@ -276,11 +276,13 @@ function createFakeClient({
   return { client, receipts };
 }
 
-test("build-farm-building runner: the template refuses an unarmed fixture config before anything is sent", async () => {
+test("build-farm-building runner: an empty config is ignored, exactly as the copy ignored it", async () => {
+  // The copy never read its config, so the definition declares `refusesConfig: false` and the template runs no config
+  // refusal. Asserting the PASS is what guards it: a template that tightened on the copy's behalf would block here.
   const { client, receipts } = createFakeClient();
   const result = await runBuildFarmBuildingSmoke(client, receipts, {}, { terminalTimeoutMs: 1_000 });
-  assert.equal(result.state, "blocked");
-  assert.equal(result.reasonCode, "native_local_build_farm_building_fixture_config_invalid");
+  assert.equal(result.state, "passed");
+  assert.equal(result.reasonCode, "farm_building_built");
 });
 
 test("build-farm-building runner: the structure is read back from the world and the stale site is refused", async () => {
