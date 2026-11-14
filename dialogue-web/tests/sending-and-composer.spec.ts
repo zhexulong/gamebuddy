@@ -285,9 +285,10 @@ test("a Class B action mid-turn reaches its route and leaves the running turn al
   await expect(popout.locator('[data-model-notice="saved"]')).toBeVisible();
   await expect(popout.getByLabel("Thinking level")).toHaveValue("high");
   await expect(page.getByText("Thinking…")).toBeVisible();
-  // The drawer's own close control, not Escape: the Save that just ran disabled itself and dropped
-  // focus to <body>, so this asserts the surface's close affordance rather than a keyboard accident.
-  await popout.getByRole("button", { name: "Close", exact: true }).click();
+  // Escape closes it, and the Save that disabled itself beside it is no obstacle: the
+  // modal drawer holds the key wherever focus is, so no keyboard player is left in a
+  // drawer whose only way out is the pointer.
+  await page.keyboard.press("Escape");
   await expect(popout).toHaveCount(0);
 
   // Class B, member two: another Chat's title.

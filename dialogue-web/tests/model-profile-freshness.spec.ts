@@ -237,8 +237,8 @@ test("the Settings game profile and the Game surface's editor show each other's 
 /**
  * The Chat drawer and the Settings entry both write `"chat"`.
  *
- * The drawer must be closed before the AppBar is reachable (its backdrop covers
- * the shell), so the Chat entry is a fresh mount each time it is opened - which
+ * The drawer must be closed before the AppBar is reachable (it is modal, and the page
+ * behind it is inert), so the Chat entry is a fresh mount each time it is opened - which
  * is exactly the freshness this journey measures, in both directions.
  */
 test("the Chat drawer's chat profile and the Settings chat editor show each other's writes", async ({ page }) => {
@@ -269,23 +269,22 @@ test("the Chat drawer's chat profile and the Settings chat editor show each othe
     "Saved. It applies the next time that surface's runtime starts.",
   );
 
-  // The drawer's backdrop covers the shell, so the AppBar cannot switch surfaces
-  // while it is open - which is what keeps the Chat entry and the Settings entry
-  // from ever being mounted at the same time (the freshness this file measures).
-  // Measured, not assumed: a trial click asserts the entry is not reachable.
+  // The drawer is modal, so the AppBar cannot switch surfaces while it is open - which is
+  // what keeps the Chat entry and the Settings entry from ever being mounted at the same
+  // time (the freshness this file measures). Measured, not assumed: a trial click asserts
+  // the entry is not reachable.
   let appBarReachable = true;
   try {
     await page.getByRole("button", { name: "Settings", exact: true }).click({ trial: true, timeout: 1_500 });
   } catch {
     appBarReachable = false;
   }
-  expect(appBarReachable, "the drawer backdrop must intercept the AppBar entry while it is open").toBe(false);
+  expect(appBarReachable, "the modal drawer must intercept the AppBar entry while it is open").toBe(false);
 
-  // It closes through its own affordance. The close button is used rather than
-  // Escape: the Save button is disabled while saving, which drops focus to <body>,
-  // so Escape would have no drawer to reach - a real affordance question, but not
-  // the freshness this journey measures.
-  await page.getByTestId("chat-model-drawer").getByRole("button", { name: "Close" }).click();
+  // It closes with the keyboard. The Save that just ran disabled itself, which parks
+  // focus on `<body>`; the dialog still holds the close request, so the drawer a
+  // keyboard player opened is a drawer they can leave.
+  await page.keyboard.press("Escape");
   await expect(page.getByTestId("chat-model-drawer")).toHaveCount(0);
 
   const readsBeforeSettings = mount.gets.count;

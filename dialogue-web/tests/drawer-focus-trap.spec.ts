@@ -342,12 +342,13 @@ test("the wrap holds when the drawer's last stop is a disclosure", async ({ page
  * `filechooser` fires only for a real click on the input, so this proves the programmatic
  * path rather than setting files on a control nothing can reach.
  *
- * NOTE, measured and deliberately NOT fixed here: while the upload is in flight the
+ * NOTE, measured and deliberately not changed here: while the upload is in flight the
  * trigger is `disabled={busy}`, and disabling the focused control drops focus to `<body>`
- * - so after an upload a keyboard player is outside the drawer with no stop to press
- * (`[probe] focusout from trigger, fromDisabled true, to null`). That is the avatar
- * feature's own busy-state behaviour, not the trap's stop list, and changing it is a
- * decision about that feature rather than about this defect.
+ * even inside a modal dialog (`[probe] focusout from trigger, fromDisabled true, to null`).
+ * That drop is the avatar feature's own busy-state behaviour. What the drawer guarantees
+ * is that it cannot strand the player OUTSIDE it: the open dialog is the only focus area
+ * in the document, so the next Tab lands inside the drawer, and Escape closes it from
+ * wherever focus is.
  */
 test("the picture control still opens the picker and the upload completes", async ({ page }) => {
   const host = await mount(page);
@@ -373,17 +374,65 @@ test("the picture control still opens the picker and the upload completes", asyn
     .toBe(2);
 
   // The picker is still out of the tab order after the re-render, and the drawer's cycle
-  // is still the three controls a player can reach. Focus is brought back inside the way a
-  // player would - by pointing at the drawer - because the upload's own busy state drops
-  // it to `<body>` (measured: `focusout` from the trigger with `disabled === true`); that
-  // drop is the avatar section's busy-state behaviour, not this trap, and it is reported
-  // rather than changed here.
+  // is still the three controls a player can reach. Focus was parked on `<body>` by the
+  // upload's own busy state (the control it sat on disabled itself); what the modal drawer
+  // promises is that no press can land on anything BEHIND it, and that the presses bring
+  // the keyboard back inside. Measured: the trigger is the drawer's last control, so the
+  // first press leaves the document for the browser's own chrome and the next one enters
+  // the drawer again.
   await expect(drawer.locator("[data-companion-avatar-file]")).toHaveAttribute("tabindex", "-1");
-  await drawer.locator(".drawer-header h2").click();
+  const landed: Stop[] = [];
+  for (let press = 0; press < 3; press += 1) {
+    await page.keyboard.press("Tab");
+    landed.push(await page.evaluate(readStop));
+    if (landed.at(-1)?.inside === true) break;
+  }
+  expect(landed.at(-1)?.inside, `focus comes back into the drawer: ${names(landed)}`).toBe(true);
+  expect(
+    landed.filter((stop) => !stop.inside && stop.key !== "page"),
+    `no control behind the drawer is reachable: ${names(landed)}`,
+  ).toEqual([]);
   const cycle = await walkOneCycle(page);
   expect(cycle.closed, `the drawer's cycle closes after an upload: ${names(cycle.stops)}`).toBe(true);
   expect(
     cycle.stops.filter((stop) => !stop.inside || stop.hidden),
     `the cycle stays inside the drawer: ${names(cycle.stops)}`,
   ).toEqual([]);
+});
+
+/**
+ * The two facts the drawer's modality is: the page behind it cannot be reached, and a
+ * press outside the panel still closes it.
+ *
+ * Both used to be a `position: fixed` overlay with a `z-index` and a hand-written
+ * backdrop `div`, so both were assertions about that element. They are the player's
+ * properties, and they are read here from what the player gets: a control behind the
+ * drawer refuses focus (`inert`), and a press on the scrim closes the drawer while a
+ * press on the panel does not.
+ */
+test("the page behind the drawer is inert, and a press outside the panel closes it", async ({ page }) => {
+  await mount(page);
+  await stubBareProfile(page);
+  const drawer = await openDrawer(page);
+
+  // The roster entry that opened the drawer is behind it now. It is a real `<button>`,
+  // and the open dialog is the only focus area in the document - so asking it to take
+  // focus does nothing at all rather than moving the keyboard out of the modal.
+  const behindTookFocus = await page.evaluate(() => {
+    const entry = document.querySelector<HTMLElement>("[data-companion-entry] [data-companion-inspect]");
+    if (entry === null) throw new Error("the roster's own inspect control is not on the page");
+    entry.focus();
+    return entry === document.activeElement;
+  });
+  expect(behindTookFocus, "a control behind the modal drawer cannot take focus").toBe(false);
+  const stillInside = await page.evaluate(readStop);
+  expect(stillInside.inside, `focus stays inside the drawer: ${stillInside.name}`).toBe(true);
+
+  // A press on the panel itself is not a dismissal - the drawer is a place to work.
+  await drawer.locator(".drawer-header").click();
+  await expect(drawer).toBeVisible();
+
+  // The drawer is 420 px against the right edge, so this point is the scrim.
+  await page.mouse.click(20, 20);
+  await expect(drawer).toHaveCount(0);
 });

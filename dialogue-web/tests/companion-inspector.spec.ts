@@ -347,8 +347,9 @@ test("the inspector shows four groups with no editor, and its writes are her pic
  * The failure this holds: the composed scrim was `#0007` - 47% black, no blur - so a
  * roster card's own text stayed legible through it and, while the drawer slid in
  * over the cards, read as one line sliced lengthwise. The reading is the COMPUTED
- * value, because a rule that loses the cascade to a later layer computes the old
- * number while its source still looks correct.
+ * value of the platform's own `::backdrop`, because a rule that loses the cascade to
+ * a later layer computes the old number while its source still looks correct, and
+ * because the drawer no longer paints a `div` of its own to read instead.
  */
 test("the inspector's scrim covers the cards behind it", async ({ page }) => {
   await stubCharacters(page, [{ handle: otherHandle, name: "Mira", isCurrent: false }], {
@@ -357,10 +358,10 @@ test("the inspector's scrim covers the cards behind it", async ({ page }) => {
   await openCharacters(page);
   await openInspector(page, "Mira");
 
-  const backdrop = page.getByTestId("companion-inspector-backdrop");
-  await expect(backdrop).toBeVisible();
-  const scrim = await backdrop.evaluate((node) => {
-    const style = getComputedStyle(node);
+  const drawer = page.getByTestId("companion-inspector");
+  await expect(drawer).toBeVisible();
+  const scrim = await drawer.evaluate((node) => {
+    const style = getComputedStyle(node, "::backdrop");
     return { backgroundColor: style.backgroundColor, backdropFilter: style.backdropFilter };
   });
   console.log(`[companion-inspector-scrim] ${JSON.stringify(scrim)}`);
