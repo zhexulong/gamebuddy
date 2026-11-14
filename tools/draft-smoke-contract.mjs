@@ -13,11 +13,16 @@
  *   action               the file name (`run-stardew-native-local-player-<action>-smoke.mjs`)
  *   expectedReasonCode   the action's own declaration when it is specific; otherwise the literal the runner's
  *                        terminal check compares against
- *   discovery.source     the declaration's `targetFamily`, cross-checked against the projection the runner reads
+ *   discovery.source     the declaration's `targetFamily`, cross-checked against the projection the runner reads;
+ *                        an action whose declaration names no family gets the format's `none` shape, in words
  *   discovery.cardinality/select   the runner's selector (`length !== 1` -> exactly_one, `find(` -> at_least_one)
  *   discovery.requiredFields       the target fields the request substitutes, plus `targetId` when it is substituted
- *   args                 the runner's `args:` object, one entry at a time: `target.<field>` -> `$target.<field>`,
- *                        a string literal (or a `const` holding one) -> that literal, anything else refused
+ *   args                 the argument object of the request that names THIS action - written inline in an
+ *                        `executeFresh(client, { action, args })` object, passed positionally to a local helper that
+ *                        takes `args`, or held in a `const` either of those names - one entry at a time:
+ *                        `<binding>.<field>` -> `$target.<field>` when the binding is proven to hold this action's
+ *                        discovered row, a string literal (or a `const` holding one) -> that literal, anything else
+ *                        refused. Two sites that disagree, a spread, a value built at run time: refused by name.
  *   evidence             a key the runner compares to a constant, or to `String(target.<field>)`/`target.<field>`;
  *                        any other comparison (a count, a delta, a set membership) is refused by name
  *   worldAfter           `every(... targetId !== target.targetId)` -> excludesTarget, `length === 0` -> size 0
@@ -74,21 +79,303 @@ function blankComments(source) {
   return out.join("\n");
 }
 
-/** The `{...}` body that follows `args:` and the offset it starts at. */
-function argsBlock(code) {
-  const match = /\bargs:\s*\{/u.exec(code);
-  if (match === null) return null;
+/** The offset just past the bracket that opens at `open`, or -1 when it never closes. */
+function endOfBracket(code, open) {
   let depth = 0;
-  let index = match.index + match[0].length - 1;
-  const start = index;
-  for (; index < code.length; index += 1) {
-    if (code[index] === "{") depth += 1;
-    else if (code[index] === "}") {
+  let quote = null;
+  for (let index = open; index < code.length; index += 1) {
+    const char = code[index];
+    if (quote !== null) {
+      if (char === "\\") index += 1;
+      else if (char === quote) quote = null;
+      continue;
+    }
+    if (char === '"' || char === "'" || char === "`") quote = char;
+    else if (char === "(" || char === "[" || char === "{") depth += 1;
+    else if (char === ")" || char === "]" || char === "}") {
       depth -= 1;
-      if (depth === 0) break;
+      if (depth === 0) return index + 1;
     }
   }
-  return { body: code.slice(start + 1, index), offset: start + 1 };
+  return -1;
+}
+
+/** The top-level comma-separated pieces between `from` and `to`, each with where its own text starts. */
+function pieces(code, from, to) {
+  const out = [];
+  let start = from;
+  let depth = 0;
+  let quote = null;
+  const push = (end) => {
+    const raw = code.slice(start, end);
+    const text = raw.trim();
+    if (text.length > 0) out.push({ text, start: start + (raw.length - raw.trimStart().length) });
+  };
+  for (let index = from; index < to; index += 1) {
+    const char = code[index];
+    if (quote !== null) {
+      if (char === "\\") index += 1;
+      else if (char === quote) quote = null;
+      continue;
+    }
+    if (char === '"' || char === "'" || char === "`") quote = char;
+    else if (char === "(" || char === "[" || char === "{") depth += 1;
+    else if (char === ")" || char === "]" || char === "}") depth -= 1;
+    else if (char === "," && depth === 0) {
+      push(index);
+      start = index + 1;
+    }
+  }
+  push(to);
+  return out;
+}
+
+/** Where an initializer written at `from` ends: a `;` at the top level, or a line break that ends the expression. */
+function statementEnd(code, from) {
+  let depth = 0;
+  let quote = null;
+  let seen = false;
+  for (let index = from; index < code.length; index += 1) {
+    const char = code[index];
+    if (quote !== null) {
+      if (char === "\\") index += 1;
+      else if (char === quote) quote = null;
+      continue;
+    }
+    if (char === '"' || char === "'" || char === "`") {
+      quote = char;
+      seen = true;
+      continue;
+    }
+    if (char === "(" || char === "[" || char === "{") {
+      depth += 1;
+      seen = true;
+      continue;
+    }
+    if (char === ")" || char === "]" || char === "}") {
+      depth -= 1;
+      seen = true;
+      continue;
+    }
+    if (depth !== 0) continue;
+    if (char === ";") return index;
+    if (char === "\n" && seen && !/[=+*/?:,.&|>([{-]$/u.test(code.slice(from, index).trimEnd())) return index;
+  }
+  return code.length;
+}
+
+/** Every `const|let|var NAME = <initializer>` in the file, in source order, with the initializer's own text. */
+function initializers(code, name) {
+  const found = [];
+  for (const match of code.matchAll(new RegExp(`\\b(?:const|let|var)\\s+${name}\\s*=\\s*`, "gu"))) {
+    const from = match.index + match[0].length;
+    const end = statementEnd(code, from);
+    const raw = code.slice(from, end);
+    found.push({ text: raw.trim(), start: from + (raw.length - raw.trimStart().length), end });
+  }
+  return found;
+}
+
+/** A local function's own body, when the runner declares one under that name. */
+function localFunctionBody(code, name) {
+  const match = new RegExp(`(?:^|[^\\w$.])(?:async\\s+)?function\\s+${name}\\s*\\(`, "u").exec(code);
+  if (match === null) return null;
+  const paramsEnd = endOfBracket(code, match.index + match[0].length - 1);
+  const bodyOpen = paramsEnd < 0 ? -1 : code.indexOf("{", paramsEnd);
+  if (bodyOpen < 0) return null;
+  return code.slice(bodyOpen, endOfBracket(code, bodyOpen));
+}
+
+const TARGET_BINDING_DEPTH = 4;
+
+/**
+ * The name the format's own `$target` substitution was read from before this reader could prove anything.
+ *
+ * It keeps its meaning unchanged: `target.<field>` was a target field when this converter could not tell a target
+ * from a tool, and requiring proof for the conventional spelling would refuse fields the format already carried. A
+ * tightening that turns a derived field into a refusal is not free - a refusal cannot be told apart from "the runner
+ * never sends this argument". Any OTHER name is new ground, so it is proven.
+ */
+const CONVENTIONAL_TARGET_NAME = "target";
+
+/**
+ * Whether `text` reads the declared discovery family, directly, through a local helper, or through another name.
+ *
+ * `scope` is the text whose own declarations a name resolves against - the enclosing helper body when this came from
+ * a helper, the whole runner when it came from the request. Resolving against the whole file from inside a helper is
+ * the first reading of this probe and it is wrong: `targets` is a different local in every helper.
+ */
+function namesFamily(scope, code, family, text, depth = 0, seen = new Set()) {
+  if (depth > TARGET_BINDING_DEPTH) return false;
+  if (new RegExp(`\\.${family}\\b`, "u").test(text) || text.includes(`"${family}"`)) return true;
+  for (const match of text.matchAll(/([A-Za-z_$][\w$]*)/gu)) {
+    const word = match[1];
+    if (word === family || seen.has(word)) continue;
+    seen.add(word);
+    const declared = initializers(scope, word);
+    if (declared.length > 0) {
+      if (declared.every((entry) => namesFamily(scope, code, family, entry.text, depth + 1, seen))) return true;
+      continue;
+    }
+    const body = localFunctionBody(code, word);
+    if (body !== null && namesFamily(body, code, family, body, depth + 1, seen)) return true;
+  }
+  return false;
+}
+
+/**
+ * Whether a name holds the row this slice discovered - the only thing `<name>.<field>` may stand for.
+ *
+ * The proof is the declaration's own `targetFamily` appearing in the name's initializer chain: `const target =
+ * (snapshot.cropTargets ?? []).find(...)`, or `const target = chooseOnlyReachableCrop(snapshot)` where that helper
+ * reads `.cropTargets` through `validCropTargets`. A name with no initializer, an initializer from an import, or two
+ * initializers that disagree is NOT proven, and the caller refuses that field instead of calling it the target's.
+ */
+function holdsTargetRow(scope, code, family, name, depth = 0) {
+  if (family === null || depth > TARGET_BINDING_DEPTH) return false;
+  const declared = initializers(scope, name);
+  if (declared.length === 0) return false;
+  return declared.every((entry) => namesFamily(scope, code, family, entry.text, depth));
+}
+
+/** The object literal whose body holds `index`, or null when `index` sits outside every brace body. */
+function enclosingObject(code, index) {
+  for (let at = code.lastIndexOf("{", index); at >= 0; at = code.lastIndexOf("{", at - 1)) {
+    const end = endOfBracket(code, at);
+    if (end > index) return { start: at, end: end - 1 };
+  }
+  return null;
+}
+
+/** The properties written at the top level of one object literal, in source order. */
+function objectProperties(code, object) {
+  return pieces(code, object.start + 1, object.end).map((piece) => {
+    const pair = /^([A-Za-z_$][\w$]*)\s*:\s*([\s\S]+)$/u.exec(piece.text);
+    if (pair !== null) return { key: pair[1], value: pair[2].trim(), start: piece.start, shorthand: false };
+    const shorthand = /^([A-Za-z_$][\w$]*)$/u.exec(piece.text);
+    if (shorthand !== null) return { key: shorthand[1], value: shorthand[1], start: piece.start, shorthand: true };
+    return { key: null, value: piece.text, start: piece.start, shorthand: false };
+  });
+}
+
+/** The parameter names of the innermost function whose body holds `index`, or none when it sits outside every one. */
+function enclosingParameters(code, index) {
+  let found = { bodyOpen: -1, params: [] };
+  for (const match of code.matchAll(/(?:async\s+)?function\s+[A-Za-z_$][\w$]*\s*\(/gu)) {
+    const paramsOpen = match.index + match[0].length - 1;
+    const paramsEnd = endOfBracket(code, paramsOpen);
+    if (paramsEnd < 0) continue;
+    const bodyOpen = code.indexOf("{", paramsEnd);
+    if (bodyOpen < 0 || bodyOpen > index || bodyOpen <= found.bodyOpen) continue;
+    found = {
+      bodyOpen,
+      params: pieces(code, paramsOpen + 1, paramsEnd - 1).map((piece) =>
+        piece.text.replace(/\s*=[\s\S]*$/u, "").trim(),
+      ),
+    };
+  }
+  return found.params;
+}
+
+/**
+ * Where the runner writes the argument object for `actionId`.
+ *
+ * Two shapes carry a request, and reading only one of them is what made `args` look underivable in 26 runners:
+ *
+ *   `executeFresh(client, { action: "<this action>", args: {...} })`   the object is written inline
+ *   `execute(client, trace, phase, "<this action>", {...}, snapshot)`  a local helper takes `action` and `args`
+ *   `request(client, receipts, timeout, {...})`                        a local helper takes `args` and dispatches
+ *
+ * The action is matched by VALUE (a string literal, or a `const` holding one), never by position, so a runner's
+ * `equip_tool` prerequisite request cannot be mistaken for its own slice.
+ */
+function argumentSites(code, actionId) {
+  const constants = new Map(
+    [...code.matchAll(/const\s+([A-Za-z_$][\w$]*)\s*=\s*"([^"]*)"\s*;/gu)].map((match) => [match[1], match[2]]),
+  );
+  const namesAction = (expression) => {
+    const text = String(expression).trim();
+    const literal = /^"([^"]*)"$/u.exec(text);
+    if (literal !== null) return literal[1] === actionId;
+    const identifier = /^([A-Za-z_$][\w$]*)$/u.exec(text);
+    return identifier !== null && constants.get(identifier[1]) === actionId;
+  };
+  const sites = [];
+  for (const match of code.matchAll(/\baction\s*:/gu)) {
+    const object = enclosingObject(code, match.index);
+    if (object === null) continue;
+    const properties = objectProperties(code, object);
+    const declared = properties.find((property) => property.key === "action");
+    const args = properties.find((property) => property.key === "args");
+    if (declared === undefined || args === undefined) continue;
+    if (!namesAction(declared.value)) continue;
+    // `{ action: ACTION, args }` inside a helper names the caller's argument: the expression that matters is what
+    // each call site passes, so that site is left to the call-site reading below instead of being refused here.
+    if (/^[A-Za-z_$][\w$]*$/u.test(args.value) && enclosingParameters(code, args.start).includes(args.value)) continue;
+    sites.push({ start: args.start, expression: args.value });
+  }
+  for (const match of code.matchAll(/(?:async\s+)?function\s+([A-Za-z_$][\w$]*)\s*\(/gu)) {
+    const name = match[1];
+    const nameAt = match.index + match[0].lastIndexOf(name);
+    const paramsOpen = match.index + match[0].length - 1;
+    const paramsEnd = endOfBracket(code, paramsOpen);
+    if (paramsEnd < 0) continue;
+    const params = pieces(code, paramsOpen + 1, paramsEnd - 1).map((piece) =>
+      piece.text.replace(/\s*=[\s\S]*$/u, "").trim(),
+    );
+    const argsIndex = params.indexOf("args");
+    if (argsIndex < 0) continue;
+    const bodyOpen = code.indexOf("{", paramsEnd);
+    if (bodyOpen < 0) continue;
+    const body = code.slice(bodyOpen, endOfBracket(code, bodyOpen));
+    const actionIndex = params.indexOf("action");
+    const dispatchesAction =
+      actionIndex < 0 && [...body.matchAll(/\baction\s*:\s*([^,\n}]+)/gu)].some((entry) => namesAction(entry[1]));
+    if (actionIndex < 0 && !dispatchesAction) continue;
+    for (const call of code.matchAll(new RegExp(`(?:^|[^\\w$.])${name}\\s*\\(`, "gu"))) {
+      const at = call.index + call[0].lastIndexOf(name);
+      if (at === nameAt) continue;
+      const open = call.index + call[0].length - 1;
+      const close = endOfBracket(code, open);
+      if (close < 0) continue;
+      const passed = pieces(code, open + 1, close - 1);
+      if (passed.length <= argsIndex) continue;
+      if (actionIndex >= 0 && !namesAction(passed[actionIndex].text)) continue;
+      sites.push({ start: passed[argsIndex].start, expression: passed[argsIndex].text });
+    }
+  }
+  return sites;
+}
+
+const ARGUMENT_RESOLUTION_DEPTH = 4;
+
+/** The object literal a site's expression names, or the reason it cannot be read as one. */
+function argumentObject(code, site) {
+  let text = site.expression.trim();
+  let start = site.start;
+  for (let depth = 0; depth < ARGUMENT_RESOLUTION_DEPTH; depth += 1) {
+    const frozen = /^Object\.freeze\s*\(\s*([\s\S]*?)\s*\)$/u.exec(text);
+    if (frozen !== null) {
+      text = frozen[1].trim();
+      continue;
+    }
+    if (text.startsWith("{")) {
+      const open = code.indexOf("{", start);
+      const end = open < 0 ? -1 : endOfBracket(code, open);
+      if (end < 0) return { why: "the request's argument object literal is not closed" };
+      return { object: { start: open, end: end - 1 } };
+    }
+    const identifier = /^([A-Za-z_$][\w$]*)$/u.exec(text);
+    if (identifier === null) return { why: `the request's argument object is \`${text}\`, computed at run time` };
+    const binding = initializers(code, identifier[1])
+      .filter((entry) => entry.start < start)
+      .at(-1);
+    if (binding === undefined)
+      return { why: `the request's argument object is \`${text}\`, which the runner builds outside this file` };
+    text = binding.text;
+    start = binding.start;
+  }
+  return { why: "the request's argument object is assembled through more indirection than this reader follows" };
 }
 
 /** `const NAME = "literal";` - the only constant form this converter will follow. */
@@ -98,20 +385,65 @@ function stringConstant(code, name) {
 }
 
 function deriveArgs(code, facts) {
-  const block = argsBlock(code);
-  if (block === null) return { value: null, fields: [refusedField("args", "no `args:` object literal in the runner")] };
+  const sites = argumentSites(code, facts.actionId);
+  if (sites.length === 0)
+    return {
+      value: null,
+      fields: [
+        refusedField(
+          "args",
+          `no request in the runner dispatches '${facts.actionId}' with an argument object (no \`executeFresh(client, { action, args })\` object and no local helper taking \`args\`)`,
+        ),
+      ],
+    };
+  const readings = sites.map((site) => {
+    const found = argumentObject(code, site);
+    if (found.object === undefined) return { why: found.why, start: site.start };
+    const properties = objectProperties(code, found.object);
+    const spread = properties.find((property) => property.key === null);
+    if (spread !== undefined)
+      return { why: `the request's argument object spreads \`${spread.value}\``, start: spread.start };
+    return { entries: properties, start: found.object.start };
+  });
+  const unreadable = readings.find((reading) => reading.why !== undefined);
+  if (unreadable !== undefined)
+    return {
+      value: null,
+      fields: [refusedField("args", unreadable.why, `runner:${lineOf(code, unreadable.start)}`)],
+    };
+  const shapes = new Set(
+    readings.map((reading) => JSON.stringify(reading.entries.map((entry) => [entry.key, entry.value]))),
+  );
+  if (shapes.size > 1) {
+    const where = readings.map((reading) => `runner:${lineOf(code, reading.start)}`).join(", ");
+    return {
+      value: null,
+      fields: [
+        refusedField(
+          "args",
+          `the runner dispatches '${facts.actionId}' from ${readings.length} sites whose argument objects differ (${where}); a contract states one request`,
+        ),
+      ],
+    };
+  }
   const fields = [];
   const args = {};
   const declared = facts.argumentSchema;
-  for (const entry of block.body.split(/,(?![^(]*\))/u)) {
-    const pair = /^\s*([A-Za-z][A-Za-z0-9_]*)\s*:\s*([\s\S]+?)\s*$/u.exec(entry.replace(/\n/gu, " "));
-    if (pair === null) continue;
-    const [, name, raw] = pair;
-    const line = lineOf(code, block.offset + block.body.indexOf(entry));
+  for (const entry of readings[0].entries) {
+    const name = entry.key;
+    const raw = entry.value.trim();
+    const line = lineOf(code, entry.start);
     if (declared[name] === undefined) continue;
-    const substitution = /^(?:[A-Za-z_$][\w$]*\.)?target\.([A-Za-z][A-Za-z0-9_]*)$/u.exec(raw);
-    if (substitution !== null) {
-      args[name] = `$target.${substitution[1]}`;
+    if (args[name] !== undefined) {
+      fields.push(refusedField(`args.${name}`, "the runner's argument object names this key twice", `runner:${line}`));
+      continue;
+    }
+    const substitution = /^([A-Za-z_$][\w$]*)\.([A-Za-z][A-Za-z0-9_]*)$/u.exec(raw);
+    if (
+      substitution !== null &&
+      (substitution[1] === CONVENTIONAL_TARGET_NAME || holdsTargetRow(code, code, facts.targetFamily, substitution[1]))
+    ) {
+      args[name] = `$target.${substitution[2]}`;
       fields.push(derived(`args.${name}`, args[name], `runner:${line}`));
       continue;
     }
@@ -130,7 +462,9 @@ function deriveArgs(code, facts) {
     fields.push(
       refusedField(
         `args.${name}`,
-        `value '${raw.trim()}' is computed at run time, so the contract cannot carry it`,
+        entry.shorthand
+          ? `the runner passes \`${raw}\` by shorthand and its value is chosen at run time`
+          : `value '${raw}' is computed at run time, so the contract cannot carry it`,
         `runner:${line}`,
       ),
     );
@@ -141,10 +475,22 @@ function deriveArgs(code, facts) {
   return { value: args, fields };
 }
 
+/**
+ * What a draft says when the action's own declaration names no target: the format's `none` shape, in words.
+ *
+ * Omitting the block instead was the converter bug this comment replaces - ten runners whose action carries no
+ * `targetFamily` (`craft_item`, `ride_bus`, `open_geode`, ...) drafted a contract that could not load at all, and
+ * the format already had a shape for their case. The words have to say WHY, because `discovery: null` alone cannot.
+ */
+const NO_TARGET_REASON = "the action's declaration names no targetFamily, so this slice discovers no target";
+
 function deriveDiscovery(code, facts, args) {
   const fields = [];
   if (facts.targetFamily === null)
-    return { value: null, fields: [refusedField("discovery.source", "the declaration names no targetFamily")] };
+    return {
+      value: { none: NO_TARGET_REASON },
+      fields: [derived("discovery.none", NO_TARGET_REASON, "declaration:targetFamily:null")],
+    };
   const read = new RegExp(`\\.${facts.targetFamily}\\b`, "u").exec(code);
   // A selector helper that takes the projection's NAME as a string (`chooseAdjacent(snapshot, "bushTargets")`)
   // names the same fact; both forms are read, and a runner that does neither is refused rather than assumed to
@@ -374,36 +720,56 @@ function deriveStale(code) {
   return { value: { refusedWith }, fields };
 }
 
-const DELTA_SUM =
-  /Number\(\s*evidence\.([a-z0-9_]+)\s*\)\s*===\s*Number\(\s*evidence\.([a-z0-9_]+)\s*\)\s*\+\s*(\d+)/gu;
-const DELTA_EQUAL = /evidence\.([a-z0-9_]+)\s*===\s*evidence\.([a-z0-9_]+)(?![\w.])/gu;
+/**
+ * `Number(evidence.x)` blanked away, keeping every offset (and therefore every line number) where it was.
+ *
+ * The narrowing call changes no key - `Number(evidence.count_after) === Number(evidence.count_before) + 1` is the sum
+ * between the same two keys - and reading it through an optional `\)?` in every pattern did not work: a sum's left
+ * half still matched the equality shape because the regex engine could give back the closing paren. Blanking the
+ * wrapper leaves one spelling of each comparison.
+ */
+function withoutNarrowing(code) {
+  return code.replace(
+    /Number\(\s*(evidence\.[a-z0-9_]+)\s*\)/gu,
+    (match, key) => `${key}${" ".repeat(match.length - key.length)}`,
+  );
+}
+
+const DELTA_SUM = /evidence\.([a-z0-9_]+)\s*===\s*evidence\.([a-z0-9_]+)\s*\+\s*(\d+)/gu;
+// The lookahead keeps an equality from claiming the left half of a sum as a relation of its own: `a === b + 1` is one
+// entry, not a `b === a` entry beside it.
+const DELTA_EQUAL = /evidence\.([a-z0-9_]+)\s*===\s*evidence\.([a-z0-9_]+)(?![\w.])(?!\s*[+-]\s*\d)/gu;
 const DELTA_AT_LEAST = /evidence\.([a-z0-9_]+)\s*>=\s*(\d+)\b/gu;
 
 /**
  * The `delta` entries a runner's arithmetic asks for, and the keys those entries answer for.
  *
  * Three shapes only, because those are the three the format carries: a sum (`to === from + n`), an equality
- * (`to === from`) and a bare lower bound (`to >= n`). Anything else stays a refusal, so the frequency table keeps
- * naming what the schema still cannot say.
+ * (`to === from`) and a bare lower bound (`to >= n`). All three read the key through an optional `Number(...)`,
+ * because that is how a runner writes it: `Number(evidence.swings) >= 1` appears in
+ * `run-stardew-native-local-player-break-resource-clump-smoke.mjs:175`, and the unwrapped pattern this converter
+ * shipped read none of it - the lower-bound shape was declared by it and never once derived. Anything else stays a
+ * refusal, so the frequency table keeps naming what the schema still cannot say.
  */
 function deriveDelta(code) {
   const fields = [];
   const entries = [];
   const claimed = new Set();
-  for (const match of code.matchAll(DELTA_SUM)) {
+  const bare = withoutNarrowing(code);
+  for (const match of bare.matchAll(DELTA_SUM)) {
     entries.push({ from: match[2], to: match[1], equals: Number(match[3]) });
     claimed.add(match[1]);
     claimed.add(match[2]);
     fields.push(derived(`delta.${match[1]}`, `${match[2]}+${match[3]}`, `runner:${lineOf(code, match.index)}`));
   }
-  for (const match of code.matchAll(DELTA_EQUAL)) {
+  for (const match of bare.matchAll(DELTA_EQUAL)) {
     if (match[1] === match[2]) continue;
     entries.push({ from: match[2], to: match[1], equals: 0 });
     claimed.add(match[1]);
     claimed.add(match[2]);
     fields.push(derived(`delta.${match[1]}`, `${match[2]}+0`, `runner:${lineOf(code, match.index)}`));
   }
-  for (const match of code.matchAll(DELTA_AT_LEAST)) {
+  for (const match of bare.matchAll(DELTA_AT_LEAST)) {
     entries.push({ to: match[1], atLeast: Number(match[2]) });
     claimed.add(match[1]);
     fields.push(derived(`delta.${match[1]}`, `>=${match[2]}`, `runner:${lineOf(code, match.index)}`));
@@ -627,4 +993,7 @@ function main(argv) {
 }
 
 if (process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.argv[1]).href)
-  process.exitCode = main(process.argv.slice(2));
+  // `--all` is the mode that measures the tree, and it returns a promise: assigning that promise to `exitCode`
+  // crashed with ERR_INVALID_ARG_TYPE after the reading had already been printed, so the sweep's own exit code
+  // (1 when anything was refused, 2 when the population was empty) never reached a caller.
+  process.exitCode = await main(process.argv.slice(2));
