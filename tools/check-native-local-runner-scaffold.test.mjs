@@ -6,12 +6,12 @@
  * pre-migration runner (not on a synthetic stand-in that happens to look like it), and that the baseline cannot be used to
  * launder the next hand-written one - a new runner cannot enter it, and a migrated runner must leave.
  *
- * red-proof: history  the sweep-scythe runner at HEAD, before its migration ->
+ * red-proof: history  the sweep-scythe runner at `fcc2c1b7`, before its migration ->
  *   `runner_reimplements_the_scaffold:...sweep-scythe-smoke.mjs:no_template_import+hand_written_bootstrap:readNativeClientConfig+...`
  * red-proof: inject  a runner that imports the template and still calls `readNativeClientConfig()` ->
- *   `runner_reimplements_the_scaffold:tools/run-stardew-native-local-player-injected-smoke.mjs:hand_written_bootstrap:readNativeClientConfig`
+ *   `runner_reimplements_the_scaffold:<injected runner>:hand_written_bootstrap:readNativeClientConfig`
  * red-proof: inject  a hand-written runner that is not in the baseline ->
- *   `runner_reimplements_the_scaffold:tools/run-stardew-native-local-player-injected-smoke.mjs:no_template_import`
+ *   `runner_reimplements_the_scaffold:<injected runner>:no_template_import`
  * red-proof: inject  a baseline entry whose runner now conforms, and an entry whose runner is gone ->
  *   `stale_baseline:<file>` twice; `recordShrinks` deletes exactly those two
  * red-proof: inject  an empty population, and a template missing `runSmokeScenarioMain` ->

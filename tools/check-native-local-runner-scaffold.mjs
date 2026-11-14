@@ -51,11 +51,11 @@
  * Exit 0 every runner conforms or is baselined, 1 a finding, 2 blocked.
  *
  * red-proof: inject  a runner that reads its own `readNativeClientConfig()` beside the template import ->
- *   `runner_still_owns_the_lifecycle:...:hand_written_bootstrap:readNativeClientConfig`
+ *   `runner_reimplements_the_scaffold:<injected runner>:hand_written_bootstrap:readNativeClientConfig`
  *   (tools/check-native-local-runner-scaffold.test.mjs)
  * red-proof: inject  a new hand-written runner not in the baseline -> `runner_reimplements_the_scaffold:<file>:...`
  *   (tools/check-native-local-runner-scaffold.test.mjs)
- * red-proof: inject  the sweep-scythe runner at HEAD (before its migration) into the population ->
+ * red-proof: history  the sweep-scythe runner at `fcc2c1b7`, before its migration, replayed into the population ->
  *   `runner_reimplements_the_scaffold:tools/run-stardew-native-local-player-sweep-scythe-smoke.mjs:...`
  *   (tools/check-native-local-runner-scaffold.test.mjs)
  * red-proof: inject  a baseline entry for a runner that now conforms, and one whose runner is gone ->
