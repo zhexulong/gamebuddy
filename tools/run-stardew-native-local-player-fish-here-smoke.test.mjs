@@ -15,6 +15,7 @@ import {
   judgeParity,
   parityNotMeasuredIsStructural,
   publishedCatchable,
+  readReaderCensus,
 } from "./run-stardew-native-local-player-fish-here-smoke.mjs";
 
 /**
@@ -217,6 +218,29 @@ test("only the structural reason is accepted; a reader that failed is not a quie
   assert.equal(parityNotMeasuredIsStructural(undefined), false);
 });
 
+test("every exit the engine takes before the table is structural; nothing else is", () => {
+  // The closed list is the engine's own four exits (GameLocation.cs:13851-13874, Farm.cs:1109-1133). The farm's map
+  // redirect is the one that can actually happen in this world, and it must be an ABSENT claim rather than a pass.
+  for (const reason of [
+    "location_overrides_get_fish:MineShaft",
+    "farm_fish_redirect:Forest:0.5",
+    "fish_pond_under_bobber:72,30",
+    "fish_frenzy_at_bobber:(O)128",
+    "fish_frenzy_active:bobber_tile_unknown",
+  ])
+    assert.equal(parityNotMeasuredIsStructural(reason), true, reason);
+  // Anything that is a reader FAILURE - or a near-miss spelling of an exit - stays a failure to look.
+  for (const reason of [
+    "location_not_loaded:Forest",
+    "locations_default_row_missing",
+    "farm_fish_redirect:",
+    "fish_pond_under_bobber:over there",
+    "fish_frenzy_at_bobber:",
+    "location_overrides_get_fish:",
+  ])
+    assert.equal(parityNotMeasuredIsStructural(reason), false, reason);
+});
+
 test("a capped species list is refused by name, not read as a disagreement", () => {
   // The wire truncates at fifteen lines plus an omission count. A caught species could then be "outside" a set that
   // does contain it, and reporting that as a disagreement would be a false accusation of the reader.
@@ -249,6 +273,8 @@ test("every sampled species inside the published set is the pass, and it prints 
     },
   );
   assert.deepEqual(judged.violations, []);
+  // N is not decoration: it is what the claim is bounded by, and the line states it beside the answer.
+  assert.equal(judged.line, "sampled 3 · distinct 2 · outside our set 0");
 });
 
 test("a caught species the reader did not publish is the disagreement this half exists for", () => {
@@ -270,4 +296,78 @@ test("the runner's address derivation reproduces the address the Mod published",
   assert.equal(deriveWaterTargetId("Farm", 72, 30), TARGET_ID);
   assert.notEqual(deriveWaterTargetId("Farm", 72, 31), TARGET_ID);
   assert.notEqual(deriveWaterTargetId("FarmHouse", 72, 30), TARGET_ID);
+});
+
+/**
+ * The census asks the reader about every location `Data/Locations` declares, and it is built from the SAME wire shape
+ * the live run produces (`data_query_result` index, then one `row` per key). The transport is the boundary faked here;
+ * the projection under test - which keys count as loaded, which rows are measured - is not.
+ */
+const censusClient = (index, rows) => ({
+  async dataQuery({ key }) {
+    if (key === undefined) return index;
+    return (
+      rows[key] ?? { status: "missing", table: "LocationFish", population: 3, rows: null, row: null, reason: null }
+    );
+  },
+});
+
+const INDEX = {
+  status: "index",
+  table: "LocationFish",
+  population: 3,
+  rows: ["here", "Farm", "Forest"],
+  row: null,
+  reason: null,
+};
+
+test("the census reports what the reader published for every declared location", async () => {
+  const census = await readReaderCensus(
+    censusClient(INDEX, {
+      // The fixture world: measured once the farm's own map declares no redirect (FishingCatchableQuery).
+      here: ROW({ ...FIELDS, location: "Farm", catchableCount: 2 }),
+      Farm: ROW({ ...FIELDS, location: "Farm", catchableCount: 2 }),
+      Forest: {
+        status: "row",
+        table: "LocationFish",
+        population: 3,
+        rows: null,
+        row: { id: "Forest", fields: { status: "not_measured", reason: "location_not_loaded:Forest" } },
+      },
+    }),
+  );
+  assert.deepEqual(census.summary, { asked: 3, loaded: 2, measured: 2, refused: 0 });
+  assert.equal(census.answers.find((entry) => entry.key === "here").species, 2);
+  // A location this process does not have loaded is NEITHER a published set NOR a reader failure, so it is named as
+  // neither: it must not be counted as a refusal, which would read as the engine's exits having been taken.
+  const forest = census.answers.find((entry) => entry.key === "Forest");
+  assert.deepEqual([forest.loaded, forest.species, forest.reason], [false, null, "location_not_loaded:Forest"]);
+});
+
+test("a loaded location the reader refused is counted as a refusal, with the reason it named", async () => {
+  const census = await readReaderCensus(
+    censusClient(INDEX, {
+      here: ROW({ ...FIELDS, status: "not_measured", reason: "farm_fish_redirect:Forest:0.5" }),
+      Farm: ROW({ ...FIELDS, status: "not_measured", reason: "farm_fish_redirect:Forest:0.5" }),
+      Forest: ROW({ ...FIELDS, location: "Forest" }),
+    }),
+  );
+  assert.deepEqual(census.summary, { asked: 3, loaded: 3, measured: 1, refused: 2 });
+  assert.equal(census.answers.find((entry) => entry.key === "Farm").reason, "farm_fish_redirect:Forest:0.5");
+});
+
+test("an empty census is refused: a population of zero cannot agree with anything", async () => {
+  await assert.rejects(
+    () => readReaderCensus(censusClient({ ...INDEX, rows: [] }, {})),
+    /fish_here_census_index_empty/u,
+  );
+  await assert.rejects(
+    () => readReaderCensus(censusClient({ status: "row", table: "LocationFish", row: null, rows: null }, {})),
+    /fish_here_census_index_absent:row/u,
+  );
+});
+
+/** A client with no reader at all is a named refusal, not an empty census. */
+test("a session with no content-data reader says so", async () => {
+  await assert.rejects(() => readReaderCensus({}), /fish_here_census_data_query_unavailable/u);
 });

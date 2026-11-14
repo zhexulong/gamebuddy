@@ -28,10 +28,17 @@
 // published immediately before that cast; a species the engine returned and the reader did not
 // publish is the disagreement this half exists to find. The reverse direction - a species the
 // reader publishes and the engine never returns - cannot be established by sampling, and this
-// runner does not claim it.
+// runner does not claim it. The sample prints `sampled N · distinct M · outside our set J`, and N is
+// reported BESIDE the number requested: the world, not the runner, bounds it (one bait per cast,
+// eight stamina per cast), so a short sample says so instead of reading as a wide one.
+//
+// AND THE READER IS READ ACROSS EVERY LOCATION THE ENGINE DECLARES. `LocationFish` answers one row per
+// `Data/Locations` key; the census asks all of them once, before any cast, so a reader that refuses to
+// publish where the engine's own sampler IS the table (or publishes where the location's class can return
+// a species the two tables do not name) is visible in the run's own evidence rather than argued from source.
 
 import { createHash } from "node:crypto";
-
+import { loadHostTestModule } from "./lib/host-test-module.mjs";
 import {
   assertRequiredCapabilities,
   connectNativeLocalClient,
@@ -41,7 +48,6 @@ import {
   summarizeReceipt,
   waitForTerminal,
 } from "./lib/stardew-native-smoke-harness-v1.mjs";
-import { loadHostTestModule } from "./lib/host-test-module.mjs";
 
 const ACTION = "fish_here";
 const REQUIRED_CAPABILITIES = ["cancel_active_execution", "inspect_self", ACTION];
@@ -51,6 +57,13 @@ const REQUIRED_CAPABILITIES = ["cancel_active_execution", "inspect_self", ACTION
  * own N beside the answer so no reader can mistake it for the population.
  */
 const PARITY_SAMPLES = 6;
+/**
+ * The world's own limits on how many casts one run can make: one bait leaves the rod per cast and a cast spends
+ * eight stamina, so the fixture's twenty bait bound a sample at nineteen draws. A refusal with one of these codes is
+ * the world saying so, and is a STOP rather than a failure - a runner that reported it as a failed sample would be
+ * reporting the fixture's arithmetic as a product defect.
+ */
+const WORLD_SAMPLE_LIMITS = Object.freeze(["no_bait_available", "out_of_stamina"]);
 /** The Mod's own address for one water tile (`BuildWaterTargetId`), reproduced here only to be CHECKED against a published row. */
 const WATER_TARGET_PREFIX = "water_";
 
@@ -66,6 +79,9 @@ export async function runFishHereSmoke(
     const snapshot = await observeFresh(client, { actionable: true });
     assertRequiredCapabilities(snapshot, REQUIRED_CAPABILITIES);
     const water = chooseWaterTarget(snapshot);
+    // The reader's own answer for EVERY location the engine declares, read before the first cast spends anything.
+    const census = await readReaderCensus(client);
+    trace.push({ step: "reader_census", ...census.summary });
 
     const requestId = `native_local_fish_here_${Date.now()}`;
     // No deadline of this runner's own: the cast is bounded by the window `fish_here` publishes on `hello_ack`, which
@@ -190,6 +206,7 @@ export async function runFishHereSmoke(
       evidence,
       negative: { reasonCode: negativeTerminal.reasonCode },
       dryTile: { tile: `${landTile.x},${landTile.y}`, reasonCode: landTerminal.reasonCode },
+      census,
       parity,
       receipt: summarizeReceipt(terminal),
       trace,
@@ -402,15 +419,24 @@ export function publishedCatchable(answer) {
 /**
  * Which `not_measured` reasons this contract accepts, and which are a failure to look.
  *
- * `location_overrides_get_fish:<location>` is STRUCTURAL: the engine's own `getFish` override can add species the two
- * tables do not name (`Farm`, `MineShaft`, `Railroad`, `IslandSouthEast`, `IslandLocation`), so the reader refuses to
- * publish a set there and the guard admits instead of refusing. Measured 2026-11-14: `fish_here`'s fixture world IS the
- * Farm, so this is the answer every run of this action gets - and the parity claim is therefore ABSENT, not satisfied.
+ * THE CLOSED LIST IS THE ENGINE'S OWN EXITS FROM THE TABLE, nothing else (`GameLocation.cs:13851-13874`,
+ * `Farm.cs:1109-1133`): a location-name redirect, a class whose own sampler answers (and the farm's map redirect), a
+ * fish pond under the bobber, an active fish frenzy. Each is STRUCTURAL - the engine can return a species the two tables
+ * do not name, so the reader refuses and the guard admits, and the parity claim is therefore ABSENT, not satisfied.
  * Any other reason (`fishing_data_unreadable:…`, `world_not_ready`) is a reader that failed, and a run that treated that
  * as "no disagreement" would pass on nothing.
+ *
+ * Measured 2026-11-14: `fish_here`'s fixture world IS the Farm, so `location_overrides_get_fish:Farm` was the answer
+ * every run of this action got - and the parity claim was absent for the whole life of the action.
  */
 export function parityNotMeasuredIsStructural(reason) {
-  return /^location_overrides_get_fish:[A-Za-z0-9_]{1,64}$/u.test(String(reason ?? ""));
+  const text = String(reason ?? "");
+  return (
+    /^location_overrides_get_fish:[A-Za-z0-9_]{1,64}$/u.test(text) ||
+    /^farm_fish_redirect:[A-Za-z0-9_]{0,64}:[0-9.]+$/u.test(text) ||
+    /^fish_pond_under_bobber:-?\d{1,6},-?\d{1,6}$/u.test(text) ||
+    /^fish_frenzy_(?:at_bobber:[A-Za-z0-9_()]{1,32}|active:bobber_tile_unknown)$/u.test(text)
+  );
 }
 
 /**
@@ -428,10 +454,56 @@ export function judgeParity(samples) {
     sampled: samples.length,
     distinct,
     outside: outside.length,
+    line: `sampled ${samples.length} · distinct ${distinct} · outside our set ${outside.length}`,
     violations: outside.map(
       (sample) =>
         `fish_here_parity_species_outside_published_set:${sample.species}:index=${sample.index}:time=${sample.publishedTimeOfDay}:published=${sample.publishedCount}`,
     ),
+  };
+}
+
+/**
+ * The reader's answer for every location the engine declares, asked once before any cast.
+ *
+ * WHY A CENSUS AND NOT ONE ANSWER. The `LocationFish` row for `here` is the one the guard and the cast use, and it is
+ * the one a single run can falsify. The rows for the OTHER locations are what makes the reader's rule visible: a
+ * location whose class inherits the engine's own sampler must be `measured` (the two tables ARE its answer) and one
+ * whose class answers `getFish` itself must not be. An answer that says otherwise is the disagreement between our
+ * projection and the engine, readable from one run instead of inferred from source.
+ *
+ * A location the process does not have loaded answers `location_not_loaded:<name>`: it is neither a published set nor
+ * a reader failure, so it is counted and named rather than reported as either.
+ */
+export async function readReaderCensus(client) {
+  if (typeof client?.dataQuery !== "function") throw new Error("fish_here_census_data_query_unavailable");
+  const index = await client.dataQuery({ table: "LocationFish" });
+  if (index?.status !== "index") throw new Error(`fish_here_census_index_absent:${index?.status ?? "no_answer"}`);
+  const keys = Array.isArray(index.rows) ? index.rows.filter((key) => typeof key === "string") : [];
+  if (keys.length === 0) throw new Error("fish_here_census_index_empty");
+  const answers = [];
+  for (const key of keys) {
+    const answer = await client.dataQuery({ table: "LocationFish", key });
+    const fields = answer?.row?.fields ?? {};
+    const reason = String(fields.reason ?? "");
+    const loaded = !reason.startsWith("location_not_loaded:");
+    answers.push({
+      key,
+      loaded,
+      status: String(fields.status ?? "absent"),
+      reason,
+      species: fields.status === "measured" ? Number(fields.catchableCount ?? 0) : null,
+    });
+  }
+  const loaded = answers.filter((entry) => entry.loaded);
+  const measured = loaded.filter((entry) => entry.status === "measured");
+  return {
+    summary: {
+      asked: answers.length,
+      loaded: loaded.length,
+      measured: measured.length,
+      refused: loaded.length - measured.length,
+    },
+    answers,
   };
 }
 
@@ -454,6 +526,7 @@ async function sampleParity(client, receipts, water, { samples, terminalTimeoutM
     return { status: "not_measured", reason: first.reason, sampled: 0, distinct: 0, outside: 0 };
   }
   const readings = [];
+  let stoppedBy = null;
   for (let index = 0; index < samples; index++) {
     const snapshot = await observeFresh(client, { actionable: true });
     const target = waterTargetAt(snapshot, water.x, water.y) ?? chooseWaterTarget(snapshot);
@@ -468,10 +541,17 @@ async function sampleParity(client, receipts, water, { samples, terminalTimeoutM
       snapshot,
     });
     const terminal = await waitForTerminal(receipts, submitted, terminalTimeoutMs);
-    if (terminal.state !== "succeeded" || terminal.reasonCode !== "fish_caught")
+    if (terminal.state !== "succeeded" || terminal.reasonCode !== "fish_caught") {
+      // The world's own arithmetic can end a sample early - one bait leaves the rod per cast and a cast spends eight
+      // stamina - and that is a STOP with a name, not a failed sample and not a clean full one.
+      if (WORLD_SAMPLE_LIMITS.includes(String(terminal.reasonCode))) {
+        stoppedBy = String(terminal.reasonCode);
+        break;
+      }
       throw new Error(
         `fish_here_parity_sample_failed:${index}:${terminal.state}/${terminal.reasonCode};${summarizeEvidence(terminal.evidence)}`,
       );
+    }
     const evidence = parseEvidence(terminal.evidence);
     const species = evidence.caught_qualified_item_id;
     readings.push({
@@ -491,8 +571,12 @@ async function sampleParity(client, receipts, water, { samples, terminalTimeoutM
   }
   const judged = judgeParity(readings);
   if (judged.violations.length > 0) throw new Error(judged.violations[0]);
+  trace.push({ step: "parity", requested: samples, line: judged.line, stoppedBy });
   return {
     status: "measured",
+    requested: samples,
+    stoppedBy,
+    line: judged.line,
     sampled: judged.sampled,
     distinct: judged.distinct,
     outside: judged.outside,
@@ -504,7 +588,10 @@ if (import.meta.main) {
   const config = await readNativeClientConfig();
   const session = await connectNativeLocalClient(config, { loadModule: loadHostTestModule });
   try {
-    const result = await runFishHereSmoke(session.client, session.receipts, config);
+    // HOW WIDE THE SAMPLE IS ASKED FOR, not promised: the world bounds it (see `WORLD_SAMPLE_LIMITS`) and the result
+    // reports both numbers. The gate's own default stays small; a deep reading is `GAMEBUDDY_FISH_PARITY_SAMPLES=90 node`.
+    const paritySamples = Number(process.env.GAMEBUDDY_FISH_PARITY_SAMPLES ?? PARITY_SAMPLES);
+    const result = await runFishHereSmoke(session.client, session.receipts, config, { paritySamples });
     console.log(JSON.stringify(result));
     if (result.state !== "passed") process.exitCode = 2;
   } finally {
