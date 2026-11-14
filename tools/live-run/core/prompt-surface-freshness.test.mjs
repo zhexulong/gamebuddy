@@ -81,6 +81,10 @@ const gitOk = (cwd, args) => {
   }
 };
 
+/** For the plumbing that reads a patch on stdin - `git patch-id` is the only one here. */
+const gitPiped = (cwd, args, input) =>
+  execFileSync("git", args, { cwd, encoding: "utf8", input, stdio: ["pipe", "pipe", "pipe"] }).trim();
+
 const scratch = [];
 after(() => {
   for (const dir of scratch) writeFileSync(join(dir, ".keep-undone"), "");
@@ -728,5 +732,56 @@ describe("the verdict is git's own patch equivalence, computed more cheaply", ()
     assert.equal(assessment.findings.length, 1, promptSurfaceRefusal(assessment));
     assert.equal(assessment.findings[0].subjects.length, 1, "the carried copy must not be counted as missing");
     assert.match(assessment.findings[0].subjects[0], /the branch's second edit/u);
+  });
+
+  test("a prompt change re-applied inside a commit that changed other files is still carried", () => {
+    // The case that separates "the same patch" from "a patch with the same text in it": `--cherry-pick` hashes only
+    // the part of each commit that touches the path in question, so a revision that re-applied the prompt sentence
+    // inside a commit whose OTHER files differ carries the work, and the blobs differ because a later commit edited
+    // the prompt again. Decided from the whole commit patch, this tree would be refused for work it already has.
+    const dir = makeRepo();
+    const plumbing = "host/src/zz-unrelated-plumbing.ts";
+    write(dir, PRESET, preset("first"));
+    write(dir, plumbing, "export const plumbing = 1;\n");
+    const base = commit(dir, "base");
+    write(dir, PRESET, preset("second"));
+    write(dir, plumbing, "export const plumbing = 2;\n");
+    const product = commit(dir, "the product branch's prompt fix, and its own plumbing");
+    git(dir, ["checkout", "-q", "-b", "feature", base]);
+    write(dir, PRESET, preset("second"));
+    write(dir, plumbing, "export const plumbing = 3;\n");
+    commit(dir, "the same prompt sentence, different plumbing");
+    write(dir, PRESET, preset("second, and the feature's own ending"));
+    commit(dir, "the feature's own edit on top");
+
+    // The fixture has to be the hard case, or this test agrees with itself: the blobs differ, the patch limited to the
+    // prompt path is the same on both sides, and the whole-commit patches are not.
+    assert.notEqual(blobAt(dir, "feature", PRESET), blobAt(dir, "main", PRESET), "the prompt content must differ");
+    const patchIds = (patchText) =>
+      gitPiped(dir, ["patch-id", "--stable"], patchText)
+        .split("\n")
+        .filter((line) => line.length > 0)
+        .map((line) => line.split(" ")[0]);
+    const reApplied = git(dir, ["rev-list", "--no-merges", "feature", "--not", "main", "--", PRESET]).split("\n")[1];
+    const patchOf = (shas, paths) =>
+      git(dir, ["log", "--no-walk=unsorted", "--patch", "--format=commit %H", ...shas, ...(paths ?? [])]);
+    assert.equal(
+      patchIds(patchOf([product, reApplied])).length,
+      2,
+      "both whole-commit patches must reach the comparison",
+    );
+    assert.equal(patchOf([product]).includes("plumbing = 2"), true, "the product commit must touch the plumbing");
+    assert.notEqual(
+      new Set(patchIds(patchOf([product, reApplied]))).size,
+      1,
+      "the whole-commit patches must differ for this to be the hard case",
+    );
+    assert.equal(
+      patchIds(patchOf([product], ["--", PRESET]))[0],
+      patchIds(patchOf([reApplied], ["--", PRESET]))[0],
+      "the prompt part of the two commits must be the same for this to be the hard case",
+    );
+    const assessment = assertMatchesPatchEquivalence({ dir, revision: "feature" });
+    assert.equal(assessment.status, "current", promptSurfaceRefusal(assessment));
   });
 });
