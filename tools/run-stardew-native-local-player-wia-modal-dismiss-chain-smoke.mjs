@@ -12,6 +12,7 @@ import {
   validateNativeLocalFixturePolicy,
 } from "./lib/stardew-native-smoke-harness-v1.mjs";
 import { loadHostTestModule } from "./lib/host-test-module.mjs";
+import { validateNativeLocalFixtureConfig } from "./lib/native-local-runner-primitives.mjs";
 
 const SCENARIO = "native_wia_modal_dismiss_chain_v1";
 const EXPECTED_ACTIONS = ["cancel_active_execution", "dismiss_modal", "move_to_tile", "travel", "observe_scene"];
@@ -55,7 +56,7 @@ export async function runWiaModalDismissChain(
 ) {
   const trace = [];
   const startedAt = Date.now();
-  validateNativeLocalFixtureConfig(config);
+  validateNativeLocalFixtureConfig(config, { action: "dismiss_modal", requiredActions: EXPECTED_ACTIONS });
   try {
     let snapshot = await observeFresh(client);
     assertRequiredCapabilities(snapshot, REQUIRED_CAPABILITIES);
@@ -363,15 +364,4 @@ function parseTargetCoordinates(value) {
   const match = typeof value === "string" ? value.match(/^([\d.]+),([\d.]+)$/) : null;
   if (!match) return { x: null, y: null };
   return { x: Number(match[1]), y: Number(match[2]) };
-}
-function validateNativeLocalFixtureConfig(value) {
-  if (value?.NativeLocalPlayerFixture?.Enable !== true) throw new Error("native_local_fixture_not_enabled");
-  if (
-    value.Portfolio?.Enable === true ||
-    value.HostAutomation?.Enable === true ||
-    value.HostFarmhandProvisioning?.Enable === true ||
-    value.FarmhandProvisioner?.Enable === true
-  )
-    throw new Error("native_local_fixture_topology_not_isolated");
-  validateNativeLocalFixturePolicy(value, { requiredActions: EXPECTED_ACTIONS });
 }

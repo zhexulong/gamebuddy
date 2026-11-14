@@ -528,11 +528,6 @@
       "reason": "predates_the_primitives"
     },
     {
-      "file": "tools/run-stardew-native-local-player-chop-tree-source-smoke.mjs",
-      "primitive": "validateNativeLocalFixtureConfig",
-      "reason": "predates_the_primitives"
-    },
-    {
       "file": "tools/run-stardew-native-local-player-claim-museum-reward-smoke.mjs",
       "primitive": "parseEvidence",
       "reason": "predates_the_primitives"
@@ -1028,11 +1023,6 @@
       "reason": "predates_the_primitives"
     },
     {
-      "file": "tools/run-stardew-native-local-player-till-soil-smoke.mjs",
-      "primitive": "validateNativeLocalFixtureConfig",
-      "reason": "predates_the_primitives"
-    },
-    {
       "file": "tools/run-stardew-native-local-player-tool-recovery-chain-smoke.mjs",
       "primitive": "tilesAdjacent",
       "reason": "predates_the_primitives"
@@ -1183,11 +1173,6 @@
       "reason": "predates_the_primitives"
     },
     {
-      "file": "tools/run-stardew-native-local-player-wia-answer-question-smoke.mjs",
-      "primitive": "validateNativeLocalFixtureConfig",
-      "reason": "predates_the_primitives"
-    },
-    {
       "file": "tools/run-stardew-native-local-player-wia-eat-interrupt-smoke.mjs",
       "primitive": "validateNativeLocalFixtureConfig",
       "reason": "predates_the_primitives"
@@ -1218,11 +1203,6 @@
       "reason": "predates_the_primitives"
     },
     {
-      "file": "tools/run-stardew-native-local-player-wia-modal-dismiss-chain-smoke.mjs",
-      "primitive": "validateNativeLocalFixtureConfig",
-      "reason": "predates_the_primitives"
-    },
-    {
       "file": "tools/run-stardew-native-local-player-wia-modal-interrupt-smoke.mjs",
       "primitive": "tilesAdjacent",
       "reason": "predates_the_primitives"
@@ -1233,11 +1213,6 @@
       "reason": "predates_the_primitives"
     },
     {
-      "file": "tools/run-stardew-native-local-player-wia-modal-interrupt-smoke.mjs",
-      "primitive": "validateNativeLocalFixtureConfig",
-      "reason": "predates_the_primitives"
-    },
-    {
       "file": "tools/run-stardew-native-local-player-wia-passout-smoke.mjs",
       "primitive": "tilesAdjacent",
       "reason": "predates_the_primitives"
@@ -1245,11 +1220,6 @@
     {
       "file": "tools/run-stardew-native-local-player-wia-passout-smoke.mjs",
       "primitive": "parseStrictEvidence",
-      "reason": "predates_the_primitives"
-    },
-    {
-      "file": "tools/run-stardew-native-local-player-wia-passout-smoke.mjs",
-      "primitive": "validateNativeLocalFixtureConfig",
       "reason": "predates_the_primitives"
     },
     {
