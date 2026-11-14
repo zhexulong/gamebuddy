@@ -115,6 +115,8 @@
  *   node tools/audit-gate-red-proofs.mjs --json       # every gate's record, with its proofs
  *   node tools/audit-gate-red-proofs.mjs --run        # also execute the declared falsifier suites
  *   node tools/audit-gate-red-proofs.mjs --update     # re-record the baseline, in its own commit
+ *   node tools/audit-gate-red-proofs.mjs --update-execution # re-record the prose ledger only
+ *   node tools/audit-gate-red-proofs.mjs --update-execution --record-unexecuted # ...and the unrun proof files
  *   node tools/audit-gate-red-proofs.mjs --root <dir> # the gate's own fixture
  *
  * red-proof: inject  deleting a gate's marker in a synthetic tree -> `no_red_proof` names that gate, its
@@ -126,6 +128,14 @@
  *                    asserts `fixture_lane_missing_required_action` stays executable
  *                    (tools/audit-gate-red-proofs.test.mjs)
  */
+
+export const gateDeclaration = {
+  id: "audit-gate-red-proofs",
+  domain: "meta",
+  tier: "l2",
+  kind: "ratchet",
+};
+
 import { spawnSync } from "node:child_process";
 import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
@@ -780,12 +790,15 @@ function describeExecution({ root, records, runnerText, runDirectories }) {
  * It is printed rather than folded into the census partition: every gate it counts is inside `with a red proof`, so a
  * sixth bucket would count those gates twice and a reader who adds the line up would get a total larger than the
  * population. The same reason `zero-population-pass` is printed beside the partition instead of in it.
+ *
+ * `prose-only baselined` is the recorded part of the same set: the two numbers beside it are the whole reading, so a
+ * reader who subtracts them sees the debt this run is not allowed to grow and cannot mistake it for a clean bill.
  */
 export function describeExecutionLine(counts) {
   return (
     `of the ${counts.gates} gate(s) with a red proof: executable ${counts.executable} · ` +
     `proof is prose ${counts.prose} · no falsifier suite ${counts.noSuite} · ` +
-    `proof file nothing runs ${counts.unexecuted}`
+    `prose-only baselined ${counts.baselined} · proof file nothing runs ${counts.unexecuted}`
   );
 }
 
@@ -916,7 +929,7 @@ function runProofSuites(root, proven) {
   return findings;
 }
 
-function report({ reading, held, gaps, undeclared = 0 }) {
+function report({ reading, held, heldProse = 0, gaps, undeclared = 0 }) {
   const { population } = reading;
   const byStatus = (status) => reading.records.filter((record) => record.status === status).length;
   process.stdout.write(
@@ -974,7 +987,7 @@ function report({ reading, held, gaps, undeclared = 0 }) {
       `shared judge reads, so a zero in them is invisible: ` +
       `${zero.invisible.map((file) => file.replace(/^tools\//u, "")).join(", ")}\n`,
   );
-  process.stdout.write(`  ${describeExecutionLine(reading.execution.counts)}\n`);
+  process.stdout.write(`  ${describeExecutionLine({ ...reading.execution.counts, baselined: heldProse })}\n`);
   if (gaps) {
     for (const gap of reading.gaps) process.stdout.write(`  gap:${gap.gate} status=${gap.status}\n`);
     for (const entry of reading.execution.prose) process.stdout.write(`  proof_is_prose:${entry.gate}\n`);
@@ -993,12 +1006,55 @@ function report({ reading, held, gaps, undeclared = 0 }) {
   );
 }
 
+/** The execution ledger, recorded from the reading: the prose set and the proof files nothing runs. */
+/**
+ * The execution ledger, recorded from the reading: the prose set, and - only when asked - the proof files nothing runs.
+ *
+ * `recordUnexecuted` is opt-in because the two halves are different debts. A prose proof is a claim whose injection was
+ * performed by hand once; recording it is honest and the conversion happens later. A falsifier no runner runs is a
+ * gate that does not execute at all, and the three measured here are live defects - recording them by default is how a
+ * finding becomes a number on a line, so it takes a second flag to say so deliberately.
+ */
+function recordExecutionBaseline({ root, reading, recordUnexecuted = false }) {
+  const execution = {
+    schema: "gamebuddy-gate-red-proof-execution-baseline/v1",
+    note:
+      "Gates whose red proof is prose at this commit: the comment describes an injection that no code performs. A record " +
+      "of measured debt, not an acceptance of it: delete an entry by making the suite write the violating input and assert " +
+      "the code the gate then prints, never by recording another gate. `unexecuted` is recorded only with " +
+      "`--record-unexecuted`; it is empty here because each one measured was a live defect and the finding names the gate " +
+      "instead of this file holding it quiet.",
+    prose: [...reading.execution.prose, ...reading.execution.noSuite].map((entry) => entry.gate).sort(),
+    unexecuted: recordUnexecuted
+      ? reading.execution.unexecuted
+          .map((entry) => ({ gate: entry.gate, pointer: entry.pointer }))
+          .sort((left, right) => `${left.gate} ${left.pointer}`.localeCompare(`${right.gate} ${right.pointer}`))
+      : [],
+  };
+  writeFileSync(join(root, EXECUTION_BASELINE_PATH), `${JSON.stringify(execution, null, 2)}\n`, "utf8");
+  return execution;
+}
+
 function main(argv) {
   const json = argv.includes("--json");
   const rootIndex = argv.indexOf("--root");
   const root =
     rootIndex >= 0 && typeof argv[rootIndex + 1] === "string" ? resolve(argv[rootIndex + 1]) : REPOSITORY_ROOT;
   const reading = auditGateRedProofs({ root });
+  // Its own flag, because the marker ledger and this one record different debts and a lane converting one proof must be
+  // able to re-record its own without touching the other. Re-recording by hand is how a baseline stops describing a run.
+  if (argv.includes("--update-execution")) {
+    const execution = recordExecutionBaseline({
+      root,
+      reading,
+      recordUnexecuted: argv.includes("--record-unexecuted"),
+    });
+    process.stdout.write(
+      `gate_red_proof_execution_baseline_recorded prose=${execution.prose.length} ` +
+        `unexecuted=${execution.unexecuted.length} into ${EXECUTION_BASELINE_PATH}\n`,
+    );
+    return 0;
+  }
   if (argv.includes("--update")) {
     const gates = reading.gaps.map((gap) => gap.gate).sort();
     writeFileSync(
@@ -1014,17 +1070,7 @@ function main(argv) {
       )}\n`,
       "utf8",
     );
-    const execution = {
-      schema: "gamebuddy-gate-red-proof-execution-baseline/v1",
-      note:
-        "Gates whose red proof is prose (no code performs the injection) and proofs whose falsifier no runner runs. " +
-        "A record of measured debt: delete an entry by making the suite inject and assert, never by recording another gate.",
-      prose: [...reading.execution.prose, ...reading.execution.noSuite].map((entry) => entry.gate).sort(),
-      unexecuted: reading.execution.unexecuted
-        .map((entry) => ({ gate: entry.gate, pointer: entry.pointer }))
-        .sort((left, right) => `${left.gate} ${left.pointer}`.localeCompare(`${right.gate} ${right.pointer}`)),
-    };
-    writeFileSync(join(root, EXECUTION_BASELINE_PATH), `${JSON.stringify(execution, null, 2)}\n`, "utf8");
+    const execution = recordExecutionBaseline({ root, reading });
     process.stdout.write(
       `gate_red_proof_baseline_recorded gates=${gates.length} into ${BASELINE_PATH}\n` +
         `gate_red_proof_execution_baseline_recorded prose=${execution.prose.length} ` +
@@ -1034,7 +1080,7 @@ function main(argv) {
   }
   const baseline = readBaseline(root);
   const executionBaseline = readExecutionBaseline(root);
-  const { findings, held } = evaluate({ reading, baseline, executionBaseline });
+  const { findings, held, heldProse } = evaluate({ reading, baseline, executionBaseline });
   // `undeclared` is the half the baseline does not cover: a gate with no red proof and no record saying it owes one.
   // It is the number the conformance suite fails on, so it is counted here once and read from the same reading there.
   // Unreadable claims and external labels with no invoked runner are findings of their own and are NOT counted as
@@ -1056,7 +1102,7 @@ function main(argv) {
     );
     return all.length === 0 ? 0 : 1;
   }
-  report({ reading, held, gaps: argv.includes("--gaps"), undeclared });
+  report({ reading, held, heldProse, gaps: argv.includes("--gaps"), undeclared });
   for (const finding of all)
     process.stderr.write(`gate_red_proof_${finding.code}:${finding.gate}: ${finding.detail}\n`);
   if (all.length > 0)

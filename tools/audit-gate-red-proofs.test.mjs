@@ -504,6 +504,11 @@ test("the execution baseline only shrinks: recorded prose holds, and a proof tha
     });
     assert.deepEqual(held.findings, []);
     assert.equal(held.heldProse, 1);
+    // The line prints the recorded half beside the live half, or a reader subtracts two numbers and sees nothing.
+    assert.match(
+      describeExecutionLine({ ...auditGateRedProofs({ root }).execution.counts, baselined: held.heldProse }),
+      /prose-only baselined 1/u,
+    );
 
     writeFileSync(
       join(root, "tools/check-b.test.mjs"),
@@ -538,7 +543,7 @@ test("a proof file no runner runs is a finding that names the gate, and a runner
       ["tools/check-a.test.mjs"],
       "no script and no workflow names the suite",
     );
-    assert.match(describeExecutionLine(reading.execution.counts), /proof file nothing runs 1/u);
+    assert.match(describeExecutionLine({ ...reading.execution.counts, baselined: 0 }), /proof file nothing runs 1/u);
     const findings = evaluate({ reading, baseline: { gates: [] } }).findings;
     assert.deepEqual(codesFor(findings, "check:a"), ["red_proof_nothing_runs"]);
     assert.match(

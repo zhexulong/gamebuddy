@@ -1,6 +1,6 @@
 {
   "schema": "gamebuddy-gate-red-proof-execution-baseline/v1",
-  "note": "Gates whose red proof is prose at this commit: the comment describes an injection that no code performs. A record of measured debt, not an acceptance of it: delete an entry by making the suite write the violating input and assert the code the gate then prints, never by recording another gate. `unexecuted` records a proof file no runner runs; it is empty on purpose - the three measured here are live defects, so the finding names them instead of this file holding them quiet.",
+  "note": "Gates whose red proof is prose at this commit: the comment describes an injection that no code performs. A record of measured debt, not an acceptance of it: delete an entry by making the suite write the violating input and assert the code the gate then prints, never by recording another gate. `unexecuted` is recorded only with `--record-unexecuted`; it is empty here because each one measured was a live defect and the finding names the gate instead of this file holding it quiet.",
   "prose": [
     "audit:stardew-execution-receipt-field-parity",
     "audit:stardew-open-ground-claims",
