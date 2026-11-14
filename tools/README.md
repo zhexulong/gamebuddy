@@ -506,3 +506,33 @@ worktree already has installed, and a package it does not have keeps the `depend
 `--out <dir>` keeps the captured stdout, stderr and verdict JSON per revision; `--keep` keeps the archived
 trees. `pnpm test:replay-gate-on-history` runs its own suite, which replays the waiver gate and the
 selector-producer gate on the commits of 2026-11-14.
+
+## Gate input populations (`audit:gate-inputs`)
+
+`tools/audit-gate-inputs.mjs` asks, for every gate in the one census population, three questions a green run
+cannot answer about itself: **what does it read**, **where does that population come from**, and **what happens
+when it reads nothing**.
+
+```powershell
+pnpm audit:gate-inputs            # the reading and the gate; exit 1 on an unrecorded or stale member
+node tools/audit-gate-inputs.mjs --json   # every gate with its three facts, machine-readable
+node tools/audit-gate-inputs.mjs --update # rewrite tools/gate-inputs-baseline.json from a real reading
+```
+
+The population is not listed here: it is `tools/lib/gate-population.mjs`'s derivation (every `check:`/`audit:`/
+`test:` script plus every `tools/check-*.mjs` file no script names), restricted to the index. Per gate the reading
+records `reads` (the paths its own code names, through its relative imports), `source` (`authority` - a scan, the
+index through `git`, or a path the gate does not name itself; `hand-listed` - the members are written in the gate's
+own closure; `external` - the deciding program is not in this repository; `unreadable` - a language this reading
+does not parse; `unknown` - no file read is reachable) and `zeroRead` (`blocked`, `unmeasured`, `green-with-zero`,
+`unseen`).
+
+The gate is the pair that cannot tell "nothing to check" from "all good": `hand-listed` **and** `green-with-zero`.
+Its members are recorded in `tools/gate-inputs-baseline.json` - written by `--update`, never by hand - and the ratchet
+turns both ways: a member nobody recorded fails, and a recorded member the tree has outgrown fails too. A run over no
+gate is `blocked` (exit 2), never green.
+
+What it cannot see is printed rather than hidden: `external` gates whose rule lives in knip/eslint/depcruise/jscpd or
+in a vendored package are named and counted, `.py`/`.ps1` gates are `unreadable`, and a gate whose reading this
+grammar cannot attribute is `unknown` and listed by name. A zero-guard in a dead branch reads like one on the verdict
+path, which is why every member is printed as a gate to inspect rather than declared a proven defect.
