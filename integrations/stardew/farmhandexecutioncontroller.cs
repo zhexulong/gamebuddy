@@ -2529,6 +2529,13 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
     /// Why this tile cannot be hoed, as one member of a CLOSED set, or null when it can.
     ///
     /// <para>
+    /// THIS is the one authority for "can this tile be hoed". `IsTillableTile` is its boolean projection, the tile-area
+    /// row and the soil discovery both read that projection, and the `for_each` row the companion is dispatched from
+    /// reads it too. The clauses live here, once: a second list beside this one is how one revision came to answer
+    /// `tillable:true` on two rows `till_soil` refused in the same run (round57), because the row was derived from the
+    /// map's `Diggable` alone while the action refused on the whole walk.
+    /// </para>
+    /// <para>
     /// The receipt used to say `soil_not_diggable` and nothing else, so a companion told "this ground is dead hard"
     /// read it as "wrong tile for now" and re-aimed. Measured 2026-11-09: four live refusals about ground that can
     /// never be hoed arrived as one `soil_not_diggable` and three `target_out_of_range` (with a distance attached).
@@ -2537,8 +2544,9 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
     /// shape exists to prevent.
     /// </para>
     /// <para>
-    /// The order is permanent facts before removable ones. Water and the map's own `Diggable` property are what the
-    /// tile IS; an occupant is only asked about ground that would otherwise be farmable, so a reader is never sent to
+    /// The order is permanent facts before removable ones. Water, the map's own `Diggable` property and the engine's
+    /// `isTileLocationOpen` (a Buildings/Front obstruction - a greenhouse wall, a farmhouse, a wall) are what the tile
+    /// IS; an occupant is only asked about ground that would otherwise be farmable, so a reader is never sent to
     /// clear a chest off ground that could not be hoed anyway. `HoeDirt` is deliberately NOT an occupant: a tilled
     /// tile has its own answer one gate earlier (`soil_already_tilled`), and naming it here would call the one state
     /// the hoe exists for "blocked".
@@ -2553,6 +2561,11 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         if (location.doesTileHaveProperty(x, y, "Diggable", "Back") is null)
             return "not_map_diggable";
         Vector2 tile = new(x, y);
+        // The map's own obstruction layers (`isTileLocationOpen` reads Buildings, Front and AlwaysFront): a diggable
+        // tile under a wall was admitted here and then went nowhere when the hoe swung, so the receipt claimed a
+        // postcondition the world never gave.
+        if (!location.isTileLocationOpen(tile))
+            return "map_blocked";
         if (location.objects.TryGetValue(tile, out StardewValley.Object? placed))
             return $"occupied:{DescribeOccupantKind(placed)}";
         if (location.terrainFeatures.TryGetValue(tile, out StardewValley.TerrainFeatures.TerrainFeature? feature)
@@ -3192,31 +3205,26 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
     internal const int MaximumDiscoveredSoilTiles = 64;
 
     /// <summary>
-    /// Whether the Hoe admits this tile, as the ONE predicate both the soil discovery and the rectangle query use.
+    /// Whether the Hoe admits this tile: the ONE boolean both the soil discovery and the rectangle query publish, and
+    /// the one the `for_each` row is filtered on.
     ///
     /// <para>
-    /// The clauses are the ones <c>DiscoverSoilTiles</c> always carried - the map's own `Diggable` property, no water,
-    /// nothing placed in `objects`, the engine's own `isTileLocationOpen` - plus the tile's own `HoeDirt`, which is the
-    /// state `till_soil` refuses with `soil_already_tilled`. They are a function rather than five lines inside the scan
-    /// because a second copy is how "tillable here" and "a soil row there" become two different answers about the same
-    /// tile - and the rectangle query (`TileAreaQuery`) publishes this fact for every tile it is asked about, whether or
-    /// not the tile is inside the actor's discovery window.
+    /// It carries no clause of its own. Every condition is <see cref="DescribeSoilRefusal"/>'s, because that is the
+    /// predicate `till_soil` itself refuses on - so "tillable here", "a soil row there" and "why the action said no"
+    /// cannot become three answers about one tile. The five clauses this function used to hold were a second copy of
+    /// that walk, differing from it on two of them (no terrain feature, no wall), and the copy is what let a published
+    /// row disagree with the action in the same revision.
     /// </para>
     /// <para>
-    /// A tile that already carries a <c>HoeDirt</c> therefore answers FALSE here, and the soil discovery still publishes
-    /// its row: a hoed tile is the target of `plant_seed`, `fertilize_tile` and `water_crop` and the record of work
-    /// already done, so it travels as its own state rather than as "not farmable". The two answers are not in conflict -
-    /// they answer different questions, and the caller reads `hoed` for the second one.
+    /// A tile that already carries a <c>HoeDirt</c> answers FALSE here, and the soil discovery still publishes its row:
+    /// a hoed tile is the target of `plant_seed`, `fertilize_tile` and `water_crop` and the record of work already
+    /// done, so it travels as its own state rather than as "not farmable". The two answers are not in conflict - they
+    /// answer different questions, and the caller reads `hoed` for the second one.
     /// </para>
     /// </summary>
     internal static bool IsTillableTile(StardewValley.GameLocation location, int x, int y)
     {
-        Vector2 tile = new(x, y);
-        return location.GetHoeDirtAtTile(tile) is null
-            && location.doesTileHaveProperty(x, y, "Diggable", "Back") is not null
-            && !location.isWaterTile(x, y)
-            && !location.objects.ContainsKey(tile)
-            && location.isTileLocationOpen(tile);
+        return location.GetHoeDirtAtTile(new Vector2(x, y)) is null && DescribeSoilRefusal(location, x, y) is null;
     }
 
     private void RecordControllerTransition(ExecutionState state, string reasonCode, string? evidence)

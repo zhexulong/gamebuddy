@@ -388,10 +388,14 @@ internal sealed class FarmhandForEachFarmWorld : IFarmhandForEachWorld
             }
         }
 
-        // `doesTileHaveProperty` answers the property's VALUE as a string (or null when the tile has none), which is how
-        // the Hoe itself reads `Diggable`.
-        bool tillable = this.farm.doesTileHaveProperty(x, y, "Diggable", "Back") is not null;
-        if (!occupied && dirt is null && tillable) kind = FarmhandForEachKindActions.EmptyTillableKind;
+        // The ONE tillability answer, asked rather than re-derived. This line used to read the map's `Diggable`
+        // property alone, so a tile that already carried a `HoeDirt` - or a grass tile, or one under a wall - answered
+        // `tillable: true` here and `till_soil` refused it at the same revision (round57: `not_matched=0 of decided=16`
+        // while two dispatched rows were `HoeDirt`, and `inspect_tiles` called exactly those two `tillable: false`).
+        bool tillable = ExecutionManager.IsTillableTile(this.farm, x, y);
+        // `occupied` and `tillable` are the two halves of the kind: a bare tile the Hoe admits is `empty_tillable`,
+        // and `tillable` already answers false for anything carrying a feature, a crop or a placed object.
+        if (!occupied && tillable) kind = FarmhandForEachKindActions.EmptyTillableKind;
         if (kind == FarmhandForEachKindActions.SoilKind) container = "terrain";
 
         var fields = new Dictionary<string, FarmhandForEachValue>(StringComparer.Ordinal)
