@@ -206,6 +206,25 @@ test("the codemod is a no-op on a runner that is already on the template", () =>
   assert.equal(second.output, first.output);
 });
 
+test("the codemod refuses when the template starts requiring a field it does not write", () => {
+  const moved = TEMPLATE.replace(
+    'const prepare = requireField(definition, "prepare", "function");',
+    'const prepare = requireField(definition, "prepare", "function");\n  const negativeHook = requireField(definition, "negativeHook", "function");',
+  );
+  assert.notEqual(moved, TEMPLATE, "the injection point moved; update this falsifier with the template");
+  const result = planMigration(SHAPED, { scenario: "native_shape_example_v1", templateSource: moved });
+  assert.equal(result.ok, false);
+  assert.equal(result.why, "template_definition_required_field_not_written:negativeHook");
+});
+
+test("the codemod refuses when the template stops reading a field it writes", () => {
+  const moved = TEMPLATE.replace("const negative = definition.negative ?? null;", "");
+  assert.notEqual(moved, TEMPLATE, "the injection point moved; update this falsifier with the template");
+  const result = planMigration(SHAPED, { scenario: "native_shape_example_v1", templateSource: moved });
+  assert.equal(result.ok, false);
+  assert.equal(result.why, "template_definition_field_unknown:negative");
+});
+
 test("a runner that arms no fixture world is refused by name", () => {
   assert.deepEqual(resolveScenario([{ actionId: "move_placed_furniture", scenario: "" }]), {
     ok: false,

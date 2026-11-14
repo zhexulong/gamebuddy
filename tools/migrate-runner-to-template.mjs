@@ -812,6 +812,52 @@ export function parserMatchesTemplate(copyBody, templateBody) {
 }
 
 /**
+ * The definition's fields, read from `defineSmokeScenario`'s OWN validators in the template.
+ *
+ * This is the one thing that keeps a codemod honest across a template change. The rewrite below writes a definition
+ * with a fixed set of fields; if the template starts requiring one more, a codemod that keeps writing the old set would
+ * produce a file that throws `native_local_scenario_definition_invalid:<field>` at import - loud, but only where someone
+ * runs it. Reading the required set from the template's own `requireField`/`requireList` calls turns that into a refusal
+ * here, with the field named, at the moment the template moves.
+ */
+export function templateDefinitionContract(templateSource) {
+  const body = functionBody(templateSource ?? "", "defineSmokeScenario");
+  if (body === null) return { ok: false, why: "template_defineSmokeScenario_unreadable" };
+  const required = new Set(
+    [...body.matchAll(/require(?:Field|List)\(definition,\s*"([A-Za-z]+)"/gu)].map((match) => match[1]),
+  );
+  if (required.size === 0) return { ok: false, why: "template_definition_contract_unreadable" };
+  const readable = new Set([...required, ...[...body.matchAll(/definition\.([A-Za-z]+)/gu)].map((match) => match[1])]);
+  return { ok: true, required, readable };
+}
+
+/** The definition fields this codemod writes. Anything else is not a definition. */
+export const EMITTED_FIELDS = Object.freeze([
+  "action",
+  "fixtureScenario",
+  "successCode",
+  "requiredCapabilities",
+  "requiredActions",
+  "experimentalActions",
+  "negative",
+  "negativeOmittedBecause",
+  "prepare",
+  "request",
+  "assertPostcondition",
+]);
+
+/** Every field this codemod writes is one the template reads, and every field it requires is one this codemod writes. */
+export function contractFailure(contract) {
+  if (!contract.ok) return contract.why;
+  const emitted = new Set(EMITTED_FIELDS);
+  for (const field of contract.required)
+    if (!emitted.has(field)) return `template_definition_required_field_not_written:${field}`;
+  for (const field of EMITTED_FIELDS)
+    if (!contract.readable.has(field)) return `template_definition_field_unknown:${field}`;
+  return null;
+}
+
+/**
  * Plan one runner's migration.
  *
  * `scenario` is the fixture world the action's gate arms, resolved by the caller from the action's own descriptor; it
@@ -819,6 +865,8 @@ export function parserMatchesTemplate(copyBody, templateBody) {
  * guessed world is a run that arms something nobody asked for.
  */
 export function planMigration(source, { scenario, templateSource }) {
+  const drift = contractFailure(templateDefinitionContract(templateSource));
+  if (drift !== null) return refuse(drift);
   if (readRunner(source).conforming) return { ok: true, alreadyMigrated: true, output: source };
   const reading = readLifecycle(source);
   if (reading.match !== true) return refuse(`shape_does_not_match:${reading.reason}`);
