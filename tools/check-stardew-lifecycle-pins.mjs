@@ -325,8 +325,11 @@ export function baselineFrom(reading) {
 }
 
 function report(reading, entries, findings) {
+  const ofRule = (prefix) => findings.filter((finding) => finding.code.startsWith(`${prefix}:`));
+  const outcome = (prefix) => (ofRule(prefix).length === 0 ? "passed" : "failed");
   return {
     gate: "stardew-lifecycle-pins",
+    status: findings.length === 0 ? "passed" : "failed",
     examined: reading.filesExamined,
     pins: reading.pins.length,
     declared: reading.pins.filter((pin) => pin.declaredBy !== null).length,
@@ -335,6 +338,23 @@ function report(reading, entries, findings) {
     recordedEntries: entries.length,
     actions: reading.actionCount,
     rungs: reading.rungs,
+    checks: [
+      {
+        id: "lifecycle_literal_pinned_in_a_test",
+        status: outcome("lifecycle_literal_pinned_in_a_test"),
+        detail: `${reading.pins.length} pin(s) in ${reading.filesExamined} test file(s), ${ofRule("lifecycle_literal_pinned_in_a_test").length} of them outside the baseline and undeclared`,
+      },
+      {
+        id: "lifecycle_pin_baseline_current",
+        status: outcome("lifecycle_pin_baseline_entry_stale"),
+        detail: `${ofRule("lifecycle_pin_baseline_entry_stale").length} recorded pin(s) that no longer exist`,
+      },
+      {
+        id: "lifecycle_pin_marker_reason",
+        status: outcome("lifecycle_pin_marker_has_no_reason"),
+        detail: `${ofRule("lifecycle_pin_marker_has_no_reason").length} declaration(s) without a stated reason`,
+      },
+    ],
     findings,
   };
 }
@@ -378,10 +398,12 @@ function main(argv) {
     console.log(`  declared  ${declaration.file}:${declaration.line} - ${declaration.reason}`);
   if (findings.length === 0) {
     console.log(`lifecycle-pin: ok (no pin outside the recorded debt)`);
+    console.log(JSON.stringify(summary));
     return 0;
   }
   console.log(`lifecycle-pin: ${findings.length} finding(s)`);
   for (const finding of findings) console.log(`${MARKER} ${finding.code}`);
+  console.log(JSON.stringify(summary));
   return 1;
 }
 
