@@ -24,6 +24,7 @@
  */
 import { ScrollText } from "lucide-react";
 import { type ReactElement, useEffect, useState } from "react";
+import { assertNever } from "../assert-never";
 import type { Messages } from "../i18n";
 import {
   type PresetActiveBindingV1,
@@ -153,6 +154,8 @@ function activePresetLine(binding: PresetBindingShown, labels: Messages): string
       return labels.presetActiveUnreported;
     case "none":
       return labels.presetActiveNone;
+    default:
+      return assertNever(binding);
   }
 }
 
