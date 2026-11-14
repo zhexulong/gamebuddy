@@ -271,12 +271,21 @@ public sealed record BridgeTileAreaQueryRequest(int X, int Y, int W, int H);
 /// <c>PathFindController.cs:222</c>). There is no <c>fixture</c> field: a fixture plants real engine entities, so the
 /// occupant and soil facts already carry it and a flag beside them would be a second spelling of one fact.
 /// </para>
+/// <para>
+/// TWO OCCUPANT FIELDS, TWO VOCABULARIES, said out loud because a reader must never have to guess which one a filter
+/// speaks: <see cref="Occupant"/> answers "what engine thing is stored here" in runtime type names, and
+/// <see cref="OccupantKind"/> answers "what is standing here" in the words a `for_each` `where: [{ occupant: ... }]`
+/// filter and an action's `Clears` declaration are written in (<see cref="TileOccupancy.Of"/>, the one producer both
+/// this row and the pass read). A weed is `object` in the first and `weed` in the second; a crop tile is `none` in the
+/// first and `crop` in the second.
+/// </para>
 /// </summary>
 public sealed record BridgeTileAreaRow(
     int X,
     int Y,
     bool Tillable,
     string Occupant,
+    string OccupantKind,
     bool Hoed,
     bool Watered,
     bool Crop,

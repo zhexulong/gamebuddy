@@ -340,14 +340,13 @@ internal sealed class FarmhandForEachFarmWorld : IFarmhandForEachWorld
         // written in. Two facts, two fields: a tile's `occupant` is what a declaration is read against, and `container` is
         // where it is stored.
         string container = "none";
-        string occupant = FarmhandForEachHealing.NoOccupant;
+        string occupant = TileOccupancy.Of(this.farm, x, y);
 
         foreach (ResourceClump clump in this.farm.resourceClumps)
         {
             if (clump.Tile != tile) continue;
             occupied = true;
             container = "resourceClump";
-            occupant = StardewBodyController.ClumpOccupant(clump.parentSheetIndex.Value);
             kind = ExecutionManager.TryGetDebrisToolRequirement(clump, out string toolKind, out _)
                 ? ClearableKind.Map("resourceClump", toolKind) ?? FarmhandForEachKindActions.ObjectKind
                 : FarmhandForEachKindActions.ObjectKind;
@@ -359,9 +358,6 @@ internal sealed class FarmhandForEachFarmWorld : IFarmhandForEachWorld
             occupied = true;
             container = "object";
             string detail = item.QualifiedItemId == "(O)2" ? "stone" : item.IsWeeds() ? "weed" : string.Empty;
-            // An object this pass cannot name is `object` - the word the tile query publishes for it - and no declaration
-            // clears that word, so a refused row on such a tile is refused BY NAME instead of guessed at.
-            occupant = detail.Length > 0 ? detail : "object";
             kind = ClearableKind.Map("object", detail) ?? FarmhandForEachKindActions.ObjectKind;
         }
 
@@ -375,26 +371,19 @@ internal sealed class FarmhandForEachFarmWorld : IFarmhandForEachWorld
             {
                 case Grass:
                     occupied = true;
-                    occupant = "grass";
                     kind = ClearableKind.Map("terrain", "grass") ?? FarmhandForEachKindActions.GroundKind;
                     break;
                 case HoeDirt hoed:
                     dirt = hoed;
                     occupied = hoed.crop is not null;
-                    occupant = hoed.crop is null ? FarmhandForEachHealing.NoOccupant : "crop";
                     kind = hoed.crop is null
                         ? FarmhandForEachKindActions.SoilKind
                         : ClearableKind.Map("terrain", "crop") ?? FarmhandForEachKindActions.GroundKind;
                     break;
-                // A TREE is the one terrain feature whose two phases are two different published actions, so the two
-                // words are the two `Clears` occupants those actions declare: a standing tree and its stump.
-                case Tree tree:
-                    occupied = true;
-                    occupant = tree.stump.Value ? "tree_stump" : "tree";
-                    break;
+                // Every other feature stands on the tile - a tree's two phases (a standing tree and its stump) are the
+                // classifier's two words - and `occupied` is all this pass needs from them.
                 default:
                     occupied = true;
-                    occupant = "terrain";
                     break;
             }
         }

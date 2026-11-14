@@ -46,11 +46,34 @@ public sealed class TileOccupantVocabularyTests
         SeedFloorPathLookup();
         Populate(world);
 
-        IReadOnlyList<string> findings = Findings(BothPaths(world, row => row.Occupant));
+        IReadOnlyList<string> findings = Findings(BothPaths(world, row => row.OccupantKind));
 
         findings.Should().BeEmpty(
             "a filter written against the rectangle's word must claim the rows the loop's own filter claims, and: {0}",
             string.Join(" ", findings));
+    }
+
+    /// <summary>
+    /// The two occupant fields are two different vocabularies, and the tiles above are where they part: a weed is the
+    /// engine's `object` and the loop's `weed`, and a crop tile is `none` there because soil is not an occupant while
+    /// here it is the crop. A rename that collapsed the two fields would make these equal, and a filter written against
+    /// the engine's word would then be silently right on some tiles and wrong on others.
+    /// </summary>
+    [Fact]
+    public void TheEngineTypeNameIsNotTheFilterVocabulary()
+    {
+        using TargetFamilyCompletenessTests.TargetFamilyWorld world = TargetFamilyCompletenessTests.TargetFamilyWorld.Create();
+        SeedFloorPathLookup();
+        Populate(world);
+
+        IReadOnlyList<TileOccupantReading> tiles = BothPaths(world, row => row.Occupant);
+
+        tiles.Should().Contain(
+            tile => tile.X == 3 && tile.Y == 4 && tile.Published != tile.Loop,
+            "a weed is an engine Object and the loop's `weed`");
+        tiles.Should().Contain(
+            tile => tile.X == 4 && tile.Y == 5 && tile.Published != tile.Loop,
+            "a crop tile is `none` to the engine's occupant walk because soil is not an occupant");
     }
 
     /// <summary>

@@ -326,17 +326,19 @@ test("a plan vocabulary that cannot be read is blocked by name, not read as an e
  * prose nobody re-read.
  * </p>
  */
-test("the committed tree gives every tile-area fact one owner, and the shared one is really shared", () => {
+test("the committed tree gives every tile-area fact one owner, and the shared ones are really shared", () => {
   const report = auditDiscoveryChannels({ modSources: loadModSources() });
   const tileArea = report.tileArea;
   assert.equal(tileArea.measured, true);
   assert.ok(tileArea.examined > 0, "a population of zero would agree with itself");
   assert.equal(tileArea.owned, tileArea.examined, JSON.stringify(tileArea.rows));
-  assert.equal(
-    tileArea.shared,
-    1,
-    "`tillable` is the one fact a second publication also answers, so it is the one that must be a single function",
-  );
+  // The population is the declaration's own `SharedWith` column: every fact the table says a second publication
+  // answers must be a fact that publication's body actually calls. `tillable` is shared with the soil discovery and
+  // `occupantKind` with the `for_each` pass's row; a third one is admitted by declaring it, and a declared one that
+  // stopped being called fails here by name.
+  const declaredShared = tileArea.rows.filter((row) => row.sharedWith !== null);
+  assert.ok(declaredShared.length > 0, "the table declares which facts a second publication also answers");
+  assert.equal(tileArea.shared, declaredShared.length, JSON.stringify(tileArea.rows));
   assert.deepEqual(
     report.gaps.filter((gap) => gap.gap.startsWith("tile_area")),
     [],

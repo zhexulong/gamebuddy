@@ -430,8 +430,11 @@ export function createStardewObservationTools(
       "tiles in between: the observation's soil family is only a square window around you, so a long strip is not in it. " +
       "x,y is the rectangle's north-west tile and w,h its width and height in tiles; w*h is at most 100, and a bigger " +
       "rectangle is REFUSED by name with the limit and the size you asked for. Every row carries tillable (would the Hoe " +
-      "admit this tile), occupant (the engine's own name for what is stored on it, 'none' when it is free), hoed / " +
-      "watered / crop (the soil's state), and passable (would the pathfinder step onto it now). The header names the " +
+      "admit this tile), occupant (the engine's own name for what is stored on it, 'none' when it is free), occupantKind " +
+      "(what stands there in the words a for_each where filter uses - 'weed', 'stone', 'crop', 'grass', 'tree', " +
+      "'tree_stump', 'object', 'terrain' or 'none' - so a row can be filtered in JavaScript with the same word a loop's " +
+      "where: [{ occupant: ... }] writes), hoed / watered / crop (the soil's state), and passable (would the pathfinder " +
+      "step onto it now). The header names the " +
       "location and the snapshot revision the answer describes. It changes nothing.",
     parameters: Type.Object(
       {

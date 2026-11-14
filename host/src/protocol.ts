@@ -1432,12 +1432,18 @@ export type TileAreaRequest = Readonly<{ x: number; y: number; w: number; h: num
  * `tillable` is the Hoe's own admission predicate, `passable` the planner's own step test, and `occupant` the engine's
  * stored thing on the tile (`none` when free). There is no `fixture` field: a fixture plants real engine entities, so
  * the occupant and soil facts already carry it.
+ *
+ * TWO OCCUPANT FIELDS, TWO VOCABULARIES: `occupant` names the engine's runtime TYPE, and `occupantKind` names what
+ * stands there in the words a `for_each` `where: [{ occupant: ... }]` filter uses (`TileOccupancy.Of`, the function the
+ * pass's own row reads). A weed is `object` in the first and `weed` in the second; a crop tile is `none` in the first
+ * and `crop` in the second, so a filter written against `occupant` claims nothing.
  */
 export type TileAreaRow = Readonly<{
   x: number;
   y: number;
   tillable: boolean;
   occupant: string;
+  occupantKind: string;
   hoed: boolean;
   watered: boolean;
   crop: boolean;
@@ -3132,11 +3138,12 @@ function validateTileAreaResult(value: Record<string, unknown>): string | null {
 function isTileAreaRow(value: unknown): value is TileAreaRow {
   return (
     isRecord(value) &&
-    hasExactKeys(value, ["x", "y", "tillable", "occupant", "hoed", "watered", "crop", "passable"]) &&
+    hasExactKeys(value, ["x", "y", "tillable", "occupant", "occupantKind", "hoed", "watered", "crop", "passable"]) &&
     Number.isSafeInteger(value.x) &&
     Number.isSafeInteger(value.y) &&
     typeof value.tillable === "boolean" &&
     isBoundedNonEmptyString(value.occupant, 64) &&
+    isBoundedNonEmptyString(value.occupantKind, 64) &&
     typeof value.hoed === "boolean" &&
     typeof value.watered === "boolean" &&
     typeof value.crop === "boolean" &&

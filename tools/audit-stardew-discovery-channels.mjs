@@ -404,7 +404,8 @@ export function contentTableRegistry(query) {
  * The declaration lives where the projection lives (`TileAreaQuery.PublishedFacts`), because that is the code that
  * computes them; this hop only asks whether it still answers for the wire. The population is the schema's own
  * `tileAreaRow` properties, so a field added to the wire and not to the table is a finding, and a table entry the wire no
- * longer carries is a finding too - which is what keeps this from being a hand-maintained list that can only drift.
+ * longer carries is a finding too - which is what keeps this from being a hand-maintained list that can only drift. The
+ * fact names are read as the wire spells them, which is camelCase (`occupantKind`), not snake_case.
  * </p>
  * <p>
  * The `SharedWith` column is the part with teeth: a fact whose owner is shared with ANOTHER publication must be
@@ -416,7 +417,7 @@ export function contentTableRegistry(query) {
 export function tileAreaFactOwners(query) {
   const block = query.match(/PublishedFacts\s*=\s*\[?\s*\{([\s\S]*?)\n\s*\};/u)?.[1];
   if (typeof block !== "string") return [];
-  return [...block.matchAll(/\(\s*"([a-z_]+)"\s*,\s*"([A-Za-z.]+)"\s*,\s*(?:null|"([A-Za-z.]+)")\s*\)/gu)].map(
+  return [...block.matchAll(/\(\s*"([A-Za-z_]+)"\s*,\s*"([A-Za-z.]+)"\s*,\s*(?:null|"([A-Za-z.]+)")\s*\)/gu)].map(
     (match) => ({ fact: match[1], owner: match[2], sharedWith: match[3] ?? null }),
   );
 }
