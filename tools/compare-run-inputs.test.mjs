@@ -3,6 +3,10 @@
 // The comparison is the whole point of `input-manifest.json`: "she chose X" is not a finding until the input she was
 // given has been read for the difference. These tests drive the differ with manifests written by hand, so a broken
 // differ cannot hide behind a builder that agrees with it.
+//
+// red-proof: inject  the second manifest's text read as the first's in `compareSection`, so a rewritten line and a
+//   section only the second run delivered are both reported unchanged -> `✖ one changed tool description line is
+//   printed under that tool's name` (0 !== 1), 2 of 14 cases red
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";

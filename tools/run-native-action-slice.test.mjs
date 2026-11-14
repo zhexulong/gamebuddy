@@ -52,6 +52,9 @@ import { STARDEW_PUBLISHED_ACTION_GATES } from "./stardew-action-gate-descriptor
  *
  * The transport is a fake for the same reason the runners' own tests use one: the bridge is a boundary this tree does
  * not own, and every assertion here is about the engine's own orchestration and judgement.
+ *
+ * red-proof: inject  `compareRequests` answering `identical: true` for the frame pair whose args differ, so the reverted
+ *   contract reads as the same request -> `the two requests are not the same request`, 1 of 24 cases red
  */
 
 const CONTRACTS_DIR = join(import.meta.dirname, "..", "contracts", "smoke");

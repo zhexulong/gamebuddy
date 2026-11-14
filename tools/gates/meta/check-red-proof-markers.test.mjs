@@ -11,6 +11,10 @@
  *
  * The integration cases run the REAL gate - the file is copied into a fixture repository beside its baseline, exactly
  * as a checkout carries it - so a gate that only agrees with itself here cannot pass.
+ *
+ * red-proof: inject  the corrupted-line report dropped from `scanMarkerCorruption`, so the gate exits 0 over a fixture
+ *   ledger holding one corrupted marker -> `✖ the gate names the file and the line, and exits 1` (0 !== 1), 3 of 7
+ *   cases red, `the population is every file that carries either glyph` among them
  */
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
