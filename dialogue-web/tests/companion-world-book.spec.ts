@@ -558,6 +558,32 @@ test("an entry marked always with her keeps that fact through the Host round tri
   const rowBox = await row.boundingBox();
   expect(rowBox).not.toBeNull();
   expect(Math.round(rowBox!.height), `the switch's own row is ${rowBox!.height}px tall`).toBeGreaterThanOrEqual(44);
+  // …and that row is where the thumb actually lands. The row's HEIGHT is a rule; this is the
+  // browser's own hit test, walked outward from the box's centre: the label the box sits in is what
+  // answers, so the reading is the control's real target rather than the 20 px square it paints.
+  const switchHit = await constant.evaluate((element) => {
+    element.scrollIntoView({ block: "center", inline: "center" });
+    const owner = element.closest("label") ?? element;
+    const rect = element.getBoundingClientRect();
+    const centreX = Math.round(rect.left + rect.width / 2);
+    const centreY = Math.round(rect.top + rect.height / 2);
+    const owns = (node: Element | null) => node !== null && (node === owner || owner.contains(node));
+    const walk = (dy: number) => {
+      let distance = 0;
+      while (distance < 80 && owns(document.elementFromPoint(centreX, centreY + dy * (distance + 1)))) distance += 1;
+      return distance;
+    };
+    return { up: walk(-1), down: walk(1), painted: Math.round(rect.height) };
+  });
+  console.log(
+    `[world-book-switch] painted=${switchHit.painted} hit=${switchHit.up + switchHit.down} ` +
+      `up=${switchHit.up} down=${switchHit.down}`,
+  );
+  expect(
+    switchHit.up + switchHit.down,
+    `the always-with-her switch answers a hit ${switchHit.up} px above and ${switchHit.down} px below its centre, ` +
+      `while it paints ${switchHit.painted}px`,
+  ).toBeGreaterThanOrEqual(44);
 
   await constant.check();
   // The state is painted as well as announced: the box is the product's own surface

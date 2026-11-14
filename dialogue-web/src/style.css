@@ -3396,6 +3396,7 @@
      of chips; `--accent` on `--surface-raised` is the sheet's measured ink-on-card pair, and `:focus-visible`
      draws the shared gold ring on it like every other control. */
   .installation-mod-loader-acquire {
+    position: relative;
     display: inline-flex;
     align-items: center;
     min-height: 24px;
@@ -3403,6 +3404,21 @@
     color: var(--accent);
     text-decoration: underline;
     text-underline-offset: 2px;
+  }
+
+  /* The HIT, not the paint. The sentence draws one 24 px line inside a row of chips, and 24 px is
+     under this product's own floor (`--touch-target-min`, 44 px) for the one control a player
+     presses when her folder has Stardew Valley and no mod loader. `::after` extends the area the
+     browser hit-tests to the floor - 24 + 10 px either side - and the link keeps drawing 11 px
+     type on a 24 px line, because a 44 px painted control would break the chip row's rhythm.
+     Horizontal is left alone: the sentence is already wider than 44 px, and the chip to its left
+     keeps its own hits. Measured by probing `elementFromPoint` outward from the link's centre,
+     mounted at 400x800: the hit was 24 px tall before this rule and is 44 px after
+     (`tests/installation-mod-loader-link-target.spec.ts`). */
+  .installation-mod-loader-acquire::after {
+    content: "";
+    position: absolute;
+    inset: -10px 0;
   }
 
   .installation-mod-loader-acquire:hover {
