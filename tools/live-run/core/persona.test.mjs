@@ -1,10 +1,18 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { glob, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { pathToFileURL } from "node:url";
-
+import { fileURLToPath, pathToFileURL } from "node:url";
+import {
+  assessLiveRunPresetSurface,
+  buildReport,
+  censusLine,
+  gateDeclaration,
+  RULES,
+} from "../../check-live-run-preset-surface.mjs";
+import { assertNonVacuous } from "../../lib/assert-non-vacuous.mjs";
 import {
   assertLiveRunPersonaMounted,
   LIVE_RUN_PERSONA_DIR,
@@ -361,5 +369,199 @@ test("an empty or macro-laden world book is refused", { skip: REQUIRES_HOST_BUIL
     assert.equal(templated.macroTokens, 1);
   } finally {
     await rm(root, { recursive: true, force: true });
+  }
+});
+
+// ---------------------------------------------------------------------------------------------------------------------
+// The gate that pairs the mounted preset with its own declaration.
+//
+// These cases live in THIS suite, not beside the gate, for one reason: this file is the one a package.json script runs
+// (`suite:live-run-harness`), and a falsifier nothing invokes is indistinguishable from a passing one - the red-proof
+// audit reports exactly that as `red_proof_nothing_runs`. The subject is the same either way: the preset the live run
+// mounts must be the preset that declares itself this surface's.
+// ---------------------------------------------------------------------------------------------------------------------
+
+const GATE = fileURLToPath(new URL("../../check-live-run-preset-surface.mjs", import.meta.url));
+
+/** The reviewable document a preset is, reduced to the two fields a declaration is read from. */
+const preset = (name, description = "") =>
+  JSON.stringify({ name, description, prompts: [], prompt_order: [] }, null, 2);
+
+/** A world book is not a preset: it carries `entries` and no `prompts`. */
+const worldbook = () => JSON.stringify({ schemaVersion: 1, entries: [] }, null, 2);
+
+async function syntheticPresets(files) {
+  const dir = await mkdtemp(path.join(tmpdir(), "preset-surface-"));
+  for (const [name, text] of Object.entries(files)) await writeFile(path.join(dir, name), text, "utf8");
+  return dir;
+}
+
+function runGate(argv) {
+  const result = spawnSync(process.execPath, [GATE, ...argv], { encoding: "utf8" });
+  return { status: result.status, stdout: String(result.stdout), stderr: String(result.stderr) };
+}
+
+test("the gate's declaration keeps it in the one gate registry", () => {
+  // The registry refuses `gate_declaration_invalid:<path>:id` unless the id is the file's slug, and a gate whose
+  // declaration drifts out of the closed sets leaves the population silently - so the pairing is asserted, not assumed.
+  assert.equal(gateDeclaration.id, "check-live-run-preset-surface");
+  assert.equal(gateDeclaration.domain, "product");
+  assert.equal(gateDeclaration.tier, "l1");
+  assert.equal(gateDeclaration.kind, "contract");
+});
+
+test("the gate on the real tree: the run mounts the preset whose own declaration is the Game surface's", () => {
+  const assessment = assessLiveRunPresetSurface();
+  const declarations = readPresetDeclarations();
+  assert.equal(assessment.status, "passed", JSON.stringify(assessment.findings));
+  // Derived, not pinned to a count: the population is every preset document in the reviewed directory.
+  assert.equal(assessment.examined, declarations.length);
+  assert.equal(assessment.declaredSurface + assessment.declaredNone, assessment.examined);
+  assert.ok(assessment.examined > 0);
+  // The two halves of the pair, from their own authorities: the file the harness copies, and that file's declaration.
+  const resolved = resolveLiveRunGenerationPreset();
+  assert.equal(assessment.binding, resolved.file);
+  assert.equal(assessment.bindingSurface, LIVE_RUN_SURFACE);
+  assert.equal(assessment.declaredNone, declarations.filter((entry) => entry.surfaces.length === 0).length);
+  // The file that produced the defect is IN the "declares none" bucket, classified by its own text, so a reader of the
+  // census sees the model-named preset rather than a number that hides it.
+  assert.ok(
+    declarations.filter((entry) => entry.surfaces.length === 0).some((entry) => entry.name !== null),
+    `examined ${declarations.length} preset(s): every one that declares no surface must still carry the name that says why`,
+  );
+  assert.equal(
+    declarations.filter((entry) => entry.surfaces.includes(LIVE_RUN_SURFACE)).length,
+    1,
+    `exactly one preset may declare ${LIVE_RUN_SURFACE}`,
+  );
+});
+
+test("RED on the shipped binding: the model-named preset this lane replaced is refused by name", () => {
+  // The literal `persona.mjs` carried. Nothing is edited to replay it: the gate judges the binding it is given, which is
+  // what makes this the falsifier for the gate rather than a restatement of the fix.
+  const shipped = path.join(LIVE_RUN_PERSONA_DIR, "..", "amber-deepseek-v4.1.json");
+  const assessment = assessLiveRunPresetSurface({ bindingPath: shipped });
+  assert.equal(assessment.status, "failed");
+  assert.deepEqual(
+    assessment.findings.map((finding) => `${finding.code}:${finding.id}`),
+    ["live_run_uses_a_preset_for_another_surface:amber-deepseek-v4.1.json:none"],
+  );
+  // The finding says WHY none: a declaration naming a model is the case that shipped, and a bare "none" would send the
+  // next reader to the file to re-derive that.
+  assert.match(assessment.findings[0].detail, /names a model, not a surface/u);
+  assert.match(assessment.findings[0].detail, /DeepSeek-V4\.1/u);
+});
+
+test("RED when the bound preset declares the other surface", async () => {
+  const dir = await syntheticPresets({
+    "game.json": preset("琥珀 (Game Surface)"),
+    "chat.json": preset("琥珀 (Chat Surface)"),
+  });
+  try {
+    const assessment = assessLiveRunPresetSurface({ presetsDir: dir, bindingPath: path.join(dir, "chat.json") });
+    assert.equal(assessment.status, "failed");
+    assert.deepEqual(
+      assessment.findings.map((finding) => `${finding.code}:${finding.id}`),
+      ["live_run_uses_a_preset_for_another_surface:chat.json:Chat Surface"],
+    );
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("RED when two presets claim the run's surface, and when none does", async () => {
+  const ambiguous = await syntheticPresets({
+    "game-a.json": preset("琥珀 (Game Surface)"),
+    "game-b.json": preset("第二版 (Game Surface)"),
+  });
+  const missing = await syntheticPresets({ "chat.json": preset("琥珀 (Chat Surface)"), "book.json": worldbook() });
+  try {
+    const both = assessLiveRunPresetSurface({ presetsDir: ambiguous });
+    assert.equal(both.status, "failed");
+    assert.equal(both.findings[0].code, "live_run_preset_surface_ambiguous");
+    assert.equal(both.findings[0].id, "Game Surface:game-a.json,game-b.json");
+    // A refusal that says "ambiguous" and not WHICH presets, and what each declares, sends the next reader to the
+    // directory to re-derive the one fact the gate already had.
+    assert.match(both.findings[0].detail, /game-a\.json declares Game Surface/u);
+    assert.match(both.findings[0].detail, /game-b\.json declares Game Surface/u);
+
+    // A world book is not a preset, so this directory's population is one preset that declares the other surface: the
+    // run's surface is declared nowhere and the gate must say so rather than fall back to the only file it can see.
+    const none = assessLiveRunPresetSurface({ presetsDir: missing });
+    assert.equal(none.status, "failed");
+    assert.equal(none.examined, 1, "a world book must not join the preset population");
+    assert.equal(none.findings[0].code, "live_run_preset_surface_missing");
+    assert.match(none.findings[0].detail, /chat\.json declares Chat Surface/u);
+  } finally {
+    await rm(ambiguous, { recursive: true, force: true });
+    await rm(missing, { recursive: true, force: true });
+  }
+});
+
+test("RED on a preset that declares two surfaces, and on a bound file that is not a preset at all", async () => {
+  const dir = await syntheticPresets({
+    "both.json": preset("双表面预设 (Game Surface) (Chat Surface)"),
+    "book.json": worldbook(),
+  });
+  try {
+    const conflict = assessLiveRunPresetSurface({ presetsDir: dir, bindingPath: path.join(dir, "both.json") });
+    const conflictFinding = conflict.findings.find((entry) => entry.code === "live_run_preset_surface_conflict");
+    assert.notEqual(conflictFinding, undefined, JSON.stringify(conflict.findings));
+    assert.equal(conflictFinding.id, "both.json");
+    // `book.json` is a real file in the directory but not a preset document: the binding must not be excused by being
+    // present, only by declaring this surface.
+    const notPreset = assessLiveRunPresetSurface({ presetsDir: dir, bindingPath: path.join(dir, "book.json") });
+    const notPresetFinding = notPreset.findings.find((entry) => entry.code === "live_run_preset_not_in_population");
+    assert.notEqual(notPresetFinding, undefined, JSON.stringify(notPreset.findings));
+    assert.equal(notPresetFinding.id, "book.json");
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("BLOCKED, not green, when the directory carries no presets at all", async () => {
+  const dir = await syntheticPresets({ "book.json": worldbook() });
+  try {
+    const assessment = assessLiveRunPresetSurface({ presetsDir: dir });
+    assert.equal(assessment.status, "blocked");
+    assert.equal(assessment.reason, "presets_population_empty");
+    assert.equal(assessment.examined, 0);
+    assert.equal(assessLiveRunPresetSurface({ presetsDir: path.join(dir, "absent") }).status, "blocked");
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("the gate's report is a measurement a harness can refuse on, and its exit code follows the verdict", async () => {
+  const assessment = assessLiveRunPresetSurface();
+  const report = buildReport(assessment);
+  assert.equal(report.status, "passed");
+  assert.equal(report.population, assessment.examined);
+  assert.ok(report.checks.length >= RULES.length);
+  // The shared judge, not a restatement of it: `passed` beside a zero population is not a measurement.
+  assert.notEqual(assertNonVacuous(report).status, "blocked");
+  for (const rule of RULES)
+    assert.ok(
+      report.checks.some((check) => check.id === rule),
+      `${rule} has no verdict entry`,
+    );
+  assert.match(censusLine(assessment), /^presets examined \d+ · declare a surface \d+ · declare none \d+$/u);
+
+  const green = runGate([]);
+  assert.equal(green.status, 0, green.stdout + green.stderr);
+  assert.match(green.stdout, /^presets examined \d+ · declare a surface \d+ · declare none \d+$/mu);
+
+  const red = runGate(["--binding", path.join(LIVE_RUN_PERSONA_DIR, "..", "amber-deepseek-v4.1.json")]);
+  assert.equal(red.status, 1, red.stdout);
+  assert.match(red.stdout, /^live_run_uses_a_preset_for_another_surface:amber-deepseek-v4\.1\.json:none/mu);
+
+  const empty = await syntheticPresets({ "book.json": worldbook() });
+  try {
+    const blocked = runGate(["--presets-dir", empty, "--json"]);
+    assert.equal(blocked.status, 2, blocked.stdout);
+    assert.equal(JSON.parse(blocked.stdout).status, "blocked");
+    assert.equal(JSON.parse(blocked.stdout).population, 0);
+  } finally {
+    await rm(empty, { recursive: true, force: true });
   }
 });

@@ -37,10 +37,15 @@
  *
  * red-proof: inject `--binding assets/tavern/presets/amber-deepseek-v4.1.json` - the literal binding this gate was
  *   built for - -> `live_run_uses_a_preset_for_another_surface:amber-deepseek-v4.1.json:none`, exit 1, and the
- *   finding says the file's declaration names a model (tools/check-live-run-preset-surface.test.mjs)
- * red-proof: fixture a synthetic presets directory whose only `(Game Surface)` preset is bound while a second preset
- *   declares `(Chat Surface)` and the bound one is swapped for it -> `...:chat.json:Chat Surface`, exit 1; a directory
- *   with no presets -> `live_run_presets_population_empty`, exit 2 (tools/check-live-run-preset-surface.test.mjs)
+ *   finding says the file's declaration names a model (tools/live-run/core/persona.test.mjs)
+ * red-proof: fixture a synthetic presets directory with a `(Game Surface)` preset and a `(Chat Surface)` one, bound to
+ *   the chat file -> `...:chat.json:Chat Surface`, exit 1; two presets claiming one surface ->
+ *   `live_run_preset_surface_ambiguous`; a directory with no presets -> `live_run_presets_population_empty`, exit 2
+ *   (tools/live-run/core/persona.test.mjs)
+ *
+ * WHY THE FALSIFIER IS IN THE PERSONA SUITE. This gate's cases live in `tools/live-run/core/persona.test.mjs`, the
+ * file `suite:live-run-harness` runs. A suite beside this gate would be a falsifier nothing invokes - the red-proof
+ * audit reports exactly that as `red_proof_nothing_runs`, and an unrun case is indistinguishable from a passing one.
  */
 import { existsSync } from "node:fs";
 import path from "node:path";
