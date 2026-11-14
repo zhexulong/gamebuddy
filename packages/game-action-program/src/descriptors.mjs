@@ -26,7 +26,7 @@ const DESCRIPTOR_REQUIRED_KEYS = Object.freeze([
 // derivation lives one layer up, in `tools/audit-stardew-decision-closure.test.mjs`, where both directions are asserted
 // against the published surface and `protocol.ts`'s `KNOWN_ACTION_DESCRIPTOR_KEYS` - so a member added to either side is
 // judged and named instead of silently missed.
-const DESCRIPTOR_OPTIONAL_KEYS = Object.freeze(["approach", "sceneTarget", "targetFamily", "nativeBinding"]);
+const DESCRIPTOR_OPTIONAL_KEYS = Object.freeze(["approach", "sceneTarget", "targetFamily", "nativeBinding", "synthetic"]);
 // `description` is the Mod's own words for what an argument MEANS, published per argument so the companion is not told
 // a Host-side sentence about a shared argument name that is false for the action it is calling. The Host's registration
 // descriptor has carried it since `693c19a8`; this entry whitelist still refused it.
@@ -192,6 +192,13 @@ function isValidDescriptor(descriptor) {
   // language were published, planned for, and unmountable from the only descriptor a consumer without a running game
   // can read.
   const nativeBinding = ownValue(descriptor, "nativeBinding");
+  // The claim that this action performs its effect WITHOUT the NPC counter that owns it (`build_farm_building` spends the
+  // wood and gold and places the structure itself). A descriptor, not a permission: it says who performed a write the
+  // action already carries, so admitting it here widens nothing - and refusing it made the one published/parseable
+  // artifact unreadable to its only consumer, which the decision-closure gate reported as `synthetic on
+  // build_farm_building`. Only ever `true`, the Host's own rule: the Mod omits the member where the claim is false, so a
+  // published `false` would be a second spelling of absent.
+  const synthetic = ownValue(descriptor, "synthetic");
   return typeof actionId === "string" && IDENTIFIER.test(actionId)
     && Number.isSafeInteger(identityVersion) && identityVersion >= 1
     && identityVersion <= MAX_IDENTITY_VERSION
@@ -206,7 +213,8 @@ function isValidDescriptor(descriptor) {
     && (sceneTarget === INVALID || validSceneTarget(sceneTarget))
     && (targetFamily === INVALID || (typeof targetFamily === "string" && TARGET_FAMILY_NAME.test(targetFamily)))
     && (nativeBinding === INVALID
-      || (typeof nativeBinding === "string" && nativeBinding.length > 0 && nativeBinding.length <= MAX_STRING_LENGTH));
+      || (typeof nativeBinding === "string" && nativeBinding.length > 0 && nativeBinding.length <= MAX_STRING_LENGTH))
+    && (synthetic === INVALID || synthetic === true);
 }
 
 /**

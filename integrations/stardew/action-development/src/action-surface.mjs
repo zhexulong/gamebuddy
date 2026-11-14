@@ -30,8 +30,13 @@ export const ACTION_SURFACE_ACTION_KEYS = Object.freeze([
  * published before its readers learned it, and the parity producer could not run at all (measured 2026-11-11:
  * `stardew_action_surface_invalid_action_shape` out of `parseActionSurface`). Same ordering as `approach` above, and
  * the same fix: the reader learns the member it was already being handed.
+ *
+ * `sceneTarget` LEFT in `0c7848cd`, which removed the member from `FarmhandActionDescriptorProjection` - so this list
+ * kept admitting a field the record can no longer emit. The record is the authority for this vocabulary, and the
+ * decision-closure drift check names any entry here that the record does not declare: a tolerance with nothing behind
+ * it is a field every future reader has to re-justify.
  */
-export const ACTION_SURFACE_OPTIONAL_ACTION_KEYS = Object.freeze(["approach", "sceneTarget", "targetFamily", "nativeBinding", "synthetic"]);
+export const ACTION_SURFACE_OPTIONAL_ACTION_KEYS = Object.freeze(["approach", "targetFamily", "nativeBinding", "synthetic"]);
 export const ACTION_SURFACE_MAX_JSON_BYTES = 64 * 1024;
 const ACTION_SURFACE_MAX_REGISTRATIONS = 128;
 export const ACTION_SURFACE_MAX_IDENTIFIER_LENGTH = 128;

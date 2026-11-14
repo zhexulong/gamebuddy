@@ -574,6 +574,11 @@ test("the Mod's descriptor record parses to exactly the member vocabulary it dec
   // The parser's own self-check, and the reason it is a pinned list rather than a count: a truncated parse is the one
   // failure that makes this gate green forever. The version that started its depth counter at 0 returned ten of these
   // thirteen members and reported `condition` as the last one, and every assertion built on it passed.
+  //
+  // Two members moved since this list was pinned, and the list follows the RECORD because the record is the authority:
+  // `sceneTarget` left it in `0c7848cd` (with the observation binding's publication) and `synthetic` entered it in
+  // `f1474cff`. Both were named by the drift checks below before they were named here - which is what those checks are
+  // for, and why this list is not allowed to be the only reading.
   const vocabulary = recordMemberVocabulary(sourceOf(SURFACE_PUBLICATION_PATH), "FarmhandActionDescriptorProjection");
   assert.deepEqual(vocabulary.members, [
     { name: "actionId", bucket: "required" },
@@ -587,9 +592,9 @@ test("the Mod's descriptor record parses to exactly the member vocabulary it dec
     { name: "postcondition", bucket: "required" },
     { name: "watchdogMs", bucket: "ignored" },
     { name: "approach", bucket: "optional" },
-    { name: "sceneTarget", bucket: "optional" },
     { name: "targetFamily", bucket: "optional" },
     { name: "nativeBinding", bucket: "optional" },
+    { name: "synthetic", bucket: "optional" },
   ]);
   // The other record is parsed by the same reader and must not bleed into this one: `Enum` and `Description` also carry
   // `WhenWritingNull` and belong to FarmhandActionArgumentSchema.

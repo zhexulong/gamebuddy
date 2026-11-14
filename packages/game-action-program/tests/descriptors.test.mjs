@@ -226,3 +226,22 @@ test("hostile descriptor accessors fail closed without throwing, freezing, or al
   assert.equal(Object.isFrozen(throwingFacts), false);
   assert.equal(Object.isFrozen(throwingPostcondition), false);
 });
+
+test("a descriptor's synthetic claim is admitted only as `true`, and absent on every other action", () => {
+  // `synthetic: true` is the one member that separates a commissioned counter purchase from an effect the Mod
+  // performs itself (`build_farm_building` spends the wood and gold and calls `buildStructure`). It reached the
+  // published artifact in `f1474cff` and this gateway refused the whole projection for it, which the decision-closure
+  // gate read as "the projection whitelist refuses synthetic on build_farm_building".
+  assert.equal(validateDescriptorProjection(validProjection({ synthetic: true })), true);
+  assert.equal(descriptorMap(validProjection({ synthetic: true })).get("move_to_tile").synthetic, true);
+  // Absent is how the Mod says the claim is false - it omits the member rather than publishing `false`.
+  assert.equal(validateDescriptorProjection(validProjection()), true);
+  // A published `false` would be a second spelling of absent, so the Host refuses it and so does this gateway.
+  for (const value of [false, "true", 1, null]) {
+    assert.equal(
+      validateDescriptorProjection(validProjection({ synthetic: value })),
+      false,
+      `synthetic: ${JSON.stringify(value)} is not a claim the Mod can publish`,
+    );
+  }
+});
