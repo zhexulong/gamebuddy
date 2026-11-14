@@ -171,7 +171,7 @@ test("a companion who has a world book shows its count and its trigger words", a
 
   const block = surface.locator("[data-companion-world-book]");
   await expect(block).toBeVisible();
-  await expect(block.locator("h3")).toHaveText("伴侣自己的世界书");
+  await expect(block.locator("h3")).toHaveText("伙伴自己的世界书");
   // The count is text a player reads, not only an attribute or a list header.
   await expect(block.locator("[data-companion-world-book-count]")).toHaveText(
     "她自己的世界书里有 2 条词条",

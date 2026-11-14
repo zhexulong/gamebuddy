@@ -768,7 +768,7 @@ test("the Memory surface's primary action outranks its secondaries", async ({ pa
     secondary.backgroundColor,
   );
   // The labelled control is the one the surface is for: the primary carries the notebook's words.
-  expect(closed.text, "the primary is the action the surface exists for").toContain("悄悄告诉伴侣一件事");
+  expect(closed.text, "the primary is the action the surface exists for").toContain("悄悄告诉伙伴一件事");
 });
 
 // --- the opening switcher's label vocabulary ---------------------------------

@@ -857,7 +857,7 @@ const zh: CharacterLabels = Object.freeze({
   voiceTitle: "演出指导",
   voiceHint:
     "卡片自带的演出指令，位于 Host 底层规则之后。你可以改写或清除；清除后提示词中不再出现该指令，而不是留下一段空文本。",
-  voiceEmptyHint: "这位同伴还没有演出指导。你可以在这里写一条；它会随她保存，并在她演出时用于提示词。",
+  voiceEmptyHint: "这位伙伴还没有演出指导。你可以在这里写一条；它会随她保存，并在她演出时用于提示词。",
   voiceFromCard: "来自卡片",
   voiceEditedByYou: "你已修改",
   voiceText: "指令内容",
@@ -893,7 +893,7 @@ const zh: CharacterLabels = Object.freeze({
   openingSave: "保存开场白",
 
   worldBookTitle: "可关联的世界书",
-  worldBookHint: "可以从库里关联到这次对话的世界书。伴侣自己的世界书是另一份清单，始终跟她在一起。",
+  worldBookHint: "可以从库里关联到这次对话的世界书。伙伴自己的世界书是另一份清单，始终跟她在一起。",
   worldBookAttach: "关联",
   worldBookDetach: "解除关联",
   worldBookPending: "已保存，将在下一回合完全生效。",
@@ -959,7 +959,7 @@ const zh: CharacterLabels = Object.freeze({
   worldBookExportSaved: "已保存 {{file}}。可以在这里重新导入，也可以用其他应用打开。",
   worldBookExportFailed: "无法把这本世界书保存为文件。",
 
-  companionWorldBookTitle: "伴侣自己的世界书",
+  companionWorldBookTitle: "伙伴自己的世界书",
   companionWorldBookHint:
     "她卡片自带的世界书，一直保存在她这里。当你自己的话命中某条词条的触发词时，这条词条才会被用到；标为常驻的除外。",
   companionWorldBookReadFailed: "无法读取她自己的世界书，可以再读一次。",

@@ -42,7 +42,7 @@ export type MemoryNotebookLabelKey =
 export type MemoryNotebookLabels = Readonly<Record<MemoryNotebookLabelKey, string>>;
 
 const MESSAGES: Readonly<Record<MemoryNotebookLabelKey, { en: string; zh: string }>> = {
-  title: { en: "Your companion's notebook", zh: "伴侣的时光手札" },
+  title: { en: "Your companion's notebook", zh: "伙伴的时光手札" },
   promise: {
     en: "This is her notebook. Whatever you tell her is worth keeping stays in it.",
     zh: "这是她的手札。你告诉她值得留下的事，就会留在这里。",
@@ -66,7 +66,7 @@ const MESSAGES: Readonly<Record<MemoryNotebookLabelKey, { en: string; zh: string
   },
   unavailable: { en: "The notebook is not open right now.", zh: "手札暂时打不开。" },
   failed: { en: "The notebook could not be opened.", zh: "手札没能打开。" },
-  authoringOpen: { en: "+ Whisper something to your companion", zh: "+ 悄悄告诉伴侣一件事" },
+  authoringOpen: { en: "+ Whisper something to your companion", zh: "+ 悄悄告诉伙伴一件事" },
   authoringClose: { en: "Never mind", zh: "先不说了" },
   categorySemantic: { en: "Things she keeps", zh: "记在心里的事" },
   categoryInteraction: { en: "Times you shared", zh: "一起经历的时光" },

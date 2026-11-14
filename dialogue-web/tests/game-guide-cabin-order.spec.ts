@@ -221,7 +221,7 @@ async function readStepThree(page: Page) {
  */
 const REVERSED_ORDER = {
   en: /(?:once|after)\s+(?:she|the companion|your companion)\s+(?:has\s+)?(?:moved|moves|settled)\s+in/iu,
-  "zh-CN": /(?:住进|搬进|住进去)(?:农舍|小屋)?之后|伴侣住进农舍后|同伴住进农舍后/u,
+  "zh-CN": /(?:住进|搬进|住进去)(?:农舍|小屋)?之后|伙伴住进农舍后/u,
 } as const;
 
 /**
