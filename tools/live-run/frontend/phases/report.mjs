@@ -663,6 +663,9 @@ function newItemsFor(L, driverTexts) {
   ]);
   item("ITEM 3 — editing a message in place (driver n)", "n-message-edit", [
     /^credential present/,
+    /^the Host's answer to the press:/,
+    /^what the surface showed after/,
+    /^the surface's own sentence:/,
     /^turn settled:/,
     /^the row to edit carries:/,
     /^controls in the player row's strip:/,
