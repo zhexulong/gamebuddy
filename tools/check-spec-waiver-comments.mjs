@@ -55,8 +55,8 @@ const REPOSITORY_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
 function report({ reading, findings, list }) {
   process.stdout.write(
-    `spec_waiver files=${reading.files} examined=${reading.examined} waiver=${reading.waivers.length} ` +
-      `held=${reading.waivers.length} findings=${findings.length}\n`,
+    `spec_waiver files=${reading.files} examined=${reading.examined} held=${reading.waivers.length} ` +
+      `findings=${findings.length}\n`,
   );
   for (const line of reading.unassessed) process.stdout.write(`  ${line}\n`);
   if (list)
