@@ -129,6 +129,14 @@
  *   `claim_museum_reward` cites `LibraryMuseum.getRewardsForPlayer`, so the reward desk's deeper method is claimed
  *   and the player's own way in is not (tools/check-engine-affordance-census.test.mjs, against the exact tree)
  */
+
+export const gateDeclaration = {
+  id: "check-engine-affordance-census",
+  domain: "stardew",
+  tier: "l0",
+  kind: "ratchet",
+};
+
 import { readdir, readFile, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import path from "node:path";

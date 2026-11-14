@@ -75,6 +75,14 @@
  *                    entry -> `✖ lifecycle_pin_baseline_entry_stale:<file>:sweep_scythe:LiveVerified`
  *                    (tools/check-stardew-lifecycle-pins.test.mjs)
  */
+
+export const gateDeclaration = {
+  id: "check-stardew-lifecycle-pins",
+  domain: "stardew",
+  tier: "l0",
+  kind: "ratchet",
+};
+
 import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";

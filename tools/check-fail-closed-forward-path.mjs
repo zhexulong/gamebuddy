@@ -56,6 +56,14 @@
  *                    (`message-delete` -> `message-del` ) is `control_id_not_a_control` naming that
  *                    family (tools/check-fail-closed-forward-path.test.mjs)
  */
+
+export const gateDeclaration = {
+  id: "check-fail-closed-forward-path",
+  domain: "product",
+  tier: "l0",
+  kind: "totality",
+};
+
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, join, resolve } from "node:path";

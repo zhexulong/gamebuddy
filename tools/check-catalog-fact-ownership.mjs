@@ -30,6 +30,14 @@
  * reports as a different (empty) population rather than staying silent.
  * (tools/check-catalog-fact-ownership.test.mjs)
  */
+
+export const gateDeclaration = {
+  id: "check-catalog-fact-ownership",
+  domain: "product",
+  tier: "l1",
+  kind: "contract",
+};
+
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 

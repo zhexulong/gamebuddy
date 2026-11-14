@@ -1,3 +1,10 @@
+export const gateDeclaration = {
+  id: "check-tavern-release-prerequisites",
+  domain: "product",
+  tier: "l2",
+  kind: "contract",
+};
+
 import { execFileSync, spawnSync } from "node:child_process";
 import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { readFile } from "node:fs/promises";

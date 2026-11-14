@@ -60,6 +60,14 @@
  * red-proof: inject  add a target-bearing action to a synthetic surface whose family no channel reads, and the gate
  *   fails naming that pair; `tools/check-stardew-observation-consumers.test.mjs` plants exactly that.
  */
+
+export const gateDeclaration = {
+  id: "check-stardew-observation-consumers",
+  domain: "stardew",
+  tier: "l1",
+  kind: "contract",
+};
+
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";

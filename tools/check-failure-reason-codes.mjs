@@ -63,6 +63,14 @@
  * names `run-stardew-native-local-agent-ab-live.mjs:2829`, `:2886` and `:4826` (`String(error?.message ?? error)` inside
  * a `reasonCode` template). See `tools/check-failure-reason-codes.test.mjs`.
  */
+
+export const gateDeclaration = {
+  id: "check-failure-reason-codes",
+  domain: "product",
+  tier: "l1",
+  kind: "contract",
+};
+
 import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";

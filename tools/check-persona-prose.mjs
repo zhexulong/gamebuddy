@@ -67,6 +67,14 @@
  *                    characters to 8 with no `[persona]` message exits 1; the same commit carrying the marker and a
  *                    PERSONA-REVISION.md line exits 0 (tools/check-persona-prose.test.mjs)
  */
+
+export const gateDeclaration = {
+  id: "check-persona-prose",
+  domain: "product",
+  tier: "l2",
+  kind: "contract",
+};
+
 import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";

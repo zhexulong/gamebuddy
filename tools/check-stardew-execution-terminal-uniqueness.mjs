@@ -50,6 +50,14 @@
  *   `hay_placed_in_trough,hay_placed_in_trough`, `"duplicated":1`, exit 1
  *   (tools/check-stardew-execution-terminal-uniqueness.test.mjs)
  */
+
+export const gateDeclaration = {
+  id: "check-stardew-execution-terminal-uniqueness",
+  domain: "stardew",
+  tier: "l0",
+  kind: "contract",
+};
+
 import { readFileSync, statSync } from "node:fs";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";

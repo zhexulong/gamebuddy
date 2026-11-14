@@ -2,6 +2,14 @@
 // red-proof: inject  planting check-red-proof-probe.mjs: a gate file in neither registry -> exit 1,
 //   `gate_falsifiers: BLOCKED`, `gate_without_falsifier: check-red-proof-probe.mjs`, and
 //   `gate_undeclared: ... no `red-proof:` marker in ...`, then `harness conformance blocked`
+
+export const gateDeclaration = {
+  id: "check-harness-conformance",
+  domain: "meta",
+  tier: "l2",
+  kind: "totality",
+};
+
 import { dirname, resolve } from "node:path";
 /**
  * Harness conformance CLI: the static wiring facts that ended live runs, checked in seconds.

@@ -141,6 +141,14 @@
  *   `plan_grammar_vocabulary_not_descriptor_derived:undeclared_skip:*`, `tool_args_unreadable:<action>`,
  *   `action_surface_population_empty` (tools/check-action-surface-parity.test.mjs)
  */
+
+export const gateDeclaration = {
+  id: "check-action-surface-parity",
+  domain: "stardew",
+  tier: "l1",
+  kind: "contract",
+};
+
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import process from "node:process";

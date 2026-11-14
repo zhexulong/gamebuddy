@@ -3,6 +3,14 @@
  *                    verdict `blocked`, violation `game_imports_generic_layer` naming that importer, target and
  *                    line 1, exit 1 (tools/check-host-game-physical-seam.mjs)
  */
+
+export const gateDeclaration = {
+  id: "check-host-game-physical-seam",
+  domain: "product",
+  tier: "l0",
+  kind: "contract",
+};
+
 import { builtinModules, createRequire } from "node:module";
 import { existsSync, lstatSync, readFileSync, readdirSync, realpathSync } from "node:fs";
 import { dirname, extname, join, relative, resolve } from "node:path";

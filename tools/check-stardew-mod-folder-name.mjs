@@ -38,6 +38,14 @@
  *            spells `GameBuddy.Stardew`, reports a mismatch rather than a pass
  *            (tools/check-stardew-mod-folder-name.test.mjs)
  */
+
+export const gateDeclaration = {
+  id: "check-stardew-mod-folder-name",
+  domain: "stardew",
+  tier: "l0",
+  kind: "contract",
+};
+
 import { readdirSync, readFileSync } from "node:fs";
 import { join, relative } from "node:path";
 

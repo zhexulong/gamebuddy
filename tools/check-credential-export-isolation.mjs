@@ -54,6 +54,14 @@
  *                    `assembler_names_credential_file` names the module and the leaf, while the control whose
  *                    include set omits it is silent (tools/check-credential-export-isolation.mjs)
  */
+
+export const gateDeclaration = {
+  id: "check-credential-export-isolation",
+  domain: "product",
+  tier: "l0",
+  kind: "contract",
+};
+
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, relative, resolve, sep } from "node:path";

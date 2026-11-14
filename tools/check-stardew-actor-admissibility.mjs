@@ -44,6 +44,14 @@
  *   `FAIL  FACT-3 named`, report status failed at examined 15 with detail `Idle carries player_busy_probe; a body
  *   that is not held must not carry a hold code`, exit 1
  */
+
+export const gateDeclaration = {
+  id: "check-stardew-actor-admissibility",
+  domain: "stardew",
+  tier: "l0",
+  kind: "contract",
+};
+
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import {
   ACTOR_ADMISSIBILITY_CONTRACT,

@@ -65,6 +65,14 @@
  * *                    `test_store_teardown_failed new=1` naming `<file>: 0 -> 1 store-opening line(s)`, exit 1
  * *                    (tools/check-test-store-teardown.mjs, the ratchet this marker names)
  */
+
+export const gateDeclaration = {
+  id: "check-test-store-teardown",
+  domain: "data",
+  tier: "l2",
+  kind: "ratchet",
+};
+
 import { execFileSync } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";

@@ -18,6 +18,14 @@
  *                    re-read and nothing else -> the gate names all seven
  *                    (tools/check-unreported-catch.test.mjs, "the pre-fix handlers are reported")
  */
+
+export const gateDeclaration = {
+  id: "check-unreported-catch",
+  domain: "arch",
+  tier: "l0",
+  kind: "contract",
+};
+
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { checkUnreportedCatches, formatFinding } from "./lib/unreported-catch.mjs";

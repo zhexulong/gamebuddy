@@ -4,6 +4,14 @@
 // red-proof: inject  a tracked file edited to end `beta` with three trailing spaces ->
 //                    `proof.txt:1: trailing whitespace.` then `+beta`, exit 1; the committed tree prints
 //                    `git_diff_check_passed`, exit 0 (tools/check-diff.mjs)
+
+export const gateDeclaration = {
+  id: "check-diff",
+  domain: "meta",
+  tier: "l2",
+  kind: "contract",
+};
+
 import { execFileSync } from "node:child_process";
 
 try {

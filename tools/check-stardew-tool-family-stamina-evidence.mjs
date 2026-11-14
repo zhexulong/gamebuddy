@@ -32,6 +32,14 @@
  *                    exit 1; the unmodified tree prints `OK (every tool-family action reports stamina)`, exit 0
  *                    (tools/check-stardew-tool-family-stamina-evidence.mjs)
  */
+
+export const gateDeclaration = {
+  id: "check-stardew-tool-family-stamina-evidence",
+  domain: "stardew",
+  tier: "l0",
+  kind: "contract",
+};
+
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 

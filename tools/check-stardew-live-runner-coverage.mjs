@@ -80,6 +80,14 @@
  * USAGE
  *   node tools/check-stardew-live-runner-coverage.mjs
  */
+
+export const gateDeclaration = {
+  id: "check-stardew-live-runner-coverage",
+  domain: "stardew",
+  tier: "l0",
+  kind: "totality",
+};
+
 import { readdirSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";

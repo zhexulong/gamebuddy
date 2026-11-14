@@ -140,6 +140,14 @@
  *            with its patch deleted, so the only thing left that can notice a pin without the seam is this
  *            assertion. The same fixture with the real pin content is `passed` and prints the reason and the pin.
  */
+
+export const gateDeclaration = {
+  id: "check-vendor-patches-apply",
+  domain: "arch",
+  tier: "l2",
+  kind: "contract",
+};
+
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";

@@ -57,6 +57,14 @@
  *            exit 1, `floor_governs_form:speak_before_acting:host/src/game-surface-prompt-floor.ts`, and that rule's
  *            `checks[]` entry reads failed (tools/check-game-surface-conduct-classes.test.mjs).
  */
+
+export const gateDeclaration = {
+  id: "check-game-surface-conduct-classes",
+  domain: "product",
+  tier: "l1",
+  kind: "contract",
+};
+
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";

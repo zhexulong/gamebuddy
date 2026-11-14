@@ -56,6 +56,14 @@
  *                     said `corrupted 0 · baselined 0 · stale 110`, exit 1, naming every expired entry, before the
  *                     ledger was emptied
  */
+
+export const gateDeclaration = {
+  id: "check-red-proof-markers",
+  domain: "meta",
+  tier: "l2",
+  kind: "ratchet",
+};
+
 import { execFileSync } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";

@@ -69,6 +69,14 @@
  *   node tools/check-native-local-runner-scaffold.mjs --json
  *   node tools/check-native-local-runner-scaffold.mjs --record-shrinks
  */
+
+export const gateDeclaration = {
+  id: "check-native-local-runner-scaffold",
+  domain: "stardew",
+  tier: "l0",
+  kind: "ratchet",
+};
+
 import { readdirSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";

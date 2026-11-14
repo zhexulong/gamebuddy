@@ -57,6 +57,14 @@
  * consequence is stated plainly: this gate protects only machines that hold the decompilation, and a
  * hosted run cannot tell whether the table is covered.
  */
+
+export const gateDeclaration = {
+  id: "audit-stardew-state-coverage",
+  domain: "stardew",
+  tier: "l0",
+  kind: "totality",
+};
+
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";

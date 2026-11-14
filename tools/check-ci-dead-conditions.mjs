@@ -53,6 +53,14 @@
  *            `dead_ci_condition:ci.yml:quality:NEVER_SET` with the `+ newly added:` / `- missing:` diff
  *            (tools/check-ci-dead-conditions.test.mjs; declared in `env:` or `$GITHUB_ENV`, it reports nothing).
  */
+
+export const gateDeclaration = {
+  id: "check-ci-dead-conditions",
+  domain: "meta",
+  tier: "l0",
+  kind: "contract",
+};
+
 import { readdirSync, readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";

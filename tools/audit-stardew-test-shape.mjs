@@ -13,6 +13,14 @@
 //
 // The population is derived from file content on every run, never from a list, so a new
 // file is classified the moment it exists.
+
+export const gateDeclaration = {
+  id: "audit-stardew-test-shape",
+  domain: "stardew",
+  tier: "l0",
+  kind: "contract",
+};
+
 import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";

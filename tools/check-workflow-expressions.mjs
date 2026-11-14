@@ -24,6 +24,13 @@
  *                   only passes because it already expects 0; restoring the file leaves `git diff` empty
  */
 
+export const gateDeclaration = {
+  id: "check-workflow-expressions",
+  domain: "meta",
+  tier: "l0",
+  kind: "contract",
+};
+
 import { readdir, readFile } from "node:fs/promises";
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";

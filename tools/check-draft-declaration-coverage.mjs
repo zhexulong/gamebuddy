@@ -33,6 +33,14 @@
  *                    run reads `fields=2 revealers=1`
  *                    (dialogue-web/tests/draft-declaration-coverage.spec.ts)
  */
+
+export const gateDeclaration = {
+  id: "check-draft-declaration-coverage",
+  domain: "product",
+  tier: "l2",
+  kind: "totality",
+};
+
 import { spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";

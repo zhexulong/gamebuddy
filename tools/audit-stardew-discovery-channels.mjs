@@ -32,6 +32,14 @@
 // Any hole in the chain is silent: the game state exists, the Mod sends it, and
 // the Agent still cannot act. This tool reports per-action holes rather than a
 // single pass/fail, and exits non-zero when a target-bearing action has one.
+
+export const gateDeclaration = {
+  id: "audit-stardew-discovery-channels",
+  domain: "stardew",
+  tier: "l1",
+  kind: "contract",
+};
+
 import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";

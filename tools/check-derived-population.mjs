@@ -68,6 +68,14 @@
  * directory treated as a test, an unsorted member diff, an empty population treated as a pass, and a
  * raw-text sweep in place of the syntax tree - which names the defect inside a comment and a string.
  */
+
+export const gateDeclaration = {
+  id: "check-derived-population",
+  domain: "data",
+  tier: "l1",
+  kind: "totality",
+};
+
 import { readFileSync, readdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";

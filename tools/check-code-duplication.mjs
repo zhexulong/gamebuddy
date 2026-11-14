@@ -184,6 +184,14 @@
  * Every direction above is red on jscpd's own report, in tools/check-code-duplication.test.mjs, whose throwaway trees
  * are copied from the real body.
  */
+
+export const gateDeclaration = {
+  id: "check-code-duplication",
+  domain: "arch",
+  tier: "l2",
+  kind: "ratchet",
+};
+
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import fs from "node:fs";

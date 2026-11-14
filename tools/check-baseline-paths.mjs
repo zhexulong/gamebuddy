@@ -85,6 +85,14 @@
  *   node tools/check-baseline-paths.mjs --json
  *   node tools/check-baseline-paths.mjs --root <dir>
  */
+
+export const gateDeclaration = {
+  id: "check-baseline-paths",
+  domain: "data",
+  tier: "l2",
+  kind: "totality",
+};
+
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";

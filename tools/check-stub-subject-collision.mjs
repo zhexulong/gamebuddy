@@ -46,6 +46,14 @@
  *            stubs nothing at all, one that stubs through an imported helper, and one whose route is
  *            named by an unresolvable constant - the three shapes that made a first reading wrong.
  */
+
+export const gateDeclaration = {
+  id: "check-stub-subject-collision",
+  domain: "data",
+  tier: "l0",
+  kind: "contract",
+};
+
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";

@@ -41,6 +41,13 @@
  *                    `stale_reading_exemption`; an empty scan -> `reading-shape_blocked` (tools/audit-run-reading-shape.test.mjs)
  */
 
+export const gateDeclaration = {
+  id: "audit-run-reading-shape",
+  domain: "data",
+  tier: "l0",
+  kind: "contract",
+};
+
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";

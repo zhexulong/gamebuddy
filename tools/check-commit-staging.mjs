@@ -32,6 +32,14 @@
  * This is deliberately a script a human runs, not a git hook. A hook would block
  * every other lane silently; whether to install one is the owner's call.
  */
+
+export const gateDeclaration = {
+  id: "check-commit-staging",
+  domain: "meta",
+  tier: "l2",
+  kind: "contract",
+};
+
 import { execFileSync } from "node:child_process";
 import { cleanOutputLines } from "./lib/subprocess-output.mjs";
 

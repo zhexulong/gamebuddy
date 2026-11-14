@@ -53,6 +53,14 @@
  *            the config's `testIgnore` excludes is named `unreached_spec`, and deleting the
  *            `playwright test` script's caller leaves `mounted_zone_unreached` with every spec behind it.
  */
+
+export const gateDeclaration = {
+  id: "check-spec-reachability",
+  domain: "meta",
+  tier: "l0",
+  kind: "totality",
+};
+
 import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";

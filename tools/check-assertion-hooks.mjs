@@ -27,6 +27,14 @@
  *
  * ZERO POPULATION IS BLOCKED, not green: a directory that read nothing is not a directory whose hooks are sound.
  */
+
+export const gateDeclaration = {
+  id: "check-assertion-hooks",
+  domain: "data",
+  tier: "l0",
+  kind: "contract",
+};
+
 import { readdirSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";

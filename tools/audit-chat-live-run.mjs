@@ -18,6 +18,14 @@
  * integrity failure in this trace", not "Chat is release-ready". Only comparing
  * two runs shows whether a change helped (tools/compare-chat-live-runs.mjs).
  */
+
+export const gateDeclaration = {
+  id: "audit-chat-live-run",
+  domain: "product",
+  tier: "l2",
+  kind: "contract",
+};
+
 import { readFile, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";

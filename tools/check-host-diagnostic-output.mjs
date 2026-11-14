@@ -81,6 +81,14 @@
  * *                    `host_diagnostic_output_failed markers=2` naming that file:2, exit 1
  * *                    (tools/check-host-diagnostic-output.mjs, the marker arm this proof names)
  */
+
+export const gateDeclaration = {
+  id: "check-host-diagnostic-output",
+  domain: "product",
+  tier: "l2",
+  kind: "totality",
+};
+
 import { execFileSync } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";

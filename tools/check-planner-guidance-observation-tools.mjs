@@ -63,6 +63,14 @@
  *   every rule is enumerated", "a failing rule is the one the report names, and the others still report their own
  *   outcome", "a prerequisite that cannot be read is not_measured, and the whole gate is blocked"
  */
+
+export const gateDeclaration = {
+  id: "check-planner-guidance-observation-tools",
+  domain: "product",
+  tier: "l0",
+  kind: "totality",
+};
+
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import process from "node:process";

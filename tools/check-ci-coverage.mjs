@@ -47,6 +47,14 @@
  *   node tools/check-ci-coverage.mjs --list   # the derived set, one script name per line
  *   node tools/check-ci-coverage.mjs --run    # run that set, one named line per gate
  */
+
+export const gateDeclaration = {
+  id: "check-ci-coverage",
+  domain: "meta",
+  tier: "l2",
+  kind: "totality",
+};
+
 import { spawn } from "node:child_process";
 import { readFileSync, readdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";

@@ -21,6 +21,14 @@
  *   mp-insensitive -> `mp_sensitivity_classification_drift: use_mine_ladder declares StardewValley.Locations/MineShaft.cs
  *   mp-insensitive but the exact source reads the decisive token(s) IsLocalPlayer.`, exit 2
  */
+
+export const gateDeclaration = {
+  id: "check-stardew-native-multiplayer-sensitivity",
+  domain: "stardew",
+  tier: "l0",
+  kind: "contract",
+};
+
 import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import { assertStardewDecompileRoot } from "./lib/stardew-decompile-root.mjs";

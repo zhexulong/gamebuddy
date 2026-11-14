@@ -18,6 +18,13 @@
  *                    the binding, and the same source with the rule disabled -> no finding (tools/check-scope-references.test.mjs)
  */
 
+export const gateDeclaration = {
+  id: "check-scope-references",
+  domain: "arch",
+  tier: "l1",
+  kind: "contract",
+};
+
 import { readdir } from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";

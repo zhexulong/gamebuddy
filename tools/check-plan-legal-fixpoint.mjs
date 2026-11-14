@@ -107,6 +107,14 @@
  * red-proof: inject   an empty Y, an empty X, a Y the surface does not publish, or an X that cannot be written alone ->
  *            `blocked`, never a green run (tools/check-plan-legal-fixpoint.test.mjs)
  */
+
+export const gateDeclaration = {
+  id: "check-plan-legal-fixpoint",
+  domain: "product",
+  tier: "l2",
+  kind: "contract",
+};
+
 import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { registerHooks } from "node:module";

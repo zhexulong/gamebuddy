@@ -32,6 +32,14 @@
  *   node tools/check-action-deadline-agreement.mjs
  *   node tools/check-action-deadline-agreement.mjs --json
  */
+
+export const gateDeclaration = {
+  id: "check-action-deadline-agreement",
+  domain: "stardew",
+  tier: "l0",
+  kind: "contract",
+};
+
 import { readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";

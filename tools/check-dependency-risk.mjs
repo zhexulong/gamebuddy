@@ -19,6 +19,14 @@
  *                    dropping `mitigated` from the disposition list instead -> the schema cross-check
  *                    fails naming the missing member (tools/check-dependency-risk.test.mjs)
  */
+
+export const gateDeclaration = {
+  id: "check-dependency-risk",
+  domain: "arch",
+  tier: "l0",
+  kind: "contract",
+};
+
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";

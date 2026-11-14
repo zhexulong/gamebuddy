@@ -77,6 +77,14 @@
  * red-proof: inject a union member with no producer (`trash` removed from the Host's retention routes) -> the read is
  *   a violation naming `unserved member: /api/tavern/v1/chats/:chatHandle/trash`, which the shape alone would pass.
  */
+
+export const gateDeclaration = {
+  id: "check-frontend-reads-have-producers",
+  domain: "product",
+  tier: "l0",
+  kind: "contract",
+};
+
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 

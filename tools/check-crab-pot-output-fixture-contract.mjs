@@ -7,6 +7,14 @@
  * *                    `crab-pot-output-fixture-contract: contract: missing field nonClaims.`, exit 1
  * *                    (tools/check-crab-pot-output-fixture-contract.mjs, the validator this marker names)
  */
+
+export const gateDeclaration = {
+  id: "check-crab-pot-output-fixture-contract",
+  domain: "data",
+  tier: "l0",
+  kind: "contract",
+};
+
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";

@@ -40,6 +40,14 @@
  *            `assert.deepEqual(await disconnected, ...)` -> `await_without_deadline:<file>:882:disconnected`, green
  *            again once the await goes through `factWithinDeadline` (tools/check-test-await-deadlines.test.mjs)
  */
+
+export const gateDeclaration = {
+  id: "check-test-await-deadlines",
+  domain: "data",
+  tier: "l1",
+  kind: "totality",
+};
+
 import { readdirSync, readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, join, resolve } from "node:path";

@@ -102,6 +102,14 @@
  *                     `perf_budget_not_measured:artifact_stale:artifact_content_mismatch:<the input>` naming its mtime,
  *                     the artifact's build stamp and `worktree=modified`, exit 1 (tools/perf/artifact-readiness.test.mjs)
  */
+
+export const gateDeclaration = {
+  id: "check-perf-budget",
+  domain: "data",
+  tier: "l2",
+  kind: "ratchet",
+};
+
 import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { arch, cpus, platform } from "node:os";

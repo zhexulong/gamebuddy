@@ -11,6 +11,14 @@
  * internally complete. It never means the entire game or capability set is
  * complete, and this command is intentionally not part of the default CI gate.
  */
+
+export const gateDeclaration = {
+  id: "check-stardew-gameplay-completeness",
+  domain: "stardew",
+  tier: "l0",
+  kind: "totality",
+};
+
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";

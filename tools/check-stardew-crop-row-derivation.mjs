@@ -37,6 +37,14 @@
 // red-proof: inject  deleting `bool? IsRaised` from a copy of `BridgeProtocolModels.cs`, so the crop row stops
 //   publishing a field `ContentDataQuery.CropRow` still projects -> `not_reachable:isRaised` and three
 //   `wire_extra:isRaised`, `blocked (4 finding(s))`, exit 1 (tools/check-stardew-crop-row-derivation.test.mjs)
+
+export const gateDeclaration = {
+  id: "check-stardew-crop-row-derivation",
+  domain: "stardew",
+  tier: "l0",
+  kind: "contract",
+};
+
 import { readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 import process from "node:process";

@@ -17,6 +17,14 @@
  * *                    `families examined 19 · replacement ids checked 41 · declared terms checked 235 ·
  * *                    coordination contracts checked 14`, exit 1 (tools/check-gameplay-capability-catalog.mjs)
  */
+
+export const gateDeclaration = {
+  id: "check-gameplay-capability-catalog",
+  domain: "stardew",
+  tier: "l1",
+  kind: "contract",
+};
+
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";

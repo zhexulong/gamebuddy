@@ -47,6 +47,14 @@
  * red-proof: inject  a registry row whose gate declares a path that is not on disk reddens
  *            `gate_premise_missing:<gate>:<path>` (the same suite, the mechanism on its own).
  */
+
+export const gateDeclaration = {
+  id: "check-gate-premises",
+  domain: "meta",
+  tier: "l0",
+  kind: "totality",
+};
+
 import { existsSync, globSync, readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";

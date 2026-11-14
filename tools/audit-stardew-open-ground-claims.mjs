@@ -38,6 +38,14 @@
 // Measured at this commit: `examined 3 call sites, 0 lies, 3 corroborated` - the two map-geometry arms (a fence tile's
 // own placement ground, the engine's `onlyNeedsToBePassable` buildable arm) and one refusal's published evidence, each
 // beside the body's answer in the same member `tools/check-prelive-gate-registry.mjs` records it as `elsewhere`.
+
+export const gateDeclaration = {
+  id: "audit-stardew-open-ground-claims",
+  domain: "stardew",
+  tier: "l0",
+  kind: "totality",
+};
+
 import { readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 import process from "node:process";

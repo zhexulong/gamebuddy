@@ -19,6 +19,14 @@
  *   `bodyOwned: document says 24, source has 1`, `requestHandlers: document says 42, source has 103`, and nine more),
  *   exit 1. The sha is pinned rather than `HEAD~n`: a relative revision names a different commit as lanes land
  */
+
+export const gateDeclaration = {
+  id: "audit-stardew-action-admission-ledger",
+  domain: "stardew",
+  tier: "l2",
+  kind: "ratchet",
+};
+
 import { execFileSync } from "node:child_process";
 
 const LEDGER_FILE = "design/architecture/stardew-action-execution-kernel.md";

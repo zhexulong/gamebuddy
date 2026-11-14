@@ -47,6 +47,14 @@
  *            (the count shape the defect is named after), and a journey that only exists in the
  *            baseline (`baseline_entry_stale` once it asserts something).
  */
+
+export const gateDeclaration = {
+  id: "check-assertion-substance",
+  domain: "data",
+  tier: "l0",
+  kind: "ratchet",
+};
+
 import { readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";

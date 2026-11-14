@@ -22,6 +22,14 @@
  *                    (`obligation_<id>_can_fail`) and requires an empty compartment set not to pass
  *                    (node tools/check-game-historian-rubric.mjs)
  */
+
+export const gateDeclaration = {
+  id: "check-game-historian-rubric",
+  domain: "product",
+  tier: "l0",
+  kind: "contract",
+};
+
 import { existsSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 

@@ -44,6 +44,14 @@
  * project's list nor `excluded-files.tsv`, so the no-game lane runs none of them. The repair is the no-game project's
  * own list, not this gate, which is why the red is reported rather than worked around here.
  */
+
+export const gateDeclaration = {
+  id: "audit-stardew-nogame-subset",
+  domain: "stardew",
+  tier: "l2",
+  kind: "totality",
+};
+
 import { execFileSync } from "node:child_process";
 import { mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";

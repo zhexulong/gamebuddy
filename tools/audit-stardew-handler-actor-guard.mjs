@@ -52,6 +52,14 @@
  *   `handler_actor_guard_measured_nothing` and exit 2; a recorded site that a later edit guards ->
  *   `handler_actor_guard_shrunk` and exit 1
  */
+
+export const gateDeclaration = {
+  id: "audit-stardew-handler-actor-guard",
+  domain: "stardew",
+  tier: "l2",
+  kind: "ratchet",
+};
+
 import { execFileSync } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";

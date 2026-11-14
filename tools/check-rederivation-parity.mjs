@@ -40,6 +40,14 @@
  *   node tools/check-rederivation-parity.mjs            # the gate; exit 1 on any finding
  *   node tools/check-rederivation-parity.mjs --json     # the same reading as one JSON report
  */
+
+export const gateDeclaration = {
+  id: "check-rederivation-parity",
+  domain: "arch",
+  tier: "l0",
+  kind: "contract",
+};
+
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";

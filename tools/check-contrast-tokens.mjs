@@ -70,6 +70,14 @@
  *            `dark` reading of it still passes; a `[data-theme="sepia"]` root written outside the token-root shape ->
  *            `theme_selector_unread:sepia` (tools/check-contrast-tokens.test.mjs builds each in a temp dir).
  */
+
+export const gateDeclaration = {
+  id: "check-contrast-tokens",
+  domain: "product",
+  tier: "l0",
+  kind: "contract",
+};
+
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";

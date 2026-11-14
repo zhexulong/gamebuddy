@@ -68,6 +68,14 @@
  *                    ("an empty population is blocked, not passed")
  *                    (all five in tools/check-head-self-contained.test.mjs, on real `git init` repositories)
  */
+
+export const gateDeclaration = {
+  id: "check-head-self-contained",
+  domain: "arch",
+  tier: "l2",
+  kind: "contract",
+};
+
 import { execFileSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { createRequire } from "node:module";

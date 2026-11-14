@@ -69,6 +69,14 @@
  * red-proof: inject  a `player_only` exemption with a blank reason, and one with no player-audience renderer printing
  *            the field -> `player_only_without_reason` / `player_only_without_a_player_renderer` (the same suite)
  */
+
+export const gateDeclaration = {
+  id: "check-snapshot-field-rendering",
+  domain: "product",
+  tier: "l0",
+  kind: "totality",
+};
+
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";

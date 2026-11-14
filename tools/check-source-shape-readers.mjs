@@ -77,6 +77,14 @@
  *            (`source_shape_read_from_raw_text:<file>:<line>:<tokens>:<pattern>`), while the same pattern over `.shape`
  *            is examined and passes.
  */
+
+export const gateDeclaration = {
+  id: "check-source-shape-readers",
+  domain: "arch",
+  tier: "l0",
+  kind: "contract",
+};
+
 import { readdirSync, readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, join, resolve } from "node:path";

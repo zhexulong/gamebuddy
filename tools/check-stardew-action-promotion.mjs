@@ -1,3 +1,10 @@
+export const gateDeclaration = {
+  id: "check-stardew-action-promotion",
+  domain: "stardew",
+  tier: "l0",
+  kind: "ratchet",
+};
+
 import { constants } from "node:fs";
 import { access, readFile, readdir } from "node:fs/promises";
 import { resolve } from "node:path";

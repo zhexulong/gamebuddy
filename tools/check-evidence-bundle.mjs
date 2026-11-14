@@ -6,6 +6,14 @@
 // red-proof: inject  --run-dir over a directory holding only `{}` ->
 //                    `"status":"failed"` with `schema_version_mismatch` and `timeline_sources_missing`, `examined":1`, exit 1
 //                    (tools/check-evidence-bundle.mjs, the validator this marker names)
+
+export const gateDeclaration = {
+  id: "check-evidence-bundle",
+  domain: "data",
+  tier: "l0",
+  kind: "contract",
+};
+
 import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";

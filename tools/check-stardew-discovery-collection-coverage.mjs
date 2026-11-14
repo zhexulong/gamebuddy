@@ -84,6 +84,14 @@
  *                    the run prints that line and exits 1; restored, it prints `green` and exits 0
  *                    (measured 2026-11-04, pasted in the lane report)
  */
+
+export const gateDeclaration = {
+  id: "check-stardew-discovery-collection-coverage",
+  domain: "stardew",
+  tier: "l0",
+  kind: "totality",
+};
+
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {

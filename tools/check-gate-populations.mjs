@@ -86,6 +86,14 @@
  *
  * No game, no network, no model, no child process.
  */
+
+export const gateDeclaration = {
+  id: "check-gate-populations",
+  domain: "meta",
+  tier: "l2",
+  kind: "ratchet",
+};
+
 import { readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import process from "node:process";

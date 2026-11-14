@@ -37,6 +37,14 @@
  * *                    `the measured 2026-10-27 session is red on BOTH counts` to failed, and the run exits 1
  * *                    (tools/check-game-context-pressure.mjs, the fixture checks this marker names)
  */
+
+export const gateDeclaration = {
+  id: "check-game-context-pressure",
+  domain: "product",
+  tier: "l0",
+  kind: "contract",
+};
+
 import { existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
