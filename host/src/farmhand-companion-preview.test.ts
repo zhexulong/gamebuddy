@@ -24,7 +24,7 @@ import {
   type ExactReceiptRecoveryPort,
   StardewExecutionRecoverySupervisor,
 } from "./stardew-execution-recovery-supervisor.js";
-import { type GameIntegrationAdapter } from "./game-integration-adapter.js";
+import type { GameIntegrationAdapter } from "./game-integration-adapter.js";
 import { STARDEW_GAME_INTEGRATION_ADAPTER } from "./stardew-game-integration-adapter.js";
 import { StardewLogicalActionRecoveryJournal } from "./stardew-logical-action-recovery-journal.js";
 

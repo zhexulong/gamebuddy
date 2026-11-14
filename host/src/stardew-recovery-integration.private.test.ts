@@ -314,7 +314,6 @@ function withWindowsPlatform<T>(operation: () => Promise<T>): Promise<T> {
 }
 
 function installationInspector() {
-  let index = 0;
   return createTestWindowsReparseInspector(() => {
     const child = Object.assign(new EventEmitter(), {
       stdin: new PassThrough(),
@@ -327,7 +326,6 @@ function installationInspector() {
       () =>
         void (async () => {
           const chain = installationChain;
-          index += 1;
           child.stdout.end(
             `${JSON.stringify({
               schemaVersion: 2,

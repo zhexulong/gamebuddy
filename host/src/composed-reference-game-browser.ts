@@ -33,7 +33,7 @@ import {
   type GameDiscoveryReadResultV1,
   type GameDiscoveryConfirmCommandV1,
   type GameDiscoveryMutationResultV1,
-  GAME_BROWSER_OPERATION_IDS_V1,
+  type GAME_BROWSER_OPERATION_IDS_V1,
 } from "./game-browser-contract/index.js";
 
 export type ComposedReferenceGameBrowserReadContext = Readonly<{
