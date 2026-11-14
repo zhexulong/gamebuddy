@@ -20,7 +20,8 @@ namespace GameBuddy.Stardew.Integration.Tests;
 /// set and a real farmer - so the lifecycle, the ordering constraints and the NEGATIVE claims (what this
 /// body must NOT re-implement) are asserted on the handler source, while the registration side is
 /// asserted against the real catalog objects and the wire side against the Mod's own request parser.
-/// The live numbers belong to a live gate, which this lane deliberately did not run.
+/// The live numbers belong to the action's own native-local live gate (`a7552b6b`), which ran on 2026-11-14 and
+/// recorded its pass under `target-version-evidence/`.
 /// </summary>
 // MIXED SHAPE AND BEHAVIOUR: the pins here assert on repository source text because the native seam they cover cannot load in a headless runner, while the registration pins read the real catalog objects; keeping both in one file keeps each pin beside the behaviour it protects.
 [Trait("kind", "source-shape")]
@@ -197,7 +198,8 @@ public sealed class OpenGeodeActionSourceShapeTests
 
     /// <summary>
     /// The registration side, on the real objects: the catalog owns membership and the wire list owns the
-    /// arguments, and this action is Experimental because no live game was run for it.
+    /// arguments, and whether the action reaches the Agent at all is the policy engine's answer rather than a rung
+    /// restated here.
     /// </summary>
     [Fact]
     public void Action_IsRegisteredWithTheGeodeSlotAndItsItemId()
@@ -205,7 +207,10 @@ public sealed class OpenGeodeActionSourceShapeTests
         var registration = Core.Policy.FarmhandActionCatalog.Registrations
             .Should().ContainSingle(entry => entry.ActionId == "open_geode").Subject;
 
-        registration.Lifecycle.Should().Be(Core.Policy.FarmhandActionLifecycle.Experimental);
+        // Not a restated rung: `ComputeEnabledActions` is the one place that decides which rungs reach the Agent
+        // (`ModConfig.EnabledActionSet`), so a demotion fails here without a second copy of the promotion fact.
+        Core.Policy.ActionPolicyEngine.ComputeEnabledActions(new Core.Policy.ActionPolicyOptions())
+            .Should().Contain("open_geode", "a promoted action is on the Agent surface with no opt-in");
         registration.HandlerGroup.Should().Be(Core.Policy.FarmhandActionHandlerGroup.ResourceTools);
         registration.Descriptor!.Arguments.Select(argument => argument.Name)
             .Should().Equal("slot", "expectedQualifiedItemId");

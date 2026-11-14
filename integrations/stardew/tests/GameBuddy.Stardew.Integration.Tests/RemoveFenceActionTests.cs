@@ -60,7 +60,10 @@ public sealed class RemoveFenceActionTests
         registration.FamilyId.Should().Be("buildings_farm_management");
         registration.Kind.Should().Be(FarmhandOperationKind.Execution);
         registration.HandlerGroup.Should().Be(FarmhandActionHandlerGroup.ResourceTools);
-        registration.Lifecycle.Should().Be(FarmhandActionLifecycle.Experimental);
+        // Not a restated rung: `ComputeEnabledActions` is the one place that decides which rungs reach the Agent
+        // (`ModConfig.EnabledActionSet`), so a demotion fails here without a second copy of the promotion fact.
+        ActionPolicyEngine.ComputeEnabledActions(new ActionPolicyOptions())
+            .Should().Contain(ActionId, "a promoted action is on the Agent surface with no opt-in");
         registration.Descriptor!.Arguments.Select(argument => argument.Name)
             .Should().Equal(new[] { "x", "y", "slot", "expectedTargetId" });
         registration.Descriptor.Postcondition.Should().Be("fence_removed");
