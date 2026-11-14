@@ -22,12 +22,21 @@
  *                    the next reading has no findings at all; a group that grew -> the payload is the recorded entries
  *                    byte for byte and `clone_group_grew` still fails; an unrecorded group -> no entry is ever added, now
  *                    or on the run after; no baseline file -> `baseline_shrink_refused`.
+ * red-proof: inject  a tree whose baseline records one group and whose fourth copy has landed -> the CLI
+ *                    `--root <fixture> --write-baseline` prints `baseline_write_refused: 1 group(s) are new or grew`,
+ *                    exits 1 and leaves the baseline file byte-identical; with no baseline it prints `baseline_created`,
+ *                    and with the fourth copy removed it prints `baseline_written` - so the refusal is a condition on
+ *                    the tree, not a refusal to write.
+ * red-proof: inject  one recorded group at three runner sites beside one recorded group at three host sites ->
+ *                    `debt: 2 groups · 6 sites · of which runners 1 groups / 3 sites`; the same groups unrecorded ->
+ *                    `debt: 0 groups · 0 sites …` beside `new 2`; one runner site beside two host sites ->
+ *                    `of which runners 1 groups / 1 sites`; a blocked reading -> `debt: not measured · <reason>`.
  */
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { execFileSync, spawnSync } from "node:child_process";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { dirname, basename, join, resolve } from "node:path";
 import { after, test } from "node:test";
 import { fileURLToPath } from "node:url";
 
@@ -37,13 +46,17 @@ import {
   censusLine,
   checkCodeDuplication,
   configDisagreements,
+  debtCensus,
+  debtLine,
   evaluateGroups,
   facadeLine,
   firstLineOf,
+  FORMATS,
   groupClones,
   groupHash,
   IGNORES,
   isFacadeOnly,
+  isRunnerSite,
   MIN_LINES,
   MIN_TOKENS,
   normaliseSitePath,
@@ -51,11 +64,14 @@ import {
   recordShrinks,
   runJscpd,
   serialiseBaseline,
+  SOURCE_TREES,
   tokenCountLine,
   untrackedSources,
 } from "./check-code-duplication.mjs";
+import { RUNNER_FILE, runnerFiles } from "./check-native-local-runner-scaffold.mjs";
 
 const REPO = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const GATE = join(REPO, "tools/check-code-duplication.mjs");
 const workspaces = [];
 
 after(() => {
@@ -104,6 +120,19 @@ const pipeline = (name, handler) =>
   ].join("\n");
 
 const copies = (names) => Object.fromEntries(names.map((name) => [`host/src/${name}.cs`, pipeline(name, "Execute")]));
+
+/** A second admission body, different enough to be its own group: what an unrecorded `new` family looks like. */
+const otherFamily = (name) =>
+  [
+    `    public LocalExecutionReceipt RequestLocalClaim${name}(string requestId, int slot, int targetX, int targetY)`,
+    "    {",
+    "        if (this.receiptsByRequestId.TryGetValue(requestId, out LocalExecutionReceipt? existing)) return existing;",
+    "        this.revision++;",
+    '        string executionId = Guid.NewGuid().ToString("N");',
+    "        long nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();",
+    "        return this.Execute(requestId, slot, targetX, targetY, executionId, nowMs);",
+    "    }",
+  ].join("\n");
 
 /**
  * The other thing the controllers repeat once the eight-step body is folded behind a seam: one method per action
@@ -636,4 +665,192 @@ test("a real shrink recorded against jscpd's report turns the same tree green, a
   assert.equal(after.status, "passed");
   assert.equal(after.stale, 0);
   assert.equal(after.duplication.length, 1);
+});
+
+/** A site in the native-local smoke-runner family, spelled as the family's own gate derives it. */
+const runnerSite = (name) => `tools/run-stardew-native-local-player-${name}-smoke.mjs`;
+const RUNNER_FRAGMENT = FRAGMENT.split("\n").reverse().join("\n");
+
+/** One recorded group at three runner sites: the debt the L1 extraction is retiring. */
+const runnerCopies = () =>
+  groupClones(
+    [
+      pair({ fragment: RUNNER_FRAGMENT, first: runnerSite("alpha"), second: runnerSite("bravo") }),
+      pair({ fragment: RUNNER_FRAGMENT, first: runnerSite("alpha"), second: runnerSite("charlie") }),
+    ],
+    REPO,
+  );
+
+test("the debt line counts the recorded groups, their sites, and the runner share in one unit", () => {
+  const groups = [...runnerCopies(), ...threeCopies()];
+  const reading = evaluateGroups({ groups, baseline: baselinePayload(groups) });
+  assert.deepEqual(reading.findings, []);
+  assert.equal(reading.debt.groups, reading.baselined, "the debt population and `baselined` are one number");
+  assert.deepEqual(reading.debt, { groups: 2, sites: 6, runnerGroups: 1, runnerSites: 3 });
+  assert.equal(debtLine(reading), "debt: 2 groups · 6 sites · of which runners 1 groups / 3 sites");
+});
+
+test("debt counts what the baseline records, so an unrecorded tree full of clones has none", () => {
+  // The falsifier for reading the line as a verdict: these two groups are real duplication and both are `new`, which is
+  // the finding - the debt line says only what the ratchet is already carrying.
+  const reading = evaluateGroups({ groups: [...runnerCopies(), ...threeCopies()], baseline: { groups: [] } });
+  assert.equal(reading.newGroups, 2);
+  assert.equal(debtLine(reading), "debt: 0 groups · 0 sites · of which runners 0 groups / 0 sites");
+});
+
+test("a group is runner debt when any of its sites is a runner, and only its runner sites are counted", () => {
+  const shared = groupClones(
+    [
+      pair({ fragment: FRAGMENT, first: runnerSite("delta"), second: "host/src/a.ts" }),
+      pair({ fragment: FRAGMENT, first: runnerSite("delta"), second: "host/src/b.ts" }),
+    ],
+    REPO,
+  );
+  const mixed = evaluateGroups({ groups: shared, baseline: baselinePayload(shared) });
+  assert.equal(debtLine(mixed), "debt: 1 groups · 3 sites · of which runners 1 groups / 1 sites");
+  const hostOnly = evaluateGroups({ groups: threeCopies(), baseline: baselinePayload(threeCopies()) });
+  assert.equal(debtLine(hostOnly), "debt: 1 groups · 3 sites · of which runners 0 groups / 0 sites");
+});
+
+test("a blocked reading has no debt to report, and says so instead of printing zero", () => {
+  assert.equal(
+    debtLine({ status: "blocked", reason: "code_duplication_examined_no_files" }),
+    "debt: not measured · code_duplication_examined_no_files",
+  );
+});
+
+test("the runner predicate is the family's own population, and the template is not in it", () => {
+  // Derived, not remembered: every file the scaffold gate scans is attributed here, and the module the migration extracts
+  // INTO is not a runner - so a runner added or renamed tomorrow needs no edit in this gate.
+  const runners = runnerFiles({ root: REPO });
+  assert.ok(runners.length > 100, `the family has members: ${runners.length}`);
+  assert.ok(
+    runners.every((file) => isRunnerSite(file)),
+    "every runner `check-native-local-runner-scaffold.mjs` scans is attributed by this gate",
+  );
+  for (const file of runners) assert.ok(RUNNER_FILE.test(basename(file)), `${file} is a runner by the family's rule`);
+  assert.equal(isRunnerSite("tools/lib/native-local-runner-primitives.mjs"), false);
+  assert.equal(isRunnerSite("host/src/run-stardew-native-local-player-x-smoke.mjs"), false);
+  assert.equal(isRunnerSite("tools/check-code-duplication.mjs"), false);
+});
+
+/**
+ * A throwaway tree shaped like this repository: every declared source tree exists (jscpd fails on a path that is not
+ * there), and each tokenised format has one file of its own, because the CLI reads the real `SOURCE_TREES`/`FORMATS` and a
+ * format with no file is a blocked reading rather than a small one. They are twelve lines because jscpd does not count a
+ * shorter file as a source at all, and they share no shape with each other or with the families under test.
+ */
+const repoShaped = (files) =>
+  workspace(
+    {
+      ...files,
+      "host/src/anchor.ts": [
+        "interface AnchorShape {",
+        "  width: number;",
+        "  label: string;",
+        "}",
+        "",
+        "export function anchorWidth(shape: AnchorShape): number {",
+        "  const doubled = shape.width * 2;",
+        "  const labelled = shape.label.trim();",
+        "  if (labelled.length === 0) return doubled;",
+        "  const weight = labelled.length > 3 ? 3 : 1;",
+        "  return doubled + weight;",
+        "}",
+        "",
+      ].join("\n"),
+      "tools/anchor.mjs": [
+        "const anchorLevels = new Map();",
+        "export function recordAnchor(name, value) {",
+        "  const previous = anchorLevels.get(name);",
+        "  if (previous !== undefined) return previous;",
+        "  const next = Math.max(0, Number(value));",
+        "  anchorLevels.set(name, next);",
+        "  for (const key of anchorLevels.keys())",
+        "    if (key.startsWith('_')) anchorLevels.delete(key);",
+        "  return anchorLevels.get(name);",
+        "}",
+        "export const anchorNames = () => [...anchorLevels.keys()].sort();",
+        "export default anchorLevels;",
+        "",
+      ].join("\n"),
+      "integrations/stardew/anchor.md": "# anchor\n",
+      "host/scripts/anchor.md": "# anchor\n",
+      "dialogue-web/src/anchor.md": "# anchor\n",
+      "packages/anchor.md": "# anchor\n",
+      "desktop/anchor.md": "# anchor\n",
+    },
+    { trees: SOURCE_TREES, formats: FORMATS },
+  );
+
+/** The gate's own CLI over a throwaway tree - the door `--root` exists for. */
+const cli = (root, ...args) =>
+  spawnSync(process.execPath, [GATE, "--root", root, ...args], { encoding: "utf8", timeout: 300_000 });
+
+const baselineFileOf = (root) => join(root, "tools/duplicate-code-baseline.json");
+
+test("--write-baseline refuses a grown group and leaves the baseline byte-identical", () => {
+  const { root } = repoShaped(copies(["Alpha", "Bravo", "Charlie"]));
+
+  const created = cli(root, "--write-baseline");
+  assert.equal(created.status, 0, created.stdout);
+  assert.match(created.stdout, /baseline_created: 1 group\(s\) -> tools\/duplicate-code-baseline\.json/);
+  const recorded = readFileSync(baselineFileOf(root), "utf8");
+
+  const green = cli(root);
+  assert.equal(green.status, 0, green.stdout);
+  assert.match(green.stdout, /^debt: 1 groups · 3 sites · of which runners 0 groups \/ 0 sites$/m);
+
+  // A fourth copy lands and is staged, so it is inside the population the gate measures.
+  writeFileSync(join(root, "host/src/Delta.cs"), pipeline("Delta", "Execute"), "utf8");
+  git(root, ["add", "host/src/Delta.cs"]);
+  const grew = cli(root);
+  assert.equal(grew.status, 1, grew.stdout);
+  assert.match(grew.stdout, /clone_group_grew:[0-9a-f]{12}: now 4 sites at \d+ tokens, the baseline recorded 3 sites/);
+
+  // The claim this refutes: that `--write-baseline` is how new duplication gets packed into the record.
+  const refused = cli(root, "--write-baseline");
+  assert.equal(refused.status, 1, refused.stdout);
+  assert.match(
+    refused.stdout,
+    /baseline_write_refused: 1 group\(s\) are new or grew - the baseline may only record a shrink/,
+  );
+  assert.equal(
+    readFileSync(baselineFileOf(root), "utf8"),
+    recorded,
+    "a refused write leaves the baseline byte-identical",
+  );
+
+  // The other direction: the refusal is a condition on the tree, not a refusal to write. With the fifth copy gone the same
+  // file records again - and records the same tree, so the write is not drifting the record either.
+  rmSync(join(root, "host/src/Delta.cs"));
+  git(root, ["rm", "-q", "--cached", "host/src/Delta.cs"]);
+  const written = cli(root, "--write-baseline");
+  assert.equal(written.status, 0, written.stdout);
+  assert.match(written.stdout, /baseline_written: 1 group\(s\)/);
+  assert.equal(readFileSync(baselineFileOf(root), "utf8"), recorded, "the written tree is the tree already recorded");
+});
+
+test("--write-baseline still refuses an unrecorded group, and still creates the first baseline", () => {
+  const { root } = repoShaped(copies(["Alpha", "Bravo", "Charlie"]));
+  const noBaseline = cli(root);
+  assert.equal(noBaseline.status, 1, noBaseline.stdout);
+  assert.match(noBaseline.stdout, /^debt: 0 groups · 0 sites · of which runners 0 groups \/ 0 sites$/m);
+  assert.match(noBaseline.stdout, /clone_group:\d+tokens:3sites: host\/src\/Alpha\.cs:\d+/);
+
+  assert.equal(existsSync(baselineFileOf(root)), false, "a read run writes nothing");
+  const created = cli(root, "--write-baseline");
+  assert.equal(created.status, 0, created.stdout);
+  assert.match(created.stdout, /baseline_created: 1 group\(s\)/);
+  assert.equal(existsSync(baselineFileOf(root)), true);
+
+  // A family the record has never seen is `new`, and `new` is refused however large the count is.
+  const recorded = readFileSync(baselineFileOf(root), "utf8");
+  for (const name of ["Echo", "Foxtrot", "Golf"])
+    writeFileSync(join(root, `host/src/${name}.cs`), otherFamily(name), "utf8");
+  git(root, ["add", "host/src"]);
+  const refused = cli(root, "--write-baseline");
+  assert.equal(refused.status, 1, refused.stdout);
+  assert.match(refused.stdout, /baseline_write_refused: [1-9]\d* group\(s\) are new or grew/);
+  assert.equal(readFileSync(baselineFileOf(root), "utf8"), recorded, "an unrecorded group is never banked");
 });

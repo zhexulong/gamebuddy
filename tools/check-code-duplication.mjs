@@ -124,6 +124,36 @@
  * facade-only M · duplication K`. K is what the ratchet governs and what `--write-baseline` records; a new or grown
  * duplication group still fails, which is the hard failure this file always had.
  *
+ * THE DEBT IS PRINTED IN ITS OWN UNIT, because `duplication 289` was read as 289 groups, 289 sites and 289 lines by
+ * three readers of one line, and only one of those readings is right. One line follows the census:
+ *
+ *   debt: <baselined groups> groups · <baselined sites> sites · of which runners <M> groups / <N> sites
+ *
+ * The groups are the duplication groups the baseline records AND the tree still has - the debt the ratchet carries,
+ * which `--record-shrinks` can only lower - and the count beside them is those groups' SITES, which is the unit of the
+ * thing being duplicated: a group that loses one of its four copies lowers this number by three, and a group that leaves
+ * the population lowers it by its whole site count. Measured 2026-11-15 at `eaa5f5a6` over the 283 recorded entries:
+ * `250 groups · 1041 sites · of which runners 107 groups / 467 sites` - nearly half of the recorded debt is one family,
+ * the `run-stardew-native-local-*` smoke runners the L1 extraction is already retiring, and the bare `duplication 289`
+ * could not say so. That family is why this line exists: a red number nobody can place in the tree is read as weather.
+ *
+ * WHAT COUNTS AS A RUNNER IS NOT A LIST KEPT HERE. It is `RUNNER_FILE` - the family `check-native-local-runner-scaffold.mjs`
+ * owns, scans and ratchets - tested against a site's basename under `tools/`, so the runner written tomorrow is counted
+ * the moment it exists and a family member renamed out of the rule stops being counted instead of being remembered. A
+ * group is a runner group when ANY of its sites is a runner, because that copy is one of the copies that has to go before
+ * the group can leave the population; the site count beside it is the runner sites alone, so `467 of 1041` is a share of
+ * one unit and not a group count smuggled into a site count.
+ *
+ * A BLOCKED READING HAS NO DEBT, and says so (`debt: not measured · <reason>`) rather than printing `0 groups`, which
+ * would be the same defect this line exists to end: a zero that means "nothing to do" beside a zero that means "nothing
+ * was measured". The line is a REPORT and changes no verdict: `new` and `grown` still fail, `--write-baseline` still
+ * refuses, `--record-shrinks` still only lowers.
+ *
+ * THE CLI TAKES `--root <dir>` so the two writes above can be proved against a throwaway tree by this file's own suite -
+ * the same fixture door `check-cognitive-complexity.mjs` has. It moves where the baseline and `jscpd.json` are read from
+ * and written to, never what the rule is; `jscpd` itself still resolves from THIS file, so a fixture is measured by the
+ * repository's own scanner.
+ *
  * THE BASELINE IS A RATCHET, NOT AN ACCEPT LIST, AND ITS TWO WRITES HAVE DIFFERENT POWERS. `--write-baseline` may ADD a
  * group - that is how the tree is first written down - but only while the file does not exist or nothing is new or grew,
  * so a green run never becomes the way to accept new duplication. `--record-shrinks` may only move an existing record
@@ -155,10 +185,20 @@
  * make two structurally identical bodies one group. What it refuses is the specific thing that shipped: the same
  * block copied a third time.
  *
+ * red-proof: inject  a tree whose baseline records one group and whose fourth copy has landed ->
+ *                    `node tools/check-code-duplication.mjs --root <fixture> --write-baseline` prints
+ *                    `baseline_write_refused: 1 group(s) are new or grew - the baseline may only record a shrink`, exits 1
+ *                    and leaves the baseline file byte-identical; the same fixture with its baseline deleted creates one
+ *                    (`baseline_created`), and one whose tree shrank writes (`baseline_written`) - so the refusal is a
+ *                    condition on the tree and not a refusal to write at all.
+ * red-proof: inject  one recorded group at three runner sites beside a host file's own recorded group ->
+ *                    `debt: 2 groups · 4 sites · of which runners 1 groups / 3 sites`
+ *
  * USAGE:
  *   node tools/check-code-duplication.mjs                   # the verdict; exit 1 on a new/grown/stale group
  *   node tools/check-code-duplication.mjs --record-shrinks   # delete and lower entries only; adds nothing
  *   node tools/check-code-duplication.mjs --write-baseline   # write the tree down; refuses while a group is new or grew
+ *   node tools/check-code-duplication.mjs --root <dir>       # read and write the baseline of another tree (fixtures)
  *
  * red-proof: inject  a fourth copy of the admission pipeline body into a `farmhandexecutioncontroller.*.cs` partial
  *                    while that group's baseline entry stays at its recorded site count ->
@@ -200,6 +240,8 @@ import os from "node:os";
 import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
+
+import { RUNNER_FILE } from "./check-native-local-runner-scaffold.mjs";
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const BASELINE = "tools/duplicate-code-baseline.json";
@@ -247,6 +289,15 @@ export function normaliseSitePath(name, root = REPO) {
   const absolute = name.replace(/^\\\\\?\\/u, "");
   const relative = path.isAbsolute(absolute) ? path.relative(root, absolute) : absolute;
   return relative.replaceAll("\\", "/");
+}
+
+/**
+ * Is this site one of the native-local smoke runners - the family whose L1 extraction is the reason the debt line names
+ * it? The predicate is the family's own (`RUNNER_FILE`, from the gate that owns, scans and ratchets those files), read
+ * against the site's basename under `tools/`, so a runner added or renamed tomorrow is attributed without an edit here.
+ */
+export function isRunnerSite(file) {
+  return file.startsWith("tools/") && RUNNER_FILE.test(path.basename(file));
 }
 
 /** The identity of a clone group: the text jscpd matched, hashed so a baseline line stays readable. */
@@ -379,6 +430,23 @@ function violation(code, prefix, group) {
 }
 
 /**
+ * The debt, in the two units a reader needs and one share: the groups the baseline records and the tree still has, the
+ * sites those groups occupy, and how much of each is the native-local smoke-runner family.
+ *
+ * `groups` is the same population `evaluateGroups` reports as `baselined` - this function is where that number is
+ * COUNTED, and `evaluateGroups` reads it back as `.groups`, so the two cannot drift into two spellings of one fact.
+ */
+export function debtCensus(groups) {
+  const sites = groups.flatMap((group) => group.sites);
+  return {
+    groups: groups.length,
+    sites: sites.length,
+    runnerGroups: groups.filter((group) => group.sites.some((site) => isRunnerSite(site.file))).length,
+    runnerSites: sites.filter((site) => isRunnerSite(site.file)).length,
+  };
+}
+
+/**
  * The rule, as one reading of one report: which groups are duplication and break it, which of those the baseline
  * already recorded, whether the baseline still describes the tree, and which groups the rule read as a facade instead.
  * `groups` is `groupClones(...)`; `baseline.groups` is the file.
@@ -394,14 +462,14 @@ export function evaluateGroups({ groups, baseline, minTokens = MIN_TOKENS, minSi
   const recorded = new Map((baseline?.groups ?? []).map((entry) => [entry.hash, entry]));
   const findings = [];
   const tokenCountUnstable = [];
-  let baselined = 0;
+  const debtGroups = [];
   for (const group of duplication) {
     const entry = recorded.get(group.hash);
     if (entry === undefined) {
       findings.push(violation("clone_group", `clone_group:${group.tokens}tokens:${group.sites.length}sites`, group));
       continue;
     }
-    baselined += 1;
+    debtGroups.push(group);
     if (group.sites.length > entry.sites.length) {
       findings.push(
         violation(
@@ -461,7 +529,8 @@ export function evaluateGroups({ groups, baseline, minTokens = MIN_TOKENS, minSi
     counted,
     facade,
     duplication,
-    baselined,
+    debt: debtCensus(debtGroups),
+    baselined: debtGroups.length,
     newGroups: findings.filter((entry) => entry.code === "clone_group").length,
     grown: findings.filter((entry) => entry.code === "clone_group_grew").length,
     stale: findings.filter((entry) => entry.code === "stale_clone_baseline").length,
@@ -727,6 +796,18 @@ export function tokenCountLine(entry) {
   );
 }
 
+/**
+ * The debt as ONE line a reader can act on: how many recorded groups, how many sites, and how much of it is the runner
+ * family. A blocked reading says `not measured` and its reason, because `0 groups` beside a reading that examined nothing
+ * is the ambiguity this line exists to remove.
+ */
+export function debtLine(reading) {
+  if (reading.debt === undefined)
+    return `debt: not measured · ${reading.reason ?? "the reading carries no population"}`;
+  const { groups, sites, runnerGroups, runnerSites } = reading.debt;
+  return `debt: ${groups} groups · ${sites} sites · of which runners ${runnerGroups} groups / ${runnerSites} sites`;
+}
+
 export function censusLine(reading) {
   if (reading.status === "blocked")
     return `files examined ${reading.examined} · clone groups 0 · BLOCKED ${reading.reason}`;
@@ -792,18 +873,20 @@ export function recordShrinks({ reading, baseline }) {
 function main(argv) {
   const writeBaseline = argv.includes("--write-baseline");
   const recordingShrinks = argv.includes("--record-shrinks");
+  // `--root <dir>`: which tree's baseline (and `jscpd.json`) is read and written. Fixtures use it; the rule is the same.
+  const root = argv.includes("--root") ? argv[argv.indexOf("--root") + 1] : REPO;
   let reading;
   let baseline;
   try {
-    baseline = readBaseline({ root: REPO });
-    reading = checkCodeDuplication({ baseline });
+    baseline = readBaseline({ root });
+    reading = checkCodeDuplication({ root, baseline });
   } catch (error) {
     process.stdout.write(`code_duplication_blocked: ${String(error?.message ?? error)}\n`);
     process.stdout.write(`${reportLine({ status: "blocked", examined: 0 })}\n`);
     process.exitCode = 2;
     return;
   }
-  const lines = [censusLine(reading)];
+  const lines = [censusLine(reading), debtLine(reading)];
   for (const group of reading.facade ?? []) lines.push(facadeLine(group));
   for (const entry of reading.tokenCountUnstable ?? []) lines.push(tokenCountLine(entry));
   for (const entry of reading.findings ?? []) lines.push(`  ${entry.detail}`);
@@ -817,7 +900,7 @@ function main(argv) {
       return;
     }
     if (outcome.removed.length + outcome.lowered.length > 0)
-      fs.writeFileSync(path.join(REPO, BASELINE), serialiseBaseline(outcome.payload), "utf8");
+      fs.writeFileSync(path.join(root, BASELINE), serialiseBaseline(outcome.payload), "utf8");
     lines.push(
       `shrinks recorded: ${outcome.removed.length + outcome.lowered.length} · removed ${outcome.removed.length} · ` +
         "nothing added",
@@ -851,7 +934,7 @@ function main(argv) {
       return;
     }
     const payload = baselinePayload(reading.duplication);
-    fs.writeFileSync(path.join(REPO, BASELINE), serialiseBaseline(payload), "utf8");
+    fs.writeFileSync(path.join(root, BASELINE), serialiseBaseline(payload), "utf8");
     lines.push(
       `${creating ? "baseline_created" : "baseline_written"}: ${payload.groups.length} group(s) -> ${BASELINE}`,
     );
