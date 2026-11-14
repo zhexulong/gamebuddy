@@ -272,7 +272,9 @@ export function closeProcessLedger(
     return { ...entry, stillAliveAfter, leftDeliberately: reason };
   });
   const leftovers = entries.filter((entry) => entry.stillAliveAfter === true && entry.leftDeliberately === null);
-  const deliberatelyLeft = entries.filter((entry) => entry.leftDeliberately !== null);
+  // Only a process that is STILL THERE can be "deliberately left": a kept pid that exited on its own is gone,
+  // and printing it as left behind would be a sentence about a process that does not exist.
+  const deliberatelyLeft = entries.filter((entry) => entry.stillAliveAfter === true && entry.leftDeliberately !== null);
   const beforePids = ledger.before?.pids ?? null;
   const collateral =
     beforePids === null || after === null

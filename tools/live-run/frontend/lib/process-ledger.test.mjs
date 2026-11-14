@@ -362,3 +362,22 @@ test("an unmeasured population is named, never printed as a clean zero", () => {
   assert.equal(reading.population, "unmeasured");
   assert.match(describeProcessLedger(reading)[0], /UNMEASURED: 3 registered pid/u);
 });
+
+test("a kept pid that exited on its own is neither a leftover nor 'left behind'", () => {
+  // Measured 2026-11-15: a stepwise `check` run marked every entry kept, including one whose process had
+  // already exited, and the line read `deliberately left 36396(...)` about a pid that was gone - a sentence
+  // about a process that did not exist. The kept list says what MAY stay; the table says what DID.
+  const ledger = openProcessLedger({ stageRoot: STAGE, readTable: tableOf([row(4, 0, "System")]) });
+  const collected = collectProcessLedger(ledger, {
+    query: queriesOf({ [STAGE]: [row(900, 4, "msedge.exe")] }),
+    readTable: tableOf([row(4, 0, "System"), row(900, 4, "msedge.exe")]),
+  });
+  const reading = closeProcessLedger(ledger, collected, {
+    readTable: tableOf([row(4, 0, "System")]),
+    keptAlive: deliberatelyKept(collected.entries, { stepwise: true }),
+  });
+  assert.deepEqual(reading.leftovers, []);
+  assert.deepEqual(reading.deliberatelyLeft, [], "a pid that is gone was not left behind by anyone");
+  assert.equal(reading.entries[0].stillAliveAfter, false);
+  assert.doesNotMatch(describeProcessLedger(reading).join("\n"), /deliberately left/u);
+});
