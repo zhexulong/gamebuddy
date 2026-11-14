@@ -71,6 +71,7 @@ import { fileURLToPath } from "node:url";
 
 import { parseJavaScript } from "./lib/javascript-ast.mjs";
 import { journeySpecs, nodeAssertBindings } from "./lib/journey-source.mjs";
+import { assertNonVacuous } from "./lib/assert-non-vacuous.mjs";
 
 const REPOSITORY_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -335,28 +336,8 @@ async function main(argv) {
   const root =
     rootIndex >= 0 && typeof argv[rootIndex + 1] === "string" ? resolve(argv[rootIndex + 1]) : REPOSITORY_ROOT;
   const reading = await auditLooseAssertions({ root });
-
-  // A reading over zero journeys, or over zero assertions, agrees with itself; it is blocked, never green.
-  if (reading.specs === 0 || reading.examined === 0) {
-    const why =
-      reading.specs === 0
-        ? `no \`.spec.ts\` under ${join(root, "dialogue-web", "tests")}, so no assertion could be attributed`
-        : `${reading.specs} journey(s) read, but none of them makes an assertion call`;
-    process.stdout.write(`blocked: ${why}\n`);
-    process.stdout.write(
-      `${JSON.stringify({
-        gate: "loose_assertions/v1",
-        status: "blocked",
-        examined: reading.examined,
-        specs: reading.specs,
-        checks: [{ id: "assertion_attributed", status: "blocked" }],
-      })}\n`,
-    );
-    process.stderr.write(`loose_assertion_gate_blocked:no_assertion_examined: examined 0 assertions - ${why}\n`);
-    return 2;
-  }
-
   const counts = summarise(reading);
+
   const json = {
     gate: "loose_assertions/v1",
     status: reading.findings.length === 0 ? "passed" : "failed",
@@ -374,6 +355,22 @@ async function main(argv) {
     ],
     findings: reading.findings,
   };
+
+  // A reading over zero journeys, or over zero assertions, agrees with itself. That judgement is the shared one
+  // (`tools/lib/assert-non-vacuous.mjs`), so this gate's empty run is read by the same rule the conformance suite
+  // applies to the report it prints - not by a second opinion written here.
+  if (assertNonVacuous(json)?.status === "blocked") {
+    const why =
+      reading.specs === 0
+        ? `no \`.spec.ts\` under ${join(root, "dialogue-web", "tests")}, so no assertion could be attributed`
+        : `${reading.specs} journey(s) read, but none of them makes an assertion call`;
+    for (const check of json.checks) check.status = "blocked";
+    json.status = "blocked";
+    process.stdout.write(`blocked: ${why}\n`);
+    process.stdout.write(`${JSON.stringify(json)}\n`);
+    process.stderr.write(`loose_assertion_gate_blocked:no_assertion_examined: examined 0 assertions - ${why}\n`);
+    return 2;
+  }
 
   if (argv.includes("--json")) {
     process.stdout.write(`${JSON.stringify(json, null, 2)}\n`);
