@@ -112,8 +112,12 @@ jobs:
       # fails. It was added in b9650bd9 behind a formatter step that was repo-wide red until
       # e90da3b2, so its first real execution (run 38582152926) is where the 87 errors were seen.
       - run: pnpm lint
-      # The second half of the frontend lint pair. It ran nowhere until the CI coverage gate named
-      # it: only `quality:check`, which no job runs, held it.
+      # The frontend lint pair. `lint:ast-grep` ran nowhere until the CI coverage gate named it - only an
+      # aggregate script no job runs held it - and `lint:eslint` was the same shape, registered as debt
+      # for two `jsx-a11y` errors on the Chats row's select gesture. Those two errors are fixed (the row's
+      # gesture is one real button whose hit area is the row, `management-surface-panels.tsx`), so this
+      # second half runs here rather than in the register.
+      - run: pnpm lint:eslint
       - run: pnpm lint:ast-grep
       - run: pnpm check:host-module-graph
       - run: pnpm check:dialogue-web-boundaries
@@ -344,11 +348,11 @@ jobs:
       - run: node tools/check-workflow-expressions.mjs
       - run: node --test tools/check-workflow-expressions.test.mjs
       - run: node tools/check-ci-coverage.mjs
-      # `check-ci-coverage` asks whether a gate script runs in a workflow. This asks the neighbouring question about
-      # the LADDER: `CONTRIBUTING.md` tells a developer to run `quality:check`, no job runs it, and nothing compared
-      # the two sets - so a ladder member no step covers was green locally and unenforced on the merge. A ladder
-      # member runs in CI, is derived by the `--run` step below, runs in no workflow and carries a registered reason
-      # (the row expires by itself when a step covers it), or this step fails naming it.
+      # `check-ci-coverage` asks whether a gate script runs in a workflow. This asks the neighbouring
+      # question about the LADDER a developer runs (`pnpm prelive`): the ladder's members are read from
+      # `tools/prelive.mjs`'s own declarations, and a member no workflow step covers is either run here
+      # (by a step naming its file, or by the derived `--run` step below), covered through a sub-package
+      # step, or carries a registered reason that expires by itself when a step covers it.
       - run: pnpm check:local-ci-parity
       - run: pnpm test:local-ci-parity
       # `check:draft-declaration-coverage` drives a mounted zone, and the prerequisite it declares is a Chromium the

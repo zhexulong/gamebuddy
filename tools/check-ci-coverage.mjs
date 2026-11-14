@@ -8,9 +8,11 @@
  * like one, and no second list has to be kept in step with it. `test:*` scripts are not this gate's
  * business: `tools/run-tool-test-corpus.mjs` derives those from the same file.
  *
- * Coverage is a workflow file, never an aggregate script: `quality:check` names gates that no job
- * runs, which is the drift this gate exists to stop (design/research/system-reflection-build.md,
- * finding 2). A step covers a script when it names the script or names the file its command runs.
+ * Coverage is a workflow file, never an aggregate script: the aggregate `quality:check` that used to
+ * live in `package.json` named gates that no job ran (design/research/system-reflection-build.md,
+ * finding 2), and it was deleted rather than kept as a local entry point - the entry point is
+ * `pnpm prelive`, and `tools/check-local-ci-parity.mjs` is the gate that subtracts its members from
+ * these workflows. A step covers a script when it names the script or names the file its command runs.
  * YAML comments are stripped first, so a step discussed in prose does not read as a step.
  *
  * The derived set is what the workflows do not already run. It is install-free by construction -
@@ -203,7 +205,8 @@ const REGISTER = Object.freeze([
   {
     script: "check:text-hygiene",
     reason: "debt",
-    detail: "measured red at HEAD: committed C# files under desktop/ are missing a final newline",
+    detail:
+      "measured red at HEAD on 2026-11-14: 201 violations over 3519 files - 148 missing final newline, 40 mixed EOL, 7 trailing whitespace, 4 UTF-8 BOM, 2 invalid UTF-8 - so a CI step would be a standing red for a whole commit of mechanical edits; expires when the gate exits 0 and this row is deleted with it",
   },
   {
     script: "check:source-shape-readers",
@@ -220,12 +223,6 @@ const REGISTER = Object.freeze([
     script: "check:scope-references",
     reason: "debt",
     detail: "measured 4 findings (3 out_of_scope_reference, 1 read_before_declaration) over 731 files at HEAD",
-  },
-  {
-    script: "lint:eslint",
-    reason: "debt",
-    detail:
-      "measured 2 errors in dialogue-web/src at HEAD, both on one row's pointer-wide select gesture; 0c129f89, 45fdf829, cb47d0f4 and 3f324b38 cleared the other 60 (the register said 11 when the tree carried 62)",
   },
   {
     script: "check:sandbox-acceptance",
