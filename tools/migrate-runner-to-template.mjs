@@ -808,14 +808,18 @@ const normalizeCode = (text) =>
     .trim();
 
 /**
- * Whether a copy's evidence parser IS the template's, read from the two sources rather than assumed.
+ * The same question asked of BEHAVIOUR rather than spelling, which is the one that survives L1's split.
  *
- * Every copy of this parser is the `a349cc48b39c` clone group, and the template now owns it. A copy whose parser
- * differs in any character is a refusal: the definition receives the template's parse, and a stricter copy would have
- * refused evidence the run now accepts.
+ * When the parser moved to `native-local-runner-primitives.mjs` with `requiredKeys` and `emptyCode` as options, its body
+ * stopped being character-identical to the copies - it now assigns to `fields` and returns it, and carries a no-op loop -
+ * so the text comparison refused every runner with `evidence_parser_differs`. What the codemod actually needs to know is
+ * whether the copy reads evidence the same way, so it runs both on the probe corpus: a copy that accepts a pair the
+ * template drops (`index >= 0`) still differs, on the `=x` probe, and is still refused.
  */
-export function parserMatchesTemplate(copyBody, templateBody) {
-  return normalizeCode(copyBody) === normalizeCode(templateBody);
+export function parserParsesLikeTheTemplate(copyBody, name) {
+  const local = evaluateFunction(`function ${name}(evidence) {${copyBody}}`, name);
+  if (!local.ok) return false;
+  return EVIDENCE_PROBES.every((probe) => answer(local.value, probe) === answer(PRIMITIVE_MODULE.parseEvidence, probe));
 }
 
 /**
@@ -1022,7 +1026,6 @@ export function planMigration(source, { scenario, templateSource }) {
   }
 
   const parsed = /^const ([A-Za-z_$][\w$]*) = ([A-Za-z_$][\w$]*)\(terminal\.evidence\);$/u.exec(peek()?.code ?? "");
-  const templateParser = functionBody(templateSource ?? "", "parseEvidence");
   if (parsed === null)
     return refuse(
       "evidence_parse_missing: the template parses the terminal's evidence and this copy never did, so the migrated " +
@@ -1030,8 +1033,8 @@ export function planMigration(source, { scenario, templateSource }) {
     );
   const evidenceName = parsed[1];
   const copyParser = functionBody(source, parsed[2]);
-  if (copyParser === null || templateParser === null) return refuse(`evidence_parser_unresolved:${parsed[2]}`);
-  if (!parserMatchesTemplate(copyParser, templateParser)) return refuse(`evidence_parser_differs:${parsed[2]}`);
+  if (copyParser === null) return refuse(`evidence_parser_unresolved:${parsed[2]}`);
+  if (!parserParsesLikeTheTemplate(copyParser, parsed[2])) return refuse(`evidence_parser_differs:${parsed[2]}`);
   take();
 
   while (peek() !== undefined && /^trace\.push\(/u.test(peek().code)) take();
