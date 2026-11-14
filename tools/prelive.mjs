@@ -304,6 +304,17 @@ export const PRELUDE_RUNGS = Object.freeze([
 ]);
 
 /**
+ * Every rung in the order they run, as data. `main` builds its run list from THIS, and
+ * `tools/check-local-ci-parity.mjs` reads the same declaration instead of keeping a second copy of
+ * the rung names: a rung added here is a rung in both readings by construction, and a rung id with
+ * no runner is named (`prelive_rung_unwired`) rather than silently absent from the sequence.
+ *
+ * `l4` is not in it: it needs `--action <id> --game`, so it is not a rung of the `--no-game`
+ * ladder a developer runs before pushing (`pnpm prelive`).
+ */
+export const LADDER_RUNGS = Object.freeze(["prep", ...PRELUDE_RUNGS.map((rung) => rung.id), "l1", "l1b", "l2", "l3"]);
+
+/**
  * How a gate says it measured nothing, in the convention `tools/check-ci-coverage.mjs` already counts: a whole line whose
  * marker ends in `_skipped`. A gate that prints one has exited cleanly without comparing anything, so this ladder reports
  * it UNAVAILABLE and counts it apart from the gates that passed. The rule is the marker, not a list of gate names.
@@ -1291,14 +1302,21 @@ function main(argv) {
     return;
   }
   const deploy = deployRung(options);
+  const runners = new Map([
+    ["prep", () => modExportBuildRung()],
+    ["l1", () => linkageRung()],
+    ["l1b", () => deploy],
+    ["l2", () => actionRegistryRung({ skipCompile: options.skipCompile })],
+    ["l3", () => shapeRung()],
+  ]);
+  for (const rung of PRELUDE_RUNGS) runners.set(rung.id, () => runGateRung({ id: rung.id, gates: rung.gates }));
   const ladder = runLadder({
     rungs: [
-      () => modExportBuildRung(),
-      ...PRELUDE_RUNGS.map((rung) => () => runGateRung({ id: rung.id, gates: rung.gates })),
-      () => linkageRung(),
-      () => deploy,
-      () => actionRegistryRung({ skipCompile: options.skipCompile }),
-      () => shapeRung(),
+      ...LADDER_RUNGS.map((id) => {
+        const runner = runners.get(id);
+        if (runner === undefined) throw new Error(`prelive_rung_unwired:${id}`);
+        return runner;
+      }),
       ...(options.action === null || !options.game
         ? []
         : [() => actionRung({ action: options.action, deployRoot: deploy.deployRoot })]),
