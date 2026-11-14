@@ -90,12 +90,48 @@ function pngFacts(bytes) {
   };
 }
 
-const stagePicker = async (page, name, bytes) => {
+// One pick of a file, and what the SURFACE did with it.
+//
+// `setInputFiles` resolves when the browser has taken the file, which says nothing about the
+// card: whether it staged is a fact of the product and is read as one. The `waitForTimeout(2000)`
+// this replaced returned "staged" whatever happened, so a pick that was refused, still in flight
+// or dropped printed as success - and the empty lists that followed were then read as "the
+// exported card cannot be re-imported". It settles on one of the surface's own two answers: the
+// staged review, or its own failure sentence.
+const stagePicker = async (page, name, bytes, timeoutMs = 30000) => {
   const picker = page.locator("[data-card-import-file]").first();
-  if ((await picker.count()) === 0) return "no_file_picker";
+  if ((await picker.count()) === 0) return { outcome: "no_file_picker" };
   await picker.setInputFiles({ name, mimeType: "image/png", buffer: bytes });
-  await page.waitForTimeout(2000);
-  return "staged";
+  try {
+    await page
+      .locator("[data-card-import-review], [data-card-import-result=error]")
+      .first()
+      .waitFor({ state: "attached", timeout: timeoutMs });
+  } catch {
+    return { outcome: `no_stage_settled_within_${timeoutMs}ms` };
+  }
+  if ((await page.locator("[data-card-import-review]").count()) > 0) return { outcome: "staged" };
+  const refused = await page.evaluate(
+    () => (document.querySelector("[data-card-import-result=error]")?.textContent ?? "").replace(/\s+/gu, " ").trim(),
+  );
+  return { outcome: "staging_failed", sentence: refused };
+};
+
+// The durable roster, read through the page's own session: the authority on WHO is in it.
+//
+// The rows name a companion for the player to read; they publish no identity, and the only
+// handle in the markup is the avatar's `src` - absent for a companion without a picture. A
+// re-import of the player's own card produces a second companion with the SAME NAME, so
+// attributing the import by name subtracted her predecessor and reported "rows added: []" for a
+// successful import. Identity is the handle, and the list that owns it is this route.
+const rosterIdentities = async (page) => {
+  const answer = await page.evaluate(async () => {
+    const response = await fetch("/api/tavern/v1/companions");
+    if (!response.ok) return { status: response.status, companions: null };
+    const body = await response.json();
+    return { status: response.status, companions: Array.isArray(body.companions) ? body.companions : null };
+  });
+  return answer;
 };
 
 (async () => {
@@ -203,8 +239,9 @@ const stagePicker = async (page, name, bytes) => {
   if (pngBytes === null) {
     say(`SKIPPED:no_png_card_to_re_import (the refusal above is the named outcome; the JSON control stays offered: ${JSON.stringify(section.jsonControl?.text)})`);
   } else {
+    const rosterBeforeIdentities = await rosterIdentities(page);
     const staged = await stagePicker(page, pngBody?.fileName ?? "card.png", pngBytes);
-    say(`staging the exported file: ${staged}`);
+    say(`staging the exported file: ${JSON.stringify(staged)}`);
     const review = await page.evaluate(() => {
       const node = document.querySelector("[data-card-import-review]");
       return node === null
@@ -213,31 +250,57 @@ const stagePicker = async (page, name, bytes) => {
     });
     say(`the review of the exported card: ${JSON.stringify(review)}`);
     await shot(page, "89-card-reimport-review-1440x900.png");
-    const confirm = page.locator("[data-card-import-review-confirm]").first();
-    if ((await confirm.count()) > 0) {
+    if (staged.outcome !== "staged") {
+      say(`the exported card could not be re-imported at the surface's own picker: ${staged.outcome}${staged.sentence === undefined ? "" : ` (${JSON.stringify(staged.sentence)})`}`);
+      say(`the roster the picker left behind: ${JSON.stringify((rosterBeforeIdentities.companions ?? []).map((companion) => companion.name))}`);
+    } else {
+      const confirm = page.locator("[data-card-import-review-confirm]").first();
       await confirm.click();
       await page.waitForTimeout(3000);
+      const result = await page.evaluate(() => {
+        const node = document.querySelector("[data-card-import-result]");
+        return node === null ? null : { state: node.getAttribute("data-card-import-result"), text: (node.textContent ?? "").replace(/\s+/gu, " ").trim().slice(0, 200) };
+      });
+      say(`the import's own answer: ${JSON.stringify(result)}`);
+      const rosterAfterIdentities = await rosterIdentities(page);
+      const added = (rosterAfterIdentities.companions ?? []).filter(
+        (companion) => !(rosterBeforeIdentities.companions ?? []).some((before) => before.handle === companion.handle),
+      );
+      say(`companions the re-import added, by handle: ${JSON.stringify(added.map((companion) => `${companion.name}:${companion.handle}`))}`);
+      say(`the re-import created a companion: ${added.length === 1} (the roster went ${(rosterBeforeIdentities.companions ?? []).length} -> ${(rosterAfterIdentities.companions ?? []).length})`);
+      await page.waitForTimeout(1500);
+      const rosterAfter = await page.evaluate(rosterFacts);
+      say(`companions after the re-import: ${JSON.stringify(rosterAfter.map((row) => ({ name: row.name, hasImage: row.hasImage, decoded: (row.naturalWidth ?? 0) > 0 })))}`);
+      for (const companion of added) {
+        const row = rosterAfter.find((candidate) => (candidate.src ?? "").split("/")[3] === companion.handle) ?? null;
+        if (row === null) {
+          say(`${companion.name}: the roster renders no row whose picture names ${companion.handle}`);
+          continue;
+        }
+        say(`${companion.name}: her picture ${row.hasImage ? "is drawn" : "is a monogram"} (decoded=${(row.naturalWidth ?? 0) > 0}), src=${JSON.stringify(row.src)}`);
+        say(`the picture the imported companion serves: ${JSON.stringify(await page.evaluate(servedAvatar, companion.handle))}`);
+        say(`her picture survived the round trip: ${row.hasImage && (row.naturalWidth ?? 0) > 0}; the exported PNG carries a ${exportedPng?.ihdr.width}x${exportedPng?.ihdr.height} picture`);
+      }
+      await shot(page, "89-card-reimported-1440x900.png");
+
+      // The picker's own reset: `CharacterCardImport.tsx` clears `input.value` inside `onChange`
+      // so that choosing the SAME file again still fires `change`, and this is the only place a
+      // live run can watch that happen to the real Host. The second pick is cancelled instead of
+      // imported - one new companion per run is enough to prove the first import.
+      say("=== ITEM: the same file, picked a second time ===");
+      const again = await stagePicker(page, pngBody?.fileName ?? "card.png", pngBytes);
+      say(`picking the same file again: ${JSON.stringify(again)}`);
+      say(`the picker takes the same file twice: ${again.outcome === "staged"}`);
+      if (again.outcome === "staged") await page.locator("[data-card-import-review-cancel]").first().click();
+      const dropped = await page.evaluate(() => document.querySelector("[data-card-import-review]") === null && document.querySelector("[data-card-import-result]") === null);
+      say(`the second pick was cancelled and staged nothing: ${dropped}`);
+      const rosterFinal = await rosterIdentities(page);
+      say(`companions after the cancelled second pick: ${(rosterFinal.companions ?? []).length}`);
+
+      await page.setViewportSize({ width: 400, height: 800 });
+      await page.waitForTimeout(1200);
+      await shot(page, "89-card-reimported-400x800.png");
     }
-    const result = await page.evaluate(() => {
-      const node = document.querySelector("[data-card-import-result]");
-      return node === null ? null : { state: node.getAttribute("data-card-import-result"), text: (node.textContent ?? "").replace(/\s+/gu, " ").trim().slice(0, 200) };
-    });
-    say(`the import's own answer: ${JSON.stringify(result)}`);
-    await page.waitForTimeout(1500);
-    const rosterAfter = await page.evaluate(rosterFacts);
-    say(`companions after the re-import: ${JSON.stringify(rosterAfter.map((row) => ({ name: row.name, hasImage: row.hasImage, decoded: (row.naturalWidth ?? 0) > 0 })))}`);
-    const imported = rosterAfter.filter((row) => !rosterBefore.some((before) => before.name === row.name));
-    say(`rows the re-import added: ${JSON.stringify(imported.map((row) => row.name))}`);
-    for (const row of imported) {
-      const handle = (row.src ?? "").split("/")[3] ?? null;
-      say(`${row.name}: her picture ${row.hasImage ? "is drawn" : "is a monogram"} (decoded=${(row.naturalWidth ?? 0) > 0}), src=${JSON.stringify(row.src)}`);
-      if (handle !== null) say(`the picture the imported companion serves: ${JSON.stringify(await page.evaluate(servedAvatar, handle))}`);
-      say(`her picture survived the round trip: ${row.hasImage && (row.naturalWidth ?? 0) > 0}; the exported PNG carries a ${exportedPng?.ihdr.width}x${exportedPng?.ihdr.height} picture`);
-    }
-    await shot(page, "89-card-reimported-1440x900.png");
-    await page.setViewportSize({ width: 400, height: 800 });
-    await page.waitForTimeout(1200);
-    await shot(page, "89-card-reimported-400x800.png");
   }
 
   await observe(page, say, "r", { sinceMs: observationFrom });
