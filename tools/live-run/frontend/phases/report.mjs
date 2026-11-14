@@ -431,6 +431,35 @@ function observationsFor(L, driverTexts) {
     [],
     "no driver read the runtime",
   );
+  section(
+    "GAME-LAUNCH",
+    "=== GAME-LAUNCH — the game surface: was the game opened, and did she answer in it ===",
+    [
+      "One line per run, from driver w, and it is the only line in this report about the product's",
+      "headline path: the player says one line in the Game surface and the companion answers while the",
+      "game is attached. `measured` means the launch reached instance=running/attachment=attached, a",
+      "line was sent and a non-empty companion row settled in the game surface; `not_measured` names",
+      "the prerequisite this machine did not hold (`guardian_pipe_unreachable` when no endpoint that",
+      "can arm is bound - see the driver's header); `failed` names a refusal the product owes an",
+      "answer for.",
+    ],
+    "the game-launch driver wrote no line",
+  );
+  section(
+    "GAME-STATES",
+    "=== GAME-STATES — the states a player meets after a launch: a death, the endgame, a disconnect ===",
+    [
+      "Three scenarios, one line each, each in the three-valued vocabulary the rest of this report uses.",
+      "`x-game-death` is the game dying under a turn: the exit code the Guardian reported reaches the state",
+      "read (`game.instance.playerHostExitCode`), the cabin read refuses with `stardew_player_host_exited`,",
+      "the panel names the code, and the turn in flight settles without claiming success. `y-game-endgame` is",
+      "invariant 506 after that death: the explicit endgame still settles the world in the same session",
+      "(`gameended`, and the pid is gone). `z-game-disconnect` is the surface letting go while the game keeps",
+      "running: the pid is still alive, the authority is paused rather than silently active, and the explicit",
+      "reopen is offered - an ordinary close never ends the player's world.",
+    ],
+    "the game-state drivers wrote no line",
+  );
   section("PAINT", "=== PAINT — first paint and first contentful paint ===", [], "no driver read the paint entries");
 }
 
