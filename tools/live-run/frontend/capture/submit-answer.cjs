@@ -100,12 +100,16 @@ function pressVerdict({ answer, playerRows }) {
  * absence `pressVerdict` names as `status=none:code=no_answer` rather than a wait.
  */
 async function deliverPress(page, { timeoutMs = 15000 } = {}) {
-	const pending = page.waitForResponse(
-		(response) => response.url().includes(SUBMIT_ROUTE) && response.request().method() === "POST",
-		{ timeout: timeoutMs },
-	);
+	// The handler is attached HERE, not after the click: a rejection that arrives before the next
+	// microtask would otherwise be an unhandled rejection in the process running the driver.
+	const pending = page
+		.waitForResponse(
+			(response) => response.url().includes(SUBMIT_ROUTE) && response.request().method() === "POST",
+			{ timeout: timeoutMs },
+		)
+		.catch(() => null);
 	await page.locator(".composer-button.send-button").click();
-	const response = await pending.catch(() => null);
+	const response = await pending;
 	if (response === null) return null;
 	let body = null;
 	try {
@@ -116,4 +120,4 @@ async function deliverPress(page, { timeoutMs = 15000 } = {}) {
 	return readSubmitAnswer({ status: response.status(), body });
 }
 
-module.exports = { SUBMIT_ROUTE, readSubmitAnswer, pressVerdict, deliverPress };
+module.exports = { readSubmitAnswer, pressVerdict, deliverPress };
