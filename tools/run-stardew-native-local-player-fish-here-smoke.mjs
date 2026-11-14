@@ -99,7 +99,6 @@ export async function runFishHereSmoke(
     const evidence = parseEvidence(terminal.evidence);
     const violations = judgeCatch(evidence, { targetId: water.targetId, tile: `${water.x},${water.y}` });
     if (violations.length > 0) throw new Error(violations[0]);
-    const fish = evidence.caught_qualified_item_id;
 
     // The world is re-read after the terminal: the catch must not have taken the water with it,
     // and the snapshot must not be older than the receipt.
