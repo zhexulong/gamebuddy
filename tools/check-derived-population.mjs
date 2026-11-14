@@ -52,9 +52,9 @@
  *
  * THE RESIDUAL IS RECORDED, NOT SILENCED (measured 2026-11-15, this tree):
  *
- *   examined 1001 · sites 82 · findings 0 · baseline 73 entries · unread 0
- *   residual by shape: 5 declaration_site · 30 call_result · 47 unresolved
- *   residual by verdict: 34 derivable-now · 39 not-a-population · 0 needs-a-decision
+ *   examined 1001 · sites 72 · findings 0 · baseline 64 entries · unread 0
+ *   residual by shape: 5 declaration_site · 23 call_result · 44 unresolved
+ *   residual by verdict: 25 derivable-now · 39 not-a-population · 0 needs-a-decision
  *   set aside: 1116 test-built · 24 not-members
  *
  * Each shape is closeable, and each failure message says which one it is:
