@@ -477,6 +477,15 @@ const GATES_WITH_FALSIFIER = Object.freeze([
   // Red on real history: round41's own bundle, which carried `pieceCount: 59` and thirteen records, exits 1 here.
   "check-presentation-delivery-account.mjs",
   "check-live-run-silence.mjs",
+  // Prints `loose_assertions specs=… examined=… in_a_test=… in_a_reachable_helper=… runs_at_import=… unreached=…`
+  // plus a three-entry `checks[]` verdict (one per assertion the reading can fail on), so its default run is the report
+  // this suite reads. Its falsifier is tools/check-loose-assertions.test.mjs: a module-level `expect`, one at the top of
+  // a `describe` body and one in a helper only module code calls are each `assertion_runs_at_import` with their
+  // file:line, a `neverMounted` helper is `assertion_in_an_unreached_function` naming it, the identical assertion in a
+  // called helper and in a `page.route` callback stays green, an unparseable spec is `journey_not_parsed`, and a corpus
+  // with no assertion exits 2 with `examined 0`. Red on the real tree: a module-level `expect` and a dead helper
+  // injected into dialogue-web/tests/memory-notebook-states.spec.ts -> exit 1 naming :21 and :24.
+  "check-loose-assertions.mjs",
   // Prints `plan_legal_fixpoint examined N pairs (Y=…, X=…) · accepted … · repaired … · dead ends …` plus a `checks[]`
   // verdict (pair fixpoint, modal-target declaration), which is the report this suite reads. Its falsifier is
   // tools/check-plan-legal-fixpoint.test.mjs: the round42 pair replayed from PRE_FIX_REVISION is a dead end, an `ok`
