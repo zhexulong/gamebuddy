@@ -462,6 +462,13 @@ test("the plan node limit is printed as a population: places examined, states a 
   );
 });
 
+test("a claim in step words is the same claim about the plan's size", () => {
+  assert.deepEqual(codes(check({ [PLAN_TOOLS_PATH]: withLimitSentence("16 steps is the whole plan") })), [
+    `plan_node_limit_disagrees:16:${realReading.realLimit}`,
+    "plan_node_limit_hand_written:16",
+  ]);
+});
+
 test("every string literal is read as text, and an interpolation is not text", () => {
   const [literal] = modelVisibleLiterals("x = `a ${String(CONST)} nodes and 16 nodes`;");
   assert.equal(literal.masked, "a «String(CONST)» nodes and 16 nodes");

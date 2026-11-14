@@ -155,14 +155,15 @@ const PLAN_FULL_GUARD = /isFull"\)\s*return\s*\(\)\s*=>\s*state\.nodes\.length\s
  * The shapes in which published prose states how many nodes a plan holds.
  *
  * Each one is a sentence a reader acts on, not a word: "16 nodes is the whole plan" is the one that was wrong, and the
- * other two are the ways the same fact is written. `at most N steps` is deliberately NOT one of them - it is the
- * `for_each` chain bound (`MAX_FOR_EACH_STEPS`), a different quantity, and the description prints that one from its own
- * constant.
+ * other two are the ways the same fact is written. A plan-sized claim in STEP words is one of them too ("16 steps is the
+ * whole plan", "16 steps per plan"): what makes a claim a plan-size claim is that it names the PLAN, not the noun beside the
+ * number. What is deliberately NOT one of them is the bare `at most N steps` - that is the `for_each` chain bound
+ * (`MAX_FOR_EACH_STEPS`), a different quantity, and the description prints it from its own constant.
  */
 const PLAN_NODE_LIMIT_CLAIMS = Object.freeze([
-  /(\d{1,6}|«[^»]{1,160}»)[- ]nodes?\s+(?:is|are)\s+the\s+(?:whole|entire)\s+plan/giu,
+  /(\d{1,6}|«[^»]{1,160}»)[- ](?:nodes?|steps?)\s+(?:is|are)\s+the\s+(?:whole|entire)\s+plan/giu,
   /(?:at most|up to|no more than|maximum of|max of|limit(?:ed)? to|capped at)\s+(\d{1,6}|«[^»]{1,160}»)\s*[- ]?nodes?/giu,
-  /(\d{1,6}|«[^»]{1,160}»)\s*[- ]?nodes?\s+(?:per|in)\s+(?:one\s+)?(?:plan|program)/giu,
+  /(\d{1,6}|«[^»]{1,160}»)\s*[- ]?(?:nodes?|steps?)\s+(?:per|in)\s+(?:one\s+)?(?:plan|program)/giu,
 ]);
 
 /** A `const NAME = <digits>` declaration, the only kind of number a published text may quote. */
