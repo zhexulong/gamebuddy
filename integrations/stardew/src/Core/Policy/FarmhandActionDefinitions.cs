@@ -617,7 +617,7 @@ E("enter_exit", "movement_navigation", FarmhandActionHandlerGroup.Movement, Tran
         // (`BuildPlacedItemTargetId`): one fence, one id, whichever action takes it down.
         // Locked to a live gate on 2026-11-14: `run-stardew-native-local-player-remove-fence-smoke.mjs` took a
         // wood fence off the Farm in one axe swing, with the tile empty and its `(O)322` drop observed.
-        E("remove_fence", "buildings_farm_management", FarmhandActionHandlerGroup.ResourceTools, new FarmhandActionDescriptor(new[] { new FarmhandActionArgument("x", "integer"), new FarmhandActionArgument("y", "integer"), new FarmhandActionArgument("slot", "integer", null, ToolSlotMeaning), new FarmhandActionArgument("expectedTargetId", "string", null, "The opaque object target id of the fence on this tile, copied from the `worldObjectTargets` entry of the MOST RECENT observe result.") }, new Dictionary<string, string>(), EmbodiedActorResource, "write", "fence_removed", "Fence.performToolAction"), FarmhandActionLifecycle.LiveVerified, "worldObjectTargets"),
+        E("remove_fence", "buildings_farm_management", FarmhandActionHandlerGroup.ResourceTools, SelfWalked(new FarmhandActionDescriptor(new[] { new FarmhandActionArgument("x", "integer"), new FarmhandActionArgument("y", "integer"), new FarmhandActionArgument("slot", "integer", null, ToolSlotMeaning), new FarmhandActionArgument("expectedTargetId", "string", null, "The opaque object target id of the fence on this tile, copied from the `worldObjectTargets` entry of the MOST RECENT observe result.") }, new Dictionary<string, string>(), EmbodiedActorResource, "write", "fence_removed", "Fence.performToolAction")), FarmhandActionLifecycle.LiveVerified, "worldObjectTargets"),
         // A FISH TANK IS FURNITURE, and it is the only thing that decides what it will hold. `FishTankFurniture`
         // lives in `location.furniture` (GameLocation.cs:452), so the target id is the same `placed_furniture` id the
         // pickup and the rotation take - one piece, one id. The deposit itself is the tank's own
@@ -674,7 +674,7 @@ E("enter_exit", "movement_navigation", FarmhandActionHandlerGroup.Movement, Tran
         // LiveVerified, not Experimental: `run-stardew-native-local-player-break-resource-clump-smoke.mjs`
         // cracked a live 2x2 boulder on 2026-11-14 (health 8 -> 0, tool selected from the clump's own switch and
         // restored), so this row now carries the gate descriptor that claims exactly that.
-        E("break_resource_clump", "resource_gathering", FarmhandActionHandlerGroup.ResourceTools, Clears(Target(), FarmhandClearingCost.TargetDecidesTool, destructive: false, null, ClumpOccupants), FarmhandActionLifecycle.LiveVerified, "debrisTargets"),
+        E("break_resource_clump", "resource_gathering", FarmhandActionHandlerGroup.ResourceTools, Clears(SelfWalked(Target()), FarmhandClearingCost.TargetDecidesTool, destructive: false, null, ClumpOccupants), FarmhandActionLifecycle.LiveVerified, "debrisTargets"),
         // Fishing. `waterTargets` is the engine's own castable-tile answer (`GameLocation.canFishHere` + `isTileFishable`),
         // and the postcondition is `fish_caught` because that is the fact the receipt measures a before/after of
         // (`fish_caught_before`/`fish_caught_after` around `Farmer.fishCaught`).
