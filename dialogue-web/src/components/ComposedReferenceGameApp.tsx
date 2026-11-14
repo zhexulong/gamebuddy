@@ -70,6 +70,18 @@ const RETRY_FIRST_MS = 1_000;
 const RETRY_CEILING_MS = 5_000;
 
 /**
+ * How long a committed frame's preview is held while the read that carries its message lands.
+ *
+ * The handoff is one round trip, not a state: `message.committed` says the reply is durable, and the
+ * transcript row that replaces the streamed preview only exists once `reconcile`'s `/state` answer is
+ * committed. Spending the preview at the frame left the conversation with no reply row at all in
+ * between - measured at 80 of 101 sampled frames on a 1.5 s read. The budget is what keeps the hold
+ * bounded when the read never lands: past it the preview is dropped rather than left standing as a
+ * reply the Host may not have kept.
+ */
+const PREVIEW_HANDOFF_BUDGET_MS = 2_000;
+
+/**
  * True when a failed read says something about the conversation rather than about the link.
  *
  * The same four classes the bootstrap's fallback poll treats as terminal (`use-composed-bootstrap`,
@@ -283,6 +295,30 @@ export function ComposedReferenceGameApp() {
     startPolling,
   } = bootstrap;
 
+  /**
+   * Commits a failed CHAT read to the place it belongs: the Chat region.
+   *
+   * Every one of these reads used to answer with `kind: "problem"`, and that state is mutually
+   * exclusive with the ready shell - so the card replaced the AppBar, every peer surface and
+   * `<GameSurface />` with it. Chat and Game are peer surfaces that start, stop and recover
+   * independently (`design/architecture/product-surfaces.md`): a conversation that cannot be
+   * reread says nothing about a Player Host, a running SMAPI or the player's place on another
+   * surface, and the unmounted Game surface stayed dead until the page was reloaded.
+   *
+   * The ready shell therefore keeps standing and carries the card in `chatProblem`, which the Chat
+   * region draws in place of its conversation. `kind: "problem"` is left for the one failure that
+   * has no session to keep - the mount's own read - where there is no region to draw in and
+   * nothing else on the window to preserve.
+   */
+  const commitChatProblem = (error: unknown): void => {
+    const current = viewRef.current;
+    if (current.kind === "ready") {
+      commit({ ...current, chatProblem: problemView(error, messages(current.locale)) });
+      return;
+    }
+    commit(problemView(error, messages(localeRef.current)));
+  };
+
   const eventStreamEpoch =
     view.kind === "ready" ? `${view.session.snapshot.eventStream?.epoch ?? ""}#${mountedChatRevision}` : undefined;
 
@@ -305,6 +341,22 @@ export function ComposedReferenceGameApp() {
     setInputText(held.text);
     inputTextRef.current = held.text;
   }, [pollFailure, optimistic]);
+
+  /**
+   * The turn key names one turn, and it must not outlive it.
+   *
+   * `turn-timings.ts` states the rule where the key is used: a key that survives its turn "attaches
+   * the next turn's timing to the previous turn's name", so `turnDurations(key)` mixes two turns
+   * into one reading. The stream's terminal frame clears it where that frame arrives; the fallback
+   * poll's settle and every reread that sees a settled turn are the paths with no such frame, and
+   * they all end at the same place - the committed view. So the rule is read there too, rather than
+   * repeated at each of those writers: a terminal turn in the committed snapshot is a turn that no
+   * longer owns a key, whoever noticed it first.
+   */
+  const settledTurn = view.kind === "ready" ? (view.session.snapshot.chat?.turn ?? null) : null;
+  useEffect(() => {
+    if (settledTurn !== null && terminalTurn(settledTurn)) turnKeyRef.current = null;
+  }, [settledTurn]);
 
   useEffect(() => {
     if (view.kind !== "ready" || view.session.snapshot.eventStream === null) return;
@@ -370,6 +422,9 @@ export function ComposedReferenceGameApp() {
           session = session.resetEventCheckpoint();
         }
         setPreview(null);
+        // The recovery read is authoritative too, so a preview a committed frame was holding is
+        // spent by it - the same rule `reconcile` applies to its own answer.
+        spendHeldPreview();
         // The stream handler's own settle rule: an authoritative read that sees a
         // terminal turn spends the pending submission record. A stream that keeps
         // failing reconnects and re-suspends the poll within milliseconds of each
@@ -382,13 +437,13 @@ export function ComposedReferenceGameApp() {
           ? session.withPending(null)
           : session.withPending(current.session.pending);
         checkpoint = settled;
-        commit({ kind: "ready", root, session: settled, draft, locale: current.locale });
+        commit({ kind: "ready", root, session: settled, draft, locale: current.locale, chatProblem: null });
         setStreamNotice(null);
         retries = 0;
       } catch (error) {
         if (disposed) return;
         if (terminalReadFailure(error)) {
-          commit(problemView(error, messages(localeRef.current)));
+          commitChatProblem(error);
           return;
         }
         // The projection stands. A refresh that failed is not a conversation that stopped existing
@@ -434,6 +489,30 @@ export function ComposedReferenceGameApp() {
      */
     let reconciling = false;
     let pendingReconcile = false;
+    /**
+     * The preview a committed frame spent, held until the read that carries the message lands.
+     *
+     * A handoff is not a disappearance. `Timeline` says so at its own note: "the wire clears the
+     * preview on `message.committed` and the transcript arrives on the read that follows" - which is
+     * exactly the gap the player saw, because the clear happened at the frame and the read is a round
+     * trip later. The hold is the frame's `message.committed` and the budget above is its bound; a
+     * `turn.state_changed` still spends the preview at once, because a cancelled turn's partial reply
+     * is not owed to the transcript.
+     */
+    let previewHandoffTimer: number | null = null;
+    const holdPreviewUntilReconcile = (): void => {
+      if (previewHandoffTimer !== null) return;
+      previewHandoffTimer = window.setTimeout(() => {
+        previewHandoffTimer = null;
+        setPreview(null);
+      }, PREVIEW_HANDOFF_BUDGET_MS);
+    };
+    /** The authoritative read landed: the preview it replaces is spent now, and its budget is cancelled. */
+    const spendHeldPreview = (): void => {
+      if (previewHandoffTimer === null) return;
+      window.clearTimeout(previewHandoffTimer);
+      previewHandoffTimer = null;
+    };
     const reconcile = async (): Promise<void> => {
       if (reconciling) {
         pendingReconcile = true;
@@ -454,6 +533,7 @@ export function ComposedReferenceGameApp() {
             if (disposed || recovering || latest.kind !== "ready" || root.chat.chat === null) return;
             const session = checkpoint.applySnapshot(root.chat);
             setPreview(null);
+            spendHeldPreview();
             // The authoritative turn is settled, so a pending record for it is spent
             // - the same rule the fallback poll applies to the turns it settles. The
             // stream is the live channel and the poll is suspended underneath it, so
@@ -463,7 +543,7 @@ export function ComposedReferenceGameApp() {
               ? session.withPending(null)
               : session.withPending(latest.session.pending);
             checkpoint = settled;
-            commit({ kind: "ready", root, session: settled, draft, locale: latest.locale });
+            commit({ kind: "ready", root, session: settled, draft, locale: latest.locale, chatProblem: null });
           } catch {
             await recover(true);
             return;
@@ -495,7 +575,11 @@ export function ComposedReferenceGameApp() {
             });
             return;
           }
-          if (event.eventType === "message.committed" || event.eventType === "turn.state_changed") {
+          if (event.eventType === "message.committed") {
+            // The reply is durable; the row that shows it is in the read below, so the preview is
+            // held for that one handoff instead of vanishing here (see `holdPreviewUntilReconcile`).
+            holdPreviewUntilReconcile();
+          } else if (event.eventType === "turn.state_changed") {
             setPreview(null);
             /* The mark mapping lives in `turn-timings`: it is a fact about the contract's state union. */
             if (observeTurnEvent(event, turnKeyRef.current, null).terminal) turnKeyRef.current = null;
@@ -523,7 +607,7 @@ export function ComposedReferenceGameApp() {
         streamLiveRef.current = true;
       } catch (error) {
         streamLiveRef.current = false;
-        if (terminalReadFailure(error)) commit(problemView(error, messages(localeRef.current)));
+        if (terminalReadFailure(error)) commitChatProblem(error);
         else {
           streamFailedRef.current = true;
           setStreamNotice(messages(localeRef.current).chatArrivalNotice);
@@ -539,6 +623,7 @@ export function ComposedReferenceGameApp() {
       disposed = true;
       closeSource();
       if (retryTimer !== null) window.clearTimeout(retryTimer);
+      if (previewHandoffTimer !== null) window.clearTimeout(previewHandoffTimer);
     };
   }, [view.kind, commit, eventStreamEpoch]);
 
@@ -584,7 +669,7 @@ export function ComposedReferenceGameApp() {
       startPolling();
       return pending;
     } catch (error) {
-      commit(problemView(error, messages(current.locale)));
+      commitChatProblem(error);
       return null;
     }
   };
@@ -623,6 +708,10 @@ export function ComposedReferenceGameApp() {
    */
   const settleFailedTurnMutation = (error: unknown): void => {
     if (!hostAnswered(error)) return;
+    // An answered refusal means nothing ran, so no turn will ever settle the attempt this key names:
+    // it is not "waiting for a turn" any more, it is a name with no turn behind it. Forgotten here,
+    // at the one seam every turn-starting mutation settles through.
+    turnKeyRef.current = null;
     const latest = viewRef.current;
     if (latest.kind === "ready" && latest.session.pending !== null)
       commit({ ...latest, session: latest.session.withPending(null) });
@@ -764,6 +853,7 @@ export function ComposedReferenceGameApp() {
         session: createReferencePipelineSession(root.chat),
         draft,
         locale: localeRef.current,
+        chatProblem: null,
       });
       return;
     }
@@ -781,6 +871,9 @@ export function ComposedReferenceGameApp() {
       // the read only spends it for the one state that settles it - a terminal turn.
       session: terminalTurn(root.chat.chat.turn) ? session.withPending(null) : session,
       draft,
+      // This read landed, so the conversation it publishes has no problem: the card this shell was
+      // carrying described the state it has just replaced.
+      chatProblem: null,
     });
   };
 
@@ -805,7 +898,7 @@ export function ComposedReferenceGameApp() {
     problemRetryRef.current = true;
     void rereadChat()
       .catch((error: unknown) => {
-        commit(problemView(error, messages(localeRef.current)));
+        commitChatProblem(error);
       })
       .finally(() => {
         problemRetryRef.current = false;
@@ -1165,6 +1258,11 @@ export function ComposedReferenceGameApp() {
     if (current.kind !== "ready") return;
     if (cancelledRef.current || root.chat.chat === null) return;
     setPreview(null);
+    // The key named a turn in the conversation this mount is leaving, and the conversation it adopts
+    // is not that one's successor: its own turn, if any, was started elsewhere and has its own
+    // identity. Both switch paths (`handleChatSwitched`, `handleCurrentChatRemoved`) adopt here, so
+    // this is the one place the key can be forgotten for a committed switch.
+    turnKeyRef.current = null;
     // The refusal's sentence described an attempt in the conversation this mount is leaving, so it
     // is not a fact about the one it adopts.
     setSendFailure(null);
@@ -1172,7 +1270,7 @@ export function ComposedReferenceGameApp() {
     const base = createReferencePipelineSession(root.chat);
     const session = root.chat.eventStream === null ? base : base.resetEventCheckpoint();
     setMountedChatRevision((revision) => revision + 1);
-    commit({ ...current, root, session, draft });
+    commit({ ...current, root, session, draft, chatProblem: null });
   };
 
   /**
@@ -1217,7 +1315,7 @@ export function ComposedReferenceGameApp() {
         adoptMountedChat(pair.root, pair.draft);
         openPanelOf(CHAT_PANEL, chatEntryRef)();
       } catch (error) {
-        commit(problemView(error, messages(current.locale)));
+        commitChatProblem(error);
       }
     })();
   };
@@ -1301,7 +1399,7 @@ export function ComposedReferenceGameApp() {
         }
         adoptMountedChat(pair.root, pair.draft);
       } catch (error) {
-        commit(problemView(error, messages(locale)));
+        commitChatProblem(error);
       }
     })();
   };
@@ -1370,7 +1468,7 @@ export function ComposedReferenceGameApp() {
       try {
         await rereadChat();
       } catch {
-        commit(problemView(error, messages(current.locale)));
+        commitChatProblem(error);
       }
     }
   };
@@ -1440,7 +1538,14 @@ export function ComposedReferenceGameApp() {
 
   // The step's sentence and the card's own control are one decision, so they are read once and cannot
   // disagree: a card drawing both would name two different steps for the same refusal.
+  //
+  // Two cards, because there are two failures. `view.kind === "problem"` is the shell's own: the
+  // mount never got a session, so the card is the page. `view.chatProblem` is the conversation's,
+  // drawn INSIDE the Chat region while every other surface - the Game surface above all - keeps its
+  // place (`commitChatProblem` says why).
   const problemCard = view.kind === "problem" ? problemStepPresentation(view.step, labels()) : null;
+  const chatProblem = view.kind === "ready" ? view.chatProblem : null;
+  const chatProblemCard = chatProblem === null ? null : problemStepPresentation(chatProblem.step, labels());
 
   return (
     // One draft store for every surface: the shell is the only thing that outlives them.
@@ -1455,6 +1560,7 @@ export function ComposedReferenceGameApp() {
           </main>
         )}
         {view.kind === "problem" && problemCard !== null && (
+          // The shell never got a session: this card IS the page, and it claims the main region.
           <ProblemView
             title={view.title}
             detail={view.detail}
@@ -1480,7 +1586,24 @@ export function ComposedReferenceGameApp() {
                 covers another, and the conversation is simply the default one
                 (design/104 §2). The URL names the selected surface, so Back
                 returns to the previous one and a reload restores it. */}
-              {shownSurface === CHAT_PANEL && (
+              {shownSurface === CHAT_PANEL && chatProblem !== null && chatProblemCard !== null && (
+                // The conversation's own failure, drawn where the conversation is drawn. Two existing
+                // classes and no new rule: `.state-placeholder` is the region's centred container (the
+                // loading state uses it) and `.problem-card` is the card's. `.problem-view` is NOT
+                // reused here - it is the whole-window card (`height: 100dvh`, `id="main-content"`).
+                <div className="state-placeholder" data-testid="chat-problem">
+                  <ProblemView
+                    region="chat"
+                    title={chatProblem.title}
+                    detail={chatProblem.detail}
+                    stepLine={chatProblemCard.stepLine}
+                    action={
+                      chatProblemCard.drawsOwnRead ? { label: labels().problemRetryRead, run: retryProblemView } : null
+                    }
+                  />
+                </div>
+              )}
+              {shownSurface === CHAT_PANEL && chatProblem === null && (
                 <ChatSurface
                   transcript={view.session.snapshot.chat.transcript}
                   preview={preview}

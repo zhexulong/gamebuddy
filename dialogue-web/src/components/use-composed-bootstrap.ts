@@ -156,8 +156,17 @@ export function useComposedBootstrap(
         }
         const session = createReferencePipelineSession(pair.root.chat);
         setPreview(null);
-        commit({ kind: "ready", root: pair.root, session, draft: pair.draft, locale: localeRef.current });
+        commit({
+          kind: "ready",
+          root: pair.root,
+          session,
+          draft: pair.draft,
+          locale: localeRef.current,
+          // The mount's own read succeeded, so the conversation it publishes has no problem.
+          chatProblem: null,
+        });
       } catch (error) {
+        // Nothing was committed yet: there is no session, and no region to draw a card in.
         if (active) commit(problemView(error, messages(localeRef.current)));
       }
     })();
@@ -231,7 +240,7 @@ export function useComposedBootstrap(
           });
           session = session.withPending(applyStatus(session.pending, status).pending);
         }
-        const next = { kind: "ready" as const, root, session, draft, locale: current.locale };
+        const next = { kind: "ready" as const, root, session, draft, locale: current.locale, chatProblem: null };
         // Three awaits just happened (`readState`, `resolvePollDraft`, `readSubmissionStatus`) and the surface can
         // unmount or switch away inside any of them. The catch below answers that for the failure path; this answers
         // it for the success path, so a poll that lands after teardown does not commit state to a component that is
@@ -266,7 +275,10 @@ export function useComposedBootstrap(
           error instanceof ComposedReferenceGameProtocolError ||
           (error instanceof ComposedReferenceGameProblemError && !error.retryable)
         ) {
-          commit(problemView(error, messages(current.locale)));
+          // A read about the conversation, refused for good. The shell keeps standing - the Game
+          // projection and the Game surface are not this failure's subject - so the card is
+          // committed into the Chat region rather than over the window.
+          commit({ ...current, chatProblem: problemView(error, messages(current.locale)) });
           pollActiveRef.current = false;
           return;
         }

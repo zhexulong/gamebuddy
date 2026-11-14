@@ -20,6 +20,18 @@ export type ReadyView = Readonly<{
   session: ReferencePipelineSession;
   draft: BrowserDraftV1;
   locale: Locale;
+  /**
+   * The Chat read that failed while this shell stood, or null.
+   *
+   * A failure about the CONVERSATION is not a failure about the shell. The Game projection, the
+   * Game surface's own controls and the player's place on another surface are all still there, so
+   * the card is one region's state and not the window's: it is drawn where the conversation is,
+   * the Game surface stays mounted, and the stream that recovers the Chat half keeps running.
+   *
+   * `ViewState`'s own `kind: "problem"` is the other case and stays fatal - a mount that never had
+   * a session to keep has no region to draw a card in, and nothing else on the window to preserve.
+   */
+  chatProblem: ProblemViewState | null;
 }>;
 
 export type ViewState = Readonly<{ kind: "loading" }> | ReadyView | ProblemViewState;
