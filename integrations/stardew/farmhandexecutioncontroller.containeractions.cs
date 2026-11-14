@@ -48,37 +48,22 @@ namespace GameBuddy.Stardew;
 // `container_lock_not_granted` (we asked, and the grant did not arrive in this tick). See TakeContainerLock.
 internal sealed partial class ExecutionManager
 {
-    public LocalExecutionReceipt RequestLocalChestStore(string requestId, string chestId, string expectedQualifiedItemId, long requestedDeadlineMs)
-    {
-        if (this.AdmitLocalExecution(requestId, requestedDeadlineMs, AdmissionActionabilityProfile.General, out string executionId, out long nowMs) is LocalExecutionReceipt admissionRejection)
-            return admissionRejection;
-        if (!TryFindCarriedStack(expectedQualifiedItemId, out _, out _))
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "item_not_owned_in_slot", $"item={expectedQualifiedItemId};carried=none");
-
-        GameLocation location = Game1.player.currentLocation;
-        StorageContainerResolution resolved = ResolveStorageContainerById(location, chestId);
-        if (!resolved.Resolved)
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, resolved.RefusalReasonCode!, $"target={chestId}");
-        // 5.2: out of the native radius, walk in rather than refuse. The item and the
-        // container are resolved above; both are re-resolved after the walk inside the
-        // closure, because the walk takes several ticks and either can change.
-        if (!IsTileWithinChebyshevRadius(Game1.player, resolved.X, resolved.Y, 1))
-        {
-            return this.TryBeginToolApproach(
-                requestId,
-                executionId,
-                "chest_store",
-                location,
-                resolved.X,
-                resolved.Y,
-                chestId,
-                (arrivalExecutionId, arrivalRequestId) => this.ExecuteChestStore(arrivalExecutionId, arrivalRequestId, chestId, expectedQualifiedItemId),
-                nowMs,
-                requestedDeadlineMs);
-        }
-
-        return this.ExecuteChestStore(executionId, requestId, chestId, expectedQualifiedItemId);
-    }
+    public LocalExecutionReceipt RequestLocalChestStore(string requestId, string chestId, string expectedQualifiedItemId, long requestedDeadlineMs) =>
+        this.RequestLocalTileTarget(
+            "chest_store", requestId, chestId, requestedDeadlineMs,
+            AdmissionActionabilityProfile.General,
+            gate: location =>
+            {
+                if (!TryFindCarriedStack(expectedQualifiedItemId, out _, out _))
+                    return TileTargetGate.Refused(new TileTargetRefusal("item_not_owned_in_slot", $"item={expectedQualifiedItemId};carried=none"));
+                // The item and the container are resolved before the walk; both are re-resolved after it inside the
+                // closure, because the walk takes several ticks and either can change.
+                StorageContainerResolution resolved = ResolveStorageContainerById(location, chestId);
+                return resolved.Resolved
+                    ? TileTargetGate.Resolved(resolved.X, resolved.Y)
+                    : TileTargetGate.Refused(new TileTargetRefusal(resolved.RefusalReasonCode!, $"target={chestId}"));
+            },
+            execute: (executionId, admittedRequestId) => this.ExecuteChestStore(executionId, admittedRequestId, chestId, expectedQualifiedItemId));
 
     /// <summary>
     /// Executes chest_store against the current world, re-resolving the item, the
@@ -147,35 +132,20 @@ internal sealed partial class ExecutionManager
         return this.RememberTerminal(requestId, executionId, failureState, "chest_full", evidence);
     }
 
-    public LocalExecutionReceipt RequestLocalChestRetrieve(string requestId, string chestId, string expectedQualifiedItemId, long requestedDeadlineMs)
-    {
-        if (this.AdmitLocalExecution(requestId, requestedDeadlineMs, AdmissionActionabilityProfile.General, out string executionId, out long nowMs) is LocalExecutionReceipt admissionRejection)
-            return admissionRejection;
-
-        GameLocation location = Game1.player.currentLocation;
-        StorageContainerResolution resolved = ResolveStorageContainerById(location, chestId);
-        if (!resolved.Resolved)
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, resolved.RefusalReasonCode!, $"target={chestId}");
-        // 5.2: out of the native radius, walk in rather than refuse. The container is
-        // resolved above; it and the stored item are re-resolved after the walk inside
-        // the closure, because the walk takes several ticks and either can change.
-        if (!IsTileWithinChebyshevRadius(Game1.player, resolved.X, resolved.Y, 1))
-        {
-            return this.TryBeginToolApproach(
-                requestId,
-                executionId,
-                "chest_retrieve",
-                location,
-                resolved.X,
-                resolved.Y,
-                chestId,
-                (arrivalExecutionId, arrivalRequestId) => this.ExecuteChestRetrieve(arrivalExecutionId, arrivalRequestId, chestId, expectedQualifiedItemId),
-                nowMs,
-                requestedDeadlineMs);
-        }
-
-        return this.ExecuteChestRetrieve(executionId, requestId, chestId, expectedQualifiedItemId);
-    }
+    public LocalExecutionReceipt RequestLocalChestRetrieve(string requestId, string chestId, string expectedQualifiedItemId, long requestedDeadlineMs) =>
+        this.RequestLocalTileTarget(
+            "chest_retrieve", requestId, chestId, requestedDeadlineMs,
+            AdmissionActionabilityProfile.General,
+            gate: location =>
+            {
+                // The container is resolved before the walk; it and the stored item are re-resolved after it inside
+                // the execution body, because the walk takes several ticks and either can change.
+                StorageContainerResolution resolved = ResolveStorageContainerById(location, chestId);
+                return resolved.Resolved
+                    ? TileTargetGate.Resolved(resolved.X, resolved.Y)
+                    : TileTargetGate.Refused(new TileTargetRefusal(resolved.RefusalReasonCode!, $"target={chestId}"));
+            },
+            execute: (executionId, admittedRequestId) => this.ExecuteChestRetrieve(executionId, admittedRequestId, chestId, expectedQualifiedItemId));
 
     /// <summary>
     /// Executes chest_retrieve against the current world, re-resolving the container
