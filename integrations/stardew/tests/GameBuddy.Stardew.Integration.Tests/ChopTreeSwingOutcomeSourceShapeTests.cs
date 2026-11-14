@@ -30,7 +30,7 @@ public sealed class ChopTreeSwingOutcomeSourceShapeTests
     {
         // COMMENTS ARE STRIPPED, and this test's first green attempt is why: the assertions below look for strings the
         // comments explain, and a gate its own prose can satisfy is the same defect as one its prose can fail.
-        string body = WithoutComments(MethodBody(Source(), "private LocalExecutionReceipt ExecuteChopTreeSource("));
+        string body = WithoutComments(MethodBody(Source(), "private LocalExecutionReceipt ExecuteChopTree("));
 
         // The loop's bound is derived from the tree's own health, and its terminal is the engine's felled marker -
         // not a health value the fixture happened to start on.
@@ -48,7 +48,7 @@ public sealed class ChopTreeSwingOutcomeSourceShapeTests
         // The model should not have to observe again to learn what the chop did. `break_resource_clump` already reports
         // `health_before`/`health_after`/`swings` in one receipt; this action reports the same three facts, and the Host
         // validator accepts exactly this key set.
-        string body = WithoutComments(MethodBody(Source(), "private LocalExecutionReceipt ExecuteChopTreeSource("));
+        string body = WithoutComments(MethodBody(Source(), "private LocalExecutionReceipt ExecuteChopTree("));
 
         body.Should().Contain("health_before={before", "the receipt names the tree's health before the swings");
         body.Should().Contain("health_after={healthAfterText}", "and the health it was left at");
@@ -58,7 +58,7 @@ public sealed class ChopTreeSwingOutcomeSourceShapeTests
     [Fact]
     public void AStopNamesWhatEndedTheSwingsAndReportsAPartialResultAsUncertain()
     {
-        string body = WithoutComments(MethodBody(Source(), "private LocalExecutionReceipt ExecuteChopTreeSource("));
+        string body = WithoutComments(MethodBody(Source(), "private LocalExecutionReceipt ExecuteChopTree("));
 
         body.Should().Contain("tree_changed_during_swings", "a tree replaced mid-loop is not the tree that was asked for");
         body.Should().Contain("tool_no_longer_satisfies", "and a tool that stopped damaging the source must say so");

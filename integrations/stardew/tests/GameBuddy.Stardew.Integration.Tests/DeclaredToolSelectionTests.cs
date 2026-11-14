@@ -439,7 +439,7 @@ public sealed class DeclaredToolSelectionTests
         {
             ("cut_weeds", ResourceToolActions, "private LocalExecutionReceipt ExecuteCutWeeds(", "CutWeeds"),
             ("cut_grass", ResourceToolActions, "private LocalExecutionReceipt ExecuteCutGrass(", "CutGrass"),
-            ("break_rock", ResourceToolActions, "private LocalExecutionReceipt ExecuteBreakRockSource(", "BreakRockSource"),
+            ("break_rock", ResourceToolActions, "private LocalExecutionReceipt ExecuteBreakRock(", "BreakRockSource"),
             ("water_crop", FarmingConstructionActions, "private LocalExecutionReceipt ExecuteWaterCrop(", "WaterCrop"),
         })
         {

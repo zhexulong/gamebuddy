@@ -115,9 +115,10 @@ public sealed class RockSourceSwingOutcomeTests
             "the radar and the action must not disagree about which rocks exist");
 
         // Two revalidations: the pre-approach one and the execution body's own, which must both admit the target the
-        // radar published.
-        CountOccurrences(tools, "!NativeItemPredicates.IsBreakableStone(rock)")
-            .Should().Be(2, "both break_rock_source revalidations ask the same predicate");
+        // radar published. The pre-approach one asks the positive predicate (its refusal is "not a breakable stone"),
+        // so the shared spelling is the call itself, not the sign in front of it.
+        CountOccurrences(tools, "NativeItemPredicates.IsBreakableStone(rock)")
+            .Should().Be(2, "both break_rock revalidations ask the same predicate");
 
         // The whole CALL, closing parens included: a prefix would still match a `&& item.MinutesUntilReady == 1`
         // appended after it, which is the exact regression this pins.
@@ -162,7 +163,7 @@ public sealed class RockSourceSwingOutcomeTests
     private static string ExecutionBody(string tools)
     {
         const string declaration =
-            "private LocalExecutionReceipt ExecuteBreakRockSource(string executionId, string requestId, int slot, int targetX, int targetY, string expectedTargetId)";
+            "private LocalExecutionReceipt ExecuteBreakRock(string executionId, string requestId, int slot, int targetX, int targetY, string expectedTargetId)";
         int at = tools.IndexOf(declaration, StringComparison.Ordinal);
         at.Should().BeGreaterThanOrEqualTo(0, "the rock execution body must be findable by its declaration");
         int depth = 0;
@@ -176,7 +177,7 @@ public sealed class RockSourceSwingOutcomeTests
                 if (started && depth == 0) return tools[at..(i + 1)];
             }
         }
-        throw new InvalidOperationException("unbalanced ExecuteBreakRockSource body");
+        throw new InvalidOperationException("unbalanced ExecuteBreak body");
     }
 
     private static string DiscoveryBody(string controller)
