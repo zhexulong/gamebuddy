@@ -5,6 +5,7 @@
 // A synthetic chara_card_v3 card is staged through the paste lane (in-page textarea + native input
 // event; nothing leaves the browser). The review is then cancelled, so no companion is provisioned.
 const { connect, reporter, PAGE_HELPERS, activateSurface, shot, observe, observationStart } = require("./common.cjs");
+const { companionNames, sameCompanions } = require("./companion-names.cjs");
 
 const CARD = JSON.stringify({
   spec: "chara_card_v3",
@@ -19,15 +20,18 @@ const CARD = JSON.stringify({
   },
 });
 
-const beforeFacts = () => {
-  const panel = document.querySelector("[data-characters-panel]");
-  const cards = [...panel.children].map((card) => String((card.innerText || "").split("\n")[0] || "").trim());
+/** What the surface offers, without reading the panel's section order as if it were the companions. */
+const surfaceFacts = () => {
   const section = document.querySelector('[data-testid="characters-surface"]');
-  return {
-    companionCards: cards,
-    importSectionPresent: section?.querySelector("[data-card-import]") !== null,
-  };
+  return { importSectionPresent: section?.querySelector("[data-card-import]") !== null };
 };
+
+/**
+ * The durable companion list, read by the one reader that means "the same named companions"
+ * (`companion-names.cjs`). Its own source runs in the page, so the driver and its test read the same
+ * markup rather than two spellings of it.
+ */
+const readCompanions = (page) => page.evaluate(`(${companionNames.toString()})(document)`);
 
 const stageCard = (card) => {
   const section = document.querySelector("[data-card-import]");
@@ -95,9 +99,13 @@ const cancelReview = () => {
   await activateSurface(page, "角色");
   await page.waitForTimeout(1500);
 
-  const before = await page.evaluate(beforeFacts);
+  const before = await page.evaluate(surfaceFacts);
+  const companionsBefore = await readCompanions(page);
   say("=== ITEM: card-import review field names — state before staging ===");
   say(JSON.stringify(before, null, 1));
+  say(
+    `companions before staging (${companionsBefore.names === null ? "unobserved" : `${companionsBefore.names.length} examined`}): ${JSON.stringify(companionsBefore.names)}`,
+  );
   if (before.importSectionPresent !== true) {
     say("review verdict: SKIPPED:no_card_import_section_on_characters_surface");
     flush();
@@ -133,10 +141,29 @@ const cancelReview = () => {
   const cancelled = await page.evaluate(cancelReview);
   say("cancel:", cancelled);
   await page.waitForTimeout(800);
-  const after = await page.evaluate(beforeFacts);
+  const companionsAfter = await readCompanions(page);
   say("=== ITEM: durable companion list unchanged after cancel ===");
-  say(JSON.stringify(after, null, 1));
-  say(`companion list unchanged: ${JSON.stringify(before.companionCards) === JSON.stringify(after.companionCards)}`);
+  say(
+    `companions after the cancel (${companionsAfter.names === null ? "unobserved" : `${companionsAfter.names.length} examined`}): ${JSON.stringify(companionsAfter.names)}`,
+  );
+  const unchanged = sameCompanions(companionsBefore.names, companionsAfter.names);
+  say(`companion list unchanged: ${unchanged} (by name, ${companionsBefore.names?.length ?? 0} examined)`);
+  if (!unchanged) {
+    // A reading that measured nothing is not a pass: two absent lists are not "the same companions".
+    say(
+      companionsBefore.names === null || companionsAfter.names === null
+        ? `companion list unobserved: before=${JSON.stringify(companionsBefore)} after=${JSON.stringify(companionsAfter)}`
+        : `companion list changed: before=${JSON.stringify(companionsBefore.names)} after=${JSON.stringify(companionsAfter.names)}`,
+    );
+    flush();
+    await browser.close().catch(() => undefined);
+    say(
+      companionsBefore.names === null || companionsAfter.names === null
+        ? "DRIVER J FAILED: companion_list_unobserved"
+        : `DRIVER J FAILED: companion_list_changed:before=${JSON.stringify(companionsBefore.names)}:after=${JSON.stringify(companionsAfter.names)}`,
+    );
+    process.exit(1);
+  }
 
   await observe(page, say, "j", { sinceMs: observationFrom });
   flush();
