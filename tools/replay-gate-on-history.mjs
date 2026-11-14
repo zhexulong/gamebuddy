@@ -424,7 +424,7 @@ function lastMatchCount(pattern, text) {
 function jsonReport(text) {
   for (const line of text.split(/\r?\n/u)) {
     const trimmed = line.trim();
-    if (!trimmed.startsWith("{") || !trimmed.endsWith("}")) continue;
+    if (!(trimmed.startsWith("{") && trimmed.endsWith("}"))) continue;
     try {
       const parsed = JSON.parse(trimmed);
       if (Array.isArray(parsed.findings)) {
@@ -437,7 +437,7 @@ function jsonReport(text) {
         return { findings: parsed.findings, population: Number.isFinite(parsed.examined) ? parsed.examined : null };
       }
     } catch {
-      continue;
+      // A line that is not JSON is not a report; the next line may still be one.
     }
   }
   return null;
@@ -489,7 +489,7 @@ export function readReportVerdict({ exitCode, stdout, stderr }) {
       .split(/\r?\n/u)
       .map((line) => line.trim())
       .filter((line) => line !== "" && line !== reportLine);
-    const reported = details.length > 0 ? details : reportLine === null ? [] : [reportLine];
+    const reported = details.length > 0 || reportLine === null ? details : [reportLine];
     if (exitCode === 0)
       return {
         verdict: "not_measured",
@@ -538,19 +538,17 @@ function tapBlocks(stdout) {
     if (/^ok\s+\d+\s+-/u.test(line)) {
       current = null;
       nested = null;
-      continue;
+    } else if (current !== null) {
+      const field = /^ {2}([A-Za-z_]+):\s?(.*)$/u.exec(line);
+      if (field !== null) {
+        const value = field[2].replace(/^'(.*)'$/u, "$1");
+        current.fields.set(field[1], value);
+        nested = value === "" ? field[1] : null;
+      } else if (nested === "actual") {
+        const entry = /^ {4}\d+:\s'(.*)'$/u.exec(line);
+        if (entry !== null) current.actual.push(entry[1]);
+      }
     }
-    if (current === null) continue;
-    const field = /^ {2}([A-Za-z_]+):\s?(.*)$/u.exec(line);
-    if (field !== null) {
-      const value = field[2].replace(/^'(.*)'$/u, "$1");
-      current.fields.set(field[1], value);
-      nested = value === "" ? field[1] : null;
-      continue;
-    }
-    if (nested !== "actual") continue;
-    const entry = /^ {4}\d+:\s'(.*)'$/u.exec(line);
-    if (entry !== null) current.actual.push(entry[1]);
   }
   return blocks;
 }
@@ -581,7 +579,7 @@ export function readTestRunVerdict({ exitCode, stdout, stderr }) {
     };
   }
   const tests = lastMatchCount(/^# tests (\d+)$/gmu, stdout);
-  const passed = lastMatchCount(/^# pass (\d+)$/gmu, stdout);
+  const passing = lastMatchCount(/^# pass (\d+)$/gmu, stdout);
   const failures = tapBlocks(stdout).filter((block) => block.fields.get("failureType") === "testCodeFailure");
   const assertions = failures.filter((block) =>
     /ERR_ASSERTION|AssertionError/u.test(`${block.fields.get("code")} ${block.fields.get("name")}`),
@@ -618,12 +616,12 @@ export function readTestRunVerdict({ exitCode, stdout, stderr }) {
         reportLine: null,
       };
     }
-    if ((tests ?? 0) === 0)
+    if ((tests ?? 0) === 0 || (passing ?? 0) === 0)
       return {
         verdict: "not_measured",
         reason: "population_empty",
         findings: 0,
-        population: 0,
+        population: tests ?? 0,
         details: [],
         reportLine: null,
       };
@@ -644,9 +642,11 @@ export function readTestRunVerdict({ exitCode, stdout, stderr }) {
   return { verdict: "fired", findings: details.length, population: tests, details, reportLine: null, readings };
 }
 
-/** `succeeded` for a gate that exited 0 - the reading a missing `findings` count cannot replace. */
+/** The environment the gate runs in: the repository's own, minus the test-runner context. */
 function childEnvironment() {
   const environment = { ...process.env };
+  // A `node --test` child that inherits NODE_TEST_CONTEXT writes nothing and exits 0, so a replay started
+  // from inside a suite would read an empty run as a clean one.
   delete environment.NODE_TEST_CONTEXT;
   return environment;
 }
@@ -660,11 +660,12 @@ function runGate(treeDir, invocation) {
     timeout: GATE_TIMEOUT_MS,
     env: childEnvironment(),
   });
+  const timedOut = result.error?.code === "ETIMEDOUT";
   return {
-    exitCode: result.status ?? (result.error?.code === "ETIMEDOUT" ? "timeout" : -1),
+    exitCode: result.status ?? (timedOut ? "timeout" : -1),
     stdout: result.stdout ?? "",
     stderr: result.stderr ?? `${result.error?.message ?? ""}`,
-    timedOut: result.error?.code === "ETIMEDOUT",
+    timedOut,
   };
 }
 

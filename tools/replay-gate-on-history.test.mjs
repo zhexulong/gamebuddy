@@ -247,8 +247,8 @@ test("the selector gate names the two spellings the drawer conversion deleted", 
   ]);
   assert.equal(replayed.status, 0, replayed.output);
   const [before, after] = replayed.output.split("== ").slice(1);
-  assert.match(before, /verdict: fired  findings=6/u);
-  assert.match(after, /verdict: fired  findings=8/u);
+  assert.match(before, /verdict: fired\s+findings=6/u);
+  assert.match(after, /verdict: fired\s+findings=8/u);
   assert.doesNotMatch(before, /aria-modal/u);
   assert.match(after, /attr `aria-modal` is asserted absent/u);
   assert.match(after, /class `composed-drawer-backdrop` is asserted absent/u);
