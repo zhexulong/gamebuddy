@@ -85,10 +85,6 @@
       "reason": "predates_the_template"
     },
     {
-      "file": "tools/run-stardew-native-local-player-clear-fish-pond-smoke.mjs",
-      "reason": "predates_the_template"
-    },
-    {
       "file": "tools/run-stardew-native-local-player-clear-hoedirt-smoke.mjs",
       "reason": "predates_the_template"
     },

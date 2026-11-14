@@ -82,8 +82,8 @@ const CONFIG_DRIVER_ACTION = Object.freeze({
   // - but they are still runners whose config contract must be checked, which is what this list is for.
   "run-stardew-native-local-player-body-owner-hold-smoke.mjs": "body_owner_hold",
   // The pond runner drives the action whose fixture it uses, so this table names that action: the fixture
-  // library keys the scenario on it.
-  "run-stardew-native-local-player-clear-fish-pond-smoke.mjs": "clear_fish_pond",
+  // library keys the scenario on it. Retired to the contract route (2026-11-14): `clear_fish_pond`'s gate is
+  // `contracts/smoke/clear_fish_pond.json` now, so there is no runner here to check a config against.
   "run-stardew-native-local-player-build-farm-building-smoke.mjs": "build_farm_building",
   // A synchronous name write with no target id: the subject is the actor's own horse, so the
   // fixture scenario is keyed on the action alone.

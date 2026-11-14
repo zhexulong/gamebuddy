@@ -871,10 +871,26 @@ test("a contract whose runner is gone is promoted when its row routes through it
 });
 
 test("a contract that drops an assertion its runner makes is refused, naming the contract and the clause", async () => {
-  // Exactly the state before the declarations landed: the same committed contracts, every `unasserted` block removed.
+  // The falsifier supplies its own subject: a declaration injected into a contract the gate still compares, then
+  // stripped with every other declaration. Depending on which committed contracts happen to declare a gap made this
+  // falsifier go green the moment those actions were promoted to the contract route, which is a test that stopped
+  // testing.
+  const subject = "accept_daily_quest.json";
+  const subjectClause = "accept_daily_quest:evidence.accepted_after";
   const stripped = await checkContractCoverage({
-    contractDirectory: corpusOf((raw) => {
+    contractDirectory: corpusOf((raw, file) => {
+      // The subject has to LOSE the clause when the declaration goes, so the declaration is the only thing standing
+      // between the runner's assertion and a drop: delete one evidence entry and declare that same entry.
       const next = { ...raw };
+      if (file === subject) {
+        const { accepted_after, ...rest } = raw.evidence;
+        next.evidence = rest;
+        next.unasserted = {
+          ...(raw.unasserted ?? {}),
+          "evidence.accepted_after":
+            "accepted_after is declared here so the falsifier has a clause to lose when declarations are stripped",
+        };
+      }
       delete next.unasserted;
       return next;
     }, "undeclared"),
@@ -882,17 +898,14 @@ test("a contract that drops an assertion its runner makes is refused, naming the
   const error = expectRefusal(() => assertContractCoverage(stripped), "drops_a_runner_assertion");
   // The inverse: what the declarations excuse is exactly what the gate reports once they are gone. A declaration
   // that excused nothing, or a drop that no declaration covered, makes these two readings disagree.
-  assert.deepEqual(stripped.dropped, DECLARED_CLAUSES, "the gate's red is the declarations' own contents");
+  const expected = [...new Set([...DECLARED_CLAUSES, subjectClause])].sort();
+  assert.deepEqual(stripped.dropped, expected, "the gate's red is the declarations' own contents");
   for (const clause of stripped.dropped)
     assert.ok(error.message.includes(clause), `${clause} is not named: ${error.message}`);
   const namedActions = new Set(stripped.dropped.map((clause) => clause.split(":")[0]));
-  assert.deepEqual(
-    [...namedActions].sort(),
-    coverage.readings
-      .filter((reading) => reading.declared.length > 0)
-      .map((reading) => reading.action)
-      .sort(),
-    "the contracts the gate names are the contracts that declare a gap",
+  assert.ok(
+    namedActions.has("accept_daily_quest"),
+    `the contract the falsifier supplied a declaration to is named: ${[...namedActions].sort().join(",")}`,
   );
   console.log(
     `dropped ${stripped.dropped.length} clauses across ${namedActions.size} contracts · examined ${stripped.examined}`,
@@ -900,15 +913,18 @@ test("a contract that drops an assertion its runner makes is refused, naming the
 });
 
 test("a declaration that outlives its clause is refused, so an exemption expires with the thing it exempted", async () => {
+  // Pointed at a contract whose runner is still on disk: a promoted contract has no clauses to outlive.
+  const subject = "accept_daily_quest.json";
   const stale = await checkContractCoverage({
     contractDirectory: corpusOf(
       (raw, file) =>
-        file === "pet_animal.json"
+        file === subject
           ? {
               ...raw,
               unasserted: {
                 ...(raw.unasserted ?? {}),
-                "evidence.pet_day": "pet_day is compared with itself inside the runner, so no contract states it",
+                "evidence.not_a_clause":
+                  "not_a_clause names no clause any runner asserts, so this exemption excuses nothing at all",
               },
             }
           : raw,
@@ -917,7 +933,7 @@ test("a declaration that outlives its clause is refused, so an exemption expires
   });
   const error = expectRefusal(() => assertContractCoverage(stale), "unasserted_clause_unknown");
   assert.ok(
-    error.message.includes("pet_animal:evidence.pet_day"),
+    error.message.includes("accept_daily_quest:evidence.not_a_clause"),
     `the refusal names the declaration that outlived its clause: ${error.message}`,
   );
 });
@@ -926,13 +942,13 @@ test("a contract that states a covered clause wrongly is refused, so the compari
   const wrongValue = await checkContractCoverage({
     contractDirectory: corpusOf(
       (raw, file) =>
-        file === "pet_animal.json" ? { ...raw, evidence: { ...raw.evidence, friendship_after: "13" } } : raw,
+        file === "accept_daily_quest.json" ? { ...raw, evidence: { ...raw.evidence, accepted_after: "false" } } : raw,
       "wrong-value",
     ),
   });
   const valueError = expectRefusal(() => assertContractCoverage(wrongValue), "drops_a_runner_assertion");
   assert.ok(
-    valueError.message.includes("pet_animal:evidence.friendship_after"),
+    valueError.message.includes("accept_daily_quest:evidence.accepted_after"),
     `a value the runner does not accept is a dropped clause: ${valueError.message}`,
   );
 

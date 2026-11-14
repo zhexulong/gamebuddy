@@ -29,8 +29,8 @@
  *
  * Exit 0 only when every field was derived; 1 when any field is `not_derivable`; 2 when the runner cannot be read.
  */
-import { readFileSync } from "node:fs";
-import { basename, resolve } from "node:path";
+import { mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { basename, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
 import {
@@ -38,6 +38,7 @@ import {
   deriveActionFacts,
   GENERIC_POSTCONDITION,
   SMOKE_CONTRACT_SCHEMA,
+  validateSmokeContract,
 } from "./lib/stardew-action-smoke-contract.mjs";
 
 const RUNNER_NAME = /^run-stardew-native-local-player-([a-z0-9-]+)-smoke\.mjs$/u;
@@ -194,7 +195,7 @@ function deriveDiscovery(code, facts, args) {
     ),
   ].sort();
   fields.push(derived("discovery.requiredFields", requiredFields, "the substituted target fields in args"));
-  return { value: { cardinality, select, requiredFields }, fields };
+  return { value: { source: facts.targetFamily, cardinality, select, requiredFields }, fields };
 }
 
 function deriveReasonCode(code, facts) {
@@ -237,7 +238,7 @@ const EVIDENCE_EQUALS =
 const EVIDENCE_TARGET =
   /(?:assertEvidence\(\s*evidence\s*,\s*"([a-z0-9_]+)"\s*,\s*target\.([A-Za-z][A-Za-z0-9_]*)\s*\)|evidence\.([a-z0-9_]+)\s*===\s*String\(target\.([A-Za-z][A-Za-z0-9_]*)\)|evidence\.([a-z0-9_]+)\s*===\s*target\.([A-Za-z][A-Za-z0-9_]*)(?![.\w(]))/gu;
 
-function deriveEvidence(code) {
+function deriveEvidence(code, deltaClaimed = new Set()) {
   const fields = [];
   const evidence = {};
   for (const match of code.matchAll(EVIDENCE_EQUALS)) {
@@ -255,7 +256,7 @@ function deriveEvidence(code) {
   const known = new Set([...Object.keys(evidence), "detail"]);
   for (const match of code.matchAll(/evidence\.([a-z0-9_]+)/gu)) {
     const key = match[1];
-    if (known.has(key)) continue;
+    if (known.has(key) || deltaClaimed.has(key)) continue;
     const line = lineOf(code, match.index);
     const lineText = code.split("\n")[line - 1] ?? "";
     if (!lineText.includes(`evidence.${key}`)) continue;
@@ -373,6 +374,43 @@ function deriveStale(code) {
   return { value: { refusedWith }, fields };
 }
 
+const DELTA_SUM =
+  /Number\(\s*evidence\.([a-z0-9_]+)\s*\)\s*===\s*Number\(\s*evidence\.([a-z0-9_]+)\s*\)\s*\+\s*(\d+)/gu;
+const DELTA_EQUAL = /evidence\.([a-z0-9_]+)\s*===\s*evidence\.([a-z0-9_]+)(?![\w.])/gu;
+const DELTA_AT_LEAST = /evidence\.([a-z0-9_]+)\s*>=\s*(\d+)\b/gu;
+
+/**
+ * The `delta` entries a runner's arithmetic asks for, and the keys those entries answer for.
+ *
+ * Three shapes only, because those are the three the format carries: a sum (`to === from + n`), an equality
+ * (`to === from`) and a bare lower bound (`to >= n`). Anything else stays a refusal, so the frequency table keeps
+ * naming what the schema still cannot say.
+ */
+function deriveDelta(code) {
+  const fields = [];
+  const entries = [];
+  const claimed = new Set();
+  for (const match of code.matchAll(DELTA_SUM)) {
+    entries.push({ from: match[2], to: match[1], equals: Number(match[3]) });
+    claimed.add(match[1]);
+    claimed.add(match[2]);
+    fields.push(derived(`delta.${match[1]}`, `${match[2]}+${match[3]}`, `runner:${lineOf(code, match.index)}`));
+  }
+  for (const match of code.matchAll(DELTA_EQUAL)) {
+    if (match[1] === match[2]) continue;
+    entries.push({ from: match[2], to: match[1], equals: 0 });
+    claimed.add(match[1]);
+    claimed.add(match[2]);
+    fields.push(derived(`delta.${match[1]}`, `${match[2]}+0`, `runner:${lineOf(code, match.index)}`));
+  }
+  for (const match of code.matchAll(DELTA_AT_LEAST)) {
+    entries.push({ to: match[1], atLeast: Number(match[2]) });
+    claimed.add(match[1]);
+    fields.push(derived(`delta.${match[1]}`, `>=${match[2]}`, `runner:${lineOf(code, match.index)}`));
+  }
+  return { value: entries, claimed, fields };
+}
+
 /** The draft contract plus the provenance of every field in it. */
 export function draftContract(runnerPath, { facts = null } = {}) {
   const absolute = resolve(runnerPath);
@@ -387,7 +425,8 @@ export function draftContract(runnerPath, { facts = null } = {}) {
   const reason = deriveReasonCode(code, actionFacts);
   const args = deriveArgs(code, actionFacts);
   const discovery = deriveDiscovery(code, actionFacts, args.value ?? {});
-  const evidence = deriveEvidence(code);
+  const delta = deriveDelta(code);
+  const evidence = deriveEvidence(code, delta.claimed);
   const worldAfter = deriveWorldAfter(code);
   const stale = deriveStale(code);
 
@@ -403,12 +442,14 @@ export function draftContract(runnerPath, { facts = null } = {}) {
   if (Object.keys(evidence.value).length > 0) contract.evidence = evidence.value;
   if (worldAfter.value.length > 0) contract.worldAfter = worldAfter.value;
   if (stale.value !== null) contract.stale = stale.value;
+  if (delta.value.length > 0) contract.delta = delta.value;
 
   const fields = [
     derived("action", actionId, `runner:${name}`),
     ...reason.fields,
     ...discovery.fields,
     ...args.fields,
+    ...delta.fields,
     ...evidence.fields,
     ...worldAfter.fields,
     ...stale.fields,
@@ -433,7 +474,114 @@ export function compareContracts(draft, existing) {
   return differences;
 }
 
+/** Where `--all` writes its drafts. A directory, never stdout: a reading nobody can open is a claim. */
+export const DRAFT_DIRECTORY = ".tmp/contract-drafts";
+
+/** Every hand-written runner still on disk, derived by a scan so tomorrow's runner is measured the moment it exists. */
+export function runnerPopulation({ toolsRoot }) {
+  return readdirSync(toolsRoot)
+    .filter((name) => RUNNER_NAME.test(name))
+    .sort();
+}
+
+/**
+ * The measurement: every hand-written runner, drafted; every field the converter could not read, counted.
+ *
+ * The frequency table is the point. A field that blocks one runner is a hook to write; a field that blocks five is a
+ * schema kind, because five runners is data and one is code. `drafted` counts contracts that LOAD - a file written
+ * from a draft the format refuses is not a draft anybody can use, so it is counted apart and named with its reason.
+ */
+export async function draftAll({ toolsRoot, outDir, write = true } = {}) {
+  const population = runnerPopulation({ toolsRoot });
+  if (population.length === 0)
+    return Object.freeze({
+      blocked: `runner_population_empty:${toolsRoot}`,
+      examined: 0,
+      drafted: 0,
+      incomplete: 0,
+      unloadable: Object.freeze([]),
+      refusals: Object.freeze([]),
+      runnersWithRefusals: 0,
+      byField: Object.freeze([]),
+      outDir,
+    });
+  const refusals = [];
+  const unloadable = [];
+  let drafted = 0;
+  let incomplete = 0;
+  for (const runner of population) {
+    let draft;
+    try {
+      draft = draftContract(join(toolsRoot, runner));
+    } catch (error) {
+      unloadable.push(Object.freeze({ runner, why: String(error?.message ?? error) }));
+      continue;
+    }
+    const refused = draft.fields.filter((field) => !field.ok);
+    if (refused.length > 0) incomplete += 1;
+    for (const field of refused)
+      refusals.push(Object.freeze({ runner, field: field.field, why: field.why, where: field.where }));
+    if (write) {
+      mkdirSync(outDir, { recursive: true });
+      writeFileSync(join(outDir, `${draft.action}.json`), `${JSON.stringify(draft.contract, null, 2)}\n`, "utf8");
+    }
+    try {
+      validateSmokeContract(draft.contract);
+      drafted += 1;
+    } catch (error) {
+      unloadable.push(Object.freeze({ runner, why: String(error?.message ?? error) }));
+    }
+  }
+  const counts = new Map();
+  for (const refusal of refusals) counts.set(refusal.field, (counts.get(refusal.field) ?? 0) + 1);
+  const byField = [...counts.entries()]
+    .sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0]))
+    .map(([field, count]) => Object.freeze({ field, count }));
+  return Object.freeze({
+    blocked: null,
+    examined: population.length,
+    drafted,
+    incomplete,
+    unloadable: Object.freeze(unloadable),
+    refusals: Object.freeze(refusals),
+    runnersWithRefusals: incomplete,
+    byField: Object.freeze(byField),
+    outDir,
+  });
+}
+
+/** The reading, in the shape a batch is chosen from. */
+export function renderDraftAll(reading) {
+  if (reading.blocked !== null) return [`not_measured:${reading.blocked}`];
+  const lines = [
+    `runners examined ${reading.examined} · drafted ${reading.drafted} · not_derivable ${reading.refusals.length}` +
+      ` (fields, across ${reading.runnersWithRefusals} runners)`,
+    `underived fields by frequency (top 10):`,
+  ];
+  for (const entry of reading.byField.slice(0, 10)) lines.push(`  ${entry.field.padEnd(34)} ${entry.count}`);
+  if (reading.unloadable.length > 0) {
+    lines.push(`unloadable ${reading.unloadable.length}:`);
+    for (const entry of reading.unloadable) lines.push(`  ${entry.runner}: ${entry.why}`);
+  }
+  lines.push(`drafts: ${reading.outDir}`);
+  return lines;
+}
+
 function main(argv) {
+  if (argv.includes("--all")) {
+    const outIndex = argv.indexOf("--out");
+    const outDir = outIndex >= 0 ? resolve(argv[outIndex + 1]) : resolve(DRAFT_DIRECTORY);
+    return draftAll({ toolsRoot: resolve(import.meta.dirname), outDir }).then((reading) => {
+      for (const line of renderDraftAll(reading)) process.stdout.write(`${line}\n`);
+      if (reading.blocked !== null) return 2;
+      for (const refusal of reading.refusals)
+        process.stdout.write(
+          `  not_derivable:${refusal.field}:${refusal.why}  <- ${refusal.runner}` +
+            `${refusal.where === null ? "" : ` ${refusal.where}`}\n`,
+        );
+      return reading.refusals.length === 0 ? 0 : 1;
+    });
+  }
   const runnerPath = argv[0];
   if (runnerPath === undefined) {
     process.stderr.write("usage: node tools/draft-smoke-contract.mjs <runner-path> [--check <contract.json>]\n");

@@ -14,7 +14,6 @@
   },
   "evidence": {
     "target": { "equalsTarget": "targetId" },
-    "location": "Farm",
     "friendship_before": "0",
     "friendship_after": "12",
     "day_recorded": "true",

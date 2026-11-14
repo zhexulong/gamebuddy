@@ -252,7 +252,6 @@
     "test:stardew-attachment-telemetry": "powershell.exe -NoProfile -File tools/stardew-attachment-telemetry.test.ps1",
     "test:stardew-automation-cadence": "node --test tools/run-stardew-automation-cadence.test.mjs",
     "test:stardew-branch-writeset": "node --test integrations/stardew/action-development/tests/stardew-branch-writeset.test.mjs",
-    "test:stardew-clear-fish-pond-runner": "node --test tools/run-stardew-native-local-player-clear-fish-pond-smoke.test.mjs",
     "test:stardew-completion-evidence": "cd host && bun test src/stardew-completion-evidence-coverage.test.ts",
     "test:stardew-decision-closure": "node --test tools/audit-stardew-decision-closure.test.mjs",
     "test:stardew-open-ground-claims": "node --test tools/audit-stardew-open-ground-claims.test.mjs",

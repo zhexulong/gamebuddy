@@ -82,13 +82,7 @@ export const STARDEW_PUBLISHED_ACTION_GATES = Object.freeze([
   // Promoted 2026-10-12 after its native-local live gate passed on all five checks: the pond emptied
   // (occupants 1 -> 0, fish type -> none), the receipt agreed with the world, the published target DISAPPEARED
   // from discovery, the ejected fish were OBSERVED as ground itemTargets, and a stale target was refused by name.
-  gate(
-    "clear_fish_pond",
-    1,
-    "run-stardew-native-local-player-clear-fish-pond-smoke.mjs",
-    "fish_pond_cleared",
-    "native_clear_fish_pond_v1",
-  ),
+  gate("clear_fish_pond", 1, null, "fish_pond_cleared", "native_clear_fish_pond_v1", "contract"),
   gate(
     "harvest_crop",
     1,
