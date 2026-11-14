@@ -889,6 +889,13 @@ function noteComparison(sinks, node, scope, index) {
   const keysIn = [...evidenceKeysIn(node)];
   for (const key of keysIn) if (left.key !== key && right.key !== key) noteEvidence(sinks, key, "other");
   for (const key of keysIn) for (const partner of keysIn) if (partner !== key) notePartner(sinks, key, partner);
+  // The pair is also readable from the two sides themselves: `delivered === returned` compares two LOCALS, so no
+  // member expression names either key and the walk above sees an empty key set while the comparison is still a
+  // relation between them.
+  if (left.kind === "evidence" && right.kind === "evidence" && left.key !== right.key) {
+    notePartner(sinks, left.key, right.key);
+    notePartner(sinks, right.key, left.key);
+  }
 }
 
 /** One scope per set of arguments a local helper was called with, so its reads are read in its caller's terms. */
@@ -1067,11 +1074,18 @@ function contractCovers(clause, contract, runner) {
     const forms = runner.evidence.get(key);
     if (forms === undefined) return false;
     const assertion = contract.evidence[key];
+    const named = contract.delta.some((entry) => entry.to === key || entry.from === key);
     if (forms.other) {
       if (assertion !== undefined) return false;
       return deltaCovers(contract.delta, key, runner.relations.get(key) ?? new Set());
     }
-    if (assertion === undefined) return false;
+    if (assertion === undefined) {
+      // The runner's only comparison may be `!== null`: an integer-parse guard, not a claim about the value. The
+      // engine already fails a missing or non-numeric key on every form, so a `delta` entry naming this key covers
+      // the guard; anything else the runner compared needs its own entry.
+      const guardOnly = forms.equalsTarget.size === 0 && [...forms.equals].every((text) => text === "null");
+      return guardOnly && named;
+    }
     if (forms.equals.size > 0 && !forms.equals.has(assertion.equals)) return false;
     if (forms.equalsTarget.size > 0 && !forms.equalsTarget.has(assertion.equalsTarget)) return false;
     return forms.equals.size > 0 || forms.equalsTarget.size > 0;

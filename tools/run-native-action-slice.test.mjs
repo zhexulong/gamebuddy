@@ -245,9 +245,9 @@ test("every contract derives from its own declaration and agrees with the gate t
 /**
  * THE AGREEMENT: the engine's verdict equals the hand-written runner's, over the same world.
  *
- * `checks` is deliberately compared where they overlap rather than for equality: the runner makes assertions the
- * contract cannot (a delta between two evidence numbers) and the engine names those keys in `unassertedEvidence`
- * instead of silently passing them. What must never differ is the verdict.
+ * `checks` is deliberately compared where they overlap rather than for equality: the runner may make an assertion
+ * the contract does not, and the engine names those keys in `unassertedEvidence` instead of silently passing them.
+ * What must never differ is the verdict.
  */
 for (const actionId of Object.keys(HANDS_WRITTEN)) {
   test(`${actionId}: the contract engine and the hand-written runner reach the same verdict`, async () => {
@@ -274,9 +274,14 @@ for (const actionId of Object.keys(HANDS_WRITTEN)) {
     // One execution frame plus the contract's own stale re-send, and nothing else: a slice is not a program.
     assert.equal(sliced.callCount(), 2, "the engine dispatches exactly one frame plus its stale re-send");
     // The engine reports every receipt key it did not constrain, derived from the receipt it actually read: that
-    // list is the honest measure of what the contract format could not cover for this action.
+    // list is the honest measure of what the contract could not cover for this action. A key either side of a
+    // `delta` entry is constrained by it.
+    const constrained = new Set([
+      ...Object.keys(contract.evidence),
+      ...contract.delta.flatMap((relation) => (relation.from === null ? [relation.to] : [relation.to, relation.from])),
+    ]);
     const unconstrained = Object.keys(engineResult.evidence)
-      .filter((key) => contract.evidence[key] === undefined)
+      .filter((key) => !constrained.has(key))
       .sort();
     assert.deepEqual(engineResult.unassertedEvidence, unconstrained);
     for (const [name, value] of Object.entries(engineResult.checks))
@@ -285,8 +290,9 @@ for (const actionId of Object.keys(HANDS_WRITTEN)) {
 }
 
 test("accept_special_order: the engine names the evidence keys it could not assert", async () => {
-  // The one shape the contract format deliberately cannot express: `orders_after - orders_before === 1`. The engine
-  // reports those keys as unasserted instead of pretending it checked them, which is how a reader sees the gap.
+  // `orders_after - orders_before === 1` used to be the shape the contract format could not express, and the engine
+  // named both keys as unasserted. The `delta` entry now states it, so the only key left unasserted is the one the
+  // receipt carries and the contract never mentions - which is what this reading is for.
   const contract = contractOf("accept_special_order");
   const world = makeWorld("accept_special_order");
   const original = world.client.execute;
@@ -302,7 +308,7 @@ test("accept_special_order: the engine names the evidence keys it could not asse
     terminalTimeoutMs: 1_000,
   });
   assert.equal(result.state, "passed");
-  assert.deepEqual(result.unassertedEvidence, ["extra_count", "orders_after", "orders_before"]);
+  assert.deepEqual(result.unassertedEvidence, ["extra_count"]);
 });
 
 test("a slice that fails its contract is blocked, and the refusal names the check and both values", async () => {
