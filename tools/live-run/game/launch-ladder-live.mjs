@@ -43,6 +43,7 @@ import {
 } from "../../lib/live-run-teardown.mjs";
 import { EVIDENCE_BUNDLE_FILES } from "../../lib/evidence-bundle.mjs";
 import { judgeResultFreshness, supersedePreviousResult } from "../core/result-freshness.mjs";
+import { assertPromptSurfaceFresh } from "../core/prompt-surface-freshness.mjs";
 import { announceStardewFixtureRoots, resolveStardewFixtureRoots } from "../../lib/stardew-fixture-roots.mjs";
 import { STARDEW_MOD_FOLDER } from "../../lib/stardew-mod-folder.mjs";
 import { normalizeLiveRunWindowMode } from "../../lib/stardew-live-run.mjs";
@@ -155,6 +156,26 @@ const markPhase = (phase, atMs) => {
   return record;
 };
 markPhase("launcher_start");
+
+// A RUN'S NUMBERS BELONG TO THE PROMPT IT MEASURED, and this checkout is not the only place that prompt lives. The
+// artifact gate (`assertLiveRunArtifactFresh`, called by the launch helper the orchestrator runs) compares
+// `host/dist-test` against `host/src` and is
+// blind to `assets/`: rounds 47 and 48 were launched from a worktree whose `assets/tavern/presets/amber-game.json` was
+// byte-identical to the commit BEFORE the one that withdrew its chatter-forcing sentences, so both measured a persona two
+// commits behind `main` and were then read as evidence about the current one.
+//
+// HERE, and not in the runner that used to own it, because the gate reads the WORKTREE (`git ls-tree <revision>` plus a
+// `git diff` of the paths a rule admits) and nothing the launch produces: no save copy, no Mod deploy, no game. Checked
+// where the runner checked it, the refusal could only arrive after the orchestrator had started SMAPI and the bridge had
+// answered - measured 2026-11-14, `_multiday_routine-phase-table`: `environment_facts_done` at 21,546 ms, refused at
+// 59,281 ms, with a game running that then had to be torn down to say no. Refused here it costs one git query and no game
+// process exists to reclaim. The runner cannot be reached any other way: `_ladder-live-orchestrator.mjs` spawns it, and
+// this file spawns the orchestrator, so this is the outermost layer that decides whether the launch happens at all.
+const promptSurface = assertPromptSurfaceFresh({ repositoryRoot: repo });
+markPhase("prompt_surface_checked");
+process.stderr.write(
+  `[run] prompt surface current: ${promptSurface.examined} path(s) against ${promptSurface.refs.join(",")} at ${promptSurface.revision}\n`,
+);
 
 // A `result.json` this launch did not write is not this attempt's answer, and the tail below reads it as one: a run that
 // died before writing its own bundle left the previous run's file exactly where the report looks, so a crash printed a

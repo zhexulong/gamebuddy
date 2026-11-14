@@ -30,7 +30,10 @@ import {
  *   - an uncommitted edit is refused, because the run reads the worktree;
  *   - every way of being unable to answer is `not_measured` with a name, never a pass - including a population of
  *     zero, which would otherwise agree with itself;
- *   - the launcher calls it before it provisions the persona, which is the earliest point the prompt exists.
+ *   - the gate runs at the OUTERMOST layer that decides whether the launch exists at all: in the launch ladder,
+ *     before the save copy, the deploy and any game process. Left in the inner runner it could only refuse a launch
+ *     that had already paid for all three - measured 2026-11-14: two launches died at second 59 of a refused run, one
+ *     of them after a 3.5 s SMAPI start and a 13.4 s wait for the Mod's bridge.
  *
  * The real-history case (`REAL_RED_REVISION`) is the tree the two rounds were actually launched from. A shallow
  * checkout cannot hold it and says so by name instead of passing.
@@ -50,8 +53,11 @@ import {
  *   fails, naming `host/src/game-surface-prompt-floor.ts` as outside the population
  * red-proof: inject  making an empty population pass -> "a population of zero refuses" fails, the gate agreeing with
  *   itself about nothing
- * red-proof: inject  no longer calling the gate from the launcher -> "the live runner calls the gate synchronously"
- *   fails, naming the missing call site
+ * red-proof: inject  no longer calling the gate from the launch ladder -> "the launch ladder calls the gate before the
+ *   fixture, the deploy, the orchestrator and the game" fails with `assertPromptSurfaceFresh( is called nowhere`
+ * red-proof: inject  calling the gate from the inner runner instead of the ladder -> the same test fails with
+ *   `the launch no longer reaches: fixture_wait,save_copy,orchestrator,game_start`, and "there is one call site" fails
+ *   naming the runner's second call
  */
 
 /** The tree the two rounds were launched from: `amber-game.json` byte-identical to the commit before the fix. */
@@ -375,37 +381,90 @@ describe("a comparison that cannot be made is not_measured with a name, never a 
   });
 });
 
-describe("the launcher refuses before it provisions a prompt", () => {
-  const launcher = readFileSync(
-    join(repositoryRoot, "tools/live-run/game/run-stardew-native-local-agent-ab-live.mjs"),
-    "utf8",
-  );
-  const indexOf = (needle) => {
-    const index = launcher.indexOf(needle);
-    assert.notEqual(index, -1, `the launcher no longer contains ${needle}`);
-    return index;
-  };
+/**
+ * WHERE THE GATE RUNS is a property of the launch, so it is read as a PREDICATE over a source text rather than as a
+ * list of `indexOf` comparisons: a predicate can be handed a source that violates the property, which is the only way
+ * to show the guard would have caught the placement it exists for.
+ *
+ * The anchors are CALL SITES, not declarations: `waitForGameLaunched` is DEFINED near the top of the ladder and its
+ * `markPhase("game_launched")` sits there, 300 lines before anything runs. Anchoring on that text would report the
+ * game's start as earlier than the fixture's, and the guard would pass for the wrong reason forever.
+ */
+const LADDER = "tools/live-run/game/launch-ladder-live.mjs";
+const RUNNER = "tools/live-run/game/run-stardew-native-local-agent-ab-live.mjs";
+const GATE_CALL = "assertPromptSurfaceFresh(";
 
-  test("the live runner calls the gate synchronously, before it mounts the persona", () => {
+const gateRunsBeforeTheLaunchStarts = (source) => {
+  const anchors = Object.freeze({
+    fixture_wait: "await waitForFreeFixture()",
+    save_copy: 'markPhase("save_template_copied"',
+    orchestrator: 'spawn(node, ["tools/_ladder-live-orchestrator.mjs"]',
+    game_start: "await waitForGameLaunched({",
+  });
+  const gate = source.indexOf(GATE_CALL);
+  if (gate === -1) return Object.freeze({ ok: false, why: `${GATE_CALL} is called nowhere` });
+  const positions = {};
+  const missing = [];
+  for (const [name, needle] of Object.entries(anchors)) {
+    positions[name] = source.indexOf(needle);
+    if (positions[name] === -1) missing.push(name);
+  }
+  if (missing.length > 0)
+    return Object.freeze({ ok: false, why: `the launch no longer reaches: ${missing.join(",")}` });
+  const behind = Object.keys(anchors).filter((name) => positions[name] < gate);
+  if (behind.length > 0) return Object.freeze({ ok: false, why: `the gate runs after: ${behind.join(",")}` });
+  return Object.freeze({ ok: true, why: null });
+};
+
+describe("the gate refuses before the launch starts, at the outermost layer", () => {
+  const ladder = readFileSync(join(repositoryRoot, LADDER), "utf8");
+  const runner = readFileSync(join(repositoryRoot, RUNNER), "utf8");
+
+  test("the launch ladder calls the gate before the fixture, the deploy, the orchestrator and the game", () => {
     assert.ok(
-      launcher.includes('from "../core/prompt-surface-freshness.mjs"'),
-      "the gate must be imported by the one Game live-run file",
+      ladder.includes('from "../core/prompt-surface-freshness.mjs"'),
+      "the launch ladder is the entry point every Game live run passes through, so the gate must be imported there",
+    );
+    assert.ok(
+      ladder.includes(`${GATE_CALL}{ repositoryRoot: repo })`),
+      "the gate must be given the repository this run reads, resolved once by the ladder",
     );
     assert.notEqual(
       assertPromptSurfaceFresh.constructor.name,
       "AsyncFunction",
       "a synchronous refusal cannot be dropped by a forgotten await; an async one can",
     );
-    const call = indexOf("const promptSurface = assertPromptSurfaceFresh({ repositoryRoot: fileURLToPath(");
-    const persona = indexOf("provisionLiveRunPersona(");
-    const bridge = indexOf("createStardewIntegrationLaunchHandleFromAuthenticatedBridge(");
-    assert.ok(call < persona, "the gate must run before the persona is provisioned from the worktree");
-    assert.ok(call < bridge, "the gate must run before the Mod is attached");
+    const placement = gateRunsBeforeTheLaunchStarts(ladder);
+    assert.ok(placement.ok, placement.why);
   });
 
-  test("the runner prints the population it accepted, so a silent launch is visible", () => {
+  test("the placement predicate is falsifiable: a call below the orchestrator spawn is refused by it", () => {
+    // The falsifier is the same property against a source that violates it: the real ladder, with its one gate
+    // statement moved to the end of the file - i.e. after SMAPI has been spawned and the game has been waited for.
+    const statement = ladder.split("\n").find((line) => line.includes(GATE_CALL));
+    assert.notEqual(statement, undefined, `the ladder no longer calls ${GATE_CALL}`);
+    const moved = `${ladder.replace(`${statement}\n`, "")}\n${statement}\n`;
+    const placement = gateRunsBeforeTheLaunchStarts(moved);
+    assert.equal(placement.ok, false, "the predicate accepted a gate that runs after the game was launched");
+    assert.match(placement.why, /the gate runs after: fixture_wait,save_copy,orchestrator,game_start/u);
+  });
+
+  test("there is one call site: the inner runner does not bill every launch a second git query", () => {
+    // The runner is only ever spawned by the ladder's orchestrator, so a second call there can never be the first to
+    // speak - it could only repeat a 36.7 s reading this tree produced (measured 2026-11-14: the gate alone, refusing)
+    // at 20 s into every launch that passed. One authority for one fact.
+    assert.equal(
+      runner.includes(GATE_CALL),
+      false,
+      "the inner runner calls the gate a second time; the ladder has already refused or accepted this exact worktree",
+    );
+    assert.equal(runner.includes("prompt-surface-freshness.mjs"), false, "the inner runner still imports the gate");
+    assert.equal(ladder.split(GATE_CALL).length - 1, 1, "the ladder calls the gate more than once");
+  });
+
+  test("the ladder prints the population it accepted, so a silent launch is visible", () => {
     assert.ok(
-      launcher.includes("[run] prompt surface current: ${promptSurface.examined} path(s) against"),
+      ladder.includes("[run] prompt surface current: ${promptSurface.examined} path(s) against"),
       "a launch that passed the gate must say what it examined",
     );
   });

@@ -1395,6 +1395,7 @@ test("the player prompt waits for a real admission, and the run reports startup 
 // line shape, the clock, and the fact that every step the launch performs actually emits one.
 const LAUNCHER_OWNED_PHASES = new Set([
   "launcher_start",
+  "prompt_surface_checked",
   "fixture_free",
   "clean_done",
   "save_template_copied",
@@ -1407,7 +1408,6 @@ const REQUIRED_LAUNCH_PHASES = Object.freeze([
   "runner_process_start",
   "module_eval_start",
   "environment_facts_done",
-  "prompt_surface_checked",
   "bridge_connected",
   "first_frame_dispatched",
   "persona_mounted",

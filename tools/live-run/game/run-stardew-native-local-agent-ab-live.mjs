@@ -98,7 +98,6 @@ import {
 import { readActivityPoints, summarizeActivity } from "../../lib/companion-activity.mjs";
 import { describeRunCost, summarizeRunCost } from "../../lib/run-cost-account.mjs";
 import { assertLiveRunArtifactFresh } from "../../lib/live-run-artifact-freshness.mjs";
-import { assertPromptSurfaceFresh } from "../core/prompt-surface-freshness.mjs";
 import { summarizeSystemFindings } from "../../lib/system-findings.mjs";
 import { redactLiveRunText } from "../core/capture-text.mjs";
 import { isPass, judgeExpectation } from "../core/evidence-verdict.mjs";
@@ -760,18 +759,6 @@ installLiveRunInterrupt({ onInterrupt: writeKilledDump });
 // code — observed as an `Unsupported candidate action:` for an action that was already committed. Refuse to
 // start rather than spend a game launch, a fixture prepare and a session on it.
 await assertLiveRunArtifactFresh();
-
-// A run's numbers belong to the prompt it measured, and this checkout is not the only place that prompt lives. The
-// gate above compares `host/dist-test` against `host/src` and cannot see `assets/`: rounds 47 and 48 were launched
-// from a worktree whose `assets/tavern/presets/amber-game.json` was byte-identical to the commit BEFORE the one that
-// withdrew its chatter-forcing sentences, so both rounds measured a persona two commits behind `main` and were then
-// read as evidence about the current one. Refuse to start unless the prompt surface is current, and refuse too when
-// that cannot be shown (`live_run_prompt_surface_not_measured:<reason>`) - an unattributable run is not a cheap one.
-const promptSurface = assertPromptSurfaceFresh({ repositoryRoot: fileURLToPath(new URL("../../..", import.meta.url)) });
-markPhase("prompt_surface_checked");
-process.stderr.write(
-  `[run] prompt surface current: ${promptSurface.examined} path(s) against ${promptSurface.refs.join(",")} at ${promptSurface.revision}\n`,
-);
 
 // The three scenarios' prompts, in both locales. Written as DATA rather than nested conditionals so the
 // contract is auditable at a glance: what a scenario asks for, and that it asks for it without prescribing a
