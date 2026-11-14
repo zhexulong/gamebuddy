@@ -404,6 +404,7 @@
     "test:frontend-turn-gate": "node --test tools/live-run/frontend/capture/can-start-turn.test.mjs",
     "test:frontend-capability": "node --test tools/live-run/frontend/capture/capability.test.mjs",
     "test:frontend-observation": "node --test tools/live-run/frontend/capture/observation.test.mjs",
+    "test:frontend-observation-window": "node --test tools/live-run/frontend/capture/observation-runtime-window.test.mjs",
     "test:frontend-panel-wait": "node --test tools/live-run/frontend/capture/wait-for-panel.test.mjs",
     "test:frontend-world-book-entry": "node --test tools/live-run/frontend/capture/world-book-entry.test.mjs",
     "test:frontend-submit-answer": "node --test tools/live-run/frontend/capture/submit-answer.test.mjs",

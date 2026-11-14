@@ -142,17 +142,30 @@ function durationsByTurn(marks) {
 	return durations;
 }
 
-/** DOM size, heap and mark counts. Heap is null when the browser does not expose `performance.memory`. */
-async function readRuntimeFacts(page) {
-	return page.evaluate(() => {
+/**
+ * DOM size, heap and the marks this reading's window holds. Heap is null when the browser does not
+ * expose `performance.memory`.
+ *
+ * `markCount` respects `sinceMs` for the same reason every other reading here does: the mark buffer
+ * belongs to the PAGE, and the drivers share one page across a whole capture phase. Counting the
+ * whole buffer reported 124 marks for driver p on a run where later drivers marked nothing at all, so
+ * `marks=` said "this driver measured plenty" beside a `TIMINGS unobserved:no-turn-marks` that said
+ * the opposite - the reader could not tell a quiet driver from a busy page. A window that holds no
+ * mark is 0, honestly.
+ */
+async function readRuntimeFacts(page, sinceMs = 0) {
+	return page.evaluate((from) => {
 		const memory = typeof performance !== "undefined" ? performance.memory : undefined;
 		return {
 			domNodes: document.getElementsByTagName("*").length,
 			heapUsedBytes: memory === undefined || memory === null ? null : memory.usedJSHeapSize,
 			heapTotalBytes: memory === undefined || memory === null ? null : memory.totalJSHeapSize,
-			markCount: typeof performance === "undefined" ? null : performance.getEntriesByType("mark").length,
+			markCount:
+				typeof performance === "undefined" || typeof performance.getEntriesByType !== "function"
+					? null
+					: performance.getEntriesByType("mark").filter((entry) => entry.startTime >= from).length,
 		};
-	});
+	}, sinceMs);
 }
 
 /**
@@ -254,7 +267,7 @@ async function observe(page, say, label = "run", options = {}) {
 		say(`TIMINGS ${label}: marks_with_no_submission_key=${keyless.length} stages=${JSON.stringify(stages)}`);
 	}
 
-	const runtime = await readRuntimeFacts(page);
+	const runtime = await readRuntimeFacts(page, sinceMs);
 	const heap = runtime.heapUsedBytes === null ? "unobserved:no-performance-memory" : `${Math.round(runtime.heapUsedBytes / 1024)}KiB`;
 	say(`RUNTIME ${label}: domNodes=${runtime.domNodes} heap=${heap} marks=${runtime.markCount}`);
 
