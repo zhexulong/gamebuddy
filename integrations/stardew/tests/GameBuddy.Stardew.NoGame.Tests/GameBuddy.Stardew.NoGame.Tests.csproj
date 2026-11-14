@@ -64,6 +64,7 @@
     <Compile Include="..\GameBuddy.Stardew.Integration.Tests\BuildFarmBuildingPreconditionOrderTests.cs" Link="BuildFarmBuildingPreconditionOrderTests.cs" />
     <Compile Include="..\GameBuddy.Stardew.Integration.Tests\BuildingContactWiringTests.cs" Link="BuildingContactWiringTests.cs" />
     <Compile Include="..\GameBuddy.Stardew.Integration.Tests\ChargedFootprintDeclarationTests.cs" Link="ChargedFootprintDeclarationTests.cs" />
+    <Compile Include="..\GameBuddy.Stardew.Integration.Tests\ControllerPartials.cs" Link="ControllerPartials.cs" />
     <Compile Include="..\GameBuddy.Stardew.Integration.Tests\ChestRetrieveRollbackActionSourceShapeTests.cs" Link="ChestRetrieveRollbackActionSourceShapeTests.cs" />
     <Compile Include="..\GameBuddy.Stardew.Integration.Tests\ChestSeamProbe.cs" Link="ChestSeamProbe.cs" />
     <Compile Include="..\GameBuddy.Stardew.Integration.Tests\ChopTreeSwingOutcomeSourceShapeTests.cs" Link="ChopTreeSwingOutcomeSourceShapeTests.cs" />

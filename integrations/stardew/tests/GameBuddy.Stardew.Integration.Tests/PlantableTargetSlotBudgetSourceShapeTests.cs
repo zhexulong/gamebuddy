@@ -75,7 +75,7 @@ public sealed class PlantableTargetSlotBudgetSourceShapeTests
         throw new InvalidOperationException("unbalanced braces");
     }
 
-    private static string Source() => System.IO.File.ReadAllText(RepositoryFile());
+    private static string Source() => ControllerPartials.All();
 
     private static string RepositoryFile()
     {

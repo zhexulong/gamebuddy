@@ -107,7 +107,7 @@ public sealed class RockSourceSwingOutcomeTests
     [Fact]
     public void DiscoveryAndAdmissionAskTheSamePredicate()
     {
-        string controller = Read("farmhandexecutioncontroller.cs");
+        string controller = ControllerPartials.Declaring("DiscoverRockSourceTargets");
         string tools = Read("farmhandexecutioncontroller.resourcetoolactions.cs");
         string scanner = Read("ModEntry.cs");
 
@@ -128,7 +128,8 @@ public sealed class RockSourceSwingOutcomeTests
         // one-swing assumption coming back.
         foreach ((string file, string text) in new[]
                  {
-                     ("farmhandexecutioncontroller.cs", controller),
+                     (ControllerPartials.Main, Read(ControllerPartials.Main)),
+                     (ControllerPartials.DeclaringFile("DiscoverRockSourceTargets"), controller),
                      ("farmhandexecutioncontroller.resourcetoolactions.cs", tools),
                      ("ModEntry.cs", scanner),
                  })

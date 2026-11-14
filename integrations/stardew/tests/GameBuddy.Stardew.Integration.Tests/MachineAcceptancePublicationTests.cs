@@ -26,13 +26,11 @@ namespace GameBuddy.Stardew.Integration.Tests;
 public sealed class MachineAcceptancePublicationTests
 {
     private const string MachineActions = "integrations/stardew/farmhandexecutioncontroller.machinesanimalsitemsactions.cs";
-    private const string Controller = "integrations/stardew/farmhandexecutioncontroller.cs";
 
     [Fact]
     public void DiscoveryPublishesWhatTheMachineAcceptsAndNotJustThatItIsAMachine()
     {
-        string controller = Read(Controller);
-        string discovery = MethodBody(controller, "private static IReadOnlyList<BridgeMachineTarget> DiscoverMachineTargets(");
+        string discovery = MethodBody(ControllerPartials.Declaring("DiscoverMachineTargets"), "private static IReadOnlyList<BridgeMachineTarget> DiscoverMachineTargets(");
 
         discovery.Should().Contain(
             "Accepts: ReadMachineInputAcceptance(machine)",

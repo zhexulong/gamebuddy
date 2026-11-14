@@ -42,7 +42,7 @@ public sealed class RefillWateringCanWholeMapSourceShapeTests
     [Fact]
     public void TheRefillScanSpansTheWholeMapWithTheEnginesOwnRefillGate()
     {
-        string source = StripLineComments(Read(ControllerRelativePath));
+        string source = StripLineComments(Read(ControllerRelativePath) + ControllerPartials.Declaring("DiscoverRefillWateringCanTargets"));
         string body = Body(source);
 
         source.Should().Contain(
@@ -74,7 +74,7 @@ public sealed class RefillWateringCanWholeMapSourceShapeTests
     [Fact]
     public void TheCapIsTheNamedCeilingAndItKeepsTheNearestWater()
     {
-        string source = StripLineComments(Read(ControllerRelativePath));
+        string source = StripLineComments(Read(ControllerRelativePath) + ControllerPartials.Declaring("DiscoverRefillWateringCanTargets"));
         string body = Body(source);
 
         source.Should().Contain(

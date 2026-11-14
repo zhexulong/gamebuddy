@@ -80,7 +80,7 @@ public sealed class ChopTreeSwingOutcomeSourceShapeTests
         // regex that matched there would read the wrong 4000 characters. This test's first draft did exactly that and
         // reported "the discovery family must be findable" for a function that was findable all along.
         Match discovery = Regex.Match(
-            controller,
+            ControllerPartials.Declaring("DiscoverTreeChopSourceTargets"),
             @"private static IReadOnlyList<BridgeTreeChopSourceTarget> DiscoverTreeChopSourceTargets\([^)]*\)[\s\S]*?\n    \}",
             RegexOptions.None,
             TimeSpan.FromSeconds(2));

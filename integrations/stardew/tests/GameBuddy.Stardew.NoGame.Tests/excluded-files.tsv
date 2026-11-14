@@ -65,6 +65,7 @@ CraftItemActionTests.cs	mod-assembly	Handlers
 DayTransitionHoldTests.cs	game	Netcode, StardewValley, Farmer, FarmEvent
 DebrisTargetExclusionTests.cs	game	HeadlessGameWorld@HeadlessGameWorld.cs
 DeclaredArgumentAcceptanceTests.cs	mod-assembly	Navigation
+DiscoverySurfaceEquivalenceDump.cs	game	ExecutionManager, Farmer, GameLocation, Item, DiscoveryExclusionRecorder
 DeclaredToolSelectionTests.cs	mod-assembly	Axe, DeclaredToolResolution, FishingRod, Hoe, Item
 DecompiledSource.cs	reference-tree	StardewValleyDecompiled named in its source; /ref/ is gitignored, so a hosted checkout has no tree to read
 DestinationSearchByteBudgetEquivalenceTests.cs	mod-assembly	Navigation, DestinationSearchResult, NavigationBindingContext

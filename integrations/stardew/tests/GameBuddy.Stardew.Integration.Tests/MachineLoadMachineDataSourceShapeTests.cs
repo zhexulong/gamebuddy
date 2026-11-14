@@ -30,7 +30,6 @@ namespace GameBuddy.Stardew.Integration.Tests;
 public sealed class MachineLoadMachineDataSourceShapeTests
 {
     private const string MachineActions = "integrations/stardew/farmhandexecutioncontroller.machinesanimalsitemsactions.cs";
-    private const string Controller = "integrations/stardew/farmhandexecutioncontroller.cs";
 
     [Fact]
     public void TheLoadAdmissionIsTheMachinesOwnProbeRatherThanThisSourcesItemRule()
@@ -99,7 +98,7 @@ public sealed class MachineLoadMachineDataSourceShapeTests
     [Fact]
     public void DiscoveryPublishesTheSameInputAndCountTheActionConsumes()
     {
-        string controller = Read(Controller);
+        string controller = ControllerPartials.Declaring("DiscoverMachineTargets");
 
         // One derivation, two readers: the row the snapshot publishes and the load the action performs come from the same
         // machine data, so "discovery says the furnace takes 1, the action accepts 5" cannot be expressed.
