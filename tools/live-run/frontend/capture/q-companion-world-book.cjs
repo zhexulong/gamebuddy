@@ -12,6 +12,7 @@
 // only way it can be produced inside one tab — a second writer on the page's own session — and then
 // measures the sentence the surface shows when the save it still offers is pressed.
 const { connect, reporter, PAGE_HELPERS, activateSurface, shot , observe, observationStart } = require("./common.cjs");
+const { editRow, entryReading } = require("./world-book-entry.cjs");
 
 const bookFacts = () => {
   const section = document.querySelector("[data-companion-world-book]");
@@ -114,14 +115,11 @@ const durableBook = async (handle) => {
   return {
     ok: true,
     revision: body.revision,
-    entries: (body.entries ?? []).map((entry) => ({
-      title: entry.title,
-      keys: entry.keys,
-      constant: entry.constant,
-      content: entry.content,
-      chars: (entry.content ?? "").length,
-      head: (entry.content ?? "").slice(0, 40),
-    })),
+    // The projection as the Host sent it, member for member (world-book-entry.cjs). Reducing it here to the
+    // four fields an edit row used to be spelled with is what made the second write below a 400: `enabled`
+    // is required by `CompanionWorldBookEntryV1Schema`, so the route refused the body at :1942 before it ever
+    // compared revisions, the book stayed where it was, and the conflict this driver measures never happened.
+    entries: body.entries ?? [],
   };
 };
 
@@ -189,7 +187,7 @@ const stimulusWrite = async ({ handle, token, expectedRevision, entries }) => {
   const before = await page.evaluate(bookFacts);
   say(JSON.stringify(before, null, 1));
   const durableBefore = await page.evaluate(durableBook, handle);
-  say(`durable book: revision=${durableBefore.revision} entries=${durableBefore.entries.length} -> ${JSON.stringify(durableBefore.entries.map((entry) => ({ title: entry.title, keys: entry.keys, constant: entry.constant })))}`);
+  say(`durable book: revision=${durableBefore.revision} entries=${durableBefore.entries.length} -> ${JSON.stringify(durableBefore.entries.map(entryReading))}`);
   await shot(page, "88-companion-world-book-1440x900.png");
 
   // ---- change one entry's body and its trigger words ----
@@ -216,10 +214,11 @@ const stimulusWrite = async ({ handle, token, expectedRevision, entries }) => {
   const afterEdit = await page.evaluate(bookFacts);
   const durableAfterEdit = await page.evaluate(durableBook, handle);
   const editedEntry = durableAfterEdit.entries[target] ?? null;
+  const editedReading = editedEntry === null ? null : entryReading(editedEntry);
   say(`notice: ${JSON.stringify(afterEdit.notice?.text ?? null)}`);
   say(`the success notice's own box: ${JSON.stringify(afterEdit.notice?.box ?? null)} (the editor has closed, so there is no draft to compare against)`);
   say(`durable revision ${durableBefore.revision} -> ${durableAfterEdit.revision}`);
-  say(`durable entry ${target}: keys=${JSON.stringify(editedEntry?.keys)} constant=${editedEntry?.constant} chars=${editedEntry?.chars}`);
+  say(`durable entry ${target}: keys=${JSON.stringify(editedReading?.keys)} constant=${editedReading?.constant} enabled=${editedReading?.enabled} chars=${editedReading?.chars}`);
   // Read the WHOLE body back, not its first 40 characters: this driver appends a sentence to the end of a
   // multi-line body, so a check against `head` could never pass - and the false negative it produced was
   // read (by a four-reviewer pass) as "the world book body edit does not persist" when the write path is
@@ -301,12 +300,11 @@ const stimulusWrite = async ({ handle, token, expectedRevision, entries }) => {
     await page.locator("#companion-world-book-entry-0-body").fill(`${openDraft.rows[0]?.body ?? ""}（编辑器开着时写的。）`);
     await page.waitForTimeout(400);
     const beforeStimulus = await page.evaluate(durableBook, handle);
-    const entriesForStimulus = beforeStimulus.entries.map((entry, index) => ({
-      title: entry.title,
-      keys: entry.keys,
-      constant: entry.constant,
-      content: index === 0 ? `${entry.content}另一个窗口改了这段。` : entry.content,
-    }));
+    // One row per entry, built from the projection itself: `editRow` spreads the entry the Host projected and
+    // replaces only the body, so the write carries every member `CompanionWorldBookEntryV1Schema` requires.
+    const entriesForStimulus = beforeStimulus.entries.map((entry, index) =>
+      index === 0 ? editRow(entry, `${entry.content}另一个窗口改了这段。`) : editRow(entry),
+    );
     const stimulus = await page.evaluate(stimulusWrite, {
       handle,
       token: observed.token,
@@ -314,6 +312,18 @@ const stimulusWrite = async ({ handle, token, expectedRevision, entries }) => {
       entries: entriesForStimulus,
     });
     say(`the second writer (the page's own route, its own token) answered: ${JSON.stringify(stimulus)}`);
+    // This write has to be ACCEPTED, and that is the premise the rest of this item stands on: a body the
+    // contract does not admit is refused `invalid_request` at the route's own validator (:1942) before any
+    // revision is compared, so a malformed row leaves the book where it was, the editor's own save then
+    // succeeds and closes it, and this driver would die later on a control that no longer exists - a
+    // twenty-minute run reporting a missing element instead of the fixture that produced it.
+    if (stimulus.status !== 200 || stimulus.revision !== beforeStimulus.revision + 1)
+      throw new Error(
+        `the second writer was refused (status=${stimulus.status} code=${JSON.stringify(stimulus.code)}, book ` +
+          `${beforeStimulus.revision} -> ${JSON.stringify(stimulus.revision)}), so the stale revision this item ` +
+          `measures never happened: an edit row must carry every member CompanionWorldBookEntryV1Schema declares ` +
+          `(tools/live-run/frontend/capture/world-book-entry.cjs)`,
+      );
     const durableAfterStimulus = await page.evaluate(durableBook, handle);
     say(`the book on the server is now revision ${durableAfterStimulus.revision} while the open editor still pins ${beforeStimulus.revision}`);
     say(`pressing the save the editor still offers: ${JSON.stringify(await page.locator("[data-companion-world-book-save]").first().isEnabled())}`);
@@ -331,6 +341,17 @@ const stimulusWrite = async ({ handle, token, expectedRevision, entries }) => {
       `the refusal banner sits on the draft's column: ${refused.notice?.box != null && refused.draftBox != null && refused.notice.box.x === refused.draftBox.x && refused.notice.box.w === refused.draftBox.w}`,
     );
     say(`the editor is STILL open on its own revision (nothing silently rebased): ${refused.editorOpen}`);
+    // Both sides of the refusal, asserted rather than printed: the save was refused FOR THE REVISION (the
+    // route's own conflict code), and the editor kept its stale revision instead of rebasing and closing. A
+    // run where the save answered 200 here is a run whose premise did not happen, and it says so now.
+    if (observed.writeStatus !== 409 || observed.writeCode !== "companion_world_book_conflict")
+      throw new Error(
+        `the stale save was not refused for the revision: status=${observed.writeStatus} ` +
+          `code=${JSON.stringify(observed.writeCode)} (the book on the server is revision ` +
+          `${durableAfterStimulus.revision}, the editor pins ${beforeStimulus.revision})`,
+      );
+    if (refused.editorOpen !== true)
+      throw new Error("the refused save closed the editor, so it rebased onto the book it had never read");
     await shot(page, "88-world-book-refusal-stale-revision-1440x900.png");
     // The same editor, reopened on the book that is there now, saves the same change: the refusal
     // was about the revision and nothing else.
