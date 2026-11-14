@@ -553,6 +553,17 @@ function gameCreateProblemCode(error: unknown): string {
       return distinguishableLifecycleProblemCode(error, "game_unavailable");
     case "stardew_game_create_failed":
       return "game_storage_unavailable";
+    // The two refusals the create re-raises as themselves once its durable failure is settled
+    // (`stardew-production-lifecycle-coordinator.internal.ts:2984-2989`, under
+    // `STARDEW_GAME_CREATE_WORLD_HELD_BY_PLAYER_RESUME_REQUIRED` and
+    // `STARDEW_GAME_CREATE_SLOT_HOLDER_NOT_PROVEN_GONE`). Both fell to `state_unavailable`, whose
+    // "reload and try again" is false advice: retrying the create on that slot fails identically.
+    // The two fixes are opposite ones - the world is the player's and is resumed, or a leftover
+    // attempt of this product's own has to be closed out - so each keeps its own code.
+    case "stardew_game_create_world_held_by_player_resume_required":
+      return "stardew_game_create_world_held_by_player";
+    case "stardew_game_create_slot_holder_not_proven_gone":
+      return "stardew_game_create_slot_held_by_earlier_attempt";
     case "stardew_lifecycle_closing":
       return distinguishableLifecycleProblemCode(error, "game_unavailable");
     default:

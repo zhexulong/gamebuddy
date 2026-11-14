@@ -2852,6 +2852,16 @@ test("game.create maps only frozen typed outcomes without leaking internal error
     ["stardew_game_runtime_unavailable", "game_runtime_unavailable"],
     ["stardew_game_create_integration_conflict", "game_unavailable"],
     ["stardew_game_create_failed", "game_storage_unavailable"],
+    // The two refusals a player can answer, which the coordinator re-raises as themselves after
+    // it settled the durable failure. Each keeps its own code because their fixes are opposite
+    // ones: the world held by the player is resumed, a slot held by an earlier attempt of this
+    // product's own has to be closed out. Both read as `state_unavailable` until now, whose
+    // "reload and try again" invites a retry that fails identically.
+    ["stardew_game_create_world_held_by_player_resume_required", "stardew_game_create_world_held_by_player"],
+    ["stardew_game_create_slot_holder_not_proven_gone", "stardew_game_create_slot_held_by_earlier_attempt"],
+    // The negative that keeps the two apart from a create that simply could not happen: a
+    // composition without the create seam keeps the generic outcome, WITH its bounded cause.
+    ["stardew_game_world_creation_unavailable", "state_unavailable"],
     ["private-create-sensitive-detail", "state_unavailable"],
   ] as const;
   for (const [internalMessage, expectedCode] of cases) {
