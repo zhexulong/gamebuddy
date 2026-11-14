@@ -9,7 +9,8 @@
     "expectedTargetId": "$target.targetId"
   },
   "evidence": {
-    "rewards_collected": "true"
+    "rewards_collected": "true",
+    "rewards_after": "0"
   },
   "worldAfter": [
     { "field": "museumRewardTargets", "excludesTarget": true },
