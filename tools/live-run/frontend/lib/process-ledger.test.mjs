@@ -381,3 +381,18 @@ test("a kept pid that exited on its own is neither a leftover nor 'left behind'"
   assert.equal(reading.entries[0].stillAliveAfter, false);
   assert.doesNotMatch(describeProcessLedger(reading).join("\n"), /deliberately left/u);
 });
+
+test("the reading says how many rows the process table could not date, instead of leaving a blank column", () => {
+  const ledger = openProcessLedger({ stageRoot: STAGE, readTable: tableOf([row(4, 0, "System")]) });
+  const collected = collectProcessLedger(ledger, {
+    registry: [{ pid: 4242, role: "launch-driver" }],
+    query: queriesOf({}),
+    readTable: tableOf([row(4, 0, "System")]),
+  });
+  const reading = closeProcessLedger(ledger, collected, { readTable: tableOf([row(4, 0, "System")]) });
+  assert.match(
+    describeProcessLedger(reading).join("\n"),
+    /1 of 1 entries had already exited when the ledger collected them/u,
+    "a registry row with no name and no start time is partial, and the reading has to say so",
+  );
+});

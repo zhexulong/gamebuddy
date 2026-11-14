@@ -343,6 +343,17 @@ export function describeProcessLedger(reading) {
     lines.push(
       `${LEDGER_PREFIX}: deliberately left ${reading.deliberatelyLeft.map((entry) => `${entry.pid}(${entry.leftDeliberately})`).join(" ")}`,
     );
+  /*
+   * A process the run created and stopped BEFORE the ledger collected it is recorded from the registry alone: its
+   * pid and its role, with no name and no start time for the table to give. That is a true row, and it is also a
+   * partial one, so the reading says how many of them there are instead of letting a blank column imply the machine
+   * had nothing to say.
+   */
+  const unanswerable = reading.entries.filter((entry) => entry.startTime === null).length;
+  if (unanswerable > 0)
+    lines.push(
+      `${LEDGER_PREFIX}: ${String(unanswerable)} of ${String(reading.examined)} entries had already exited when the ledger collected them (pid and role only - the table could not date them)`,
+    );
   const collateral = reading.collateral;
   if (collateral === null) {
     lines.push(

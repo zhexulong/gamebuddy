@@ -14,7 +14,7 @@ const { randomBytes } = require("node:crypto");
 const { readFileSync } = require("node:fs");
 const path = require("node:path");
 const { REPO_ROOT } = require("./common.cjs");
-const { classifyLaunchRefusal, notMeasuredLine, describeGameState, readinessOf } = require("./game-launch-verdict.mjs");
+const { classifyLaunchRefusal, classifySilentLaunch, notMeasuredLine, describeGameState, readinessOf } = require("./game-launch-verdict.mjs");
 const { GAME_STATES_PREFIX, verdictLine } = require("./game-states-verdict.mjs");
 
 /** One line, in the language the product is set to: the same line the launch driver says. */
@@ -236,7 +236,18 @@ async function waitForControl(page, name, budgetMs) {
  */
 async function activateAndLaunch({ page, say, record, guardian, problems }) {
   let state = await page.evaluate(readGameState);
-  if (state.ok !== true) return { kind: "not_measured", reason: "game_state_unreadable", detail: `the state route answered ${String(state.status)}` };
+  /*
+   * A state route that does not answer is the same missing prerequisite reached through the transport, and it is
+   * classified by the run's ONE rule for it (`classifySilentLaunch`): a Host whose guardian session died leaves
+   * deliberately (`host/src/bootstrap/wire/desktop-runtime-bootstrap.internal.ts:188-196`), and the gate launcher
+   * destroys that socket on the first frame after `hello`. Measured 2026-11-15: the first driver to request a
+   * launch ends the mounted Host for every driver after it, and reporting that as a nameless
+   * `game_state_unreadable` would name a symptom instead of the cause.
+   */
+  if (state.ok !== true) {
+    const reading = classifySilentLaunch({ guardian, detail: `the game state route answered ${String(state.status)}` });
+    return { kind: reading.verdict === "failed" ? "failed" : "not_measured", reason: reading.reason, detail: reading.detail };
+  }
   if (state.prerequisites !== "met")
     return {
       kind: "not_measured",
