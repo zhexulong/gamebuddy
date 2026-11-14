@@ -128,11 +128,13 @@ public sealed class BodyProgramDispatchGateTests
         string actionId = BodyOwningActions().First();
 
         BodyProgramDispatchGate.HoldOf(actionId, cutsceneUp: true, BodyProgramModalFact.None, actorCanMove: false)
-            .Should().Be(new BodyProgramHold(BodyProgramModalKind.None, "held_by=cutscene_active;next_step=wait_for_event_to_end"),
-                "a cutscene outranks a mounted modal and ends on its own, so the start gate must not treat it as a modal hold");
+            .Should().Be(
+                new BodyProgramHold(BodyProgramModalKind.None, "held_by=cutscene_active;next_step=wait_for_event_to_end", BodyProgramHoldWait.Watchdog),
+                "a cutscene outranks a mounted modal and ends on its own, so the start gate must not treat it as a modal hold - and it is waited out to the node's watchdog, not to the two-second retry window the same deferral gave it (measured round56, where that window spent three of three nodes)");
 
         BodyProgramDispatchGate.HoldOf(actionId, cutsceneUp: false, BodyProgramModalFact.None, actorCanMove: false)
-            .Should().Be(new BodyProgramHold(BodyProgramModalKind.None, "held_by=transient_busy;next_step=wait_for_retry_window"),
+            .Should().Be(
+                new BodyProgramHold(BodyProgramModalKind.None, "held_by=transient_busy;next_step=wait_for_retry_window", BodyProgramHoldWait.RetryWindow),
                 "a transient body lock clears inside the retry window, which is what the bounded deferral is for");
 
         BodyProgramDispatchGate.HoldOf(actionId, cutsceneUp: false, BodyProgramModalFact.None, actorCanMove: true)

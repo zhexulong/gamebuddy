@@ -491,7 +491,12 @@ public sealed class OpenBodyProgramJournalAuthority
     /// graph, or supply a replacement state. A successful first transition
     /// atomically records the rejection and skips every still-pending dependent.
     /// </summary>
-    public BodyProgramControllerResult<NodeAdmissionChallenge> TryRejectAdmission(NodeAdmissionChallenge challenge, string code)
+    /// <param name="refusalDetail">
+    /// What the rejection is a statement ABOUT, when the code alone cannot say it - the hold a node waited on for its
+    /// whole watchdog, for instance. The code is a closed vocabulary and a detail is the sentence beside it, the same
+    /// division a failed node's `FailureCode` and `RefusalDetail` already make.
+    /// </param>
+    public BodyProgramControllerResult<NodeAdmissionChallenge> TryRejectAdmission(NodeAdmissionChallenge challenge, string code, string? refusalDetail = null)
     {
         if (!IsMutable || challenge is null || !BodyProgramValidation.IsValidRejectionCode(code))
             return BodyProgramControllerResult.Failure<NodeAdmissionChallenge>(BodyProgramControllerResultCode.InvalidInput);
@@ -522,6 +527,7 @@ public sealed class OpenBodyProgramJournalAuthority
             RecoveryDiagnostic = null,
             RejectionCode = code,
             FailureCode = null,
+            RefusalDetail = BodyProgramValidation.IsValidRefusalDetail(refusalDetail) ? refusalDetail : null,
         };
         HashSet<string> descendants = new(StringComparer.Ordinal);
         bool changed;

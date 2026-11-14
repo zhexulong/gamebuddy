@@ -355,8 +355,10 @@ public sealed class FarmhandBodyProgramController
             // The world gets its say BEFORE the transport result is taken: taking it and then skipping would consume
             // the admission and strand the node awaiting a result that no longer exists. The deferral is bounded, so a
             // world that never becomes ready delays a node instead of holding it for ever.
-            if (this.HoldOf is { } hold && hold(ActionIdOf(current, node.NodeId)) is not null)
+            if (this.HoldOf is { } hold && hold(ActionIdOf(current, node.NodeId)) is { } met)
             {
+                // A HOLD THAT CLEARS ON ITS OWN IS WAITED OUT, not spent. See `WaitOutTheHold`.
+                if (met.Wait == BodyProgramHoldWait.Watchdog && this.WaitOutTheHold(programId, node, met)) return;
                 string deferralKey = AttemptKey(programId, node.NodeId, node.NodeAttempt);
                 int deferred = this.cadenceDeferrals.TryGetValue(deferralKey, out int seen) ? seen : 0;
                 if (deferred < this.MaxCadenceDeferrals)
@@ -459,19 +461,66 @@ public sealed class FarmhandBodyProgramController
     /// Host refuses to issue at `&lt;=` - so this is the first instant at which a local verdict cannot contradict a real
     /// answer that is merely slow.
     /// </summary>
-    private bool TrySettleExpiredAdmission(string programId, BodyProgramJournalNode node)
+    private bool TrySettleExpiredAdmission(string programId, BodyProgramJournalNode node, string? refusalDetail = null)
     {
         if (node.DerivedDeadlineMs is not { } deadlineMs || deadlineMs >= this.NowMs()) return false;
         string key = AttemptKey(programId, node.NodeId, node.NodeAttempt);
         // The challenge is the settlement's own argument: the authority accepts a rejection only for the exact tuple it
         // minted, so nothing is settled unless the object that was SENT is still here to be presented.
         if (!this.admissionChallenges.TryGetValue(key, out NodeAdmissionChallenge? asked)) return false;
-        this.Diagnose($"admission_deadline_settled;program={programId};node={node.NodeId};deadlineMs={deadlineMs}");
+        this.Diagnose($"admission_deadline_settled;program={programId};node={node.NodeId};deadlineMs={deadlineMs};detail={refusalDetail ?? "none"}");
         this.admissionChallenges.Remove(key);
         this.admissionAttachmentGenerations.Remove(key);
-        this.authority.TryRejectAdmission(asked, "deadline_expired");
+        this.authority.TryRejectAdmission(asked, "deadline_expired", refusalDetail);
         return true;
     }
+
+    /// <summary>
+    /// Waits out a hold declared <see cref="BodyProgramHoldWait.Watchdog"/> for as long as this node's own watchdog
+    /// still allows the dispatch. True means the node was left waiting (or settled because the watchdog ran out).
+    ///
+    /// <para>
+    /// WHY THE CADENCE WINDOW IS THE WRONG BOUND FOR THESE. `MaxCadenceDeferrals` is the flat admission's own parking
+    /// window (two seconds, the same number that evidence publishes as `retry_window_ms`), and it is right for a hold
+    /// that ends inside it - a tool cooldown, an eating pause. A cutscene is not that, and the same two seconds made
+    /// it a terminal. Measured `round56` (day 6, 06:00, the furnace cutscene): one clear-and-plant program's three
+    /// nodes were deferred for the cadence window, dispatched into the running event, and settled
+    /// `Rejected:cutscene_active` - four row receipts and one node receipt, `0/3` nodes - while the world was free
+    /// again four seconds later. Nothing was spent but the plan: the three nodes were the plan.
+    /// </para>
+    /// <para>
+    /// THE BOUND IS THE NODE'S OWN WATCHDOG (<see cref="BodyProgramJournalNode.DerivedDeadlineMs"/>), which is not a
+    /// new number: it is the instant this node's admission can no longer be consumed at all (`TryConsumeHostGrant`
+    /// refuses a grant past it), so a wait longer than it would be a wait for a dispatch that cannot happen. While it
+    /// stands the node is neither dispatched nor settled and nothing is spent; when it passes with the hold still up,
+    /// the node settles `deadline_expired` CARRYING THE HOLD in <see cref="BodyProgramJournalNode.RefusalDetail"/>,
+    /// because "the deadline passed" and "what held her for the whole window" are two facts and a receipt that states
+    /// only the first is the one the companion cannot act on.
+    /// </para>
+    /// </summary>
+    private bool WaitOutTheHold(string programId, BodyProgramJournalNode node, BodyProgramHold met)
+    {
+        if (node.DerivedDeadlineMs is not { } deadlineMs) return false;
+        if (deadlineMs < this.NowMs()) return this.TrySettleExpiredAdmission(programId, node, met.Evidence);
+        this.DiagnoseHeld(programId, node, met, deadlineMs);
+        return true;
+    }
+
+    /// <summary>
+    /// Reports a node waiting out a hold once per program per hold, for the same reason <see cref="DiagnoseStartHeld"/> does:
+    /// a hold that stands for a whole cutscene is one line, not one per tick.
+    /// </summary>
+    private void DiagnoseHeld(string programId, BodyProgramJournalNode node, BodyProgramHold met, long deadlineMs)
+    {
+        if (this.Diagnostics is null) return;
+        string detail = $"node_waiting_out_hold;program={programId};node={node.NodeId};deadlineMs={deadlineMs};{met.Evidence}";
+        if (this.diagnosticsLastHold.TryGetValue(programId, out string? last) && last == detail) return;
+        this.diagnosticsLastHold[programId] = detail;
+        this.Diagnostics($"[GameBuddy-body-program] {detail}");
+    }
+
+    /** The last hold printed per program, so a repeat says nothing. */
+    private readonly Dictionary<string, string> diagnosticsLastHold = new(StringComparer.Ordinal);
 
     private static string AttemptKey(string programId, string nodeId, int nodeAttempt) =>
         $"{programId}\u001f{nodeId}\u001f{nodeAttempt}";
