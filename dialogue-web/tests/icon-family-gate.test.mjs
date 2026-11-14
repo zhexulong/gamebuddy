@@ -33,6 +33,7 @@ import { dirname, join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import ts from "typescript";
+import { surfaceBarEntries } from "../src/components/surface-bar-entries.ts";
 
 const DIALOGUE_WEB = join(dirname(fileURLToPath(import.meta.url)), "..");
 const SRC = join(DIALOGUE_WEB, "src");
@@ -228,4 +229,61 @@ test("icon.5: the tree really is being read, not vacuously passing", (t) => {
   }
   assert.ok(structural >= 40, `expected at least 40 controls/testid elements, found ${structural}`);
   t.diagnostic(`icon.5: ${files.length} file(s), ${structural} structural element(s) enumerated`);
+});
+
+/**
+ * The bar's own entry table, read through the function that builds it.
+ *
+ * The population is the product's, not a list here: `surfaceBarEntries` is what the shell calls to render the
+ * bar, so a surface added to the table behind it joins this reading without an edit. The labels and the openers
+ * are proxies because neither is what is being read - the label key comes back as its own name, and every
+ * opener is the same no-op - and the entry's icon is.
+ */
+export function barEntries() {
+  const labels = new Proxy({}, { get: (_target, key) => String(key) });
+  const opener = { open: () => {}, ref: { current: null } };
+  const openers = new Proxy({}, { get: () => opener });
+  return surfaceBarEntries(labels, "chat", true, openers);
+}
+
+/** An icon component's own name, so a failure says which glyph is drawn twice. */
+function iconName(icon) {
+  return icon.displayName ?? icon.render?.name ?? "an unnamed icon";
+}
+
+test("icon.6: two destinations do not draw the same icon", (t) => {
+  const entries = barEntries();
+  const seenByIcon = new Map();
+  const failures = [];
+  for (const entry of entries) {
+    const seen = seenByIcon.get(entry.icon);
+    if (seen === undefined) seenByIcon.set(entry.icon, entry);
+    else failures.push(`${seen.label} and ${entry.label} both draw ${iconName(entry.icon)}`);
+  }
+  t.diagnostic(
+    `icon.6: ${entries.length} bar entr(ies), ${seenByIcon.size} distinct icon(s), ${failures.length} shared`,
+  );
+  assert.ok(entries.length >= 2, `the bar's entry table read as ${entries.length} entries, so nothing was compared`);
+  assert.deepEqual(
+    failures,
+    [],
+    "one icon per destination: the glyph is what a player recognises the place by before reading its label",
+  );
+});
+
+test("icon.7 (mutation): two entries sharing one icon are reported by both labels", (t) => {
+  const probe = [
+    { label: "chatPanel", icon: { displayName: "MessageSquare" } },
+    { label: "chatsPanel", icon: { displayName: "MessagesSquare" } },
+    { label: "memoryPanel", icon: { displayName: "MessageSquare" } },
+  ];
+  const seenByIcon = new Map();
+  const failures = [];
+  for (const entry of probe) {
+    const seen = seenByIcon.get(entry.icon.displayName);
+    if (seen === undefined) seenByIcon.set(entry.icon.displayName, entry);
+    else failures.push(`${seen.label} and ${entry.label} both draw ${entry.icon.displayName}`);
+  }
+  assert.deepEqual(failures, ["chatPanel and memoryPanel both draw MessageSquare"]);
+  t.diagnostic("icon.7: the mutation is reported by name, not by a count");
 });

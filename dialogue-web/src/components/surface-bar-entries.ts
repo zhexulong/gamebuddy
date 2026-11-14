@@ -1,4 +1,13 @@
-import { Brain, Gamepad2, type LucideIcon, MessagesSquare, ScrollText, Settings, Users } from "lucide-react";
+import {
+  Brain,
+  Gamepad2,
+  type LucideIcon,
+  MessageSquare,
+  MessagesSquare,
+  ScrollText,
+  Settings,
+  Users,
+} from "lucide-react";
 import type { RefObject } from "react";
 import {
   CHARACTERS_PANEL,
@@ -35,7 +44,12 @@ export type SurfaceEntryOpener = Readonly<{ open: () => void; ref: RefObject<HTM
  * repeated as a number at the call site.
  */
 const SURFACE_ENTRIES = [
-  { id: CHAT_PANEL, label: "chatPanel", icon: MessagesSquare, management: false },
+  // 聊天 and 会话 are two destinations - the conversation open now, and the list of every
+  // conversation - and both used to draw `MessagesSquare`, so the bar offered one picture for
+  // two places. They take the icon family's own singular/plural pair instead: one speech bubble
+  // for the conversation, the many-bubbled one for the list. The pair is chosen for legibility at
+  // the 18 px the bar draws, and it reads as one-of / many-of rather than as two unrelated glyphs.
+  { id: CHAT_PANEL, label: "chatPanel", icon: MessageSquare, management: false },
   { id: GAME_PANEL, label: "gamePanel", icon: Gamepad2, management: false },
   { id: CHATS_PANEL, label: "chatsPanel", icon: MessagesSquare, management: true },
   { id: CHARACTERS_PANEL, label: "charactersPanel", icon: Users, management: true },

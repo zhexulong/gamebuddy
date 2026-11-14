@@ -1,4 +1,4 @@
-import { MessagesSquare } from "lucide-react";
+import { MessageSquare } from "lucide-react";
 import type { RefObject } from "react";
 import type { Messages } from "../i18n";
 import type { BrowserMessageV1 } from "../reference-pipeline-api";
@@ -133,7 +133,7 @@ export function ChatSurface({
     <SurfaceView
       title={labels.chatPanel}
       testId="chat-surface"
-      icon={MessagesSquare}
+      icon={MessageSquare}
       className="surface-conversation"
       restoreFocusTo={restoreFocusTo}
     >
