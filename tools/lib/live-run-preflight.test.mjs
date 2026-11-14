@@ -12,6 +12,7 @@ import {
   GUARDIAN_ENDPOINT_PREFIX,
   importsWithoutStarting,
   preflightLiveRun,
+  probeDesktopSupervisor,
   probeGuardianPipe,
   probeProviderReadiness,
   providerReadinessRefusal,
@@ -350,12 +351,65 @@ test("a machine with no bound guardian endpoint is not_measured, and refuses the
     // What it costs the run, in the words the run's own result files use.
     assert.match(failure.detail, /dialogue_exited_before_ready:1:desktop_runtime_bootstrap_unavailable/u);
     assert.match(failure.detail, /INJECTION and RECONCILIATION would be unobserved, not passing/u);
-    // Both routes an operator can take, and the limit of the second one.
-    assert.equal(failure.route.length, 2);
+    // The three routes, and the limit of each. The first is a measurement when the caller supplied one, the unqualified
+    // product route otherwise: a tree judged without that reading must not be told a fact nobody read.
+    assert.equal(failure.route.length, 3);
     assert.match(failure.route[0], /Desktop supervisor/u);
-    assert.match(failure.route[1], /tools\/desktop-composition-launch[.]mjs/u);
-    assert.match(failure.route[1], /arm_attempt\/launch_role\/contain_role/u);
+    assert.match(failure.route[1], /minted per launch/u);
+    assert.match(failure.route[2], /tools\/desktop-composition-launch[.]mjs/u);
+    assert.match(failure.route[2], /arm_attempt\/launch_role\/contain_role/u);
   });
+});
+
+// ── The supervisor's own install, as the reading that decides whether "start it" is a step ──
+//
+// Measured 2026-11-15: the built exe exits 1 with `root_registration_unavailable` on this machine, so the preflight's
+// first route named a repair that does not exist. The two cases below are the two readings a caller can supply, and
+// the exemption expires: the "cannot start" sentence may only appear while the install is actually absent.
+
+test("no installed supervisor is named with the code it refuses with, not offered as a repair", () => {
+  withRoot("preflight-guardian-no-install-", (root) => {
+    const result = preflightLiveRun({
+      ...freshGoodTree(root),
+      guardian: probeGuardianPipe({ readPipeDirectory: pipeDirectory("lsass") }),
+      desktopSupervisor: { programRoot: "C:\\Users\\someone\\AppData\\Local\\Programs\\GameBuddy", installed: false },
+    });
+    const route = result.firstFailure.route[0];
+    assert.match(route, /no installed generation at C:\\Users\\someone\\AppData\\Local\\Programs\\GameBuddy/u);
+    assert.match(route, /root_registration_unavailable/u);
+    assert.match(route, /exits 1 before binding any pipe/u);
+  });
+});
+
+test("an installed supervisor is not described as unable to start", () => {
+  withRoot("preflight-guardian-installed-", (root) => {
+    const result = preflightLiveRun({
+      ...freshGoodTree(root),
+      guardian: probeGuardianPipe({ readPipeDirectory: pipeDirectory("lsass") }),
+      desktopSupervisor: { programRoot: "C:\\Users\\someone\\AppData\\Local\\Programs\\GameBuddy", installed: true },
+    });
+    const route = result.firstFailure.route[0];
+    assert.match(route, /installed at C:\\Users\\someone\\AppData\\Local\\Programs\\GameBuddy/u);
+    assert.match(route, /binds this endpoint only for a launch it drives/u);
+    assert.doesNotMatch(route, /root_registration_unavailable/u, "an exemption must expire with the absence it names");
+  });
+});
+
+test("the supervisor probe reads the per-user program root from LOCALAPPDATA and nothing else", () => {
+  const asked = [];
+  const absent = probeDesktopSupervisor({
+    localAppData: "C:\\Users\\someone\\AppData\\Local",
+    exists: (path) => {
+      asked.push(path);
+      return false;
+    },
+  });
+  assert.deepEqual(asked, ["C:\\Users\\someone\\AppData\\Local\\Programs\\GameBuddy"]);
+  assert.deepEqual(absent, {
+    programRoot: "C:\\Users\\someone\\AppData\\Local\\Programs\\GameBuddy",
+    installed: false,
+  });
+  assert.deepEqual(probeDesktopSupervisor({ localAppData: null }), { programRoot: null, installed: null });
 });
 
 test("a pipe namespace that cannot be read is not_measured, never a pass", () => {
@@ -384,7 +438,10 @@ test("a bound guardian endpoint passes, and the reading names it", () => {
     const entry = result.checks.find((item) => item.code === "guardian_pipe_reachable");
     assert.equal(entry.ok, true, JSON.stringify(entry));
     assert.equal(entry.status, "passed");
-    assert.equal(entry.detail, `2 named pipe(s) examined; bound: ${GUARDIAN_ENDPOINT}`);
+    assert.equal(
+      entry.detail,
+      `2 named pipe(s) examined; bound: ${GUARDIAN_ENDPOINT} - bound, not proven armable: the name is minted per launch by whoever owns it, so this says an endpoint exists, not that the Host this run starts can arm a role on it`,
+    );
     assert.deepEqual(failureCodes(result), [], JSON.stringify(result.checks, null, 1));
   });
 });

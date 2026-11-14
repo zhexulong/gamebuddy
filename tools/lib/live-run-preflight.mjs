@@ -34,6 +34,11 @@
  * ended `dialogue_exited_before_ready:1:desktop_runtime_bootstrap_unavailable:guardian_pipe_unreachable`, reaching
  * no capture phase at all, while the preflight reported this tree healthy.
  *
+ * `probeDesktopSupervisor` answers the question that line leaves open - the endpoint's only product-side server is the
+ * native Desktop supervisor, so "no endpoint is bound" has two very different repairs, and on 2026-11-15 the shipped
+ * advice ("start the Desktop supervisor") was measured to be impossible on this machine: the built exe exits 1 with
+ * `root_registration_unavailable` before it binds anything. It too is passed in, for the same conformance reason.
+ *
  * Every check therefore reports one of three verdicts, not two: `passed`, `blocked` (a condition this host fails) and
  * `not_measured` (the prerequisite was absent, so nothing was measured - never a pass, and the same line
  * `tools/lib/assert-non-vacuous.mjs` draws for a gate's population). A `not_measured` check refuses the run exactly
@@ -373,16 +378,60 @@ export function probeGuardianPipe({
 }
 
 /**
- * The operator's two routes to a run, printed when no guardian endpoint is bound.
+ * Whether the native Desktop supervisor is installed for this user, read from the file system alone.
  *
- * The first is the product path: the Desktop supervisor owns the endpoint and is the only thing that can answer
- * `arm_attempt` / `launch_role` / `contain_role`. The second exists and is named rather than implied, because it is
+ * The supervisor is the only product-side process that serves `GameBuddy.HostGuardian.*`, and its first step derives
+ * the whole layout from the HKCU registration Setup writes and refuses any boundary that is not already an ordinary
+ * directory (`desktop/GameBuddy.Desktop/Program.cs:392-394`, `CurrentUserRootLayout.cs:85-100` with
+ * `createMissing: false`). So an absent program root decides the question without a registry read: the launch ends
+ * `root_registration_unavailable` (or `root_layout_unavailable` once the registration outlives the install), and no
+ * pipe is ever created.
+ *
+ * Measured 2026-11-15 on this checkout, running
+ * `desktop/GameBuddy.Desktop/bin/Release/net8.0-windows/win-x64/GameBuddy.Desktop.exe` with no arguments: exit 1, one
+ * line on stderr, `root_registration_unavailable`, `\\.\pipe\` holding no `GameBuddy.HostGuardian.*` name before or
+ * after. `installed: null` means this platform has no per-user LocalApplicationData to ask about, and the caller's
+ * message then keeps to the unqualified supervisor route rather than claiming a fact it did not read.
+ */
+export function probeDesktopSupervisor({ localAppData = process.env.LOCALAPPDATA ?? null, exists = existsSync } = {}) {
+  if (typeof localAppData !== "string" || localAppData.length === 0)
+    return Object.freeze({ programRoot: null, installed: null });
+  const programRoot = join(localAppData, "Programs", "GameBuddy");
+  return Object.freeze({ programRoot, installed: exists(programRoot) });
+}
+
+/**
+ * The operator's routes to a run, printed when no guardian endpoint is bound.
+ *
+ * The first is the product path and is stated as the measurement it is: the supervisor owns the endpoint, and on a
+ * machine with no installed generation it refuses before binding. The second is the structural limit that survives an
+ * install: a supervisor never serves a harness run, because the bootstrap id it mints per launch reaches only the Host
+ * child it starts and its roots are the machine's own. The third exists and is named rather than implied, because it is
  * a real route for a chat-only run and a dead one for anything that arms, launches or contains a game.
  */
-const GUARDIAN_OPERATOR_ROUTE = Object.freeze([
-  "start the native Desktop supervisor - it is the only server of this endpoint (desktop/GameBuddy.Desktop/DesktopHostBootstrapBroker.cs:47)",
-  "or drive a chat-only run through tools/desktop-composition-launch.mjs, which binds the same endpoint for the launch it drives and answers hello only: it destroys the socket on any arm_attempt/launch_role/contain_role frame (tools/desktop-composition-launch.mjs:542-545), so it cannot carry a run that arms, launches or contains a game",
-]);
+const GUARDIAN_SUPERVISOR_ROUTE_ABSENT = Object.freeze({
+  noProgramRoot:
+    "the native Desktop supervisor is the only product-side server of this endpoint and it cannot start on this machine: no installed generation, so its first step refuses with root_registration_unavailable (desktop/GameBuddy.Desktop/Program.cs:392-394; Setup is the only writer of the registration and of the installed generation). Measured 2026-11-15: the built exe prints that one code on stderr and exits 1 before binding any pipe, so starting it is not a step that exists here",
+  notRunning:
+    "the native Desktop supervisor is installed and not running; it binds this endpoint only for a launch it drives, so starting it by hand is not how a run obtains one",
+  unread:
+    "start the native Desktop supervisor - it is the only product-side server of this endpoint (desktop/GameBuddy.Desktop/DesktopHostBootstrapBroker.cs:47)",
+});
+
+const GUARDIAN_SUPERVISOR_CANNOT_SERVE_A_RUN =
+  "and even a running supervisor could not serve this run's roots: the bootstrap id is minted per launch and reaches only the Host child it starts (desktop/GameBuddy.Desktop/RuntimeSupervisor.cs:143-144, :184), so the Host this run launches has no endpoint to arm on, and the supervisor's own composition reads the machine's fixed LOCALAPPDATA\\GameBuddy\\{data,operational,presentation} (CurrentUserRootLayout.cs:134-139) rather than the run root - the page it opened would be the installed product, not this run's checkout";
+
+const GUARDIAN_GATE_PEER_ROUTE =
+  "or drive a chat-only run through tools/desktop-composition-launch.mjs, which binds the same endpoint for the launch it drives and answers hello only: it destroys the socket on any arm_attempt/launch_role/contain_role frame (tools/desktop-composition-launch.mjs:542-545), so it cannot carry a run that arms, launches or contains a game - a broker for those frames does not exist in this tree, which is a harness gap rather than an operator step";
+
+/** Which of the three supervisor facts applies, chosen from what the probe actually read. */
+function guardianSupervisorRoute(supervisor) {
+  if (supervisor === null || supervisor === undefined || typeof supervisor.programRoot !== "string")
+    return GUARDIAN_SUPERVISOR_ROUTE_ABSENT.unread;
+  if (supervisor.installed !== true)
+    return `no installed generation at ${supervisor.programRoot}: ${GUARDIAN_SUPERVISOR_ROUTE_ABSENT.noProgramRoot}`;
+  return `installed at ${supervisor.programRoot}: ${GUARDIAN_SUPERVISOR_ROUTE_ABSENT.notRunning}`;
+}
 
 /**
  * The guardian reading as a check. A bound endpoint passes; an absent or unreadable namespace is `not_measured`.
@@ -390,13 +439,16 @@ const GUARDIAN_OPERATOR_ROUTE = Object.freeze([
  * The absent case names the condition the product will fail with (`guardian_pipe_unreachable`) and what it costs
  * the run: the guardian session is the Host's second bootstrap stage, before the composition exists, so nothing is
  * captured and `INJECTION` and `RECONCILIATION` would be unobserved rather than passing.
+ *
+ * The passing case says what it did not measure: a bound name is a claim about the pipe namespace, not a broker that
+ * can arm for THIS run's Host, and on every machine seen so far the bound name belonged to another launch's peer.
  */
-const guardianCheck = (probe) => {
+const guardianCheck = (probe, supervisor = null) => {
   if (probe.endpoints.length > 0)
     return check(
       "guardian_pipe_reachable",
       true,
-      `${String(probe.examined)} named pipe(s) examined; bound: ${probe.endpoints.join(", ")}`,
+      `${String(probe.examined)} named pipe(s) examined; bound: ${probe.endpoints.join(", ")} - bound, not proven armable: the name is minted per launch by whoever owns it, so this says an endpoint exists, not that the Host this run starts can arm a role on it`,
     );
   const examined =
     probe.unreadable === null
@@ -406,7 +458,7 @@ const guardianCheck = (probe) => {
     "guardian_pipe_reachable",
     "guardian_pipe_unreachable",
     `${examined}; no ${GUARDIAN_ENDPOINT_PREFIX}* endpoint is bound, so the Host's guardian-session bootstrap stage cannot connect (host/src/bootstrap/wire/desktop-runtime-bootstrap.internal.ts:621) and the run dies dialogue_exited_before_ready:1:desktop_runtime_bootstrap_unavailable:guardian_pipe_unreachable before any capture phase - INJECTION and RECONCILIATION would be unobserved, not passing`,
-    GUARDIAN_OPERATOR_ROUTE,
+    [guardianSupervisorRoute(supervisor), GUARDIAN_SUPERVISOR_CANNOT_SERVE_A_RUN, GUARDIAN_GATE_PEER_ROUTE],
   );
 };
 
@@ -478,6 +530,7 @@ export function preflightLiveRun(options) {
     hostRoot = "host",
     modRoot = "integrations/stardew",
     guardian = null,
+    desktopSupervisor = null,
   } = options;
 
   const folders = gameBuddyFoldersIn(modsPath);
@@ -485,7 +538,7 @@ export function preflightLiveRun(options) {
   const checks = [
     // First because it is the one failure no rebuild repairs: a stale artifact is fixed by building, and a machine
     // with no guardian endpoint is not. Reported first, the operator reads the cause rather than a symptom of it.
-    ...(guardian === null ? [] : [guardianCheck(guardian)]),
+    ...(guardian === null ? [] : [guardianCheck(guardian, desktopSupervisor)]),
     hostArtifactCheck(hostRoot),
     modBundleCheck(modRoot, releaseDir),
     check(

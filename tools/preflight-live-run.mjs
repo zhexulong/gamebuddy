@@ -32,12 +32,19 @@
  * `tools/audit-gate-red-proofs.mjs` rather than skipped (this one carried the invented kind `machine` until
  * 2026-11-13).
  *
+ * Measured 2026-11-15, same machine: the route this line used to print first - "start the native Desktop supervisor" -
+ * is not a step that exists here. The built exe exits 1 with `root_registration_unavailable` (no HKCU registration, no
+ * `%LOCALAPPDATA%\Programs\GameBuddy`) before binding any pipe, and even an installed supervisor would not serve a run
+ * root (the bootstrap id it mints per launch reaches only its own Host child, `RuntimeSupervisor.cs:143-144`), so the
+ * refusal now prints what was read and the limit instead of a repair nobody can carry out.
+ *
  * The name count moves between runs because it is the machine's whole pipe namespace; that is why it is printed.
  */
 import { execFileSync } from "node:child_process";
 import { existsSync, readdirSync } from "node:fs";
 import {
   preflightLiveRun,
+  probeDesktopSupervisor,
   probeGuardianPipe,
   probeProviderReadiness,
   providerReadinessRefusal,
@@ -84,6 +91,7 @@ const result = preflightLiveRun({
   saveName,
   runningGameProcesses: runningGameProcesses(),
   guardian: probeGuardianPipe(),
+  desktopSupervisor: probeDesktopSupervisor(),
 });
 const VERDICT = { passed: "ok  ", blocked: "FAIL", not_measured: "n/m " };
 for (const entry of result.checks) console.log(`${VERDICT[entry.status]}  ${entry.code.padEnd(38)} ${entry.detail}`);
