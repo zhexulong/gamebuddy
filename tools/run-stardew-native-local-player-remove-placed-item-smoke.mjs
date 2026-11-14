@@ -6,7 +6,6 @@
 import {
   assertRequiredCapabilities,
   connectNativeLocalClient,
-  executeFresh,
   executeFreshAfterReobserve,
   observeFresh,
   readNativeClientConfig,

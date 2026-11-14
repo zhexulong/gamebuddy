@@ -13,7 +13,6 @@ import {
 } from "./lib/stardew-native-smoke-harness-v1.mjs";
 import { loadHostTestModule } from "./lib/host-test-module.mjs";
 
-const SCENARIO = "native_wia_answer_question_v1";
 const EXPECTED_ACTIONS = ["answer_dialogue", "cancel_active_execution", "move_to_tile", "travel", "observe_scene"];
 const REQUIRED_CAPABILITIES = [
   "answer_dialogue",

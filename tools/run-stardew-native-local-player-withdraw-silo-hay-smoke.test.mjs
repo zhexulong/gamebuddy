@@ -5,14 +5,6 @@ import { publishedActionRegistrations } from "./lib/stardew-native-smoke-harness
 
 const HAY = "(O)178";
 
-const scope = {
-  integrationId: "stardew",
-  saveId: "save",
-  worldId: "world",
-  playerId: "player",
-  companionId: "companion",
-};
-
 /** A snapshot the runner can act on: one adjacent stocked Silo, no Hay carried. */
 function snapshotWith({ revision, siloHay, carried }) {
   return {

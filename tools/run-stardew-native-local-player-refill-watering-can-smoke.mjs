@@ -249,7 +249,3 @@ function adjacent(left, right) {
     Math.abs(left.y - right.y) <= 1
   );
 }
-
-function same(left, right) {
-  return Array.isArray(left) && left.length === right.length && left.every((value, index) => value === right[index]);
-}

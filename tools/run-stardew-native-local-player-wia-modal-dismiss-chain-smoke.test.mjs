@@ -146,7 +146,7 @@ function makeClient(overrides = {}) {
 }
 
 test("wia dismiss chain passes the full interrupt → dismiss → resume loop", async () => {
-  const { client, receipts, counters } = makeClient();
+  const { client, receipts } = makeClient();
   const result = await runWiaModalDismissChain(client, receipts, config, { loadHostModule: hostLoader() });
   assert.equal(
     result.state,

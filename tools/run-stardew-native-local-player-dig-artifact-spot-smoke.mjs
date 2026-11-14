@@ -252,9 +252,6 @@ function parseFiniteDecimal(value) {
   const number = Number(value);
   return Number.isFinite(number) ? number : null;
 }
-function same(left, right) {
-  return Array.isArray(left) && left.length === right.length && left.every((value, index) => value === right[index]);
-}
 function summary(snapshot) {
   return {
     ...summarizeSnapshot(snapshot),

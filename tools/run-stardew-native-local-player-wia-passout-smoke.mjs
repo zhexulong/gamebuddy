@@ -13,7 +13,6 @@ import {
 } from "./lib/stardew-native-smoke-harness-v1.mjs";
 import { loadHostTestModule } from "./lib/host-test-module.mjs";
 
-const SCENARIO = "native_wia_pass_out_v1";
 const EXPECTED_ACTIONS = ["cancel_active_execution", "move_to_tile", "travel", "observe_scene"];
 const REQUIRED_CAPABILITIES = ["cancel_active_execution", "move_to_tile", "observe_scene", "travel"].sort();
 
@@ -196,9 +195,6 @@ function adjacent(left, right) {
     Math.abs(left.x - right.x) <= 1 &&
     Math.abs(left.y - right.y) <= 1
   );
-}
-function sameTile(left, right) {
-  return Number.isInteger(left?.x) && Number.isInteger(left?.y) && left.x === right?.x && left.y === right?.y;
 }
 function chooseDistantSoilTile(snapshot) {
   const player = { x: snapshot.tile?.x, y: snapshot.tile?.y };

@@ -2,7 +2,6 @@ import {
   assertRequiredCapabilities,
   connectNativeLocalClient,
   executeFresh,
-  observeFresh,
   readNativeClientConfig,
   summarizeReceipt,
   waitForFreshSnapshot,

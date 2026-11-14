@@ -23,7 +23,7 @@
  */
 import { createHash } from "node:crypto";
 import { spawn } from "node:child_process";
-import { mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm, stat } from "node:fs/promises";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
@@ -98,7 +98,7 @@ export async function runPathPredicateProbe(options) {
     // A Mod-side rejection writes no evidence file, so the only place its
     // reason code appears is the SMAPI log. Capture it before teardown, while
     // it still describes this run.
-    const smapiLogTail = await readSmapiLogTail(input);
+    await readSmapiLogTail(input);
     if (stage.child !== null) {
       try {
         await stage.child.close();

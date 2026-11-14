@@ -14,7 +14,6 @@ import {
 } from "./lib/stardew-native-smoke-harness-v1.mjs";
 import { loadHostTestModule } from "./lib/host-test-module.mjs";
 
-const SCENARIO = "native_chop_tree_source_v1";
 const EXPECTED_ACTIONS = ["move_to_tile", "travel", "equip_tool", "chop_tree"];
 const REQUIRED_CAPABILITIES = [
   "cancel_active_execution",

@@ -10,7 +10,6 @@ const KEG_TILE = { x: 20, y: 22 };
 const TWIG_TILE = { x: 19, y: 21 };
 const AXE_SLOT = 8;
 const PICKAXE_SLOT = 9;
-const TAPPER_SLOT = 3;
 
 /** The Mod's own identity rule: the object's own facts, never the tool slot. */
 const kegTargetId = "placed_item_keg";

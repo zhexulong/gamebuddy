@@ -10,7 +10,6 @@ import {
 import { loadHostTestModule } from "./lib/host-test-module.mjs";
 
 const ACTION = "plant_sapling";
-const SCENARIO = "native_plant_sapling_v1";
 const REQUIRED_CAPABILITIES = ["cancel_active_execution", "inspect_self", ACTION];
 
 /** Execute the plant_sapling contract against an already-connected bridge session. */

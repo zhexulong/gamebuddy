@@ -366,12 +366,3 @@ function summarizeWithMachines(snapshot) {
     machineTargets: snapshot.machineTargets?.map(summarizeTarget) ?? [],
   };
 }
-
-function same(left, right) {
-  return (
-    Array.isArray(left) &&
-    Array.isArray(right) &&
-    left.length === right.length &&
-    left.every((value, index) => value === right[index])
-  );
-}

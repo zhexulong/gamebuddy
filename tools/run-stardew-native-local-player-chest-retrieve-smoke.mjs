@@ -12,7 +12,6 @@ import {
 import { loadHostTestModule } from "./lib/host-test-module.mjs";
 
 const ACTION = "chest_retrieve";
-const SCENARIO = "native_chest_retrieve_v1";
 const EXPECTED_CAPABILITIES = ["cancel_active_execution", "inspect_self", ACTION];
 
 /** Execute the chest_retrieve contract against an already-connected bridge session. */

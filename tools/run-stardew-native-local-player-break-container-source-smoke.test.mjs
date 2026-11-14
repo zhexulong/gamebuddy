@@ -9,7 +9,6 @@ const NON_CONTAINER_ITEM = "(BC)12";
 const CONTAINER_TILE = { x: 21, y: 21 };
 const KEG_TILE = { x: 20, y: 22 };
 const PICKAXE_SLOT = 9;
-const TAPPER_SLOT = 3;
 
 /** The Mod's own identity rules: one per kind, both opaque. */
 const containerTargetId = "breakable_container_barrel";

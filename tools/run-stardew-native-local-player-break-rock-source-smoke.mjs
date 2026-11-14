@@ -343,10 +343,6 @@ function adjacent(left, right) {
   return Math.abs(left.x - right.x) <= 1 && Math.abs(left.y - right.y) <= 1;
 }
 
-function same(left, right) {
-  return Array.isArray(left) && left.length === right.length && left.every((value, index) => value === right[index]);
-}
-
 function parseEvidence(evidence) {
   const detail = typeof evidence?.detail === "string" ? evidence.detail : "";
   return Object.fromEntries(

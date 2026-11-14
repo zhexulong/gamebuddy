@@ -240,9 +240,6 @@ function parseEvidence(evidence) {
     throw new Error("invalid_machine_inspect_evidence");
   return result;
 }
-function same(left, right) {
-  return Array.isArray(left) && left.length === right.length && left.every((value, index) => value === right[index]);
-}
 function summarizeTarget(target) {
   return target
     ? {

@@ -400,9 +400,6 @@ function validTile(value) {
 function adjacent(left, right) {
   return Math.abs(left.x - (right.sourceX ?? right.x)) <= 1 && Math.abs(left.y - (right.sourceY ?? right.y)) <= 1;
 }
-function same(left, right) {
-  return Array.isArray(left) && left.length === right.length && left.every((value, index) => value === right[index]);
-}
 function summary(snapshot) {
   // `summarizeSnapshot` stopped carrying location/tile in 4a52188, so the
   // location this runner asserts is exposed here explicitly.

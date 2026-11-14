@@ -244,9 +244,6 @@ function parseNonNegativeSafeInteger(value) {
   const parsed = Number(value);
   return Number.isSafeInteger(parsed) ? parsed : null;
 }
-function same(left, right) {
-  return Array.isArray(left) && left.length === right.length && left.every((value, index) => value === right[index]);
-}
 function summarizeTarget(value) {
   return value
     ? {

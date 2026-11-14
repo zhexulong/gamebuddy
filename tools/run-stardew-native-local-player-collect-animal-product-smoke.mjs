@@ -5,7 +5,6 @@ import {
   observeFresh,
   readNativeClientConfig,
   summarizeReceipt,
-  validateNativeLocalFixturePolicy,
   summarizeSnapshot,
   waitForFreshSnapshot,
   waitForTerminal,
@@ -152,9 +151,6 @@ function parseEvidence(evidence) {
       return index > 0 ? [[part.slice(0, index), part.slice(index + 1)]] : [];
     }),
   );
-}
-function same(left, right) {
-  return Array.isArray(left) && left.length === right.length && left.every((value, index) => value === right[index]);
 }
 function validId(value) {
   return typeof value === "string" && value.length > 0;

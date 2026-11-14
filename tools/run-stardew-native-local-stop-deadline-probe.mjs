@@ -3,26 +3,15 @@
 // Each scenario drives one typed execution and verifies the terminal
 // semantics: safe-point settle, deadline expiry, single receipt lineage,
 // and never a do-over of an already-committed side effect.
-import { createConnection } from "node:net";
 import {
   connectNativeLocalClient,
   executeFresh,
   observeFresh,
   readNativeClientConfig,
-  summarizeReceipt,
-  waitForFreshSnapshot,
   waitForTerminal,
 } from "./lib/stardew-native-smoke-harness-v1.mjs";
 
 const ACTION = "navigate_to_destination";
-const SCENARIO = "navigation_mutation_v1";
-const EXPECTED_CAPABILITIES = [
-  "cancel_active_execution",
-  "find_destination",
-  "inspect_self",
-  "inspect_world_map",
-  ACTION,
-];
 
 async function loadDistTestClient(entry) {
   const { LocalStardewBridgeClient } = await import(`../host/dist-test/${entry}`);
@@ -199,25 +188,4 @@ function requireResolvedLabelDestination(result, currentLocation) {
   // exactly { kind, label } — no ref field — matching C# IsExactNavigationDestinationSelector.
   return Object.freeze({ kind: destination.kind, label: destination.label });
 }
-
-/** Probe a named pipe by attempting a short-lived connection and immediately closing. */
-async function waitForPipeListening(pipeName, timeoutMs) {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    const ok = await new Promise((resolve) => {
-      const socket = createConnection(`\\.\pipe\${pipeName}`);
-      const done = (value) => {
-        socket.destroy();
-        resolve(value);
-      };
-      socket.once("connect", () => done(true));
-      socket.once("error", () => done(false));
-      socket.setTimeout(2_000, () => done(false));
-    });
-    if (ok) return true;
-    await new Promise((resolve) => setTimeout(resolve, 1_000));
-  }
-  return false;
-}
-
 await main();

@@ -17,7 +17,6 @@ const ACTION = "navigate_to_destination";
 // (`tools/run-stardew-native-local-player-navigation-mutation-fixture.ps1`); the navigation ladder's mutation half is
 // scenario-driven rather than one action, so the action->runner map has no entry for it.
 const SCENARIO = "navigation_mutation_v1";
-const EXPECTED_ACTIONS = ["inspect_world_map", "find_destination", ACTION];
 const REQUIRED_CAPABILITIES = [
   "cancel_active_execution",
   "find_destination",
@@ -253,10 +252,6 @@ function parseCompletionEvidence(receiptEvidence) {
   if (fields.arrived !== "true" || fields.postcondition !== "true")
     throw new Error("navigation_mutation_completion_evidence_invalid");
   return fields;
-}
-
-function same(left, right) {
-  return Array.isArray(left) && JSON.stringify(left) === JSON.stringify(right);
 }
 
 function sameSelector(left, right) {

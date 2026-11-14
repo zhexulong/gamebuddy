@@ -104,7 +104,7 @@ export async function runUseWarpItemSmoke(
     // The arrival can still be finishing (the totem's freeze plus the warp fade), and admission answers
     // `player_not_actionable` for that - true, but not the clause under test. Wait for an actionable
     // actor, then send: the refusal must come from the slot no longer holding the totem.
-    const ready = await waitForFreshSnapshot(client, {
+    await waitForFreshSnapshot(client, {
       minRevision: terminal.revision,
       timeoutMs: arrivalTimeoutMs,
       check: (candidate) => candidate.actionable === true && candidate.activeExecution == null,

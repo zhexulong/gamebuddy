@@ -34,8 +34,6 @@ import { loadHostTestModule } from "./lib/host-test-module.mjs";
 const EXPECTED_CAPABILITIES = ["cancel_active_execution", "inspect_self", "select_mine_elevator_floor"];
 const SCENARIO = "native_mine_elevator_v1";
 const TERMINAL_REASON = "mine_elevator_floor_selected";
-/** The level the fixture places the actor on (a floor that carries elevator tile 112). */
-const FIXTURE_START_LOCATION = "UndergroundMine5";
 
 /** Execute the select_mine_elevator_floor contract against a connected session. */
 export async function runMineElevatorSmoke(client, receipts, config, { floorsTimeoutMs = 30_000 } = {}) {

@@ -36,7 +36,6 @@ import { loadHostTestModule } from "./lib/host-test-module.mjs";
 const EXPECTED_CAPABILITIES = ["cancel_active_execution", "inspect_self", "ride_bus"];
 const BUS_STOP_LOCATION = "BusStop";
 const BUS_DESTINATION = "Desert";
-const RUNNING_REASON = "bus_departure_started";
 const TERMINAL_REASON = "bus_arrived";
 
 /** Execute the ride_bus contract against an already-connected bridge session. */

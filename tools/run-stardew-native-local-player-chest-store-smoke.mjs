@@ -10,7 +10,6 @@ import {
 import { loadHostTestModule } from "./lib/host-test-module.mjs";
 
 const ACTION = "chest_store";
-const SCENARIO = "native_chest_store_v1";
 const REQUIRED_CAPABILITIES = ["cancel_active_execution", "inspect_self", ACTION];
 
 /** Execute the chest-store contract against an already-connected bridge session. */

@@ -1296,14 +1296,6 @@ function describeSelector(selector) {
   return selector.kind === "label" ? `label:${selector.label}` : `ref:${selector.ref}`;
 }
 
-/** Every native form a hop tried, with ITS OWN reason code and the tile it aimed at. */
-function describeRefusals(refusals) {
-  if (refusals.length === 0) return "none";
-  return refusals
-    .map((entry) => `${entry.action}:${entry.state}/${entry.reasonCode}@${entry.sourceX},${entry.sourceY}`)
-    .join("|");
-}
-
 /**
  * Every candidate this location was refused, one entry each.
  *

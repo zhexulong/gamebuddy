@@ -50,7 +50,6 @@ const REQUIRED_CAPABILITIES = [
 
 const BREAKPOINT_REASON = "hoe_not_equipped";
 const RECOVERY_ACTION = "equip_tool";
-const RECOVERY_REASON = "tool_equipped";
 const RETRY_REASON = "soil_tilled";
 
 /** Execute the tool-recovery chain against an already-connected bridge session. */

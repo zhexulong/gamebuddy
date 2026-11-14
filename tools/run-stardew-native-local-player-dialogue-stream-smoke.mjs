@@ -86,7 +86,6 @@ export async function runDialogueStreamSmoke(client, receipts, config, options =
       0,
     );
     const speakers = payloads.map((payload) => payload.speaker);
-    const reported = payloads.length > 0 && maxPages >= 1;
     // The speaker the gate expects is the villager the fixture ACTUALLY picked, not a constant: the multi-page
     // search may choose Lewis or another villager whose location line is multi-page. Hard-coding Gus here made a
     // correct run fail `speaker_unexpected` once the fixture stopped forcing Gus.

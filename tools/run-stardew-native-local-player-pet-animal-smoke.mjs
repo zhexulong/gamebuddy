@@ -3,7 +3,6 @@ import {
   classifyTopology,
   connectNativeLocalClient,
   executeFresh,
-  observeFresh,
   observeTopologySnapshot,
   readNativeClientConfig,
   summarizeReceipt,
