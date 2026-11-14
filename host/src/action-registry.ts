@@ -646,6 +646,38 @@ export function isExpressionOnlyAction(actionId: string | null | undefined): boo
   return actionId !== null && actionId !== undefined && EXPRESSION_ONLY_ACTION_ID_SET.has(actionId);
 }
 
+/**
+ * Whether an adapter action tool survives a plan-builder surface, which keeps one tool per action the PLAN cannot carry.
+ *
+ * <p>
+ * A surface that carries the builder replaces the flat per-action tools for EXACTLY the actions its vocabulary carries -
+ * one builder method per plannable action, so a second spelling of the same act is a one-step tool beside it. An action
+ * the plan really cannot carry therefore keeps its own tool, because the plan is not a route it has.
+ * </p>
+ *
+ * <p>
+ * Two declarations decide "cannot carry", and this function reads both rather than restating either:
+ * `EXPRESSION_ONLY_ACTION_IDS` (one step by nature) and the plan vocabulary itself
+ * (`body-program-script.ts` `planActionsFromRegistrations`), which drops a lifecycle the Mod's own Body Program catalog
+ * refuses as a node (`FarmhandBodyProgramCatalogProjection.cs` `lifecycle_not_allowed:<action>:<lifecycle>`). So a
+ * lifecycle the Mod refuses keeps the tool, and the day the Mod admits one the tool stops being mounted - by
+ * construction, with no list to edit here.
+ * </p>
+ *
+ * <p>
+ * MEASURED 2026-11-14, WHY THIS IS NOT JUST THE EXPRESSION EXCEPTION. The mount filter read `isExpressionOnlyAction`
+ * alone, while the Host's admission (`visibleActionsFromModCatalog`) publishes the seven `experimental` actions that have
+ * a complete Mod descriptor. Those left the plan vocabulary on their lifecycle and lost their tool one layer below, so
+ * they had no route at all and nothing in the companion's context said they existed (`round54`: `sweep_scythe` appeared
+ * zero times). `action-route-gate.test.ts` names them now; its population was the same lifecycle rule, which is why it
+ * could not before.
+ * </p>
+ */
+export function keepsOwnToolOnPlanSurface(actionId: string | null, planActionIds: ReadonlySet<string>): boolean {
+  if (actionId === null) return true;
+  return isExpressionOnlyAction(actionId) || !planActionIds.has(actionId);
+}
+
 /** A current restrictive projection: registration facts remain Mod-owned. */
 export type VisibleStardewAction = StardewActionAdapter & ActionRegistration;
 

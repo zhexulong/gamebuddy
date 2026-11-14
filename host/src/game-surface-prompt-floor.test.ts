@@ -167,10 +167,33 @@ test("the reading's premise about the plan builder still holds: the flat per-act
   );
 
   const { shape: runtimeShape } = readSourceShape(join(HOST_SOURCE, "runtime-core.internal.ts"));
+  // The mount rule, as the formatter leaves it: the whole decision in one collapsed clause.
+  const mountRule = runtimeShape.slice(
+    runtimeShape.indexOf("const actionToolsToMount"),
+    runtimeShape.indexOf("const integrationToolGroups"),
+  );
+  assert.ok(
+    mountRule.length > 0,
+    "blocked: runtime-core's plan-surface mount rule is not where this gate reads it, so nothing below was examined",
+  );
+  assert.match(
+    mountRule,
+    /planActionSurface \? integrationToolSet\.actions\.filter\(\(tool\) => keepsOwnToolOnPlanSurface\(integrationModule\?\.actionIdForToolName\(tool\.name\)/u,
+    "runtime-core no longer filters adapter action tools out of a plan-builder surface, or it keeps them by a rule of its own",
+  );
+  // The rule may not be restated one layer up either: the surface keeps a tool when the plan CANNOT carry its action,
+  // which is the plan vocabulary's own answer. Measured 2026-11-14: this filter read `isExpressionOnlyAction` alone, so the
+  // seven `experimental` actions the Host admits were dropped here and excluded from the plan - zero routes, and nothing in
+  // the companion's context said they existed. `action-route-gate.test.ts` holds the same property from the assembled set.
   assert.match(
     runtimeShape,
-    /planActionSurface\s*\n?\s*\?[\s\S]{0,400}?actionIdForToolName\(tool\.name\)[\s\S]{0,200}?isExpressionOnlyAction/u,
-    "runtime-core no longer filters adapter action tools out of a plan-builder surface, or it keeps more than the declared expression exception",
+    /planActionIds[\s\S]{0,200}?planActionsFromRegistrations\(/u,
+    "the mount filter no longer asks the plan vocabulary which actions it carries, so it is deciding visibility itself",
+  );
+  assert.doesNotMatch(
+    runtimeShape,
+    /isExpressionOnlyAction/u,
+    "runtime-core decides expression for itself instead of asking the plan vocabulary, so it has grown a second escape hatch",
   );
 });
 

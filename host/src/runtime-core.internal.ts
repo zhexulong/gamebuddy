@@ -20,7 +20,8 @@ import {
   type ActionExecutionCoordinator,
   createActionExecutionCoordinator,
 } from "./action-execution-coordinator.internal.js";
-import { isExpressionOnlyAction } from "./action-registry.js";
+import { keepsOwnToolOnPlanSurface } from "./action-registry.js";
+import { planActionsFromRegistrations } from "./body-program-script.js";
 import type { CompanionInterruption } from "./companion-interruption.js";
 import type { ChatRuntimeBindingExecution } from "./continuity-semantic-chat-runtime-binding/continuity-semantic-chat-runtime-binding.internal.js";
 import { prepareExactChatRuntimeConstruction } from "./continuity-semantic-chat-runtime-construction/continuity-semantic-chat-runtime-construction.internal.js";
@@ -60,7 +61,7 @@ import {
   renderGameEnvironmentFactsObservation,
   type GameEnvironmentFactsRender,
 } from "./game-world-vocabulary.js";
-import type { ExecutionReceipt } from "./protocol.js";
+import type { ActionRegistration, ExecutionReceipt } from "./protocol.js";
 import {
   createProviderTurnHeaderScope,
   PROVIDER_TURN_HEADER_EXTENSION_NAME,
@@ -1499,19 +1500,26 @@ export async function createRuntimeWithFixedToolsCore(
   // tool the adapter does not publish as an action stays mounted - `stardew_stop_action` is deliberately not an
   // action. The decision is the composition's to declare, not a Stardew tool name's to imply here.
   //
-  // EXPRESSION IS NOT WORK, and that is the one exception the action registry declares (`EXPRESSION_ONLY_ACTION_IDS`):
-  // an emote or a turn of the head is one step by nature, so dropping its tool does not avoid a one-step run of work -
-  // it forces the gesture into the plan, where it queues behind the work steps in front of it and settles with them.
-  // Measured `round47` (2026-11-12, 188 planned nodes, zero emotes). The plan vocabulary excludes exactly that same
-  // declaration, so each action keeps one route and this file keeps no list of its own.
+  // WHICH TOOLS SURVIVE IS `keepsOwnToolOnPlanSurface`'S ANSWER, not a predicate of this file's. The plan replaces the
+  // flat tools for exactly the actions its vocabulary CARRIES, so an action it cannot carry keeps its own tool - and the
+  // plan vocabulary for this connection is read through the same function the plan tools themselves read
+  // (`continuity-semantic-game-runtime-materializer.ts` `readPlanActions`). Measured 2026-11-14: this filter kept only
+  // the expression exception while the plan vocabulary excluded the Mod's `experimental` lifecycle, so the seven
+  // experimental actions the Host admits were dropped here and absent there - no route at all, and nothing in the
+  // companion's context said they existed.
+  const catalogRegistrations = (
+    integration as { state?: { catalogRegistrations?: readonly ActionRegistration[] } } | undefined
+  )?.state?.catalogRegistrations;
+  const planActionIds = new Set(
+    planActionsFromRegistrations(catalogRegistrations ?? []).map((action) => action.actionId),
+  );
   const actionToolsToMount =
     integrationToolSet === undefined
       ? []
       : planActionSurface
-        ? integrationToolSet.actions.filter((tool) => {
-            const actionId = integrationModule?.actionIdForToolName(tool.name) ?? null;
-            return actionId === null || isExpressionOnlyAction(actionId);
-          })
+        ? integrationToolSet.actions.filter((tool) =>
+            keepsOwnToolOnPlanSurface(integrationModule?.actionIdForToolName(tool.name) ?? null, planActionIds),
+          )
         : integrationToolSet.actions;
   // Tool definitions remain mounted for the lifetime of a Pi session. Every adapter tool therefore receives a
   // Host-owned execution fence so a later lifecycle loss revokes stale closures rather than trusting the adapter

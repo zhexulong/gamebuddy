@@ -5,7 +5,6 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 import {
-  EXPRESSION_ONLY_ACTION_IDS,
   MOD_DESCRIPTOR_REQUIREMENTS,
   STARDEW_ACTION_ADAPTERS,
   STARDEW_ACTION_TOOL_NAMES,
@@ -13,6 +12,7 @@ import {
   isDescriptorDerivedActionId,
   isModDescriptorComplete,
 } from "./action-registry.js";
+import { planActionsFromRegistrations } from "./body-program-script.js";
 import { createStardewActionTools, type MoveCapableIntegration } from "./game-tools.js";
 import { buildGameCompanionSystemPrompt } from "./game-surface-prompt-floor.js";
 import { MOUNTED_GAME_SURFACE_TOOL_NAMES } from "./game-surface-prompt-floor.test-support.js";
@@ -278,12 +278,13 @@ function whyTheArmClosed(
 }
 
 /**
- * The tool list a Game session is handed, built by the function a session calls with the catalog hello_ack
- * publishes. `familyId` is the one registration field the artifact does not publish, and mounting reads only the
- * id and the descriptor.
+ * The registrations a `hello_ack` publishes for the artifact.
+ *
+ * `familyId` is the one registration field the artifact does not publish, and both readers below - the mount and the plan
+ * vocabulary - group or mount by id and descriptor only.
  */
-function mountedToolNames(published: readonly SurfaceAction[]): readonly string[] {
-  const registrations: readonly ActionRegistration[] = published.map((action) => ({
+function registrationsFor(published: readonly SurfaceAction[]): readonly ActionRegistration[] {
+  return published.map((action) => ({
     actionId: action.actionId,
     familyId: action.actionId,
     identityVersion: action.identityVersion,
@@ -291,6 +292,14 @@ function mountedToolNames(published: readonly SurfaceAction[]): readonly string[
     kind: action.kind as ActionRegistration["kind"],
     descriptor: publishedDescriptor(action),
   }));
+}
+
+/**
+ * The tool list a Game session is handed, built by the function a session calls with the catalog hello_ack
+ * publishes.
+ */
+function mountedToolNames(published: readonly SurfaceAction[]): readonly string[] {
+  const registrations = registrationsFor(published);
   const capabilities = registrations.filter((registration) => registration.kind === "execution").map((r) => r.actionId);
   const scope: Scope = {
     integrationId: "stardew",
@@ -482,19 +491,27 @@ test("every tool the Game prompt floor names is a tool a Game session mounts", (
     [],
     `the prompt tells the companion to use a tool no Game session mounts: ${named.join(", ")}`,
   );
-  // The surface's own rule, DERIVED rather than recorded: a plan surface drops every tool `createStardewActionTools`
-  // returns, EXCEPT the actions the registry declares expression-only - those keep their tool and lose their plan step
-  // instead (`action-route-gate.test.ts` holds both directions). So neither the per-action projection nor a plan step may
-  // be the only thing the floor names for an action.
-  const expressionOnlyNames = new Set<string>(
-    EXPRESSION_ONLY_ACTION_IDS.map((actionId) => STARDEW_ACTION_TOOL_NAMES[actionId]),
+  // The surface's own rule, DERIVED rather than recorded: a plan surface keeps a per-action tool for exactly the actions
+  // its plan vocabulary does not carry (`action-registry.ts` `keepsOwnToolOnPlanSurface`), and carries the rest as plan
+  // steps - one action, one route (`action-route-gate.test.ts` holds both directions). So the floor may not name the tool
+  // of an action that reaches her as a plan row, and the population is that set of tools, not "every tool but expression".
+  // Measured 2026-11-14: the old population also excused itself for the seven `experimental` actions, whose tools no
+  // surface mounted at all, so the gate was quiet about a route that did not exist while calling it the right one.
+  const planCarried = new Set<string>(
+    planActionsFromRegistrations(registrationsFor(loadActionSurface())).map((action) => action.actionId),
+  );
+  const toolNameOfPlanCarried = new Set<string>(
+    [...planCarried].flatMap((actionId) => {
+      const name = STARDEW_ACTION_TOOL_NAMES[actionId as keyof typeof STARDEW_ACTION_TOOL_NAMES] as string | undefined;
+      return name === undefined ? [] : [name];
+    }),
   );
   const perAction = new Set<string>(
-    mountedToolNames(loadActionSurface()).filter((name) => !expressionOnlyNames.has(name)),
+    mountedToolNames(loadActionSurface()).filter((name) => toolNameOfPlanCarried.has(name)),
   );
   assert.ok(
     perAction.size > 0,
-    "blocked: the adapter mounts no per-action tool, so the negative below examines nothing",
+    "blocked: the adapter mounts no per-action tool for a plan-carried action, so the negative below examines nothing",
   );
   assert.deepEqual(
     named.filter((name) => perAction.has(name)).map((name) => `floor_names_per_action_tool:${name}`),

@@ -21,7 +21,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { EXPRESSION_ONLY_ACTION_IDS, STARDEW_ACTION_TOOL_NAMES } from "./action-registry.js";
+import { STARDEW_ACTION_TOOL_NAMES } from "./action-registry.js";
 import { planActionsFromRegistrations } from "./body-program-script.js";
 import type { ActionRegistration } from "./protocol.js";
 
@@ -354,16 +354,16 @@ export const GAME_SURFACE_PROMPT_FLOOR: PromptFloorReading = Object.freeze({
       flatPerActionTools: FLAT_TOOLS.length,
       plannableBuilderMethods: BUILDER_METHODS.length,
     }),
-    note: "The flat per-action tools are NOT in the request, with one derived exception: the actions `action-registry.ts` declares expression-only (`EXPRESSION_ONLY_ACTION_IDS`) keep their own tool, because a gesture is one step by nature and a plan step would queue it behind work. The 14-tool set above is the measurement of the plan-builder-only surface, not an assumption - `stardew_plan_work`'s description carries the builder method names instead, and `MOUNTED_GAME_SURFACE_TOOL_NAMES` below adds the expression tools from that declaration.",
+    note: "The flat per-action tools are NOT in the request, with one derived exception: an action the plan vocabulary does not carry keeps its own tool (`action-registry.ts` `keepsOwnToolOnPlanSurface`) - the expression pair, because a gesture is one step by nature, and the seven `experimental` actions the Host admits, because the Mod refuses them as Body Program nodes. The 14-tool set above is the measurement of the plan-builder-only surface, not an assumption - `stardew_plan_work`'s description carries the builder method names instead, and `MOUNTED_GAME_SURFACE_TOOL_NAMES` below adds every tool-only action's tool from that declaration.",
   }),
 });
 
 /**
- * The tool names the live Game surface MOUNTS: the recorded rows' own population plus the expression exception.
+ * The tool names the live Game surface MOUNTS: the recorded rows' own population plus every action the plan cannot carry.
  *
  * <p>
  * The recorded rows are the plan-builder surface a measured production session carried, and they are not
- * `STARDEW_ACTION_TOOL_NAMES`: a plan surface drops every tool the adapter publishes as an action
+ * `STARDEW_ACTION_TOOL_NAMES`: a plan surface drops the flat tools of every action its plan vocabulary carries
  * (`runtime-core.internal.ts`, asserted structurally by `game-surface-prompt-floor.test.ts`), so that projection is a list
  * of names the Agent is never handed. Two gates resolved the prompt against the projection and stayed green while the
  * conduct sent body language to `stardew_express_emote`, which was not in the request at all (measured 2026-11-11,
@@ -371,13 +371,17 @@ export const GAME_SURFACE_PROMPT_FLOOR: PromptFloorReading = Object.freeze({
  * </p>
  *
  * <p>
- * THE EXCEPTION IS DERIVED, not recorded: the actions `action-registry.ts` declares expression-only mount their own tool
- * on that same surface (`EXPRESSION_ONLY_ACTION_IDS` is the one declaration both the mount filter and the plan vocabulary
- * read), so their names join the mounted set from that declaration and from `STARDEW_ACTION_TOOL_NAMES`. A third one
- * declared tomorrow reaches every gate here without an edit to this file.
+ * THE EXCEPTION IS DERIVED, not recorded: the actions the plan vocabulary does not carry keep their own tool
+ * (`action-registry.ts` `keepsOwnToolOnPlanSurface` is the one declaration the mount filter and this reading both ask), so
+ * their names join the mounted set from that derivation and from `STARDEW_ACTION_TOOL_NAMES`. That is the expression pair
+ * AND the seven `experimental` actions the Host's admission publishes - measured 2026-11-14, when the mount filter kept
+ * only the expression exception and those seven had no route at all. An action declared tomorrow reaches every gate here
+ * without an edit to this file.
  * </p>
  */
 export const MOUNTED_GAME_SURFACE_TOOL_NAMES: readonly string[] = Object.freeze([
   ...GAME_SURFACE_PROMPT_FLOOR.rows.map((row) => row.name),
-  ...EXPRESSION_ONLY_ACTION_IDS.map((actionId) => STARDEW_ACTION_TOOL_NAMES[actionId]),
+  ...SURFACE.filter((action) => action.kind === "execution" && !BUILDER_METHODS.includes(action.actionId)).map(
+    (action) => STARDEW_ACTION_TOOL_NAMES[action.actionId as keyof typeof STARDEW_ACTION_TOOL_NAMES],
+  ),
 ]);
