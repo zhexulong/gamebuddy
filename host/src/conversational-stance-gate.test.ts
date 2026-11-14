@@ -41,10 +41,13 @@ import { fileURLToPath } from "node:url";
  *
  * <p>
  * The detectors are CONCEPTS, not today's sentences: a quantity of speech (`one utterance`, `one remark per reply`), a
- * stop bound on a speech act (`say ... and stop`, `stop when it has been said`), the turn's end followed by speech
- * (`end your turn and speak to the player`), a silence licence (`work quietly until you are done`), and the Chinese
- * forms the presets themselves use (`说清就停`, `保持安静`, `单条 … 字`). Each names the property it protects, so the
- * failure says what to do with the sentence rather than which string matched.
+ * stop bound on a speech act (`say ... and stop`, `stop when it has been said`), a MANDATE laid on a speech act (`end
+ * your turn and speak to the player`, `you must tell the player`, `make sure to say something`), a silence licence
+ * (`work quietly until you are done`), and the Chinese forms the presets themselves use (`说清就停`, `保持安静`, `单条 … 字`).
+ * Each names the property it protects, so the failure says what to do with the sentence rather than which string matched.
+ * A mandate is a REQUIREMENT, not a mention: `speak to the player when there is something to coordinate or share` is a
+ * rule about when she talks - the preset's, per the layer split above - but it requires nothing, and a detector that
+ * could not tell it from `speak to the player` could not say which layer a sentence belongs to.
  * </p>
  */
 
@@ -76,11 +79,30 @@ const INPUT_SOURCES = Object.freeze([
 const PRESET_DIRECTORY = "assets/tavern/presets";
 
 /**
+ * The shapes a mandate wears, as source, so the reason each one is here sits on the line beside it.
+ *
+ * They read one property - an instruction that REQUIRES her to speak - from three moods: the turn's end coordinated
+ * with a speech act (the sentence this gate was written for), an obligation laid on a speech act, and a bare directive
+ * that names the player with no condition on it. A conditional clause is deliberately not a shape: it states WHEN, so
+ * it is the preset's sentence rather than a description's, but it also does not require anything of her, and flagging it
+ * is how this detector came to report a stance clause while passing "Make sure to say something once the receipt
+ * arrives".
+ */
+const SPEECH_MANDATE_SHAPES = Object.freeze([
+  String.raw`\bend (?:your|the) turn\b\s*(?:[,;]\s*)?(?:and|then)\s+(?:you\s+)?(?:must\s+|should\s+|always\s+)?(?:speak|say|talk|tell|reply|answer)\b`,
+  String.raw`\b(?:you|she)\s+(?:must|should|have to|has to|need to|needs to)\s+(?:always\s+|also\s+)?(?:speak|say|talk|tell|reply|answer)\b`,
+  String.raw`\b(?:make sure|be sure|remember)\s+(?:to\s+|you\s+)?(?:speak|say|talk|tell|reply|answer)\b`,
+  String.raw`\bdo not forget to\s+(?:speak|say|talk|tell|reply|answer)\b`,
+  String.raw`\bspeak to (?:the|your) player\b(?!\s+(?:when|whenever|if|unless|once|only|as|while|before|after|until)\b)`,
+]);
+
+/**
  * Every concept the gate can go red on: the finding code names the property, so a failure says which rule was broken.
  *
- * A speech act is the subject; the bound is what makes the sentence a rule about WHEN or HOW MUCH rather than about
- * what may be said. A content rule ("never read machine ids out loud", "answer your partner's words first") has no
- * bound and is left to the floor, which is where it belongs.
+ * A speech act is the subject, and a bound is what makes the sentence a rule about WHEN or HOW MUCH rather than about
+ * what may be said: the turn it is hung on, the obligation that demands it, or the quantity it caps. A content rule
+ * ("never read machine ids out loud", "answer your partner's words first") has no bound and is left to the floor, which
+ * is where it belongs.
  */
 const STANCE_DETECTORS = Object.freeze([
   Object.freeze({
@@ -90,10 +112,10 @@ const STANCE_DETECTORS = Object.freeze([
       /\b(?:say|speak|talk|tell|reply|answer|deliver)\b[^.!?]{0,60}\b(?:and|then)\s+stop\b|\bstop when it has been said\b/iu,
   }),
   Object.freeze({
-    id: "turn_end_then_speak",
-    protects: "the turn's end is a tool fact; ordering speech with it is the preset's",
-    pattern:
-      /\bend (?:your|the) turn\b[^.!?]{0,40}\b(?:and\s+)?(?:speak|say|talk|tell)\b|\bspeak to (?:the|your) player\b/iu,
+    id: "speech_mandated",
+    protects:
+      "an instruction that she must speak ('end your turn and speak to the player') is the preset's, not a description's",
+    pattern: new RegExp(SPEECH_MANDATE_SHAPES.join("|"), "iu"),
   }),
   Object.freeze({
     id: "silence_licence",
