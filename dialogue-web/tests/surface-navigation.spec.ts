@@ -50,8 +50,12 @@ test("the AppBar Game entry selects the Game surface, the URL names it, and Back
   // and `eslint.config.mjs` relies on the same implicit role).
   await expect(surface).toHaveRole("region");
   await expect(surface).toHaveAccessibleName("Game");
-  await expect(page.locator("[aria-modal='true']")).toHaveCount(0);
-  await expect(page.locator(".composed-drawer-backdrop")).toHaveCount(0);
+  // Nothing is modal: no `dialog` is in the top layer, and the bar behind the surface is
+  // the player's to press. (`dialog[open]` is the platform's own answer to "is something
+  // modal on screen" - the shared drawer puts one there and nothing else in the shell
+  // does - and a trial press is reachability rather than a claim about it.)
+  await expect(page.locator("dialog[open]")).toHaveCount(0);
+  await page.getByRole("button", { name: "Chat", exact: true }).click({ trial: true });
   // The panel keeps its frozen anchors inside the surface.
   const panel = page.getByTestId("game-state-panel");
   await expect(panel).toHaveAttribute("data-game-state", "available");
