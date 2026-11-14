@@ -600,9 +600,9 @@ E("enter_exit", "movement_navigation", FarmhandActionHandlerGroup.Movement, Tran
         // A rotation that would push the piece into a neighbour is put BACK and refused by name
         // (`furniture_rotation_blocked_by_occupant`), never reported as a success the world does not show.
         //
-        // Registered `Experimental` for the same reason as its sibling: it stays off the Agent surface until
-        // it passes its own native-local live gate, and promotion is a separate catalog edit.
-        E("rotate_furniture", "buildings_farm_management", FarmhandActionHandlerGroup.ResourceTools, new FarmhandActionDescriptor(new[] { new FarmhandActionArgument("x", "integer"), new FarmhandActionArgument("y", "integer"), new FarmhandActionArgument("expectedTargetId", "string", null, "The opaque `placed_furniture` target id of the piece standing on this tile, copied from the `worldObjectTargets` entry of the MOST RECENT observe result. It binds the location, the tile and the item, so it is also what proves the piece is still the one you saw.") }, new Dictionary<string, string>(), EmbodiedActorResource, "write", "furniture_rotated", "Furniture.rotate"), FarmhandActionLifecycle.Experimental, "worldObjectTargets"),
+        // Locked to a live gate on 2026-11-14: `run-stardew-native-local-player-rotate-furniture-smoke.mjs`
+        // turned an oak chair 0 -> 1 on the Farm and drove the 0-rotation refusal in the same session.
+        E("rotate_furniture", "buildings_farm_management", FarmhandActionHandlerGroup.ResourceTools, new FarmhandActionDescriptor(new[] { new FarmhandActionArgument("x", "integer"), new FarmhandActionArgument("y", "integer"), new FarmhandActionArgument("expectedTargetId", "string", null, "The opaque `placed_furniture` target id of the piece standing on this tile, copied from the `worldObjectTargets` entry of the MOST RECENT observe result. It binds the location, the tile and the item, so it is also what proves the piece is still the one you saw.") }, new Dictionary<string, string>(), EmbodiedActorResource, "write", "furniture_rotated", "Furniture.rotate"), FarmhandActionLifecycle.LiveVerified, "worldObjectTargets"),
         // TAKING A FENCE DOWN IS NOT `remove_placed_item` WITH A FENCE IN FRONT OF IT. The fence's own write is
         // `Fence.performToolAction` (Fence.cs:436-474), which overrides the Object-shaped guards that action mirrors:
         // the question "can this tool break THIS fence" is answered by `Fence.IsValidRemovalTool` (Fence.cs:478-513)
@@ -615,7 +615,9 @@ E("enter_exit", "movement_navigation", FarmhandActionHandlerGroup.Movement, Tran
         //
         // The target id is the object identity `remove_placed_item` already publishes for the same fence
         // (`BuildPlacedItemTargetId`): one fence, one id, whichever action takes it down.
-        E("remove_fence", "buildings_farm_management", FarmhandActionHandlerGroup.ResourceTools, new FarmhandActionDescriptor(new[] { new FarmhandActionArgument("x", "integer"), new FarmhandActionArgument("y", "integer"), new FarmhandActionArgument("slot", "integer", null, ToolSlotMeaning), new FarmhandActionArgument("expectedTargetId", "string", null, "The opaque object target id of the fence on this tile, copied from the `worldObjectTargets` entry of the MOST RECENT observe result.") }, new Dictionary<string, string>(), EmbodiedActorResource, "write", "fence_removed", "Fence.performToolAction"), FarmhandActionLifecycle.Experimental, "worldObjectTargets"),
+        // Locked to a live gate on 2026-11-14: `run-stardew-native-local-player-remove-fence-smoke.mjs` took a
+        // wood fence off the Farm in one axe swing, with the tile empty and its `(O)322` drop observed.
+        E("remove_fence", "buildings_farm_management", FarmhandActionHandlerGroup.ResourceTools, new FarmhandActionDescriptor(new[] { new FarmhandActionArgument("x", "integer"), new FarmhandActionArgument("y", "integer"), new FarmhandActionArgument("slot", "integer", null, ToolSlotMeaning), new FarmhandActionArgument("expectedTargetId", "string", null, "The opaque object target id of the fence on this tile, copied from the `worldObjectTargets` entry of the MOST RECENT observe result.") }, new Dictionary<string, string>(), EmbodiedActorResource, "write", "fence_removed", "Fence.performToolAction"), FarmhandActionLifecycle.LiveVerified, "worldObjectTargets"),
         // A FISH TANK IS FURNITURE, and it is the only thing that decides what it will hold. `FishTankFurniture`
         // lives in `location.furniture` (GameLocation.cs:452), so the target id is the same `placed_furniture` id the
         // pickup and the rotation take - one piece, one id. The deposit itself is the tank's own
@@ -669,10 +671,10 @@ E("enter_exit", "movement_navigation", FarmhandActionHandlerGroup.Movement, Tran
         // row that claimed one family would be wrong for every clump of the other. The requirement therefore travels
         // with the TARGET, from the same one table the native switch is mirrored in, and the refusal is named
         // `clump_tool_too_weak` instead of the slot-and-holding words the old contract used.
-        // `Experimental`, not `Published`: a gate descriptor is a promise that this action has its own live-run gate
-        // (check-stardew-action-promotion.mjs:150-156), and no live gate has been run for it. Promotion to
-        // LiveVerified is the parent's step and lands with that gate, the way move_placed_furniture's did.
-        E("break_resource_clump", "resource_gathering", FarmhandActionHandlerGroup.ResourceTools, Clears(Target(), FarmhandClearingCost.TargetDecidesTool, destructive: false, null, ClumpOccupants), FarmhandActionLifecycle.Experimental, "debrisTargets"),
+        // LiveVerified, not Experimental: `run-stardew-native-local-player-break-resource-clump-smoke.mjs`
+        // cracked a live 2x2 boulder on 2026-11-14 (health 8 -> 0, tool selected from the clump's own switch and
+        // restored), so this row now carries the gate descriptor that claims exactly that.
+        E("break_resource_clump", "resource_gathering", FarmhandActionHandlerGroup.ResourceTools, Clears(Target(), FarmhandClearingCost.TargetDecidesTool, destructive: false, null, ClumpOccupants), FarmhandActionLifecycle.LiveVerified, "debrisTargets"),
         // Fishing. `waterTargets` is the engine's own castable-tile answer (`GameLocation.canFishHere` + `isTileFishable`),
         // and the postcondition is `fish_caught` because that is the fact the receipt measures a before/after of
         // (`fish_caught_before`/`fish_caught_after` around `Farmer.fishCaught`).

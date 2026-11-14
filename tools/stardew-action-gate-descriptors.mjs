@@ -654,6 +654,27 @@ export const STARDEW_PUBLISHED_ACTION_GATES = Object.freeze([
   // Its fixture world (`native_fish_here_v1`) arms exactly that Given and casts nothing: a rod
   // that takes bait with bait in it, the morning's stamina, and the actor beside castable water.
   gate("fish_here", 1, "run-stardew-native-local-player-fish-here-smoke.mjs", "fish_caught", "native_fish_here_v1"),
+  gate(
+    "break_resource_clump",
+    1,
+    "run-stardew-native-local-player-break-resource-clump-smoke.mjs",
+    "clump_broken",
+    "native_clear_debris_resource_clump_v1",
+  ),
+  gate(
+    "rotate_furniture",
+    1,
+    "run-stardew-native-local-player-rotate-furniture-smoke.mjs",
+    "furniture_rotated",
+    "native_rotate_furniture_v1",
+  ),
+  gate(
+    "remove_fence",
+    1,
+    "run-stardew-native-local-player-remove-fence-smoke.mjs",
+    "fence_removed",
+    "native_remove_fence_v1",
+  ),
 ]);
 
 /**
@@ -743,10 +764,8 @@ export const STARDEW_EXPERIMENTAL_ACTION_RUNNERS = Object.freeze({
   // not something the fixture placed.
   // The turn is the piece's own `Furniture.rotate`, and a piece whose data allows fewer than two
   // rotations is refused by name rather than turned into a silent no-op.
-  rotate_furniture: "run-stardew-native-local-player-rotate-furniture-smoke.mjs",
   // The fence's own `performToolAction` returns false on every branch, so success can only be the
   // fence GONE from the location's objects plus the drops it produced.
-  remove_fence: "run-stardew-native-local-player-remove-fence-smoke.mjs",
   // `talk_to_npc` owes a SHARED-WORLD live run, not another native-local one: the multiplayer
   // sensitivity register derives its native seam (`NPC.checkAction`) as mp-semantic, because the
   // conversation branch is gated on `who.IsLocalPlayer` and the same method's pause differs under
@@ -827,7 +846,6 @@ export const STARDEW_EXPERIMENTAL_ACTION_RUNNERS = Object.freeze({
   // slice: one ResourceClump cleared through `ResourceClump.performToolAction`, with the tool
   // selected from the CLUMP's own switch and restored afterwards. Its Given is the clump world
   // the `clear_debris` fixture already owns, so this entry adds a route, not a capability.
-  break_resource_clump: "run-stardew-native-local-player-break-resource-clump-smoke.mjs",
   // `open_geode` is registered Experimental in the Mod catalog and has a native-local slice: one
   // geode cracked at Clint's own counter through `GeodeMenu`'s own click, animation and delivery,
   // with the menu closed before the receipt is written. The fixture supplies the geode and the

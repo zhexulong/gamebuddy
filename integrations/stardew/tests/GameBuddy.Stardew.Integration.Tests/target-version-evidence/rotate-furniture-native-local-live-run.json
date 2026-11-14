@@ -1,0 +1,248 @@
+{
+  "schema": "gamebuddy-stardew-native-local-live-run-evidence/v1",
+  "action": "rotate_furniture",
+  "fixtureScenario": "native_rotate_furniture_v1",
+  "resolvedRunner": "run-stardew-native-local-player-rotate-furniture-smoke.mjs",
+  "recordedFrom": {
+    "artifact": ".tmp/live-captures/rotate_furniture.log",
+    "durable": false,
+    "note": "The runner prints its result object to stdout and writes nothing durable. This bundle is that object, verbatim, captured from the stdout of one disposable native-local run driven by tools/run-stardew-native-local-player-move-fixture.ps1; the capture path is gitignored and will not survive."
+  },
+  "run": {
+    "state": "passed",
+    "topology": "native_local_player_fixture",
+    "reasonCode": "furniture_rotated",
+    "target": {
+      "targetId": "placed_furniture_a21a3ab6acb8949a",
+      "kind": "placed_furniture",
+      "x": 4,
+      "y": 13,
+      "qualifiedItemId": "(F)0",
+      "displayName": "橡木椅子"
+    },
+    "freshRow": {
+      "targetId": "placed_furniture_a21a3ab6acb8949a",
+      "x": 4,
+      "y": 13,
+      "qualifiedItemId": "(F)0",
+      "rotation": 1,
+      "rotations": 4
+    },
+    "freshRowAbsent": false,
+    "freshRefusalRow": {
+      "targetId": "placed_furniture_49e6b4ae7c2d4ff7",
+      "x": 3,
+      "y": 14,
+      "qualifiedItemId": "(F)1",
+      "rotation": 0,
+      "rotations": 0
+    },
+    "freshRefusalRowAbsent": false,
+    "rotation": {
+      "before": 0,
+      "after": 1,
+      "expected": 1,
+      "rotations": 4
+    },
+    "refusal": {
+      "target": "placed_furniture_49e6b4ae7c2d4ff7",
+      "rotations": 0,
+      "state": "rejected",
+      "reasonCode": "furniture_rotation_unsupported",
+      "freshRotation": 0
+    },
+    "evidence": {
+      "target": "placed_furniture_a21a3ab6acb8949a",
+      "tile": "4,13",
+      "location": "Farm",
+      "item": "(F)0",
+      "rotation_before": "0",
+      "rotation_after": "1",
+      "rotation_expected": "1",
+      "rotations": "4",
+      "flipped_before": "false",
+      "flipped_after": "false",
+      "footprint_before": "4,13:1x1",
+      "footprint_after": "4,13:1x1",
+      "placeable": "true",
+      "turned": "true",
+      "standing": "true",
+      "furniture_in_location": "2"
+    },
+    "receipt": {
+      "state": "succeeded",
+      "reasonCode": "furniture_rotated",
+      "revision": 1,
+      "hasEvidence": true
+    },
+    "observations": {
+      "before": {
+        "revision": 0,
+        "location": "Farm",
+        "tile": {
+          "x": 3,
+          "y": 13
+        }
+      },
+      "after": {
+        "revision": 1,
+        "location": "Farm",
+        "tile": {
+          "x": 3,
+          "y": 13
+        }
+      },
+      "afterRefusal": {
+        "revision": 2,
+        "location": "Farm",
+        "tile": {
+          "x": 3,
+          "y": 13
+        }
+      }
+    },
+    "trace": [
+      {
+        "phase": "observed",
+        "revision": 0,
+        "location": "Farm",
+        "tile": {
+          "x": 3,
+          "y": 13
+        },
+        "actionable": true,
+        "furniture": "placed_furniture_a21a3ab6acb8949a@4,13=(F)0#0/4|placed_furniture_49e6b4ae7c2d4ff7@3,14=(F)1#0/0"
+      },
+      {
+        "phase": "chosen",
+        "turnable": {
+          "targetId": "placed_furniture_a21a3ab6acb8949a",
+          "x": 4,
+          "y": 13,
+          "qualifiedItemId": "(F)0",
+          "displayName": "橡木椅子",
+          "rotation": 0,
+          "rotations": 4
+        },
+        "unsupported": {
+          "targetId": "placed_furniture_49e6b4ae7c2d4ff7",
+          "x": 3,
+          "y": 14,
+          "qualifiedItemId": "(F)1",
+          "displayName": "错误物品 (1)",
+          "rotation": 0,
+          "rotations": 0
+        }
+      },
+      {
+        "phase": "turn",
+        "action": "rotate_furniture",
+        "args": {
+          "x": 4,
+          "y": 13,
+          "expectedTargetId": "placed_furniture_a21a3ab6acb8949a"
+        },
+        "receipt": {
+          "state": "succeeded",
+          "reasonCode": "furniture_rotated",
+          "revision": 1,
+          "hasEvidence": true
+        }
+      },
+      {
+        "phase": "turn_terminal",
+        "state": "succeeded",
+        "reasonCode": "furniture_rotated",
+        "evidence": {
+          "target": "placed_furniture_a21a3ab6acb8949a",
+          "tile": "4,13",
+          "location": "Farm",
+          "item": "(F)0",
+          "rotation_before": "0",
+          "rotation_after": "1",
+          "rotation_expected": "1",
+          "rotations": "4",
+          "flipped_before": "false",
+          "flipped_after": "false",
+          "footprint_before": "4,13:1x1",
+          "footprint_after": "4,13:1x1",
+          "placeable": "true",
+          "turned": "true",
+          "standing": "true",
+          "furniture_in_location": "2"
+        }
+      },
+      {
+        "phase": "fresh_postcondition",
+        "revision": 1,
+        "freshRow": {
+          "targetId": "placed_furniture_a21a3ab6acb8949a",
+          "x": 4,
+          "y": 13,
+          "qualifiedItemId": "(F)0",
+          "rotation": 1,
+          "rotations": 4
+        },
+        "rotationBefore": 0,
+        "rotationAfter": 1
+      },
+      {
+        "phase": "refuse",
+        "action": "rotate_furniture",
+        "args": {
+          "x": 3,
+          "y": 14,
+          "expectedTargetId": "placed_furniture_49e6b4ae7c2d4ff7"
+        },
+        "receipt": {
+          "state": "rejected",
+          "reasonCode": "furniture_rotation_unsupported",
+          "revision": 2,
+          "hasEvidence": true
+        }
+      },
+      {
+        "phase": "refuse_terminal",
+        "state": "rejected",
+        "reasonCode": "furniture_rotation_unsupported",
+        "evidence": {
+          "target": "placed_furniture_49e6b4ae7c2d4ff7",
+          "tile": "3,14",
+          "location": "Farm",
+          "item": "(F)1",
+          "rotations": "0",
+          "rotation": "0",
+          "blocked_by": "object:(F)1@3,14"
+        }
+      },
+      {
+        "phase": "refusal",
+        "state": "rejected",
+        "reasonCode": "furniture_rotation_unsupported",
+        "target": "placed_furniture_49e6b4ae7c2d4ff7",
+        "rotations": 0,
+        "freshRefusalRow": {
+          "targetId": "placed_furniture_49e6b4ae7c2d4ff7",
+          "x": 3,
+          "y": 14,
+          "qualifiedItemId": "(F)1",
+          "rotation": 0,
+          "rotations": 0
+        }
+      }
+    ],
+    "durationMs": 563
+  },
+  "whatThisProves": [
+    "The Mod ran the game's own `Furniture.rotate` on the game thread for the oak chair `placed_furniture_a21a3ab6acb8949a` at Farm (4,13): receipt `succeeded/furniture_rotated`, revision 0 -> 1.",
+    "The piece's own rotation cycle decided the result: `rotations=4`, `rotation_before=0`, `rotation_after=1`, `turned=true`, `standing=true`, footprint unchanged at `4,13:1x1`.",
+    "The world agrees, from a fresh observation and not from the receipt: the same target id republishes with `rotation=1` at revision 1.",
+    "The named refusal was driven in the same session: a 0-rotation piece (`(F)1`) answered `rejected/furniture_rotation_unsupported`, and a THIRD fresh observation (revision 2) still shows it at rotation 0 — a refusal, never a turn that did nothing."
+  ],
+  "whatThisDoesNotProve": [
+    "One step of a 4-rotation cycle. The 0 <-> 2 alternating cycle and the 0 -> 1 -> 2 -> 3 -> 0 walk are not fully exercised.",
+    "Only an unflipped piece (`flipped_before/after=false`); flipping is not covered.",
+    "No move or placement (separate actions), no cancellation, deadline, replay or save/reload coverage.",
+    "No shared-world (Farmhand) coverage; the seam is multiplayer-insensitive per the derived sensitivity register."
+  ]
+}

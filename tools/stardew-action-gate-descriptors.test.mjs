@@ -196,6 +196,9 @@ test("descriptor runner identity names the native-local shared-harness runner fo
     // Published before its live run, so that a run CAN dispatch it at all: an Experimental action
     // is off the agent surface and no evidence for it can ever exist.
     fish_here: "run-stardew-native-local-player-fish-here-smoke.mjs",
+    break_resource_clump: "run-stardew-native-local-player-break-resource-clump-smoke.mjs",
+    rotate_furniture: "run-stardew-native-local-player-rotate-furniture-smoke.mjs",
+    remove_fence: "run-stardew-native-local-player-remove-fence-smoke.mjs",
   });
   // Obsolete parallel-route runner IDs that must never be re-selected.
   const forbiddenRouteIds = Object.freeze([
@@ -340,6 +343,9 @@ test("fixture-backed descriptor coverage is explicit rather than inferred", () =
       "use_mine_ladder",
       "pet_farm_animal",
       "fish_here",
+      "break_resource_clump",
+      "rotate_furniture",
+      "remove_fence",
     ],
   );
   assert.deepEqual(

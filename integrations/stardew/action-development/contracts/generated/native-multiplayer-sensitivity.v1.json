@@ -694,7 +694,7 @@
     },
     {
       "actionId": "rotate_furniture",
-      "lifecycle": "experimental",
+      "lifecycle": "live_verified",
       "seams": [
         {
           "kind": "native",
@@ -711,7 +711,7 @@
     },
     {
       "actionId": "remove_fence",
-      "lifecycle": "experimental",
+      "lifecycle": "live_verified",
       "seams": [
         {
           "kind": "native",
@@ -922,7 +922,7 @@
     },
     {
       "actionId": "break_resource_clump",
-      "lifecycle": "experimental",
+      "lifecycle": "live_verified",
       "seams": [
         {
           "kind": "native",

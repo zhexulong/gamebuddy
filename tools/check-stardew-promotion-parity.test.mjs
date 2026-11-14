@@ -49,6 +49,53 @@ function replaceOnce(source, search, replacement) {
   return source.slice(0, at) + replacement + source.slice(at + search.length);
 }
 
+/**
+ * The experimental catalog rows, each bounded by its OWN lifecycle token so a match cannot slide into a later row.
+ * `(?!E\(")` is what bounds it: a row that carries no lifecycle token stops the scan instead of swallowing the next.
+ */
+function experimentalCatalogRows(source) {
+  const row =
+    /E\("([a-z][a-z0-9_]*)"(?:(?!E\(")[\s\S])*?FarmhandActionLifecycle\.(Experimental|LiveVerified|Published)/gu;
+  return [...source.matchAll(row)].map((match) => ({ actionId: match[1], lifecycle: match[2], at: match.index }));
+}
+
+/** The experimental runner map's entries, read as data: the case needs the runner string the finding must quote. */
+function experimentalRunners(source) {
+  const table = /STARDEW_EXPERIMENTAL_ACTION_RUNNERS\s*=\s*Object\.freeze\(\{([\s\S]*?)\n\}\);/u.exec(source);
+  assert.ok(table !== null, "the experimental runner map must still parse");
+  const entry = /^[ \t]*([a-z][a-z0-9_]*)[ \t]*:[ \t]*(?:\r?\n[ \t]*)?"([a-z0-9-]+\.mjs)",/gmu;
+  return new Map([...table[1].matchAll(entry)].map((match) => [match[1], match[2]]));
+}
+
+/**
+ * The first catalog row that is `Experimental` AND still has an entry in the experimental runner map.
+ *
+ * Both halves have to be observable for the case to mean anything, so a tree with no such row is a loud failure
+ * rather than a case that asserts a one-sided finding and calls it the half-write.
+ */
+const FIRST_EXPERIMENTAL_WITH_RUNNER = (() => {
+  const runners = experimentalRunners(gateDescriptorSource);
+  const row = experimentalCatalogRows(catalogSource).find(
+    (candidate) => candidate.lifecycle === "Experimental" && runners.has(candidate.actionId),
+  );
+  assert.ok(
+    row !== undefined,
+    "no Experimental catalog action still carries an experimental runner entry: this case cannot state the half-write",
+  );
+  return Object.freeze({ actionId: row.actionId, runner: runners.get(row.actionId) });
+})();
+
+/** Replace the lifecycle token of ONE row, located from that row's own start, without touching any other row. */
+function spliceRowLifecycle(source, actionId, lifecycle) {
+  const start = source.indexOf(`E("${actionId}"`);
+  assert.ok(start >= 0, `the row must still exist: ${actionId}`);
+  const token = source.indexOf("FarmhandActionLifecycle.Experimental", start);
+  assert.ok(token >= 0, `the row must still carry its own lifecycle token: ${actionId}`);
+  const end = source.indexOf("FarmhandActionLifecycle.", start);
+  assert.equal(token, end, "the first lifecycle token after the row's start must be the row's own");
+  return `${source.slice(0, token)}FarmhandActionLifecycle.${lifecycle}${source.slice(token + "FarmhandActionLifecycle.Experimental".length)}`;
+}
+
 const USE_MINE_LADDER_ROW = `  gate(
     "use_mine_ladder",
     1,
@@ -114,17 +161,19 @@ test("a gate row naming a scenario the Mod does not declare is named, even when 
 });
 
 test("an experimental action that already carries a gate row is named", () => {
-  // rotate_furniture is experimental today, so promoting the catalog alone (the row and the runner map
-  // untouched) is the half-write a hand edit leaves behind.
-  const catalog = catalogSource.replace(
-    /(E\("rotate_furniture"[\s\S]*?FarmhandActionLifecycle\.)Experimental/u,
-    "$1LiveVerified",
-  );
+  // The subject is DERIVED from the catalog, never named here. It used to read
+  // `E("rotate_furniture"[\s\S]*?FarmhandActionLifecycle\.)Experimental`, and on 2026-11-14 that action was
+  // promoted: the non-greedy gap then slid past the row it was written for and mutated the NEXT Experimental row
+  // instead, so the case kept passing while asserting about a different action. A fixture anchored on a row whose
+  // lifecycle someone else will change is a fixture that silently re-targets, so the anchor is now whatever the
+  // catalog says is Experimental today.
+  const subject = FIRST_EXPERIMENTAL_WITH_RUNNER;
+  const catalog = spliceRowLifecycle(catalogSource, subject.actionId, "LiveVerified");
   assert.notEqual(catalog, catalogSource, "the mutation must actually apply");
   const report = check({ catalog });
   // Both halves of the half-write are named: no gate row appeared, and the runner never left the map.
   assert.deepEqual(report.findings, [
-    "promotion_places_disagree:rotate_furniture:catalog=live_verified;gate=absent;experimental=present:run-stardew-native-local-player-rotate-furniture-smoke.mjs",
+    `promotion_places_disagree:${subject.actionId}:catalog=live_verified;gate=absent;experimental=present:${subject.runner}`,
   ]);
 });
 
