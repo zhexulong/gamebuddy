@@ -31,6 +31,7 @@ import {
   type CapabilityBoardCard,
 } from "../game-presentation";
 import { useArmedConfirmation } from "./armed-confirmation";
+import { preventImeFormSubmit } from "./ime-composition";
 
 /**
  * The create form's id, named once: the control that opens it points at this id with
@@ -800,6 +801,7 @@ export function GameStatePanel({
             <form
               id={GAME_CREATE_FORM_ID}
               className="game-create-form"
+              onKeyDown={preventImeFormSubmit}
               onSubmit={(event) => {
                 event.preventDefault();
                 handlers.create();

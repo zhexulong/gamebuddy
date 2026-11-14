@@ -20,6 +20,7 @@ import {
 } from "../management-pipeline-api";
 import type { ChatModelRoute } from "../chat-model-route";
 import { connectionModelOptions } from "./connection-model-options";
+import { isImeProcessingKey, preventImeFormSubmit } from "./ime-composition";
 import { useChoiceDraft, useDraft, useDraftOverAuthority, useOpenDraft, type DraftField } from "./surface-drafts";
 
 /**
@@ -341,6 +342,7 @@ export function ModelProfileEditor({
     <form
       className="model-profile-editor"
       data-model-profile-surface={surface}
+      onKeyDown={preventImeFormSubmit}
       onSubmit={(event) => {
         event.preventDefault();
         if (!canSave) return;
@@ -618,6 +620,7 @@ export function ConnectionSettingsPanel({
         <form
           className="connection-form"
           data-connection-form
+          onKeyDown={preventImeFormSubmit}
           onSubmit={(event) => {
             event.preventDefault();
             if (selected === undefined) return;
@@ -1156,6 +1159,7 @@ export function LanguageSettingsPanel({
             onChange={(event) => companionLanguage.type(event.target.value)}
             onBlur={submit}
             onKeyDown={(event) => {
+              if (isImeProcessingKey(event.nativeEvent)) return;
               if (event.key !== "Enter") return;
               event.preventDefault();
               submit();

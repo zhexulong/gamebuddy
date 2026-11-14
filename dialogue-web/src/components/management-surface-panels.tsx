@@ -40,6 +40,7 @@ import { problemTextWithCode } from "../composed-problem-view";
 import { useArmedConfirmation } from "./armed-confirmation";
 import type { AppearanceChoice } from "../appearance";
 import { ContextDrawer } from "./ContextDrawer";
+import { isImeProcessingKey } from "./ime-composition";
 import { MarkdownMessage } from "./MarkdownMessage";
 import { openingVariantName } from "./opening-variant-labels";
 import { useChoiceDraft, useDraft, useDraftOverAuthority } from "./surface-drafts";
@@ -495,6 +496,8 @@ export function ChatsSurfacePanel({
    * dismissal of the surface the row sits on.
    */
   const renameKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>): void => {
+    // The input method's own Enter confirms a candidate; it must not also save the title.
+    if (isImeProcessingKey(event.nativeEvent)) return;
     if (event.key === "Escape") {
       renamePair.onConfirmKeyDown(event);
       return;

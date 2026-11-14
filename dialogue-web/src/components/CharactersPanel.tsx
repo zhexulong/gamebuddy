@@ -16,6 +16,7 @@ import { CharacterCardImport } from "./CharacterCardImport";
 import { CompanionAvatar } from "./CompanionAvatar";
 import { CompanionInspectorDrawer, type InspectedCompanion } from "./CompanionInspectorDrawer";
 import { characterLabels, type CharacterLabels } from "./character-domain-labels";
+import { isImeProcessingKey } from "./ime-composition";
 import { useChoiceDraft, useDraft, useOpenDraft, useRowsDraft } from "./surface-drafts";
 
 /** A save's outcome: `saved`, or the refusal's own bounded reason, or none. */
@@ -750,6 +751,7 @@ export function CharactersPanel({
                 maxLength={128}
                 onChange={(event) => createName.type(event.target.value)}
                 onKeyDown={(event) => {
+                  if (isImeProcessingKey(event.nativeEvent)) return;
                   if (event.key === "Enter") void handleCreate();
                 }}
               />

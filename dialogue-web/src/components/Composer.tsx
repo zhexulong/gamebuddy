@@ -11,6 +11,7 @@ import {
 } from "react";
 import type { Messages } from "../i18n";
 import { assertKnownPhase, fieldLocked, sendRefused, type ChatUIState } from "./chat-ui-state";
+import { isImeProcessingKey } from "./ime-composition";
 
 /** Voice surface narrow state from the additive optional snapshot field. */
 export type VoiceSurfaceStateV1 = Readonly<{ state: "unavailable" | "ready" | "speaking" }>;
@@ -165,7 +166,7 @@ export function Composer({
   const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     // An Enter that confirms an IME candidate is not a send: the composed text
     // is still being edited, so the existing Enter/Shift+Enter paths are skipped.
-    if (e.nativeEvent.isComposing) return;
+    if (isImeProcessingKey(e.nativeEvent)) return;
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       // Enter sends exactly when the Send control would: nothing in flight and a gate that is open.
