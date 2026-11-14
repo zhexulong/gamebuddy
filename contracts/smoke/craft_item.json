@@ -1,0 +1,20 @@
+{
+  "schema": "stardew-action-smoke-contract/v1",
+  "action": "craft_item",
+  "expectedReasonCode": "crafted_item_created",
+  "discovery": {
+    "cardinality": "at_least_one",
+    "select": "first",
+    "requiredFields": ["targetId"]
+  },
+  "args": {
+    "expectedTargetId": "Wood_Fence"
+  },
+  "evidence": {
+    "disposition": "added_to_inventory",
+    "materials_consumed_exactly": "true",
+    "inventory_postcondition": "true",
+    "count_postcondition": "true",
+    "native_menu_opened": "false"
+  }
+}

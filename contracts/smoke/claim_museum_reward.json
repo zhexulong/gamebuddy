@@ -1,0 +1,21 @@
+{
+  "schema": "stardew-action-smoke-contract/v1",
+  "action": "claim_museum_reward",
+  "discovery": {
+    "cardinality": "exactly_one",
+    "requiredFields": ["targetId", "rewardCount"]
+  },
+  "args": {
+    "expectedTargetId": "$target.targetId"
+  },
+  "evidence": {
+    "rewards_collected": "true"
+  },
+  "worldAfter": [
+    { "field": "museumRewardTargets", "excludesTarget": true },
+    { "field": "museumRewardTargets", "size": 0 }
+  ],
+  "stale": {
+    "refusedWith": ["museum_rewards_empty", "museum_reward_target_moved"]
+  }
+}

@@ -1,0 +1,25 @@
+{
+  "schema": "stardew-action-smoke-contract/v1",
+  "action": "pet_animal",
+  "expectedReasonCode": "pet_completed",
+  "discovery": {
+    "cardinality": "at_least_one",
+    "select": "first",
+    "requiredFields": ["targetId", "x", "y"]
+  },
+  "args": {
+    "x": "$target.x",
+    "y": "$target.y",
+    "expectedTargetId": "$target.targetId"
+  },
+  "evidence": {
+    "target": { "equalsTarget": "targetId" },
+    "friendship_before": "0",
+    "friendship_after": "12",
+    "day_recorded": "true",
+    "friendship_callback": "true"
+  },
+  "worldAfter": [
+    { "field": "petTargets", "excludesTarget": true }
+  ]
+}

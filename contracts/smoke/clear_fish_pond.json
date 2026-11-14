@@ -1,0 +1,26 @@
+{
+  "schema": "stardew-action-smoke-contract/v1",
+  "action": "clear_fish_pond",
+  "discovery": {
+    "cardinality": "at_least_one",
+    "select": "first",
+    "requiredFields": ["targetId", "x", "y", "occupants"]
+  },
+  "args": {
+    "x": "$target.x",
+    "y": "$target.y",
+    "expectedTargetId": "$target.targetId"
+  },
+  "evidence": {
+    "occupants_after": "0",
+    "fish_type_after": "none",
+    "occupants_before": { "equalsTarget": "occupants" },
+    "fish_ejected": { "equalsTarget": "occupants" }
+  },
+  "worldAfter": [
+    { "field": "fishPondTargets", "excludesTarget": true }
+  ],
+  "stale": {
+    "refusedWith": ["pond_already_empty"]
+  }
+}

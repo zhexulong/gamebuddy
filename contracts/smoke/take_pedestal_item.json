@@ -1,0 +1,18 @@
+{
+  "schema": "stardew-action-smoke-contract/v1",
+  "action": "take_pedestal_item",
+  "expectedReasonCode": "pedestal_item_taken",
+  "discovery": {
+    "cardinality": "at_least_one",
+    "select": "first",
+    "requiredFields": ["targetId", "x", "y"]
+  },
+  "args": {
+    "x": "$target.x",
+    "y": "$target.y",
+    "expectedTargetId": "$target.targetId"
+  },
+  "worldAfter": [
+    { "field": "pedestalTargets", "excludesTarget": true }
+  ]
+}
