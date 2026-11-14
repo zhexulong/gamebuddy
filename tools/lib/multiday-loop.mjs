@@ -26,8 +26,21 @@ import {
   WAIT_ROLLOVER_MENUS,
 } from "./multiday-baseline.mjs";
 
-/** Poll spacing while a night rolls over (the same cadence the deterministic crossing uses). */
-const POLL_INTERVAL_MS = 250;
+/**
+ * The longest the watcher will go without looking at the world, when nothing wakes it sooner.
+ *
+ * It used to be 250 ms, and that cadence was measured on `round56`: **742** observations inside ONE night window of
+ * 208.6 s (period median 289 ms, longest run 208.6 s unbroken), to detect an event - a day rollover - that happens about
+ * once per twenty real minutes. The product has no publisher timer (the Mod publishes when asked, or on a real
+ * transition), so those 742 asks bought 742 rebuilds of a whole snapshot on the game thread and nothing else: 618 of the
+ * run's 624 suppressed flushes carried no fact at all, and each of them was one of these asks.
+ *
+ * Two seconds is a third of the engine's own clock tick (ten in-game minutes is about seven real seconds at the shipped
+ * rate), so a clock that moved is still sampled at least three times before the next tick, and it is one sixtieth of the
+ * shortest hold this loop waits out (`eventWaitMs` = 120 s). A caller that has the world's facts passes `waitForLook`
+ * (`worldFactWake`), and then this is not the cadence at all - it is the ceiling a silent world falls back to.
+ */
+const LOOK_CEILING_MS = 2_000;
 
 /** How many times ONE menu type may be dismissed before its persistence is a named stop. */
 const MAX_DISMISS_ATTEMPTS = 3;
@@ -158,7 +171,13 @@ export async function watchRollover(
   {
     dayBefore,
     timeoutMs,
-    pollIntervalMs = POLL_INTERVAL_MS,
+    // The longest the loop will go without looking again; `waitForLook` is what normally ends the wait sooner.
+    lookCeilingMs = LOOK_CEILING_MS,
+    // WHAT WAKES THE LOOP. A timer by default; a caller holding the world's own facts passes a function that resolves
+    // on the next statement the world makes and falls back to the ceiling (see `worldFactWake`). The distinction is not
+    // stylistic: the timer is why a night was observed at 3.56 Hz for 208.6 s, and the fact is the event it was
+    // watching for. Resolved below rather than here, because a destructuring default cannot read `sleep`.
+    waitForLook = null,
     // How long an `event` hold may stand before it is a named stop rather than a world still loading. A day-start
     // transition is the common case and clears in about two seconds; a SAVE can hold it for tens of seconds, so the
     // bound is generous and the calendar (above) is what decides a crossing, not this clock.
@@ -174,6 +193,8 @@ export async function watchRollover(
 ) {
   const menus = [];
   const attempts = new Map();
+  // The cadence: the caller's trigger when it has one, else the interval between two looks.
+  const lookWhen = waitForLook ?? sleep;
   // Menu types whose close the ENGINE is completing: waited for, never re-sent.
   const deadline = now() + timeoutMs;
   // The hold under watch and the facts under it: how long the same menu has stood, how long NOTHING the Mod publishes
@@ -310,8 +331,55 @@ export async function watchRollover(
         dayAfter: dayNow,
       });
     }
-    await sleep(pollIntervalMs);
+    await lookWhen(lookCeilingMs);
   }
+}
+
+/**
+ * Wake the watcher on a FACT, so its cadence is the world's rather than a timer's.
+ *
+ * <p>
+ * The loop's own record is the argument. `round56` observed one night 742 times at 3.56 Hz over 208.6 s, and 618 of the
+ * run's 624 suppressed flushes carried no fact at all - the reader asking, over and over, while the Mod had nothing to
+ * say. The Mod does speak when something happens (`time_milestone` every ten game minutes, `snapshot_changed` on a warp,
+ * `night_ended_pass_out` at 02:00, `day_started` at the boundary), so a fact is the event the watcher is actually
+ * waiting for, and a timer is only the answer to a world that has gone quiet.
+ * </p>
+ * <p>
+ * `factPublished()` is called from the run's fact listener and `wait(ceilingMs)` is `watchRollover`'s `waitForLook`. A
+ * statement that arrives while nobody is waiting is REMEMBERED, so one that lands between the observe and the wait cannot
+ * be lost and cost a full ceiling of latency; and a statement that arrives while a waiter stands wakes exactly that
+ * waiter, so the loop looks once per statement instead of once per tick.
+ * </p>
+ */
+export function worldFactWake() {
+  const waiting = new Set();
+  let arrived = false;
+  return Object.freeze({
+    factPublished() {
+      // Nobody waiting means the loop is between a look and its own wait; the flag is what that next wait reads.
+      if (waiting.size === 0) {
+        arrived = true;
+        return;
+      }
+      for (const wake of [...waiting]) wake();
+    },
+    wait(ceilingMs) {
+      if (arrived) {
+        arrived = false;
+        return Promise.resolve();
+      }
+      return new Promise((resolve) => {
+        const wake = () => {
+          waiting.delete(wake);
+          clearTimeout(timer);
+          resolve();
+        };
+        const timer = setTimeout(wake, ceilingMs);
+        waiting.add(wake);
+      });
+    },
+  });
 }
 
 /**

@@ -2217,6 +2217,74 @@ test("the night watcher outlives the day turn it accompanies", () => {
   assert.match(RUNNER_SOURCE, /companion_did_not_sleep/u);
 });
 
+/**
+ * The night watch's cadence, read off the runner's own `watchRollover` call site.
+ *
+ * A string answer rather than a boolean, because a red gate has to say which of the two defects it found: the timer put
+ * back (`timer`), or the trigger gone so the loop falls back to its ceiling alone (`no_trigger`).
+ */
+function nightWatchCadence(source) {
+  const start = source.indexOf("watchRollover(world, {");
+  if (start < 0) return "no_watch_call_site";
+  const end = source.indexOf("}),", start);
+  const site = source.slice(start, end < 0 ? undefined : end);
+  if (/pollIntervalMs/u.test(site)) return "timer";
+  if (!/waitForLook: \(ceilingMs\) => worldFacts\.wait\(ceilingMs\)/u.test(site)) return "no_trigger";
+  return "world_facts";
+}
+
+test("the night watch waits on the world's statements instead of observing at 3.56 Hz", () => {
+  // Measured 2026-11-15 (`round56`): 742 observations inside ONE 208.6 s night window (period median 289 ms, the run's
+  // longest unbroken run 208.6 s), 618 of the run's 624 suppressed flushes carrying no fact at all - every one of those an
+  // ask the timer made on a world that had nothing to say, and each an entire snapshot rebuilt on the game thread. A
+  // rollover is an EVENT, so the watch waits on the Mod's own statements and the interval degrades to a ceiling.
+  assert.equal(
+    nightWatchCadence(RUNNER_SOURCE),
+    "world_facts",
+    "the watch's wait must be the facts the Mod publishes (`worldFactWake`), with `watchRollover`'s ceiling as the fallback",
+  );
+  // THE FALSIFIERS, both directions, on the same reader: the timer restored, and the trigger removed.
+  assert.equal(
+    nightWatchCadence(
+      RUNNER_SOURCE.replace(
+        "waitForLook: (ceilingMs) => worldFacts.wait(ceilingMs),",
+        "waitForLook: (ceilingMs) => worldFacts.wait(ceilingMs),\n        pollIntervalMs: 250,",
+      ),
+    ),
+    "timer",
+    "a `pollIntervalMs` inside this call site is the defect the reader exists to catch, and it must be named",
+  );
+  assert.equal(
+    nightWatchCadence(RUNNER_SOURCE.replace("waitForLook: (ceilingMs) => worldFacts.wait(ceilingMs),", "")),
+    "no_trigger",
+    "a watch with no trigger falls back to the ceiling alone, which is the timer under another name",
+  );
+
+  // The latch is ONE per run, and the fact listener is the only thing that publishes into it. Two spellings of the wake
+  // would be two clocks.
+  assert.equal(
+    (RUNNER_SOURCE.match(/worldFactWake\(\)/gu) ?? []).length,
+    1,
+    "exactly one wake latch, so every waiter shares one answer about whether the world spoke",
+  );
+  assert.match(
+    RUNNER_SOURCE,
+    /if \(NIGHT_WAKE_WORLD_FACT_KINDS\.includes\(entry\.worldFactKind\)\) worldFacts\.factPublished\(\);/u,
+    "and the only publisher is the fact listener, keyed on the statements the watch can decide from",
+  );
+  // The kinds are what the watch actually decides on, so a bright line is drawn around them: her own progress
+  // (`tile_advanced`, `route_progress`) and the transport's bookkeeping must not wake it, or a walk to bed would be the
+  // 3.56 Hz poll again with a better excuse.
+  const kinds = /const NIGHT_WAKE_WORLD_FACT_KINDS = Object\.freeze\(\[([^\]]*)\]\);/u.exec(RUNNER_SOURCE)?.[1] ?? "";
+  assert.match(kinds, /"day_started"/u, "the day boundary is the crossing itself");
+  assert.match(
+    kinds,
+    /"night_ended_pass_out"/u,
+    "the engine's pass-out is how a night the companion did not sleep ends",
+  );
+  assert.doesNotMatch(kinds, /tile_advanced|route_progress|execution_receipt/u, "progress is not a rollover");
+});
+
 test("a pass-out mid-night is not the night's outcome: the watch runs on to the new day", async () => {
   // Measured (g120): the night watch stopped on `actor_passed_out`, and the run reported `crossings 0/2` for a night
   // the game had already crossed - `Game1.PassOutNewDay()` calls `NewDay(0f)` itself, so the player wakes on the NEXT
@@ -2584,6 +2652,9 @@ test("a night the Mod crossed through Body Program reaches the record with its o
         MOD_HEARTBEAT_STALL_MS: 90_000,
         MULTIDAY_NIGHT_TIMEOUT_MS: nightTimeoutMs,
         MULTIDAY_POLL_INTERVAL_MS: 5,
+        // The watch waits on the world's statements in the runner; this scripted night has no fact stream, so the stub
+        // spends the same 5 ms per look that the runner's own record poll spends.
+        worldFacts: { wait: async () => new Promise((resolve) => timers.push(setTimeout(resolve, 5))) },
         MULTIDAY_DISPATCH_TIMEOUT_MS: 5_000,
         MULTIDAY_DISMISS_TIMEOUT_MS: 5_000,
       },
@@ -2795,6 +2866,9 @@ test("a night her own sleep ended, crossed by the calendar, carries her sleep on
         MOD_HEARTBEAT_STALL_MS: 90_000,
         MULTIDAY_NIGHT_TIMEOUT_MS: 5_000,
         MULTIDAY_POLL_INTERVAL_MS: 5,
+        // The watch waits on the world's statements in the runner; this scripted night has no fact stream, so the stub
+        // spends the same 5 ms per look that the runner's own record poll spends.
+        worldFacts: { wait: async () => new Promise((resolve) => timers.push(setTimeout(resolve, 5))) },
         MULTIDAY_DISPATCH_TIMEOUT_MS: 5_000,
         MULTIDAY_DISMISS_TIMEOUT_MS: 5_000,
       },
@@ -2970,6 +3044,9 @@ test("a night she slept through and the host player did not is not reported as h
         MOD_HEARTBEAT_STALL_MS: 90_000,
         MULTIDAY_NIGHT_TIMEOUT_MS: 5_000,
         MULTIDAY_POLL_INTERVAL_MS: 5,
+        // The watch waits on the world's statements in the runner; this scripted night has no fact stream, so the stub
+        // spends the same 5 ms per look that the runner's own record poll spends.
+        worldFacts: { wait: async () => new Promise((resolve) => timers.push(setTimeout(resolve, 5))) },
         MULTIDAY_DISPATCH_TIMEOUT_MS: 5_000,
         MULTIDAY_DISMISS_TIMEOUT_MS: 5_000,
       },

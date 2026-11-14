@@ -37,6 +37,7 @@ import {
   WAKE_REASONS,
   WAKE_SUPPRESSION_REASONS,
   watchRollover,
+  worldFactWake,
 } from "../../lib/multiday-loop.mjs";
 import {
   assessMultiDayBaseline,
@@ -632,6 +633,27 @@ const hostMemory = {
 // The program half of "how far had this run got", updated as the journal reports it. A disconnect that says
 // only the flat count reads as "nothing had happened" on a run whose work all went through programs.
 let lastKnownProgramDispatches = 0;
+// WHAT WAKES THE NIGHT WATCHER: the world's own statements, not a timer.
+//
+// The watcher used to observe on a 250 ms interval, and `round56` measured what that costs - 742 observations inside one
+// 208.6 s night window, 618 of the run's 624 suppressed flushes carrying no fact at all, each one a whole snapshot
+// rebuilt on the game thread to be told that nothing had changed. A rollover is an EVENT, so the fact listener below
+// publishes into this latch and the watch waits on it, with `watchRollover`'s own ceiling as the answer for a world that
+// has gone quiet.
+const worldFacts = worldFactWake();
+/**
+ * The statements that wake the watcher, by the Mod's own kind (`payload.kind`, recorded as `worldFactKind`).
+ *
+ * Four things can change what the watch decides: the day boundary, the engine's pass-out, the clock, and the reading the
+ * snapshot is made of. Everything else the Mod publishes describes her own body moving through a step, and observing once
+ * per step would rebuild the snapshot for information the watch already polls for.
+ */
+const NIGHT_WAKE_WORLD_FACT_KINDS = Object.freeze([
+  "day_started",
+  "night_ended_pass_out",
+  "time_milestone",
+  "snapshot_changed",
+]);
 const factLog = [];
 /**
  * THE WORLD'S OWN CLOCK, sampled wherever this run already reads the world.
@@ -2096,6 +2118,12 @@ client.onFact((fact) => {
       }
     })();
     factLog.push(entry);
+    // THE WORLD SAYING SOMETHING IS WHAT THE NIGHT WATCHER WAITS FOR - and only the statements it can decide from. The
+    // kinds below are the rollover, the engine's pass-out, the clock and the reading itself; her own progress
+    // (`tile_advanced`, `route_progress`, receipts) deliberately does NOT wake it, because a watcher that observed once per
+    // step of the walk it is watching would be the 3.56 Hz poll again with a better excuse. This list is a LATENCY list and
+    // not a correctness one: a kind missing from it costs the watch's own ceiling (`watchRollover`), never a missed night.
+    if (NIGHT_WAKE_WORLD_FACT_KINDS.includes(entry.worldFactKind)) worldFacts.factPublished();
     // The same listener that records the fact also stamps the ledger: a receipt is one boundary on the run's
     // own clock, so the wait it ends is a subtraction rather than an inference.
     // The identity is what makes a settle attributable to a dispatch. Without it the ledger recorded 294
@@ -3053,7 +3081,15 @@ const MULTIDAY_DISPATCH_TIMEOUT_MS = 45_000;
 
 /** How long one `dismiss_modal` may take to reach its terminal before the wait is named. */
 const MULTIDAY_DISMISS_TIMEOUT_MS = 60_000;
-/** How often the night watcher asks the world. It runs only while a night is in flight. */
+/**
+ * How often the runner re-checks ITS OWN record - 250 ms, and it costs no bridge request.
+ *
+ * Two waits use it: `waitForNightToBegin` reads the fact log and the cached snapshot until the companion's `sleep` shows
+ * up, and the pass-out re-entry asks the watcher again. Neither asks the world anything. The night WATCH is not on this
+ * cadence and must not be: it is the one that observes, and `round56` measured what a 250 ms interval costs there - 742
+ * observations inside one 208.6 s night, each a whole snapshot rebuilt on the game thread. The watch waits on the Mod's own
+ * statements instead (see `worldFacts` below).
+ */
 const MULTIDAY_POLL_INTERVAL_MS = 250;
 
 /**
@@ -4039,6 +4075,10 @@ async function watchNightRollover(day, { dayTurnSettled = Promise.resolve() } = 
       watchRollover(world, {
         dayBefore,
         timeoutMs: remainingMs,
+        // WAKE ON THE WORLD, NOT ON THE CLOCK. The Mod's own rollover statements end the wait; the loop's ceiling is what
+        // a silent world falls back to. Measured on `round56`: 742 observations inside one 208.6 s night window, almost all
+        // of them the timer asking a world that had nothing to say.
+        waitForLook: (ceilingMs) => worldFacts.wait(ceilingMs),
         abort: () =>
           bridgeDisconnections.length > 0
             ? `night_watched_over_a_dead_bridge:${String(bridgeDisconnections[0]?.reasonCode ?? "unknown")}`

@@ -27,6 +27,7 @@ import {
   WAKE_SUPPRESSION_REASONS,
   wakeReasonReachability,
   watchRollover,
+  worldFactWake,
 } from "./multiday-loop.mjs";
 
 /** A scripted world: each observe() returns the next snapshot, and dismiss() records the call. */
@@ -90,7 +91,89 @@ const held = (menuType, dayOfMonth) => ({
   actorDispositionDetail: menuType,
 });
 
-const instant = { sleep: async () => {}, now: () => 0, pollIntervalMs: 0 };
+const instant = { sleep: async () => {}, now: () => 0, lookCeilingMs: 0 };
+
+/**
+ * THE CADENCE IS THE WORLD'S, NOT A TIMER'S.
+ *
+ * `round56` measured the defect this pins: 742 observations inside ONE 208.6 s night window (3.56 Hz, period median
+ * 289 ms) to detect a rollover that happens about once per twenty real minutes - and 618 of that run's 624 suppressed
+ * flushes carried no fact at all, so the asks bought nothing. The loop must take its cadence from whatever the caller can
+ * see the world with (`waitForLook`), and its own interval must degrade to a CEILING for a silent world.
+ */
+test("the night watcher looks when the caller says the world moved, and its timer is only the ceiling", async () => {
+  // The scripted night: five statements, then the calendar crosses. Nothing here is timed - the test says when a look is
+  // due, which is the property under test.
+  const statements = 6;
+  const scripted = world([held("ShippingMenu", 6), free(6), free(6), held("ShippingMenu", 6), free(6), free(7)]);
+  let looks = 0;
+  const outcome = await watchRollover(scripted, {
+    dayBefore: 6,
+    timeoutMs: 600_000,
+    now: () => 0,
+    // A waiter that answers only when the test publishes a statement: the loop must be driven by this, not by a clock.
+    waitForLook: async () => {
+      looks += 1;
+    },
+    sleep: async () => {
+      throw new Error("the watcher waited on a timer: the world's statements are what it is watching for");
+    },
+  });
+
+  assert.equal(outcome.crossed, true, `the calendar moved, so the night was crossed: ${JSON.stringify(outcome)}`);
+  assert.equal(outcome.dayAfter, 7);
+  assert.equal(
+    looks,
+    statements - 1,
+    "one look per statement after the first observation, and not one per tick: the look count is the world's own count",
+  );
+  assert.equal(
+    scripted.observed.length,
+    statements,
+    "and exactly one observation per look, so nothing was asked twice",
+  );
+});
+
+/**
+ * The pending statement is not lost, and a statement does not wake the loop twice.
+ *
+ * Both directions are the latch's whole contract: a fact that lands while the loop is between a look and its wait must
+ * shorten the NEXT wait (otherwise the watcher sleeps a full ceiling over news it already had), and a wake must not leave
+ * a phantom behind that makes the following wait return at once (that would be an observe with nothing that caused it -
+ * the timer defect wearing a different hat).
+ */
+test("a statement shortens the next wait, and waking consumes exactly one", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const wake = worldFactWake();
+  const settled = [];
+  const wait = (ceilingMs, label) => wake.wait(ceilingMs).then(() => settled.push(label));
+
+  // 1. A statement with a waiter standing ends the wait at once.
+  const standing = wait(2_000, "standing");
+  wake.factPublished();
+  await standing;
+  assert.deepEqual(settled, ["standing"], "the statement ended the wait, not the ceiling");
+
+  // 2. A statement with NOBODY waiting is remembered, so the next wait does not spend a ceiling on news already in hand.
+  wake.factPublished();
+  await wait(2_000, "remembered");
+  assert.deepEqual(settled, ["standing", "remembered"]);
+
+  // 3. And that memory is spent by that one wait: the next one waits out its ceiling instead of looking again for nothing.
+  let ceilingReached = false;
+  const next = wait(2_000, "ceiling").then(() => {
+    ceilingReached = true;
+  });
+  await Promise.resolve();
+  assert.equal(ceilingReached, false, "no phantom wake survived the last one");
+  t.mock.timers.tick(1_999);
+  await Promise.resolve();
+  assert.equal(ceilingReached, false, "the ceiling is 2000 ms, and the wait has not reached it");
+  t.mock.timers.tick(1);
+  await next;
+  assert.equal(ceilingReached, true, "and at the ceiling the world that said nothing is looked at anyway");
+  assert.deepEqual(settled, ["standing", "remembered", "ceiling"]);
+});
 
 test("the night is not crossed while a menu still holds the actor, even if the calendar moved", async () => {
   // The calendar moves FIRST (that is the real order), so a loop that trusted the day number would
@@ -213,7 +296,7 @@ test("a menu that stands while no observed fact moves is named a DEADLOCK, not a
   const outcome = await watchRollover(scripted, {
     dayBefore: 6,
     timeoutMs: 600_000,
-    pollIntervalMs: 250,
+    lookCeilingMs: 250,
     now: () => clock,
     sleep: async () => {
       clock += 250;
@@ -252,7 +335,7 @@ test("the same menu standing while the game's own clock runs is a SLOW night, no
   const outcome = await watchRollover(moving, {
     dayBefore: 6,
     timeoutMs: 300_000,
-    pollIntervalMs: 250,
+    lookCeilingMs: 250,
     now: () => clock,
     sleep: async () => {
       clock += 60_000;
@@ -272,7 +355,7 @@ test("an execution in flight is an owner, so a standing menu is not a deadlock",
   const outcome = await watchRollover(scripted, {
     dayBefore: 6,
     timeoutMs: 60_000,
-    pollIntervalMs: 250,
+    lookCeilingMs: 250,
     now: () => clock,
     sleep: async () => {
       clock += 250;
@@ -457,7 +540,7 @@ test("a close the ENGINE owns is waited for instead of being counted as a failed
     now: () => Date.now(),
     sleep: async () => {},
     timeoutMs: 5_000,
-    pollIntervalMs: 1,
+    lookCeilingMs: 1,
   }).then((outcome) => {
     assert.equal(outcome.crossed, true, JSON.stringify(outcome));
     assert.equal(outcome.dayAfter, 6);
@@ -470,7 +553,7 @@ test("a day-start transition is WAITED for, not answered as a cutscene verdict",
   // had crossed one of its two nights. The fade finished two seconds later, on its own. An event that clears itself is
   // a wait; only an event that never clears is a stop, and then it must say how long it waited.
   let clock = 0;
-  const advancing = { sleep: async () => {}, now: () => clock, pollIntervalMs: 0 };
+  const advancing = { sleep: async () => {}, now: () => clock, lookCeilingMs: 0 };
   const fading = [
     { actionable: false, actorDispositionKind: "event", actorDispositionDetail: "new_day_transition", dayOfMonth: 6 },
     { actionable: false, actorDispositionKind: "event", actorDispositionDetail: "new_day_transition", dayOfMonth: 7 },
@@ -495,7 +578,7 @@ test("a day-start transition is WAITED for, not answered as a cutscene verdict",
 
 test("an event that never clears stops by name, with the time it was given", async () => {
   let clock = 0;
-  const advancing = { sleep: async () => {}, now: () => clock, pollIntervalMs: 0 };
+  const advancing = { sleep: async () => {}, now: () => clock, lookCeilingMs: 0 };
   const stuck = {
     async observe() {
       clock += 1000;
@@ -521,7 +604,7 @@ test("a cutscene cannot outrank a calendar that already moved", async () => {
   // uncrossed on a day record whose own terminal said `day_advanced`. A menu holds a night because the harness must not
   // close it; a cutscene has already let the world move, and the day moving IS the crossing.
   let clock = 0;
-  const advancing = { sleep: async () => {}, now: () => clock, pollIntervalMs: 0 };
+  const advancing = { sleep: async () => {}, now: () => clock, lookCeilingMs: 0 };
   const transitionAfterCrossing = {
     async observe() {
       clock += 500;
