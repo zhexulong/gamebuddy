@@ -8,7 +8,6 @@ import { dirname, join, resolve } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { auditGateRedProofs, describeGateCensus } from "../gates/meta/audit-gate-red-proofs.mjs";
-import { indexedGatePopulation } from "./indexed-sources.mjs";
 import {
   checkExperimentalRunners,
   checkGateFalsifiers,
@@ -23,6 +22,7 @@ import {
   harnessGateNames,
   readModFixtureSources,
 } from "./harness-conformance.mjs";
+import { indexedGatePopulation } from "./indexed-sources.mjs";
 import { preflightLiveRun } from "./live-run-preflight.mjs";
 
 const toolsDir = resolve(dirname(fileURLToPath(import.meta.url)), "..");
