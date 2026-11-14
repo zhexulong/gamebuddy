@@ -526,15 +526,6 @@
       "reason": "[not-a-population] the module restates its own export to itself: `PROMOTION_RESPONSIBILITIES` IS the tool's published step list, so `length === 6` could only ever confirm the declaration it was counted from, and naming the members would make the test a second copy of the export. The contract is order and non-emptiness - the first step, the last step, and a list that declares something to order - so the zero left is that anti-vacuity guard, where a guard's zero is a branch rather than a frozen count."
     },
     {
-      "file": "tools/run-stardew-native-local-player-dialogue-stream-smoke.test.mjs",
-      "authority": "JSON.parse(result.bridgeFacts[0].worldFactPayload.payloadJson).pages",
-      "literal": "2",
-      "shape": "call_result",
-      "sites": 1,
-      "line": 70,
-      "reason": "[derivable-now] `deepEqual(pages.map((page) => page.text), [...])` pins the two pages the pager emitted, and `observed.pagedAs` one line above already names the paging."
-    },
-    {
       "file": "tools/run-stardew-native-local-player-equip-wearable-smoke.test.mjs",
       "authority": "digest",
       "literal": "16",

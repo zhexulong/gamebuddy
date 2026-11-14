@@ -67,7 +67,11 @@ test("a native multi-page dialogue passes, and the pages come out of the payload
   assert.equal(result.observed.pagedAs, "multi_page_single_box");
   // And the recorded fact carries the payload shape the checker reads.
   assert.equal(result.bridgeFacts[0].worldFactKind, "npc_dialogue_presented");
-  assert.equal(JSON.parse(result.bridgeFacts[0].worldFactPayload.payloadJson).pages.length, 2);
+  assert.deepEqual(
+    JSON.parse(result.bridgeFacts[0].worldFactPayload.payloadJson).pages,
+    ["第一页", "第二页"],
+    "the recorded payload carries the fixture's own pages, not merely two of them",
+  );
 });
 
 test("one page is BLOCKED, not passed: the claim is that the pager advanced", async () => {
