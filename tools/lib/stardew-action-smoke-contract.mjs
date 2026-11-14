@@ -21,9 +21,18 @@
  * spelling that agrees today is a disagreement scheduled for later.
  *
  * WHAT A CONTRACT MAY SAY (and nothing else, because a key nobody reads is a key that lies):
- *   action, discovery, args, evidence, worldAfter, stale, unasserted,
+ *   action, discovery, args, evidence, worldAfter, stale, unasserted, assertion,
  * and `expectedReasonCode` only where the declaration is generic (`native_action_postcondition`) and therefore
  * derives nothing.
+ *
+ * THE ONE CLAUSE CODE HOLDS. A comparison that orders one number against another - "at least as many ground debris
+ * carrying the pond's fish type as the pond held occupants" - is not a `worldAfter` form and never will be, so the
+ * contract names a HOOK instead: `"assertion": "clear_fish_pond"` is `tools/assertions/clear_fish_pond.mjs`, which
+ * `tools/run-native-action-slice.mjs` runs after its own checks and whose declared clauses (`asserts`) the coverage
+ * gate counts as covered. The name must exist (`assertion_missing`) and a clause the hook declares must be one this
+ * contract can name - a receipt key the contract states, or an observation family the protocol publishes
+ * (`assertion_clause_unknown`) - because an excuse nobody can find, or one that asserts something the contract never
+ * mentions, is a comment rather than a test.
  *
  * AN ACTION THAT NAMES NO TARGET IS STILL A SLICE. 14 of the 103 execution declarations carry no `targetFamily`
  * (`sleep`, `advance_day`, `dismiss_modal`, ...) and are perfectly testable: they take arguments and answer a
@@ -44,7 +53,7 @@
 
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { isAbsolute, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { parseJavaScript } from "./javascript-ast.mjs";
 import { fixtureActions, fixtureScenario } from "./stardew-native-local-player-fixture.mjs";
@@ -71,6 +80,7 @@ const CONTRACT_KEYS = Object.freeze([
   "stale",
   "delta",
   "unasserted",
+  "assertion",
 ]);
 /** Keys a contract may not carry because the action's own declaration (or the engine) already answers them. */
 const DERIVED_KEYS = Object.freeze([
@@ -160,6 +170,12 @@ const PROJECTION_SAMPLE_PATH = resolve(
   "integrations/stardew/action-development/contracts/generated/snapshot-sample.v1.json",
 );
 const CONTRACT_DIRECTORY = resolve(ROOT, "contracts/smoke");
+/** The directory a contract's `assertion` name is resolved in, and the one `tools/check-assertion-hooks.mjs` scans. */
+export const ASSERTION_DIRECTORY = resolve(ROOT, "tools/assertions");
+/** A hook name is a module name: lowercase, no path, no extension. */
+const ASSERTION_NAME = /^[a-z][a-z0-9_]{0,63}$/u;
+/** `<evidence|worldAfter>.<subject>` - the clause vocabulary the coverage gate already names clauses in. */
+const ASSERTION_CLAUSE = /^(?:evidence|worldAfter)\.([A-Za-z][A-Za-z0-9_]{0,63})$/u;
 const RUNNER_DIRECTORY = resolve(ROOT, "tools");
 const RUNNER_PREFIX = "run-stardew-native-local-player-";
 const EVIDENCE_OBJECT = "evidence";
@@ -483,6 +499,53 @@ function genericKey(reason) {
     .replace(/\s+/gu, " ");
 }
 
+/**
+ * `assertion` - the hook a contract names for the clauses its data cannot state.
+ *
+ * The value is checked, not just the key: a name that is not a module name is `assertion_invalid`, and one no file in
+ * the hook directory carries is `assertion_missing`. A key whose value is never looked up is a comment.
+ */
+function validateAssertion(assertion, { assertionDirectory }) {
+  if (assertion === undefined) return null;
+  if (!isNonEmptyString(assertion)) fail("assertion_invalid", JSON.stringify(assertion));
+  const name = assertion.trim();
+  if (!ASSERTION_NAME.test(name)) fail("assertion_invalid", name);
+  if (!existsSync(join(assertionDirectory, `${name}.mjs`)))
+    fail("assertion_missing", `${name}:${join(assertionDirectory, `${name}.mjs`)}`);
+  return name;
+}
+
+/**
+ * The hook one contract names: the clauses it declares, and the one function the engine calls.
+ *
+ * The clauses are checked against what THIS contract can name. A receipt key the hook asserts must be a key the
+ * contract states - otherwise the hook is asserting something the contract never mentions, which is either a stale
+ * hook or a missing clause. An observation family must be one the protocol publishes, read from the generated sample
+ * rather than from a list here, because a hook cannot invent a family name either.
+ */
+export async function loadAssertionHook(contract, { assertionDirectory = ASSERTION_DIRECTORY, families = null } = {}) {
+  const name = contract.assertion ?? null;
+  if (name === null) return null;
+  const path = join(assertionDirectory, `${name}.mjs`);
+  const module = await import(pathToFileURL(path).href);
+  const functions = Object.entries(module).filter(([, value]) => typeof value === "function");
+  if (functions.length !== 1)
+    fail("assertion_hook_functions", `${name}:${functions.length}:the engine calls the one function`);
+  const asserted = module.asserts;
+  if (!Array.isArray(asserted) || asserted.length === 0 || asserted.some((clause) => !isNonEmptyString(clause)))
+    fail("assertion_clauses_missing", `${name}:the hook declares no clause list, so nothing can be counted as covered`);
+  const published = families ?? readObservationFamilies();
+  for (const clause of asserted) {
+    const subject = ASSERTION_CLAUSE.exec(clause)?.[1];
+    if (subject === undefined) fail("assertion_clause_unnameable", `${name}:${clause}`);
+    if (clause.startsWith("evidence.") && contract.evidence[subject] === undefined)
+      fail("assertion_clause_unknown", `${name}:${clause}:the contract states no such receipt key`);
+    if (clause.startsWith("worldAfter.") && !published.has(subject))
+      fail("assertion_clause_unknown", `${name}:${clause}:the protocol publishes no such observation family`);
+  }
+  return Object.freeze({ name, path, clauses: Object.freeze([...asserted]), run: functions[0][1] });
+}
+
 function validateStale(stale, args) {
   if (stale === undefined) return null;
   if (!isPlainObject(stale)) fail("stale_not_object");
@@ -509,7 +572,10 @@ function validateStaleArgs(args) {
  * `facts` defaults to `deriveActionFacts(action)`; a caller may pass it so many contracts are validated against one
  * surface read. Every refusal names the key or the disagreement, never just "invalid".
  */
-export function validateSmokeContract(raw, { facts = null, surface = null, protocolControls = null } = {}) {
+export function validateSmokeContract(
+  raw,
+  { facts = null, surface = null, protocolControls = null, assertionDirectory = ASSERTION_DIRECTORY } = {},
+) {
   if (!isPlainObject(raw)) fail("not_object");
   if (raw.schema !== SMOKE_CONTRACT_SCHEMA) fail("schema_unknown", String(raw.schema));
   for (const key of DERIVED_KEYS) {
@@ -538,6 +604,7 @@ export function validateSmokeContract(raw, { facts = null, surface = null, proto
   const stale = validateStale(raw.stale, args);
   const delta = validateDelta(raw.delta);
   const unasserted = validateUnasserted(raw.unasserted);
+  const assertion = validateAssertion(raw.assertion, { assertionDirectory });
 
   return Object.freeze({
     schema: SMOKE_CONTRACT_SCHEMA,
@@ -551,6 +618,7 @@ export function validateSmokeContract(raw, { facts = null, surface = null, proto
     stale,
     delta,
     unasserted,
+    assertion,
     derived: Object.freeze({
       lifecycle: resolvedFacts.lifecycle,
       nativeBinding: resolvedFacts.nativeBinding,
@@ -615,6 +683,7 @@ export function adHocContract({ action, args, expectReasonCode = null }, options
     stale: null,
     delta: Object.freeze([]),
     unasserted: Object.freeze({}),
+    assertion: null,
     derived: Object.freeze({
       lifecycle: facts.lifecycle,
       nativeBinding: facts.nativeBinding,
@@ -1125,18 +1194,23 @@ function deltaCovers(entries, key, partners) {
  * `unknown` is the other direction, and it is the one that keeps a declaration from outliving its clause: a
  * contract naming `evidence.count_after` after the runner stopped comparing it is refused too.
  */
-function compareContractToRunner(contract, runner) {
+function compareContractToRunner(contract, runner, hook) {
   const declarations = contract.unasserted ?? {};
+  const asserted = hook === null ? [] : hook.clauses;
   const covered = [];
   const declared = [];
   const dropped = [];
   for (const clause of runner.clauses) {
-    if (declarations[clause] !== undefined) declared.push(clause);
+    // A hook answers what the format cannot write down, so its clauses are covered - before the declaration is
+    // consulted, because a clause a hook asserts cannot also be an exception nobody asserts.
+    if (asserted.includes(clause)) covered.push(clause);
+    else if (declarations[clause] !== undefined) declared.push(clause);
     else if (contractCovers(clause, contract, runner)) covered.push(clause);
     else dropped.push(clause);
   }
+  // A declaration the hook now asserts has outlived itself: the exemption expires with the gap it excused.
   const unknown = Object.keys(declarations)
-    .filter((clause) => !runner.clauses.includes(clause))
+    .filter((clause) => !runner.clauses.includes(clause) || asserted.includes(clause))
     .sort();
   return Object.freeze({
     covered: Object.freeze(covered),
@@ -1162,6 +1236,7 @@ export async function checkContractCoverage({
   runnerDirectory = RUNNER_DIRECTORY,
   samplePath = PROJECTION_SAMPLE_PATH,
   routeFor = gateRouteFor,
+  assertionDirectory = ASSERTION_DIRECTORY,
 } = {}) {
   const families = readObservationFamilies({ samplePath });
   const routes = await loadGateRoute();
@@ -1171,12 +1246,17 @@ export async function checkContractCoverage({
   if (files.length === 0) fail("corpus_empty", contractDirectory);
   const readings = [];
   for (const file of files) {
-    const contract = loadSmokeContractFile(join(contractDirectory, file));
+    const contract = loadSmokeContractFile(join(contractDirectory, file), { assertionDirectory });
+    // The hook is read for EVERY contract that names one, promoted or compared: a name that resolves to no file, a
+    // hook that exports no clause list, or a clause this contract cannot name is a finding here rather than a silence
+    // in the live run that would have called it.
+    const hook = await loadAssertionHook(contract, { assertionDirectory, families });
     const runner = runnerFileName(contract.action);
     const runnerPath = resolve(runnerDirectory, runner);
     const base = {
       file: join(contractDirectory, file),
       action: contract.action,
+      assertion: hook === null ? null : hook.name,
       withFamily: contract.derived.targetFamily !== null,
       declaredNone: contract.discovery === null,
     };
@@ -1209,7 +1289,7 @@ export async function checkContractCoverage({
         ...base,
         runner,
         promoted: false,
-        ...compareContractToRunner(contract, runnerAssertions(tree.rootNode, { families })),
+        ...compareContractToRunner(contract, runnerAssertions(tree.rootNode, { families }), hook),
       }),
     );
   }

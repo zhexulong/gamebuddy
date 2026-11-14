@@ -23,7 +23,5 @@
   "stale": {
     "refusedWith": ["pond_already_empty"]
   },
-  "unasserted": {
-    "worldAfter.itemTargets": "the runner counts ground debris (worldAfter.itemTargets) carrying the pond's fish type and requires that count to be at least the pond's occupants; a worldAfter form asserts a size or a target's absence, never one field ordered against another"
-  }
+  "assertion": "clear_fish_pond"
 }

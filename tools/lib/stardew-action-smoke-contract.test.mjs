@@ -182,6 +182,37 @@ function corpusOf(transform, name = "corpus") {
   return directory;
 }
 
+/**
+ * A corpus and a hook directory of its own, with the committed hooked contract pointed at a probe hook.
+ *
+ * Probe hooks are written here rather than into `tools/assertions/`, whose population is the structural gate's: a
+ * file that exists only to be refused would be a hook the live engine could be pointed at by a contract.
+ */
+function hookCorpus(files) {
+  const assertionDirectory = tempDirectory("smoke-contract-hooks-");
+  for (const [name, source] of Object.entries(files)) writeFileSync(join(assertionDirectory, name), source, "utf8");
+  const contractDirectory = corpusOf(
+    (raw) => (raw.assertion === undefined ? raw : { ...raw, assertion: "probe_hook" }),
+    "hooked",
+  );
+  return { assertionDirectory, contractDirectory };
+}
+
+const HOOK_BODY = `export function hook({ before, after, evidence }) {
+  return [];
+}
+`;
+
+/** A runner that reads ground items after its dispatch: the clause a hook has to answer when the format cannot. */
+const HOOK_RUNNER_SOURCE = `export async function runClearFishPondSmoke(client, receipts) {
+  const accepted = await executeFresh(client, { action: "clear_fish_pond" });
+  const terminal = await waitForTerminal(receipts, accepted);
+  const after = await observeFresh(client, { actionable: true });
+  const ground = after.itemTargets;
+  return { terminal, ground };
+}
+`;
+
 const validate = (raw, options = {}) => validateSmokeContract(raw, { surface, protocolControls, ...options });
 
 function expectRefusal(probe, code) {
@@ -431,6 +462,9 @@ const REFUSAL_PROBES = Object.freeze([
         unasserted: { "evidence.probe": "the runner compares two receipt numbers with each other here" },
       }),
   },
+  // The hook a contract names: the value is looked up, not only spelled.
+  { code: "assertion_invalid", probe: () => validate({ ...GENERIC_CONTRACT, assertion: "Clear Fish Pond" }) },
+  { code: "assertion_missing", probe: () => validate({ ...GENERIC_CONTRACT, assertion: "no_such_hook" }) },
   { code: "delta_invalid", probe: () => validate({ ...GENERIC_CONTRACT, delta: [] }) },
   {
     code: "delta_key_missing",
@@ -502,6 +536,43 @@ const COVERAGE_PROBES = Object.freeze([
     code: "unasserted_clause_unknown",
     probe: () =>
       assertContractCoverage({ directory: "probe", examined: 1, dropped: [], unknown: ["craft_item:evidence.absent"] }),
+  },
+  {
+    code: "assertion_hook_functions",
+    probe: () => {
+      const { assertionDirectory, contractDirectory } = hookCorpus({
+        "probe_hook.mjs": `${HOOK_BODY}export function second({ before }) {
+  return [];
+}
+`,
+      });
+      return checkContractCoverage({ assertionDirectory, contractDirectory });
+    },
+  },
+  {
+    code: "assertion_clauses_missing",
+    probe: () => {
+      const { assertionDirectory, contractDirectory } = hookCorpus({ "probe_hook.mjs": HOOK_BODY });
+      return checkContractCoverage({ assertionDirectory, contractDirectory });
+    },
+  },
+  {
+    code: "assertion_clause_unnameable",
+    probe: () => {
+      const { assertionDirectory, contractDirectory } = hookCorpus({
+        "probe_hook.mjs": `export const asserts = ["terminal.state"];\n${HOOK_BODY}`,
+      });
+      return checkContractCoverage({ assertionDirectory, contractDirectory });
+    },
+  },
+  {
+    code: "assertion_clause_unknown",
+    probe: () => {
+      const { assertionDirectory, contractDirectory } = hookCorpus({
+        "probe_hook.mjs": `export const asserts = ["worldAfter.not_a_family", "evidence.not_a_key"];\n${HOOK_BODY}`,
+      });
+      return checkContractCoverage({ assertionDirectory, contractDirectory });
+    },
   },
 ]);
 
@@ -1018,4 +1089,60 @@ test("an action that names no target says so in words, and silence is still refu
     () => validate({ ...contractRow(GENERIC_ROW), discovery: { none: noneReason(GENERIC_ROW.actionId) } }),
     "discovery_none_but_declaration_names_target",
   );
+});
+/**
+ * A HOOK ANSWERS A CLAUSE THE FORMAT CANNOT, and the reading has to say so on the SAME clause key.
+ *
+ * The runner here is written into a temp directory rather than read from the tree, because the committed
+ * `clear_fish_pond` runner is deleted in the same change that gives its clause a hook: a test that needed the runner
+ * on disk would go green by the runner disappearing, which is the trap the coverage gate's own falsifier documents.
+ * The measure is the clause, not the file: the runner publishes `after.itemTargets`, the contract cannot state a count
+ * relation, and the hook declares it - so the clause is COVERED with the hook and DROPPED without it.
+ */
+test("a clause a hook declares is covered on its own key, and the same clause drops when the hook is gone", async () => {
+  const runners = tempDirectory("smoke-contract-hook-runners-");
+  writeFileSync(join(runners, runnerFileName("clear_fish_pond")), HOOK_RUNNER_SOURCE, "utf8");
+  const routeFor = (action) => ({ route: CONTRACT_ROUTE, gate: `contracts/smoke/${action}.json`, problem: null });
+  const withHook = await checkContractCoverage({ runnerDirectory: runners, routeFor });
+  const clear = withHook.readings.find((entry) => entry.action === "clear_fish_pond");
+  assert.equal(clear.promoted, false, "the runner supplied above is the one this reading compares against");
+  assert.equal(clear.assertion, "clear_fish_pond", "the reading names the hook the contract points at");
+  assert.ok(
+    clear.covered.includes("worldAfter.itemTargets"),
+    `the hook's clause is covered: ${clear.covered.join(",")}`,
+  );
+  assert.deepEqual([clear.declared, clear.dropped], [[], []], "a hooked clause is neither declared nor dropped");
+  assert.deepEqual(withHook.dropped, [], `nothing else dropped: ${withHook.dropped.join(" ")}`);
+  console.log(
+    `hooked reading: covered ${clear.covered.length} · declared ${clear.declared.length} · dropped ${clear.dropped.length} · corpus covered ${withHook.covered} · declared ${withHook.declared}`,
+  );
+
+  // The control: the same contract without its `assertion` key. The clause has nowhere to live, so it is a DROP -
+  // which is what the ORIGINAL defect declared in words and left untested.
+  const unhooked = corpusOf((raw) => {
+    if (raw.assertion === undefined) return raw;
+    const next = { ...raw };
+    delete next.assertion;
+    return next;
+  }, "unhooked");
+  const without = await checkContractCoverage({ contractDirectory: unhooked, runnerDirectory: runners, routeFor });
+  const error = expectRefusal(() => assertContractCoverage(without), "drops_a_runner_assertion");
+  assert.ok(
+    error.message.includes("clear_fish_pond:worldAfter.itemTargets"),
+    `the drop names the contract and the clause the hook covered: ${error.message}`,
+  );
+});
+
+test("a hook that does not exist, and one that asserts a clause this contract cannot name, are both refused", async () => {
+  expectRefusal(() => validate({ ...GENERIC_CONTRACT, assertion: "no_such_hook" }), "assertion_missing");
+  for (const clause of ["worldAfter.not_a_family", "evidence.not_a_key"]) {
+    const { assertionDirectory, contractDirectory } = hookCorpus({
+      "probe_hook.mjs": `export const asserts = ["${clause}"];\n${HOOK_BODY}`,
+    });
+    const error = await expectRefusalAsync(
+      () => checkContractCoverage({ assertionDirectory, contractDirectory }),
+      "assertion_clause_unknown",
+    );
+    assert.ok(error.message.includes(clause), `the refusal names the clause: ${error.message}`);
+  }
 });

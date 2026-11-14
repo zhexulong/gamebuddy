@@ -86,6 +86,29 @@ function initialWorld(kind) {
       capabilities: ["cancel_active_execution", "inspect_self", "toggle_animal_door"],
       animalDoorTargets: [{ targetId: "animal_door_state_closed", x: 31, y: 20, buildingType: "Coop", isOpen: false }],
     };
+  if (kind === "clear_fish_pond")
+    return {
+      revision: 1,
+      location: "Farm",
+      tile: { x: 10, y: 12 },
+      actionable: true,
+      activeExecution: null,
+      capabilities: ["cancel_active_execution", "inspect_self", "clear_fish_pond"],
+      // The pond's fish type is UNQUALIFIED, as the Mod publishes it; the ground items it becomes are qualified. The
+      // hook's normalisation exists for exactly this pair of surfaces, so the fake world has to carry both forms.
+      fishPondTargets: [
+        {
+          targetId: "fish_pond_0123456789abcdef",
+          location: "Farm",
+          x: 10,
+          y: 12,
+          buildingType: "Fish Pond",
+          occupants: 2,
+          fishType: "128",
+        },
+      ],
+      itemTargets: [],
+    };
   throw new Error(`unknown world ${kind}`);
 }
 
@@ -151,6 +174,42 @@ function answer(kind, client, request) {
       reasonCode: "special_order_already_active",
       revision: client.state.snapshot.revision,
       evidence: { detail: "quest_key=DoctorOrder;board_marker_after=true" },
+    };
+  }
+  if (kind === "clear_fish_pond") {
+    const pond = client.state.snapshot.fishPondTargets?.[0];
+    if (pond !== undefined && request.args.expectedTargetId === pond.targetId) {
+      const ejected = Array.from({ length: pond.occupants }, () => ({
+        qualifiedItemId: `(O)${pond.fishType}`,
+        x: 11,
+        y: 12,
+      }));
+      client.state.snapshot = {
+        ...client.state.snapshot,
+        revision: 2,
+        fishPondTargets: [],
+        itemTargets: [...client.state.snapshot.itemTargets, ...ejected],
+      };
+      return {
+        requestId: request.requestId,
+        executionId: "fish-pond-execution",
+        state: "succeeded",
+        reasonCode: "fish_pond_cleared",
+        revision: 2,
+        evidence: {
+          detail:
+            `pond_id=${pond.targetId};location=Farm;fish_type_before=${pond.fishType};fish_type_after=none` +
+            `;occupants_before=${pond.occupants};occupants_after=0;fish_ejected=${pond.occupants}`,
+        },
+      };
+    }
+    return {
+      requestId: request.requestId,
+      executionId: "fish-pond-execution-stale",
+      state: "rejected",
+      reasonCode: "pond_already_empty",
+      revision: client.state.snapshot.revision,
+      evidence: { detail: `pond_id=none;fish_type_after=none;occupants_after=0` },
     };
   }
   const live = client.state.snapshot.animalDoorTargets?.[0];
@@ -602,4 +661,55 @@ test("the protocol controls are read from the Mod's own capability set, not copi
   const controls = readProtocolControls();
   assert.deepEqual([...controls].sort(), ["cancel_active_execution", "inspect_self"]);
   assert.ok(CAPABILITY_SET_PATH.endsWith("FarmhandCapabilitySet.cs"));
+});
+
+/**
+ * THE HOOK, DRIVEN BY THE ENGINE OVER A WHOLE SLICE.
+ *
+ * `clear_fish_pond` is the one contract whose clause is code rather than data: the ejected ground debris must be at
+ * least the pond's occupants. These two runs are the two directions of that clause, and the second is the case the
+ * format could never catch - every built-in check passes (the receipt says `fish_ejected=2`, the pond left discovery,
+ * the stale id is refused) and the WORLD holds only one ejected fish.
+ */
+test("clear_fish_pond: the hook's clause is a check of the run, and a short ejection blocks it on that check", async () => {
+  const contract = contractOf("clear_fish_pond");
+  const satisfied = makeWorld("clear_fish_pond");
+  const passed = await runActionSlice({
+    client: satisfied.client,
+    receipts: satisfied.receipts,
+    contract,
+    terminalTimeoutMs: 1_000,
+  });
+  assert.equal(passed.state, "passed", `the hook's own world must pass: ${passed.reasonCode}`);
+  assert.equal(passed.checks["assertion.worldAfter.itemTargets"], true, "the hook's clause is a named check");
+  assert.deepEqual(passed.assertion, { hook: "clear_fish_pond", clauses: ["worldAfter.itemTargets"], failures: [] });
+
+  const short = makeWorld("clear_fish_pond");
+  const execute = short.client.execute;
+  short.client.execute = async (request) => {
+    const receipt = await execute(request);
+    // The pond emptied and the receipt agrees with itself; the ground holds ONE of the two fish it claims to have
+    // ejected. Nothing the contract states as data can see this.
+    if (receipt.state === "succeeded")
+      short.client.state.snapshot = {
+        ...short.client.state.snapshot,
+        itemTargets: [{ qualifiedItemId: "(O)128", x: 11, y: 12 }],
+      };
+    return receipt;
+  };
+  const blocked = await runActionSlice({
+    client: short.client,
+    receipts: short.receipts,
+    contract,
+    terminalTimeoutMs: 1_000,
+  });
+  assert.equal(blocked.state, "blocked", "a world one fish short must not pass");
+  assert.equal(blocked.checks["assertion.worldAfter.itemTargets"], false);
+  assert.match(blocked.reasonCode, /^slice_assertion_unmet:worldAfter\.itemTargets:/u, blocked.reasonCode);
+  assert.match(blocked.reasonCode, /= 1\b/u, `the failure names the count it found: ${blocked.reasonCode}`);
+  assert.match(
+    blocked.reasonCode,
+    /occupants before = 2\b/u,
+    `and the count it was measured against: ${blocked.reasonCode}`,
+  );
 });

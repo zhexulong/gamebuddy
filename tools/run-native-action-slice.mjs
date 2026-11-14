@@ -33,6 +33,12 @@
  * contract declares one - the same request re-sent with a target that has just been consumed must be refused by one
  * of the named codes. A check that could not be looked at is `not_checked`, and `not_checked` fails the run.
  *
+ * WHAT DATA CANNOT SAY, A HOOK DOES. The format asserts one receipt key against one value, one world field against a
+ * size or a target's absence; a clause that ORDERS one number against another - `clear_fish_pond`'s "at least as many
+ * ejected fish as the pond held" - is code by nature, and it lives in `tools/assertions/` where the contract names it
+ * (`assertion`). The hook runs last, after the built-in checks, and each clause it declares becomes a named check of
+ * its own, so a live reading cannot show a hooked contract as having asserted nothing.
+ *
  * REFUSES before any mutation, each naming its own fact:
  *   slice_fixture_override_disagrees:<given>:<derived>     --fixture names a world the action's declaration does not
  *   slice_contract_missing                                 no --contract and no --action
@@ -49,6 +55,7 @@ import { installLiveRunInterrupt } from "./lib/live-run-teardown.mjs";
 import {
   adHocContract,
   deriveActionFacts,
+  loadAssertionHook,
   loadSmokeContractFile,
   readActionSurface,
   readProtocolControls,
@@ -393,7 +400,11 @@ export async function runActionSlice({
     }
     timings.settleMs = Date.now() - settleStartedAt;
 
-    const checks = judgeSlice({ contract, target: discovery.chosen, terminal, after, evidence, staleTerminal });
+    const builtIn = judgeSlice({ contract, target: discovery.chosen, terminal, after, evidence, staleTerminal });
+    // The hook runs LAST, over the observation the request was built from and the fresh one read after the terminal:
+    // what it could not look at it reports, and a report is a failure.
+    const assertion = await runContractAssertion({ contract, before: snapshot, after, evidence });
+    const checks = { ...builtIn, ...assertion.checks };
     trace.push({ step: "observed", checks, evidence: evidence === null ? null : Object.fromEntries(evidence) });
     const failed = Object.keys(checks).filter((name) => checks[name] === false || checks[name] === "not_checked");
     // A key the contract states - through a literal, a target field, or either side of a `delta` entry - is asserted;
@@ -415,11 +426,19 @@ export async function runActionSlice({
       receipt: summarizeReceipt(terminal),
       stale: staleTerminal === null ? null : { receipt: summarizeReceipt(staleTerminal) },
       unassertedEvidence,
+      assertion:
+        assertion.hook === null
+          ? null
+          : { hook: assertion.hook, clauses: assertion.clauses, failures: assertion.failures },
       timings,
       trace,
     };
     if (failed.length === 0) return { ...base, state: "passed", reasonCode: contract.expectedReasonCode };
-    return { ...base, state: "blocked", reasonCode: failureReason(failed[0], terminal, checks, evidence, contract) };
+    return {
+      ...base,
+      state: "blocked",
+      reasonCode: failureReason(failed[0], terminal, checks, evidence, contract, assertion),
+    };
   } catch (error) {
     timings.totalMs = Date.now() - startedAt;
     return {
@@ -431,6 +450,30 @@ export async function runActionSlice({
       trace,
     };
   }
+}
+
+/**
+ * The contract's own hook, run after the format's built-in checks.
+ *
+ * One check per clause the hook DECLARES, not one per message: a hook that found nothing and a hook that was never
+ * called must not read the same, and a contract whose assertion produced no check at all would be a slice that passed
+ * with nothing asserted. A message naming a clause the hook did not declare is added as a failing check of its own
+ * instead of being dropped, because a hook may not report a clause the coverage gate was never told about.
+ */
+export async function runContractAssertion({ contract, before, after, evidence }) {
+  const hook = await loadAssertionHook(contract);
+  if (hook === null) return { hook: null, clauses: [], checks: {}, failures: [] };
+  const failures = hook.run({ before, after, evidence });
+  if (!Array.isArray(failures)) refuse(`slice_assertion_not_a_reading:${hook.name}`);
+  const checks = {};
+  for (const clause of hook.clauses)
+    checks[`assertion.${clause}`] = !failures.some((message) => message.startsWith(`${clause}:`));
+  for (const message of failures) {
+    const at = message.indexOf(":");
+    const name = `assertion.${at <= 0 ? message : message.slice(0, at)}`;
+    if (checks[name] === undefined) checks[name] = false;
+  }
+  return { hook: hook.name, clauses: [...hook.clauses], checks, failures: [...failures] };
 }
 
 function buildStaleArgs(contract, target) {
@@ -445,7 +488,7 @@ function buildStaleArgs(contract, target) {
  * `rejected/not_tillable` is the action answering, and a reason code that only said `terminalStateExpected` would
  * send the reader to the run's own code instead of the game's.
  */
-function failureReason(name, terminal, checks, evidence, contract) {
+function failureReason(name, terminal, checks, evidence, contract, assertion = { failures: [] }) {
   if (name === "terminalStateExpected" || name === "terminalReasonExpected")
     return `slice_terminal_not_expected:${String(terminal?.state)}:${String(terminal?.reasonCode)}`;
   if (name === "evidenceParsed")
@@ -464,6 +507,14 @@ function failureReason(name, terminal, checks, evidence, contract) {
     const expected =
       expectation?.equalsTarget === undefined ? expectation?.equals : `$target.${expectation.equalsTarget}`;
     return `slice_evidence_mismatch:${key}:expected=${String(expected)}:actual=${String(evidence?.get(key))}`;
+  }
+  if (name.startsWith("assertion.")) {
+    const clause = name.slice("assertion.".length);
+    const message = assertion.failures.find((entry) => entry.startsWith(`${clause}:`));
+    return `slice_assertion_unmet:${message ?? `${clause}:the hook reported it without a message`}`.slice(
+      0,
+      MAX_REASON_CHARS,
+    );
   }
   return `slice_world_unmet:${name}:${checks[name] === "not_checked" ? "not_checked" : "false"}`;
 }
@@ -654,6 +705,7 @@ export async function runSliceLive({ contract, plan, evidencePath = null }) {
         evidence: contract.evidence,
         worldAfter: contract.worldAfter,
         stale: contract.stale,
+        assertion: contract.assertion,
       }),
     }),
     fixture: Object.freeze({
@@ -686,6 +738,7 @@ export function describeSlice(contract) {
       evidence: contract.evidence,
       worldAfter: contract.worldAfter,
       stale: contract.stale,
+      assertion: contract.assertion,
     },
     expected: { state: contract.expectedState, reasonCode: contract.expectedReasonCode },
   };
