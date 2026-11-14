@@ -260,7 +260,7 @@ test("a corpus with no assertion is blocked, never green", () => {
 
 test("a corpus with no journey is blocked too, rather than reading clean over nothing", () => {
   const root = makeTree({});
-  const { status, stdout, stderr } = spawnSync(process.execPath, [GATE, "--root", root], { encoding: "utf8" });
+  const { status, stderr } = spawnSync(process.execPath, [GATE, "--root", root], { encoding: "utf8" });
   assert.equal(status, 2, `expected the blocked exit, got ${status}: ${stderr}`);
   assert.match(stderr, /examined 0 assertions/u);
 });

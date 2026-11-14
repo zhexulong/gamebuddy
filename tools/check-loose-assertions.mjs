@@ -159,6 +159,49 @@ function reachableFunctions({ calls, byLabel, rootIds, moduleIsLive, followRegis
   return live;
 }
 
+/** The callee a call names, or `null` when it is a computed member or a literal it invokes instead. */
+function calleeOf(node) {
+  const calleeNode = unwrapParentheses(node.childForFieldName("function"));
+  const written = (calleeNode?.text ?? "").replace(/\s+/gu, "");
+  return { calleeNode, callee: CALLEE_NAME.test(written) ? written : null };
+}
+
+/**
+ * One call, read into the graph: an assertion under the function that encloses it, or an edge from that function
+ * to the names it calls and the bodies it hands a live call.
+ */
+function readCall({
+  node,
+  spec,
+  enclosing,
+  isAssertion,
+  assertions,
+  calls,
+  registrationCallbacks,
+  collectionCallbacks,
+}) {
+  const { calleeNode, callee } = calleeOf(node);
+  // The bodies this call runs: the callbacks it is handed, and the literal it immediately invokes.
+  const invokedFunctions = [
+    ...(node.childForFieldName("arguments")?.namedChildren ?? []),
+    ...(calleeNode !== null && FUNCTION_TYPES.has(calleeNode.type) ? [calleeNode] : []),
+  ].filter((child) => FUNCTION_TYPES.has(child.type));
+  if (callee !== null && isAssertion(callee)) {
+    assertions.push({
+      file: spec.file,
+      line: node.startPosition.row + 1,
+      caller: enclosing,
+      text: node.text.split("\n")[0].trim().slice(0, 120),
+    });
+    return;
+  }
+  calls.push({ caller: enclosing, callee, invokedFunctions });
+  for (const fn of invokedFunctions) {
+    if (callee !== null && RUNNER_REGISTRATION.test(callee)) registrationCallbacks.add(fn.id);
+    if (callee !== null && COLLECTION_GROUP.test(callee)) collectionCallbacks.add(fn.id);
+  }
+}
+
 /**
  * The whole reading: every assertion in every mounted journey, attributed to a test, to module-level code, or
  * to a function nothing reaches.
@@ -196,30 +239,17 @@ export async function auditLooseAssertions({ root = REPOSITORY_ROOT } = {}) {
         if (!byLabel.has(label)) byLabel.set(label, []);
         byLabel.get(label).push(node.id);
       }
-      if (node.type === "call_expression") {
-        const calleeNode = unwrapParentheses(node.childForFieldName("function"));
-        const written = (calleeNode?.text ?? "").replace(/\s+/gu, "");
-        const callee = CALLEE_NAME.test(written) ? written : null;
-        // The bodies this call runs: the callbacks it is handed, and the literal it immediately invokes.
-        const invokedFunctions = [
-          ...(node.childForFieldName("arguments")?.namedChildren ?? []),
-          ...(calleeNode !== null && FUNCTION_TYPES.has(calleeNode.type) ? [calleeNode] : []),
-        ].filter((child) => FUNCTION_TYPES.has(child.type));
-        if (callee !== null && isAssertion(callee))
-          assertions.push({
-            file: spec.file,
-            line: node.startPosition.row + 1,
-            caller: enclosing,
-            text: node.text.split("\n")[0].trim().slice(0, 120),
-          });
-        else {
-          calls.push({ caller: enclosing, callee, invokedFunctions });
-          if (callee !== null && RUNNER_REGISTRATION.test(callee))
-            for (const fn of invokedFunctions) registrationCallbacks.add(fn.id);
-          if (callee !== null && COLLECTION_GROUP.test(callee))
-            for (const fn of invokedFunctions) collectionCallbacks.add(fn.id);
-        }
-      }
+      if (node.type === "call_expression")
+        readCall({
+          node,
+          spec,
+          enclosing,
+          isAssertion,
+          assertions,
+          calls,
+          registrationCallbacks,
+          collectionCallbacks,
+        });
       for (const child of node.namedChildren) walk(child, ownsBody ? node.id : enclosing);
     };
     walk(tree.rootNode, null);
