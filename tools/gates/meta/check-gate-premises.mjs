@@ -77,6 +77,10 @@ const RENDERER_DECLARATION = "tools/check-snapshot-field-rendering.mjs";
 export const GATE_PREMISES = Object.freeze([
   { gate: "tools/check-stardew-observation-gap.mjs", reads: [OBSERVATION_GAP_ANALYZER] },
   { gate: "tools/check-stardew-observation-consumers.mjs", reads: [RENDERER_DECLARATION] },
+  // Both gates below declare their inputs as UPPER_CASE constants and `path:` rows, so their premise lists are derived
+  // rather than restated here: the wire schema, the Host validator, the contract and the producer it judges.
+  { gate: "tools/check-inventory-row-field-rendering.mjs" },
+  { gate: "tools/check-browser-state-projection-fields.mjs" },
 ]);
 
 /** A repo-relative path: the roots this tree's gates read from. A string outside these is prose, not an input. */

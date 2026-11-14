@@ -1,12 +1,17 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { GameBrowserValidatorsV1, composeGameProfile } from "../game-browser-contract/index.js";
+import {
+  GameBrowserValidatorsV1,
+  composeGameProfile,
+  type GameBrowserStateV1,
+} from "../game-browser-contract/index.js";
 import { createGameBrowserStateProvider } from "./game-browser-state-provider.js";
 import type {
   StardewGameSurfaceActionAuthorityReader,
   StardewGameSurfaceActionAuthorityView,
   StardewGameSurfaceAttachmentReader,
   StardewGameSurfaceAttachmentView,
+  StardewGameSurfaceCapabilityView,
   StardewGameSurfaceLaunchReadinessReader,
   StardewGameSurfaceLaunchReadinessView,
 } from "../stardew-production-lifecycle-coordinator.internal.js";
@@ -137,7 +142,7 @@ test("read-only provider accepts a reader-only fresh lifecycle and projects only
     companionName: null,
     selectedWorld: null,
     selectedSave: null,
-    capabilitySummary: { available: false, count: 0 },
+    capabilitySummary: { status: "not_measured", reason: "no_capability_reader" },
     latestOutcome: "none",
   });
 });
@@ -161,7 +166,7 @@ test("read-only provider projects unavailable lifecycle without fabricated attac
     companionName: null,
     selectedWorld: null,
     selectedSave: null,
-    capabilitySummary: { available: false, count: 0 },
+    capabilitySummary: { status: "not_measured", reason: "no_capability_reader" },
     latestOutcome: "none",
   });
 });
@@ -228,10 +233,51 @@ test("provider projects only Host-owned attachment generation and connection sta
     assert.equal(GameBrowserValidatorsV1.GameBrowserStateV1Schema.Check(state), true);
     assert.deepEqual(state.game.attachment, { status: "attached", generation: 1 });
     assert.equal(state.game.connectionStatus, connectionStatus);
-    assert.equal(state.game.capabilitySummary.available, false);
+    // No capability reader is mounted in this construction, so the projection says so (`not_measured` + a reason)
+    // instead of publishing the `0` the old literal did.
+    assert.deepEqual(state.game.capabilitySummary, { status: "not_measured", reason: "no_capability_reader" });
     assert.equal(state.game.selectedSave, null);
     assert.equal(state.game.selectedWorld, null);
   }
+});
+
+/**
+ * THE CAPABILITY SUMMARY IS THE LIVE SURFACE'S OWN COUNT, and the three zeros stay apart.
+ *
+ * `game_browser_api/v1` carries either a measured count (`published`, where `0` means the runtime advertised nothing) or
+ * a reason this layer could not measure it (`not_measured`, which carries no count at all). The field used to be the
+ * literal `Object.freeze({ available: false, count: 0 })`, so the companion board read "no capability published"
+ * whatever the runtime said - the review's finding, and the reason the number is now read from a reader.
+ */
+test("capability_summary: a published count reaches the browser, and an unmeasured reading carries no count", async () => {
+  const read = (view: StardewGameSurfaceCapabilityView): Promise<GameBrowserStateV1> =>
+    createGameBrowserStateProvider(
+      profile(),
+      lifecycle(authenticatedView("verified")),
+      attachment(Object.freeze({ status: "attached", generation: 1, connectionStatus: "connected_idle" })),
+      launchReadiness(),
+      actionAuthority("active"),
+      undefined,
+      undefined,
+      Object.freeze({ readCapabilityView: () => view }),
+    ).readState(context);
+
+  // The count is the reader's own: two different counts must reach two different projections.
+  const three = await read(Object.freeze({ status: "published", count: 3 }));
+  const nine = await read(Object.freeze({ status: "published", count: 9 }));
+  assert.deepEqual(three.game.capabilitySummary, { status: "published", count: 3 });
+  assert.deepEqual(nine.game.capabilitySummary, { status: "published", count: 9 });
+
+  // A MEASURED ZERO IS NOT "NOT MEASURED": the runtime answered and advertised nothing.
+  const zero = await read(Object.freeze({ status: "published", count: 0 }));
+  assert.deepEqual(zero.game.capabilitySummary, { status: "published", count: 0 });
+
+  // And an unmeasured reading carries the reader's reason and NO count - never `count: 0` as a stand-in.
+  const unmeasured = await read(Object.freeze({ status: "not_measured", reason: "host_game_state_mismatch" }));
+  assert.deepEqual(unmeasured.game.capabilitySummary, {
+    status: "not_measured",
+    reason: "host_game_state_mismatch",
+  });
 });
 
 test("provider requires an exact composed profile with game.state.read mounted", () => {

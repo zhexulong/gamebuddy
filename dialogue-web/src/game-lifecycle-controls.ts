@@ -434,7 +434,7 @@ export const GAME_SESSION_INPUTS: Readonly<Record<GameSessionPhase, Parameters<t
       companionName: null,
       selectedWorld: null,
       selectedSave: null,
-      capabilitySummary: Object.freeze({ available: false, count: 0 }),
+      capabilitySummary: Object.freeze({ status: "not_measured", reason: "no_attached_runtime" }),
       latestOutcome: "none" as const,
     });
     const game = (overrides: Partial<GameBrowserStateV1["game"]>): GameBrowserStateV1 =>

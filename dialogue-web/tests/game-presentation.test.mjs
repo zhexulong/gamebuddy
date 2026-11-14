@@ -596,9 +596,16 @@ test("the discovery outcomes a reply can name are distinct sentences in both lan
 
 test("the capability summary says how many capabilities are published, or says it published none", () => {
   const en = messages("en");
-  assert.equal(capabilitiesLabel(en, { available: true, count: 7 }), "7 available");
-  assert.equal(capabilitiesLabel(en, { available: false, count: 0 }), en.gameCapabilitiesUnavailable);
-  assert.equal(capabilitiesLabel(messages("zh-CN"), { available: true, count: 7 }), "7 项可用");
+  assert.equal(capabilitiesLabel(en, { status: "published", count: 7 }), "7 available");
+  assert.equal(
+    capabilitiesLabel(en, { status: "not_measured", reason: "no_attached_runtime" }),
+    en.gameCapabilitiesUnavailable,
+  );
+  assert.equal(capabilitiesLabel(messages("zh-CN"), { status: "published", count: 7 }), "7 项可用");
+  // A MEASURED ZERO IS NOT "NOT PUBLISHED": the runtime answered and advertised nothing, so the label says `0` rather
+  // than falling back to the waiting sentence - the two zeros the old `{available: boolean}` conflated.
+  assert.equal(capabilitiesLabel(en, { status: "published", count: 0 }), "0 available");
+  assert.notEqual(capabilitiesLabel(en, { status: "published", count: 0 }), en.gameCapabilitiesUnavailable);
 });
 
 test("a candidate says whether its folder can load the companion, and ready folders come first", () => {

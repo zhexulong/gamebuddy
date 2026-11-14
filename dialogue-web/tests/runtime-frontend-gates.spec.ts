@@ -174,7 +174,7 @@ function composedRoot(options: FixtureOptions = {}) {
         companionName: null,
         selectedWorld: null,
         selectedSave: null,
-        capabilitySummary: { available: false, count: 0 },
+        capabilitySummary: { status: "not_measured", reason: "no_attached_runtime" },
         latestOutcome: "none",
       },
     },
@@ -1350,7 +1350,7 @@ function gameRootWith(overrides: Record<string, unknown>) {
 }
 
 test("game.1: a published capability surface renders as readable board cards, never as a raw id", async ({ page }) => {
-  await mountShell(page, { root: gameRootWith({ capabilitySummary: { available: true, count: 7 } }) });
+  await mountShell(page, { root: gameRootWith({ capabilitySummary: { status: "published", count: 7 } }) });
   await page.getByRole("button", { name: "Game", exact: true }).click();
 
   const panel = page.getByTestId("game-state-panel");

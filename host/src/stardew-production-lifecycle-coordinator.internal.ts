@@ -121,6 +121,7 @@ import type {
 import type { RedactedRecoveryOutcome, RoleLaunchOperation } from "./containment/runtime/contract/game-runtime.js";
 import { FarmhandBridgeConnectionNotAvailableError } from "./containment/runtime/contract/game-runtime.js";
 import { createStardewRoleLifecycleFacade, type StardewRoleLifecycleReader } from "./stardew-role-lifecycle-facade.js";
+import type { HostGameLifecycleSnapshot } from "./game-status/game-status.js";
 import { composeCoordinatorRoleLifecycleView } from "./stardew-role-lifecycle-projection.internal.js";
 import type {
   StardewOwnedPlayerHostStageCResult,
@@ -334,6 +335,21 @@ export type StardewGameSurfaceActionAuthorityReader = Readonly<{
 }>;
 
 /**
+ * What the live capability surface published, or why this lifecycle could not read it.
+ *
+ * `published` carries a count the runtime itself produced - `0` there is a measured zero, a Mod that answered and
+ * advertised nothing. `not_measured` carries NO count: a projection that could not see the surface does not know the
+ * number, and a `0` in its place is the browser telling the player a fact nobody measured.
+ */
+export type StardewGameSurfaceCapabilityView = Readonly<
+  { status: "published"; count: number } | { status: "not_measured"; reason: string }
+>;
+
+export type StardewGameSurfaceCapabilityReader = Readonly<{
+  readCapabilityView(): StardewGameSurfaceCapabilityView;
+}>;
+
+/**
  * Integration-private redacted projection of the world this lifecycle currently
  * holds bound.
  *
@@ -355,6 +371,33 @@ export type StardewGameSurfaceWorldBindingView = Readonly<
 export type StardewGameSurfaceWorldBindingReader = Readonly<{
   readWorldBindingView(): Promise<StardewGameSurfaceWorldBindingView>;
 }>;
+
+/**
+ * The live connection's capability count, as the ONE redacted fact the browser publishes about it.
+ *
+ * <p>
+ * The number already exists: `IntegrationLifecycleSnapshot` reduces the attached connection to
+ * `availableCapabilities` (`continuity-semantic-game-runtime-materializer.ts`), counting the integrations the policy
+ * keeps visible, and `ConnectedSemanticGameLease.lifecycleSnapshot()` is the only handle on it. This maps that reading
+ * and adds nothing: no second count, no default.
+ * </p>
+ *
+ * <p>
+ * THREE ZEROS STAY APART. `unavailable` means the source produced no reading at all and a non-`current` freshness means
+ * the reading it produced is not this moment's - both are `not_measured`, and neither carries a count, because the
+ * number is unknown. A measured `0` is `published` with `count: 0`: the runtime answered and advertised nothing.
+ * </p>
+ */
+export function projectCapabilityView(
+  lifecycle: HostGameLifecycleSnapshot | undefined,
+): StardewGameSurfaceCapabilityView {
+  if (lifecycle === undefined) return Object.freeze({ status: "not_measured", reason: "no_attached_runtime" });
+  if (lifecycle.availability !== "available")
+    return Object.freeze({ status: "not_measured", reason: "host_game_state_unavailable" });
+  if (lifecycle.freshness !== "current")
+    return Object.freeze({ status: "not_measured", reason: `host_game_state_${lifecycle.freshness}` });
+  return Object.freeze({ status: "published", count: lifecycle.availableCapabilities.count });
+}
 
 /**
  * The one consumer of the integration-private resolver: turns the lifecycle's own
@@ -567,6 +610,15 @@ export type StardewProductionLifecycleCoordinator = Readonly<{
   readonly launchReadinessReader: StardewGameSurfaceLaunchReadinessReader;
   readonly installationReader: StardewGameSurfaceInstallationReader;
   readonly actionAuthorityReader: StardewGameSurfaceActionAuthorityReader;
+  /**
+   * The capability surface the attached runtime published, as ONE count this lifecycle measured.
+   *
+   * It is a reader rather than a field the browser derives because the number already exists one layer down:
+   * `IntegrationLifecycleSnapshot` reduces the live connection to `availableCapabilities` (the count of actions the
+   * Mod advertises that the policy keeps visible), and `ConnectedSemanticGameLease.lifecycleSnapshot()` is the only
+   * handle on it. A second count here would be a second authority for one fact.
+   */
+  readonly capabilityReader: StardewGameSurfaceCapabilityReader;
   /** The world this lifecycle holds bound, resolved through the integration-private resolver. */
   readonly worldBindingReader: StardewGameSurfaceWorldBindingReader;
   readonly activationOwner: StardewProductionLifecycleActivationOwner;
@@ -1356,6 +1408,11 @@ function createCoordinator(
   const actionAuthorityReader: StardewGameSurfaceActionAuthorityReader = Object.freeze({
     readActionAuthorityView(): StardewGameSurfaceActionAuthorityView {
       return Object.freeze({ status: actionAuthorityStatus });
+    },
+  });
+  const capabilityReader: StardewGameSurfaceCapabilityReader = Object.freeze({
+    readCapabilityView(): StardewGameSurfaceCapabilityView {
+      return projectCapabilityView(farmhandGameRuntimeLease?.lifecycleSnapshot());
     },
   });
   // The lifecycle's own launch facts compose the Player Host slot for every
@@ -3541,6 +3598,7 @@ function createCoordinator(
     launchReadinessReader,
     installationReader,
     actionAuthorityReader,
+    capabilityReader,
     worldBindingReader: createStardewGameSurfaceWorldBindingReader(worldBindingResolver, () => resumedGameSessionId),
     activationOwner,
     headlessOperationalGame,

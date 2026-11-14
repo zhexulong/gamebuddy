@@ -178,9 +178,14 @@ test("the Host's own note becomes the player's sentence, never the Host's Englis
   assert.equal(installationHintLabel(labels, "another producer sentence"), sentence);
 });
 
-test("the capability board states the published facts, and waits when nothing is published", () => {
+test("the capability board states the published facts, and waits when nothing is measured", () => {
   const labels = messages("en");
-  const projection = (available: boolean, count: number, companionName: string | null) => ({
+  const projection = (
+    capabilitySummary:
+      | Readonly<{ status: "published"; count: number }>
+      | Readonly<{ status: "not_measured"; reason: string }>,
+    companionName: string | null,
+  ) => ({
     prerequisites: { status: "met" as const, detectedGame: null, missingItems: [] },
     instance: { status: "running" as const, gameTitle: null, generation: 1 },
     compatibility: { status: "compatible" as const, message: null },
@@ -191,11 +196,11 @@ test("the capability board states the published facts, and waits when nothing is
     companionName,
     selectedWorld: null,
     selectedSave: null,
-    capabilitySummary: { available, count },
+    capabilitySummary,
     latestOutcome: "none" as const,
   });
 
-  const published = deriveCapabilityBoard(labels, projection(true, 7, "Mira"));
+  const published = deriveCapabilityBoard(labels, projection({ status: "published", count: 7 }, "Mira"));
   assert.deepEqual(
     published.cards.map((card) => card.key),
     ["companion", "abilities", "action"],
@@ -206,12 +211,27 @@ test("the capability board states the published facts, and waits when nothing is
   // The board is a derivation of the projection, not a mutation surface.
   assert.ok(Object.isFrozen(published) && Object.isFrozen(published.cards));
 
-  const unpublished = deriveCapabilityBoard(labels, projection(false, 0, null));
-  assert.equal(unpublished.waiting, labels.gameBoardWaiting);
-  assert.equal(unpublished.cards[0].title, labels.gameBoardCompanionTitle);
+  const unmeasured = deriveCapabilityBoard(
+    labels,
+    projection({ status: "not_measured", reason: "no_attached_runtime" }, null),
+  );
+  assert.equal(unmeasured.waiting, labels.gameBoardWaiting);
+  assert.equal(unmeasured.cards[0].title, labels.gameBoardCompanionTitle);
   // What the board is waiting for is never a fallback list of abilities.
-  assert.equal(unpublished.lead, labels.gameBoardUnpublishedLead);
-  assert.notEqual(unpublished.cards[1].detail, published.cards[1].detail);
+  assert.equal(unmeasured.lead, labels.gameBoardUnpublishedLead);
+  assert.notEqual(unmeasured.cards[1].detail, published.cards[1].detail);
+
+  // THREE ZEROS STAY APART: a runtime that answered and published nothing is a measured zero and says `0`, while a
+  // reading this layer could not take has no count at all. Collapsing them is what the literal `{available:false,
+  // count:0}` did on every reply.
+  const measuredZero = deriveCapabilityBoard(labels, projection({ status: "published", count: 0 }, null));
+  assert.ok(measuredZero.lead.includes("0"), "a measured zero is still a measurement");
+  assert.notEqual(
+    measuredZero.lead,
+    unmeasured.lead,
+    "a measured zero reads as the same sentence as an unmeasured one",
+  );
+  assert.equal(measuredZero.waiting, null, "a measured zero is not 'waiting for the session'");
 });
 
 test("every installation state reaches the player as a sentence, in both catalogues", () => {

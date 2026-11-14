@@ -10,6 +10,8 @@ import type {
   StardewGameSurfaceActionAuthorityView,
   StardewGameSurfaceAttachmentReader,
   StardewGameSurfaceAttachmentView,
+  StardewGameSurfaceCapabilityReader,
+  StardewGameSurfaceCapabilityView,
   StardewGameSurfaceInstallationReader,
   StardewGameSurfaceLaunchReadinessReader,
   StardewGameSurfaceLaunchReadinessView,
@@ -48,6 +50,7 @@ export function createGameBrowserStateProvider(
   actionAuthority?: StardewGameSurfaceActionAuthorityReader,
   installation?: StardewGameSurfaceInstallationReader,
   worldBinding?: StardewGameSurfaceWorldBindingReader,
+  capability?: StardewGameSurfaceCapabilityReader,
 ): GameBrowserStateProvider {
   if (!isComposedGameProfile(profile)) throw new TypeError("game_browser_profile_not_composed");
   if (!profile.operationIds.includes("game.state.read")) throw new TypeError("game_browser_state_read_not_mounted");
@@ -69,6 +72,9 @@ export function createGameBrowserStateProvider(
       // browser and the resume seam can never name different worlds; no launch fact
       // (dataRoot, pid, pipe, token, native frame) travels with it.
       const worldBindingView = worldBinding === undefined ? undefined : await worldBinding.readWorldBindingView();
+      // The capability count is the runtime's own answer, read from the same lifecycle the lease above holds: nothing
+      // here counts anything, and an unmounted reader is `not_measured` rather than a zero.
+      const capabilityView = capability?.readCapabilityView();
       return projectGameBrowserState(
         profile,
         context,
@@ -78,6 +84,7 @@ export function createGameBrowserStateProvider(
         actionAuthorityView,
         installationView,
         worldBindingView,
+        capabilityView,
       );
     },
   });
@@ -92,6 +99,7 @@ function projectGameBrowserState(
   actionAuthority: StardewGameSurfaceActionAuthorityView | undefined,
   installation: "registered" | "absent" | undefined,
   worldBinding: StardewGameSurfaceWorldBindingView | undefined,
+  capability: StardewGameSurfaceCapabilityView | undefined,
 ): GameBrowserStateV1 {
   const compatibility = projectCompatibility(lifecycle);
   const playerHostStarted = lifecycle.playerHost.ownership === "gamebuddy_direct_spawn";
@@ -123,7 +131,7 @@ function projectGameBrowserState(
       companionName: null,
       selectedWorld: worldBinding?.status === "bound" ? worldBinding.worldRef : null,
       selectedSave: null,
-      capabilitySummary: Object.freeze({ available: false, count: 0 }),
+      capabilitySummary: projectCapabilitySummary(capability),
       // The coordinator's launch terminality is the only honest source of a
       // failed Game outcome this provider can attest: it is set once the owned
       // Player Host launch or attestation correlation failed and the owner was
@@ -132,6 +140,22 @@ function projectGameBrowserState(
       latestOutcome: launchFailed ? "failed" : "none",
     }),
   });
+}
+
+/**
+ * The capability surface as the browser publishes it: the runtime's own count, or the reason this layer has none.
+ *
+ * `published` carries the number the live surface produced, and `0` there means the runtime advertised nothing - a
+ * measurement. `not_measured` carries the reason and NO count: `capabilitySummary` is the field the companion board
+ * renders, and a `0` in place of an unmeasured reading is the browser telling the player a fact nobody measured.
+ */
+function projectCapabilitySummary(
+  capability: StardewGameSurfaceCapabilityView | undefined,
+): GameBrowserStateV1["game"]["capabilitySummary"] {
+  if (capability === undefined) return Object.freeze({ status: "not_measured", reason: "no_capability_reader" });
+  return capability.status === "published"
+    ? Object.freeze({ status: "published", count: capability.count })
+    : Object.freeze({ status: "not_measured", reason: capability.reason });
 }
 
 /**
