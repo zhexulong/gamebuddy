@@ -400,15 +400,6 @@
       "reason": "[not-a-population] a guard collecting the seams that resolved to nothing (`if (methods.length === 0) failures.push(...)`), which the `deepEqual(failures, [])` at the end reads."
     },
     {
-      "file": "integrations/stardew/action-development/tests/stardew-observation-gap.test.mjs",
-      "authority": "population.filter((entry) => entry.id.toLowerCase() === \"objects\")",
-      "literal": "1",
-      "shape": "call_result",
-      "sites": 1,
-      "line": 198,
-      "reason": "[derivable-now] the next line already `deepEqual`s every id; `deepEqual(that filter.map((entry) => entry.id), [\"objects\"])` states one row per collection, which is the assertion's own comment."
-    },
-    {
       "file": "integrations/stardew/action-development/tests/static-verifier-contract.test.mjs",
       "authority": "INTEGRATION_REQUIREMENTS",
       "literal": "3",
