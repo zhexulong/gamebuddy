@@ -7,13 +7,19 @@ const INTEGRATION_ID = STARDEW_GAME_INTEGRATION_ID;
 const SAFE_ID_PATTERN = /^[A-Za-z0-9_-]{1,128}$/;
 
 /**
- * Integration-private narrow world-creation seam (boundary card D6, frozen
- * draft). It consumes only opaque `(gameSessionId, integrationId, worldRequest)`
- * and outputs an opaque bindingRef (`[A-Za-z0-9_-]{1,256}`). The Stardew
- * implementation (creating a new world/save and only then returning a legal
- * binding ref) is a later integration task; until then this seam is declared
- * but never mounted, and any create that needs it fails closed. A fake second
- * integration must implement the same seam.
+ * Integration-private narrow world-creation seam (boundary card D6). It consumes only opaque
+ * `(gameSessionId, integrationId, worldRequest)` and outputs an opaque bindingRef
+ * (`[A-Za-z0-9_-]{1,256}`).
+ *
+ * The Stardew implementation exists and is mounted: the Mod drives the game's own native new-game
+ * entry, and the seam returns the physical save slot the launched Player Host observed in its signed
+ * join manifest (`stardew-owned-farmhand-game-world-creation-seam.internal.ts`; landed in a09fa1ba
+ * and wired into the production composition by 7b21183f, both 2026-10-05). A composition that mints
+ * no seam still fails closed instead of fabricating a binding - it answers the generic `unavailable`
+ * outcome with a null handle (`stardew_game_world_creation_unavailable`,
+ * stardew-production-lifecycle-coordinator.internal.ts:2816) - but that is the structural guard for a
+ * composition without one, not the ordinary state of this seam. A fake second integration must
+ * implement the same seam.
  */
 export type CreateWorldBindingSeam = Readonly<{
   createWorldBinding(
