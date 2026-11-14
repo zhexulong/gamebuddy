@@ -766,13 +766,14 @@ E("enter_exit", "movement_navigation", FarmhandActionHandlerGroup.Movement, Tran
         // that refuses the normal case is not a safety rule, it is the absence of one - the intent has three values (a
         // loss, the work, and a surprise) and a boolean cannot carry them.
         //
-        // `Experimental`, because the rung is EARNED BY A RUN and this swing has not had one. `published` is defined as an
-        // action with native live evidence (`tools/stardew-action-gate-descriptors.mjs`), and there is none here: the
-        // recorded receipt corpus holds no sweep, there is no target-version evidence file, and the promotion gate
-        // correctly refuses a published action that owns no live-run gate row - that row IS the claim, so writing one
-        // without the run would be the half-promotion the gate exists for. Experimental is where the other unrun actions
-        // sit (`open_geode`, `break_resource_clump`, `place_item_on_pedestal`, ...); promotion to `LiveVerified` after the
-        // live gate passes is a separate catalog edit, the way till_soil's was (`:504`).
+        // `LiveVerified`, because the rung is EARNED BY A RUN and this swing now has one
+        // (`target-version-evidence/sweep-scythe-native-local-live-run.json`). `published` is defined as an action with
+        // native live evidence (`tools/stardew-action-gate-descriptors.mjs`), and the promotion gate refuses a published
+        // action that owns no live-run gate row - that row IS the claim, so writing one without the run would be the
+        // half-promotion the gate exists for. The run: Farm stance (3,9) facing LEFT, `succeeded/scythe_sweep_cut`, the
+        // engine's own `arc_tiles=14` (the count its rectangles measure for that facing), `arc_sweepable=2`, and two
+        // weeds moved - the named (2,9) and (4,10), which is BEHIND the actor and is the live proof that the footprint
+        // is a footprint rather than a direction.
         //
         // THE POSTCONDITION NAMES WHAT THE HANDLER RE-READS: the arc's own occupant set, before the swing and after it
         // (`MeleeSweepOccupancy.Read` over every sampled tile, then `Changes`/`Changed`). The generic
@@ -780,7 +781,7 @@ E("enter_exit", "movement_navigation", FarmhandActionHandlerGroup.Movement, Tran
         // comparison is the one that separates a swing that cut from a swing that reached nothing, which is why a
         // no-change arc is `sweep_postcondition_unavailable` rather than a success. The native binding is the engine entry
         // the swing is driven through (`MeleeWeapon.DoDamage`, one call per frame index).
-        E("sweep_scythe", "resource_gathering", FarmhandActionHandlerGroup.ResourceTools, SelfWalked(new FarmhandActionDescriptor(new[] { new FarmhandActionArgument("x", "integer"), new FarmhandActionArgument("y", "integer") }, new Dictionary<string, string>(), ToolResource("scythe", FarmhandResourceTemplateValue.AnyUpgrade), "write", "scythe_arc_occupancy_changed", "MeleeWeapon.DoDamage")), FarmhandActionLifecycle.Experimental),
+        E("sweep_scythe", "resource_gathering", FarmhandActionHandlerGroup.ResourceTools, SelfWalked(new FarmhandActionDescriptor(new[] { new FarmhandActionArgument("x", "integer"), new FarmhandActionArgument("y", "integer") }, new Dictionary<string, string>(), ToolResource("scythe", FarmhandResourceTemplateValue.AnyUpgrade), "write", "scythe_arc_occupancy_changed", "MeleeWeapon.DoDamage")), FarmhandActionLifecycle.LiveVerified),
         E("harvest_bush", "resource_gathering", FarmhandActionHandlerGroup.Farming, SelfWalked(Target()), FarmhandActionLifecycle.LiveVerified, "bushTargets"),
         E("harvest_fruit_tree", "resource_gathering", FarmhandActionHandlerGroup.Farming, SelfWalked(Target()), FarmhandActionLifecycle.LiveVerified, "fruitTreeTargets"),
         E("shake_tree", "resource_gathering", FarmhandActionHandlerGroup.Farming, SelfWalked(Target()), FarmhandActionLifecycle.LiveVerified, "shakeTreeTargets"),

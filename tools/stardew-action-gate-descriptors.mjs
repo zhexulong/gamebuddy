@@ -676,6 +676,13 @@ export const STARDEW_PUBLISHED_ACTION_GATES = Object.freeze([
     "native_remove_fence_v1",
   ),
   gate("open_geode", 1, "run-stardew-native-local-player-open-geode-smoke.mjs", "geode_opened", "native_open_geode_v1"),
+  gate(
+    "sweep_scythe",
+    1,
+    "run-stardew-native-local-player-sweep-scythe-smoke.mjs",
+    "scythe_sweep_cut",
+    "native_cut_weeds_v1",
+  ),
 ]);
 
 /**
@@ -856,12 +863,6 @@ export const STARDEW_EXPERIMENTAL_ACTION_RUNNERS = Object.freeze({
   // charged for (`Tool.cs:875-895`, `ShopMenu.cs:1369-1378`). One runner, two worlds, because no single world stands in
   // two shops; the published gate above keeps its own terminal and its own scenario.
   shop_purchase_tool_upgrade: "run-stardew-native-local-player-shop-purchase-smoke.mjs",
-  // `sweep_scythe` is registered Experimental in the Mod catalog and has a native-local slice: ONE scythe swing over the
-  // arc the held weapon's own level reaches, with the receipt's arc counts read on either side of the single
-  // `MeleeWeapon.DoDamage` pass and its completion condition the tile the actor FACED. Its Given is the cut-weeds world
-  // (a plain scythe in the pack, the actor on the Farm beside a native weed), so this entry adds a route, not a
-  // capability - and the patch it sweeps is the world's own, discovered through `weedTargets`.
-  sweep_scythe: "run-stardew-native-local-player-sweep-scythe-smoke.mjs",
 });
 
 /**
