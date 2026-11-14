@@ -11,6 +11,7 @@ import {
 } from "react";
 import type { Messages } from "../i18n";
 import { assertKnownPhase, fieldLocked, sendRefused, type ChatUIState } from "./chat-ui-state";
+import { fieldSizingSupported } from "./field-sizing";
 import { isImeProcessingKey } from "./ime-composition";
 
 /** Voice surface narrow state from the additive optional snapshot field. */
@@ -153,9 +154,15 @@ export function Composer({
         ? labels.voiceReady
         : labels.voiceUnavailable;
 
-  // Height is recomputed before paint on every value change so the textarea
-  // grows and shrinks with the drafted text without a visible jump.
+  // The field is as tall as the drafted text between the band's floor and its ceiling, and that is
+  // the sheet's job (`.composer-textarea`'s `field-sizing: content` with the 48 px floor and the
+  // 176 px ceiling as `min-height`/`max-height`): the engine sizes the field, so no keystroke reads
+  // a layout back out of it.
+  //
+  // A browser without `field-sizing` has no such path, so it gets the measurement instead - and only
+  // it does (`field-sizing`), because a fallback that always runs is not a fallback.
   useLayoutEffect(() => {
+    if (fieldSizingSupported) return;
     const el = textareaRef.current;
     if (!el) return;
     el.style.height = "auto";

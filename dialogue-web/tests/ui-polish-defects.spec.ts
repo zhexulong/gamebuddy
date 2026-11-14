@@ -323,7 +323,6 @@ async function composerField(page: Page) {
     const style = getComputedStyle(textarea);
     return {
       placeholder: textarea.placeholder,
-      inlineHeight: textarea.style.height,
       clientHeight: textarea.clientHeight,
       scrollHeight: textarea.scrollHeight,
       overflowY: style.overflowY,
@@ -563,8 +562,7 @@ test("defect 3: the composer hint is one line and the field does not scroll at 4
   ).not.toMatch(/Shift\s*\+\s*Enter/iu);
   // The field's height is the composer token's floor, and nothing overflows: the
   // audit's scrollbar reading was the field quietly growing to three lines.
-  expect(field.inlineHeight, "the field sits on the composer's own minimum").toBe("48px");
-  expect(field.clientHeight, "the rendered field is the 48px minimum").toBe(48);
+  expect(field.clientHeight, "the field sits on the composer's own minimum").toBe(48);
   expect(field.clientHeight, "no line is hidden above the field's own box").toBe(field.scrollHeight);
   expect(field.scrollHeight, "the field does not overflow, so it cannot raise a scrollbar").toBeLessThanOrEqual(
     field.clientHeight,

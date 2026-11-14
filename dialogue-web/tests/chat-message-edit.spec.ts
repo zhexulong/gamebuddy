@@ -320,7 +320,11 @@ test("the field grows with the words in it, caps, scrolls inside, and Ctrl+Enter
     capped.clientHeight,
   );
   expect(capped.overflowY, "so the field's own scrollbar is the one that moves").toBe("auto");
-  expect(long.overflowY, "while a reply under the ceiling has no internal scrollbar").toBe("hidden");
+  // Under the ceiling nothing overflows, so there is no scrollbar to raise - the property the
+  // `overflow-y: hidden` this replaces was there for.
+  expect(long.scrollHeight, "while a reply under the ceiling has no internal scrollbar").toBeLessThanOrEqual(
+    long.clientHeight,
+  );
 
   // A bare Enter is the field's own key: it inserts the newline and sends nothing.
   await field.fill("Where are we?");

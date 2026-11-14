@@ -13,6 +13,7 @@ import { memo, type KeyboardEvent as ReactKeyboardEvent, useEffect, useLayoutEff
 import type { BrowserMessageV1 } from "../reference-pipeline-api";
 import { browserMessageLanguageTag } from "../reference-pipeline-api";
 import { useArmedConfirmation } from "./armed-confirmation";
+import { fieldSizingSupported } from "./field-sizing";
 import { isImeProcessingKey } from "./ime-composition";
 import { CompanionAvatar } from "./CompanionAvatar";
 import { MarkdownMessage } from "./MarkdownMessage";
@@ -219,13 +220,17 @@ function MessageEditor({
     field.setSelectionRange(field.value.length, field.value.length);
   }, []);
   /**
-   * The field is as tall as the words in it, between two rows and the ceiling.
+   * The field is as tall as the words in it, between two rows and the ceiling, and the sheet does
+   * that now (`.message-edit-field`'s `field-sizing: content` with the two-row floor as its
+   * `min-height` and `EDIT_FIELD_MAX_HEIGHT` as its `max-height`): the engine sizes the field, so a
+   * keystroke does not read a layout back out of it.
    *
    * `height: auto` first, because `scrollHeight` is the content's own height only while the box is not
-   * already stretched to it; the two-row floor itself is the sheet's `min-height`, so a short reply
-   * still opens a field the size the strip has always given it and the bubble's geometry does not move.
+   * already stretched to it. That reasoning only applies to the browsers with no `field-sizing`, which
+   * are the only ones that run this at all - a fallback that always runs is not a fallback.
    */
   useLayoutEffect(() => {
+    if (fieldSizingSupported) return;
     const field = fieldRef.current;
     if (field === null) return;
     field.style.height = "auto";
