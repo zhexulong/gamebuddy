@@ -74,6 +74,15 @@
  * "0 violation(s)" arrives with the number of keys it examined - a sheet with no appearance root at all is
  * `blocked` by the appearance union assertion, never green.
  *
+ * IF THE PALETTE MOVES TO `light-dark()`
+ *
+ * Then one root states both values and the light root keeps only its scheme, so every colour token becomes one-sided
+ * with a colour literal - and this rule, whose premise is "each appearance re-states what it changes", would report
+ * all of them. That migration is deliberately not here: it is a value change with its own risk, and `cb723b6d` kept
+ * the custom properties on purpose. When it happens, this premise is what has to be restated with it - the property
+ * to assert becomes "a colour token is declared once, as the `light-dark()` pair", which is a different reading of
+ * the same sheet - rather than waived or blanket-exempted.
+ *
  * RED PROOF, each rule seen red on a real injected violation
  *
  *   - `--surface-elevated` deleted from the light root -> `theme_token_not_restated:light:surface-elevated`, and the
