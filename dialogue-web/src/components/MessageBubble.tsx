@@ -404,6 +404,12 @@ export const MessageBubble = memo(function MessageBubble({
    * reading caret. The caret is inserted into the bubble's last block on every
    * render - only `[data-streaming]` styles it - so it trails the reply's last
    * character and the preview's and the committed message's bytes stay identical.
+   *
+   * The row is also `aria-busy` for as long as it streams. A reply takes seconds to
+   * write and this row's text changes on every token, so a screen reader is told the
+   * row is being updated rather than being fed the paragraph again twenty times; the
+   * one spoken fact about the turn belongs to the timeline's own region, which says
+   * only what a busy row cannot - that the reply landed.
    */
   streaming?: boolean;
   /**
@@ -870,7 +876,7 @@ export const MessageBubble = memo(function MessageBubble({
       data-handle={message.handle}
       {...(busy ? { "aria-busy": "true" as const, "data-pending": pending } : {})}
       {...(waitingNote === null ? {} : { "aria-busy": "true" as const, "data-waiting": "true" as const })}
-      {...(streaming ? { "data-streaming": "true" as const } : {})}
+      {...(streaming ? { "aria-busy": "true" as const, "data-streaming": "true" as const } : {})}
     >
       {/* The avatar is the row's first child on both sides, and the player's
           row is mirrored by `flex-direction: row-reverse` (style.css): the

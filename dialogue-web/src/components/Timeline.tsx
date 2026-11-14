@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useRef } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { BrowserMessageV1 } from "../reference-pipeline-api";
 import { MessageBubble } from "./MessageBubble";
 
@@ -88,6 +88,11 @@ export function Timeline({
      * a separate action.
      */
     chatReplyCutOff: string;
+    /**
+     * The one sentence a screen reader is told about a reply. It names the COMPLETION, because the
+     * start of the reply is already spoken for (see the announcement region below).
+     */
+    chatReplyReady: string;
     /** The catalogue's words for the Host's own greeting-variant labels. */
     openingVariantDefault: string;
     openingVariantAlternate: string;
@@ -356,6 +361,69 @@ export function Timeline({
     replyTruncated && transcript.length > 1 && transcript[transcript.length - 1]?.role === "companion"
       ? transcript[transcript.length - 1]!.handle
       : null;
+  /**
+   * The conversation's one spoken fact, and the policy behind it.
+   *
+   * A reply that takes twenty seconds to write is total silence for a screen-reader player, and the
+   * obvious repair is worse than the silence: a live region holding the streaming text re-reads the
+   * same paragraph on every token, twenty to fifty times a second. So the preview is not a live
+   * region at all - it is `aria-busy` while it streams (`MessageBubble.streaming`), which says the
+   * row is being updated without reading it aloud - and this region says only the one thing a busy
+   * row cannot say: that the reply landed.
+   *
+   * The reply's START needs no sentence here: the app bar's own `role="status"` speaks the
+   * generating word from the turn's admission and holds it until the turn is terminal
+   * (`appBarStatus`), and a second sentence a few hundred milliseconds later about the same moment
+   * is how a reader learns to ignore both.
+   *
+   * The region is emptied when the next reply starts, because an announcement is a CHANGE: two
+   * replies in a row both land on the same sentence, and the second one has to be able to say it.
+   */
+  const streaming = preview !== null;
+  const [announcement, setAnnouncement] = useState("");
+  /** A stream this surface watched is still running. */
+  const watchedStreamRef = useRef(false);
+  /** The row that stream was answering, read when it started: the transcript may have moved since. */
+  const streamAnchorRef = useRef<string | null>(null);
+  /** A commit still owed when its stream stopped and the reply had not arrived yet. */
+  const owedReplyRef = useRef<Readonly<{ anchor: string | null }> | null>(null);
+  /**
+   * The commit does not land with the last delta. The wire clears the preview on `message.committed`
+   * and the transcript arrives on the read that follows (ComposedReferenceGameApp), so the stream
+   * stops one render before the reply exists - and the reply that is not here yet is owed, then said
+   * the moment a companion row closes the transcript. If the player leaves the conversation first,
+   * the row the stream was answering is gone with it and nothing is said: another chat's reply is
+   * not this turn's.
+   */
+  useEffect(() => {
+    const tail = transcript[transcript.length - 1];
+    const anchorIsMounted = (anchor: string | null): boolean =>
+      anchor === null || transcript.some((message) => message.handle === anchor);
+    if (streaming) {
+      watchedStreamRef.current = true;
+      owedReplyRef.current = null;
+      streamAnchorRef.current = tail?.handle ?? null;
+      setAnnouncement("");
+      return;
+    }
+    if (watchedStreamRef.current) {
+      watchedStreamRef.current = false;
+      const anchor = streamAnchorRef.current;
+      streamAnchorRef.current = null;
+      if (!anchorIsMounted(anchor)) return;
+      if (tail !== undefined && tail.role === "companion") {
+        setAnnouncement(labels.chatReplyReady);
+        return;
+      }
+      owedReplyRef.current = Object.freeze({ anchor });
+      return;
+    }
+    const owed = owedReplyRef.current;
+    if (owed === null || tail === undefined || tail.role !== "companion") return;
+    if (!anchorIsMounted(owed.anchor)) return;
+    owedReplyRef.current = null;
+    setAnnouncement(labels.chatReplyReady);
+  }, [streaming, transcript, labels.chatReplyReady]);
 
   // Track the reader's own position: every scroll (a wheel, a drag, a keyboard
   // page-down or our own programmatic follow) updates whether they are at the
@@ -390,6 +458,13 @@ export function Timeline({
     // serious). tabIndex makes the region itself the scroll target; the label is
     // already the region's accessible name, so focus announces where it landed.
     <section ref={sectionRef} className="timeline" aria-label={labels.chatTranscript} tabIndex={0}>
+      {/* The conversation's one spoken fact - see the state above for what it says and why the
+          streaming row says nothing. `role="status"` is the product's own polite region (`AppBar`,
+          the composer, the row's own receipts), so the reader is told once and nothing interrupts;
+          `visually-hidden` because the same fact is already on screen for everyone else. */}
+      <p className="visually-hidden" role="status" data-testid="chat-announcement">
+        {announcement}
+      </p>
       {/* The title band names the conversation the player is reading: the Host's
           own title when it published one, otherwise the catalogue's word for an
           untitled conversation. It is the one place the surface says which

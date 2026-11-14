@@ -29,6 +29,10 @@ const LABELS = messages("en");
 
 const reads = new Map<string, number>();
 
+/** Every text the announcement region has held since a journey started watching it. */
+let announcementStates: string[] = [];
+let announcementObserver: MutationObserver | null = null;
+
 /**
  * What the composer actually handed to the surface's send path. A keyboard
  * journey has to observe the *send*, not the field's contents: a composer that
@@ -1043,6 +1047,64 @@ const chatProbe = {
       testId: active.getAttribute("data-testid"),
       handle: active.closest("[data-handle]")?.getAttribute("data-handle") ?? null,
     };
+  },
+  /**
+   * The conversation's one spoken channel, as the tree presents it: its text, the role it is a live
+   * region by, the box it occupies, and the announcement sentences in each catalogue.
+   */
+  announcement(): { text: string; role: string | null; width: number; height: number } | null {
+    const region = document.querySelector('[data-testid="chat-announcement"]');
+    if (region === null) return null;
+    const box = region.getBoundingClientRect();
+    return {
+      text: (region.textContent ?? "").trim(),
+      role: region.getAttribute("role"),
+      width: Math.round(box.width),
+      height: Math.round(box.height),
+    };
+  },
+  /**
+   * Start counting what the conversation SAYS. Every change of the live region's text is one entry,
+   * seeded with the text the region starts on; consecutive identical readings collapse into one,
+   * because React may touch the node twice for a single state and a reader hears the state, not the
+   * touch.
+   */
+  watchAnnouncement(): void {
+    announcementObserver?.disconnect();
+    const region = document.querySelector('[data-testid="chat-announcement"]');
+    announcementStates = region === null ? [] : [region.textContent ?? ""];
+    if (region === null) return;
+    announcementObserver = new MutationObserver(() => {
+      const text = region.textContent ?? "";
+      if (announcementStates[announcementStates.length - 1] !== text) announcementStates.push(text);
+    });
+    announcementObserver.observe(region, { childList: true, characterData: true, subtree: true });
+  },
+  /**
+   * What the region said since `watchAnnouncement`, minus the state it started on - the announcements
+   * themselves. A channel that spoke on every delta reads back as one entry per delta here.
+   */
+  announcements(): readonly string[] {
+    return [...announcementStates.slice(1)];
+  },
+  /**
+   * Every live region inside one row's own subtree. The streaming preview must carry none: a region
+   * over text that changes twenty times a second is the flood, whatever else the row gets right.
+   */
+  liveRegionsIn(handle: string): number {
+    const row = document.querySelector(`li[data-handle="${handle}"]`);
+    if (row === null) return 0;
+    return row.querySelectorAll('[aria-live], [role="status"], [role="alert"], [role="log"]').length;
+  },
+  /** The streaming row's own busy state, as the tree states it. */
+  streamingRow(handle: string): { streaming: boolean; ariaBusy: string | null } | null {
+    const row = document.querySelector(`li[data-handle="${handle}"]`);
+    if (row === null) return null;
+    return { streaming: row.getAttribute("data-streaming") === "true", ariaBusy: row.getAttribute("aria-busy") };
+  },
+  /** The announcement sentence in each catalogue, so a journey can pin both languages. */
+  announcementSentences(locale: "en" | "zh-CN"): string {
+    return messages(locale).chatReplyReady;
   },
 };
 
