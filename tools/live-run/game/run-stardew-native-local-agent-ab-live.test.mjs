@@ -2,7 +2,7 @@
 //   `AssertionError: she declared locally ready: got companion_sleep_refused:requires_other_player` at
 //   tools/live-run/game/run-stardew-native-local-agent-ab-live.test.mjs:2715
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -53,8 +53,17 @@ import { TERMINAL_STATES } from "../../lib/stardew-native-smoke-harness-v1.mjs";
 import { STARDEW_PUBLISHED_ACTION_GATES } from "../../stardew-action-gate-descriptors.mjs";
 import { DAILY_TASK_ROTATION, sweepTaskPrompts } from "../../lib/multiday-daily-tasks.mjs";
 import { assessPlayerInputSchedule, SCHEDULED_DIALOGUE_GATES } from "../dialogue-gates.mjs";
+import {
+  createLaunchPhaseLog,
+  LAUNCH_PHASE_PREFIX,
+  readLaunchPhaseHandover,
+  writeLaunchPhaseHandover,
+} from "../core/launch-phase.mjs";
 
 const RUNNER_SOURCE = await readFile(new URL("./run-stardew-native-local-agent-ab-live.mjs", import.meta.url), "utf8");
+// The launch begins before the runner exists, so the steps the RUNNER cannot see (the save copy, the deploy, the game's
+// own start) are measured by the launcher and asserted here against ITS source, not the runner's.
+const LAUNCHER_SOURCE = await readFile(new URL("./launch-ladder-live.mjs", import.meta.url), "utf8");
 /**
  * What the presentation evidence is in the fixtures below: nothing presented, and an account that says exactly that.
  *
@@ -1363,8 +1372,8 @@ test("the player prompt waits for a real admission, and the run reports startup 
   assert.match(RUNNER_SOURCE, /error: `player_input_refused:/);
   assert.match(RUNNER_SOURCE, /if \(admission\.accepted !== true\)/);
   // Startup phase timings answer "the live run is slow to start" with numbers.
-  for (const phase of ["bridgeConnectedMs", "covenantSeedDoneMs", "bindingReadyMs", "runtimeMaterializedMs"]) {
-    assert.match(RUNNER_SOURCE, new RegExp(`markPhase\\(\"${phase}\"\\)`), `missing phase mark ${phase}`);
+  for (const phase of ["bridge_connected", "covenant_seed_done", "binding_ready", "runtime_materialized"]) {
+    assert.ok(RUNNER_SOURCE.includes(`markPhase("${phase}"`), `missing phase mark ${phase}`);
   }
   assert.match(RUNNER_SOURCE, /phaseTimings: Object\.freeze\(\{/);
   // The seed is the dominant cold-start cost, so its own phases must reach the
@@ -1376,6 +1385,129 @@ test("the player prompt waits for a real admission, and the run reports startup 
   // presentation.pieces = [] and presentedSummary = "".
   assert.match(RUNNER_SOURCE, /onCompanionTextPresented,\n/);
   assert.doesNotMatch(RUNNER_SOURCE, /SCENARIO === "npc_social_and_presence" \? \{ onCompanionTextPresented \}/);
+});
+
+// ── the launch sequence, on one clock, in one line shape ──────────────────────────────────────────────────────────────
+// "Why is startup slow" was unanswerable from the log: the runner's first line was its first bridge frame, so the save
+// copy, the deploy, the game's own load and the runner's imports arrived as one blank (round55: the log's first phase-ish
+// number was 25,750ms in, and nothing said which step cost it). The instrument that replaced the blank is one line per
+// phase, all on the launcher's clock, so a reader SUBTRACTS instead of guessing. These guards hold the instrument: the
+// line shape, the clock, and the fact that every step the launch performs actually emits one.
+const LAUNCHER_OWNED_PHASES = new Set([
+  "launcher_start",
+  "fixture_free",
+  "clean_done",
+  "save_template_copied",
+  "deploy_done",
+  "orchestrator_spawned",
+  "game_launched",
+]);
+const REQUIRED_LAUNCH_PHASES = Object.freeze([
+  ...LAUNCHER_OWNED_PHASES,
+  "runner_process_start",
+  "module_eval_start",
+  "environment_facts_done",
+  "prompt_surface_checked",
+  "bridge_connected",
+  "first_frame_dispatched",
+  "persona_mounted",
+  "provider_wait",
+  "first_model_response",
+]);
+
+test("every phase of the launch prints one line, and the line carries the clock a reader subtracts", () => {
+  const lines = [];
+  const clock = createLaunchPhaseLog({ startedAtMs: 1_000_000, emit: (line) => lines.push(line) });
+  const deployed = clock.mark("deploy_done", 1_001_200);
+  const launched = clock.mark("game_launched", 1_003_400);
+
+  assert.deepEqual(lines, [
+    `${LAUNCH_PHASE_PREFIX} {"phase":"deploy_done","elapsedMs":1200,"atMs":1001200}\n`,
+    `${LAUNCH_PHASE_PREFIX} {"phase":"game_launched","elapsedMs":3400,"atMs":1003400}\n`,
+  ]);
+  // A phase's duration is the difference of two elapsed values, and there is no second clock to reconcile.
+  assert.equal(deployed.elapsedMs, 1_200);
+  assert.equal(launched.elapsedMs - deployed.elapsedMs, 2_200);
+});
+
+test("a phase marked before the clock, or behind one already written, is refused and named", () => {
+  const clock = createLaunchPhaseLog({ startedAtMs: 1_000_000, emit: () => {} });
+  assert.throws(() => clock.mark("before_the_start", 999_999), /launch_phase_before_the_clock:before_the_start:1ms/u);
+  clock.mark("module_eval_start", 1_000_500);
+  assert.throws(() => clock.mark("bridge_connected", 1_000_400), /launch_phase_went_backwards:bridge_connected:100ms/u);
+});
+
+test("the launcher's marks reach the runner's log on the launcher's own clock", () => {
+  const root = mkdtempSync(join(tmpdir(), "launch-phase-"));
+  try {
+    const path = join(root, "run-launch-phases.json");
+    const launcher = createLaunchPhaseLog({ startedAtMs: 2_000_000, emit: () => {} });
+    launcher.mark("launcher_start", 2_000_000);
+    launcher.mark("save_template_copied", 2_012_000);
+    launcher.mark("game_launched", 2_018_000);
+    writeLaunchPhaseHandover({ path, startedAtMs: launcher.startedAtMs, records: launcher.records });
+
+    const handover = readLaunchPhaseHandover(path);
+    assert.equal(handover.startedAtMs, 2_000_000);
+    assert.deepEqual(
+      handover.records.map((record) => record.phase),
+      ["launcher_start", "save_template_copied", "game_launched"],
+    );
+
+    // The runner's own first marks continue the SAME clock: the game's load and the runner's imports are then a
+    // subtraction (runner_process_start - game_launched), not an inference.
+    const lines = [];
+    const runner = createLaunchPhaseLog({ startedAtMs: handover.startedAtMs, emit: (line) => lines.push(line) });
+    runner.adopt(handover.records);
+    const firstOwnMark = runner.mark("module_eval_start", 2_021_500);
+    assert.equal(firstOwnMark.elapsedMs, 21_500);
+    assert.equal(lines.length, 4);
+    assert.match(lines[3], /"phase":"module_eval_start","elapsedMs":21500/u);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("a handover this module did not write is refused by name, never partly adopted", () => {
+  const root = mkdtempSync(join(tmpdir(), "launch-phase-unreadable-"));
+  try {
+    const path = join(root, "launch-phases.json");
+    assert.equal(readLaunchPhaseHandover(null), null);
+    assert.equal(readLaunchPhaseHandover(""), null);
+    writeFileSync(path, "{not json", "utf8");
+    assert.throws(() => readLaunchPhaseHandover(path), /invalid_launch_phase_handover:unreadable/u);
+    writeFileSync(
+      path,
+      JSON.stringify({ startedAtMs: 1, records: [{ phase: "deploy_done", elapsedMs: 1.5, atMs: 2 }] }),
+      "utf8",
+    );
+    assert.throws(
+      () => readLaunchPhaseHandover(path),
+      /invalid_launch_phase_handover:elapsed_not_a_duration:deploy_done/u,
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("every step the launch performs emits its phase, and the line shape is spelled in one place", () => {
+  for (const phase of REQUIRED_LAUNCH_PHASES) {
+    const source = LAUNCHER_OWNED_PHASES.has(phase) ? LAUNCHER_SOURCE : RUNNER_SOURCE;
+    assert.ok(source.includes(`markPhase("${phase}"`), `no launch phase marker for ${phase}`);
+  }
+  // The launcher measures what the runner cannot see, and hands those records over instead of letting the runner
+  // re-measure them (a second measurement of the save copy is a different number, not the same fact).
+  assert.match(LAUNCHER_SOURCE, /writeLaunchPhaseHandover\(\{/);
+  assert.match(LAUNCHER_SOURCE, /GAMEBUDDY_LAUNCH_PHASE_HANDOVER/);
+  assert.match(RUNNER_SOURCE, /readLaunchPhaseHandover\(process\.env\.GAMEBUDDY_LAUNCH_PHASE_HANDOVER\)/);
+  // One spelling of the line: neither caller may format a LAUNCH_PHASE line of its own.
+  for (const [name, source] of [
+    ["runner", RUNNER_SOURCE],
+    ["launcher", LAUNCHER_SOURCE],
+  ]) {
+    assert.doesNotMatch(source, /LAUNCH_PHASE_PREFIX\s*=/u, `${name} declares the line prefix a second time`);
+    assert.doesNotMatch(source, /`LAUNCH_PHASE \$\{/u, `${name} formats a launch phase line a second time`);
+  }
 });
 
 test("the capability audit keeps an execution's terminal failure and cannot read it as success", () => {

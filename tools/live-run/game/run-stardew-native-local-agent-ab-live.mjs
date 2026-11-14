@@ -193,6 +193,32 @@ import { submitPlayerPrompt } from "../core/player-input-admission.mjs";
 // `models.json`, the credential beside it) and asked BEFORE the first model turn: two runs spent their whole budget on
 // `503 auth_unavailable` with zero tokens. One probe module serves this runner and `tools/preflight-live-run.mjs`.
 import { probeProviderReadiness, providerReadinessRefusal } from "../../lib/live-run-preflight.mjs";
+import { createLaunchPhaseLog, readLaunchPhaseHandover } from "../core/launch-phase.mjs";
+
+// THE LAUNCH CLOCK, which is the launcher's and not this file's.
+//
+// `phaseTimings` used to start here, part-way through module evaluation, so the five to ten seconds this process spent
+// resolving ~200 modules and measuring the environment were invisible AND outside every number the artifact published.
+// The clock now starts where the LAUNCH starts: the launcher's `launcher_start`, continued through the handover it writes
+// for us, and — on a run with no handover — this process's own start, which `process.uptime()` reaches back to (it counts
+// node's bootstrap, so the import graph below is measured rather than assumed).
+const processStartedAtMs = Math.floor(Date.now() - process.uptime() * 1000);
+const launcherPhases = readLaunchPhaseHandover(process.env.GAMEBUDDY_LAUNCH_PHASE_HANDOVER);
+const launchPhases = createLaunchPhaseLog({
+  startedAtMs: launcherPhases === null ? processStartedAtMs : launcherPhases.startedAtMs,
+});
+// The steps the runner cannot see (the save copy, the deploy, the game's own load) come from the launcher, on its clock,
+// so they are PRINTED here first thing: the log's own table is complete without a second file to reconcile.
+if (launcherPhases !== null) launchPhases.adopt(launcherPhases.records);
+// Startup phase timings. "The live run is slow to start" needs numbers, not impressions: this separates the phases a
+// reader can act on (save copy, deploy, game start, bridge connect, persona mount, provider wait) instead of one total.
+// ONE computation feeds both readers: the log line is printed by the clock, and the artifact publishes its duration.
+const phaseTimings = { runStartedAtMs: launchPhases.startedAtMs, marks: {} };
+const markPhase = (phase, atMs = Date.now()) => {
+  phaseTimings.marks[phase] = launchPhases.mark(phase, atMs).elapsedMs;
+};
+markPhase("runner_process_start", processStartedAtMs);
+markPhase("module_eval_start");
 
 // Live-run evidence root: every run writes its own local directory with the
 // runtime root's OWN evidence (identity-profile.json, worldbook.json, the
@@ -289,6 +315,7 @@ const programSubmissions = [];
 // run kept returning nothing - the measurement was being taken while a frozen game was eating the machine, and a failed
 // query is indistinguishable from a missing adapter.
 const environmentFacts = measureEnvironmentFacts();
+markPhase("environment_facts_done");
 
 const SCENARIO = (() => {
   const requested =
@@ -579,10 +606,6 @@ const NON_ACCOMPLISHMENT_ACTIONS = Object.freeze(
 // shipping bin. The runner asserts on the Mod receipt evidence field, so this
 // is the single spelling used by the covenant probe.
 const PROTECTED_COVENANT_ITEM_ID = "(O)400";
-// Startup phase timings. "The live run is slow to start" needs numbers, not
-// impressions: this separates the phases a reader can act on (bridge connect,
-// covenant seed, runtime materialization, agent turn) instead of one total.
-const phaseTimings = { runStartedAtMs: Date.now(), marks: {} };
 /** The run's own record of what happened when (`run-ledger.mjs`): the dump publishes it, so it exists before the hooks. */
 const ledger = createLedger({ now: () => Date.now() });
 // Free physical memory, sampled cheaply and continuously, because three runs ended with the process simply gone and no
@@ -745,6 +768,7 @@ await assertLiveRunArtifactFresh();
 // read as evidence about the current one. Refuse to start unless the prompt surface is current, and refuse too when
 // that cannot be shown (`live_run_prompt_surface_not_measured:<reason>`) - an unattributable run is not a cheap one.
 const promptSurface = assertPromptSurfaceFresh({ repositoryRoot: fileURLToPath(new URL("../../..", import.meta.url)) });
+markPhase("prompt_surface_checked");
 process.stderr.write(
   `[run] prompt surface current: ${promptSurface.examined} path(s) against ${promptSurface.refs.join(",")} at ${promptSurface.revision}\n`,
 );
@@ -1046,6 +1070,7 @@ const PRESENCE_ACTION_VOCABULARY = Object.freeze({
 }
 
 bindWindowsStaleLockReclaimer(await createBuildWindowsStaleLockReclaimer());
+markPhase("stale_lock_reclaimer_ready");
 const config = JSON.parse(await readFile(configPath, "utf8"));
 // Each scenario needs a world that can SUPPORT its question, and the fixture is what makes the world. Asking for
 // the wrong fixture does not produce a weaker run, it produces a run whose verdict answers a different question
@@ -1126,9 +1151,6 @@ const RUN_BUDGET_MS = (() => {
   return SCENARIO === "multiday_routine" ? 4 * 60 * 60 * 1000 : 600_000;
 })();
 const deadline = Date.now() + RUN_BUDGET_MS;
-const markPhase = (name) => {
-  phaseTimings.marks[name] = Date.now() - phaseTimings.runStartedAtMs;
-};
 client = await LocalStardewBridgeClient.connect(
   scope,
   config.PipeName,
@@ -1137,7 +1159,7 @@ client = await LocalStardewBridgeClient.connect(
   undefined,
   "1.6.15",
 );
-markPhase("bridgeConnectedMs");
+markPhase("bridge_connected");
 // A transport that dies mid-run must say SO, and say when. This is the one fact the run previously could not
 // report: a session ended with the Agent editing a truthful "the connection went down" line, the trace carried
 // `bridge_disconnected:local_close`, and nothing recorded what the Mod was told or how far into the run it
@@ -1214,6 +1236,10 @@ client.onDiagnostic?.((diagnostic) => {
     elapsedMs: Date.now() - phaseTimings.runStartedAtMs,
   });
   bridgeDiagnostics.push(entry);
+  // The first frame the Mod hands over is the moment the game is genuinely talking to this run: everything before it is
+  // startup, and the log could not say where that ended.
+  if (entry.stage === "pipe_frame_dispatched" && phaseTimings.marks.first_frame_dispatched === undefined)
+    markPhase("first_frame_dispatched", entry.atMs);
   console.error("BRIDGE_DIAGNOSTIC", JSON.stringify(entry));
 });
 /** Exact serialized bridge entries already printed, so a contract-legal
@@ -1226,7 +1252,12 @@ const loggedFactLines = new Set();
 {
   const write = process.stderr.write.bind(process.stderr);
   process.stderr.write = (chunk, encoding, callback) => {
-    hostLogChunks.push(typeof chunk === "string" ? chunk : Buffer.from(chunk).toString("utf8"));
+    const text = typeof chunk === "string" ? chunk : Buffer.from(chunk).toString("utf8");
+    hostLogChunks.push(text);
+    // `PROVIDER_WAIT` is the Host's own statement that the first prompt is now with the model. It reaches this process
+    // as this process's stderr, so the phase is taken from the Host's line rather than guessed from the call that
+    // produced it - and "launch is done, the model is thinking" becomes a subtraction instead of an impression.
+    if (phaseTimings.marks.provider_wait === undefined && text.includes("PROVIDER_WAIT")) markPhase("provider_wait");
     return write(chunk, encoding, callback);
   };
 }
@@ -1977,6 +2008,9 @@ const onCompanionTextPresented = (text, locale) => {
   // it), while a reader still gets the moment each piece landed on the run clock. Without it the silence audit can only
   // answer `not established`, which is what it had to do for every run before this.
   presentationPieceAtMs.push(committedAtMs);
+  // The first companion text that reached the player is this run's first MODEL response: the provider, the turn and the
+  // presentation have all completed by the time this callback fires, so it is the honest end of the launch sequence.
+  if (phaseTimings.marks.first_model_response === undefined) markPhase("first_model_response", committedAtMs);
   console.error(
     "AGENT_PRESENTATION_PIECE",
     JSON.stringify({ index: presentationPieces.length - 1, elapsedMs, chars: text.length }),
@@ -4565,6 +4599,7 @@ if (!personaMounted.ok) throw new Error(`live_run_persona_not_mounted:${personaM
 process.stderr.write(
   `[run] persona mounted: ${String(personaMounted.name)} (profile ${String(personaMounted.profileName)}, ${personaMounted.worldBookEntries} world-book entries, ${personaMounted.macroTokens} authored tokens, opening ${personaMounted.greeting === null ? "absent" : `${personaMounted.greeting.variants} variants`}) from ${provisionedPersona.identity.dir}\n`,
 );
+markPhase("persona_mounted");
 // The model profile is configuration, not a script constant: an existing profile is reused AS IS, and a root that has
 // none gets the local development model.
 //
@@ -4677,7 +4712,7 @@ await writeFile(
 if (existsSync(join(runtimePaths.agentDir, "models.json"))) {
   providerReadiness = await probeProviderReadiness({ runtimeRoot, agentDir: runtimePaths.agentDir });
   if (!providerReadiness.ok) throw new Error(providerReadinessRefusal(providerReadiness));
-  markPhase("providerReadyMs");
+  markPhase("provider_ready");
 }
 // Capture the run's evidence into a dedicated local directory (git-ignored).
 // The summary lands in the result JSON so a failed capture is visible, never
@@ -4744,14 +4779,14 @@ if (SCENARIO === "memory_covenant" && !usesDisposableRoot) {
   });
   if (!seeded.result.durable) console.error(JSON.stringify({ covenantSeedFailed: true, seed: covenantSeed }));
 }
-markPhase("covenantSeedDoneMs");
+markPhase("covenant_seed_done");
 const binding = await createGameRuntimeBindingFromReceiptBackedLaunch({
   manifest: deploymentManifest,
   launcher: STARDEW_INTEGRATION_LAUNCHER,
   launch,
   expectedWorld: Object.freeze({ saveId: config.SaveId, worldId: config.WorldId }),
 });
-markPhase("bindingReadyMs");
+markPhase("binding_ready");
 let runtime;
 /**
  * Set when the MOD stopped advancing while a turn was running, and why.
@@ -4842,13 +4877,13 @@ try {
   // first action was `stardew_observe {}` - a whole turn spent looking at a world the harness was already holding.
   // `#sayArrivalOnce` is gated on the same attach (`host-service.ts`), so the companion-arrival fact was lost with it.
   runtime.connected.activateIngress();
-  markPhase("runtimeMaterializedMs");
+  markPhase("runtime_materialized");
   // A disposable root's catalog arrives with its runtime, so readiness is asked here instead - still before the first
   // turn, and a provider that cannot answer costs one probe instead of the turn's whole budget.
   if (providerReadiness === null) {
     providerReadiness = await probeProviderReadiness({ runtimeRoot, agentDir: runtimePaths.agentDir });
     if (!providerReadiness.ok) throw new Error(providerReadinessRefusal(providerReadiness));
-    markPhase("providerReadyMs");
+    markPhase("provider_ready");
   }
   const tools = runtime.connected.host;
   // One prompt per SCENARIO. The retired 0-2 prompts (the Keg errand) are gone: they were the same errand with
