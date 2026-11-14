@@ -149,6 +149,14 @@ export const EXEMPTIONS = Object.freeze([
     runsIn: "pnpm check:release-generation-self-contained",
   },
   {
+    path: "tools/check-spec-waiver-comments.mjs",
+    reason:
+      "elsewhere: reads the journey prose under dialogue-web/tests against the product source each waiver names, and " +
+      "runs in the CI `gates` job, which is where a spec comment can go from a waiver to an undeclared one without any " +
+      "launch prerequisite being present",
+    runsIn: "pnpm check:spec-waiver-comments",
+  },
+  {
     path: "tools/check-vendored-bundle-leaks.mjs",
     reason:
       "elsewhere: reads every `dist` under `vendor/`, i.e. bundles a submodule builds; runs in the CI `gates` job " +
