@@ -85,18 +85,6 @@
       "reason": "predates_the_template"
     },
     {
-      "file": "tools/run-stardew-native-local-player-cook-recipe-smoke.mjs",
-      "reason": "predates_the_template"
-    },
-    {
-      "file": "tools/run-stardew-native-local-player-crab-pot-collect-smoke.mjs",
-      "reason": "predates_the_template"
-    },
-    {
-      "file": "tools/run-stardew-native-local-player-craft-item-smoke.mjs",
-      "reason": "predates_the_template"
-    },
-    {
       "file": "tools/run-stardew-native-local-player-craft-partial-recovery-chain-smoke.mjs",
       "reason": "predates_the_template"
     },
