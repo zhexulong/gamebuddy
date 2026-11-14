@@ -53,7 +53,12 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import process from "node:process";
-import { auditGateRedProofs, describeGateCensus, evaluate, readBaseline } from "../audit-gate-red-proofs.mjs";
+import {
+  auditGateRedProofs,
+  describeGateCensus,
+  evaluate,
+  readBaseline,
+} from "../gates/meta/audit-gate-red-proofs.mjs";
 import { resolveStardewActionGateRunner } from "../resolve-stardew-action-gate-runner.mjs";
 import {
   STARDEW_EXPERIMENTAL_ACTION_RUNNERS,
@@ -67,6 +72,16 @@ import { STARDEW_MOD_FOLDER } from "./stardew-mod-folder.mjs";
 import { fixtureActions, fixtureScenario } from "./stardew-native-local-player-fixture.mjs";
 
 const finding = (code, detail) => ({ code, detail });
+
+/**
+ * The name a gate is DECLARED under: its file's own name, with no directory.
+ *
+ * A gate is run from a path relative to `tools/` (`gates/meta/check-diff.mjs`) and declared by a name
+ * (`check-diff.mjs`), because a gate keeps its name when its domain files it in a directory. Comparing the path
+ * against the ledger read every sorted gate as undeclared - measured on the `meta` pilot, all 14 at once, while the
+ * ledger held all 14 entries.
+ */
+const declaredNameOf = (path) => String(path).replace(/^.*\//u, "");
 
 /** Actions whose scenario/runner wiring decides whether a harness run can start at all. */
 const HARNESS_ACTIONS = Object.freeze([
@@ -1117,12 +1132,20 @@ export function checkGateFalsifiers({
 } = {}) {
   const declared = new Set(withoutFalsifier.map((entry) => entry.gate));
   const withSet = new Set(withFalsifier);
+  /**
+   * The name a DECLARATION is filed under: the gate file's own name, with no directory.
+   *
+   * `gateNames` are paths relative to `tools/` because a gate is run from one (`tools/gates/meta/check-diff.mjs`),
+   * while the declaration table is keyed by name because a gate keeps its name when its domain files it in a
+   * directory.
+   */
+  const declaredName = declaredNameOf;
   const findings = [];
   if (gateNames.length === 0)
     findings.push(finding("gate_population_empty", "no tools/check-*.mjs gate was enumerated, so no report was read"));
   for (const name of gateNames) {
-    const selfReports = withSet.has(name);
-    const declaredExcept = declared.has(name);
+    const selfReports = withSet.has(declaredName(name));
+    const declaredExcept = declared.has(declaredName(name));
     if (selfReports && declaredExcept) {
       findings.push(finding("gate_classified_twice", name));
       continue;
@@ -1279,7 +1302,7 @@ export function checkGateRegistry({
   withFalsifier = GATES_WITH_FALSIFIER,
   withoutFalsifier = GATES_WITHOUT_FALSIFIER,
 } = {}) {
-  const present = new Set(gateNames);
+  const present = new Set(gateNames.map(declaredNameOf));
   const findings = [];
   for (const name of withFalsifier) {
     if (!present.has(name))

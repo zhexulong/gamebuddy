@@ -30,7 +30,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { GATE_NAME as CI_COVERAGE_NAMESPACE } from "../check-ci-coverage.mjs";
+import { GATE_NAME as CI_COVERAGE_NAMESPACE } from "../gates/meta/check-ci-coverage.mjs";
 import { gateFiles, isGateFile } from "../gates/registry.mjs";
 
 /**

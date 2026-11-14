@@ -7,7 +7,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { auditGateRedProofs, describeGateCensus } from "../audit-gate-red-proofs.mjs";
+import { auditGateRedProofs, describeGateCensus } from "../gates/meta/audit-gate-red-proofs.mjs";
 import { indexedGatePopulation } from "./indexed-sources.mjs";
 import {
   checkExperimentalRunners,
@@ -165,6 +165,34 @@ test("experimental runner check reports a descriptor runner that is not on disk"
   );
 
   assert.deepEqual(checkExperimentalRunners({ toolsDir }), []);
+});
+
+test("gate check judges a gate by its NAME, so filing a domain in a directory does not read as undeclared", () => {
+  // A gate keeps its name when its domain files it in `tools/gates/<domain>/`; only its path grows a prefix. Reading
+  // the path against the ledger read all 14 `meta` gates as `gate_without_falsifier` at once, while the ledger held
+  // all 14 entries - a whole domain going silently undeclared on the day it was sorted.
+  assert.deepEqual(
+    checkGateFalsifiers({
+      gateNames: ["gates/meta/check-a-sorted-gate.mjs"],
+      withFalsifier: [],
+      withoutFalsifier: [{ gate: "check-a-sorted-gate.mjs", reason: "a report, not a gate" }],
+      toolsDir,
+      run: () => ({ status: 0, stdout: "" }),
+    }),
+    [],
+  );
+  // The name is what is compared, so a genuinely unclassified gate is still named - and it is named by its PATH, which
+  // is where a reader has to go.
+  assert.deepEqual(
+    checkGateFalsifiers({
+      gateNames: ["gates/meta/check-a-gate-nobody-classified.mjs"],
+      withFalsifier: [],
+      withoutFalsifier: [],
+      toolsDir,
+      run: () => ({ status: 0, stdout: "" }),
+    }).map((entry) => [entry.code, entry.detail]),
+    [["gate_without_falsifier", "gates/meta/check-a-gate-nobody-classified.mjs"]],
+  );
 });
 
 test("gate check reports a gate that neither self-reports nor is declared", () => {

@@ -1,0 +1,3251 @@
+/**
+ * The totality audit: the classes of defect that no test names, enumerated from
+ * the authorities instead of from a list somebody remembered to update.
+ *
+ * Every rule below starts from a *declaration* - a contract schema, a route
+ * descriptor, a problem union, a catalogue, a cap constant - reads the rule's
+ * own set out of that declaration, and then walks it. Adding a capability
+ * therefore fails this audit the moment it is declared, which is the whole
+ * point: the owner's question was "can we expose all the problems at once,
+ * instead of finding a few at a time", and the honest answer is that a fix for
+ * one instance is not a fix for the class.
+ *
+ * What each class derives, and what it honestly cannot:
+ *
+ *  - `bounds` reads every `maxItems`/`maxLength`/`maxProperties` in both browser
+ *    contracts and pairs it with the writer's own capacity constant. A cap the
+ *    wire enforces more tightly than the writer fills (`truncated`) and a cap
+ *    the writer enforces more tightly than the wire allows (`refused`) are both
+ *    real: the first loses rows silently, the second refuses data the published
+ *    contract says is acceptable. The pairing is by name and therefore
+ *    incomplete - a writer that bounds a collection with a differently-named
+ *    constant is reported as `unpaired`, not as clean. That count is printed.
+ *
+ *  - `refusal` asks the other half of the same question: a capacity that is
+ *    enforced must be refused *before* the write lands and must name the code
+ *    that tells the player why. A cap compared with no bounded code in its
+ *    refusal branch is a limit the player meets as a generic failure.
+ *
+ *  - `read-path` is the class that blanked four surfaces in one day: a service
+ *    reads its own data, validates it against the published contract, and fails
+ *    closed on the mismatch, so one row over a cap removes the whole surface.
+ *    The acceptable shapes are a named actionable state or a row-level
+ *    degradation. This class finds every fail-closed self-validation site and
+ *    asks whether the projection can exceed the schema it validates against.
+ *
+ *  - `codes` walks both problem unions (tavern and game), both client mirrors,
+ *    and the handlers that produce them. A code a handler invents is a code no
+ *    client can classify; a mirror that is a stale subset reads a typed refusal
+ *    as protocol corruption.
+ *
+ *  - `routes` derives the route-id list from the contract's descriptor table and
+ *    checks it against the dispatchers that actually serve a route.
+ *
+ *  - `fields` walks every property both contracts declare and asks whether a
+ *    Host source produces it and a browser source reads it. It is a name-level
+ *    approximation and says so: it reports its own unmatched count, and it
+ *    cannot see a field the Host writes under a different name.
+ *
+ *  - `catalogue`, `prompt`, `promises`, `hygiene` and `duplication` reuse the existing gates
+ *    where one exists rather than keeping a second copy of the same reading
+ *    (`i18n-parity-gate`, `enum-leak-gate`, `problem-code-gate`,
+ *    `memory-notebook-promise-gate`) and add the direction nothing covered: the
+ *    catalogue text itself may not carry an engineering artefact, a promise
+ *    must name something a player can reach, and a rule with more than one
+ *    consumer must be one function those consumers consult rather than several
+ *    places that each decide it again.
+ *
+ * The three survey readings (`read-path`, `bounds`, `refusal`) ask questions the tree can answer, and the answer for
+ * each site is one of three things rather than a silence:
+ *
+ *  - `decided` - the evidence is already in the tree and this run computes the answer, so the site is no longer a
+ *    quantity nobody proved. A decided site that disagrees with its contract is a violation, with the semantics the
+ *    class already had; a decided site that agrees says which fact decided it.
+ *  - `needs-declaration` - the product could state the fact once and the audit would read it: a constant shared by the
+ *    contract and the writer instead of a literal in two places, an `omitted` count beside a trimmed list. The site's
+ *    own line names the declaration and where it belongs.
+ *  - `cannot-prove` - no static reader decides it, and the site's line names the evidence that would (a run that fills
+ *    the collection to its ceiling, a producer constant the cap could name). This is a legitimate outcome, not a
+ *    clean one: the count stays in the report and the verdict line, and the population it came from is printed beside
+ *    it, so a reading that walked 19 sites and decided 1 cannot be mistaken for a reading with nothing to say.
+ *
+ * A declaration is added to the product only where it is the single authority for the fact. Two copies that agree
+ * today are a disagreement scheduled for later, so a shape whose declaration would be a second spelling is classified
+ * `cannot-prove` and says why, rather than growing the tree another number.
+ *
+ * Reporting shape: one summary line, then violations grouped by class and
+ * ranked by "a player reaches it and it fails badly". Every violation carries
+ * `path:line`. A class that reports by *kind* (today only `hygiene`, whose
+ * findings are all instances of one pattern) prints one line per kind with its
+ * count and at most ten of its sites, because a list of identical complaints is
+ * a report nobody reads; `--verbose` (or `--all-findings`) prints
+ * every site, and `--json` carries every site either way. Aggregation is a
+ * reading aid, never a smaller total: the counts are the counts that were
+ * found. `--only=<class>` runs one class; `--json` emits the same facts as
+ * data. Exit status is non-zero when any blocking class has a violation.
+ *
+ * A gate that is wrong is worse than no gate, so each class's own test
+ * (`audit-totality.test.mjs`) injects one violation into a scratch copy of the
+ * tree and shows the class red, then green again. The classes are pure functions
+ * of a root directory so that proof needs no monkey-patching.
+ *
+ * red-proof: inject  one violation per class into a scratch copy of the tree -> that class reports it at
+ *                    `path:line`, and the same class is green again once the edit is reverted
+ *                    (tools/gates/meta/audit-totality.test.mjs)
+ */
+
+export const gateDeclaration = {
+  id: "audit-totality",
+  domain: "meta",
+  tier: "l2",
+  kind: "totality",
+};
+
+import { spawnSync } from "node:child_process";
+import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
+import { dirname, join, relative, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+import { createRequire } from "node:module";
+import { cleanOutputLines } from "../../lib/subprocess-output.mjs";
+
+// TypeScript is a per-package dependency here (`host/node_modules`), so it is resolved through the Host's own
+// manifest rather than from the repository root, where no `typescript` is installed.
+const requireFromHost = createRequire(new URL("../../../host/package.json", import.meta.url));
+const ts = requireFromHost("typescript");
+
+const HERE = dirname(fileURLToPath(import.meta.url));
+export const DEFAULT_ROOT = resolve(HERE, "..", "..", "..");
+
+const HOST = ["host", "src"];
+const WEB = ["dialogue-web", "src"];
+
+const TAVERN_CONTRACT = ["host", "src", "tavern", "browser-contract", "index.ts"];
+const GAME_CONTRACT = ["host", "src", "game-browser-contract", "index.ts"];
+
+/**
+ * Test-only source never produces, reads, or bounds a production fact.
+ *
+ * The suffixes are the ones this tree actually names its scaffolding with, not a guess: `x.test-fixtures.ts` and
+ * `x.test-support-internal.ts` sit beside `stardew-private-bootstrap-composer.private.test.ts` in the Stardew lifecycle, and
+ * `stardew-test-fixtures.ts` beside the tests that load mod registrations from it. Misspelling the population here
+ * does not hide a defect - it invents one, because a module named as scaffolding has no production surface to
+ * report.
+ */
+const TEST_FILE_PATH = /\.test\.(?:ts|tsx)$/u;
+const TEST_SCAFFOLDING_PATH =
+  /[-.]test-(?:support|fixtures)(?:-internal)?\.ts$|[\\/](?:test-support|test-fixtures|__tests__)[\\/]/u;
+const TEST_PATH = new RegExp(`${TEST_FILE_PATH.source}|${TEST_SCAFFOLDING_PATH.source}`, "u");
+
+/**
+ * A test that names itself `*.private.test.ts` declares that it pins a production module's internals on purpose.
+ *
+ * The declaration lives in the file name and nowhere else, so `git grep private.test` lists every internal this
+ * tree has agreed to pin, and a test that is not named this way still reports the export it reaches with the
+ * declaring file and the symbol. It is a per-export claim: one plain test reaching the same export withholds it.
+ */
+const PRIVATE_TEST_PATH = /\.private\.test\.(?:ts|tsx)$/u;
+
+/**
+ * A module whose own name says it is not a product surface: `*.internal.ts`, `*-internal.ts`.
+ *
+ * This is the second spelling of the same claim `*.private.test.ts` makes, and it is the one a test-support module
+ * relies on. `x.test-fixtures.ts` cannot rename itself to declare the internals it reaches - it is scaffolding, not a
+ * test - so the declaration has to come from the other side of the import: a module that calls itself `internal` has
+ * said, in its own name, that what it exports is not a product surface. Both halves are derived from the same spelling
+ * family as `TEST_SCAFFOLDING_PATH`'s `-internal` suffix, and a module that does NOT declare itself this way is not
+ * covered: `host/src/bridge.ts` exported an in-memory test double from a product module (`eded0bd4`) and that is still
+ * a finding, because nothing in that file's name says a test may reach into it.
+ */
+const INTERNAL_MODULE_PATH = /(?:[.-]internal)\.(?:ts|tsx)$/u;
+const SOURCE_FILE = /\.(?:ts|tsx)$/u;
+const SOURCE_EXT = /\.(?:ts|tsx)$/u;
+
+// ---------------------------------------------------------------------------
+// Source reading
+// ---------------------------------------------------------------------------
+
+function relativeTo(root, file) {
+  return relative(root, file).replaceAll("\\", "/");
+}
+
+/** A `path:line` a reader can open. */
+function at(root, node, sourceFile, file) {
+  const { line } = sourceFile.getLineAndCharacterOfPosition(node.getStart(sourceFile));
+  return `${relativeTo(root, file)}:${line + 1}`;
+}
+
+function walk(node, visit) {
+  visit(node);
+  ts.forEachChild(node, (child) => walk(child, visit));
+}
+
+/** Parsed sources by absolute path, so the readers share one parse per file. */
+class Sources {
+  constructor(root) {
+    this.root = root;
+    this.cache = new Map();
+  }
+
+  path(...segments) {
+    return join(this.root, ...segments);
+  }
+
+  source(file) {
+    const cached = this.cache.get(file);
+    if (cached !== undefined) return cached;
+    const text = readFileSync(file, "utf8");
+    const kind = file.endsWith(".tsx") ? ts.ScriptKind.TSX : ts.ScriptKind.TS;
+    const parsed = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true, kind);
+    this.cache.set(file, parsed);
+    return parsed;
+  }
+
+  /** Every non-test TypeScript source under one of the given roots. */
+  files(...roots) {
+    return this.enumerate(roots, false);
+  }
+
+  /** Every TypeScript source, tests included - the importer scan needs them. */
+  allFiles(...roots) {
+    return this.enumerate(roots, true);
+  }
+
+  enumerate(roots, includeTests) {
+    const found = [];
+    const visit = (directory) => {
+      let entries;
+      try {
+        entries = readdirSync(directory);
+      } catch {
+        return;
+      }
+      for (const entry of entries) {
+        if (entry === "node_modules" || entry === "dist" || entry === "dist-test" || entry.startsWith(".")) continue;
+        const full = join(directory, entry);
+        const stats = statSync(full);
+        if (stats.isDirectory()) visit(full);
+        else if (SOURCE_FILE.test(entry) && (includeTests || !TEST_PATH.test(full))) found.push(full);
+      }
+    };
+    for (const directory of roots) visit(directory);
+    return found.sort();
+  }
+
+  /**
+   * The modules of an operator or build harness: `.mjs`/`.cjs`/`.js` files, which `files` and `allFiles` skip.
+   *
+   * Only text that names a source root is parsed at all - a harness that cannot name a module is a read of nothing
+   * and there are a thousand of them, so the cheap substring decides what the parser sees.
+   */
+  harnessModules(...roots) {
+    const found = [];
+    const visit = (directory) => {
+      let entries;
+      try {
+        entries = readdirSync(directory);
+      } catch {
+        return;
+      }
+      for (const entry of entries) {
+        if (entry === "node_modules" || entry === "dist" || entry === "dist-test" || entry.startsWith(".")) continue;
+        const full = join(directory, entry);
+        const stats = statSync(full);
+        if (stats.isDirectory()) visit(full);
+        else if (/\.(?:mjs|cjs|js|ts|tsx)$/u.test(entry)) found.push(full);
+      }
+    };
+    for (const directory of roots) visit(directory);
+    return found.filter((file) =>
+      /host[\\/](?:src|dist)|dialogue-web[\\/](?:src|dist)/u.test(readFileSync(file, "utf8")),
+    );
+  }
+}
+
+/** `4 * 1024`, `1_048_576`, `MAX_X` - resolved to a number, or null. */
+function resolveNumber(node, sourceFile, seen = new Set()) {
+  if (node === undefined || node === null) return null;
+  if (ts.isNumericLiteral(node)) return Number(node.text.replaceAll("_", ""));
+  if (ts.isParenthesizedExpression(node)) return resolveNumber(node.expression, sourceFile, seen);
+  if (ts.isPrefixUnaryExpression(node) && node.operator === ts.SyntaxKind.MinusToken) {
+    const inner = resolveNumber(node.operand, sourceFile, seen);
+    return inner === null ? null : -inner;
+  }
+  if (ts.isIdentifier(node)) {
+    if (seen.has(node.text)) return null;
+    const initializer = constInitializer(sourceFile, node.text);
+    if (initializer === undefined) return null;
+    return resolveNumber(initializer, sourceFile, new Set([...seen, node.text]));
+  }
+  if (ts.isBinaryExpression(node)) {
+    const left = resolveNumber(node.left, sourceFile, seen);
+    const right = resolveNumber(node.right, sourceFile, seen);
+    if (left === null || right === null) return null;
+    switch (node.operatorToken.kind) {
+      case ts.SyntaxKind.AsteriskToken:
+        return left * right;
+      case ts.SyntaxKind.PlusToken:
+        return left + right;
+      case ts.SyntaxKind.MinusToken:
+        return left - right;
+      case ts.SyntaxKind.SlashToken:
+        return right === 0 ? null : left / right;
+      default:
+        return null;
+    }
+  }
+  return null;
+}
+
+function constInitializer(sourceFile, name) {
+  let found;
+  walk(sourceFile, (node) => {
+    if (found !== undefined) return;
+    if (!ts.isVariableDeclaration(node) || !ts.isIdentifier(node.name) || node.name.text !== name) return;
+    found = node.initializer;
+  });
+  return found;
+}
+
+/** Unwraps `as const`, `satisfies T`, `Object.freeze(...)` and parentheses. */
+function unwrap(node) {
+  let current = node;
+  for (;;) {
+    if (ts.isAsExpression(current) || ts.isSatisfiesExpression(current) || ts.isParenthesizedExpression(current)) {
+      current = current.expression;
+      continue;
+    }
+    if (
+      ts.isCallExpression(current) &&
+      ts.isPropertyAccessExpression(current.expression) &&
+      current.expression.name.text === "freeze" &&
+      current.arguments.length === 1
+    ) {
+      current = current.arguments[0];
+      continue;
+    }
+    return current;
+  }
+}
+
+/** Splits an identifier or a phrase into lowercase concept words. */
+function conceptWords(text) {
+  const spaced = text
+    .replaceAll(/([a-z0-9])([A-Z])/gu, "$1 $2")
+    .replaceAll(/[^A-Za-z0-9]+/gu, " ")
+    .toLowerCase();
+  return spaced.split(" ").filter((word) => word.length > 0);
+}
+
+const SINGULAR = (word) =>
+  word.endsWith("ies") ? `${word.slice(0, -3)}y` : word.endsWith("s") ? word.slice(0, -1) : word;
+
+/** Words that carry no concept: a cap named after them says nothing. */
+const GENERIC_WORDS = new Set([
+  "max",
+  "min",
+  "limit",
+  "length",
+  "chars",
+  "bytes",
+  "count",
+  "index",
+  "internal",
+  "service",
+  "services",
+  "store",
+  "management",
+  "manager",
+  "schema",
+  "schemas",
+  "v1",
+  "v2",
+  "type",
+]);
+
+// ---------------------------------------------------------------------------
+// Evidence the three survey readings share
+// ---------------------------------------------------------------------------
+
+/**
+ * Every numeric module constant `host/src` declares, whatever its name says.
+ *
+ * `hostCapConstants` reads only the names shaped like a cap, because that is what its own rule compares. A
+ * survey reading needs the other half: a contract that writes `maxLength: CHAT_EXPORT_JSONL_MAX_LENGTH` publishes
+ * the number once, as a name, and the question "which number governs this field" has an answer that is that
+ * name. Resolving it here is what lets a reading say *the wire publishes the writer's constant* instead of
+ * reporting the cap as unpaired for want of a literal to pair it with.
+ */
+function numericHostConstants(sources) {
+  const found = new Map();
+  for (const file of sources.files(sources.path(...HOST))) {
+    const sourceFile = sources.source(file);
+    for (const statement of sourceFile.statements) {
+      if (!ts.isVariableStatement(statement)) continue;
+      for (const declaration of statement.declarationList.declarations) {
+        if (!ts.isIdentifier(declaration.name) || declaration.initializer === undefined) continue;
+        const name = declaration.name.text;
+        if (found.has(name)) continue;
+        const limit = resolveNumber(declaration.initializer, sourceFile);
+        if (limit === null) continue;
+        found.set(name, { name, limit, where: at(sources.root, declaration, sourceFile, file) });
+      }
+    }
+  }
+  return found;
+}
+
+/** The identifiers Host code compares something against: the names a gate is actually spelled with. */
+function comparedIdentifiers(sources) {
+  const names = new Set();
+  for (const file of sources.files(sources.path(...HOST))) {
+    const sourceFile = sources.source(file);
+    walk(sourceFile, (node) => {
+      if (!ts.isBinaryExpression(node)) return;
+      for (const side of [node.left, node.right]) if (ts.isIdentifier(side)) names.add(side.text);
+    });
+  }
+  return names;
+}
+
+/** `X.<property>.length` compared against a resolvable number, anywhere in Host source. */
+function propertyBounds(sources) {
+  const found = new Map();
+  for (const file of sources.files(sources.path(...HOST))) {
+    const sourceFile = sources.source(file);
+    walk(sourceFile, (node) => {
+      if (!ts.isBinaryExpression(node)) return;
+      for (const [side, other] of [
+        [node.left, node.right],
+        [node.right, node.left],
+      ]) {
+        if (!ts.isPropertyAccessExpression(side) || side.name.text !== "length") continue;
+        const receiver = side.expression;
+        if (!ts.isPropertyAccessExpression(receiver)) continue;
+        const limit = resolveNumber(other, sourceFile);
+        if (limit === null) continue;
+        const property = receiver.name.text;
+        found.set(property, [
+          ...(found.get(property) ?? []),
+          { limit, where: at(sources.root, node, sourceFile, file) },
+        ]);
+      }
+    });
+  }
+  return found;
+}
+
+/** The last name in an expression chain: `devices.filter(...)` names `devices`. */
+function collectionName(expression) {
+  if (ts.isIdentifier(expression)) return expression.text;
+  if (ts.isPropertyAccessExpression(expression)) return collectionName(expression.expression);
+  if (ts.isCallExpression(expression)) return collectionName(expression.expression);
+  if (ts.isNonNullExpression(expression) || ts.isParenthesizedExpression(expression))
+    return collectionName(expression.expression);
+  return null;
+}
+
+/**
+ * The collections a scope clamps before a value leaves it, keyed by the name of the collection.
+ *
+ * A read path that slices `devices` to 32 rows and then validates the result against a schema capped at 32
+ * cannot exceed that cap, and a writer that breaks its loop at `rows.length >= MAX_CARRYING` states its own
+ * ceiling. Both are the same fact — *this function stops at N* — written two ways, and neither needs a
+ * declaration outside the function to be readable.
+ */
+function clampedCollections(sources, file, scope) {
+  const sourceFile = sources.source(file);
+  const clamps = new Map();
+  const record = (name, limit, node) => {
+    if (name === null || limit === null) return;
+    const known = clamps.get(name);
+    if (known !== undefined && known.limit <= limit) return;
+    clamps.set(name, { name, limit, where: at(sources.root, node, sourceFile, file) });
+  };
+  walk(scope, (node) => {
+    if (
+      ts.isCallExpression(node) &&
+      ts.isPropertyAccessExpression(node.expression) &&
+      node.expression.name.text === "slice"
+    ) {
+      const [from, to] = node.arguments;
+      const start = from === undefined ? 0 : resolveNumber(from, sourceFile);
+      const limit = to === undefined ? null : resolveNumber(to, sourceFile);
+      if (start === 0 && limit !== null) record(collectionName(node.expression.expression), limit, node);
+    }
+    if (!ts.isBreakStatement(node)) return;
+    for (let current = node.parent; current !== undefined; current = current.parent) {
+      if (ts.isIfStatement(current)) {
+        const guard = current.expression;
+        if (ts.isBinaryExpression(guard)) {
+          for (const [side, other] of [
+            [guard.left, guard.right],
+            [guard.right, guard.left],
+          ]) {
+            if (!ts.isPropertyAccessExpression(side) || side.name.text !== "length") continue;
+            record(collectionName(side.expression), resolveNumber(other, sourceFile), node);
+          }
+        }
+        break;
+      }
+      if (ts.isFunctionLike(current) || ts.isSourceFile(current)) break;
+    }
+  });
+  return clamps;
+}
+
+// ---------------------------------------------------------------------------
+// Class: bounds
+// ---------------------------------------------------------------------------
+
+const CAP_KINDS = ["maxItems", "maxLength", "maxProperties"];
+
+/**
+ * Every schema a contract declares, with its own properties and their caps.
+ * A schema is a `const XSchema = strictObject({...})` / `Type.Object({...})`
+ * binding; a property's caps are the `maxItems`/`maxLength`/`maxProperties`
+ * inside that property's own initializer, so a nested schema's cap is read once,
+ * where it is declared, rather than inherited by its parent.
+ */
+function contractSchemas(sources, file) {
+  const sourceFile = sources.source(file);
+  const schemas = [];
+  walk(sourceFile, (node) => {
+    if (!ts.isVariableDeclaration(node) || !ts.isIdentifier(node.name)) return;
+    const initializer = node.initializer === undefined ? undefined : unwrap(node.initializer);
+    if (initializer === undefined || !ts.isCallExpression(initializer)) return;
+    const callee = initializer.expression.getText(sourceFile);
+    if (callee !== "strictObject" && callee !== "Type.Object") return;
+    const properties = initializer.arguments[0];
+    if (properties === undefined || !ts.isObjectLiteralExpression(properties)) return;
+    const name = node.name.text;
+    const entries = [];
+    const fieldNames = [];
+    for (const property of properties.properties) {
+      if (!ts.isPropertyAssignment(property)) continue;
+      const propertyName = property.name.getText(sourceFile).replaceAll(/["']/gu, "");
+      fieldNames.push({ name: propertyName, where: at(sources.root, property, sourceFile, file) });
+      for (const cap of CAP_KINDS) {
+        let capNode;
+        walk(property.initializer, (inner) => {
+          if (capNode !== undefined) return;
+          if (ts.isPropertyAssignment(inner) && inner.name.getText(sourceFile) === cap) capNode = inner;
+        });
+        if (capNode === undefined) continue;
+        const limit = resolveNumber(capNode.initializer, sourceFile);
+        entries.push({
+          schema: name,
+          property: propertyName,
+          kind: cap,
+          limit,
+          expression: capNode.initializer.getText(sourceFile),
+          /**
+           * The name the cap is published as, when the contract states a constant rather than a literal.
+           *
+           * A `maxLength: CHAT_EXPORT_JSONL_MAX_LENGTH` is the product saying the number once; the literal
+           * `maxLength: 1048576` is it saying the number twice, and the second copy is the one a writer drifts from.
+           */
+          identifier: ts.isIdentifier(capNode.initializer) ? capNode.initializer.text : null,
+          where: at(sources.root, capNode, sourceFile, file),
+          elementSchema: arrayElementSchema(property.initializer, sourceFile),
+        });
+      }
+    }
+    schemas.push({ name, file, where: at(sources.root, node, sourceFile, file), properties: entries, fieldNames });
+  });
+  return schemas;
+}
+
+/** The element schema name of a `Type.Array(XSchema, ...)` property. */
+function arrayElementSchema(initializer, sourceFile) {
+  let found = null;
+  walk(initializer, (node) => {
+    if (found !== null) return;
+    if (!ts.isCallExpression(node)) return;
+    const callee = node.expression.getText(sourceFile);
+    if (callee !== "Type.Array" && callee !== "Array") return;
+    const first = node.arguments[0];
+    if (first !== undefined && ts.isIdentifier(first)) found = first.text;
+  });
+  return found;
+}
+
+/**
+ * Every capacity constant a Host source declares, as `{name, limit, file,
+ * where}`. Only a numeric module constant named as a cap qualifies: a `MAX_*`
+ * timeout or a byte guard is not a collection's capacity and is excluded by
+ * measurement, not by a list.
+ */
+function hostCapConstants(sources) {
+  const found = [];
+  for (const file of sources.files(sources.path(...HOST))) {
+    if (TEST_PATH.test(file)) continue;
+    const sourceFile = sources.source(file);
+    for (const statement of sourceFile.statements) {
+      if (!ts.isVariableStatement(statement)) continue;
+      for (const declaration of statement.declarationList.declarations) {
+        if (!ts.isIdentifier(declaration.name) || declaration.initializer === undefined) continue;
+        const name = declaration.name.text;
+        if (!/(?:^MAX_|_MAX$|_LIMIT$)/u.test(name)) continue;
+        if (/_MS$|_BYTES$/u.test(name)) continue;
+        const limit = resolveNumber(declaration.initializer, sourceFile);
+        if (limit === null) continue;
+        found.push({
+          name,
+          limit,
+          file,
+          where: at(sources.root, declaration, sourceFile, file),
+          measuresCharacters: /LENGTH|CHARS/u.test(name),
+          concept: new Set(
+            conceptWords(name)
+              .filter((word) => !GENERIC_WORDS.has(word))
+              .map(SINGULAR),
+          ),
+          fileWords: new Set(
+            conceptWords(relativeTo(sources.root, file).split("/").at(-1)?.replace(SOURCE_EXT, "") ?? "")
+              .filter((word) => !GENERIC_WORDS.has(word))
+              .map(SINGULAR),
+          ),
+        });
+      }
+    }
+  }
+  return found;
+}
+
+/**
+ * How well a writer's constant names the contract's cap. Higher is more specific; zero means "not this
+ * collection", and the cap is then reported unpaired instead of compared against a guess.
+ *
+ * The constant has to name the **property**, because the property is the collection the cap counts.
+ * A concept word in common is not enough on its own: `MAX_CONNECTIONS` shares `connection` with
+ * `TavernConnectionThinkingLevelV1Schema`, whose `maxItems: 7` counts thinking levels, and
+ * `MAX_SUMMARY` shares `summary` with `StCardImportFieldSummaryV1Schema`, whose array holds one
+ * summary per card field. Pairing either would compare two different collections and print a
+ * violation no writer can act on.
+ */
+function capAffinity(entry, constant) {
+  if (entry.limit === null || constant.concept.size === 0) return 0;
+  const propertyWords = new Set(
+    conceptWords(entry.property)
+      .filter((word) => !GENERIC_WORDS.has(word))
+      .map(SINGULAR),
+  );
+  const schemaWords = new Set(
+    conceptWords(entry.schema)
+      .filter((word) => !GENERIC_WORDS.has(word))
+      .map(SINGULAR),
+  );
+  // A constant that names more concepts than the property does is not this
+  // property's writer: `MAX_NOTE_TITLE_LENGTH` says nothing about `notes`.
+  for (const word of constant.concept) if (!propertyWords.has(word)) return 0;
+  let fileFit = 0;
+  for (const word of constant.fileWords) {
+    const matched = [...schemaWords].some((candidate) => candidate.includes(word) || word.includes(candidate));
+    if (matched) fileFit += 1;
+  }
+  // A constant that names more of the property is a closer name; a constant whose own module is
+  // named after the schema breaks the tie between two that name it equally well.
+  return constant.concept.size * 10 + fileFit;
+}
+
+/** Pairs each contract cap with the single writer constant that best names it. */
+function pairCaps(caps, constants) {
+  const pairs = [];
+  const unpaired = [];
+  for (const entry of caps) {
+    const scored = constants
+      .map((constant) => ({ constant, score: capAffinity(entry, constant) }))
+      .filter((candidate) => candidate.score > 0)
+      .sort((left, right) => right.score - left.score);
+    if (scored.length === 0) {
+      unpaired.push(entry);
+      continue;
+    }
+    const best = scored[0];
+    const ambiguous = scored.filter((candidate) => candidate.score === best.score);
+    pairs.push({ entry, constant: best.constant, tie: ambiguous.length > 1 });
+  }
+  return { pairs, unpaired };
+}
+
+function runBounds(sources) {
+  const caps = [
+    ...contractSchemas(sources, sources.path(...TAVERN_CONTRACT)).flatMap((schema) => schema.properties),
+    ...contractSchemas(sources, sources.path(...GAME_CONTRACT)).flatMap((schema) => schema.properties),
+  ];
+  const constants = hostCapConstants(sources);
+  const { pairs, unpaired } = pairCaps(caps, constants);
+  const violations = [];
+  const notes = [];
+  let compared = 0;
+  for (const { entry, constant, tie } of pairs) {
+    if (tie) {
+      notes.push(
+        `${entry.where} ${entry.schema}.${entry.property} ${entry.kind}=${entry.limit} names ${constant.name} ambiguously; not compared`,
+      );
+      continue;
+    }
+    // A `maxLength` measures characters and a `maxItems` measures rows; only the
+    // same measure can be compared.
+    const measuresRows = entry.kind !== "maxLength";
+    if (measuresRows === constant.measuresCharacters) continue;
+    compared += 1;
+    if (entry.limit === constant.limit) continue;
+    if (entry.limit > constant.limit) {
+      violations.push({
+        rank: 2,
+        where: `${entry.where} vs ${constant.where}`,
+        message: `${entry.schema}.${entry.property} ${entry.kind}=${entry.limit} but the writer caps it at ${constant.limit} (${constant.name}); a request inside the published bound is refused`,
+      });
+    } else {
+      violations.push({
+        rank: 2,
+        where: `${entry.where} vs ${constant.where}`,
+        message: `${entry.schema}.${entry.property} ${entry.kind}=${entry.limit} but the writer fills up to ${constant.limit} (${constant.name}); the wire can only truncate what the writer allows`,
+      });
+    }
+  }
+
+  // One collection, declared twice with two different caps, is the drift no single-schema check can see:
+  // the read schema can project a record its own command schema refuses, or keep one the other cannot fill.
+  //
+  // The collection is named by its property AND by what it holds. Grouping by the element type alone
+  // compares two different collections that happen to share a row shape: `deniedActionFamilies` (64) and
+  // `deniedActions` (512) both carry `SAFE_ID`, and the writer states both caps on purpose
+  // (`STARDEW_DENIED_FAMILY_LIMIT`, `STARDEW_DENIED_ACTION_LIMIT`, one per collection). Two arrays of one
+  // element type are not one collection, so they are not one cap.
+  const byCollection = new Map();
+  for (const entry of caps) {
+    if (entry.elementSchema === null) continue;
+    const key = `${entry.property}\u0000${entry.elementSchema}`;
+    byCollection.set(key, [...(byCollection.get(key) ?? []), entry]);
+  }
+  for (const entries of byCollection.values()) {
+    const limits = new Set(entries.map((entry) => entry.limit));
+    if (limits.size <= 1) continue;
+    violations.push({
+      rank: 2,
+      where: entries.map((entry) => entry.where).join(" "),
+      message: `${entries[0].property} (${entries[0].elementSchema} rows) is capped ${limits.size} different ways in ${entries.length} schema(s) (${entries.map((entry) => `${entry.schema}=${entry.limit ?? entry.expression}`).join(", ")}); one of them truncates`,
+    });
+  }
+
+  const unresolved = caps.filter((entry) => entry.limit === null);
+  // The survey: an unpaired cap is a question this class asked and could not answer by pairing. Each site is
+  // classified by the strongest evidence the tree already carries, and the ones the evidence *does* answer stop
+  // being counted as unproven - they are decisions, not silences.
+  const evidence = {
+    constants: numericHostConstants(sources),
+    compared: comparedIdentifiers(sources),
+    checked: new Set(failClosedSites(sources).map((site) => site.schema)),
+    propertyBounds: propertyBounds(sources),
+  };
+  const sites = unpaired.map((entry) => classifyCap(entry, evidence));
+  const unpairedRows = sites.filter((site) => site.category !== "decided").length;
+  const decidedRows = sites.length - unpairedRows;
+  notes.push(
+    `bounds: ${caps.length} declared cap(s), ${pairs.length} paired with a writer constant (${compared} compared, ${pairs.length - compared} of a different measure), ${sites.length} unpaired of which ${decidedRows} are decided below, ${unresolved.length} whose limit is not a resolvable number`,
+  );
+  if (unpairedRows > 0)
+    notes.push(
+      `bounds: an unpaired cap is NOT clean - it means no Host constant names it, so nothing proves the writer stops where the contract says: ${sites
+        .filter((site) => site.category !== "decided")
+        .slice(0, 8)
+        .map((site) => `${site.label}@${site.where}`)
+        .join(", ")}${unpairedRows > 8 ? `, +${unpairedRows - 8} more` : ""}`,
+    );
+  return {
+    declared: caps.length,
+    violations,
+    notes,
+    unproven:
+      sites.length === 0
+        ? []
+        : [
+            {
+              count: unpairedRows,
+              reading: "declared cap(s) with no writer constant paired to them",
+              walked: sites.length,
+              decided: decidedRows,
+              sites,
+            },
+          ],
+  };
+}
+
+/**
+ * Property names so widely shared that a same-named bound elsewhere is not evidence about this field.
+ *
+ * `label` is a field of a connection, an opening variant, a greeting and a game candidate; a Host module that bounds
+ * its own `label` at the same number has said nothing about the contract's. The name is what the audit matched on, so
+ * where the name cannot identify the field, the reading says so instead of proposing a shared constant.
+ */
+const SHARED_FIELD_NAMES = new Set([
+  "label",
+  "name",
+  "title",
+  "hint",
+  "reason",
+  "field",
+  "type",
+  "text",
+  "content",
+  "key",
+  "value",
+  "preview",
+  "summary",
+  "description",
+  "location",
+]);
+
+/**
+ * What the tree already says about one unpaired cap, strongest evidence first.
+ *
+ * The class pairs a cap with a writer's constant *by name*, so a cap the writer states under another name is
+ * reported unpaired and nothing is proved about it. Four things settle that without a second spelling of the
+ * number, and one does not:
+ *
+ *  - the cap publishes a constant, and Host code compares against that same constant: the wire and the writer
+ *    state one number, so there are not two to drift;
+ *  - a Host module validates a value against the schema that declares the cap: the published declaration *is* the
+ *    enforcement point, and there is no second number at all;
+ *  - a Host module bounds the property by a number of its own, under a different name: that is a second spelling,
+ *    and one constant shared with the contract would remove it - a declaration, not a defect;
+ *  - nothing in Host source bounds the property: no static reader can decide whether the producer stays under the
+ *    cap, and the evidence that would is named in the site's own line.
+ */
+function classifyCap(entry, evidence) {
+  const label = `${entry.schema}.${entry.property} ${entry.kind}=${entry.limit ?? entry.expression}`;
+  const where = entry.where;
+  const published = entry.identifier === null ? undefined : evidence.constants.get(entry.identifier);
+  if (published !== undefined) {
+    if (evidence.compared.has(published.name))
+      return {
+        label,
+        where,
+        category: "decided",
+        why: `the cap IS ${published.name} (${published.where}), the constant Host code compares against`,
+      };
+    return {
+      label,
+      where,
+      category: "needs-declaration",
+      why: `the number is published as ${published.name} (${published.where}) and nothing compares against it`,
+    };
+  }
+  if (evidence.checked.has(entry.schema))
+    return {
+      label,
+      where,
+      category: "cannot-prove",
+      why: `a Host module validates values against ${entry.schema}, which proves the wire never carries more than ${entry.limit ?? entry.expression} but not where the writer stops: a producer constant named by this cap, or a run that fills it to ${entry.limit ?? entry.expression}, would decide it`,
+    };
+  const writer = evidence.propertyBounds.get(entry.property);
+  // Naming the property is not enough on its own: two fields called `label` in two features are two fields. A
+  // bound whose number the contract also states is the writer spelling the same ceiling a second way; a same-named
+  // bound at a different number is a different field or a disagreeing one, and this reading cannot tell which.
+  const matching = (writer ?? []).filter((bound) => bound.limit === entry.limit);
+  if (SHARED_FIELD_NAMES.has(entry.property) && matching.length > 0)
+    return {
+      label,
+      where,
+      category: "cannot-prove",
+      why: `Host code states ${entry.property} at ${entry.limit} in ${[...new Set(matching.map((bound) => bound.where.split(":").slice(0, -1).join(":")))].slice(0, 3).join(", ")}, but \`${entry.property}\` names many fields: a producer constant named by this cap, or a run that fills it to ${entry.limit} and validates the result against ${entry.schema}, would decide it`,
+    };
+  if (matching.length > 0)
+    return {
+      label,
+      where,
+      category: "needs-declaration",
+      why: `a Host module states ${entry.property} at the same ${entry.limit} (${matching
+        .slice(0, 3)
+        .map((bound) => bound.where)
+        .join(", ")}); one constant shared with the contract would state it once`,
+    };
+  return {
+    label,
+    where,
+    category: "cannot-prove",
+    why:
+      writer === undefined
+        ? `nothing in Host source bounds ${entry.property}: a producer constant named by this cap, or a run that fills it to ${entry.limit ?? entry.expression} and validates the result against ${entry.schema}, would decide it`
+        : `Host code bounds other ${entry.property} fields at ${[...new Set(writer.map((bound) => bound.limit))].slice(0, 4).join("/")} and none at ${entry.limit ?? entry.expression}; a producer constant named by this cap, or a run that fills it to ${entry.limit ?? entry.expression} and validates the result against ${entry.schema}, would decide it`,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Class: refusal
+// ---------------------------------------------------------------------------
+
+/** A bounded token: the shape every problem code has. */
+const BOUNDED_CODE = /^[a-z][a-z0-9_]{0,63}$/u;
+
+/**
+ * The string a refusal names, if the branch names one at all.
+ *
+ * A refusal is spelled three ways in this tree: a `{ code: "…" }` payload, a `sendProblem(response, 400, "…")`
+ * call, and a thrown error. The thrown error is the one the rule used to miss: `throw new Error("notes_too_many")`
+ * is a `NewExpression` (not a call), and `throw new TavernConnectionInputError("connection_limit_reached")`
+ * names its own class. Both put the code in the first string argument of a constructor or function whose name
+ * ends in `Error`/`Failure`, which is the one convention every thrower here follows.
+ */
+function namedCodeIn(node, sourceFile) {
+  let found = null;
+  const namedByThrower = (callee) => {
+    const text = callee.getText(sourceFile);
+    return /(?:Error|Failure)$/u.test(text);
+  };
+  // A refusal is named by a *reason*, and this tree writes reasons three ways: a plain string, a no-substitution
+  // template, and a template with the offending value appended (`plan_cap_exceeded:17`). The audit wants to know that
+  // the refusal says something specific; a `:value` suffix does not make it less specific, so the static head is the
+  // name. Reading only plain strings is how this class reported "0 name their code" on a tree full of named refusals.
+  const reasonIn = (expression) => {
+    if (ts.isStringLiteral(expression)) return expression.text;
+    if (ts.isNoSubstitutionTemplateLiteral(expression)) return expression.text;
+    if (ts.isTemplateExpression(expression)) return expression.head.text;
+    return null;
+  };
+  const codeIn = (expression) => {
+    const reason = reasonIn(expression);
+    if (reason === null) return null;
+    const head = reason.split(":")[0]?.trim() ?? "";
+    return BOUNDED_CODE.test(head) ? head : reason.trim().length > 0 && BOUNDED_CODE.test(reason) ? reason : null;
+  };
+  // The helpers that refuse on behalf of their caller, by name.
+  const namedByRefuser = (callee) => /^(?:refuse|fail|reject)/u.test(callee.getText(sourceFile));
+  walk(node, (inner) => {
+    if (found !== null) return;
+    if (ts.isPropertyAssignment(inner) && inner.name.getText(sourceFile) === "code") {
+      const code = codeIn(inner.initializer);
+      if (code !== null) found = code;
+    }
+    if (
+      ts.isCallExpression(inner) &&
+      ts.isIdentifier(inner.expression) &&
+      (/sendProblem|sendBootstrapProblem|sendLifecycleProblem|refuseBootstrap/u.test(inner.expression.text) ||
+        namedByRefuser(inner.expression))
+    ) {
+      for (const argument of inner.arguments) {
+        const code = codeIn(argument);
+        if (code !== null) found = code;
+      }
+    }
+    const thrower =
+      (ts.isNewExpression(inner) || ts.isCallExpression(inner)) && namedByThrower(inner.expression) ? inner : null;
+    if (thrower !== null)
+      for (const argument of thrower.arguments ?? []) {
+        const code = codeIn(argument);
+        if (code !== null) found = code;
+      }
+  });
+  return found;
+}
+
+function enclosingFunction(node) {
+  for (let current = node.parent; current !== undefined; current = current.parent) {
+    if (
+      ts.isFunctionDeclaration(current) ||
+      ts.isFunctionExpression(current) ||
+      ts.isArrowFunction(current) ||
+      ts.isMethodDeclaration(current) ||
+      ts.isConstructorDeclaration(current)
+    )
+      return current;
+    if (ts.isSourceFile(current)) return null;
+  }
+  return null;
+}
+
+/**
+ * The nearest enclosing function the module *declared* by name, with its name and the return type it
+ * declares.
+ *
+ * A `const`-bound arrow is one of those: `const isX = (value: string): boolean => …` is a predicate this
+ * tree writes, and reading it is the difference between "the caller names this refusal" and "the player
+ * meets a generic failure". An anonymous callback (`value.every((item) => …)`) is not - the question it
+ * answers is the named function's, not its own - so it is scanned past, not returned.
+ */
+function declaredFunction(node) {
+  for (let current = node.parent; current !== undefined; current = current.parent) {
+    if (ts.isFunctionDeclaration(current) || ts.isMethodDeclaration(current)) return current;
+    if (ts.isFunctionExpression(current) && current.name !== undefined) return current;
+    if (ts.isArrowFunction(current) || ts.isFunctionExpression(current)) {
+      const binding = current.parent;
+      if (ts.isVariableDeclaration(binding) && ts.isIdentifier(binding.name))
+        return { name: binding.name, type: current.type };
+      continue;
+    }
+    if (ts.isSourceFile(current)) return null;
+  }
+  return null;
+}
+
+/**
+ * A function that answers a question instead of performing the write: a name this tree uses for predicates
+ * (`isX`/`hasX`/`canX`/`validateX`/`assertX`/`allowsX`), or a `boolean` / `value is T` return. Its refusal is named by
+ * its caller, which is the one place a single refusal can be given one sentence. Counted, not failed - the audit
+ * cannot see the caller's mapping from a predicate.
+ */
+function answersQuestion(fn) {
+  if (fn === null) return false;
+  const name = fn.name !== undefined && ts.isIdentifier(fn.name) ? fn.name.text : undefined;
+  if (name !== undefined && /^(?:is|has|can|validate|assert|allows)/u.test(name)) return true;
+  const type = fn.type;
+  if (type === undefined) return false;
+  return ts.isTypePredicateNode(type) || type.kind === ts.SyntaxKind.BooleanKeyword;
+}
+
+/** A function declared at module level, so a decision can be followed one hop into the helper that refuses. */
+function localFunction(sourceFile, name) {
+  for (const statement of sourceFile.statements)
+    if (ts.isFunctionDeclaration(statement) && statement.name?.text === name) return statement;
+  return null;
+}
+
+/**
+ * The statement that decides what a failed capacity comparison means: the `if` that tests it, not the whole
+ * function. A function with two refusals must not let one name the other. A comparison no `if` tests - a `filter`
+ * callback, a ternary - is decided by the statement that carries it.
+ */
+function refusalScope(node) {
+  for (let current = node.parent; current !== undefined; current = current.parent) {
+    if (ts.isIfStatement(current)) return current.thenStatement;
+    if (ts.isStatement(current)) return current;
+    if (ts.isSourceFile(current)) return null;
+  }
+  return null;
+}
+
+/** The bounded code a decision names, including one hop into a module-level helper it calls (`fail()`). */
+function decisionCode(deciding, sourceFile) {
+  const own = namedCodeIn(deciding, sourceFile);
+  if (own !== null) return own;
+  let code = null;
+  walk(deciding, (node) => {
+    if (code !== null || !ts.isCallExpression(node) || !ts.isIdentifier(node.expression)) return;
+    const helper = localFunction(sourceFile, node.expression.text);
+    if (helper !== null) code = namedCodeIn(helper, sourceFile);
+  });
+  return code;
+}
+
+/**
+ * What a decision does with the comparison: refuse the operation, or narrow the value.
+ *
+ * A refusal is a `throw`, a `send*Problem`/`refuse*` call, or a helper that does one - the branch that stops the
+ * operation, and the only place a bounded code belongs. A bound is a `break`, a `slice`/`filter`, or a `return` of
+ * nothing: the payload is trimmed or dropped instead of the operation being refused. That is a truncation defect of
+ * its own, not a limit the player meets as a generic failure, and this class reports it as a bound rather than as a
+ * missing code.
+ */
+function decisionKind(deciding, sourceFile) {
+  let narrows = false;
+  let discards = false;
+  walk(deciding, (node) => {
+    if (ts.isBreakStatement(node) || ts.isContinueStatement(node)) narrows = true;
+    if (ts.isReturnStatement(node)) discards = true;
+    if (
+      ts.isCallExpression(node) &&
+      ts.isPropertyAccessExpression(node.expression) &&
+      /^(?:filter|slice)$/u.test(node.expression.name.text)
+    )
+      narrows = true;
+  });
+  return narrows ? "narrows" : discards ? "discards" : "refuses";
+}
+
+/**
+ * Every comparison of a collection's length against a capacity constant, with the refusal the comparison leads to.
+ * A capacity that is enforced without a named code is a limit the player meets as an unexplained failure.
+ */
+function runRefusal(sources) {
+  const constants = hostCapConstants(sources);
+  const byName = new Map(constants.map((constant) => [constant.name, constant]));
+  const violations = [];
+  const notes = [];
+  const bounds = [];
+  let comparisons = 0;
+  let named = 0;
+  let delegated = 0;
+  let scopeless = 0;
+  for (const file of sources.files(sources.path(...HOST))) {
+    const sourceFile = sources.source(file);
+    walk(sourceFile, (node) => {
+      if (!ts.isBinaryExpression(node)) return;
+      const left = node.left.getText(sourceFile);
+      const right = node.right.getText(sourceFile);
+      const constantEntry = [left, right].map((side) => byName.get(side.trim())).find((entry) => entry !== undefined);
+      const lengthSide = [left, right].find((side) => /\.length$/u.test(side.trim()));
+      if (constantEntry === undefined || lengthSide === undefined) return;
+      comparisons += 1;
+      if (enclosingFunction(node) === null) {
+        scopeless += 1;
+        return;
+      }
+      if (answersQuestion(declaredFunction(node))) {
+        delegated += 1;
+        return;
+      }
+      const deciding = refusalScope(node);
+      const code = deciding === null ? null : decisionCode(deciding, sourceFile);
+      if (code !== null) {
+        named += 1;
+        return;
+      }
+      const kind = deciding === null ? "refuses" : decisionKind(deciding, sourceFile);
+      const where = at(sources.root, node, sourceFile, file);
+      if (kind !== "refuses") {
+        bounds.push({
+          where,
+          kind,
+          constant: constantEntry.name,
+          limit: constantEntry.limit,
+          lengthSide: lengthSide.trim(),
+          node,
+          deciding,
+          fn: declaredFunction(node),
+          sourceFile,
+        });
+        return;
+      }
+      violations.push({
+        rank: 2,
+        where,
+        message: `${constantEntry.name} (${constantEntry.limit}) is enforced on ${lengthSide.trim()} with no bounded code in the refusal; the player meets the ceiling as a generic failure`,
+      });
+    });
+  }
+  notes.push(
+    `refusal: ${comparisons} capacity comparison(s) across ${constants.length} cap constant(s), ${named} name their code, ${delegated} answered by a predicate (named by its caller), ${bounds.length} bound the value instead of refusing it, ${scopeless} outside any function`,
+  );
+  const unproven = [];
+  const publishedCaps = new Set(
+    [
+      ...contractSchemas(sources, sources.path(...TAVERN_CONTRACT)),
+      ...contractSchemas(sources, sources.path(...GAME_CONTRACT)),
+    ]
+      .flatMap((schema) => schema.properties)
+      .map((entry) => entry.identifier)
+      .filter((name) => name !== null),
+  );
+  for (const kind of ["narrows", "discards"]) {
+    const ofKind = bounds.filter((bound) => bound.kind === kind);
+    if (ofKind.length === 0) continue;
+    const sites = ofKind.map((bound) => classifyBound(bound, publishedCaps));
+    const stillOpen = sites.filter((site) => site.category !== "decided");
+    const reading =
+      kind === "narrows"
+        ? "capacity comparison(s) that trim the collection (break/slice/filter) instead of refusing"
+        : "capacity comparison(s) that discard the value (return null/undefined) instead of refusing";
+    unproven.push({
+      count: stillOpen.length,
+      reading,
+      walked: sites.length,
+      decided: sites.length - stillOpen.length,
+      sites,
+    });
+    notes.push(
+      `refusal: ${kind} - ${sites.length} comparison(s), ${sites.length - stillOpen.length} decided by what their branch states, ${stillOpen.length} still open: ${stillOpen
+        .slice(0, 6)
+        .map((site) => `${site.label}@${site.where}`)
+        .join(", ")}${stillOpen.length > 6 ? `, +${stillOpen.length - 6} more` : ""}`,
+    );
+  }
+  return { declared: constants.length, violations, notes, unproven };
+}
+
+/**
+ * What one non-refusing capacity comparison is, read from the branch that carries it.
+ *
+ * The class asks whether a player who meets a ceiling gets a sentence. A comparison that does not refuse may be
+ * outside that question entirely, and each of those shapes is visible where it happens:
+ *
+ *  - the comparison is the value its caller receives (the body of an arrow, the expression of a `return`): there is
+ *    no branch to name, and the caller is the one place the answer becomes a sentence;
+ *  - the branch answers absence (`return null`/`undefined`): the value is not usable at all, so the caller's own
+ *    absence path applies rather than a refusal of an operation;
+ *  - the clamp cuts to the same constant the wire publishes: the ceiling is the published one, and the wire schema's
+ *    own cap is what says it;
+ *  - the clamp states what it dropped - an ellipsis, an `omitted`/`dropped` field, a loss record: the result cannot
+ *    be read as complete, which is the property this class exists to check.
+ *
+ * What is left is a clamp that drops rows silently, and that is a declaration the branch owes: a count or an
+ * `omitted` field beside the trimmed value.
+ */
+function classifyBound(bound, publishedCaps) {
+  const label = `${bound.constant} (${bound.lengthSide})`;
+  const where = bound.where;
+  if (isAnswerExpression(bound.node))
+    return {
+      label,
+      where,
+      category: "decided",
+      why: "the comparison is the value its caller receives, so no branch here decides anything and the caller names the answer",
+    };
+  if (bound.kind === "discards" && answersAbsence(bound.deciding))
+    return {
+      label,
+      where,
+      category: "decided",
+      why: "the branch answers absence (null/undefined): the value is not usable, so there is no operation to refuse",
+    };
+  if (publishedCaps.has(bound.constant))
+    return {
+      label,
+      where,
+      category: "decided",
+      why: `the clamp cuts to ${bound.constant}, the same constant the wire publishes`,
+    };
+  const marker = announcement(bound.deciding, bound.fn, bound.sourceFile);
+  if (marker !== null)
+    return {
+      label,
+      where,
+      category: "decided",
+      why: `the branch states what it dropped (${marker}), so a trimmed result cannot be read as complete`,
+    };
+  return {
+    label,
+    where,
+    category: "needs-declaration",
+    why: "the branch drops rows without saying so: a count, an `omitted` field or an ellipsis beside the trimmed value is the declaration that closes it",
+  };
+}
+
+/** Whether a comparison is itself an answer: an arrow body, or the expression of a `return`. */
+function isAnswerExpression(node) {
+  const parent = node.parent;
+  if (parent === undefined) return false;
+  if (ts.isReturnStatement(parent)) return true;
+  return ts.isArrowFunction(parent) && parent.body === node;
+}
+
+/** Whether a branch returns nothing to the caller: `return null`, `return undefined`, `return;`. */
+function answersAbsence(deciding) {
+  let absent = false;
+  walk(deciding, (node) => {
+    if (absent || !ts.isReturnStatement(node)) return;
+    const expression = node.expression;
+    if (expression === undefined) absent = true;
+    else if (expression.kind === ts.SyntaxKind.NullKeyword) absent = true;
+    // `return undefined` is an identifier, not the `undefined` keyword token.
+    else if (ts.isIdentifier(expression) && expression.text === "undefined") absent = true;
+  });
+  return absent;
+}
+
+/**
+ * What a clamp's own text says it dropped, or null when it says nothing.
+ *
+ * The marker is looked for where the clamp happens and, failing that, in the values the enclosing function returns: a
+ * `break` inside a row loop carries no marker of its own, and the `omitted` field beside the rows it produced is where
+ * that function states the cost.
+ */
+function announcement(deciding, fn, sourceFile) {
+  const MARKER = /…|omitted|dropped|over[_-]?ceiling|truncated|ceiling/iu;
+  let marker = null;
+  const scan = (node) =>
+    walk(node, (inner) => {
+      if (marker !== null) return;
+      if (ts.isStringLiteral(inner) || ts.isNoSubstitutionTemplateLiteral(inner)) {
+        if (MARKER.test(inner.text)) marker = JSON.stringify(inner.text.slice(0, 40));
+        return;
+      }
+      // A clamp written `\`${value.slice(0, N)}…\`` puts the marker in the template's tail, not its head.
+      if (ts.isTemplateExpression(inner) && MARKER.test(inner.head.text))
+        marker = JSON.stringify(inner.head.text.slice(0, 40));
+      if (ts.isTemplateMiddleOrTemplateTail(inner) && MARKER.test(inner.text))
+        marker = JSON.stringify(inner.text.slice(0, 40));
+      if (ts.isIdentifier(inner) && /^(?:omitted|dropped|truncated)/iu.test(inner.text)) marker = inner.text;
+      if (ts.isPropertyAssignment(inner) && MARKER.test(inner.name.getText(sourceFile)))
+        marker = inner.name.getText(sourceFile);
+      if (
+        ts.isCallExpression(inner) &&
+        ts.isPropertyAccessExpression(inner.expression) &&
+        inner.expression.name.text === "record" &&
+        /loss/iu.test(inner.expression.expression.getText(sourceFile))
+      )
+        marker = "a loss record";
+    });
+  if (deciding !== null) scan(deciding);
+  if (marker === null && fn !== null)
+    walk(fn, (node) => {
+      if (marker !== null || !ts.isReturnStatement(node) || node.expression === undefined) return;
+      scan(node.expression);
+    });
+  return marker;
+}
+
+// ---------------------------------------------------------------------------
+// Class: read-path
+// ---------------------------------------------------------------------------
+
+/** `sendProblem`/`throw` remove the whole surface; a windowed list does not. */
+function blankingShape(node, sourceFile) {
+  let shape = null;
+  walk(node, (inner) => {
+    if (shape !== null) return;
+    if (
+      ts.isCallExpression(inner) &&
+      ts.isIdentifier(inner.expression) &&
+      /^send(?:Problem|BootstrapProblem|LifecycleProblem)$|^refuse/u.test(inner.expression.text)
+    )
+      shape = `${inner.expression.text}(${inner.arguments
+        .map((argument) => argument.getText(sourceFile))
+        .join(", ")
+        .slice(0, 48)})`;
+    if (ts.isThrowStatement(inner)) shape = `throw ${inner.expression?.getText(sourceFile).slice(0, 48) ?? ""}`;
+  });
+  return shape;
+}
+
+/**
+ * Every `<Schema>.Check(<projection>)` in a Host module, with the shape of its
+ * failure branch. Request validators are not read paths - they decide whether to
+ * accept a write - so a site whose argument is the request is excluded by the
+ * enclosing name, and a site that only returns a boolean is a predicate.
+ *
+ * The schema is recorded by its **declaration name** (`NoteListV1Schema`), the
+ * same name `contractSchemas` keys its map by. Storing the reference as written
+ * (`TavernBrowserValidatorsV1.NoteListV1Schema`) is what made this class vacuous
+ * on the product: every site was counted and none was ever resolved.
+ */
+function failClosedSites(sources) {
+  const sites = [];
+  for (const file of sources.files(sources.path(...HOST))) {
+    const sourceFile = sources.source(file);
+    walk(sourceFile, (node) => {
+      if (!ts.isCallExpression(node) || !ts.isPropertyAccessExpression(node.expression)) return;
+      if (node.expression.name.text !== "Check") return;
+      const reference = node.expression.expression;
+      const declared = ts.isIdentifier(reference)
+        ? reference.text
+        : ts.isPropertyAccessExpression(reference)
+          ? reference.name.text
+          : null;
+      if (declared === null || !/Schema$/u.test(declared)) return;
+      const scope = enclosingFunction(node);
+      if (scope === null) return;
+      const shape = blankingShape(scope, sourceFile);
+      sites.push({
+        schema: declared,
+        file,
+        where: at(sources.root, node, sourceFile, file),
+        shape,
+        blanking: shape !== null,
+        scope,
+        sourceFile,
+      });
+    });
+  }
+  return sites;
+}
+
+/** The transitive closure of a module's relative imports, as absolute paths. */
+function importClosure(sources, file, depth = 3) {
+  const seen = new Set([file]);
+  let frontier = [file];
+  for (let level = 0; level < depth; level += 1) {
+    const next = [];
+    for (const current of frontier) {
+      let sourceFile;
+      try {
+        sourceFile = sources.source(current);
+      } catch {
+        continue;
+      }
+      for (const statement of sourceFile.statements) {
+        if (!ts.isImportDeclaration(statement) || !ts.isStringLiteral(statement.moduleSpecifier)) continue;
+        const specifier = statement.moduleSpecifier.text;
+        if (!specifier.startsWith(".")) continue;
+        const base = resolve(dirname(current), specifier.replace(/\.js$/u, ""));
+        for (const candidate of [`${base}.ts`, `${base}.tsx`, join(base, "index.ts")]) {
+          if (existsSync(candidate) && !seen.has(candidate)) {
+            seen.add(candidate);
+            next.push(candidate);
+          }
+        }
+      }
+    }
+    frontier = next;
+  }
+  return seen;
+}
+
+function runReadPath(sources) {
+  const sites = failClosedSites(sources);
+  const schemas = [
+    ...contractSchemas(sources, sources.path(...TAVERN_CONTRACT)),
+    ...contractSchemas(sources, sources.path(...GAME_CONTRACT)),
+  ];
+  const byName = new Map(schemas.map((schema) => [schema.name, schema]));
+  // The same capacity constants `bounds` pairs against the wire, so a projection's producer is measured by
+  // the same reading in both classes. Paired by name, not by presence: a constant sharing no concept with the
+  // capped property does not bound it, and counting it as a bound is how this class printed fifteen findings
+  // about constants that measure a different collection.
+  const constants = hostCapConstants(sources);
+  const violations = [];
+  const notes = [];
+  const survey = [];
+  let blanking = 0;
+  let exceeded = 0;
+  let within = 0;
+  let clamped = 0;
+  let unbound = 0;
+  for (const site of sites) {
+    if (!site.blanking) continue;
+    blanking += 1;
+    const schema = byName.get(site.schema);
+    if (schema === undefined) continue;
+    const capped = schema.properties.filter((property) => property.kind === "maxItems" && property.limit !== null);
+    if (capped.length === 0) continue;
+    const reachable = hostCapConstantsWithin(constants, importClosure(sources, site.file));
+    for (const property of capped) {
+      const naming = reachable.filter((constant) => capAffinity(property, constant) > 0);
+      if (naming.length === 0) {
+        const label = `${site.schema}.${property.property} maxItems=${property.limit}`;
+        const clamp = projectionClamp(sources, site, property);
+        if (clamp !== null && clamp.limit <= property.limit) {
+          clamped += 1;
+          survey.push({
+            label,
+            where: site.where,
+            category: "decided",
+            why: `the validating function clamps ${clamp.name} to ${clamp.limit} (${clamp.where}), at or below the cap`,
+          });
+          continue;
+        }
+        if (clamp !== null) {
+          exceeded += 1;
+          violations.push({
+            rank: 1,
+            where: `${site.where} vs ${clamp.where}`,
+            message: `${site.schema}.${property.property} is capped at ${property.limit} (${property.where}) but this read path clamps ${clamp.name} to ${clamp.limit}; one row over the cap and ${site.shape} removes the whole surface`,
+          });
+          continue;
+        }
+        unbound += 1;
+        survey.push({
+          label,
+          where: site.where,
+          category: "cannot-prove",
+          why: `the projection copies the producer's collection unchanged: a run that feeds ${property.limit + 1} rows through this read path would decide it`,
+        });
+        continue;
+      }
+      const larger = naming.filter((constant) => constant.limit > property.limit);
+      if (larger.length === 0) {
+        within += 1;
+        continue;
+      }
+      exceeded += 1;
+      const worst = larger.sort((left, right) => right.limit - left.limit)[0];
+      violations.push({
+        rank: 1,
+        where: `${site.where} vs ${worst.where}`,
+        message: `${site.schema}.${property.property} is capped at ${property.limit} (${property.where}) but this read path's own dependency tree fills it to ${worst.limit} (${worst.name}); one row over the cap and ${site.shape} removes the whole surface`,
+      });
+    }
+  }
+  notes.push(
+    `read-path: ${sites.length} schema self-validation site(s), ${blanking} remove the surface on mismatch, ${exceeded} cap(s) that the projection can exceed, ${within} bounded by a constant that names it, ${clamped} bounded by a clamp in the validating function, ${unbound} capped field(s) nothing visible bounds`,
+  );
+  return {
+    declared: sites.length,
+    violations,
+    notes,
+    unproven:
+      survey.length === 0
+        ? []
+        : [
+            {
+              count: unbound,
+              reading: "capped field(s) no reachable constant names",
+              walked: survey.length,
+              decided: clamped,
+              sites: survey,
+            },
+          ],
+  };
+}
+
+/**
+ * The clamp the read path itself puts on a capped collection, if it applies one before validating.
+ *
+ * A projection that copies `result.candidates` straight into a schema capped at 64 rows can exceed that cap, and the
+ * audit cannot follow the value back to the producer to find out. It can read the other half: when the validating
+ * function (or a helper the same module declares and it calls) slices the collection to a number at or below the
+ * cap, the fail-closed branch cannot fire on that field, and that is a fact about the code in front of it rather
+ * than an inference about a producer three modules away.
+ */
+function projectionClamp(sources, site, property) {
+  const own = clampedCollections(sources, site.file, site.scope).get(property.property);
+  if (own !== undefined) return own;
+  let found = null;
+  walk(site.scope, (node) => {
+    if (found !== null || !ts.isCallExpression(node) || !ts.isIdentifier(node.expression)) return;
+    const helper = localFunction(site.sourceFile, node.expression.text);
+    if (helper === null) return;
+    const clamp = clampedCollections(sources, site.file, helper).get(property.property);
+    if (clamp !== undefined) found = clamp;
+  });
+  return found;
+}
+
+/** The capacity constants whose declaring module is in a read path's own dependency tree. */
+function hostCapConstantsWithin(constants, moduleSet) {
+  return constants.filter((constant) => moduleSet.has(constant.file));
+}
+
+const CLASS_IMPLEMENTATIONS = [
+  { id: "read-path", rank: 1, title: "a read path cannot blank its own surface", run: runReadPath },
+  { id: "bounds", rank: 2, title: "the contract's cap and the writer's cap agree", run: runBounds },
+  { id: "refusal", rank: 2, title: "a capacity is refused before the write, by name", run: runRefusal },
+];
+
+export function runAudit({ root = DEFAULT_ROOT, only = null } = {}) {
+  const sources = new Sources(root);
+  const results = [];
+  const byId = new Map();
+  for (const auditClass of CLASSES) {
+    if (only !== null && !only.includes(auditClass.id)) continue;
+    const outcome =
+      auditClass.run === null
+        ? { declared: 0, violations: [], notes: [`${auditClass.id}: delegated; see its own gate`] }
+        : auditClass.run(sources);
+    const result = {
+      id: auditClass.id,
+      rank: auditClass.rank,
+      title: auditClass.title,
+      declared: outcome.declared,
+      // Each finding says for itself whether it decides the run: a class can carry a reading an owner ruling is
+      // pending on beside a site defect that must block, and only the finding knows which it is.
+      violations: outcome.violations.map((violation) => ({
+        ...violation,
+        class: auditClass.id,
+        ...(advisoryReadingFor(auditClass.id, violation.kind) === undefined ? {} : { advisory: true }),
+      })),
+      notes: outcome.notes ?? [],
+      unproven: outcome.unproven ?? [],
+    };
+    results.push(result);
+    byId.set(result.id, result);
+  }
+  for (const gate of DELEGATED) {
+    const target = byId.get(gate.into ?? gate.id);
+    if (target === undefined) continue;
+    const outcome = runDelegated(sources, gate);
+    target.declared += outcome.declared;
+    target.violations.push(...outcome.violations.map((violation) => ({ ...violation, class: target.id })));
+    target.notes.push(...outcome.notes);
+  }
+  return results;
+}
+
+// ---------------------------------------------------------------------------
+// Reporting
+// ---------------------------------------------------------------------------
+
+/** How many sites of one kind the report prints; `--verbose` lifts it. Nothing is lost, only bounded. */
+const SAMPLE_LIMIT = 10;
+
+/** How much of a sampled finding's message a sample line prints before it clips. */
+const SAMPLE_MESSAGE = 160;
+
+export function totals(results) {
+  const violations = results.flatMap((result) => result.violations);
+  // A violation is advisory when its own reading is one the owner has not ruled on (`ADVISORY_READINGS`). Everything
+  // else decides the exit code, including the defect kinds inside a class that also carries an advisory reading.
+  const blocking = violations.filter((violation) => violation.advisory !== true);
+  return {
+    classes: results.length,
+    declared: results.reduce((total, result) => total + result.declared, 0),
+    violations: violations.length,
+    blocking: blocking.length,
+    advisory: violations.length - blocking.length,
+    /**
+     * Every reading this run walked without proving clean, advisory findings included: the section's own count.
+     *
+     * A survey entry whose sites were all decided by this run is not one of them - that reading is measured, not
+     * unproven - so the count follows `count`, never the number of entries the run happens to produce.
+     */
+    unproven: unprovenReadings(results).filter((row) => row.count > 0).length,
+  };
+}
+
+/**
+ * The readings this run cannot call clean, as `[class, count, reading, classification]` rows.
+ *
+ * Two different things share this list on purpose, because a reader who has to tell them apart is a reader who can
+ * mistake one for clean: findings an owner has not ruled on (they print as violations and here) and quantities a class
+ * walked without being able to prove (they print only here).
+ *
+ * A survey row carries the population it walked and how that population was classified, because a bare count is what
+ * let the next reader assume the sites were fine: `count` is what is still open, `walked` is what the reading
+ * examined, and the three categories sum to `walked`.
+ */
+export function unprovenReadings(results) {
+  const rows = [];
+  for (const result of results) {
+    for (const entry of result.unproven) {
+      const sites = entry.sites ?? [];
+      const categories = (category) => sites.filter((site) => site.category === category).length;
+      rows.push({
+        className: result.id,
+        count: entry.count,
+        reading: entry.reading,
+        walked: entry.walked ?? entry.count,
+        classification: {
+          decided: entry.decided ?? 0,
+          needsDeclaration: categories("needs-declaration"),
+          cannotProve: categories("cannot-prove"),
+        },
+        sites,
+      });
+    }
+    const advisory = result.violations.filter((violation) => violation.advisory === true);
+    if (advisory.length === 0) continue;
+    const kinds = [...new Set(advisory.map((violation) => violation.kind).filter((kind) => kind !== undefined))];
+    rows.push({
+      className: result.id,
+      count: advisory.length,
+      reading: `advisory finding(s)${kinds.length === 0 ? "" : ` of ${kinds.join(", ")}`} - an owner ruling is pending, so these do not decide the run`,
+      walked: advisory.length,
+      classification: { decided: 0, needsDeclaration: advisory.length, cannotProve: 0 },
+      sites: [],
+    });
+  }
+  return rows;
+}
+
+/** `19 walked (10 decided, 0 need a declaration, 9 cannot be proved statically)` - the four numbers, named. */
+function classificationLine(row) {
+  return `${row.walked} walked (${row.classification.decided} decided by this run, ${row.classification.needsDeclaration} need a declaration, ${row.classification.cannotProve} cannot be proved statically)`;
+}
+
+export function formatReport(results, { all = false } = {}) {
+  const summary = totals(results);
+  const lines = [
+    `audit-totality: ${summary.classes} classes, ${summary.declared} declared items walked, ${summary.violations} violations (${summary.blocking} blocking, ${summary.advisory} advisory), ${summary.unproven} reading(s) this run cannot call clean`,
+  ];
+  const width = Math.max(...results.map((result) => result.id.length), 8);
+  for (const result of results)
+    lines.push(
+      `  ${result.id.padEnd(width)}  ${String(result.declared).padStart(5)} declared  ${String(result.violations.length).padStart(4)} violation(s)  ${result.title}`,
+    );
+  // The survey line. Every reading below prints the population it walked and how it split, so a reader sees the
+  // measurement and not only what is left over - a reading that decided all of its sites is not a reading that found
+  // nothing, and the two must not print the same way.
+  const unproven = unprovenReadings(results);
+  if (unproven.length > 0)
+    lines.push(
+      "",
+      `survey: ${unproven.length} reading(s) walked sites this run had to classify - ${unproven
+        .filter((row) => row.sites.length > 0)
+        .map(
+          (row) =>
+            `${row.className} ${row.walked} (${row.classification.decided} decided, ${row.classification.needsDeclaration} need a declaration, ${row.classification.cannotProve} cannot be proved)`,
+        )
+        .join(" · ")}`,
+    );
+  // The section that exists because a note among thirty other notes reads as clean. Every quantity this run walked
+  // without proving prints here, one line per class and reading, with its count - so "0 blocking" can never be the
+  // only thing a reader takes away. It prints even when it is empty, and then says so in words. A reading whose sites
+  // were all decided prints below the open ones under its own heading: it is still evidence, and it is no longer a
+  // count in the header.
+  const stillOpen = unproven.filter((row) => row.count > 0 || row.sites.length === 0);
+  const decidedRows = unproven.filter((row) => row.count === 0 && row.sites.length > 0);
+  const pushSites = (row) => {
+    lines.push(`  ${row.className.padEnd(width)}  ${String(row.count).padStart(5)}  ${row.reading}`);
+    lines.push(`    ${classificationLine(row)}`);
+    // One line per site category, with the sites themselves bounded the way a violation kind is: the count is the
+    // count that was found, the sample is what fits, and `--verbose` prints every site.
+    for (const category of ["cannot-prove", "needs-declaration", "decided"]) {
+      const ofCategory = row.sites.filter((site) => site.category === category);
+      if (ofCategory.length === 0) continue;
+      lines.push(`    ${category}  ${ofCategory.length} site(s)`);
+      for (const site of all ? ofCategory : ofCategory.slice(0, SAMPLE_LIMIT))
+        lines.push(`        ${site.label}  ${site.where}`, `          ${site.why}`);
+      if (!all && ofCategory.length > SAMPLE_LIMIT)
+        lines.push(
+          `        … ${ofCategory.length - SAMPLE_LIMIT} more site(s); --verbose prints every one, --json carries them all`,
+        );
+    }
+  };
+  lines.push("", "NOT CLEAN - readings this run walked but cannot prove:");
+  if (stillOpen.length === 0) lines.push("  (none: every reading this run walked was proved clean)");
+  else for (const row of stillOpen) pushSites(row);
+  if (decidedRows.length > 0) {
+    lines.push("", "walked and decided by this run (not counted above, and not counted as clean either):");
+    for (const row of decidedRows) pushSites(row);
+  }
+  for (const note of results.flatMap((result) => result.notes)) lines.push(`  note  ${note}`);
+  const ranked = [...results.flatMap((result) => result.violations)].sort((left, right) => left.rank - right.rank);
+  if (ranked.length === 0) return lines.join("\n");
+  lines.push("", "violations, worst first:");
+  // A violation that carries a `kind` is reported by kind: one line with the count, then at most `SAMPLE_LIMIT` of
+  // its sites. A violation without one is reported by site, as every class except `hygiene` does. Both keep the
+  // count that was found - the sample bounds what is printed, never what is reported. `all` lifts the bound.
+  const perKind = new Map();
+  for (const violation of ranked)
+    if (violation.kind !== undefined) {
+      const key = `${violation.class}: ${violation.kind}`;
+      perKind.set(key, (perKind.get(key) ?? 0) + 1);
+    }
+  const printed = new Map();
+  for (const violation of ranked) {
+    if (violation.kind === undefined || all) {
+      lines.push(`  [${violation.rank}] ${violation.class}: ${violation.where}`, `        ${violation.message}`);
+      continue;
+    }
+    const key = `${violation.class}: ${violation.kind}`;
+    const found = perKind.get(key) ?? 0;
+    const shown = printed.get(key) ?? 0;
+    if (shown === 0) lines.push(`  [${violation.rank}] ${key} - ${found} finding(s)`);
+    if (shown < SAMPLE_LIMIT) lines.push(`          ${violation.where}  ${sampled(violation.message)}`);
+    else if (shown === SAMPLE_LIMIT)
+      lines.push(`          … ${found - SAMPLE_LIMIT} more site(s) of this kind; --verbose prints every one`);
+    printed.set(key, shown + 1);
+  }
+  return lines.join("\n");
+}
+
+/** A sample line's message, clipped: the sample carries the site, `--verbose` carries the whole finding. */
+function sampled(message) {
+  return message.length <= SAMPLE_MESSAGE ? message : `${message.slice(0, SAMPLE_MESSAGE)}…`;
+}
+
+function parseArguments(argv) {
+  const options = { root: DEFAULT_ROOT, only: null, json: false, all: false };
+  for (const argument of argv) {
+    if (argument.startsWith("--only=")) options.only = argument.slice("--only=".length).split(",");
+    else if (argument === "--json") options.json = true;
+    else if (argument === "--verbose" || argument === "--all-findings") options.all = true;
+  }
+  return options;
+}
+function main() {
+  const options = parseArguments(process.argv.slice(2));
+  const results = runAudit(options);
+  const summary = totals(results);
+  if (options.json) process.stdout.write(`${JSON.stringify({ summary, results }, null, 2)}\n`);
+  else process.stdout.write(`${formatReport(results, { all: options.all })}\n`);
+  process.exitCode = summary.blocking > 0 ? 1 : 0;
+  // A reading this run cannot call clean is not a pass. The audit reports it and still exits 0 only because every such
+  // site now carries one of the two reasons above it - `needs-declaration` (the product could state the fact once) or
+  // `cannot-prove` (the evidence that would decide it is named) - and neither is a silence. A site this run could
+  // decide stopped being a reading and became a decision, which is why the number can fall without the measurement
+  // getting smaller.
+}
+
+// ---------------------------------------------------------------------------
+// Class: codes
+// ---------------------------------------------------------------------------
+
+/** The handlers whose vocabulary the tavern contract declares. */
+const TAVERN_HANDLERS = [
+  ["host", "src", "reference-pipeline-dialogue-web.core.ts"],
+  ["host", "src", "reference-pipeline-dialogue-web.ts"],
+  ["host", "src", "tavern-management-dialogue-web.ts"],
+  ["host", "src", "composed-reference-game-browser.ts"],
+];
+
+/** The browser's own copies of the declared vocabularies. */
+const TAVERN_MIRRORS = [
+  ["dialogue-web", "src", "reference-pipeline-api.ts"],
+  ["dialogue-web", "src", "management-pipeline-api.ts"],
+];
+const GAME_MIRROR = ["dialogue-web", "src", "composed-reference-game-browser-api.ts"];
+const CORE_HANDLER = ["host", "src", "reference-pipeline-dialogue-web.core.ts"];
+
+/** The string literals of a named `const`, read from the declaration itself. */
+function literalsInDeclaration(sources, file, name, property = null) {
+  const sourceFile = sources.source(file);
+  const found = [];
+  walk(sourceFile, (node) => {
+    if (!ts.isVariableDeclaration(node) || !ts.isIdentifier(node.name) || node.name.text !== name) return;
+    const scope =
+      property === null
+        ? node
+        : (() => {
+            let hit = null;
+            walk(node, (inner) => {
+              if (ts.isPropertyAssignment(inner) && inner.name.getText(sourceFile) === property) hit = inner;
+            });
+            return hit;
+          })();
+    if (scope === null) return;
+    walk(scope, (inner) => {
+      if (ts.isStringLiteral(inner) && BOUNDED_CODE.test(inner.text))
+        found.push({ value: inner.text, where: at(sources.root, inner, sourceFile, file) });
+    });
+  });
+  return found;
+}
+
+/** The literal members of a named type alias. */
+function literalsInTypeAlias(sources, file, name) {
+  const sourceFile = sources.source(file);
+  const found = [];
+  walk(sourceFile, (node) => {
+    if (!ts.isTypeAliasDeclaration(node) || node.name.text !== name) return;
+    const members = ts.isUnionTypeNode(node.type) ? node.type.types : [node.type];
+    for (const member of members) {
+      if (!ts.isLiteralTypeNode(member) || !ts.isStringLiteral(member.literal)) continue;
+      found.push({ value: member.literal.text, where: at(sources.root, member, sourceFile, file) });
+    }
+  });
+  return found;
+}
+
+/** callee name -> index of its parameter named `code`, read from the handlers. */
+function codeArity(sources) {
+  const map = new Map();
+  for (const segments of TAVERN_HANDLERS) {
+    const file = sources.path(...segments);
+    const sourceFile = sources.source(file);
+    const record = (name, parameters) => {
+      const index = parameters.findIndex(
+        (parameter) => ts.isIdentifier(parameter.name) && parameter.name.text === "code",
+      );
+      if (index >= 0) map.set(name, index);
+    };
+    walk(sourceFile, (node) => {
+      if (ts.isFunctionDeclaration(node) && node.name !== undefined) record(node.name.text, node.parameters);
+      if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.initializer !== undefined) {
+        if (ts.isArrowFunction(node.initializer) || ts.isFunctionExpression(node.initializer))
+          record(node.name.text, node.initializer.parameters);
+      }
+    });
+  }
+  return map;
+}
+
+function insideProblemCodeFunction(node) {
+  for (let current = node.parent; current !== undefined; current = current.parent) {
+    if (ts.isFunctionDeclaration(current)) return current.name !== undefined && /ProblemCode$/u.test(current.name.text);
+    if (ts.isSourceFile(current)) return false;
+  }
+  return false;
+}
+
+/** Every problem code a handler file can produce, with the line that names it. */
+function producedCodes(sources, file) {
+  const sourceFile = sources.source(file);
+  const arity = codeArity(sources);
+  const found = [];
+  walk(sourceFile, (node) => {
+    if (
+      ts.isPropertyAssignment(node) &&
+      node.name.getText(sourceFile) === "code" &&
+      ts.isStringLiteral(node.initializer) &&
+      BOUNDED_CODE.test(node.initializer.text)
+    )
+      found.push({ value: node.initializer.text, where: at(sources.root, node.initializer, sourceFile, file) });
+    if (
+      ts.isReturnStatement(node) &&
+      node.expression !== undefined &&
+      ts.isStringLiteral(node.expression) &&
+      BOUNDED_CODE.test(node.expression.text) &&
+      insideProblemCodeFunction(node)
+    )
+      found.push({ value: node.expression.text, where: at(sources.root, node.expression, sourceFile, file) });
+    if (!ts.isCallExpression(node) || !ts.isIdentifier(node.expression)) return;
+    const index = arity.get(node.expression.text);
+    if (index === undefined) return;
+    const argument = node.arguments[index];
+    if (argument !== undefined && ts.isStringLiteral(argument) && BOUNDED_CODE.test(argument.text))
+      found.push({ value: argument.text, where: at(sources.root, argument, sourceFile, file) });
+  });
+  return found;
+}
+
+function codeAuthorities(sources) {
+  const tavern = new Set(
+    literalsInDeclaration(sources, sources.path(...TAVERN_CONTRACT), "ProblemCode").map((entry) => entry.value),
+  );
+  const turn = new Set(
+    literalsInDeclaration(sources, sources.path(...TAVERN_CONTRACT), "BrowserTurnV1Schema", "problemCode").map(
+      (entry) => entry.value,
+    ),
+  );
+  const game = new Set(
+    literalsInDeclaration(sources, sources.path(...GAME_CONTRACT), "GameProblemCode").map((entry) => entry.value),
+  );
+  const transport = new Set(
+    literalsInTypeAlias(sources, sources.path(...CORE_HANDLER), "ProblemCode").map((entry) => entry.value),
+  );
+  return { tavern, turn, game, transport };
+}
+
+/** The two ways a mirror drifts from the declared set, named by code. */
+function codeSetDrift(where, mirrored, authority, noun) {
+  return [
+    ...[...authority]
+      .filter((code) => !mirrored.has(code))
+      .map((code) => `${where} does not recognise declared code ${JSON.stringify(code)}`),
+    ...[...mirrored]
+      .filter((code) => !authority.has(code))
+      .map((code) => `${where} recognises a code no ${noun} declares ${JSON.stringify(code)}`),
+  ];
+}
+
+function runCodes(sources) {
+  const { tavern, game, turn, transport } = codeAuthorities(sources);
+  const declaredTavern = new Set([...tavern, ...transport]);
+  const violations = [];
+  const notes = [];
+  let produced = 0;
+  const producedSet = new Set();
+  for (const segments of TAVERN_HANDLERS) {
+    const file = sources.path(...segments);
+    for (const entry of producedCodes(sources, file)) {
+      produced += 1;
+      producedSet.add(entry.value);
+      if (!declaredTavern.has(entry.value) && !game.has(entry.value))
+        violations.push({
+          rank: 3,
+          where: entry.where,
+          message: `produces undeclared code ${JSON.stringify(entry.value)}`,
+        });
+    }
+  }
+  let mirrored = 0;
+  for (const segments of TAVERN_MIRRORS) {
+    const file = sources.path(...segments);
+    const where = relativeTo(sources.root, file);
+    for (const name of ["PROBLEM_CODES"]) {
+      const entries = literalsInDeclaration(sources, file, name);
+      mirrored += entries.length;
+      for (const drift of codeSetDrift(
+        where,
+        new Set(entries.map((entry) => entry.value)),
+        declaredTavern,
+        "tavern route",
+      ))
+        violations.push({ rank: 3, where, message: drift });
+    }
+    const turnEntries = literalsInDeclaration(sources, file, "TURN_PROBLEM_CODES");
+    mirrored += turnEntries.length;
+    for (const drift of codeSetDrift(where, new Set(turnEntries.map((entry) => entry.value)), turn, "turn"))
+      violations.push({ rank: 3, where, message: drift });
+  }
+  const gameFile = sources.path(...GAME_MIRROR);
+  const gameEntries = literalsInDeclaration(sources, gameFile, "GAME_PROBLEM_CODES");
+  mirrored += gameEntries.length;
+  for (const drift of codeSetDrift(
+    relativeTo(sources.root, gameFile),
+    new Set(gameEntries.map((entry) => entry.value)),
+    game,
+    "game route",
+  ))
+    violations.push({ rank: 3, where: relativeTo(sources.root, gameFile), message: drift });
+
+  // A code the contract declares that nothing produces and nothing mirrors is a
+  // branch no player can reach: the contract promises a refusal that does not exist.
+  const mirroredAll = new Set([
+    ...TAVERN_MIRRORS.flatMap((segments) =>
+      literalsInDeclaration(sources, sources.path(...segments), "PROBLEM_CODES").map((entry) => entry.value),
+    ),
+    ...gameEntries.map((entry) => entry.value),
+  ]);
+  for (const [noun, union] of [
+    ["tavern", declaredTavern],
+    ["game", game],
+  ]) {
+    for (const code of union) {
+      if (producedSet.has(code) || mirroredAll.has(code)) continue;
+      violations.push({
+        rank: 3,
+        where: `${noun} contract`,
+        message: `declares ${JSON.stringify(code)} but no handler produces it and no client mirror names it`,
+      });
+    }
+  }
+  if (declaredTavern.size === 0 || game.size === 0)
+    violations.push({
+      rank: 3,
+      where: "host/src",
+      message: "the problem unions could not be read; every rule below them is vacuous",
+    });
+  notes.push(
+    `codes: ${declaredTavern.size} tavern (+${transport.size} transport), ${turn.size} turn, ${game.size} game declared; ${produced} produced across ${TAVERN_HANDLERS.length} handler(s), ${mirrored} mirrored across ${TAVERN_MIRRORS.length + 1} mirror(s)`,
+  );
+  return { declared: declaredTavern.size + turn.size + game.size, violations, notes };
+}
+
+// ---------------------------------------------------------------------------
+// Class: routes
+// ---------------------------------------------------------------------------
+
+/**
+ * Every route descriptor the tavern contract declares, and every table entry the reader could not read.
+ *
+ * The count of `routeId` properties in the file is not a count of routes: the same module declares the
+ * `routeId` member of a schema and the `routeId` key of a profile. An entry the reader cannot read is
+ * the only honest signal that its reading is incomplete - a table entry that is not an object literal,
+ * or whose `routeId` is not a string literal, is a route this rule would silently not see.
+ */
+function routeDescriptors(sources) {
+  const file = sources.path(...TAVERN_CONTRACT);
+  const sourceFile = sources.source(file);
+  const routes = [];
+  const unresolved = [];
+  walk(sourceFile, (node) => {
+    if (!ts.isCallExpression(node) || !ts.isIdentifier(node.expression) || node.expression.text !== "route") return;
+    const argument = node.arguments[0];
+    if (argument === undefined || !ts.isObjectLiteralExpression(argument)) {
+      unresolved.push(at(sources.root, node, sourceFile, file));
+      return;
+    }
+    const entry = { where: at(sources.root, node, sourceFile, file) };
+    for (const property of argument.properties) {
+      if (!ts.isPropertyAssignment(property)) continue;
+      const name = property.name.getText(sourceFile);
+      if (["routeId", "method", "path"].includes(name) && ts.isStringLiteral(property.initializer))
+        entry[name] = property.initializer.text;
+    }
+    if (entry.routeId === undefined) {
+      unresolved.push(entry.where);
+      return;
+    }
+    routes.push(entry);
+  });
+  return { routes, unresolved };
+}
+
+function runRoutes(sources) {
+  const { routes, unresolved } = routeDescriptors(sources);
+  const declared = new Set(routes.map((route) => route.routeId));
+  const violations = [];
+  const notes = [];
+  const hostFiles = sources.files(sources.path(...HOST)).filter((file) => !/browser-contract/u.test(file));
+  const text = new Map();
+  for (const file of hostFiles) {
+    const sourceFile = sources.source(file);
+    const literals = new Set();
+    walk(sourceFile, (node) => {
+      if (ts.isStringLiteral(node)) literals.add(node.text);
+    });
+    text.set(file, literals);
+  }
+  const servedBy = (needle) => hostFiles.filter((file) => text.get(file).has(needle));
+  let served = 0;
+  for (const route of routes) {
+    const owners = [...new Set([...servedBy(route.routeId), ...servedBy(route.path)])];
+    if (owners.length === 0) {
+      violations.push({
+        rank: 3,
+        where: route.where,
+        message: `${route.routeId} (${route.method} ${route.path}) is declared but no Host dispatcher names its id or its path; the route a client calls answers nothing`,
+      });
+      continue;
+    }
+    served += 1;
+  }
+  // The reverse direction: a route id a dispatcher branches on must be declared.
+  for (const file of hostFiles) {
+    const sourceFile = sources.source(file);
+    walk(sourceFile, (node) => {
+      if (!ts.isCallExpression(node) || !ts.isPropertyAccessExpression(node.expression)) return;
+      if (node.expression.name.text !== "includes" && node.expression.name.text !== "some") return;
+      const receiver = node.expression.expression.getText(sourceFile);
+      if (!/routeIds|ROUTE_IDS|routeId/iu.test(receiver)) return;
+      for (const argument of node.arguments) {
+        if (!ts.isStringLiteral(argument) || !/^[a-z][a-z0-9._-]*$/u.test(argument.text)) continue;
+        if (declared.has(argument.text)) continue;
+        violations.push({
+          rank: 3,
+          where: at(sources.root, argument, sourceFile, file),
+          message: `serves route ${JSON.stringify(argument.text)} which the contract does not declare`,
+        });
+      }
+    });
+  }
+  if (unresolved.length > 0)
+    violations.push({
+      rank: 3,
+      where: unresolved[0],
+      message: `${unresolved.length} route table entr${unresolved.length === 1 ? "y" : "ies"} could not be read as an object literal with a string \`routeId\` (${unresolved.join(", ")}), so this rule is incomplete`,
+    });
+  notes.push(
+    `routes: ${routes.length} declared route descriptor(s), ${unresolved.length} table entry(ies) the reader could not read, ${served} named by a Host dispatcher, ${hostFiles.length} dispatcher candidates scanned`,
+  );
+  return { declared: routes.length, violations, notes };
+}
+
+// ---------------------------------------------------------------------------
+// Class: fields
+// ---------------------------------------------------------------------------
+
+/** Every property name both contracts declare, with the schema that declares it. */
+function declaredFields(sources) {
+  const fields = new Map();
+  for (const file of [sources.path(...TAVERN_CONTRACT), sources.path(...GAME_CONTRACT)]) {
+    for (const schema of contractSchemas(sources, file))
+      for (const field of schema.fieldNames) {
+        const known = fields.get(field.name);
+        if (known === undefined) fields.set(field.name, { schema: schema.name, where: field.where, count: 1 });
+        else known.count += 1;
+      }
+  }
+  return fields;
+}
+
+/**
+ * Every name a source spells, with the first place it appears: an identifier, or a string literal when
+ * the key is quoted.
+ *
+ * A schema field reaches a source in more forms than `field: value`. `{ chats }` is a shorthand
+ * assignment, `<Row companionHandle={...}>` is a JSX attribute, `const { chats } = list` is a binding
+ * element, and a projection usually reads the value into a local of the same name before it fills the
+ * schema. All of those are identifiers, so the name - not the syntax around it - is what counts as a
+ * mention. Anything narrower reads production as absence.
+ */
+function namesIn(sources, roots, skip) {
+  const seen = new Map();
+  for (const file of sources.files(...roots)) {
+    if (skip.has(file)) continue;
+    const sourceFile = sources.source(file);
+    walk(sourceFile, (node) => {
+      const name = ts.isIdentifier(node) || ts.isStringLiteral(node) ? node.text : null;
+      if (name === null || seen.has(name)) return;
+      seen.set(name, at(sources.root, node, sourceFile, file));
+    });
+  }
+  return seen;
+}
+
+function runFields(sources) {
+  const fields = declaredFields(sources);
+  const contractFiles = new Set([sources.path(...TAVERN_CONTRACT), sources.path(...GAME_CONTRACT)]);
+  const hostNames = namesIn(sources, [sources.path(...HOST)], contractFiles);
+  const webNames = namesIn(sources, [sources.path(...WEB)], new Set());
+  const violations = [];
+  const notes = [];
+  let produced = 0;
+  let read = 0;
+  const unproduced = [];
+  const unread = [];
+  for (const [field, entry] of fields) {
+    if (hostNames.has(field)) produced += 1;
+    else unproduced.push({ field, ...entry });
+    if (webNames.has(field)) read += 1;
+    else unread.push({ field, ...entry });
+  }
+  // A field nobody names is only dead when the schema around it is unnamed too: a side that names the
+  // schema can still produce or read the field through a spread or a projection it derives from that
+  // schema, and the reader cannot see which members such a value carries. That is unverified, and it
+  // is reported as a count rather than as a violation.
+  const unverified = (rows, names) => rows.filter((entry) => names.has(entry.schema));
+  for (const entry of unproduced) {
+    if (hostNames.has(entry.schema)) continue;
+    violations.push({
+      rank: 3,
+      where: entry.where,
+      message: `${entry.schema}.${entry.field} is declared but no Host source names it, nor the schema that declares it; a declared member with nothing behind it reads as a capability a player waits for`,
+    });
+  }
+  for (const entry of unread) {
+    if (webNames.has(entry.schema)) continue;
+    violations.push({
+      rank: 4,
+      where: entry.where,
+      message: `${entry.schema}.${entry.field} is declared but no browser source names it, nor the schema that declares it; the wire carries a field nothing reads`,
+    });
+  }
+  const unverifiedProducer = unverified(unproduced, hostNames);
+  const unverifiedConsumer = unverified(unread, webNames);
+  notes.push(
+    `fields: ${fields.size} distinct declared field name(s), ${produced} named by a Host source, ${read} named by a browser source; a field whose schema a side names but whose own name it does not is counted unverified (${unverifiedProducer.length} producer, ${unverifiedConsumer.length} consumer), not dead`,
+  );
+  if (unverifiedProducer.length + unverifiedConsumer.length > 0)
+    notes.push(
+      `fields: unverified - the name is spelled nowhere on that side, so a spread or a schema-derived projection could still carry it: ${[...unverifiedProducer.map((entry) => `${entry.schema}.${entry.field}`), ...unverifiedConsumer.map((entry) => `${entry.schema}.${entry.field}`)].slice(0, 12).join(", ")}`,
+    );
+  return { declared: fields.size, violations, notes };
+}
+
+// ---------------------------------------------------------------------------
+// Classes: catalogue, prompt, promises
+// ---------------------------------------------------------------------------
+
+/** The catalogue files that carry player-visible sentences. */
+const CATALOGUE_FILE = /(?:^|[\\/])(?:i18n\.ts|[^\\/]*labels\.ts)$/u;
+
+/** Every `en`/`zh` catalogue entry under `dialogue-web/src`, by key. */
+function catalogueStrings(sources) {
+  const entries = [];
+  for (const file of sources.files(sources.path(...WEB))) {
+    if (!CATALOGUE_FILE.test(file)) continue;
+    const sourceFile = sources.source(file);
+    walk(sourceFile, (node) => {
+      if (!ts.isVariableDeclaration(node) || !ts.isIdentifier(node.name)) return;
+      if (node.name.text !== "en" && node.name.text !== "zh") return;
+      if (node.initializer === undefined) return;
+      const initializer = unwrap(node.initializer);
+      if (!ts.isObjectLiteralExpression(initializer)) return;
+      for (const property of initializer.properties) {
+        if (!ts.isPropertyAssignment(property)) continue;
+        if (!ts.isStringLiteral(property.initializer) && !ts.isNoSubstitutionTemplateLiteral(property.initializer))
+          continue;
+        entries.push({
+          locale: node.name.text === "en" ? "en" : "zh-CN",
+          key: property.name.getText(sourceFile).replaceAll(/["']/gu, ""),
+          text: property.initializer.text,
+          where: at(sources.root, property, sourceFile, file),
+        });
+      }
+    });
+  }
+  return entries;
+}
+
+/**
+ * Strings a rendered prompt may not carry. Each is a thing a developer writes
+ * for themselves and a model reads as content: a digest, a revision counter, an
+ * internal id, or an unsubstituted macro.
+ */
+const PROMPT_ARTEFACTS = Object.freeze([
+  { id: "canonical-hash", pattern: /canonical[-_ ]?hash/iu },
+  { id: "revision-counter", pattern: /\brevision\s*[=:]\s*\d/iu },
+  { id: "sha256-digest", pattern: /\bsha-?256\b|\b[0-9a-f]{32,}\b/u },
+  { id: "internal-id", pattern: /\b(?:wb|mem|chat|companion|persona|scenario)-entry-[A-Za-z0-9]/u },
+  { id: "unsubstituted-macro", pattern: /\{\{/u },
+  { id: "raw-enum-member", pattern: /\b[a-z][a-z0-9]*_[a-z0-9_]+\b/u },
+]);
+
+function runPrompt(sources) {
+  const entries = catalogueStrings(sources);
+  const violations = [];
+  const notes = [];
+  const hits = new Map();
+  for (const entry of entries) {
+    for (const artefact of PROMPT_ARTEFACTS) {
+      if (!artefact.pattern.test(entry.text)) continue;
+      hits.set(artefact.id, (hits.get(artefact.id) ?? 0) + 1);
+      // A macro in the catalogue is legitimate when the surface substitutes it
+      // (`{{name}}`, `{{code}}`); what is not is a `{{` a renderer never fills.
+      const macros = entry.text.match(/\{\{[A-Za-z0-9_]+\}\}/gu) ?? [];
+      const loose = entry.text.replace(/\{\{[A-Za-z0-9_]+\}\}/gu, "");
+      if (artefact.id === "unsubstituted-macro" && macros.length > 0 && !loose.includes("{{")) continue;
+      violations.push({
+        rank: 4,
+        where: entry.where,
+        message: `${entry.locale}.${entry.key} carries a ${artefact.id} into player-visible text: ${JSON.stringify(entry.text.slice(0, 96))}`,
+      });
+    }
+  }
+  notes.push(
+    `prompt: ${entries.length} catalogue sentence(s) across ${new Set(entries.map((entry) => entry.where.split("/").slice(0, -1).join("/"))).size} catalogue file(s) checked against ${PROMPT_ARTEFACTS.length} artefact shape(s); ${[...hits.entries()].map(([id, count]) => `${id}=${count}`).join(" ") || "no hits"}`,
+  );
+  return { declared: entries.length, violations, notes };
+}
+
+/**
+ * Promise families, and the capability each one names. This is a CHECKLIST, not
+ * an invariant: it cannot catch a promise nobody thought of, and it says so in
+ * its own note. What it does catch is the promise that names a capability the
+ * product does not have - the shape that made the notebook claim an automatic
+ * writer for months.
+ */
+const PROMISE_FAMILIES = Object.freeze([
+  {
+    id: "restore-later",
+    pattern: /\b(?:restore|recover|bring back|undo)\b[^.]{0,40}\blater\b|\bfrom the (?:next|last) conversation\b/iu,
+    capability: ["restore", "recover"],
+  },
+  {
+    id: "automatic-writer",
+    pattern: /\b(?:automatically|by itself|by herself|on its own|without asking)\b|自动|自己记下|不用动手/iu,
+    capability: [],
+  },
+  {
+    id: "built-in-default",
+    pattern: /\bbuilt-in\b|\bdefault connection\b|内置/iu,
+    capability: ["connection", "provider"],
+  },
+  { id: "applies-next", pattern: /\bapplies?\b[^.]{0,40}\bnext\b|下次/iu, capability: [] },
+  { id: "kept-forever", pattern: /\b(?:kept|saved|stored) (?:forever|permanently)\b|永久/iu, capability: [] },
+]);
+
+/** True when the tree carries a route, control or state named after the capability. */
+function capabilityReachable(sources, capability) {
+  if (capability.length === 0) return true;
+  const routes = routeDescriptors(sources).routes.map((route) => route.routeId.toLowerCase());
+  if (routes.some((routeId) => capability.some((token) => routeId.includes(token)))) return true;
+  for (const file of sources.files(sources.path(...WEB))) {
+    // The promise's own sentence is not evidence that the capability exists.
+    if (CATALOGUE_FILE.test(file)) continue;
+    const sourceFile = sources.source(file);
+    let found = false;
+    walk(sourceFile, (node) => {
+      if (!found && ts.isStringLiteral(node) && capability.some((token) => node.text.toLowerCase().includes(token)))
+        found = true;
+    });
+    if (found) return true;
+  }
+  return false;
+}
+
+function runPromises(sources) {
+  const entries = catalogueStrings(sources);
+  const violations = [];
+  const notes = [];
+  let promised = 0;
+  for (const entry of entries) {
+    for (const family of PROMISE_FAMILIES) {
+      if (!family.pattern.test(entry.text)) continue;
+      promised += 1;
+      if (capabilityReachable(sources, family.capability)) continue;
+      violations.push({
+        rank: 4,
+        where: entry.where,
+        message: `${entry.locale}.${entry.key} promises ${family.id} but nothing in the tree names ${family.capability.join("/")}: ${JSON.stringify(entry.text.slice(0, 96))}`,
+      });
+    }
+  }
+  notes.push(
+    `promises: ${entries.length} sentence(s) checked against ${PROMISE_FAMILIES.length} curated promise family/families, ${promised} promise(s) found; this class is a checklist, not an invariant - a promise nobody listed is not audited`,
+  );
+  return { declared: entries.length, violations, notes };
+}
+
+// ---------------------------------------------------------------------------
+// Class: hygiene
+// ---------------------------------------------------------------------------
+
+const SUPPRESSION =
+  /(?:@ts-(?:ignore|expect-error|nocheck)\b|\beslint-disable(?:-next-line|-line)?\b|\boxlint-disable\b|\bbiome-ignore\b|\bprettier-ignore\b|\bstylelint-disable(?:-next-line|-line)?\b|\b(?:c8|istanbul) ignore\b|\bNOLINT\b)/u;
+const COMMENTED_CODE =
+  /^\s*\/\/\s*(?:const|let|var|return|if|for|while|await|import|export|function|class|throw|switch|case)\b.*(?:[;{}]|=>)\s*$/u;
+
+/**
+ * The readings `hygiene` reports, each with what a count of it means.
+ *
+ * The owner cannot act on a list of one unreadable pattern that long, so each kind carries its own reading, every
+ * site stays a finding, and the report prints the count with a bounded sample instead of every line. A reading whose
+ * population the rule can now separate is not one decision any more: `test-only export` splits an export that only a
+ * test can mock with (scaffolding, which moves) from a production algorithm a test pins at its boundary (declared by
+ * the test's own `.private.test.ts` name).
+ *
+ * `decision` is a broad pattern one ruling settles; `defect` is a site that is wrong on its own terms.
+ */
+const HYGIENE_KINDS = Object.freeze([
+  {
+    id: "test-only export",
+    readsAs: "decision",
+    note: "a Host export no production code reaches is one of three things: a helper that only exists so a test can mock with it, which belongs in a test-support module; a production module whose own algorithm a test pins at its boundary, which the test declares by naming itself `.private.test.ts`; or a module an operator or build harness loads, which is counted as a harness read rather than as a finding. What is left names the declaring file, the symbol and every test that reaches it without declaring, so the fix is a decision about that export and not a line of the gate",
+  },
+  {
+    id: "commented-out code",
+    readsAs: "defect",
+    note: "each site is a line the compiler never reads; the fix is to delete that line, site by site",
+  },
+  {
+    id: "suppression directive",
+    readsAs: "defect",
+    note: "each site hides one specific defect from the compiler or the linter; the fix belongs at that defect, not at the directive",
+  },
+]);
+
+/**
+ * One module's export surface, read the way an importer sees it: the names it declares, the names it aliases
+ * from another module (`export { a } from`, and `export { a }` of a binding it imported), the modules whose
+ * whole surface it repeats (`export * from`), and what it imports (so a local `export { a }` list resolves to
+ * the module that declares `a`).
+ */
+function moduleSurface(sources, file) {
+  const sourceFile = sources.source(file);
+  const surface = { declared: new Map(), aliases: new Map(), stars: [], imports: new Map() };
+  for (const statement of sourceFile.statements) {
+    if (!ts.isImportDeclaration(statement) || !ts.isStringLiteral(statement.moduleSpecifier)) continue;
+    const clause = statement.importClause;
+    if (clause === undefined || clause.namedBindings === undefined || !ts.isNamedImports(clause.namedBindings))
+      continue;
+    for (const element of clause.namedBindings.elements)
+      surface.imports.set(element.name.text, {
+        specifier: statement.moduleSpecifier.text,
+        inner: (element.propertyName ?? element.name).text,
+      });
+  }
+  for (const statement of sourceFile.statements) {
+    if (ts.isExportDeclaration(statement)) {
+      const named =
+        statement.exportClause !== undefined && ts.isNamedExports(statement.exportClause)
+          ? statement.exportClause.elements
+          : null;
+      if (statement.moduleSpecifier === undefined) {
+        for (const element of named ?? []) {
+          const imported = surface.imports.get(element.name.text);
+          if (imported === undefined) surface.declared.set(element.name.text, statement);
+          else surface.aliases.set(element.name.text, imported);
+        }
+        continue;
+      }
+      if (!ts.isStringLiteral(statement.moduleSpecifier)) continue;
+      const specifier = statement.moduleSpecifier.text;
+      if (named === null) {
+        if (statement.exportClause === undefined) surface.stars.push(specifier);
+        continue;
+      }
+      for (const element of named)
+        surface.aliases.set(element.name.text, {
+          specifier,
+          inner: (element.propertyName ?? element.name).text,
+        });
+      continue;
+    }
+    const modifiers = ts.canHaveModifiers(statement) ? ts.getModifiers(statement) : undefined;
+    if (!(modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.ExportKeyword) ?? false)) continue;
+    if (ts.isFunctionDeclaration(statement) && statement.name !== undefined)
+      surface.declared.set(statement.name.text, statement);
+    if (ts.isClassDeclaration(statement) && statement.name !== undefined)
+      surface.declared.set(statement.name.text, statement);
+    if (ts.isInterfaceDeclaration(statement) || ts.isTypeAliasDeclaration(statement) || ts.isEnumDeclaration(statement))
+      surface.declared.set(statement.name.text, statement);
+    if (ts.isVariableStatement(statement))
+      for (const declaration of statement.declarationList.declarations)
+        if (ts.isIdentifier(declaration.name)) surface.declared.set(declaration.name.text, statement);
+  }
+  return surface;
+}
+
+/** The audited module a relative specifier names, or null when it names nothing the audit parses. */
+function resolveSpecifier(surfaces, from, specifier) {
+  if (!specifier.startsWith(".")) return null;
+  const base = resolve(dirname(from), specifier);
+  for (const candidate of [
+    base.replace(/\.js$/u, ".ts"),
+    base.replace(/\.js$/u, ".tsx"),
+    `${base}.ts`,
+    `${base}.tsx`,
+    join(base, "index.ts"),
+    join(base, "index.tsx"),
+  ])
+    if (surfaces.has(candidate)) return candidate;
+  return null;
+}
+
+/** Every name a module exposes to an importer, its star re-exports included. */
+function exposedNames(surfaces, file, seen = new Set()) {
+  if (seen.has(file)) return [];
+  seen.add(file);
+  const surface = surfaces.get(file);
+  const names = [...surface.declared.keys(), ...surface.aliases.keys()];
+  for (const specifier of surface.stars) {
+    const target = resolveSpecifier(surfaces, file, specifier);
+    if (target !== null) names.push(...exposedNames(surfaces, target, seen));
+  }
+  return names;
+}
+
+/** The module that declares what `file` exposes as `name`, following re-export barrels to the origin. */
+function declaringModule(surfaces, file, name, seen = new Set()) {
+  const key = `${file}#${name}`;
+  if (seen.has(key)) return null;
+  seen.add(key);
+  const surface = surfaces.get(file);
+  if (surface === undefined) return null;
+  if (surface.declared.has(name)) return file;
+  const alias = surface.aliases.get(name);
+  if (alias !== undefined) {
+    const target = resolveSpecifier(surfaces, file, alias.specifier);
+    return target === null ? null : declaringModule(surfaces, target, alias.inner, seen);
+  }
+  for (const specifier of surface.stars) {
+    const target = resolveSpecifier(surfaces, file, specifier);
+    if (target === null) continue;
+    const found = declaringModule(surfaces, target, name, seen);
+    if (found !== null) return found;
+  }
+  return null;
+}
+
+/**
+ * Every reference to an export, keyed by the module that declares it.
+ *
+ * A reference is an import that names it, a namespace import or dynamic import of the module that exposes it,
+ * or a type-position `import("…").Name`. A re-export is not one: a barrel is transparent, so a consumer of
+ * the barrel is recorded against the module that declares the symbol, which is what makes a test that imports
+ * through a facade read as a test consumer.
+ */
+function exportConsumers(sources, files, surfaces) {
+  const consumers = new Map();
+  const record = (declarer, name, from) => {
+    if (declarer === null) return;
+    const key = `${declarer}#${name}`;
+    if (!consumers.has(key)) consumers.set(key, new Set());
+    consumers.get(key).add(from);
+  };
+  const recordSurface = (target, from) => {
+    for (const name of exposedNames(surfaces, target)) record(declaringModule(surfaces, target, name), name, from);
+  };
+  for (const file of files) {
+    walk(sources.source(file), (node) => {
+      if (ts.isImportDeclaration(node) && ts.isStringLiteral(node.moduleSpecifier)) {
+        const target = resolveSpecifier(surfaces, file, node.moduleSpecifier.text);
+        if (target === null || node.importClause === undefined) return;
+        const clause = node.importClause;
+        if (clause.name !== undefined) record(declaringModule(surfaces, target, "default"), "default", file);
+        if (clause.namedBindings === undefined) return;
+        if (ts.isNamespaceImport(clause.namedBindings)) {
+          recordSurface(target, file);
+          return;
+        }
+        for (const element of clause.namedBindings.elements) {
+          const imported = (element.propertyName ?? element.name).text;
+          record(declaringModule(surfaces, target, imported), imported, file);
+        }
+        return;
+      }
+      if (
+        ts.isImportTypeNode(node) &&
+        ts.isLiteralTypeNode(node.argument) &&
+        ts.isStringLiteral(node.argument.literal) &&
+        node.qualifier !== undefined &&
+        ts.isIdentifier(node.qualifier)
+      ) {
+        const target = resolveSpecifier(surfaces, file, node.argument.literal.text);
+        const name = node.qualifier.text;
+        if (target !== null) record(declaringModule(surfaces, target, name), name, file);
+        return;
+      }
+      if (ts.isCallExpression(node) && node.expression.kind === ts.SyntaxKind.ImportKeyword) {
+        const argument = node.arguments[0];
+        if (argument === undefined || !ts.isStringLiteral(argument)) return;
+        const target = resolveSpecifier(surfaces, file, argument.text);
+        if (target !== null) recordSurface(target, file);
+      }
+    });
+  }
+  return consumers;
+}
+
+/**
+ * The `host/src` or `dialogue-web/src` module a harness specifier names.
+ *
+ * A harness reads the product two ways: the source, or the build of it (`host/dist`, `host/dist-test`,
+ * `dialogue-web/dist`), which is the same module compiled. Both name the declaring module; a comment that mentions
+ * `host/src/x.ts`, a step name in a workflow, or a local function that shares the symbol's name does not, and the
+ * caller only records a specifier it could resolve through here.
+ */
+function sourceBehindHarnessSpecifier(root, from, specifier, surfaces) {
+  if (!specifier.startsWith(".")) return null;
+  const target = relativeTo(root, resolve(dirname(from), specifier));
+  for (const [built, sourceRoot] of [
+    ["host/dist-test/", "host/src/"],
+    ["host/dist/", "host/src/"],
+    ["dialogue-web/dist/", "dialogue-web/src/"],
+    ["host/src/", "host/src/"],
+    ["dialogue-web/src/", "dialogue-web/src/"],
+  ]) {
+    if (!target.startsWith(built)) continue;
+    const tail = target.slice(built.length).replace(/\.(?:m?js|cjs)$/u, ".ts");
+    const candidate = join(root, ...(sourceRoot + tail).split("/"));
+    return surfaces.has(candidate) ? candidate : null;
+  }
+  return null;
+}
+
+/**
+ * The operator and build harnesses that read a Host module, recorded against the module that declares the symbol.
+ *
+ * `tools/` live-run harnesses, `host/scripts/` gates and `dialogue-web/scripts/` manifest builders are neither the
+ * product nor tests, and the reading's own name is what makes them matter: an export a harness loads is not a
+ * test-only export. They are recorded as consumers, so a module only a harness reads stops being a finding, and the
+ * count is printed beside the finding count rather than dropped.
+ */
+function recordHarnessConsumers(sources, surfaces, consumers) {
+  const record = (declarer, name, from) => {
+    if (declarer === null) return;
+    const key = `${declarer}#${name}`;
+    if (!consumers.has(key)) consumers.set(key, new Set());
+    consumers.get(key).add(from);
+  };
+  const files = new Set(
+    sources.harnessModules(
+      sources.path("tools"),
+      sources.path("host", "scripts"),
+      sources.path("dialogue-web", "scripts"),
+    ),
+  );
+  for (const file of files) {
+    walk(sources.source(file), (node) => {
+      if (ts.isImportDeclaration(node) && ts.isStringLiteral(node.moduleSpecifier)) {
+        const target = sourceBehindHarnessSpecifier(sources.root, file, node.moduleSpecifier.text, surfaces);
+        if (target === null || node.importClause === undefined) return;
+        const bindings = node.importClause.namedBindings;
+        if (bindings === undefined) return;
+        if (ts.isNamespaceImport(bindings)) {
+          for (const name of exposedNames(surfaces, target))
+            record(declaringModule(surfaces, target, name), name, file);
+          return;
+        }
+        for (const element of bindings.elements) {
+          const imported = (element.propertyName ?? element.name).text;
+          record(declaringModule(surfaces, target, imported), imported, file);
+        }
+        return;
+      }
+      if (
+        ts.isCallExpression(node) &&
+        (node.expression.kind === ts.SyntaxKind.ImportKeyword ||
+          node.expression.getText(sources.source(file)) === "require")
+      ) {
+        const argument = node.arguments[0];
+        if (argument === undefined || !ts.isStringLiteral(argument)) return;
+        const target = sourceBehindHarnessSpecifier(sources.root, file, argument.text, surfaces);
+        if (target === null) return;
+        // A dynamic import binds no name, so only an immediate destructure of it names what the harness reads.
+        const declaration = node.parent;
+        if (
+          declaration === undefined ||
+          !ts.isVariableDeclaration(declaration) ||
+          !ts.isObjectBindingPattern(declaration.name)
+        )
+          return;
+        for (const element of declaration.name.elements)
+          if (ts.isBindingElement(element))
+            record(
+              declaringModule(surfaces, target, (element.propertyName ?? element.name).text),
+              (element.propertyName ?? element.name).text,
+              file,
+            );
+      }
+    });
+  }
+  return files;
+}
+
+/**
+ * Whether `name` is used inside the module that declares it, anywhere other than the declaration itself.
+ *
+ * A name-level reading with no scope model, so a shadowing local of the same name would read as a use. It is
+ * asked only to withhold a finding - a module that names its own export ships it - so the approximation can
+ * cost a missed finding, never a reported one.
+ */
+function referencedInModule(sources, file, name, declaration) {
+  let found = false;
+  const isName = (node) => {
+    const parent = node.parent;
+    if (parent === undefined) return true;
+    if (parent.name === node) return true;
+    if (ts.isQualifiedName(parent) && parent.right === node) return true;
+    if (ts.isImportSpecifier(parent) || ts.isExportSpecifier(parent) || ts.isImportClause(parent)) return true;
+    return false;
+  };
+  const within = (node) => {
+    for (let current = node; current !== undefined; current = current.parent) if (current === declaration) return true;
+    return false;
+  };
+  walk(sources.source(file), (node) => {
+    if (found || !ts.isIdentifier(node) || node.text !== name || isName(node) || within(node)) return;
+    found = true;
+  });
+  return found;
+}
+
+/**
+ * What a `test-only export` finding says about its own case: whether a declaration exists and what withdrew it.
+ *
+ * There are three shapes and one message used to describe all of them as "none is named .private.test.ts", which was
+ * false for two: a sibling `.private.test.ts` can be pinning the export while a plain test beside it - or a
+ * test-support module's import - withdraws the declaration, and scaffolding cannot be renamed to declare because it is
+ * not a test. The reader of a finding needs the shape, so the message states it.
+ */
+function undeclaredReading(root, undeclared, users, file) {
+  const names = undeclared.map((user) => relativeTo(root, user)).join(", ");
+  const declarers = users.filter((user) => PRIVATE_TEST_PATH.test(user));
+  const module = relativeTo(root, file);
+  if (declarers.length === 0) {
+    if (!undeclared.every((user) => TEST_SCAFFOLDING_PATH.test(user)))
+      return `nothing declares that it pins this internal, and ${names} reach it without naming themselves .private.test.ts`;
+    return `a test-support module reaches this internal, and ${module} is not named internal, so nothing declares it`;
+  }
+  return `a .private.test.ts declares that it pins this internal, and ${names} withdraws that declaration by reaching it without the same name`;
+}
+
+function runHygiene(sources) {
+  const violations = [];
+  const notes = [];
+  const hostFiles = sources.files(sources.path(...HOST));
+  const webFiles = sources.files(sources.path(...WEB));
+  for (const file of [...hostFiles, ...webFiles]) {
+    const lines = readFileSync(file, "utf8").split("\n");
+    for (let index = 0; index < lines.length; index += 1) {
+      const line = lines[index];
+      if (SUPPRESSION.test(line)) {
+        violations.push({
+          rank: 4,
+          kind: "suppression directive",
+          where: `${relativeTo(sources.root, file)}:${index + 1}`,
+          message: `suppression directive ${JSON.stringify(line.trim().slice(0, 72))}; a compiler or linter silenced by hand hides the next defect`,
+        });
+      }
+      if (COMMENTED_CODE.test(line)) {
+        violations.push({
+          rank: 4,
+          kind: "commented-out code",
+          where: `${relativeTo(sources.root, file)}:${index + 1}`,
+          message: `commented-out code ${JSON.stringify(line.trim().slice(0, 72))}`,
+        });
+      }
+    }
+  }
+
+  // An export whose only readers are tests is a production path a test keeps alive: nothing ships it, and
+  // deleting the test would expose it as dead. The reading resolves each relative specifier to the module it
+  // names and counts a module's own use of its export, because the bare-name scan it replaces counted only
+  // `import` declarations: `MAX_PLAN_NODES` read by the file that declares it, with a test importing it, was
+  // reported as a production path with no production consumer. A re-export barrel is transparent here - a
+  // consumer of the barrel is recorded against the module that declares the symbol - so a barrel neither
+  // launders a test-only export nor hides a production one.
+  const audited = sources.allFiles(sources.path(...HOST), sources.path(...WEB));
+  const surfaces = new Map(audited.map((file) => [file, moduleSurface(sources, file)]));
+  const consumers = exportConsumers(sources, audited, surfaces);
+  const harnessFiles = recordHarnessConsumers(sources, surfaces, consumers);
+  let testOnly = 0;
+  let declaredPrivate = 0;
+  let declaredScaffolding = 0;
+  let harnessOnly = 0;
+  let examinedExports = 0;
+  for (const file of hostFiles) {
+    const sourceFile = sources.source(file);
+    for (const [name, declaration] of surfaces.get(file).declared) {
+      const users = [...(consumers.get(`${file}#${name}`) ?? [])].filter((user) => user !== file);
+      if (users.length === 0) continue;
+      examinedExports += 1;
+      const shipped = users.filter((user) => !TEST_PATH.test(user));
+      if (shipped.length > 0) {
+        if (shipped.every((user) => harnessFiles.has(user))) harnessOnly += 1;
+        continue;
+      }
+      if (referencedInModule(sources, file, name, declaration)) continue;
+      const undeclared = users.filter((user) => !PRIVATE_TEST_PATH.test(user));
+      if (undeclared.length === 0) {
+        declaredPrivate += 1;
+        continue;
+      }
+      // A test-support module reaches production internals on purpose and cannot rename itself to say so. The
+      // declaration therefore lives on the other side, in the reached module's own name - and only there, because a
+      // module that never said `internal` has not agreed that a test may reach into it. The consumer half is the same
+      // `TEST_SCAFFOLDING_PATH` the class already walks, so a fourth scaffolding spelling is picked up without an edit
+      // here; if the reach is by anything else, the finding stands.
+      if (undeclared.every((user) => TEST_SCAFFOLDING_PATH.test(user)) && INTERNAL_MODULE_PATH.test(file)) {
+        declaredScaffolding += 1;
+        continue;
+      }
+      testOnly += 1;
+      violations.push({
+        rank: 4,
+        kind: "test-only export",
+        where: at(sources.root, declaration, sourceFile, file),
+        message: `${name} is exported and no production code names it; ${undeclaredReading(sources.root, undeclared, users, file)}`,
+      });
+    }
+  }
+  const kinds = HYGIENE_KINDS.map((kind) => ({
+    ...kind,
+    count: violations.filter((violation) => violation.kind === kind.id).length,
+  }));
+  notes.push(
+    `hygiene: ${violations.length} finding(s) in ${kinds.filter((kind) => kind.count > 0).length} kind(s) across ${hostFiles.length + webFiles.length} source file(s); ${examinedExports} imported export(s) examined, ${testOnly} reached only from tests, ${declaredPrivate} declared as pinned by a .private.test.ts, ${declaredScaffolding} declared by a test-support module reaching a module that names itself internal, ${harnessOnly} reached only by an operator or build harness`,
+  );
+  for (const kind of kinds) notes.push(`hygiene: ${kind.id} (${kind.count}) reads as a ${kind.readsAs}: ${kind.note}`);
+  return { declared: hostFiles.length + webFiles.length, violations, notes };
+}
+
+// ---------------------------------------------------------------------------
+// Class: duplication
+// ---------------------------------------------------------------------------
+
+/**
+ * The verbs that name a *decision* in this tree: a function whose name begins with one of these
+ * answers a question the product asks in more than one place.
+ */
+const DECISION_VERB = /^(?:resolve|select|pick|decide|derive|should)[A-Z0-9_]/u;
+
+/**
+ * The surfaces this class counts separately, derived from the layout rather than typed.
+ *
+ * A surface is a workspace's `src` plus the first directory under it, so `host/src/tavern` and
+ * `dialogue-web/src/components` are different surfaces while `host/src` itself is the workspace's
+ * root modules. Deriving it means a new workspace, or a new top-level directory in one, becomes a
+ * counted surface the moment it exists; no constant here has to be kept in step with the tree.
+ */
+function surfaceOf(root, file) {
+  const parts = relativeTo(root, file).split("/");
+  const src = parts.indexOf("src");
+  if (src === -1) return parts.slice(0, -1).join("/");
+  return parts.length > src + 2 ? parts.slice(0, src + 2).join("/") : parts.slice(0, src + 1).join("/");
+}
+
+/** Every directory this class reads: a workspace `src`, found from the repository layout. */
+function workspaceSourceRoots(sources) {
+  const roots = [];
+  for (const entry of readdirSync(sources.root)) {
+    if (entry.startsWith(".") || entry === "node_modules") continue;
+    const source = join(sources.root, entry, "src");
+    if (existsSync(source) && statSync(source).isDirectory()) roots.push(source);
+  }
+  // The workspace globs also cover `packages/*`, whose `src` is one level deeper than a workspace's own.
+  const packages = join(sources.root, "packages");
+  if (existsSync(packages)) {
+    for (const entry of readdirSync(packages)) {
+      const source = join(packages, entry, "src");
+      if (existsSync(source) && statSync(source).isDirectory()) roots.push(source);
+    }
+  }
+  return roots.sort();
+}
+
+/**
+ * Whether a type member names the absence of an answer rather than an answer.
+ *
+ * `undefined` and `null` in a return type mean "there was nothing to return", which is not a state a
+ * caller chooses between: every call site handles it the same way, with one `?? fallback` or one
+ * early return. `selected | no_model | unreadable` names three states of the world, and a caller has
+ * to tell them apart - that is what this class counts.
+ */
+function namesAbsence(typeNode) {
+  if (typeNode.kind === ts.SyntaxKind.UndefinedKeyword || typeNode.kind === ts.SyntaxKind.NullKeyword) return true;
+  return ts.isLiteralTypeNode(typeNode) && typeNode.literal.kind === ts.SyntaxKind.NullKeyword;
+}
+
+/**
+ * How many distinct answers a declared answer admits, read from the declaration rather than from the
+ * function's body: `boolean` is two, a union of N answers is N, and a single structural answer (a paths
+ * object, one record) is one.
+ *
+ * This is what separates a *constructor* from a *decision*. `resolveRuntimePaths` answers exactly one
+ * shape, so a second caller cannot receive an answer the first did not - it is a pure name for one
+ * object, not a rule two places could state differently. `resolveSurfaceModelSelection` answers
+ * `selected | no_model | unreadable`, which is three outcomes a caller has to act on, and that is the
+ * kind of function a second call site can disagree about.
+ *
+ * An optional answer is one answer, not two. `resolveWindowsPowerShell` returns `string | undefined`,
+ * and `undefined` there is "this environment names no SystemRoot" - every one of its call sites then
+ * applies the same `?? "powershell.exe"`. A caller has nothing to choose, so there is no rule that two
+ * of them could state differently.
+ */
+function answerOutcomes(typeNode, sourceFile, seen = new Set()) {
+  if (typeNode === undefined || typeNode === null) return null;
+  if (typeNode.kind === ts.SyntaxKind.BooleanKeyword) return 2;
+  if (ts.isParenthesizedTypeNode(typeNode)) return answerOutcomes(typeNode.type, sourceFile, seen);
+  // Every answer of a union is one the caller has to tell apart, whatever shape it carries: a union of
+  // three discriminated object literals is three, not one. A union of one answer is a single answer,
+  // which is why the floor is 2 for a boolean and 1 for one member below.
+  if (ts.isUnionTypeNode(typeNode)) {
+    const answers = typeNode.types.filter((member) => !namesAbsence(member));
+    return Math.max(1, answers.length);
+  }
+  if (ts.isTypeReferenceNode(typeNode) && ts.isIdentifier(typeNode.typeName)) {
+    const name = typeNode.typeName.text;
+    if (
+      (name === "Promise" || name === "Readonly" || name === "PromiseLike") &&
+      typeNode.typeArguments?.[0] !== undefined
+    )
+      return answerOutcomes(typeNode.typeArguments[0], sourceFile, seen);
+    if (seen.has(name)) return 1;
+    const alias = sourceFile.statements.find(
+      (statement) => ts.isTypeAliasDeclaration(statement) && statement.name.text === name,
+    );
+    return alias === undefined ? 1 : answerOutcomes(alias.type, sourceFile, new Set([...seen, name]));
+  }
+  return 1;
+}
+
+/**
+ * The exported decision-verb functions of one module, with the outcomes their declaration admits.
+ * A `const`-bound arrow is read too, because this tree declares some deciders that way.
+ */
+function declaredDeciders(sources, file) {
+  const sourceFile = sources.source(file);
+  const found = [];
+  for (const statement of sourceFile.statements) {
+    const modifiers = ts.canHaveModifiers(statement) ? ts.getModifiers(statement) : undefined;
+    if (!(modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.ExportKeyword) ?? false)) continue;
+    if (
+      ts.isFunctionDeclaration(statement) &&
+      statement.name !== undefined &&
+      DECISION_VERB.test(statement.name.text)
+    ) {
+      found.push({
+        name: statement.name.text,
+        outcomes: answerOutcomes(statement.type, sourceFile),
+        where: at(sources.root, statement, sourceFile, file),
+      });
+      continue;
+    }
+    if (!ts.isVariableStatement(statement)) continue;
+    for (const declaration of statement.declarationList.declarations) {
+      if (!ts.isIdentifier(declaration.name) || !DECISION_VERB.test(declaration.name.text)) continue;
+      const initializer = declaration.initializer;
+      if (initializer === undefined) continue;
+      if (!ts.isArrowFunction(initializer) && !ts.isFunctionExpression(initializer)) continue;
+      found.push({
+        name: declaration.name.text,
+        outcomes: answerOutcomes(initializer.type, sourceFile),
+        where: at(sources.root, declaration, sourceFile, file),
+      });
+    }
+  }
+  return found;
+}
+
+/** A relative specifier resolved to the module this class parsed, or null. */
+function parsedSpecifier(parsed, from, specifier) {
+  if (!specifier.startsWith(".")) return null;
+  const base = resolve(dirname(from), specifier);
+  for (const candidate of [
+    base.replace(/\.js$/u, ".ts"),
+    base.replace(/\.js$/u, ".tsx"),
+    `${base}.ts`,
+    `${base}.tsx`,
+    join(base, "index.ts"),
+  ])
+    if (parsed.has(candidate)) return candidate;
+  return null;
+}
+
+/**
+ * The module that *declares* a decider a file exposes as `name`, following a re-export to its origin.
+ * A barrel is transparent: a consumer of the barrel is a consumer of the module that declares the rule,
+ * which is the only reading under which a re-export cannot launder a second decider.
+ */
+function decidingModule(parsed, deciders, file, name, seen = new Set()) {
+  const key = `${file}#${name}`;
+  if (seen.has(key)) return null;
+  seen.add(key);
+  if (deciders.has(file) && deciders.get(file).some((decider) => decider.name === name)) return file;
+  const sourceFile = parsed.get(file);
+  if (sourceFile === undefined) return null;
+  for (const statement of sourceFile.statements) {
+    if (!ts.isExportDeclaration(statement)) continue;
+    if (statement.moduleSpecifier === undefined || !ts.isStringLiteral(statement.moduleSpecifier)) continue;
+    const target = parsedSpecifier(parsed, file, statement.moduleSpecifier.text);
+    if (target === null) continue;
+    if (statement.exportClause !== undefined && ts.isNamedExports(statement.exportClause)) {
+      for (const element of statement.exportClause.elements) {
+        if ((element.propertyName ?? element.name).text !== name) continue;
+        const found = decidingModule(parsed, deciders, target, element.name.text, seen);
+        if (found !== null) return found;
+      }
+      continue;
+    }
+    const found = decidingModule(parsed, deciders, target, name, seen);
+    if (found !== null) return found;
+  }
+  return null;
+}
+
+/**
+ * Every call site of every exported decision-verb function, keyed by the module that declares the rule.
+ *
+ * A call is a `CallExpression` whose callee is an identifier bound to the decider, either imported from
+ * the declaring module (directly or through a barrel) or declared in the same file. That binding is what
+ * makes the reading a name resolution rather than a text scan: a method named `resolveX` on an unrelated
+ * object, and a local variable that happens to share the name, are both excluded by construction.
+ */
+function deciderCallSites(sources, parsed, deciders) {
+  const sites = new Map();
+  for (const [file, sourceFile] of parsed) {
+    const binding = new Map();
+    for (const statement of sourceFile.statements) {
+      if (!ts.isImportDeclaration(statement) || !ts.isStringLiteral(statement.moduleSpecifier)) continue;
+      if (statement.importClause === undefined) continue;
+      const target = parsedSpecifier(parsed, file, statement.moduleSpecifier.text);
+      if (target === null) continue;
+      const named = statement.importClause.namedBindings;
+      if (named === undefined || !ts.isNamedImports(named)) continue;
+      for (const element of named.elements) {
+        const imported = (element.propertyName ?? element.name).text;
+        const declarer = decidingModule(parsed, deciders, target, imported);
+        if (declarer !== null) binding.set(element.name.text, { declarer, name: imported });
+      }
+    }
+    if (binding.size === 0) continue;
+    walk(sourceFile, (node) => {
+      if (!ts.isCallExpression(node) || !ts.isIdentifier(node.expression)) return;
+      const bound = binding.get(node.expression.text);
+      if (bound === undefined) return;
+      if (bound.declarer === file) return;
+      const key = `${bound.declarer}#${bound.name}`;
+      if (!sites.has(key)) sites.set(key, []);
+      sites.get(key).push({ file, where: at(sources.root, node, sourceFile, file) });
+    });
+  }
+  return sites;
+}
+
+/**
+ * The deciders that are called from more than one module inside one surface, with those call sites.
+ *
+ * A rule consulted by several modules of one surface is a rule those modules each had to reach for;
+ * that is the shape a second implementation grows in. One caller per surface - the shape
+ * `resolveSurfaceModelSelection` has, one per Chat, Game and Preview - is exactly the pattern this looks
+ * for and does not report.
+ */
+function crowdedDeciders(sources, parsed, deciders) {
+  const sites = deciderCallSites(sources, parsed, deciders);
+  const crowded = [];
+  let consulted = 0;
+  for (const [key, calls] of sites) {
+    consulted += 1;
+    const [declarer, name] = key.split("#");
+    const perSurface = new Map();
+    for (const call of calls) {
+      const surface = surfaceOf(sources.root, call.file);
+      if (!perSurface.has(surface)) perSurface.set(surface, new Set());
+      perSurface.get(surface).add(call.file);
+    }
+    const over = [...perSurface].filter(([, callers]) => callers.size > 1);
+    if (over.length === 0) continue;
+    const decider = deciders.get(declarer).find((entry) => entry.name === name);
+    crowded.push({ declarer, name, decider, surfaces: over, calls });
+  }
+  return { crowded, consulted };
+}
+
+/**
+ * Whether a crowded decider's answer can carry two or more distinct outcomes, i.e. whether two call
+ * sites could disagree about it.
+ *
+ * This is the class's promotion criterion as a reading of the declaration: a decider answering one shape
+ * is a constructor, and a constructor cannot diverge - it names one object, so no caller receives an
+ * answer another did not. A decider answering `boolean`, or a union, is a rule a caller has to act on,
+ * and that is the shape a second call site can state differently.
+ */
+function canDiverge(decider) {
+  return decider.outcomes !== null && decider.outcomes >= 2;
+}
+
+function runDuplication(sources) {
+  const roots = workspaceSourceRoots(sources);
+  const files = roots.flatMap((root) => sources.files(root));
+  const parsed = new Map(files.map((file) => [file, sources.source(file)]));
+  const deciders = new Map();
+  for (const file of files) {
+    const declared = declaredDeciders(sources, file);
+    if (declared.length > 0) deciders.set(file, declared);
+  }
+  const { crowded, consulted } = crowdedDeciders(sources, parsed, deciders);
+  const declaredCount = [...deciders.values()].reduce((total, entries) => total + entries.length, 0);
+
+  const violations = [];
+  const constructors = [];
+  let diverging = 0;
+  for (const entry of crowded) {
+    const surfaces = entry.surfaces
+      .map(
+        ([surface, callers]) => `${surface} (${[...callers].map((file) => relativeTo(sources.root, file)).join(", ")})`,
+      )
+      .join("; ");
+    if (!canDiverge(entry.decider)) {
+      constructors.push(`${entry.name} (one outcome) -> ${surfaces}`);
+      continue;
+    }
+    diverging += 1;
+    violations.push({
+      rank: 3,
+      where: entry.calls[0].where,
+      message: `${entry.name} (${entry.declarer.slice(sources.root.length + 1).replaceAll("\\", "/")}) admits ${entry.decider.outcomes} outcomes and is called from more than one module inside a surface: ${surfaces}; ${entry.calls.map((call) => call.where).join(", ")}`,
+    });
+  }
+
+  const notes = [];
+  notes.push(
+    `duplication: ${declaredCount} exported decision-verb function(s) declared across ${files.length} source file(s), ${consulted} called from another module, ${crowded.length} called from more than one module inside one surface (${crowded.length - diverging} of them constructors)`,
+  );
+  if (constructors.length > 0)
+    notes.push(
+      `duplication: crowded by construction, cannot diverge - each answers exactly one outcome, so no two call sites can receive answers that disagree: ${constructors.join("; ")}`,
+    );
+  notes.push(
+    `duplication: promotion condition - this class is blocking for a crowded decider whose declared answer admits two or more answers a caller has to tell apart (a boolean, or a union of two or more members that are not the absence of an answer). It reports ${diverging} such decider(s) today, and every one of them is a finding that decides the run`,
+  );
+  notes.push(
+    "duplication: what it cannot see - two implementations with different names (nothing here reads intent), a decision inlined into a caller with no decider function at all, and a decider whose second consumer reaches it through an `export *` barrel with no `index.ts`, which the specifier resolver does not follow",
+  );
+  return { declared: declaredCount, violations, notes };
+}
+
+// ---------------------------------------------------------------------------
+// Classes: delegated gates
+// ---------------------------------------------------------------------------
+
+/**
+ * The gates that already own a reading this audit must not keep a second copy
+ * of. Each runs as its own process (they load TypeScript and the browser
+ * modules through `tsx`) and the audit lifts the failure names and the walked
+ * count out of their TAP output.
+ */
+const DELEGATED = Object.freeze([
+  {
+    id: "codes",
+    into: "codes",
+    file: "dialogue-web/tests/problem-code-gate.test.mjs",
+    tests: ["problem-code.8", "problem-code.9", "problem-code.10"],
+  },
+  { id: "catalogue", into: null, file: "dialogue-web/tests/i18n-parity-gate.test.mjs", tests: ["i18n.7"] },
+  { id: "prompt", into: null, file: "dialogue-web/tests/enum-leak-gate.test.mjs", tests: ["enum."] },
+  {
+    id: "promises",
+    into: null,
+    file: "dialogue-web/tests/memory-notebook-promise-gate.test.mjs",
+    tests: ["notebook-promise."],
+  },
+]);
+
+/** `not ok N - name` blocks from a TAP stream, with their message and the diagnostics. */
+function parseTap(output) {
+  const failures = [];
+  const diagnostics = [];
+  const lines = cleanOutputLines(output);
+  let current = null;
+  for (const line of lines) {
+    const failed = /^not ok \d+ - (.*)$/u.exec(line);
+    if (failed !== null) {
+      current = { name: failed[1], message: [] };
+      failures.push(current);
+      continue;
+    }
+    if (/^ok \d+ - /u.test(line) || /^\d+\.\.\d+$/u.test(line)) {
+      current = null;
+      continue;
+    }
+    if (line.startsWith("# ")) {
+      diagnostics.push(line.slice(2));
+      continue;
+    }
+    if (current === null) continue;
+    const message = /^\s+error: \|?-?$|^\s+message: (.*)$/u.exec(line);
+    if (message !== null) {
+      if (message[1] !== undefined) current.message.push(message[1]);
+      continue;
+    }
+    if (/^\s{4,}\S/u.test(line)) current.message.push(line.trim());
+  }
+  return {
+    failures: failures.map((failure) => ({ name: failure.name, message: failure.message.join("\n").trim() })),
+    diagnostics,
+  };
+}
+
+function runDelegated(sources, gate) {
+  if (!existsSync(sources.path(...gate.file.split("/"))))
+    return {
+      id: gate.id,
+      rank: 3,
+      title: "delegated gate",
+      declared: 0,
+      violations: [],
+      notes: [`${gate.id}: ${gate.file} is absent; the delegated reading did not run`],
+    };
+  const [packageDirectory] = gate.file.split("/");
+  const result = spawnSync(
+    process.execPath,
+    ["--import", "tsx", "--test", "--test-reporter=tap", gate.file.slice(packageDirectory.length + 1)],
+    { cwd: sources.path(packageDirectory), encoding: "utf8", timeout: 300_000, maxBuffer: 32 * 1024 * 1024 },
+  );
+  const output = `${result.stdout ?? ""}\n${result.stderr ?? ""}`;
+  const { failures, diagnostics } = parseTap(output);
+  const relevant = failures.filter((failure) => gate.tests.some((prefix) => failure.name.startsWith(prefix)));
+  const violations = relevant.map((failure) => ({
+    rank: 3,
+    where: `${gate.file} :: ${failure.name.split(":")[0]}`,
+    message: failure.message.length > 0 ? failure.message.slice(0, 900) : "gate failed",
+  }));
+  const walked = diagnostics
+    .filter((line) => gate.tests.some((prefix) => line.startsWith(`${prefix}:`)))
+    .map((line) => Number(/(\d+)/u.exec(line)?.[1] ?? "0"))
+    .reduce((total, value) => Math.max(total, value), 0);
+  const notes = [
+    `${gate.id}: delegated to ${gate.file} (${gate.tests.join(", ")}); ${failures.length} failing test(s) in that file, ${relevant.length} owned by this class`,
+  ];
+  if (result.error !== undefined) notes.push(`${gate.id}: the delegated gate could not run (${result.error.message})`);
+  return {
+    id: gate.id,
+    rank: 3,
+    title: `the gate that already owns this reading (${gate.file.split("/").at(-1)})`,
+    declared: walked,
+    violations,
+    notes,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// The audit
+// ---------------------------------------------------------------------------
+
+/**
+ * The readings whose findings print but do not fail the run, each with the ruling it awaits.
+ *
+ * Membership is per READING, not per class, and that is the point: a class is a rule, but a reading inside it is a
+ * defect or a decision, and the two deserve different answers. `hygiene` carries one of each - `test-only export` is
+ * findings of one pattern that one ruling settles, while `suppression directive` and `commented-out code` are site
+ * defects with none today, so those two block and cannot come back unnoticed.
+ *
+ * A reading belongs here for ONE reason: its findings are a ruling the owner has not taken, so a red from it would veto
+ * an unmade decision rather than report a defect this repository already holds wrong. It is not a licence for a rule
+ * that cannot read its own fixture - every rule here is proved clean-then-red-then-clean on the scratch tree.
+ *
+ * `test-only export`: three populations, and the reading separates them. A module that exists so a test can mock
+ * with it is scaffolding and belongs in a test-support module - `host/src/bridge.ts` was the member of that class and
+ * it moved. A production module whose own algorithm a test pins at its boundary is legitimate white-box testing, and
+ * the test says so by naming itself `*.private.test.ts`. A module an operator or build harness loads (`tools/`,
+ * `host/scripts/`, `dialogue-web/scripts/`, whether it names the source or its build) is not a test-only export
+ * either, and that count is printed beside this one. What remains is the export no product, harness or declaring test
+ * names. That count only became a reading when the importer detection was resolved (`759b588a`): the scan it replaced
+ * keyed importers by the bare name of an `import` declaration, so an export the declaring module itself names was
+ * reported as a path with no consumer, and a renamed import cleared the wrong symbol. 286 of the 287 findings that fix
+ * removed were that shape; the rest moved to the declaration a re-export list aliases. The class now resolves a
+ * relative specifier, treats a re-export barrel as transparent, and counts a module's own use of its export, and what
+ * the run prints as `reached only from tests` is that population - the number is the reading's, on every run, so it is
+ * never restated here. The note line beside it carries the count, the population it examined and how many of the
+ * exports are declared as pinned.
+ *
+ * Nothing else is listed. `read-path` left this list when the rule learned the namespaced schema reference the product
+ * writes (`e9efd15e`), and it reports `0 cap(s) that the projection can exceed`. `bounds`, `fields`, `routes`,
+ * `refusal`, `codes`, `prompt`, `promises` and `duplication` were each triaged to compare only what they can prove,
+ * so each blocks - `duplication` included, because its promotion condition is the finding itself (a crowded decider
+ * whose answer is a boolean or a union of two real answers), it reports zero of those today, and a red from it
+ * therefore names a defect rather than an unmade decision.
+ */
+export const ADVISORY_READINGS = Object.freeze(
+  [
+    {
+      className: "hygiene",
+      kind: "test-only export",
+      reason:
+        "three populations under one reading - scaffolding that belongs in a test-support module, a production module a test pins at its boundary and declares as `.private.test.ts`, and a module an operator or build harness loads - so the ruling is per export, and this reading reports the ones that carry none of the three",
+    },
+  ].map(Object.freeze),
+);
+
+/** Whether one finding is a reading an owner ruling is still pending on. */
+function advisoryReadingFor(className, kind) {
+  return ADVISORY_READINGS.find((entry) => entry.className === className && entry.kind === kind);
+}
+
+export const CLASSES = Object.freeze([
+  ...CLASS_IMPLEMENTATIONS,
+  { id: "codes", rank: 3, title: "every problem code is declared, produced, mirrored and named", run: runCodes },
+  { id: "routes", rank: 3, title: "every declared route has a handler and vice versa", run: runRoutes },
+  { id: "fields", rank: 3, title: "every declared field is produced and read", run: runFields },
+  { id: "catalogue", rank: 4, title: "every declared catalogue key is read or recorded", run: null },
+  { id: "prompt", rank: 4, title: "no rendered text carries an engineering artefact", run: runPrompt },
+  { id: "promises", rank: 4, title: "a promise names something reachable", run: runPromises },
+  { id: "hygiene", rank: 4, title: "no test-only production path, suppression or dead comment", run: runHygiene },
+  {
+    id: "duplication",
+    rank: 4,
+    title: "a decision-verb function is consulted by one module per surface",
+    run: runDuplication,
+  },
+]);
+
+// The gate `package.json` runs, and only that: a test that imports the class list must not run a whole audit
+// as a side effect of the import.
+if (process.argv[1] !== undefined && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) main();
