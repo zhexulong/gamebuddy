@@ -826,6 +826,10 @@ export function fixtureActions(action) {
   // a pass-out or a modal mid-move; travel is needed only if the actor starts
   // inside the FarmHouse.
   if (action === "scythe_crop") return ["equip_tool", "scythe_crop"];
+  // `sweep_scythe` names the tile to FACE and nothing else, so the fixture supplies what the action's own `tool:scythe`
+  // claim and its `self_walked` approach need: a plain scythe in the pack, the Farm, and the typed routes to reach a
+  // patch. The weed the run swings at is the world's own - published by `weedTargets` - and is never planted here.
+  if (action === "sweep_scythe") return ["move_to_tile", "travel", "sweep_scythe"];
   // The fixture keeps the Farm's own native Shipping Bin building and adds one
   // shippable Object to the backpack; production alone calls Farm.shipItem.
   if (action === "ship_item") return ["ship_item"];
@@ -1108,6 +1112,10 @@ export function fixtureScenario(actions, action) {
   if (actions.includes("dismount_transport")) return "native_dismount_transport_v1";
   if (actions.includes("enter_mine")) return "native_enter_mine_v1";
   if (actions.includes("scythe_crop")) return "native_scythe_crop_v1";
+  // `sweep_scythe` keys its Given on the ACTION, not on a family: its own capability set carries no per-tile verb, and
+  // the cut-weeds world is already the exact precondition set (a plain scythe in the pack, the actor on the Farm beside
+  // a native weed). Falling through to "" would arm the ordinary world, whose FarmHouse start has no patch at all.
+  if (action === "sweep_scythe") return "native_cut_weeds_v1";
   if (actions.includes("ship_item")) return "native_ship_item_v1";
   if (actions.includes("craft_item")) return "native_craft_item_v1";
   if (actions.includes("cook_recipe")) return "native_cook_recipe_v1";
