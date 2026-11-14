@@ -72,7 +72,7 @@ try {
       console.log(`STILL GREEN           ${m.name}`);
       allCaught = false;
     } else {
-      const failed = (r.out.match(/^× (?!failing)/gm) ?? []).length;
+      const failed = (r.out.match(/^✖ (?!failing)/gm) ?? []).length;
       console.log(`CAUGHT (${failed} failing)   ${m.name}`);
     }
     await writeFile(GATE, original);
