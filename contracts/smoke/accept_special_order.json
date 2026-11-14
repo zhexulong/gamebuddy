@@ -27,5 +27,9 @@
       "special_order_target_moved",
       "special_order_unavailable"
     ]
+  },
+  "unasserted": {
+    "evidence.orders_before": "the runner asserts Number(evidence.orders_after) - Number(evidence.orders_before) === 1, a delta between two receipt numbers; the format compares one key to one value",
+    "evidence.orders_after": "the runner asserts Number(evidence.orders_after) - Number(evidence.orders_before) === 1, a delta between two receipt numbers; the format compares one key to one value"
   }
 }

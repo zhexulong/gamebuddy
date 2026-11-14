@@ -16,5 +16,9 @@
     "inventory_postcondition": "true",
     "count_postcondition": "true",
     "native_menu_opened": "false"
+  },
+  "unasserted": {
+    "evidence.count_after": "the runner asserts Number(evidence.count_after) === Number(evidence.count_before) + 1, a delta between two receipt numbers; the format compares one key to one value",
+    "evidence.count_before": "the runner reads evidence.count_before only as the other side of that count_after === count_before + 1 delta, so pinning it to one literal would replace the relation with today's answer"
   }
 }

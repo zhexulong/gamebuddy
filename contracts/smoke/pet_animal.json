@@ -22,5 +22,9 @@
   },
   "worldAfter": [
     { "field": "petTargets", "excludesTarget": true }
-  ]
+  ],
+  "unasserted": {
+    "evidence.location": "the runner asserts evidence.location === before.location, the location the pre-action snapshot reported; the format compares one key to one literal, not to another observation",
+    "evidence.tile": "the runner asserts evidence.tile === `${target.x},${target.y}`; one $target.<field> substitution cannot build two fields into one string"
+  }
 }

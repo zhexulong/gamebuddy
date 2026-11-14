@@ -18,5 +18,13 @@
   ],
   "stale": {
     "refusedWith": ["museum_rewards_empty", "museum_reward_target_moved"]
+  },
+  "unasserted": {
+    "evidence.rewards_before": "the runner asserts evidence.rewards_before >= 1 and evidence.rewards_before === evidence.rewards_returned; the format compares one receipt key to one value",
+    "evidence.rewards_returned": "the runner compares evidence.rewards_returned with evidence.rewards_before, evidence.rewards_delivered and evidence.rewards_recorded; the format compares one key to one value",
+    "evidence.rewards_delivered": "the runner asserts evidence.rewards_delivered === evidence.rewards_returned, a relation between two receipt keys; the format compares one key to one value",
+    "evidence.rewards_recorded": "the runner asserts evidence.rewards_recorded === evidence.rewards_returned, a relation between two receipt keys; the format compares one key to one value",
+    "evidence.mail_flags_before": "the runner only checks that evidence.mail_flags_before parses as an integer, then orders evidence.mail_flags_after above it; a key read for an existence check has no form here",
+    "evidence.mail_flags_after": "the runner asserts evidence.mail_flags_after > evidence.mail_flags_before, an ordered comparison the format cannot write"
   }
 }
