@@ -8,9 +8,9 @@
  *                     script and the reading that now covers it, so an exemption cannot outlive its reason (this file)
  * red-proof: inject   a ladder member with no workflow step and no row -> `ladder_step_uncovered:<position>:<script>`,
  *                     exit 1 (this file)
- * red-proof: inject   a ladder step the reader cannot resolve (`node tools/x.mjs` in the ladder) -> the membership is
- *                     named rather than dropped, and a ladder that resolves no member at all is blocked, exit 2
- *                     (this file)
+ * red-proof: inject   a ladder step the reader cannot resolve (a `node` invocation where `pnpm <script>` belongs)
+ *                     -> the membership is named rather than dropped, and a ladder that resolves no member at all is
+ *                     blocked, exit 2 (this file)
  *
  * Every case drives the exported reading over a fixture tree or a fixture `scripts` table: the gate's population is
  * two documents (`package.json`, the workflow files), so a test that handed it a prepared answer would not exercise
