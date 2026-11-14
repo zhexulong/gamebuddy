@@ -32,6 +32,7 @@ import { fileURLToPath } from "node:url";
 
 import {
   auditGateRedProofs,
+  describeExecutionLine,
   describeGateCensus,
   describePopulationLine,
   evaluate,
@@ -59,12 +60,20 @@ function makeTree(files, packageExtra = {}) {
       scripts: {
         "check:a": "node tools/check-a.mjs",
         "check:aggregate": "pnpm check:a",
+        falsifiers: "node --test tools/check-a.test.mjs",
         build: "node tools/check-a.mjs",
       },
       ...packageExtra,
     }),
   );
-  write("tools/check-a.test.mjs", "// the falsifier suite\n");
+  // An executable falsifier: it reaches the gate and asserts the failure its marker names. A fixture whose suite only
+  // says "the falsifier suite" is a PROSE proof under the rule this suite exists to enforce, and every test that
+  // expects `proven` has to supply the code rather than a sentence.
+  write(
+    "tools/check-a.test.mjs",
+    'import assert from "node:assert/strict";\nimport { checkA } from "./check-a.mjs";\n' +
+      'export const probe = () => assert.equal(checkA("omitted"), "fixture_lane_missing_required_action");\n',
+  );
   for (const [path, contents] of Object.entries(files)) write(path, contents);
   git(root, "init", "-q");
   git(root, "add", "-A");
@@ -114,7 +123,7 @@ test("a recorded gap holds the ratchet, and recording it as proven again fails i
     // The baseline only tightens: an entry that is proven now cannot keep excusing the gate.
     writeFileSync(
       join(root, "tools/check-a.mjs"),
-      gateSource(marker("inject", "an omission -> the finding", "tools/check-a.test.mjs")),
+      gateSource(marker("inject", "an omission -> fixture_lane_missing_required_action", "tools/check-a.test.mjs")),
       "utf8",
     );
     const stale = evaluateAgainst(root, ["check:a", "check:aggregate"]);
@@ -150,7 +159,9 @@ test("a marker on a code line is not a marker, so a gate cannot satisfy itself",
 
 test("a proof that names a file which is not on disk is a dead claim the baseline cannot hold", () => {
   const root = makeTree({
-    "tools/check-a.mjs": gateSource(marker("inject", "an omission -> the finding", "tools/check-a-vanished.test.mjs")),
+    "tools/check-a.mjs": gateSource(
+      marker("inject", "an omission -> fixture_lane_missing_required_action", "tools/check-a-vanished.test.mjs"),
+    ),
   });
   try {
     const reading = auditGateRedProofs({ root });
@@ -409,6 +420,152 @@ test("an aggregate whose members are proven or external is external, and one wit
   }
 });
 
+// The fifth question: is the injection CODE, or is it a sentence? Two gates carrying the same claim - one whose suite
+// asserts the failure, one whose suite builds the string it asserts - must land in different buckets. This is the
+// "toy assertion" the rule exists to refuse: a suite that checks its own replacement proves nothing about the gate.
+test("a proof whose suite asserts the failure the claim names is executable; one that asserts its own string is prose", () => {
+  const claim = marker(
+    "inject",
+    "a lane set that omits an action -> fixture_lane_missing_required_action",
+    "tools/check-b.test.mjs",
+  );
+  const toy = [
+    'import assert from "node:assert/strict";',
+    // The marker itself names the failure. Read from a comment it would satisfy its own claim, which is why the suite's
+    // CODE lines are the only place the failure may appear.
+    "// red-proof: inject a lane set that omits an action -> fixture_lane_missing_required_action",
+    'const parts = ["fixture", "lane", "missing"];',
+    'assert.equal(parts.join("_"), "fixture_lane_missing");',
+    "",
+  ].join("\n");
+  const root = makeTree(
+    {
+      "tools/check-a.mjs": gateSource(
+        marker(
+          "inject",
+          "a lane set that omits an action -> fixture_lane_missing_required_action",
+          "tools/check-a.test.mjs",
+        ),
+      ),
+      "tools/check-b.mjs": gateSource(claim),
+      "tools/check-b.test.mjs": toy,
+    },
+    {
+      scripts: {
+        "check:a": "node tools/check-a.mjs",
+        "check:b": "node tools/check-b.mjs",
+        falsifiers: "node --test tools/check-a.test.mjs tools/check-b.test.mjs",
+      },
+    },
+  );
+  try {
+    const reading = auditGateRedProofs({ root });
+    assert.deepEqual(reading.execution.counts, { gates: 2, executable: 1, prose: 1, noSuite: 0, unexecuted: 0 });
+    assert.deepEqual(
+      reading.execution.prose.map((entry) => entry.gate),
+      ["check:b"],
+      "the suite that asserts its own joined string is the prose proof",
+    );
+    const findings = evaluate({ reading, baseline: { gates: [] } }).findings;
+    assert.deepEqual(codesFor(findings, "check:b"), ["red_proof_is_prose"]);
+    assert.deepEqual(codesFor(findings, "check:a"), [], "the suite that asserts the failure is executable");
+    // The finding has to say which claim, or the operator has to guess which of several sentences to convert.
+    assert.match(findings.find((finding) => finding.code === "red_proof_is_prose").detail, /fixture_lane_missing/u);
+    assert.match(
+      describeExecutionLine(reading.execution.counts),
+      /executable 1 · proof is prose 1 · no falsifier suite 0/u,
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+// The debt ledger for the reading above: recorded prose holds the ratchet, and a proof that becomes executable leaves
+// a stale entry behind. Without the second half an entry could outlive the conversion it exists to force.
+test("the execution baseline only shrinks: recorded prose holds, and a proof that becomes executable makes its entry stale", () => {
+  const claim = marker(
+    "inject",
+    "a lane set that omits an action -> fixture_lane_missing_required_action",
+    "tools/check-b.test.mjs",
+  );
+  const root = makeTree(
+    {
+      "tools/check-b.mjs": gateSource(claim),
+      "tools/check-b.test.mjs": 'assert.equal(["fixture", "lane"].join("_"), "fixture_lane");\n',
+    },
+    { scripts: { "check:b": "node tools/check-b.mjs", falsifiers: "node --test tools/check-b.test.mjs" } },
+  );
+  const record = { prose: ["check:b"], unexecuted: [] };
+  try {
+    const held = evaluate({
+      reading: auditGateRedProofs({ root }),
+      baseline: { gates: [] },
+      executionBaseline: record,
+    });
+    assert.deepEqual(held.findings, []);
+    assert.equal(held.heldProse, 1);
+
+    writeFileSync(
+      join(root, "tools/check-b.test.mjs"),
+      'assert.equal(checkB("omitted"), "fixture_lane_missing_required_action");\n',
+      "utf8",
+    );
+    const stale = evaluate({
+      reading: auditGateRedProofs({ root }),
+      baseline: { gates: [] },
+      executionBaseline: record,
+    });
+    assert.deepEqual(codesFor(stale.findings, "check:b"), ["execution_baseline_entry_stale"]);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+// `proven_but_nothing_runs` used to be a row printed beside the verdict: a gate whose falsifier no script and no workflow
+// runs was readable in principle and unread in practice. It is a finding now, naming the gate and the file.
+test("a proof file no runner runs is a finding that names the gate, and a runner naming it makes the entry stale", () => {
+  const claim = marker(
+    "inject",
+    "a lane set that omits an action -> fixture_lane_missing_required_action",
+    "tools/check-a.test.mjs",
+  );
+  const scripts = { "check:a": "node tools/check-a.mjs" };
+  const root = makeTree({ "tools/check-a.mjs": gateSource(claim) }, { scripts });
+  try {
+    const reading = auditGateRedProofs({ root });
+    assert.deepEqual(
+      reading.execution.unexecuted.map((entry) => entry.pointer),
+      ["tools/check-a.test.mjs"],
+      "no script and no workflow names the suite",
+    );
+    assert.match(describeExecutionLine(reading.execution.counts), /proof file nothing runs 1/u);
+    const findings = evaluate({ reading, baseline: { gates: [] } }).findings;
+    assert.deepEqual(codesFor(findings, "check:a"), ["red_proof_nothing_runs"]);
+    assert.match(
+      findings.find((finding) => finding.code === "red_proof_nothing_runs").detail,
+      /tools\/check-a\.test\.mjs/u,
+    );
+
+    // Recording it holds the ratchet, and a runner that starts naming the file makes the record stale.
+    const record = { prose: [], unexecuted: [{ gate: "check:a", pointer: "tools/check-a.test.mjs" }] };
+    assert.deepEqual(evaluate({ reading, baseline: { gates: [] }, executionBaseline: record }).findings, []);
+    writeFileSync(
+      join(root, "package.json"),
+      JSON.stringify({ scripts: { ...scripts, falsifiers: "node --test tools/check-a.test.mjs" } }),
+      "utf8",
+    );
+    git(root, "add", "package.json");
+    const stale = evaluate({
+      reading: auditGateRedProofs({ root }),
+      baseline: { gates: [] },
+      executionBaseline: record,
+    });
+    assert.deepEqual(codesFor(stale.findings, "check:a"), ["execution_baseline_entry_stale"]);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("the real tree: every gate file reaches a record or the published complement, and this audit shows its own red proof", () => {
   const reading = auditGateRedProofs({ root: REPOSITORY_ROOT });
   const claimed = new Set(reading.records.flatMap((record) => record.entryFiles));
@@ -443,6 +600,12 @@ test("the real tree: every gate file reaches a record or the published complemen
     reading.zeroPopulationPass.invisible.filter((file) => !reading.zeroPopulationPass.reporting.includes(file)),
     [],
   );
+  // The fifth reading on the real tree: its three buckets partition the gates that carry a proof, and neither the
+  // executable half nor the prose half may be a green zero - a reading that measured nothing agrees with itself.
+  const execution = reading.execution.counts;
+  assert.equal(execution.executable + execution.prose + execution.noSuite, execution.gates);
+  assert.ok(execution.gates > 0, "no gate carries a proof, so the execution reading measured nothing");
+  assert.ok(execution.executable > 0 && execution.prose + execution.noSuite > 0);
 });
 
 // Two lines print a population and both must say what the index removed from it. The first is the one an operator quotes,

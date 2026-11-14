@@ -83,6 +83,32 @@
  * the proven set, the gap count and the totals, and `--gaps` prints every gate still owing a proof.
  * The same shape as `tools/scripts/check-format-ratchet.mjs`, for the same reason.
  *
+ * THE FIFTH QUESTION: is the proof CODE, or is it a sentence? Measured 2026-11-14: of 373 gates carrying a
+ * readable marker, 79 described an injection nothing performs - the comment said "dropping the guard ->
+ * `finding_code`" and the suite it pointed at never contained `finding_code`, or there was no falsifier suite to point
+ * at all. The ledger could not tell, because a marker was read from a comment and a comment is prose by construction.
+ * This section makes the claim executable:
+ *
+ *   * the falsifier suite (the marker's `*.test.*` / `*.mutation.*` pointer, or a suite sitting beside the entry)
+ *     must contain, IN ITS OWN CODE - comment lines are stripped first, or a marker would satisfy itself - either
+ *     the failure the claim names after its arrow (a backticked fragment or a finding code), or a finding code the
+ *     gate's own source graph emits. When it contains neither, the injection was performed by hand once and the
+ *     comment is a story: `red_proof_is_prose:<gate>:<claim>`.
+ *   * a gate with no falsifier suite at all is `no_suite`, and it is the same finding - an artifact nothing can run.
+ *   * a proof whose suite no script and no workflow runs is `red_proof_nothing_runs:<gate>:<pointer>`. That used to
+ *     be a row printed beside the verdict and counted on a line; it is a finding now, because a gate nothing
+ *     executes is not a gate and the reader has to see which one.
+ *
+ * WHAT THIS IS NOT: an execution of the suite. It is a static reading of two files - the gate's graph and the
+ * suite's code - so a suite that asserts the right code with a stub beside it still reads as executable. `--run`
+ * executes the suites this reading trusts; the reading is what decides which those are.
+ *
+ * THE DEBT IS RECORDED, NOT ERASED. Writing 79 real injections would manufacture the illusion in the other
+ * direction, so the measured set goes into `tools/gate-red-proof-execution-baseline.json` - one array of prose gates,
+ * one of unexecuted proof files - and the ratchet over it only shrinks: a gate not recorded is a finding, and a
+ * recorded gate whose proof becomes executable (or whose file a runner starts running) has a stale entry that must
+ * go. The same discipline as the marker baseline above, for the same reason.
+ *
  * Usage:
  *   node tools/audit-gate-red-proofs.mjs              # the ratchet; exit 1 on a new or stale entry
  *   node tools/audit-gate-red-proofs.mjs --gaps       # every gate that still owes a red proof
@@ -93,6 +119,11 @@
  *
  * red-proof: inject  deleting a gate's marker in a synthetic tree -> `no_red_proof` names that gate, its
  *                    aggregate, and `baseline_entry_stale` for the entry the proof had closed
+ *                    (tools/audit-gate-red-proofs.test.mjs)
+ *
+ * red-proof: inject  a suite reduced to asserting its own joined string instead of the gate's code ->
+ *                    `red_proof_is_prose:check:b` names the claim, while the suite that imports the gate and
+ *                    asserts `fixture_lane_missing_required_action` stays executable
  *                    (tools/audit-gate-red-proofs.test.mjs)
  */
 import { spawnSync } from "node:child_process";
@@ -134,6 +165,26 @@ const MEMBER_SCRIPT = /(?:^|[\s"'&|]+)((?:audit|check|test):[\w:-]+)/gu;
 const REPORT_LITERAL = /JSON\.stringify\(\{[^}]*\bgate\b|\bgate["']?\s*:\s*["'`]/u;
 /** The population fields `tools/lib/assert-non-vacuous.mjs` reads: name none of them and a zero is invisible. */
 const POPULATION_FIELD = populationFieldPattern();
+/** A falsifier suite: the only kind of file whose content can perform an injection. */
+const SUITE_FILE = /\.(?:test|mutation)\.(?:mjs|ts|tsx|cjs)$/u;
+/** A finding code: two or more snake_case segments, which is the shape every gate in this tree prints. */
+const FINDING_CODE = /\b[a-z][a-z0-9]*(?:_[a-z0-9]+)+\b/gu;
+/** A marker's claim is `<violation> -> <what the gate then said>`; the second half is the half that must be code. */
+const CLAIM_ARROW = /\s*(?:-{1,2}>|→)\s*/u;
+/** A relative import, so a gate's rule can be followed out of its entry file into `tools/lib/`. */
+const RELATIVE_IMPORT = /(?:from\s+|import\(\s*)["'](\.{1,2}\/[^"']+)["']/gu;
+/** The recorded set of proofs measured as prose, and of proof files nothing runs. */
+const EXECUTION_BASELINE_PATH = "tools/gate-red-proof-execution-baseline.json";
+
+/** A file's lines with its commentary removed: a claim written in a comment cannot be the code that performs it. */
+const withoutCommentary = (text) =>
+  text
+    .split("\n")
+    .filter((line) => !COMMENT_LINE.test(line))
+    .join("\n");
+/** Whitespace collapsed, so a sentence the suite splits across lines is still one token to compare. */
+const oneLine = (text) => text.replace(/\s+/gu, " ");
+const findingCodes = (text) => new Set([...text.matchAll(FINDING_CODE)].map((match) => match[0]));
 
 const stripDecoration = (line) => line.replace(/^\s*(?:\/\*\*?|\*|\/\/|#|--)\s?/u, "").trim();
 
@@ -221,6 +272,104 @@ function siblingFalsifiers(root, entryFiles) {
     .filter((candidate) => existsSync(join(root, candidate)));
 }
 
+/**
+ * Every file the gate's rule lives in: its entry, plus the relative modules it imports, followed transitively.
+ *
+ * A gate is often a thin CLI over `tools/lib/<rule>.mjs`, and the finding code is emitted by the lib. Reading only the
+ * entry file reported `check:scope-references` as a prose proof while its suite asserted `out_of_scope_reference` on
+ * every other line - a warning about this reader, not about the proof.
+ */
+export function sourceGraph({ root, entry }) {
+  const seen = new Set();
+  const pending = [entry];
+  const texts = [];
+  while (pending.length > 0) {
+    const file = pending.shift();
+    if (file === undefined || seen.has(file)) continue;
+    seen.add(file);
+    const text = read(join(root, file));
+    if (text === null) continue;
+    texts.push(text);
+    for (const match of text.matchAll(RELATIVE_IMPORT)) {
+      const target = join(dirname(file), match[1]).replaceAll("\\", "/");
+      if (existsSync(join(root, target))) pending.push(target);
+    }
+  }
+  return texts.join("\n");
+}
+
+/**
+ * The failures a claim says the gate produced: the half after its arrow, as backticked fragments and finding codes.
+ *
+ * A fragment that is one camelCase identifier (`` `deriveInstruments` ``) names the subject, not the failure, so it is
+ * dropped: keeping it made a claim executable on the strength of the function name it mentioned. A fragment holding a
+ * `<placeholder>` or an ellipsis is dropped for the same reason - it names a shape, not the text a suite can assert.
+ */
+export function claimFailures(claim) {
+  const halves = claim.split(CLAIM_ARROW);
+  const said = halves.length > 1 ? halves.slice(1).join(" ") : claim;
+  const fragments = [...[...said.matchAll(/`([^`]+)`/gu)].map((match) => match[1]), ...said.matchAll(FINDING_CODE)].map(
+    (entry) => (typeof entry === "string" ? entry : entry[0]),
+  );
+  return fragments
+    .map((fragment) =>
+      fragment
+        .replace(/^\s*✖\s*/u, "")
+        .replace(/[.:,;]+$/u, "")
+        .replace(/\s+/gu, " ")
+        .trim(),
+    )
+    .filter(
+      (fragment) =>
+        fragment.length >= 8 &&
+        !fragment.includes("<") &&
+        (/\s/u.test(fragment) || /^[a-z][a-z0-9]*(?:_[a-z0-9]+)+$/u.test(fragment)),
+    );
+}
+
+/** The falsifier suites a gate's own record points at, whether the marker names them or they sit beside the entry. */
+function proofSuites(record) {
+  return [
+    ...new Set([
+      ...record.proofs.flatMap((proof) => proof.pointers).filter((pointer) => SUITE_FILE.test(pointer)),
+      ...record.owned.filter((file) => SUITE_FILE.test(file)),
+    ]),
+  ].sort();
+}
+
+/**
+ * Whether a gate's proof is performed by code, and if not, what is missing.
+ *
+ * `executable` needs one of two ties between the claim and the suite, and both are read from the suite's CODE lines:
+ *   - the failure the claim names after its arrow appears in the suite (`fixture_lane_missing_required_action`);
+ *   - a finding code the gate's own graph emits appears in the suite (the `tools/lib/` rule the entry delegates to).
+ * A suite that only builds the string it asserts satisfies neither, which is the "toy assertion" this reading exists
+ * to refuse. `no_suite` is a third answer, not a fourth: nothing can perform an injection there at all.
+ */
+function proofExecution({ root, record }) {
+  const suites = proofSuites(record);
+  const suiteText = suites.map((file) => read(join(root, file)) ?? "").join("\n");
+  const suiteCode = oneLine(withoutCommentary(suiteText));
+  const asserted = findingCodes(withoutCommentary(suiteText));
+  const entry = record.entryFiles[0];
+  // A gate that IS its suite has no separate failure vocabulary: its own file would trivially contain every code, so
+  // the only tie left is the failure its claim names. Any other gate is read through its import graph.
+  const vocabulary =
+    entry === undefined || SUITE_FILE.test(entry)
+      ? new Set()
+      : findingCodes(withoutCommentary(sourceGraph({ root, entry })));
+  const claims = record.proofs.map((proof) => {
+    const named = claimFailures(proof.claim).filter((failure) => suiteCode.includes(failure));
+    const shared = [...vocabulary].filter((code) => asserted.has(code));
+    return { ...proof, asserted: named[0] ?? shared[0] ?? null, executable: named.length > 0 || shared.length > 0 };
+  });
+  return {
+    suites,
+    claims,
+    verdict: suites.length === 0 ? "no_suite" : claims.some((claim) => claim.executable) ? "executable" : "prose",
+  };
+}
+
 /** The other gate scripts an aggregate gate runs; it has no rule of its own to prove. */
 function memberScripts(id, command, scriptNames) {
   return [...new Set([...command.matchAll(MEMBER_SCRIPT)].map((match) => match[1]))].filter(
@@ -252,10 +401,9 @@ function declaredRunnerText(root) {
  * every command that names a directory, because a tool that merely parses a tree (`depcruise ... tools`) is not what
  * the claim `nothing runs this` is about.
  */
-function isExecuted(pointer, runnerText, dotnetProjects) {
+function isExecuted(pointer, runnerText, runDirectories) {
   if (runnerText.includes(pointer)) return true;
-  if (!pointer.endsWith(".cs")) return false;
-  return dotnetProjects.some((directory) => pointer.startsWith(`${directory}/`));
+  return runDirectories.some((directory) => pointer.startsWith(`${directory}/`));
 }
 
 /** The project directories every `dotnet test`/`dotnet build` command in a runner names. */
@@ -263,6 +411,29 @@ function dotnetProjectDirectories(runnerText) {
   return [...runnerText.matchAll(/dotnet\s+(?:test|build)\s+([\w./-]+)/gu)]
     .map((match) => match[1].replace(/\/+$/u, ""))
     .map((project) => (project.endsWith(".csproj") ? project.slice(0, project.lastIndexOf("/")) : project));
+}
+
+/**
+ * The directories whose tests a package runner compiles: `pnpm --filter @gamebuddy/companion-host test` runs every test
+ * file under `host/`, the way `dotnet test <project>` compiles every C# file beneath it.
+ *
+ * Without this rule a proof pointing at `host/src/*.test.ts` read as executed by nothing while `pnpm test` had been
+ * running it on every run - the same false alarm the dotnet-project rule already fixed, one package later.
+ */
+function packageTestDirectories(root, runnerText) {
+  const directories = [];
+  const walk = (relative, depth) => {
+    const text = read(join(root, relative, "package.json"));
+    const name = text === null ? undefined : JSON.parse(text).name;
+    if (typeof name === "string" && runnerText.includes(`--filter ${name} test`))
+      directories.push(relative.replace(/\/+$/u, ""));
+    if (depth === 0) return;
+    for (const child of readdirSync(join(root, relative), { withFileTypes: true }))
+      if (child.isDirectory() && !["node_modules", "vendor", ".git", "dist", "ref"].includes(child.name))
+        walk(join(relative, child.name), depth - 1);
+  };
+  walk("", 3);
+  return directories;
 }
 
 /** One gate's record: what it owns, what it claims, and whether those claims can be read. */
@@ -364,8 +535,11 @@ export function auditGateRedProofs({ root = REPOSITORY_ROOT } = {}) {
   const scriptNames = new Set(scripts.map((gate) => gate.id));
   const runnerText = declaredRunnerText(root);
   const dotnetProjects = dotnetProjectDirectories(runnerText);
+  const runDirectories = [...dotnetProjects, ...packageTestDirectories(root, runnerText)];
   const declarations = declaredRedProofMarkers(root);
-  const records = gates.map((gate) => classify({ root, gate, scriptNames, runnerText, dotnetProjects, declarations }));
+  const records = gates
+    .map((gate) => classify({ root, gate, scriptNames, runnerText, dotnetProjects, declarations }))
+    .map((record) => ({ ...record, execution: proofExecution({ root, record }) }));
   const status = assignStatus(records);
   const gaps = records
     .filter((record) => !["proven", "external"].includes(status.get(record.id)))
@@ -392,6 +566,9 @@ export function auditGateRedProofs({ root = REPOSITORY_ROOT } = {}) {
         : [],
     ),
     zeroPopulationPass: zeroPopulationPass({ root, files }),
+    // The three answers to "is the proof code?": a suite that asserts the failure, a suite that does not, and no suite
+    // at all. Read once here, so the finding, the line and the ratchet cannot disagree about which gate is which.
+    execution: describeExecution({ root, records, runnerText, runDirectories }),
     gaps,
     // A claim that cannot be read is reported whatever the baseline says. Recording it would be
     // recording the disease: the baseline exists for gates with no proof, not for proofs nobody can check.
@@ -543,6 +720,74 @@ export function describePopulationLine({ population, proven, held, unproven, una
   );
 }
 
+/**
+ * The fifth reading, as one set of answers: which proofs are code, which are prose, which have nothing to run.
+ *
+ * `unexecuted` is about the proof's falsifier SUITE, not about every path a claim names: a marker usually points at the
+ * file it mutated (`dialogue-web/src/composed-problem-view.ts`), and nothing is supposed to run that file. The pointer
+ * reading stays on each record; what becomes a finding is the artifact that is meant to be run and is not.
+ */
+function describeExecution({ root, records, runnerText, runDirectories }) {
+  const counted = records.filter((record) => record.proofs.length > 0);
+  const prose = [];
+  const noSuite = [];
+  const unexecuted = [];
+  for (const record of counted) {
+    const proof = record.execution.claims.find((claim) => !claim.executable) ?? record.execution.claims[0];
+    if (record.execution.verdict === "prose")
+      prose.push({
+        gate: record.id,
+        claim: proof.claim,
+        detail:
+          `the claim at ${proof.file}:${proof.line} says ${JSON.stringify(proof.claim.slice(0, 100))}, but ` +
+          `${record.execution.suites.join(", ")} contains that failure nowhere in its own code - the injection was a ` +
+          "sentence, not a statement. Make the suite write the violating input and assert the code the gate then prints",
+      });
+    if (record.execution.verdict === "no_suite")
+      noSuite.push({
+        gate: record.id,
+        claim: proof.claim,
+        detail:
+          `the claim at ${proof.file}:${proof.line} names no falsifier suite and none sits beside ` +
+          `${record.entryFiles[0] ?? "its entry"}, so there is nothing for an injection to be performed by`,
+      });
+    for (const suite of record.execution.suites)
+      if (existsSync(join(root, suite)) && !isExecuted(suite, runnerText, runDirectories))
+        unexecuted.push({
+          gate: record.id,
+          pointer: suite,
+          detail: `the proof's falsifier ${suite} is named by no package.json script and no workflow, so nothing runs it`,
+        });
+  }
+  return {
+    counts: {
+      gates: counted.length,
+      executable: counted.filter((record) => record.execution.verdict === "executable").length,
+      prose: prose.length,
+      noSuite: noSuite.length,
+      unexecuted: unexecuted.length,
+    },
+    prose,
+    noSuite,
+    unexecuted,
+  };
+}
+
+/**
+ * The line that answers "is the proof code?" in the audit's own words, beside the census it belongs to.
+ *
+ * It is printed rather than folded into the census partition: every gate it counts is inside `with a red proof`, so a
+ * sixth bucket would count those gates twice and a reader who adds the line up would get a total larger than the
+ * population. The same reason `zero-population-pass` is printed beside the partition instead of in it.
+ */
+export function describeExecutionLine(counts) {
+  return (
+    `of the ${counts.gates} gate(s) with a red proof: executable ${counts.executable} · ` +
+    `proof is prose ${counts.prose} · no falsifier suite ${counts.noSuite} · ` +
+    `proof file nothing runs ${counts.unexecuted}`
+  );
+}
+
 /** One sentence naming what is wrong with a gate, for the operator who has to fix it. */
 function describeGap({ record, status }) {
   const verdict = status.get(record.id);
@@ -567,8 +812,18 @@ export function readBaseline(root) {
   return { gates: parsed.gates, note: parsed.note };
 }
 
+/** The recorded prose set and the recorded unexecuted files: the second ledger, same discipline as the first. */
+export function readExecutionBaseline(root) {
+  const text = read(join(root, EXECUTION_BASELINE_PATH));
+  if (text === null) return { prose: [], unexecuted: [] };
+  const parsed = JSON.parse(text);
+  if (!Array.isArray(parsed.prose) || !Array.isArray(parsed.unexecuted))
+    throw new Error("gate_red_proof_execution_baseline_malformed:prose,unexecuted");
+  return { prose: parsed.prose, unexecuted: parsed.unexecuted };
+}
+
 /** Why one run is red: a gap nobody recorded, a recorded gap that has closed, or an unreadable claim. */
-export function evaluate({ reading, baseline }) {
+export function evaluate({ reading, baseline, executionBaseline = { prose: [], unexecuted: [] } }) {
   const recorded = new Set(baseline.gates);
   const gaps = new Set(reading.gaps.map((gap) => gap.gate));
   const unreadable = new Set(reading.unreadableClaims.map((claim) => claim.gate));
@@ -589,6 +844,18 @@ export function evaluate({ reading, baseline }) {
       detail: gap.detail,
     });
   }
+  // The execution ratchet: a proof whose injection no code performs, or whose falsifier nothing runs, is a claim with
+  // no execution behind it. Recorded debt holds; a new one is a finding, and the recording only tightens.
+  const recordedProse = new Set(executionBaseline.prose);
+  const proseGates = [...reading.execution.prose, ...reading.execution.noSuite];
+  for (const entry of proseGates)
+    if (!recordedProse.has(entry.gate))
+      findings.push({ code: "red_proof_is_prose", gate: entry.gate, detail: entry.detail });
+  const unexecutedKey = (entry) => `${entry.gate} ${entry.pointer}`;
+  const recordedUnexecuted = new Set(executionBaseline.unexecuted.map(unexecutedKey));
+  for (const entry of reading.execution.unexecuted)
+    if (!recordedUnexecuted.has(unexecutedKey(entry)))
+      findings.push({ code: "red_proof_nothing_runs", gate: entry.gate, detail: entry.detail });
   for (const runner of reading.externalWithoutRunner)
     findings.push({
       code: "external_runner_not_invoked",
@@ -604,7 +871,29 @@ export function evaluate({ reading, baseline }) {
         gate,
         detail: "this gate is proven now (or no longer declared); delete its entry so the baseline only tightens",
       });
-  return { findings, held: reading.gaps.filter((gap) => recorded.has(gap.gate) && !unreadable.has(gap.gate)).length };
+  const liveProse = new Set(proseGates.map((entry) => entry.gate));
+  for (const gate of executionBaseline.prose)
+    if (!liveProse.has(gate))
+      findings.push({
+        code: "execution_baseline_entry_stale",
+        gate,
+        detail:
+          "this gate's proof is executable now (or no longer declared); delete its entry so the baseline only tightens",
+      });
+  const liveUnexecuted = new Set(reading.execution.unexecuted.map(unexecutedKey));
+  for (const entry of executionBaseline.unexecuted)
+    if (!liveUnexecuted.has(unexecutedKey(entry)))
+      findings.push({
+        code: "execution_baseline_entry_stale",
+        gate: entry.gate,
+        detail: `${entry.pointer} is run by a runner now; delete this entry so the baseline only tightens`,
+      });
+  return {
+    findings,
+    held: reading.gaps.filter((gap) => recorded.has(gap.gate) && !unreadable.has(gap.gate)).length,
+    heldProse: proseGates.filter((entry) => recordedProse.has(entry.gate)).length,
+    heldUnexecuted: reading.execution.unexecuted.filter((entry) => recordedUnexecuted.has(unexecutedKey(entry))).length,
+  };
 }
 
 /** Execute each declared falsifier suite; a proof whose suite has rotted is not a proof. */
@@ -684,13 +973,22 @@ function report({ reading, held, gaps, undeclared = 0 }) {
       `shared judge reads, so a zero in them is invisible: ` +
       `${zero.invisible.map((file) => file.replace(/^tools\//u, "")).join(", ")}\n`,
   );
-  if (gaps) for (const gap of reading.gaps) process.stdout.write(`  gap:${gap.gate} status=${gap.status}\n`);
-  for (const entry of reading.unexecutedProofs)
-    process.stdout.write(`  proven_but_nothing_runs:${entry.gate}:${entry.pointer}\n`);
+  process.stdout.write(`  ${describeExecutionLine(reading.execution.counts)}\n`);
+  if (gaps) {
+    for (const gap of reading.gaps) process.stdout.write(`  gap:${gap.gate} status=${gap.status}\n`);
+    for (const entry of reading.execution.prose) process.stdout.write(`  proof_is_prose:${entry.gate}\n`);
+    for (const entry of reading.execution.noSuite) process.stdout.write(`  proof_has_no_suite:${entry.gate}\n`);
+    for (const entry of reading.execution.unexecuted)
+      process.stdout.write(`  proof_file_nothing_runs:${entry.gate}:${entry.pointer}\n`);
+    for (const entry of reading.unexecutedProofs)
+      process.stdout.write(`  pointer_nothing_runs:${entry.gate}:${entry.pointer}\n`);
+  }
   process.stdout.write(
     `  ${reading.gaps.length} gate(s) still owe a red proof; ${held} of them are recorded in ${BASELINE_PATH}` +
-      `; ${reading.external.length} are external and ${reading.gaps.length + reading.external.length + reading.proven.length} ` +
-      `of ${population.total} are accounted for\n`,
+      `; ${reading.execution.counts.prose + reading.execution.counts.noSuite} carry a proof that is prose, ` +
+      `${reading.execution.counts.unexecuted} name a proof file nothing runs, and both are recorded in ` +
+      `${EXECUTION_BASELINE_PATH}; ${reading.external.length} are external and ` +
+      `${reading.gaps.length + reading.external.length + reading.proven.length} of ${population.total} are accounted for\n`,
   );
 }
 
@@ -715,11 +1013,27 @@ function main(argv) {
       )}\n`,
       "utf8",
     );
-    process.stdout.write(`gate_red_proof_baseline_recorded gates=${gates.length} into ${BASELINE_PATH}\n`);
+    const execution = {
+      schema: "gamebuddy-gate-red-proof-execution-baseline/v1",
+      note:
+        "Gates whose red proof is prose (no code performs the injection) and proofs whose falsifier no runner runs. " +
+        "A record of measured debt: delete an entry by making the suite inject and assert, never by recording another gate.",
+      prose: [...reading.execution.prose, ...reading.execution.noSuite].map((entry) => entry.gate).sort(),
+      unexecuted: reading.execution.unexecuted
+        .map((entry) => ({ gate: entry.gate, pointer: entry.pointer }))
+        .sort((left, right) => `${left.gate} ${left.pointer}`.localeCompare(`${right.gate} ${right.pointer}`)),
+    };
+    writeFileSync(join(root, EXECUTION_BASELINE_PATH), `${JSON.stringify(execution, null, 2)}\n`, "utf8");
+    process.stdout.write(
+      `gate_red_proof_baseline_recorded gates=${gates.length} into ${BASELINE_PATH}\n` +
+        `gate_red_proof_execution_baseline_recorded prose=${execution.prose.length} ` +
+        `unexecuted=${execution.unexecuted.length} into ${EXECUTION_BASELINE_PATH}\n`,
+    );
     return 0;
   }
   const baseline = readBaseline(root);
-  const { findings, held } = evaluate({ reading, baseline });
+  const executionBaseline = readExecutionBaseline(root);
+  const { findings, held } = evaluate({ reading, baseline, executionBaseline });
   // `undeclared` is the half the baseline does not cover: a gate with no red proof and no record saying it owes one.
   // It is the number the conformance suite fails on, so it is counted here once and read from the same reading there.
   // Unreadable claims and external labels with no invoked runner are findings of their own and are NOT counted as
@@ -728,7 +1042,16 @@ function main(argv) {
   const all = argv.includes("--run") ? [...findings, ...runProofSuites(root, reading.proven)] : findings;
   if (json) {
     process.stdout.write(
-      `${JSON.stringify({ ...reading, baseline: baseline.gates.length, findings: all }, null, 2)}\n`,
+      `${JSON.stringify(
+        {
+          ...reading,
+          baseline: baseline.gates.length,
+          executionBaseline: executionBaseline.prose.length,
+          findings: all,
+        },
+        null,
+        2,
+      )}\n`,
     );
     return all.length === 0 ? 0 : 1;
   }
@@ -740,7 +1063,9 @@ function main(argv) {
       "  fix: show the gate red on a real injected violation, then write it down in the gate or its falsifier as\n" +
         "       `red-proof: <inject|history|fixture|self-check> <the violation injected -> what the gate then said>`\n" +
         "       or, when the rule lives in another program, `red-proof: external <runner command> - <how it fails>`\n" +
-        "       with that command written the way package.json or a workflow invokes it\n",
+        "       with that command written the way package.json or a workflow invokes it\n" +
+        "       a `red_proof_is_prose` gate has the sentence and not the statement: make its falsifier write the\n" +
+        "       violating input and assert the code the gate then prints, so the injection is code rather than a claim\n",
     );
   return all.length === 0 ? 0 : 1;
 }
