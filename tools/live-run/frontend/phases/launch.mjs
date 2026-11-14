@@ -24,7 +24,12 @@ import { startWireCapture } from "../lib/wire-capture.mjs";
 
 const run = loadRunConfig({ runConfigFile: process.argv[2] });
 if (run === null) throw new Error(`run_config_unreadable:${process.argv[2]}`);
-const cdpPort = Number(process.argv[3] ?? process.env.GB_SHOTS_CDP_PORT ?? 9341);
+// The RUN CONFIG is the authority for the port: `--cdp-port` (or `GB_SHOTS_CDP_PORT`) is resolved once by
+// `run.mjs` and saved there, and every reader of the port - the capture phase, `cleanup`, and the run's own
+// leftovers assertion - reads the same saved value. Taking argv here first would let a hand-set port
+// diverge from the one the run recorded, measured 2026-11-15: `--cdp-port 9345` claimed 9341, so the
+// post-run assertion asked about a port the run never used.
+const cdpPort = Number(run.cdpPort ?? process.argv[3] ?? process.env.GB_SHOTS_CDP_PORT ?? 9341);
 const paths = runPaths(run);
 
 const LOG = paths.launchLog;
