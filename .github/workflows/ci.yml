@@ -344,6 +344,13 @@ jobs:
       - run: node tools/check-workflow-expressions.mjs
       - run: node --test tools/check-workflow-expressions.test.mjs
       - run: node tools/check-ci-coverage.mjs
+      # `check-ci-coverage` asks whether a gate script runs in a workflow. This asks the neighbouring question about
+      # the LADDER: `CONTRIBUTING.md` tells a developer to run `quality:check`, no job runs it, and nothing compared
+      # the two sets - so a ladder member no step covers was green locally and unenforced on the merge. A ladder
+      # member runs in CI, is derived by the `--run` step below, runs in no workflow and carries a registered reason
+      # (the row expires by itself when a step covers it), or this step fails naming it.
+      - run: pnpm check:local-ci-parity
+      - run: pnpm test:local-ci-parity
       # `check:draft-declaration-coverage` drives a mounted zone, and the prerequisite it declares is a Chromium the
       # checkout does not create. Without this the gate refuses with `playwright_browser_missing`, which reads in the
       # summary exactly like a real finding - the shape this repo keeps paying for.
