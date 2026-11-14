@@ -1,12 +1,7 @@
 {
   "gate": "derived-population",
-  "measured": "2026-11-13",
-  "rule": "One entry per surviving literal count. Identity is file + authority + literal - never the line - so a reformat is the same site and a third copy beside two is not. `line` is documentation only. The recorded residual may only shrink: `literal_population_baseline_stale` fails a site the tree no longer has, and `literal_population_baseline_grew` fails a site that gained copies.",
-  "shapes": {
-    "declaration_site": 6,
-    "call_result": 35,
-    "unresolved": 69
-  },
+  "measured": "2026-11-14",
+  "rule": "One entry per surviving literal count. Identity is file + authority + literal - never the line - so a reformat is the same site and a third copy beside two is not. `line` is documentation only. The recorded residual may only shrink: `literal_population_baseline_stale` fails a site the tree no longer has, and `literal_population_baseline_grew` fails a site that gained copies. Every entry's `reason` opens with one of `[derivable-now]` (an authority exists that both sides could read - the reason names the derivation), `[not-a-population]` (a character count, a guard, a ternary, or a recorder the test seeded - `new Set(actual)` has no members to print) or `[needs-a-decision]` (the two readings disagree about what the fact IS). An entry with no such verdict fails as `literal_population_baseline_unexplained`.",
   "sites": [
     {
       "file": "dialogue-web/tests/card-import-hidden-input.spec.ts",

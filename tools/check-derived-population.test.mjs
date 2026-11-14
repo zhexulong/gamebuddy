@@ -6,7 +6,13 @@ import { dirname, join, resolve } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
-import { auditDerivedPopulation, byFile, compareWithBaseline } from "./check-derived-population.mjs";
+import {
+  auditDerivedPopulation,
+  byFile,
+  compareWithBaseline,
+  RESIDUAL_BUCKETS,
+  verdictCounts,
+} from "./check-derived-population.mjs";
 import { describeMemberDiff, memberDiff } from "./lib/member-diff.mjs";
 
 // red-proof: inject  `assert.equal(list.length, 15)` into a test file -> `literal_population_assertion:
@@ -249,6 +255,7 @@ test("the CLI prints examined N and names the violation it found", async () => {
         "examined",
         "sites",
         "shapes",
+        "verdicts",
         "baselineSites",
         "setAside",
         "findings",
@@ -278,7 +285,8 @@ test("the per-file counts are what a lane receives", () => {
 
 test("the baseline records the residual, and a site it does not hold is new debt", () => {
   const site = { file: "a.test.ts", line: 3, literal: "2", authority: "SURFACES", shape: "declaration_site" };
-  const baseline = { sites: [{ ...site, sites: 1 }] };
+  const recorded = { ...site, sites: 1, reason: "[derivable-now] `SURFACES` is the table both sides can read" };
+  const baseline = { sites: [recorded] };
   assert.deepEqual(compareWithBaseline({ violations: [site], baseline }).findings, []);
   // The same site forty lines lower is the same site: identity is content, never position.
   assert.deepEqual(compareWithBaseline({ violations: [{ ...site, line: 43 }], baseline }).findings, []);
@@ -292,9 +300,60 @@ test("the baseline records the residual, and a site it does not hold is new debt
   assert.match(findings[0].message, /literal_population_assertion:a\.test\.ts:9:2/u);
 });
 
+test("a recorded site that states no verdict is unexplained, and fails", () => {
+  const site = { file: "a.test.ts", line: 3, literal: "2", authority: "SURFACES", shape: "declaration_site" };
+  for (const reason of [undefined, "", "   ", "an empty catch is a finding", "[closed] a tag nobody declared"]) {
+    const findings = compareWithBaseline({
+      violations: [site],
+      baseline: { sites: [{ ...site, sites: 1, reason }] },
+    }).findings;
+    assert.deepEqual(
+      findings.map((finding) => finding.code),
+      ["literal_population_baseline_unexplained"],
+      `reason ${JSON.stringify(reason)} must not be read as a verdict`,
+    );
+    assert.match(findings[0].message, /`SURFACES` is recorded with no verdict/u);
+    assert.match(findings[0].hint, /\[derivable-now\], \[not-a-population\], \[needs-a-decision\]/u);
+  }
+  for (const bucket of RESIDUAL_BUCKETS) {
+    const findings = compareWithBaseline({
+      violations: [site],
+      baseline: { sites: [{ ...site, sites: 1, reason: `[${bucket}] because` }] },
+    }).findings;
+    assert.deepEqual(findings, [], `${bucket} is a verdict this reading knows`);
+  }
+});
+
+test("the residual is counted per verdict, so the record is a measurement of each kind", () => {
+  const row = (authority, reason) => ({
+    file: "a.test.ts",
+    line: 0,
+    literal: "1",
+    authority,
+    shape: "unresolved",
+    sites: 1,
+    reason,
+  });
+  assert.deepEqual(
+    verdictCounts({
+      sites: [
+        row("A", "[derivable-now] an authority exists"),
+        row("B", "[not-a-population] a string's length"),
+        row("C", "[needs-a-decision] two readings"),
+        row("D", "[not-a-population] a guard"),
+      ],
+    }),
+    { "derivable-now": 1, "not-a-population": 2, "needs-a-decision": 1 },
+  );
+  assert.deepEqual(verdictCounts(null), { "derivable-now": 0, "not-a-population": 0, "needs-a-decision": 0 });
+});
+
 test("a recorded site the tree no longer has is stale, because the residual may only shrink", () => {
   const site = { file: "a.test.ts", line: 3, literal: "2", authority: "SURFACES", shape: "declaration_site" };
-  const findings = compareWithBaseline({ violations: [], baseline: { sites: [{ ...site, sites: 1 }] } }).findings;
+  const findings = compareWithBaseline({
+    violations: [],
+    baseline: { sites: [{ ...site, sites: 1, reason: "[derivable-now] ..." }] },
+  }).findings;
   assert.deepEqual(
     findings.map((finding) => finding.code),
     ["literal_population_baseline_stale"],
@@ -307,7 +366,7 @@ test("a recorded site that gained a copy fails, so two copies cannot hide behind
   const site = { file: "a.test.ts", line: 3, literal: "2", authority: "SURFACES", shape: "declaration_site" };
   const findings = compareWithBaseline({
     violations: [site, { ...site, line: 20 }],
-    baseline: { sites: [{ ...site, sites: 1 }] },
+    baseline: { sites: [{ ...site, sites: 1, reason: "[derivable-now] ..." }] },
   }).findings;
   assert.deepEqual(
     findings.map((finding) => [finding.code, finding.sites]),

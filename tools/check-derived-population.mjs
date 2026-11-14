@@ -50,26 +50,45 @@
  * nothing here binds, and a local helper that loads a product artifact (`const seams = loadSeams()`) all read as
  * TEST_BUILT or PRODUCT by the rules above and not by what they mean. That is the `unresolved` residual below.
  *
- * THE RESIDUAL IS RECORDED, NOT SILENCED (measured 2026-11-13, this tree):
+ * THE RESIDUAL IS RECORDED, NOT SILENCED (measured 2026-11-14, this tree):
  *
- *   examined 983 · sites 110 · findings 0 · baseline 95 entries · unread 1
- *   residual by shape: 6 declaration_site · 35 call_result · 69 unresolved
- *   set aside: 1098 test-built · 23 not-members
+ *   examined 1001 · sites 83 · findings 0 · baseline 74 entries · unread 1
+ *   residual by shape: 5 declaration_site · 30 call_result · 48 unresolved
+ *   residual by verdict: 34 derivable-now · 38 not-a-population · 2 needs-a-decision
+ *   set aside: 1106 test-built · 24 not-members
  *
- * Each shape is cl osable, and each failure message says which one it is:
+ * Each shape is closeable, and each failure message says which one it is:
  *
  *   declaration_site  the counted value is an import or a table this file declares at module level - close it by
  *                     deriving the members from that declaration. (`INTEGRATION_REQUIREMENTS`,
- *                     `PROMOTION_RESPONSIBILITIES`, `EXPECTED_EVIDENCE_KEYS`)
+ *                     `PROMOTION_RESPONSIBILITIES`)
  *   call_result       the value is a product function's output whose inputs name a product declaration - close it by
  *                     asserting the returned members against the declaration that fed the call.
  *   unresolved        the walk could not attribute the value - close it by naming the fixture the count belongs to, or by
  *                     teaching this reading that shape.
  *
- * `tools/derived-population-baseline.json` holds those 95 entries. The recorded residual MAY ONLY SHRINK: a site the
+ * EVERY ENTRY STATES WHICH KIND OF RESIDUE IT IS, in its own `reason`, opened with one of three verdicts. An entry that
+ * states none fails as `literal_population_baseline_unexplained`, because a record that cannot say why a row is there is
+ * indistinguishable from one nobody read:
+ *
+ *   [derivable-now]      an authority exists that both sides could read. The reason names the derivation; the row is debt
+ *                        with a known fix, and clearing it is the work.
+ *   [not-a-population]   there is no member set here to name: a string's character count, a control-flow or anti-vacuity
+ *                        guard, a ternary in a fixture builder, a recorder the test seeded itself, a b-tree read off the
+ *                        filesystem. `new Set(actual)` has nothing to print, so the gate's prescription cannot apply.
+ *   [needs-a-decision]   the two readings disagree about WHAT the fact is, not merely its value. Named so a later lane
+ *                        merges them only after deciding, instead of quietly collapsing one into the other.
+ *
+ * `tools/derived-population-baseline.json` holds those entries. The recorded residual MAY ONLY SHRINK: a site the
  * baseline does not hold is new debt and fails, a site that gained copies fails, and a site the tree no longer has is
  * `literal_population_baseline_stale` and fails. Identity is file + authority + literal, never the line, so a reformat
  * is the same site - a line-numbered identity reports a change that did not happen.
+ *
+ * THE `unread 1` IS A GRAMMAR GAP, named rather than hidden: `host/src/gameplay-task-subagent.private.test.ts` declares
+ * `catalogRegistrations: readonly import("./protocol.js").ActionRegistration[]` in a type alias, and the typescript wasm
+ * this seam loads rejects the inline import type - the tree carries one ERROR node at the closing brace of that alias, so
+ * every comparison in the file is invisible to this gate (including any frozen count). It is not a cleared residual: the
+ * file is reported as unread on every run, at HEAD as well as in the worktree, until the grammar reads that shape.
  *
  * WHAT IS READ, and why syntax rather than a grep: this file's own fixtures spell the defect inside string and template
  * literals, and a comment could spell it too. A line scanner cannot tell those from code, so the reading is the syntax
@@ -87,6 +106,12 @@
  *            and `examined 997`; removed, the same command reads `findings 0`. It read `findings 1` on
  *            `tools/check-spec-waiver-comments.test.mjs:110` - a site the injection did not create - until that
  *            count was derived from the comment lines the test builds. Measured 2026-11-13 on this checkout.
+ *
+ * red-proof: `--root` over a fixture whose baseline entry carries no `reason` reads `findings 1` and
+ *            `literal_population_baseline_unexplained:host/src/a.test.ts:3 — `list` is recorded with no verdict, so the
+ *            record cannot say whether it is debt or not one fact`; giving that entry
+ *            `reason: "[derivable-now] list is the seams table"` reads `findings 0 status passed` and
+ *            `residual by verdict: 1 derivable-now · 0 not-a-population · 0 needs-a-decision`. Measured 2026-11-14.
  *
  * Also injected, each seen red once (tools/check-derived-population.test.mjs): `assert.equal(list.length, 15)` on a
  * test file's own array, the same literal on the left of the assertion, a bare `list.length === 15`, two derived sides
@@ -708,6 +733,31 @@ export function shapeCounts(sites) {
 }
 
 /**
+ * The three verdicts a recorded site can carry, and the only ones: the enum the residual's `reason` opens with.
+ *
+ * `derivable-now`     an authority exists that both sides could read - the reason names the derivation.
+ * `not-a-population`  there is no member set to name - a character count, a guard, a fixture the test seeded.
+ * `needs-a-decision`  the two readings disagree about what the fact IS, so merging them is a decision, not a cleanup.
+ */
+export const RESIDUAL_BUCKETS = Object.freeze(["derivable-now", "not-a-population", "needs-a-decision"]);
+
+/** The verdict a recorded site's reason opens with, or `null` when it states none this reading recognises. */
+export function verdictOf(entry) {
+  const match = /^\[([a-z-]+)\]/u.exec(typeof entry.reason === "string" ? entry.reason.trim() : "");
+  return match !== null && RESIDUAL_BUCKETS.includes(match[1]) ? match[1] : null;
+}
+
+/** How many recorded sites of each verdict the baseline holds, so the residual is a measurement per kind. */
+export function verdictCounts(baseline) {
+  const counts = Object.fromEntries(RESIDUAL_BUCKETS.map((bucket) => [bucket, 0]));
+  for (const entry of baseline?.sites ?? []) {
+    const verdict = verdictOf(entry);
+    if (verdict !== null) counts[verdict] += 1;
+  }
+  return counts;
+}
+
+/**
  * A site's identity, which is content and never position: the file, the expression that produced the value, and the
  * literal. A reflow that moves the assertion down forty lines is the same site; a third copy beside two others is not.
  */
@@ -720,6 +770,25 @@ const siteKey = (site) => `${site.file}\u0000${site.authority}\u0000${site.liter
  */
 export function compareWithBaseline({ violations, baseline }) {
   if (baseline === null) return { findings: violations, baselineSites: 0 };
+  const findings = [];
+  for (const entry of baseline.sites) {
+    if (verdictOf(entry) !== null) continue;
+    findings.push({
+      code: "literal_population_baseline_unexplained",
+      file: entry.file,
+      line: 0,
+      literal: entry.literal,
+      authority: entry.authority,
+      operator: "baseline",
+      shape: entry.shape,
+      message:
+        `literal_population_baseline_unexplained:${entry.file}:${entry.literal} — \`${entry.authority}\` is recorded ` +
+        "with no verdict, so the record cannot say whether it is debt or not one fact",
+      hint:
+        `open the entry's \`reason\` with one of ${RESIDUAL_BUCKETS.map((bucket) => `[${bucket}]`).join(", ")} ` +
+        `in ${BASELINE_PATH}, and say why`,
+    });
+  }
   const current = new Map();
   for (const violation of violations) {
     const key = siteKey(violation);
@@ -727,7 +796,6 @@ export function compareWithBaseline({ violations, baseline }) {
     if (bucket === undefined) current.set(key, { site: violation, sites: [violation] });
     else bucket.sites.push(violation);
   }
-  const findings = [];
   const recorded = new Map();
   for (const entry of baseline.sites) recorded.set(siteKey(entry), entry);
 
@@ -819,14 +887,17 @@ function main(argv) {
   const json = argv.includes("--json");
   auditDerivedPopulation({ root })
     .then(({ examined, violations, unparsed, setAside }) => {
-      const { findings, baselineSites } = compareWithBaseline({ violations, baseline: readBaseline(root) });
+      const baseline = readBaseline(root);
+      const { findings, baselineSites } = compareWithBaseline({ violations, baseline });
       const status = statusOf({ examined, findings });
       const counts = shapeCounts(violations);
+      const verdicts = verdictCounts(baseline);
       const reading = {
         gate: "derived-population",
         examined,
         sites: violations,
         shapes: counts,
+        verdicts,
         baselineSites,
         setAside,
         findings,
@@ -840,6 +911,7 @@ function main(argv) {
             `baseline ${baselineSites} unread ${unparsed.length} status ${status}\n`,
         );
         process.stdout.write(`  residual by shape: ${shapeLine(counts)}\n`);
+        if (baseline !== null) process.stdout.write(`  residual by verdict: ${shapeLine(verdicts)}\n`);
         process.stdout.write(
           `  set aside: ${setAside[TEST_BUILT]} test-built · ${setAside[NOT_A_MEMBERS]} not-members\n`,
         );
