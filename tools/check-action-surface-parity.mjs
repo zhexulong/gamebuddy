@@ -28,10 +28,11 @@
  *                 whole-number ranges the same rows pin are `executionRequestIntegerBounds`, which the tool schema reads
  *                 rather than restating (`declaredIntegerArgument`).
  *   plan-grammar  `body-program-script.ts`: which actions a script may name at all, from the grammar's own published
- *                 admission rule (`PLAN_ACTION_LIFECYCLES` and `PLAN_ARGUMENT_TYPES`, applied in
+ *                 admission rule (`PLAN_ACTION_LIFECYCLES`, `PLAN_ARGUMENT_TYPES`, and the registry's
+ *                 `EXPRESSION_ONLY_ACTION_IDS` through `isExpressionOnlyAction`, applied in
  *                 `planActionsFromRegistrations`). Its per-action argument vocabulary is `declaredArgumentsOf(registration)`
  *                 - the same descriptor the catalog projects - so this gate reads THAT DEPENDENCY and blocks if the
- *                 grammar stops deriving from the descriptor, or adds a `continue` beside its two declared filters;
+ *                 grammar stops deriving from the descriptor, or adds a `continue` beside its three declared filters;
  *                 inventing a second copy of the names here would be the drift the gate exists to catch.
  *   tool-schema   `game-tools.ts`: the parameters each mounted Game Action tool declares, either inline
  *                 (`parameters: Type.Object({...})`) or from the descriptor (`buildCandidateToolSchema`), whose per-action
@@ -64,18 +65,36 @@
  * to the same set for the same action, and the only thing still blocked is a declaration this reader cannot read.
  *
  * THE LIFECYCLE RULE, per (action, surface): an action absent from a surface is `surface_silently_omits_action:<action>:
- * <surface>` unless a declaration says why. Two declarations exist and both are read, never restated:
+ * <surface>` unless TWO things hold - a declaration says why it is absent, and the action has a route to the actor
+ * somewhere else. Both are read, never restated:
  *   - `kind: "read_only"` - the wire, the Mod's execution reader and the Game Action tools all take EXECUTION actions;
  *     a read-only action (`observe_scene`, `inspect_world_map`, `find_destination`) is not one.
- *   - the grammar's own lifecycle and argument-type sets - `experimental` is not nameable in a plan, and neither is an
- *     action carrying an argument type the grammar's value contracts do not cover.
+ *   - the grammar's own admission rule - `experimental` is not nameable in a plan, an action carrying an argument type
+ *     the grammar's value contracts do not cover is not either, and neither is one the registry declares EXPRESSION-ONLY
+ *     (`EXPRESSION_ONLY_ACTION_IDS`), because a gesture is one step by nature and queues behind the plan's work steps.
  * That is precisely the `sweep_scythe` shape: `experimental`, present in three surfaces and absent from a fourth with
  * nothing recording the intent. A lifecycle is NOT a declaration for the tool surfaces - staging an experimental action is
  * an explicit mount (`isModDescriptorComplete`) and an omission is what this gate exists to name.
  *
+ * A DECLARATION IS ONLY AN EXCUSE WHILE THE ACTION HAS A ROUTE (2026-11-14). Until this pass the rule above was
+ * unconditional: `plan-grammar-lifecycle 4` and `expression-only 2` were printed as explained while nothing asked whether
+ * those actions could be reached at all. They can - `keepsOwnToolOnPlanSurface` (`host/src/action-registry.ts`) keeps a
+ * mounted tool for exactly the actions the plan cannot carry - but that was taken on faith, and a declaration that names
+ * no destination is how `sweep_scythe` disappeared: three surfaces, no tool, nothing said. So an omission keeps its
+ * declaration only while a route for the action is read out of the tool source; without one the surface is
+ * `surface_silently_omits_action:<action>:<surface>` again and the action is `action_has_no_route:<action>` once.
+ *
+ * THE ROUTE, per action, from the tool source this gate already reads - never from a list here:
+ *   - a per-action mount (`makeGameActionTool({...})`), labelled by its `name:` member;
+ *   - a hand-written constant tool whose `execute` names the one catalog action it performs - `stardew_read_scene` names
+ *     `observe_scene` through `readOnlyRefusal`, `stardew_inspect_world_map` and `stardew_find_destination` through
+ *     `operation:`. A block naming no catalog action, or more than one, is attributed to none: an unrouted action is loud,
+ *     a wrongly routed one hides the defect.
+ *
  * ZERO POPULATION IS BLOCKED, NEVER GREEN. `actions examined 0`, any surface that read nothing, and any reader that could
  * not resolve an action's argument set are all `blocked` (exit 2) with the authority named, and the run prints how many
- * actions came from EACH authority - so a shrinking catalog cannot look like a clean matrix.
+ * actions came from EACH authority - so a shrinking catalog cannot look like a clean matrix. It also prints how many
+ * actions have a route and how many have none: `with no route 0` beside `examined 0` is still blocked.
  *
 /**
  * WHAT THIS GATE DOES NOT COVER, said out loud so a green run is not read as covering it.
@@ -95,8 +114,9 @@
  * `express_emote` IS covered, and was one of the five: it is an action with an `emote` argument, its mount is conditional
  * on `isModDescriptorComplete`, and a mount that silently stops happening is `surface_silently_omits_action`.
  *
- * VERDICT. `actions examined N · surfaces S · pairs checked P`, then the population per authority, then the omission
- * declarations it used, then one line per finding. Exit 0 agree, 1 drift, 2 blocked.
+ * VERDICT. `actions examined N · surfaces S · pairs checked P`, then the population per authority, then
+ * `actions with a route M · with no route J`, then the omission declarations it used, then one line per action a route
+ * explains, then one line per finding. Exit 0 agree, 1 drift, 2 blocked.
  *
  * USAGE
  *   node tools/check-action-surface-parity.mjs            # the matrix; exit 1 on drift, 2 when blocked
@@ -108,8 +128,13 @@
  *   (tools/check-action-surface-parity.test.mjs)
  * red-proof: history  the pre-8c53105e tree, where the catalog carried `sweep_scythe` and no tool mounted it ->
  *   `surface_silently_omits_action:sweep_scythe:tool-schema` (tools/check-action-surface-parity.test.mjs)
+ * red-proof: inject  a per-action tool mount deleted -> `surface_silently_omits_action:put_item_in_fish_tank:
+ *   plan-grammar` and `action_has_no_route:put_item_in_fish_tank`, where the same tree answered `plan-grammar-lifecycle`
+ *   while that mount existed (tools/check-action-surface-parity.test.mjs)
+ * red-proof: inject  the grammar's expression filter replaced by a hand-written id test ->
+ *   `plan_grammar_vocabulary_not_descriptor_derived:undeclared_skip:*` (tools/check-action-surface-parity.test.mjs)
  * red-proof: inject  an argument deleted from a mount's `toArgs`, a key deleted from the wire declaration, an arm
- *   deleted from the Mod's switch, a `continue` added beside the grammar's two declared filters, a `toArgs` this reader
+ *   deleted from the Mod's switch, a `continue` added beside the grammar's declared filters, a `toArgs` this reader
  *   cannot enumerate, an argument deleted from the frozen table a forwarded mount names, and an empty source tree ->
  *   `surface_refuses_what_another_accepts:<action>:<argument>:tool-args:*`,
  *   `tool_args_disagrees_with_declaration:<action>`, `surface_silently_omits_action:<action>:wire|mod`,
@@ -129,9 +154,13 @@ export const PATHS = Object.freeze({
   planGrammar: "host/src/body-program-script.ts",
   toolSchema: "host/src/game-tools.ts",
   mod: "integrations/stardew/src/Core/Protocol/BridgeProtocol.cs",
-  // Not a surface: the argument tables a mounted tool FORWARDS by name. Read because `tool-args` must follow the
-  // declaration a mount names, and this file is where those declarations live.
+  // Not surfaces: the declarations a mounted tool FORWARDS by name, and the two files that decide which of the built
+  // tools the live Game surface really DELIVERS. Read because `tool-args` must follow the declaration a mount names, and
+  // because a tool that is built and never mounted is not a face the model can be handed.
   actionRegistry: "host/src/action-registry.ts",
+  planSurfaceComposition:
+    "host/src/continuity-semantic-game-runtime-materializer/continuity-semantic-game-runtime-materializer.ts",
+  planSurfaceFilter: "host/src/runtime-core.internal.ts",
 });
 
 /** The surfaces, in the order findings name them. Every one is read from its own declaration, never from a table here. */
@@ -143,6 +172,8 @@ export const CODES = Object.freeze({
   refuses: "surface_refuses_what_another_accepts",
   omits: "surface_silently_omits_action",
   disagrees: "tool_args_disagrees_with_declaration",
+  noRoute: "action_has_no_route",
+  notMeasured: "plan_surface_delivery_not_measured",
 });
 
 // ---------------------------------------------------------------------------
@@ -391,13 +422,18 @@ export function readModSurface(source) {
 /**
  * The plan grammar: which actions a script may name, and the vocabulary it derives for each.
  *
- * TWO FACTS, both declarations: the admission sets the grammar publishes (`PLAN_ACTION_LIFECYCLES`,
- * `PLAN_ARGUMENT_TYPES`) and the derivation its vocabulary comes from. The second is read as a dependency - the grammar
- * must still build each action's arguments out of `declaredArgumentsOf(registration)` - because a grammar that started
- * carrying its own copy of the names would make this gate's reading of it wrong in the one direction that matters, and a
- * blocked run is the only honest answer to that.
+ * THREE FACTS, all declarations: the admission sets the grammar publishes (`PLAN_ACTION_LIFECYCLES`,
+ * `PLAN_ARGUMENT_TYPES`), the expression declaration the registry owns (`EXPRESSION_ONLY_ACTION_IDS`, passed in because
+ * the grammar reads it through `isExpressionOnlyAction`), and the derivation its vocabulary comes from. The last is read
+ * as a dependency - the grammar must still build each action's arguments out of `declaredArgumentsOf(registration)` -
+ * because a grammar that started carrying its own copy of the names would make this gate's reading of it wrong in the one
+ * direction that matters, and a blocked run is the only honest answer to that.
+ *
+ * `expressionOnly` is the registry's list rather than a set of names here: null when that declaration cannot be read,
+ * which blocks. The grammar may reject an action for exactly three declared reasons, so the expression filter must call
+ * `isExpressionOnlyAction` and may not spell an id by hand - a hand-written id is an undeclared skip below.
  */
-export function readPlanGrammarSurface(source, catalog) {
+export function readPlanGrammarSurface(source, catalog, expressionOnly) {
   const text = stripComments(source);
   const problems = [];
   const lifecycles = frozenStringArray(text, "PLAN_ACTION_LIFECYCLES");
@@ -412,17 +448,26 @@ export function readPlanGrammarSurface(source, catalog) {
   ])
     if (builder === null || !builder.includes(required))
       problems.push(`plan_grammar_vocabulary_not_descriptor_derived:${required}`);
-  // The two filters are the WHOLE admission rule, so the loop may not skip a registration for any other reason: an extra
-  // `continue` is a hand-written vocabulary this reader cannot enumerate, and the honest answer to that is blocked rather
-  // than a matrix that silently stopped covering the actions it drops.
+  const expressionFiltered = builder?.includes("isExpressionOnlyAction(registration.actionId)") === true;
+  if (expressionOnly === null) problems.push("plan_grammar_expression_declaration_unreadable");
+  else if (expressionOnly.length > 0 && !expressionFiltered) problems.push("plan_grammar_expression_filter_missing");
+  // The declared filters are the WHOLE admission rule, so the loop may not skip a registration for any other reason: an
+  // extra `continue` is a hand-written vocabulary this reader cannot enumerate, and the honest answer to that is blocked
+  // rather than a matrix that silently stopped covering the actions it drops.
   for (const line of undeclaredSkips(builder)) problems.push(`plan_grammar_vocabulary_not_descriptor_derived:${line}`);
+  const expressionIds = expressionFiltered && expressionOnly !== null ? new Set(expressionOnly) : new Set();
   const admitted = new Map();
   const omittedForLifecycle = [];
+  const omittedForExpression = [];
   const omittedForArgumentType = [];
   for (const [actionId, entry] of catalog.actions) {
     if (entry.kind !== "execution") continue;
     if (lifecycles === null || !lifecycles.includes(entry.lifecycle)) {
       omittedForLifecycle.push(actionId);
+      continue;
+    }
+    if (expressionIds.has(actionId)) {
+      omittedForExpression.push(actionId);
       continue;
     }
     if (argumentTypes === null || ![...entry.types.values()].every((type) => argumentTypes.includes(type))) {
@@ -431,14 +476,35 @@ export function readPlanGrammarSurface(source, catalog) {
     }
     admitted.set(actionId, entry.arguments);
   }
-  return { actions: admitted, problems, lifecycles, argumentTypes, omittedForLifecycle, omittedForArgumentType };
+  return {
+    actions: admitted,
+    problems,
+    lifecycles,
+    argumentTypes,
+    expressionOnly: [...expressionIds],
+    omittedForLifecycle,
+    omittedForExpression,
+    omittedForArgumentType,
+  };
 }
 
 /**
- * The `continue` statements in `planActionsFromRegistrations` that are not one of its two declared filters.
+ * The expression-only declaration the grammar reads, from the registry that owns it.
+ *
+ * Null rather than an empty list when it cannot be read or reads empty: `no action is expression-only` and `this reader
+ * lost the declaration` are different facts, and only the first one may be green.
+ */
+export function readExpressionOnlyIds(source) {
+  const names = frozenStringArray(stripComments(source ?? ""), "EXPRESSION_ONLY_ACTION_IDS");
+  return names === null || names.length === 0 ? null : names;
+}
+
+/**
+ * The `continue` statements in `planActionsFromRegistrations` that are not one of its three declared filters.
  *
  * Line-scoped on purpose: a guard the formatter split over four lines is reported rather than guessed at, because the
- * failure this protects against is a reader believing it enumerated a vocabulary it did not.
+ * failure this protects against is a reader believing it enumerated a vocabulary it did not. The expression filter is
+ * allowed by its CALL, not by a name list: it may only reach the registry's declaration.
  */
 function undeclaredSkips(builder) {
   if (builder === null) return [];
@@ -448,14 +514,20 @@ function undeclaredSkips(builder) {
   if (close < 0) return [];
   return splitTopLevel(builder.slice(open + 1, close), "\n")
     .filter((line) => /\bcontinue;/u.test(line))
-    .filter((line) => !/PLAN_ACTION_LIFECYCLES\.includes\(|PLAN_ARGUMENT_TYPES\.includes\(/u.test(line))
+    .filter(
+      (line) =>
+        !/PLAN_ACTION_LIFECYCLES\.includes\(|PLAN_ARGUMENT_TYPES\.includes\(|isExpressionOnlyAction\(registration\.actionId\)/u.test(
+          line,
+        ),
+    )
     .map((line) => `undeclared_skip:${line.trim()}`);
 }
 
 /**
- * The tool surface, read one layer at a time: what each mounted tool's `parameters` DECLARE, and what its `toArgs`
- * FORWARDS. They are separate because they fail separately - a declared argument the projector drops is accepted from the
- * model and thrown away, and a forwarded argument no parameter declares can never be filled.
+ * The tool surface, read one layer at a time: what each mounted tool's `parameters` DECLARE, what its `toArgs`
+ * FORWARDS, and which actions have a route at all. They are separate because they fail separately - a declared argument
+ * the projector drops is accepted from the model and thrown away, a forwarded argument no parameter declares can never be
+ * filled, and an action with no route is an intent the companion can form and never carry out.
  *
  * Mounts arrive in two shapes and both are read: an inline `parameters: Type.Object({...})`, and a schema built from the
  * descriptor (`buildCandidateToolSchema`), whose per-action arms are override constraints and whose fallback is the
@@ -473,6 +545,8 @@ export function readToolSurface(source, catalog, argumentDeclarations = "") {
   if (loops.length === 0) problems.push("tool_schema_loop_mounts_unreadable");
   const declaredByAction = new Map();
   const forwardedByAction = new Map();
+  const routes = new Map();
+  const actionMounts = [];
   for (const mount of text.matchAll(/makeGameActionTool\(\{/gu)) {
     const open = mount.index + mount[0].length - 1;
     const close = balancedEnd(text, open);
@@ -480,6 +554,7 @@ export function readToolSurface(source, catalog, argumentDeclarations = "") {
       problems.push("tool_mount_unterminated");
       continue;
     }
+    actionMounts.push({ start: open, end: close });
     const block = text.slice(open + 1, close);
     const literal = /\baction:\s*"([a-z0-9_]+)"/u.exec(block)?.[1];
     const enclosing = loops.find((loop) => loop.start < mount.index && mount.index < loop.end);
@@ -490,10 +565,12 @@ export function readToolSurface(source, catalog, argumentDeclarations = "") {
     }
     const parameters = declaredToolParameters(block, arms, catalog, identity);
     const declaration = forwardedArgumentDeclaration(block);
+    const route = mountToolName(block);
     for (const id of ids) {
       if (parameters === null) problems.push(`tool_schema_parameters_unreadable:${id}`);
       else if (declaredByAction.has(id)) problems.push(`tool_mounted_twice:${id}`);
       else declaredByAction.set(id, parameters);
+      routes.set(id, route ?? "tool_name_unreadable");
       const forwarded = forwardedArguments(declaration, id, catalog, tables);
       if (forwarded !== null) forwardedByAction.set(id, forwarded);
       else if (declaration?.kind === "table")
@@ -501,8 +578,56 @@ export function readToolSurface(source, catalog, argumentDeclarations = "") {
       else problems.push(`tool_args_unreadable:${id}`);
     }
   }
+  for (const [id, route] of constantToolRoutes(text, catalog, actionMounts)) if (!routes.has(id)) routes.set(id, route);
   if (declaredByAction.size === 0) problems.push("tool_schema_mounts_empty");
-  return { actions: declaredByAction, forwarded: forwardedByAction, problems, identity };
+  return { actions: declaredByAction, forwarded: forwardedByAction, problems, identity, routes };
+}
+
+/**
+ * The tool name a mount declares, as written: a literal, the closed projection, or the loop's index.
+ *
+ * Null when the member is not one of those - a name this reader cannot attribute is still a mount, so the route is
+ * recorded as unreadable rather than dropped: the point of the reading is that a route exists, and hiding a mount this
+ * reader failed to name would turn a naming gap into a silently missing capability.
+ */
+function mountToolName(block) {
+  const literal = /\bname:\s*"([^"]+)"/u.exec(block)?.[1];
+  if (literal !== undefined) return literal;
+  const projected = /\bname:\s*STARDEW_ACTION_TOOL_NAMES\.([a-z0-9_]+)/u.exec(block)?.[1];
+  if (projected !== undefined) return `STARDEW_ACTION_TOOL_NAMES.${projected}`;
+  const indexed = /\bname:\s*STARDEW_ACTION_TOOL_NAMES\[([^\]]*)\]/u.exec(block)?.[1];
+  return indexed === undefined ? null : `STARDEW_ACTION_TOOL_NAMES[${indexed}]`;
+}
+
+/**
+ * The hand-written constant tools that reach one catalog action each, keyed by that action.
+ *
+ * `stardew_read_scene`, `stardew_inspect_world_map` and `stardew_find_destination` are the read-only tools: they take no
+ * descriptor and forward no argument list, so they are not `makeGameActionTool` mounts and the argument matrix above
+ * never sees them. Without this reading the catalog's three `read_only` actions would have no route at all, every
+ * `read_only` declaration would name nothing, and the `with no route` population would be three actions nobody could
+ * fix. The action is read from the block's own statement of what it performs - `readOnlyRefusal("observe_scene")` for
+ * the scene, `operation: "inspect_world_map"` for the two navigation reads - and a block that names no catalog action,
+ * or more than one, is a route for none of them.
+ */
+function constantToolRoutes(text, catalog, actionMounts) {
+  const routes = new Map();
+  const starts = [...text.matchAll(/\bdefineTool\(\{/gu)].map((match) => match.index);
+  for (const [index, start] of starts.entries()) {
+    if (actionMounts.some((mount) => mount.start <= start && start < mount.end)) continue;
+    const end = index + 1 < starts.length ? starts[index + 1] : text.length;
+    const block = text.slice(start, end);
+    const named = [
+      ...new Set(
+        [...block.matchAll(/readOnlyRefusal\(\s*"([a-z0-9_]+)"|operation:\s*"([a-z0-9_]+)"/gu)]
+          .map((match) => match[1] ?? match[2])
+          .filter((id) => catalog.actions.has(id)),
+      ),
+    ];
+    if (named.length !== 1) continue;
+    routes.set(named[0], mountToolName(block) ?? "tool_name_unreadable");
+  }
+  return routes;
 }
 
 /**
@@ -645,14 +770,92 @@ function forwardedArguments(declaration, actionId, catalog, tables) {
 }
 
 // ---------------------------------------------------------------------------
+// What the live Game surface DELIVERS, as opposed to what the adapter builds
+// ---------------------------------------------------------------------------
+
+/**
+ * Which action tools the plan surface mounts, read from the composition and the filter it applies.
+ *
+ * WHY THIS IS A READING OF ITS OWN. `tool-schema`/`tool-args` above are the tools the adapter BUILDS. The live Game
+ * composition declares `planActionSurface: true as const` and then mounts only the tools its filter keeps, so for every
+ * action the plan vocabulary carries, the built flat tool is never handed to the model - a green argument face over it
+ * certifies a surface nobody sees. This reading says which tools really reach the actor, and the route an action omitted
+ * from the plan must have is read HERE, from the composition, not from the built set: measured on the pre-58ca1f73 tree,
+ * the filter kept no action tool at all, so seven committed actions were built, advertised, and reachable by nothing.
+ *
+ * NOT IMPORTED, BECAUSE IT CANNOT BE. `import`ing `host/src/action-registry.ts` from this Node script fails on its
+ * `./protocol.js` specifier (the Host compiles to that specifier; this reader has no compiler). So the predicate is read
+ * as the TWO DECLARATIONS it composes - `EXPRESSION_ONLY_ACTION_IDS` and the plan vocabulary - and its own body is
+ * checked to still be that composition. A filter or a predicate of any other shape is `not_measured` with the reason
+ * printed, never a guess, and then the built set is the only route this gate can vouch for and it says so.
+ *
+ * Returns `delivered` as null when the composition declares the plan surface and the filter is not one of the two shapes
+ * this reader knows; `problems` carries the reason either way.
+ */
+export function readPlanSurfaceDelivery({
+  composition,
+  filter,
+  registry,
+  actionIds,
+  planCarried,
+  expressionOnly,
+  hasTool,
+}) {
+  const problems = [];
+  const declared = /planActionSurface:\s*true/u.test(stripComments(composition ?? ""));
+  const built = actionIds.filter((actionId) => hasTool(actionId));
+  if (!declared) return { declared, delivered: new Set(built), problems };
+  const runtime = stripComments(filter ?? "");
+  const at = runtime.indexOf("const actionToolsToMount");
+  if (at < 0) return { declared, delivered: null, problems: ["plan_surface_filter_not_found"] };
+  const block = runtime.slice(at, at + 800);
+  if (/keepsOwnToolOnPlanSurface\(/u.test(block)) {
+    const predicate = functionBody(stripComments(registry ?? ""), "keepsOwnToolOnPlanSurface");
+    const twoDeclarations =
+      predicate !== null &&
+      /isExpressionOnlyAction\(actionId\)\s*\|\|\s*!\s*planActionIds\.has\(actionId\)/u.test(predicate);
+    if (!twoDeclarations)
+      return { declared, delivered: null, problems: ["plan_surface_predicate_not_the_two_declarations"] };
+    return {
+      declared,
+      delivered: new Set(built.filter((actionId) => expressionOnly.has(actionId) || !planCarried.has(actionId))),
+      problems,
+    };
+  }
+  // The shapes this reader knows, each with the delivered set it implies. A filter of any other shape is not measured.
+  if (/actionId\s*===\s*null\s*\|\|\s*isExpressionOnlyAction\(actionId\)/u.test(block))
+    return {
+      declared,
+      delivered: new Set(built.filter((actionId) => expressionOnly.has(actionId))),
+      problems,
+    };
+  // The pre-58ca1f73 shape: only tools that are NOT an action survive, so no action tool reaches the plan surface.
+  if (/actionIdForToolName\([^)]*\)\s*===\s*null/u.test(block)) return { declared, delivered: new Set(), problems };
+  return {
+    declared,
+    delivered: null,
+    problems: [
+      `plan_surface_filter_unreadable:${block.split("\n").slice(0, 4).join(" ").replace(/\s+/gu, " ").slice(0, 120)}`,
+    ],
+  };
+}
+
+// ---------------------------------------------------------------------------
 // The matrix
 // ---------------------------------------------------------------------------
 
-/** What a surface's own declaration says about an action it does not carry, or null when it says nothing. */
-function omissionDeclaration(surfaceId, catalogEntry, grammar) {
+/**
+ * What a surface's own declaration says about an action it does not carry, or null when it says nothing.
+ *
+ * The reason, not the excuse: `compareAction` keeps it only while the action has a route, because a reason that names no
+ * destination is how `sweep_scythe` vanished - three surfaces carried it, the fourth omitted it, and the omission read as
+ * explained. A read-only action's reason is its KIND, and its route is the read tool that names it.
+ */
+function omissionDeclaration(actionId, surfaceId, catalogEntry, grammar) {
   if (catalogEntry.kind !== "execution") return "read_only";
   if (surfaceId !== "plan-grammar") return null;
   if (!grammar.lifecycles.includes(catalogEntry.lifecycle)) return "plan-grammar-lifecycle";
+  if (grammar.expressionOnly.includes(actionId)) return "expression-only";
   if (![...catalogEntry.types.values()].every((type) => grammar.argumentTypes.includes(type)))
     return "plan-grammar-argument-type";
   return null;
@@ -660,14 +863,16 @@ function omissionDeclaration(surfaceId, catalogEntry, grammar) {
 
 /**
  * One action's row of the matrix: the surfaces that carry it, and for every argument the union names, the surfaces that
- * refuse it while another admits it.
+ * refuse it while another admits it. An absent surface is a finding unless its reason AND a route for the action are both
+ * read - `route` is the tool this gate found for the action, or null when the action has nowhere to go.
  *
  * Returned rather than pushed into a caller's arrays, so the accumulation in `compareSurfaces` stays a loop over rows and
  * this function stays one reading per cell.
  */
-function compareAction(actionId, catalogEntry, carried, grammarSurface) {
+function compareAction(actionId, catalogEntry, carried, grammarSurface, route) {
   const findings = [];
   const declared = [];
+  const omitted = [];
   const present = [];
   for (const surfaceId of SURFACE_IDS) {
     const actions = carried.get(surfaceId);
@@ -675,9 +880,13 @@ function compareAction(actionId, catalogEntry, carried, grammarSurface) {
       present.push({ surfaceId, arguments: actions.get(actionId) });
       continue;
     }
-    const declaration = omissionDeclaration(surfaceId, catalogEntry, grammarSurface);
-    if (declaration === null) findings.push(`${CODES.omits}:${actionId}:${surfaceId}`);
-    else declared.push(declaration);
+    const declaration = omissionDeclaration(actionId, surfaceId, catalogEntry, grammarSurface);
+    if (declaration === null || route === null) {
+      findings.push(`${CODES.omits}:${actionId}:${surfaceId}`);
+      continue;
+    }
+    declared.push(declaration);
+    omitted.push({ surfaceId, declaration });
   }
   const arguments_ = [...new Set(present.flatMap((surface) => [...surface.arguments]))].sort();
   for (const argument of arguments_) {
@@ -687,7 +896,7 @@ function compareAction(actionId, catalogEntry, carried, grammarSurface) {
     for (const surface of present.filter((candidate) => !candidate.arguments.has(argument)))
       findings.push(`${CODES.refuses}:${actionId}:${argument}:${surface.surfaceId}:${admittingSurface}`);
   }
-  return { findings, declared, pairs: arguments_.length };
+  return { findings, declared, omitted, pairs: arguments_.length };
 }
 
 /**
@@ -718,19 +927,99 @@ function verdictOf({ findings, problems, blocks }) {
 /**
  * The matrix, over the sources it is given.
  *
- * `sources` is the five files' text plus the parsed catalog, so the falsifier injects a violation into a real declaration
+ * `sources` is the files' text plus the parsed catalog, so the falsifier injects a violation into a real declaration
  * instead of rewriting the reader. `argumentDeclarations` is `host/src/action-registry.ts`, read for the frozen argument
- * tables a mount forwards by name; it carries no actions of its own, so it adds no population. `examined` is the number of
- * actions any surface names, `pairs` is the number of (action, argument) cells those actions contribute - the two numbers
- * a zero can hide behind.
+ * tables a mount forwards by name and for the expression declaration the plan vocabulary excludes; it carries no actions
+ * of its own, so it adds no population. `planSurfaceComposition` and `planSurfaceFilter` are the two files that decide
+ * which of the BUILT tools the live Game surface really mounts. `examined` is the number of actions any surface names,
+ * `pairs` is the number of (action, argument) cells those actions contribute - the two numbers a zero can hide behind.
  */
-export function checkActionSurfaceParity({ catalog, wire, planGrammar, toolSchema, mod, argumentDeclarations }) {
+export function checkActionSurfaceParity(sources) {
+  const { catalogSurface, toolSurface, grammarSurface, carried, populations, actionIds, problems, blocks } =
+    readSurfaces(sources);
+  const delivery = readPlanSurfaceDelivery({
+    composition: sources.planSurfaceComposition ?? "",
+    filter: sources.planSurfaceFilter ?? "",
+    registry: sources.argumentDeclarations ?? "",
+    actionIds: [...catalogSurface.actions.keys()],
+    planCarried: new Set(grammarSurface.actions.keys()),
+    expressionOnly: new Set(grammarSurface.expressionOnly),
+    hasTool: (actionId) => toolSurface.routes.has(actionId),
+  });
+  const reading = deliveredReading(delivery, toolSurface, grammarSurface, actionIds);
+  const findings = projectionDisagreements(toolSurface.forwarded, catalogSurface.actions);
+  // A composition that declares the plan surface and a filter this reader cannot classify is not a passing reading: the
+  // gate cannot say what the model is handed, so it names the reason instead of vouching for the built set.
+  for (const problem of delivery.problems) findings.push(`${CODES.notMeasured}:${problem}`);
+  // Named once per action as well as once per omitted surface: a route is what makes a declaration an excuse, so an
+  // action nothing reaches has to appear in the findings even when every surface that omits it has a reason for it.
+  for (const actionId of reading.unrouted) findings.push(`${CODES.noRoute}:${actionId}`);
+  const declarations = new Map();
+  const omittedWithRoute = [];
+  let pairs = 0;
+  for (const actionId of actionIds) {
+    const catalogEntry = catalogSurface.actions.get(actionId);
+    if (catalogEntry === undefined) continue;
+    const route = reading.routeOf(actionId);
+    const row = compareAction(actionId, catalogEntry, carried, grammarSurface, route);
+    findings.push(...row.findings);
+    pairs += row.pairs;
+    for (const declaration of row.declared) declarations.set(declaration, (declarations.get(declaration) ?? 0) + 1);
+    if (row.omitted.length > 0)
+      omittedWithRoute.push({
+        actionId,
+        route,
+        surfaces: row.omitted.map((entry) => entry.surfaceId),
+        declarations: [...new Set(row.omitted.map((entry) => entry.declaration))].sort(),
+      });
+  }
+  findings.sort();
+  return Object.freeze({
+    status: verdictOf({ findings, problems, blocks }),
+    examined: actionIds.length,
+    surfaces: SURFACE_IDS.length,
+    pairs,
+    populations,
+    routes: { reachable: actionIds.length - reading.unrouted.length, unreachable: reading.unrouted },
+    delivery: {
+      declared: delivery.declared,
+      measured: delivery.delivered !== null,
+      built: reading.toolFaceIds.length,
+      delivered: reading.deliveredFaces.length,
+      expressionKept: reading.deliveredFaces.filter((id) => grammarSurface.expressionOnly.includes(id)).length,
+      keptBecauseNotCarried: reading.deliveredFaces.filter((id) => !grammarSurface.expressionOnly.includes(id)).length,
+      replacedByPlan: reading.replacedByPlan.length,
+      droppedWithNoPlanRow: reading.droppedWithNoPlanRow,
+      notApplicable: reading.replacedByPlan,
+      problems: delivery.problems,
+    },
+    declarations: Object.fromEntries([...declarations].sort(([left], [right]) => left.localeCompare(right))),
+    omittedWithRoute,
+    grammar: {
+      lifecycles: grammarSurface.lifecycles,
+      argumentTypes: grammarSurface.argumentTypes,
+      expressionOnly: grammarSurface.expressionOnly,
+      omittedForLifecycle: grammarSurface.omittedForLifecycle,
+      omittedForExpression: grammarSurface.omittedForExpression,
+      omittedForArgumentType: grammarSurface.omittedForArgumentType,
+    },
+    findings,
+    blocked: [...problems, ...blocks],
+  });
+}
+
+/** Every surface read once, its population, and the blocks a population of zero is. */
+function readSurfaces({ catalog, wire, planGrammar, toolSchema, mod, argumentDeclarations }) {
   const problems = [];
   const blocks = [];
   const catalogSurface = readCatalogSurface(catalog);
   const wireSurface = readWireSurface(wire ?? "");
   const modSurface = readModSurface(mod ?? "");
-  const grammarSurface = readPlanGrammarSurface(planGrammar ?? "", catalogSurface);
+  const grammarSurface = readPlanGrammarSurface(
+    planGrammar ?? "",
+    catalogSurface,
+    readExpressionOnlyIds(argumentDeclarations ?? ""),
+  );
   const toolSurface = readToolSurface(toolSchema ?? "", catalogSurface, argumentDeclarations ?? "");
   for (const [id, surface] of [
     ["catalog", catalogSurface],
@@ -739,9 +1028,8 @@ export function checkActionSurfaceParity({ catalog, wire, planGrammar, toolSchem
     ["plan-grammar", grammarSurface],
     ["tool-schema", toolSurface],
     ["tool-args", { actions: toolSurface.forwarded, problems: [] }],
-  ]) {
+  ])
     problems.push(...surface.problems.map((problem) => (problem.includes(":") ? problem : `${problem}:${id}`)));
-  }
   const carried = new Map([
     ["catalog", new Map([...catalogSurface.actions].map(([actionId, entry]) => [actionId, entry.arguments]))],
     ["mod", modSurface.actions],
@@ -752,41 +1040,38 @@ export function checkActionSurfaceParity({ catalog, wire, planGrammar, toolSchem
   ]);
   const populations = Object.fromEntries(SURFACE_IDS.map((id) => [id, carried.get(id).size]));
   for (const id of SURFACE_IDS) if (carried.get(id).size === 0) blocks.push(`action_surface_population_empty:${id}`);
-
   const actionIds = [...new Set([...carried.values()].flatMap((actions) => [...actions.keys()]))].sort();
   if (actionIds.length === 0) blocks.push("action_surface_population_empty");
   for (const [surfaceId, actions] of carried)
     for (const actionId of actions.keys())
       if (!catalogSurface.actions.has(actionId)) blocks.push(`action_not_in_catalog:${actionId}:${surfaceId}`);
+  return { catalogSurface, toolSurface, grammarSurface, carried, populations, actionIds, problems, blocks };
+}
 
-  const findings = projectionDisagreements(toolSurface.forwarded, catalogSurface.actions);
-  const declarations = new Map();
-  let pairs = 0;
-  for (const actionId of actionIds) {
-    const catalogEntry = catalogSurface.actions.get(actionId);
-    if (catalogEntry === undefined) continue;
-    const row = compareAction(actionId, catalogEntry, carried, grammarSurface);
-    findings.push(...row.findings);
-    pairs += row.pairs;
-    for (const declaration of row.declared) declarations.set(declaration, (declarations.get(declaration) ?? 0) + 1);
-  }
-  findings.sort();
-  return Object.freeze({
-    status: verdictOf({ findings, problems, blocks }),
-    examined: actionIds.length,
-    surfaces: SURFACE_IDS.length,
-    pairs,
-    populations,
-    declarations: Object.fromEntries(declarations),
-    grammar: {
-      lifecycles: grammarSurface.lifecycles,
-      argumentTypes: grammarSurface.argumentTypes,
-      omittedForLifecycle: grammarSurface.omittedForLifecycle,
-      omittedForArgumentType: grammarSurface.omittedForArgumentType,
-    },
-    findings,
-    blocked: [...problems, ...blocks],
-  });
+/**
+ * What each action's route is, and which tool faces the plan surface does not have.
+ *
+ * The route an omitted action must have is "a plan row, or a tool the live surface really mounts". When the composition
+ * cannot be read, the built set is the only thing this gate can vouch for - and the printed `not measured` line says so.
+ */
+function deliveredReading(delivery, toolSurface, grammarSurface, actionIds) {
+  const planCarried = new Set(grammarSurface.actions.keys());
+  const deliveredTools = delivery.delivered ?? new Set(toolSurface.routes.keys());
+  const routeOf = (actionId) => {
+    if (planCarried.has(actionId)) return "a plan row";
+    if (!deliveredTools.has(actionId)) return null;
+    return toolSurface.routes.get(actionId) ?? "a mounted tool";
+  };
+  const toolFaceIds = [...toolSurface.actions.keys()];
+  const deliveredFaces = delivery.delivered === null ? toolFaceIds : toolFaceIds.filter((id) => deliveredTools.has(id));
+  return {
+    routeOf,
+    unrouted: actionIds.filter((actionId) => routeOf(actionId) === null),
+    toolFaceIds,
+    deliveredFaces,
+    replacedByPlan: toolFaceIds.filter((id) => !deliveredFaces.includes(id) && planCarried.has(id)),
+    droppedWithNoPlanRow: toolFaceIds.filter((id) => !(deliveredFaces.includes(id) || planCarried.has(id))),
+  };
 }
 
 /** Read one checkout's five authorities and the argument declarations they forward from, and run the matrix over them. */
@@ -799,6 +1084,8 @@ export function readActionSurfaceParity({ root = REPOSITORY_ROOT } = {}) {
     ["toolSchema", PATHS.toolSchema],
     ["mod", PATHS.mod],
     ["argumentDeclarations", PATHS.actionRegistry],
+    ["planSurfaceComposition", PATHS.planSurfaceComposition],
+    ["planSurfaceFilter", PATHS.planSurfaceFilter],
   ]) {
     try {
       sources[key] = readFileSync(resolve(root, path), "utf8");
@@ -821,11 +1108,38 @@ export function readActionSurfaceParity({ root = REPOSITORY_ROOT } = {}) {
   };
 }
 
-/** Every authority's population, then the declarations the lifecycle rule used, as the lines a reader reconciles. */
+/**
+ * The delivery lines: what the live Game surface mounts, and which tool faces therefore do not exist on it.
+ *
+ * Printed beside the populations rather than folded into them, because the two numbers answer different questions - how
+ * many tools are built, and how many are handed to the model - and a reader who sees only the first is reading the
+ * surface this gate used to certify.
+ */
+function deliveryLines(delivery) {
+  if (!delivery.measured)
+    return [
+      `plan surface delivery: not measured (${delivery.problems.join(" · ")}) · the built set is all this gate can ` +
+        "vouch for",
+    ];
+  if (!delivery.declared)
+    return [`plan surface delivery: not declared · every built action tool is mounted (${delivery.built})`];
+  return [
+    `plan surface delivery: declared · action tools built ${delivery.built} · delivered ${delivery.delivered} ` +
+      `(expression-only ${delivery.expressionKept} · the plan cannot carry them ${delivery.keptBecauseNotCarried}) · ` +
+      `replaced by a plan row ${delivery.replacedByPlan} · dropped with no plan row ` +
+      `${delivery.droppedWithNoPlanRow.length}`,
+    `tool faces not applicable on the plan surface: tool-schema ${delivery.notApplicable.length} · tool-args ` +
+      `${delivery.notApplicable.length} (the plan carries them) - their face above measures the BUILT declaration, ` +
+      "which only a composition that does not declare `planActionSurface` mounts",
+  ];
+}
+
+/** Every authority's population, the routes, then the declarations they justify, then one line per finding. */
 export function describeReport(report) {
   const lines = [
     `actions examined ${report.examined} · surfaces ${report.surfaces} · pairs checked ${report.pairs}`,
     `population per authority: ${SURFACE_IDS.map((id) => `${id} ${report.populations[id]}`).join(" · ")}`,
+    `actions with a route ${report.routes.reachable} · with no route ${report.routes.unreachable.length}`,
     `omission declarations: ${
       Object.keys(report.declarations).length === 0
         ? "none used"
@@ -833,10 +1147,23 @@ export function describeReport(report) {
             .map(([name, count]) => `${name} ${count}`)
             .join(" · ")
     }`,
+  ];
+  for (const entry of report.omittedWithRoute)
+    lines.push(
+      `omitted with a route: ${entry.actionId} [${entry.declarations.join("/")}] ${entry.surfaces.join("+")} -> ${
+        entry.route ?? "no route"
+      }`,
+    );
+  lines.push(...deliveryLines(report.delivery));
+  lines.push(
     `plan grammar admission: lifecycles ${report.grammar.lifecycles.join("/")} (omits ${
       report.grammar.omittedForLifecycle.length
-    }) · argument types ${report.grammar.argumentTypes.join("/")} (omits ${report.grammar.omittedForArgumentType.length})`,
-  ];
+    }) · argument types ${report.grammar.argumentTypes.join("/")} (omits ${
+      report.grammar.omittedForArgumentType.length
+    }) · expression-only ${
+      report.grammar.expressionOnly.length === 0 ? "none" : report.grammar.expressionOnly.join("/")
+    } (omits ${report.grammar.omittedForExpression.length})`,
+  );
   for (const entry of report.blocked) lines.push(`blocked: ${entry}`);
   for (const entry of report.findings) lines.push(entry);
   lines.push(`action surface parity ${report.status}`);
