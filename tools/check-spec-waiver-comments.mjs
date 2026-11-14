@@ -91,7 +91,20 @@ function main(argv) {
         "journeys hold no prose about their steps, or the reader no longer recognises one - say which",
     });
   if (argv.includes("--json")) {
-    process.stdout.write(`${JSON.stringify({ gate: "spec-waiver-comments", ...reading, findings }, null, 2)}\n`);
+    process.stdout.write(
+      `${JSON.stringify(
+        {
+          gate: "spec-waiver-comments",
+          examined: reading.examined,
+          files: reading.files,
+          waivers: reading.waivers,
+          unassessed: reading.unassessed,
+          findings,
+        },
+        null,
+        2,
+      )}\n`,
+    );
     return blocked || findings.length > 0 ? 1 : 0;
   }
   report({ reading, findings, list: argv.includes("--list") });
