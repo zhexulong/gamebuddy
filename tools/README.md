@@ -481,3 +481,28 @@ Host Memory API, or system `pi` CLI path. Output contains only counts and gate
 state, never
 model text or credentials. A failure is a bounded non-zero exit and does not
 change product configuration.
+
+## Replaying a gate on a past commit (`replay:gate-on-history`)
+
+`tools/replay-gate-on-history.mjs` answers the question the `red-proof: history` kind asks, as a command:
+does this gate fire on the commit that introduced the defect, and not on its parent?
+
+```powershell
+pnpm replay:gate-on-history --gate tools/check-spec-waiver-comments.mjs `
+  --rev-range 930a031e^..930a031e `
+  --expect fired@930a031e^ --expect did-not-fire@930a031e
+```
+
+It archives each revision into a directory outside this repository, copies the gate's files from the
+current worktree (its repo-relative imports included, found by the gate's own import statements), takes
+the invocation from the script that registers the gate - never from a guess - and prints one verdict per
+revision: `fired` with the finding count, `did-not-fire` only when the gate also stated a non-empty
+population, and `not_measured` with the reason named (`gate_unregistered`, `dependencies_absent:<module>`,
+`population_empty`, `population_unstated`, `findings_unreadable`, `run_failed:<code>`, `run_timeout`,
+`exit_code_disagrees`).
+
+It never runs `pnpm install` and never writes a lockfile: a package the gate needs is linked from what the
+worktree already has installed, and a package it does not have keeps the `dependencies_absent` verdict.
+`--out <dir>` keeps the captured stdout, stderr and verdict JSON per revision; `--keep` keeps the archived
+trees. `pnpm test:replay-gate-on-history` runs its own suite, which replays the waiver gate and the
+selector-producer gate on the commits of 2026-11-14.
