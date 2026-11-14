@@ -2467,11 +2467,6 @@ test("stardew_plan_work teaches submit-then-end-the-turn, and names what wakes t
   );
   assert.match(
     planWork,
-    /builder\.sleep\(\); \/\/ End the day from inside the farmhouse \(no arguments\)/u,
-    "teaches builder.sleep() syntax in sequential steps example",
-  );
-  assert.match(
-    planWork,
     /stardew_action_program_status is for a plan that is not moving, not a progress bar/u,
     "and the status tool is pointed at its one remaining use",
   );

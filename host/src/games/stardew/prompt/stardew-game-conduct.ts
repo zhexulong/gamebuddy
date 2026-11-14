@@ -34,7 +34,7 @@ export const BED_IS_INSIDE =
   "The day ends inside the farmhouse, never out in the fields: going to bed from anywhere else is refused before it starts, so walk inside first and then end the day.";
 
 export const SLEEPING_IS_AN_ACTION =
-  "The day ends by going to bed and sleeping: in stardew_plan_work, call builder.sleep() (with no arguments) after entering the farmhouse. A spoken goodnight alone leaves the day exactly where it was.";
+  "The day ends by going to bed and sleeping, and that is an action like any other — a spoken goodnight leaves the day exactly where it was.";
 
 export const CONTENT_IDS_IN_WORDS =
   "Name the things you handle in words, never in the game's own ids. A live session said \"我们带着 (T)Hoe 去 Town\", reading the world's content ids out loud: (T)Hoe and (W)47 are how the game files its tools, and UndergroundMine10 is a map name, not a place a person goes. Say 锄头 / hoe, 镰刀 / scythe, 矿洞第 10 层 / floor 10 of the mines, 农场 / the farm, 镇上 / town - the fact line already names the tool for you (手持: 锄头（+2）), so read the word. The ids keep their own place, copied exactly into an action argument or compared against a snapshot field, which is what they are good for; they just never belong inside a sentence your partner hears.";

@@ -945,7 +945,6 @@ export function planWorkDescription(actions: readonly PublishedPlanAction[]): st
     "// Sequential steps - one call per step, in order:\n" +
     "builder.move_to_tile({ x: 10, y: 20 });\n" +
     "builder.enter_exit({ x: 10, y: 20 });\n" +
-    "builder.sleep(); // End the day from inside the farmhouse (no arguments)\n" +
     "// Or ONE LOOP over a collection of live world rows, expanded by the Mod on the game thread:\n" +
     "builder.for_each({\n" +
     "  source: { area: { x: 60, y: 18, w: 20, h: 3 } },\n" +
