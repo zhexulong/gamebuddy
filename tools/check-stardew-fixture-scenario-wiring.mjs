@@ -1,65 +1,62 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { parseKnownFixtureScenarios } from "./prelive.mjs";
 
 /**
- * Fixture-scenario wiring parity across the Mod's three hand-written lists AND
- * the tools-side declaration of which scenario a run will arm.
+ * Fixture-scenario wiring parity across the Mod's declarations AND the tools side's declaration of which scenario a run
+ * will arm.
  *
- * To be runnable a scenario must be named in three places:
- *   1. ModConfig.KnownFixtureScenarios     -- the config gate; anything else is
- *                                             rejected when the config loads.
- *   2. ModEntry's pre-attachment allowlist -- `FixtureScenario is not (...)`;
- *                                             absent scenarios are refused with
- *                                             "rejected an unsupported or
- *                                             unavailable pre-attachment scenario"
- *                                             before their own block can run.
- *   3. ModEntry's dispatcher               -- the block that builds the actual
- *                                             precondition, written either as
- *                                             `FixtureScenario == "X"` or as a
- *                                             `FixtureScenario is "X"` pattern.
+ * To be runnable an armed scenario must be named in two places, and a known scenario must be explained by one of them:
+ *   1. `NativeLocalPlayerFixtureConfig.NativeLocalFixtureScenarios` (`ModConfig.cs`) -- the ARMED universe. A scenario
+ *      outside it is refused by `IsValid` before anything runs.
+ *   2. `NativeLocalFixtureScenarioRows` (`ModEntry.Fixtures.ScenarioInitializers.cs`) -- one row per scenario, declaring
+ *      the stage its Given runs in and the initializer that builds it. `TryInitializeNativeLocalPlayerFixtureScenario`
+ *      refuses a scenario with no row, which is why a member of (1) with no row is a run that config accepts and the
+ *      dispatcher rejects.
+ * plus `HostAutomationFixtureSaveScenarios`, the two scenarios whose Given the HOST-AUTOMATION dispatcher owns: they are
+ * accepted when this fixture creates the disposable save and refused when it arms, so their absence from the row table
+ * is declared intent rather than a gap.
  *
- * The lists are separate concerns, which is exactly why they drift, and both
- * directions are silent:
- *   - gate + dispatcher but not allowlist -> accepted, then refused before arming
- *     (native_clear_debris_resource_clump_v1 and native_refill_watering_can_v1
- *     had runners and dispatcher blocks yet could never arm)
- *   - gate but no dispatcher -> arms and provisions nothing
- *     (native_tree_first_hit_v1)
+ * WHAT THIS GATE READ UNTIL `21bd3a46`, and why the reading changed. It used to check three hand-written lists - the
+ * config set, a `FixtureScenario is not (...)` pre-attachment allowlist, and an `if (fixture.FixtureScenario == "X")`
+ * chain in `ModEntry.Fixtures.cs`. That refactor replaced the allowlist and the chain with the row table, because the
+ * chain's LAST branch carried no guard: a scenario nobody had written a branch for silently built the `else` world
+ * (arming `native_farmhand_chat_v1` created dry unwatered crops and logged a water-crop initialisation). The table
+ * refuses instead, so this gate reads the table: the expectation - a scenario the config accepts must be one the
+ * dispatcher can build, and a scenario the dispatcher can build must be one the config accepts - is unchanged, and only
+ * the mechanism that carries it moved. `armed_without_a_recipe` retired with the chain: a row whose stage and initializer
+ * shape disagree is refused by `FoldNativeLocalFixtureScenarioDeclarations` at start-up, so "arms and provisions
+ * nothing" is no longer a state this tree can reach.
  *
- * A scenario handled by an earlier `if` that returns never reaches the allowlist
- * (navigation_mutation_v1, navigation_read_only_v1, native_express_emote_v1), so
- * absence from it is legitimate for those; the checker detects that by looking for
- * a pre-allowlist block naming the scenario.
+ * THE TOOLS -> MOD DIRECTION, and the gap that added it: the tools side decides which scenario id a run asks for
+ * (`fixtureScenario` in `tools/lib/stardew-native-local-player-fixture.mjs`), and nothing checked that the Mod had ever
+ * heard of that id. `native_open_geode_v1` was returned by the tools function, shipped in a runner and in the
+ * action-gate descriptor, and was absent from the Mod's declarations - so the Mod rejected its own configuration at
+ * launch and the fixture ticked forever with no bridge. The population for that direction is DERIVED from the tools
+ * function's own `return` literals: a hand-written copy of the scenario names here would be a second authority that
+ * drifts from the function that actually decides.
  *
- * THE FOURTH DIRECTION, and the one that hid a real gap: the tools side decides
- * which scenario id a run asks for (`fixtureScenario` in
- * tools/lib/stardew-native-local-player-fixture.mjs), and nothing checked that
- * the Mod had ever heard of that id. `native_open_geode_v1` was returned by the
- * tools function, shipped in a runner and in the action-gate descriptor, and was
- * absent from all three Mod lists - so the Mod rejected its own configuration at
- * launch and the fixture ticked forever with no bridge. The three Mod-side loops
- * below cannot see that, because they only ever iterate Mod-side sets. The
- * population for this direction is DERIVED from the tools function's own
- * `return` literals: a hand-written copy of the scenario names here would be a
- * second authority that drifts from the function that actually decides.
+ * The known set is read by `parseKnownFixtureScenarios` in `tools/prelive.mjs`, which resolves the DERIVED initializer
+ * `KnownFixtureScenarios = NativeLocalFixtureScenarios.Concat(HostAutomationFixtureSaveScenarios).ToArray()` that
+ * `21bd3a46` introduced. That reader is shared with `tools/check-stardew-promotion-parity.mjs` and prelive's own ladder:
+ * this gate was the only one of the four readers of that declaration that still looked for a literal block, so it
+ * reported `known_scenarios_block_missing` on a tree whose wiring was fine.
  *
- * red-proof: inject  one `native_*_v1` id renamed in `ModConfig.KnownFixtureScenarios` ->
+ * red-proof: inject  one `native_*_v1` id renamed in `ModConfig.NativeLocalFixtureScenarios` ->
  *                    `"state":"failed"` with `{"issue":"accepted_by_config_but_refused_before_arming",
- *                    "scenario":"native_removed_for_the_proof_v1"}` and `armed_without_a_recipe` for the same id,
- *                    exit 1; the unmodified tree reports `"state":"passed"` with `"known":119` and no violations,
- *                    exit 0 (tools/check-stardew-fixture-scenario-wiring.mjs)
+ *                    "scenario":"native_removed_for_the_proof_v1"}` (config accepts an armed run whose scenario the
+ *                    dispatcher has no row for) plus `dispatched_but_config_rejects` for the rename's other half, exit 1;
+ *                    the unmodified tree reports `"state":"passed"` with `"known":120`, `"armed":119`, `"rows":119` and no
+ *                    violations, exit 0 (tools/check-stardew-fixture-scenario-wiring.mjs)
  */
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repositoryRoot = path.resolve(here, "..");
 const MOD_CONFIG = path.join(repositoryRoot, "integrations/stardew/ModConfig.cs");
 /**
- * ModEntry is a partial class: the pre-attachment allowlist and the dispatcher
- * live in ModEntry.Fixtures.cs (and the per-slot WIA fixtures in further
- * ModEntry.Fixtures.*.cs files), not in ModEntry.cs. Reading only ModEntry.cs
- * made this checker report `allowlist_missing` forever, so the gate was noise
- * instead of signal. Read every partial and concatenate.
+ * ModEntry is a partial class: the row table lives in ModEntry.Fixtures.ScenarioInitializers.cs and the dispatch that
+ * reads it in ModEntry.Fixtures.cs, so every partial is concatenated rather than one file being read.
  */
 const MOD_ENTRY_PARTIALS = fs
   .readdirSync(path.join(repositoryRoot, "integrations/stardew"))
@@ -71,6 +68,9 @@ const MOD_ENTRY_PARTIALS = fs
  */
 const FIXTURE_LIBRARY = path.join(repositoryRoot, "tools/lib/stardew-native-local-player-fixture.mjs");
 
+/** The row type whose static factories each name one scenario. */
+const SCENARIO_ROW_TYPE = "NativeLocalFixtureScenarioRow";
+
 function readModEntryPartials() {
   return MOD_ENTRY_PARTIALS.map((file) => fs.readFileSync(file, "utf8")).join("\n");
 }
@@ -81,22 +81,36 @@ function quoted(source) {
 }
 
 /**
- * The `FixtureScenario is not (...)` group, closed at the first `)` that is not
- * inside a string literal. A plain indexOf(")") would cut inside a literal and
- * silently truncate the list.
+ * One `string[] NAME = new[] { ... }` declaration's literals, or `null` when the file declares no such array.
+ *
+ * The empty string is KEPT: for these two declarations it is a scenario like any other - the move-only profile, whose
+ * Given is the world as it loaded - and both the armed config and the row table carry it. (The tools side uses `""`
+ * for something else, "this action needs no fixture world", which is why that population drops it instead.)
+ *
+ * `null` is not "empty": the caller reports it by name, because a population this gate cannot find is a reading it must
+ * refuse rather than a population with nothing in it.
  */
-export function extractPreAttachmentAllowlist(entry) {
-  const marker = "FixtureScenario is not (";
-  const start = entry.indexOf(marker);
-  if (start < 0) return null;
-  const rest = entry.slice(start + marker.length);
-  let inString = false;
-  for (let i = 0; i < rest.length; i++) {
-    const ch = rest[i];
-    if (ch === '"' && rest[i - 1] !== "\\") inString = !inString;
-    if (!inString && ch === ")") return { start, end: start + marker.length + i, body: rest.slice(0, i) };
-  }
-  return null;
+export function extractDeclaredScenarios(source, name) {
+  const declaration = new RegExp(`string\\[\\]\\s+${name}\\s*=\\s*new(?:\\s+string)?\\s*\\[\\s*\\]`, "u").exec(source);
+  if (declaration === null) return null;
+  const open = source.indexOf("{", declaration.index + declaration[0].length);
+  const close = source.indexOf("}", open);
+  if (open < 0 || close < 0) return null;
+  return new Set(quoted(source.slice(open, close)));
+}
+
+/**
+ * Every scenario the row table declares, read from the factories that name one.
+ *
+ * The population is the CALLS, not a list of stages: `NativeLocalFixtureScenarioRow.<AnyFactory>("<scenario>", ...)`.
+ * A stage added later joins without editing this gate, and a row moved to a shape that does not name its scenario first
+ * fails as a scenario the config accepts with no row - loudly, and on the right side of the comparison.
+ */
+export function extractScenarioRows(entry) {
+  const rows = new Set();
+  const pattern = new RegExp(`\\b${SCENARIO_ROW_TYPE}\\.[A-Z][A-Za-z0-9_]*\\(\\s*"((?:[^"\\\\]|\\\\.)*)"`, "gu");
+  for (const match of entry.matchAll(pattern)) rows.add(match[1]);
+  return rows;
 }
 
 /**
@@ -126,57 +140,69 @@ export function checkStardewFixtureScenarioWiring({ modEntrySource, modConfigSou
   const config = modConfigSource ?? fs.readFileSync(MOD_CONFIG, "utf8");
   const library = fixtureLibrarySource ?? fs.readFileSync(FIXTURE_LIBRARY, "utf8");
 
-  const knownStart = config.indexOf("KnownFixtureScenarios = new[]");
-  if (knownStart < 0) return { state: "failed", violations: [{ issue: "known_scenarios_block_missing" }] };
-  const knownEnd = config.indexOf("};", knownStart);
-  const known = new Set(quoted(config.slice(knownStart, knownEnd)).filter((name) => name.length > 0));
-
-  const group = extractPreAttachmentAllowlist(entry);
-  if (group === null) return { state: "failed", violations: [{ issue: "allowlist_missing" }] };
-  const allowlist = new Set(quoted(group.body));
-
-  const preAllowlist = entry.slice(0, group.start);
-  // Both spellings the dispatcher uses.
-  const dispatcher = new Set([
-    ...[...entry.matchAll(/FixtureScenario == "([^"]+)"/g)].map((m) => m[1]),
-    ...[...entry.matchAll(/FixtureScenario is "([^"]+)"/g)].map((m) => m[1]),
-  ]);
-
   const violations = [];
   const add = (issue, scenario, detail) => violations.push({ issue, scenario, detail });
+  const refuse = (issue, detail) => ({ state: "failed", violations: [{ issue, detail }] });
 
+  const armed = extractDeclaredScenarios(config, "NativeLocalFixtureScenarios");
+  if (armed === null) {
+    return refuse(
+      "armed_scenarios_block_missing",
+      "ModConfig declares no `string[] NativeLocalFixtureScenarios = new[]` array, so the armed population was not read and no wiring was checked",
+    );
+  }
+  const hostAutomation = extractDeclaredScenarios(config, "HostAutomationFixtureSaveScenarios");
+  if (hostAutomation === null) {
+    return refuse(
+      "host_automation_scenarios_block_missing",
+      "ModConfig declares no `string[] HostAutomationFixtureSaveScenarios = new[]` array, so the scenarios another dispatcher owns were not read and their absence from the row table could not be told from a gap",
+    );
+  }
+  let known;
+  try {
+    known = parseKnownFixtureScenarios(config);
+  } catch (error) {
+    return refuse(
+      "known_scenarios_block_missing",
+      `ModConfig's KnownFixtureScenarios was not readable as a scenario set, so no wiring was checked: ${error.message}`,
+    );
+  }
+  const rows = extractScenarioRows(entry);
+  if (rows.size === 0) {
+    return refuse(
+      "dispatcher_table_missing",
+      `no \`${SCENARIO_ROW_TYPE}.<Factory>("<scenario>", ...)\` row was found in the ModEntry partials, so the dispatcher population was not read and no comparison was made`,
+    );
+  }
+
+  // The armed direction. `IsValid` accepts a scenario from this set, and the dispatch refuses one with no row, so a
+  // member here without a row is a configuration the Mod accepts and then cannot build.
+  for (const scenario of armed) {
+    if (rows.has(scenario)) continue;
+    add(
+      "accepted_by_config_but_refused_before_arming",
+      scenario,
+      "in NativeLocalFixtureScenarios (so the armed config accepts it) but the row table has no initializer for it, which is a configuration the Mod refuses before any Given runs",
+    );
+  }
+  // The other direction: a row the config refuses is a world no configuration can ask for.
+  for (const scenario of rows) {
+    if (armed.has(scenario)) continue;
+    add(
+      "dispatched_but_config_rejects",
+      scenario,
+      "the row table declares an initializer for it but NativeLocalFixtureScenarios omits it, so IsValid refuses the configuration before dispatch is reached",
+    );
+  }
+  // Every scenario the config calls known must be explained by one of the two populations: the armed universe it can
+  // build, or the host-automation dispatcher whose Given it only creates the save for.
   for (const scenario of known) {
-    const handledEarlier = preAllowlist.includes(`FixtureScenario == "${scenario}"`);
-    if (!allowlist.has(scenario) && !handledEarlier) {
-      add(
-        "accepted_by_config_but_refused_before_arming",
-        scenario,
-        "in KnownFixtureScenarios but neither in the pre-attachment allowlist nor handled by an earlier returning block",
-      );
-    }
-    if (!dispatcher.has(scenario)) {
-      add("armed_without_a_recipe", scenario, "in KnownFixtureScenarios but ModEntry has no dispatch block for it");
-    }
-  }
-
-  for (const scenario of allowlist) {
-    if (!known.has(scenario)) {
-      add(
-        "allowlisted_but_config_rejects",
-        scenario,
-        "in the allowlist but missing from KnownFixtureScenarios, so config rejects it first",
-      );
-    }
-  }
-
-  for (const scenario of dispatcher) {
-    if (!known.has(scenario)) {
-      add(
-        "dispatched_but_config_rejects",
-        scenario,
-        "ModEntry dispatches it but KnownFixtureScenarios omits it, so config rejects it first",
-      );
-    }
+    if (armed.has(scenario) || hostAutomation.has(scenario)) continue;
+    add(
+      "known_scenario_outside_both_populations",
+      scenario,
+      "KnownFixtureScenarios lists it but it is neither in NativeLocalFixtureScenarios (which has an initializer) nor in HostAutomationFixtureSaveScenarios (whose Given another dispatcher owns), so nothing in this Mod can build its world",
+    );
   }
 
   // The tools -> Mod direction. A scenario the tools side can return but the Mod
@@ -200,11 +226,11 @@ export function checkStardewFixtureScenarioWiring({ modEntrySource, modConfigSou
           "fixtureScenario returns it but KnownFixtureScenarios omits it, so the Mod rejects its own configuration at launch and never opens the bridge",
         );
       }
-      if (!dispatcher.has(scenario)) {
+      if (!rows.has(scenario)) {
         add(
           "armed_by_the_tools_side_but_no_recipe",
           scenario,
-          "fixtureScenario returns it but ModEntry has no dispatch block for it, so it arms and provisions nothing",
+          "fixtureScenario returns it but the row table has no initializer for it, so it arms and provisions nothing",
         );
       }
     }
@@ -214,8 +240,9 @@ export function checkStardewFixtureScenarioWiring({ modEntrySource, modConfigSou
     state: violations.length === 0 ? "passed" : "failed",
     counts: {
       known: known.size,
-      allowlist: allowlist.size,
-      dispatcher: dispatcher.size,
+      armed: armed.size,
+      hostAutomation: hostAutomation.size,
+      rows: rows.size,
       tools: toolsScenarios?.size ?? 0,
     },
     violations,

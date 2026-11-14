@@ -27,6 +27,7 @@ import {
   readPreliveLogTail,
   readPreliveReadinessFacts,
 } from "./lib/stardew-prelive-ladder.mjs";
+import { parseKnownFixtureScenarios } from "./prelive.mjs";
 
 const BUNDLE_FILES = [
   "GameBuddy.Stardew.dll",
@@ -1459,11 +1460,12 @@ test("native-local place-crab-pot fixture discovers one exact native target and 
     /gate\(\s*"place_crab_pot",\s*1,\s*"run-stardew-native-local-player-place-crab-pot-smoke\.mjs"/s,
   );
   const config = await readFile(new URL("../integrations/stardew/ModConfig.cs", import.meta.url), "utf8");
-  // The armed/bootstrap gate no longer enumerates scenarios inline: both paths
-  // validate against the one closed `KnownFixtureScenarios` set (91638ce0).
-  const scenarioSetStart = config.indexOf("KnownFixtureScenarios = new[]");
-  const scenarioSet = config.slice(scenarioSetStart, config.indexOf("];", scenarioSetStart));
-  assert.match(scenarioSet, /"native_place_crab_pot_v1"/);
+  // The armed/bootstrap gate no longer enumerates scenarios inline: both paths validate against the one closed
+  // `KnownFixtureScenarios` set (91638ce0), which `21bd3a46` made the union of the armed population and the two
+  // scenarios the host-automation dispatcher owns. Read through the resolver for that declaration instead of slicing a
+  // literal block that no longer exists - the pin used to match `KnownFixtureScenarios = new[]`, so it compared an empty
+  // string and failed on a tree whose wiring was right.
+  assert.ok(parseKnownFixtureScenarios(config).has("native_place_crab_pot_v1"));
   const definitions = await readFile(
     new URL("../integrations/stardew/src/Core/Policy/FarmhandActionDefinitions.cs", import.meta.url),
     "utf8",
