@@ -414,6 +414,33 @@
    App Shell & Header
    ========================================================================== */
 
+  /* ==========================================================================
+   The shell is the box the AppBar measures itself in
+
+   Every width rule on the bar - the rail's labels, the wordmark, the bar's own air, the
+   status word and the fold - used to be a `@media (max-width: Npx)` query, which asks the
+   WINDOW. The bar's budget is the width of the box it is laid out in, and the two agree only
+   while the shell fills the window. Docked beside the game the shell is narrower, so a 400 px
+   bar sat inside a 1440 px window and nothing fired: measured against the shipped sheet, the
+   same bar width read in both frames disagreed at every declared cell at or below the fold -
+   at 816 px it folded in an 816 px window and did NOT fold in the dock (`folded false, peers 7`
+   instead of `true, 2`, the companion's name cut off by 127 px), and at 400 px the docked
+   reading still carried all seven peers with the name given 0 px.
+
+   `.tavern-app-shell` is that box, and it is the only one: it is the bar's parent and also the
+   main region's, so the surface heading that comes back where the bar stops naming the surface
+   answers the same query - and its width IS the width the bar is given (the bar fills it).
+   `container-type: inline-size` makes the shell's inline size independent of its contents,
+   which it already is (100 % of the window), so the shipped frame lays out exactly as it did:
+   measured, every declared cell reads the same folded state, the same peer count, the same
+   status word and the same name width in a window of that width and in a dock of it.
+
+   The same containment also makes the shell the containing block for the fixed drawers it
+   holds (`.backdrop-overlay`, `.context-panel`). In the shipped frame that box is the window,
+   so nothing moves; in a dock it is the dock, which is where a drawer opened from a docked bar
+   belongs - and a `<dialog>` in the top layer is outside containment anyway.
+   ========================================================================== */
+
   .tavern-app-shell,
   .app-shell {
     display: flex;
@@ -423,6 +450,7 @@
     height: 100dvh;
     overflow: hidden;
     background-color: var(--surface-canvas);
+    container-type: inline-size;
   }
 
   .app-bar {
@@ -638,7 +666,7 @@
     border-color: var(--border-strong);
   }
 
-  @media (max-width: 860px) {
+  @container (max-width: 860px) {
     .nav-button .nav-label {
       display: none;
     }
@@ -1617,45 +1645,29 @@
    Full Context Drawers & Management Panels
    ========================================================================== */
 
-  /* The drawer is the platform's modal dialog (`ContextDrawer` calls `showModal()`),
-   so its box is a box reset of the UA's `dialog` rule rather than an overlay placed
-   by hand: `inset` anchors it to the right edge, `margin: 0` replaces the UA's
-   centring `auto`, `height: auto` and `max-height: none` replace its
-   `fit-content` sizing (measured: with `fit-content` a long drawer grew past the
-   viewport and its own content could not be scrolled to), `padding: 0` and
-   `border: 0` its defaults, and `color` its black on white. `overflow: hidden`
-   keeps `.drawer-content` the one scroller in the panel. Nothing here needs a
-   `z-index`: a top-layer dialog is painted above every stacking context on the page. */
+  .backdrop-overlay {
+    position: fixed;
+    inset: 0;
+    background-color: rgba(0, 0, 0, 0.65);
+    backdrop-filter: blur(2px);
+    z-index: 100;
+    animation: backdrop-in var(--motion-duration-fast) var(--motion-ease-out);
+  }
+
   .context-panel {
     position: fixed;
-    inset: 0 0 0 auto;
-    margin: 0;
-    padding: 0;
+    top: 0;
+    right: 0;
+    bottom: 0;
     width: 100%;
-    height: auto;
     max-width: var(--drawer-max-width);
-    max-height: none;
-    overflow: hidden;
     background-color: var(--surface-panel);
-    color: var(--text-primary);
-    border: 0;
     border-left: 1px solid var(--border-subtle);
     display: flex;
     flex-direction: column;
+    z-index: 101;
     box-shadow: -10px 0 30px rgba(0, 0, 0, 0.5);
     animation: drawer-in var(--motion-duration-normal) var(--motion-ease-drawer);
-  }
-
-  /* The scrim: 72% black with a 4 px blur, replacing the documented `#0007` with no
-   blur (design/26 §4.2, §6.1). At 47% black a roster card's own text stayed legible
-   through the scrim, and while the drawer slid in over the cards it read as one line
-   sliced lengthwise. It is the platform's `::backdrop` now rather than a div behind
-   the panel, so it cannot be ordered wrong against the panel and it is covered by the
-   same modality that makes the page behind inert. */
-  .context-panel::backdrop {
-    background-color: rgba(0, 0, 0, 0.72);
-    backdrop-filter: blur(4px);
-    animation: backdrop-in var(--motion-duration-fast) var(--motion-ease-out);
   }
 
   .drawer-header {
@@ -1692,9 +1704,6 @@
   .drawer-content {
     flex: 1 1 0%;
     overflow-y: auto;
-    /* The panel is modal, so a scroller that ran on would move the page behind it.
-     The scroll chaining stops here. */
-    overscroll-behavior: contain;
     scrollbar-gutter: stable;
     padding: 16px;
     display: flex;
@@ -2712,7 +2721,7 @@
 
    The Game surface is the shell's single contextual drawer, not an inline
    status block (design/26 §4.2, design/104 §2). It reuses the shared drawer
-   primitive - `.context-panel` at `min(420px, 100vw)`, its `::backdrop`,
+   primitive - `.context-panel` at `min(420px, 100vw)`, `.backdrop-overlay`,
    `.drawer-header` - and only the panel body is described here.
 
    The body is four labelled groups in one scrolling column: connection facts,
@@ -2727,6 +2736,17 @@
    CSS layer the spec depends on, and no rule changes a role or an accessible
    name.
    ========================================================================== */
+
+  /* The scrim: 72% black with a 4 px blur, replacing the documented `#0007` with no
+   blur (design/26 §4.2, §6.1). At 47% black a roster card's own text stayed legible
+   through the scrim, and while the drawer slid in over the cards it read as one line
+   sliced lengthwise. The shared `.backdrop-overlay` is another surface's primitive,
+   so the composed drawer sets its own value instead of changing it under a different
+   lane. */
+  .composed-drawer-backdrop {
+    background-color: rgba(0, 0, 0, 0.72);
+    backdrop-filter: blur(4px);
+  }
 
   /* Exactly one drawer at a time, anchored right, full height, safe-area aware. */
   .composed-game-panel {
@@ -3408,13 +3428,18 @@
     }
   }
 
+  /* The wordmark is the bar's own, so it retires on the bar's width (the shell is the container,
+   above). The three rules beside it in the 640 block below are the window's: the drawer takes
+   the whole window, and the transcript's measure is a fraction of the surface's. */
+  @container (max-width: 640px) {
+    .app-bar-brand-name {
+      display: none;
+    }
+  }
+
   @media (max-width: 640px) {
     .context-panel {
       max-width: 100vw;
-    }
-
-    .app-bar-brand-name {
-      display: none;
     }
 
     .message.companion,
@@ -3440,7 +3465,7 @@
       animation: none;
     }
 
-    .context-panel::backdrop {
+    .backdrop-overlay {
       animation: none;
     }
   }
@@ -4594,9 +4619,12 @@
    badge keeps the status as its accessible name (`aria-label`/`title` on
    `.app-bar-status`), the dot carries the tone on its own, and the dot pulses
    while a turn is in flight - so the state is never colour alone.
+
+   "This width" is the BAR's, not the window's: the shell is the container (see the
+   `.tavern-app-shell` block above).
    ========================================================================== */
 
-  @media (max-width: 480px) {
+  @container (max-width: 480px) {
     .app-bar {
       padding: 0 var(--space-2);
     }
@@ -5456,7 +5484,11 @@
    Wide bars are unchanged, and not by a duplicated rule: the wrapper is
    `display: contents`, so its children *are* the action row's own flex items,
    in the same order with the same gaps, and the trigger does not exist. Only the
-   860 px media query gives the wrapper a box at all.
+   860 px query gives the wrapper a box at all - and that query asks the BAR's
+   width, not the window's (`.tavern-app-shell` is the container, above): the bar
+   is what the rail competes with the name for. Measured in the dock, where the two
+   questions give different answers: an 816 px bar inside a 1440 px window folded
+   here and did not fold on the window's width (7 peers, the name cut by 127 px).
    ========================================================================== */
 
   .app-bar-more,
@@ -5468,7 +5500,7 @@
     display: none;
   }
 
-  @media (max-width: 860px) {
+  @container (max-width: 860px) {
     .app-bar-more {
       display: block;
       position: relative;
@@ -5769,7 +5801,7 @@
    Appended block; the rules above are untouched.
    ========================================================================== */
 
-  @media (max-width: 480px) {
+  @container (max-width: 480px) {
     .app-bar-companion {
       position: relative;
     }
@@ -6478,8 +6510,8 @@
    A narrow bar names the surface in the surface itself (owner ruling, 2026-10-21)
 
    The retired band above was retired because the AppBar's own entry names the
-   surface it is showing. Below 861 px that premise is gone: `.nav-button
-   .nav-label` is `display: none` (the bar's own media query, near `.nav-button`),
+   surface it is showing. Below 861 px of BAR that premise is gone: `.nav-button
+   .nav-label` is `display: none` (the bar's own container query, near `.nav-button`),
    so the bar is a row of unlabelled icons - and under 480 px four of the six
    entries are not even drawn, they live inside the `More` panel whose trigger
    carries no active state at all. At 400x800 the shell therefore said nothing
@@ -6494,6 +6526,11 @@
    `aria-labelledby` (`SurfaceView`), so `getByRole("region", { name: "聊天" })`
    still resolves to exactly one node.
 
+   The query is the bar's width, not the window's, for the same reason the rule
+   exists: it restores the fact the BAR gave up. In a dock the bar gives its entries'
+   names up while the window is wide, so a window query here would leave the player
+   with no name for the surface anywhere on screen.
+
    Measured, mounted, at 400x800: the band is 368x55 at y=56..111, the word 聊天
    draws 34x26 inside it at y=72, and the scroll container starts at y=119 - the
    band plus the column's own 8 px gap - reading `clientHeight` 682 where the
@@ -6505,7 +6542,7 @@
    Appended block; the rules above are untouched.
    ========================================================================== */
 
-  @media (max-width: 860px) {
+  @container (max-width: 860px) {
     .surface-view > .surface-header {
       position: static;
       clip-path: none;

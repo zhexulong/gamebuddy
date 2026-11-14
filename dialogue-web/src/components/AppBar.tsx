@@ -19,13 +19,15 @@ import { CompanionAvatar } from "./CompanionAvatar";
  * - The mark and the status text are catalog values, never literals: the entry
  *   is visible at every locale (design/26 §5.1).
  * - `fold` moves the bar's trailing entries into one disclosure on a narrow
- *   window instead of shrinking them. The owner's 400 px strip carries six peers,
+ *   bar instead of shrinking them. The owner's 400 px strip carries six peers,
  *   which is more control than bar: at that width the rail squeezed the
  *   companion's own name down to a bracket, which is the opposite of the point.
- *   Folding is a viewport behaviour and never a capability change - every entry
- *   keeps its name, its target and its surface, and on a wide window the bar is
- *   exactly the row it always was (`display: contents` makes the wrapper no box
- *   at all, style.css).
+ *   Folding is a container behaviour - the bar's own width, not the window's, so a
+ *   bar docked beside the game folds at the same width one in a narrow window does
+ *   (the shell is the container, style.css) - and never a capability change: every
+ *   entry keeps its name, its target and its surface, and on a wide bar the row is
+ *   exactly the one it always was (`display: contents` makes the wrapper no box at
+ *   all, style.css).
  */
 
 export type AppBarEntry = Readonly<{
@@ -83,7 +85,7 @@ export type AppBarProps = Readonly<{
    * entries from `from` on keep every property they have - same control, same
    * name, same 44 px target - and are only moved inside the panel on a narrow
    * bar, which is what gives the companion block its width back. Absent means
-   * the bar never folds, which is the whole bar on a wide window.
+   * the bar never folds, which is the whole bar at any width.
    */
   fold?: Readonly<{ from: number; label: string }>;
 }>;
