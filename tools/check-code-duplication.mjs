@@ -131,8 +131,9 @@
  *
  * The groups are the duplication groups the baseline records AND the tree still has - the debt the ratchet carries,
  * which `--record-shrinks` can only lower - and the count beside them is those groups' SITES, which is the unit of the
- * thing being duplicated: a group that loses one of its four copies lowers this number by three, and a group that leaves
- * the population lowers it by its whole site count. Measured 2026-11-15 at `eaa5f5a6` over the 283 recorded entries:
+ * thing being duplicated: the number falls by one when one copy of a group is deleted, and by that group's whole site
+ * count when it drops below the rule and leaves the population, so a reader can subtract what they removed instead of
+ * guessing what a group weighs. Measured 2026-11-15 at `eaa5f5a6` over the 283 recorded entries:
  * `250 groups · 1041 sites · of which runners 107 groups / 467 sites` - nearly half of the recorded debt is one family,
  * the `run-stardew-native-local-*` smoke runners the L1 extraction is already retiring, and the bare `duplication 289`
  * could not say so. That family is why this line exists: a red number nobody can place in the tree is read as weather.

@@ -854,3 +854,28 @@ test("--write-baseline still refuses an unrecorded group, and still creates the 
   assert.match(refused.stdout, /baseline_write_refused: [1-9]\d* group\(s\) are new or grew/);
   assert.equal(readFileSync(baselineFileOf(root), "utf8"), recorded, "an unrecorded group is never banked");
 });
+
+test("the debt site count moves by the copies that moved, which is the unit it claims to be", () => {
+  // Four recorded sites, then one copy deleted: the number falls by ONE, and the record is stale until the shrink is
+  // recorded - so a reader subtracting what they removed can tell the shrink apart from a token count that drifted.
+  const four = groupClones(
+    [
+      pair({ fragment: FRAGMENT, first: "host/src/a.ts", second: "host/src/b.ts" }),
+      pair({ fragment: FRAGMENT, first: "host/src/a.ts", second: "host/src/c.ts" }),
+      pair({ fragment: FRAGMENT, first: "host/src/a.ts", second: "host/src/d.ts" }),
+    ],
+    REPO,
+  );
+  const baseline = baselinePayload(four);
+  const before = evaluateGroups({ groups: four, baseline });
+  assert.equal(before.debt.sites, 4);
+  const after = evaluateGroups({ groups: threeCopies(), baseline });
+  assert.equal(after.debt.sites, 3);
+  assert.equal(after.stale, 1, "the record still says four sites, so the shrink has to be recorded");
+
+  // One copy further and the group is below the rule: it leaves the population and takes all three sites with it.
+  const twoCopies = groupClones([pair({ fragment: FRAGMENT, first: "host/src/a.ts", second: "host/src/b.ts" })], REPO);
+  const gone = evaluateGroups({ groups: twoCopies, baseline });
+  assert.deepEqual(gone.debt, { groups: 0, sites: 0, runnerGroups: 0, runnerSites: 0 });
+  assert.equal(debtLine(gone), "debt: 0 groups · 0 sites · of which runners 0 groups / 0 sites");
+});
