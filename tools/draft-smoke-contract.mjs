@@ -341,7 +341,7 @@ function deriveWorldAfter(code) {
   return { value: worldAfter, fields };
 }
 
-function deriveStale(code, args) {
+function deriveStale(code) {
   const fields = [];
   const dispatches = [...code.matchAll(/executeFresh(?:AfterReobserve)?\s*\(/gu)];
   if (dispatches.length < 2) return { value: null, fields };
@@ -389,7 +389,7 @@ export function draftContract(runnerPath, { facts = null } = {}) {
   const discovery = deriveDiscovery(code, actionFacts, args.value ?? {});
   const evidence = deriveEvidence(code);
   const worldAfter = deriveWorldAfter(code);
-  const stale = deriveStale(code, args.value ?? {});
+  const stale = deriveStale(code);
 
   const contract = { schema: SMOKE_CONTRACT_SCHEMA, action: actionId };
   // Only a declaration too generic to name a success word may carry one in the contract, so only then is it written;
