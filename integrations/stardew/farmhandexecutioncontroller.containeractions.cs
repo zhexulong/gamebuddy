@@ -52,6 +52,10 @@ internal sealed partial class ExecutionManager
         this.RequestLocalTileTarget(
             "chest_store", requestId, chestId, requestedDeadlineMs,
             AdmissionActionabilityProfile.General,
+            // This action admits at the top: it owes no scope-bound actor proof, so the seam is asked for the 8-argument
+            // form explicitly. A 7-argument call resolves to the walking-subject form, which would add
+            // `AuthorizeActorOnReadyWorld` - a refusal this action never had.
+            authorize: null,
             gate: location =>
             {
                 if (!TryFindCarriedStack(expectedQualifiedItemId, out _, out _))
@@ -136,6 +140,9 @@ internal sealed partial class ExecutionManager
         this.RequestLocalTileTarget(
             "chest_retrieve", requestId, chestId, requestedDeadlineMs,
             AdmissionActionabilityProfile.General,
+            // Admits at the top, like chest_store: `authorize: null` is the 8-argument form, not the walking-subject
+            // form that would add `AuthorizeActorOnReadyWorld`.
+            authorize: null,
             gate: location =>
             {
                 // The container is resolved before the walk; it and the stored item are re-resolved after it inside
