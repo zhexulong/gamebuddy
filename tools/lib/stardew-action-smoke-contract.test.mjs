@@ -876,6 +876,29 @@ const DECLARED_CLAUSES = coverage.readings
   .flatMap((reading) => reading.declared.map((clause) => `${reading.action}:${clause}`))
   .sort();
 
+/**
+ * A subject for the three falsifiers below, taken from the corpus as the gate reads it.
+ *
+ * They used `accept_daily_quest.json` by name until that action was promoted into its contract. A subject named by
+ * hand stops existing the moment its runner is retired, and then the falsifier reads green while the rule is intact - a
+ * test that stopped testing. The subject is the first contract the gate still COMPARES that covers an evidence key
+ * against a literal, and the key is read off the same reading the gate produced.
+ */
+const evidenceSubject = coverage.readings
+  .filter((reading) => !reading.promoted)
+  .map((reading) => {
+    const clause = reading.covered.find((entry) => entry.startsWith("evidence."));
+    if (clause === undefined) return null;
+    const key = clause.slice("evidence.".length);
+    const expectation = loadSmokeContractFile(reading.file).evidence[key];
+    return expectation?.equals === undefined ? null : { action: reading.action, key, value: expectation.equals };
+  })
+  .find((entry) => entry !== null);
+assert.ok(
+  evidenceSubject !== undefined,
+  "no compared contract covers an evidence key against a literal: the three falsifiers below have no subject",
+);
+
 test("the committed corpus covers every assertion its runner makes, or declares the gap in words", async () => {
   console.log(
     `contracts examined ${coverage.examined} · assertions compared ${coverage.compared} · dropped ${coverage.dropped.length} · declared ${coverage.declared}`,
@@ -964,22 +987,22 @@ test("a contract whose runner is gone is promoted when its row routes through it
 test("a contract that drops an assertion its runner makes is refused, naming the contract and the clause", async () => {
   // The falsifier supplies its own subject: a declaration injected into a contract the gate still compares, then
   // stripped with every other declaration. Depending on which committed contracts happen to declare a gap made this
-  // falsifier go green the moment those actions were promoted to the contract route, which is a test that stopped
-  // testing.
-  const subject = "accept_daily_quest.json";
-  const subjectClause = "accept_daily_quest:evidence.accepted_after";
+  // falsifier go green the moment those actions were promoted to the contract route, and a subject NAMED here did the
+  // same when its runner was retired - so the subject is the first contract the gate still compares, and the clause
+  // is one that contract covers, both read from the reading the gate just produced.
+  const subject = `${evidenceSubject.action}.json`;
+  const subjectClause = `${evidenceSubject.action}:evidence.${evidenceSubject.key}`;
   const stripped = await checkContractCoverage({
     contractDirectory: corpusOf((raw, file) => {
       // The subject has to LOSE the clause when the declaration goes, so the declaration is the only thing standing
       // between the runner's assertion and a drop: delete one evidence entry and declare that same entry.
       const next = { ...raw };
       if (file === subject) {
-        const { accepted_after, ...rest } = raw.evidence;
+        const { [evidenceSubject.key]: _dropped, ...rest } = raw.evidence;
         next.evidence = rest;
         next.unasserted = {
           ...(raw.unasserted ?? {}),
-          "evidence.accepted_after":
-            "accepted_after is declared here so the falsifier has a clause to lose when declarations are stripped",
+          [`evidence.${evidenceSubject.key}`]: `${evidenceSubject.key} is declared here so this falsifier has a clause to lose when declarations are stripped`,
         };
       }
       delete next.unasserted;
@@ -995,7 +1018,7 @@ test("a contract that drops an assertion its runner makes is refused, naming the
     assert.ok(error.message.includes(clause), `${clause} is not named: ${error.message}`);
   const namedActions = new Set(stripped.dropped.map((clause) => clause.split(":")[0]));
   assert.ok(
-    namedActions.has("accept_daily_quest"),
+    namedActions.has(evidenceSubject.action),
     `the contract the falsifier supplied a declaration to is named: ${[...namedActions].sort().join(",")}`,
   );
   console.log(
@@ -1004,8 +1027,9 @@ test("a contract that drops an assertion its runner makes is refused, naming the
 });
 
 test("a declaration that outlives its clause is refused, so an exemption expires with the thing it exempted", async () => {
-  // Pointed at a contract whose runner is still on disk: a promoted contract has no clauses to outlive.
-  const subject = "accept_daily_quest.json";
+  // Pointed at a contract whose runner is still on disk: a promoted contract has no clauses to outlive. The subject
+  // is derived for the same reason as above - a named one stops existing when its runner is retired.
+  const subject = `${evidenceSubject.action}.json`;
   const stale = await checkContractCoverage({
     contractDirectory: corpusOf(
       (raw, file) =>
@@ -1024,22 +1048,25 @@ test("a declaration that outlives its clause is refused, so an exemption expires
   });
   const error = expectRefusal(() => assertContractCoverage(stale), "unasserted_clause_unknown");
   assert.ok(
-    error.message.includes("accept_daily_quest:evidence.not_a_clause"),
+    error.message.includes(`${evidenceSubject.action}:evidence.not_a_clause`),
     `the refusal names the declaration that outlived its clause: ${error.message}`,
   );
 });
 
 test("a contract that states a covered clause wrongly is refused, so the comparison is not a registration step", async () => {
+  const wrong = evidenceSubject.value === "false" ? "true" : "false";
   const wrongValue = await checkContractCoverage({
     contractDirectory: corpusOf(
       (raw, file) =>
-        file === "accept_daily_quest.json" ? { ...raw, evidence: { ...raw.evidence, accepted_after: "false" } } : raw,
+        file === `${evidenceSubject.action}.json`
+          ? { ...raw, evidence: { ...raw.evidence, [evidenceSubject.key]: wrong } }
+          : raw,
       "wrong-value",
     ),
   });
   const valueError = expectRefusal(() => assertContractCoverage(wrongValue), "drops_a_runner_assertion");
   assert.ok(
-    valueError.message.includes("accept_daily_quest:evidence.accepted_after"),
+    valueError.message.includes(`${evidenceSubject.action}:evidence.${evidenceSubject.key}`),
     `a value the runner does not accept is a dropped clause: ${valueError.message}`,
   );
 
