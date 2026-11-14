@@ -9,8 +9,9 @@
 // this driver first ensures the row it needs exists rather than assuming one is mounted. When the
 // open conversation carries no message of its own, it gets one real turn, gated exactly as driver F
 // gates its own (`GB_SHOTS_CREDENTIAL_PRESENT`, set by the orchestrator; the value never crosses in).
-const { connect, reporter, PAGE_HELPERS, activateSurface, shot, readDurableTranscript, canStartTurn , observe, observationStart } = require("./common.cjs");
+const { connect, reporter, PAGE_HELPERS, activateSurface, shot, readDurableTranscript, canStartTurn , observe, observationStart, waitForPanel } = require("./common.cjs");
 const { continuityLine } = require("./capability.cjs");
+const { deliverPress, pressVerdict } = require("./submit-answer.cjs");
 
 const CREDENTIAL_PRESENT = process.env.GB_SHOTS_CREDENTIAL_PRESENT === "1";
 
@@ -40,17 +41,34 @@ const sendLine = (text) => {
   return "typed";
 };
 
-async function sendAndSettle(page, text, settled) {
+async function sendAndSettle(page, text, settled, { budgetMs = 60000, tickMs = 500 } = {}) {
   await page.evaluate(sendLine, text);
-  await page.waitForTimeout(300);
-  await page.locator(".composer-button.send-button").click();
-  for (let attempt = 0; attempt < 90; attempt += 1) {
-    await page.waitForTimeout(2000);
+  // The click is not the measurement, and neither is a sleep: the Send control is what a press needs,
+  // and it is enabled only once the surface's own gate allows one. 300 ms used to be spent guessing.
+  const ready = await page
+    .waitForFunction(
+      () => {
+        const area = document.querySelector(".composer-textarea");
+        const send = document.querySelector(".composer-button.send-button");
+        return area !== null && area.value.trim().length > 0 && send !== null && !send.disabled;
+      },
+      null,
+      { timeout: 15000 },
+    )
+    .then(() => true)
+    .catch(() => false);
+  if (!ready) return { state: null, answer: null, waitedMs: 0, last: await page.evaluate(composerState) };
+  const started = Date.now();
+  // The Host's own answer to this press: `deliverPress` waits for the submit response the click earns,
+  // so a refusal is read as a refusal instead of being polled past for three minutes.
+  const answer = await deliverPress(page);
+  for (let waited = 0; waited <= budgetMs; waited += tickMs) {
     const state = await page.evaluate(composerState);
     if (!state.running && state.optimistic === false && state.streaming === 0 && (await page.evaluate(settled)))
-      return state;
+      return { state, answer, waitedMs: Date.now() - started, last: state };
+    await page.waitForTimeout(tickMs);
   }
-  return null;
+  return { state: null, answer, waitedMs: Date.now() - started, last: await page.evaluate(composerState) };
 }
 
 /** The controls in one row's strip: what the player can press, with the shape of each. */
@@ -154,6 +172,9 @@ const editorFacts = () => {
   };
 };
 
+/** The one line the surface says above the composer: a refusal, a no-model banner, or nothing. */
+const surfaceSentence = () => (document.querySelector(".reference-turn-notice")?.textContent ?? "").trim() || null;
+
 (async () => {
   const { browser, page } = await connect();
   const { say, flush } = reporter("n-message-edit.txt");
@@ -181,7 +202,20 @@ const editorFacts = () => {
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.evaluate(`${PAGE_HELPERS};undefined`);
   await activateSurface(page, "聊天");
-  await page.waitForTimeout(1800);
+  // The surface's data, waited for instead of guessed at. 1800 ms was the old budget for "the
+  // transcript has probably painted"; the panel now says when it has settled, and how long that took.
+  try {
+    const panel = await waitForPanel(page, {
+      name: "chat",
+      panel: '[data-testid="chat-surface"]',
+      item: ".message-list > li.message",
+    });
+    say(`the conversation's panel settled after ${panel.waitedMs}ms with ${panel.count} row(s)`);
+  } catch (error) {
+    // Whether this mount can do anything at all is `canStartTurn`'s question below, so its answer - not
+    // this failure to read a panel - decides between a named skip and a loud one.
+    say(`the conversation's panel did not settle: ${String(error).slice(0, 300)}`);
+  }
 
   say(`credential present (present|absent only): ${CREDENTIAL_PRESENT ? "present" : "absent"}`);
 
@@ -202,24 +236,36 @@ const editorFacts = () => {
       process.exit(0);
     }
     say("the open conversation carries no player message; one real turn is sent so there is a row to edit");
-    const settled = await sendAndSettle(
+    const press = await sendAndSettle(
       page,
       "在吗？",
       () => document.querySelectorAll(".message-list > li.message.companion:not([data-streaming])").length > 1,
     );
-    say(`turn settled: ${settled !== null} ${JSON.stringify(settled)}`);
+    say("=== ITEM: the press, and the Host's own answer to it ===");
+    say(`the Host's answer to the press: ${JSON.stringify(press.answer)}`);
+    say(
+      `what the surface showed after ${press.waitedMs}ms: ${JSON.stringify(press.last)} settled=${press.state !== null}`,
+    );
+    say(`the surface's own sentence: ${JSON.stringify(await page.evaluate(surfaceSentence))}`);
     rows = await page.evaluate(domRows);
+    const verdict = pressVerdict({ answer: press.answer, playerRows: rows.filter((row) => row.role === "player").length });
+    if (!verdict.ok) {
+      say(`refused API calls since mount: ${JSON.stringify(refusals.splice(0))}`);
+      say(`the transcript after the press: ${JSON.stringify(rows)}`);
+      flush();
+      await browser.close().catch(() => undefined);
+      say(`DRIVER N FAILED: ${verdict.line}`);
+      process.exit(1);
+    }
+    say(`turn settled: ${press.state !== null} ${JSON.stringify(press.state)} waited=${press.waitedMs}ms`);
     say(JSON.stringify(rows, null, 1));
   }
 
-  const original = rows.find((row) => row.role === "player")?.text ?? null;
-  if (original === null) {
-    say("SKIPPED:no_player_row_to_edit_after_the_turn");
-    flush();
-    await browser.close().catch(() => undefined);
-    say("DONE-N");
-    process.exit(0);
-  }
+  // The verdict above admits only a transcript that carries a player row, so this names the invariant
+  // rather than describing a state the driver knows how to go on from.
+  const editedRow = rows.find((row) => row.role === "player");
+  if (editedRow === undefined) throw new Error("no_player_row_to_edit_after_the_press_read_clean");
+  const original = editedRow.text;
   say(`the row to edit carries: ${JSON.stringify(original)}`);
 
   say("=== ITEM: the player row's own strip (the control that opens the editor) ===");
