@@ -1,0 +1,122 @@
+{
+  "schema": "gamebuddy-stardew-native-local-live-run-evidence/v1",
+  "action": "fish_here",
+  "fixtureScenario": "native_fish_here_v1",
+  "resolvedRunner": "run-stardew-native-local-player-fish-here-smoke.mjs",
+  "recordedFrom": {
+    "artifact": ".tmp/fish/launcher.log",
+    "durable": false,
+    "note": "The runner prints its result object to stdout and writes nothing durable. This bundle is that object, verbatim, from one disposable native-local run driven by the launcher the gate table resolves for the action (`tools/run-stardew-native-local-player-move-fixture.ps1 -Action fish_here`), on commit d43ff405. A second, independent run of the same commit from `tools/live-action.mjs --action fish_here --keep-log` (.tmp/fish/live7.json, state=passed, reasonCode=fish_caught, target water_254b7a3116211750, tile 72,30, fish_caught 0->1, bait 20->19, stamina -8, 30834 ms, restore problems []) agreed on every field the two share. No earlier run of this action had ever been read as a pass: the first real receipt (2026-11-14, before 834aabb0) was `succeeded/fish_caught` while the runner reported `blocked fish_here_evidence_was_perfect:missing:true`, and .tmp/fish/live-1..live-5 record the five blocked slices that between them produced the runner's dry-tile refusal, its off-map coordinate and its `not_measured` parity answer."
+  },
+  "run": {
+    "state": "passed",
+    "topology": "native_local_player_fixture",
+    "reasonCode": "fish_caught",
+    "water": {
+      "targetId": "water_254b7a3116211750",
+      "x": 72,
+      "y": 30
+    },
+    "evidence": {
+      "location": "Farm",
+      "target": "water_254b7a3116211750",
+      "tile": "72,30",
+      "caught_qualified_item_id": "(O)145",
+      "display_name": "太阳鱼",
+      "fish_size": "8",
+      "quality": "0",
+      "pull_outcome": "not_verified",
+      "pull_unobserved_field": "BobberBar.distanceFromCatching",
+      "bite_observed": "isNibbling",
+      "cast_to_credit_ms": "1612",
+      "rod_durability_left": "-1",
+      "bait_before": "20",
+      "bait_left": "19",
+      "bait_consumed": "1",
+      "stamina_before": "270",
+      "stamina_after": "262",
+      "stamina_delta": "-8",
+      "inventory_before": "0",
+      "inventory_after": "1",
+      "fish_caught_before": "0",
+      "fish_caught_after": "1",
+      "fish_caught_delta": "1",
+      "credit": "fishCaught:0->1"
+    },
+    "negative": {
+      "reasonCode": "water_not_fishable:target_changed"
+    },
+    "dryTile": {
+      "tile": "1000,1000",
+      "reasonCode": "no_cuttable_blocker:water"
+    },
+    "parity": {
+      "status": "not_measured",
+      "reason": "location_overrides_get_fish:Farm",
+      "sampled": 0,
+      "distinct": 0,
+      "outside": 0
+    },
+    "receipt": {
+      "state": "succeeded",
+      "reasonCode": "fish_caught",
+      "revision": 2,
+      "hasEvidence": true
+    },
+    "trace": [
+      {
+        "step": "cast",
+        "action": "fish_here",
+        "water": "72,30",
+        "targetId": "water_254b7a3116211750",
+        "receipt": {
+          "state": "accepted",
+          "reasonCode": "accepted",
+          "revision": 1,
+          "hasEvidence": true
+        }
+      },
+      {
+        "step": "mismatched_binding",
+        "action": "fish_here",
+        "water": "72,30",
+        "targetId": "water_f05b58f51f879411",
+        "receipt": {
+          "state": "rejected",
+          "reasonCode": "water_not_fishable:target_changed",
+          "revision": 3,
+          "hasEvidence": true
+        }
+      },
+      {
+        "step": "dry_tile",
+        "action": "fish_here",
+        "tile": "1000,1000",
+        "targetId": "water_15b4d217b6ad2cf1",
+        "receipt": {
+          "state": "rejected",
+          "reasonCode": "no_cuttable_blocker:water",
+          "revision": 4,
+          "hasEvidence": true
+        }
+      }
+    ]
+  },
+  "whatThisProves": [
+    "The Mod drove the game's own cast at the nearest water tile the engine published: `Farm` tile 72,30, target `water_254b7a3116211750`, receipt `succeeded/fish_caught` at revision 2 with `hasEvidence=true`. The trace shows the request ACCEPTED at revision 1 first, so the terminal is the same execution's settlement and not a re-read of the accepted receipt.",
+    "The catch is the engine's own credit, not the action's narration: `fish_caught_before=0` -> `fish_caught_after=1`, `fish_caught_delta=1`, `credit=fishCaught:0->1` - exactly one fish booked by `Farmer.caughtFish`'s own win path - and it arrived in the pack (`inventory_before=0` -> `inventory_after=1`).",
+    "The species, size and quality are the ENGINE's draw, not an argument: `(O)145` 太阳鱼, `fish_size=8`, `quality=0`, chosen by `GameLocation.getFish` at the bite (`bite_observed=isNibbling`, `cast_to_credit_ms=1612`). Nothing in the request names a species.",
+    "The cast cost what a cast costs, from the engine's own mutations: bait 20 -> 19 (`(O)685` armed by the fixture in the rod), stamina 270 -> 262 (`stamina_delta=-8`), and the rod's durability answer present (`rod_durability_left=-1`).",
+    "The pull's own outcome is NOT claimed: `pull_outcome=not_verified` with the field it could not watch named (`BobberBar.distanceFromCatching`). A receipt that said `verified` would be a violation of the same gate.",
+    "A request whose `expectedTargetId` names another tile was refused BY NAME before the rig was touched: `water_not_fishable:target_changed`, evidence `target=water_f05b58f51f879411;tile=72,30;actual=water_254b7a3116211750`, revision 3, and no catch was booked. A handler that cast whatever it was handed would make the positive half meaningless.",
+    "`fish_here` at a tile the map does not contain (1000,1000) is a NAMED REFUSAL, not a cast: `no_cuttable_blocker:water` at revision 4, evidence `actor=73,30;reach=1;standable_neighbour=none;approaches=north:off_map,east:off_map,south:off_map,west:off_map;blocked_by=range:reach:970`, with no catch and no stamina spent.",
+    "The reader's parity half answered `not_measured` (reason `location_overrides_get_fish:Farm`, `sampled=0`) instead of reading as agreement - the third answer, not a quiet pass."
+  ],
+  "whatThisDoesNotProve": [
+    "The reader-against-engine parity claim is ABSENT, not satisfied: `parity.status=not_measured`, `sampled=0`, because Farm is one of the five locations whose own `getFish` override means `FishingCatchable` refuses to publish a set at all. Nothing here says our published set contains every species the engine can return, and the reverse direction (we publish a species the engine never returns) is not claimed even where sampling runs.",
+    "The two specific-bait cases were NOT driven. This world arms plain `(O)685` (20) in the rod, and no published action replaces a rod's bait, so neither `(O)SpecificBait` naming a species present in this location's rows nor one naming an absent species was exercised. See `not_measured` in the task's report: arming it needs a scenario variant in `integrations/stardew/ModEntry.Fixtures.ScenarioInitializers.Containers.cs`, which is outside this unit's files.",
+    "One location (`Farm`), one season/day/hour (spring 1 Y1, morning), one weather. Species whose rows the conditions exclude are not exercised.",
+    "No cancellation, deadline expiry, uncertain outcome, replay, save/reload or Farmhand (shared-world) coverage.",
+    "The dry-tile case names a tile the map does not contain, not an in-map land tile: the actor is boxed in by water on all four sides in this fixture, so no adjacent in-map tile can produce `water_not_fishable:not_water`, and `(-1,-1)` is refused by the bridge's argument range before any handler runs."
+  ]
+}
