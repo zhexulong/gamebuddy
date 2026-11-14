@@ -602,9 +602,7 @@
     },
     {
       "property": "Chest.playerChest",
-      "verdict": "deliberately_absent",
-      "reason": "whether a player placed the chest; it gates removal, which the Mod decides against the live chest",
-      "expires": "row_field:chests.playerChest"
+      "verdict": "not_measured"
     },
     {
       "property": "Chest.fridge",
