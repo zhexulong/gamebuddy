@@ -1,0 +1,17 @@
+{
+  "schema": "gamebuddy-gate-inputs-baseline/v1",
+  "note": "Gates that hand-list the population they read AND report nothing wrong when it is empty at this commit. A record of debt, not an acceptance of it: delete a row by deriving the population or by blocking on zero, never by adding one by hand. `--update` writes this file; the ratchet fails on a row the tree has outgrown.",
+  "members": [
+    "test:dependency-risk :: ../security/dependency-advisories.json, ../security/dependency-advisories.schema.json",
+    "test:live-run-analysis :: live.jsonl, session-1.jsonl",
+    "test:stardew-admission-hold-codes :: WorldModel.cs, farmhandexecutioncontroller.cs",
+    "test:stardew-fixture-action-coverage :: ../../integrations/stardew/action-development/contracts/generated/action-surface.v1.json, ./stardew-native-local-player-fixture.mjs",
+    "test:stardew-fixture-profile :: .stardew-fixture-profile.lock, transaction.json",
+    "test:stardew-fixture-roots :: launch-ladder-live.mjs, launch-stardew-navigation-fixture.ps1, start-farmhand-launcher.ps1",
+    "test:stardew-fixture-transaction-inspector :: .stardew-fixture-profile.lock, transaction.json",
+    "test:stardew-test-shape :: RefusalLayerNamingTests.cs, ToolPreconditionUniformityTests.cs",
+    "test:stardew-wire-agreement :: bridge-v1.schema.json, integrations/stardew/action-development/contracts/generated/action-surface.v1.json",
+    "test:vendor-build-artifacts :: dist/index.d.ts, dist/index.js, dist/tavern/index.d.ts, dist/tavern/index.js",
+    "test:windows-process-tree :: secret.txt, sentinel.txt"
+  ]
+}

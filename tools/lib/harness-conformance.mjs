@@ -559,6 +559,16 @@ const GATES_WITH_FALSIFIER = Object.freeze([
   // register naming a member that is not a gate, an untracked gate published rather than named, and the real tree
   // agreeing - and its own red proof is the reading that preceded its fix (one mutation driver in prelive's 143).
   "check-gate-population-agreement.mjs",
+  // Prints `gate_inputs examined N · authority A · hand-listed H · external E · unreadable U · unknown K` and
+  // `zero-read: blocked B · unmeasured M · green-with-zero G · unseen S` plus a two-entry `checks[]` verdict (every
+  // gate reached a source, the worst-class ratchet is current), so its default run is the report this suite reads - and
+  // its `examined` is judged by `tools/lib/assert-non-vacuous.mjs`, the same rule it applies to every other gate. Its
+  // falsifier is tools/audit-gate-inputs.test.mjs, which drives the reading over throwaway trees: a scan, a module-level
+  // path table, one fixed input, a blocked pair and a silent pair are each classified from code, a comment saying
+  // `not_measured` does not make a gate report one, `findings.length === 0` is not read as a zero-population guard, an
+  // arrived member of the worst class exits 1 naming the population it hand-lists, a recorded one exits 0, a stale row
+  // exits 1, and a tree with no gate in it exits 2 rather than passing.
+  "audit-gate-inputs.mjs",
   // Prints `{"gate":"stardew_receipt_transition_field_provenance/v1","status":"passed","population":443,...}` and
   // the same object as a `receipt_transition_fields examined=443 files=47 ...` line, blocking on
   // `gate_measured_nothing` when it finds no receipt builder or no transition field, so its default run is the report

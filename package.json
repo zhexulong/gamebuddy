@@ -11,6 +11,7 @@
   "scripts": {
     "assess:stardew-soil-itm-conformance": "node tools/assess-stardew-soil-itm-conformance.mjs",
     "audit:chat-live-run": "node tools/audit-chat-live-run.mjs",
+    "audit:gate-inputs": "node tools/audit-gate-inputs.mjs",
     "audit:gate-red-proofs": "node tools/audit-gate-red-proofs.mjs",
     "audit:stardew-action-seam-terminals": "node integrations/stardew/action-development/src/analysis/stardew-action-seam-terminals-audit.mjs",
     "audit:stardew-decision-closure": "node tools/audit-stardew-decision-closure.mjs",
@@ -200,6 +201,7 @@
     "test:fail-closed-forward-path": "node --test tools/check-fail-closed-forward-path.test.mjs",
     "test:first-viewport-forward-path": "cd dialogue-web && pnpm exec playwright test tests/first-viewport-forward-path.spec.ts --project=chromium --workers=1",
     "test:format-ratchet": "node --test tools/scripts/check-format-ratchet.test.mjs tools/scripts/check-lint-ratchet.test.mjs",
+    "test:gate-inputs": "node --test tools/audit-gate-inputs.test.mjs",
     "test:gate-red-proofs": "node --test tools/audit-gate-red-proofs.test.mjs",
     "test:pre-commit": "node --test tools/scripts/pre-commit.test.mjs",
     "test:switch-exhaustiveness": "node --test tools/check-switch-exhaustiveness.test.mjs",
