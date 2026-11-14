@@ -204,6 +204,21 @@ function MessageEditor({
 }>) {
   const fieldRef = useRef<HTMLTextAreaElement | null>(null);
   /**
+   * The field takes the focus the moment it opens.
+   *
+   * The press that opened it was the row's Edit control, and that control is UNMOUNTED by the same
+   * press - so without this the caret is left on `<body>` and a keyboard player who meant to rewrite
+   * the words has to tab through the whole page to reach them again.
+   */
+  useEffect(() => {
+    const field = fieldRef.current;
+    if (field === null) return;
+    field.focus();
+    // The caret lands at the END of the words. Focusing a field that already holds the reply leaves
+    // the caret at offset zero, so the first keystroke of a correction would go in front of it.
+    field.setSelectionRange(field.value.length, field.value.length);
+  }, []);
+  /**
    * The field is as tall as the words in it, between two rows and the ceiling.
    *
    * `height: auto` first, because `scrollHeight` is the content's own height only while the box is not
@@ -544,10 +559,29 @@ export const MessageBubble = memo(function MessageBubble({
     editorDraft.type(Object.freeze({ text: message.text, sent: null }));
   };
   /**
+   * The Edit control the editor replaced, and the request to give the focus back to it.
+   *
+   * The control is not in the DOM while the field is open, so the press that closes the field cannot
+   * focus it directly: it ASKS (`restoreEditFocusRef`), and the effect below runs after the render
+   * that brings the control back. Cancelling is the case that drops focus today - Escape and Cancel
+   * both come from a field that the same state change unmounts.
+   */
+  const editTriggerRef = useRef<HTMLButtonElement | null>(null);
+  const restoreEditFocusRef = useRef(false);
+  const closeEditor = (): void => {
+    restoreEditFocusRef.current = true;
+    editorDraft.clear();
+  };
+  /**
    * True while this row's strip IS the editor: the bubble has given way to it and the strip takes
    * the bubble's own place in the flow (`.message-actions-editing`).
    */
   const editing = editor !== null;
+  useEffect(() => {
+    if (editing || !restoreEditFocusRef.current) return;
+    restoreEditFocusRef.current = false;
+    editTriggerRef.current?.focus();
+  }, [editing]);
   /**
    * The editor closes on the one fact that says the edit landed: the row the transcript now carries
    * holds exactly the words that were sent, and no mutation is in flight. A refusal therefore leaves
@@ -579,7 +613,7 @@ export const MessageBubble = memo(function MessageBubble({
       if (event.key !== "Escape") return;
       event.stopPropagation();
       if (pending !== null) return;
-      editorDraft.clear();
+      closeEditor();
     };
     document.addEventListener("keydown", onKeyDown);
     return () => document.removeEventListener("keydown", onKeyDown);
@@ -914,7 +948,7 @@ export const MessageBubble = memo(function MessageBubble({
                   saveLabel={labels.editMessageSave}
                   cancelLabel={labels.editMessageCancel}
                   onTextChange={(text) => editorDraft.type({ text, sent: editor.sent })}
-                  onCancel={() => editorDraft.clear()}
+                  onCancel={closeEditor}
                   onSave={() => {
                     editorDraft.type({ text: editor.text, sent: editor.text });
                     onEdit?.(message.handle, message.order, editor.text);
@@ -1003,6 +1037,7 @@ export const MessageBubble = memo(function MessageBubble({
                 leave it outside the population. */}
                   {!stripReplaced && editReplyPoint !== undefined && (
                     <button
+                      ref={editTriggerRef}
                       type="button"
                       className="action-btn edit-btn"
                       data-testid="message-edit"
@@ -1105,7 +1140,7 @@ export const MessageBubble = memo(function MessageBubble({
                     saveLabel={labels.editMessageSave}
                     cancelLabel={labels.editMessageCancel}
                     onTextChange={(text) => editorDraft.type({ text, sent: editor.sent })}
-                    onCancel={() => editorDraft.clear()}
+                    onCancel={closeEditor}
                     onSave={() => {
                       editorDraft.type({ text: editor.text, sent: editor.text });
                       onEdit(message.handle, message.order, editor.text);
@@ -1113,6 +1148,7 @@ export const MessageBubble = memo(function MessageBubble({
                   />
                 ) : (
                   <button
+                    ref={editTriggerRef}
                     type="button"
                     className="action-btn edit-btn"
                     data-testid="message-edit"

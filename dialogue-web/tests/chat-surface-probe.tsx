@@ -1029,6 +1029,21 @@ const chatProbe = {
     element.scrollTop = top;
     element.dispatchEvent(new Event("scroll"));
   },
+  /**
+   * Where the keyboard actually is.
+   *
+   * `document.activeElement` is the reading that matters: a caret dropped on `<body>` is the defect
+   * itself, not a missing attribute on a control that claims to be focused, so the probe reports the
+   * element the browser gave the focus to and not a flag the surface set.
+   */
+  focusedControl(): { tag: string; testId: string | null; handle: string | null } {
+    const active = document.activeElement ?? document.body;
+    return {
+      tag: active.tagName.toLowerCase(),
+      testId: active.getAttribute("data-testid"),
+      handle: active.closest("[data-handle]")?.getAttribute("data-handle") ?? null,
+    };
+  },
 };
 
 (window as unknown as { chatProbe: typeof chatProbe }).chatProbe = chatProbe;
