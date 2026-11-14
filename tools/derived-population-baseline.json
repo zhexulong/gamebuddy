@@ -364,15 +364,6 @@
       "reason": "[derivable-now] `PRESET_MARKERS` is the table the test reads; naming the marker it holds (`deepEqual(entries.filter(([, kind]) => kind === \"cut\").map(([name]) => name), [<name>])`) is the fact."
     },
     {
-      "file": "host/src/tavern/preset-st-conformance.private.test.ts",
-      "authority": "rows",
-      "literal": "9",
-      "shape": "unresolved",
-      "sites": 1,
-      "line": 519,
-      "reason": "[needs-a-decision] the assertion is a re-measurement tripwire on a real user document outside the repo (`amber's row count this suite was measured against has changed`). Reading A, the gate's: a frozen count of a population this file did not declare. Reading B, the test's: a tripwire that must fire when the corpus changes, whose 9 row identifiers are not the test's to restate. Naming the 9 identifiers would duplicate a user's preset in the suite; leaving the count keeps a literal as the expected side of a population."
-    },
-    {
       "file": "host/src/tavern/reference-pipeline-state.test.ts",
       "authority": "results",
       "literal": "10",

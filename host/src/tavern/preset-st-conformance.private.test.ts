@@ -516,15 +516,30 @@ test("amber's 9 rows are 7 sent + 1 cut + 1 in-chat: jailbreak (position 1, dept
     const expected = expectedPlacement(amber.document, rows, SLOTS);
     const assembly = assemblePreset(amber.document, { macros: MACROS, markers: SLOTS });
 
-    assert.equal(rows.length, 9, "amber's row count this suite was measured against has changed");
-    assert.deepEqual(expected.sent, [...DEFAULTS_PREFIX]);
-    assert.deepEqual(expected.cut, ["chatHistory"]);
-    assert.deepEqual(expected.depth, ["jailbreak"]);
-    assert.deepEqual(expected.disabled, []);
-    assert.deepEqual(expected.blank, []);
+    // Amber is the preset this product authors, so its rows are asserted HERE, one bucket each, and the group's size
+    // is their sum rather than a number beside them: an asset that gained or lost a row makes `rows` disagree with
+    // the buckets instead of matching a count somebody re-measured by hand.
+    const declared = {
+      sent: [...DEFAULTS_PREFIX],
+      named: [],
+      cut: ["chatHistory"],
+      depth: ["jailbreak"],
+      disabled: [],
+      blank: [],
+    };
+    assert.equal(
+      rows.length,
+      Object.values(declared).flat().length,
+      "amber's row count this suite was measured against has changed",
+    );
+    assert.deepEqual(expected.sent, declared.sent);
+    assert.deepEqual(expected.cut, declared.cut);
+    assert.deepEqual(expected.depth, declared.depth);
+    assert.deepEqual(expected.disabled, declared.disabled);
+    assert.deepEqual(expected.blank, declared.blank);
     assert.deepEqual(
       expected.named,
-      [],
+      declared.named,
       "amber has no marker without a source, so the ladder's second rung must not start naming slots for it",
     );
 
