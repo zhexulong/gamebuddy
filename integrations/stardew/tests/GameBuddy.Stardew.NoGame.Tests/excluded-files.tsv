@@ -131,6 +131,7 @@ MovingSubjectRequestEquivalenceTests.cs	mod-assembly	Handlers, Xna, StardewValle
 NativeChatIngressRoutingTests.cs	mod-assembly	NativeChatIngressPolicy, NativeChatIngressTextClassification, BridgeSession, ExecutionManager, DummyMonitor@NativeFarmingContractTests.cs, BridgeHello, PlayerControlProtocol
 NativeFarmingContractTests.cs	mod-assembly	StardewModdingAPI, Handlers
 NativeItemPredicateTests.cs	mod-assembly	NativeItemPredicates
+NativeToolExhaustionCoverageTests.cs	reference-tree	StardewValleyDecompiled (Farmer.cs :6874 the only write of exhausted.Value = true, :3573-3577 the day-rollover penalty, StardewValley.Tools/*.cs the DoFunction bodies); /ref/ is gitignored, so a hosted checkout has no reference tree
 NativeLocalFixtureScenarioPopulationTests.cs	mod-assembly	NativeLocalPlayerFixtureConfig
 NativeLocalPlayerFixtureHeldItemTests.cs	mod-assembly	ModConfig, NativeLocalPlayerFixtureConfig, NativeLocalPlayerFixtureBootstrapConfig
 nativelanendpointtargetsurfacetests.cs	game	StardewValley
