@@ -26,3 +26,4 @@ One line per deliberate change:
 | 2026-11-13 | 4210d14e | amber-game.json (main, jailbreak) | replace broken positive declarations forcing chatter with action-with-spoken-intent and emote awareness | user |
 | 2026-11-13 | 0d7b2dc2 | amber-game.json (main, jailbreak) | resolve prompt floor overlap by removing duplicate surface rules and trimming jailbreak | user |
 | 2026-11-14 | pending | amber-game.json (main, jailbreak) | replace false-dichotomy note condition with strict same-turn action synchronization | user |
+| 2026-11-15 | pending | amber-game.json, amber-deepseek-v4.1.json, card.json | reposition as gaming co-op buddy (开黑搭子), purge sensory prose and introspective monologue | user |
