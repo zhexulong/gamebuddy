@@ -860,6 +860,16 @@ const GATES_WITHOUT_FALSIFIER = Object.freeze([
       "       the resource it stubs and its control, a route stubbed by an imported helper, a route named by a constant, an\n" +
       "       unresolvable route name and a probe-mounted spec, and asserts the report exits 0 with a collision on it",
   },
+  {
+    gate: "check-spec-waiver-comments.mjs",
+    reason:
+      "prints a population line (`spec_waiver files=… examined=… held=… findings=…`) and its findings, not a\n" +
+      "       `checks[]` report, so it is declared here rather than read by checkGateFalsifiers; its falsifier is\n" +
+      "       tools/check-spec-waiver-comments.test.mjs, which replays the four real 2026-11-14 spec comments as they\n" +
+      "       stood before the commits that deleted them - each is `waiver_undocumented` at the line that held it - and\n" +
+      "       injects a declaration whose product literal is gone (`waiver_expired`), one whose file is gone\n" +
+      "       (`waiver_expiry_unmeasurable`) and one with no expiry clause (`waiver_without_expiry`)",
+  },
   { gate: "check-stardew-action-promotion.mjs", reason: "static table gate; falsifier in its test" },
   {
     gate: "check-engine-affordance-census.mjs",
