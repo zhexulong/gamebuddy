@@ -8,6 +8,11 @@
  * is NOT lifecycle authority: an action's lifecycle lives in the Mod catalog
  * (FarmhandActionDefinition), and promotion to `published` requires an
  * independent review the live run alone cannot supply.
+ *
+ * A row names where its live gate LIVES - a runner file or a smoke contract - and
+ * `tools/lib/stardew-action-gate-route.mjs` is the only place that resolves it. Before
+ * that split, "this action is gated" and "this runner exists" were the same statement,
+ * so no runner could ever be retired.
  */
 export const STARDEW_PUBLISHED_ACTION_GATES = Object.freeze([
   gate("move_to_tile", 1, "run-stardew-native-local-player-move-smoke.mjs", "target_reached"),
@@ -886,6 +891,25 @@ export const STARDEW_SHARED_WORLD_ACTION_SCENARIOS = Object.freeze({
   talk_to_npc: "native_farmhand_talk_to_npc_v1",
 });
 
-function gate(actionId, identityVersion, runner, terminalReasonCode, fixtureScenario = null) {
-  return Object.freeze({ actionId, identityVersion, runner, terminalReasonCode, fixtureScenario });
+/**
+ * One gate row.
+ *
+ * `gateRoute` is where the action's live gate LIVES, and it is the fact that lets a runner be retired:
+ *
+ *   "runner"    (the default) `tools/<runner>` is the gate. The row names the file, so the file is the gate.
+ *   "contract"  `contracts/smoke/<actionId>.json` is the gate, run by `tools/run-native-action-slice.mjs`. A contract
+ *               row names NO runner: it states in JSON what the action must do, which is a fact that survives the
+ *               runner that first proved it.
+ *
+ * A row that names neither is refused here, at import, rather than by a reader that could not tell "no gate" from
+ * "gate not found". Resolution lives in `tools/lib/stardew-action-gate-route.mjs` and nowhere else.
+ */
+function gate(actionId, identityVersion, runner, terminalReasonCode, fixtureScenario = null, gateRoute = "runner") {
+  const declared = gateRoute === "contract" ? null : runner;
+  if (gateRoute !== "runner" && gateRoute !== "contract")
+    throw new Error(`stardew_gate_row_route_unknown:${actionId}:${String(gateRoute)}`);
+  if (gateRoute === "contract" && runner !== null)
+    throw new Error(`stardew_gate_row_contract_row_names_a_runner:${actionId}:${runner}`);
+  if (declared !== null && typeof declared !== "string") throw new Error(`stardew_gate_row_runner_missing:${actionId}`);
+  return Object.freeze({ actionId, identityVersion, runner: declared, terminalReasonCode, fixtureScenario, gateRoute });
 }
