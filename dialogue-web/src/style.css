@@ -700,11 +700,20 @@
     padding: 0 16px;
   }
 
+  /* The transcript grows while the player is reading it: the companion's reply
+   arrives token by token, crosses the viewport height mid-stream, and a classic
+   scrollbar then takes its own width out of the reading column - every bubble
+   above it re-wraps, and the text jumps under the reader for the rest of the
+   reply. `scrollbar-gutter: stable` reserves that strip while the transcript is
+   still short, so both states lay their content out in the same width. Measured
+   in a 400 px frame: the short state reserves 15 px and lays its row out in
+   385 px, and the overflowing state keeps exactly those 385 px. */
   .timeline {
     flex: 1 1 0%;
     min-height: 0;
     overflow-y: auto;
     overflow-x: hidden;
+    scrollbar-gutter: stable;
     padding: 20px 0;
     display: flex;
     flex-direction: column;
@@ -1628,9 +1637,13 @@
     background-color: var(--surface-canvas);
   }
 
+  /* The same reservation one panel over, for the same reason: a section that
+   opens or a list that arrives mid-use would otherwise move the whole drawer
+   body sideways. (`.timeline` above carries the measurement.) */
   .drawer-content {
     flex: 1 1 0%;
     overflow-y: auto;
+    scrollbar-gutter: stable;
     padding: 16px;
     display: flex;
     flex-direction: column;
@@ -4103,10 +4116,15 @@
     letter-spacing: 0.01em;
   }
 
+  /* A management surface's content arrives in pieces - a list resolves, a section
+   expands, a confirmation opens - so it crosses its own height mid-use exactly as
+   the transcript does, and it takes the same reserved gutter (`.timeline` carries
+   the measurement). */
   .surface-content {
     flex: 1 1 0%;
     min-height: 0;
     overflow-y: auto;
+    scrollbar-gutter: stable;
     display: flex;
     flex-direction: column;
     gap: 12px;
@@ -4154,9 +4172,15 @@
   }
 
   /* The conversation is a surface like the others, but its transcript scrolls
-   above a composer that stays at the bottom, so it manages its own scrolling. */
+   above a composer that stays at the bottom, so it manages its own scrolling.
+   It must give the reserved gutter back: `overflow: hidden` still creates a
+   scroll container, so it would inherit `scrollbar-gutter: stable` from the
+   shared `.surface-content` rule and spend 15 px of the column on a scrollbar it
+   can never draw - while the transcript inside it reserves its own (measured:
+   `overflow: hidden` + `stable` reserves the 15 px exactly like `auto` does). */
   .surface-conversation .surface-content {
     overflow: hidden;
+    scrollbar-gutter: auto;
     gap: 0;
     padding-bottom: 0;
   }
