@@ -11,6 +11,7 @@ import {
   waitForTerminal,
 } from "./lib/stardew-native-smoke-harness-v1.mjs";
 import { loadHostTestModule } from "./lib/host-test-module.mjs";
+import { sameTile, validFixtureSlotRelationship } from "./lib/native-local-runner-primitives.mjs";
 
 /**
  * Native-local recovery-chain contract for Lane G「断点续作 / 部分完成」(partial
@@ -614,10 +615,6 @@ function cardinalAdjacent(tile, target) {
   return Math.abs(tile.x - target.x) + Math.abs(tile.y - target.y) === 1;
 }
 
-function sameTile(left, right) {
-  return Number.isInteger(left?.x) && Number.isInteger(left?.y) && left.x === right?.x && left.y === right?.y;
-}
-
 function summarizeWithTargets(snapshot) {
   return {
     ...summarizeSnapshot(snapshot),
@@ -656,13 +653,4 @@ function validateNativeLocalFixtureConfig(value) {
       })}`,
     );
   validateNativeLocalFixturePolicy(value, { requiredActions: EXPECTED_ACTIONS });
-}
-
-function validFixtureSlotRelationship(logicalName, observedSaveSlot) {
-  return (
-    typeof logicalName === "string" &&
-    /^GameBuddyFixture[A-Za-z0-9]{0,64}$/.test(logicalName) &&
-    typeof observedSaveSlot === "string" &&
-    new RegExp(`^${logicalName}_[0-9]{1,32}$`).test(observedSaveSlot)
-  );
 }

@@ -30,6 +30,7 @@ import {
   checkRunnerScaffold,
   detectPrimitiveCopies,
   localFunctions,
+  maskComments,
   PRIMITIVE_BASELINE_REASON,
   PRIMITIVES_FILE,
   readBaseline,
@@ -451,6 +452,23 @@ test("an export with no detector, and a detector with no export, are blocked rea
     ),
   });
   assert.equal(missing.blocked, "detector_without_a_primitive:waitForNavigationTerminal");
+});
+
+test("the offsets a migration slices by index the ORIGINAL source, comments and all", () => {
+  // The regression that ate a predicate: `stripComments` shortens the text, so an offset read from it lands somewhere
+  // else in the source, and the migration deleted three lines of a neighbouring function instead of the copy.
+  const source = `${"/".repeat(2)} a doc comment above the copy\nfunction parseEvidence(evidence) {\n  return { evidence };\n}\n\n/**\n * block comment\n */\nfunction after(value) { return value; }\n`;
+  const parsed = localFunctions(source).find((entry) => entry.name === "parseEvidence");
+  assert.equal(
+    source.slice(parsed.start, parsed.end),
+    "function parseEvidence(evidence) {\n  return { evidence };\n}",
+    "the slice is the function, not the comment above it or the one below it",
+  );
+  // And the mask keeps the geometry it promises: same length, same newlines, comments gone.
+  const masked = maskComments(source);
+  assert.equal(masked.length, source.length);
+  assert.equal(masked.split("\n").length, source.split("\n").length);
+  assert.ok(!masked.includes("doc comment") && !masked.includes("block comment"));
 });
 
 test("the real tree: the recorded copies are exactly the detected ones", () => {

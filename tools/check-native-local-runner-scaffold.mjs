@@ -305,15 +305,66 @@ export function runnerFiles({ root = ROOT, directory = SCAN_ROOT } = {}) {
 }
 
 /**
- * Every local function definition in a runner, with the body a detector reads.
+ * `source` with every comment replaced by SPACES, so an offset into the result is an offset into the source.
+ *
+ * `stripComments` above is for readers that only ask a question (`does this text call X?`); a reader that hands back a
+ * POSITION has to keep the source's geometry, or the position it hands back lands somewhere else. That difference ate a
+ * `sameTile` predicate out of `run-stardew-native-local-player-water-pet-bowl-smoke.mjs` and returned three lines of a
+ * neighbouring function instead - which is why the offsets below are computed on this mask and the migration is verified
+ * by slicing its own source.
+ */
+export function maskComments(source) {
+  const text = String(source ?? "");
+  const out = text.split("");
+  let index = 0;
+  const skip = (at) => {
+    const quote = text[at];
+    let cursor = at + 1;
+    while (cursor < text.length) {
+      if (text[cursor] === "\\") cursor += 2;
+      else if (text[cursor] === quote) return cursor + 1;
+      else cursor++;
+    }
+    return text.length;
+  };
+  while (index < text.length) {
+    const char = text[index];
+    if (char === '"' || char === "'" || char === "`") {
+      index = skip(index);
+      continue;
+    }
+    if (char === "/" && text[index + 1] === "/") {
+      const end = text.indexOf("\n", index);
+      const stop = end < 0 ? text.length : end;
+      for (let i = index; i < stop; i++) out[i] = " ";
+      index = stop;
+      continue;
+    }
+    if (char === "/" && text[index + 1] === "*") {
+      const end = text.indexOf("*/", index + 2);
+      const stop = end < 0 ? text.length : end + 2;
+      for (let i = index; i < stop; i++) if (out[i] !== "\n") out[i] = " ";
+      index = stop;
+      continue;
+    }
+    index++;
+  }
+  return out.join("");
+}
+
+/**
+ * Every local function definition in a runner, with the body a detector reads and the offsets a migration needs.
  *
  * Function declarations only: a copy spelled as an arrow (`const parseEvidence = (e) => ...`) is not read here, and that
- * is stated rather than guessed. Measured on the tree at `3f660c7e`: every one of the 110 copies that exist is a
- * declaration, so the blind spot is real but empty today, and the diff of a future arrow copy is a line this gate would
- * miss - which is why the population line prints `private copies M` rather than a bare pass.
+ * is stated rather than guessed. Measured on the tree at `3f660c7e`: every one of the copies that exist is a declaration,
+ * so the blind spot is real but empty today, and the diff of a future arrow copy is a line this gate would miss - which is
+ * why the population line prints `private copies M` rather than a bare pass.
+ *
+ * `start`/`end` index the ORIGINAL source: the scan runs over `maskComments(source)`, whose length and newlines are the
+ * source's own, so a caller can slice the source with them.
  */
 export function localFunctions(source) {
-  const text = stripComments(source);
+  const text = maskComments(source);
   const found = [];
   const declaration = /(?:export\s+)?(?:async\s+)?function\s+([A-Za-z_$][\w$]*)\s*\(([^)]*)\)\s*\{/gu;
   let match;
@@ -331,6 +382,9 @@ export function localFunctions(source) {
       name: match[1],
       params: match[2].split(",").filter((entry) => entry.trim().length > 0).length,
       body,
+      start: match.index,
+      end: index,
+      exported: /^export\s/u.test(match[0]) || new RegExp(`export\\s+\\{[^}]*\\b${match[1]}\\b`, "u").test(text),
       calls: callsIn(body, match[1]),
     });
   }

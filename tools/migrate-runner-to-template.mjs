@@ -67,7 +67,14 @@ import {
   STARDEW_PUBLISHED_ACTION_GATES,
 } from "./stardew-action-gate-descriptors.mjs";
 import { fixtureActions, fixtureScenario } from "./lib/stardew-native-local-player-fixture.mjs";
-import { readBaseline, runnerFiles, readRunner } from "./check-native-local-runner-scaffold.mjs";
+import {
+  localFunctions,
+  readBaseline,
+  readPrimitiveExports,
+  readRunner,
+  runnerFiles,
+} from "./check-native-local-runner-scaffold.mjs";
+import * as PRIMITIVE_MODULE from "./lib/native-local-runner-primitives.mjs";
 
 const ROOT = resolve(import.meta.dirname, "..");
 
@@ -1175,6 +1182,216 @@ export function planMigration(source, { scenario, templateSource }) {
   };
 }
 
+/* ---------------------------------------------------------------------------------------------------------------
+ * THE PRIMITIVE MIGRATION: L1's copies, deleted by behaviour rather than by name
+ * ------------------------------------------------------------------------------------------------------------- */
+
+/**
+ * The probes every evidence copy is compared on: the shapes the 49+32 copies actually disagree about.
+ *
+ * A migration that swapped a parser on a text match would be the second-copy problem wearing a cleanup's clothes. So the
+ * private body is RUN - `new Function` over its own source - against the L1 primitive on this corpus, and a copy moves only
+ * when every answer is identical: the same object, or the same refusal word. A copy with its own refusal word, its own
+ * required-key list or its own strictness therefore stays where it is, and the report says which probe it differed on.
+ */
+export const EVIDENCE_PROBES = Object.freeze([
+  undefined,
+  null,
+  {},
+  { detail: "" },
+  { detail: "a=1" },
+  { detail: "a=1;b=2" },
+  { detail: "=x" },
+  { detail: "a=" },
+  { detail: "a=1;a=2" },
+  { detail: "a=b=c" },
+  { detail: "a=1;" },
+  { detail: ";" },
+  { detail: "a=1;=2;b=3" },
+  { detail: "x" },
+  { detail: "  a = 1 " },
+  "a=1",
+  { detail: "a=1;b=2;c=3;d=4" },
+]);
+
+/** The tiles a predicate is compared on: the actor's own tile, both diagonals, two steps out, and the non-tiles. */
+export const TILE_PROBES = Object.freeze([
+  [
+    { x: 4, y: 7 },
+    { x: 4, y: 7 },
+  ],
+  [
+    { x: 4, y: 7 },
+    { x: 5, y: 7 },
+  ],
+  [
+    { x: 4, y: 7 },
+    { x: 5, y: 8 },
+  ],
+  [
+    { x: 4, y: 7 },
+    { x: 4, y: 9 },
+  ],
+  [
+    { x: 4, y: 7 },
+    { x: 6, y: 8 },
+  ],
+  [
+    { x: 4, y: 7 },
+    { x: 4.5, y: 7 },
+  ],
+  [
+    { x: 4, y: 7 },
+    { x: "4", y: 7 },
+  ],
+  [{ x: 4, y: 7 }, {}],
+  [{ x: 4, y: 7 }, null],
+  [{}, { x: 4, y: 7 }],
+  [null, null],
+]);
+
+/** The logical-save/slot pairs the relationship rule is compared on, including both boundary forms. */
+export const SLOT_PROBES = Object.freeze([
+  ["GameBuddyFixtureA", "GameBuddyFixtureA_1"],
+  ["GameBuddyFixtureA", "GameBuddyFixtureB_1"],
+  ["GameBuddyFixtureA", "GameBuddyFixtureA_x"],
+  ["GameBuddyFixtureA", "GameBuddyFixtureA"],
+  ["FixtureA", "FixtureA_1"],
+  ["GameBuddyFixture" + "Z".repeat(64), "GameBuddyFixture" + "Z".repeat(64) + "_1"],
+  ["GameBuddyFixture" + "Z".repeat(65), "GameBuddyFixture" + "Z".repeat(65) + "_1"],
+  [undefined, undefined],
+  ["", "_1"],
+]);
+
+/** One answer from a primitive: its value, or its refusal word. Two copies agree when these agree on every probe. */
+function answer(parse, probe) {
+  try {
+    const value = Array.isArray(probe) ? parse(...probe) : parse(probe);
+    return `ok:${JSON.stringify(value)}`;
+  } catch (error) {
+    return `refused:${String(error?.message ?? error)}`;
+  }
+}
+
+/** Which corpus each L1 primitive is compared on. Anything absent is refused, not guessed. */
+export const PROBE_CORPUS = Object.freeze({
+  parseEvidence: EVIDENCE_PROBES,
+  parseStrictEvidence: EVIDENCE_PROBES,
+  parseCompleteEvidence: EVIDENCE_PROBES,
+  sameTile: TILE_PROBES,
+  tilesAdjacent: TILE_PROBES,
+  tilesNeighbouring: TILE_PROBES,
+  tilesCardinallyAdjacent: TILE_PROBES,
+  tileChebyshevDistance: TILE_PROBES,
+  validFixtureSlotRelationship: SLOT_PROBES,
+});
+
+/** A private function, evaluated from its own source so the migration compares the COPY, not a description of it. */
+export function evaluateFunction(body, name) {
+  try {
+    return { ok: true, value: new Function(`${body}\nreturn ${name};`)() };
+  } catch (error) {
+    return { ok: false, why: `unparsable:${String(error?.message ?? error)}` };
+  }
+}
+
+/**
+ * The plan for ONE runner: which private copies can be deleted in favour of an L1 import, and which cannot.
+ *
+ * A copy is migrated only when all three hold, and each is a refusal rather than a guess:
+ *   * its name is an L1 export (a renamed copy would need a call-site rename, which this pass does not do);
+ *   * it is not exported, so no sibling suite imports it through the runner;
+ *   * its answers are identical to the primitive's on every probe.
+ */
+export function planPrimitiveMigration(source, { primitives, exports }) {
+  const removals = [];
+  const findings = [];
+  for (const entry of localFunctions(source)) {
+    if (!exports.includes(entry.name)) continue;
+    const parse = primitives[entry.name];
+    if (typeof parse !== "function") continue;
+    if (entry.exported) {
+      findings.push(`primitive_copy_exported:${entry.name}`);
+      continue;
+    }
+    // An async copy cannot be compared by return value without awaiting it, and two rejections stringify alike: a
+    // comparison that cannot fail is not a comparison, so an async primitive copy is refused by name instead.
+    if (/^(?:export\s+)?async\s/u.test(entry.body)) {
+      findings.push(`primitive_copy_async_not_probed:${entry.name}`);
+      continue;
+    }
+    const probes = PROBE_CORPUS[entry.name];
+    // A primitive with no corpus cannot be compared, and a comparison that cannot fail is not a comparison.
+    if (probes === undefined) {
+      findings.push(`primitive_copy_no_probe_corpus:${entry.name}`);
+      continue;
+    }
+    const local = evaluateFunction(entry.body, entry.name);
+    if (!local.ok) {
+      findings.push(`primitive_copy_${local.why}`);
+      continue;
+    }
+    const differing = probes.filter((probe) => answer(local.value, probe) !== answer(parse, probe));
+    if (differing.length > 0) {
+      findings.push(`primitive_copy_behaviour_differs:${entry.name}:${differing.length} probe(s)`);
+      continue;
+    }
+    removals.push({ name: entry.name, start: entry.start, end: entry.end });
+  }
+  return { removals, findings };
+}
+
+/** The import the migrated runner needs: merged into an existing L1 import, or inserted after the last import. */
+export function withPrimitiveImport(source, names) {
+  const existing = /import\s*\{([^}]*)\}\s*from\s*(["'][^"']*native-local-runner-primitives\.mjs["']);/u.exec(source);
+  if (existing !== null) {
+    const present = existing[1]
+      .split(",")
+      .map((entry) => entry.trim())
+      .filter(Boolean);
+    const missing = names.filter((name) => !present.includes(name));
+    if (missing.length === 0) return source;
+    const merged = [...present, ...missing].sort().join(", ");
+    return `${source.slice(0, existing.index)}import { ${merged} } from ${existing[2]};${source.slice(existing.index + existing[0].length)}`;
+  }
+  const imports = [...source.matchAll(/^import\s[\s\S]*?;$/gmu)];
+  const line = `import { ${names.slice().sort().join(", ")} } from "./lib/native-local-runner-primitives.mjs";`;
+  if (imports.length === 0) return `${line}\n${source}`;
+  const last = imports[imports.length - 1];
+  const at = last.index + last[0].length;
+  return `${source.slice(0, at)}\n${line}${source.slice(at)}`;
+}
+
+/** Remove the planned declarations, back to front so the offsets stay valid, then add the import. */
+export function applyPrimitiveMigration(source, { removals }) {
+  let output = source;
+  for (const removal of [...removals].sort((left, right) => right.start - left.start)) {
+    output = `${output.slice(0, removal.start)}${output.slice(removal.end)}`;
+  }
+  output = output.replace(/\n{3,}/gu, "\n\n");
+  return withPrimitiveImport(
+    output,
+    removals.map((removal) => removal.name),
+  );
+}
+
+/** Every runner that carries a private copy of an L1 primitive, with what this pass would do about it. */
+export function primitiveCensus({ root = ROOT } = {}) {
+  const primitivesSource = readFileSync(resolve(root, "tools/lib/native-local-runner-primitives.mjs"), "utf8");
+  const exports = readPrimitiveExports(primitivesSource);
+  const rows = [];
+  for (const file of runnerFiles({ root })) {
+    const source = readFileSync(resolve(root, file), "utf8");
+    rows.push({ file, ...planPrimitiveMigration(source, { primitives: PRIMITIVE_MODULE, exports }) });
+  }
+  return {
+    exports,
+    rows,
+    migratable: rows.filter((row) => row.removals.length > 0),
+    refused: rows.filter((row) => row.removals.length === 0 && row.findings.length > 0),
+  };
+}
+
 async function main() {
   const argv = process.argv.slice(2);
   const write = argv.includes("--write");
@@ -1189,6 +1406,43 @@ async function main() {
     }
     for (const line of renderCensus(result)) process.stdout.write(`${line}\n`);
     process.exitCode = result.examined === 0 ? 2 : 0;
+    return;
+  }
+
+  if (argv.includes("--primitives")) {
+    const result = primitiveCensus();
+    const named = argv.filter((a) => !a.startsWith("--"));
+    const targets = argv.includes("--all") || named.length === 0 ? result.migratable.map((row) => row.file) : named;
+    if (targets.length === 0) {
+      for (const row of result.refused) {
+        if (argv.some((argument) => argument === row.file))
+          for (const finding of row.findings) process.stdout.write(`not_migratable:${row.file}:${finding}\n`);
+      }
+    }
+    let moved = 0;
+    for (const row of result.rows) {
+      if (!targets.includes(row.file)) continue;
+      if (row.removals.length === 0) {
+        for (const finding of row.findings) process.stdout.write(`not_migratable:${row.file}:${finding}\n`);
+        continue;
+      }
+      const source = readFileSync(resolve(ROOT, row.file), "utf8");
+      const output = applyPrimitiveMigration(source, row);
+      if (write) {
+        writeFileSync(resolve(ROOT, row.file), output, "utf8");
+        process.stdout.write(`migrated:${row.file}:${row.removals.map((r) => r.name).join(",")}\n`);
+      } else {
+        for (const line of lineDiff(source, output)) process.stdout.write(`${line}\n`);
+        process.stdout.write(`\nwould_migrate:${row.file}:${row.removals.map((r) => r.name).join(",")}\n`);
+      }
+      moved++;
+    }
+    process.stdout.write(
+      `\nprimitives: examined ${result.rows.length} · ${write ? "migrated" : "would migrate"} ${moved} · ` +
+        `private copies removed ${result.rows.filter((row) => targets.includes(row.file) || argv.includes("--all")).reduce((total, row) => total + row.removals.length, 0)} · ` +
+        `refused ${result.refused.length}\n`,
+    );
+    if (!write) process.exitCode = 0;
     return;
   }
 
