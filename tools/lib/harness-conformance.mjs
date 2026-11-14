@@ -1041,6 +1041,30 @@ const GATES_WITHOUT_FALSIFIER = Object.freeze([
       "prints a population line and findings, not a `checks[]` report, so it is declared here rather than read by " +
       "checkGateFalsifiers",
   },
+  {
+    gate: "check-local-ci-parity.mjs",
+    reason:
+      "compares `tools/prelive.mjs`'s own member declarations against `.github/workflows/*.yml`: which ladder members a " +
+      "step covers (by file, by a root script, by a sub-package step, by a package's suite) and which CI members the " +
+      "ladder does not run. Its falsifier is tools/check-local-ci-parity.test.mjs, whose 16 cases drive the gate over a " +
+      "temporary copy of the two documents: a ladder member no step covers is `ladder_member_uncovered` with its " +
+      "position and id, a gate file with no `package.json` name stays a named member, a declared row a new step has " +
+      "overtaken is `parity_exemption_redundant`, a row for a member the ladder no longer runs is " +
+      "`parity_exemption_stale`, and a ladder that resolves no member or a workflow read that covers no file is blocked " +
+      "rather than clean. Its default run prints `local_ci_parity: ... examined=49`, not a `{gate, checks[]}` report, " +
+      "so it is declared here rather than read by checkGateFalsifiers",
+  },
+  {
+    gate: "check-viewport-population.mjs",
+    reason:
+      "reads every spec under dialogue-web/tests and asks which viewport sizes each measurement site evaluates against " +
+      "the cells `viewport-policy` declares, so a spec that spells 1440x900 by hand and a cell that no site evaluates " +
+      "are each named; its default run prints one line per site (`cells=... — unresolved: ...`, `— matrix`) and no " +
+      "`{gate, checks[]}` report. Its falsifier is tools/check-viewport-population.test.mjs, which drives the gate " +
+      "itself over synthetic trees: a hand-spelled size set, a ninth `VIEWPORT_SIZES` cell nobody measures, a project " +
+      "`use` with no `viewport` and one with a literal in its place, an exemption whose cell set no site evaluates, and " +
+      "a tests root holding no spec at all blocked rather than green",
+  },
   // The sixteen audits half B began scanning on 2026-11-13, when `tools/lib/gate-population.mjs`'s gate-file rule became
   // `(check|audit)-*.mjs` - the rule `tools/check-prelive-gate-registry.mjs` already used, so 17 `tools/audit-*.mjs`
   // gates that were in nobody's census became members of this one. Each prints what it found as lines, not as a
