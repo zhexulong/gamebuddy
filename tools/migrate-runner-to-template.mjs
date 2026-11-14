@@ -915,6 +915,12 @@ export function planMigration(source, { scenario, templateSource }) {
     inherited.push(refusal);
     take();
   }
+  if (inherited.length === 0)
+    return refuse(
+      "config_refusal_missing: the template's step 1 refuses a fixture config this copy accepted, so a caller that " +
+        "drives it with any other config would now block before its first request - measured on craft_item, which " +
+        "run-native-action-slice.test.mjs drives with {} and which the migrated runner refused",
+    );
 
   const observed = /^(?:const|let)\s+([A-Za-z_$][\w$]*)\s*=\s*await\s+observeFresh\(client,/u.exec(peek()?.code ?? "");
   if (observed === null)

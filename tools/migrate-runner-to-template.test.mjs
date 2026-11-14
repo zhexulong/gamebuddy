@@ -27,9 +27,10 @@ const ACTION = "shape_example";
 const SCENARIO = "native_shape_example_v1";
 const REQUIRED_CAPABILITIES = ["cancel_active_execution", "inspect_self", ACTION];
 
-export async function runShapeExampleSmoke(client, receipts, _config, { terminalTimeoutMs = 5_000 } = {}) {
+export async function runShapeExampleSmoke(client, receipts, config, { terminalTimeoutMs = 5_000 } = {}) {
   const trace = [];
   const startedAt = Date.now();
+  validateFixtureConfig(config);
   try {
     const before = await observeFresh(client, { actionable: true });
     assertRequiredCapabilities(before, REQUIRED_CAPABILITIES);
@@ -74,6 +75,11 @@ export async function runShapeExampleSmoke(client, receipts, _config, { terminal
 
 function chooseTarget(snapshot) {
   return (snapshot.exampleTargets ?? [])[0];
+}
+
+function validateFixtureConfig(value) {
+  if (value?.NativeLocalPlayerFixture?.Enable !== true)
+    throw new Error("native_local_shape_example_fixture_not_enabled");
 }
 
 function parseStrictEvidence(evidence) {
@@ -195,6 +201,14 @@ test("the codemod refuses when the copy's own SCENARIO disagrees with the action
   const result = plan(source);
   assert.equal(result.ok, false);
   assert.match(result.why, /^fixture_scenario_disagrees:native_something_else_v1:native_shape_example_v1/u);
+});
+
+test("the codemod refuses a copy that never refused its own fixture config", () => {
+  const source = SHAPED.replace("  validateFixtureConfig(config);\n", "");
+  assert.notEqual(source, SHAPED, "the injection point moved; update this falsifier with the fixture");
+  const result = plan(source);
+  assert.equal(result.ok, false);
+  assert.match(result.why, /^config_refusal_missing:/u);
 });
 
 test("the codemod is a no-op on a runner that is already on the template", () => {
