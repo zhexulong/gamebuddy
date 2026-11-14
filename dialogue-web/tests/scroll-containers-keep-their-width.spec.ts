@@ -27,204 +27,21 @@
  * scrollbar exists. It is the load-bearing assertion below; the width comparison is kept beside it as
  * the invariant to protect the day a classic-scrollbar environment runs this file.
  *
- * THE POPULATION IS THE STYLESHEET
+ * THE POPULATION IS THE STYLESHEET, and the reading of it lives in `style-scroll-containers.ts`
  *
  * The containers are read out of `src/style.css`: every ruleset that declares a block-axis
  * (`overflow-y`, or `overflow`) value of `auto` or `scroll`, which is the set of boxes whose own
  * scrollbar can appear and disappear. Nothing lists the containers by hand, so a new scroller joins
- * the gate by being written into the sheet. Inline-axis scrollers (`overflow-x` alone, a code block's
- * `<pre>`) are outside it: `scrollbar-gutter` reserves the gutter a *block-axis* scrollbar occupies,
- * and a horizontally scrolling box is served by neither.
+ * by being written into the sheet, and inline-axis scrollers (`overflow-x` alone, a code block's
+ * `<pre>`) stay outside it: `scrollbar-gutter` reserves the gutter a *block-axis* scrollbar
+ * occupies, and a horizontally scrolling box is served by neither.
  *
- * The source-reading half lives here rather than in a `tests/*.test.mjs` gate because the static
- * zone's single command line is the one place every static suite is registered, and it belongs to
- * another lane while this was written; `disabled-controls-are-quieter.spec.ts` reads the stylesheet
- * from this zone for the same reason.
+ * That reader, and the exemption list it is judged against, is shared with
+ * `layout-stability-gate.test.mjs` in the static zone, which holds the class - every container
+ * reserves the gutter or is exempt with a reason, and no exemption outlives its selector. This file
+ * keeps the half a browser is needed for: what those containers DO when the content arrives.
  */
-import { readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
 import { type Page, expect, test } from "./frontend-coverage";
-
-const STYLESHEET = join(dirname(fileURLToPath(import.meta.url)), "..", "src", "style.css");
-
-/** The values that make a box a scroll container on an axis. */
-const SCROLLING = new Set(["auto", "scroll"]);
-
-/** The values that reserve the gutter. `both-edges` is the same promise with the strip mirrored. */
-const RESERVING = /^stable(\s+both-edges)?$/u;
-
-/**
- * Containers deliberately left without a reserved gutter, each with the reason it is left alone.
- *
- * Two bands: a box with no block-axis bound of its own, which can never draw a scrollbar and would
- * only lose width; and a nested list or preview that is capped and filled in one answer, where the
- * shift happens as the content is replaced wholesale and a permanent strip would narrow every short
- * state of it.
- */
-const EXEMPT = new Map([
-  [
-    ".tavern-memory-section",
-    "declares `overflow-y: auto` but no block-axis bound of its own - it is a column child of the " +
-      "surface and grows with its content, so it never becomes a scroller; a reserved gutter would " +
-      "only take 15 px off the notebook",
-  ],
-  [
-    ".draft-content",
-    "a `max-height: 120px` preview inside the drawer, replaced wholesale when a draft arrives: " +
-      "reserving the strip would narrow every two-line draft to avoid a shift that happens while the " +
-      "text under it is being replaced anyway",
-  ],
-  [".reference-draft-section p", "the same capped preview in the reference drawer, one selector over"],
-  [
-    ".composer-textarea",
-    "the field the player types into: two lines at rest, the band's 176 px ceiling when the draft is long, " +
-      "and it scrolls only past that ceiling. A reserved strip would narrow every line of every short draft " +
-      "to avoid one reflow of the field's own text at the ceiling",
-  ],
-  [
-    ".message-edit-field",
-    "the same field on the other side of the exchange - two rows at rest, 300 px at the ceiling - and " +
-      "exempt for the same reason",
-  ],
-  [
-    ".opening-variants",
-    "a nested list capped to `min(32dvh, 300px)` and generated in one answer; the region a machine " +
-      "fills is the region that scrolls, and a permanent strip in a 420 px card costs the rows more " +
-      "than the one-off reflow",
-  ],
-  [".installation-candidates", "the same capped, machine-filled list on the installation panel"],
-  [
-    "[data-card-import-review] .card-import-report",
-    "the same capped report, filled once by an import, with the decision row kept outside it",
-  ],
-  [
-    ".game-diagnostics-json",
-    "a `<pre>` that scrolls on both axes; the gutter a horizontal scrollbar occupies is on the block " +
-      "axis, which `scrollbar-gutter` does not reserve",
-  ],
-]);
-
-/** Comments blanked so a `;` or `{}` inside them cannot be read as syntax. */
-function blankComments(css: string): string {
-  return css.replace(/\/\*[\s\S]*?\*\//gu, (match) => " ".repeat(match.length));
-}
-
-/** The declarations of one rule body, as `[property, value]` pairs with whitespace collapsed. */
-function declarationsOf(body: string): readonly (readonly [string, string])[] {
-  const out: (readonly [string, string])[] = [];
-  for (const part of body.split(";")) {
-    const trimmed = part.trim();
-    if (trimmed.length === 0 || trimmed.includes("{")) continue;
-    const separator = trimmed.indexOf(":");
-    if (separator <= 0) continue;
-    out.push([trimmed.slice(0, separator).trim(), trimmed.slice(separator + 1).trim().replace(/\s+/gu, " ")]);
-  }
-  return out;
-}
-
-/** One innermost ruleset: its selector and its declarations, in source order. */
-function rulesOf(css: string): readonly { selector: string; declarations: readonly (readonly [string, string])[] }[] {
-  const text = blankComments(css);
-  const out: { selector: string; declarations: readonly (readonly [string, string])[] }[] = [];
-  const stack: { prelude: string; start: number }[] = [];
-  let preludeStart = 0;
-  for (let index = 0; index < text.length; index += 1) {
-    const character = text[index];
-    if (character === "{") {
-      stack.push({ prelude: text.slice(preludeStart, index).trim().replace(/\s+/gu, " "), start: index });
-      preludeStart = index + 1;
-      continue;
-    }
-    if (character === "}") {
-      const entry = stack.pop();
-      if (entry !== undefined && !entry.prelude.startsWith("@")) {
-        out.push({ selector: entry.prelude, declarations: declarationsOf(text.slice(entry.start + 1, index)) });
-      }
-      preludeStart = index + 1;
-      continue;
-    }
-    if (character === ";") preludeStart = index + 1;
-  }
-  return out;
-}
-
-/** The block-axis overflow a rule's declarations resolve to, or null when it declares none. */
-function blockAxisOverflow(declarations: readonly (readonly [string, string])[]): string | null {
-  const declared = new Map(declarations);
-  const shorthand = declared.get("overflow");
-  if (shorthand !== undefined) {
-    // `overflow: <inline> <block>`; a single value applies to both axes.
-    const values = shorthand.split(" ");
-    return values.length === 1 ? values[0] : values[1];
-  }
-  return declared.get("overflow-y") ?? null;
-}
-
-/** Every ruleset whose own block axis can scroll: the gate's population. */
-function scrollContainers(css: string): readonly { selector: string; reserving: boolean }[] {
-  return rulesOf(css)
-    .filter((rule) => SCROLLING.has(blockAxisOverflow(rule.declarations) ?? ""))
-    .map((rule) => ({
-      selector: rule.selector,
-      reserving: rule.declarations.some(([property, value]) => property === "scrollbar-gutter" && RESERVING.test(value)),
-    }));
-}
-
-test("every scroll container in the stylesheet reserves its gutter, or is exempt with a reason", () => {
-  const containers = scrollContainers(readFileSync(STYLESHEET, "utf8"));
-  expect(
-    containers.length,
-    "blocked: the stylesheet declares no scroll container, so this gate has nothing to hold and cannot pass",
-  ).toBeGreaterThan(0);
-  const findings = containers
-    .filter((container) => !container.reserving && !EXEMPT.has(container.selector))
-    .map(
-      (container) =>
-        `${container.selector} can start scrolling mid-use but reserves no gutter - declare ` +
-        "`scrollbar-gutter: stable`, or add it to EXEMPT with the reason it is left alone",
-    );
-  const reserving = containers.filter((container) => container.reserving).length;
-  console.log(
-    `[gutter-population] ${containers.length} examined, ${reserving} reserving, ${EXEMPT.size} exempt: ` +
-      containers.map((container) => container.selector).join(", "),
-  );
-  expect(findings, findings.join("\n")).toEqual([]);
-});
-
-test("every gutter exemption still names a scroll container, so none outlives its reason", () => {
-  const declared = new Set(scrollContainers(readFileSync(STYLESHEET, "utf8")).map((container) => container.selector));
-  const stale = [...EXEMPT.keys()].filter((selector) => !declared.has(selector));
-  expect(
-    stale,
-    `these exemptions no longer name a scroll container, so the reason they recorded is gone: ${stale.join(", ")}`,
-  ).toEqual([]);
-});
-
-test("the stylesheet reader tells a reservation, an inline-axis scroller and a hidden one apart", () => {
-  const selectors = (css: string) => scrollContainers(css).map((container) => container.selector);
-  expect(selectors(".gate-probe-body {\n  overflow-y: auto;\n}\n"), "a block-axis scroller is the population").toEqual([
-    ".gate-probe-body",
-  ]);
-  expect(
-    scrollContainers(".gate-probe-body {\n  overflow-y: auto;\n  scrollbar-gutter: stable;\n}\n")[0]?.reserving,
-    "`stable` is read as the reservation",
-  ).toBe(true);
-  expect(
-    scrollContainers(".gate-probe-body {\n  overflow: auto;\n  scrollbar-gutter: stable both-edges;\n}\n")[0]?.reserving,
-    "`stable both-edges` reserves as well",
-  ).toBe(true);
-  expect(
-    scrollContainers(".gate-probe-body {\n  overflow: auto;\n  scrollbar-gutter: auto;\n}\n")[0]?.reserving,
-    "`auto` reserves nothing",
-  ).toBe(false);
-  expect(selectors(".gate-probe-pre {\n  overflow-x: auto;\n}\n"), "an inline-axis scroller is outside the population").toEqual(
-    [],
-  );
-  expect(selectors(".gate-probe-field {\n  overflow-y: hidden;\n}\n"), "`hidden` draws no scrollbar to reserve for").toEqual(
-    [],
-  );
-});
 
 /* ==========================================================================
    The behavioural half: the containers the player actually meets.
