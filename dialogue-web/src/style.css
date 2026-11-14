@@ -1820,11 +1820,23 @@
     min-height: var(--touch-target-min);
   }
 
-  .chat-item-title {
-    font-size: 14px;
-    font-weight: 500;
-    color: var(--text-primary);
-    margin-bottom: 2px;
+  /* The select control's hit area is a pseudo-element belonging to the CARD
+     (`.chat-item-card[data-selectable="true"] .chat-select-btn::after`), because a
+     `role="listitem"` with a click handler is not a control: no accessible name, no focus
+     stop, no keyboard, which `jsx-a11y` named on 2026-11-14. That `::after` is positioned
+     against the card, so the shell's press beat - a `translate` on the control - would make
+     the control the containing block of its own `::after` and collapse the stretch for the
+     length of the press: measured `mousedown BUTTON`, `mouseup SPAN`, `click DIV`, and the
+     conversation was never selected. The card carries this control's beat instead, so the
+     press still moves what the player pressed and the hit area survives the gesture. */
+  .chat-item-card {
+    position: relative;
+  }
+
+  .chat-item-card[data-selectable="true"] .chat-select-btn::after {
+    content: "";
+    position: absolute;
+    inset: 0;
   }
 
   .chat-item-meta {
@@ -1842,6 +1854,9 @@
     display: flex;
     align-items: center;
     gap: 4px;
+    /* Above the stretched select control, so the row's own icons answer their own presses. */
+    position: relative;
+    z-index: 1;
   }
 
   .icon-button-small {
@@ -6164,6 +6179,22 @@
    ========================================================================== */
 
   .tavern-app-shell :is(button, summary):active:not(:disabled) {
+    translate: 0 var(--press-shift);
+  }
+
+  /* The Chats row's select control is a title button stretched over the row by a pseudo-element
+     positioned against the CARD (`@layer theme.legacy`, `.chat-select-btn::after`). The beat above
+     would make the held button the containing block of that `::after` and collapse the stretch for
+     the length of the press - measured `mousedown BUTTON`, `mouseup SPAN`, `click DIV`, and the
+     conversation was never selected, because the browser dispatches `click` on the common ancestor
+     of the two, which is the row. So this one control's beat is carried by its card: the press still
+     moves what the player pressed, and the hit area survives the gesture. It lives in this layer
+     because a layer's order outranks specificity, and the beat it cancels is declared here. */
+  .chat-item-card[data-selectable="true"] .chat-select-btn:active:not(:disabled) {
+    translate: none;
+  }
+
+  .chat-item-card[data-selectable="true"]:active {
     translate: 0 var(--press-shift);
   }
 

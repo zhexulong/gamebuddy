@@ -1259,7 +1259,7 @@ test("the armed Chats row puts the confirmation on its own line and hides the ro
     await row.evaluate((node) => {
       const main = node.querySelector(".chat-item-main") as HTMLElement;
       const confirm = node.querySelector(".chat-item-confirm") as HTMLElement | null;
-      const title = node.querySelector(".chat-select-btn") as HTMLElement;
+      const title = node.querySelector(".chat-item-title") as HTMLElement;
       const range = document.createRange();
       range.selectNodeContents(title);
       const titleLines = range.getClientRects().length;
@@ -1870,7 +1870,7 @@ test("the Chats list rows take the surface's own measure instead of the whole pa
     const content = root.querySelector<HTMLElement>(".surface-content")!;
     const list = root.querySelector<HTMLElement>(".chat-list")!;
     const row = root.querySelector<HTMLElement>(".chat-item-card")!;
-    const title = root.querySelector<HTMLElement>(".chat-select-btn")!;
+    const title = root.querySelector<HTMLElement>(".chat-item-title")!;
     const actions = root.querySelector<HTMLElement>(".chat-item-actions")!;
     const range = document.createRange();
     range.selectNodeContents(title);

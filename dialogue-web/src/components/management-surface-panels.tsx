@@ -940,14 +940,23 @@ export function ChatsSurfacePanel({
             const armedHere = confirmation !== null && confirmation.handle === chat.handle;
             const editingHere = renameHere && renameHandle === chat.handle;
             /*
-             * The row's whole surface is the select control: its title, its stamp and
-             * its preview are one gesture, because the preview is most of the row's
-             * area and the title alone is a target a thumb misses. Two states take the
-             * surface away rather than sharing it - the armed confirmation, which is the
-             * row's only action until it is answered, and the rename editor, whose own
-             * field must not also be a selection target.
+             * The row's whole surface is the select control, and that control is the title
+             * BUTTON stretched over the row by `style.css`
+             * (`.chat-item-card[data-selectable="true"] .chat-select-btn::after`): its title,
+             * its stamp and its preview are one gesture, because the preview is most of the
+             * row's area and the title alone is a target a thumb misses. The stretch is a
+             * pseudo-element of the button rather than a click handler on the row, because a
+             * `role="listitem"` carrying `onClick` is not a control - no accessible name, no
+             * focus stop, no keyboard - and `jsx-a11y/click-events-have-key-events` named it
+             * on 2026-11-14. Two states take the surface away rather than sharing it: the
+             * armed confirmation, which is the row's only action until it is answered, and
+             * the rename editor, whose own field must not also be a selection target.
+             *
+             * A selection IN FLIGHT is deliberately not one of them: the press that starts one
+             * must find the same element at its mouseup, or the browser dispatches `click` on the
+             * common ancestor - the row, which has no handler - and nothing is selected.
              */
-            const rowSelects = !armedHere && !editingHere && selectAvailable !== false && selecting === null;
+            const rowSelects = !armedHere && !editingHere && selectAvailable !== false;
             return (
               <div
                 key={chat.handle}
@@ -956,7 +965,6 @@ export function ChatsSurfacePanel({
                 data-selected={isSelected ? "true" : "false"}
                 data-selectable={rowSelects ? "true" : undefined}
                 className={`chat-item-card ${isSelected ? "selected" : ""}`}
-                onClick={rowSelects ? () => selectChat(chat.handle) : undefined}
               >
                 {editingHere ? (
                   <div data-testid="chat-rename" onKeyDown={renameKeyDown} role="group">
@@ -994,13 +1002,8 @@ export function ChatsSurfacePanel({
                         className="chat-item-title chat-select-btn"
                         data-testid="chat-select"
                         aria-current={isSelected ? "true" : undefined}
-                        disabled={selectAvailable === false || selecting !== null}
-                        onClick={(event) => {
-                          // The row carries the same gesture, so the title answers it
-                          // once rather than once per handler between here and the row.
-                          event.stopPropagation();
-                          selectChat(chat.handle);
-                        }}
+                        disabled={selectAvailable === false}
+                        onClick={() => selectChat(chat.handle)}
                       >
                         {name}
                       </button>

@@ -7,7 +7,24 @@
  * the composer from that chat's own durable draft and aborts the turn being generated.
  */
 import { expect, test } from "./frontend-coverage";
+import type { Locator } from "@playwright/test";
 import { token, handle, csrfToken, draft, chat, root, jsonOk } from "./composed-reference-game-fixtures";
+
+/**
+ * A point inside the row that lies over its preview text. The row's select control is the title
+ * button STRETCHED over the row (`style.css`), so the element at that point IS the button and not
+ * the preview span - the press is therefore made on the row's own box, and what the assertion
+ * pins is the property (a press over the preview selects the Chat) rather than today's element.
+ */
+async function pointOverPreview(row: Locator): Promise<{ x: number; y: number }> {
+  const rowBox = await row.boundingBox();
+  const previewBox = await row.getByTestId("chat-item-preview").boundingBox();
+  if (rowBox === null || previewBox === null) throw new Error("the row and its preview must both have a box");
+  return {
+    x: Math.round(previewBox.x - rowBox.x + previewBox.width / 2),
+    y: Math.round(previewBox.y - rowBox.y + previewBox.height / 2),
+  };
+}
 
 /**
  * Chat selection (ADR-0009, turn-level). Choosing another Chat must switch the mounted
@@ -233,16 +250,19 @@ test("clicking the already-mounted Chat shows it and issues no selection", async
  * The measured defect: only the title line is inside `[data-testid="chat-select"]`,
  * while the preview and the stamp - the rest of the row's area, and almost all of it
  * on a phone - are outside it, so a thumb that lands on the preview does nothing at
- * all. The row's own surface now carries the same gesture its title does, and the
- * row's action buttons stop the event rather than the row wrapping them in a button
- * that would nest one control inside another.
+ * all. The row's whole surface now carries the same gesture its title does: the title
+ * BUTTON is stretched over the row by `style.css`, because a click handler on the
+ * `role="listitem"` wrapper is not a control - no accessible name, no focus stop, no
+ * keyboard (`jsx-a11y/click-events-have-key-events`, 2026-11-14) - and the row's
+ * action buttons sit above the stretch rather than inside a control that would nest
+ * one button inside another.
  *
  * The assertions, and the failure each one catches:
- *  - the mounted row's preview opens the conversation with no `chat/select` request:
- *    catches the dead preview and a preview that admits a selection for the Chat the
- *    runtime already holds;
- *  - another row's preview sends the selection naming *that* row's Chat: catches a
- *    surface that selects the wrong conversation, or none;
+ *  - a press over the mounted row's preview opens the conversation with no
+ *    `chat/select` request: catches the dead preview and a preview that admits a
+ *    selection for the Chat the runtime already holds;
+ *  - a press over another row's preview sends the selection naming *that* row's Chat:
+ *    catches a surface that selects the wrong conversation, or none;
  *  - a row's action button still only arms its own confirmation and sends no
  *    selection: catches the new surface swallowing the buttons that live inside it;
  *  - the armed confirmation is outside the surface: catches a press on the
@@ -304,7 +324,7 @@ test("the whole Chats row selects its conversation: the preview and stamp too, n
 
   // The preview is most of the row and it is inside the surface now, so choosing the
   // mounted conversation needs no admission - exactly as choosing its title does not.
-  await first.getByTestId("chat-item-preview").click();
+  await first.click({ position: await pointOverPreview(first) });
   await expect(page.getByTestId("chat-surface")).toBeVisible();
   await expect(chats).toHaveCount(0);
   expect(selections, "the mounted Chat must not create a selection admission").toEqual([]);
@@ -312,7 +332,7 @@ test("the whole Chats row selects its conversation: the preview and stamp too, n
   await expect(first).toBeVisible();
 
   // Another row's preview names that row's conversation, and moves to it.
-  await second.getByTestId("chat-item-preview").click();
+  await second.click({ position: await pointOverPreview(second) });
   await expect.poll(() => selections.length).toBe(1);
   expect(selections[0]).toBe(secondHandle);
   await expect(page.getByRole("region", { name: "Chat transcript" })).toContainText(
