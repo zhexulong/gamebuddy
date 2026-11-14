@@ -381,3 +381,150 @@ test.describe("the player's correction of one memory", () => {
     await expect(row.locator("p")).toContainText(SENTINEL_MEMORY);
   });
 });
+
+/**
+ * The refusal is also the field's own description.
+ *
+ * A visible sentence under a field says nothing to a screen reader: until this was wired, the three
+ * editors above reported a refusal the sighted player could read and a player using a screen reader
+ * could not - the field carried no `aria-invalid` and pointed at nothing. These are the mounted halves
+ * of `fieldError` (the module) and `form-error-association-gate.test.mjs` (the static rule): the
+ * attribute has to resolve, in the real document, to the element that holds the words.
+ */
+type FieldAssociation = Readonly<{
+  /** `aria-invalid` as the browser reports it, or null when the attribute is absent. */
+  invalid: string | null;
+  /** `aria-describedby` as written on the field. */
+  describedBy: string | null;
+  /** What that id resolves to in the document, or null when it resolves to nothing. */
+  description: string | null;
+  /** How many elements in the document carry that id: one row's refusal must not describe another's. */
+  targets: number;
+}>;
+
+async function associationOf(field: Locator): Promise<FieldAssociation> {
+  return field.evaluate((element: HTMLElement) => {
+    const describedBy = element.getAttribute("aria-describedby");
+    const targets = describedBy === null ? [] : [...element.ownerDocument.querySelectorAll(`#${CSS.escape(describedBy)}`)];
+    return {
+      invalid: element.getAttribute("aria-invalid"),
+      describedBy,
+      description: targets.length === 0 ? null : (targets[0].textContent ?? "").trim(),
+      targets: targets.length,
+    };
+  });
+}
+
+test.describe("the field that was refused says so, and the field that was not does not", () => {
+  test("the new-memory field names the refusal beside it, and stops naming it once the write lands", async ({
+    page,
+  }) => {
+    const stub = await stubMemory(page, {
+      refusals: 1,
+      refusal: problem(409, "state_reconciliation_required", "Memory projection conflict", false),
+    });
+    const surface = await openMemory(page);
+    const { field, create, refusal } = await openCreateForm(surface);
+
+    // Nothing has been refused yet: the field is a field, not a field in error.
+    const clean = await associationOf(field);
+    console.log("create form, no refusal:", JSON.stringify(clean));
+    expect(clean.invalid).toBeNull();
+    expect(clean.describedBy).toBeNull();
+
+    await field.fill(SENTINEL_MEMORY);
+    await create.click();
+    await expect.poll(() => stub.writes.length).toBe(1);
+    await expect(refusal).toHaveText(catalogue.problemReconciliationFailedDetail);
+
+    const refused = await associationOf(field);
+    console.log("create form, refused:", JSON.stringify(refused));
+    expect(refused.invalid).toBe("true");
+    expect(refused.description).toBe(catalogue.problemReconciliationFailedDetail);
+    expect(refused.targets).toBe(1);
+
+    // The retry lands and the refusal leaves the screen: an attribute still pointing at a message that
+    // is no longer rendered would describe the field with a sentence nobody can see.
+    await create.click();
+    await expect.poll(() => stub.writes.length).toBe(2);
+    await expect(field).toHaveValue("");
+    const afterSave = await associationOf(field);
+    console.log("create form, saved:", JSON.stringify(afterSave));
+    expect(afterSave.invalid).toBeNull();
+    expect(afterSave.describedBy).toBeNull();
+  });
+
+  test("the chapter correction names its own refusal", async ({ page }) => {
+    const stub = await stubMemory(page, {
+      refusals: 1,
+      refusal: problem(409, "state_reconciliation_required", "Memory projection conflict", false),
+    });
+    const surface = await openMemory(page);
+    const panel = surface.locator("[data-memory-chapters]");
+    await panel.getByRole("button", { name: catalogue.memoryChapterEdit, exact: true }).click();
+    const draft = panel.locator("textarea");
+
+    const clean = await associationOf(draft);
+    console.log("chapter correction, no refusal:", JSON.stringify(clean));
+    expect(clean.invalid).toBeNull();
+    expect(clean.describedBy).toBeNull();
+
+    await draft.fill(SENTINEL_CHAPTER);
+    await panel.getByRole("button", { name: catalogue.memoryChapterSave, exact: true }).click();
+    await expect.poll(() => stub.writes.length).toBe(1);
+    await expect(panel.locator("[data-memory-chapter-refusal]")).toHaveText(
+      catalogue.problemReconciliationFailedDetail,
+    );
+
+    const refused = await associationOf(draft);
+    console.log("chapter correction, refused:", JSON.stringify(refused));
+    expect(refused.invalid).toBe("true");
+    expect(refused.description).toBe(catalogue.problemReconciliationFailedDetail);
+    expect(refused.targets).toBe(1);
+  });
+
+  test("each refused memory row describes itself, not the first row that refused", async ({ page }) => {
+    const secondMemory = { ...storedMemory, handle: "S".repeat(42) + "A", content: "A second stored memory." };
+    const stub = await stubMemory(page, {
+      refusals: 2,
+      refusal: problem(409, "state_reconciliation_required", "Memory projection conflict", false),
+      seedMemories: [storedMemory, secondMemory],
+    });
+    const surface = await openMemory(page);
+    const first = surface.locator(`[data-memory-handle="${storedMemory.handle}"]`);
+    const second = surface.locator(`[data-memory-handle="${secondMemory.handle}"]`);
+
+    await first.getByRole("button", { name: catalogue.editMemory, exact: true }).click();
+    const firstField = first.locator("textarea");
+    const clean = await associationOf(firstField);
+    console.log("memory row, no refusal:", JSON.stringify(clean));
+    expect(clean.invalid).toBeNull();
+    expect(clean.describedBy).toBeNull();
+
+    await firstField.fill(SENTINEL_MEMORY);
+    await first.getByRole("button", { name: catalogue.save, exact: true }).click();
+    await expect.poll(() => stub.writes.length).toBe(1);
+    await expect(first.locator("[data-memory-item-refusal]")).toHaveText(catalogue.problemReconciliationFailedDetail);
+
+    await second.getByRole("button", { name: catalogue.editMemory, exact: true }).click();
+    const secondField = second.locator("textarea");
+    await secondField.fill(SENTINEL_MEMORY);
+    await second.getByRole("button", { name: catalogue.save, exact: true }).click();
+    await expect.poll(() => stub.writes.length).toBe(2);
+    await expect(second.locator("[data-memory-item-refusal]")).toHaveText(catalogue.problemReconciliationFailedDetail);
+
+    const firstRefused = await associationOf(firstField);
+    const secondRefused = await associationOf(secondField);
+    console.log("memory row 1, refused:", JSON.stringify(firstRefused));
+    console.log("memory row 2, refused:", JSON.stringify(secondRefused));
+    // Both rows are refused at the same time: each field points at its OWN sentence, and neither id
+    // resolves to two elements.
+    expect(firstRefused.describedBy).not.toBe(secondRefused.describedBy);
+    expect(firstRefused.targets).toBe(1);
+    expect(secondRefused.targets).toBe(1);
+    expect(firstRefused.invalid).toBe("true");
+    expect(secondRefused.invalid).toBe("true");
+    expect(firstRefused.description).toBe(catalogue.problemReconciliationFailedDetail);
+    expect(secondRefused.description).toBe(catalogue.problemReconciliationFailedDetail);
+  });
+});
