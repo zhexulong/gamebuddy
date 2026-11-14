@@ -241,6 +241,7 @@
     "test:stub-subject-collision": "node --test tools/check-stub-subject-collision.test.mjs",
     "test:surface-journeys": "node --test tools/check-surface-journeys.test.mjs",
     "test:stardew-action-candidates": "node --test integrations/stardew/action-development/tests/stardew-action-candidates.test.mjs",
+    "test:stardew-action-smoke-contract": "node --test tools/lib/stardew-action-smoke-contract.test.mjs",
     "test:stardew-action-gate-descriptors": "node --test tools/stardew-action-gate-descriptors.test.mjs",
     "test:stardew-action-gates-batch": "node --test tools/run-stardew-action-gates-batch.test.mjs",
     "test:stardew-action-inventory-reconciliation": "node --test integrations/stardew/action-development/tests/stardew-action-inventory-reconciliation.test.mjs",

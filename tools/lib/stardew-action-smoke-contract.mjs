@@ -140,6 +140,26 @@ export function readActionSurface({ surfacePath = ACTION_SURFACE_PATH } = {}) {
  * `not_derived:<why>` rather than a silent null: the caller must then either supply `expectedReasonCode` in the
  * contract or accept that no success code is known.
  */
+
+/**
+ * The launcher's own fixture selection for one action - the world the slice would be run in.
+ *
+ * `fixtureActions` refuses an action its route table does not carry with a bare `Error`, which names neither the
+ * action nor this layer: seven of the 103 declared execution actions (`dismiss_modal`, `answer_dialogue`,
+ * `face_direction`, `send_multiplayer_chat`, ...) reached a contract author as
+ * `Error: invalid_native_local_fixture_action`. A contract cannot be run in a world the launcher has no Given for,
+ * so the refusal stands; what changes here is that it is one of this file's named refusals and it names the action.
+ */
+function fixtureSelection(actionId) {
+  let actions;
+  try {
+    actions = fixtureActions(actionId);
+  } catch {
+    fail("fixture_scenario_underivable", actionId);
+  }
+  return fixtureScenario(actions, actionId);
+}
+
 export function deriveActionFacts(actionId, { surface = null, protocolControls = null } = {}) {
   if (!isNonEmptyString(actionId)) fail("action_missing");
   const rows = surface ?? readActionSurface();
@@ -149,6 +169,7 @@ export function deriveActionFacts(actionId, { surface = null, protocolControls =
   const declaredPostcondition = row.postcondition?.name ?? null;
   if (!isNonEmptyString(declaredPostcondition)) fail("postcondition_undeclared", actionId);
   const controls = protocolControls ?? readProtocolControls();
+  const fixture = fixtureSelection(actionId);
   return Object.freeze({
     actionId,
     lifecycle: row.lifecycle ?? null,
@@ -164,7 +185,7 @@ export function deriveActionFacts(actionId, { surface = null, protocolControls =
         ? `not_derived:postcondition_is_generic:${GENERIC_POSTCONDITION}`
         : null,
     requiredCapabilities: Object.freeze([...new Set([...controls, actionId])].sort()),
-    fixtureScenario: fixtureScenario(fixtureActions(actionId), actionId),
+    fixtureScenario: fixture,
   });
 }
 
@@ -323,7 +344,7 @@ export function validateSmokeContract(raw, { facts = null, surface = null, proto
     // Only an action whose declaration says nothing specific may name its own success word - and it must be
     // named, because the alternative is a contract that cannot judge the terminal at all.
     if (resolvedFacts.expectedReasonCode !== null)
-      fail("reason_code_redeclared", `${raw.expectedReasonCode}:declared=${resolvedFacts.expectedReasonCode}`);
+      fail("reason_code_redeclared", `${resolvedFacts.actionId}:expectedReasonCode=${raw.expectedReasonCode}`);
     if (!isNonEmptyString(raw.expectedReasonCode)) fail("reason_code_invalid");
     expectedReasonCode = raw.expectedReasonCode;
   }
