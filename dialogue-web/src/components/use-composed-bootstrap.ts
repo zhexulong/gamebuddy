@@ -1,28 +1,28 @@
 import { type Dispatch, type RefObject, type SetStateAction, useCallback, useEffect, useRef, useState } from "react";
-import { type Locale, type Messages, applyDocumentLocale, messages, persistLocale } from "../i18n";
-import {
-  type BrowserTurnV1,
-  type ReferencePipelineApi,
-  TavernProblemError,
-  TavernProtocolError,
-  createReferencePipelineApi,
-} from "../reference-pipeline-api";
-import {
-  type PendingSubmission,
-  ReferencePipelineSessionError,
-  applyStatus,
-  createReferencePipelineSession,
-} from "../reference-pipeline-session";
+import { readChatSnapshotPair } from "../chat-snapshot-pair";
+import { composedProblemView as problemView } from "../composed-problem-view";
 import {
   type ComposedReferenceGameBrowserApi,
   ComposedReferenceGameProblemError,
   ComposedReferenceGameProtocolError,
   createComposedReferenceGameBrowserApi,
 } from "../composed-reference-game-browser-api";
-import type { ManagementPipelineApi } from "../management-pipeline-api";
-import { composedProblemView as problemView } from "../composed-problem-view";
-import { readChatSnapshotPair } from "../chat-snapshot-pair";
 import { PANEL_PARAM } from "../composed-surface-route";
+import { applyDocumentLocale, type Locale, type Messages, messages, persistLocale } from "../i18n";
+import type { ManagementPipelineApi } from "../management-pipeline-api";
+import {
+  type BrowserTurnV1,
+  createReferencePipelineApi,
+  type ReferencePipelineApi,
+  TavernProblemError,
+  TavernProtocolError,
+} from "../reference-pipeline-api";
+import {
+  applyStatus,
+  createReferencePipelineSession,
+  type PendingSubmission,
+  ReferencePipelineSessionError,
+} from "../reference-pipeline-session";
 import type { ViewState } from "./composed-reference-game-view";
 
 /**
