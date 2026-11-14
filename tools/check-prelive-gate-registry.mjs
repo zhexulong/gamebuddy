@@ -141,6 +141,18 @@ export const EXEMPTIONS = Object.freeze([
     runsIn: "pnpm audit:gate-red-proofs",
   },
   {
+    path: "tools/audit-gate-inputs.mjs",
+    reason:
+      "debt: measured red at HEAD (exit 1) - its own report reads `examined 385 · authority 288 · hand-listed 23 · " +
+      "external 37 · unreadable 4 · unknown 33` and fails two checks: `baseline_current` (`0 unrecorded · 1 stale`, " +
+      "`test:stardew-test-shape` is no longer the worst class) and `zero_read_classified` (`11 member(s) · 160 row(s) · " +
+      "3 undeclared · 8 finding(s)`, five `zero_read_row_stale` rows whose gates stopped being green-with-zero), so a " +
+      "prelive rung would be red for the census's own backlog rather than for this tree. Its falsifier does run on " +
+      "every push, and this row expires when the gate exits 0 and it is deleted with it · measured examined 385 with " +
+      "3 undeclared and 8 zero-read findings, exit 1 at 3dcf008d",
+    runsIn: "falsifier:test:gate-inputs",
+  },
+  {
     path: "tools/check-release-generation-self-contained.mjs",
     reason:
       "elsewhere: reads the generation `host/dist/current.json` points at and the modules `production-artifact.config.json` " +
@@ -529,6 +541,15 @@ export const EXEMPTIONS = Object.freeze([
     path: "tools/check-live-run-silence.mjs",
     reason: "elsewhere: static scan for silent live-run outcomes, runs on every push in the CI gates job",
     runsIn: "pnpm check:live-run-silence",
+  },
+  {
+    path: "tools/check-loose-assertions.mjs",
+    reason:
+      "elsewhere: reads every spec under dialogue-web as a parsed tree and asks whether each assertion runs inside a " +
+      "test or in a helper a test reaches - `specs=117 parsed=117 examined=4671 in_a_test=4440 " +
+      "in_a_reachable_helper=231 runs_at_import=0 unreached=0`, 1.1 s here - and prints its own `{gate, checks[]}` " +
+      "report, so it already has a home on every push through `check:loose-assertions` in the CI `gates` job",
+    runsIn: "pnpm check:loose-assertions",
   },
   {
     path: "tools/check-parser-agreement.mjs",
