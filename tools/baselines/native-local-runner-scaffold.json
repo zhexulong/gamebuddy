@@ -197,15 +197,7 @@
       "reason": "predates_the_template"
     },
     {
-      "file": "tools/run-stardew-native-local-player-harvest-bush-smoke.mjs",
-      "reason": "predates_the_template"
-    },
-    {
       "file": "tools/run-stardew-native-local-player-harvest-crop-smoke.mjs",
-      "reason": "predates_the_template"
-    },
-    {
-      "file": "tools/run-stardew-native-local-player-harvest-fruit-tree-smoke.mjs",
       "reason": "predates_the_template"
     },
     {
@@ -242,10 +234,6 @@
     },
     {
       "file": "tools/run-stardew-native-local-player-mine-elevator-smoke.mjs",
-      "reason": "predates_the_template"
-    },
-    {
-      "file": "tools/run-stardew-native-local-player-mount-transport-smoke.mjs",
       "reason": "predates_the_template"
     },
     {
@@ -389,10 +377,6 @@
       "reason": "predates_the_template"
     },
     {
-      "file": "tools/run-stardew-native-local-player-shake-tree-smoke.mjs",
-      "reason": "predates_the_template"
-    },
-    {
       "file": "tools/run-stardew-native-local-player-ship-item-smoke.mjs",
       "reason": "predates_the_template"
     },
@@ -409,10 +393,6 @@
       "reason": "predates_the_template"
     },
     {
-      "file": "tools/run-stardew-native-local-player-take-pedestal-item-smoke.mjs",
-      "reason": "predates_the_template"
-    },
-    {
       "file": "tools/run-stardew-native-local-player-talk-to-npc-smoke.mjs",
       "reason": "predates_the_template"
     },
@@ -422,10 +402,6 @@
     },
     {
       "file": "tools/run-stardew-native-local-player-toggle-animal-door-smoke.mjs",
-      "reason": "predates_the_template"
-    },
-    {
-      "file": "tools/run-stardew-native-local-player-toggle-fence-gate-smoke.mjs",
       "reason": "predates_the_template"
     },
     {

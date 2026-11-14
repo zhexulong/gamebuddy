@@ -361,35 +361,11 @@ export const STARDEW_PUBLISHED_ACTION_GATES = Object.freeze([
   // (architecture/game-action-model.md 'lifecycle 与发布终点'), so live_verified is
   // the release endpoint and these are now part of the published set.
   gate("cut_grass", 1, "run-stardew-native-local-player-cut-grass-smoke.mjs", "grass_cut", "native_cut_grass_v1"),
-  gate(
-    "harvest_bush",
-    1,
-    "run-stardew-native-local-player-harvest-bush-smoke.mjs",
-    "bush_harvested",
-    "native_harvest_bush_v1",
-  ),
-  gate(
-    "harvest_fruit_tree",
-    1,
-    "run-stardew-native-local-player-harvest-fruit-tree-smoke.mjs",
-    "fruit_tree_harvested",
-    "native_harvest_fruit_tree_v1",
-  ),
-  gate("shake_tree", 1, "run-stardew-native-local-player-shake-tree-smoke.mjs", "tree_shaken", "native_shake_tree_v1"),
-  gate(
-    "take_pedestal_item",
-    1,
-    "run-stardew-native-local-player-take-pedestal-item-smoke.mjs",
-    "pedestal_item_taken",
-    "native_take_pedestal_item_v1",
-  ),
-  gate(
-    "toggle_fence_gate",
-    1,
-    "run-stardew-native-local-player-toggle-fence-gate-smoke.mjs",
-    "fence_gate_toggled",
-    "native_toggle_fence_gate_v1",
-  ),
+  gate("harvest_bush", 1, null, "bush_harvested", "native_harvest_bush_v1", "contract"),
+  gate("harvest_fruit_tree", 1, null, "fruit_tree_harvested", "native_harvest_fruit_tree_v1", "contract"),
+  gate("shake_tree", 1, null, "tree_shaken", "native_shake_tree_v1", "contract"),
+  gate("take_pedestal_item", 1, null, "pedestal_item_taken", "native_take_pedestal_item_v1", "contract"),
+  gate("toggle_fence_gate", 1, null, "fence_gate_toggled", "native_toggle_fence_gate_v1", "contract"),
 
   // World-object lane (2026-10-08): three actions on objects occupying world tiles.
   gate("clear_cask", 1, "run-stardew-native-local-player-clear-cask-smoke.mjs", "cask_cleared", "native_clear_cask_v1"),
@@ -422,13 +398,7 @@ export const STARDEW_PUBLISHED_ACTION_GATES = Object.freeze([
     "native_toggle_tool_light_v1",
   ),
   gate("use_raft", 1, "run-stardew-native-local-player-use-raft-smoke.mjs", "raft_launched", "native_use_raft_v1"),
-  gate(
-    "mount_transport",
-    1,
-    "run-stardew-native-local-player-mount-transport-smoke.mjs",
-    "horse_mounted",
-    "native_mount_transport_v1",
-  ),
+  gate("mount_transport", 1, null, "horse_mounted", "native_mount_transport_v1", "contract"),
   gate("enter_mine", 1, "run-stardew-native-local-player-enter-mine-smoke.mjs", "mine_entered", "native_enter_mine_v1"),
   // WIA §4.2: the two modal-handling primitives. Promoted to live_verified on owner ruling
   // (2026-10-06) after both crossed the live gate: a real native-local run each, with its own
