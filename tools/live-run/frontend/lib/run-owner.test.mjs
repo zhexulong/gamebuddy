@@ -9,8 +9,9 @@ import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, dirname } from "node:path";
 import { test } from "node:test";
+import { fileURLToPath } from "node:url";
 import { cdpPortLockDir } from "./cdp-port-lock.mjs";
 import { runPaths } from "./config.mjs";
 import {
@@ -46,6 +47,19 @@ async function waitForGone(pid) {
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
   return false;
+}
+
+/** The same asynchronous reap applies to a directory a just-killed process was working in. */
+async function removeTree(root) {
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    try {
+      rmSync(root, { recursive: true, force: true });
+      return;
+    } catch (error) {
+      if (attempt === 19) throw error;
+      await new Promise((resolve) => setTimeout(resolve, 200));
+    }
+  }
 }
 
 const CDP_PORT = 9499;
@@ -123,4 +137,54 @@ test("an unreadable process table is not reported as 'nothing remained'", () => 
   const leftovers = inspectRunLeftovers({ paths: runPaths({ outRoot: "x", stageRoot: "" }), run: { cdpPort: 9498 } });
   assert.equal(leftovers.status, "unverifiable", "an empty query is not a machine running nothing");
   assert.match(describeLeftovers(leftovers, { cdpPort: 9498 }), /^LEFTOVERS: unverifiable:process_table_unavailable/u);
+});
+
+// The half the unit above cannot prove: that a REAL failed phase goes through this teardown. `report` on
+// an out root with no artifacts is a real failure of a real phase, and it costs no build, no browser and
+// no game - so the run's own exit path is exercised without a live run.
+test("a phase that fails takes the run's processes with it", { timeout: 180_000 }, async () => {
+  const root = mkdtempSync(join(tmpdir(), "gb-run-exit-"));
+  const outRoot = join(root, "shots");
+  const paths = runPaths({ outRoot, stageRoot: `${outRoot}.stage` });
+  mkdirSync(paths.stateDir, { recursive: true });
+  // A process the run started whose command line names nothing of this run's: only the registry finds it.
+  const child = spawn(process.execPath, ["-e", IDLE], { cwd: root, stdio: "ignore", windowsHide: true });
+  try {
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    registerRunProcess(paths, { pid: child.pid, role: "launch-driver" });
+    const command = [
+      fileURLToPath(new URL("../run.mjs", import.meta.url)),
+      "report",
+      "--out",
+      outRoot,
+      "--commit",
+      "HEAD",
+      "--runtime",
+      dirname(process.execPath),
+      "--cdp-port",
+      "9497",
+    ];
+    const result = await new Promise((resolve) => {
+      const phase = spawn(process.execPath, command, { stdio: ["ignore", "pipe", "pipe"], windowsHide: true });
+      let output = "";
+      phase.stdout.on("data", (chunk) => {
+        output += String(chunk);
+      });
+      phase.stderr.on("data", (chunk) => {
+        output += String(chunk);
+      });
+      phase.on("close", (code) => resolve({ code, output }));
+    });
+
+    assert.notEqual(result.code, 0, "the report phase fails on an out root with no artifacts");
+    assert.match(result.output, /RUN-CLEANUP\(phase_failure\)/u, result.output.slice(-1200));
+    assert.match(result.output, /killed=1 \[\d+\(launch-driver\)\]/u, "the run killed the pid it recorded");
+    assert.match(result.output, /^LEFTOVERS: none \(examined \d+ processes; cdp port 9497 free\)$/mu);
+    assert.ok(await waitForGone(child.pid), `the recorded process (pid ${child.pid}) must be gone after the failure`);
+  } finally {
+    child.kill("SIGKILL");
+    // Its working directory is the root this test deletes, so the delete waits for the process itself.
+    await waitForGone(child.pid);
+    await removeTree(root);
+  }
 });
