@@ -81,8 +81,11 @@ async function runOperationalGate(deploymentManifestRef: string, operationalNonc
   const folderPicker = await createPublishedWindowsStardewFolderPicker(artifactRoot);
   const game = await createKnownSemanticGameProductionAuthorityFromDeploymentManifest(manifest);
   const coordinator = createStardewProductionLifecycleCoordinator(manifest, folderPicker, game);
-  // Host boot: release a pointer an earlier ordinary close or crash left bound, and
-  // only when the OS proves the attempt's Guardian-owned objects gone.
+  // Host boot: release a pointer an earlier ordinary close left bound, and close out
+  // an attempt an earlier crash left non-terminal, each only when the OS proves the
+  // attempt's Guardian-owned objects gone. This is the path every player takes, so it
+  // is the one that matters: the same finalisation used to be reachable only through
+  // `game.create`, and a player who never pressed Create again stayed blocked.
   process.stdout.write(
     `${formatStardewBootstrapRegistrationReconcile(await coordinator.reconcileHeldBootstrapRegistration())}\n`,
   );

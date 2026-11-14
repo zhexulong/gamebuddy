@@ -3712,7 +3712,11 @@ export function createStardewProductionLifecycleCoordinatorFromTestingCompositio
 
 /**
  * One bounded operator line for a boot reconcile: the counts, then one
- * `correlation:outcome` pair per record the pass examined.
+ * `correlation:outcome[:finalisation]` triple per record the pass examined.
+ *
+ * The finalisation is printed only when the pass wrote a terminal, and it names
+ * that terminal: a reader must never have to infer which one freed the player, nor
+ * which reason pushed an attempt into quarantine.
  *
  * A pass that examined nothing prints `examined 0` and an empty list, because a
  * counted zero must not read like a pass that found nothing wrong.
@@ -3720,8 +3724,14 @@ export function createStardewProductionLifecycleCoordinatorFromTestingCompositio
 export function formatStardewBootstrapRegistrationReconcile(
   report: StardewBootstrapRegistrationReconcileReport,
 ): string {
-  const records = report.records.map((record) => `${record.bootstrapCorrelation}:${record.outcome}`).join(",");
-  return `GameBuddy Stardew bootstrap registration reconcile: examined ${report.examined}, released ${report.released}${records.length === 0 ? "" : ` [${records}]`}`;
+  const records = report.records
+    .map((record) =>
+      record.finalisation === null
+        ? `${record.bootstrapCorrelation}:${record.outcome}`
+        : `${record.bootstrapCorrelation}:${record.outcome}:${record.finalisation}`,
+    )
+    .join(",");
+  return `GameBuddy Stardew bootstrap registration reconcile: examined ${report.examined}, released ${report.released}, finalised ${report.finalised}${records.length === 0 ? "" : ` [${records}]`}`;
 }
 
 /** Constructs the coordinator exclusively from the closed first-party composition. */

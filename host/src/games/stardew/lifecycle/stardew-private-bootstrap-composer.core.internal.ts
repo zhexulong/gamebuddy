@@ -1567,14 +1567,15 @@ export async function settleOwnedPlayerHostRegistrationAttempt(
 
 /**
  * One named outcome per attempt record the reconcile examined. Every one of them
- * is a fact an operator can act on, and only `released` changed durable state.
+ * is a fact an operator can act on, and only `released` and `finalised` changed
+ * durable state.
  */
 export type StardewBootstrapRegistrationReconcileOutcome =
-  /** The OS proved both Guardian-owned objects gone and the pointer was released. */
+  /** The record was already terminal and the OS proved both objects gone: the pointer was released. */
   | "released"
-  /** The owner record is not terminal: the attempt is still held, and was not probed. */
-  | "kept_attempt_open"
-  /** Both objects opened: the attempt still owns them. */
+  /** The record was not terminal, the OS proved both objects gone, and it was finalised; `finalisation` names the terminal written. */
+  | "finalised"
+  /** Both objects opened: the attempt still owns them, whichever state its record is in. */
   | "kept_objects_present"
   /** One object missing, or any answer that was not a measurement. */
   | "kept_presence_unverifiable"
@@ -1582,37 +1583,89 @@ export type StardewBootstrapRegistrationReconcileOutcome =
   | "kept_not_bound"
   /** The owner record could not be read or validated. */
   | "kept_unreadable"
-  /** Absence was proven, but the release itself refused (record or pointer changed under it). */
+  /** Absence was proven, the record is not terminal, and the durable engine refused to take it to one. */
+  | "kept_finalise_refused"
+  /** Absence was proven and the record is terminal, but the release itself refused (record or pointer changed under it). */
   | "kept_release_refused";
+
+/**
+ * The durable terminal a pass actually wrote for an attempt, so that a reader
+ * never has to infer which one freed the player.
+ *
+ * Four shapes, and the suffix always means the SAME thing: something after the
+ * named terminal refused, and the name carries that refusal rather than hiding it.
+ *
+ * - `ai_settled_player_preserved` - the finalisation reached the AI-side terminal
+ *   and the pointer was released.
+ * - `ai_settled_player_preserved:<reason>` - the terminal and the release both
+ *   landed, and a step after them (the attempt's own residue cleanup) refused, so
+ *   the transaction stays on disk.
+ * - `quarantined:<reason>` - the finalisation could not reach its terminal and its
+ *   OWN failure closure quarantined the attempt; the pointer was then released, so
+ *   the player is free and the reason that pushed it there survives.
+ * - `refused:<reason>` - the durable engine refused before writing any terminal, so
+ *   the attempt is exactly as it was found and the next boot will read it again.
+ */
+export type StardewBootstrapRegistrationReconcileFinalisation =
+  | "ai_settled_player_preserved"
+  | `ai_settled_player_preserved:${string}`
+  | `quarantined:${string}`
+  | `refused:${string}`;
 
 export type StardewBootstrapRegistrationReconcileRecord = Readonly<{
   bootstrapCorrelation: string;
   outcome: StardewBootstrapRegistrationReconcileOutcome;
+  /** The terminal this pass wrote for the attempt, or null when it wrote none. */
+  finalisation: StardewBootstrapRegistrationReconcileFinalisation | null;
 }>;
+
+/** One record's outcome, frozen, so every exit of the per-record decision spells it the same way. */
+function reconcileRecord(
+  bootstrapCorrelation: string,
+  outcome: StardewBootstrapRegistrationReconcileOutcome,
+  finalisation: StardewBootstrapRegistrationReconcileFinalisation | null = null,
+): StardewBootstrapRegistrationReconcileRecord {
+  return Object.freeze({ bootstrapCorrelation, outcome, finalisation });
+}
 
 export type StardewBootstrapRegistrationReconcileReport = Readonly<{
   /** How many attempt records were read. Zero is a counted zero, not an absent report. */
   examined: number;
   released: number;
+  /** How many records were not terminal and were finalised (and released) by this pass. */
+  finalised: number;
   records: readonly StardewBootstrapRegistrationReconcileRecord[];
 }>;
 
 /**
  * Host-boot reconcile over `stardew-private-bootstrap` records.
  *
- * It releases the registration's bound attempt pointer for a terminal attempt
- * whose two Guardian-owned OS objects the OS proves gone, so the next launch is
- * admitted instead of being refused with
- * `stardew_bootstrap_registration_unavailable` forever after one ordinary close.
+ * This is the entry point that matters for a crashed attempt. The finalisation
+ * that frees a player whose Guardian died was reachable only through
+ * `game.create`, which opens the leftover attempt and drives its recovery; a
+ * player who never pressed Create again stayed blocked on every boot, because the
+ * only pass that ran could report the record it would not touch. The
+ * `game.create` trigger stays - it is a valid second entry, and a create that
+ * finds a leftover still has to answer for it - but boot is the path every player
+ * actually takes.
  *
- * Its authority stops there. This pass releases BOOKKEEPING: it never claims
- * containment, never finalizes a role, and never stands in for
- * `containedRuntimeTeardown.settle`, which remains the only path allowed to say a
- * runtime was contained. A record that is not terminal is not even probed, and any
- * answer other than "both objects gone" leaves the pointer exactly as it was.
+ * Its authority is bounded by ONE measurement: the presence verdict for the two
+ * OS objects the attempt's Guardian binding names. Only `proven_dead` (both
+ * `not_found`) may move a record; `present` and `unverifiable` leave everything
+ * exactly as it was, whichever state the record is in.
+ *
+ * A terminal record is released, not finalised: this pass releases its
+ * BOOKKEEPING and never stands in for `containedRuntimeTeardown.settle`, which
+ * remains the only path allowed to say a live runtime was contained.
+ *
+ * A NON-terminal record is finalised through the existing recovery finalisation,
+ * which is what closes the boot deadlock; `finaliseAbsentAttempt` owns the one
+ * decision that needs arguing (which terminal the evidence supports) and the
+ * record it reports.
  *
  * Idempotent: a released pointer is no longer the active attempt, so a second pass
- * reports `kept_not_bound` for the same record and releases nothing again.
+ * reports `kept_not_bound` for the same record and releases nothing again, and a
+ * finalised attempt has consumed its transaction record entirely.
  */
 export async function reconcileHeldBootstrapRegistration(
   runtimeRoot: string,
@@ -1623,15 +1676,17 @@ export async function reconcileHeldBootstrapRegistration(
   const bound = await boundBootstrapCorrelation(root);
   const records: StardewBootstrapRegistrationReconcileRecord[] = [];
   let released = 0;
+  let finalised = 0;
   for (const bootstrapCorrelation of correlations) {
-    const outcome =
+    const record =
       bound !== bootstrapCorrelation
-        ? ("kept_not_bound" as const)
+        ? reconcileRecord(bootstrapCorrelation, "kept_not_bound")
         : await reconcileHeldBootstrapAttempt(root, bootstrapCorrelation, probe);
-    if (outcome === "released") released += 1;
-    records.push(Object.freeze({ bootstrapCorrelation, outcome }));
+    if (record.outcome === "released") released += 1;
+    if (record.outcome === "finalised") finalised += 1;
+    records.push(record);
   }
-  return Object.freeze({ examined: correlations.length, released, records: Object.freeze(records) });
+  return Object.freeze({ examined: correlations.length, released, finalised, records: Object.freeze(records) });
 }
 
 /** The attempt correlation the registration currently binds, or null when it binds none. */
@@ -1670,37 +1725,149 @@ async function reconcileHeldBootstrapAttempt(
   root: string,
   bootstrapCorrelation: string,
   probe: StardewGuardianNamedObjectProbe,
-): Promise<StardewBootstrapRegistrationReconcileOutcome> {
+): Promise<StardewBootstrapRegistrationReconcileRecord> {
   const ownerPath = join(root, "stardew-private-bootstrap", bootstrapCorrelation, OWNER_FILE);
-  let terminal: StardewPrivateBootstrapOwnerRecord;
+  let record: StardewPrivateBootstrapOwnerRecord;
   try {
-    terminal = await withPathLock(ownerPath, () => readAndValidateOwner(ownerPath, root), { containmentRoot: root });
+    record = await withPathLock(ownerPath, () => readAndValidateOwner(ownerPath, root), { containmentRoot: root });
   } catch {
-    return "kept_unreadable";
+    return reconcileRecord(bootstrapCorrelation, "kept_unreadable");
   }
-  if (terminal.bootstrapId !== bootstrapCorrelation) return "kept_unreadable";
-  if (!isTerminalOwnerState(terminal.state)) return "kept_attempt_open";
+  if (record.bootstrapId !== bootstrapCorrelation) return reconcileRecord(bootstrapCorrelation, "kept_unreadable");
   const verdict = await probeStardewGuardianObjects(probe, {
-    playerJobName: terminal.guardian.playerJobName,
-    leaseName: terminal.guardian.leaseName,
+    playerJobName: record.guardian.playerJobName,
+    leaseName: record.guardian.leaseName,
   });
-  if (verdict.presence === "present") return "kept_objects_present";
-  if (verdict.presence === "unverifiable") return "kept_presence_unverifiable";
-  const immutableFence = immutableFenceFor(terminal);
+  if (verdict.presence === "present") return reconcileRecord(bootstrapCorrelation, "kept_objects_present");
+  if (verdict.presence === "unverifiable") return reconcileRecord(bootstrapCorrelation, "kept_presence_unverifiable");
+  if (!isTerminalOwnerState(record.state)) return await finaliseAbsentAttempt(root, bootstrapCorrelation, record);
   try {
     await withStardewLifecycleInstallationRegistrationOwner(root, async (registration) => {
       await releaseSettledPlayerHostRegistrationAttempt(
         root,
         bootstrapCorrelation,
-        immutableFence,
-        terminal.ownerRecordRevision,
+        immutableFenceFor(record),
+        record.ownerRecordRevision,
         registration,
       );
     });
   } catch {
-    return "kept_release_refused";
+    return reconcileRecord(bootstrapCorrelation, "kept_release_refused");
   }
-  return "released";
+  return reconcileRecord(bootstrapCorrelation, "released");
+}
+
+/**
+ * Closes out ONE attempt the OS proved gone, through the existing recovery
+ * finalisation.
+ *
+ * The terminal it asks for is `ai_settled_player_preserved`, and the whole reason
+ * is what the presence verdict can and cannot prove. Both named objects
+ * `not_found` proves the Guardian's own ownership handles are closed: its lease
+ * mutex is released and its player-Job handle no longer exists. That is an AI-side
+ * fact - the attempt's Guardian, which is the only owner its AI client ever had, is
+ * gone - and it is not a containment fact. The native Guardian creates the player
+ * Job with kill-on-close OFF so the player's world survives its Guardian, which
+ * means the game process is left running, orphaned outside any job, and the durable
+ * player role is still `armed`/`active` and never `contained`. The native recovery
+ * classifier refuses to classify the player role contained at all, for the stated
+ * reason that player world ownership is not an AI containment artifact. Claiming
+ * `contained` here would need a role CAS nobody observed, in the one record that
+ * decides whether the player can start again; the sibling finalisation records
+ * exactly what was observed instead.
+ *
+ * The handle and its one-shot Guardian binding are minted over the record this pass
+ * already read and validated, never over a second read: the binding's CAS cursor is
+ * that exact predecessor, and the finalisation reads the same handle's durable
+ * record for the terminal it must match. A record already `recovering` adopts the
+ * actor it recorded, so an interrupted recovery is closed out under its own actor;
+ * only a record with none goes through `beginRecovery` to mint one.
+ *
+ * A finalisation that refuses is not reported as one that ran. The record is
+ * re-read: still non-terminal means the durable engine refused before writing any
+ * terminal (nothing was closed out, the next boot reads it again); terminal means
+ * the finalisation's own failure closure quarantined it, and the pointer is then
+ * released through the same `releaseSettledPlayerHostRegistrationAttempt` every
+ * other terminal uses, so one boot frees the player and the reason survives in the
+ * report.
+ */
+async function finaliseAbsentAttempt(
+  root: string,
+  bootstrapCorrelation: string,
+  record: StardewPrivateBootstrapOwnerRecord,
+): Promise<StardewBootstrapRegistrationReconcileRecord> {
+  const ownerPath = join(root, "stardew-private-bootstrap", bootstrapCorrelation, OWNER_FILE);
+  const owner = composeRecoverablePlayerHostOwner(durableOwnerStateOver(ownerPath, root, record));
+  const { transitions } = consumeStardewBootstrapGuardianOwnerBinding(
+    createStardewBootstrapGuardianOwnerBinding(owner),
+  );
+  const recoveryInstanceId = record.recoveryInstanceId ?? randomUUID();
+  let refusal: unknown;
+  try {
+    if (record.state !== "recovering") await transitions.beginRecovery(recoveryInstanceId);
+    await finalizeRecoveredPlayerHostAiSettledRuntimeAttempt(owner, recoveryInstanceId);
+    return reconcileRecord(bootstrapCorrelation, "finalised", "ai_settled_player_preserved");
+  } catch (error) {
+    refusal = error;
+  }
+  const reason = bootstrapFinaliseRefusalReason(refusal);
+  const stopped = await readOwnerRecordOrNull(ownerPath, root);
+  if (stopped !== null && !isTerminalOwnerState(stopped.state))
+    return reconcileRecord(bootstrapCorrelation, "kept_finalise_refused", `refused:${reason}`);
+  if (stopped !== null && (await boundBootstrapCorrelation(root)) === bootstrapCorrelation) {
+    try {
+      await withStardewLifecycleInstallationRegistrationOwner(root, async (registration) => {
+        await releaseSettledPlayerHostRegistrationAttempt(
+          root,
+          bootstrapCorrelation,
+          immutableFenceFor(stopped),
+          stopped.ownerRecordRevision,
+          registration,
+        );
+      });
+    } catch {
+      return reconcileRecord(
+        bootstrapCorrelation,
+        "kept_release_refused",
+        stopped.state === "quarantined" ? `quarantined:${reason}` : "ai_settled_player_preserved",
+      );
+    }
+  }
+  // A record that is gone was consumed by the finalisation, which only deletes it
+  // after the terminal write and the pointer release have both succeeded.
+  return reconcileRecord(
+    bootstrapCorrelation,
+    "finalised",
+    stopped !== null && stopped.state === "quarantined"
+      ? `quarantined:${reason}`
+      : `ai_settled_player_preserved:${reason}`,
+  );
+}
+
+/**
+ * The bounded reason a finalisation refused with, quoted rather than summarised.
+ *
+ * The finalisation wraps its durable refusal in one code, so the cause is the only
+ * place the transition the engine actually refused survives. The result is
+ * restricted to the alphabet the operator's one-line record format can carry, so a
+ * reason can never split or terminate the record it belongs to.
+ */
+function bootstrapFinaliseRefusalReason(error: unknown): string {
+  const message = error instanceof Error ? error.message : "unknown";
+  const cause = error instanceof Error && error.cause instanceof Error ? `/${error.cause.message}` : "";
+  return `${message}${cause}`.replace(/[^A-Za-z0-9_/-]/gu, "_");
+}
+
+/** The attempt's own record, or null when it is not on disk (consumed by a close-out). */
+async function readOwnerRecordOrNull(
+  ownerPath: string,
+  root: string,
+): Promise<StardewPrivateBootstrapOwnerRecord | null> {
+  try {
+    return await readAndValidateOwner(ownerPath, root);
+  } catch {
+    return null;
+  }
 }
 
 function persistPrivateBootstrapOwner(

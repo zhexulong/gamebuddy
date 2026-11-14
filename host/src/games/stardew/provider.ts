@@ -204,8 +204,9 @@ export function createStardewGameIntegrationProvider(): GameIntegrationProvider 
         input.game,
         input.runtimeCollaborator,
       );
-      // Host boot: a pointer left bound by an ordinary close or a crash is released
-      // here, and only when the OS proves the attempt's Guardian-owned objects gone.
+      // Host boot: a pointer left bound by an ordinary close is released here, and an
+      // attempt a crash left non-terminal is closed out here, each only when the OS
+      // proves the attempt's Guardian-owned objects gone.
       console.error(
         formatStardewBootstrapRegistrationReconcile(await coordinator.reconcileHeldBootstrapRegistration()),
       );
