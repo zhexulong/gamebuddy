@@ -26,12 +26,16 @@ import { fileURLToPath } from "node:url";
 
 import {
   checkPlannerGuidanceObservationTools,
+  modelVisibleLiterals,
+  numericConstants,
   observationToolNames,
   PLANNER_NEED_NOT_MENTION,
+  planNodeLimitReading,
   plannerGuidanceText,
+  quotedLimit,
   REASON_CLASSES,
-  renderReport,
   RULES,
+  renderReport,
 } from "./check-planner-guidance-observation-tools.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -285,4 +289,187 @@ test("every reason in the table uses a declared class and says the concrete thin
     );
     assert.ok(entry.reason.length > 60, `${toolName}'s reason is too short to name anything`);
   }
+});
+
+/* --------------------------------------------------------------------------------------------------------------------
+ * THE PLAN'S NODE LIMIT, which is a number one text published and a guard enforced.
+ *
+ * `round55`, turn 152, in her own thinking: "equip + 15 = 16 nodes, at limit… 16 nodes max". The `isFull()` guard has
+ * never refused a 17th node; `MAX_PLAN_NODES` is 256. The number she read was the `stardew_plan_work` script parameter
+ * description - "16 nodes is the whole plan" - and 32 plans later, 26 accepted at a mean of 3.69 nodes, every program
+ * boundary cost a measured 55.4 s of model turn. So the cases below are the two directions of one fact: the published
+ * number must equal the guard's, and it must be QUOTED from the constant rather than typed in, because a typed number is
+ * how the two came apart when the constant moved.
+ * ------------------------------------------------------------------------------------------------------------------ */
+
+const PLAN_TOOLS_PATH =
+  "host/src/continuity-semantic-game-runtime-materializer/continuity-semantic-game-runtime-materializer.ts";
+const PLAN_TOOLS = read(PLAN_TOOLS_PATH);
+
+/** The sentence as the tree writes it, matched rather than quoted, so an edit above it fails here instead of drifting. */
+const DERIVED_LIMIT_SENTENCE = /a plan holds at most \$\{String\(([A-Za-z_$][\w$]*)\)\} nodes/u;
+
+/** The shipped `script` description with its node-limit sentence replaced, so each case injects one defect at a time. */
+function withLimitSentence(replacement) {
+  const match = DERIVED_LIMIT_SENTENCE.exec(PLAN_TOOLS);
+  assert.notEqual(
+    match,
+    null,
+    "the plan tool's script description no longer derives the node limit from a constant, so this suite can no longer " +
+      "inject the reading it exists for",
+  );
+  const injected = PLAN_TOOLS.replace(match[0], replacement);
+  assert.notEqual(injected, PLAN_TOOLS, "the node-limit sentence is no longer where this case injects");
+  return injected;
+}
+
+const realReading = planNodeLimitReading({ guidanceSource: GUIDANCE, toolsSource: PLAN_TOOLS });
+
+test("the published plan node limit is the number the isFull() guard enforces", () => {
+  assert.equal(
+    typeof realReading.realLimit,
+    "number",
+    "the guard must compare the node count against a declared constant",
+  );
+  assert.equal(realReading.limitConstant === undefined, false, "the guard's constant must be named, not a literal");
+  assert.equal(
+    numericConstants(GUIDANCE).get(realReading.limitConstant),
+    realReading.realLimit,
+    "the constant the guard names and the constant this reading found are one declaration",
+  );
+  assert.ok(realReading.places.length > 0, "blocked: the plan surface published no text to examine");
+  assert.ok(
+    realReading.claims.length > 0,
+    "the plan tool states nowhere how many nodes a plan holds, so a companion can only learn the ceiling by hitting it",
+  );
+  assert.deepEqual(
+    realReading.claims.map((claim) => claim.quoted.derived),
+    realReading.claims.map(() => true),
+    "every stated limit is quoted from a constant; a typed number is the defect this rule exists for",
+  );
+  assert.deepEqual(codes(check({})), [], "the real tree publishes the guard's own number");
+});
+
+test("the shipped sentence is red on both counts: it disagrees with the guard and it is typed in", () => {
+  // The reading this gate was written from, replayed on the text HEAD ships: "16 nodes is the whole plan", 79 minutes
+  // before `round55` stopped at 16 on every program.
+  const result = check({ [PLAN_TOOLS_PATH]: withLimitSentence("16 nodes is the whole plan") });
+  assert.deepEqual(codes(result), [
+    `plan_node_limit_disagrees:16:${realReading.realLimit}`,
+    "plan_node_limit_hand_written:16",
+  ]);
+  assert.equal(result.status, "failed");
+});
+
+test("a number that is wrong is red whatever it is, not only the one that shipped", () => {
+  const wrong = realReading.realLimit - 1;
+  assert.deepEqual(codes(check({ [PLAN_TOOLS_PATH]: withLimitSentence(`a plan holds at most ${wrong} nodes`) })), [
+    `plan_node_limit_disagrees:${wrong}:${realReading.realLimit}`,
+    `plan_node_limit_hand_written:${wrong}`,
+  ]);
+});
+
+test("a number that is RIGHT today and typed in is still red: the class, not the instance", () => {
+  assert.deepEqual(
+    codes(check({ [PLAN_TOOLS_PATH]: withLimitSentence(`a plan holds at most ${realReading.realLimit} nodes`) })),
+    [`plan_node_limit_hand_written:${realReading.realLimit}`],
+  );
+});
+
+test("moving the constant moves both sides: the guard and the text are one reading, not two copies", () => {
+  const moved = GUIDANCE.replace(
+    new RegExp(`(export const ${realReading.limitConstant} = )${realReading.realLimit}`, "u"),
+    `$1${realReading.realLimit + 7}`,
+  );
+  assert.notEqual(
+    moved,
+    GUIDANCE,
+    `the declaration of ${realReading.limitConstant} is no longer where this case injects`,
+  );
+  const reading = planNodeLimitReading({ guidanceSource: moved, toolsSource: PLAN_TOOLS });
+  assert.equal(reading.realLimit, realReading.realLimit + 7, "the real limit is the guard's declaration");
+  assert.deepEqual(
+    reading.claims.map((claim) => claim.quoted.value),
+    [reading.realLimit],
+    "the text follows the constant, so a moved limit is green without an edit to the sentence",
+  );
+  assert.deepEqual(
+    codes(check({ [GUIDANCE_PATH]: moved })).filter((code) => code.includes("plan_node_limit")),
+    [],
+    "a limit that moved in one place is not a disagreement",
+  );
+});
+
+test("a guard that compares a literal is unanchored, and the gate is blocked rather than green", () => {
+  const literalGuard = GUIDANCE.replace(
+    `state.nodes.length >= ${realReading.limitConstant}`,
+    "state.nodes.length >= 16",
+  );
+  assert.notEqual(literalGuard, GUIDANCE, "the isFull() guard is no longer where this case injects");
+  const report = reportOf(check({ [GUIDANCE_PATH]: literalGuard }));
+  assert.equal(report.status, "blocked", "with no constant there is no real limit, so nothing was measured");
+  assert.deepEqual(rulesOf(report, "not_measured"), ["plan_node_limit_read_from_the_guard"]);
+});
+
+test("a claim this gate cannot resolve is red: an unknown interpolation is not skipped", () => {
+  const unresolved = withLimitSentence("a plan holds at most ${String(PUBLISHED_PLAN_NODES)} nodes");
+  const findings = codes(check({ [PLAN_TOOLS_PATH]: unresolved }));
+  assert.equal(findings.length, 1, `one unresolved claim, one finding; got ${findings.join(", ")}`);
+  assert.match(
+    findings[0],
+    new RegExp(`^plan_node_limit_unresolved:${PLAN_TOOLS_PATH.replace(".", "\\.")}:\\d+$`, "u"),
+    "the finding names the file and line the number is written on",
+  );
+});
+
+test("a description whose text is not a literal is a place the gate could not read, and says so", () => {
+  const computed = PLAN_TOOLS.replace(
+    "      script: Type.String({",
+    "      computed: Type.String({ description: String(PLAN_NODE_LIMIT_TEXT) }),\n      script: Type.String({",
+  );
+  assert.notEqual(
+    computed,
+    PLAN_TOOLS,
+    "the script parameter is no longer where this case injects a computed description",
+  );
+  const report = reportOf(check({ [PLAN_TOOLS_PATH]: computed }));
+  assert.equal(report.status, "blocked");
+  assert.deepEqual(rulesOf(report, "not_measured"), ["plan_text_population_readable"]);
+});
+
+test("a plan surface that publishes no text at all is blocked, never a pass over nothing", () => {
+  const report = reportOf(
+    check({ [PLAN_TOOLS_PATH]: "export const nothing = 1;\n", [GUIDANCE_PATH]: "export const nothing = 1;\n" }),
+  );
+  assert.equal(report.status, "blocked");
+  assert.ok(rulesOf(report, "not_measured").includes("plan_text_population_readable"));
+  assert.equal(report.examined.planTextPlaces, 0);
+});
+
+test("the plan node limit is printed as a population: places examined, states a limit, disagrees", () => {
+  const { lines } = renderReport(check({}));
+  const line = lines.find((candidate) => candidate.startsWith("plan node limit · places examined "));
+  assert.notEqual(line, undefined, "the verdict has to print the population this rule rests on");
+  assert.equal(
+    line,
+    `plan node limit · places examined ${realReading.places.length} · state a limit ` +
+      `${realReading.claims.length} · disagree 0`,
+  );
+  const provenance = lines.find((candidate) => candidate.startsWith("plan node limit · real "));
+  assert.equal(
+    provenance,
+    `plan node limit · real ${realReading.realLimit} from ${realReading.limitConstant} · typed into the text 0`,
+  );
+});
+
+test("every string literal is read as text, and an interpolation is not text", () => {
+  const [literal] = modelVisibleLiterals("x = `a ${String(CONST)} nodes and 16 nodes`;");
+  assert.equal(literal.masked, "a «String(CONST)» nodes and 16 nodes");
+  assert.deepEqual(quotedLimit("16", numericConstants("export const CONST = 256;")), { value: 16, derived: false });
+  assert.deepEqual(quotedLimit("«String(CONST)»", numericConstants("export const CONST = 256;")), {
+    value: 256,
+    derived: true,
+    name: "CONST",
+  });
+  assert.equal(quotedLimit("«MISSING»", new Map()).value, null);
 });
