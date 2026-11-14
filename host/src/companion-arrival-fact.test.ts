@@ -9,7 +9,7 @@ import {
   companionArrivalAlreadySaid,
   companionArrivalFact,
 } from "./companion-arrival-fact.js";
-import type { WorldFact } from "./event-pump.js";
+import { FACT_PRODUCER, WorldFact } from "./event-pump.js";
 import { CompanionHostService } from "./host-service.js";
 
 /** The attach boundary and the pump, reduced to what the arrival decision reads. */
@@ -141,7 +141,7 @@ test("a second tick in the same session says nothing, and a transcript that alre
   // The durable half: the Game session's own transcript already holds this fact's batch.
   const delivered: string[] = [];
   const loop = new CompanionLoop(recordingSession(delivered) as never);
-  loop.pump.enqueueFact(companionArrivalFact(SNAPSHOT_PAYLOAD)!);
+  loop.pump.enqueueFact(companionArrivalFact(SNAPSHOT_PAYLOAD)!, FACT_PRODUCER.companionArrival);
   await loop.flush();
   assert.equal(delivered.length, 1);
   assert.equal(
@@ -227,7 +227,7 @@ test("the arrival rides world_fact with semanticKind companion_arrival, and the 
     },
     endBatch() {},
   });
-  loop.pump.enqueueFact(arrival!);
+  loop.pump.enqueueFact(arrival!, FACT_PRODUCER.companionArrival);
   await loop.flush();
   assert.equal(delivered.length, 1, "the arrival reaches Pi as one turn");
   assert.deepEqual(opened, [COMPANION_ARRIVAL_EVENT_ID], "the arrival opens its own presentation lease");
@@ -242,16 +242,19 @@ test("the arrival rides world_fact with semanticKind companion_arrival, and the 
     },
     endBatch() {},
   });
-  unlisted.pump.enqueueFact({
-    source: COMPANION_ARRIVAL_SOURCE,
-    kind: "world_fact",
-    eventId: "weather_changed_01",
-    sourceEventId: "weather_changed_01",
-    correlationId: "weather_changed_01",
-    revision: 0,
-    semanticKind: "weather_changed",
-    payload: Object.freeze({ kind: "weather_changed" }),
-  });
+  unlisted.pump.enqueueFact(
+    {
+      source: COMPANION_ARRIVAL_SOURCE,
+      kind: "world_fact",
+      eventId: "weather_changed_01",
+      sourceEventId: "weather_changed_01",
+      correlationId: "weather_changed_01",
+      revision: 0,
+      semanticKind: "weather_changed",
+      payload: Object.freeze({ kind: "weather_changed" }),
+    },
+    FACT_PRODUCER.companionArrival,
+  );
   await unlisted.flush();
   assert.equal(unlistedDelivered.length, 1);
   assert.deepEqual(unlistedOpened, [], "an unlisted world-fact kind does not open a turn");

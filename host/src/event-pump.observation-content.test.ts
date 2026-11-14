@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  FACT_PRODUCER,
   AUTO_OBSERVE_ON_STALE,
   AUTO_OBSERVE_UNAVAILABLE,
   CompanionEventPump,
@@ -164,13 +165,16 @@ test("the reading alone opens no turn: round55's 90 snapshot-only flushes are st
   const pump = new CompanionEventPump();
   const batches: PendingBatch[] = [];
 
-  pump.enqueueFact(reading(352, READING, 0));
+  pump.enqueueFact(reading(352, READING, 0), FACT_PRODUCER.adapterIngress);
   pump.enqueuePlayerInput(FIRST_INPUT);
   await pump.flush(sink(batches));
   assert.equal(batches.length, 1, "the person spoke, so the first turn is owed whatever else is pending");
 
   // The turn that ran a tool leaves its own observations behind; `HostService.#restateWorldSnapshot` hands them back.
-  pump.enqueueFact(reading(400, Object.freeze({ ...READING, timeOfDay: 700, stamina: 240 }), 1));
+  pump.enqueueFact(
+    reading(400, Object.freeze({ ...READING, timeOfDay: 700, stamina: 240 }), 1),
+    FACT_PRODUCER.adapterIngress,
+  );
   await pump.flush(sink(batches));
 
   assert.equal(
@@ -181,7 +185,7 @@ test("the reading alone opens no turn: round55's 90 snapshot-only flushes are st
   );
   assert.deepEqual(
     pump.turnAccount.lastDecision,
-    Object.freeze({ kind: "suppressed", reason: TURN_SUPPRESSION.observationIsState }),
+    Object.freeze({ kind: "suppressed", reason: TURN_SUPPRESSION.observationMoved }),
     "and the flush names what it was holding rather than claiming nothing arrived",
   );
   assert.equal(pump.turnAccount.opened, 1, "no turn was opened for it");
@@ -208,12 +212,15 @@ test("a fact beside the reading opens the turn, and the reading rides along as s
   const pump = new CompanionEventPump();
   const batches: PendingBatch[] = [];
 
-  pump.enqueueFact(reading(352, READING, 0));
+  pump.enqueueFact(reading(352, READING, 0), FACT_PRODUCER.adapterIngress);
   pump.enqueuePlayerInput(FIRST_INPUT);
   await pump.flush(sink(batches));
 
-  pump.enqueueFact(reading(400, Object.freeze({ ...READING, timeOfDay: 1130, stamina: 240 }), 1));
-  pump.enqueueFact(milestoneFact(1200, 1_790_000_002_000));
+  pump.enqueueFact(
+    reading(400, Object.freeze({ ...READING, timeOfDay: 1130, stamina: 240 }), 1),
+    FACT_PRODUCER.adapterIngress,
+  );
+  pump.enqueueFact(milestoneFact(1200, 1_790_000_002_000), FACT_PRODUCER.adapterIngress);
   await pump.flush(sink(batches));
 
   assert.equal(batches.length, 2, "the milestone is news, so it opens the turn it needs");
@@ -245,15 +252,15 @@ async function row(payload: Readonly<Record<string, unknown>>, revision: number)
   const pump = new CompanionEventPump();
   const batches: PendingBatch[] = [];
 
-  pump.enqueueFact(reading(352, READING, 0));
+  pump.enqueueFact(reading(352, READING, 0), FACT_PRODUCER.adapterIngress);
   pump.enqueuePlayerInput(FIRST_INPUT);
   await pump.flush(sink(batches));
 
-  pump.enqueueFact(reading(revision, payload, 1));
+  pump.enqueueFact(reading(revision, payload, 1), FACT_PRODUCER.adapterIngress);
   await pump.flush(sink(batches));
   assert.deepEqual(
     pump.turnAccount.lastDecision,
-    Object.freeze({ kind: "suppressed", reason: TURN_SUPPRESSION.observationIsState }),
+    Object.freeze({ kind: "suppressed", reason: TURN_SUPPRESSION.observationMoved }),
     "the reading alone opens nothing, whatever field moved",
   );
 
@@ -282,16 +289,16 @@ test("content matrix: a clock that moved, a location that changed, stamina, weat
 test("content matrix: an identical payload with a new revision is still state, and opens nothing", async () => {
   const pump = new CompanionEventPump();
   const batches: PendingBatch[] = [];
-  pump.enqueueFact(reading(352, READING, 0));
+  pump.enqueueFact(reading(352, READING, 0), FACT_PRODUCER.adapterIngress);
   pump.enqueuePlayerInput(FIRST_INPUT);
   await pump.flush(sink(batches));
 
-  pump.enqueueFact(reading(353, READING, 1));
+  pump.enqueueFact(reading(353, READING, 1), FACT_PRODUCER.adapterIngress);
   await pump.flush(sink(batches));
   assert.equal(batches.length, 1);
   assert.deepEqual(
     pump.turnAccount.lastDecision,
-    Object.freeze({ kind: "suppressed", reason: TURN_SUPPRESSION.observationIsState }),
+    Object.freeze({ kind: "suppressed", reason: TURN_SUPPRESSION.observationRestated }),
   );
 });
 
@@ -307,10 +314,10 @@ function answeringPort(
   const port: WorldStateRefreshPort = Object.freeze({
     async observe(): Promise<unknown> {
       asked.push(asked.length + 1);
-      pump.enqueueFact(answer());
+      pump.enqueueFact(answer(), FACT_PRODUCER.adapterIngress);
       return Object.freeze({});
     },
-    publish: (fact: WorldFact) => pump.enqueueFact(fact),
+    publish: (fact: WorldFact) => pump.enqueueFact(fact, FACT_PRODUCER.adapterIngress),
   });
   return { port, asked };
 }
@@ -334,17 +341,17 @@ test("an aged reading still asks the world first, and the ask itself opens no tu
   const { port, asked } = answeringPort(pump, () => reading(355, Object.freeze({ ...READING, timeOfDay: 640 }), 3));
   pump.attachWorldStateRefresh(port);
 
-  pump.enqueueFact(reading(352, READING, 0));
+  pump.enqueueFact(reading(352, READING, 0), FACT_PRODUCER.adapterIngress);
   pump.enqueuePlayerInput(FIRST_INPUT);
   await pump.flush(sink(batches));
   assert.deepEqual(asked, [], "the turn brought its own reading, so there was nothing to cure");
 
   // A reading alone: suppressed, and the cure still runs - the world is asked about the aged reading without paying a turn.
-  pump.enqueueFact(reading(354, READING, 2));
+  pump.enqueueFact(reading(354, READING, 2), FACT_PRODUCER.adapterIngress);
   await pump.flush(sink(batches));
   assert.deepEqual(
     pump.turnAccount.lastDecision,
-    Object.freeze({ kind: "suppressed", reason: TURN_SUPPRESSION.observationIsState }),
+    Object.freeze({ kind: "suppressed", reason: TURN_SUPPRESSION.observationMoved }),
     "the answer to the ask is a reading, so it opens no turn either",
   );
   assert.equal(asked.length, 1, "the flush asked the world about the reading it could not use");
@@ -373,7 +380,7 @@ test("a pump with no way to ask declines by name, and the turn it could not cure
   // aged reading exactly as before and say why it could not ask.
   const pump = new CompanionEventPump();
   const batches: PendingBatch[] = [];
-  pump.enqueueFact(reading(352, READING, 0));
+  pump.enqueueFact(reading(352, READING, 0), FACT_PRODUCER.adapterIngress);
   pump.enqueuePlayerInput(FIRST_INPUT);
   await pump.flush(sink(batches));
 
@@ -382,6 +389,77 @@ test("a pump with no way to ask declines by name, and the turn it could not cure
   assert.equal(batches.length, 2, "a person's turn is owed even when the world cannot be asked");
   assert.equal(pump.turnAccount.autoObserve.unavailable[AUTO_OBSERVE_UNAVAILABLE.noBridge], 1);
   assert.match(worldStateBlock(batches[1]?.text ?? "").header, new RegExp(RESTATED, "u"));
+});
+
+/**
+ * THE LABEL DECIDES, OR IT IS REMOVED.
+ *
+ * <p>
+ * `HostService.#restateWorldSnapshot` re-states the session's reading before EVERY flush, so a suppressed flush that
+ * carried no fact necessarily held a reading and the one member `observation_is_state` could only ever equal
+ * `suppressed - world_fact_restated`. Measured 2026-11-15 (`round56`): `suppressed 624 {observation_is_state: 610, ...}` -
+ * a label that equals its bucket.
+ * </p>
+ * <p>
+ * The guard is the brief's own criterion: two flushes that DIFFER must get different labels. The expectation is derived
+ * from the schedule below - a reading, then the same reading again on the Host's own re-statement path, then the world's
+ * next statement - so the counts are read off the fixture rather than off the implementation's answer. The falsifier is
+ * either degenerate direction: a rule that answered one member for everything fails the `repeated` count, and one that
+ * alternated fails it too.
+ * </p>
+ */
+test("a reading that repeats the held one and a reading that moved are the same flush, named apart", async () => {
+  const pump = new CompanionEventPump();
+  const batches: PendingBatch[] = [];
+  pump.enqueueFact(reading(352, READING, 0), FACT_PRODUCER.adapterIngress);
+  pump.enqueuePlayerInput(FIRST_INPUT);
+  await pump.flush(sink(batches));
+  assert.equal(batches.length, 1, "the person spoke, so the first turn is owed whatever else is pending");
+
+  // The schedule, in the units the world publishes: each row is one reading, and whether it says anything the reading
+  // before it did is decided by comparing the two payloads - not by a number written here.
+  const schedule = [
+    { payload: READING, by: FACT_PRODUCER.snapshotRestate },
+    { payload: READING, by: FACT_PRODUCER.snapshotRestate },
+    { payload: Object.freeze({ ...READING, timeOfDay: 610 }), by: FACT_PRODUCER.adapterIngress },
+    { payload: Object.freeze({ ...READING, timeOfDay: 610 }), by: FACT_PRODUCER.snapshotRestate },
+    { payload: Object.freeze({ ...READING, timeOfDay: 610, stamina: 265 }), by: FACT_PRODUCER.adapterIngress },
+  ];
+  const held = [READING, ...schedule.map((row) => row.payload)];
+  const repeats = schedule.filter((row, index) => JSON.stringify(row.payload) === JSON.stringify(held[index])).length;
+  assert.equal(repeats, 3, "the fixture's own arithmetic: three of these five readings say what the one before said");
+
+  const labels: string[] = [];
+  for (const [index, row] of schedule.entries()) {
+    pump.enqueueFact(reading(353 + index, row.payload, index + 1), row.by);
+    await pump.flush(sink(batches));
+    const decision = pump.turnAccount.lastDecision;
+    assert.equal(decision?.kind, "suppressed", `a reading opens no turn: ${JSON.stringify(decision)}`);
+    labels.push((decision as { reason: string }).reason);
+  }
+
+  assert.equal(batches.length, 1, "no reading in the schedule was worth a turn");
+  assert.equal(
+    labels.filter((label) => label === TURN_SUPPRESSION.observationRestated).length,
+    repeats,
+    `the readings that said what the held one said are \`${TURN_SUPPRESSION.observationRestated}\`, and no others: ${labels.join(", ")}`,
+  );
+  assert.equal(
+    labels.filter((label) => label === TURN_SUPPRESSION.observationMoved).length,
+    schedule.length - repeats,
+    `and the readings that moved are \`${TURN_SUPPRESSION.observationMoved}\`: ${labels.join(", ")}`,
+  );
+  const account = pump.turnAccount;
+  assert.equal(
+    account.suppressed[TURN_SUPPRESSION.observationRestated] + account.suppressed[TURN_SUPPRESSION.observationMoved],
+    schedule.length,
+    "the two members partition \`a reading and nothing else\`: every scheduled flush is in exactly one of them",
+  );
+  assert.equal(
+    account.suppressed[TURN_SUPPRESSION.nothingPending] + account.suppressed[TURN_SUPPRESSION.worldFactRestated],
+    0,
+    "and nothing in this window was anything else",
+  );
 });
 
 test("the flush that holds only a reading is counted against the reading, never as nothing pending", async () => {
@@ -396,13 +474,20 @@ test("the flush that holds only a reading is counted against the reading, never 
     "an empty pump has nothing pending, and no reading to blame",
   );
 
-  pump.enqueueFact(reading(352, READING, 0));
+  pump.enqueueFact(reading(352, READING, 0), FACT_PRODUCER.adapterIngress);
   await pump.flush(sink(batches));
   assert.deepEqual(
     pump.turnAccount.lastDecision,
-    Object.freeze({ kind: "suppressed", reason: TURN_SUPPRESSION.observationIsState }),
+    Object.freeze({ kind: "suppressed", reason: TURN_SUPPRESSION.observationMoved }),
     "a reading that arrived and decided nothing is its own named condition",
   );
   const line = turnAccountLine(pump.turnAccount);
-  assert.match(line, /suppressed 2 \{observation_is_state: 1, world_fact_restated: 0, nothing_pending: 1\}/u, line);
+  assert.match(line, /suppressed 2 \{/u, line);
+  assert.match(
+    line,
+    /observation_restated: 0/u,
+    `the member is printed even at zero, so a reader sees the population: ${line}`,
+  );
+  assert.match(line, /observation_moved: 1/u, line);
+  assert.match(line, /nothing_pending: 1/u, line);
 });

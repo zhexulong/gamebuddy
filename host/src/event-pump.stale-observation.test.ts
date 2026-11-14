@@ -8,6 +8,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import ts from "typescript";
 
 import {
+  FACT_PRODUCER,
   AUTO_OBSERVE_AGED_TURNS,
   AUTO_OBSERVE_ON_STALE,
   AUTO_OBSERVE_UNAVAILABLE,
@@ -129,10 +130,10 @@ function servingPort(pump: CompanionEventPump, fromRevision: number): { port: Wo
     async observe(): Promise<unknown> {
       asked.push(asked.length + 1);
       const revision = fromRevision + asked.length;
-      pump.enqueueFact(snapshotFact(revision, 1_000 + asked.length, true));
+      pump.enqueueFact(snapshotFact(revision, 1_000 + asked.length, true), FACT_PRODUCER.adapterIngress);
       return Object.freeze({ revision });
     },
-    publish: (fact: WorldFact) => pump.enqueueFact(fact),
+    publish: (fact: WorldFact) => pump.enqueueFact(fact, FACT_PRODUCER.adapterIngress),
   });
   return { port, asked };
 }
@@ -157,7 +158,7 @@ async function deliverTurn(
   facts: readonly WorldFact[],
   input?: Readonly<{ text: string }>,
 ): Promise<Delivery | undefined> {
-  for (const fact of facts) pump.enqueueFact(fact);
+  for (const fact of facts) pump.enqueueFact(fact, FACT_PRODUCER.adapterIngress);
   if (input !== undefined)
     pump.enqueuePlayerInput({
       source: "player_text",
@@ -383,7 +384,7 @@ test("auto_observe_unavailable:refresh_refused - the route's own words reach the
       observe: () => Promise.reject(new Error("bridge_not_authenticated")),
       publish: (fact: WorldFact) => {
         published.push(fact);
-        pump.enqueueFact(fact);
+        pump.enqueueFact(fact, FACT_PRODUCER.adapterIngress);
       },
     }),
   );

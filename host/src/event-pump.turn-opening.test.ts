@@ -15,6 +15,8 @@ import {
   CompanionEventPump,
   EXECUTION_STALL_SEMANTIC_KIND,
   emptyTurnShapes,
+  FACT_PRODUCER,
+  FACT_PRODUCERS,
   factContentIdentity,
   HOST_MINTED_FACT_SOURCE,
   MAX_DELIVERED_FACT_IDENTITIES,
@@ -29,6 +31,7 @@ import {
   TURN_WITHOUT_ACTION,
   TURN_WITHOUT_ACTION_REASON,
   type TurnAccount,
+  type FactProducer,
   type TurnProduction,
   turnAccountLine,
   turnWithoutActionShape,
@@ -210,12 +213,18 @@ async function replayRecordedWindow(): Promise<
   const pump = new CompanionEventPump();
   const recorder = recordingSink();
   // Turn one: the reading, and the settlement that arrived with it.
-  pump.enqueueFact(readingFact(0));
-  pump.enqueueFact(settlementFact("program_settled_plan_r46_weed_row_1", WINDOW_AT_MS + 1_000));
+  pump.enqueueFact(readingFact(0), FACT_PRODUCER.adapterIngress);
+  pump.enqueueFact(
+    settlementFact("program_settled_plan_r46_weed_row_1", WINDOW_AT_MS + 1_000),
+    FACT_PRODUCER.adapterIngress,
+  );
   await pump.flush(recorder.sink);
   // Turn two: the Host re-states the last reading before every turn, and the same settlement is published again.
-  pump.enqueueFact(readingFact(1));
-  pump.enqueueFact(settlementFact("program_settled_plan_r46_weed_row_2", REPLAY_END_AT_MS));
+  pump.enqueueFact(readingFact(1), FACT_PRODUCER.adapterIngress);
+  pump.enqueueFact(
+    settlementFact("program_settled_plan_r46_weed_row_2", REPLAY_END_AT_MS),
+    FACT_PRODUCER.adapterIngress,
+  );
   await pump.flush(recorder.sink);
   return { pump, batches: recorder.batches, deliveredAtMs: recorder.deliveredAtMs };
 }
@@ -336,19 +345,22 @@ test("suppressed_turn_is_named: every examined flush is either an opened turn or
   };
 
   await step(); // nothing pending at all
-  pump.enqueueFact(readingFact(0, 14));
-  pump.enqueueFact(milestoneFact(600, WINDOW_AT_MS));
+  pump.enqueueFact(readingFact(0, 14), FACT_PRODUCER.adapterIngress);
+  pump.enqueueFact(milestoneFact(600, WINDOW_AT_MS), FACT_PRODUCER.adapterIngress);
   await step(); // the world-fact member, carrying the first reading
-  pump.enqueueFact(readingFact(1, 14));
+  pump.enqueueFact(readingFact(1, 14), FACT_PRODUCER.adapterIngress);
   await step(); // the reading re-stated and nothing else: suppressed, and named as state
-  pump.enqueueFact(settlementFact("program_settled_plan_r46_weed_row_1", WINDOW_AT_MS));
+  pump.enqueueFact(settlementFact("program_settled_plan_r46_weed_row_1", WINDOW_AT_MS), FACT_PRODUCER.adapterIngress);
   await step(); // the world-fact member again
-  pump.enqueueFact(settlementFact("program_settled_plan_r46_weed_row_2", WINDOW_AT_MS + 1_000));
+  pump.enqueueFact(
+    settlementFact("program_settled_plan_r46_weed_row_2", WINDOW_AT_MS + 1_000),
+    FACT_PRODUCER.adapterIngress,
+  );
   await step(); // the re-statement of it: suppressed, and named
 
   const account = pump.turnAccount;
   assert.equal(account.suppressed[TURN_SUPPRESSION.nothingPending], 1);
-  assert.equal(account.suppressed[TURN_SUPPRESSION.observationIsState], 1);
+  assert.equal(account.suppressed[TURN_SUPPRESSION.observationRestated], 1);
   assert.equal(account.suppressed[TURN_SUPPRESSION.worldFactRestated], 1);
   assert.equal(account.opened, 2, "two turns: the first reading and the settlement");
 });
@@ -367,10 +379,13 @@ test("the closed list is what opens turns: every member has a producer, and noth
 
   // player_input: the person spoke, and a re-stated world rides along without being lost.
   const spoken = new CompanionEventPump();
-  spoken.enqueueFact(readingFact(0));
-  spoken.enqueueFact(settlementFact("program_settled_plan_r46_weed_row_1", WINDOW_AT_MS));
+  spoken.enqueueFact(readingFact(0), FACT_PRODUCER.adapterIngress);
+  spoken.enqueueFact(settlementFact("program_settled_plan_r46_weed_row_1", WINDOW_AT_MS), FACT_PRODUCER.adapterIngress);
   await open(spoken, recorder.sink);
-  spoken.enqueueFact(settlementFact("program_settled_plan_r46_weed_row_2", WINDOW_AT_MS + 1_000));
+  spoken.enqueueFact(
+    settlementFact("program_settled_plan_r46_weed_row_2", WINDOW_AT_MS + 1_000),
+    FACT_PRODUCER.adapterIngress,
+  );
   spoken.enqueuePlayerInput({
     source: "player_text",
     inputId: "player_1",
@@ -383,7 +398,7 @@ test("the closed list is what opens turns: every member has a producer, and noth
 
   // world_fact: content she has not received.
   const factPump = new CompanionEventPump();
-  factPump.enqueueFact(milestoneFact(1200, WINDOW_AT_MS));
+  factPump.enqueueFact(milestoneFact(1200, WINDOW_AT_MS), FACT_PRODUCER.adapterIngress);
   await open(factPump, recorder.sink);
 
   // A READING IS NOT AN OPENER. The same world moved (a clock, a location, a new revision) and the flush is suppressed,
@@ -391,14 +406,14 @@ test("the closed list is what opens turns: every member has a producer, and noth
   // and 87 of them ended with speech and no action. The population below is `TURN_OPENINGS` itself, so a reading that
   // crept back in as a fifth member would fail here by name.
   const observationPump = new CompanionEventPump();
-  observationPump.enqueueFact(readingFact(0, 14));
-  observationPump.enqueueFact(milestoneFact(600, WINDOW_AT_MS));
+  observationPump.enqueueFact(readingFact(0, 14), FACT_PRODUCER.adapterIngress);
+  observationPump.enqueueFact(milestoneFact(600, WINDOW_AT_MS), FACT_PRODUCER.adapterIngress);
   await open(observationPump, recorder.sink);
-  observationPump.enqueueFact(readingFact(1, 15, { location: "Farm", gameTime: "0750" }));
+  observationPump.enqueueFact(readingFact(1, 15, { location: "Farm", gameTime: "0750" }), FACT_PRODUCER.adapterIngress);
   await open(observationPump, recorder.sink);
   assert.deepEqual(observationPump.turnAccount.lastDecision, {
     kind: "suppressed",
-    reason: TURN_SUPPRESSION.observationIsState,
+    reason: TURN_SUPPRESSION.observationMoved,
   });
   assert.equal(
     observationPump.turnAccount.opened,
@@ -408,13 +423,16 @@ test("the closed list is what opens turns: every member has a producer, and noth
 
   // due: a Host-owned schedule coming due - the stall watch's own fact.
   const duePump = new CompanionEventPump();
-  duePump.enqueueFact({
-    ...settlementFact("execution_stalled_exec_1_1", WINDOW_AT_MS),
-    semanticKind: EXECUTION_STALL_SEMANTIC_KIND,
-    correlationId: "exec_1",
-    executionId: "exec_1",
-    payload: { kind: EXECUTION_STALL_SEMANTIC_KIND, executionId: "exec_1", elapsedMs: 120_000, stallFactsSoFar: 1 },
-  });
+  duePump.enqueueFact(
+    {
+      ...settlementFact("execution_stalled_exec_1_1", WINDOW_AT_MS),
+      semanticKind: EXECUTION_STALL_SEMANTIC_KIND,
+      correlationId: "exec_1",
+      executionId: "exec_1",
+      payload: { kind: EXECUTION_STALL_SEMANTIC_KIND, executionId: "exec_1", elapsedMs: 120_000, stallFactsSoFar: 1 },
+    },
+    FACT_PRODUCER.adapterIngress,
+  );
   await open(duePump, recorder.sink);
 
   // The population is the closed list itself: a member added to it without a producer here fails by name.
@@ -429,28 +447,34 @@ test("the closed list is what opens turns: every member has a producer, and noth
 test("suppression holds the facts: the next turn that opens carries what a suppressed flush did not", async () => {
   const pump = new CompanionEventPump();
   const recorder = recordingSink();
-  pump.enqueueFact(readingFact(0));
-  pump.enqueueFact(settlementFact("program_settled_plan_r46_weed_row_1", WINDOW_AT_MS));
+  pump.enqueueFact(readingFact(0), FACT_PRODUCER.adapterIngress);
+  pump.enqueueFact(settlementFact("program_settled_plan_r46_weed_row_1", WINDOW_AT_MS), FACT_PRODUCER.adapterIngress);
   await pump.flush(recorder.sink);
   const queueAfterFirstTurn = pump.pendingCount;
 
   // The settlement is published again, and the stall watch's fact arrives in the same breath: nothing may be lost by
   // the suppression that follows, and the watchdog's fact must not be swallowed by the re-statement beside it.
-  pump.enqueueFact(settlementFact("program_settled_plan_r46_weed_row_2", WINDOW_AT_MS + 1_000));
+  pump.enqueueFact(
+    settlementFact("program_settled_plan_r46_weed_row_2", WINDOW_AT_MS + 1_000),
+    FACT_PRODUCER.adapterIngress,
+  );
   const stall = pump.takeStallFact();
   assert.equal(stall, undefined, "the watch has nothing to say about an execution it never timed");
-  pump.enqueueFact({
-    source: HOST_MINTED_FACT_SOURCE,
-    kind: "world_fact",
-    eventId: "execution_stalled_exec_7_1",
-    sourceEventId: "execution_stalled_exec_7_1",
-    correlationId: "exec_7",
-    revision: 1,
-    occurredAtMs: WINDOW_AT_MS + 121_000,
-    executionId: "exec_7",
-    semanticKind: EXECUTION_STALL_SEMANTIC_KIND,
-    payload: { kind: EXECUTION_STALL_SEMANTIC_KIND, executionId: "exec_7", elapsedMs: 121_000, stallFactsSoFar: 1 },
-  });
+  pump.enqueueFact(
+    {
+      source: HOST_MINTED_FACT_SOURCE,
+      kind: "world_fact",
+      eventId: "execution_stalled_exec_7_1",
+      sourceEventId: "execution_stalled_exec_7_1",
+      correlationId: "exec_7",
+      revision: 1,
+      occurredAtMs: WINDOW_AT_MS + 121_000,
+      executionId: "exec_7",
+      semanticKind: EXECUTION_STALL_SEMANTIC_KIND,
+      payload: { kind: EXECUTION_STALL_SEMANTIC_KIND, executionId: "exec_7", elapsedMs: 121_000, stallFactsSoFar: 1 },
+    },
+    FACT_PRODUCER.adapterIngress,
+  );
   await pump.flush(recorder.sink);
 
   assert.equal(pump.turnAccount.lastDecision?.kind, "opened", "a stall fact is due, so it opens the turn it needs");
@@ -493,15 +517,18 @@ test("suppression leaves the settlement observer alone: it runs on its own timer
   });
   const recorder = recordingSink();
 
-  pump.enqueueFact(readingFact(0));
-  pump.enqueueFact(settlementFact("program_settled_plan_r46_weed_row_1", WINDOW_AT_MS));
+  pump.enqueueFact(readingFact(0), FACT_PRODUCER.adapterIngress);
+  pump.enqueueFact(settlementFact("program_settled_plan_r46_weed_row_1", WINDOW_AT_MS), FACT_PRODUCER.adapterIngress);
   await pump.flush(recorder.sink);
   const readsAfterTurn = reads;
   assert.ok(readsAfterTurn > 0, "a delivered batch states the programme in flight");
 
   // A suppressed flush is not an observation of the journal, and must not consume or clear its reading.
-  pump.enqueueFact(readingFact(1));
-  pump.enqueueFact(settlementFact("program_settled_plan_r46_weed_row_2", WINDOW_AT_MS + 1_000));
+  pump.enqueueFact(readingFact(1), FACT_PRODUCER.adapterIngress);
+  pump.enqueueFact(
+    settlementFact("program_settled_plan_r46_weed_row_2", WINDOW_AT_MS + 1_000),
+    FACT_PRODUCER.adapterIngress,
+  );
   await pump.flush(recorder.sink);
   assert.equal(pump.turnAccount.lastDecision?.kind, "suppressed");
   assert.equal(
@@ -511,7 +538,7 @@ test("suppression leaves the settlement observer alone: it runs on its own timer
   );
 
   // The next turn that opens still carries it: suppression neither starved the observer nor hid its result.
-  pump.enqueueFact(milestoneFact(1200, WINDOW_AT_MS + 2_000));
+  pump.enqueueFact(milestoneFact(1200, WINDOW_AT_MS + 2_000), FACT_PRODUCER.adapterIngress);
   await pump.flush(recorder.sink);
   assert.match(recorder.batches.at(-1)!.text, /<in-flight>\n/u, "the programme in flight reaches the next turn");
   assert.match(recorder.batches.at(-1)!.text, /plan_r46_weed_row/u);
@@ -523,28 +550,34 @@ test("the delivered-content memory is bounded, and its drain errs toward a turn"
   const pump = new CompanionEventPump();
   const recorder = recordingSink();
   const first = settlementFact("program_settled_plan_drain_first", WINDOW_AT_MS);
-  pump.enqueueFact(first);
+  pump.enqueueFact(first, FACT_PRODUCER.adapterIngress);
   await pump.flush(recorder.sink);
 
   for (let index = 1; index <= MAX_DELIVERED_FACT_IDENTITIES; index += 1) {
-    pump.enqueueFact({
-      ...settlementFact(`program_settled_plan_drain_${String(index)}`, WINDOW_AT_MS + index),
-      payload: { ...RECORDED_SETTLEMENT, programId: `plan_drain_${String(index)}` },
-    });
+    pump.enqueueFact(
+      {
+        ...settlementFact(`program_settled_plan_drain_${String(index)}`, WINDOW_AT_MS + index),
+        payload: { ...RECORDED_SETTLEMENT, programId: `plan_drain_${String(index)}` },
+      },
+      FACT_PRODUCER.adapterIngress,
+    );
     await pump.flush(recorder.sink);
   }
   const opened = pump.turnAccount.opened;
 
   // The newest identity is still remembered: re-stating it is the defect this gate removes.
-  pump.enqueueFact({
-    ...settlementFact("program_settled_plan_drain_repeat", WINDOW_AT_MS + 1_000),
-    payload: { ...RECORDED_SETTLEMENT, programId: `plan_drain_${String(MAX_DELIVERED_FACT_IDENTITIES)}` },
-  });
+  pump.enqueueFact(
+    {
+      ...settlementFact("program_settled_plan_drain_repeat", WINDOW_AT_MS + 1_000),
+      payload: { ...RECORDED_SETTLEMENT, programId: `plan_drain_${String(MAX_DELIVERED_FACT_IDENTITIES)}` },
+    },
+    FACT_PRODUCER.adapterIngress,
+  );
   await pump.flush(recorder.sink);
   assert.equal(pump.turnAccount.opened, opened, "a re-statement inside the memory is still suppressed");
 
   // The first identity has been drained out, so it reads as news again: one extra turn, and nothing lost.
-  pump.enqueueFact(first);
+  pump.enqueueFact(first, FACT_PRODUCER.adapterIngress);
   await pump.flush(recorder.sink);
   assert.equal(
     pump.turnAccount.opened,
@@ -567,8 +600,60 @@ function parseCounts(inner: string): Record<string, number> {
   );
 }
 
+/** One printed block's entries, split at its TOP level so a nested `{…}` does not split in half. */
+function splitEntries(inner: string): string[] {
+  const entries: string[] = [];
+  let depth = 0;
+  let from = 0;
+  for (let at = 0; at < inner.length; at += 1) {
+    const char = inner[at];
+    if (char === "{") depth += 1;
+    else if (char === "}") depth -= 1;
+    else if (char === "," && depth === 0) {
+      entries.push(inner.slice(from, at).trim());
+      from = at + 1;
+    }
+  }
+  const last = inner.slice(from).trim();
+  if (last !== "") entries.push(last);
+  return entries;
+}
+
+/**
+ * One histogram read back, WITH the producer block a fact-decided reason carries inside its own braces.
+ *
+ * The inverse of the printer, and it refuses anything it cannot read: an entry is `<name>: <count>` or
+ * `<name>: <count> {<producer>: <count>, …}` and nothing else. A reader that fell back to a substring would read
+ * `world_fact: 28 {adapter_ingress: 26}` as `world_fact: NaN`, which is the shape this whole segment exists to end.
+ */
+function parseCountsAndProducers(inner: string): Readonly<{
+  counts: Record<string, number>;
+  producers: Record<string, Record<string, number>>;
+}> {
+  const counts: Record<string, number> = {};
+  const producers: Record<string, Record<string, number>> = {};
+  for (const entry of splitEntries(inner)) {
+    const nested = /^(.+?): (\d+) \{(.*)\}$/u.exec(entry);
+    if (nested === null) {
+      const at = entry.lastIndexOf(": ");
+      assert.ok(at > 0, `an entry in the printed histogram is not "<name>: <count>": ${entry}`);
+      counts[entry.slice(0, at)] = Number(entry.slice(at + 2));
+      continue;
+    }
+    const name = nested[1] ?? "";
+    counts[name] = Number(nested[2]);
+    producers[name] = parseCounts(nested[3] ?? "");
+  }
+  return Object.freeze({ counts, producers });
+}
+
 /** One `label N {counts}` segment, or one `label N` segment with no histogram. */
-function parseSegment(segment: string): Readonly<{ label: string; total: number; counts: Record<string, number> }> {
+function parseSegment(segment: string): Readonly<{
+  label: string;
+  total: number;
+  counts: Record<string, number>;
+  producers: Record<string, Record<string, number>>;
+}> {
   const matched = /^([\w ]+) (\d+)(?: \{(.*)\})?$/u.exec(segment);
   assert.ok(matched !== null, `the account line carries a segment this reader cannot parse: ${segment}`);
   const label = matched[1];
@@ -577,7 +662,8 @@ function parseSegment(segment: string): Readonly<{ label: string; total: number;
     typeof label === "string" && typeof total === "string",
     `the account line carries a segment this reader cannot parse: ${segment}`,
   );
-  return Object.freeze({ label, total: Number(total), counts: parseCounts(matched[3] ?? "") });
+  const read = parseCountsAndProducers(matched[3] ?? "");
+  return Object.freeze({ label, total: Number(total), counts: read.counts, producers: read.producers });
 }
 
 /**
@@ -592,7 +678,13 @@ function parseSegment(segment: string): Readonly<{ label: string; total: number;
 function readTurnAccountLine(line: string): Readonly<{
   opened: number;
   byReason: Record<string, number>;
-  suppressed: Readonly<{ total: number; counts: Record<string, number> }>;
+  /** The producers printed inside each opener's braces: the reasons a FACT opened, and which entrance it came in by. */
+  openedProducers: Record<string, Record<string, number>>;
+  suppressed: Readonly<{
+    total: number;
+    counts: Record<string, number>;
+    producers: Record<string, Record<string, number>>;
+  }>;
   examined: number;
   emptyTurns: Readonly<{ total: number; counts: Record<string, number> }>;
   silentSettled: Readonly<{ total: number; counts: Record<string, number> }>;
@@ -640,7 +732,12 @@ function readTurnAccountLine(line: string): Readonly<{
   return Object.freeze({
     opened: openedSegment.total,
     byReason: openedSegment.counts,
-    suppressed: Object.freeze({ total: suppressedSegment.total, counts: suppressedSegment.counts }),
+    openedProducers: openedSegment.producers,
+    suppressed: Object.freeze({
+      total: suppressedSegment.total,
+      counts: suppressedSegment.counts,
+      producers: suppressedSegment.producers,
+    }),
     examined: examinedSegment.total,
     emptyTurns: Object.freeze({ total: emptySegment.total, counts: emptySegment.counts }),
     silentSettled: Object.freeze({ total: silentSegment.total, counts: silentSegment.counts }),
@@ -664,6 +761,28 @@ function emptyTurnShapeCounts(overrides: Readonly<Record<string, number>>): Reco
   const counts: Record<string, number> = {};
   for (const shape of emptyTurnShapes()) counts[shape] = overrides[shape] ?? 0;
   return counts;
+}
+
+/** One reason's producer histogram, over the pump's own closed producer set. */
+function producerCounts(overrides: Readonly<Record<string, number>>): Record<FactProducer, number> {
+  const counts = {} as Record<FactProducer, number>;
+  for (const producer of FACT_PRODUCERS) counts[producer] = overrides[producer] ?? 0;
+  return counts;
+}
+
+/** Every reason's producer histogram with the given ones counted - the population is the pump's own reason list. */
+function producerHistograms<Reason extends string>(
+  reasons: readonly Reason[],
+  overrides: Readonly<Record<string, Readonly<Record<string, number>>>> = {},
+): Record<Reason, Record<FactProducer, number>> {
+  const histograms = {} as Record<Reason, Record<FactProducer, number>>;
+  for (const reason of reasons) histograms[reason] = producerCounts(overrides[reason] ?? {});
+  return histograms;
+}
+
+/** What the printer writes for one reason's producers: only the ones that fired, so `{}` is `no producer decided it`. */
+function firedProducers(counts: Readonly<Record<FactProducer, number>>): Record<string, number> {
+  return Object.fromEntries(Object.entries(counts).filter(([, count]) => count > 0));
 }
 
 /** The stale path's own account, with every declared unavailability reason printed even at zero. */
@@ -692,11 +811,25 @@ test("the account line reads back into the account it names", () => {
       [TURN_OPENING.worldFact]: 7,
       [TURN_OPENING.due]: 3,
     }),
+    openedByProducer: Object.freeze(
+      producerHistograms(TURN_OPENINGS, {
+        [TURN_OPENING.worldFact]: { [FACT_PRODUCER.adapterIngress]: 5, [FACT_PRODUCER.narrationWithoutWork]: 2 },
+        [TURN_OPENING.due]: { [FACT_PRODUCER.stallWatch]: 3 },
+      }),
+    ),
     suppressed: Object.freeze({
-      [TURN_SUPPRESSION.observationIsState]: 3,
+      [TURN_SUPPRESSION.observationRestated]: 2,
+      [TURN_SUPPRESSION.observationMoved]: 1,
       [TURN_SUPPRESSION.worldFactRestated]: 4,
       [TURN_SUPPRESSION.nothingPending]: 5,
     }),
+    suppressedByProducer: Object.freeze(
+      producerHistograms(TURN_SUPPRESSIONS, {
+        [TURN_SUPPRESSION.observationRestated]: { [FACT_PRODUCER.snapshotRestate]: 2 },
+        [TURN_SUPPRESSION.observationMoved]: { [FACT_PRODUCER.adapterIngress]: 1 },
+        [TURN_SUPPRESSION.worldFactRestated]: { [FACT_PRODUCER.adapterIngress]: 4 },
+      }),
+    ),
     examined: 24,
     emptyTurns: Object.freeze({
       total: 3,
@@ -717,6 +850,29 @@ test("the account line reads back into the account it names", () => {
 
   assert.equal(parsed.opened, account.opened);
   assert.deepEqual(parsed.byReason, account.byReason, "every opener is printed WITH its count, not only the total");
+  for (const opener of TURN_OPENINGS)
+    assert.deepEqual(
+      parsed.openedProducers[opener] ?? {},
+      firedProducers(account.openedByProducer[opener]),
+      `the producers under \`${opener}\` read back: only the ones that fired are printed, and a decision no fact made carries none`,
+    );
+  for (const reason of TURN_SUPPRESSIONS)
+    assert.deepEqual(
+      parsed.suppressed.producers[reason] ?? {},
+      firedProducers(account.suppressedByProducer[reason]),
+      `the producers under \`${reason}\` read back, so \`why was this flush suppressed\` is a query and not an investigation`,
+    );
+  assert.equal(
+    Object.values(account.openedByProducer[TURN_OPENING.worldFact]).reduce((total, count) => total + count, 0),
+    account.byReason[TURN_OPENING.worldFact],
+    "the block inside `world_fact`'s braces IS its count: a turn cannot be opened and attributed to no producer",
+  );
+  for (const readingHeld of [TURN_SUPPRESSION.observationRestated, TURN_SUPPRESSION.observationMoved])
+    assert.equal(
+      Object.values(account.suppressedByProducer[readingHeld]).reduce((total, count) => total + count, 0),
+      account.suppressed[readingHeld],
+      `and the same for \`${readingHeld}\`: every flush that held a reading names the producer that put it there`,
+    );
   assert.equal(parsed.suppressed.total, 12);
   assert.deepEqual(parsed.suppressed.counts, account.suppressed);
   assert.equal(parsed.examined, account.examined);
@@ -753,11 +909,14 @@ test("the account line names a member that never fired, in both histograms", () 
       [TURN_OPENING.worldFact]: 0,
       [TURN_OPENING.due]: 0,
     }),
+    openedByProducer: Object.freeze(producerHistograms(TURN_OPENINGS)),
     suppressed: Object.freeze({
-      [TURN_SUPPRESSION.observationIsState]: 0,
+      [TURN_SUPPRESSION.observationRestated]: 0,
+      [TURN_SUPPRESSION.observationMoved]: 0,
       [TURN_SUPPRESSION.worldFactRestated]: 0,
       [TURN_SUPPRESSION.nothingPending]: 0,
     }),
+    suppressedByProducer: Object.freeze(producerHistograms(TURN_SUPPRESSIONS)),
     examined: 1,
     emptyTurns: Object.freeze({ total: 0, byShape: Object.freeze(emptyTurnShapeCounts({})) }),
     silentSettled: Object.freeze({ total: 0, byOpener: Object.freeze(silentSettledCounts({})) }),
@@ -770,6 +929,11 @@ test("the account line names a member that never fired, in both histograms", () 
     Object.keys(parsed.byReason),
     [...TURN_OPENINGS],
     "the opener population is the closed list itself, so a new opener cannot be opened without being counted",
+  );
+  assert.equal(
+    parsed.openedProducers[TURN_OPENING.playerInput],
+    undefined,
+    "a person's word is not a fact, so it prints with NO producer block rather than eleven invented zeroes",
   );
   assert.deepEqual(Object.keys(parsed.emptyTurns.counts), [...emptyTurnShapes()]);
   assert.deepEqual(
@@ -871,8 +1035,11 @@ test("turn_closed_without_action: a speaking turn with a stale reading is counte
   const sink = speakingSink(pump);
 
   // Turn one: the reading arrives with a settlement. The batch brings the observation, and the body is free.
-  pump.enqueueFact(readingAt(14, 0, BODY_FREE));
-  pump.enqueueFact(settlementFact("program_settled_plan_r46_weed_row_1", WINDOW_AT_MS + 1_000));
+  pump.enqueueFact(readingAt(14, 0, BODY_FREE), FACT_PRODUCER.adapterIngress);
+  pump.enqueueFact(
+    settlementFact("program_settled_plan_r46_weed_row_1", WINDOW_AT_MS + 1_000),
+    FACT_PRODUCER.adapterIngress,
+  );
   await pump.flush(sink);
   assert.equal(pump.turnAccount.opened, 1);
   assert.equal(
@@ -882,8 +1049,8 @@ test("turn_closed_without_action: a speaking turn with a stale reading is counte
   );
 
   // Turn two: the Host re-states the same reading and publishes a clock milestone - the turn opens, the reading is old.
-  pump.enqueueFact(readingAt(14, 1, BODY_FREE));
-  pump.enqueueFact(milestoneFact(600, WINDOW_AT_MS + 60_000));
+  pump.enqueueFact(readingAt(14, 1, BODY_FREE), FACT_PRODUCER.adapterIngress);
+  pump.enqueueFact(milestoneFact(600, WINDOW_AT_MS + 60_000), FACT_PRODUCER.adapterIngress);
   await pump.flush(sink);
 
   const account = pump.turnAccount;
@@ -908,7 +1075,10 @@ test("turn_closed_without_action: a speaking turn with a stale reading is counte
 
   // Turn three: the same settlement re-stated, and the reading re-stated - the flush is suppressed, so it is not a turn
   // and must not be counted as one. The count stays where it was and the suppression names its reason.  pump.enqueueFact(readingAt(14, 2, BODY_FREE));
-  pump.enqueueFact(settlementFact("program_settled_plan_r46_weed_row_2", WINDOW_AT_MS + 120_000));
+  pump.enqueueFact(
+    settlementFact("program_settled_plan_r46_weed_row_2", WINDOW_AT_MS + 120_000),
+    FACT_PRODUCER.adapterIngress,
+  );
   await pump.flush(sink);
 
   const afterSuppression = pump.turnAccount;
@@ -929,20 +1099,26 @@ test("turn_closed_without_action: the same flush suppressed rather than opened c
   // the difference between a turn that happened and one that did not.
   const pump = new CompanionEventPump();
   const sink = speakingSink(pump);
-  pump.enqueueFact(readingAt(14, 0, BODY_FREE));
-  pump.enqueueFact(settlementFact("program_settled_plan_r46_weed_row_1", WINDOW_AT_MS));
+  pump.enqueueFact(readingAt(14, 0, BODY_FREE), FACT_PRODUCER.adapterIngress);
+  pump.enqueueFact(settlementFact("program_settled_plan_r46_weed_row_1", WINDOW_AT_MS), FACT_PRODUCER.adapterIngress);
   await pump.flush(sink);
   assert.equal(pump.turnAccount.emptyTurns.total, 1);
 
   const suppressed = new CompanionEventPump();
-  suppressed.enqueueFact(readingAt(14, 0, BODY_FREE));
-  suppressed.enqueueFact(settlementFact("program_settled_plan_r46_weed_row_1", WINDOW_AT_MS));
+  suppressed.enqueueFact(readingAt(14, 0, BODY_FREE), FACT_PRODUCER.adapterIngress);
+  suppressed.enqueueFact(
+    settlementFact("program_settled_plan_r46_weed_row_1", WINDOW_AT_MS),
+    FACT_PRODUCER.adapterIngress,
+  );
   await suppressed.flush(speakingSink(suppressed));
   const before = suppressed.turnAccount.emptyTurns.total;
 
   // Now the same content again: nothing pending that she does not already have.
-  suppressed.enqueueFact(readingAt(14, 1, BODY_FREE));
-  suppressed.enqueueFact(settlementFact("program_settled_plan_r46_weed_row_2", WINDOW_AT_MS + 60_000));
+  suppressed.enqueueFact(readingAt(14, 1, BODY_FREE), FACT_PRODUCER.adapterIngress);
+  suppressed.enqueueFact(
+    settlementFact("program_settled_plan_r46_weed_row_2", WINDOW_AT_MS + 60_000),
+    FACT_PRODUCER.adapterIngress,
+  );
   await suppressed.flush(speakingSink(suppressed));
 
   const account = suppressed.turnAccount;
@@ -960,14 +1136,14 @@ test("turn_closed_without_action: a turn that ran a tool, or said nothing, is no
   // THE FALSIFIERS for the count above: the same fixture, with only the turn's production changed. A counter that
   // counted every turn would pass the test above and answer nothing.
   const worked = new CompanionEventPump();
-  worked.enqueueFact(readingAt(14, 0, BODY_FREE));
-  worked.enqueueFact(settlementFact("program_settled_plan_r46_weed_row_1", WINDOW_AT_MS));
+  worked.enqueueFact(readingAt(14, 0, BODY_FREE), FACT_PRODUCER.adapterIngress);
+  worked.enqueueFact(settlementFact("program_settled_plan_r46_weed_row_1", WINDOW_AT_MS), FACT_PRODUCER.adapterIngress);
   await worked.flush(speakingSink(worked, TURN_PRODUCTION.worked));
   assert.equal(worked.turnAccount.emptyTurns.total, 0, "a turn that moved something is not an empty turn");
 
   const silent = new CompanionEventPump();
-  silent.enqueueFact(readingAt(14, 0, BODY_FREE));
-  silent.enqueueFact(settlementFact("program_settled_plan_r46_weed_row_1", WINDOW_AT_MS));
+  silent.enqueueFact(readingAt(14, 0, BODY_FREE), FACT_PRODUCER.adapterIngress);
+  silent.enqueueFact(settlementFact("program_settled_plan_r46_weed_row_1", WINDOW_AT_MS), FACT_PRODUCER.adapterIngress);
   await silent.flush(speakingSink(silent, TURN_PRODUCTION.saidNothing));
   assert.equal(
     silent.turnAccount.emptyTurns.total,
@@ -981,8 +1157,11 @@ test("turn_closed_without_action: a held body is its own reason, and a fresh obs
   // the shape round47 named in her own account: the farmhouse door put her in `身体: 忙（不可行动）` and she read it as
   // "nothing may be submitted this turn".
   const held = new CompanionEventPump();
-  held.enqueueFact(readingAt(14, 0, { ...BODY_FREE, actionable: false, actorDispositionKind: "modal" }));
-  held.enqueueFact(settlementFact("program_settled_plan_r46_weed_row_1", WINDOW_AT_MS));
+  held.enqueueFact(
+    readingAt(14, 0, { ...BODY_FREE, actionable: false, actorDispositionKind: "modal" }),
+    FACT_PRODUCER.adapterIngress,
+  );
+  held.enqueueFact(settlementFact("program_settled_plan_r46_weed_row_1", WINDOW_AT_MS), FACT_PRODUCER.adapterIngress);
   await held.flush(speakingSink(held));
 
   const heldShape = turnWithoutActionShape(TURN_OPENING.worldFact, TURN_WITHOUT_ACTION_REASON.bodyHeld);
@@ -994,8 +1173,8 @@ test("turn_closed_without_action: a held body is its own reason, and a fresh obs
   );
 
   const fresh = new CompanionEventPump();
-  fresh.enqueueFact(readingAt(14, 0, BODY_FREE));
-  fresh.enqueueFact(settlementFact("program_settled_plan_r46_weed_row_1", WINDOW_AT_MS));
+  fresh.enqueueFact(readingAt(14, 0, BODY_FREE), FACT_PRODUCER.adapterIngress);
+  fresh.enqueueFact(settlementFact("program_settled_plan_r46_weed_row_1", WINDOW_AT_MS), FACT_PRODUCER.adapterIngress);
   await fresh.flush(speakingSink(fresh));
   assert.equal(
     fresh.turnAccount.emptyTurns.byShape[`${TURN_OPENING.worldFact}:${TURN_WITHOUT_ACTION_REASON.nothingPending}`],
@@ -1050,8 +1229,11 @@ function settledSink(
  */
 test("turn_settled_silent: a receipt batch that carried no speech is named, with the opener that owed the turn", async () => {
   const pump = new CompanionEventPump();
-  pump.enqueueFact(readingAt(14, 0, BODY_FREE));
-  pump.enqueueFact(settlementFact("program_settled_plan_r47_silent", WINDOW_AT_MS + 1_000));
+  pump.enqueueFact(readingAt(14, 0, BODY_FREE), FACT_PRODUCER.adapterIngress);
+  pump.enqueueFact(
+    settlementFact("program_settled_plan_r47_silent", WINDOW_AT_MS + 1_000),
+    FACT_PRODUCER.adapterIngress,
+  );
   await pump.flush(settledSink(pump, TURN_PRODUCTION.saidNothing));
 
   const account = pump.turnAccount;
@@ -1083,19 +1265,25 @@ test("turn_settled_silent: a due wake that found nothing to say is counted under
   // and not a person: the counter must name `due`, or the histogram says the world owed every silent turn when a third of
   // them were her own schedule. The reading rides along and decides nothing, as it does on every turn.
   const pump = new CompanionEventPump();
-  pump.enqueueFact(readingAt(14, 0, BODY_FREE));
-  pump.enqueueFact(settlementFact("program_settled_plan_r47_refresh", WINDOW_AT_MS + 1_000));
+  pump.enqueueFact(readingAt(14, 0, BODY_FREE), FACT_PRODUCER.adapterIngress);
+  pump.enqueueFact(
+    settlementFact("program_settled_plan_r47_refresh", WINDOW_AT_MS + 1_000),
+    FACT_PRODUCER.adapterIngress,
+  );
   await pump.flush(settledSink(pump, TURN_PRODUCTION.spoke));
   assert.equal(pump.turnAccount.silentSettled.total, 0, "the first turn spoke, so nothing is counted yet");
 
-  pump.enqueueFact(readingAt(15, 1, { ...BODY_FREE, gameTime: "0741" }));
-  pump.enqueueFact({
-    ...settlementFact("execution_stalled_exec_r47_1", WINDOW_AT_MS + 2_000),
-    semanticKind: EXECUTION_STALL_SEMANTIC_KIND,
-    correlationId: "exec_r47",
-    executionId: "exec_r47",
-    payload: { kind: EXECUTION_STALL_SEMANTIC_KIND, executionId: "exec_r47", elapsedMs: 120_000, stallFactsSoFar: 1 },
-  });
+  pump.enqueueFact(readingAt(15, 1, { ...BODY_FREE, gameTime: "0741" }), FACT_PRODUCER.adapterIngress);
+  pump.enqueueFact(
+    {
+      ...settlementFact("execution_stalled_exec_r47_1", WINDOW_AT_MS + 2_000),
+      semanticKind: EXECUTION_STALL_SEMANTIC_KIND,
+      correlationId: "exec_r47",
+      executionId: "exec_r47",
+      payload: { kind: EXECUTION_STALL_SEMANTIC_KIND, executionId: "exec_r47", elapsedMs: 120_000, stallFactsSoFar: 1 },
+    },
+    FACT_PRODUCER.adapterIngress,
+  );
   await pump.flush(settledSink(pump, TURN_PRODUCTION.saidNothing));
 
   const account = pump.turnAccount;
@@ -1114,8 +1302,8 @@ test("turn_settled_silent: the turns that are NOT silent - spoke, acted, still w
   // THE FALSIFIERS. Each case is the fixture above with exactly one thing changed, so a counter that fired on any
   // completed turn, or on any quiet one, would fail here while passing the test above.
   const spoke = new CompanionEventPump();
-  spoke.enqueueFact(readingAt(14, 0, BODY_FREE));
-  spoke.enqueueFact(settlementFact("program_settled_plan_r47_spoke", WINDOW_AT_MS));
+  spoke.enqueueFact(readingAt(14, 0, BODY_FREE), FACT_PRODUCER.adapterIngress);
+  spoke.enqueueFact(settlementFact("program_settled_plan_r47_spoke", WINDOW_AT_MS), FACT_PRODUCER.adapterIngress);
   await spoke.flush(settledSink(spoke, TURN_PRODUCTION.spoke));
   assert.equal(
     spoke.turnAccount.silentSettled.total,
@@ -1125,8 +1313,8 @@ test("turn_settled_silent: the turns that are NOT silent - spoke, acted, still w
   assert.equal(spoke.turnAccount.emptyTurns.total, 1);
 
   const acted = new CompanionEventPump();
-  acted.enqueueFact(readingAt(14, 0, BODY_FREE));
-  acted.enqueueFact(settlementFact("program_settled_plan_r47_acted", WINDOW_AT_MS));
+  acted.enqueueFact(readingAt(14, 0, BODY_FREE), FACT_PRODUCER.adapterIngress);
+  acted.enqueueFact(settlementFact("program_settled_plan_r47_acted", WINDOW_AT_MS), FACT_PRODUCER.adapterIngress);
   await acted.flush(settledSink(acted, TURN_PRODUCTION.worked));
   assert.equal(acted.turnAccount.silentSettled.total, 0, "she acted, so the turn was not spent on nothing");
   assert.equal(acted.turnAccount.emptyTurns.total, 0);
@@ -1134,19 +1322,22 @@ test("turn_settled_silent: the turns that are NOT silent - spoke, acted, still w
   // Her body still working: the delivery carried no speech because there was something to WAIT for. Counting it as
   // "nothing to say" would name a busy companion silent, which is the mistake the narration counter already refuses.
   const working = new CompanionEventPump();
-  working.enqueueFact(readingAt(14, 0, BODY_FREE));
-  working.enqueueFact(settlementFact("program_settled_plan_r47_working", WINDOW_AT_MS));
+  working.enqueueFact(readingAt(14, 0, BODY_FREE), FACT_PRODUCER.adapterIngress);
+  working.enqueueFact(settlementFact("program_settled_plan_r47_working", WINDOW_AT_MS), FACT_PRODUCER.adapterIngress);
   await working.flush({
     async deliver() {
       working.turnProduction = TURN_PRODUCTION.saidNothing;
-      working.enqueueFact({
-        source: "stardew_mod",
-        kind: "execution_receipt",
-        correlationId: "execution_still_running",
-        revision: 15,
-        occurredAtMs: WINDOW_AT_MS + 2_000,
-        payload: { state: "running" },
-      });
+      working.enqueueFact(
+        {
+          source: "stardew_mod",
+          kind: "execution_receipt",
+          correlationId: "execution_still_running",
+          revision: 15,
+          occurredAtMs: WINDOW_AT_MS + 2_000,
+          payload: { state: "running" },
+        },
+        FACT_PRODUCER.adapterIngress,
+      );
       return "completed" as const;
     },
   });
@@ -1169,8 +1360,8 @@ test("turn_settled_silent: the turns that are NOT silent - spoke, acted, still w
 
   // A turn Pi reported as ended rather than completed: nothing here may read it as a settled one.
   const ended = new CompanionEventPump();
-  ended.enqueueFact(readingAt(14, 0, BODY_FREE));
-  ended.enqueueFact(settlementFact("program_settled_plan_r47_ended", WINDOW_AT_MS));
+  ended.enqueueFact(readingAt(14, 0, BODY_FREE), FACT_PRODUCER.adapterIngress);
+  ended.enqueueFact(settlementFact("program_settled_plan_r47_ended", WINDOW_AT_MS), FACT_PRODUCER.adapterIngress);
   await ended.flush(settledSink(ended, TURN_PRODUCTION.saidNothing, "error"));
   assert.equal(ended.turnAccount.silentSettled.total, 0, "an aborted or errored turn settled nothing at all");
 });
@@ -1255,8 +1446,8 @@ test("turn_settled_silent: the pre-change module refuses the name, and this one 
       turnAccountLine(account: never): string;
     };
     const pump = new pre.CompanionEventPump();
-    pump.enqueueFact(readingAt(14, 0, BODY_FREE));
-    pump.enqueueFact(settlementFact("program_settled_plan_r47_before", WINDOW_AT_MS));
+    pump.enqueueFact(readingAt(14, 0, BODY_FREE), FACT_PRODUCER.adapterIngress);
+    pump.enqueueFact(settlementFact("program_settled_plan_r47_before", WINDOW_AT_MS), FACT_PRODUCER.adapterIngress);
     await pump.flush({
       async deliver() {
         pump.turnProduction = TURN_PRODUCTION.saidNothing;
@@ -1283,8 +1474,8 @@ test("turn_settled_silent: the pre-change module refuses the name, and this one 
   }
 
   const pump = new CompanionEventPump();
-  pump.enqueueFact(readingAt(14, 0, BODY_FREE));
-  pump.enqueueFact(settlementFact("program_settled_plan_r47_before", WINDOW_AT_MS));
+  pump.enqueueFact(readingAt(14, 0, BODY_FREE), FACT_PRODUCER.adapterIngress);
+  pump.enqueueFact(settlementFact("program_settled_plan_r47_before", WINDOW_AT_MS), FACT_PRODUCER.adapterIngress);
   await pump.flush(settledSink(pump, TURN_PRODUCTION.saidNothing));
   const afterLine = turnAccountLine(pump.turnAccount);
   assert.equal(pump.turnAccount.silentSettled.total, 1);

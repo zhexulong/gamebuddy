@@ -9,7 +9,7 @@ import {
   type NativeGameContentPresenter,
   PROVIDER_EMPTY_COMPLETION,
 } from "./companion-loop.js";
-import type { CompanionTurnOutcome, WorldFact } from "./event-pump.js";
+import { type CompanionTurnOutcome, FACT_PRODUCER, type FactProducer, type WorldFact } from "./event-pump.js";
 import type { IntegrationEventSource, IntegrationLifecycleEvent } from "./integration-launcher.js";
 import { NativeNoticeLedger } from "./native-notice-fact.js";
 import type {
@@ -878,19 +878,22 @@ export class CompanionHostService {
     const ageMs = Date.now() - note.atMs;
     if (ageMs > 120_000) return; // stale note is not a fact for this turn
     try {
-      this.loop.pump.enqueueFact({
-        source: "voice",
-        kind: "semantic_event",
-        eventId: `voice_interruption_${note.speechJobId ?? "unknown"}`,
-        occurredAtMs: note.atMs,
-        correlationId: randomUUID(),
-        revision: 0,
-        payload: Object.freeze({ kind: "speech_interrupted", speechJobId: note.speechJobId ?? null }),
-        contextProjection: Object.freeze({
-          kind: "speech_interrupted",
-          text: "上一句语音在播放中被玩家打断（玩家后来开口说话），玩家没有听到那句话的结尾。",
-        }),
-      });
+      this.loop.pump.enqueueFact(
+        {
+          source: "voice",
+          kind: "semantic_event",
+          eventId: `voice_interruption_${note.speechJobId ?? "unknown"}`,
+          occurredAtMs: note.atMs,
+          correlationId: randomUUID(),
+          revision: 0,
+          payload: Object.freeze({ kind: "speech_interrupted", speechJobId: note.speechJobId ?? null }),
+          contextProjection: Object.freeze({
+            kind: "speech_interrupted",
+            text: "上一句语音在播放中被玩家打断（玩家后来开口说话），玩家没有听到那句话的结尾。",
+          }),
+        },
+        FACT_PRODUCER.voiceInterruption,
+      );
     } catch {
       this.#voiceInterruptionNote = note; // retry on the next player input
     }
@@ -910,14 +913,20 @@ export class CompanionHostService {
   /**
    * A fact the Host itself mints about the companion's own work, onto the same pump every other fact uses.
    *
-   * The one producer today is the settled-plan digest (`program-settlement-digest.ts`): the per-node terminal ledger of
-   * a plan the Mod's journal has stopped. It travels here rather than through `acceptIntegrationFact` because that route
-   * is the ADAPTER's ingress - it gates on the integration admission switch and on receipt identity, none of which is a
-   * question about a fact the Host observed by reading the journal itself.
+   * <p>
+   * The producers are the settled-plan digest (`program-settlement-digest.ts`), the stall watch, the aged reading, the
+   * narration run and a refused stale-reading refresh. They travel here rather than through `acceptIntegrationFact`
+   * because that route is the ADAPTER's ingress - it gates on the integration admission switch and on receipt identity,
+   * none of which is a question about a fact the Host observed by reading the journal itself.
+   * </p>
+   * <p>
+   * `producedBy` is the caller's own name from `FACT_PRODUCER`: five producers share this one route, so the route cannot
+   * name itself.
+   * </p>
    */
-  public acceptHostMintedFact(fact: WorldFact): void {
+  public acceptHostMintedFact(fact: WorldFact, producedBy: FactProducer): void {
     if (this.#closed) return;
-    this.loop.pump.enqueueFact(fact);
+    this.loop.pump.enqueueFact(fact, producedBy);
     this.#armStallWatch();
     // A held fact (`isSettledPlanDigest`) does not set `hasPendingDelivery` on its own, so this flush delivers it with
     // whatever else is queued and starts no turn of its own.
@@ -1009,7 +1018,7 @@ export class CompanionHostService {
       // A native notice is its own fact, admitted whatever the execution that carried it is doing: a
       // companion waiting between plans has nothing outstanding, which is exactly when the clock matters.
       if (fact.kind === "execution_receipt") this.#admitNativeNotices(fact);
-      this.loop.pump.enqueueFact(fact);
+      this.loop.pump.enqueueFact(fact, FACT_PRODUCER.adapterIngress);
       this.#publishWorldStateStaleFact();
       // The one call that re-arms (or clears) the stall watch: this fact is the freshest thing the pump has been told
       // about its execution, so it is also what moves that execution's next stall threshold.
@@ -1038,13 +1047,13 @@ export class CompanionHostService {
     // first real reading may still speak.
     if (arrival === undefined) return;
     this.#arrivalSaid = true;
-    this.loop.pump.enqueueFact(arrival);
+    this.loop.pump.enqueueFact(arrival, FACT_PRODUCER.companionArrival);
   }
 
   /** Admits this receipt's unseen native notices onto the same session-level pump as every other fact. */
   #admitNativeNotices(fact: WorldFact): void {
     const notices = this.#nativeNotices.admit(fact.payload as ExecutionReceipt, fact.occurredAtMs ?? Date.now());
-    for (const notice of notices) this.loop.pump.enqueueFact(notice);
+    for (const notice of notices) this.loop.pump.enqueueFact(notice, FACT_PRODUCER.nativeNotice);
   }
 
   #publishStopObservationIfExact(stopId: string): void {
@@ -1122,13 +1131,16 @@ export class CompanionHostService {
     // must happen before invoking external code: a synchronous reentrant
     // callback must observe either the queued terminal event or a sealed pump.
     try {
-      this.loop.pump.enqueueFact({
-        source: "host_local_transport",
-        kind: "lifecycle",
-        correlationId: `transport_${event.state}`,
-        revision: 0,
-        payload: event,
-      });
+      this.loop.pump.enqueueFact(
+        {
+          source: "host_local_transport",
+          kind: "lifecycle",
+          correlationId: `transport_${event.state}`,
+          revision: 0,
+          payload: event,
+        },
+        FACT_PRODUCER.transportLifecycle,
+      );
     } catch (error) {
       if (!isEventPumpOverflow(error)) throw error;
       this.#containIntegrationOverflow();
@@ -1202,7 +1214,7 @@ export class CompanionHostService {
    */
   #restateWorldSnapshot(): void {
     const snapshot = this.#latestSnapshotFact;
-    if (snapshot !== undefined) this.loop.pump.enqueueFact(snapshot);
+    if (snapshot !== undefined) this.loop.pump.enqueueFact(snapshot, FACT_PRODUCER.snapshotRestate);
   }
 
   private async flushSoon(): Promise<void> {
@@ -1443,7 +1455,7 @@ export class CompanionHostService {
     // Named where an operator and a bundle reader can both date it: what was watched, what the bound evicted, and what
     // is stuck - including the ownership that would release it, when the Mod said.
     process.stderr.write(`EXECUTION_STALL ${JSON.stringify({ atMs: Date.now(), ...fact.payload })}\n`);
-    this.acceptHostMintedFact(fact);
+    this.acceptHostMintedFact(fact, FACT_PRODUCER.stallWatch);
   }
 
   /**
@@ -1461,7 +1473,7 @@ export class CompanionHostService {
     const fact = this.loop.pump.takeWorldStateStaleFact?.();
     if (fact === undefined) return;
     process.stderr.write(`WORLD_STATE_STALE ${JSON.stringify({ atMs: Date.now(), ...fact.payload })}\n`);
-    this.acceptHostMintedFact(fact);
+    this.acceptHostMintedFact(fact, FACT_PRODUCER.worldStateStale);
   }
 
   /**
@@ -1480,7 +1492,7 @@ export class CompanionHostService {
     process.stderr.write(
       `NARRATION_WITHOUT_WORK ${JSON.stringify({ atMs: Date.now(), reason: HOST_WAKE_REASON.narrationWithoutWork, ...fact.payload })}\n`,
     );
-    this.acceptHostMintedFact(fact);
+    this.acceptHostMintedFact(fact, FACT_PRODUCER.narrationWithoutWork);
   }
 
   private scheduleRetry(): void {

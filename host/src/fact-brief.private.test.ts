@@ -4,7 +4,7 @@ import { dirname, join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
-import { CompanionEventPump, type WorldFact } from "./event-pump.js";
+import { FACT_PRODUCER, CompanionEventPump, type WorldFact } from "./event-pump.js";
 import {
   composeFactBrief,
   composeWorldState,
@@ -405,9 +405,10 @@ test("a reading that has not changed is one line, not the whole world again", ()
 test("world_state_present: the pump states the world on EVERY batch, including batches that brought no snapshot", async () => {
   const pump = new CompanionEventPump();
   const batches: string[] = [];
-  pump.enqueueFact(snapshotFact(1205));
+  pump.enqueueFact(snapshotFact(1205), FACT_PRODUCER.adapterIngress);
   pump.enqueueFact(
     fact({ kind: "execution_receipt", eventId: "receipt_1", executionId: "exec_1", payload: { state: "succeeded" } }),
+    FACT_PRODUCER.adapterIngress,
   );
   await pump.flush({
     async deliver(batch) {
@@ -423,6 +424,7 @@ test("world_state_present: the pump states the world on EVERY batch, including b
         executionId: `exec_${String(index)}`,
         payload: { state: "succeeded" },
       }),
+      FACT_PRODUCER.adapterIngress,
     );
     await pump.flush({
       async deliver(batch) {

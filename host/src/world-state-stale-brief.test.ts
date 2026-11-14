@@ -18,7 +18,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { CompanionEventPump, type PendingBatch, type WorldFact } from "./event-pump.js";
+import { FACT_PRODUCER, CompanionEventPump, type PendingBatch, type WorldFact } from "./event-pump.js";
 import { composeWorldState, WORLD_STATE_STALE_TURNS, worldStateStaleCode } from "./fact-brief.js";
 import type { Snapshot } from "./protocol.js";
 
@@ -90,14 +90,17 @@ test("a delivered turn carries the stale token in the block, not only in prose",
       },
     });
   };
-  pump.enqueueFact({
-    source: "stardew_mod",
-    kind: "snapshot",
-    eventId: "snapshot_352",
-    correlationId: "observe_352",
-    revision: 352,
-    payload: STUCK_READING as never,
-  } satisfies WorldFact);
+  pump.enqueueFact(
+    {
+      source: "stardew_mod",
+      kind: "snapshot",
+      eventId: "snapshot_352",
+      correlationId: "observe_352",
+      revision: 352,
+      payload: STUCK_READING as never,
+    } satisfies WorldFact,
+    FACT_PRODUCER.worldStateStale,
+  );
   await flush();
   // Forty-eight turns of narration from the reading that brought the first one: the measured shape of the freeze, where
   // the player said nothing and the world published nothing that reached her state block.

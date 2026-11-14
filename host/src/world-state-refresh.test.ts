@@ -23,6 +23,7 @@ import test from "node:test";
 
 import { CompanionLoop } from "./companion-loop.js";
 import {
+  FACT_PRODUCER,
   AUTO_OBSERVE_UNAVAILABLE,
   CompanionEventPump,
   type PendingBatch,
@@ -105,9 +106,9 @@ const FROZEN_WINDOW: readonly WorldFact[] = Object.freeze([
 /** One delivered turn, admitted in the order the Host admits it: the fact, then whatever the pump minted for it. */
 async function deliverTurn(pump: CompanionEventPump, fact: WorldFact): Promise<PendingBatch | undefined> {
   const batches: PendingBatch[] = [];
-  pump.enqueueFact(fact);
+  pump.enqueueFact(fact, FACT_PRODUCER.worldStateRefreshRefused);
   const stale = pump.takeWorldStateStaleFact();
-  if (stale !== undefined) pump.enqueueFact(stale);
+  if (stale !== undefined) pump.enqueueFact(stale, FACT_PRODUCER.worldStateRefreshRefused);
   await pump.flush({
     async deliver(batch) {
       batches.push(batch);
@@ -168,7 +169,10 @@ test("stale_world_state_produces_no_refresh: every aged turn is answered by a re
         // The answer arrives the way the integration's does: an ordinary snapshot fact admitted by the pump - and it is a
         // LATER WORLD, not the same one under a new counter, so the clock follows the revision.
         revision += 1;
-        pump.enqueueFact(snapshotFact(revision, { ...STUCK_READING, revision, timeOfDay: 600 + revision } as Snapshot));
+        pump.enqueueFact(
+          snapshotFact(revision, { ...STUCK_READING, revision, timeOfDay: 600 + revision } as Snapshot),
+          FACT_PRODUCER.worldStateRefreshRefused,
+        );
         return Object.freeze({ revision });
       },
       publish: () => undefined,
@@ -365,7 +369,7 @@ test("a refused refresh reaches a turn on the Host's own Host-minted-fact route"
     loop.pump.attachWorldStateRefresh(
       Object.freeze({
         observe: () => Promise.reject(new Error("bridge_not_authenticated")),
-        publish: (fact: WorldFact) => host.acceptHostMintedFact(fact),
+        publish: (fact: WorldFact) => host.acceptHostMintedFact(fact, FACT_PRODUCER.worldStateRefreshRefused),
       }),
     );
     adapter.emit(snapshotFact(352));

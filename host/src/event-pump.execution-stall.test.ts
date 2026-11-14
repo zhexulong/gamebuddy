@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  FACT_PRODUCER,
   CompanionEventPump,
   EXECUTION_STALL_BOUND_MS,
   EXECUTION_STALL_REARM_MULTIPLE,
@@ -53,7 +54,7 @@ async function deliver(pump: CompanionEventPump): Promise<{ eventIds: string[]; 
 test("a silent execution mints one stall fact, and that fact asks for a turn", async (t) => {
   t.mock.timers.enable({ apis: ["Date", "setTimeout"] });
   const pump = new CompanionEventPump();
-  pump.enqueueFact(receipt("running", "exec_sleep"));
+  pump.enqueueFact(receipt("running", "exec_sleep"), FACT_PRODUCER.adapterIngress);
   assert.equal(
     pump.stallWatch.nextStallInMs,
     EXECUTION_STALL_BOUND_MS,
@@ -73,7 +74,7 @@ test("a silent execution mints one stall fact, and that fact asks for a turn", a
   assert.equal(fact.payload.lastFactKind, "execution_receipt:running");
   assert.equal(fact.payload.stallFactsSoFar, 1);
 
-  pump.enqueueFact(fact);
+  pump.enqueueFact(fact, FACT_PRODUCER.adapterIngress);
   assert.equal(
     pump.hasPendingDelivery,
     true,
@@ -89,7 +90,7 @@ test("a silent execution mints one stall fact, and that fact asks for a turn", a
 test("a stall that lasts ten minutes is two facts, not seven", async (t) => {
   t.mock.timers.enable({ apis: ["Date", "setTimeout"] });
   const pump = new CompanionEventPump();
-  pump.enqueueFact(receipt("running", "exec_sleep"));
+  pump.enqueueFact(receipt("running", "exec_sleep"), FACT_PRODUCER.adapterIngress);
 
   t.mock.timers.tick(EXECUTION_STALL_BOUND_MS);
   const first = pump.takeStallFact();
@@ -109,11 +110,11 @@ test("a stall that lasts ten minutes is two facts, not seven", async (t) => {
 test("a stall fact does not reset the clock it was measured from", (t) => {
   t.mock.timers.enable({ apis: ["Date", "setTimeout"] });
   const pump = new CompanionEventPump();
-  pump.enqueueFact(receipt("running", "exec_sleep"));
+  pump.enqueueFact(receipt("running", "exec_sleep"), FACT_PRODUCER.adapterIngress);
   t.mock.timers.tick(EXECUTION_STALL_BOUND_MS);
   const fact = pump.takeStallFact();
   assert.ok(fact !== undefined, "the stall is due at the bound");
-  pump.enqueueFact(fact);
+  pump.enqueueFact(fact, FACT_PRODUCER.adapterIngress);
 
   t.mock.timers.tick(30_000);
   const watched = pump.stallWatch.watched[0];
@@ -128,9 +129,9 @@ test("a stall fact does not reset the clock it was measured from", (t) => {
 test("an execution that settles normally publishes no stall fact at all", (t) => {
   t.mock.timers.enable({ apis: ["Date", "setTimeout"] });
   const pump = new CompanionEventPump();
-  pump.enqueueFact(receipt("running", "exec_sleep"));
+  pump.enqueueFact(receipt("running", "exec_sleep"), FACT_PRODUCER.adapterIngress);
   t.mock.timers.tick(60_000);
-  pump.enqueueFact(receipt("succeeded", "exec_sleep"));
+  pump.enqueueFact(receipt("succeeded", "exec_sleep"), FACT_PRODUCER.adapterIngress);
   assert.equal(pump.stallWatch.nextStallInMs, undefined, "a settled execution leaves no deadline behind");
 
   t.mock.timers.tick(600_000);
@@ -144,14 +145,17 @@ test("an execution that settles normally publishes no stall fact at all", (t) =>
 test("an execution the watch cannot date is not_measured, not silent", (t) => {
   t.mock.timers.enable({ apis: ["Date", "setTimeout"] });
   const pump = new CompanionEventPump();
-  pump.enqueueFact({
-    source: "stardew_mod",
-    kind: "execution_receipt",
-    eventId: "nameless_running",
-    correlationId: "nameless",
-    revision: 1,
-    payload: { state: "running" },
-  });
+  pump.enqueueFact(
+    {
+      source: "stardew_mod",
+      kind: "execution_receipt",
+      eventId: "nameless_running",
+      correlationId: "nameless",
+      revision: 1,
+      payload: { state: "running" },
+    },
+    FACT_PRODUCER.adapterIngress,
+  );
 
   const reading = pump.stallWatch;
   assert.equal(reading.nextStallInMs, undefined, "there is no start to count from, so there is no deadline to arm");
@@ -166,7 +170,7 @@ test("an execution the bound evicts while still running is named, not forgotten"
   t.mock.timers.enable({ apis: ["Date", "setTimeout"] });
   const pump = new CompanionEventPump();
   for (let index = 0; index <= MAX_WATCHED_EXECUTIONS; index += 1)
-    pump.enqueueFact(receipt("running", `exec_${index}`));
+    pump.enqueueFact(receipt("running", `exec_${index}`), FACT_PRODUCER.adapterIngress);
 
   const reading = pump.stallWatch;
   assert.equal(reading.watched.length, MAX_WATCHED_EXECUTIONS, "the record is bounded");
@@ -181,7 +185,10 @@ test("an execution the Mod BLOCKED is over: it leaves the watch, and no stall fa
   // terminal receipt, and the classification of "terminal" belongs to the ledger, not to a second list kept here.
   t.mock.timers.enable({ apis: ["Date", "setTimeout"] });
   const pump = new CompanionEventPump();
-  pump.enqueueFact(receipt("running", "exec_navigate", { actionId: "navigate_to_destination" }));
+  pump.enqueueFact(
+    receipt("running", "exec_navigate", { actionId: "navigate_to_destination" }),
+    FACT_PRODUCER.adapterIngress,
+  );
   t.mock.timers.tick(EXECUTION_STALL_BOUND_MS);
   assert.ok(pump.takeStallFact() !== undefined, "the silence was real while it lasted");
 
@@ -191,6 +198,7 @@ test("an execution the Mod BLOCKED is over: it leaves the watch, and no stall fa
       reasonCode: "destination_unreachable",
       topology: "unreachable",
     }),
+    FACT_PRODUCER.adapterIngress,
   );
   assert.deepEqual(pump.stallWatch.watched, [], "a terminal receipt of ANY state ends the watch entry");
   assert.equal(pump.stallWatch.nextStallInMs, undefined, "and leaves no deadline for the Host to arm");
@@ -202,9 +210,9 @@ test("an execution the Mod BLOCKED is over: it leaves the watch, and no stall fa
 test("a still-open execution's elapsedMs is the silence since its last fact, not the age of the run", (t) => {
   t.mock.timers.enable({ apis: ["Date", "setTimeout"] });
   const pump = new CompanionEventPump();
-  pump.enqueueFact(receipt("running", "exec_sleep"));
+  pump.enqueueFact(receipt("running", "exec_sleep"), FACT_PRODUCER.adapterIngress);
   t.mock.timers.tick(30_000);
-  pump.enqueueFact(receipt("meaningful_progress", "exec_sleep"));
+  pump.enqueueFact(receipt("meaningful_progress", "exec_sleep"), FACT_PRODUCER.adapterIngress);
   t.mock.timers.tick(EXECUTION_STALL_BOUND_MS);
 
   const fact = pump.takeStallFact();
@@ -222,7 +230,8 @@ test("a stall fact bounds the executions it cannot date, and counts what it omit
   t.mock.timers.enable({ apis: ["Date", "setTimeout"] });
   const pump = new CompanionEventPump();
   const total = MAX_WATCHED_EXECUTIONS * 2 + 1;
-  for (let index = 0; index < total; index += 1) pump.enqueueFact(receipt("running", `exec_${index}`));
+  for (let index = 0; index < total; index += 1)
+    pump.enqueueFact(receipt("running", `exec_${index}`), FACT_PRODUCER.adapterIngress);
   t.mock.timers.tick(EXECUTION_STALL_BOUND_MS);
 
   const fact = pump.takeStallFact();
@@ -240,7 +249,7 @@ test("a stall fact bounds the executions it cannot date, and counts what it omit
 test("a stall with no body-owning transition says so instead of a bare null owner", (t) => {
   t.mock.timers.enable({ apis: ["Date", "setTimeout"] });
   const pump = new CompanionEventPump();
-  pump.enqueueFact(receipt("running", "exec_sleep"));
+  pump.enqueueFact(receipt("running", "exec_sleep"), FACT_PRODUCER.adapterIngress);
   t.mock.timers.tick(EXECUTION_STALL_BOUND_MS);
   const fact = pump.takeStallFact();
   assert.ok(fact !== undefined);
@@ -257,22 +266,25 @@ test("a held body is carried on the stall fact, with what would release it", (t)
   t.mock.timers.enable({ apis: ["Date", "setTimeout"] });
   const pump = new CompanionEventPump();
   // The shape round43 measured: `sleep` refused with `body_owned_by_day_advance` and `owner_action=sleep`.
-  pump.enqueueFact({
-    source: "stardew_mod",
-    kind: "execution_receipt",
-    eventId: "sleep_refused",
-    correlationId: "exec_advance",
-    executionId: "exec_advance",
-    revision: 1,
-    payload: {
-      state: "failed",
+  pump.enqueueFact(
+    {
+      source: "stardew_mod",
+      kind: "execution_receipt",
+      eventId: "sleep_refused",
+      correlationId: "exec_advance",
       executionId: "exec_advance",
-      actionId: "sleep",
-      failureCode: "body_owned_by_day_advance",
-      owner_action: "sleep",
+      revision: 1,
+      payload: {
+        state: "failed",
+        executionId: "exec_advance",
+        actionId: "sleep",
+        failureCode: "body_owned_by_day_advance",
+        owner_action: "sleep",
+      },
     },
-  });
-  pump.enqueueFact(receipt("running", "exec_sleep"));
+    FACT_PRODUCER.adapterIngress,
+  );
+  pump.enqueueFact(receipt("running", "exec_sleep"), FACT_PRODUCER.adapterIngress);
   t.mock.timers.tick(EXECUTION_STALL_BOUND_MS);
   const fact = pump.takeStallFact();
   assert.ok(fact !== undefined, "the running execution stalls regardless of why");
@@ -288,16 +300,19 @@ test("a held body is carried on the stall fact, with what would release it", (t)
 test("with no owner_transition named, the release is the fact the guard itself clears on", (t) => {
   t.mock.timers.enable({ apis: ["Date", "setTimeout"] });
   const pump = new CompanionEventPump();
-  pump.enqueueFact({
-    source: "stardew_mod",
-    kind: "execution_receipt",
-    eventId: "body_owned",
-    correlationId: "exec_advance",
-    executionId: "exec_advance",
-    revision: 1,
-    payload: { state: "failed", executionId: "exec_advance", rejectionCode: "body_owned_by_day_advance" },
-  });
-  pump.enqueueFact(receipt("running", "exec_sleep"));
+  pump.enqueueFact(
+    {
+      source: "stardew_mod",
+      kind: "execution_receipt",
+      eventId: "body_owned",
+      correlationId: "exec_advance",
+      executionId: "exec_advance",
+      revision: 1,
+      payload: { state: "failed", executionId: "exec_advance", rejectionCode: "body_owned_by_day_advance" },
+    },
+    FACT_PRODUCER.adapterIngress,
+  );
+  pump.enqueueFact(receipt("running", "exec_sleep"), FACT_PRODUCER.adapterIngress);
   t.mock.timers.tick(EXECUTION_STALL_BOUND_MS);
   const fact = pump.takeStallFact();
   assert.ok(fact !== undefined, "the running execution stalls regardless of why");

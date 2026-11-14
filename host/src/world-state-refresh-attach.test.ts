@@ -22,6 +22,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { createGameCompanionLoop } from "./continuity-semantic-game-runtime-materializer/continuity-semantic-game-runtime-materializer.js";
 import {
+  FACT_PRODUCER,
   type CompanionEventPump,
   WORLD_STATE_REFRESH_ATTEMPTS,
   WORLD_STATE_REFRESH_REFUSED_SEMANTIC_KIND,
@@ -100,7 +101,7 @@ function movedFact(revision: number, index: number): WorldFact {
  * the cure.
  */
 async function deliverTurn(pump: CompanionEventPump, fact: WorldFact, say = false): Promise<void> {
-  pump.enqueueFact(fact);
+  pump.enqueueFact(fact, FACT_PRODUCER.worldStateRefreshRefused);
   if (say)
     pump.enqueuePlayerInput({
       source: "player_text",
@@ -110,7 +111,7 @@ async function deliverTurn(pump: CompanionEventPump, fact: WorldFact, say = fals
       timestampMs: 1_790_000_000_000,
     });
   const stale = pump.takeWorldStateStaleFact();
-  if (stale !== undefined) pump.enqueueFact(stale);
+  if (stale !== undefined) pump.enqueueFact(stale, FACT_PRODUCER.worldStateRefreshRefused);
   await pump.flush({
     async deliver() {
       return undefined;

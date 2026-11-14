@@ -4,6 +4,7 @@ import { GAME_DELIVERY_PACING, selectReactionSound } from "./companion-delivery-
 import { CompanionLoop } from "./companion-loop.js";
 import { MAGIC_CONTEXT_REFUSED_TURN_ENTRY_TYPE } from "./companion-turn-refusal.js";
 import { programSettledDigest } from "./program-settlement-digest.js";
+import { FACT_PRODUCER } from "./event-pump.js";
 
 /**
  * What the player receives for one Game turn: ONE bubble - the turn's reaction sound at its head, then the words.
@@ -63,13 +64,16 @@ test("CompanionLoop explicitly steers player input and includes the latest snaps
       received.push({ text, deliverAs: options?.deliverAs });
     }) as never,
   );
-  loop.pump.enqueueFact({
-    source: "stardew_mod",
-    kind: "snapshot",
-    correlationId: "snapshot_01",
-    revision: 3,
-    payload: { location: "Farm" },
-  });
+  loop.pump.enqueueFact(
+    {
+      source: "stardew_mod",
+      kind: "snapshot",
+      correlationId: "snapshot_01",
+      revision: 3,
+      payload: { location: "Farm" },
+    },
+    FACT_PRODUCER.adapterIngress,
+  );
   loop.pump.enqueuePlayerInput({
     source: "player_text",
     inputId: "input_01",
@@ -122,16 +126,19 @@ test("CompanionLoop chooses the deterministic final player trigger as presentati
     locale: "en-US",
     timestampMs: 1,
   });
-  loop.pump.enqueueFact({
-    source: "stardew_mod",
-    kind: "semantic_event",
-    eventId: "world_later",
-    sourceEventId: "world_later",
-    correlationId: "world",
-    revision: 1,
-    occurredAtMs: 3,
-    payload: { kind: "warped" },
-  });
+  loop.pump.enqueueFact(
+    {
+      source: "stardew_mod",
+      kind: "semantic_event",
+      eventId: "world_later",
+      sourceEventId: "world_later",
+      correlationId: "world",
+      revision: 1,
+      occurredAtMs: 3,
+      payload: { kind: "warped" },
+    },
+    FACT_PRODUCER.adapterIngress,
+  );
   await loop.flush();
   assert.deepEqual(observed, ["begin:player_late", "end"]);
 });
@@ -790,45 +797,57 @@ test("CompanionLoop chooses an authenticated world source for fact-only follow-u
       observed.push("end");
     },
   });
-  loop.pump.enqueueFact({
-    source: "stardew_mod",
-    kind: "snapshot",
-    eventId: "snapshot",
-    sourceEventId: "snapshot_source",
-    correlationId: "snapshot",
-    revision: 1,
-    occurredAtMs: 1,
-    payload: {},
-  });
-  loop.pump.enqueueFact({
-    source: "stardew_mod",
-    kind: "execution_receipt",
-    eventId: "progress",
-    sourceEventId: "progress_source",
-    correlationId: "progress",
-    revision: 1,
-    occurredAtMs: 2,
-    payload: { state: "meaningful_progress" },
-  });
-  loop.pump.enqueueFact({
-    source: "stardew_mod",
-    kind: "semantic_event",
-    eventId: "fallback_event",
-    correlationId: "first",
-    revision: 1,
-    occurredAtMs: 3,
-    payload: {},
-  });
-  loop.pump.enqueueFact({
-    source: "stardew_mod",
-    kind: "lifecycle",
-    eventId: "lifecycle_event",
-    sourceEventId: "world_canonical",
-    correlationId: "last",
-    revision: 1,
-    occurredAtMs: 4,
-    payload: {},
-  });
+  loop.pump.enqueueFact(
+    {
+      source: "stardew_mod",
+      kind: "snapshot",
+      eventId: "snapshot",
+      sourceEventId: "snapshot_source",
+      correlationId: "snapshot",
+      revision: 1,
+      occurredAtMs: 1,
+      payload: {},
+    },
+    FACT_PRODUCER.adapterIngress,
+  );
+  loop.pump.enqueueFact(
+    {
+      source: "stardew_mod",
+      kind: "execution_receipt",
+      eventId: "progress",
+      sourceEventId: "progress_source",
+      correlationId: "progress",
+      revision: 1,
+      occurredAtMs: 2,
+      payload: { state: "meaningful_progress" },
+    },
+    FACT_PRODUCER.adapterIngress,
+  );
+  loop.pump.enqueueFact(
+    {
+      source: "stardew_mod",
+      kind: "semantic_event",
+      eventId: "fallback_event",
+      correlationId: "first",
+      revision: 1,
+      occurredAtMs: 3,
+      payload: {},
+    },
+    FACT_PRODUCER.adapterIngress,
+  );
+  loop.pump.enqueueFact(
+    {
+      source: "stardew_mod",
+      kind: "lifecycle",
+      eventId: "lifecycle_event",
+      sourceEventId: "world_canonical",
+      correlationId: "last",
+      revision: 1,
+      occurredAtMs: 4,
+      payload: {},
+    },
+    FACT_PRODUCER.adapterIngress,
+  );
   await loop.flush();
   // Non-salient world-trigger batches deliberately cannot mint a native
   // player-chat presentation lineage; only Pi-consumed authenticated player
@@ -855,18 +874,21 @@ test("CompanionLoop delivers an npc_dialogue_presented fact to Pi without mintin
       },
     },
   );
-  loop.pump.enqueueFact({
-    source: "stardew_mod",
-    kind: "world_fact",
-    eventId: "npc_dialogue_pierre_3",
-    sourceEventId: "npc_dialogue_pierre_3",
-    correlationId: "npc_dialogue_pierre_3",
-    revision: 1,
-    occurredAtMs: 1,
-    observedTick: 900,
-    semanticKind: "npc_dialogue_presented",
-    payload: { speaker: "Pierre", pages: ["欢迎光临！"], isQuestion: false, choices: [] },
-  });
+  loop.pump.enqueueFact(
+    {
+      source: "stardew_mod",
+      kind: "world_fact",
+      eventId: "npc_dialogue_pierre_3",
+      sourceEventId: "npc_dialogue_pierre_3",
+      correlationId: "npc_dialogue_pierre_3",
+      revision: 1,
+      occurredAtMs: 1,
+      observedTick: 900,
+      semanticKind: "npc_dialogue_presented",
+      payload: { speaker: "Pierre", pages: ["欢迎光临！"], isQuestion: false, choices: [] },
+    },
+    FACT_PRODUCER.adapterIngress,
+  );
   await loop.flush();
   // The Mod reads the NPC's own lines, so the typed fact reaches Pi's exact
   // context with its readable payload. But `npc_dialogue_presented` is
@@ -947,17 +969,20 @@ test("CompanionLoop grants a bounded presentation lease to salient sensory world
       },
     },
   );
-  loop.pump.enqueueFact({
-    source: "stardew_mod",
-    kind: "world_fact",
-    eventId: "day_started_day_3",
-    sourceEventId: "day_started_day_3",
-    correlationId: "day_started_day_3",
-    revision: 2,
-    occurredAtMs: 1,
-    semanticKind: "day_started",
-    payload: { day: 3 },
-  });
+  loop.pump.enqueueFact(
+    {
+      source: "stardew_mod",
+      kind: "world_fact",
+      eventId: "day_started_day_3",
+      sourceEventId: "day_started_day_3",
+      correlationId: "day_started_day_3",
+      revision: 2,
+      occurredAtMs: 1,
+      semanticKind: "day_started",
+      payload: { day: 3 },
+    },
+    FACT_PRODUCER.adapterIngress,
+  );
   await loop.flush();
   assert.deepEqual(lifecycle, ["begin", "end"]);
   assert.deepEqual(presented, [{ sourceEventId: "day_started_day_3", text: "早安!今天也要加油。" }]);
@@ -1463,13 +1488,16 @@ test("CompanionLoop explicitly follows up an ordinary fact-only batch", async ()
       received.push({ deliverAs: options?.deliverAs });
     }) as never,
   );
-  loop.pump.enqueueFact({
-    source: "stardew_mod",
-    kind: "semantic_event",
-    correlationId: "warp",
-    revision: 1,
-    payload: { kind: "warped" },
-  });
+  loop.pump.enqueueFact(
+    {
+      source: "stardew_mod",
+      kind: "semantic_event",
+      correlationId: "warp",
+      revision: 1,
+      payload: { kind: "warped" },
+    },
+    FACT_PRODUCER.adapterIngress,
+  );
   await loop.flush();
   assert.deepEqual(received, [{ deliverAs: "followUp" }]);
 });
@@ -1975,16 +2003,19 @@ test("a turn with no presentation source accounts for its text instead of leavin
     return true;
   }) as typeof process.stderr.write;
   try {
-    loop.pump.enqueueFact({
-      source: "stardew_mod",
-      kind: "execution_receipt",
-      eventId: "receipt_harvest",
-      sourceEventId: "receipt_harvest",
-      correlationId: "receipt_harvest",
-      revision: 7,
-      executionId: "execution_harvest",
-      payload: { state: "succeeded", actionId: "harvest_crop", reasonCode: "crop_harvested", revision: 7 },
-    });
+    loop.pump.enqueueFact(
+      {
+        source: "stardew_mod",
+        kind: "execution_receipt",
+        eventId: "receipt_harvest",
+        sourceEventId: "receipt_harvest",
+        correlationId: "receipt_harvest",
+        revision: 7,
+        executionId: "execution_harvest",
+        payload: { state: "succeeded", actionId: "harvest_crop", reasonCode: "crop_harvested", revision: 7 },
+      },
+      FACT_PRODUCER.adapterIngress,
+    );
     assert.equal(await loop.flush(), "completed");
   } finally {
     process.stderr.write = stderrWrite;
@@ -2203,7 +2234,7 @@ test("a settled program opens a presentation lease, because an outcome nobody wa
     },
   });
   const digest = settledDigest("plan_41", "succeeded");
-  loop.pump.enqueueFact(digest);
+  loop.pump.enqueueFact(digest, FACT_PRODUCER.adapterIngress);
   const account = await turnAccount(() => loop.flush());
 
   assert.deepEqual(
@@ -2236,16 +2267,19 @@ test("an ordinary execution outcome still opens no lease, so volume cannot creep
       presented.push(content);
     },
   });
-  loop.pump.enqueueFact({
-    source: "stardew_mod",
-    kind: "semantic_event",
-    eventId: "execution_settled_1",
-    sourceEventId: "execution_settled_1",
-    correlationId: "execution_settled_1",
-    revision: 9,
-    occurredAtMs: 5,
-    payload: { kind: "execution_settled_succeeded", executionId: "execution_1" },
-  });
+  loop.pump.enqueueFact(
+    {
+      source: "stardew_mod",
+      kind: "semantic_event",
+      eventId: "execution_settled_1",
+      sourceEventId: "execution_settled_1",
+      correlationId: "execution_settled_1",
+      revision: 9,
+      occurredAtMs: 5,
+      payload: { kind: "execution_settled_succeeded", executionId: "execution_1" },
+    },
+    FACT_PRODUCER.adapterIngress,
+  );
   const account = await turnAccount(() => loop.flush());
 
   assert.deepEqual(presented, []);
@@ -2313,16 +2347,19 @@ test("a turn that ran with no projection is named, so its text is never an unexp
     async presentNativeAssistantContent() {},
   });
   const account = await turnAccount(async () => {
-    loop.pump.enqueueFact({
-      source: "stardew_mod",
-      kind: "semantic_event",
-      eventId: "execution_settled_account",
-      sourceEventId: "execution_settled_account",
-      correlationId: "execution_settled_account",
-      revision: 11,
-      occurredAtMs: 5,
-      payload: { kind: "execution_settled_succeeded", executionId: "execution_account" },
-    });
+    loop.pump.enqueueFact(
+      {
+        source: "stardew_mod",
+        kind: "semantic_event",
+        eventId: "execution_settled_account",
+        sourceEventId: "execution_settled_account",
+        correlationId: "execution_settled_account",
+        revision: 11,
+        occurredAtMs: 5,
+        payload: { kind: "execution_settled_succeeded", executionId: "execution_account" },
+      },
+      FACT_PRODUCER.adapterIngress,
+    );
     await loop.flush();
   });
   assert.deepEqual(account, {

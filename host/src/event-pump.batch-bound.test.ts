@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  FACT_PRODUCER,
   CompanionEventPump,
   FACT_BATCH_CHARS_PER_TOKEN_MIN,
   FACT_BATCH_SHARE_OF_CHUNK,
@@ -42,17 +43,20 @@ test("a batch is bounded by bytes, and the overflow is delivered in a later batc
   // this fails on SIZE, not on the count limit that already existed.
   const page = "今天天气不错，要不要一起去山里走走？".repeat(70);
   for (let index = 0; index < MAX_PENDING_WORLD_FACTS - 2; index += 1) {
-    pump.enqueueFact({
-      source: "stardew_mod",
-      kind: "world_fact",
-      eventId: `npc_dialogue_${String(index)}`,
-      sourceEventId: `npc_dialogue_${String(index)}`,
-      correlationId: `npc_dialogue_${String(index)}`,
-      revision: index,
-      observedTick: index,
-      semanticKind: "npc_dialogue_presented",
-      payload: { speaker: "Marnie", pages: [page], choices: [] },
-    });
+    pump.enqueueFact(
+      {
+        source: "stardew_mod",
+        kind: "world_fact",
+        eventId: `npc_dialogue_${String(index)}`,
+        sourceEventId: `npc_dialogue_${String(index)}`,
+        correlationId: `npc_dialogue_${String(index)}`,
+        revision: index,
+        observedTick: index,
+        semanticKind: "npc_dialogue_presented",
+        payload: { speaker: "Marnie", pages: [page], choices: [] },
+      },
+      FACT_PRODUCER.adapterIngress,
+    );
   }
 
   await pump.flush(sink);
@@ -92,13 +96,16 @@ test("a batch of ordinary size is not split", async () => {
     },
   };
   for (let index = 0; index < 5; index += 1) {
-    pump.enqueueFact({
-      source: "stardew_mod",
-      kind: "execution_receipt",
-      correlationId: `small_${String(index)}`,
-      revision: index,
-      payload: { index },
-    });
+    pump.enqueueFact(
+      {
+        source: "stardew_mod",
+        kind: "execution_receipt",
+        correlationId: `small_${String(index)}`,
+        revision: index,
+        payload: { index },
+      },
+      FACT_PRODUCER.adapterIngress,
+    );
   }
 
   await pump.flush(sink);
@@ -117,21 +124,27 @@ test("the snapshot is never separated from the batch that triggers it", async ()
       delivered.push(batch);
     },
   };
-  pump.enqueueFact({
-    source: "stardew_mod",
-    kind: "snapshot",
-    correlationId: "snap",
-    revision: 1,
-    payload: { location: "Farm", pad: "y".repeat(200_000) },
-  });
-  for (let index = 0; index < 60; index += 1) {
-    pump.enqueueFact({
+  pump.enqueueFact(
+    {
       source: "stardew_mod",
-      kind: "execution_receipt",
-      correlationId: `after_${String(index)}`,
-      revision: index + 2,
-      payload: { detail: "z".repeat(900), index },
-    });
+      kind: "snapshot",
+      correlationId: "snap",
+      revision: 1,
+      payload: { location: "Farm", pad: "y".repeat(200_000) },
+    },
+    FACT_PRODUCER.adapterIngress,
+  );
+  for (let index = 0; index < 60; index += 1) {
+    pump.enqueueFact(
+      {
+        source: "stardew_mod",
+        kind: "execution_receipt",
+        correlationId: `after_${String(index)}`,
+        revision: index + 2,
+        payload: { detail: "z".repeat(900), index },
+      },
+      FACT_PRODUCER.adapterIngress,
+    );
   }
 
   await pump.flush(sink);

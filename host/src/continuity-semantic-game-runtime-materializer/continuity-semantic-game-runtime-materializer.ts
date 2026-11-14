@@ -111,7 +111,7 @@ import {
   watchProgramSettlement,
 } from "../program-settlement-digest.js";
 import { createProgramEventDeliveryLedger, type ProgramSnapshotStaleness } from "../program-event-delivery.js";
-import type { WorldFact } from "../event-pump.js";
+import { FACT_PRODUCER, type FactProducer, type WorldFact } from "../event-pump.js";
 import { createGameRuntimeAttachment } from "./game-runtime-attachment.js";
 import {
   type GameRuntimeMaterializer,
@@ -1574,7 +1574,7 @@ export function createHostGameRuntimeMaterializer(
         // moment the Host service exists - the tools and the pump's port are built first and cannot see it - and a fact
         // that arrives before then (it cannot: nothing has been submitted and no turn has been opened) is dropped by the
         // no-op rather than queued somewhere else.
-        let announceHostFact: (fact: WorldFact) => void = () => {};
+        let announceHostFact: (fact: WorldFact, producedBy: FactProducer) => void = () => {};
         const fixedTools = bodyProgramMounted
           ? createBodyProgramTools(
               bodyProgramConsumer,
@@ -1583,7 +1583,7 @@ export function createHostGameRuntimeMaterializer(
               retainedPolicyIdentity,
               () => revealProgramReaders(),
               runTrace,
-              (fact) => announceHostFact(fact),
+              (fact) => announceHostFact(fact, FACT_PRODUCER.programSettlement),
             )
           : Object.freeze([]);
         const recovery = readStardewRecoveryBindingContext(recoveryContext);
@@ -1657,7 +1657,7 @@ export function createHostGameRuntimeMaterializer(
           connection: execution.connection,
           // The Host's Host-minted-fact route, which is the same one the settled digest rides: assigned the moment the
           // service exists, and unreachable before then because the Host is what drives a stale reading's measurement.
-          publish: (fact) => announceHostFact(fact),
+          publish: (fact) => announceHostFact(fact, FACT_PRODUCER.worldStateRefreshRefused),
         });
         const lifecycle = new IntegrationLifecycleSnapshot(execution.connection.module, execution.connection);
         const host = new CompanionHostService(
@@ -1718,7 +1718,7 @@ export function createHostGameRuntimeMaterializer(
         );
         // The settled digest rides the pump from here on. `host` is the only layer that owns it, which is why the
         // tools' sink was left unbound until this line.
-        announceHostFact = (fact) => host.acceptHostMintedFact(fact);
+        announceHostFact = (fact, producedBy) => host.acceptHostMintedFact(fact, producedBy);
         const operationalGateEvidence =
           options.gameOperationalGateNonceSha256 === undefined
             ? undefined

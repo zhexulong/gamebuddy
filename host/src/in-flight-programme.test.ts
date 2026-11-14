@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { CompanionEventPump, type WorldFact } from "./event-pump.js";
+import { FACT_PRODUCER, CompanionEventPump, type WorldFact } from "./event-pump.js";
 import { composeFactBrief, FACT_BRIEF_BLOCKS, NOTHING_IN_FLIGHT } from "./fact-brief.js";
 import { PROGRAM_SETTLEMENT_WATCH_INTERVAL_MS } from "./program-settlement-digest.js";
 import {
@@ -142,12 +142,12 @@ test("in_flight_programme_absent_from_batch: round46's 07:26:04 batch says the p
   const pump = pumpReading(observer, 11_000);
 
   // 07:25:53 - the world's first reading, delivered by the turn the submission came back on.
-  pump.enqueueFact(round46WorldFact(0));
-  pump.enqueueFact(milestone(599, 0));
+  pump.enqueueFact(round46WorldFact(0), FACT_PRODUCER.adapterIngress);
+  pump.enqueueFact(milestone(599, 0), FACT_PRODUCER.adapterIngress);
   const first = await deliverText(pump);
   assert.match(first, /刚刚更新/u, `the first batch is the one that BRINGS the reading: ${first}`);
   // 07:26:04 - the turn she spoke over: no new observation at all, and a programme 11 s old.
-  pump.enqueueFact(milestone(600, 11_000));
+  pump.enqueueFact(milestone(600, 11_000), FACT_PRODUCER.adapterIngress);
   const text = await deliverText(pump);
 
   assert.match(text, /本轮无新观察/u, `the world facts of this turn are round46's: ${text}`);
@@ -184,8 +184,8 @@ test("in_flight_programme_absent_from_batch: every node state the journal can re
       0,
     );
     const pump = pumpReading(observer, 3_000);
-    pump.enqueueFact(round46WorldFact(0));
-    pump.enqueueFact(milestone(1, 3_000));
+    pump.enqueueFact(round46WorldFact(0), FACT_PRODUCER.adapterIngress);
+    pump.enqueueFact(milestone(1, 3_000), FACT_PRODUCER.adapterIngress);
     const text = await deliverText(pump);
     const rows = inFlightRows(text);
     if (!text.includes(`in_flight:settled=0;total=2;remaining=2`))
@@ -214,10 +214,10 @@ test("in_flight_block_when_nothing_is_running: no unsettled programme means no b
     0,
   );
   const pump = pumpReading(observer, 11_000);
-  pump.enqueueFact(round46WorldFact(0));
-  pump.enqueueFact(milestone(599, 0));
+  pump.enqueueFact(round46WorldFact(0), FACT_PRODUCER.adapterIngress);
+  pump.enqueueFact(milestone(599, 0), FACT_PRODUCER.adapterIngress);
   await deliverText(pump);
-  pump.enqueueFact(milestone(601, 11_000));
+  pump.enqueueFact(milestone(601, 11_000), FACT_PRODUCER.adapterIngress);
   const text = await deliverText(pump);
 
   assert.equal(text.includes("<in-flight>"), false, `no block, and not an empty one: ${text}`);
@@ -368,7 +368,7 @@ test("steer_batch_carries_it_too: a steer joining a running turn states the prog
     0,
   );
   const pump = pumpReading(observer, 5_000);
-  pump.enqueueFact(milestone(700, 5_000));
+  pump.enqueueFact(milestone(700, 5_000), FACT_PRODUCER.adapterIngress);
   const texts: string[] = [];
   await pump.steer({
     async deliver(batch) {

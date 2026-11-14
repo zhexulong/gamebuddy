@@ -138,6 +138,59 @@ export const TURN_OPENINGS = Object.freeze(Object.values(TURN_OPENING));
 export type TurnOpening = (typeof TURN_OPENINGS)[number];
 
 /**
+ * Who can put a fact on this pump, declared once.
+ *
+ * <p>
+ * `TURN_OPENING` answers why a turn opened at the granularity of a REASON, so a run that printed `world_fact: 28` said
+ * a fact woke her twenty-eight times and nothing about which of the pump's entrances produced one of them - the producer
+ * was something a reader found by reading `enqueueFact`'s call sites. Measured 2026-11-15 (`round56`): 28 of 31 turns
+ * were `world_fact`, and the account could not separate the Mod's own traffic from the Host re-stating a reading it
+ * already held.
+ * </p>
+ * <p>
+ * THE MEMBERS ARE THE CALL SITES. One entry per `enqueueFact` call site, in the order a fact can arrive: the adapter's
+ * stream first, then the Host's own mints, then the two the Host publishes on another layer's behalf. The Host's
+ * Host-minted route (`acceptHostMintedFact`) carries five of them, which is why the producer is a parameter of that
+ * route and not a property of the fact.
+ * </p>
+ * <p>
+ * A member without a call site, and a call site without a member, are what `event-pump.fact-producer.test.ts` reds on -
+ * and the second is also a compile error, because `enqueueFact` demands a producer.
+ * </p>
+ */
+export const FACT_PRODUCER = Object.freeze({
+  /** `HostService.acceptIntegrationFact`: the authenticated adapter's own fact stream - snapshot, receipt, semantic event, world fact. */
+  adapterIngress: "adapter_ingress",
+  /** `HostService.acceptLifecycleEvent`: the local adapter transport going away - the one fact that is not the world speaking. */
+  transportLifecycle: "transport_lifecycle",
+  /** `HostService.#sayArrivalOnce`: the once-per-session "I have arrived, and the clock has ticked" fact. */
+  companionArrival: "companion_arrival",
+  /** `HostService.#admitNativeNotices`: an unseen native notice lifted out of the payload of the receipt that carried it. */
+  nativeNotice: "native_notice",
+  /** `HostService.#injectVoiceInterruptionNote`: the player cut the previous utterance off (Voice-local, never Chat or Game state). */
+  voiceInterruption: "voice_interruption",
+  /** `HostService.#restateWorldSnapshot`: the Host re-states the session's current reading before composing a batch. */
+  snapshotRestate: "snapshot_restate",
+  /** The settled-plan digest, announced by the materializer's `announceHostFact` once the Mod's journal reports a plan stopped. */
+  programSettlement: "program_settlement",
+  /** `HostService.#publishStallFact`: an execution stopped making progress, on the Host's own timer. */
+  stallWatch: "stall_watch",
+  /** `HostService.#publishWorldStateStaleFact`: the reading this session re-states has outlived its bound. */
+  worldStateStale: "world_state_stale",
+  /** `HostService.#publishNarrationWithoutWorkFact`: an awake companion spoke and ran nothing. */
+  narrationWithoutWork: "narration_without_work",
+  /** The pump's own refresh probe came back refused, published through the materializer's `publish` port. */
+  worldStateRefreshRefused: "world_state_refresh_refused",
+});
+
+export const FACT_PRODUCERS = Object.freeze(Object.values(FACT_PRODUCER));
+
+export type FactProducer = (typeof FACT_PRODUCERS)[number];
+
+/** One examined flush's decision, with the producer of the fact that made it. `undefined` means no fact decided it. */
+type FlushDecision<Decision extends string> = Readonly<{ decision: Decision; producedBy: FactProducer | undefined }>;
+
+/**
  * Why a flush that was EXAMINED opened no turn. Closed, so "fewer turns" and "lost turns" are distinguishable.
  *
  * A batch whose only pending content is a `world_fact` she already received is the re-statement reason. A fact whose
@@ -145,16 +198,27 @@ export type TurnOpening = (typeof TURN_OPENINGS)[number];
  * reason of its own: a Host-minted wake fact carries its re-arm counter in its content, and a clock or day fact is news
  * every time.
  *
- * `observation_is_state` is the flush that held a reading and nothing else: the world was observed, the observation opens
- * no turn (see `TURN_OPENING`), and the next turn states it. It is named rather than folded into `nothing_pending` because
- * a run has to be able to tell "a reading arrived and decided nothing" from "nothing arrived" - `round55` printed
- * `observation: 115` with no suppression at all, which is the reading this reason replaces.
+ * A flush that held a reading and nothing else used to be ONE member, `observation_is_state`, and that member was a second
+ * spelling of the bucket it labelled: `HostService.#restateWorldSnapshot` re-states the session's reading before EVERY
+ * flush, so every suppressed flush that carried no restated fact held a reading, and the member could only ever equal
+ * `suppressed - world_fact_restated`. Measured 2026-11-15 (`round56`): `suppressed 624 {observation_is_state: 610,
+ * world_fact_restated: 5, nothing_pending: 9}` - the 610 said exactly what the 624 said.
+ *
+ * It is now the one question such a flush can answer about ITSELF, asked of the reading against the reading the pump
+ * already held. `observation_restated` is a re-reading of a world whose own last statement it repeats - what asking again
+ * costs when nothing moved; `observation_moved` is a reading that says something the held one did not and still opens no
+ * turn, which is the rule "a reading is standing state, not news" (`TURN_OPENING`) applied to a reading she has not been
+ * handed. On `round56` the night window was 742 watches at 3.56 Hz and the second number is what says how many of them
+ * were the world moving at all.
  *
  * `nothing_pending` is not a lost turn: there was nothing to deliver, and counting it keeps the arithmetic closed
  * (`examined === opened + every suppressed reason`).
  */
 export const TURN_SUPPRESSION = Object.freeze({
-  observationIsState: "observation_is_state",
+  /** The flush held a copy of the reading the pump already held: nothing this flush saw was different. */
+  observationRestated: "observation_restated",
+  /** The flush held a reading that says something the held one did not, and a reading opens no turn. */
+  observationMoved: "observation_moved",
   worldFactRestated: `${TURN_OPENING.worldFact}_restated`,
   nothingPending: "nothing_pending",
 });
@@ -233,7 +297,17 @@ export type TurnWithoutActionResult = Readonly<{
 export type TurnAccount = Readonly<{
   opened: number;
   byReason: Readonly<Record<TurnOpening, number>>;
+  /**
+   * Which producer's fact opened each turn, per opener.
+   *
+   * The nested half of `byReason`: `world_fact: 28` and `due: 1` are both `Σ producer`, while a `player_input` turn's
+   * cause is a person's word rather than a fact and stays zero on every producer. `byReason[opener]` is the authority
+   * for the count; this says which entrance the fact came in through.
+   */
+  openedByProducer: Readonly<Record<TurnOpening, Readonly<Record<FactProducer, number>>>>;
   suppressed: Readonly<Record<TurnSuppression, number>>;
+  /** Which producer's fact decided each suppressed flush: the re-stated fact, or the reading held as state. */
+  suppressedByProducer: Readonly<Record<TurnSuppression, Readonly<Record<FactProducer, number>>>>;
   examined: number;
   emptyTurns: TurnWithoutActionResult;
   /** The turns that settled with nothing said and nothing done - see `TurnSettledSilentResult`. */
@@ -254,6 +328,13 @@ export type TurnAccount = Readonly<{
  * about what opened them, so "she was woken by the clock fifty times" and "the person spoke fifty times" were the same
  * line.
  *
+ * A reason a FACT decided carries the producers of those facts inside its own braces - `world_fact: 28 {adapter_ingress:
+ * 26, narration_without_work: 2}` - because the reason alone still collapses six entrances into one word, and `flushes
+ * examined 655` with no producer on it was a question answered by reading `enqueueFact`'s call sites instead of the log.
+ * Only producers that FIRED are printed: the closed set is declared once above, the reason's own count is the declared
+ * total beside it, and eleven zeroes repeated on each of a run's six hundred lines would be noise where the reading is
+ * one number.
+ *
  * The three stale segments are what makes a REMOVED turn countable AND a turn that was NOT removed explainable. A refresh
  * costs no turn, so without them "the stale notices stopped opening turns" and "the stale notices stopped happening"
  * would print the same line; with them, `A` is how many examined flushes reached their decision holding a reading they
@@ -262,8 +343,13 @@ export type TurnAccount = Readonly<{
  * short of it is one nobody has accounted for.
  */
 export function turnAccountLine(account: TurnAccount): string {
-  const opened = TURN_OPENINGS.map((reason) => `${reason}: ${String(account.byReason[reason])}`).join(", ");
-  const suppressed = TURN_SUPPRESSIONS.map((reason) => `${reason}: ${String(account.suppressed[reason])}`).join(", ");
+  const opened = TURN_OPENINGS.map(
+    (reason) => `${reason}: ${String(account.byReason[reason])}${producerBlock(account.openedByProducer[reason])}`,
+  ).join(", ");
+  const suppressed = TURN_SUPPRESSIONS.map(
+    (reason) =>
+      `${reason}: ${String(account.suppressed[reason])}${producerBlock(account.suppressedByProducer[reason])}`,
+  ).join(", ");
   const empty = emptyTurnShapes()
     .map((shape) => `${shape}: ${String(account.emptyTurns.byShape[shape])}`)
     .join(", ");
@@ -298,14 +384,60 @@ export function emptyTurnShapes(): readonly TurnWithoutActionShape[] {
   );
 }
 
+/**
+ * One frozen copy of a producer histogram per reason: the account is a reading, so a caller cannot move a counter by
+ * holding what it was handed.
+ */
+function freezeProducerHistograms<Reason extends string>(
+  counts: Readonly<Record<Reason, Record<FactProducer, number>>>,
+  reasons: readonly Reason[],
+): Readonly<Record<Reason, Readonly<Record<FactProducer, number>>>> {
+  const frozen = {} as Record<Reason, Readonly<Record<FactProducer, number>>>;
+  for (const reason of reasons) frozen[reason] = Object.freeze({ ...counts[reason] });
+  return Object.freeze(frozen);
+}
+
 function suppressedTotal(account: TurnAccount): number {
   return TURN_SUPPRESSIONS.reduce((total, reason) => total + account.suppressed[reason], 0);
+}
+
+/**
+ * The producers that fired inside one reason's braces, or nothing when none did.
+ *
+ * Nothing is printed for `player_input` and `nothing_pending` for the reason a zero block would be a lie about the
+ * question: no fact decided those flushes, so no producer of one can be named. A reason no producer fired for is the
+ * same shape - the reason's own count beside it is the reading, and it is the declared member that says so.
+ */
+function producerBlock(counts: Readonly<Record<FactProducer, number>>): string {
+  const fired = FACT_PRODUCERS.filter((producer) => counts[producer] > 0).map(
+    (producer) => `${producer}: ${String(counts[producer])}`,
+  );
+  return fired.length === 0 ? "" : ` {${fired.join(", ")}}`;
 }
 
 /** The counter, keyed by the closed set of shapes rather than by what this run happened to do. */
 function initializedEmptyTurns(): Record<TurnWithoutActionShape, number> {
   const counts = {} as Record<TurnWithoutActionShape, number>;
   for (const shape of emptyTurnShapes()) counts[shape] = 0;
+  return counts;
+}
+
+/**
+ * One all-zero producer histogram per reason, from the two closed lists.
+ *
+ * Derived rather than listed, so a producer added to `FACT_PRODUCER` (or a reason added to its own list) is counted
+ * without anyone remembering to extend a second table - and a pair that never fired is a declared zero rather than an
+ * absent key.
+ */
+function initializedByProducer<Reason extends string>(
+  reasons: readonly Reason[],
+): Record<Reason, Record<FactProducer, number>> {
+  const counts = {} as Record<Reason, Record<FactProducer, number>>;
+  for (const reason of reasons) {
+    const producers = {} as Record<FactProducer, number>;
+    for (const producer of FACT_PRODUCERS) producers[producer] = 0;
+    counts[reason] = producers;
+  }
   return counts;
 }
 
@@ -947,6 +1079,22 @@ export class CompanionEventPump {
   /** The snapshot slot the next batch TAKES: consumed by `takeBatch`, so a batch carries a snapshot once. */
   #snapshot: WorldFact | undefined;
   /**
+   * Whether the reading in that slot says what the reading the pump already held said.
+   *
+   * <p>
+   * The ONE comparison admission already makes to decide whether the world moved (see the `changes` branch of
+   * `enqueueFact`), kept beside the slot rather than computed again at flush time: a second spelling of "the reading says
+   * something else" is the disagreement this file exists to prevent. It travels with the slot - cleared by `takeBatch`
+   * with it - because it is a property of the reading being held, not of the session.
+   * </p>
+   * <p>
+   * What reads it is the suppressed-flush reason: `#suppressionReason` names a re-statement of the held reading
+   * (`observation_restated`) apart from a reading that moved (`observation_moved`), which is the difference between "the
+   * watcher asked again and the world had not spoken" and "the world spoke and a reading still opens no turn".
+   * </p>
+   */
+  #snapshotRestatesPrevious = false;
+  /**
    * The world as LAST HEARD, for rendering `<world-state>` on every batch.
    *
    * <p>
@@ -1090,10 +1238,24 @@ export class CompanionEventPump {
   #openedTurns = 0;
   /** Examined flushes that opened no turn, one count per `TURN_SUPPRESSIONS` member. */
   readonly #suppressedByReason: Record<TurnSuppression, number> = {
-    [TURN_SUPPRESSION.observationIsState]: 0,
+    [TURN_SUPPRESSION.observationRestated]: 0,
+    [TURN_SUPPRESSION.observationMoved]: 0,
     [TURN_SUPPRESSION.worldFactRestated]: 0,
     [TURN_SUPPRESSION.nothingPending]: 0,
   };
+  /** The nested half of both histograms above: which `FACT_PRODUCER` entrance the deciding fact came in through. */
+  readonly #openedByProducer = initializedByProducer(TURN_OPENINGS);
+  readonly #suppressedByProducer = initializedByProducer(TURN_SUPPRESSIONS);
+  /**
+   * Which producer put each WAITING fact here, by slot key.
+   *
+   * Beside the windows rather than on the fact: a fact is delivered to the model verbatim (`takeBatch` -> `batch.facts`),
+   * so a field added for the Host's own counting would travel into the prompt as a label about the Host's plumbing. The
+   * record's population is the windows', not the run's - `#pruneProducedBy` drains it with them.
+   */
+  readonly #producedBy = new Map<string, FactProducer>();
+  /** Which producer put the reading in the snapshot slot. The one slot whose key is not a fact slot. */
+  #snapshotProducedBy: FactProducer | undefined;
   #lastTurnDecision: TurnDecision | undefined;
   /**
    * Turns that spoke, ran no action and closed, one count per `<opener>:<reason>` shape.
@@ -1126,7 +1288,7 @@ export class CompanionEventPump {
    * One field rather than two, because a retry that lost its opening reason would be a batch the gate could neither open
    * a turn for nor name a suppression for: the two facts are one decision and are stored as one.
    */
-  #retry: Readonly<{ batch: PendingBatch; opening: TurnOpening }> | undefined;
+  #retry: Readonly<{ batch: PendingBatch; opening: FlushDecision<TurnOpening> }> | undefined;
   /**
    * How many batches this pump has handed to a turn that accepted them.
    *
@@ -1157,7 +1319,16 @@ export class CompanionEventPump {
   // captured batch so a late rejection cannot resurrect stale facts.
   #generation = 0;
 
-  public enqueueFact(fact: WorldFact): void {
+  /**
+   * Admit one fact, naming the entrance it came in through.
+   *
+   * <p>
+   * `producedBy` is REQUIRED, and that is the whole point: a new ingress cannot appear without saying who it is, because
+   * a call that omits it does not compile. It is not part of the fact - a fact is delivered to the model verbatim - so the
+   * pump keeps it beside the window entry, and the account prints it under the reason the fact decided.
+   * </p>
+   */
+  public enqueueFact(fact: WorldFact, producedBy: FactProducer): void {
     if (typeof fact.source !== "string" || !/^[a-z][a-z0-9_-]{0,63}$/.test(fact.source))
       throw new Error("invalid_world_fact_source");
     if (fact.source === "host_local_transport" && (fact.kind !== "lifecycle" || fact.revision !== 0))
@@ -1178,6 +1349,8 @@ export class CompanionEventPump {
       const changes = previous === undefined || readingContentIdentity(fact) !== readingContentIdentity(previous);
       this.#snapshot = frozen;
       this.#lastSnapshot = frozen;
+      this.#snapshotRestatesPrevious = !changes;
+      this.#snapshotProducedBy = producedBy;
       if (changes) {
         this.#lastSnapshotArrivedAtMs = Date.now();
         this.#worldStateStalePublished = 0;
@@ -1249,10 +1422,16 @@ export class CompanionEventPump {
           fact.kind === "execution_receipt" ? "event_pump_terminal_overflow" : "event_pump_event_overflow",
         );
       destination.delete(evictedKey);
+      // The producer leaves with the fact it was recorded for, or the record grows with the session instead of with the
+      // windows it describes.
+      this.#producedBy.delete(evictedKey);
       this.#droppedFacts += 1;
     }
     const previous = destination.get(key);
-    if (previous === undefined || fact.revision >= previous.revision) destination.set(key, frozen);
+    if (previous === undefined || fact.revision >= previous.revision) {
+      destination.set(key, frozen);
+      this.#producedBy.set(key, producedBy);
+    }
   }
 
   /**
@@ -1281,6 +1460,22 @@ export class CompanionEventPump {
     const key = factSlotKey(fact);
     if (!destination.has(key)) destination.set(key, fact);
   }
+
+  /**
+   * Forget the producers of facts no window holds any more.
+   *
+   * The record's population is the four windows' (plus the snapshot slot, which is emptied with them), so it is BOUNDED by
+   * the same numbers that bound the pump - and a fact a bound evicted already had its entry deleted at the eviction. This
+   * runs after `takeBatch` has put back what the byte bound pushed out, which is why it can be a plain sweep rather than a
+   * before/after copy.
+   */
+  #pruneProducedBy(): void {
+    for (const key of [...this.#producedBy.keys()]) {
+      if (this.#receipts.has(key) || this.#semanticEvents.has(key)) continue;
+      if (this.#lifecycle.has(key) || this.#worldFacts.has(key)) continue;
+      this.#producedBy.delete(key);
+    }
+  }
   public enqueuePlayerInput(input: PlayerInput): void {
     if (input.text.length === 0)
       throw new Error(input.source === "voice_final" ? "empty_final_voice_input" : "empty_player_input");
@@ -1302,6 +1497,8 @@ export class CompanionEventPump {
   public clear(): void {
     this.#generation++;
     this.#snapshot = undefined;
+    this.#snapshotRestatesPrevious = false;
+    this.#snapshotProducedBy = undefined;
     this.#lastSnapshot = undefined;
     this.#lastSnapshotDeliveredIdentity = undefined;
     this.#lastSnapshotDeliveredBatch = 0;
@@ -1322,6 +1519,7 @@ export class CompanionEventPump {
     this.#semanticEvents.clear();
     this.#lifecycle.clear();
     this.#worldFacts.clear();
+    this.#producedBy.clear();
     this.#inputs.length = 0;
     this.#deliveredProgress.clear();
     this.#watch.clear();
@@ -1337,6 +1535,10 @@ export class CompanionEventPump {
     this.#openedTurns = 0;
     for (const reason of TURN_OPENINGS) this.#openedByReason[reason] = 0;
     for (const reason of TURN_SUPPRESSIONS) this.#suppressedByReason[reason] = 0;
+    for (const reason of TURN_OPENINGS)
+      for (const producer of FACT_PRODUCERS) this.#openedByProducer[reason][producer] = 0;
+    for (const reason of TURN_SUPPRESSIONS)
+      for (const producer of FACT_PRODUCERS) this.#suppressedByProducer[reason][producer] = 0;
     for (const shape of emptyTurnShapes()) this.#emptyTurnsByShape[shape] = 0;
     this.#emptyTurns = 0;
     for (const opener of SILENT_SETTLED_OPENINGS) this.#silentSettledByOpener[opener] = 0;
@@ -1372,7 +1574,9 @@ export class CompanionEventPump {
     return Object.freeze({
       opened: this.#openedTurns,
       byReason: Object.freeze({ ...this.#openedByReason }),
+      openedByProducer: freezeProducerHistograms(this.#openedByProducer, TURN_OPENINGS),
       suppressed: Object.freeze({ ...this.#suppressedByReason }),
+      suppressedByProducer: freezeProducerHistograms(this.#suppressedByProducer, TURN_SUPPRESSIONS),
       examined: this.#openedTurns + suppressed,
       emptyTurns: Object.freeze({ total: this.#emptyTurns, byShape: Object.freeze({ ...this.#emptyTurnsByShape }) }),
       silentSettled: Object.freeze({
@@ -1741,7 +1945,7 @@ export class CompanionEventPump {
     // A retry does not ask again: it must send the exact text the sink rejected, which was composed from the reading of
     // that moment, and asking for a new one would put a second, unreviewed composition behind one turn.
     let pending: PendingBatch | undefined;
-    let opening: TurnOpening | undefined;
+    let opening: FlushDecision<TurnOpening> | undefined;
     try {
       const aged = retry === undefined ? this.#beginAgedReadingAsk() : undefined;
       if (aged !== undefined) {
@@ -1764,11 +1968,12 @@ export class CompanionEventPump {
       pending = retry?.batch ?? this.takeBatch();
       this.#retry = undefined;
       this.#openedTurns += 1;
-      this.#openedByReason[opening] += 1;
-      this.#lastTurnDecision = Object.freeze({ kind: "opened", index: this.#openedTurns, reason: opening });
+      this.#openedByReason[opening.decision] += 1;
+      if (opening.producedBy !== undefined) this.#openedByProducer[opening.decision][opening.producedBy] += 1;
+      this.#lastTurnDecision = Object.freeze({ kind: "opened", index: this.#openedTurns, reason: opening.decision });
       const outcome = (await sink.deliver(pending)) ?? undefined;
       this.#deliveredBatches += 1;
-      this.#observeTurnProduction(outcome, opening, pending.broughtObservation);
+      this.#observeTurnProduction(outcome, opening.decision, pending.broughtObservation);
       return outcome;
     } catch (error) {
       // Do not revive a batch cleared while its asynchronous delivery was in
@@ -1786,13 +1991,19 @@ export class CompanionEventPump {
    *
    * ONE place: `hasPendingDelivery`, `flush` and the account all ask this, so "is a turn owed" and "was one taken"
    * cannot disagree. The snapshot slot is deliberately not asked: a reading is standing state (`TURN_OPENING`), so the
-   * flush that holds only a reading suppresses and names it (`TURN_SUPPRESSION.observationIsState`).
+   * flush that holds only a reading suppresses and names which reading it held (`TURN_SUPPRESSION.observationRestated` /
+   * `observationMoved`).
    */
-  #opening(): TurnOpening | undefined {
-    if (this.#inputs.length > 0) return TURN_OPENING.playerInput;
+  #opening(): FlushDecision<TurnOpening> | undefined {
+    // A person's word is not a fact, so it has no producer: the opener's own count carries it, and every producer stays
+    // at zero for this decision instead of one of them being credited with a turn it did not cause.
+    if (this.#inputs.length > 0) return Object.freeze({ decision: TURN_OPENING.playerInput, producedBy: undefined });
     for (const fact of this.#ordinaryFacts()) {
       if (isHeldFact(fact) || this.#isRestatement(fact)) continue;
-      return isDueFact(fact) ? TURN_OPENING.due : TURN_OPENING.worldFact;
+      return Object.freeze({
+        decision: isDueFact(fact) ? TURN_OPENING.due : TURN_OPENING.worldFact,
+        producedBy: this.#producedBy.get(factSlotKey(fact)),
+      });
     }
     return undefined;
   }
@@ -1838,20 +2049,34 @@ export class CompanionEventPump {
    * Which member a suppressed flush was answered by absence of.
    *
    * An ordinary fact that is waiting but NOT an opening one is a fact whose content she already received (`#opening`
-   * skipped it for that reason). A snapshot slot holding a reading - new or re-stated - is `observation_is_state`: the
-   * reading is standing state, so nothing in it was pending, and naming it keeps "a reading arrived" apart from "nothing
-   * did". `nothing_pending` is the rest.
+   * skipped it for that reason). A snapshot slot holding a reading is a READING AND NOTHING ELSE, and which of the two
+   * members it is depends on the reading alone: a copy of the one the pump already held is `observation_restated` - the
+   * world's last statement, asked about again - and a reading that says something else is `observation_moved`, which is
+   * standing state she has not been handed rather than a wake (`TURN_OPENING`). `nothing_pending` is the rest.
    */
-  #suppressionReason(): TurnSuppression {
-    if (this.#ordinaryFacts().some((fact) => !isHeldFact(fact) && this.#isRestatement(fact)))
-      return TURN_SUPPRESSION.worldFactRestated;
-    if (this.#snapshot !== undefined) return TURN_SUPPRESSION.observationIsState;
-    return TURN_SUPPRESSION.nothingPending;
+  #suppressionReason(): FlushDecision<TurnSuppression> {
+    for (const fact of this.#ordinaryFacts()) {
+      if (isHeldFact(fact) || !this.#isRestatement(fact)) continue;
+      return Object.freeze({
+        decision: TURN_SUPPRESSION.worldFactRestated,
+        producedBy: this.#producedBy.get(factSlotKey(fact)),
+      });
+    }
+    if (this.#snapshot !== undefined)
+      return Object.freeze({
+        decision: this.#snapshotRestatesPrevious
+          ? TURN_SUPPRESSION.observationRestated
+          : TURN_SUPPRESSION.observationMoved,
+        producedBy: this.#snapshotProducedBy,
+      });
+    return Object.freeze({ decision: TURN_SUPPRESSION.nothingPending, producedBy: undefined });
   }
 
-  #suppress(reason: TurnSuppression): void {
-    this.#suppressedByReason[reason] += 1;
-    this.#lastTurnDecision = Object.freeze({ kind: "suppressed", reason });
+  #suppress(suppression: FlushDecision<TurnSuppression>): void {
+    this.#suppressedByReason[suppression.decision] += 1;
+    if (suppression.producedBy !== undefined)
+      this.#suppressedByProducer[suppression.decision][suppression.producedBy] += 1;
+    this.#lastTurnDecision = Object.freeze({ kind: "suppressed", reason: suppression.decision });
   }
 
   /**
@@ -1937,6 +2162,7 @@ export class CompanionEventPump {
       if (fact.kind !== "world_fact" || fact.semanticKind !== "time_milestone") continue;
       expiring.push(fact);
       this.#worldFacts.delete(key);
+      this.#producedBy.delete(key);
     }
     if (expiring.length === 0) return undefined;
 
@@ -2000,6 +2226,8 @@ export class CompanionEventPump {
     const snapshot = this.#snapshot;
     const broughtObservation = this.#snapshotBringsObservation();
     this.#snapshot = undefined;
+    this.#snapshotRestatesPrevious = false;
+    this.#snapshotProducedBy = undefined;
     const receipts = [...this.#receipts.values()];
     this.#receipts.clear();
     const semanticEvents = [...this.#semanticEvents.values()];
@@ -2100,6 +2328,7 @@ export class CompanionEventPump {
     // admission would evict a newer fact to make room for an older one.
     const dropped = facts.slice(0, facts.length - chosen.length);
     for (const fact of dropped) this.#readmit(fact);
+    this.#pruneProducedBy();
 
     // This batch was shown the observation, so the next one counts its age from here. Recorded at composition, not at
     // acceptance: a rejected batch is retried with this exact text ("刚刚更新"), and the only error this can make is
