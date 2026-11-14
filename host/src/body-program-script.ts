@@ -112,11 +112,19 @@ type PublishedPlanToolRequirement =
  * One action as the Mod published it for Body Programs: the id, the family it belongs to, and everything a script or a
  * program must supply or can read back. Every field is the Mod's own declaration, so a refusal or a shape answer cannot
  * describe an action differently from the surface the Mod actually enforces.
+ *
+ * <p>
+ * WHAT IS NOT HERE IS DELIBERATE: the registration's `lifecycle` is OUR release maturity, not a fact a caller can act on.
+ * It used to ride along in every shape answer (`stardew_plan_shape` printed `published`, `live_verified` or `experimental`
+ * per action), which is a word that answers nothing the companion can do: whether an action is plannable is decided by the
+ * vocabulary she is handed and by the Mod's admission, not by a label she has to interpret. The label still lives where it
+ * is used - the registry, the gates, the dashboards - and `agent_visible_field_is_our_bookkeeping:<field>`
+ * (`body-program-script.test.ts`) keeps any other field of ours from reaching her the same way.
+ * </p>
  */
 export type PublishedPlanAction = Readonly<{
   actionId: string;
   familyId: string;
-  lifecycle: string;
   arguments: readonly PlanArgumentShape[];
   outputFacts: readonly Readonly<{ name: string; type: string }>[];
   resourceClaims: readonly Readonly<{ key: string; value: string }>[];
@@ -653,7 +661,6 @@ export function planActionsFromRegistrations(
       Object.freeze({
         actionId: registration.actionId,
         familyId: registration.familyId,
-        lifecycle: registration.lifecycle,
         arguments: Object.freeze(declared),
         outputFacts: Object.freeze(declaredOutputFactsOf(registration)),
         resourceClaims: Object.freeze(declaredResourceClaimsOf(registration)),

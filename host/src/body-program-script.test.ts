@@ -2532,6 +2532,92 @@ test("the argument-row gate names a declaration whose row drops the argument it 
   );
 });
 
+/**
+ * The fields `stardew_plan_shape`'s answer carries, and what a caller can DO with each.
+ *
+ * THE POPULATION IS THE ANSWER, NOT THIS TABLE: the gate below enumerates the keys of the actions `planShape` really
+ * returns, so a field added anywhere in `PublishedPlanAction` reaches it without an edit - and lands here as
+ * `agent_visible_field_is_our_bookkeeping:<field>` unless this table says what she can do with it. The reasons are the only
+ * place a field may be kept, and every entry expires: a reason naming a field the answer no longer carries is red, so this
+ * cannot become a list of excuses that outlived their fields.
+ *
+ * WHY THIS IS A GATE AND NOT A STYLE NOTE. `lifecycle` rode along in every shape answer until it was removed: the Mod's
+ * release maturity (`published`, `live_verified`, `experimental`) printed per action, which decides nothing she can act on -
+ * the vocabulary she is handed already contains exactly the plannable actions, and the Mod refuses the rest by name. A field
+ * of ours in an answer she reads costs her a guess about what to do with it, and it is invisible in any test that only
+ * asserts the answer's size.
+ */
+const PLAN_SHAPE_FIELDS_A_CALLER_CAN_ACT_ON: Readonly<Record<string, string>> = Object.freeze({
+  actionId: "the name the script writes",
+  familyId: "the family `stardew_plan_shape` and the vocabulary grouping select by",
+  arguments: "the arguments the call must pass",
+  outputFacts: "the facts a later node can bind from this one",
+  resourceClaims: "the claims an admission refusal names",
+  toolRequirement: "the tool, upgrade level and range a step needs before it can run",
+  approachRequirement: "where the actor must stand first",
+  targetFamily: "the snapshot family whose rows carry this action's targets",
+});
+
+/**
+ * The fields of a shape answer that are our bookkeeping: `agent_visible_field_is_our_bookkeeping:<field>`.
+ *
+ * The answer is asked for every action in the vocabulary, so the population is the whole answer rather than one sampled
+ * action: a field carried by one family and not another is still a field she meets.
+ */
+function bookkeepingFieldsInPlanShape(actions: readonly PublishedPlanAction[]): readonly string[] {
+  const answer = planShape(actions, { actionIds: actions.map((action) => action.actionId) });
+  if (!answer.ok) return Object.freeze([`plan_shape_answer_refused:${answer.reasonCode}`]);
+  return Object.freeze(
+    [...new Set(answer.actions.flatMap((action) => Object.keys(action)))]
+      .filter((field) => PLAN_SHAPE_FIELDS_A_CALLER_CAN_ACT_ON[field] === undefined)
+      .sort()
+      .map((field) => `agent_visible_field_is_our_bookkeeping:${field}`),
+  );
+}
+
+test("every field the shape answer carries is one a caller can act on", () => {
+  assert.ok(CATALOG_ACTIONS.length > 0, "blocked: the vocabulary is empty, so a shape answer could not carry a field");
+  const answer = planShape(CATALOG_ACTIONS, { actionIds: CATALOG_ACTIONS.map((action) => action.actionId) });
+  assert.equal(answer.ok, true, "blocked: the shape answer refused the vocabulary it was handed");
+  const carried = new Set(answer.ok ? answer.actions.flatMap((action) => Object.keys(action)) : []);
+  // An exemption must expire: a reason for a field the answer no longer carries is a rule nobody reads, and it would let a
+  // future field of the same name be silently excused.
+  assert.deepEqual(
+    Object.keys(PLAN_SHAPE_FIELDS_A_CALLER_CAN_ACT_ON)
+      .filter((field) => !carried.has(field))
+      .sort(),
+    [],
+    "the reasons table names a field the shape answer does not carry, so its exemption outlived its field",
+  );
+  assert.deepEqual(
+    bookkeepingFieldsInPlanShape(CATALOG_ACTIONS),
+    [],
+    `the shape answer carries fields she can do nothing with (${String(carried.size)} fields examined: ` +
+      `${[...carried].sort().join(", ")})`,
+  );
+});
+
+/**
+ * The falsifier: the field this gate removed is put back, and the gate must name it.
+ *
+ * It is the shape a future change takes - a field of ours rides along because it was convenient in the code that builds the
+ * answer - so the gate is driven through the SAME reading the test above uses, not through a second one.
+ */
+test("the shape-answer gate names our bookkeeping when it rides along again", () => {
+  // A distinct id on purpose: `planShape` answers one row per id, so a field added to an action whose id the vocabulary
+  // already carries would never reach the answer and this falsifier would pass by looking at the wrong row.
+  const withLifecycle = Object.freeze({
+    ...CATALOG_ACTIONS[0]!,
+    actionId: "patch_scythe",
+    lifecycle: "published",
+  }) as unknown as PublishedPlanAction;
+  assert.deepEqual(
+    bookkeepingFieldsInPlanShape(Object.freeze([...CATALOG_ACTIONS, withLifecycle])),
+    ["agent_visible_field_is_our_bookkeeping:lifecycle"],
+    "a field that is our release maturity rather than a fact she can act on is named, once, by its own name",
+  );
+});
+
 test("the description's example uses a published action and that action's own declared argument names", () => {
   const description = planWorkDescription(CATALOG_ACTIONS);
   const call = /builder\.([a-z0-9_]+)\(\{ (.*) \}\);/u.exec(description);
