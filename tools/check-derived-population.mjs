@@ -55,7 +55,7 @@
  *   examined 1001 · sites 82 · findings 0 · baseline 73 entries · unread 0
  *   residual by shape: 5 declaration_site · 30 call_result · 47 unresolved
  *   residual by verdict: 34 derivable-now · 39 not-a-population · 0 needs-a-decision
- *   set aside: 1114 test-built · 24 not-members
+ *   set aside: 1116 test-built · 24 not-members
  *
  * Each shape is closeable, and each failure message says which one it is:
  *
@@ -89,14 +89,15 @@
  * import type - one node, and the file's 8 comparisons were invisible. The grammar cannot be taught that shape from here,
  * so the file names the type through `import type { ActionRegistration }`, the form every other reader of `./protocol.js`
  * already uses; the new reading adds no finding, because all 8 counts belong to the fixture the test builds itself. A file
- * the grammar still cannot read is named on stderr, never counted as a clean file.
+ * the grammar still cannot read is named with the position of the node that stopped it, on stdout and on stderr, and it
+ * fails the run: unmeasured is not the same as clean.
  *
  * WHAT IS READ, and why syntax rather than a grep: this file's own fixtures spell the defect inside string and template
  * literals, and a comment could spell it too. A line scanner cannot tell those from code, so the reading is the syntax
  * tree (tools/lib/javascript-ast.mjs): comments and strings are never descended into, and the line is the node's own.
  *
  * Usage:
- *   node tools/check-derived-population.mjs             # the gate; exit 1 on a new/stale site or an empty population
+ *   node tools/check-derived-population.mjs             # the gate; exit 1 on a new/stale site, an unread file or an empty population
  *   node tools/check-derived-population.mjs --json      # the reading, machine-readable, including every site
  *   node tools/check-derived-population.mjs --root <dir>  # the gate's own fixture
  *
@@ -114,11 +115,18 @@
  *            `reason: "[derivable-now] list is the seams table"` reads `findings 0 status passed` and
  *            `residual by verdict: 1 derivable-now · 0 not-a-population · 0 needs-a-decision`. Measured 2026-11-14.
  *
+ * red-proof: fixture  `--root` over a fixture test file carrying `readonly import("./protocol.js").ActionRegistration[]`
+ *            reads `derived_population examined 1 sites 0 findings 0 baseline 0 unread 1 status failed`, exit 1, and the
+ *            unread row names the ERROR node's line and column on stdout as well as on stderr; the same fixture with that
+ *            declaration spelled through a named `import type` reads the frozen count it carries as
+ *            `literal_population_assertion` - and before this lane the first run read `status passed`, because an unread
+ *            file used to leave the run green. Measured 2026-11-15.
+ *
  * Also injected, each seen red once (tools/check-derived-population.test.mjs): `assert.equal(list.length, 15)` on a
  * test file's own array, the same literal on the left of the assertion, a bare `list.length === 15`, two derived sides
  * reported as a literal, every file in a directory treated as a test, an unsorted member diff, an empty population
  * treated as a pass, a raw-text sweep in place of the syntax tree, a count of a test's own recorder, a count of a
- * string, a new site, and a stale baseline entry.
+ * string, a new site, a stale baseline entry, and a file the grammar cannot read.
  */
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
@@ -671,11 +679,30 @@ const hintOf = ({ authority }) =>
   `"+ newly added: [...]" and "- missing: [...]" (tools/lib/member-diff.mjs)`;
 
 /**
+ * The node where the grammar stopped reading, which is what makes an unread file actionable: tree-sitter tends to place
+ * its recovery `ERROR` node after the construct it could not accept, so the earliest one in source order is as close as
+ * this reading can get to the declaration that broke it.
+ */
+function firstErrorNode(root) {
+  let earliest = null;
+  const stack = [root];
+  while (stack.length > 0) {
+    const node = stack.pop();
+    if (node.type === "ERROR" || node.isMissing) {
+      if (earliest === null || node.startIndex < earliest.startIndex) earliest = node;
+    }
+    for (const child of node.namedChildren) stack.push(child);
+  }
+  return earliest;
+}
+
+/**
  * The whole reading: every test file in the scope, parsed, and every comparison between a `.length` and a number literal
  * in it whose counted value the walk could not prove this file built. `examined` is the population, so a reading that
  * measured nothing is visible as `examined 0` rather than as a clean run; `unparsed` is a file the grammar could not
- * read, which is not the same as a file with no finding and is reported as `unread` on every run; `setAside` counts what
- * the discrimination removed, so it is a measurement rather than a claim; each site carries the residual `shape`.
+ * read, which is not the same as a file with no finding: it is named with the node that stopped the grammar and it fails
+ * the run; `setAside` counts what the discrimination removed, so it is a measurement rather than a claim; each site
+ * carries the residual `shape`.
  */
 export async function auditDerivedPopulation({ root = REPOSITORY_ROOT, scope = POPULATION_SCOPE } = {}) {
   const files = populationFiles({ root, scope });
@@ -693,7 +720,10 @@ export async function auditDerivedPopulation({ root = REPOSITORY_ROOT, scope = P
       continue;
     }
     if (tree.rootNode.hasError) {
-      unparsed.push(`${file}: the grammar left an ERROR node, so its comparisons were not all read`);
+      const at = firstErrorNode(tree.rootNode);
+      const line = at === null ? 0 : at.startPosition.row + 1;
+      const column = at === null ? 0 : at.startPosition.column + 1;
+      unparsed.push(`${file}:${line}:${column}: the grammar left an ERROR node, so its comparisons were not all read`);
       continue;
     }
     const bindings = fileBindings(tree);
@@ -869,10 +899,13 @@ export function byFile(violations) {
   return [...counts.entries()].sort((left, right) => right[1] - left[1] || (left[0] < right[0] ? -1 : 1));
 }
 
-/** The verdict: a reading that examined nothing cannot pass, whatever it found. */
-function statusOf({ examined, findings }) {
+/**
+ * The verdict: a reading that examined nothing cannot pass, and neither can one that could not read a file it was there
+ * to measure - an unread file is unmeasured, not a file with nothing wrong in it.
+ */
+function statusOf({ examined, findings, unparsed }) {
   if (examined === 0) return "blocked";
-  if (findings.length > 0) return "failed";
+  if (findings.length > 0 || unparsed.length > 0) return "failed";
   return "passed";
 }
 
@@ -890,7 +923,7 @@ function main(argv) {
     .then(({ examined, violations, unparsed, setAside }) => {
       const baseline = readBaseline(root);
       const { findings, baselineSites } = compareWithBaseline({ violations, baseline });
-      const status = statusOf({ examined, findings });
+      const status = statusOf({ examined, findings, unparsed });
       const counts = shapeCounts(violations);
       const verdicts = verdictCounts(baseline);
       const reading = {
@@ -917,6 +950,7 @@ function main(argv) {
           `  set aside: ${setAside[TEST_BUILT]} test-built · ${setAside[NOT_A_MEMBERS]} not-members\n`,
         );
         for (const [file, count] of byFile(findings)) process.stdout.write(`  ${file}: ${count}\n`);
+        for (const entry of unparsed) process.stdout.write(`  unread ${entry}\n`);
         process.stdout.write(`${JSON.stringify(reading)}\n`);
       }
       for (const finding of findings) process.stderr.write(`${finding.message}\n  ${finding.hint}\n`);

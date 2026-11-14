@@ -269,6 +269,38 @@ test("the CLI prints examined N and names the violation it found", async () => {
   );
 });
 
+test("a file the grammar cannot read fails the run and names the node that stopped it", async () => {
+  await withFixtureRoot(
+    {
+      "host/src/unreadable.test.ts": [
+        "type Wire = {",
+        '  registrations: readonly import("./protocol.js").ActionRegistration[];',
+        "};",
+        'test("x", () => {',
+        "  assert.equal(list.length, 15);",
+        "});",
+        "",
+      ].join("\n"),
+    },
+    async (root) => {
+      const { examined, violations, unparsed } = await auditDerivedPopulation({ root });
+      assert.equal(examined, 1);
+      // The file is read by nobody: its frozen count is neither a finding nor a clean comparison, which is why
+      // an unread file cannot leave the run green.
+      assert.deepEqual(violations, []);
+      assert.equal(unparsed.length, 1);
+      assert.match(unparsed[0], /^host\/src\/unreadable\.test\.ts:2:18: .*ERROR node/u);
+
+      const result = spawnSync(process.execPath, [GATE, "--root", root], { encoding: "utf8", windowsHide: true });
+      assert.equal(result.status, 1);
+      assert.match(result.stdout, /derived_population examined 1 sites 0 findings 0 .* unread 1 status failed/u);
+      assert.match(result.stdout, /^ {2}unread host\/src\/unreadable\.test\.ts:2:18: /mu);
+      assert.match(result.stderr, /derived_population_unparsed: host\/src\/unreadable\.test\.ts:2:18/u);
+      assert.equal(JSON.parse(result.stdout.trim().split("\n").at(-1)).status, "failed");
+    },
+  );
+});
+
 test("the per-file counts are what a lane receives", () => {
   assert.deepEqual(
     byFile([

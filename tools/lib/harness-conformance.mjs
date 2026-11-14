@@ -722,9 +722,9 @@ const GATES_WITHOUT_FALSIFIER = Object.freeze([
       "reads test files as syntax trees so a literal population assertion (`list.length === 15`) is found in code " +
       "and not in prose, and judges the counted value's PROVENANCE - a recorder the test declared, a string's " +
       "characters, or a module-level list of its own all pass, while an import, a product function over product input " +
-      "and a table this file declares stay findings; its falsifier is tools/check-derived-population.test.mjs, sixteen " +
-      "injections including the member-diff format that replaces a bare pair of counts, the three set-aside shapes, and " +
-      "the ratchet's new/stale/grown verdicts",
+      "and a table this file declares stay findings; its falsifier is tools/check-derived-population.test.mjs, whose " +
+      "injections include the member-diff format that replaces a bare pair of counts, the three set-aside shapes, the " +
+      "ratchet's new/stale/grown verdicts, and a file the grammar cannot read",
   },
   {
     gate: "check-vendor-build-artifacts.mjs",
