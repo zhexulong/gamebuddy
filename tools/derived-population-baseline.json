@@ -393,30 +393,6 @@
       "line": 67
     },
     {
-      "file": "integrations/stardew/action-development/tests/stardew-rejected-layer-verdicts.test.mjs",
-      "authority": "stillNeeding",
-      "literal": "0",
-      "shape": "unresolved",
-      "sites": 1,
-      "line": 162
-    },
-    {
-      "file": "integrations/stardew/action-development/tests/stardew-remaining-actions-report.test.mjs",
-      "authority": "r.gameplayWrites",
-      "literal": "0",
-      "shape": "unresolved",
-      "sites": 1,
-      "line": 110
-    },
-    {
-      "file": "integrations/stardew/action-development/tests/stardew-remaining-actions-report.test.mjs",
-      "authority": "r.referenceIntents",
-      "literal": "0",
-      "shape": "unresolved",
-      "sites": 1,
-      "line": 141
-    },
-    {
       "file": "integrations/stardew/action-development/tests/static-verifier-contract.test.mjs",
       "authority": "INTEGRATION_REQUIREMENTS",
       "literal": "3",
@@ -511,14 +487,6 @@
       "shape": "unresolved",
       "sites": 1,
       "line": 102
-    },
-    {
-      "file": "tools/lib/catalog-fact-ownership.test.mjs",
-      "authority": "live.filter((finding) => finding.path === exemption.path)",
-      "literal": "0",
-      "shape": "call_result",
-      "sites": 1,
-      "line": 372
     },
     {
       "file": "tools/lib/duplicated-authority.test.mjs",
@@ -743,14 +711,6 @@
       "shape": "unresolved",
       "sites": 2,
       "line": 257
-    },
-    {
-      "file": "tools/stardew-player-command-graph.test.mjs",
-      "authority": "candidates",
-      "literal": "0",
-      "shape": "unresolved",
-      "sites": 1,
-      "line": 416
     },
     {
       "file": "tools/stardew-soil-itm-canary-gate.test.mjs",

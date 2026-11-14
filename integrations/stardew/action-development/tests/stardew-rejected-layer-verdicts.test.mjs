@@ -159,5 +159,5 @@ test("the shipped verdicts cover every rejected-layer unit that needs one", asyn
   const resolution = JSON.parse(fs.readFileSync(artifactPath, "utf8"));
   const rows = groupRejectedUnits({ methodResolution: resolution, seamMembers: seamIndex([]) });
   const stillNeeding = rows.filter((r) => r.group === "needs_adjudication");
-  assert.equal(stillNeeding.length, 0, `unadjudicated: ${stillNeeding.map((r) => r.key).join(", ")}`);
+  assert.deepEqual(stillNeeding, [], `unadjudicated: ${stillNeeding.map((r) => r.key).join(", ")}`);
 });

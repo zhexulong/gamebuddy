@@ -369,7 +369,11 @@ for (const exemption of DECLARED_EXEMPTIONS.filter((entry) => !GATE_PATHS.includ
       `${exemption.path} no longer holds a ${exemption.fields?.join("/") ?? "declared-fact"} copy, ` +
         "so the exemption no longer earns its place",
     );
-    assert.equal(live.filter((finding) => finding.path === exemption.path).length, 0);
+    assert.deepEqual(
+      live.filter((finding) => finding.path === exemption.path).map((finding) => finding.field),
+      [],
+      `${exemption.path} is exempt and still reports a declared-fact copy`,
+    );
     assert.ok(source.length > 0);
     assert.equal(exemption.reason.trim(), exemption.reason, `${exemption.path} needs a trimmed one-line reason`);
     assert.ok(

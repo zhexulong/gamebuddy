@@ -107,7 +107,7 @@ test("C 档只含视觉/计时器写入（不含 gameplay 字段）", async () =
   // 名单来自词汇表的单一权威 —— 这里是测试，不是第二份副本。
   const nonGameplay = STARDEW_NON_GAMEPLAY_FIELDS;
   for (const r of a.tiers.C_non_gameplay_writes) {
-    assert.equal(r.gameplayWrites.length, 0, `${r.class}.${r.member} 不应有 gameplay 写入`);
+    assert.deepEqual(r.gameplayWrites, [], `${r.class}.${r.member} 不应有 gameplay 写入`);
     for (const w of r.nonGameplayWrites) {
       const tail = w
         .replace(/[.](Value|Milliseconds|Seconds|X|Y|Count|Length|Stack)$/i, "")
@@ -138,7 +138,7 @@ test("B 档有 gameplay 写入但无 intent 引用——这是『可能漏记』
   const { artifact: a } = await report();
   assert.ok(a.tiers.B_no_catalog_intent.length > 0);
   for (const r of a.tiers.B_no_catalog_intent) {
-    assert.equal(r.referenceIntents.length, 0);
+    assert.deepEqual(r.referenceIntents, []);
     assert.ok(r.gameplayWrites.length > 0);
   }
   // 抽查：PetBowl 给碗加水应在此档（catalog 无 pet bowl intent）
