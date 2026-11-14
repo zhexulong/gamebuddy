@@ -5,6 +5,23 @@ import { publishedActionRegistrations } from "./lib/stardew-native-smoke-harness
 
 const HAY = "(O)178";
 
+/**
+ * The config the fixture writes for this gate. The template refuses a config that does not arm exactly this scenario
+ * before a request is sent, so the fake config has to be the one a live run would carry.
+ */
+function validConfig() {
+  return {
+    DeniedActions: [],
+    DeniedActionFamilies: [],
+    ExperimentalActions: [],
+    NativeLocalPlayerFixture: {
+      Enable: true,
+      Bootstrap: { Enable: false },
+      FixtureScenario: "native_withdraw_silo_hay_v1",
+    },
+  };
+}
+
 const scope = {
   integrationId: "stardew",
   saveId: "save",
@@ -81,7 +98,7 @@ function makeClient({ siloHay, carried }) {
 
 test("withdraw_silo_hay: the transfer is asserted from the world, both halves", async () => {
   const { client, receipts } = makeClient({ siloHay: 1, carried: 0 });
-  const result = await runWithdrawSiloHaySmoke(client, receipts, {}, { terminalTimeoutMs: 1_000 });
+  const result = await runWithdrawSiloHaySmoke(client, receipts, validConfig(), { terminalTimeoutMs: 1_000 });
   assert.equal(result.state, "passed");
   assert.equal(result.siloHay.before, 1);
   assert.equal(result.siloHay.after, 0);
@@ -104,7 +121,7 @@ test("withdraw_silo_hay: a silo that did not lose hay fails the run", async () =
     }
     return receipt;
   };
-  const result = await runWithdrawSiloHaySmoke(client, receipts, {}, { terminalTimeoutMs: 1_000 });
+  const result = await runWithdrawSiloHaySmoke(client, receipts, validConfig(), { terminalTimeoutMs: 1_000 });
   assert.equal(result.state, "blocked", "a silo that still holds its hay must not be a pass");
 });
 
@@ -121,7 +138,7 @@ test("withdraw_silo_hay: hay that left the silo without arriving fails the run",
     }
     return receipt;
   };
-  const result = await runWithdrawSiloHaySmoke(client, receipts, {}, { terminalTimeoutMs: 1_000 });
+  const result = await runWithdrawSiloHaySmoke(client, receipts, validConfig(), { terminalTimeoutMs: 1_000 });
   assert.equal(result.state, "blocked", "hay that vanished between silo and actor must not be a pass");
 });
 
@@ -129,9 +146,9 @@ test("withdraw_silo_hay: the emptied silo is refused, and a silent no-op fails",
   // Negative case. If the second withdrawal were reported as success, or silently no-oped, the run
   // must fail rather than accept a green receipt.
   const { client, receipts } = makeClient({ siloHay: 1, carried: 0 });
-  const result = await runWithdrawSiloHaySmoke(client, receipts, {}, { terminalTimeoutMs: 1_000 });
+  const result = await runWithdrawSiloHaySmoke(client, receipts, validConfig(), { terminalTimeoutMs: 1_000 });
   assert.equal(result.state, "passed");
-  assert.equal(result.negative.reasonCode, "silo_empty");
+  assert.equal(result.negative, "measured:silo_empty");
 
   const forged = makeClient({ siloHay: 1, carried: 0 });
   const original = forged.client.execute;
@@ -143,6 +160,8 @@ test("withdraw_silo_hay: the emptied silo is refused, and a silent no-op fails",
     }
     return receipt;
   };
-  const forgedResult = await runWithdrawSiloHaySmoke(forged.client, forged.receipts, {}, { terminalTimeoutMs: 1_000 });
+  const forgedResult = await runWithdrawSiloHaySmoke(forged.client, forged.receipts, validConfig(), {
+    terminalTimeoutMs: 1_000,
+  });
   assert.equal(forgedResult.state, "blocked", "a second withdrawal that claims success must fail the run");
 });
