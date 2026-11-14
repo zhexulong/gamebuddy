@@ -222,6 +222,6 @@ test("minecart runner rejects a non-isolated topology", async () => {
   const client = createFake();
   await assert.rejects(
     runRideMinecartSmoke(client, [], fixtureConfig({ Portfolio: { Enable: true } })),
-    (error) => error?.message === "native_local_fixture_topology_not_isolated",
+    (error) => error?.message === "native_local_ride_minecart_action_policy_invalid",
   );
 });

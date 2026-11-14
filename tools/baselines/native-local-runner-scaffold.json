@@ -638,18 +638,8 @@
       "reason": "predates_the_primitives"
     },
     {
-      "file": "tools/run-stardew-native-local-player-enter-exit-smoke.mjs",
-      "primitive": "validateNativeLocalFixtureConfig",
-      "reason": "predates_the_primitives"
-    },
-    {
       "file": "tools/run-stardew-native-local-player-enter-exit-warp-action-smoke.mjs",
       "primitive": "tilesAdjacent",
-      "reason": "predates_the_primitives"
-    },
-    {
-      "file": "tools/run-stardew-native-local-player-enter-exit-warp-action-smoke.mjs",
-      "primitive": "validateNativeLocalFixtureConfig",
       "reason": "predates_the_primitives"
     },
     {
@@ -688,11 +678,6 @@
       "reason": "predates_the_primitives"
     },
     {
-      "file": "tools/run-stardew-native-local-player-expression-smoke.mjs",
-      "primitive": "validateNativeLocalFixtureConfig",
-      "reason": "predates_the_primitives"
-    },
-    {
       "file": "tools/run-stardew-native-local-player-feed-animal-smoke.mjs",
       "primitive": "validateNativeLocalFixtureConfig",
       "reason": "predates_the_primitives"
@@ -730,11 +715,6 @@
     {
       "file": "tools/run-stardew-native-local-player-harvest-crop-smoke.mjs",
       "primitive": "tilesAdjacent",
-      "reason": "predates_the_primitives"
-    },
-    {
-      "file": "tools/run-stardew-native-local-player-harvest-crop-smoke.mjs",
-      "primitive": "validateNativeLocalFixtureConfig",
       "reason": "predates_the_primitives"
     },
     {
@@ -893,11 +873,6 @@
       "reason": "predates_the_primitives"
     },
     {
-      "file": "tools/run-stardew-native-local-player-pickup-forage-smoke.mjs",
-      "primitive": "validateNativeLocalFixtureConfig",
-      "reason": "predates_the_primitives"
-    },
-    {
       "file": "tools/run-stardew-native-local-player-pickup-item-smoke.mjs",
       "primitive": "validateNativeLocalFixtureConfig",
       "reason": "predates_the_primitives"
@@ -920,11 +895,6 @@
     {
       "file": "tools/run-stardew-native-local-player-place-crab-pot-smoke.mjs",
       "primitive": "parseEvidence",
-      "reason": "predates_the_primitives"
-    },
-    {
-      "file": "tools/run-stardew-native-local-player-place-wood-fence-smoke.mjs",
-      "primitive": "validateNativeLocalFixtureConfig",
       "reason": "predates_the_primitives"
     },
     {
@@ -990,11 +960,6 @@
     {
       "file": "tools/run-stardew-native-local-player-ride-minecart-smoke.mjs",
       "primitive": "tilesAdjacent",
-      "reason": "predates_the_primitives"
-    },
-    {
-      "file": "tools/run-stardew-native-local-player-ride-minecart-smoke.mjs",
-      "primitive": "validateNativeLocalFixtureConfig",
       "reason": "predates_the_primitives"
     },
     {
@@ -1090,11 +1055,6 @@
     {
       "file": "tools/run-stardew-native-local-player-travel-smoke.mjs",
       "primitive": "tilesAdjacent",
-      "reason": "predates_the_primitives"
-    },
-    {
-      "file": "tools/run-stardew-native-local-player-travel-smoke.mjs",
-      "primitive": "validateNativeLocalFixtureConfig",
       "reason": "predates_the_primitives"
     },
     {

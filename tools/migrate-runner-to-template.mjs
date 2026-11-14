@@ -1508,6 +1508,7 @@ export function planPrimitiveMigration(source, { primitives, exports, file = "" 
       // whose export disappears without its suite being rewritten breaks at import rather than at the refusal.
       removals.push({
         ...fixture.removal,
+        copyName: fixture.entry.name,
         optionsText: fixture.optionsText,
         scenarioFromArgument: fixture.scenarioFromArgument,
         wasExported: fixture.entry.exported,
@@ -1571,7 +1572,7 @@ export function applyPrimitiveMigration(source, { removals }) {
 /** The fixture-config primitive's call, with the options its copy read from the runner's constants. */
 function rewriteFixtureConfigCalls(source, removal) {
   return source.replace(/(?<![\w$.])([A-Za-z_$][\w$]*)\s*\(([^()]*)\)/gu, (whole, name, args) => {
-    if (name !== "validateNativeLocalFixtureConfig") return whole;
+    if (name !== "validateNativeLocalFixtureConfig" && name !== removal.copyName) return whole;
     const pieces = args.split(",");
     const extra =
       removal.scenarioFromArgument && pieces.length > 1 ? `, fixtureScenario: ${pieces.slice(1).join(",").trim()}` : "";
@@ -1586,7 +1587,7 @@ export function primitiveCensus({ root = ROOT } = {}) {
   const rows = [];
   for (const file of runnerFiles({ root })) {
     const source = readFileSync(resolve(root, file), "utf8");
-    rows.push({ file, ...planPrimitiveMigration(source, { primitives: PRIMITIVE_MODULE, exports }) });
+    rows.push({ file, ...planPrimitiveMigration(source, { primitives: PRIMITIVE_MODULE, exports, file }) });
   }
   return {
     exports,
