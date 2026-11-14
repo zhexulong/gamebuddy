@@ -1206,19 +1206,25 @@ test("contained runtime adapters surface every refusal as a rejection rather tha
  */
 test("the boot reconcile line counts what it examined and prints a counted zero", () => {
   assert.equal(
-    formatStardewBootstrapRegistrationReconcile({ examined: 0, released: 0, records: [] }),
-    "GameBuddy Stardew bootstrap registration reconcile: examined 0, released 0",
+    formatStardewBootstrapRegistrationReconcile({ examined: 0, released: 0, finalised: 0, records: [] }),
+    "GameBuddy Stardew bootstrap registration reconcile: examined 0, released 0, finalised 0",
   );
   assert.equal(
     formatStardewBootstrapRegistrationReconcile({
-      examined: 2,
+      examined: 3,
       released: 1,
+      finalised: 1,
       records: [
-        { bootstrapCorrelation: "bootstrap-1", outcome: "released" },
-        { bootstrapCorrelation: "bootstrap-2", outcome: "kept_objects_present" },
+        { bootstrapCorrelation: "bootstrap-1", outcome: "released", finalisation: null },
+        {
+          bootstrapCorrelation: "bootstrap-2",
+          outcome: "finalised",
+          finalisation: "ai_settled_player_preserved",
+        },
+        { bootstrapCorrelation: "bootstrap-3", outcome: "kept_objects_present", finalisation: null },
       ],
     }),
-    "GameBuddy Stardew bootstrap registration reconcile: examined 2, released 1 [bootstrap-1:released,bootstrap-2:kept_objects_present]",
+    "GameBuddy Stardew bootstrap registration reconcile: examined 3, released 1, finalised 1 [bootstrap-1:released,bootstrap-2:finalised:ai_settled_player_preserved,bootstrap-3:kept_objects_present]",
   );
 });
 
