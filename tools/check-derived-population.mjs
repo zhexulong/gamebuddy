@@ -50,18 +50,17 @@
  * nothing here binds, and a local helper that loads a product artifact (`const seams = loadSeams()`) all read as
  * TEST_BUILT or PRODUCT by the rules above and not by what they mean. That is the `unresolved` residual below.
  *
- * THE RESIDUAL IS RECORDED, NOT SILENCED (measured 2026-11-14, this tree):
+ * THE RESIDUAL IS RECORDED, NOT SILENCED (measured 2026-11-15, this tree):
  *
- *   examined 1001 · sites 83 · findings 0 · baseline 74 entries · unread 1
- *   residual by shape: 5 declaration_site · 30 call_result · 48 unresolved
- *   residual by verdict: 34 derivable-now · 38 not-a-population · 2 needs-a-decision
+ *   examined 1001 · sites 82 · findings 0 · baseline 73 entries · unread 1
+ *   residual by shape: 5 declaration_site · 30 call_result · 47 unresolved
+ *   residual by verdict: 34 derivable-now · 39 not-a-population · 0 needs-a-decision
  *   set aside: 1106 test-built · 24 not-members
  *
  * Each shape is closeable, and each failure message says which one it is:
  *
  *   declaration_site  the counted value is an import or a table this file declares at module level - close it by
- *                     deriving the members from that declaration. (`INTEGRATION_REQUIREMENTS`,
- *                     `PROMOTION_RESPONSIBILITIES`)
+ *                     deriving the members from that declaration. (`INTEGRATION_REQUIREMENTS`)
  *   call_result       the value is a product function's output whose inputs name a product declaration - close it by
  *                     asserting the returned members against the declaration that fed the call.
  *   unresolved        the walk could not attribute the value - close it by naming the fixture the count belongs to, or by
