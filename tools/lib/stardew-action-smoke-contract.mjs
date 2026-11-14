@@ -134,14 +134,6 @@ export function readActionSurface({ surfacePath = ACTION_SURFACE_PATH } = {}) {
 }
 
 /**
- * The five facts a contract may not restate, derived for one action from the declarations that own them.
- *
- * `expectedReasonCode` is `null` when the declaration is generic, and the shape that says so is
- * `not_derived:<why>` rather than a silent null: the caller must then either supply `expectedReasonCode` in the
- * contract or accept that no success code is known.
- */
-
-/**
  * The launcher's own fixture selection for one action - the world the slice would be run in.
  *
  * `fixtureActions` refuses an action its route table does not carry with a bare `Error`, which names neither the
@@ -160,6 +152,13 @@ function fixtureSelection(actionId) {
   return fixtureScenario(actions, actionId);
 }
 
+/**
+ * The five facts a contract may not restate, derived for one action from the declarations that own them.
+ *
+ * `expectedReasonCode` is `null` when the declaration is generic, and the shape that says so is
+ * `not_derived:<why>` rather than a silent null: the caller must then either supply `expectedReasonCode` in the
+ * contract or accept that no success code is known.
+ */
 export function deriveActionFacts(actionId, { surface = null, protocolControls = null } = {}) {
   if (!isNonEmptyString(actionId)) fail("action_missing");
   const rows = surface ?? readActionSurface();
