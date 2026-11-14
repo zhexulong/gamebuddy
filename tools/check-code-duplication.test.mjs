@@ -36,7 +36,7 @@ import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, basename, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { after, test } from "node:test";
 import { fileURLToPath } from "node:url";
 
@@ -46,12 +46,11 @@ import {
   censusLine,
   checkCodeDuplication,
   configDisagreements,
-  debtCensus,
   debtLine,
   evaluateGroups,
+  FORMATS,
   facadeLine,
   firstLineOf,
-  FORMATS,
   groupClones,
   groupHash,
   IGNORES,
@@ -63,8 +62,8 @@ import {
   readBaseline,
   recordShrinks,
   runJscpd,
-  serialiseBaseline,
   SOURCE_TREES,
+  serialiseBaseline,
   tokenCountLine,
   untrackedSources,
 } from "./check-code-duplication.mjs";

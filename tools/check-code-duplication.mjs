@@ -437,7 +437,7 @@ function violation(code, prefix, group) {
  * `groups` is the same population `evaluateGroups` reports as `baselined` - this function is where that number is
  * COUNTED, and `evaluateGroups` reads it back as `.groups`, so the two cannot drift into two spellings of one fact.
  */
-export function debtCensus(groups) {
+function debtCensus(groups) {
   const sites = groups.flatMap((group) => group.sites);
   return {
     groups: groups.length,
