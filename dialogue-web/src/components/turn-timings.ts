@@ -15,10 +15,16 @@
  * The names are stable and prefixed because they are a contract with those readers:
  *
  *   gamebuddy:turn:submit        the player pressed send; the request is being assembled
- *   gamebuddy:turn:accepted      the Host accepted it (the pending row exists)
+ *   gamebuddy:turn:accepted      the Host answered that it accepted it (202, with the turn it started)
  *   gamebuddy:turn:first-token   the first streamed delta painted
  *   gamebuddy:turn:settled       the turn reached a terminal state
  *   gamebuddy:turn:failed        the turn ended as a failure (paired with settled, never instead)
+ *
+ * `submit -> accepted` is the Host's own round trip, and that is the split a first-token reading is
+ * attributed with: until this mark existed the page recorded nothing between the press and the first
+ * word, so "900 ms before the first token" could not say whether the app, the Host or the provider
+ * held the time. `accepted` is emitted by the mutation that started the turn, from the answer it got
+ * (see `observeTurnEvent` for why the event stream cannot carry it).
  *
  * Every mark carries the turn's idempotency key when one is known, so a DevTools recording with
  * several interleaved turns can still be attributed. Nothing carries player text: a mark name and a
@@ -74,6 +80,15 @@ export function markTurn(stage: TurnMarkStage, detail: { surface?: string; turnK
  *
  * Returns `terminal: true` when the turn reached a terminal state, so the caller can forget the key - a
  * key that outlives its turn attaches the next turn's timing to the previous turn's name.
+ *
+ * `accepted` is deliberately NOT mapped here. The Host publishes `turn.state_changed` twice: once as
+ * its continuation starts, with the state its durable ledger projects (`projectTurn` in
+ * `chat-pipeline-service.ts` turns `accepted_queued`/`attempt_starting` into `queued`), and again when
+ * the turn ends. A `running` payload therefore never arrives for a fresh turn - it used to be the only
+ * branch that could mark `accepted`, so on every real run the mark was never emitted and the stage a
+ * first-token reading needs was permanently absent. The acceptance this page can see is the answer to
+ * the request it made (202 `SubmitResultV1`, with the turn it started), which is the mutation's own
+ * fact and is marked there.
  */
 export function observeTurnEvent(
   event: Readonly<{ eventType: string; payload?: unknown }>,
@@ -88,10 +103,6 @@ export function observeTurnEvent(
     return { terminal: false, isFirstDelta };
   }
   if (event.eventType !== "turn.state_changed") return { terminal: false, isFirstDelta: false };
-  if (payload.state === "running") {
-    markTurn("accepted", { surface: "chat", turnKey });
-    return { terminal: false, isFirstDelta: false };
-  }
   if (payload.state === "completed" || payload.state === "cancelled") {
     markTurn("settled", { surface: "chat", turnKey });
     return { terminal: true, isFirstDelta: false };

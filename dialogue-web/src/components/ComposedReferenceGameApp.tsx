@@ -639,6 +639,13 @@ export function ComposedReferenceGameApp() {
         },
         { csrfToken: current.session.snapshot.csrfToken, idempotencyKey },
       );
+      /*
+       * The Host's answer is the acceptance: 202 with the turn it started, under the key this press
+       * sent. It is the one mark that splits "the app took my press" from "the Host took my turn",
+       * and it cannot come from the event stream - the Host's `turn.state_changed` for a fresh turn
+       * carries the `queued` ledger state, not `running` (`turn-timings.ts` says so at the mapping).
+       */
+      markTurn("accepted", { surface: "chat", turnKey: idempotencyKey });
     } catch (error) {
       // A failed send costs the attempt, never the paragraph.
       //
@@ -968,11 +975,15 @@ export function ComposedReferenceGameApp() {
         markTurn("submit", { surface: "chat", turnKey: idempotencyKey });
         return true;
       },
-      send: ({ selectionGeneration, csrfToken }) =>
-        tavernApiRef.current.regenerate(
+      send: async ({ selectionGeneration, csrfToken }) => {
+        const accepted = await tavernApiRef.current.regenerate(
           { apiVersion: 1, selectionGeneration, messageHandle },
           { csrfToken, idempotencyKey },
-        ),
+        );
+        // The same acceptance `handleSend` marks: the Host's 202 for THIS key, with the turn it started.
+        markTurn("accepted", { surface: "chat", turnKey: idempotencyKey });
+        return accepted;
+      },
     });
     if (outcome.kind === "landed") {
       startPolling();

@@ -138,10 +138,27 @@ test("every turn-starting mutation joins the turn ledger it opens", async () => 
 	const callSites = [...source.matchAll(/beginTurnMutation\(/gu)].map((match) => match.index ?? 0);
 	assert.ok(callSites.length > 0, "the shell must open its turns through one seam, and this gate found none");
 	const disciplines = [
-		["writes the turn key", /turnKeyRef\.current\s*=\s*idempotencyKey\s*;/u],
+		[
+			"writes the turn key",
+			/turnKeyRef\.current\s*=\s*idempotencyKey\s*;/u,
+			"a turn nothing names cannot be read back from the page's timeline",
+		],
 		[
 			"marks the submit",
 			/markTurn\(\s*"submit"\s*,\s*\{[^}]*turnKey:\s*idempotencyKey\s*\}/u,
+			"a turn nothing names cannot be read back from the page's timeline",
+		],
+		/*
+		 * And the acceptance the Host's 202 answers with. The stage used to be mapped from a
+		 * `turn.state_changed` carrying `running` - a state the Host does not publish for a fresh turn
+		 * (its continuation starts with the `queued` ledger state), so on every real run the mark was
+		 * never emitted: `TIMINGS` could say where the first token landed but not whether the wait was
+		 * the app's, the Host's or the provider's.
+		 */
+		[
+			"marks the Host's acceptance",
+			/markTurn\(\s*"accepted"\s*,\s*\{[^}]*turnKey:\s*idempotencyKey\s*\}/u,
+			"its timings cannot be split between the app, the Host and the provider",
 		],
 	];
 	for (const [index, at] of callSites.entries()) {
@@ -149,11 +166,8 @@ test("every turn-starting mutation joins the turn ledger it opens", async () => 
 		// The segment this call owns runs to the next one: a handler that set the key for a
 		// DIFFERENT mutation would otherwise satisfy its neighbour's gate.
 		const segment = source.slice(at, callSites[index + 1] ?? source.length);
-		for (const [what, pattern] of disciplines)
-			assert.ok(
-				pattern.test(segment),
-				`${handler} starts a durable turn through beginTurnMutation but never ${what}; a turn nothing names cannot be read back from the page's timeline`,
-			);
+		for (const [what, pattern, why] of disciplines)
+			assert.ok(pattern.test(segment), `${handler} starts a durable turn through beginTurnMutation but never ${what}; ${why}`);
 	}
 });
 

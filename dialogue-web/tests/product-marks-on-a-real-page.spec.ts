@@ -418,19 +418,16 @@ test.describe("the marks the product records reach a real page", () => {
     await regenerateControl.click();
     await expect.poll(() => regenerateKey).not.toBeNull();
 
-    // The turn that regenerate started reaches `running` on the stream the page opened.
-    await emitEvent(
-      page,
-      "turn.state_changed",
-      JSON.stringify({
-        apiVersion: 1,
-        epoch: streamEpoch,
-        sequence: 2,
-        selectionGeneration: 1,
-        eventType: "turn.state_changed",
-        payload: { handle: turnHandle, state: "running", projectionRevision: 1, canCancel: true },
-      }),
-    );
+    /*
+     * The acceptance is the Host's ANSWER to this regenerate - the 202 the route above just
+     * fulfilled under this turn's key - so the mark is on the timeline without the stream saying
+     * anything. It used to be mapped from a `turn.state_changed` carrying `running`, which the Host
+     * never publishes for a fresh turn: its continuation starts with the `queued` ledger state, so
+     * the stage was silently never emitted on any real run.
+     */
+    await expect
+      .poll(async () => (await readMarks(page)).filter((mark) => mark.name === "gamebuddy:turn:accepted").length)
+      .toBeGreaterThan(1);
 
     const marks = await readMarks(page);
     const acceptedMarks = marks.filter((mark) => mark.name === "gamebuddy:turn:accepted");
