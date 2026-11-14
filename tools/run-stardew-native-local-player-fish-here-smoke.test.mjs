@@ -14,6 +14,7 @@ import {
   judgeDryTileRefusal,
   judgeParity,
   parityNotMeasuredIsStructural,
+  paritySampleCount,
   publishedCatchable,
   readReaderCensus,
 } from "./run-stardew-native-local-player-fish-here-smoke.mjs";
@@ -303,20 +304,47 @@ test("the runner's address derivation reproduces the address the Mod published",
  * the live run produces (`data_query_result` index, then one `row` per key). The transport is the boundary faked here;
  * the projection under test - which keys count as loaded, which rows are measured - is not.
  */
-const censusClient = (index, rows) => ({
-  async dataQuery({ key }) {
-    if (key === undefined) return index;
+/**
+ * The census' wire, as the protocol declares it (`host/src/protocol.ts:1375`): a request is `{ table, key }` - `key`
+ * PRESENT and `null` for the table's index. Omitting it is refused by the Mod with
+ * `bridge_rejected:invalid_data_query_request`, which is what the first live census run got (measured 2026-11-14), so
+ * this fake refuses it the same way instead of answering a request the wire never accepts.
+ */
+const censusClient = (index, rows, requests = []) => ({
+  async dataQuery(request) {
+    requests.push(request);
+    if (request?.key === undefined) throw new Error("bridge_rejected:invalid_data_query_request");
+    const { key } = request;
+    if (key === null) return index;
     return (
-      rows[key] ?? { status: "missing", table: "LocationFish", population: 3, rows: null, row: null, reason: null }
+      rows[key] ?? {
+        status: "absent_row",
+        table: "LocationFish",
+        population: 3,
+        ids: null,
+        row: null,
+        detail: "no such row",
+      }
     );
   },
+});
+
+test("the census asks for the index with a null key, the only shape the wire accepts", async () => {
+  const requests = [];
+  await readReaderCensus(censusClient(INDEX, { here: ROW(FIELDS) }, requests));
+  assert.deepEqual(requests[0], { table: "LocationFish", key: null });
+  assert.deepEqual(
+    requests.slice(1).map((request) => request.key),
+    ["here", "Farm", "Forest"],
+    "every declared key is asked for, once",
+  );
 });
 
 const INDEX = {
   status: "index",
   table: "LocationFish",
   population: 3,
-  rows: ["here", "Farm", "Forest"],
+  ids: ["here", "Farm", "Forest"],
   row: null,
   reason: null,
 };
@@ -358,11 +386,11 @@ test("a loaded location the reader refused is counted as a refusal, with the rea
 
 test("an empty census is refused: a population of zero cannot agree with anything", async () => {
   await assert.rejects(
-    () => readReaderCensus(censusClient({ ...INDEX, rows: [] }, {})),
+    () => readReaderCensus(censusClient({ ...INDEX, ids: [] }, {})),
     /fish_here_census_index_empty/u,
   );
   await assert.rejects(
-    () => readReaderCensus(censusClient({ status: "row", table: "LocationFish", row: null, rows: null }, {})),
+    () => readReaderCensus(censusClient({ status: "row", table: "LocationFish", row: null, ids: null }, {})),
     /fish_here_census_index_absent:row/u,
   );
 });
@@ -370,4 +398,13 @@ test("an empty census is refused: a population of zero cannot agree with anythin
 /** A client with no reader at all is a named refusal, not an empty census. */
 test("a session with no content-data reader says so", async () => {
   await assert.rejects(() => readReaderCensus({}), /fish_here_census_data_query_unavailable/u);
+});
+
+test("the sample width is askable through the path every invoker takes", () => {
+  // `tools/live-action.mjs` calls this module's `run*Smoke` in-process with no options object, so the width has to be
+  // readable from the process environment rather than from an argument the live path never passes.
+  assert.equal(paritySampleCount({}), 6);
+  assert.equal(paritySampleCount({ GAMEBUDDY_FISH_PARITY_SAMPLES: "90" }), 90);
+  assert.equal(paritySampleCount({ GAMEBUDDY_FISH_PARITY_SAMPLES: "0" }), 6);
+  assert.equal(paritySampleCount({ GAMEBUDDY_FISH_PARITY_SAMPLES: "lots" }), 6);
 });

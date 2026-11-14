@@ -64,6 +64,15 @@ const PARITY_SAMPLES = 6;
  * reporting the fixture's arithmetic as a product defect.
  */
 const WORLD_SAMPLE_LIMITS = Object.freeze(["no_bait_available", "out_of_stamina"]);
+/**
+ * How many draws this run asks for, read from the environment because EVERY invoker is one: `tools/live-action.mjs`
+ * calls this module's `run*Smoke` in-process (from its own parameter names, with no options object), so a knob that
+ * lived in the `import.meta.main` block below would never be read by the path a live run actually takes.
+ */
+export function paritySampleCount(env = process.env) {
+  const requested = Number(env.GAMEBUDDY_FISH_PARITY_SAMPLES ?? PARITY_SAMPLES);
+  return Number.isInteger(requested) && requested >= 1 ? requested : PARITY_SAMPLES;
+}
 /** The Mod's own address for one water tile (`BuildWaterTargetId`), reproduced here only to be CHECKED against a published row. */
 const WATER_TARGET_PREFIX = "water_";
 
@@ -72,7 +81,7 @@ export async function runFishHereSmoke(
   client,
   receipts,
   _config,
-  { terminalTimeoutMs = 60_000, paritySamples = PARITY_SAMPLES } = {},
+  { terminalTimeoutMs = 60_000, paritySamples = paritySampleCount() } = {},
 ) {
   const trace = [];
   try {
@@ -476,9 +485,9 @@ export function judgeParity(samples) {
  */
 export async function readReaderCensus(client) {
   if (typeof client?.dataQuery !== "function") throw new Error("fish_here_census_data_query_unavailable");
-  const index = await client.dataQuery({ table: "LocationFish" });
+  const index = await client.dataQuery({ table: "LocationFish", key: null });
   if (index?.status !== "index") throw new Error(`fish_here_census_index_absent:${index?.status ?? "no_answer"}`);
-  const keys = Array.isArray(index.rows) ? index.rows.filter((key) => typeof key === "string") : [];
+  const keys = Array.isArray(index.ids) ? index.ids.filter((key) => typeof key === "string") : [];
   if (keys.length === 0) throw new Error("fish_here_census_index_empty");
   const answers = [];
   for (const key of keys) {
@@ -588,10 +597,7 @@ if (import.meta.main) {
   const config = await readNativeClientConfig();
   const session = await connectNativeLocalClient(config, { loadModule: loadHostTestModule });
   try {
-    // HOW WIDE THE SAMPLE IS ASKED FOR, not promised: the world bounds it (see `WORLD_SAMPLE_LIMITS`) and the result
-    // reports both numbers. The gate's own default stays small; a deep reading is `GAMEBUDDY_FISH_PARITY_SAMPLES=90 node`.
-    const paritySamples = Number(process.env.GAMEBUDDY_FISH_PARITY_SAMPLES ?? PARITY_SAMPLES);
-    const result = await runFishHereSmoke(session.client, session.receipts, config, { paritySamples });
+    const result = await runFishHereSmoke(session.client, session.receipts, config);
     console.log(JSON.stringify(result));
     if (result.state !== "passed") process.exitCode = 2;
   } finally {
