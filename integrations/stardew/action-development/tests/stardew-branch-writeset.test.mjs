@@ -207,7 +207,7 @@ test("回归子集：18_ ledger 的八条工具 source summary 仍复现其裁�
   ];
   for (const [relPath, member, expected] of cases) {
     const methods = await extractBranches({ sourceRoot: SOURCE_ROOT, relPath, memberName: member, parser });
-    assert.equal(methods.length, 1, `${relPath}::${member} must exist`);
+    assert.deepEqual(methods.map((method) => method.member), [member], `${relPath}::${member} must exist`);
     assert.equal(
       methods[0].branches.filter((b) => b.candidate).length,
       expected,
