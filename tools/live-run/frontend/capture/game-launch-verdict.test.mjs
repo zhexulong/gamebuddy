@@ -33,7 +33,11 @@ const GATE_PEER = Object.freeze({
   endpoints: Object.freeze(["GameBuddy.HostGuardian.0123456789abcdef"]),
   examined: 203,
   onlyRunOwnGatePeer: true,
+  runGatePeerMode: "hello_only",
 });
+// The same peer, once the generation publishes a Guardian and the launcher runs it: still one
+// endpoint, still this run's own, but now a real server of the arm/launch/contain frames.
+const GATE_PEER_ARMABLE = Object.freeze({ ...GATE_PEER, runGatePeerMode: "armable" });
 const REAL_SUPERVISOR = Object.freeze({
   endpoints: Object.freeze(["GameBuddy.HostGuardian.0123456789abcdef", "GameBuddy.HostGuardian.fedcba9876543210"]),
   examined: 204,
@@ -72,20 +76,21 @@ test("the generic launch refusal is the guardian prerequisite only when no endpo
     assert.equal(reading.reason, "guardian_pipe_unreachable");
   }
   // One extra endpoint and the driver can no longer tell the gate peer from a supervisor, so the
-  // refusal is the product's to answer for.
-  const ambiguous = classifyLaunchRefusal({
-    step: LAUNCH_STEPS.launch,
-    code: "game_unavailable",
-    guardian: REAL_SUPERVISOR,
-  });
-  assert.equal(ambiguous.verdict, VERDICTS.failed);
+  // refusal is the product's to answer for. So is the same refusal when this run's own peer CAN arm.
+  for (const guardian of [REAL_SUPERVISOR, GATE_PEER_ARMABLE]) {
+    const ambiguous = classifyLaunchRefusal({ step: LAUNCH_STEPS.launch, code: "game_unavailable", guardian });
+    assert.equal(ambiguous.verdict, VERDICTS.failed);
+  }
 });
 
-test("guardianCanArm reads the population, not a flag", () => {
+test("guardianCanArm reads the population and the peer's own armability, not a flag", () => {
   assert.equal(guardianCanArm(GATE_PEER), false);
+  assert.equal(guardianCanArm(GATE_PEER_ARMABLE), true);
   assert.equal(guardianCanArm(NOTHING_BOUND), false);
   assert.equal(guardianCanArm(REAL_SUPERVISOR), true);
   assert.equal(guardianCanArm({ endpoints: undefined, onlyRunOwnGatePeer: false }), false);
+  // A caller that does not say which peer it bound cannot claim the peer is unable to arm.
+  assert.equal(guardianCanArm({ endpoints: ["GameBuddy.HostGuardian.0123456789abcdef"], onlyRunOwnGatePeer: true }), false);
 });
 
 test("the earlier links of the chain name themselves", () => {
@@ -131,11 +136,19 @@ test("a launch that got no answer at all is the same prerequisite, reached throu
   assert.equal(silenced.verdict, VERDICTS.notMeasured);
   assert.equal(silenced.reason, "guardian_pipe_unreachable");
   assert.match(silenced.detail, /ERR_CONNECTION_REFUSED/u);
-  assert.match(silenced.detail, /hello-only gate peer/u);
-  // With an endpoint that can arm bound, the same silence is the Host's own failure.
+  assert.match(silenced.detail, /gate peer \(hello-only: the generation publishes no resident Guardian\)/u);
+  // With an endpoint that can arm bound, the same silence is the Host's own failure - including when
+  // that endpoint is this run's OWN peer, now that it brokers arm/launch/contain for real.
   const fatal = classifySilentLaunch({ guardian: REAL_SUPERVISOR, detail: "the Host stopped answering its port" });
   assert.equal(fatal.verdict, VERDICTS.failed);
   assert.equal(fatal.reason, "game_never_reached_ready:host_silent_on_launch");
+  const ownPeerSilenced = classifySilentLaunch({
+    guardian: GATE_PEER_ARMABLE,
+    detail: "the page's own state route answered net::ERR_CONNECTION_REFUSED",
+  });
+  assert.equal(ownPeerSilenced.verdict, VERDICTS.failed);
+  assert.equal(ownPeerSilenced.reason, "game_never_reached_ready:host_silent_on_launch");
+  assert.match(ownPeerSilenced.detail, /armable: it runs the generation's resident Guardian/u);
 });
 
 test("readiness is one exact pair; a dead instance is a failure rather than a wait", () => {

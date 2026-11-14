@@ -16,19 +16,27 @@
 // session, and the driver's last act is the product's own stop control. A driver that spawned the game
 // would be measuring itself.
 //
-// THE HONEST ABSENCE. The frontend run launches the product through
+// THE HONEST LIMITS. The frontend run launches the product through
 // `tools/desktop-composition-launch.mjs`, which binds the run's own guardian endpoint (the one whose name
-// is derived from a per-launch id — this file deliberately does not spell it, `tools/lib/`
-// `live-run-preflight.test.mjs` holds the three files that do) and answers `hello` only: any
-// `arm_attempt`/`launch_role`/`contain_role` frame destroys that socket
-// (`tools/desktop-composition-launch.mjs:542-545`). The Host's composition hands that session to the game
+// is derived from a per-launch id - this file deliberately does not spell it, `tools/lib/`
+// `live-run-preflight.test.mjs` holds the files that do) and serves that session by starting the
+// INSTALLED generation's resident Guardian and relaying `arm_attempt`/`launch_role`/`contain_role` to
+// it (`tools/lib/guardian-role-broker.mjs`). The Host's composition hands that session to the game
 // runtime (`host/src/composition/desktop-host-composition.ts:241-247`), and `arm` is attempted inside
-// `launchRole` (`host/src/containment/runtime/core/contained-game-runtime.ts:192-201`), so on a machine
-// with no native Desktop supervisor the launch request reaches the Host and is refused there. This driver
-// therefore asserts every link up to and including the launch REQUEST, records the product's own refusal,
-// and reports `not_measured: guardian_pipe_unreachable` with the endpoint population that decided it
-// (`game-launch-verdict.mjs`). It never reports a pass it did not measure, and never a failure for a
-// prerequisite this machine does not hold.
+// `launchRole` (`host/src/containment/runtime/core/contained-game-runtime.ts:192-201`), so the launch
+// request reaches a real Job owner here. Two limits are reported rather than assumed away:
+//
+//   - whether that peer could ARM at all is read from the launch state's own role-broker mode
+//     (`roleBroker.mode`: `armable` / `hello_only`), because a generation that publishes no Guardian
+//     leaves the peer hello-only and then no role can be served;
+//   - the peer authenticates the Host by the per-launch id only - Node cannot reproduce the Desktop's
+//     pid/session/SID check - so a launch that reaches ready here proves the launch chain and is weaker
+//     evidence about the Desktop's containment policy.
+//
+// This driver asserts every link up to and including the launch REQUEST, records the product's own
+// refusal, and reports `not_measured: guardian_pipe_unreachable` only while nothing that can arm is
+// bound (`game-launch-verdict.mjs`). It never reports a pass it did not measure, and never a failure for
+// a prerequisite this machine does not hold.
 //
 // Named outcomes, never a bare timeout:
 //   NOT-MEASURED: guardian_pipe_unreachable | game_prerequisites_missing | game_install_absent |
@@ -265,9 +273,10 @@ function readLaunchState() {
 /**
  * The pid this run recorded for its launch driver — the process that created the gate's Guardian peer.
  *
- * Read so the driver can say WHICH endpoint it found: the gate's hello-only peer is a reachable endpoint
- * that can serve no role, and mistaking it for a supervisor is how a `not_measured` would silently become
- * a fabricated pass.
+ * Read so the driver can say WHICH endpoint it found: this run's own peer is a reachable endpoint whose
+ * ability to serve a role depends on the generation it launched (`roleBroker.mode` in the launch state),
+ * and mistaking it for a supervisor - or for a peer that cannot arm - is how a `not_measured` would
+ * silently become a fabricated pass in either direction.
  */
 function runLaunchDriverPid(launchStatePath) {
   if (launchStatePath === null) return { pid: null, alive: false };
@@ -372,9 +381,13 @@ async function hostAnswers(port) {
     runLaunchDriverPid: driverPid.pid,
     runLaunchDriverAlive: driverPid.alive,
     // The basis, stated: exactly one endpoint is bound and this run's own launch driver — the process
-    // that created it — is alive, so the endpoint is that gate's hello-only peer. A second endpoint
-    // makes this false, and the driver then refuses to excuse a launch refusal.
+    // that created it — is alive, so the endpoint is this run's own gate peer. A second endpoint makes
+    // this false, and the driver then refuses to excuse a launch refusal on this ground at all.
     onlyRunOwnGatePeer: probe.unreadable === null && probe.endpoints.length === 1 && driverPid.alive === true,
+    // What that peer said it can do. `hello_only` is the generation publishing no Guardian; `null` is a
+    // launch state written before the broker existed, and `guardianCanArm` reads it as unable to arm
+    // rather than assuming the better case.
+    runGatePeerMode: launch.state?.roleBroker?.mode ?? null,
   };
   record("guardian", guardian);
 

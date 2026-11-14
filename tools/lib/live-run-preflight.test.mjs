@@ -468,7 +468,8 @@ test("the guardian condition is reported ahead of a stale artifact, because a re
 const GUARDIAN_ENDPOINT_SPELLERS = Object.freeze([
   "host/src/bootstrap/wire/desktop-runtime-bootstrap.internal.ts",
   "desktop/GameBuddy.Desktop/DesktopHostBootstrapBroker.cs",
-  "tools/desktop-composition-launch.mjs",
+  "tools/lib/guardian-role-broker.mjs",
+  "tools/lib/guardian-role-broker.test.mjs",
 ]);
 
 test("the guardian endpoint prefix is still the spelling its producers and consumer use", () => {

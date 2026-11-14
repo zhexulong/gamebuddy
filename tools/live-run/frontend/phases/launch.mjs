@@ -383,6 +383,11 @@ async function main() {
   }
 
   say("bootstrap ack schema:", launch.ack.schema, "status=", launch.ack.status);
+  // The guardian session's own account of what it can serve, read before anything is launched: this is
+  // the fact a capture driver needs to say whether a launch refusal was a missing prerequisite or the
+  // product's own, so it is written into the launch state instead of being left in the log.
+  const roleBroker = launch.roleBrokerFacts();
+  say("guardian role broker:", JSON.stringify(roleBroker));
   say("child pid:", launch.child.pid, "alive=", launch.child.exitCode === null);
   say("ENTRY STDERR BYTES (=0 required):", Buffer.byteLength(stderr, "utf8"));
   if (stderr.length > 0) say("entry stderr (first 800):", stderr.slice(0, 800));
@@ -565,6 +570,7 @@ async function main() {
         preset,
         principal,
         wireCapture: wireCaptureFact,
+        roleBroker: launch.roleBrokerFacts(),
         title,
         launchUrlRedacted: launchUrl.replace(/boot=[^&]*/u, "boot=<redacted>"),
         measureRunRootsAfterLaunch: measurement,

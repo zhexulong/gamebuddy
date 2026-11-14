@@ -11,16 +11,16 @@
  *
  * The rule, in order:
  *
- * 1. A refusal whose bounded cause names the Guardian family is `guardian_pipe_unreachable`. The
- *    only server of that session in production is the native Desktop supervisor
- *    (`desktop/GameBuddy.Desktop/DesktopHostBootstrapBroker.cs:47`), so on a machine that runs the
- *    gate launcher instead, the Host's arm/launch frames have nowhere to go.
+ * 1. A refusal whose bounded cause names the Guardian family is `guardian_pipe_unreachable`. In
+ *    production the only server of that session is the native Desktop supervisor
+ *    (`desktop/GameBuddy.Desktop/DesktopHostBootstrapBroker.cs:47`); a harness run's server is the
+ *    gate launcher's own peer, which arms a role only when the generation publishes a resident
+ *    Guardian (`tools/lib/guardian-role-broker.mjs`).
  * 2. A launch refused with the generic `game_unavailable` while NO endpoint can arm is the same
- *    prerequisite, named the same way. "No endpoint can arm" is either "none bound" or "the only one
- *    bound is this run's own gate peer" - the gate answers `hello` and destroys the socket on any
- *    later frame (`tools/desktop-composition-launch.mjs:542-545`), so it is a reachable endpoint
- *    that cannot serve a role. With any other endpoint bound the driver cannot tell the two
- *    apart, so it takes the conservative direction and calls the refusal a product fault.
+ *    prerequisite, named the same way. "No endpoint can arm" is either "none bound", "the only one
+ *    bound is this run's own gate peer and that peer serves `hello` only", or "the caller did not say
+ *    which". With any other endpoint bound the driver cannot tell them apart, so it takes the
+ *    conservative direction and calls the refusal a product fault.
  * 3. `game_prerequisites_missing` is the Host's own word for "this machine is not staged", which is
  *    likewise not a measurement of the product's launch path.
  * 4. A refusal before the launch request - registration or activation - is an earlier prerequisite
@@ -86,13 +86,18 @@ const failed = (code, detail) => Object.freeze({ verdict: VERDICTS.failed, reaso
  *
  * `onlyRunOwnGatePeer` is the driver's own reading of its run: the launch driver recorded in
  * `<stage>/state/launch-driver.pid` is alive and exactly one endpoint is bound, so the endpoint is
- * that gate's hello-only peer. It is stated as the basis rather than assumed, and any second
- * endpoint makes it false so a real supervisor is never mistaken for the gate.
+ * that gate's own peer. Whether such a peer can ARM a role is a separate fact, and it is read from
+ * the peer itself (`runGatePeerMode`, the broker's own `mode`): `armable` when the generation
+ * published a resident Guardian and the launcher runs it, `hello_only` when it did not. A peer that
+ * is armable is a real server, so a launch it could not serve is the product's to answer for; a
+ * hello-only peer is the missing prerequisite this classification exists to name. A caller that does
+ * not say which is treated as unable to arm, which is the conservative direction for an excuse.
  */
-export function guardianCanArm({ endpoints, onlyRunOwnGatePeer }) {
+export function guardianCanArm({ endpoints, onlyRunOwnGatePeer, runGatePeerMode = null }) {
   if (!Array.isArray(endpoints)) return false;
   if (endpoints.length === 0) return false;
-  return onlyRunOwnGatePeer !== true;
+  if (onlyRunOwnGatePeer === true) return runGatePeerMode === "armable";
+  return true;
 }
 
 /**
@@ -143,9 +148,8 @@ export function classifyLaunchRefusal({
  * This is the same missing prerequisite reached through the transport instead of through a bounded refusal.
  * The Host treats the loss of its guardian session as controller EOF and leaves deliberately - "the one
  * bounded thing this process can still do about it is leave" (`host/src/bootstrap/wire/
- * desktop-runtime-bootstrap.internal.ts:188-196`) - and the gate launcher destroys that socket on the first
- * frame after `hello` (`tools/desktop-composition-launch.mjs:542-545`). With an endpoint that CAN arm
- * bound, the same silence is the Host's own failure and is named as one.
+ * desktop-runtime-bootstrap.internal.ts:188-196`). When the bound peer cannot arm a role that loss is
+ * the missing prerequisite; when it can, the same silence is the Host's own failure and is named as one.
  */
 export function classifySilentLaunch({ guardian, detail }) {
   const observed = typeof detail === "string" ? detail : "the launch request produced no answer";
@@ -162,8 +166,18 @@ export function describeGuardian(guardian) {
   const examined = typeof guardian?.examined === "number" ? guardian.examined : 0;
   const endpoints = Array.isArray(guardian?.endpoints) ? guardian.endpoints : [];
   const bound = endpoints.length === 0 ? "none bound" : `bound: ${endpoints.join(", ")}`;
-  const owning = guardian?.onlyRunOwnGatePeer === true ? "; the only one is this run's own hello-only gate peer" : "";
+  const owning =
+    guardian?.onlyRunOwnGatePeer === true
+      ? `; the only one is this run's own gate peer (${describeGatePeerMode(guardian?.runGatePeerMode)})`
+      : "";
   return `${String(examined)} named pipe(s) examined, ${bound}${owning}`;
+}
+
+/** The gate peer's own account of whether it can arm a role, in the words the report uses. */
+function describeGatePeerMode(mode) {
+  if (mode === "armable") return "armable: it runs the generation's resident Guardian";
+  if (mode === "hello_only") return "hello-only: the generation publishes no resident Guardian";
+  return "armability unread: the launch state records no role-broker mode";
 }
 
 /**

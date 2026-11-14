@@ -474,7 +474,10 @@ test("desktop composition launch never references the removed entry or the chat-
     "utf8",
   );
   assert.match(source, /desktop-host-entry\.internal\.js/);
-  assert.match(source, /GameBuddy\.HostGuardian\.\$\{bootstrapId\}/);
+  // The guardian endpoint is no longer spelled here: `tools/lib/guardian-role-broker.mjs` owns the
+  // session (and its own test asserts the spelling), so what this launcher must be seen doing is
+  // reaching that peer rather than binding a look-alike of it.
+  assert.match(source, /from "\.\/lib\/guardian-role-broker\.mjs"/);
   assert.doesNotMatch(
     source,
     /dialogue-web-main|start-production-artifact|chat-tavern-live|CHAT_LIVE_ARTIFACT|GAMEBUDDY_CHAT_LIVE_ARTIFACT/,

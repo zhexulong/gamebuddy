@@ -9,10 +9,16 @@
  * child validates as its launcher-owned root layout (LOCALAPPDATA-relative,
  * mirroring `gamebuddy-windows-root-layout/v1`). There is no second entry,
  * alias, or fallback: the gate plays the launcher/broker role the Desktop app
- * plays in production, including the guardian-session pipe peer that answers
- * the wire's `hello` with the exact binding facts. Stardew containment
- * (`arm_attempt`/`launch_role`/`contain_role`) is deliberately never forged:
- * any non-hello guardian frame destroys the session so the wire fails closed.
+ * plays in production, including the guardian-session pipe peer that answers the
+ * wire's `hello` with the exact binding facts.
+ *
+ * The peer's three role commands (`arm_attempt`/`launch_role`/`contain_role`) are
+ * served by the generation's OWN resident Guardian, started from the installed
+ * generation and relayed frame for frame - `tools/lib/guardian-role-broker.mjs`
+ * owns that wire and states exactly which identity check the harness cannot
+ * reproduce. A generation that publishes no Guardian keeps the previous
+ * hello-only behaviour: the socket is destroyed on the first role command, so the
+ * wire fails closed instead of a role being forged.
  *
  * The composed surface launch URL is delivered over the child IPC channel as
  * `gamebuddy-desktop-composition-ready/v1`, so the production stdout ack
@@ -20,12 +26,20 @@
  */
 import { createHash, randomBytes } from "node:crypto";
 import { spawn } from "node:child_process";
-import { createServer } from "node:net";
 import { cp, lstat, mkdir, readFile, readdir } from "node:fs/promises";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 
+import {
+  admitGuardianImage,
+  createGuardianRoleBroker,
+  guardianImagePaths,
+  guardianPipeEndpoint,
+  validateGuardianHelloRequest,
+} from "./lib/guardian-role-broker.mjs";
+
+export { validateGuardianHelloRequest };
+
 const BOOTSTRAP_SCHEMA = "gamebuddy-desktop-host-bootstrap/v1";
-const GUARDIAN_SESSION_SCHEMA = "gamebuddy-desktop-guardian-session/v1";
 const ROOT_LAYOUT_SCHEMA = "gamebuddy-windows-root-layout/v1";
 const READY_SCHEMA = "gamebuddy-desktop-composition-ready/v1";
 /**
@@ -39,8 +53,6 @@ const READY_SCHEMA = "gamebuddy-desktop-composition-ready/v1";
 const BOOTSTRAP_STATUS_SCHEMA = "gamebuddy-desktop-host-bootstrap-status/v1";
 const POINTER_SCHEMA = "gamebuddy-host-production-current/v2";
 const RUNTIME_ADMISSION_SCHEMA = "host-runtime-admission/v1";
-const MAX_GUARDIAN_FRAME_BYTES = 16_384;
-const GUARDIAN_HELLO_TIMEOUT_MS = 30_000;
 
 export const COMPOSITION_SURFACES = Object.freeze(["composed-reference-game", "chat-only", "management"]);
 const sha256 = (value) => createHash("sha256").update(value).digest("hex");
@@ -291,27 +303,6 @@ function isSessionEntry(value) {
   );
 }
 
-export function validateGuardianHelloRequest(value, expected) {
-  return (
-    exactKeysInOrder(value, [
-      "schema",
-      "protocolVersion",
-      "operation",
-      "bootstrapId",
-      "generation",
-      "inventoryDigest",
-      "runtimeAdmissionSha256",
-    ]) &&
-    value.schema === GUARDIAN_SESSION_SCHEMA &&
-    value.protocolVersion === 1 &&
-    value.operation === "hello" &&
-    value.bootstrapId === expected.bootstrapId &&
-    value.generation === expected.generation &&
-    value.inventoryDigest === expected.inventoryDigest &&
-    value.runtimeAdmissionSha256 === expected.runtimeAdmissionSha256
-  );
-}
-
 export function validateCompositionReadyMessage(value) {
   return (
     exactKeysInOrder(value, ["schema", "protocolVersion", "launchUrl"]) &&
@@ -504,110 +495,6 @@ export async function installDesktopCompositionGeneration({ artifactRoot, rootLa
   return rootLayout;
 }
 
-function serveGuardianHello({ bootstrapId, generation, inventoryDigest, runtimeAdmissionSha256 }) {
-  const endpoint = `\\\\.\\pipe\\GameBuddy.HostGuardian.${bootstrapId}`;
-  const server = createServer();
-  let session;
-  let settled = false;
-  const hello = new Promise((resolveHello, rejectHello) => {
-    const fail = (error) => {
-      if (settled) return;
-      settled = true;
-      try {
-        session?.destroy();
-      } catch {
-        /* already gone */
-      }
-      server.close(() => undefined);
-      rejectHello(error);
-    };
-    const timer = setTimeout(
-      () => fail(new Error("desktop_compose_guardian_hello_timeout")),
-      GUARDIAN_HELLO_TIMEOUT_MS,
-    );
-    server.once("error", () => {
-      clearTimeout(timer);
-      fail(new Error("desktop_compose_guardian_pipe_unavailable"));
-    });
-    server.on("connection", (socket) => {
-      if (session !== undefined || settled) {
-        socket.destroy();
-        return;
-      }
-      session = socket;
-      let buffer = Buffer.alloc(0);
-      const reject = () => fail(new Error("desktop_compose_guardian_hello_rejected"));
-      socket.on("data", (chunk) => {
-        if (settled) {
-          // The one authenticated session carries no further protocol: any
-          // non-hello frame (arm/launch/contain) must never be forged here.
-          socket.destroy();
-          return;
-        }
-        buffer = Buffer.concat([buffer, chunk]);
-        const newline = buffer.indexOf(10);
-        if (newline < 0) {
-          if (buffer.length > MAX_GUARDIAN_FRAME_BYTES) reject();
-          return;
-        }
-        if (newline !== buffer.length - 1 || buffer.includes(0) || buffer.includes(13)) return reject();
-        let value;
-        try {
-          value = JSON.parse(buffer.subarray(0, newline).toString("utf8"));
-        } catch {
-          return reject();
-        }
-        if (!validateGuardianHelloRequest(value, { bootstrapId, generation, inventoryDigest, runtimeAdmissionSha256 }))
-          return reject();
-        clearTimeout(timer);
-        settled = true;
-        socket.write(
-          `${JSON.stringify({ schema: GUARDIAN_SESSION_SCHEMA, protocolVersion: 1, operation: "hello", status: "accepted", bootstrapId, generation, inventoryDigest, runtimeAdmissionSha256 })}\n`,
-          (error) => {
-            if (error != null) {
-              fail(new Error("desktop_compose_guardian_hello_rejected"));
-              return;
-            }
-            resolveHello();
-          },
-        );
-      });
-      socket.on("error", () => {
-        /* peer teardown is normal */
-      });
-      socket.on("close", () => {
-        if (session === socket) session = undefined;
-      });
-    });
-  });
-  // The launcher may await the acknowledgement before the hello; keep the
-  // promise rejection observable to awaiters without an unhandled rejection.
-  void hello.catch(() => undefined);
-  return Object.freeze({
-    hello,
-    listen: () =>
-      new Promise((resolveListen, rejectListen) => {
-        server.once("error", rejectListen);
-        server.listen(endpoint, () => {
-          server.off("error", rejectListen);
-          resolveListen();
-        });
-      }),
-    dispose: () => {
-      if (settled && session === undefined) {
-        server.close(() => undefined);
-        return;
-      }
-      try {
-        session?.destroy();
-      } catch {
-        /* already gone */
-      }
-      server.close(() => undefined);
-    },
-  });
-}
-
 function waitForBootstrapAck(child, timeoutMs, stderrTail = () => "", onStatus = undefined) {
   return new Promise((resolveAck, rejectAck) => {
     let data = "";
@@ -768,7 +655,22 @@ export async function launchDesktopCompositionGateChild({
   await installDesktopCompositionGeneration({ artifactRoot: admitted.artifactRoot, rootLayout });
   const bootstrapId = randomBytes(32).toString("hex");
   const frame = composeDesktopBootstrapFrame({ bootstrapId, ...pointer, rootLayout });
-  const peer = serveGuardianHello({ bootstrapId, ...pointer });
+  // The generation's own resident Guardian is admitted by its published digest before any session
+  // exists, so a launch either brokers roles from the image the generation shipped or says in one
+  // line which path had no image. `admitGuardianImage` returning null is the hello-only mode, never
+  // a reason to throw: a generation without a Guardian still serves a composition that needs no role.
+  const guardian = await admitGuardianImage({ generationRoot: rootLayout.generationRoot });
+  const guardianImagePath = guardianImagePaths(rootLayout.generationRoot).image;
+  // No `spawnImpl` here on purpose: the broker spawns the Guardian, not the Host, and a caller's spawn
+  // seam observes the child it launched (the phase's tracker rebinds its own `child` on every spawn), so
+  // routing the Guardian through it would replace that child with the guardian's pid.
+  const peer = createGuardianRoleBroker({
+    bootstrapId,
+    binding: pointer,
+    image: guardian,
+    imagePath: guardianImagePath,
+    endpoint: guardianPipeEndpoint(bootstrapId),
+  });
   await peer.listen();
   // The pipe server is listening from here on: every failure below must dispose it, or a launch that
   // did not complete leaves a live guardian endpoint behind.
@@ -848,6 +750,9 @@ export async function launchDesktopCompositionGateChild({
       rootLayout,
       frame,
       ack,
+      // The broker's redacted account of what the guardian session did: the image digest that ran,
+      // the pids, one row per command, and every refusal name. No token, frame or endpoint is in it.
+      roleBrokerFacts: () => peer.facts(),
       // The honest isolation subject travels with the launch: the child's real data root is the
       // deployment manifest's `runtimeRoot`, not the bootstrap frame's declared layout. A driver
       // that re-derives the narrow `GameBuddy\{data,operational,presentation}` check can report a
@@ -862,7 +767,7 @@ export async function launchDesktopCompositionGateChild({
       dispose: () => peer.dispose(),
     });
   } catch (error) {
-    peer.dispose();
+    await peer.dispose();
     throw error;
   }
 }

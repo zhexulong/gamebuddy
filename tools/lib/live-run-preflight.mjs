@@ -406,8 +406,8 @@ export function probeDesktopSupervisor({ localAppData = process.env.LOCALAPPDATA
  * The first is the product path and is stated as the measurement it is: the supervisor owns the endpoint, and on a
  * machine with no installed generation it refuses before binding. The second is the structural limit that survives an
  * install: a supervisor never serves a harness run, because the bootstrap id it mints per launch reaches only the Host
- * child it starts and its roots are the machine's own. The third exists and is named rather than implied, because it is
- * a real route for a chat-only run and a dead one for anything that arms, launches or contains a game.
+ * child it starts and its roots are the machine's own. The third names the harness route that does serve the whole
+ * session, including the arm/launch/contain frames a game launch needs.
  */
 const GUARDIAN_SUPERVISOR_ROUTE_ABSENT = Object.freeze({
   noProgramRoot:
@@ -422,7 +422,7 @@ const GUARDIAN_SUPERVISOR_CANNOT_SERVE_A_RUN =
   "and even a running supervisor could not serve this run's roots: the bootstrap id is minted per launch and reaches only the Host child it starts (desktop/GameBuddy.Desktop/RuntimeSupervisor.cs:143-144, :184), so the Host this run launches has no endpoint to arm on, and the supervisor's own composition reads the machine's fixed LOCALAPPDATA\\GameBuddy\\{data,operational,presentation} (CurrentUserRootLayout.cs:134-139) rather than the run root - the page it opened would be the installed product, not this run's checkout";
 
 const GUARDIAN_GATE_PEER_ROUTE =
-  "or drive a chat-only run through tools/desktop-composition-launch.mjs, which binds the same endpoint for the launch it drives and answers hello only: it destroys the socket on any arm_attempt/launch_role/contain_role frame (tools/desktop-composition-launch.mjs:542-545), so it cannot carry a run that arms, launches or contains a game - a broker for those frames does not exist in this tree, which is a harness gap rather than an operator step";
+  "or drive the run through tools/desktop-composition-launch.mjs, which binds this endpoint for the launch it drives and serves the whole session: `hello` from its own bootstrap binding, and arm_attempt/launch_role/contain_role by starting the INSTALLED generation's resident Guardian (native/windows-bootstrap-guardian/win-x64) and relaying frame for frame (tools/lib/guardian-role-broker.mjs). It authenticates that peer by the per-launch bootstrap id alone - Node cannot ask a named-pipe server for its client's pid, session or SID the way desktop/GameBuddy.Desktop/DesktopHostBootstrapBroker.cs:60-79 does - so a run it carries is evidence about the launch chain and weaker evidence about the Desktop's containment policy";
 
 /** Which of the three supervisor facts applies, chosen from what the probe actually read. */
 function guardianSupervisorRoute(supervisor) {
