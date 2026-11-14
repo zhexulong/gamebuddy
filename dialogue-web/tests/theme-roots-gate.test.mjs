@@ -42,37 +42,49 @@
  *
  * GATE B: KEY-SET PARITY
  *
- * Every appearance root must declare the same key set as the base root. The rule is stated as the property behind
- * it rather than as "the two lists must match", because they do NOT match today and must not: the light root
- * re-states only what the light canvas changes. So a key the base declares and an appearance does not is a finding
- * UNLESS its value carries no appearance at all:
+ * K_dark is the base root's key set (`:root`, 64 tokens today) and K_light the light root's (24). Two rules:
  *
- *   - a pure alias (`var(--x)`) follows the literal it points at, and the whole chain is resolved: the aliased key
- *     must be re-stated in that appearance, or its own value must be appearance-neutral. An alias to a colour only
- *     the dark root declares is a dark colour in the light appearance, which is the defect, and it is named with
- *     the chain that produced it.
- *   - a length, a time, an easing or a font stack is appearance-neutral by nature: `--space-3: 12px` is the same
- *     12 px in every appearance, and re-stating it would make one fact two.
- *   - everything else - a colour, a shadow, and a percentage, because a share is measured against the canvas it
- *     sits on (which is why `--banner-wash` is 12% and 6%) - is appearance-bearing and must be re-stated. A key
- *     that is deliberately one-sided says so in `ONE_SIDED_TOKENS` with the appearance it is missing from and the
- *     reason, and an entry whose key is no longer one-sided is `one_sided_token_expired`.
+ *   1. K_light ⊆ K_dark. A key the light root declares and the base root does not has a value in no appearance at
+ *      all, so it is a finding even though the set is empty today: an assertion that only holds because nobody has
+ *      written the defect yet is not an assertion.
+ *   2. every k ∈ K_dark \ K_light is legal exactly when one of two properties holds:
  *
- * The other direction is unconditional: a key an appearance declares and the base does not is
- * `theme_token_orphan:<appearance>:<key>` - there is no appearance in which that key has an inherited value.
+ *        P1 appearance-neutral. The value carries a unit or a family no appearance can change: a time or an easing
+ *           (`150ms`, `0.2s`, `cubic-bezier(...)`, `steps(...)`, `ease`, `linear`), a length (`56px`, `0.1em`,
+ *           `28rem`, `40ch`, `12cqi`), or a font-stack keyword (`monospace`, `system-ui`, `serif`, ...). The unit is
+ *           what is matched, not the letter: `--font-mono`'s `monospace` is typography, never motion.
+ *        P2 closed-loop alias. The value is exactly `var(--target)`, and following the chain from k to its terminal
+ *           token must end on a token K_light re-states explicitly. An alias to a token only the dark root declares
+ *           is a dark colour the light appearance inherits - the same defect, one indirection out.
+ *
+ *      Anything else fails, in the operator's own words:
+ *
+ *        `color_scheme_parity_failed: <k> declares a theme-dependent color literal (<value>) on the base root, but
+ *         neither restates it in light root nor aliases an already-restated token.`
+ *        `color_scheme_parity_failed: <k> aliases <target>, but the terminal token is missing from the light root.`
+ *
+ *      `<target>` is the terminal token - the one the second sentence then says is missing; a chain longer than one
+ *      hop is printed beside its finding. A percentage is not neutral (a share is measured against the canvas it
+ *      sits on, which is why `--banner-wash` is 12% and 6%), so a one-sided one fails through the literal message;
+ *      "color literal" there means "a value that only fits the canvas it was written on".
+ *
+ * THE CHAIN IS BOUNDED. `MAX_ALIAS_HOPS` caps the walk. A token that reappears on its own chain is `alias_cycle`
+ * and a chain that outlives the cap is `alias_chain_too_long`; neither may pass as "not an alias".
+ *
+ * NO EXEMPTION TABLE. The two properties are exhaustive by construction, so the table holds no row and the reading
+ * prints `exemptions 0`. A third category would be a rule this gate cannot state - the honest repair for the next
+ * one-sided token would be to restate the rule, not to name the key.
  *
  * WHAT THIS DOES NOT READ (named so the reading is not overclaimed)
  *
  *   - `style.css` only. An inline `style={{ colorScheme: "dark" }}` in a component, or a `color-scheme` in
  *     `index.html`, is outside this gate; the mounted spec is what sees the painted result.
- *   - the winning cascade. A root's scheme is the last declaration written for that appearance in source order;
- *     declarations spread across `@layer`s are read, but which layer wins is the browser's business.
- *   - whether a re-stated value is the RIGHT colour, or a pair is legible: `tools/check-contrast-tokens.mjs` owns
- *     the AA floor, and it holds each appearance's own table.
- *
- * The reading prints the population (appearances, key counts, the one-sided keys with their classification), so
- * "0 violation(s)" arrives with the number of keys it examined - a sheet with no appearance root at all is
- * `blocked` by the appearance union assertion, never green.
+ *   - the winning cascade. A root's scheme is taken as the last declaration written for that appearance in source
+ *     order; declarations spread across `@layer`s are read, but which layer wins is the browser's business.
+ *   - whether a re-stated value is the RIGHT colour, or a pair is legible: `tools/check-contrast-tokens.mjs` owns the
+ *     AA floor, and it holds each appearance's own table.
+ *   - an alias whose target nothing declares. Stylelint's `value-no-unknown-custom-properties` owns that; here it
+ *     arrives as the alias message, because the terminal token is missing from the light root too.
  *
  * IF THE PALETTE MOVES TO `light-dark()`
  *
@@ -81,20 +93,22 @@
  * all of them. That migration is deliberately not here: it is a value change with its own risk, and `cb723b6d` kept
  * the custom properties on purpose. When it happens, this premise is what has to be restated with it - the property
  * to assert becomes "a colour token is declared once, as the `light-dark()` pair", which is a different reading of
- * the same sheet - rather than waived or blanket-exempted.
+ * the same sheet - rather than waived or exempted.
  *
  * RED PROOF, each rule seen red on a real injected violation
  *
- *   - `--surface-elevated` deleted from the light root -> `theme_token_not_restated:light:surface-elevated`, and the
- *     alias that reads it -> `theme_token_not_restated:light:surface-hover`, naming the chain
- *     `--surface-hover -> --surface-elevated`;
- *   - `color-scheme: dark` added to `.form-select` -> `color_scheme_off_theme_root:.form-select`;
- *   - the base root written as `light dark` -> `color_scheme_two_valued::root` and
- *     `color_scheme_root_undeclared:dark`;
- *   - the light root naming `dark` -> `color_scheme_disagrees_with_root:light`;
- *   - a token declared on the light root only -> `theme_token_orphan:light:<token>`;
- *   - an exemption matching no selector -> `color_scheme_exemption_expired:<selector>`, and one for a key both roots
- *     declare -> `one_sided_token_expired:light:<token>`;
+ *   - `--card-border-glow: #3a2226` added to the base root -> `color_scheme_parity_failed: --card-border-glow
+ *     declares a theme-dependent color literal (#3a2226) ...` (scenario A below, and on the real sheet);
+ *   - `--badge-border: var(--palette-amber-base)` with the amber literal only on the base root ->
+ *     `color_scheme_parity_failed: --badge-border aliases --palette-amber-base, but the terminal token is missing
+ *     from the light root.` (scenario B below, and on the real sheet);
+ *   - `--space-7: 28px` added to the base root -> green, `exemptions 0` (scenario C below, and on the real sheet);
+ *   - `--surface-elevated` deleted from the light root -> the literal message for it, and for `--surface-hover` the
+ *     alias message naming the terminal it can no longer follow;
+ *   - two tokens aliasing each other -> `alias_cycle`; a chain past the cap -> `alias_chain_too_long`;
+ *   - `color-scheme: dark` on `.form-select` -> `color_scheme_off_theme_root:.form-select`; `:root` written as
+ *     `light dark` -> `color_scheme_two_valued::root`; the light root naming `dark` ->
+ *     `color_scheme_disagrees_with_root:light`; a light-only token -> `light_root_declares_unknown_key`;
  *   - history, through `pnpm replay:gate-on-history`: at `d7b214bd`, the revision that still carried the
  *     `.form-select` hardcode, the gate `fired` with four findings naming `.form-select` and the three roots that
  *     stated no scheme; at `bd49cc52`, the commit that moved the declaration to the roots, `did-not-fire`.
@@ -115,17 +129,21 @@ const APPEARANCE_ROOT = /^:root(?:\[data-theme="([a-z0-9-]+)"\])?$/u;
 const COLOR_SCHEME = "color-scheme";
 /** `color-scheme` takes one appearance, or `only` plus one. `light dark` is the form this product rejected. */
 const ONE_APPEARANCE = /^(?:only\s+)?(dark|light)$/u;
-/** A token that is exactly one alias of another token. */
+/** A token whose whole value is one alias of another token. */
 const ALIAS = /^var\(\s*--([a-z0-9-]+)\s*\)$/u;
-/** A length, a time or an angle: geometry has no appearance, so no ramp can change it. */
-const DIMENSION = /^-?(?:\d+|\d*\.\d+)(?:px|rem|em|ms|s|vh|vw|dvh|fr|deg|ch)$/u;
-const EASING = /^(?:cubic-bezier\(|steps\(|ease|linear|step-start|step-end)/u;
-/** One font family: a word or a quoted name. A stack is several of them, comma-separated. */
-const FONT_FAMILY = /^(?:[A-Za-z0-9_-]+|"[^"]*"|'[^']*')$/u;
-/** How many `var()` hops an alias may take before the chain is a loop. */
-const MAX_ALIAS_DEPTH = 8;
+/** How many alias hops a chain may take before it is `alias_chain_too_long`. */
+const MAX_ALIAS_HOPS = 8;
 /** The base root's name in the finding codes, so every report says which root it is about. */
 const BASE = "base";
+
+/** A time or a duration: `150ms`, `0.2s`. The number is required, so `monospace`'s `s` is not a duration. */
+const TIME = /(?:^|[^\w.-])\d*\.?\d+(?:ms|s)\b/u;
+/** An easing: a function, or one of the keywords a transition accepts. */
+const EASING = /(?:cubic-bezier|steps|linear)\(|(?:^|[^\w-])(?:ease|ease-in|ease-out|ease-in-out|linear|step-start|step-end)(?:$|[^\w-])/u;
+/** A length: the units this sheet writes its geometry and typography in. */
+const LENGTH = /(?:^|[^\w.-])\d*\.?\d+(?:px|rem|em|ch|cqi)\b/u;
+/** A generic font family. `--font-mono`'s whole value is a stack of these. */
+const FONT_FAMILY = /(?:^|[^\w-])(?:serif|sans-serif|monospace|system-ui|ui-monospace|ui-sans-serif|ui-serif|cursive|fantasy)(?:$|[^\w-])/u;
 
 /**
  * Selectors that genuinely need their own `color-scheme`, as `{ selector, reason }`.
@@ -137,13 +155,13 @@ const BASE = "base";
 const COLOR_SCHEME_EXEMPTIONS = [];
 
 /**
- * Tokens that are deliberately declared in one root only, as `{ token, missingFrom, reason }`.
+ * One-sided tokens the two properties below cannot express, as `{ token, missingFrom, reason }`.
  *
- * Empty: every one-sided key today is one-sided for a reason the gate can read off its own value (an alias, or a
- * value that carries no appearance), so nothing needs a written exception. An entry names ONE token and the
- * appearance that omits it, and stops being valid once the token is declared there.
+ * Empty, and it should stay empty: P1 (appearance-neutral value) and P2 (closed alias to a re-stated terminal) are
+ * exhaustive by construction, so a row here would mean the rule is wrong rather than that a key is special. The
+ * reading prints `exemptions 0` so a reader can see the claim rather than trust it.
  */
-const ONE_SIDED_TOKENS = [];
+const PARITY_EXEMPTIONS = [];
 
 /** The appearances this product paints, from the union that owns them. */
 function readAppearances(source) {
@@ -172,6 +190,11 @@ export function readRules(css) {
   const open = [];
   let buffer = "";
   let index = 0;
+  const declare = (rule, statement) => {
+    const colon = statement.indexOf(":");
+    if (colon <= 0) return;
+    rule.declarations.push({ property: statement.slice(0, colon).trim(), value: statement.slice(colon + 1).trim() });
+  };
   while (index < css.length) {
     const character = css[index];
     if (character === "/" && css[index + 1] === "*") {
@@ -206,15 +229,8 @@ export function readRules(css) {
     if (character === "}" || character === ";") {
       const rule = open.at(-1);
       const statement = buffer.trim();
-      if (character === "}" && rule !== undefined && !rule.atRule && statement.length > 0) {
-        const colon = statement.indexOf(":");
-        if (colon > 0) rule.declarations.push({ property: statement.slice(0, colon).trim(), value: statement.slice(colon + 1).trim() });
-      }
+      if (rule !== undefined && !rule.atRule && statement.length > 0) declare(rule, statement);
       if (character === "}" && open.length > 0) open.pop();
-      if (character === ";" && rule !== undefined && !rule.atRule && statement.length > 0) {
-        const colon = statement.indexOf(":");
-        if (colon > 0) rule.declarations.push({ property: statement.slice(0, colon).trim(), value: statement.slice(colon + 1).trim() });
-      }
       buffer = "";
       index += 1;
       continue;
@@ -238,33 +254,49 @@ export function readAppearanceRoots(rules) {
 /** The appearance a selector names, or `base` for the bare `:root`. */
 const appearanceOf = (selector) => APPEARANCE_ROOT.exec(selector)[1] ?? BASE;
 
-/** True when the value carries no appearance: a dimension, an easing, or a font stack. */
-export function isAppearanceNeutral(value) {
-  if (value === "0" || DIMENSION.test(value)) return true;
-  const parts = value.split(/\s+/u).filter((part) => part.length > 0);
-  if (parts.length > 0 && parts.every((part) => part === "0" || DIMENSION.test(part))) return true;
-  if (EASING.test(value)) return true;
-  const families = value.split(",").map((family) => family.trim());
-  return families.length > 1 && families.every((family) => FONT_FAMILY.test(family));
+/**
+ * The appearance-neutral family a value belongs to, or `null` when it carries an appearance.
+ *
+ * The families are the operator's three - `motion`, `geometry`, `typography` - and the order matters: a font stack
+ * is read before the units, so `--font-mono`'s `monospace` is typography even though the value also contains the
+ * letters `s` and `em` further along the stack.
+ */
+export function neutralFamily(value) {
+  if (FONT_FAMILY.test(value)) return "typography";
+  if (TIME.test(value) || EASING.test(value)) return "motion";
+  if (LENGTH.test(value)) return "geometry";
+  return null;
 }
 
 /**
- * Follow a token's alias chain to the literal it ends at: `{ chain, terminal, value }`, where `chain` is the alias
- * path (so a finding can quote it), `terminal` the token that writes a literal, and `value` that literal.
+ * Follow a token's alias chain to the literal it ends at.
+ *
+ * `fate` says how the walk ended: `literal` (a value that is not an alias), `cycle` (a token reappeared),
+ * `too_long` (the walk outlived `MAX_ALIAS_HOPS`), or `literal` with no value (the target nothing declares). The
+ * bound is stated once, here, so no caller can walk an unbounded chain.
  */
-export function resolveAlias(tokens, token) {
+export function resolveTerminal(tokens, token) {
   const chain = [token];
   let current = token;
-  for (let depth = 0; depth <= MAX_ALIAS_DEPTH; depth += 1) {
+  for (let hop = 0; hop <= MAX_ALIAS_HOPS; hop += 1) {
     const value = tokens.get(current);
-    if (value === undefined) return { chain, terminal: current, value: undefined, loop: false };
-    const alias = ALIAS.exec(value);
-    if (alias === null) return { chain, terminal: current, value, loop: false };
+    const alias = value === undefined ? null : ALIAS.exec(value);
+    if (alias === null) return { chain, terminal: current, literal: value, fate: "literal" };
     current = alias[1];
+    if (chain.includes(current)) return { chain: [...chain, current], terminal: current, fate: "cycle" };
     chain.push(current);
   }
-  return { chain, terminal: current, value: tokens.get(current), loop: true };
+  return { chain, terminal: current, fate: "too_long" };
 }
+
+/** The operator's message for a one-sided key whose value carries an appearance and aliases nothing. */
+export const parityLiteralMessage = (token, value) =>
+  `color_scheme_parity_failed: --${token} declares a theme-dependent color literal (${value}) on the base root, ` +
+  "but neither restates it in light root nor aliases an already-restated token.";
+
+/** The operator's message for a one-sided key whose alias chain no longer ends on a re-stated token. */
+export const parityAliasMessage = (token, terminal) =>
+  `color_scheme_parity_failed: --${token} aliases --${terminal}, but the terminal token is missing from the light root.`;
 
 /**
  * Gate A over one sheet: every `color-scheme` is written on an appearance root, every appearance asks the platform
@@ -289,7 +321,6 @@ export function colorSchemeFindings(rules, appearances) {
         findings.push({
           code: `color_scheme_off_theme_root:${offRoot.join(",")}`,
           selector: subject,
-          atRules: rule.atRules,
           detail:
             `${subject} declares \`color-scheme: ${declaration.value}\`, so the platform's own widgets are drawn ` +
             `in that appearance whatever the page says: \`${COLOR_SCHEME}\` belongs on the appearance roots ` +
@@ -391,159 +422,195 @@ export function readTokenTables(rules) {
 }
 
 /**
- * Gate B over one sheet: every appearance declares the base root's whole token set, minus the keys whose value
- * carries no appearance (an alias that lands on a re-stated literal, a length, a time, an easing, a font stack).
+ * Gate B over one sheet: K_light ⊆ K_dark, and every one-sided key is either appearance-neutral or an alias whose
+ * terminal token the light root re-states. Returns the findings and, per appearance, the classification of every
+ * one-sided key, so the reading prints the population rather than a count that could be a zero.
  */
 export function tokenParityFindings(rules, expectedAppearances) {
   const findings = [];
   const { base, appearances } = readTokenTables(rules);
   const reading = [];
 
-  for (const name of expectedAppearances) {
-    const table = appearances.get(name);
+  if (base.size === 0)
+    findings.push({
+      code: "population_empty",
+      message:
+        "population_empty: the base root declares no custom property, so there is no token set to compare and this " +
+        "gate would agree with itself",
+    });
+
+  for (const appearance of expectedAppearances) {
+    const table = appearances.get(appearance);
     if (table === undefined) {
       findings.push({
-        code: `appearance_root_missing:${name}`,
-        appearance: name,
-        detail:
-          `\`export type Appearance\` in appearance.ts names \`${name}\`, and no \`:root[data-theme="${name}"]\` rule ` +
-          "declares a token for it: that appearance would paint the base root's dark set",
+        code: `appearance_root_missing:${appearance}`,
+        message:
+          `appearance_root_missing: no \`:root[data-theme="${appearance}"]\` rule declares a token, so the ` +
+          `${appearance} appearance would paint the base root's dark set`,
       });
       continue;
     }
-    const orphans = [...table.keys()].filter((token) => !base.has(token));
-    for (const token of orphans)
+
+    const lightOnly = [...table.keys()].filter((token) => !base.has(token)).sort();
+    for (const token of lightOnly)
       findings.push({
-        code: `theme_token_orphan:${name}:${token}`,
-        appearance: name,
-        token,
-        detail:
-          `--${token} is declared on the ${name} root and on no base root, so there is no appearance in which it ` +
-          "has a value: declare it in the base root and override it where the appearance changes it",
+        code: `light_root_declares_unknown_key:${token}`,
+        message:
+          `light_root_declares_unknown_key: --${token} is declared on the ${appearance} root and on no base root, ` +
+          "so there is no appearance in which it has a value",
       });
 
+    const exemptions = PARITY_EXEMPTIONS.filter((entry) => entry.missingFrom === appearance);
+    const exempted = new Set();
     const oneSided = [...base.keys()].filter((token) => !table.has(token));
-    const declared = ONE_SIDED_TOKENS.filter((entry) => entry.missingFrom === name);
-    const consumed = new Set();
-    /** Why each one-sided key is one-sided: `alias`, `neutral`, `declared`, or `violation`. */
     const kinds = new Map();
     for (const token of oneSided) {
       const value = base.get(token);
-      const exemption = declared.find((entry) => entry.token === token);
+      const exemption = exemptions.find((entry) => entry.token === token);
       if (exemption !== undefined) {
-        consumed.add(token);
-        kinds.set(token, "declared");
-        if (typeof exemption.reason !== "string" || exemption.reason.trim().length < 20)
-          findings.push({
-            code: `one_sided_token_unreasoned:${name}:${token}`,
-            appearance: name,
-            token,
-            detail: `--${token} is one-sided in the ${name} root and its exception does not say why`,
-          });
+        exempted.add(token);
+        kinds.set(token, "exempt");
+        continue;
+      }
+      const neutral = neutralFamily(value);
+      if (neutral !== null) {
+        kinds.set(token, `neutral:${neutral}`);
         continue;
       }
       const alias = ALIAS.exec(value);
-      if (alias !== null) {
-        const { chain, terminal, value: literal, loop } = resolveAlias(base, token);
-        if (loop) {
-          kinds.set(token, "violation");
-          findings.push({
-            code: `theme_token_alias_loop:${token}`,
-            token,
-            detail: `${chain.map((step) => `--${step}`).join(" -> ")} never reaches a literal`,
-          });
-          continue;
-        }
-        if (literal === undefined) {
-          kinds.set(token, "violation");
-          findings.push({
-            code: `theme_token_alias_undeclared:${token}:${terminal}`,
-            token,
-            detail:
-              `--${token} is \`var(--${terminal})\`, and --${terminal} is declared in no base root: in every ` +
-              "appearance the alias feeds an invalid value",
-          });
-          continue;
-        }
-        if (table.has(terminal) || isAppearanceNeutral(literal)) {
-          kinds.set(token, "alias");
-          continue;
-        }
-        kinds.set(token, "violation");
+      if (alias === null) {
+        kinds.set(token, "literal");
+        findings.push({ code: "color_scheme_parity_failed", token, message: parityLiteralMessage(token, value) });
+        continue;
+      }
+      const { chain, terminal, fate } = resolveTerminal(base, token);
+      if (fate === "cycle") {
+        kinds.set(token, "alias:cycle");
         findings.push({
-          code: `theme_token_not_restated:${name}:${token}`,
-          appearance: name,
+          code: "alias_cycle",
           token,
-          detail:
-            `the ${name} root declares no --${token}, and its alias chain lands on --${terminal}: ` +
-            `${literal} - a dark literal this appearance inherits, because --${terminal} is not re-stated there. ` +
-            `Chain: ${chain.map((step) => `--${step}`).join(" -> ")}`,
+          message:
+            `alias_cycle: ${chain.map((step) => `--${step}`).join(" -> ")} never reaches a literal, so no terminal ` +
+            "token can be checked against the light root",
         });
         continue;
       }
-      if (isAppearanceNeutral(value)) {
-        kinds.set(token, "neutral");
+      if (fate === "too_long") {
+        kinds.set(token, "alias:too-long");
+        findings.push({
+          code: "alias_chain_too_long",
+          token,
+          message:
+            `alias_chain_too_long: ${chain.map((step) => `--${step}`).join(" -> ")} outlives the ` +
+            `${MAX_ALIAS_HOPS}-hop alias bound without reaching a literal`,
+        });
         continue;
       }
-      kinds.set(token, "violation");
+      if (table.has(terminal)) {
+        kinds.set(token, `alias\u2192--${terminal}\u2208light`);
+        continue;
+      }
+      kinds.set(token, `alias\u2192--${terminal}\u2209light`);
       findings.push({
-        code: `theme_token_not_restated:${name}:${token}`,
-        appearance: name,
+        code: "color_scheme_parity_failed",
         token,
-        detail:
-          `the ${name} root declares no --${token} and the base root's value is \`${value}\`, which carries an ` +
-          "appearance: state --" +
-          token +
-          ` on \`:root[data-theme="${name}"]\` in the same commit as this one`,
+        chain,
+        message: parityAliasMessage(token, terminal),
       });
     }
-    for (const entry of declared)
-      if (!consumed.has(entry.token))
+    for (const entry of exemptions)
+      if (!exempted.has(entry.token))
         findings.push({
-          code: `one_sided_token_expired:${name}:${entry.token}`,
-          appearance: name,
-          token: entry.token,
-          detail: `--${entry.token} is declared on the ${name} root now, so its one-sided exception (${entry.reason}) has expired`,
+          code: `one_sided_token_expired:${entry.token}`,
+          message:
+            `one_sided_token_expired: --${entry.token} is declared on the ${appearance} root now, so its exemption ` +
+            `(${entry.reason}) has expired`,
         });
 
-    const counts = { alias: 0, neutral: 0, declared: 0, violation: 0 };
-    for (const kind of kinds.values()) counts[kind] += 1;
     reading.push({
-      appearance: name,
+      appearance,
       keys: table.size,
       shared: [...table.keys()].filter((token) => base.has(token)).length,
+      lightOnly,
       oneSided,
       kinds,
-      counts,
+      counts: countKinds(kinds),
     });
   }
 
   return { findings, base, appearances, reading };
 }
 
+/** How many one-sided keys fell into each classification, for the reading. */
+function countKinds(kinds) {
+  const counts = { motion: 0, geometry: 0, typography: 0, aliasClosed: 0, aliasOpen: 0, literal: 0, broken: 0 };
+  for (const kind of kinds.values()) {
+    if (kind === "neutral:motion") counts.motion += 1;
+    else if (kind === "neutral:geometry") counts.geometry += 1;
+    else if (kind === "neutral:typography") counts.typography += 1;
+    else if (kind.endsWith("\u2208light")) counts.aliasClosed += 1;
+    else if (kind.endsWith("\u2209light")) counts.aliasOpen += 1;
+    else if (kind === "literal") counts.literal += 1;
+    else counts.broken += 1;
+  }
+  return counts;
+}
+
+/** The reading: what was compared, how every one-sided key was classified, and how many exemptions exist. */
 function describeTokenSet(base, reading) {
-  const lines = [`theme_roots: base ${base.size} token(s)`];
-  for (const entry of reading)
+  const lines = [];
+  for (const entry of reading) {
+    const { counts } = entry;
+    const neutral = counts.motion + counts.geometry + counts.typography;
     lines.push(
-      `theme_roots: ${entry.appearance} ${entry.keys} token(s), ${entry.shared} shared with the base, ` +
-        `${entry.oneSided.length} one-sided -> ${entry.counts.alias} alias-follows-literal, ` +
-        `${entry.counts.neutral} appearance-neutral, ${entry.counts.declared} declared, ` +
-        `${entry.counts.violation} violation(s)`,
+      `theme_roots: base ${base.size} token(s); ${entry.appearance} ${entry.keys} declared, ${entry.shared} shared ` +
+        `with the base, ${entry.oneSided.length} one-sided, ${entry.lightOnly.length} not in the base`,
     );
-  for (const entry of reading)
     lines.push(
-      `theme_roots: ${entry.appearance} one-sided: ` +
-        (entry.oneSided.length === 0
-          ? "(none)"
-          : entry.oneSided.map((token) => `--${token} (${entry.kinds.get(token)})`).join(", ")),
+      `theme_roots: one-sided ${entry.oneSided.length} = neutral ${neutral} (motion ${counts.motion}, geometry ` +
+        `${counts.geometry}, typography ${counts.typography}) + alias-closed ${counts.aliasClosed} + alias-open ` +
+        `${counts.aliasOpen} + literal ${counts.literal} + broken ${counts.broken}`,
     );
+    for (const token of entry.oneSided) lines.push(`theme_roots: --${token} ${entry.kinds.get(token)}`);
+  }
+  lines.push(
+    `theme_roots: exemptions ${PARITY_EXEMPTIONS.length}` +
+      (PARITY_EXEMPTIONS.length === 0 ? " (the two properties are exhaustive; no key needs a row)" : ""),
+  );
   return lines;
 }
 
+/** The stylesheet with a declaration inserted at the top of the base root - the shape every scenario injects. */
+function withBaseDeclaration(css, declaration) {
+  const opening = /:root,\s*\n?[\w\s[\]=":-]*:root\[data-theme="[a-z0-9-]+"\]\s*\{/u.exec(css);
+  assert.ok(opening !== null, "the stylesheet no longer opens a `:root, :root[data-theme=…]` block to inject into");
+  const insertAt = opening.index + opening[0].length;
+  return `${css.slice(0, insertAt)}\n  ${declaration}${css.slice(insertAt)}`;
+}
+
+/**
+ * What one injected declaration adds to the parity findings, and how the light root classifies it.
+ *
+ * The comparison is a delta against the sheet as it stands, not the whole finding list: a scenario asserts what ITS
+ * injection does, so an unrelated finding in the live stylesheet cannot make the scenario red for the wrong reason.
+ */
+function parityDelta(token, declaration) {
+  const appearances = appearanceNames();
+  const before = tokenParityFindings(readRules(stylesheetText()), appearances);
+  const after = tokenParityFindings(readRules(withBaseDeclaration(stylesheetText(), declaration)), appearances);
+  const known = new Set(before.findings.map((finding) => finding.message));
+  return {
+    added: after.findings.map((finding) => finding.message).filter((message) => !known.has(message)),
+    kind: after.reading.find((entry) => entry.appearance === "light")?.kinds.get(token),
+  };
+}
+
+const stylesheetText = () => readFileSync(STYLESHEET, "utf8");
+const appearanceNames = () => readAppearances(readFileSync(APPEARANCE_SOURCE, "utf8"));
+
 test("gate: color-scheme is declared by the appearance roots and by nothing else", (t) => {
-  const stylesheet = readFileSync(STYLESHEET, "utf8");
-  const appearances = readAppearances(readFileSync(APPEARANCE_SOURCE, "utf8"));
-  const rules = readRules(stylesheet);
+  const appearances = appearanceNames();
+  const rules = readRules(stylesheetText());
   const roots = readAppearanceRoots(rules);
 
   const { findings, declared } = colorSchemeFindings(rules, appearances);
@@ -563,21 +630,91 @@ test("gate: color-scheme is declared by the appearance roots and by nothing else
 });
 
 test("gate: every appearance declares the base root's whole token set", (t) => {
-  const stylesheet = readFileSync(STYLESHEET, "utf8");
-  const appearances = readAppearances(readFileSync(APPEARANCE_SOURCE, "utf8"));
-  const { findings, base, reading } = tokenParityFindings(readRules(stylesheet), appearances);
+  const { findings, base, reading } = tokenParityFindings(readRules(stylesheetText()), appearanceNames());
 
-  assert.ok(
-    base.size > 0,
-    "the sheet declares no custom property on its base root: this gate would pass by having found nothing to read",
-  );
   for (const line of describeTokenSet(base, reading)) t.diagnostic(line);
   t.diagnostic(`theme_roots: ${findings.length} violation(s)`);
 
+  assert.ok(
+    base.size > 0,
+    "the base root declares no custom property: this gate would pass by having found nothing to read",
+  );
+  assert.ok(
+    reading.length > 0,
+    "appearance.ts names no appearance in a root this sheet carries: there is no key set to compare",
+  );
   assert.deepEqual(
-    findings.map((finding) => `${finding.code} - ${finding.detail}`),
+    findings.map((finding) => finding.message),
     [],
-    "a token one appearance does not declare is a dark literal the other appearance inherits, unless its value " +
-      "carries no appearance",
+    "a one-sided key must be appearance-neutral or alias a token the light root re-states",
+  );
+});
+
+test("scenario A: a colour literal the light root does not restate fails parity", (t) => {
+  const { added, kind } = parityDelta("card-border-glow", "--card-border-glow: #3a2226;");
+  t.diagnostic(`scenario A: +${added.length} finding(s), classified ${kind} - ${added.join(" | ")}`);
+
+  assert.deepEqual(
+    added,
+    [
+      "color_scheme_parity_failed: --card-border-glow declares a theme-dependent color literal (#3a2226) on the " +
+        "base root, but neither restates it in light root nor aliases an already-restated token.",
+    ],
+    "--card-border-glow is a dark literal the light appearance would inherit",
+  );
+});
+
+test("scenario B: an alias whose terminal token the light root does not restate fails parity", (t) => {
+  const { added } = parityDelta(
+    "badge-border",
+    "--palette-amber-base: #f0b429;\n  --badge-border: var(--palette-amber-base);",
+  );
+  t.diagnostic(`scenario B: +${added.length} finding(s) - ${added.join(" | ")}`);
+
+  assert.deepEqual(
+    added,
+    [
+      // The injected literal is itself one-sided, so the pair reports both members - the terminal first, because it
+      // is declared first on the base root.
+      "color_scheme_parity_failed: --palette-amber-base declares a theme-dependent color literal (#f0b429) on the " +
+        "base root, but neither restates it in light root nor aliases an already-restated token.",
+      "color_scheme_parity_failed: --badge-border aliases --palette-amber-base, but the terminal token is missing " +
+        "from the light root.",
+    ],
+    "--badge-border's chain ends on a token the light root does not re-state",
+  );
+});
+
+test("scenario C: a neutral addition is legal and needs no exemption", (t) => {
+  const { added, kind } = parityDelta("space-7", "--space-7: 28px;");
+  t.diagnostic(
+    `scenario C: +${added.length} finding(s), space-7 classified ${kind}, exemptions ${PARITY_EXEMPTIONS.length}`,
+  );
+
+  assert.deepEqual(added, [], "a length carries no appearance, so a one-sided geometry token is legal");
+  assert.equal(kind, "neutral:geometry", "--space-7: 28px is geometry, and P1 is what lets it stay one-sided");
+  assert.equal(PARITY_EXEMPTIONS.length, 0, "scenario C must not need an exemption row");
+});
+
+test("gate: an alias chain is bounded, and a cycle or an overlong chain is named", (t) => {
+  const cycle = withBaseDeclaration(stylesheetText(), "--loop-a: var(--loop-b);\n  --loop-b: var(--loop-a);");
+  const cycleMessages = tokenParityFindings(readRules(cycle), appearanceNames()).findings.map((f) => f.message);
+  t.diagnostic(`alias bound: cycle - ${cycleMessages.filter((m) => m.startsWith("alias_cycle")).length} cycle finding(s)`);
+  assert.ok(
+    cycleMessages.some((message) => message.startsWith("alias_cycle: --loop-a -> --loop-b -> --loop-a")),
+    "two tokens aliasing each other must be reported as alias_cycle, naming the chain",
+  );
+
+  const hops = Array.from({ length: 12 }, (_, index) =>
+    index === 11 ? "--hop-12: 28px;" : `--hop-${index + 1}: var(--hop-${index + 2});`,
+  ).join("\n  ");
+  const longMessages = tokenParityFindings(readRules(withBaseDeclaration(stylesheetText(), hops)), appearanceNames())
+    .findings.map((f) => f.message);
+  t.diagnostic(
+    `alias bound: overlong - ${longMessages.filter((m) => m.startsWith("alias_chain_too_long")).length} too-long finding(s)`,
+  );
+  assert.ok(
+    longMessages.some((message) => message.startsWith("alias_chain_too_long: --hop-1 -> ")),
+    "a chain past MAX_ALIAS_HOPS must be reported as alias_chain_too_long, not pass as a non-alias",
   );
 });
