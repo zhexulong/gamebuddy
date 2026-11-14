@@ -28,5 +28,9 @@
       "special_order_unavailable"
     ]
   },
+  "afterStale": [
+    { "field": "specialOrderTargets", "excludesTarget": true },
+    { "field": "activeSpecialOrderKeys", "includesTargetField": "questKey" }
+  ],
   "delta": [{ "from": "orders_before", "to": "orders_after", "equals": 1 }]
 }

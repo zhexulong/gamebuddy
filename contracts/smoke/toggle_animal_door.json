@@ -23,5 +23,9 @@
   ],
   "stale": {
     "refusedWith": ["animal_door_target_changed"]
-  }
+  },
+  "afterStale": [
+    { "field": "animalDoorTargets", "excludesTarget": true },
+    { "field": "animalDoorTargets", "rowAtTargetTile": { "isOpen": true } }
+  ]
 }

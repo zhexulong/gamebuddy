@@ -21,7 +21,7 @@
  * spelling that agrees today is a disagreement scheduled for later.
  *
  * WHAT A CONTRACT MAY SAY (and nothing else, because a key nobody reads is a key that lies):
- *   action, discovery, args, evidence, worldAfter, stale, unasserted, assertion,
+ *   action, discovery, args, evidence, worldAfter, afterStale, stale, unasserted, assertion,
  * and `expectedReasonCode` only where the declaration is generic (`native_action_postcondition`) and therefore
  * derives nothing.
  *
@@ -41,6 +41,15 @@
  * though: a missing `discovery` key is still refused (`discovery_source_undeclared`), and an action that names no
  * target says so in words: `"discovery": { "none": "<why>" }`. The reason is required for the same reason every
  * other declaration-needs-a-reason here is required - a blank one cannot be told from a forgotten one.
+ *
+ * THE THIRD PART OF A STALE RE-SEND. `stale: { args, refusedWith }` says "re-send the consumed id and expect this
+ * refusal", and `worldAfter` is read BEFORE that re-send - so a runner that reads the world again once the refusal
+ * arrived ("nothing moved: the door is still open, the offer was not re-advertised") had no way to be stated. 33 of
+ * the 124 runners in this tree did exactly that, and a contract without the block still read `dropped 0`: the clause
+ * had no spelling, so it could not be missed. `afterStale` is that spelling - the same assertion entries `worldAfter`
+ * takes, evaluated against a fresh observation read after the stale terminal - and `checkContractCoverage` refuses a
+ * contract whose runner re-reads without it. The inverse is refused too: a block on a runner that never re-reads is an
+ * assertion about a shape the runner does not have, which is a guess rather than a proof.
  *
  * A CONTRACT THAT LOADS IS NOT A CONTRACT THAT COVERS. `checkContractCoverage` reads the hand-written runner for
  * the action - the authority this format was built to carry - extracts the assertions it makes (receipt keys and
@@ -77,6 +86,7 @@ const CONTRACT_KEYS = Object.freeze([
   "args",
   "evidence",
   "worldAfter",
+  "afterStale",
   "stale",
   "delta",
   "unasserted",
@@ -414,18 +424,26 @@ function validateDelta(delta) {
   );
 }
 
-function validateWorldAfter(worldAfter) {
+/**
+ * `worldAfter` and `afterStale` - the same assertion entries, read at two different moments.
+ *
+ * `worldAfter` is read after the terminal; `afterStale` after the stale re-send has been refused. One validator for
+ * both, because a second spelling of these five forms would be a second answer to "what may a world assertion say".
+ * `where` names which block a refusal came from, so an author is sent to the key they wrote.
+ */
+function validateWorldAfter(worldAfter, where = "worldAfter") {
   if (worldAfter === undefined) return Object.freeze([]);
-  if (!Array.isArray(worldAfter) || worldAfter.length === 0) fail("world_after_invalid");
+  if (!Array.isArray(worldAfter) || worldAfter.length === 0) fail("world_after_invalid", where);
   return Object.freeze(
     worldAfter.map((assertion) => {
-      if (!isPlainObject(assertion)) fail("world_after_invalid");
-      assertKeys(assertion, WORLD_AFTER_KEYS, "worldAfter[]");
-      if (!isNonEmptyString(assertion.field)) fail("world_after_field_missing");
+      if (!isPlainObject(assertion)) fail("world_after_invalid", where);
+      assertKeys(assertion, WORLD_AFTER_KEYS, `${where}[]`);
+      if (!isNonEmptyString(assertion.field)) fail("world_after_field_missing", where);
       const forms = ["excludesTarget", "size", "equals", "includesTargetField", "rowAtTargetTile"].filter(
         (key) => assertion[key] !== undefined,
       );
-      if (forms.length !== 1) fail("world_after_form_invalid", `${assertion.field}:${forms.join("+") || "none"}`);
+      if (forms.length !== 1)
+        fail("world_after_form_invalid", `${where}.${assertion.field}:${forms.join("+") || "none"}`);
       const form = forms[0];
       if (form === "excludesTarget" && assertion.excludesTarget !== true) fail("world_after_form_invalid", form);
       if (form === "size" && !Number.isInteger(assertion.size)) fail("world_after_form_invalid", form);
@@ -602,6 +620,11 @@ export function validateSmokeContract(
   const evidence = validateEvidence(raw.evidence);
   const worldAfter = validateWorldAfter(raw.worldAfter);
   const stale = validateStale(raw.stale, args);
+  const afterStale = validateWorldAfter(raw.afterStale, "afterStale");
+  // `afterStale` is read once the stale re-send has been REFUSED, so a contract carrying it without a re-send to
+  // refuse describes a moment its own slice never reaches: the engine would have no terminal to read after.
+  if (afterStale.length > 0 && stale === null)
+    fail("after_stale_without_stale", `${resolvedFacts.actionId}:declare the stale re-send the block is read after`);
   const delta = validateDelta(raw.delta);
   const unasserted = validateUnasserted(raw.unasserted);
   const assertion = validateAssertion(raw.assertion, { assertionDirectory });
@@ -615,6 +638,7 @@ export function validateSmokeContract(
     args,
     evidence,
     worldAfter,
+    afterStale,
     stale,
     delta,
     unasserted,
@@ -680,6 +704,7 @@ export function adHocContract({ action, args, expectReasonCode = null }, options
     args: Object.freeze({ ...args }),
     evidence: Object.freeze({}),
     worldAfter: Object.freeze([]),
+    afterStale: Object.freeze([]),
     stale: null,
     delta: Object.freeze([]),
     unasserted: Object.freeze({}),
@@ -812,16 +837,20 @@ function parameterNames(parameters) {
  *   terminal.state, terminal.reasonCode, terminal.stale   the terminal the runner demands, and whether it re-sends
  *                        the stale target.
  *   dispatch.<n>         the second and later dispatches: the format expresses one dispatch plus one stale re-send.
+ *   afterStale           ONE clause for the class `stale` cannot state: the runner reads a world family off an
+ *                        observation taken after the stale re-send was refused. One clause rather than one per field,
+ *                        because what the block declares is a MOMENT the contract has to reach; which fields it pins
+ *                        is the contract's own claim, and `worldAfter` already owns the per-field reading.
  *
  * A key compared to itself (`evidence.pet_day === String(evidence.pet_day)`) is not a clause: it asserts the value
  * is a string, which the evidence envelope already guarantees.
  */
 function runnerAssertions(root, { families }) {
-  const dispatchSites = nodesOfType(root, "call_expression").filter(
-    (call) => call.childForFieldName("function")?.text === DISPATCH_CALL,
-  );
-  const firstDispatch =
-    dispatchSites.length === 0 ? Number.POSITIVE_INFINITY : Math.min(...dispatchSites.map((c) => c.startIndex));
+  const dispatchSites = nodesOfType(root, "call_expression")
+    .filter((call) => call.childForFieldName("function")?.text === DISPATCH_CALL)
+    .sort((left, right) => left.startIndex - right.startIndex);
+  const firstDispatch = dispatchSites.length === 0 ? Number.POSITIVE_INFINITY : dispatchSites[0].startIndex;
+  const staleDispatch = staleReSendPosition(dispatchSites);
 
   const functions = new Map();
   for (const declaration of nodesOfType(root, "function_declaration")) {
@@ -878,7 +907,7 @@ function runnerAssertions(root, { families }) {
     if (inner.type === "identifier") return holdsObservation(inner, scope, depth);
     if (inner.type !== "call_expression") return false;
     const callee = inner.childForFieldName("function")?.text;
-    if (isNonEmptyString(callee) && OBSERVATION_CALL.test(callee) && inner.startIndex > firstDispatch) return true;
+    if (isNonEmptyString(callee) && OBSERVATION_CALL.test(callee) && inner.startIndex > scope.frontier) return true;
     const local = functions.get(callee);
     if (local === undefined) return false;
     // A helper that hands back part of an observation (`fishPondTargets(after)`) carries the observation with it.
@@ -886,39 +915,96 @@ function runnerAssertions(root, { families }) {
     return args.some((arg) => isPost(arg, scope, depth + 1));
   }
 
-  const sinks = {
-    world: new Set(),
-    evidence: new Map(),
-    relations: new Map(),
-    states: new Set(),
-    reasonCodes: new Set(),
-    staleTerminal: false,
-  };
   const index = { lastBindingBefore, observesName, functions, isPost };
 
-  // One walk, one scope per set of arguments a local helper was called with: a comparison inside
-  // `assertEvidence(evidence, "animal_door_open_before", "false")` is only readable once `key` is resolved to the
-  // literal its own call site passed, and a snapshot read inside `fishPondTargets(after)` is only a world-after
-  // reading once `after` is known to be a post-dispatch observation.
-  const context = { index, families, scopes: [{ body: root, post: new Set(), params: new Set(), bound: new Map() }] };
-  const visited = new Set();
-  while (context.scopes.length > 0) {
-    const scope = context.scopes.shift();
-    const mark = scopeMark(scope);
-    if (visited.has(mark)) continue;
-    visited.add(mark);
-    eachNode(scope.body, (node) => noteNode(sinks, node, scope, context));
-  }
+  /**
+   * One walk, one scope per set of arguments a local helper was called with: a comparison inside
+   * `assertEvidence(evidence, "animal_door_open_before", "false")` is only readable once `key` is resolved to the
+   * literal its own call site passed, and a snapshot read inside `fishPondTargets(after)` is only a world-after
+   * reading once `after` is known to be an observation taken after the frame the walk is measuring against.
+   *
+   * `frontier` is that frame. Two walks share the parse: the first measures against the dispatch, the second against
+   * the stale re-send - so "the world after the action" and "the world after the refusal" are two readings of one
+   * source, not two parsers that could disagree.
+   */
+  const walk = (frontier) => {
+    const sinks = {
+      world: new Set(),
+      evidence: new Map(),
+      relations: new Map(),
+      states: new Set(),
+      reasonCodes: new Set(),
+      staleTerminal: false,
+    };
+    const context = {
+      index,
+      families,
+      scopes: [{ body: root, post: new Set(), params: new Set(), bound: new Map(), frontier }],
+    };
+    const visited = new Set();
+    while (context.scopes.length > 0) {
+      const scope = context.scopes.shift();
+      const mark = scopeMark(scope);
+      if (visited.has(mark)) continue;
+      visited.add(mark);
+      eachNode(scope.body, (node) => noteNode(sinks, node, scope, context));
+    }
+    return sinks;
+  };
+
+  const read = walk(firstDispatch);
+  // `staleDispatch` is the frame that sent a request an earlier frame already sent, so a world read after it is the
+  // reading `stale` has no spelling for. A second ACTION is not this: `equip_tool` then `cut_grass` sends different
+  // arguments, and the world after the cut is that action's own postcondition.
+  const afterStale = staleDispatch === null ? null : walk(staleDispatch);
   return Object.freeze({
-    clauses: Object.freeze(clauseNames(sinks, dispatchSites.length)),
-    evidence: sinks.evidence,
-    relations: sinks.relations,
-    world: sinks.world,
-    states: sinks.states,
-    reasonCodes: sinks.reasonCodes,
-    staleTerminal: sinks.staleTerminal,
+    clauses: Object.freeze(clauseNames(read, dispatchSites.length, afterStale !== null && afterStale.world.size > 0)),
+    evidence: read.evidence,
+    relations: read.relations,
+    world: read.world,
+    afterStaleWorld: afterStale === null ? new Set() : afterStale.world,
+    states: read.states,
+    reasonCodes: read.reasonCodes,
+    staleTerminal: read.staleTerminal,
     dispatches: dispatchSites.length,
   });
+}
+
+/** The property values of one dispatch's `args` bag, normalised and sorted: two frames sending the same request. */
+function dispatchArgsKey(call) {
+  const bag = (call.childForFieldName("arguments")?.namedChildren ?? []).find((node) => node.type === "object");
+  const args = (bag?.namedChildren ?? []).find(
+    (node) => node.type === "pair" && node.childForFieldName("key")?.text === "args",
+  );
+  const value = args?.childForFieldName("value");
+  if (value?.type !== "object") return null;
+  const entries = value.namedChildren
+    .filter((node) => node.type === "pair")
+    .map(
+      (pair) =>
+        `${pair.childForFieldName("key")?.text}=${String(pair.childForFieldName("value")?.text ?? "")
+          .replace(/\s+/gu, " ")
+          .trim()}`,
+    );
+  return entries.length === 0 ? null : JSON.stringify(entries.sort());
+}
+
+/**
+ * The first dispatch that sends a request an earlier dispatch already sent - the stale re-send, by its own arguments.
+ *
+ * A SECOND FRAME IS NOT ENOUGH. 31 of the 119 runners dispatch more than once, and most of those are a preview action
+ * (`equip_tool`) followed by the action under test, or a chain of two different actions. The stale re-send is the one
+ * frame that sends the arguments of a frame that has already been consumed, and it is the only one whose refusal, and
+ * whose world, the `stale` key describes. Measured by arguments rather than by position, so a chain's third frame is
+ * never mistaken for a re-send just because it is second.
+ */
+function staleReSendPosition(dispatchSites) {
+  const keys = dispatchSites.map(dispatchArgsKey);
+  for (let index = 1; index < keys.length; index++) {
+    if (keys[index] === null) continue;
+    if (keys.slice(0, index).includes(keys[index])) return dispatchSites[index].startIndex;
+  }
+  return null;
 }
 
 function noteNode(sinks, node, scope, context) {
@@ -980,7 +1066,13 @@ function pushCalleeScope(node, scope, { index, scopes }) {
     if (param.key === null) bound.set(param.name, argument);
     if (index.isPost(argument, scope)) post.add(param.name);
   });
-  scopes.push({ body: local.body, post, params: new Set(local.params.map((param) => param.name)), bound });
+  scopes.push({
+    body: local.body,
+    post,
+    params: new Set(local.params.map((param) => param.name)),
+    bound,
+    frontier: scope.frontier,
+  });
 }
 
 function scopeMark(scope) {
@@ -988,7 +1080,7 @@ function scopeMark(scope) {
     .map((node) => node.startIndex)
     .sort((left, right) => left - right)
     .join(",");
-  return [scope.body.startIndex, [...scope.post].sort().join(","), bound].join("|");
+  return [scope.body.startIndex, scope.frontier, [...scope.post].sort().join(","), bound].join("|");
 }
 
 function noteEvidence(sinks, key, form) {
@@ -1028,13 +1120,14 @@ function noteClause(sinks, side, other, operator) {
   if (side.field === "reasonCode") sinks.reasonCodes.add(other.text);
 }
 
-function clauseNames(sinks, dispatches) {
+function clauseNames(sinks, dispatches, reReadsAfterStale) {
   return [
     ...[...sinks.evidence.keys()].map((key) => `${EVIDENCE_OBJECT}.${key}`),
     ...[...sinks.world].map((field) => `worldAfter.${field}`),
     ...(sinks.states.size > 0 ? ["terminal.state"] : []),
     ...(sinks.reasonCodes.size > 0 ? ["terminal.reasonCode"] : []),
     ...(sinks.staleTerminal ? ["terminal.stale"] : []),
+    ...(reReadsAfterStale ? ["afterStale"] : []),
     ...Array.from({ length: Math.max(0, dispatches - 1) }, (_, position) => `dispatch.${position + 2}`),
   ].sort();
 }
@@ -1169,6 +1262,8 @@ function contractCovers(clause, contract, runner) {
     return runner.reasonCodes.size === 0 || runner.reasonCodes.has(contract.expectedReasonCode);
   if (clause === "terminal.stale") return contract.stale !== null;
   if (clause === "dispatch.2") return contract.stale !== null;
+  // The moment, not the fields: a block of any size reaches the reading the runner took after the refusal.
+  if (clause === "afterStale") return contract.afterStale.length > 0;
   return false;
 }
 
@@ -1212,11 +1307,17 @@ function compareContractToRunner(contract, runner, hook) {
   const unknown = Object.keys(declarations)
     .filter((clause) => !runner.clauses.includes(clause) || asserted.includes(clause))
     .sort();
+  // The inverse of the `afterStale` clause: a block declaring a moment this runner never reaches. Nothing else in
+  // this format refuses a contract for asserting MORE than its runner does - an extra `worldAfter` field is a claim,
+  // and a live slice judges it. But a `afterStale` block is a claim about a SHAPE (the runner re-reads after the
+  // refusal), and a shape nobody can point at is a guess: the engine would read a moment the runner never took.
+  const afterStaleUnread = contract.afterStale.length > 0 && runner.afterStaleWorld.size === 0 ? [contract.action] : [];
   return Object.freeze({
     covered: Object.freeze(covered),
     declared: Object.freeze(declared),
     dropped: Object.freeze(dropped),
     unknown: Object.freeze(unknown),
+    afterStaleUnread: Object.freeze(afterStaleUnread),
     withFamily: contract.derived.targetFamily !== null,
     declaredNone: contract.discovery === null,
   });
@@ -1278,6 +1379,7 @@ export async function checkContractCoverage({
           declared: Object.freeze([]),
           dropped: Object.freeze([]),
           unknown: Object.freeze([]),
+          afterStaleUnread: Object.freeze([]),
         }),
       );
       continue;
@@ -1295,6 +1397,8 @@ export async function checkContractCoverage({
   }
   const dropped = readings.flatMap((entry) => entry.dropped.map((clause) => `${entry.action}:${clause}`));
   const unknown = readings.flatMap((entry) => entry.unknown.map((clause) => `${entry.action}:${clause}`));
+  const census = await classCensus({ runnerDirectory, families });
+  const represented = readings.filter((entry) => !entry.promoted && census.readers.has(entry.runner));
   return Object.freeze({
     directory: contractDirectory,
     examined: readings.length,
@@ -1309,8 +1413,55 @@ export async function checkContractCoverage({
     declared: readings.reduce((total, entry) => total + entry.declared.length, 0),
     dropped: Object.freeze(dropped.sort()),
     unknown: Object.freeze(unknown.sort()),
+    // THE CLASS, not only the contracts. `stale` could not say "and the world did not move", so a runner that read the
+    // world again after the refusal lost the only test of that clause the moment its runner was retired - and the
+    // gate read `dropped 0` because the clause had no spelling. The population here is the runner DIRECTORY, so a
+    // runner written tomorrow is measured by existing, and the reading says how many of them the format was blind to.
+    afterStale: Object.freeze({
+      runners: census.runners,
+      reread: census.readers.size,
+      // The members, so the number is auditable: "18 of 119" without the list is a rumour a reader cannot check.
+      readers: Object.freeze([...census.readers].map(runnerAction).sort()),
+      represented: represented.length,
+      declared: represented.filter((entry) => !entry.dropped.includes("afterStale")).length,
+      undeclared: Object.freeze(
+        readings
+          .filter((entry) => entry.dropped.includes("afterStale"))
+          .map((entry) => entry.action)
+          .sort(),
+      ),
+    }),
+    afterStaleUnread: Object.freeze(
+      readings.flatMap((entry) => (entry.afterStaleUnread ?? []).map((action) => `${action}:afterStale`)).sort(),
+    ),
     readings: Object.freeze(readings),
   });
+}
+
+/** `run-stardew-native-local-player-<action>-smoke.mjs` -> `<action>`: the inverse of `runnerFileName`, exactly. */
+function runnerAction(runner) {
+  return runner.slice(RUNNER_PREFIX.length, -"-smoke.mjs".length).replaceAll("-", "_");
+}
+
+/**
+ * The runners that read a world family off an observation taken after their stale re-send.
+ *
+ * This is the population the `afterStale` clause is about, measured over the runner directory rather than over the
+ * contracts, so the number is the SIZE OF THE CLASS and not the size of the corpus that happens to answer for it
+ * today. A runner whose file does not parse is a refusal, not a silent omission: an unreadable member of the
+ * population would make the class look smaller than it is.
+ */
+async function classCensus({ runnerDirectory, families }) {
+  const runnerFiles = readdirSync(runnerDirectory)
+    .filter((name) => name.startsWith(RUNNER_PREFIX) && name.endsWith("-smoke.mjs"))
+    .sort();
+  const readers = new Set();
+  for (const runner of runnerFiles) {
+    const tree = await parseJavaScript(readFileSync(resolve(runnerDirectory, runner), "utf8"), runner);
+    if (tree.rootNode.hasError) fail("runner_unparsed", `${runner}:class_census`);
+    if (runnerAssertions(tree.rootNode, { families }).afterStaleWorld.size > 0) readers.add(runner);
+  }
+  return { runners: runnerFiles.length, readers };
 }
 
 /**
@@ -1331,7 +1482,8 @@ async function gateRouteFor(action) {
 }
 
 /**
- * The corpus guard: refuse a dropped assertion, and refuse a declaration that outlived the clause it excuses.
+ * The corpus guard: refuse a dropped assertion, a declaration that outlived the clause it excuses, and an
+ * `afterStale` block on a runner that has no such moment to declare.
  *
  * Zero examined is blocked with its reason instead of passing, because a directory that read nothing is not a corpus
  * that covered everything.
@@ -1341,6 +1493,8 @@ export function assertContractCoverage(reading) {
     fail("coverage_examined_nothing", `${reading.directory}: a corpus that read nothing is not a corpus that passed`);
   if (reading.dropped.length > 0) fail("drops_a_runner_assertion", reading.dropped.join(" "));
   if (reading.unknown.length > 0) fail("unasserted_clause_unknown", reading.unknown.join(" "));
+  if (reading.afterStaleUnread.length > 0)
+    fail("afterStale_declared_but_the_runner_does_not_re_read", reading.afterStaleUnread.join(" "));
   return reading;
 }
 

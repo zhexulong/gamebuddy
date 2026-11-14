@@ -23,5 +23,9 @@
   ],
   "stale": {
     "refusedWith": ["daily_quest_already_accepted", "daily_quest_target_moved", "daily_quest_unavailable"]
-  }
+  },
+  "afterStale": [
+    { "field": "acceptedDailyQuest", "equals": true },
+    { "field": "dailyQuestTargets", "excludesTarget": true }
+  ]
 }

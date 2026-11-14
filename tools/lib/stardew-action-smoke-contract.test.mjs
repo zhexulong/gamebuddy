@@ -23,7 +23,7 @@
  */
 
 import assert from "node:assert/strict";
-import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import test from "node:test";
@@ -47,6 +47,7 @@ import {
 const ROOT = resolve(fileURLToPath(new URL("../..", import.meta.url)));
 const LOADER_PATH = join(ROOT, "tools/lib/stardew-action-smoke-contract.mjs");
 const CONTRACT_DIRECTORY = join(ROOT, "contracts/smoke");
+const TOOLS_DIRECTORY = join(ROOT, "tools");
 
 const surface = readActionSurface();
 const protocolControls = readProtocolControls();
@@ -246,7 +247,9 @@ async function expectRefusalAsync(probe, code) {
 
 /** Every `fail("<code>"` in the loader - the refusals it can make, derived rather than listed. */
 function loaderRefusalCodes(source = readFileSync(LOADER_PATH, "utf8")) {
-  return new Set([...source.matchAll(/fail\(\s*"([a-z][a-z0-9_]*)"/gu)].map((match) => match[1]));
+  // `[a-zA-Z]`, not `[a-z]`: a code that carries an uppercase letter was invisible to this scanner, and a population
+  // that quietly omits a member is the defect the probes below exist to catch.
+  return new Set([...source.matchAll(/fail\(\s*"([a-zA-Z][a-zA-Z0-9_]*)"/gu)].map((match) => match[1]));
 }
 
 function assertEveryCodeProbed(declared, probes) {
@@ -364,6 +367,12 @@ const REFUSAL_PROBES = Object.freeze([
   { code: "evidence_expectation_empty", probe: () => validate({ ...GENERIC_CONTRACT, evidence: { ok: "" } }) },
   { code: "evidence_expectation_invalid", probe: () => validate({ ...GENERIC_CONTRACT, evidence: { ok: 5 } }) },
   { code: "world_after_invalid", probe: () => validate({ ...GENERIC_CONTRACT, worldAfter: [] }) },
+  // `afterStale` is validated by the same reader as `worldAfter`, and the refusal names WHICH block was wrong.
+  {
+    code: "after_stale_without_stale",
+    probe: () =>
+      validate({ ...GENERIC_CONTRACT, afterStale: [{ field: GENERIC_ROW.targetFamily, excludesTarget: true }] }),
+  },
   {
     code: "world_after_field_missing",
     probe: () => validate({ ...GENERIC_CONTRACT, worldAfter: [{ equals: true }] }),
@@ -536,6 +545,17 @@ const COVERAGE_PROBES = Object.freeze([
     code: "unasserted_clause_unknown",
     probe: () =>
       assertContractCoverage({ directory: "probe", examined: 1, dropped: [], unknown: ["craft_item:evidence.absent"] }),
+  },
+  {
+    code: "afterStale_declared_but_the_runner_does_not_re_read",
+    probe: () =>
+      assertContractCoverage({
+        directory: "probe",
+        examined: 1,
+        dropped: [],
+        unknown: [],
+        afterStaleUnread: ["probe:afterStale"],
+      }),
   },
   {
     code: "assertion_hook_functions",
@@ -1045,6 +1065,137 @@ test("a contract that states a covered clause wrongly is refused, so the compari
   assert.ok(
     worldError.message.includes(`${worldClause.action}:${worldClause.clause}`),
     `a world change the runner reads and the contract omits is a dropped clause: ${worldError.message}`,
+  );
+});
+
+/**
+ * THE CLASS THE FORMAT COULD NOT SAY.
+ *
+ * `stale: { args, refusedWith }` describes the re-send and its refusal; `worldAfter` is read BEFORE it. A runner that
+ * reads the world again once the refusal arrived had no way to be stated, so a contract without the block still read
+ * `dropped 0` - and the clause lost its only test the day the runner was retired. The population below is the runner
+ * DIRECTORY, and the detector is measured as a DIFFERENCE: one runner source with the final reading, one without it.
+ */
+const STALE_RE_SEND = `export async function probe(client, receipts) {
+  const snapshot = await observeFresh(client, { actionable: true });
+  const target = snapshot.animalDoorTargets[0];
+  const accepted = await executeFresh(client, {
+    action: "toggle_animal_door",
+    args: { expectedTargetId: target.targetId },
+    snapshot,
+  });
+  const terminal = await waitForTerminal(receipts, accepted);
+  const stale = await executeFresh(client, {
+    action: "toggle_animal_door",
+    args: { expectedTargetId: target.targetId },
+    snapshot,
+  });
+  const staleTerminal = await waitForTerminal(receipts, stale);
+`;
+const RE_READING_RUNNER = `${STALE_RE_SEND}  const settled = await observeFresh(client);
+  return { terminal, staleTerminal, door: settled.animalDoorTargets[0] };
+}
+`;
+const STALE_ONLY_RUNNER = `${STALE_RE_SEND}  return { terminal, staleTerminal };
+}
+`;
+const PROMOTED = () => ({ route: "contract", gate: "contracts/smoke/probe.json", problem: null });
+
+/** One runner directory holding a probe runner for one action; every other contract's row routes through itself. */
+async function coverageWithRunner(source, contractDirectory = CONTRACT_DIRECTORY) {
+  const runnerDirectory = tempDirectory("smoke-contract-class-");
+  writeFileSync(join(runnerDirectory, runnerFileName("toggle_animal_door")), source, "utf8");
+  return checkContractCoverage({ contractDirectory, runnerDirectory, routeFor: PROMOTED });
+}
+
+const withoutAfterStale = (raw, file) => {
+  if (file !== "toggle_animal_door.json") return raw;
+  const { afterStale, ...rest } = raw;
+  return rest;
+};
+
+test("a runner that reads the world after its stale re-send is a clause, and the block is what covers it", async () => {
+  const declared = await coverageWithRunner(RE_READING_RUNNER);
+  assertContractCoverage(declared);
+  const reading = declared.readings.find((entry) => entry.action === "toggle_animal_door");
+  assert.equal(reading.promoted, false, "the probe runner is compared against its contract");
+  assert.ok(reading.covered.includes("afterStale"), `the block covers it: ${reading.covered.join(",")}`);
+  // The census sees the same runner as a member of the class, and a runner that stops after the refusal is not one:
+  // the reading is about the SHAPE, not about the file being called smoke.
+  assert.deepEqual(
+    declared.afterStale.readers,
+    ["toggle_animal_door"],
+    "the class census counts the re-reading runner",
+  );
+  const silent = await coverageWithRunner(STALE_ONLY_RUNNER);
+  assert.deepEqual(silent.afterStale.readers, [], "a runner that stops after the refusal is not in the class");
+  console.log(
+    `afterStale: ${declared.afterStale.reread} of ${declared.afterStale.runners} runners re-read` +
+      ` · represented ${declared.afterStale.represented} · the probe counted ${declared.afterStale.readers.length}`,
+  );
+});
+
+test("a contract that drops the afterStale block its runner's re-read needs is refused by name", async () => {
+  const stripped = await coverageWithRunner(RE_READING_RUNNER, corpusOf(withoutAfterStale, "class-stripped"));
+  const error = expectRefusal(() => assertContractCoverage(stripped), "drops_a_runner_assertion");
+  assert.ok(
+    error.message.includes("toggle_animal_door:afterStale"),
+    `the refusal names the action and the block: ${error.message}`,
+  );
+  assert.deepEqual(stripped.dropped, ["toggle_animal_door:afterStale"], "one clause, named, not a list of guesses");
+  assert.ok(
+    error.message.includes(":afterStale"),
+    `the dropped clause is the block itself, not a field it happens to mention: ${error.message}`,
+  );
+});
+
+test("an afterStale block on a runner that never re-reads is refused: a shape nobody can point at is a guess", async () => {
+  const unread = await coverageWithRunner(STALE_ONLY_RUNNER);
+  const error = expectRefusal(
+    () => assertContractCoverage(unread),
+    "afterStale_declared_but_the_runner_does_not_re_read",
+  );
+  assert.deepEqual(
+    unread.afterStaleUnread,
+    ["toggle_animal_door:afterStale"],
+    "the reading names the contract and block",
+  );
+  assert.ok(error.message.includes("toggle_animal_door:afterStale"), `the refusal names it: ${error.message}`);
+});
+
+test("the class census reads its population from the runner directory, and the corpus answers every member", () => {
+  const runners = readdirSync(TOOLS_DIRECTORY).filter(
+    (name) => name.startsWith("run-stardew-native-local-player-") && name.endsWith("-smoke.mjs"),
+  );
+  assert.equal(coverage.afterStale.runners, runners.length, "the population is the runner directory, not a list here");
+  assert.equal(coverage.afterStale.reread, coverage.afterStale.readers.length, "the count is the members it printed");
+  assert.ok(
+    coverage.afterStale.reread > 0,
+    "no runner in this tree re-reads after a stale re-send: the detector lost it",
+  );
+  for (const action of coverage.afterStale.readers)
+    assert.ok(
+      existsSync(join(TOOLS_DIRECTORY, runnerFileName(action))),
+      `${action} is named as a reader with no runner file: the name is not derived from the directory`,
+    );
+  // Every member the corpus can answer for declares the block, and every member it cannot is still COUNTED - the
+  // number is the point, so a corpus that grows leaves the remaining members visible instead of forgetting them.
+  assert.deepEqual(
+    coverage.afterStale.undeclared,
+    [],
+    "a represented runner re-reads and its contract does not say so",
+  );
+  const represented = coverage.readings.filter(
+    (entry) => !entry.promoted && coverage.afterStale.readers.includes(entry.action),
+  );
+  assert.equal(
+    coverage.afterStale.represented,
+    represented.length,
+    "the represented count is the readings whose runner is in the class",
+  );
+  console.log(
+    `afterStale: ${coverage.afterStale.reread} of ${coverage.afterStale.runners} runners re-read after the stale re-send` +
+      ` · represented ${coverage.afterStale.represented} · declared ${coverage.afterStale.declared} · undeclared ${coverage.afterStale.undeclared.length}`,
   );
 });
 

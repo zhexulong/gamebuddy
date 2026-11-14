@@ -31,7 +31,10 @@
  * be the one the action's declaration names, every evidence expectation must hold on the receipt's own `key=value`
  * detail, every world-after assertion must hold on a FRESH observation read after the terminal, and - where the
  * contract declares one - the same request re-sent with a target that has just been consumed must be refused by one
- * of the named codes. A check that could not be looked at is `not_checked`, and `not_checked` fails the run.
+ * of the named codes. The contract may also say what the world looks like ONCE THAT REFUSAL ARRIVED (`afterStale`):
+ * that reading is taken after the stale terminal and judged by its own named checks, because "the relay did nothing"
+ * and "I did not look again" must never read the same. A check that could not be looked at is `not_checked`, and
+ * `not_checked` fails the run.
  *
  * WHAT DATA CANNOT SAY, A HOOK DOES. The format asserts one receipt key against one value, one world field against a
  * size or a target's absence; a clause that ORDERS one number against another - `clear_fish_pond`'s "at least as many
@@ -250,7 +253,7 @@ export function buildRequestArgs(contract, target) {
   return built;
 }
 
-export function judgeSlice({ contract, target, terminal, after, evidence, staleTerminal }) {
+export function judgeSlice({ contract, target, terminal, after, afterStale, evidence, staleTerminal }) {
   const checks = {};
   checks.terminalStateExpected = terminal?.state === contract.expectedState;
   checks.terminalReasonExpected = terminal?.reasonCode === contract.expectedReasonCode;
@@ -267,6 +270,10 @@ export function judgeSlice({ contract, target, terminal, after, evidence, staleT
   if (contract.stale !== null) {
     checks.staleRefused =
       staleTerminal?.state === "rejected" && contract.stale.refusedWith.includes(staleTerminal?.reasonCode);
+  }
+  // The same assertion entries, read at the LATER moment: what the world looks like once the stale re-send was refused.
+  for (const assertion of contract.afterStale) {
+    checks[`afterStale.${assertion.field}.${assertion.form}`] = judgeWorldAfter(assertion, afterStale, target);
   }
   return checks;
 }
@@ -385,6 +392,7 @@ export async function runActionSlice({
     });
 
     let staleTerminal = null;
+    let afterStale = null;
     if (contract.stale !== null) {
       const staleArgs = { ...args, ...buildStaleArgs(contract, discovery.chosen) };
       const staleRequestId = `native_action_slice_${contract.action}_stale_${Date.now()}`;
@@ -397,10 +405,27 @@ export async function runActionSlice({
       });
       staleTerminal = await waitForTerminal(receipts, staleAccepted, terminalTimeoutMs);
       trace.push({ step: "stale_target", args: staleArgs, receipt: summarizeReceipt(staleTerminal) });
+      // The world AFTER the refusal: the moment `worldAfter` is read before, so a clause about it needs its own read
+      // and its own checks. Taken only when the contract declares one, so an ordinary slice spends no frame on it.
+      if (contract.afterStale.length > 0) {
+        afterStale = await waitForFreshSnapshot(client, {
+          minRevision: Number.isInteger(staleTerminal.revision) ? staleTerminal.revision : (after.revision ?? 0),
+          timeoutMs: terminalTimeoutMs,
+        });
+        trace.push({ step: "observed_after_stale", revision: afterStale.revision });
+      }
     }
     timings.settleMs = Date.now() - settleStartedAt;
 
-    const builtIn = judgeSlice({ contract, target: discovery.chosen, terminal, after, evidence, staleTerminal });
+    const builtIn = judgeSlice({
+      contract,
+      target: discovery.chosen,
+      terminal,
+      after,
+      afterStale,
+      evidence,
+      staleTerminal,
+    });
     // The hook runs LAST, over the observation the request was built from and the fresh one read after the terminal:
     // what it could not look at it reports, and a report is a failure.
     const assertion = await runContractAssertion({ contract, before: snapshot, after, evidence });
@@ -516,6 +541,8 @@ function failureReason(name, terminal, checks, evidence, contract, assertion = {
       MAX_REASON_CHARS,
     );
   }
+  if (name.startsWith("afterStale."))
+    return `slice_after_stale_unmet:${name.slice("afterStale.".length)}:${checks[name] === "not_checked" ? "not_checked" : "false"}`;
   return `slice_world_unmet:${name}:${checks[name] === "not_checked" ? "not_checked" : "false"}`;
 }
 
@@ -705,6 +732,7 @@ export async function runSliceLive({ contract, plan, evidencePath = null }) {
         evidence: contract.evidence,
         worldAfter: contract.worldAfter,
         stale: contract.stale,
+        afterStale: contract.afterStale,
         assertion: contract.assertion,
       }),
     }),
@@ -738,6 +766,7 @@ export function describeSlice(contract) {
       evidence: contract.evidence,
       worldAfter: contract.worldAfter,
       stale: contract.stale,
+      afterStale: contract.afterStale,
       assertion: contract.assertion,
     },
     expected: { state: contract.expectedState, reasonCode: contract.expectedReasonCode },

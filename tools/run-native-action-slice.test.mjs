@@ -499,6 +499,81 @@ test("the first observation is taken when the world can act, and a world that ne
   assert.equal(refused.reasonCode, "native_snapshot_not_actionable");
 });
 
+/**
+ * THE MOMENT AFTER THE REFUSAL.
+ *
+ * `worldAfter` is read before the stale re-send; a contract that says "and nothing moved once the re-send was refused"
+ * needs a read at that later moment, judged by its own named checks. The three readings below are the same world with
+ * one difference each: quiet, moved, and a surface that cannot be looked at - and the last two must fail, because "I
+ * could not look" and "nothing moved" can never read the same.
+ */
+function afterStaleWorld(kind, mutate) {
+  const world = makeWorld(kind);
+  const inner = world.client.execute;
+  world.client.execute = async (request) => {
+    const receipt = await inner(request);
+    if (receipt.state === "rejected") world.client.state.snapshot = mutate(world.client.state.snapshot, receipt);
+    return receipt;
+  };
+  return world;
+}
+
+test("the afterStale block is judged on the world the refusal left behind, and costs no extra frame", async () => {
+  const contract = contractOf("toggle_animal_door");
+  const quiet = afterStaleWorld("toggle_animal_door", (snapshot, receipt) => ({
+    ...snapshot,
+    revision: receipt.revision + 1,
+  }));
+  const result = await runActionSlice({
+    client: quiet.client,
+    receipts: quiet.receipts,
+    contract,
+    terminalTimeoutMs: 1_000,
+  });
+  assert.equal(result.state, "passed", `the refusal left the door open, as the block says: ${result.reasonCode}`);
+  assert.equal(result.checks["afterStale.animalDoorTargets.rowAtTargetTile"], true);
+  assert.equal(result.checks["afterStale.animalDoorTargets.excludesTarget"], true);
+  assert.equal(quiet.callCount(), 2, "the later reading is an observation, not a second dispatch");
+});
+
+test("a world that moves after the refusal fails the afterStale check, named with the field and the form", async () => {
+  const contract = contractOf("toggle_animal_door");
+  const moving = afterStaleWorld("toggle_animal_door", (snapshot, receipt) => ({
+    ...snapshot,
+    revision: receipt.revision + 1,
+    animalDoorTargets: [{ targetId: "animal_door_state_closed", x: 31, y: 20, buildingType: "Coop", isOpen: false }],
+  }));
+  const result = await runActionSlice({
+    client: moving.client,
+    receipts: moving.receipts,
+    contract,
+    terminalTimeoutMs: 1_000,
+  });
+  assert.equal(result.state, "blocked");
+  assert.equal(result.checks["afterStale.animalDoorTargets.rowAtTargetTile"], false);
+  assert.equal(result.checks["afterStale.animalDoorTargets.excludesTarget"], false);
+  // The first failing entry names itself: the closed-door target came back into the discovery projection.
+  assert.equal(result.reasonCode, "slice_after_stale_unmet:animalDoorTargets.excludesTarget:false");
+});
+
+test("an afterStale field the surface does not carry after the refusal is not_checked, never a pass", async () => {
+  const contract = contractOf("toggle_animal_door");
+  const blind = afterStaleWorld("toggle_animal_door", (snapshot, receipt) => {
+    const { animalDoorTargets, ...withoutSurface } = snapshot;
+    return { ...withoutSurface, revision: receipt.revision + 1 };
+  });
+  const result = await runActionSlice({
+    client: blind.client,
+    receipts: blind.receipts,
+    contract,
+    terminalTimeoutMs: 1_000,
+  });
+  assert.equal(result.state, "blocked");
+  assert.equal(result.checks["afterStale.animalDoorTargets.rowAtTargetTile"], "not_checked");
+  assert.equal(result.checks["afterStale.animalDoorTargets.excludesTarget"], "not_checked");
+  assert.equal(result.reasonCode, "slice_after_stale_unmet:animalDoorTargets.excludesTarget:not_checked");
+});
+
 test("the discovery refuses a world that does not advertise the declared family", () => {
   const contract = contractOf("accept_daily_quest");
   assert.throws(() => chooseTarget({ revision: 1 }, contract), /slice_discovery_surface_absent:dailyQuestTargets/u);
@@ -574,6 +649,7 @@ test("the judgement is pure: it takes facts and returns a check per assertion", 
     target,
     terminal: { state: "succeeded", reasonCode: "animal_door_toggled" },
     after,
+    afterStale: after,
     evidence,
     staleTerminal: { state: "rejected", reasonCode: "animal_door_target_changed" },
   });
@@ -587,6 +663,8 @@ test("the judgement is pure: it takes facts and returns a check per assertion", 
     "world.animalDoorTargets.excludesTarget": true,
     "world.animalDoorTargets.rowAtTargetTile": true,
     staleRefused: true,
+    "afterStale.animalDoorTargets.excludesTarget": true,
+    "afterStale.animalDoorTargets.rowAtTargetTile": true,
   });
   // Falsifier: the same facts with the door still closed in the world take the same guard red.
   const red = judgeSlice({
@@ -609,6 +687,7 @@ test("a delta entry is judged as the relation it states, and both numbers appear
     expectedReasonCode: "crafted_item_created",
     evidence: {},
     worldAfter: [],
+    afterStale: [],
     stale: null,
     delta: [
       { to: "count_after", from: "count_before", bound: { form: "equals", value: 1 } },

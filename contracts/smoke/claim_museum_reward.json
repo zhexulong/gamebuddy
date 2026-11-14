@@ -19,6 +19,7 @@
   "stale": {
     "refusedWith": ["museum_rewards_empty", "museum_reward_target_moved"]
   },
+  "afterStale": [{ "field": "museumRewardTargets", "size": 0 }],
   "delta": [
     { "to": "rewards_before", "atLeast": 1 },
     { "to": "rewards_returned", "atLeast": 1 },
