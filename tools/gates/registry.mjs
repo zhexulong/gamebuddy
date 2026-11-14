@@ -11,11 +11,14 @@
  *
  * WHAT THIS MODULE OWNS, and therefore what a directory move touches:
  *
- *   `GATE_DIRECTORIES`  the directories a gate file may live in. A move into `tools/gates/<domain>/` adds one string
- *                       here and changes nothing else - every consumer below reads this scan, not a glob of its own.
+ *   `GATE_DIRECTORIES`  the directories a gate file may live in, DERIVED from the domain list: `tools/` plus
+ *                       `tools/gates/<domain>/` for every domain. Filing a domain in its own directory is therefore a
+ *                       `git mv` and no edit here - and every consumer below reads this scan, not a glob of its own.
  *   `isGateFile`        the name rule: `check-*.mjs` / `audit-*.mjs`, minus the falsifier suffixes that live beside
  *                       their gate. A path is a gate when its own directory is one of `GATE_DIRECTORIES`.
  *   `gateFiles`         the population: that rule applied to those directories, sorted, relative to the repository root.
+ *   `directoryDomain`   which domain a gate's own directory files it under, so that the layout and the declaration
+ *                       cannot say two different things about the same gate.
  *
  * WHY THE DECLARATION IS READ FROM THE SYNTAX TREE AND NOT BY IMPORTING THE MODULE. A loader that imports each gate
  * runs each gate: measured on this tree, importing all 148 took 90.6 s, exited non-zero on 16 of them (argument
@@ -50,7 +53,8 @@
  *   gate_without_a_declaration:<path>              a gate file that declares nothing.
  *   gate_id_collision:<id>:<pathA>:<pathB>         two gates claiming one identity.
  *   gate_declaration_invalid:<path>:<field>        a field outside its closed set, a missing field, an `id` that is
- *                                                  not the file's slug, or a declaration that is not a literal object.
+ *                                                  not the file's slug, a declaration that is not a literal object,
+ *                                                  or a `domain` that contradicts the directory the file is filed in.
  *   gate_registry_no_population                    the scan found no gate file at all - BLOCKED, exit 2, never green,
  *                                                  because an empty population agrees with itself.
  *
@@ -68,8 +72,24 @@ import { parseJavaScript } from "../lib/javascript-ast.mjs";
 
 const REPOSITORY_ROOT = resolve(fileURLToPath(import.meta.url), "../../..");
 
-/** The directories a gate file may live in. A directory move is an edit to THIS list and nothing else. */
-export const GATE_DIRECTORIES = Object.freeze(["tools"]);
+/** The three closed sets a declaration is checked against, in the order a reader wants them. */
+export const GATE_DOMAINS = Object.freeze(["product", "data", "arch", "stardew", "meta"]);
+export const GATE_TIERS = Object.freeze(["l0", "l1", "l2"]);
+export const GATE_KINDS = Object.freeze(["contract", "totality", "ratchet"]);
+
+/** The directory a domain's gates live in. One string per domain, derived from the domain list. */
+const DOMAIN_ROOT = "tools/gates";
+
+/**
+ * The directories a gate file may live in: `tools/` for the gates no domain has claimed yet, and one directory per
+ * domain beneath `tools/gates/`.
+ *
+ * DERIVED FROM `GATE_DOMAINS`, not written out, so filing a domain in its directory is a `git mv` and no edit at all.
+ * Written out, the list was `["tools"]` and this scan is not recursive: measured on the `meta` pilot, moving 14 gates
+ * into `tools/gates/meta/` took this registry from 148 declared to 134 with no finding, because a gate that leaves
+ * every declared directory leaves the population and an empty answer agrees with itself.
+ */
+export const GATE_DIRECTORIES = Object.freeze(["tools", ...GATE_DOMAINS.map((domain) => `${DOMAIN_ROOT}/${domain}`)]);
 
 /** A gate file's name, wherever it lives: the rule every consumer now reads instead of restating. */
 const GATE_NAME = /^(?:check|audit)-.*\.mjs$/u;
@@ -79,11 +99,6 @@ const SIBLING_FALSIFIER = /\.(?:test\.mjs|test\.ts|mutation\.mjs)$/u;
 
 /** The export a gate declares itself with. */
 export const DECLARATION_EXPORT = "gateDeclaration";
-
-/** The three closed sets a declaration is checked against, in the order a reader wants them. */
-export const GATE_DOMAINS = Object.freeze(["product", "data", "arch", "stardew", "meta"]);
-export const GATE_TIERS = Object.freeze(["l0", "l1", "l2"]);
-export const GATE_KINDS = Object.freeze(["contract", "totality", "ratchet"]);
 
 /** The fields a declaration carries, and the set each one must be in. */
 const DECLARATION_FIELDS = Object.freeze({
@@ -96,6 +111,17 @@ const DECLARATION_FIELDS = Object.freeze({
 const normalize = (path) => String(path).replace(/\\/gu, "/");
 const basename = (path) => normalize(path).replace(/^.*\//u, "");
 const directoryOf = (path) => normalize(path).replace(/\/[^/]*$/u, "");
+
+/**
+ * The domain a gate's own directory files it under, or `null` when the gate sits directly in `tools/`.
+ *
+ * `tools/gates/meta/check-diff.mjs` is filed under `meta`. `tools/check-diff.mjs` is filed under nothing, because the
+ * unsorted half of the population has no domain directory and its declaration is the only word on the subject.
+ */
+export function directoryDomain(path) {
+  const match = /^tools\/gates\/([^/]+)\//u.exec(normalize(path));
+  return match === null ? null : match[1];
+}
 
 /**
  * Is this path a gate file? The ONE spelling of the rule.
@@ -224,12 +250,14 @@ export async function readDeclarations({ root = REPOSITORY_ROOT, files } = {}) {
     }
 
     const fields = result.declaration;
+    const filedUnder = directoryDomain(file);
     const invalid = [];
     for (const [field, allowed] of Object.entries(DECLARATION_FIELDS)) {
       const value = fields[field];
       if (typeof value !== "string" || value.length === 0) invalid.push(field);
       else if (allowed !== null && !allowed.includes(value)) invalid.push(field);
       else if (field === "id" && value !== basename(file).replace(/\.mjs$/u, "")) invalid.push(field);
+      else if (field === "domain" && filedUnder !== null && value !== filedUnder) invalid.push(field);
     }
     const unknown = Object.keys(fields).filter((field) => DECLARATION_FIELDS[field] === undefined);
     for (const field of unknown)
@@ -242,10 +270,7 @@ export async function readDeclarations({ root = REPOSITORY_ROOT, files } = {}) {
       findings.push({
         code: "gate_declaration_invalid",
         id: `${file}:${field}`,
-        detail:
-          field === "id"
-            ? `must be the file's slug \`${basename(file).replace(/\.mjs$/u, "")}\`, got \`${fields.id}\``
-            : `\`${String(fields[field])}\` is not one of ${(DECLARATION_FIELDS[field] ?? []).join(" | ")}`,
+        detail: invalidDetail({ file, field, fields, filedUnder }),
       });
     if (invalid.length > 0 || unknown.length > 0) {
       undeclared.push(file);
@@ -267,6 +292,21 @@ export async function readDeclarations({ root = REPOSITORY_ROOT, files } = {}) {
   }
 
   return { examined: examinedFiles.length, files: examinedFiles, declared, undeclared, findings };
+}
+
+/**
+ * Why one field was refused, in terms of what THIS file wrote - a closed set alone cannot tell a reader that the gate
+ * is filed in the wrong directory, because the value it declared is a legal one.
+ */
+function invalidDetail({ file, field, fields, filedUnder }) {
+  if (field === "id")
+    return `must be the file's slug \`${basename(file).replace(/\.mjs$/u, "")}\`, got \`${fields.id}\``;
+  if (field === "domain" && filedUnder !== null && GATE_DOMAINS.includes(fields.domain))
+    return (
+      `\`${fields.domain}\` is declared, but the file is filed under \`${filedUnder}\` - ` +
+      `a gate in ${DOMAIN_ROOT}/<domain>/ declares that domain, so move the file or change the declaration`
+    );
+  return `\`${String(fields[field])}\` is not one of ${(DECLARATION_FIELDS[field] ?? []).join(" | ")}`;
 }
 
 /** The self-verification report: one entry per rule this registry can report red. */
