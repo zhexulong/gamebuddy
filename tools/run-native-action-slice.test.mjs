@@ -397,6 +397,43 @@ test("a world-after assertion whose field the surface does not carry is not_chec
   assert.equal(result.checks["world.dailyQuestTargets.excludesTarget"], "not_checked");
 });
 
+test("the first observation is taken when the world can act, and a world that never can is refused by name", async () => {
+  // Measured live 2026-11-14: the bridge opens while the fixture's warp fade is still in flight, and
+  // `toggle_animal_door` refused `native_snapshot_not_actionable` on the first observation. The engine must wait
+  // that transition out - and must still refuse, by name, when the world never becomes actionable.
+  const contract = contractOf("toggle_animal_door");
+  const handling = makeWorld("toggle_animal_door");
+  const inner = handling.client.observe;
+  let reads = 0;
+  handling.client.observe = async () => {
+    reads += 1;
+    const snapshot = await inner();
+    return reads === 1 ? { ...snapshot, actionable: false } : snapshot;
+  };
+  const result = await runActionSlice({
+    client: handling.client,
+    receipts: handling.receipts,
+    contract,
+    terminalTimeoutMs: 1_000,
+    actionableTimeoutMs: 1_000,
+  });
+  assert.equal(result.state, "passed", `the fade must be waited out: ${result.reasonCode}`);
+  assert.ok(reads > 1, "the engine must have observed again after the non-actionable snapshot");
+
+  const stuck = makeWorld("toggle_animal_door");
+  const stuckInner = stuck.client.observe;
+  stuck.client.observe = async () => ({ ...(await stuckInner()), actionable: false });
+  const refused = await runActionSlice({
+    client: stuck.client,
+    receipts: stuck.receipts,
+    contract,
+    terminalTimeoutMs: 1_000,
+    actionableTimeoutMs: 250,
+  });
+  assert.equal(refused.state, "blocked");
+  assert.equal(refused.reasonCode, "native_snapshot_not_actionable");
+});
+
 test("the discovery refuses a world that does not advertise the declared family", () => {
   const contract = contractOf("accept_daily_quest");
   assert.throws(() => chooseTarget({ revision: 1 }, contract), /slice_discovery_surface_absent:dailyQuestTargets/u);

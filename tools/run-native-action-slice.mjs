@@ -68,6 +68,7 @@ import {
   executeFresh,
   observeFresh,
   summarizeReceipt,
+  waitForActionable,
   waitForFreshSnapshot,
   waitForTerminal,
 } from "./lib/stardew-native-smoke-harness-v1.mjs";
@@ -309,12 +310,25 @@ export function receiptEvidence(terminal) {
  * One slice over ONE connected session: discover, dispatch a single frame, wait for its receipt, re-read the world,
  * re-send the stale target, judge. No second action is ever dispatched except the contract's own stale re-send.
  */
-export async function runActionSlice({ client, receipts, contract, terminalTimeoutMs = 5_000, argsOverride = null }) {
+export async function runActionSlice({
+  client,
+  receipts,
+  contract,
+  terminalTimeoutMs = 5_000,
+  actionableTimeoutMs = 15_000,
+  argsOverride = null,
+}) {
   const trace = [];
   const timings = { fixtureMs: 0, dispatchMs: 0, settleMs: 0, totalMs: 0 };
   const startedAt = Date.now();
   try {
-    const snapshot = await observeFresh(client, { actionable: true });
+    // THE FIRST OBSERVATION IS TAKEN WHEN THE WORLD CAN ACT. The bridge opens while the fixture's own
+    // `warpFarmer` fade is still in flight, so the snapshot that arrives first reports `actionable: false` -
+    // measured live 2026-11-14, `toggle_animal_door` refused `native_snapshot_not_actionable` with the fixture
+    // freshly armed. A transition in flight is not a world that cannot act, and every native-local runner already
+    // waits it out (`waitForActionable`), so this does too rather than spending a game launch on the race.
+    const first = await observeFresh(client);
+    const snapshot = await waitForActionable(client, first, actionableTimeoutMs);
     if (contract.derived.requiredCapabilities.length > 0)
       assertRequiredCapabilities(snapshot, contract.derived.requiredCapabilities);
 
@@ -675,9 +689,8 @@ export async function main(argv) {
     }
     if (options.evidencePath === null)
       refuse("slice_evidence_path_required", "a live run must write --evidence <path>");
-    const roots = announceStardewFixtureRoots(resolveStardewFixtureRoots({ env: process.env }), (line) =>
-      process.stderr.write(`${line}\n`),
-    );
+    const roots = resolveStardewFixtureRoots({ env: process.env });
+    announceStardewFixtureRoots(roots, process.stderr);
     const plan = await planSlice({ contract, roots, keepLog: options.keepLog });
     process.stderr.write(
       `[slice] ${contract.action} scenario=${contract.derived.fixtureScenario} save=${plan.saveName} window=${plan.windowMode}\n`,
