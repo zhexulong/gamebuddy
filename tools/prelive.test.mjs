@@ -15,6 +15,7 @@
  * checking either would fail those tests, not pass silently.
  */
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
@@ -44,9 +45,11 @@ import {
   parseKnownFixtureScenarios,
   parseModDispatchScenarios,
   reachableRunnerNames,
+  recordShrinks,
   runGateRung,
   runLadder,
   shapeRung,
+  siteLabel,
 } from "./prelive.mjs";
 import { resolveStardewActionGateRunner } from "./resolve-stardew-action-gate-runner.mjs";
 import {
@@ -300,6 +303,121 @@ test("(iv) the baseline is a ratchet: a listed site that stopped violating is re
   });
   assert.equal(report.status, "failed");
   assert.equal(report.violations[0].rule, "baseline_stale");
+});
+
+//
+// The L3 baseline's only writer - `--record-shrinks`
+//
+
+/** One rule-(a) site: a one-shot actionable observation whose next statement asserts the tile. */
+const tileSite = (binding) => `
+const ${binding} = await observeFresh(client, { actionable: true });
+if (!Number.isInteger(${binding}.tile?.x)) throw new Error("tile_missing");
+`;
+
+const recordOf = (entries) => ({ schema: "prelive-l3-baseline/v1", ratchet: "only down", knownSites: entries });
+
+const shapeOf = (runners, baseline) =>
+  checkRunnerShape({
+    runners,
+    harnessSource: HARNESS_SOURCE,
+    baseline,
+    reachableRunners: new Set(runners.map((runner) => runner.file)),
+  });
+
+test("(iv) --record-shrinks removes a site the tree no longer produces and lowers one it produces fewer times", () => {
+  const baseline = recordOf([
+    { file: "gone-smoke.mjs", fact: "tile", count: 1, reason: "the runner b6128a58 deleted" },
+    { file: "twice-smoke.mjs", fact: "tile", count: 2, reason: "two one-shot re-reads" },
+    { file: "live-smoke.mjs", fact: "tile", count: 1, reason: "still there" },
+  ]);
+  const runners = [
+    { file: "twice-smoke.mjs", source: tileSite("first") },
+    { file: "live-smoke.mjs", source: tileSite("only") },
+  ];
+  const reading = shapeOf(runners, baseline);
+  assert.deepEqual(
+    reading.violations.map((entry) => entry.rule),
+    ["baseline_stale", "baseline_stale"],
+  );
+  const outcome = recordShrinks({ baseline, report: reading });
+  assert.equal(outcome.refused, undefined);
+  assert.deepEqual(outcome.removed, ["gone-smoke.mjs:tile"]);
+  assert.deepEqual(outcome.lowered, ["twice-smoke.mjs:tile"]);
+  assert.deepEqual(outcome.added, [], "nothing is added");
+  assert.deepEqual(outcome.raised, [], "nothing is raised");
+  assert.deepEqual(
+    outcome.payload.knownSites.map((entry) => [entry.file, entry.count]),
+    [
+      ["twice-smoke.mjs", 1],
+      ["live-smoke.mjs", 1],
+    ],
+  );
+  // The classification survives a lowered count, and every other key is carried rather than replaced.
+  assert.equal(outcome.payload.knownSites[0].reason, "two one-shot re-reads");
+  assert.equal(outcome.payload.ratchet, "only down");
+  // INVERSE: the payload it would write is the tree's own reading, so the file and the tree agree again.
+  assert.deepEqual(shapeOf(runners, outcome.payload).violations, []);
+});
+
+test("(iv) --record-shrinks names a site the baseline does not record, and never adds it", () => {
+  const runners = [{ file: "new-smoke.mjs", source: tileSite("fresh") }];
+  const baseline = recordOf([{ file: "gone-smoke.mjs", fact: "tile", count: 1, reason: "gone" }]);
+  const outcome = recordShrinks({ baseline, report: shapeOf(runners, baseline) });
+  assert.equal(outcome.refused, undefined);
+  assert.deepEqual(outcome.added, ["new-smoke.mjs:tile"], "the member it refuses to record is named");
+  assert.deepEqual(outcome.raised, []);
+  assert.deepEqual(outcome.removed, ["gone-smoke.mjs:tile"], "the shrink is still recorded beside it");
+  assert.deepEqual(outcome.payload.knownSites, [], "the unrecorded site is not written");
+  // FALSIFIER for "`added` is just a copy of the violations": recorded by hand, the same reading adds nothing.
+  const withSite = recordOf([{ file: "new-smoke.mjs", fact: "tile", count: 1, reason: "recorded once, by hand" }]);
+  const recorded = recordShrinks({ baseline: withSite, report: shapeOf(runners, withSite) });
+  assert.deepEqual([recorded.added, recorded.raised], [[], []]);
+  assert.deepEqual(recorded.removed, []);
+  assert.deepEqual(recorded.payload.knownSites, withSite.knownSites);
+});
+
+test("(iv) --record-shrinks refuses to raise a count, and keeps the lower record the tree exceeds", () => {
+  const runners = [{ file: "twice-smoke.mjs", source: `${tileSite("first")}${tileSite("second")}` }];
+  const baseline = recordOf([{ file: "twice-smoke.mjs", fact: "tile", count: 1, reason: "one one-shot re-read" }]);
+  const reading = shapeOf(runners, baseline);
+  assert.equal(reading.status, "failed", "a repeated site is red before any flag is asked to look at it");
+  assert.deepEqual(reading.sites, [{ file: "twice-smoke.mjs", fact: "tile", count: 1, seen: 2 }]);
+  const outcome = recordShrinks({ baseline, report: reading });
+  assert.equal(outcome.refused, undefined);
+  assert.deepEqual(outcome.raised, ["twice-smoke.mjs:tile"], "the member it refuses to raise is named");
+  assert.deepEqual(outcome.added, []);
+  assert.deepEqual(outcome.lowered, []);
+  assert.equal(outcome.payload.knownSites[0].count, 1, "the record is never raised onto the reading");
+  // FALSIFIER: the count that matches the tree is green and is left exactly as it is.
+  const matching = recordOf([{ file: "twice-smoke.mjs", fact: "tile", count: 2, reason: "two one-shot re-reads" }]);
+  assert.equal(shapeOf(runners, matching).status, "passed");
+  const unchanged = recordShrinks({ baseline: matching, report: shapeOf(runners, matching) });
+  assert.deepEqual([unchanged.removed, unchanged.lowered, unchanged.raised, unchanged.added], [[], [], [], []]);
+  assert.deepEqual(unchanged.payload.knownSites, matching.knownSites);
+});
+
+test("the real tree: no recorded L3 entry outlives or outnumbers the sites the tree still produces", () => {
+  const report = shapeRung();
+  const labels = report.sites.filter((site) => site.seen < site.count).map(siteLabel);
+  assert.deepEqual(
+    labels,
+    [],
+    "an entry whose runner retired, or whose site the tree no longer repeats, is discharged by " +
+      "`node tools/prelive.mjs --record-shrinks` - never by a hand edit",
+  );
+  assert.deepEqual(
+    report.sites.filter((site) => site.seen > site.count).map(siteLabel),
+    [],
+    "no record sits below the tree: a site the tree repeats more often is new debt for a fix, not for this flag",
+  );
+  assert.ok(report.sites.length > 0, "the baseline must still be describing real sites");
+  const baseline = JSON.parse(
+    readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), "..", "tools/prelive-l3-baseline.json"), "utf8"),
+  );
+  const outcome = recordShrinks({ baseline, report });
+  assert.equal(outcome.refused, undefined);
+  assert.deepEqual([outcome.removed, outcome.lowered], [[], []]);
 });
 
 test("(v) a clean tree is green, end to end through every rung", () => {
