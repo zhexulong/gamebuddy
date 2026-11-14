@@ -12,21 +12,25 @@
  *
  * red-proof: fixture  a mods directory holding `GameBuddy/` and the stale `GameBuddy.Stardew/` alias beside it, the
  *                    2026-10-19 shape SMAPI answers by refusing the mod -> `FAIL  mods_path_exactly_one_gamebuddy
- *                    GameBuddy+GameBuddy.Stardew` then `preflight_failed:mods_path_exactly_one_gamebuddy`, exit 1,
- *                    while the same tree with one folder prints `preflight_ok` (tools/preflight-live-run.mjs)
+ *                    GameBuddy+GameBuddy.Stardew`; the same fixture with one folder prints
+ *                    `ok    mods_path_exactly_one_gamebuddy        GameBuddy` and moves on to the next check. Measured
+ *                    2026-11-13 on this checkout with `.tmp/rp-fixture/mods-two` and `.tmp/rp-fixture/mods-one`, exit
+ *                    1 both times - the guardian check below fails first here, so the mods verdict is read from the
+ *                    check list rather than from the first-failure line.
  *
- * red-proof: machine  2026-11-13, this checkout. Before the guardian check existed, the same command printed
- *                    `ok host_artifact_fresh`, `FAIL mod_bundle_fresh`, `ok mods_path_exactly_one_gamebuddy`,
- *                    `ok bridge_config_readable` and nothing else - the condition that had already killed four chat
- *                    runs (`dialogue_exited_before_ready:1:desktop_runtime_bootstrap_unavailable:
- *                    guardian_pipe_unreachable`, no capture phase) had no word in the preflight. After the check, the
- *                    FIRST line of the same command reads `n/m  guardian_pipe_reachable  guardian_pipe_unreachable:
- *                    251 named pipe(s) examined; no GameBuddy.HostGuardian.* endpoint is bound, ...`, followed by the
- *                    two operator routes and `preflight_not_measured:guardian_pipe_reachable:
- *                    guardian_pipe_unreachable`, exit 1. With a `GameBuddy.HostGuardian.<64 hex>` endpoint bound on
- *                    the same machine - a 60-second stand-in listener, nothing launched - the line reads
- *                    `ok  guardian_pipe_reachable  250 named pipe(s) examined; bound: GameBuddy.HostGuardian.<hex>`,
- *                    the rest of the tree passes, and the command ends `preflight_ok`, exit 0.
+ * NOT a red proof, and kept because it is why the guardian check exists: measured 2026-11-13, this checkout. Before the
+ * check existed the same command printed `ok host_artifact_fresh`, `FAIL mod_bundle_fresh`,
+ * `ok mods_path_exactly_one_gamebuddy`, `ok bridge_config_readable` and nothing else - the condition that had already
+ * killed four chat runs (`dialogue_exited_before_ready:1:desktop_runtime_bootstrap_unavailable:
+ * guardian_pipe_unreachable`, no capture phase) had no word in the preflight. It has one now: the same command on this
+ * machine prints `n/m  guardian_pipe_reachable  guardian_pipe_unreachable: 385 named pipe(s) examined; no
+ * GameBuddy.HostGuardian.* endpoint is bound, ...`, then `preflight_not_measured:guardian_pipe_reachable:
+ * guardian_pipe_unreachable` and exit 1; with a `GameBuddy.HostGuardian.<64 hex>` endpoint bound the line reads
+ * `ok  guardian_pipe_reachable  N named pipe(s) examined; bound: GameBuddy.HostGuardian.<hex>` and the run proceeds.
+ * That pair is a live observation of one machine, not an injected violation, so it carries no `red-proof:` kind: the
+ * proof above is what shows this gate can fail, and a marker whose kind a reader does not know is reported by
+ * `tools/audit-gate-red-proofs.mjs` rather than skipped (this one carried the invented kind `machine` until
+ * 2026-11-13).
  *
  * The name count moves between runs because it is the machine's whole pipe namespace; that is why it is printed.
  */
