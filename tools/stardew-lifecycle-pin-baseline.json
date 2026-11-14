@@ -1,0 +1,293 @@
+{
+  "schema": "gamebuddy-stardew-lifecycle-pin-baseline/v1",
+  "entries": [
+    {
+      "file": "GameBuddy.Stardew.Core.Tests/CandidateActionRegistrationTests.cs",
+      "actionId": "express_emote",
+      "lifecycle": "LiveVerified",
+      "count": 1
+    },
+    {
+      "file": "GameBuddy.Stardew.Core.Tests/CandidateActionRegistrationTests.cs",
+      "actionId": "face_direction",
+      "lifecycle": "LiveVerified",
+      "count": 1
+    },
+    {
+      "file": "GameBuddy.Stardew.Core.Tests/CandidateActionRegistrationTests.cs",
+      "actionId": "interact_npc_with_item",
+      "lifecycle": "LiveVerified",
+      "count": 1
+    },
+    {
+      "file": "GameBuddy.Stardew.Core.Tests/FarmAnimalPetActionSurfaceTests.cs",
+      "actionId": "pet_farm_animal",
+      "lifecycle": "LiveVerified",
+      "count": 1
+    },
+    {
+      "file": "GameBuddy.Stardew.Core.Tests/farmhandactionsurfaceexporttests.cs",
+      "actionId": "observe_scene",
+      "lifecycle": "Published",
+      "count": 1
+    },
+    {
+      "file": "GameBuddy.Stardew.Core.Tests/FarmhandBodyProgramCatalogProjectionTests.cs",
+      "actionId": "cut_weeds",
+      "lifecycle": "LiveVerified",
+      "count": 1
+    },
+    {
+      "file": "GameBuddy.Stardew.Integration.Tests/AcceptDailyQuestActionTests.cs",
+      "actionId": "accept_daily_quest",
+      "lifecycle": "LiveVerified",
+      "count": 2
+    },
+    {
+      "file": "GameBuddy.Stardew.Integration.Tests/AcceptSpecialOrderActionTests.cs",
+      "actionId": "accept_special_order",
+      "lifecycle": "LiveVerified",
+      "count": 1
+    },
+    {
+      "file": "GameBuddy.Stardew.Integration.Tests/ActorStateActionTests.cs",
+      "actionId": "dismount_transport",
+      "lifecycle": "LiveVerified",
+      "count": 1
+    },
+    {
+      "file": "GameBuddy.Stardew.Integration.Tests/ActorStateActionTests.cs",
+      "actionId": "equip_wearable",
+      "lifecycle": "LiveVerified",
+      "count": 1
+    },
+    {
+      "file": "GameBuddy.Stardew.Integration.Tests/ActorStateActionTests.cs",
+      "actionId": "unequip_wearable",
+      "lifecycle": "LiveVerified",
+      "count": 1
+    },
+    {
+      "file": "GameBuddy.Stardew.Integration.Tests/AnimalProductSingleToolTests.cs",
+      "actionId": "collect_animal_product",
+      "lifecycle": "Published",
+      "count": 1
+    },
+    {
+      "file": "GameBuddy.Stardew.Integration.Tests/BuildFarmBuildingActionSourceShapeTests.cs",
+      "actionId": "build_farm_building",
+      "lifecycle": "LiveVerified",
+      "count": 1
+    },
+    {
+      "file": "GameBuddy.Stardew.Integration.Tests/BuildingChestActionTests.cs",
+      "actionId": "collect_building_chest_output",
+      "lifecycle": "LiveVerified",
+      "count": 1
+    },
+    {
+      "file": "GameBuddy.Stardew.Integration.Tests/CandidateActionExecutionTests.cs",
+      "actionId": "express_emote",
+      "lifecycle": "LiveVerified",
+      "count": 1
+    },
+    {
+      "file": "GameBuddy.Stardew.Integration.Tests/CandidateActionExecutionTests.cs",
+      "actionId": "face_direction",
+      "lifecycle": "LiveVerified",
+      "count": 1
+    },
+    {
+      "file": "GameBuddy.Stardew.Integration.Tests/ClaimMuseumRewardActionTests.cs",
+      "actionId": "claim_museum_reward",
+      "lifecycle": "LiveVerified",
+      "count": 1
+    },
+    {
+      "file": "GameBuddy.Stardew.Integration.Tests/ClearDebrisOrthogonalityTests.cs",
+      "actionId": "clear_debris",
+      "lifecycle": "LiveVerified",
+      "count": 1
+    },
+    {
+      "file": "GameBuddy.Stardew.Integration.Tests/ContainerActionTests.cs",
+      "actionId": "chest_retrieve",
+      "lifecycle": "LiveVerified",
+      "count": 1
+    },
+    {
+      "file": "GameBuddy.Stardew.Integration.Tests/ContainerActionTests.cs",
+      "actionId": "chest_store",
+      "lifecycle": "LiveVerified",
+      "count": 1
+    },
+    {
+      "file": "GameBuddy.Stardew.Integration.Tests/CookRecipeActionTests.cs",
+      "actionId": "cook_recipe",
+      "lifecycle": "LiveVerified",
+      "count": 1
+    },
+    {
+      "file": "GameBuddy.Stardew.Integration.Tests/CrabPotCollectActionTests.cs",
+      "actionId": "collect_crab_pot_output",
+      "lifecycle": "LiveVerified",
+      "count": 1
+    },
+    {
+      "file": "GameBuddy.Stardew.Integration.Tests/CraftItemActionTests.cs",
+      "actionId": "craft_item",
+      "lifecycle": "LiveVerified",
+      "count": 1
+    },
+    {
+      "file": "GameBuddy.Stardew.Integration.Tests/EnterExitDoorGateTests.cs",
+      "actionId": "enter_exit",
+      "lifecycle": "Published",
+      "count": 1
+    },
+    {
+      "file": "GameBuddy.Stardew.Integration.Tests/FacilityActionTests.cs",
+      "actionId": "clear_cask",
+      "lifecycle": "LiveVerified",
+      "count": 1
+    },
+    {
+      "file": "GameBuddy.Stardew.Integration.Tests/ItemTileActionTests.cs",
+      "actionId": "claim_mail_attachment",
+      "lifecycle": "LiveVerified",
+      "count": 1
+    },
+    {
+      "file": "GameBuddy.Stardew.Integration.Tests/ItemTileActionTests.cs",
+      "actionId": "pan_ore",
+      "lifecycle": "LiveVerified",
+      "count": 1
+    },
+    {
+      "file": "GameBuddy.Stardew.Integration.Tests/ItemTileActionTests.cs",
+      "actionId": "use_warp_item",
+      "lifecycle": "LiveVerified",
+      "count": 1
+    },
+    {
+      "file": "GameBuddy.Stardew.Integration.Tests/MineFloorDescentGuardTests.cs",
+      "actionId": "use_mine_ladder",
+      "lifecycle": "LiveVerified",
+      "count": 1
+    },
+    {
+      "file": "GameBuddy.Stardew.Integration.Tests/MovePlacedFurnitureActionTests.cs",
+      "actionId": "move_placed_furniture",
+      "lifecycle": "LiveVerified",
+      "count": 1
+    },
+    {
+      "file": "GameBuddy.Stardew.Integration.Tests/NpcGiftActionTests.cs",
+      "actionId": "interact_npc_with_item",
+      "lifecycle": "LiveVerified",
+      "count": 1
+    },
+    {
+      "file": "GameBuddy.Stardew.Integration.Tests/PetBowlWateringActionTests.cs",
+      "actionId": "water_pet_bowl",
+      "lifecycle": "LiveVerified",
+      "count": 1
+    },
+    {
+      "file": "GameBuddy.Stardew.Integration.Tests/PlaceItemOnPedestalActionTests.cs",
+      "actionId": "place_item_on_pedestal",
+      "lifecycle": "Experimental",
+      "count": 1
+    },
+    {
+      "file": "GameBuddy.Stardew.Integration.Tests/PutItemInFishTankActionTests.cs",
+      "actionId": "put_item_in_fish_tank",
+      "lifecycle": "Experimental",
+      "count": 1
+    },
+    {
+      "file": "GameBuddy.Stardew.Integration.Tests/RedeemPrizeTicketActionTests.cs",
+      "actionId": "redeem_prize_ticket",
+      "lifecycle": "LiveVerified",
+      "count": 1
+    },
+    {
+      "file": "GameBuddy.Stardew.Integration.Tests/RideMinecartActionTests.cs",
+      "actionId": "ride_minecart",
+      "lifecycle": "LiveVerified",
+      "count": 1
+    },
+    {
+      "file": "GameBuddy.Stardew.Integration.Tests/SaplingPlantTests.cs",
+      "actionId": "plant_sapling",
+      "lifecycle": "LiveVerified",
+      "count": 1
+    },
+    {
+      "file": "GameBuddy.Stardew.Integration.Tests/ScytheActionTests.cs",
+      "actionId": "cut_weeds",
+      "lifecycle": "LiveVerified",
+      "count": 1
+    },
+    {
+      "file": "GameBuddy.Stardew.Integration.Tests/ScytheActionTests.cs",
+      "actionId": "scythe_crop",
+      "lifecycle": "LiveVerified",
+      "count": 1
+    },
+    {
+      "file": "GameBuddy.Stardew.Integration.Tests/ShipItemActionTests.cs",
+      "actionId": "ship_item",
+      "lifecycle": "LiveVerified",
+      "count": 1
+    },
+    {
+      "file": "GameBuddy.Stardew.Integration.Tests/SlimeHutchTroughActionTests.cs",
+      "actionId": "water_slime_hutch_trough",
+      "lifecycle": "LiveVerified",
+      "count": 1
+    },
+    {
+      "file": "GameBuddy.Stardew.Integration.Tests/StumpActionTests.cs",
+      "actionId": "chop_stump",
+      "lifecycle": "LiveVerified",
+      "count": 1
+    },
+    {
+      "file": "GameBuddy.Stardew.Integration.Tests/TalkToNpcActionTests.cs",
+      "actionId": "talk_to_npc",
+      "lifecycle": "LiveVerified",
+      "count": 1
+    },
+    {
+      "file": "GameBuddy.Stardew.Integration.Tests/ToggleAnimalDoorActionTests.cs",
+      "actionId": "toggle_animal_door",
+      "lifecycle": "LiveVerified",
+      "count": 1
+    },
+    {
+      "file": "GameBuddy.Stardew.Integration.Tests/UseMineLadderExitTests.cs",
+      "actionId": "use_mine_ladder",
+      "lifecycle": "LiveVerified",
+      "count": 1
+    },
+    {
+      "file": "GameBuddy.Stardew.Integration.Tests/UseObeliskActionTests.cs",
+      "actionId": "use_obelisk",
+      "lifecycle": "LiveVerified",
+      "count": 1
+    },
+    {
+      "file": "GameBuddy.Stardew.Integration.Tests/WithdrawSiloHayActionTests.cs",
+      "actionId": "withdraw_silo_hay",
+      "lifecycle": "LiveVerified",
+      "count": 1
+    },
+    {
+      "file": "GameBuddy.Stardew.Integration.Tests/WorldObjectActionTests.cs",
+      "actionId": "unattributed",
+      "lifecycle": "LiveVerified",
+      "count": 1
+    }
+  ]
+}

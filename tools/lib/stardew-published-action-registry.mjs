@@ -70,6 +70,29 @@ export const GATE_EXEMPT_PUBLISHED_ACTIONS = Object.freeze([
 ]);
 
 /**
+ * EVERY action id the registration table declares, whatever its lifecycle and whatever its kind.
+ *
+ * The narrowed projections beside this one answer narrower questions (`readPublishedStardewActionIds` drops the
+ * experimental rows; `readStardewActionFamilies` matches only enforced rows, so the three read-only `R(...)` rows -
+ * `inspect_world_map`, `find_destination`, `observe_scene` - are absent from its map). A caller asking "is this string
+ * an action id the catalog declares" cannot use either of those without silently answering "no" for a real row, and
+ * that is the reading a vocabulary check must not get wrong.
+ *
+ * SYNCHRONOUS, like `readStardewActionFamilies`, so a lexical gate can build its vocabulary at module load.
+ *
+ * FAILS CLOSED. A body that does not parse, or one that declares no id at all, is a named refusal - never an empty
+ * set, which would read as "the catalog has no actions" and make every vocabulary check pass over nothing.
+ */
+export function readStardewActionIds({ registrationsPath = REGISTRATIONS_PATH } = {}) {
+  const body = registrationsBody(readFileSync(registrationsPath, "utf8"));
+  const ids = new Set(
+    [...body.matchAll(/\b(?:E|R|Registration)\(\s*"([a-z][a-z0-9_]{1,127})"/gu)].map((match) => match[1]),
+  );
+  if (ids.size === 0) fail("registrations_declare_no_action_id");
+  return ids;
+}
+
+/**
  * Reads only the Mod-owned published registrations for non-authoritative live
  * gate descriptor coverage. It never publishes capabilities or affects routing.
  */
