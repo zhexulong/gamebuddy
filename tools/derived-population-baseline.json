@@ -409,15 +409,6 @@
       "reason": "[derivable-now] the next line already `deepEqual`s every id; `deepEqual(that filter.map((entry) => entry.id), [\"objects\"])` states one row per collection, which is the assertion's own comment."
     },
     {
-      "file": "integrations/stardew/action-development/tests/stardew-rejected-layer-verdicts.test.mjs",
-      "authority": "rows",
-      "literal": "1",
-      "shape": "unresolved",
-      "sites": 1,
-      "line": 67,
-      "reason": "[derivable-now] the three lines below read `rows[0].group`, `rows[0].actionIds` and `rows[0].reason`; one `deepEqual(rows, [{ ... }])` carries all of it and counts as well."
-    },
-    {
       "file": "integrations/stardew/action-development/tests/static-verifier-contract.test.mjs",
       "authority": "INTEGRATION_REQUIREMENTS",
       "literal": "3",

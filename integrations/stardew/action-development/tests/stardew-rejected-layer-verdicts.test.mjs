@@ -64,9 +64,10 @@ test("a covered unit is reported as registered, not as a gap", () => {
     seamMembers: seamIndex([["hoedirt.cs", "performUseAction", "harvest_crop"]]),
     verdicts: {},
   });
-  assert.equal(rows.length, 1);
-  assert.equal(rows[0].group, "already_registered");
-  assert.deepEqual(rows[0].actionIds, ["harvest_crop"]);
+  assert.deepEqual(
+    rows.map(({ group, actionIds }) => ({ group, actionIds })),
+    [{ group: "already_registered", actionIds: ["harvest_crop"] }],
+  );
   assert.match(rows[0].reason, /registered seam itself/);
 });
 
