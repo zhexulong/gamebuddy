@@ -2131,7 +2131,14 @@ function isCompanionCharacterVoice(value: unknown): value is CompanionCharacterV
 }
 
 const COMPANION_WORLD_BOOK_KEYS = ["apiVersion", "present", "revision", "entries"] as const;
-const COMPANION_WORLD_BOOK_ENTRY_KEYS = ["title", "keys", "constant", "enabled", "content"] as const;
+/**
+ * The keys one entry of the companion's own book carries, as the Host's `CompanionWorldBookEntryV1Schema`
+ * declares them. Exported because a save is judged against it: `CompanionWorldBookSection` derives its
+ * draft from the entry TYPE, and the journey beside it asserts that the body it sends carries exactly
+ * these keys - a hand-written copy of this list in either place could disagree with the contract in
+ * silence, which is how `enabled` was once dropped from a save.
+ */
+export const COMPANION_WORLD_BOOK_ENTRY_KEYS = ["title", "keys", "constant", "enabled", "content"] as const;
 /**
  * The companion's own world book, read once per mount. The browser may not widen
  * what the Host bounded: an entry's title is `worldbook.ts`'s own title bound, its

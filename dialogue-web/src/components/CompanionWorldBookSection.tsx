@@ -3,6 +3,7 @@ import { type ReactElement, useEffect, useState } from "react";
 import { problemTextWithCode } from "../composed-problem-view";
 import { type Locale, type Messages, messages } from "../i18n";
 import {
+  type CompanionWorldBookEntryV1,
   type CompanionWorldBookV1,
   type ManagementPipelineApi,
   TavernProblemError,
@@ -37,23 +38,26 @@ type CompanionWorldBookView =
  */
 type CompanionWorldBookRead = CompanionWorldBookView;
 
-/** One entry being edited, with its trigger words as the player typed them. */
-type CompanionWorldBookEntryDraft = Readonly<{
-  /**
-   * The row's own identity while it is being edited, and the handle its removal is
-   * armed on. It is client-only - the save builds the wire payload field by field, so
-   * it cannot be sent - and it is minted per row, so adding or removing rows never
-   * reuses one. Keying editable rows by position is what makes React reconcile a
-   * keystroke into the wrong row.
-   */
-  rowId: string;
-  title: string;
-  keys: string;
-  constant: boolean;
-  /** The switch that decides whether this entry takes part; a switched-off one stays in the book. */
-  enabled: boolean;
-  content: string;
-}>;
+/**
+ * One entry's own fields, as the editor holds them: every field the published entry carries, with the
+ * trigger words as the ONE string the player types them into.
+ *
+ * Derived from the wire type rather than listed. A hand-written row is a row that silently drops
+ * whatever the contract grows - spelled out by hand, the entry lost `enabled` once already - and the
+ * derivation is what makes the next declared field this editor's problem instead of a silent absence
+ * from every save it makes.
+ */
+type CompanionWorldBookEntryFields = Omit<CompanionWorldBookEntryV1, "keys"> & Readonly<{ keys: string }>;
+
+/**
+ * One entry being edited: its contract fields, plus the row's own identity.
+ *
+ * `rowId` is the row's own identity while it is being edited, and the handle its removal is armed on.
+ * It is client-only - the save sends the contract's fields, so it cannot be sent - and it is minted
+ * per row, so adding or removing rows never reuses one. Keying editable rows by position is what
+ * makes React reconcile a keystroke into the wrong row.
+ */
+type CompanionWorldBookEntryDraft = CompanionWorldBookEntryFields & Readonly<{ rowId: string }>;
 
 type CompanionWorldBookDraft = Readonly<{
   handle: string;
@@ -82,28 +86,44 @@ type CompanionWorldBookNotice = Readonly<{ kind: "success" | "failure"; text: st
  */
 let nextCompanionWorldBookRowId = 0;
 
-function toCompanionWorldBookEntryDraft(entry: CompanionWorldBookV1["entries"][number]): CompanionWorldBookEntryDraft {
+function toCompanionWorldBookEntryDraft(entry: CompanionWorldBookEntryV1): CompanionWorldBookEntryDraft {
   nextCompanionWorldBookRowId += 1;
   return {
+    ...entry,
     rowId: `companion-world-book-row-${nextCompanionWorldBookRowId}`,
-    title: entry.title,
     keys: entry.keys.join(", "),
-    constant: entry.constant,
-    enabled: entry.enabled,
-    content: entry.content,
   };
 }
 
+/**
+ * The fields a row the player ADDS starts from.
+ *
+ * The `satisfies` is the compile-time half of the derivation above: a field the contract grows has to
+ * be answered here by name, so a new row can never be the one place an entry is missing it.
+ */
+const NEW_COMPANION_WORLD_BOOK_ENTRY = {
+  title: "",
+  keys: "",
+  constant: false,
+  enabled: true,
+  content: "",
+} satisfies Record<keyof CompanionWorldBookEntryFields, unknown>;
+
 function newCompanionWorldBookEntryDraft(): CompanionWorldBookEntryDraft {
   nextCompanionWorldBookRowId += 1;
-  return {
-    rowId: `companion-world-book-row-${nextCompanionWorldBookRowId}`,
-    title: "",
-    keys: "",
-    constant: false,
-    enabled: true,
-    content: "",
-  };
+  return { ...NEW_COMPANION_WORLD_BOOK_ENTRY, rowId: `companion-world-book-row-${nextCompanionWorldBookRowId}` };
+}
+
+/**
+ * One row as the Host takes it: the entry's own fields, with her trigger words parsed back out of the
+ * one field she typed them into.
+ *
+ * `rowId` is dropped here and nowhere else, because this is the boundary it must not cross: the
+ * published command is a strict object, and a key it does not declare is refused rather than stored.
+ */
+function toCompanionWorldBookEntry(entry: CompanionWorldBookEntryDraft): CompanionWorldBookEntryV1 {
+  const { rowId, keys, ...fields } = entry;
+  return { ...fields, title: fields.title.trim(), keys: parseTriggerWords(keys) };
 }
 
 /**
@@ -278,13 +298,7 @@ export function CompanionWorldBookSection({
   const submit = (): void => {
     const target = bookDraft.value;
     if (target === null || !companionWorldBookDraftIsComplete(target)) return;
-    const entries = target.entries.map((entry) => ({
-      title: entry.title.trim(),
-      keys: parseTriggerWords(entry.keys),
-      constant: entry.constant,
-      enabled: entry.enabled,
-      content: entry.content,
-    }));
+    const entries = target.entries.map(toCompanionWorldBookEntry);
     setSaving(true);
     setArmed(null);
     void (async () => {

@@ -1,5 +1,6 @@
 import { expect, test } from "./frontend-coverage";
 import { characterLabels } from "../src/components/character-domain-labels";
+import { COMPANION_WORLD_BOOK_ENTRY_KEYS } from "../src/management-pipeline-api";
 import { hostWorldBookReply } from "./host-world-book-reply";
 
 /**
@@ -1004,4 +1005,92 @@ test("a world book library that could not be read says so, and offers the read a
   await reread;
   await expect(surface.locator("[data-world-book-read-failed]")).toHaveCount(0);
   await expect(surface.locator("[data-world-book]")).toBeVisible();
+});
+
+/**
+ * A save carries EVERY field the entry's contract declares, and the fields the player did not touch
+ * come back byte-identical.
+ *
+ * The round trip is the assertion, not the edit: the whole entry set goes back on one `PUT`, so a
+ * field the editor forgets to pack does not fail the save - it silently rewrites every entry of the
+ * book without it. `enabled` was lost that way once (`new-companion-service.ts` names it), and a
+ * hand-written row is how it happened, so the population compared here is derived: the body's entry
+ * must carry exactly the keys the client mirror declares for the contract's entry
+ * (`COMPANION_WORLD_BOOK_ENTRY_KEYS`, itself held to the Host's own schema by
+ * `contract-mirror-keys-gate`), and every entry the player did not edit must deep-equal the one the
+ * read served.
+ *
+ * The one entry the player DID edit is compared field by field, so the edit is visible in the same
+ * assertion that holds the rest still - a save that resent the served list unchanged would pass the
+ * deep-equal and fail this.
+ */
+test("a save carries every declared entry field and changes nothing the player did not edit", async ({ page }) => {
+  const book = {
+    apiVersion: 1,
+    present: true,
+    revision: 11,
+    entries: [
+      {
+        title: "温室",
+        keys: ["温室", "玻璃房"],
+        constant: false,
+        enabled: true,
+        content: "温室的玻璃是她去年冬天换的。",
+      },
+      {
+        title: "洒水器",
+        keys: ["洒水器", "灌溉"],
+        constant: true,
+        enabled: false,
+        content: "洒水器是她修好的，管子接在井边。",
+      },
+    ],
+  };
+  const served = hostWorldBookReply(book);
+  await stubCharacters(page, book);
+  const sent: unknown[] = [];
+  await page.route(`**/api/tavern/v1/companions/${handle}/worldbook`, async (route) => {
+    if (route.request().method() !== "PUT") {
+      await route.fulfill(jsonOk(served));
+      return;
+    }
+    const body = JSON.parse(route.request().postData() ?? "null") as { entries: readonly Record<string, unknown>[] };
+    sent.push(body);
+    // The Host's own reply: the list it kept, at the next revision.
+    await route.fulfill(jsonOk(hostWorldBookReply({ ...book, revision: 12, entries: body.entries })));
+  });
+  await page.addInitScript(() => localStorage.setItem("gamebuddy.tavern.ui-locale", "zh-CN"));
+  const surface = await openCharacters(page, "角色");
+
+  const block = surface.locator("[data-companion-world-book]");
+  await block.locator("[data-companion-world-book-edit]").click();
+  const editor = block.locator("[data-companion-world-book-draft]");
+  await expect(editor).toBeVisible();
+
+  // One field, one entry: the row she typed in, and nothing else.
+  const edited = "{{user}}说这扇玻璃是她挑的。";
+  await editor.locator("textarea").first().fill(edited);
+  await editor.locator("[data-companion-world-book-save]").click();
+  await expect(block.locator("[data-companion-world-book-notice]")).toHaveText("已保存。");
+
+  expect(sent).toHaveLength(1);
+  const body = sent[0] as { expectedRevision: number; entries: readonly Record<string, unknown>[] };
+  console.log(`[world-book-save-body] ${JSON.stringify(body)}`);
+  expect(body.expectedRevision, "the save CASes on the revision the read carried").toBe(11);
+  expect(body.entries).toHaveLength(served.entries.length);
+
+  // Every entry the save sends carries exactly the contract's declared keys …
+  for (const entry of body.entries)
+    expect(Object.keys(entry).sort(), "the save packs every declared field and invents none").toEqual(
+      [...COMPANION_WORLD_BOOK_ENTRY_KEYS].sort(),
+    );
+
+  // … the entry she did not touch comes back byte-identical …
+  expect(body.entries[1]).toEqual({ ...served.entries[1] });
+
+  // … and the entry she did edit differs in exactly one field.
+  expect(body.entries[0]).toEqual({ ...served.entries[0], content: edited });
+
+  // The list re-renders from the Host's reply, which is the same list: the round trip closes.
+  await expect(editor).toHaveCount(0);
 });
