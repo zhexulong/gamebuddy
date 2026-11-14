@@ -77,6 +77,17 @@ const EXEMPT = new Map([
   ],
   [".reference-draft-section p", "the same capped preview in the reference drawer, one selector over"],
   [
+    ".composer-textarea",
+    "the field the player types into: two lines at rest, the band's 176 px ceiling when the draft is long, " +
+      "and it scrolls only past that ceiling. A reserved strip would narrow every line of every short draft " +
+      "to avoid one reflow of the field's own text at the ceiling",
+  ],
+  [
+    ".message-edit-field",
+    "the same field on the other side of the exchange - two rows at rest, 300 px at the ceiling - and " +
+      "exempt for the same reason",
+  ],
+  [
     ".opening-variants",
     "a nested list capped to `min(32dvh, 300px)` and generated in one answer; the region a machine " +
       "fills is the region that scrolls, and a permanent strip in a 420 px card costs the rows more " +
