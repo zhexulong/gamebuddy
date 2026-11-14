@@ -84,9 +84,9 @@
  *            tools/check-refusal-informativeness.test.mjs, the file that consumes the derived surface, read
  *            `literal_population_assertion:tools/check-refusal-informativeness.test.mjs:584:2 — use SURFACES.length or`
  *            `assert.deepEqual(new Set(actual), new Set(AUTHORITY))` (shape `declaration_site`) with `status failed`
- *            and `examined 997`; removed, the same command reads `findings 1`, that one being
- *            `tools/check-spec-waiver-comments.test.mjs:110:1` - a site the injection did not create. Measured
- *            2026-11-13 on this checkout.
+ *            and `examined 997`; removed, the same command reads `findings 0`. It read `findings 1` on
+ *            `tools/check-spec-waiver-comments.test.mjs:110` - a site the injection did not create - until that
+ *            count was derived from the comment lines the test builds. Measured 2026-11-13 on this checkout.
  *
  * Also injected, each seen red once (tools/check-derived-population.test.mjs): `assert.equal(list.length, 15)` on a
  * test file's own array, the same literal on the left of the assertion, a bare `list.length === 15`, two derived sides

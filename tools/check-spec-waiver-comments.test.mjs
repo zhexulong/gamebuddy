@@ -104,11 +104,13 @@ for (const [file, step, comment] of CASES) {
 }
 
 test("the two halves of a multi-line waiver are one comment, which is the only way either half reads as a waiver", () => {
-  const blocks = commentBlocksOf(
-    journey(["  // used rather than Escape", "  // drops focus to <body>.", "  step();"].join("\n")),
+  const WAIVER = ["used rather than Escape", "drops focus to <body>."];
+  const blocks = commentBlocksOf(journey([...WAIVER.map((half) => `  // ${half}`), "  step();"].join("\n")));
+  assert.deepEqual(
+    blocks.map((block) => block.text),
+    [WAIVER.join(" ")],
+    `the ${WAIVER.length} comment lines are one block, and the block carries both halves`,
   );
-  assert.equal(blocks.length, 1);
-  assert.match(blocks[0].text, /used rather than Escape drops focus to <body>/u);
   assert.equal(classifyComment(blocks[0].text).isWaiver, true);
   assert.equal(classifyComment("used rather than Escape").isWaiver, false, "a deviation alone is not a waiver");
   assert.equal(classifyComment("drops focus to <body>").isWaiver, false, "a denial alone is not a waiver");
