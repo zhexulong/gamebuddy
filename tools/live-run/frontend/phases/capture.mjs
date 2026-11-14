@@ -5,10 +5,11 @@
 // re-run without redoing the survivors.
 import { spawn } from "node:child_process";
 import { appendFileSync } from "node:fs";
-import { mkdir, access, writeFile, readFile } from "node:fs/promises";
+import { mkdir, access, writeFile, readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { runPaths, loadRunConfig, REPO_ROOT, KIT_ROOT } from "../lib/config.mjs";
 import { registerRunProcess } from "../lib/run-owner.mjs";
+import { readNotMeasured } from "../capture/game-launch-verdict.mjs";
 import { DRIVERS } from "./drivers.mjs";
 
 /* The roster lives in one module because the report reconciles the same list (drivers.mjs). */
@@ -19,6 +20,15 @@ async function exists(path) {
     return true;
   } catch {
     return false;
+  }
+}
+
+/** A driver's facts file, or `null` when it wrote none - absence is the driver's, never an empty string's. */
+async function factsText(path) {
+  try {
+    return await readFile(path, "utf8");
+  } catch {
+    return null;
   }
 }
 
@@ -67,6 +77,17 @@ async function main() {
 
   let failed = 0;
   let skippedByMarker = 0;
+  /*
+   * A driver that measured NOTHING is a third outcome, and it is counted here rather than left to the
+   * exit code: the game-launch driver asserts every link of the product's chain up to the launch request
+   * and then declares `NOT-MEASURED: <reason>` when this machine holds no prerequisite that can arm the
+   * Guardian. Exiting 0 is right (nothing failed) and exiting non-zero would be a lie, but a totals line
+   * reading `failed=0` alone would present an unmeasured path as a covered one. The verdict comes from
+   * the driver's own facts file, so the classification lives where the driver wrote it
+   * (`capture/game-launch-verdict.mjs`), never as a second copy here.
+   */
+  let notMeasuredCount = 0;
+  const notMeasuredKeys = [];
   /* The failed drivers by NAME. A count beside a mostly-green reconciliation is the shape the operator could
    * not act on: `failed=2 of 22` names nothing, and a reader has to go hunting through the log for which two.
    * The roster keys are printed in the DONE line so the failure and its owner are read together. */
@@ -84,6 +105,13 @@ async function main() {
     executed.push(driver.key);
     log(`========== ${driver.key} ==========`);
     const started = Date.now();
+    /*
+     * The facts file is this driver's own reading of THIS execution, so the previous one is removed first.
+     * Measured 2026-11-15: a driver crashed before flushing and the verdict read from the file the previous
+     * execution left behind counted `not-measured=1` for a run that had failed - a stale reading presented as
+     * this run's measurement, which is the exact shape the done-marker already prevents for execution.
+     */
+    await rm(join(paths.outRoot, driver.out), { force: true });
     const code = await runDriver(driver, { port, cdpPort, run, paths, log });
     const elapsed = Math.round((Date.now() - started) / 1000);
     log(`  exit=${code} elapsed=${elapsed}s`);
@@ -93,6 +121,14 @@ async function main() {
       log(`  DRIVER ${driver.key} FAILED (exit ${code})`);
     }
     await writeFile(doneMarker, JSON.stringify({ exit: code, elapsed }, null, 1), "utf8");
+    const verdict = readNotMeasured(await factsText(join(paths.outRoot, driver.out)));
+    if (verdict !== null) {
+      notMeasuredCount += 1;
+      notMeasuredKeys.push(`${driver.key}:${verdict.reason}`);
+      log(
+        `  NOT-MEASURED ${driver.key}: ${verdict.reason}${verdict.detail.length === 0 ? "" : ` - ${verdict.detail}`}`,
+      );
+    }
   }
 
   // `skipped` used to mean "filtered out by --driver=", so a driver skipped by a done marker was counted as
@@ -100,9 +136,9 @@ async function main() {
   // `failed=0 of 20 (skipped=0)` and exited 0 above eight-day-old screenshots. A run that executed nothing
   // verified nothing, so it is a failure with its own exit code rather than a pass.
   log(
-    `DONE-CAPTURE failed=${failed} of ${selected.length} ran=${executed.length} skipped=${skippedByMarker} not-selected=${DRIVERS.length - selected.length}${
+    `DONE-CAPTURE failed=${failed} of ${selected.length} ran=${executed.length} skipped=${skippedByMarker} not-selected=${DRIVERS.length - selected.length} not-measured=${notMeasuredCount}${
       failedKeys.length === 0 ? "" : ` failed-drivers=[${failedKeys.join(",")}]`
-    }`,
+    }${notMeasuredKeys.length === 0 ? "" : ` not-measured-drivers=[${notMeasuredKeys.join(",")}]`}`,
   );
   if (selected.length === 0) {
     log(`capture_selected_nothing: --driver= matched none of ${DRIVERS.length} drivers, so this run verified nothing`);
