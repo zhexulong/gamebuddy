@@ -519,11 +519,11 @@
     {
       "file": "tools/promote-stardew-action.test.mjs",
       "authority": "PROMOTION_RESPONSIBILITIES",
-      "literal": "6",
+      "literal": "0",
       "shape": "declaration_site",
       "sites": 1,
-      "line": 147,
-      "reason": "[needs-a-decision] the count and the two endpoints (`[0]`, `[5]`) pin the tool's published header, `the header's six responsibilities are declared in promotion order`. Reading A, the gate's: a frozen count of an imported table. Reading B, the test's: the published list is the contract, and restating all six would make the test a second copy of it. Naming the members is the only derivation, and it replaces one copy with another."
+      "line": 149,
+      "reason": "[not-a-population] the module restates its own export to itself: `PROMOTION_RESPONSIBILITIES` IS the tool's published step list, so `length === 6` could only ever confirm the declaration it was counted from, and naming the members would make the test a second copy of the export. The contract is order and non-emptiness - the first step, the last step, and a list that declares something to order - so the zero left is that anti-vacuity guard, where a guard's zero is a branch rather than a frozen count."
     },
     {
       "file": "tools/run-stardew-native-local-player-accept-daily-quest-smoke.test.mjs",
