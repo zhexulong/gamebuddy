@@ -17,10 +17,6 @@
       "reason": "predates_the_template"
     },
     {
-      "file": "tools/run-stardew-native-local-player-bait-crab-pot-smoke.mjs",
-      "reason": "predates_the_template"
-    },
-    {
       "file": "tools/run-stardew-native-local-player-body-owner-hold-smoke.mjs",
       "reason": "predates_the_template"
     },
@@ -78,10 +74,6 @@
     },
     {
       "file": "tools/run-stardew-native-local-player-clear-hoedirt-smoke.mjs",
-      "reason": "predates_the_template"
-    },
-    {
-      "file": "tools/run-stardew-native-local-player-collect-animal-product-smoke.mjs",
       "reason": "predates_the_template"
     },
     {
@@ -209,15 +201,7 @@
       "reason": "predates_the_template"
     },
     {
-      "file": "tools/run-stardew-native-local-player-machine-collect-output-smoke.mjs",
-      "reason": "predates_the_template"
-    },
-    {
       "file": "tools/run-stardew-native-local-player-machine-inspect-smoke.mjs",
-      "reason": "predates_the_template"
-    },
-    {
-      "file": "tools/run-stardew-native-local-player-machine-load-smoke.mjs",
       "reason": "predates_the_template"
     },
     {

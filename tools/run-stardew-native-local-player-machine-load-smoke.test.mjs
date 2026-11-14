@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { runMachineLoadSmoke } from "./run-stardew-native-local-player-machine-load-smoke.mjs";
 import { publishedActionRegistrations } from "./lib/stardew-native-smoke-harness-v1.mjs";
+import { runMachineLoadSmoke } from "./run-stardew-native-local-player-machine-load-smoke.mjs";
 
 const capabilities = ["cancel_active_execution", "inspect_self", "machine_load"];
 const target = {
@@ -40,11 +40,26 @@ test("machine-load runner uses shared dispatch, terminal correlation, and fresh 
     machineTargets: [target],
   };
   const receipts = [];
+  let executions = 0;
   const client = {
     state: { catalogRegistrations: publishedActionRegistrations(), snapshot },
     observe: async () => snapshot,
     execute: async (request) => {
       assert.equal(request.action, "machine_load");
+      executions += 1;
+      if (executions > 1) {
+        // The stale re-send: the load spent the stack it named, so the same request now names a slot that no longer
+        // holds it. Nothing about the machine may move for a refusal, so the world is left exactly as it was.
+        const refused = {
+          requestId: request.requestId,
+          executionId: "machine-load-execution-stale",
+          state: "rejected",
+          reasonCode: "machine_load_input_not_in_slot",
+          revision: snapshot.revision,
+        };
+        receipts.push(refused);
+        return refused;
+      }
       assert.equal(request.expectedRevision, 1);
       assert.deepEqual(request.args, {
         slot: 3,
@@ -90,4 +105,6 @@ test("machine-load runner uses shared dispatch, terminal correlation, and fresh 
   assert.equal(result.state, "passed");
   assert.equal(result.reasonCode, "machine_coffee_loaded");
   assert.equal(result.reread.heldObjectQualifiedItemId, "(O)395");
+  // The stale re-send happened and the refusal word is published rather than hidden in the trace.
+  assert.equal(result.negative, "measured:machine_load_input_not_in_slot");
 });

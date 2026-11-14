@@ -1,40 +1,52 @@
-import {
-  assertRequiredCapabilities,
-  connectNativeLocalClient,
-  delay,
-  executeFresh,
-  observeFresh,
-  readNativeClientConfig,
-  summarizeReceipt,
-  validateNativeLocalFixturePolicy,
-  summarizeSnapshot,
-  waitForTerminal,
-} from "./lib/stardew-native-smoke-harness-v1.mjs";
-import { loadHostTestModule } from "./lib/host-test-module.mjs";
+// Stardew-local machine_collect_output smoke.
+//
+// The lifecycle - the fixture-config refusal, observe-fresh and the capability check, the requestId mint and the
+// execute, the terminal wait and its identity, the evidence parse and the stale reread, the stale re-send, the
+// bootstrap and the exit code - is `tools/lib/native-local-runner-scaffold.mjs`. What is left here is what is
+// actually about collecting a finished keg: loading it, waiting for its own processing clock, and then proving the
+// output the world reports is the output the pack received.
+//
+// The receipt is not the proof. Three readings come from the machine's own row: it must be PROCESSING after the load
+// (held object, input recorded, a non-zero duration), READY on its own clock before the collect, and EMPTY after it.
+// The pack's own count of the output must rise by exactly the stack the machine held, which is the invariant the
+// receipt's two numbers can only corroborate.
 
+import { defineSmokeScenario, runSmokeScenarioMain } from "./lib/native-local-runner-scaffold.mjs";
+import { delay, observeFresh, summarizeReceipt, waitForTerminal } from "./lib/stardew-native-smoke-harness-v1.mjs";
+
+const ACTION = "machine_collect_output";
 const ACTION_LOAD = "machine_load";
-const ACTION_COLLECT = "machine_collect_output";
-const SCENARIO = "native_machine_coffee_load_v1";
-const EXPECTED_ACTIONS = [ACTION_LOAD, ACTION_COLLECT];
-const REQUIRED_CAPABILITIES = ["cancel_active_execution", "inspect_self", ACTION_LOAD, ACTION_COLLECT];
+/** The action's own success word (`MachineActions.CollectOutput`: the held stack moved to the pack). */
+const SUCCESS_CODE = "machine_coffee_collected";
+/** The one `NativeLocalPlayerFixture.FixtureScenario` this gate arms (gate descriptor `native_machine_coffee_load_v1`). */
+const FIXTURE_SCENARIO = "native_machine_coffee_load_v1";
+const REQUIRED_CAPABILITIES = ["cancel_active_execution", "inspect_self", ACTION_LOAD, ACTION];
+const KEG_QUALIFIED_ITEM_ID = "(BC)12";
+const COFFEE_QUALIFIED_ITEM_ID = "(O)395";
+const INPUT_QUALIFIED_ITEM_ID = "(O)433";
+const DEFAULT_READY_TIMEOUT_MS = 180_000;
 
-/** Execute the machine-collect contract against an already-connected bridge session. */
-export async function runMachineCollectOutputSmoke(
-  client,
-  receipts,
-  config,
-  { terminalTimeoutMs = 5_000, readyTimeoutMs = 180_000 } = {},
-) {
-  const trace = [];
-  const startedAt = Date.now();
-  validateNativeLocalFixtureConfig(config);
-  try {
-    const before = await requireActionableMachineSnapshot(client);
-    assertRequiredCapabilities(before, REQUIRED_CAPABILITIES);
-    const loadTarget = chooseOnlyLoadableKeg(before);
+const scenario = defineSmokeScenario({
+  action: ACTION,
+  fixtureScenario: FIXTURE_SCENARIO,
+  successCode: SUCCESS_CODE,
+  requiredCapabilities: REQUIRED_CAPABILITIES,
+  requiredActions: [ACTION_LOAD, ACTION],
+  experimentalActions: [ACTION],
+  projection: { collections: ["machineTargets"] },
+
+  /**
+   * Load the keg, prove it is PROCESSING, then wait for its own clock to make it ready.
+   *
+   * The load is a legitimate request of its own, so it goes through the template's traced `execute`; its terminal is
+   * checked here because it is a precondition of the collect rather than the outcome this gate is about. The snapshot
+   * handed back is the ready one, so the collect is planned against the world it is about to act on.
+   */
+  async prepare({ client, receipts, trace, snapshot, options, execute }) {
+    const readyTimeoutMs = options.readyTimeoutMs ?? DEFAULT_READY_TIMEOUT_MS;
+    const loadTarget = chooseOnlyLoadableKeg(snapshot);
     const loadAccepted = await execute(
-      client,
-      trace,
+      "load",
       ACTION_LOAD,
       {
         slot: loadTarget.loadInputSlot,
@@ -43,117 +55,123 @@ export async function runMachineCollectOutputSmoke(
         expectedQualifiedItemId: loadTarget.loadInputQualifiedItemId,
         expectedTargetId: loadTarget.targetId,
       },
-      before,
+      snapshot,
     );
-    const loadTerminal = await waitForTerminal(receipts, loadAccepted, terminalTimeoutMs);
+    if (loadAccepted.state !== "accepted") throw new Error(`machine_load_not_accepted:${loadAccepted.reasonCode}`);
+    // The load's own terminal, waited for here rather than 180 s later: a load the Mod refused would otherwise be
+    // reported as the readiness timeout, which names the wrong layer.
+    const loadTerminal = await waitForTerminal(receipts, loadAccepted, options.terminalTimeoutMs ?? 5_000);
     if (loadTerminal.state !== "succeeded" || loadTerminal.reasonCode !== "machine_coffee_loaded")
-      throw new Error(`machine_load_failed:${loadTerminal.reasonCode}`);
-    const loaded = await requireActionableMachineSnapshot(client);
-    const processingTarget = (loaded.machineTargets ?? []).find((entry) => entry?.targetId === loadTarget.targetId);
-    if (!isProcessingCoffee(processingTarget)) throw new Error("machine_collect_processing_postcondition_mismatch");
+      throw new Error(`machine_load_failed:${loadTerminal.state}/${loadTerminal.reasonCode}`);
+    trace.push({ phase: "load", action: ACTION_LOAD, receipt: summarizeReceipt(loadTerminal) });
+
+    const loaded = await actionableSnapshot(client);
+    const processing = (loaded.machineTargets ?? []).find((entry) => entry?.targetId === loadTarget.targetId);
+    if (!isProcessingCoffee(processing)) throw new Error("machine_collect_processing_postcondition_mismatch");
 
     const ready = await waitForReadyTarget(client, loadTarget.targetId, readyTimeoutMs);
-    const collectAccepted = await execute(
-      client,
-      trace,
-      ACTION_COLLECT,
-      { x: ready.x, y: ready.y, expectedTargetId: ready.targetId },
-      await requireActionableMachineSnapshot(client),
-    );
-    const collectTerminal = await waitForTerminal(receipts, collectAccepted, terminalTimeoutMs);
-    if (collectTerminal.state !== "succeeded" || collectTerminal.reasonCode !== "machine_coffee_collected")
-      throw new Error(`machine_collect_failed:${collectTerminal.reasonCode}`);
-    const evidence = parseEvidence(collectTerminal.evidence);
-    const after = await requireActionableMachineSnapshot(client);
-    assertRequiredCapabilities(after, REQUIRED_CAPABILITIES);
+    trace.push({ phase: "ready", target: ready.targetId, tile: `${ready.x},${ready.y}` });
+    return {
+      snapshot: await actionableSnapshot(client),
+      plan: { loadTarget, ready, loadReceipt: summarizeReceipt(loadTerminal) },
+    };
+  },
+
+  describePlan: ({ loadTarget, ready }) => ({
+    target: loadTarget.targetId,
+    tile: `${ready.x},${ready.y}`,
+    machine: KEG_QUALIFIED_ITEM_ID,
+    output: COFFEE_QUALIFIED_ITEM_ID,
+  }),
+
+  request: ({ ready }) => ({ args: { x: ready.x, y: ready.y, expectedTargetId: ready.targetId } }),
+
+  /**
+   * The negative case, declared to the template: the collect emptied the keg, so the same target is no longer ready
+   * (`machine_collect_target_not_ready`) and - if the held object is already gone before the readiness gate is asked -
+   * no longer the target the request named (`machine_collect_target_changed`). Both are the Mod's words
+   * (`FarmhandExecutionController.MachineActions`).
+   */
+  negative: {
+    args: ({ ready }) => ({ x: ready.x, y: ready.y, expectedTargetId: ready.targetId }),
+    refusedCodes: ["machine_collect_target_not_ready", "machine_collect_target_changed"],
+    unchanged: ({ before, after }) => {
+      const rows = (snapshot) =>
+        (snapshot.machineTargets ?? [])
+          .map(
+            (entry) =>
+              `${entry?.targetId}:${entry?.heldObjectQualifiedItemId ?? "none"}:${entry?.readyForHarvest}:${entry?.minutesUntilReady}:${entry?.collectOutputReady ?? "n/a"}`,
+          )
+          .join("|");
+      return rows(before) === rows(after) ? null : `machineTargets:${rows(before)}->${rows(after)}`;
+    },
+  },
+
+  async assertPostcondition({ evidence, plan, after, terminal }) {
+    const { loadTarget, ready } = plan;
+    if (!Array.isArray(after.machineTargets)) throw new Error("native_local_machine_collect_snapshot_not_actionable");
     const reread = (after.machineTargets ?? []).find((entry) => entry?.targetId === loadTarget.targetId);
+    if (reread === undefined) throw new Error(`machine_collect_target_gone:${loadTarget.targetId}`);
+
     const inventoryBefore = parseNonNegativeSafeInteger(evidence.inventory_output_before);
     const inventoryAfter = parseNonNegativeSafeInteger(evidence.inventory_output_after);
     const outputStack = parseNonNegativeSafeInteger(evidence.output_stack);
-    const passed =
-      evidence.location === before.location &&
-      evidence.target === loadTarget.targetId &&
-      evidence.tile === `${ready.x},${ready.y}` &&
-      evidence.machine === "(BC)12" &&
-      evidence.output === "(O)395" &&
-      evidence.input === "(O)433" &&
-      evidence.ready_before === "true" &&
-      evidence.minutes_until_ready_before === "0" &&
-      outputStack !== null &&
-      outputStack >= 1 &&
-      inventoryBefore !== null &&
-      // The pack gained exactly the stack the machine held, which is the invariant rather than "one item".
-      inventoryAfter === inventoryBefore + outputStack &&
-      evidence.held_after === "none" &&
-      evidence.ready_after === "false" &&
-      evidence.native_check_action === "true" &&
-      reread?.heldObjectQualifiedItemId == null &&
-      reread?.readyForHarvest === false &&
-      reread?.minutesUntilReady === 0 &&
-      reread?.collectOutputReady === false;
+
+    const failures = [];
+    const check = (name, ok) => {
+      if (!ok) failures.push(name);
+    };
+    check("location_matches_observation", evidence.location === after.location);
+    check("target_matches_the_collected_machine", evidence.target === loadTarget.targetId);
+    check("tile_matches_the_ready_target", evidence.tile === `${ready.x},${ready.y}`);
+    check("machine_matches_the_keg", evidence.machine === KEG_QUALIFIED_ITEM_ID);
+    check("output_is_the_held_object", evidence.output === COFFEE_QUALIFIED_ITEM_ID);
+    check("input_is_the_loaded_item", evidence.input === INPUT_QUALIFIED_ITEM_ID);
+    check("was_ready_before", evidence.ready_before === "true");
+    check("had_nothing_left_to_wait", evidence.minutes_until_ready_before === "0");
+    check("stack_is_positive", outputStack !== null && outputStack >= 1);
+    // The pack gained exactly the stack the machine held: "one item" would be a second, weaker rule.
+    check("pack_gained_the_whole_stack", inventoryBefore !== null && inventoryAfter === inventoryBefore + outputStack);
+    check("keg_holds_nothing_after", evidence.held_after === "none");
+    check("keg_not_ready_after", evidence.ready_after === "false");
+    check("native_check_action_ran", evidence.native_check_action === "true");
+    check("reread_holds_nothing", reread.heldObjectQualifiedItemId == null);
+    check("reread_not_ready", reread.readyForHarvest === false);
+    check("reread_no_longer_collectable", reread.collectOutputReady === false);
+
+    if (failures.length > 0)
+      throw new Error(
+        `machine_collect live contract failed: ${failures.join(",")};evidence=${JSON.stringify(evidence)}`,
+      );
+
     return {
-      state: passed ? "passed" : "blocked",
-      topology: "native_local_player_fixture",
-      reasonCode: passed ? "machine_coffee_collected" : "machine_collect_postcondition_mismatch",
       loadTarget: summarizeTarget(loadTarget),
       readyTarget: summarizeTarget(ready),
-      loadReceipt: summarizeReceipt(loadTerminal),
-      collectReceipt: summarizeReceipt(collectTerminal),
+      loadReceipt: plan.loadReceipt,
+      collectReceipt: summarizeReceipt(terminal),
       evidence,
       reread: summarizeTarget(reread),
-      trace,
-      before: summarizeWithMachines(before),
-      loaded: summarizeWithMachines(loaded),
-      after: summarizeWithMachines(after),
-      durationMs: Date.now() - startedAt,
     };
-  } catch (error) {
-    return {
-      state: "blocked",
-      topology: "native_local_player_fixture",
-      reasonCode: String(error instanceof Error ? error.message : error).slice(0, 256),
-      latestReceipt: summarizeReceipt(client.state?.latestReceipt),
-      trace,
-      durationMs: Date.now() - startedAt,
-    };
-  }
-}
+  },
+});
 
-if (import.meta.main) {
-  const config = await readNativeClientConfig();
-  const session = await connectNativeLocalClient(config, { loadModule: loadHostTestModule });
-  try {
-    const result = await runMachineCollectOutputSmoke(session.client, session.receipts, config);
-    console.log(JSON.stringify(result));
-    if (result.state !== "passed") process.exitCode = 2;
-  } finally {
-    session.close();
-  }
-}
+export const runMachineCollectOutputSmoke = (client, receipts, config, options) =>
+  scenario.run(client, receipts, config, options);
 
-function validateNativeLocalFixtureConfig(value) {
-  const fixture = value?.NativeLocalPlayerFixture;
-  if (fixture?.Enable !== true || fixture.Bootstrap?.Enable === true || fixture.FixtureScenario !== SCENARIO)
-    throw new Error("native_local_machine_collect_fixture_config_invalid");
-  validateNativeLocalFixturePolicy(value, { requiredActions: EXPECTED_ACTIONS });
-  if (
-    value.Portfolio?.Enable === true ||
-    value.HostAutomation?.Enable === true ||
-    value.HostFarmhandProvisioning?.Enable === true ||
-    value.FarmhandProvisioner?.Enable === true
-  )
-    throw new Error("native_local_machine_collect_topology_invalid");
-}
-async function requireActionableMachineSnapshot(client) {
+if (import.meta.main) await runSmokeScenarioMain(scenario);
+
+async function actionableSnapshot(client) {
   const snapshot = await observeFresh(client, { actionable: true });
-  if (!Number.isInteger(snapshot?.revision) || !Array.isArray(snapshot?.machineTargets))
+  if (!(Number.isInteger(snapshot?.revision) && Array.isArray(snapshot?.machineTargets)))
     throw new Error("native_local_machine_collect_snapshot_not_actionable");
   return snapshot;
 }
+
+/** The one keg the fixture stages as loadable with the coffee input it expects. */
 function chooseOnlyLoadableKeg(snapshot) {
-  const targets = snapshot.machineTargets.filter(
+  const targets = (snapshot.machineTargets ?? []).filter(
     (entry) =>
-      entry?.qualifiedItemId === "(BC)12" &&
+      entry?.qualifiedItemId === KEG_QUALIFIED_ITEM_ID &&
       Number.isInteger(entry.x) &&
       Number.isInteger(entry.y) &&
       typeof entry.targetId === "string" &&
@@ -162,91 +180,49 @@ function chooseOnlyLoadableKeg(snapshot) {
       entry.heldObjectQualifiedItemId == null &&
       entry.lastInputQualifiedItemId == null &&
       Number.isInteger(entry.loadInputSlot) &&
-      entry.loadInputQualifiedItemId === "(O)433" &&
+      entry.loadInputQualifiedItemId === INPUT_QUALIFIED_ITEM_ID &&
       entry.loadInputStack === 5,
   );
   if (targets.length !== 1) throw new Error(targets.length ? "ambiguous_loadable_keg" : "no_loadable_keg");
   return targets[0];
 }
+
 function isProcessingCoffee(entry) {
   return (
-    entry?.qualifiedItemId === "(BC)12" &&
+    entry?.qualifiedItemId === KEG_QUALIFIED_ITEM_ID &&
     entry.readyForHarvest === false &&
     entry.minutesUntilReady > 0 &&
-    entry.heldObjectQualifiedItemId === "(O)395" &&
-    entry.lastInputQualifiedItemId === "(O)433"
+    entry.heldObjectQualifiedItemId === COFFEE_QUALIFIED_ITEM_ID &&
+    entry.lastInputQualifiedItemId === INPUT_QUALIFIED_ITEM_ID
   );
 }
+
+/** Poll the machine's own row until its clock says the output is collectable. */
 async function waitForReadyTarget(client, targetId, timeoutMs) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    const snapshot = await requireActionableMachineSnapshot(client);
-    const entry = snapshot.machineTargets.find((candidate) => candidate?.targetId === targetId);
+    const snapshot = await actionableSnapshot(client);
+    const entry = (snapshot.machineTargets ?? []).find((candidate) => candidate?.targetId === targetId);
     if (
-      entry?.qualifiedItemId === "(BC)12" &&
+      entry?.qualifiedItemId === KEG_QUALIFIED_ITEM_ID &&
       entry.readyForHarvest === true &&
       entry.minutesUntilReady === 0 &&
-      entry.heldObjectQualifiedItemId === "(O)395" &&
-      entry.lastInputQualifiedItemId === "(O)433" &&
+      entry.heldObjectQualifiedItemId === COFFEE_QUALIFIED_ITEM_ID &&
+      entry.lastInputQualifiedItemId === INPUT_QUALIFIED_ITEM_ID &&
       entry.collectOutputReady === true
     )
       return entry;
-    await delay(500);
+    await delay(250);
   }
   throw new Error("machine_ready_timeout_without_time_skip");
 }
-async function execute(client, trace, action, args, snapshot) {
-  const requestId = `native_local_${action}_${Date.now()}`;
-  const receipt = await executeFresh(client, {
-    requestId,
-    idempotencyKey: `${requestId}_idem`,
-    action,
-    args,
-    snapshot,
-    timeoutMs: 30_000,
-  });
-  trace.push({ action, args, receipt: summarizeReceipt(receipt) });
-  return receipt;
-}
-function parseEvidence(receiptEvidence) {
-  const detail = typeof receiptEvidence?.detail === "string" ? receiptEvidence.detail : "";
-  const fields = Object.fromEntries(
-    detail.split(";").map((part) => {
-      const index = part.indexOf("=");
-      return index > 0 ? [part.slice(0, index), part.slice(index + 1)] : ["", ""];
-    }),
-  );
-  const expected = [
-    "location",
-    "target",
-    "tile",
-    "machine",
-    "output",
-    "output_stack",
-    "input",
-    "ready_before",
-    "minutes_until_ready_before",
-    "inventory_output_before",
-    "inventory_output_after",
-    "held_after",
-    "ready_after",
-    "native_check_action",
-  ];
-  if (
-    Object.keys(fields).length !== expected.length ||
-    !expected.every((key) => typeof fields[key] === "string" && fields[key].length > 0)
-  )
-    throw new Error("invalid_machine_collect_evidence");
-  return fields;
-}
+
 function parseNonNegativeSafeInteger(value) {
   if (typeof value !== "string" || !/^(0|[1-9]\d*)$/.test(value)) return null;
   const parsed = Number(value);
   return Number.isSafeInteger(parsed) ? parsed : null;
 }
-function same(left, right) {
-  return Array.isArray(left) && left.length === right.length && left.every((value, index) => value === right[index]);
-}
+
 function summarizeTarget(value) {
   return value
     ? {
@@ -264,7 +240,4 @@ function summarizeTarget(value) {
         collectOutputReady: value.collectOutputReady ?? null,
       }
     : null;
-}
-function summarizeWithMachines(snapshot) {
-  return { ...summarizeSnapshot(snapshot), machineTargets: snapshot.machineTargets?.map(summarizeTarget) ?? [] };
 }

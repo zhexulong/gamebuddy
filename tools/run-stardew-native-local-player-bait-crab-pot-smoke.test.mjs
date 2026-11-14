@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { runBaitCrabPotSmoke } from "./run-stardew-native-local-player-bait-crab-pot-smoke.mjs";
 import { publishedActionRegistrations } from "./lib/stardew-native-smoke-harness-v1.mjs";
+import { runBaitCrabPotSmoke } from "./run-stardew-native-local-player-bait-crab-pot-smoke.mjs";
 
 const target = {
   targetId: "bait-target",
@@ -19,6 +19,11 @@ const config = {
   DeniedActions: [],
   DeniedActionFamilies: [],
   ExperimentalActions: [],
+  NativeLocalPlayerFixture: {
+    Enable: true,
+    Bootstrap: { Enable: false },
+    FixtureScenario: "native_bait_crab_pot_v1",
+  },
   SaveId: "save",
   WorldId: "world",
   PlayerId: "player",
@@ -43,6 +48,16 @@ test("bait-crab-pot runner uses shared dispatch and fresh result reread", async 
     observe: async () => snapshot,
     execute: async (request) => {
       assert.equal(request.action, "bait_crab_pot");
+      if (snapshot.revision !== 1) {
+        // The stale re-send: the one Bait was spent, so the same target is no longer bailable.
+        return {
+          requestId: request.requestId,
+          executionId: "bait-execution-stale",
+          state: "rejected",
+          reasonCode: "bait_crab_pot_target_unavailable",
+          revision: snapshot.revision,
+        };
+      }
       assert.equal(request.expectedRevision, 1);
       assert.deepEqual(request.args, {
         slot: 4,
@@ -72,7 +87,7 @@ test("bait-crab-pot runner uses shared dispatch and fresh result reread", async 
     },
   };
 
-  const result = await runBaitCrabPotSmoke(client, config);
+  const result = await runBaitCrabPotSmoke(client, [], config, { terminalTimeoutMs: 1_000 });
   assert.equal(result.state, "passed");
   assert.equal(result.receipt.reasonCode, "crab_pot_baited");
   assert.equal(result.result.targetId, "bait-target");

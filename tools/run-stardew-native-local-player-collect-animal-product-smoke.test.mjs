@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { runCollectAnimalProductSmoke } from "./run-stardew-native-local-player-collect-animal-product-smoke.mjs";
 import { publishedActionRegistrations } from "./lib/stardew-native-smoke-harness-v1.mjs";
+import { runCollectAnimalProductSmoke } from "./run-stardew-native-local-player-collect-animal-product-smoke.mjs";
 
 const target = {
   targetId: "animal_target_1",
@@ -47,6 +47,18 @@ test("collect-animal-product runner uses shared dispatch, exact terminal correla
     observe: async () => snapshot,
     execute: async (request) => {
       assert.equal(request.action, "collect_animal_product");
+      if (client.state.snapshot.revision !== 3) {
+        // The stale re-send: the animal's produce was taken, so the same target must be refused and nothing may move.
+        const refused = {
+          requestId: request.requestId,
+          executionId: "execution-stale-replay",
+          state: "rejected",
+          reasonCode: "animal_product_target_gone",
+          revision: client.state.snapshot.revision,
+        };
+        receipts.push(refused);
+        return refused;
+      }
       assert.equal(request.expectedRevision, 3);
       assert.deepEqual(request.args, { slot: 2, x: 3, y: 4, expectedTargetId: "animal_target_1" });
       snapshot = {
@@ -85,7 +97,10 @@ test("collect-animal-product runner uses shared dispatch, exact terminal correla
   });
   assert.equal(result.state, "passed");
   assert.equal(result.reasonCode, "animal_product_collected");
-  assert.equal(result.executionId, "execution-1");
+  // The request/terminal identity is the template's: the fake above publishes a succeeded receipt for ANOTHER
+  // execution first, so this pass is only reachable when the matching terminal won the wait.
+  assert.equal(result.receipt.state, "succeeded");
+  assert.equal(result.receipt.reasonCode, "animal_product_collected");
   assert.equal(result.inventory.before, 0);
   assert.equal(result.inventory.after, 1);
   assert.equal(result.after.animalProductTargets, 0);
@@ -140,5 +155,8 @@ test("collect-animal-product runner blocks on mismatched evidence", async () => 
     postconditionTimeoutMs: 2_000,
   });
   assert.equal(result.state, "blocked");
-  assert.equal(result.reasonCode, "collect_animal_product_postcondition_mismatch");
+  assert.match(
+    result.reasonCode,
+    /^collect_animal_product live contract failed: receipt_names_the_(target|produce|tool|stack)/u,
+  );
 });
