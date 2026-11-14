@@ -1,0 +1,1086 @@
+{
+  "schema": "gamebuddy-gate-inputs-zero-read/v1",
+  "note": "What each gate in the census's `green-with-zero` bucket reads nothing over, and which of four causes it is.\nThe population is DERIVED, never listed: `node tools/audit-gate-inputs.mjs` takes every gate its reading puts in\n`green-with-zero` and fails if one has no row here, and fails a row whose gate has left the bucket. A row is deleted\nby fixing the gate or the reading - never by deleting the row to make the count smaller.\n\n  empty-is-correct      zero members is the healthy reading, and the gate's green is right (`because` says why).\n  reader-blind          a fact about the READING: it cannot see which members the gate judges. The fix is in\n                        tools/audit-gate-inputs.mjs's read model, or in the shared reader the gate hands its root to.\n  unmeasurable          the input is not in this tree (the operator's path, a built artifact, an installed game) or\n                        the gate reads no file at all: nothing here can settle the empty case. `because` says what\n                        would.\n  unguarded-population  a fact about the GATE: the reading sees a population this tree owns and the gate has no\n                        zero branch, so a filter that moved reads as a clean run. `guard` names the branch that\n                        would settle it. This is debt with an owner, not an acceptance.",
+  "members": [
+    {
+      "gate": "audit:chat-live-run",
+      "class": "unmeasurable",
+      "because": "`await readFile(resolve(auditPath), \"utf8\")` — the transcript path is the caller's. The census cannot settle whether it exists, and this row is the record: the gate's own verdict when the input is absent is the honest one. What would settle it: the artifact the run names."
+    },
+    {
+      "gate": "audit:run-reading-shape",
+      "class": "reader-blind",
+      "blind": "root",
+      "because": "`readdirSync(absoluteDirectory)` in `walk` (tools/audit-run-reading-shape.mjs) reads whatever the caller hands it: the census names the parameter and not one member of the set, so a root that moved reads as a green over nothing."
+    },
+    {
+      "gate": "audit:stardew-action-seam-terminals",
+      "class": "unmeasurable",
+      "because": "`JSON.parse(await readFile(options.candidates, \"utf8\"))` — the candidates file is the caller's. The census cannot settle whether it exists, and this row is the record: the gate's own verdict when the input is absent is the honest one. What would settle it: the artifact the run names."
+    },
+    {
+      "gate": "audit:stardew-discovery-channels",
+      "class": "unguarded-population",
+      "area": "stardew",
+      "guard": "must print `examined 0` and exit 2 when its scan finds no file: the population is a committed source tree, so zero means the root or the filter moved",
+      "because": "tools/audit-stardew-discovery-channels.mjs enumerates a committed source tree it scans and reports the same green over nine hundred members as over none: a filter or a root that moved is indistinguishable from a clean run. The census sees the population and the gate has no zero branch."
+    },
+    {
+      "gate": "audit:stardew-fixture-scenario-wiring",
+      "class": "unguarded-population",
+      "area": "stardew",
+      "guard": "must print `examined 0` and exit 2 when its scan of `integrations/stardew` yields no file",
+      "because": "tools/check-stardew-fixture-scenario-wiring.mjs enumerates `integrations/stardew` and reports the same green over nine hundred members as over none: a filter or a root that moved is indistinguishable from a clean run. The census sees the population and the gate has no zero branch."
+    },
+    {
+      "gate": "audit:stardew-native-local-runner-contract",
+      "class": "unguarded-population",
+      "area": "stardew",
+      "guard": "must print `examined 0` and exit 2 when its scan finds no file: the population is a committed source tree, so zero means the root or the filter moved",
+      "because": "tools/audit-stardew-native-local-runner-contract.mjs enumerates a committed source tree it scans and reports the same green over nine hundred members as over none: a filter or a root that moved is indistinguishable from a clean run. The census sees the population and the gate has no zero branch."
+    },
+    {
+      "gate": "audit:stardew-open-ground-claims",
+      "class": "unguarded-population",
+      "area": "stardew",
+      "guard": "must print `examined 0` and exit 2 when its scan finds no file: the population is a committed source tree, so zero means the root or the filter moved",
+      "because": "tools/audit-stardew-open-ground-claims.mjs enumerates a committed source tree it scans and reports the same green over nine hundred members as over none: a filter or a root that moved is indistinguishable from a clean run. The census sees the population and the gate has no zero branch."
+    },
+    {
+      "gate": "audit:stardew-receipt-transition-provenance",
+      "class": "unguarded-population",
+      "area": "stardew",
+      "guard": "must print `examined 0` and exit 2 when its scan finds no file: the population is a committed source tree, so zero means the root or the filter moved",
+      "because": "tools/audit-stardew-receipt-transition-fields.mjs enumerates a committed source tree it scans and reports the same green over nine hundred members as over none: a filter or a root that moved is indistinguishable from a clean run. The census sees the population and the gate has no zero branch."
+    },
+    {
+      "gate": "audit:stardew-test-shape",
+      "class": "unguarded-population",
+      "area": "stardew",
+      "guard": "must print `examined 0` and exit 2 when its scan finds no file: the population is a committed source tree, so zero means the root or the filter moved",
+      "because": "tools/audit-stardew-test-shape.mjs enumerates a committed source tree it scans and reports the same green over nine hundred members as over none: a filter or a root that moved is indistinguishable from a clean run. The census sees the population and the gate has no zero branch."
+    },
+    {
+      "gate": "audit:totality",
+      "class": "reader-blind",
+      "blind": "root",
+      "because": "`readdirSync(directory)` in `visit` (tools/audit-totality.mjs) reads whatever the caller hands it: the census names the parameter and not one member of the set, so a root that moved reads as a green over nothing."
+    },
+    {
+      "gate": "check:action-surface-parity",
+      "class": "unguarded-population",
+      "area": "tools",
+      "guard": "must print `examined 0` and exit 2 when its scan finds no file: the population is a committed source tree, so zero means the root or the filter moved",
+      "because": "tools/check-action-surface-parity.mjs enumerates a committed source tree it scans and reports the same green over nine hundred members as over none: a filter or a root that moved is indistinguishable from a clean run. The census sees the population and the gate has no zero branch."
+    },
+    {
+      "gate": "check:assertion-substance",
+      "class": "unguarded-population",
+      "area": "tools",
+      "guard": "must print `examined 0` and exit 2 when its scan finds no file: the population is a committed source tree, so zero means the root or the filter moved",
+      "because": "tools/check-assertion-substance.mjs enumerates a committed source tree it scans and reports the same green over nine hundred members as over none: a filter or a root that moved is indistinguishable from a clean run. The census sees the population and the gate has no zero branch."
+    },
+    {
+      "gate": "check:catalog-fact-ownership",
+      "class": "reader-blind",
+      "blind": "root",
+      "because": "`readdirSync(directory)` in `walk` (tools\\lib\\catalog-fact-ownership.mjs) reads whatever the caller hands it: the census names the parameter and not one member of the set, so a root that moved reads as a green over nothing."
+    },
+    {
+      "gate": "check:class-name-declarations",
+      "class": "reader-blind",
+      "blind": "root",
+      "because": "`readdirSync(current)` in `walk` (tools\\lib\\class-name-declarations.mjs) reads whatever the caller hands it: the census names the parameter and not one member of the set, so a root that moved reads as a green over nothing."
+    },
+    {
+      "gate": "check:cognitive-complexity",
+      "class": "reader-blind",
+      "blind": "root",
+      "because": "`readdirSync(directory)` in `walk` (tools/check-cognitive-complexity.mjs) reads whatever the caller hands it: the census names the parameter and not one member of the set, so a root that moved reads as a green over nothing."
+    },
+    {
+      "gate": "check:configuration-surfaces",
+      "class": "unguarded-population",
+      "area": "tools",
+      "guard": "must print `examined 0` and exit 2 when its scan finds no file: the population is a committed source tree, so zero means the root or the filter moved",
+      "because": "tools/check-configuration-surfaces.mjs enumerates a committed source tree it scans and reports the same green over nine hundred members as over none: a filter or a root that moved is indistinguishable from a clean run. The census sees the population and the gate has no zero branch."
+    },
+    {
+      "gate": "check:contrast-tokens",
+      "class": "unguarded-population",
+      "area": "tools",
+      "guard": "must print `examined 0` and exit 2 when its scan finds no file: the population is a committed source tree, so zero means the root or the filter moved",
+      "because": "tools/check-contrast-tokens.mjs enumerates a committed source tree it scans and reports the same green over nine hundred members as over none: a filter or a root that moved is indistinguishable from a clean run. The census sees the population and the gate has no zero branch."
+    },
+    {
+      "gate": "check:credential-export-isolation",
+      "class": "unguarded-population",
+      "area": "tools",
+      "guard": "must print `examined 0` and exit 2 when its scan finds no file: the population is a committed source tree, so zero means the root or the filter moved",
+      "because": "tools/check-credential-export-isolation.mjs enumerates a committed source tree it scans and reports the same green over nine hundred members as over none: a filter or a root that moved is indistinguishable from a clean run. The census sees the population and the gate has no zero branch."
+    },
+    {
+      "gate": "check:dependency-risk",
+      "class": "unguarded-population",
+      "area": "tools",
+      "guard": "must print `examined 0` and exit 2 when its scan finds no file: the population is a committed source tree, so zero means the root or the filter moved",
+      "because": "tools/check-dependency-risk.mjs enumerates a committed source tree it scans and reports the same green over nine hundred members as over none: a filter or a root that moved is indistinguishable from a clean run. The census sees the population and the gate has no zero branch."
+    },
+    {
+      "gate": "check:diff",
+      "class": "empty-is-correct",
+      "because": "`git diff --check --no-ext-diff HEAD` judges the diff, and an empty diff is the healthy reading: no changed line can carry a trailing space, a tab or a conflict marker. Over zero lines the gate's `git_diff_check_passed` is right, not vacuous."
+    },
+    {
+      "gate": "check:error-identity-classification",
+      "class": "reader-blind",
+      "blind": "root",
+      "because": "`readdirSync(directory)` in `walk` (tools/check-error-identity-classification.mjs) reads whatever the caller hands it: the census names the parameter and not one member of the set, so a root that moved reads as a green over nothing."
+    },
+    {
+      "gate": "check:eval-instruments",
+      "class": "unmeasurable",
+      "because": "one fixed input (`package.json`), read directly: a missing one fails the read or the pointer rather than printing a green over nothing, so the green-over-zero case cannot be constructed. What would settle it: delete the input and watch the gate refuse."
+    },
+    {
+      "gate": "check:failure-reason-codes",
+      "class": "unguarded-population",
+      "area": "tools",
+      "guard": "must print `examined 0` and exit 2 when its scan finds no file: the population is a committed source tree, so zero means the root or the filter moved",
+      "because": "tools/check-failure-reason-codes.mjs enumerates a committed source tree it scans and reports the same green over nine hundred members as over none: a filter or a root that moved is indistinguishable from a clean run. The census sees the population and the gate has no zero branch."
+    },
+    {
+      "gate": "check:game-historian-rubric",
+      "class": "reader-blind",
+      "blind": "root",
+      "because": "`readdirSync(directory)` in `visit` (tools/check-game-historian-rubric.mjs) reads whatever the caller hands it: the census names the parameter and not one member of the set, so a root that moved reads as a green over nothing."
+    },
+    {
+      "gate": "check:host-diagnostic-output",
+      "class": "unguarded-population",
+      "area": "tools",
+      "guard": "must print `examined 0` and exit 2 when the index names no file in its scope",
+      "because": "tools/check-host-diagnostic-output.mjs enumerates a committed source tree it scans and reports the same green over nine hundred members as over none: a filter or a root that moved is indistinguishable from a clean run. The census sees the population and the gate has no zero branch."
+    },
+    {
+      "gate": "check:host-game-physical-seam",
+      "class": "unguarded-population",
+      "area": "tools",
+      "guard": "must print `examined 0` and exit 2 when its scan finds no file: the population is a committed source tree, so zero means the root or the filter moved",
+      "because": "tools/check-host-game-physical-seam.mjs enumerates a committed source tree it scans and reports the same green over nine hundred members as over none: a filter or a root that moved is indistinguishable from a clean run. The census sees the population and the gate has no zero branch."
+    },
+    {
+      "gate": "check:host-production-import-boundary",
+      "class": "unguarded-population",
+      "area": "tools",
+      "guard": "must print `examined 0` and exit 2 when its scan finds no file: the population is a committed source tree, so zero means the root or the filter moved",
+      "because": "tools/check-host-production-import-boundary.mjs enumerates a committed source tree it scans and reports the same green over nine hundred members as over none: a filter or a root that moved is indistinguishable from a clean run. The census sees the population and the gate has no zero branch."
+    },
+    {
+      "gate": "check:host-windows-test-preflight",
+      "class": "unguarded-population",
+      "area": "tools",
+      "guard": "must print `examined 0` and exit 2 when its scan finds no file: the population is a committed source tree, so zero means the root or the filter moved",
+      "because": "tools/check-host-windows-test-preflight.mjs enumerates a committed source tree it scans and reports the same green over nine hundred members as over none: a filter or a root that moved is indistinguishable from a clean run. The census sees the population and the gate has no zero branch."
+    },
+    {
+      "gate": "check:live-run-isolation",
+      "class": "reader-blind",
+      "blind": "root",
+      "because": "`readdirSync(directory)` in `visit` (tools/check-live-run-isolation.mjs) reads whatever the caller hands it: the census names the parameter and not one member of the set, so a root that moved reads as a green over nothing."
+    },
+    {
+      "gate": "check:live-run-silence",
+      "class": "unguarded-population",
+      "area": "live-run",
+      "guard": "must print `examined 0` and exit 2 when its scan finds no file: the population is a committed source tree, so zero means the root or the filter moved",
+      "because": "tools/check-live-run-silence.mjs enumerates a committed source tree it scans and reports the same green over nine hundred members as over none: a filter or a root that moved is indistinguishable from a clean run. The census sees the population and the gate has no zero branch."
+    },
+    {
+      "gate": "check:parser-agreement",
+      "class": "unguarded-population",
+      "area": "tools",
+      "guard": "must print `examined 0` and exit 2 when its scan finds no file: the population is a committed source tree, so zero means the root or the filter moved",
+      "because": "tools/check-parser-agreement.mjs enumerates a committed source tree it scans and reports the same green over nine hundred members as over none: a filter or a root that moved is indistinguishable from a clean run. The census sees the population and the gate has no zero branch."
+    },
+    {
+      "gate": "check:production-pack-load",
+      "class": "unmeasurable",
+      "because": "one fixed input (`current.json`), read directly: a missing one fails the read or the pointer rather than printing a green over nothing, so the green-over-zero case cannot be constructed. What would settle it: delete the input and watch the gate refuse."
+    },
+    {
+      "gate": "check:refusal-detail-state-parity",
+      "class": "unguarded-population",
+      "area": "tools",
+      "guard": "must print `examined 0` and exit 2 when its scan finds no file: the population is a committed source tree, so zero means the root or the filter moved",
+      "because": "tools/check-refusal-detail-state-parity.mjs enumerates a committed source tree it scans and reports the same green over nine hundred members as over none: a filter or a root that moved is indistinguishable from a clean run. The census sees the population and the gate has no zero branch."
+    },
+    {
+      "gate": "check:sbom",
+      "class": "unmeasurable",
+      "because": "`loadPolicy(root, policyPath, read = readFile)` reads a descriptor the caller passes. The census cannot settle whether it exists, and this row is the record: the gate's own verdict when the input is absent is the honest one. What would settle it: the artifact the run names."
+    },
+    {
+      "gate": "check:scope-references",
+      "class": "unguarded-population",
+      "area": "tools",
+      "guard": "must print `examined 0` and exit 2 when its scan finds no file: the population is a committed source tree, so zero means the root or the filter moved",
+      "because": "tools/check-scope-references.mjs enumerates a committed source tree it scans and reports the same green over nine hundred members as over none: a filter or a root that moved is indistinguishable from a clean run. The census sees the population and the gate has no zero branch."
+    },
+    {
+      "gate": "check:silent-failure",
+      "class": "reader-blind",
+      "blind": "root",
+      "because": "`readdirSync(directory)` in `walk` (tools\\lib\\silent-failure.mjs) reads whatever the caller hands it: the census names the parameter and not one member of the set, so a root that moved reads as a green over nothing."
+    },
+    {
+      "gate": "check:spec-reachability",
+      "class": "unguarded-population",
+      "area": "tools",
+      "guard": "must print `examined 0` and exit 2 when its scan finds no file: the population is a committed source tree, so zero means the root or the filter moved",
+      "because": "tools/check-spec-reachability.mjs enumerates a committed source tree it scans and reports the same green over nine hundred members as over none: a filter or a root that moved is indistinguishable from a clean run. The census sees the population and the gate has no zero branch."
+    },
+    {
+      "gate": "check:stardew-companion-production-admission",
+      "class": "unmeasurable",
+      "because": "`read(invocation.fixtureTransactionManifestPath, …)` — the manifest is the invocation's. The census cannot settle whether it exists, and this row is the record: the gate's own verdict when the input is absent is the honest one. What would settle it: the artifact the run names."
+    },
+    {
+      "gate": "check:stardew-discovery-collection-coverage",
+      "class": "reader-blind",
+      "blind": "root",
+      "because": "`readdirSync(directory)` in `walk` (integrations\\stardew\\action-development\\src\\analysis\\stardew-mod-csharp-source.mjs) reads whatever the caller hands it: the census names the parameter and not one member of the set, so a root that moved reads as a green over nothing."
+    },
+    {
+      "gate": "check:stardew-gameplay-completeness",
+      "class": "unmeasurable",
+      "because": "`readFile(path.resolve(reportPath), …)` and `readFile(catalogPath, …)` are the caller's. The census cannot settle whether it exists, and this row is the record: the gate's own verdict when the input is absent is the honest one. What would settle it: the artifact the run names."
+    },
+    {
+      "gate": "check:stardew-native-mechanism-review-register",
+      "class": "unmeasurable",
+      "because": "`readFile(input[\"mechanism-report\"], …)` and its candidate files are the caller's. The census cannot settle whether it exists, and this row is the record: the gate's own verdict when the input is absent is the honest one. What would settle it: the artifact the run names."
+    },
+    {
+      "gate": "check:stardew-native-multiplayer-sensitivity",
+      "class": "unguarded-population",
+      "area": "stardew",
+      "guard": "must print `examined 0` and exit 2 when its scan finds no file: the population is a committed source tree, so zero means the root or the filter moved",
+      "because": "tools/check-stardew-native-multiplayer-sensitivity.mjs enumerates a committed source tree it scans and reports the same green over nine hundred members as over none: a filter or a root that moved is indistinguishable from a clean run. The census sees the population and the gate has no zero branch."
+    },
+    {
+      "gate": "check:stardew-native-normal-player-ingress-register",
+      "class": "unmeasurable",
+      "because": "`readFile(filePath, …)` and `readFile(path.join(root, source.relativePath), …)` are the register's inputs. The census cannot settle whether it exists, and this row is the record: the gate's own verdict when the input is absent is the honest one. What would settle it: the artifact the run names."
+    },
+    {
+      "gate": "check:stardew-native-notice-coverage",
+      "class": "reader-blind",
+      "blind": "root",
+      "because": "`readdirSync(directory)` in `visit` (tools/check-stardew-native-notice-coverage.mjs) reads whatever the caller hands it: the census names the parameter and not one member of the set, so a root that moved reads as a green over nothing."
+    },
+    {
+      "gate": "check:stardew-native-pathfinder-source",
+      "class": "reader-blind",
+      "blind": "root",
+      "because": "`readdirSync(path)` in `visit` (tools/check-stardew-native-pathfinder-source.mjs) reads whatever the caller hands it: the census names the parameter and not one member of the set, so a root that moved reads as a green over nothing."
+    },
+    {
+      "gate": "check:stardew-native-router-exit-classifier",
+      "class": "unmeasurable",
+      "because": "`readFile(filePath, …)` is the inventory file the caller names. The census cannot settle whether it exists, and this row is the record: the gate's own verdict when the input is absent is the honest one. What would settle it: the artifact the run names."
+    },
+    {
+      "gate": "check:stardew-native-source-closure",
+      "class": "unmeasurable",
+      "because": "`readFile(resolve(certificatePath), …)` and `readFile(resolve(universePath), …)` are the caller's. The census cannot settle whether it exists, and this row is the record: the gate's own verdict when the input is absent is the honest one. What would settle it: the artifact the run names."
+    },
+    {
+      "gate": "check:stardew-native-transition-ledger",
+      "class": "unmeasurable",
+      "because": "`readFile(filePath, …)` and `readFile(candidate, …)` are the caller's. The census cannot settle whether it exists, and this row is the record: the gate's own verdict when the input is absent is the honest one. What would settle it: the artifact the run names."
+    },
+    {
+      "gate": "check:stardew-observation-gap",
+      "class": "unguarded-population",
+      "area": "stardew",
+      "guard": "must print `examined 0` and exit 2 when its scan finds no file: the population is a committed source tree, so zero means the root or the filter moved",
+      "because": "tools/check-stardew-observation-gap.mjs enumerates a committed source tree it scans and reports the same green over nine hundred members as over none: a filter or a root that moved is indistinguishable from a clean run. The census sees the population and the gate has no zero branch."
+    },
+    {
+      "gate": "check:stardew-receipt-attribution",
+      "class": "reader-blind",
+      "blind": "root",
+      "because": "`readdirSync(path)` in `visit` (tools/check-stardew-receipt-attribution.mjs) reads whatever the caller hands it: the census names the parameter and not one member of the set, so a root that moved reads as a green over nothing."
+    },
+    {
+      "gate": "check:stardew-tool-family-stamina-evidence",
+      "class": "unguarded-population",
+      "area": "stardew",
+      "guard": "must print `examined 0` and exit 2 when its scan finds no file: the population is a committed source tree, so zero means the root or the filter moved",
+      "because": "tools/check-stardew-tool-family-stamina-evidence.mjs enumerates a committed source tree it scans and reports the same green over nine hundred members as over none: a filter or a root that moved is indistinguishable from a clean run. The census sees the population and the gate has no zero branch."
+    },
+    {
+      "gate": "check:stub-subject-collision",
+      "class": "reader-blind",
+      "blind": "root",
+      "because": "`tools/check-stub-subject-collision.mjs(path)` in `read` (path_not_written_in_this_reading) reads whatever the caller hands it: the census names the parameter and not one member of the set, so a root that moved reads as a green over nothing."
+    },
+    {
+      "gate": "check:surface-journeys",
+      "class": "unguarded-population",
+      "area": "tools",
+      "guard": "must print `examined 0` and exit 2 when its scan finds no file: the population is a committed source tree, so zero means the root or the filter moved",
+      "because": "tools/check-surface-journeys.mjs enumerates a committed source tree it scans and reports the same green over nine hundred members as over none: a filter or a root that moved is indistinguishable from a clean run. The census sees the population and the gate has no zero branch."
+    },
+    {
+      "gate": "check:test-store-teardown",
+      "class": "unguarded-population",
+      "area": "tools",
+      "guard": "must print `examined 0` and exit 2 when the index names no file in its scope",
+      "because": "tools/check-test-store-teardown.mjs enumerates a committed source tree it scans and reports the same green over nine hundred members as over none: a filter or a root that moved is indistinguishable from a clean run. The census sees the population and the gate has no zero branch."
+    },
+    {
+      "gate": "check:unreported-catch",
+      "class": "reader-blind",
+      "blind": "root",
+      "because": "`readdirSync(current)` in `walk` (tools\\lib\\unreported-catch.mjs) reads whatever the caller hands it: the census names the parameter and not one member of the set, so a root that moved reads as a green over nothing."
+    },
+    {
+      "gate": "check:vendor-build-artifacts",
+      "class": "unguarded-population",
+      "area": "tools",
+      "guard": "must print `examined 0` and exit 2 when its scan finds no file: the population is a committed source tree, so zero means the root or the filter moved",
+      "because": "tools/check-vendor-build-artifacts.mjs enumerates a committed source tree it scans and reports the same green over nine hundred members as over none: a filter or a root that moved is indistinguishable from a clean run. The census sees the population and the gate has no zero branch."
+    },
+    {
+      "gate": "check:vendored-bundle-leaks",
+      "class": "unguarded-population",
+      "area": "tools",
+      "guard": "must print `examined 0` and exit 2 when its scan finds no file: the population is a committed source tree, so zero means the root or the filter moved",
+      "because": "tools/check-vendored-bundle-leaks.mjs enumerates a committed source tree it scans and reports the same green over nine hundred members as over none: a filter or a root that moved is indistinguishable from a clean run. The census sees the population and the gate has no zero branch."
+    },
+    {
+      "gate": "check:workflow-expressions",
+      "class": "unguarded-population",
+      "area": "tools",
+      "guard": "must print `examined 0` and exit 2 when its scan finds no file: the population is a committed source tree, so zero means the root or the filter moved",
+      "because": "tools/check-workflow-expressions.mjs enumerates a committed source tree it scans and reports the same green over nine hundred members as over none: a filter or a root that moved is indistinguishable from a clean run. The census sees the population and the gate has no zero branch."
+    },
+    {
+      "gate": "dependency-audit",
+      "class": "unmeasurable",
+      "because": "`loadPolicy(root, policyPath, read = readFile)` reads a descriptor the caller passes. The census cannot settle whether it exists, and this row is the record: the gate's own verdict when the input is absent is the honest one. What would settle it: the artifact the run names."
+    },
+    {
+      "gate": "format:check",
+      "class": "unguarded-population",
+      "area": "tools",
+      "guard": "must print `examined 0` and exit 2 when the index names no file in its scope",
+      "because": "tools/scripts/check-format-ratchet.mjs enumerates a committed source tree it scans and reports the same green over nine hundred members as over none: a filter or a root that moved is indistinguishable from a clean run. The census sees the population and the gate has no zero branch."
+    },
+    {
+      "gate": "lint",
+      "class": "unguarded-population",
+      "area": "tools",
+      "guard": "must print `examined 0` and exit 2 when the index names no file in its scope",
+      "because": "tools/scripts/check-lint-ratchet.mjs enumerates a committed source tree it scans and reports the same green over nine hundred members as over none: a filter or a root that moved is indistinguishable from a clean run. The census sees the population and the gate has no zero branch."
+    },
+    {
+      "gate": "report:stardew-remaining-actions",
+      "class": "unmeasurable",
+      "because": "`options.candidates` and `options.catalog` are the caller's files. The census cannot settle whether it exists, and this row is the record: the gate's own verdict when the input is absent is the honest one. What would settle it: the artifact the run names."
+    },
+    {
+      "gate": "test:action-surface-parity",
+      "class": "unguarded-population",
+      "area": "tools",
+      "guard": "must print `examined 0` and exit 2 when the index names no file in its scope",
+      "because": "tools/check-action-surface-parity.test.mjs enumerates a committed source tree it scans and reports the same green over nine hundred members as over none: a filter or a root that moved is indistinguishable from a clean run. The census sees the population and the gate has no zero branch."
+    },
+    {
+      "gate": "test:assertion-substance",
+      "class": "unguarded-population",
+      "area": "tools",
+      "guard": "must print `examined 0` and exit 2 when its scan finds no file: the population is a committed source tree, so zero means the root or the filter moved",
+      "because": "tools/check-assertion-substance.test.mjs enumerates a committed source tree it scans and reports the same green over nine hundred members as over none: a filter or a root that moved is indistinguishable from a clean run. The census sees the population and the gate has no zero branch."
+    },
+    {
+      "gate": "test:audit-totality",
+      "class": "unguarded-population",
+      "area": "tools",
+      "guard": "must print `examined 0` and exit 2 when its scan finds no file: the population is a committed source tree, so zero means the root or the filter moved",
+      "because": "tools/audit-totality.test.mjs enumerates a committed source tree it scans and reports the same green over nine hundred members as over none: a filter or a root that moved is indistinguishable from a clean run. The census sees the population and the gate has no zero branch."
+    },
+    {
+      "gate": "test:catalog-fact-ownership",
+      "class": "unguarded-population",
+      "area": "tools",
+      "guard": "must print `examined 0` and exit 2 when its scan finds no file: the population is a committed source tree, so zero means the root or the filter moved",
+      "because": "tools/lib/catalog-fact-ownership.test.mjs enumerates a committed source tree it scans and reports the same green over nine hundred members as over none: a filter or a root that moved is indistinguishable from a clean run. The census sees the population and the gate has no zero branch."
+    },
+    {
+      "gate": "test:chat-quality-transcript",
+      "class": "unmeasurable",
+      "because": "tools/live-run/chat/transcript-from-live-run.test.mjs reads no file through any call this census models: its population is fixture objects and literals in its own source, so there is no empty set to construct. What would settle it: nothing - a gate that reads no file is not a population gate, and this row leaves the population the day it reads one."
+    },
+    {
+      "gate": "test:chat-run-audit",
+      "class": "unmeasurable",
+      "because": "the fixture a `readFile(join(FIXTURE_DIR, name))` names is the test's own. The census cannot settle whether it exists, and this row is the record: the gate's own verdict when the input is absent is the honest one. What would settle it: the artifact the run names."
+    },
+    {
+      "gate": "test:class-name-declarations",
+      "class": "unguarded-population",
+      "area": "tools",
+      "guard": "must print `examined 0` and exit 2 when the index names no file in its scope",
+      "because": "tools/check-class-name-declarations.test.mjs enumerates a committed source tree it scans and reports the same green over nine hundred members as over none: a filter or a root that moved is indistinguishable from a clean run. The census sees the population and the gate has no zero branch."
+    },
+    {
+      "gate": "test:cognitive-complexity",
+      "class": "unmeasurable",
+      "because": "one fixed input (`cognitive-complexity-baseline.json`), read directly: a missing one fails the read or the pointer rather than printing a green over nothing, so the green-over-zero case cannot be constructed. What would settle it: delete the input and watch the gate refuse."
+    },
+    {
+      "gate": "test:configuration-surfaces",
+      "class": "unguarded-population",
+      "area": "tools",
+      "guard": "must print `examined 0` and exit 2 when its scan finds no file: the population is a committed source tree, so zero means the root or the filter moved",
+      "because": "tools/check-configuration-surfaces.test.mjs enumerates a committed source tree it scans and reports the same green over nine hundred members as over none: a filter or a root that moved is indistinguishable from a clean run. The census sees the population and the gate has no zero branch."
+    },
+    {
+      "gate": "test:dependency-risk",
+      "class": "unguarded-population",
+      "area": "tools",
+      "guard": "must refuse when none of the paths it wrote down exists, and name them",
+      "because": "tools/check-dependency-risk.test.mjs enumerates `../security/dependency-advisories.json`, `../security/dependency-advisories.schema.json` and reports the same green over nine hundred members as over none: a filter or a root that moved is indistinguishable from a clean run. The census sees the population and the gate has no zero branch."
+    },
+    {
+      "gate": "test:dialogue-web-boundaries",
+      "class": "unmeasurable",
+      "because": "one fixed input (`package.json`), read directly: a missing one fails the read or the pointer rather than printing a green over nothing, so the green-over-zero case cannot be constructed. What would settle it: delete the input and watch the gate refuse."
+    },
+    {
+      "gate": "test:duplicated-authority",
+      "class": "unguarded-population",
+      "area": "tools",
+      "guard": "must print `examined 0` and exit 2 when its scan finds no file: the population is a committed source tree, so zero means the root or the filter moved",
+      "because": "tools/lib/duplicated-authority.test.mjs enumerates a committed source tree it scans and reports the same green over nine hundred members as over none: a filter or a root that moved is indistinguishable from a clean run. The census sees the population and the gate has no zero branch."
+    },
+    {
+      "gate": "test:error-identity-classification",
+      "class": "reader-blind",
+      "blind": "root",
+      "because": "`readdirSync(directory)` in `walk` (tools\\check-error-identity-classification.mjs) reads whatever the caller hands it: the census names the parameter and not one member of the set, so a root that moved reads as a green over nothing."
+    },
+    {
+      "gate": "test:eval",
+      "class": "unmeasurable",
+      "because": "one fixed input (`package.json`), read directly: a missing one fails the read or the pointer rather than printing a green over nothing, so the green-over-zero case cannot be constructed. What would settle it: delete the input and watch the gate refuse."
+    },
+    {
+      "gate": "test:failure-reason-codes",
+      "class": "unguarded-population",
+      "area": "tools",
+      "guard": "must print `examined 0` and exit 2 when its scan finds no file: the population is a committed source tree, so zero means the root or the filter moved",
+      "because": "tools/check-failure-reason-codes.test.mjs enumerates a committed source tree it scans and reports the same green over nine hundred members as over none: a filter or a root that moved is indistinguishable from a clean run. The census sees the population and the gate has no zero branch."
+    },
+    {
+      "gate": "test:format-ratchet",
+      "class": "unguarded-population",
+      "area": "tools",
+      "guard": "must print `examined 0` and exit 2 when the index names no file in its scope",
+      "because": "tools/scripts/check-format-ratchet.test.mjs enumerates a committed source tree it scans and reports the same green over nine hundred members as over none: a filter or a root that moved is indistinguishable from a clean run. The census sees the population and the gate has no zero branch."
+    },
+    {
+      "gate": "test:frontend-capability",
+      "class": "unmeasurable",
+      "because": "`worldbookPath` is the capture run's own artifact. The census cannot settle whether it exists, and this row is the record: the gate's own verdict when the input is absent is the honest one. What would settle it: the artifact the run names."
+    },
+    {
+      "gate": "test:host-game-physical-seam",
+      "class": "unguarded-population",
+      "area": "tools",
+      "guard": "must print `examined 0` and exit 2 when its scan finds no file: the population is a committed source tree, so zero means the root or the filter moved",
+      "because": "tools/check-host-game-physical-seam.test.mjs enumerates a committed source tree it scans and reports the same green over nine hundred members as over none: a filter or a root that moved is indistinguishable from a clean run. The census sees the population and the gate has no zero branch."
+    },
+    {
+      "gate": "test:host-windows-test-preflight",
+      "class": "unguarded-population",
+      "area": "tools",
+      "guard": "must print `examined 0` and exit 2 when its scan finds no file: the population is a committed source tree, so zero means the root or the filter moved",
+      "because": "tools/check-host-windows-test-preflight.test.mjs enumerates a committed source tree it scans and reports the same green over nine hundred members as over none: a filter or a root that moved is indistinguishable from a clean run. The census sees the population and the gate has no zero branch."
+    },
+    {
+      "gate": "test:lane-diagnosis",
+      "class": "unmeasurable",
+      "because": "tools/lib/lane-diagnosis.test.mjs reads no file through any call this census models: its population is fixture objects and literals in its own source, so there is no empty set to construct. What would settle it: nothing - a gate that reads no file is not a population gate, and this row leaves the population the day it reads one."
+    },
+    {
+      "gate": "test:live-run-analysis",
+      "class": "unguarded-population",
+      "area": "live-run",
+      "guard": "must refuse when none of the paths it wrote down exists, and name them",
+      "because": "tools/live-run/analysis/session-reading.test.mjs enumerates `live.jsonl`, `session-1.jsonl` and reports the same green over nine hundred members as over none: a filter or a root that moved is indistinguishable from a clean run. The census sees the population and the gate has no zero branch."
+    },
+    {
+      "gate": "test:parser-agreement",
+      "class": "unguarded-population",
+      "area": "tools",
+      "guard": "must print `examined 0` and exit 2 when its scan finds no file: the population is a committed source tree, so zero means the root or the filter moved",
+      "because": "tools/lib/parser-agreement.test.mjs enumerates a committed source tree it scans and reports the same green over nine hundred members as over none: a filter or a root that moved is indistinguishable from a clean run. The census sees the population and the gate has no zero branch."
+    },
+    {
+      "gate": "test:pre-commit",
+      "class": "unguarded-population",
+      "area": "tools",
+      "guard": "must print `examined 0` and exit 2 when the index names no file in its scope",
+      "because": "tools/scripts/pre-commit.test.mjs enumerates a committed source tree it scans and reports the same green over nine hundred members as over none: a filter or a root that moved is indistinguishable from a clean run. The census sees the population and the gate has no zero branch."
+    },
+    {
+      "gate": "test:production-pack-load",
+      "class": "unmeasurable",
+      "because": "one fixed input (`current.json`), read directly: a missing one fails the read or the pointer rather than printing a green over nothing, so the green-over-zero case cannot be constructed. What would settle it: delete the input and watch the gate refuse."
+    },
+    {
+      "gate": "test:refusal-detail-state-parity",
+      "class": "unguarded-population",
+      "area": "tools",
+      "guard": "must print `examined 0` and exit 2 when its scan finds no file: the population is a committed source tree, so zero means the root or the filter moved",
+      "because": "tools/check-refusal-detail-state-parity.test.mjs enumerates a committed source tree it scans and reports the same green over nine hundred members as over none: a filter or a root that moved is indistinguishable from a clean run. The census sees the population and the gate has no zero branch."
+    },
+    {
+      "gate": "test:run-scenarios",
+      "class": "unmeasurable",
+      "because": "`RUNNER_PATH` is the launcher the scenario drives. The census cannot settle whether it exists, and this row is the record: the gate's own verdict when the input is absent is the honest one. What would settle it: the artifact the run names."
+    },
+    {
+      "gate": "test:scope-references",
+      "class": "unmeasurable",
+      "because": "the test reads `filePath` through the scope audit's own reader. The census cannot settle whether it exists, and this row is the record: the gate's own verdict when the input is absent is the honest one. What would settle it: the artifact the run names."
+    },
+    {
+      "gate": "test:silent-failure",
+      "class": "reader-blind",
+      "blind": "root",
+      "because": "`readdirSync(directory)` in `walk` (tools\\lib\\silent-failure.mjs) reads whatever the caller hands it: the census names the parameter and not one member of the set, so a root that moved reads as a green over nothing."
+    },
+    {
+      "gate": "test:smoke-syntax",
+      "class": "unmeasurable",
+      "because": "`script` is the file the test just wrote. The census cannot settle whether it exists, and this row is the record: the gate's own verdict when the input is absent is the honest one. What would settle it: the artifact the run names."
+    },
+    {
+      "gate": "test:spec-reachability",
+      "class": "unguarded-population",
+      "area": "tools",
+      "guard": "must print `examined 0` and exit 2 when its scan finds no file: the population is a committed source tree, so zero means the root or the filter moved",
+      "because": "tools/check-spec-reachability.test.mjs enumerates a committed source tree it scans and reports the same green over nine hundred members as over none: a filter or a root that moved is indistinguishable from a clean run. The census sees the population and the gate has no zero branch."
+    },
+    {
+      "gate": "test:spec-waiver-comments",
+      "class": "unguarded-population",
+      "area": "tools",
+      "guard": "must print `examined 0` and exit 2 when its scan finds no file: the population is a committed source tree, so zero means the root or the filter moved",
+      "because": "tools/check-spec-waiver-comments.test.mjs enumerates a committed source tree it scans and reports the same green over nine hundred members as over none: a filter or a root that moved is indistinguishable from a clean run. The census sees the population and the gate has no zero branch."
+    },
+    {
+      "gate": "test:stardew-action-candidates",
+      "class": "unmeasurable",
+      "because": "the test reads `out` from the CLI it drove, a file it created itself. The census cannot settle whether it exists, and this row is the record: the gate's own verdict when the input is absent is the honest one. What would settle it: the artifact the run names."
+    },
+    {
+      "gate": "test:stardew-action-gate-descriptors",
+      "class": "unguarded-population",
+      "area": "stardew",
+      "guard": "must print `examined 0` and exit 2 when its scan finds no file: the population is a committed source tree, so zero means the root or the filter moved",
+      "because": "tools/stardew-action-gate-descriptors.test.mjs enumerates a committed source tree it scans and reports the same green over nine hundred members as over none: a filter or a root that moved is indistinguishable from a clean run. The census sees the population and the gate has no zero branch."
+    },
+    {
+      "gate": "test:stardew-action-seam-terminals",
+      "class": "unmeasurable",
+      "because": "the test reads `auditPath`, the file its subprocess wrote. The census cannot settle whether it exists, and this row is the record: the gate's own verdict when the input is absent is the honest one. What would settle it: the artifact the run names."
+    },
+    {
+      "gate": "test:stardew-admission-hold-codes",
+      "class": "unguarded-population",
+      "area": "stardew",
+      "guard": "must refuse when none of the paths it wrote down exists, and name them",
+      "because": "tools/lib/stardew-admission-hold-codes.test.mjs enumerates `WorldModel.cs`, `farmhandexecutioncontroller.cs` and reports the same green over nine hundred members as over none: a filter or a root that moved is indistinguishable from a clean run. The census sees the population and the gate has no zero branch."
+    },
+    {
+      "gate": "test:stardew-branch-writeset",
+      "class": "unmeasurable",
+      "because": "`JSON.parse(await readFile(REGISTER, …))` is the generated writeset register. The census cannot settle whether it exists, and this row is the record: the gate's own verdict when the input is absent is the honest one. What would settle it: the artifact the run names."
+    },
+    {
+      "gate": "test:stardew-completion-evidence",
+      "class": "unmeasurable",
+      "because": "host/src/stardew-completion-evidence-coverage.test.ts reads no file through any call this census models: its population is fixture objects and literals in its own source, so there is no empty set to construct. What would settle it: nothing - a gate that reads no file is not a population gate, and this row leaves the population the day it reads one."
+    },
+    {
+      "gate": "test:stardew-dialogue-stream",
+      "class": "unguarded-population",
+      "area": "stardew",
+      "guard": "must print `examined 0` and exit 2 when its scan finds no file: the population is a committed source tree, so zero means the root or the filter moved",
+      "because": "tools/check-stardew-dialogue-stream.test.mjs enumerates a committed source tree it scans and reports the same green over nine hundred members as over none: a filter or a root that moved is indistinguishable from a clean run. The census sees the population and the gate has no zero branch."
+    },
+    {
+      "gate": "test:stardew-discovery-channels",
+      "class": "unguarded-population",
+      "area": "stardew",
+      "guard": "must print `examined 0` and exit 2 when its scan finds no file: the population is a committed source tree, so zero means the root or the filter moved",
+      "because": "tools/audit-stardew-discovery-channels.test.mjs enumerates a committed source tree it scans and reports the same green over nine hundred members as over none: a filter or a root that moved is indistinguishable from a clean run. The census sees the population and the gate has no zero branch."
+    },
+    {
+      "gate": "test:stardew-discovery-collection-coverage",
+      "class": "reader-blind",
+      "blind": "root",
+      "because": "`readdirSync(directory)` in `walk` (integrations\\stardew\\action-development\\src\\analysis\\stardew-mod-csharp-source.mjs) reads whatever the caller hands it: the census names the parameter and not one member of the set, so a root that moved reads as a green over nothing."
+    },
+    {
+      "gate": "test:stardew-fixture-action-coverage",
+      "class": "unguarded-population",
+      "area": "stardew",
+      "guard": "must refuse when none of the paths it wrote down exists, and name them",
+      "because": "tools/lib/fixture-action-coverage.test.mjs enumerates `../../integrations/stardew/action-development/contracts/generated/action-surface.v1.json`, `./stardew-native-local-player-fixture.mjs` and reports the same green over nine hundred members as over none: a filter or a root that moved is indistinguishable from a clean run. The census sees the population and the gate has no zero branch."
+    },
+    {
+      "gate": "test:stardew-fixture-profile",
+      "class": "unguarded-population",
+      "area": "stardew",
+      "guard": "must refuse when none of the paths it wrote down exists, and name them",
+      "because": "tools/stardew-fixture-profile.test.mjs enumerates `.stardew-fixture-profile.lock`, `transaction.json` and reports the same green over nine hundred members as over none: a filter or a root that moved is indistinguishable from a clean run. The census sees the population and the gate has no zero branch."
+    },
+    {
+      "gate": "test:stardew-fixture-roots",
+      "class": "unguarded-population",
+      "area": "stardew",
+      "guard": "must refuse when none of the paths it wrote down exists, and name them",
+      "because": "tools/stardew-fixture-roots.test.mjs enumerates `launch-ladder-live.mjs`, `launch-stardew-navigation-fixture.ps1`, `start-farmhand-launcher.ps1` and reports the same green over nine hundred members as over none: a filter or a root that moved is indistinguishable from a clean run. The census sees the population and the gate has no zero branch."
+    },
+    {
+      "gate": "test:stardew-fixture-scenario-wiring",
+      "class": "unguarded-population",
+      "area": "stardew",
+      "guard": "must print `examined 0` and exit 2 when its scan of `integrations/stardew` yields no file",
+      "because": "tools/check-stardew-fixture-scenario-wiring.test.mjs enumerates `integrations/stardew` and reports the same green over nine hundred members as over none: a filter or a root that moved is indistinguishable from a clean run. The census sees the population and the gate has no zero branch."
+    },
+    {
+      "gate": "test:stardew-fixture-transaction-inspector",
+      "class": "unguarded-population",
+      "area": "stardew",
+      "guard": "must refuse when none of the paths it wrote down exists, and name them",
+      "because": "tools/stardew-fixture-transaction-inspector.test.mjs enumerates `.stardew-fixture-profile.lock`, `transaction.json` and reports the same green over nine hundred members as over none: a filter or a root that moved is indistinguishable from a clean run. The census sees the population and the gate has no zero branch."
+    },
+    {
+      "gate": "test:stardew-gameplay-completeness",
+      "class": "unmeasurable",
+      "because": "the test reads the report path it hands the gate. The census cannot settle whether it exists, and this row is the record: the gate's own verdict when the input is absent is the honest one. What would settle it: the artifact the run names."
+    },
+    {
+      "gate": "test:stardew-gameplay-surface-rules",
+      "class": "unmeasurable",
+      "because": "tools/stardew-gameplay-surface-rules.test.mjs reads no file through any call this census models: its population is fixture objects and literals in its own source, so there is no empty set to construct. What would settle it: nothing - a gate that reads no file is not a population gate, and this row leaves the population the day it reads one."
+    },
+    {
+      "gate": "test:stardew-gameplay-surface-selector",
+      "class": "unmeasurable",
+      "because": "tools/stardew-gameplay-surface-selector.test.mjs reads no file through any call this census models: its population is fixture objects and literals in its own source, so there is no empty set to construct. What would settle it: nothing - a gate that reads no file is not a population gate, and this row leaves the population the day it reads one."
+    },
+    {
+      "gate": "test:stardew-gate-failure-taxonomy",
+      "class": "unmeasurable",
+      "because": "tools/stardew-gate-failure-taxonomy.test.mjs reads no file through any call this census models: its population is fixture objects and literals in its own source, so there is no empty set to construct. What would settle it: nothing - a gate that reads no file is not a population gate, and this row leaves the population the day it reads one."
+    },
+    {
+      "gate": "test:stardew-loop-closure",
+      "class": "unguarded-population",
+      "area": "stardew",
+      "guard": "must print `examined 0` and exit 2 when its scan finds no file: the population is a committed source tree, so zero means the root or the filter moved",
+      "because": "tools/check-stardew-loop-closure.test.mjs enumerates a committed source tree it scans and reports the same green over nine hundred members as over none: a filter or a root that moved is indistinguishable from a clean run. The census sees the population and the gate has no zero branch."
+    },
+    {
+      "gate": "test:stardew-method-resolution",
+      "class": "unguarded-population",
+      "area": "stardew",
+      "guard": "must print `examined 0` and exit 2 when its scan finds no file: the population is a committed source tree, so zero means the root or the filter moved",
+      "because": "integrations/stardew/action-development/tests/stardew-method-resolution.test.mjs enumerates a committed source tree it scans and reports the same green over nine hundred members as over none: a filter or a root that moved is indistinguishable from a clean run. The census sees the population and the gate has no zero branch."
+    },
+    {
+      "gate": "test:stardew-method-resolution-mutation",
+      "class": "unguarded-population",
+      "area": "stardew",
+      "guard": "must print `examined 0` and exit 2 when its scan finds no file: the population is a committed source tree, so zero means the root or the filter moved",
+      "because": "integrations/stardew/action-development/tests/stardew-method-resolution.mutation.mjs enumerates a committed source tree it scans and reports the same green over nine hundred members as over none: a filter or a root that moved is indistinguishable from a clean run. The census sees the population and the gate has no zero branch."
+    },
+    {
+      "gate": "test:stardew-native-completion-event-register",
+      "class": "unmeasurable",
+      "because": "tools/stardew-native-completion-event-register.test.mjs reads no file through any call this census models: its population is fixture objects and literals in its own source, so there is no empty set to construct. What would settle it: nothing - a gate that reads no file is not a population gate, and this row leaves the population the day it reads one."
+    },
+    {
+      "gate": "test:stardew-native-event-continuation-trace",
+      "class": "unmeasurable",
+      "because": "tools/stardew-native-event-continuation-trace.test.mjs reads no file through any call this census models: its population is fixture objects and literals in its own source, so there is no empty set to construct. What would settle it: nothing - a gate that reads no file is not a population gate, and this row leaves the population the day it reads one."
+    },
+    {
+      "gate": "test:stardew-native-farmer-sprite-callback-boundary",
+      "class": "unmeasurable",
+      "because": "tools/stardew-native-farmer-sprite-callback-boundary.test.mjs reads no file through any call this census models: its population is fixture objects and literals in its own source, so there is no empty set to construct. What would settle it: nothing - a gate that reads no file is not a population gate, and this row leaves the population the day it reads one."
+    },
+    {
+      "gate": "test:stardew-native-field-continuation-trace",
+      "class": "unmeasurable",
+      "because": "tools/stardew-native-field-continuation-trace.test.mjs reads no file through any call this census models: its population is fixture objects and literals in its own source, so there is no empty set to construct. What would settle it: nothing - a gate that reads no file is not a population gate, and this row leaves the population the day it reads one."
+    },
+    {
+      "gate": "test:stardew-native-local-runner-entry",
+      "class": "unmeasurable",
+      "because": "`readFileSync(path.join(ROOT, \"tools\", name), …)` over runner names the test itself enumerates. The census cannot settle whether it exists, and this row is the record: the gate's own verdict when the input is absent is the honest one. What would settle it: the artifact the run names."
+    },
+    {
+      "gate": "test:stardew-native-mechanism-family-register",
+      "class": "unmeasurable",
+      "because": "tools/stardew-native-mechanism-family-register.test.mjs reads no file through any call this census models: its population is fixture objects and literals in its own source, so there is no empty set to construct. What would settle it: nothing - a gate that reads no file is not a population gate, and this row leaves the population the day it reads one."
+    },
+    {
+      "gate": "test:stardew-native-mechanism-review-register",
+      "class": "unmeasurable",
+      "because": "tools/stardew-native-mechanism-review-register.test.mjs reads no file through any call this census models: its population is fixture objects and literals in its own source, so there is no empty set to construct. What would settle it: nothing - a gate that reads no file is not a population gate, and this row leaves the population the day it reads one."
+    },
+    {
+      "gate": "test:stardew-native-multiplayer-sensitivity",
+      "class": "unguarded-population",
+      "area": "stardew",
+      "guard": "must print `examined 0` and exit 2 when its scan finds no file: the population is a committed source tree, so zero means the root or the filter moved",
+      "because": "tools/stardew-native-multiplayer-sensitivity.test.mjs enumerates a committed source tree it scans and reports the same green over nine hundred members as over none: a filter or a root that moved is indistinguishable from a clean run. The census sees the population and the gate has no zero branch."
+    },
+    {
+      "gate": "test:stardew-native-normal-player-ingress-register",
+      "class": "unmeasurable",
+      "because": "tools/stardew-native-normal-player-ingress-register.test.mjs reads no file through any call this census models: its population is fixture objects and literals in its own source, so there is no empty set to construct. What would settle it: nothing - a gate that reads no file is not a population gate, and this row leaves the population the day it reads one."
+    },
+    {
+      "gate": "test:stardew-native-pathfinder-source",
+      "class": "reader-blind",
+      "blind": "root",
+      "because": "`readdirSync(path)` in `visit` (tools\\check-stardew-native-pathfinder-source.mjs) reads whatever the caller hands it: the census names the parameter and not one member of the set, so a root that moved reads as a green over nothing."
+    },
+    {
+      "gate": "test:stardew-native-router-exit-classifier",
+      "class": "unmeasurable",
+      "because": "one fixed input (`package.json`), read directly: a missing one fails the read or the pointer rather than printing a green over nothing, so the green-over-zero case cannot be constructed. What would settle it: delete the input and watch the gate refuse."
+    },
+    {
+      "gate": "test:stardew-native-router-invocation-inventory",
+      "class": "unmeasurable",
+      "because": "one fixed input (`package.json`), read directly: a missing one fails the read or the pointer rather than printing a green over nothing, so the green-over-zero case cannot be constructed. What would settle it: delete the input and watch the gate refuse."
+    },
+    {
+      "gate": "test:stardew-native-source-closure",
+      "class": "unmeasurable",
+      "because": "tools/stardew-native-source-closure.test.mjs reads no file through any call this census models: its population is fixture objects and literals in its own source, so there is no empty set to construct. What would settle it: nothing - a gate that reads no file is not a population gate, and this row leaves the population the day it reads one."
+    },
+    {
+      "gate": "test:stardew-native-state-machine-family-register",
+      "class": "unmeasurable",
+      "because": "tools/stardew-native-state-machine-family-register.test.mjs reads no file through any call this census models: its population is fixture objects and literals in its own source, so there is no empty set to construct. What would settle it: nothing - a gate that reads no file is not a population gate, and this row leaves the population the day it reads one."
+    },
+    {
+      "gate": "test:stardew-native-tool-owner-slice",
+      "class": "unmeasurable",
+      "because": "tools/stardew-native-tool-owner-slice.test.mjs reads no file through any call this census models: its population is fixture objects and literals in its own source, so there is no empty set to construct. What would settle it: nothing - a gate that reads no file is not a population gate, and this row leaves the population the day it reads one."
+    },
+    {
+      "gate": "test:stardew-native-tool-update-dispatch-boundary",
+      "class": "unmeasurable",
+      "because": "tools/stardew-native-tool-update-dispatch-boundary.test.mjs reads no file through any call this census models: its population is fixture objects and literals in its own source, so there is no empty set to construct. What would settle it: nothing - a gate that reads no file is not a population gate, and this row leaves the population the day it reads one."
+    },
+    {
+      "gate": "test:stardew-native-transition-family-universe",
+      "class": "unmeasurable",
+      "because": "tools/stardew-native-transition-family-universe.test.mjs reads no file through any call this census models: its population is fixture objects and literals in its own source, so there is no empty set to construct. What would settle it: nothing - a gate that reads no file is not a population gate, and this row leaves the population the day it reads one."
+    },
+    {
+      "gate": "test:stardew-native-transition-ledger",
+      "class": "unmeasurable",
+      "because": "tools/stardew-native-transition-ledger.test.mjs reads no file through any call this census models: its population is fixture objects and literals in its own source, so there is no empty set to construct. What would settle it: nothing - a gate that reads no file is not a population gate, and this row leaves the population the day it reads one."
+    },
+    {
+      "gate": "test:stardew-native-virtual-member-invocation-register",
+      "class": "unmeasurable",
+      "because": "tools/stardew-native-virtual-member-invocation-register.test.mjs reads no file through any call this census models: its population is fixture objects and literals in its own source, so there is no empty set to construct. What would settle it: nothing - a gate that reads no file is not a population gate, and this row leaves the population the day it reads one."
+    },
+    {
+      "gate": "test:stardew-native-virtual-receiver-register",
+      "class": "unmeasurable",
+      "because": "tools/stardew-native-virtual-receiver-register.test.mjs reads no file through any call this census models: its population is fixture objects and literals in its own source, so there is no empty set to construct. What would settle it: nothing - a gate that reads no file is not a population gate, and this row leaves the population the day it reads one."
+    },
+    {
+      "gate": "test:stardew-observation-gap",
+      "class": "unmeasurable",
+      "because": "the test reads the summary file it staged. The census cannot settle whether it exists, and this row is the record: the gate's own verdict when the input is absent is the honest one. What would settle it: the artifact the run names."
+    },
+    {
+      "gate": "test:stardew-open-ground-claims",
+      "class": "unguarded-population",
+      "area": "stardew",
+      "guard": "must print `examined 0` and exit 2 when its scan finds no file: the population is a committed source tree, so zero means the root or the filter moved",
+      "because": "tools/audit-stardew-open-ground-claims.test.mjs enumerates a committed source tree it scans and reports the same green over nine hundred members as over none: a filter or a root that moved is indistinguishable from a clean run. The census sees the population and the gate has no zero branch."
+    },
+    {
+      "gate": "test:stardew-player-command-equivalence-audit",
+      "class": "unmeasurable",
+      "because": "tools/stardew-player-command-equivalence-audit.test.mjs reads no file through any call this census models: its population is fixture objects and literals in its own source, so there is no empty set to construct. What would settle it: nothing - a gate that reads no file is not a population gate, and this row leaves the population the day it reads one."
+    },
+    {
+      "gate": "test:stardew-player-command-graph",
+      "class": "unmeasurable",
+      "because": "tools/stardew-player-command-graph.test.mjs reads no file through any call this census models: its population is fixture objects and literals in its own source, so there is no empty set to construct. What would settle it: nothing - a gate that reads no file is not a population gate, and this row leaves the population the day it reads one."
+    },
+    {
+      "gate": "test:stardew-player-reachable-exits",
+      "class": "unmeasurable",
+      "because": "`readFile(REGISTER, …)` is the generated register. The census cannot settle whether it exists, and this row is the record: the gate's own verdict when the input is absent is the honest one. What would settle it: the artifact the run names."
+    },
+    {
+      "gate": "test:stardew-reachable-exits-reconciliation",
+      "class": "unmeasurable",
+      "because": "integrations/stardew/action-development/tests/stardew-reachable-exit-reconciliation.test.mjs reads no file through any call this census models: its population is fixture objects and literals in its own source, so there is no empty set to construct. What would settle it: nothing - a gate that reads no file is not a population gate, and this row leaves the population the day it reads one."
+    },
+    {
+      "gate": "test:stardew-receipt-attribution",
+      "class": "reader-blind",
+      "blind": "root",
+      "because": "`readdirSync(path)` in `visit` (tools\\check-stardew-receipt-attribution.mjs) reads whatever the caller hands it: the census names the parameter and not one member of the set, so a root that moved reads as a green over nothing."
+    },
+    {
+      "gate": "test:stardew-receipt-transition-provenance",
+      "class": "unguarded-population",
+      "area": "stardew",
+      "guard": "must print `examined 0` and exit 2 when its scan finds no file: the population is a committed source tree, so zero means the root or the filter moved",
+      "because": "tools/audit-stardew-receipt-transition-fields.test.mjs enumerates a committed source tree it scans and reports the same green over nine hundred members as over none: a filter or a root that moved is indistinguishable from a clean run. The census sees the population and the gate has no zero branch."
+    },
+    {
+      "gate": "test:stardew-rejected-layer-verdicts-mutation",
+      "class": "unguarded-population",
+      "area": "stardew",
+      "guard": "must print `examined 0` and exit 2 when its scan finds no file: the population is a committed source tree, so zero means the root or the filter moved",
+      "because": "integrations/stardew/action-development/tests/stardew-rejected-layer-verdicts.mutation.mjs enumerates a committed source tree it scans and reports the same green over nine hundred members as over none: a filter or a root that moved is indistinguishable from a clean run. The census sees the population and the gate has no zero branch."
+    },
+    {
+      "gate": "test:stardew-remaining-actions",
+      "class": "unmeasurable",
+      "because": "the test reads `outPath`, the report its subprocess wrote. The census cannot settle whether it exists, and this row is the record: the gate's own verdict when the input is absent is the honest one. What would settle it: the artifact the run names."
+    },
+    {
+      "gate": "test:stardew-scaffold",
+      "class": "unguarded-population",
+      "area": "stardew",
+      "guard": "must print `examined 0` and exit 2 when its scan finds no file: the population is a committed source tree, so zero means the root or the filter moved",
+      "because": "tools/verify-stardew-scaffold.test.mjs enumerates a committed source tree it scans and reports the same green over nine hundred members as over none: a filter or a root that moved is indistinguishable from a clean run. The census sees the population and the gate has no zero branch."
+    },
+    {
+      "gate": "test:stardew-soil-itm-conformance",
+      "class": "unmeasurable",
+      "because": "one fixed input (`./stardew-soil-itm-canary.model.json`), read directly: a missing one fails the read or the pointer rather than printing a green over nothing, so the green-over-zero case cannot be constructed. What would settle it: delete the input and watch the gate refuse."
+    },
+    {
+      "gate": "test:stardew-static-companion-admission",
+      "class": "unmeasurable",
+      "because": "the test reads `output`, the file the admission run wrote. The census cannot settle whether it exists, and this row is the record: the gate's own verdict when the input is absent is the honest one. What would settle it: the artifact the run names."
+    },
+    {
+      "gate": "test:stardew-static-companion-evidence",
+      "class": "unmeasurable",
+      "because": "tools/lib/stardew-companion-live-evidence.test.mjs reads no file through any call this census models: its population is fixture objects and literals in its own source, so there is no empty set to construct. What would settle it: nothing - a gate that reads no file is not a population gate, and this row leaves the population the day it reads one."
+    },
+    {
+      "gate": "test:stardew-static-companion-fixture",
+      "class": "unguarded-population",
+      "area": "stardew",
+      "guard": "must refuse when none of the paths it wrote down exists, and name them",
+      "because": "tools/stardew-companion-live-scenario.test.mjs enumerates `phrases.zh-CN.v1.json`, `scenarios.v1.json` and reports the same green over nine hundred members as over none: a filter or a root that moved is indistinguishable from a clean run. The census sees the population and the gate has no zero branch."
+    },
+    {
+      "gate": "test:stardew-test-shape",
+      "class": "unguarded-population",
+      "area": "stardew",
+      "guard": "must refuse when none of the paths it wrote down exists, and name them",
+      "because": "tools/audit-stardew-test-shape.test.mjs enumerates `RefusalLayerNamingTests.cs`, `ToolPreconditionUniformityTests.cs` and reports the same green over nine hundred members as over none: a filter or a root that moved is indistinguishable from a clean run. The census sees the population and the gate has no zero branch."
+    },
+    {
+      "gate": "test:stardew-tile-action-selectors",
+      "class": "reader-blind",
+      "blind": "root",
+      "because": "`readdir(d)` in `walk` (integrations\\stardew\\action-development\\src\\analysis\\stardew-tile-action-selectors.mjs) reads whatever the caller hands it: the census names the parameter and not one member of the set, so a root that moved reads as a green over nothing."
+    },
+    {
+      "gate": "test:stardew-tool-family-stamina-evidence",
+      "class": "unmeasurable",
+      "because": "the test reads a fixture through `new URL(\\`../${file}\\`, import.meta.url)`. The census cannot settle whether it exists, and this row is the record: the gate's own verdict when the input is absent is the honest one. What would settle it: the artifact the run names."
+    },
+    {
+      "gate": "test:stardew-uncovered-exit-expansion",
+      "class": "unmeasurable",
+      "because": "integrations/stardew/action-development/tests/stardew-uncovered-exit-expansion.test.mjs reads no file through any call this census models: its population is fixture objects and literals in its own source, so there is no empty set to construct. What would settle it: nothing - a gate that reads no file is not a population gate, and this row leaves the population the day it reads one."
+    },
+    {
+      "gate": "test:stardew-uncovered-exit-table",
+      "class": "unmeasurable",
+      "because": "integrations/stardew/action-development/tests/stardew-uncovered-exit-table.test.mjs reads no file through any call this census models: its population is fixture objects and literals in its own source, so there is no empty set to construct. What would settle it: nothing - a gate that reads no file is not a population gate, and this row leaves the population the day it reads one."
+    },
+    {
+      "gate": "test:stardew-wire-agreement",
+      "class": "unguarded-population",
+      "area": "host",
+      "guard": "must refuse when none of the paths it wrote down exists, and name them",
+      "because": "host/src/protocol-catalog-agreement.test.ts enumerates `bridge-v1.schema.json`, `integrations/stardew/action-development/contracts/generated/action-surface.v1.json` and reports the same green over nine hundred members as over none: a filter or a root that moved is indistinguishable from a clean run. The census sees the population and the gate has no zero branch."
+    },
+    {
+      "gate": "test:stardew:all",
+      "class": "unguarded-population",
+      "area": "stardew",
+      "guard": "must print `examined 0` and exit 2 when its scan finds no file: the population is a committed source tree, so zero means the root or the filter moved",
+      "because": "tools/test-stardew-all.mjs enumerates a committed source tree it scans and reports the same green over nine hundred members as over none: a filter or a root that moved is indistinguishable from a clean run. The census sees the population and the gate has no zero branch."
+    },
+    {
+      "gate": "test:surface-journeys",
+      "class": "unguarded-population",
+      "area": "tools",
+      "guard": "must print `examined 0` and exit 2 when its scan finds no file: the population is a committed source tree, so zero means the root or the filter moved",
+      "because": "tools/check-surface-journeys.test.mjs enumerates a committed source tree it scans and reports the same green over nine hundred members as over none: a filter or a root that moved is indistinguishable from a clean run. The census sees the population and the gate has no zero branch."
+    },
+    {
+      "gate": "test:tavern-presets",
+      "class": "unguarded-population",
+      "area": "tools",
+      "guard": "must print `examined 0` and exit 2 when its scan finds no file: the population is a committed source tree, so zero means the root or the filter moved",
+      "because": "tools/validate-tavern-card.mjs enumerates a committed source tree it scans and reports the same green over nine hundred members as over none: a filter or a root that moved is indistinguishable from a clean run. The census sees the population and the gate has no zero branch."
+    },
+    {
+      "gate": "test:tool-corpus",
+      "class": "unmeasurable",
+      "because": "one fixed input (`package.json`), read directly: a missing one fails the read or the pointer rather than printing a green over nothing, so the green-over-zero case cannot be constructed. What would settle it: delete the input and watch the gate refuse."
+    },
+    {
+      "gate": "test:tools-lib",
+      "class": "unmeasurable",
+      "because": "tools/lib/action-cadence.test.mjs reads no file through any call this census models: its population is fixture objects and literals in its own source, so there is no empty set to construct. What would settle it: nothing - a gate that reads no file is not a population gate, and this row leaves the population the day it reads one."
+    },
+    {
+      "gate": "test:unreported-catch",
+      "class": "unguarded-population",
+      "area": "tools",
+      "guard": "must print `examined 0` and exit 2 when the index names no file in its scope",
+      "because": "tools/check-unreported-catch.test.mjs enumerates a committed source tree it scans and reports the same green over nine hundred members as over none: a filter or a root that moved is indistinguishable from a clean run. The census sees the population and the gate has no zero branch."
+    },
+    {
+      "gate": "test:vendor-build-artifacts",
+      "class": "unguarded-population",
+      "area": "tools",
+      "guard": "must refuse when none of the paths it wrote down exists, and name them",
+      "because": "tools/check-vendor-build-artifacts.test.mjs enumerates `dist/index.d.ts`, `dist/index.js`, `dist/tavern/index.d.ts` and reports the same green over nine hundred members as over none: a filter or a root that moved is indistinguishable from a clean run. The census sees the population and the gate has no zero branch."
+    },
+    {
+      "gate": "test:vendored-bundle-leaks",
+      "class": "unguarded-population",
+      "area": "tools",
+      "guard": "must print `examined 0` and exit 2 when its scan finds no file: the population is a committed source tree, so zero means the root or the filter moved",
+      "because": "tools/check-vendored-bundle-leaks.test.mjs enumerates a committed source tree it scans and reports the same green over nine hundred members as over none: a filter or a root that moved is indistinguishable from a clean run. The census sees the population and the gate has no zero branch."
+    },
+    {
+      "gate": "test:windows-process-tree",
+      "class": "unguarded-population",
+      "area": "tools",
+      "guard": "must refuse when none of the paths it wrote down exists, and name them",
+      "because": "tools/lib/windows-process-tree.test.mjs enumerates `secret.txt`, `sentinel.txt` and reports the same green over nine hundred members as over none: a filter or a root that moved is indistinguishable from a clean run. The census sees the population and the gate has no zero branch."
+    },
+    {
+      "gate": "test:workflow-expressions",
+      "class": "unguarded-population",
+      "area": "tools",
+      "guard": "must print `examined 0` and exit 2 when its scan finds no file: the population is a committed source tree, so zero means the root or the filter moved",
+      "because": "tools/check-workflow-expressions.test.mjs enumerates a committed source tree it scans and reports the same green over nine hundred members as over none: a filter or a root that moved is indistinguishable from a clean run. The census sees the population and the gate has no zero branch."
+    },
+    {
+      "gate": "tools/audit-preset-macro-frequency.mjs",
+      "class": "reader-blind",
+      "blind": "root",
+      "because": "`readdirSync(directory)` in `walk` (tools/audit-preset-macro-frequency.mjs) reads whatever the caller hands it: the census names the parameter and not one member of the set, so a root that moved reads as a green over nothing."
+    },
+    {
+      "gate": "tools/audit-stardew-action-admission-ledger.mjs",
+      "class": "unguarded-population",
+      "area": "stardew",
+      "guard": "must print `examined 0` and exit 2 when the index names no file in its scope",
+      "because": "tools/audit-stardew-action-admission-ledger.mjs enumerates a committed source tree it scans and reports the same green over nine hundred members as over none: a filter or a root that moved is indistinguishable from a clean run. The census sees the population and the gate has no zero branch."
+    },
+    {
+      "gate": "tools/audit-stardew-admission-fork-delta.mjs",
+      "class": "unguarded-population",
+      "area": "stardew",
+      "guard": "must print `examined 0` and exit 2 when its scan finds no file: the population is a committed source tree, so zero means the root or the filter moved",
+      "because": "tools/audit-stardew-admission-fork-delta.mjs enumerates a committed source tree it scans and reports the same green over nine hundred members as over none: a filter or a root that moved is indistinguishable from a clean run. The census sees the population and the gate has no zero branch."
+    },
+    {
+      "gate": "tools/audit-stardew-handler-actor-guard.mjs",
+      "class": "unguarded-population",
+      "area": "stardew",
+      "guard": "must print `examined 0` and exit 2 when the index names no file in its scope",
+      "because": "tools/audit-stardew-handler-actor-guard.mjs enumerates a committed source tree it scans and reports the same green over nine hundred members as over none: a filter or a root that moved is indistinguishable from a clean run. The census sees the population and the gate has no zero branch."
+    },
+    {
+      "gate": "tools/audit-stardew-nogame-subset.mjs",
+      "class": "unguarded-population",
+      "area": "stardew",
+      "guard": "must print `examined 0` and exit 2 when its scan finds no file: the population is a committed source tree, so zero means the root or the filter moved",
+      "because": "tools/audit-stardew-nogame-subset.mjs enumerates a committed source tree it scans and reports the same green over nine hundred members as over none: a filter or a root that moved is indistinguishable from a clean run. The census sees the population and the gate has no zero branch."
+    },
+    {
+      "gate": "tools/check-action-coverage.mjs",
+      "class": "unguarded-population",
+      "area": "tools",
+      "guard": "must print `examined 0` and exit 2 when its scan finds no file: the population is a committed source tree, so zero means the root or the filter moved",
+      "because": "tools/check-action-coverage.mjs enumerates a committed source tree it scans and reports the same green over nine hundred members as over none: a filter or a root that moved is indistinguishable from a clean run. The census sees the population and the gate has no zero branch."
+    },
+    {
+      "gate": "tools/check-dist-runtime-exports.mjs",
+      "class": "unmeasurable",
+      "because": "the population is a module loaded at start (`tools/check-dist-runtime-exports.mjs:import`): an absent one throws inside the load and the gate exits non-zero, so it cannot pass over nothing. What would settle it: remove the loaded artifact and the gate refuses."
+    },
+    {
+      "gate": "tools/check-game-context-pressure.mjs",
+      "class": "unguarded-population",
+      "area": "tools",
+      "guard": "must print `examined 0` and exit 2 when its scan finds no file: the population is a committed source tree, so zero means the root or the filter moved",
+      "because": "tools/check-game-context-pressure.mjs enumerates a committed source tree it scans and reports the same green over nine hundred members as over none: a filter or a root that moved is indistinguishable from a clean run. The census sees the population and the gate has no zero branch."
+    },
+    {
+      "gate": "tools/check-live-run-verdict-guards.mjs",
+      "class": "reader-blind",
+      "blind": "root",
+      "because": "`readdirSync(directory)` in `walk` (tools/check-live-run-verdict-guards.mjs) reads whatever the caller hands it: the census names the parameter and not one member of the set, so a root that moved reads as a green over nothing."
+    },
+    {
+      "gate": "tools/check-stardew-dialogue-stream.mjs",
+      "class": "unguarded-population",
+      "area": "stardew",
+      "guard": "must print `examined 0` and exit 2 when its scan finds no file: the population is a committed source tree, so zero means the root or the filter moved",
+      "because": "tools/check-stardew-dialogue-stream.mjs enumerates a committed source tree it scans and reports the same green over nine hundred members as over none: a filter or a root that moved is indistinguishable from a clean run. The census sees the population and the gate has no zero branch."
+    },
+    {
+      "gate": "tools/check-stardew-discovery-exclusions.mjs",
+      "class": "unguarded-population",
+      "area": "stardew",
+      "guard": "must print `examined 0` and exit 2 when its scan finds no file: the population is a committed source tree, so zero means the root or the filter moved",
+      "because": "tools/check-stardew-discovery-exclusions.mjs enumerates a committed source tree it scans and reports the same green over nine hundred members as over none: a filter or a root that moved is indistinguishable from a clean run. The census sees the population and the gate has no zero branch."
+    },
+    {
+      "gate": "tools/check-stardew-wia-agent-loop.mjs",
+      "class": "unmeasurable",
+      "because": "`path.resolve(resultPath)` is the result file the runner names. The census cannot settle whether it exists, and this row is the record: the gate's own verdict when the input is absent is the honest one. What would settle it: the artifact the run names."
+    }
+  ]
+}

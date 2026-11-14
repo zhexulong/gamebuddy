@@ -40,9 +40,11 @@ import {
   buildReport,
   classifyReading,
   compareWithBaseline,
+  judgeZeroReadPopulation,
   readGateInputs,
   statusOf,
   worstClass,
+  ZERO_READ_POPULATION_PATH,
   zeroReadFlags,
   zeroReadVerdict,
 } from "./audit-gate-inputs.mjs";
@@ -65,6 +67,13 @@ async function readingOf(root) {
   const reading = await readGateInputs({ root });
   return { reading, byId: new Map(reading.gates.map((gate) => [gate.id, gate])) };
 }
+
+/** The document `tools/gate-inputs-zero-read.json` carries, built from rows so a case states only what it varies. */
+const zeroReadPopulation = (rows) => ({
+  schema: "gamebuddy-gate-inputs-zero-read/v1",
+  note: "fixture",
+  members: rows,
+});
 
 const scripts = (names) => JSON.stringify({ scripts: Object.fromEntries(names) });
 
@@ -267,6 +276,15 @@ test("a reading over no gate is blocked, not passed", () => {
   assert.equal(statusOf({ examined: 3, baselineMissing: true, unrecorded: [], stale: [] }), "blocked");
   assert.equal(statusOf({ examined: 3, baselineMissing: false, unrecorded: [], stale: [] }), "passed");
   assert.equal(statusOf({ examined: 3, baselineMissing: false, unrecorded: [{ id: "check:a" }], stale: [] }), "failed");
+  // A tree with no recorded cause cannot tell an explained green from the one this gate exists for.
+  assert.equal(
+    statusOf({ examined: 3, baselineMissing: false, unrecorded: [], stale: [], populationMissing: true }),
+    "blocked",
+  );
+  assert.equal(
+    statusOf({ examined: 3, baselineMissing: false, unrecorded: [], stale: [], zeroReadFindings: [{ code: "x" }] }),
+    "failed",
+  );
 });
 
 test("the report names the class, the counts, and its own rule outcomes", async (t) => {
@@ -278,6 +296,8 @@ test("the report names the class, the counts, and its own rule outcomes", async 
     baseline: null,
     unrecorded: compareWithBaseline({ members, baseline: null }).unrecorded,
     stale: [],
+    population: null,
+    zeroReadJudgement: judgeZeroReadPopulation({ members: [], population: null }),
   });
   assert.equal(report.gate, "gate_inputs/v1");
   assert.equal(report.examined, reading.examined);
@@ -287,13 +307,45 @@ test("the report names the class, the counts, and its own rule outcomes", async 
   assert.equal(report.zeroRead.unseen, 2);
   assert.deepEqual(
     report.checks.map((check) => check.id),
-    ["every_gate_classified", "baseline_current"],
+    ["every_gate_classified", "baseline_current", "zero_read_classified"],
   );
 });
 
 test("the CLI: a new member is red and names itself, a recorded one is green, a stale row is red", async (t) => {
   const root = fixtureTree(t, MIXED);
   const run = () => spawnSync(process.execPath, [TOOL, "--root", root], { encoding: "utf8" });
+  const recordCauses = () => {
+    mkdirSync(join(root, dirname(ZERO_READ_POPULATION_PATH)), { recursive: true });
+    writeFileSync(
+      join(root, ZERO_READ_POPULATION_PATH),
+      `${JSON.stringify(
+        zeroReadPopulation([
+          {
+            gate: "check:scan",
+            class: "unguarded-population",
+            area: "host",
+            guard: "must print examined 0 and exit 2 when host/src yields no file",
+            because: "it scans host/src and reports the same green over no file as over two",
+          },
+          {
+            gate: "check:single",
+            class: "unmeasurable",
+            because:
+              "one fixed input read directly: a missing package.json fails the read rather than printing a green",
+          },
+          {
+            gate: "check:silent",
+            class: "unguarded-population",
+            area: "host",
+            guard: "must refuse when none of the two paths it wrote down exists",
+            because: "it writes two paths down and reports passed over none of them",
+          },
+        ]),
+        null,
+        2,
+      )}\n`,
+    );
+  };
 
   // No baseline: blocked, because a member cannot be told from a new one.
   assert.equal(run().status, 2);
@@ -304,9 +356,14 @@ test("the CLI: a new member is red and names itself, a recorded one is green, a 
     join(root, BASELINE_PATH),
     `${JSON.stringify(baselineDocument([{ id: "check:silent", reads: ["host/src/a.ts", "host/src/b.ts"] }]), null, 2)}\n`,
   );
+  recordCauses();
   const recorded = run();
   assert.equal(recorded.status, 0, recorded.stderr);
   assert.match(recorded.stdout, /gate_inputs examined 7 · /u);
+  assert.match(
+    recorded.stdout,
+    /green-with-zero by cause: empty-is-correct 0 · reader-blind 0 · unmeasurable 1 · unguarded-population 2 · undeclared 0/u,
+  );
   assert.equal(JSON.parse(recorded.stdout.trim().split("\n").at(-1)).status, "passed");
 
   // A member nobody recorded: red, and the finding names the gate and the population it hand-lists.
@@ -322,6 +379,11 @@ test("the CLI: a new member is red and names itself, a recorded one is green, a 
   assert.match(
     arrived.stderr,
     /gate_input_hand_listed_and_green_with_zero: check:arrived — host\/src\/a\.ts, host\/src\/b\.ts/u,
+  );
+  // And the green over nothing it arrived with is named as unexplained too: two rules, two findings, one gate.
+  assert.match(
+    arrived.stderr,
+    /gate_input_green_with_zero_undeclared: check:arrived — module_level_path_table:tools\/check-arrived\.mjs/u,
   );
 
   // A row the tree has outgrown: red too, because the record may only shrink.
@@ -461,4 +523,85 @@ test("a command decided by a program this repository does not carry is external,
   // `cd host && node --test …` is `node` running this repository's own file: the chain is a shell detail, not a program.
   assert.equal(byId.get("check:chained").source, "unknown");
   assert.equal(byId.get("check:chained").because, "no_file_read_reachable");
+});
+
+test("a row must carry what the next reader can act on, and the four causes are counted", () => {
+  const member = { id: "check:scan", because: "directory_scan:tools/check-scan.mjs:readdirSync" };
+  const ward = (row) => judgeZeroReadPopulation({ members: [member], population: zeroReadPopulation([row]) });
+  const codes = (judgement) => judgement.findings.map((finding) => finding.code);
+
+  // A green over nothing with no row at all is the finding this gate exists for, and it names the reading.
+  const undeclared = judgeZeroReadPopulation({ members: [member], population: zeroReadPopulation([]) });
+  assert.deepEqual(codes(undeclared), ["gate_input_green_with_zero_undeclared"]);
+  assert.match(undeclared.findings[0].detail, /check:scan — directory_scan:tools\/check-scan\.mjs:readdirSync/u);
+
+  // "no guard" is not an explanation, and neither is an empty reason: the row has to say what would settle it.
+  assert.deepEqual(
+    codes(ward({ gate: "check:scan", class: "unguarded-population", because: "passes over nothing", guard: "" })),
+    ["gate_input_zero_read_row_without_a_reason", "gate_input_unguarded_row_without_a_guard"],
+  );
+
+  // A class outside the vocabulary is not a cause: four owners, four names.
+  assert.deepEqual(codes(ward({ gate: "check:scan", class: "debt", because: "x".repeat(50) })), [
+    "gate_input_zero_read_cause_unknown",
+  ]);
+
+  // `reader-blind` states which blind spot, and the row fails once the reading no longer has it.
+  assert.deepEqual(codes(ward({ gate: "check:scan", class: "reader-blind", blind: "root", because: "x".repeat(50) })), [
+    "gate_input_reader_blind_row_stale",
+  ]);
+  assert.deepEqual(
+    codes(ward({ gate: "check:scan", class: "reader-blind", blind: "member_predicate", because: "x".repeat(50) })),
+    [],
+  );
+
+  // The mirror: a row whose gate has left the bucket outlived its cause.
+  const gone = judgeZeroReadPopulation({
+    members: [],
+    population: zeroReadPopulation([
+      { gate: "check:quiet", class: "unmeasurable", because: "reads no file through any call this reading models" },
+    ]),
+  });
+  assert.deepEqual(codes(gone), ["gate_input_zero_read_row_stale"]);
+  assert.match(gone.findings[0].detail, /check:quiet — the gate is no longer green-with-zero/u);
+});
+
+test("the checked-in causes explain every real member, and a real member without one is named", async () => {
+  const reading = await readGateInputs();
+  const members = reading.gates.filter((gate) => gate.zeroRead === "green-with-zero");
+  const population = JSON.parse(readFileSync(new URL("./gate-inputs-zero-read.json", import.meta.url), "utf8"));
+  assert.ok(members.length > 100, `the real census holds ${members.length} green-with-zero gates`);
+
+  // Green on the real tree: every member of the bucket has a row, and every row still describes a member.
+  const judgement = judgeZeroReadPopulation({ members, population });
+  assert.deepEqual(judgement.findings, []);
+  assert.equal(judgement.rows, members.length);
+
+  // Red on a REAL member: the gate that reads `dist/index.js` by loading it, which this census read as reading
+  // nothing at all until the read model was extended. Delete its row and the finding names it, with the call.
+  const without = {
+    ...population,
+    members: population.members.filter((row) => row.gate !== "tools/check-dist-runtime-exports.mjs"),
+  };
+  const red = judgeZeroReadPopulation({ members, population: without });
+  assert.deepEqual(
+    red.findings.map((finding) => finding.code),
+    ["gate_input_green_with_zero_undeclared"],
+  );
+  assert.match(
+    red.findings[0].detail,
+    /^tools\/check-dist-runtime-exports\.mjs — module_load:tools\/check-dist-runtime-exports\.mjs:import$/u,
+  );
+
+  // And a real `empty-is-correct` row with its reason stripped is refused, not silently accepted.
+  const stripped = {
+    ...population,
+    members: population.members.map((row) => (row.class === "empty-is-correct" ? { ...row, because: "" } : row)),
+  };
+  const noReason = judgeZeroReadPopulation({ members, population: stripped });
+  assert.deepEqual(
+    noReason.findings.map((finding) => finding.code),
+    ["gate_input_zero_read_row_without_a_reason"],
+  );
+  assert.match(noReason.findings[0].detail, /^check:diff — the row says ""$/u);
 });

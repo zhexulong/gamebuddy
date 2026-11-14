@@ -47,6 +47,25 @@
  * both ways - a new member fails, and a recorded member that is no longer in the class fails too, so a row cannot
  * outlive the debt it describes.
  *
+ * THE GREEN-WITH-ZERO BUCKET IS THE NEXT ONE, and half of it would pass on an empty set for a reason nobody wrote down.
+ * That bucket conflates four causes, and they have four different owners, so each member is recorded in
+ * `tools/gate-inputs-zero-read.json` with the cause and what would settle it:
+ *
+ *   `empty-is-correct`     nothing may be there, and green is the right answer (`git diff --check` over no diff).
+ *   `reader-blind`         the READING cannot see which members the gate judges - the root arrives as a function
+ *                          parameter, or the call the gate reads through was one this model did not follow. The fix is
+ *                          in this file.
+ *   `unmeasurable`         the input is not in this tree (the operator's path, a built artifact, an installed game) or
+ *                          the gate reads no file at all: nothing here can construct the empty case.
+ *   `unguarded-population` the GATE has no zero branch over a population this tree owns, so a filter that moved reads
+ *                          as a clean run. `guard` names the branch that would settle it - debt with an owner, kept
+ *                          apart from the reading's blind spots because a read-model fix must never relabel a missing
+ *                          guard as a blind reading, which is how debt disappears by being renamed.
+ *
+ * The population is derived (every `green-with-zero` gate), a missing row fails naming the gate and its reading, a row
+ * whose gate left the bucket fails as stale, and the four causes are counted in the census line on every run. The rows
+ * are authored because a cause is a judgement; the population never is.
+ *
  * WHAT THIS READING CANNOT SEE, stated rather than hidden (each is a `source` or a bucket a reader can act on):
  *
  *   - a gate whose reading is a program this repository does not carry is `external`, not green: knip, eslint,
@@ -73,6 +92,12 @@
  *            `gate_input_hand_listed_and_green_with_zero:` naming the gate and both paths, exit 1. Recorded in the
  *            baseline, the same reading is green; a row the tree outgrew is `gate_input_baseline_stale:`, exit 1.
  *            Measured 2026-11-14 on this checkout.
+ *            On a REAL member: `tools/check-dist-runtime-exports.mjs` loads `dist/index.js` with `await import(url)`,
+ *            and this reading called it `no_file_read_reachable` until the load and the aliased reader were modelled
+ *            (measured 2026-11-16: HEAD's reading over today's tree prints `unknown: tools/check-dist-runtime-exports.mjs`
+ *            at `unknown 41 · green-with-zero 180`, this one names the load at `unknown 33 · green-with-zero 177`).
+ *            With its row deleted, the zero-read gate fails naming it: `gate_input_green_with_zero_undeclared:
+ *            tools/check-dist-runtime-exports.mjs — module_load:tools/check-dist-runtime-exports.mjs:import`.
  *
  * No game, no network, no model: it parses this repository's sources with the shared tree-sitter seam.
  */
@@ -90,6 +115,36 @@ const REPOSITORY_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 /** Where the recorded debt lives, relative to the root the gate was pointed at. */
 export const BASELINE_PATH = "tools/gate-inputs-baseline.json";
 export const BASELINE_SCHEMA = "gamebuddy-gate-inputs-baseline/v1";
+
+/** Where each `green-with-zero` gate's cause is recorded. The rows are authored; the population is derived. */
+export const ZERO_READ_POPULATION_PATH = "tools/gate-inputs-zero-read.json";
+export const ZERO_READ_POPULATION_SCHEMA = "gamebuddy-gate-inputs-zero-read/v1";
+
+/**
+ * Why a gate that reads a set reports the same verdict over none of it. Four causes, because four different owners
+ * have to act on them:
+ *
+ *   `empty-is-correct`     nothing may be there, and green is the right reading (`because` says why).
+ *   `reader-blind`         the READING cannot see which members the gate judges: the fix is in the read model below,
+ *                          or in the shared reader the gate hands its root to.
+ *   `unmeasurable`         the input is not in this tree (the operator's path, a built artifact, an installed game) or
+ *                          reads no file at all: nothing here settles the empty case.
+ *   `unguarded-population` the GATE has no zero branch over a population this tree owns: `guard` names the branch
+ *                          that would settle it. Naming them separately is the point - a reader fix must not
+ *                          relabel a missing guard as a blind reading, because then the debt disappears unnamed.
+ */
+export const ZERO_READ_CAUSES = Object.freeze([
+  "empty-is-correct",
+  "reader-blind",
+  "unmeasurable",
+  "unguarded-population",
+]);
+
+/** The reading's blind spots a `reader-blind` row may name, each checked against what the reading now reports. */
+export const BLIND_KINDS = Object.freeze(["root", "call_style", "member_predicate"]);
+
+/** The shortest cause a row may carry: "no guard" alone is a row the next reader cannot act on. */
+const MIN_REASON = 40;
 
 /** Where a population comes from. A closed vocabulary: a new member has to mean one of these or say why. */
 export const INPUT_SOURCES = Object.freeze(["authority", "hand-listed", "external", "unreadable", "unknown"]);
@@ -756,15 +811,93 @@ export function compareWithBaseline({ members, baseline }) {
 }
 
 /** The verdict, in the three words the rest of the tree uses: a reading that examined nothing cannot pass. */
-export function statusOf({ examined, baselineMissing, unrecorded, stale }) {
-  if (examined === 0 || baselineMissing) return "blocked";
-  return unrecorded.length === 0 && stale.length === 0 ? "passed" : "failed";
+export function statusOf({
+  examined,
+  baselineMissing,
+  unrecorded,
+  stale,
+  populationMissing = false,
+  zeroReadFindings = [],
+}) {
+  if (examined === 0 || baselineMissing || populationMissing) return "blocked";
+  return unrecorded.length === 0 && stale.length === 0 && zeroReadFindings.length === 0 ? "passed" : "failed";
+}
+
+/** The recorded causes, or `null` when this root has none (a fixture tree, or a tree that owes one). */
+export function readZeroReadPopulation(root = REPOSITORY_ROOT) {
+  const path = join(root, ZERO_READ_POPULATION_PATH);
+  if (!existsSync(path)) return null;
+  return JSON.parse(readFileSync(path, "utf8"));
+}
+
+/**
+ * Every `green-with-zero` gate judged against the row that explains it, in both directions: a member without a row is an
+ * unexplained green, and a row whose gate left the bucket has outlived its cause. A row also has to carry something the
+ * next reader can act on - a reason, the blind spot, or the guard - because "no guard" alone is not a finding.
+ */
+export function judgeZeroReadPopulation({ members, population }) {
+  const rows = new Map((population?.members ?? []).map((row) => [row.gate, row]));
+  const findings = [];
+  const add = (code, gate, detail) => findings.push({ code, gate, detail });
+  for (const member of members) {
+    const row = rows.get(member.id);
+    if (row === undefined) {
+      add("gate_input_green_with_zero_undeclared", member.id, `${member.id} — ${member.because}`);
+      continue;
+    }
+    if (!ZERO_READ_CAUSES.includes(row.class))
+      add("gate_input_zero_read_cause_unknown", member.id, `${member.id} — ${JSON.stringify(row.class)}`);
+    if (typeof row.because !== "string" || row.because.trim().length < MIN_REASON)
+      add(
+        "gate_input_zero_read_row_without_a_reason",
+        member.id,
+        `${member.id} — the row says ${JSON.stringify(row.because ?? "")}`,
+      );
+    if (row.class === "reader-blind") {
+      if (!BLIND_KINDS.includes(row.blind))
+        add("gate_input_reader_blind_row_without_a_kind", member.id, `${member.id} — ${JSON.stringify(row.blind)}`);
+      else if (row.blind === "root" && !member.because.includes("root is "))
+        add(
+          "gate_input_reader_blind_row_stale",
+          member.id,
+          `${member.id} — the reading now names the root: ${member.because}`,
+        );
+      else if (row.blind === "call_style" && member.because === "no_file_read_reachable")
+        add(
+          "gate_input_reader_blind_row_stale",
+          member.id,
+          `${member.id} — the reading no longer follows the call this row names`,
+        );
+    }
+    if (row.class === "unguarded-population" && (typeof row.guard !== "string" || row.guard.trim() === ""))
+      add("gate_input_unguarded_row_without_a_guard", member.id, `${member.id} — the row names no guard`);
+  }
+  const present = new Set(members.map((member) => member.id));
+  const staleRows = [...rows.keys()].filter((id) => !present.has(id)).sort();
+  for (const id of staleRows)
+    add("gate_input_zero_read_row_stale", id, `${id} — the gate is no longer green-with-zero, so the row outlived it`);
+  return { rows: rows.size, staleRows, findings, causes: countZeroReadCauses({ members, population }) };
+}
+
+/**
+ * The four causes counted over the members, with `undeclared` for a member whose row is missing or unclassifiable: the
+ * numbers are printed every run, so the debt is a count in the output and not only a file. A row deleted without a fix
+ * moves its gate into `undeclared` and fails, which is what stops the count shrinking by bookkeeping.
+ */
+export function countZeroReadCauses({ members, population }) {
+  const rows = new Map((population?.members ?? []).map((row) => [row.gate, row]));
+  const counts = Object.fromEntries([...ZERO_READ_CAUSES, "undeclared"].map((cause) => [cause, 0]));
+  for (const member of members) {
+    const cause = rows.get(member.id)?.class;
+    counts[ZERO_READ_CAUSES.includes(cause) ? cause : "undeclared"] += 1;
+  }
+  return counts;
 }
 
 const EXIT_FOR_STATUS = Object.freeze({ passed: 0, failed: 1, blocked: 2 });
 
 /** The census line: the sources and the zero-read verdicts as two partitions of `examined`, then the worst class. */
-function describeCensus({ examined, sources, zeroRead, members, baseline }) {
+function describeCensus({ examined, sources, zeroRead, members, baseline, zeroReadCauses }) {
   const line = (counts) =>
     Object.entries(counts)
       .map(([name, count]) => `${name} ${count}`)
@@ -772,16 +905,27 @@ function describeCensus({ examined, sources, zeroRead, members, baseline }) {
   return [
     `gate_inputs examined ${examined} · ${line(sources)}`,
     `  zero-read: ${line(zeroRead)}`,
+    `  green-with-zero by cause: ${line(zeroReadCauses)}`,
     `  worst class ${WORST_SOURCE}+${WORST_ZERO_READ} ${members.length} · baseline ${baseline?.members.length ?? 0}`,
   ].join("\n");
 }
 
 /** The report every gate-meta tool in this tree prints: an id, a status, the population, and one entry per rule. */
-export function buildReport({ reading, members, baseline, unrecorded, stale }) {
+export function buildReport({ reading, members, baseline, unrecorded, stale, population = null, zeroReadJudgement }) {
   const sources = countBy(reading.gates, "source", INPUT_SOURCES);
   const zeroRead = countBy(reading.gates, "zeroRead", ZERO_READ_VERDICTS);
   const baselineMissing = baseline === null;
-  const status = statusOf({ examined: reading.examined, baselineMissing, unrecorded, stale });
+  const populationMissing = population === null;
+  const zeroReadFindings = zeroReadJudgement.findings;
+  const zeroReadCauses = zeroReadJudgement.causes;
+  const status = statusOf({
+    examined: reading.examined,
+    baselineMissing,
+    unrecorded,
+    stale,
+    populationMissing,
+    zeroReadFindings,
+  });
   return {
     gate: "gate_inputs/v1",
     status,
@@ -789,10 +933,12 @@ export function buildReport({ reading, members, baseline, unrecorded, stale }) {
     populationSource: reading.populationSource,
     sources,
     zeroRead,
+    zeroReadCauses,
     worstClass: members.length,
     baseline: baseline?.members.length ?? 0,
     unrecorded: unrecorded.map((gate) => gate.id),
     stale,
+    zeroReadStale: zeroReadJudgement.staleRows,
     untrackedNotCounted: [...reading.untrackedNotCounted].sort(),
     checks: [
       {
@@ -809,6 +955,13 @@ export function buildReport({ reading, members, baseline, unrecorded, stale }) {
         detail: baselineMissing
           ? `no ${BASELINE_PATH}, so no member of the worst class can be told from a new one`
           : `${unrecorded.length} unrecorded · ${stale.length} stale`,
+      },
+      {
+        id: "zero_read_classified",
+        status: populationMissing ? "blocked" : zeroReadFindings.length === 0 ? "passed" : "failed",
+        detail: populationMissing
+          ? `no ${ZERO_READ_POPULATION_PATH}, so a green over nothing cannot be told from an explained one`
+          : `${members.length} member(s) · ${zeroReadJudgement.rows} row(s) · ${zeroReadCauses.undeclared} undeclared · ${zeroReadFindings.length} finding(s)`,
       },
     ],
   };
@@ -841,12 +994,15 @@ async function main(argv) {
 
   const baseline = readBaseline(root);
   const { unrecorded, stale } = compareWithBaseline({ members, baseline });
-  const report = buildReport({ reading, members, baseline, unrecorded, stale });
+  const green = reading.gates.filter((gate) => gate.zeroRead === WORST_ZERO_READ);
+  const population = readZeroReadPopulation(root);
+  const zeroReadJudgement = judgeZeroReadPopulation({ members: green, population });
+  const report = buildReport({ reading, members, baseline, unrecorded, stale, population, zeroReadJudgement });
 
   if (argv.includes("--json")) process.stdout.write(`${JSON.stringify({ ...report, gates: reading.gates })}\n`);
   else {
     process.stdout.write(
-      `${describeCensus({ examined: reading.examined, sources: report.sources, zeroRead: report.zeroRead, members, baseline })}\n`,
+      `${describeCensus({ examined: reading.examined, sources: report.sources, zeroRead: report.zeroRead, members, baseline, zeroReadCauses: report.zeroReadCauses })}\n`,
     );
     if (report.untrackedNotCounted.length > 0)
       process.stdout.write(`  untracked_not_counted ${describeUntracked(new Set(report.untrackedNotCounted))}\n`);
@@ -858,7 +1014,10 @@ async function main(argv) {
       );
     for (const id of stale)
       process.stderr.write(`gate_input_baseline_stale: ${id} — the worst class no longer holds it\n`);
+    for (const finding of zeroReadJudgement.findings) process.stderr.write(`${finding.code}: ${finding.detail}\n`);
     if (baseline === null) process.stderr.write(`gate_input_baseline_missing: ${BASELINE_PATH}\n`);
+    if (population === null)
+      process.stderr.write(`gate_input_zero_read_population_missing: ${ZERO_READ_POPULATION_PATH}\n`);
     process.stdout.write(`${JSON.stringify(report)}\n`);
   }
   process.exitCode = EXIT_FOR_STATUS[report.status];
