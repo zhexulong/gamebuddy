@@ -20,6 +20,16 @@
  * A contract that spells one of those out is refused by name (`smoke_contract_rederived_key`), because a second
  * spelling that agrees today is a disagreement scheduled for later.
  *
+ * DERIVED, AND THEREFORE COMPLETE. `args` is the one block whose KEYS are not free: it must carry every argument the
+ * declaration carries, and nothing else, because the Mod's inbound parser demands the frame's `args` match its own
+ * `ExecutionArgumentProperties` set exactly (`HasExactProperties`). A contract that omits one loads, dispatches, and is
+ * answered `bridge_rejected:invalid_envelope` with `dispatchMs` 0 - the frame was never sent. That is what happened to
+ * `deposit_silo_hay`, whose draft carried `{x, y, expectedTargetId}` against a declaration of
+ * `{x, y, slot, expectedTargetId}`, and two gates said yes: this format loaded it, and a fake-world equivalence that
+ * compared verdicts rather than requests saw the two drivers agree. So the refusal is
+ * `contract_args_disagree_with_the_declaration:<action>:<missing|extra|wrongtype>:...`, and it is the gate that would
+ * have caught it before a game launch.
+ *
  * WHAT A CONTRACT MAY SAY (and nothing else, because a key nobody reads is a key that lies):
  *   action, discovery, args, evidence, worldAfter, afterStale, stale, unasserted, assertion,
  * and `expectedReasonCode` only where the declaration is generic (`native_action_postcondition`) and therefore
@@ -351,23 +361,65 @@ function validateDiscovery(discovery, facts) {
   };
 }
 
+/**
+ * The contract's argument names and types, against the ones the action's declaration carries - every one of them.
+ *
+ * A CONTRACT THAT LOADS IS NOT A FRAME THAT CAN BE SENT, and until this check existed the format only knew the first
+ * fact. `deposit_silo_hay`'s draft carried `{x, y, expectedTargetId}`; the declaration carries `{x, y, slot,
+ * expectedTargetId}` and the Mod's `ExecutionArgumentProperties` switch demands the frame's `args` match it exactly
+ * (`HasExactProperties`), so the live slice came back `bridge_rejected:invalid_envelope` with `dispatchMs` 0. The
+ * frame was never sent, and two gates had already said yes - this one, and a fake-world equivalence that compared
+ * verdicts between two drivers whose arguments it never looked at.
+ *
+ * THREE DISAGREEMENTS, ONE REFUSAL. `missing` is an argument the declaration requires and the contract omits (the
+ * deposit case); `extra` is one the declaration does not carry; `wrongtype` is a value that is not the declared type.
+ * One code rather than three, because they are one fact - this argument object is not this action's - and a reader of
+ * a blocked run should not have to learn three names to find that out.
+ *
+ * A `$target.<field>` SUBSTITUTION IS EXEMPT FROM THE TYPE CHECK. Discovery rows are untyped data published by the
+ * Mod, so the format cannot know whether `$target.x` is an integer; what it CAN know is that the name is declared,
+ * and that is what the other two branches read.
+ */
+function assertArgsAgreeWithDeclaration(args, facts) {
+  const declared = facts.argumentSchema;
+  const declaredNames = Object.keys(declared).sort();
+  const parts = [];
+  const missing = declaredNames.filter((name) => args[name] === undefined);
+  if (missing.length > 0) parts.push(`missing:${missing.join(",")}`);
+  const extra = Object.keys(args)
+    .filter((name) => declared[name] === undefined)
+    .sort();
+  if (extra.length > 0) parts.push(`extra:${extra.join(",")}`);
+  const wrongType = [];
+  for (const [name, value] of Object.entries(args)) {
+    if (declared[name] === undefined || substitutionField(value) !== null) continue;
+    const type = declared[name].type;
+    const agrees = DECLARED_TYPE_AGREES[type]?.(value) ?? true;
+    if (!agrees) wrongType.push(`${name}(expected_${type}:actual=${JSON.stringify(value)})`);
+  }
+  if (wrongType.length > 0) parts.push(`wrongtype:${wrongType.join(",")}`);
+  if (parts.length === 0) return;
+  fail(
+    "contract_args_disagree_with_the_declaration",
+    `${facts.actionId}:${parts.join(":")}:declared=${declaredNames.join(",")}`,
+  );
+}
+
+/**
+ * One predicate per declared argument type, so the type check is a lookup rather than a chain of conditionals.
+ *
+ * A type this table does not carry is not checked here: the surface could publish a fourth one tomorrow, and refusing
+ * it would be this file inventing a rule the declaration does not state.
+ */
+const DECLARED_TYPE_AGREES = Object.freeze({
+  integer: (value) => Number.isInteger(value),
+  string: (value) => typeof value === "string",
+  boolean: (value) => typeof value === "boolean",
+});
+
 function validateArgs(args, facts) {
   if (!isPlainObject(args)) fail("args_not_object");
-  const declared = facts.argumentSchema;
-  // An action that declares no argument needs none: `sleep`, `ride_bus` and `dismiss_modal` take nothing, and
-  // refusing their empty argument object was the same defect as refusing a targetless action - the format deciding
-  // what kind of action may be a slice instead of the declaration deciding what the slice must pass.
-  if (Object.keys(declared).length > 0 && Object.keys(args).length === 0) fail("args_empty", facts.actionId);
-  for (const [name, value] of Object.entries(args)) {
-    if (declared[name] === undefined)
-      fail("args_undeclared", `${name}:declared=${Object.keys(declared).sort().join(",")}`);
-    const substituted = substitutionField(value);
-    if (substituted !== null) continue;
-    const type = declared[name].type;
-    if (type === "integer" && !Number.isInteger(value)) fail("args_type_mismatch", `${name}:expected_integer`);
-    if (type === "string" && typeof value !== "string") fail("args_type_mismatch", `${name}:expected_string`);
-    if (type === "boolean" && typeof value !== "boolean") fail("args_type_mismatch", `${name}:expected_boolean`);
-  }
+  assertArgsAgreeWithDeclaration(args, facts);
   return Object.freeze({ ...args });
 }
 
@@ -686,15 +738,10 @@ export function adHocContract({ action, args, expectReasonCode = null }, options
   const facts = deriveActionFacts(action, options);
   const expectedReasonCode = facts.expectedReasonCode ?? expectReasonCode;
   if (expectedReasonCode === null) fail("reason_code_underivable", `${action}:${GENERIC_POSTCONDITION}:pass_--expect`);
-  const declared = facts.argumentSchema;
   if (!isPlainObject(args)) fail("args_not_object");
-  for (const [name, value] of Object.entries(args)) {
-    if (declared[name] === undefined)
-      fail("args_undeclared", `${name}:declared=${Object.keys(declared).sort().join(",")}`);
-    const type = declared[name].type;
-    if (type === "integer" && !Number.isInteger(value)) fail("args_type_mismatch", `${name}:expected_integer`);
-    if (type === "string" && typeof value !== "string") fail("args_type_mismatch", `${name}:expected_string`);
-  }
+  // The same reader the file form uses: an ad-hoc frame the format itself would refuse is not a frame to launch a
+  // game for. The difference between the two forms is where the arguments come from, never what they must say.
+  assertArgsAgreeWithDeclaration(args, facts);
   return Object.freeze({
     schema: SMOKE_CONTRACT_SCHEMA,
     action,

@@ -118,19 +118,6 @@ function argsFor(row) {
   return args;
 }
 
-/** The argument of one declared type, so a probe can break exactly that one. */
-function argumentNamed(row, type) {
-  const entry = Object.entries(row.argumentSchema ?? {}).find(([, spec]) => spec.type === type);
-  assert.ok(entry !== undefined, `${row.actionId} declares no ${type} argument`);
-  return entry[0];
-}
-
-/** The same question with `null` instead of an assertion, for a row chosen by having one. */
-function argumentNamedOrNull(row, type) {
-  const entry = Object.entries(row.argumentSchema ?? {}).find(([, spec]) => spec.type === type);
-  return entry === undefined ? null : entry[0];
-}
-
 /**
  * A contract the loader accepts for this row, before the probe breaks one thing.
  *
@@ -345,21 +332,18 @@ const REFUSAL_PROBES = Object.freeze([
     probe: () => validate({ ...GENERIC_CONTRACT, discovery: { require: { isOpen: null } } }),
   },
   { code: "args_not_object", probe: () => validate({ ...GENERIC_CONTRACT, args: [] }) },
-  { code: "args_empty", probe: () => validate({ ...GENERIC_CONTRACT, args: {} }) },
-  { code: "args_undeclared", probe: () => validate({ ...GENERIC_CONTRACT, args: { nope: 1 } }) },
+  // The three kinds of disagreement are one refusal, so one probe: the deposit case (an argument the declaration
+  // requires and the contract omits) is the one that reached a live run. `extra` and `wrongtype` are exercised by the
+  // behavioural test below, which names `deposit_silo_hay` on each.
   {
-    code: "args_type_mismatch",
-    probe: () =>
-      validate({
-        ...contractRow(SPECIFIC_ROW),
-        args: { ...argsFor(SPECIFIC_ROW), [argumentNamed(SPECIFIC_ROW, "integer")]: 1.5 },
-      }),
-  },
-  {
-    code: "args_type_mismatch",
+    code: "contract_args_disagree_with_the_declaration",
     probe: () => {
-      const row = rowWhere((candidate) => argumentNamedOrNull(candidate, "string") !== null, "with a string argument");
-      return validate({ ...contractRow(row), args: { ...argsFor(row), [argumentNamedOrNull(row, "string")]: 5 } });
+      const row = rowWhere(
+        (candidate) => candidate.targetFamily !== undefined && Object.keys(candidate.argumentSchema ?? {}).length > 0,
+        "with arguments and a target family",
+      );
+      const { [Object.keys(row.argumentSchema)[0]]: _omitted, ...rest } = argsFor(row);
+      return validate({ ...contractRow(row), args: rest });
     },
   },
   { code: "evidence_not_object", probe: () => validate({ ...GENERIC_CONTRACT, evidence: [] }) },
@@ -691,6 +675,56 @@ test("a key nobody reads is refused by name, and a derived fact is refused separ
   });
   assert.deepEqual(withOwnKeys.evidence.ok, { equals: "true" });
   assert.equal(withOwnKeys.worldAfter[0].form, "size");
+});
+
+/**
+ * THE FRAME THE FORMAT CALLED FINE AND THE MOD REFUSED.
+ *
+ * `deposit_silo_hay`'s drafted contract carried `{x, y, expectedTargetId}`; the action's own declaration carries
+ * `{x, y, slot, expectedTargetId}`, and the Mod's `ExecutionArgumentProperties` switch demands the frame's `args`
+ * match it EXACTLY (`HasExactProperties`). The live slice answered `bridge_rejected:invalid_envelope` with
+ * `dispatchMs` 0 - the frame was never sent - after this format had loaded it without a word.
+ *
+ * THE POPULATION IS THE DECLARATION'S OWN `argumentSchema`, the list `stardew_plan_shape` answers from and the one
+ * `tools/check-action-surface-parity.mjs` holds equal to the Mod's wire list for every action. So an action whose
+ * arguments change moves this reading with it, instead of leaving a copy here that agrees today.
+ */
+test("a contract whose args disagree with its action's declaration is refused, and deposit_silo_hay is named", () => {
+  // Verbatim `git show 352293e4:contracts/smoke/deposit_silo_hay.json`: the draft the live run refuted, and the one
+  // this format accepted.
+  const drafted = {
+    schema: SMOKE_CONTRACT_SCHEMA,
+    action: "deposit_silo_hay",
+    discovery: {
+      source: "siloTargets",
+      cardinality: "at_least_one",
+      select: "first",
+      requiredFields: ["targetId", "x", "y"],
+    },
+    args: { x: "$target.x", y: "$target.y", expectedTargetId: "$target.targetId" },
+  };
+  const missing = expectRefusal(() => validate(drafted), "contract_args_disagree_with_the_declaration");
+  assert.match(
+    missing.message,
+    /deposit_silo_hay:missing:slot/u,
+    "the refusal names the action and the argument its declaration requires and the contract omits",
+  );
+  // The control: the same draft with the argument the declaration requires loads, and sends what the Mod's own wire
+  // parser demands.
+  const whole = validate({ ...drafted, args: { ...drafted.args, slot: 3 } });
+  assert.deepEqual(Object.keys(whole.args).sort(), ["expectedTargetId", "slot", "x", "y"]);
+  // The other two disagreements are the same fact with their own word: an argument the declaration does not carry,
+  // and one whose value is not the declared type.
+  const extra = expectRefusal(
+    () => validate({ ...drafted, args: { ...drafted.args, slot: 3, spare: 1 } }),
+    "contract_args_disagree_with_the_declaration",
+  );
+  assert.match(extra.message, /deposit_silo_hay:extra:spare/u);
+  const wrong = expectRefusal(
+    () => validate({ ...drafted, args: { ...drafted.args, slot: "3" } }),
+    "contract_args_disagree_with_the_declaration",
+  );
+  assert.match(wrong.message, /deposit_silo_hay:wrongtype:slot/u);
 });
 
 test("a fact that cannot be derived reads not_derived:<why>, never a null a caller mistakes for 'not required'", () => {

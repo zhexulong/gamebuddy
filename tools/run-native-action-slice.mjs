@@ -253,6 +253,58 @@ export function buildRequestArgs(contract, target) {
   return built;
 }
 
+/**
+ * What the two drivers SENT, compared frame by frame - not what they concluded.
+ *
+ * WHY THIS EXISTS, AND WHAT IT DOES NOT PROVE. The equivalence reading this replaces compared the two drivers' verdicts,
+ * their success words and their dispatch counts, and reported AGREE for a contract the Mod refused:
+ * `deposit_silo_hay` sent `{x, y, expectedTargetId}` where the declaration requires `{x, y, slot, expectedTargetId}`,
+ * and the fake world answered success to BOTH because it accepts any arguments at all. So the two readings agreed
+ * about everything except the one fact that decided the run.
+ *
+ * It is still not a proof that the frame can be sent. Request equality plus verdict equality says the two drivers send
+ * the same bytes-shaped object and reach the same conclusion over a world that invents its own envelope rules; it says
+ * NOTHING about whether the real bridge's admission (exact property sets, deadline windows, scope, revision) accepts
+ * them. Only a live run answers that, and only a live run ever will.
+ *
+ * `args` is compared by content, not by the order the two authors wrote their keys in: the runner writes
+ * `{slot, x, y, expectedTargetId}` and the engine builds the contract's order, and that is the same request.
+ *
+ * The finding is one line, and it carries both sides: a reader must be able to see WHICH argument differs without
+ * re-running anything.
+ */
+export function compareRequests(action, runnerRequests, contractRequests) {
+  const runner = (runnerRequests ?? []).map(canonicalFrame);
+  const contract = (contractRequests ?? []).map(canonicalFrame);
+  const at = runner.findIndex((frame, index) => index >= contract.length || !sameFrame(frame, contract[index]));
+  let differing = at;
+  if (differing < 0 && runner.length < contract.length) differing = runner.length;
+  if (differing < 0) return { identical: true, finding: null };
+  const counts = runner.length === contract.length ? "" : `:frames=${runner.length}:${contract.length}`;
+  return {
+    identical: false,
+    finding: `equivalence_requests_differ:${action}:${describeFrame(runner[differing], action)}:${describeFrame(contract[differing], action)}${counts}`,
+  };
+}
+
+/** One side of the finding: the args, or `<action>:<args>` when the two drivers did not even name the same action. */
+function describeFrame(frame, action) {
+  if (frame === undefined) return "none";
+  return frame.action === action ? frame.args : `${String(frame.action)}:${frame.args}`;
+}
+
+/** One sent frame, with `args` key-sorted so two authors' key order is not a difference. */
+function canonicalFrame(request) {
+  const args = isPlainObject(request?.args) ? request.args : {};
+  const ordered = {};
+  for (const key of Object.keys(args).sort()) ordered[key] = args[key];
+  return { action: request?.action ?? null, args: JSON.stringify(ordered) };
+}
+
+function sameFrame(left, right) {
+  return left.action === right.action && left.args === right.args;
+}
+
 export function judgeSlice({ contract, target, terminal, after, afterStale, evidence, staleTerminal }) {
   const checks = {};
   checks.terminalStateExpected = terminal?.state === contract.expectedState;

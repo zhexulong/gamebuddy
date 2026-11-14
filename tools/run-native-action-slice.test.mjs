@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { readdirSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import test from "node:test";
 import {
@@ -9,27 +9,49 @@ import {
   loadSmokeContractFile,
   readActionSurface,
   readProtocolControls,
+  runnerFileName,
   SMOKE_CONTRACT_SCHEMA,
   validateSmokeContract,
 } from "./lib/stardew-action-smoke-contract.mjs";
 import { publishedActionRegistrations } from "./lib/stardew-native-smoke-harness-v1.mjs";
-import { chooseTarget, judgeSlice, runActionSlice } from "./run-native-action-slice.mjs";
+import {
+  buildRequestArgs,
+  chooseTarget,
+  compareRequests,
+  judgeSlice,
+  runActionSlice,
+} from "./run-native-action-slice.mjs";
 import { runAcceptSpecialOrderSmoke } from "./run-stardew-native-local-player-accept-special-order-smoke.mjs";
+import { runClaimMuseumRewardSmoke } from "./run-stardew-native-local-player-claim-museum-reward-smoke.mjs";
+import { runCraftItemSmoke } from "./run-stardew-native-local-player-craft-item-smoke.mjs";
+import { runDepositSiloHaySmoke } from "./run-stardew-native-local-player-deposit-silo-hay-smoke.mjs";
+import { runPetAnimalSmoke } from "./run-stardew-native-local-player-pet-animal-smoke.mjs";
 import { STARDEW_PUBLISHED_ACTION_GATES } from "./stardew-action-gate-descriptors.mjs";
 
 /**
- * The engine and every hand-written runner it still stands beside.
+ * THE ENGINE AND EVERY HAND-WRITTEN RUNNER IT STILL STANDS BESIDE - AND THE REQUESTS, NOT ONLY THE VERDICTS.
  *
- * The population is the runners that are STILL on disk: `accept_daily_quest` and `toggle_animal_door` were retired
- * into their contracts after a live slice passed, so there is no second implementation of those two left to compare
- * against - and comparing the engine with itself would be a reading that agrees with itself.
+ * The population is derived, not listed: a contract file on disk whose `run-stardew-native-local-player-<action>-smoke.mjs`
+ * also still exists. The day a conversion lands, its pair disappears and so does the obligation; the day a contract is
+ * written for a runner nobody retired, this file is red until somebody drives both over the same world.
  *
- * THE AGREEMENT IS THE POINT. Each case below builds ONE fake world, drives the hand-written runner over it, then
- * drives the contract engine over an identical world, and asserts the two verdicts are the same - so the day a
- * runner changes an assertion the contract does not make, this fails instead of the contract quietly passing.
+ * WHAT THE AGREEMENT IS. Each case builds ONE fake world, drives the hand-written runner over it, drives the contract
+ * engine over an identical world, and asserts THREE things: the two requests are the same (`compareRequests`), the two
+ * verdicts are the same, and the engine dispatched the number of frames its contract declares.
  *
- * The transport is a fake for the same reason the runners' own tests use one: the bridge is a boundary this tree
- * does not own, and every assertion here is about the engine's own orchestration and judgement.
+ * The request comparison is the reading this file did not have, and its absence shipped a defect: `deposit_silo_hay`'s
+ * contract sent `{x, y, expectedTargetId}` where the declaration requires `{x, y, slot, expectedTargetId}`, so the Mod
+ * answered `bridge_rejected:invalid_envelope` with `dispatchMs` 0. The old reading - verdict, success word, dispatch
+ * count - said AGREE, because the engine builds its request from the contract and this fake world answers success to
+ * any arguments it is handed. Two drivers agreeing about everything but the question they asked.
+ *
+ * WHAT THIS STILL DOES NOT PROVE, AND NOTHING HERE EVER WILL: the fake world has no envelope rules. It does not know
+ * the Mod's exact-property-set admission, its deadline window, its scope, or its revision binding. Request equality plus
+ * verdict equality means the two drivers send the same object and agree about a world that invents its own rules - it
+ * does NOT mean the frame is sendable. Only a live run answers that.
+ *
+ * The transport is a fake for the same reason the runners' own tests use one: the bridge is a boundary this tree does
+ * not own, and every assertion here is about the engine's own orchestration and judgement.
  */
 
 const CONTRACTS_DIR = join(import.meta.dirname, "..", "contracts", "smoke");
@@ -40,19 +62,24 @@ const CONTRACTS_DIR = join(import.meta.dirname, "..", "contracts", "smoke");
  */
 function makeWorld(kind) {
   const receipts = [];
+  // THE REQUESTS, NOT ONLY THE ANSWERS. The old reading compared what the two drivers concluded, and a fake world that
+  // accepts any arguments gave them both the same conclusion - which is how a contract missing a required argument
+  // passed a gate and died live with `dispatchMs` 0. What was sent is recorded here so it can be compared.
+  const requests = [];
   let calls = 0;
   const client = {
     state: { catalogRegistrations: publishedActionRegistrations(), snapshot: null, latestReceipt: null },
     observe: async () => client.state.snapshot,
     execute: async (request) => {
       calls += 1;
-      const receipt = answer(kind, client, request);
+      requests.push({ action: request.action, args: request.args });
+      const receipt = answer(kind, client, request, receipts);
       receipts.push(receipt);
       return receipt;
     },
   };
   client.state.snapshot = initialWorld(kind);
-  return { client, receipts, callCount: () => calls };
+  return { client, receipts, requests, callCount: () => calls };
 }
 
 function initialWorld(kind) {
@@ -88,6 +115,18 @@ function initialWorld(kind) {
       capabilities: ["cancel_active_execution", "inspect_self", "toggle_animal_door"],
       animalDoorTargets: [{ targetId: "animal_door_state_closed", x: 31, y: 20, buildingType: "Coop", isOpen: false }],
     };
+  if (kind === "deposit_silo_hay")
+    return {
+      revision: 1,
+      location: "Farm",
+      tile: { x: 5, y: 5 },
+      actionable: true,
+      activeExecution: null,
+      capabilities: ["cancel_active_execution", "inspect_self", "deposit_silo_hay"],
+      // The silo the runner may reach, and the backpack slot HOLDING the hay - the two reads its request is built from.
+      siloTargets: [{ targetId: "silo_0123456789abcdef", x: 6, y: 5, hay: 0 }],
+      inventoryItemFacts: [{ qualifiedItemId: "(O)178", slot: 3, stack: 40 }],
+    };
   if (kind === "clear_fish_pond")
     return {
       revision: 1,
@@ -111,10 +150,53 @@ function initialWorld(kind) {
       ],
       itemTargets: [],
     };
+  if (kind === "craft_item")
+    return {
+      revision: 1,
+      location: "Farm",
+      tile: { x: 5, y: 5 },
+      actionable: true,
+      activeExecution: null,
+      capabilities: ["cancel_active_execution", "inspect_self", "craft_item"],
+      craftingRecipeTargets: [{ targetId: "Wood_Fence", recipeKey: "Wood_Fence" }],
+      inventoryItemFacts: [],
+    };
+  if (kind === "claim_museum_reward")
+    return {
+      revision: 1,
+      location: "ArchaeologyHouse",
+      tile: { x: 5, y: 5 },
+      actionable: true,
+      activeExecution: null,
+      capabilities: ["cancel_active_execution", "inspect_self", "claim_museum_reward"],
+      museumRewardTargets: [
+        { targetId: "museum_reward_0123456789abcdef", location: "ArchaeologyHouse", rewardCount: 3 },
+      ],
+    };
+  if (kind === "pet_animal")
+    return {
+      revision: 1,
+      location: "Farm",
+      tile: { x: 1, y: 1 },
+      actionable: true,
+      activeExecution: null,
+      capabilities: ["cancel_active_execution", "inspect_self", "pet_animal"],
+      petTargets: [
+        {
+          targetId: "pet_0123456789abcdef",
+          x: 2,
+          y: 1,
+          petType: "Dog",
+          friendship: 0,
+          pettedToday: false,
+          stationary: true,
+        },
+      ],
+    };
   throw new Error(`unknown world ${kind}`);
 }
 
-function answer(kind, client, request) {
+function answer(kind, client, request, receipts) {
   if (kind === "accept_daily_quest") {
     const live = client.state.snapshot.dailyQuestTargets?.[0];
     if (live !== undefined && request.args.expectedTargetId === live.targetId) {
@@ -178,6 +260,27 @@ function answer(kind, client, request) {
       evidence: { detail: "quest_key=DoctorOrder;board_marker_after=true" },
     };
   }
+  if (kind === "deposit_silo_hay") {
+    // IT ANSWERS SUCCESS TO WHATEVER IT IS HANDED, deliberately: the bridge's envelope rules (an exact argument set,
+    // a deadline window, a scope) are the one thing this boundary does not own, and a fake that invented them would be
+    // a second hand-written copy of the Mod's admission. The consequence is the fact this unit exists for - a request
+    // missing a required argument is answered here exactly like a complete one.
+    const silo = client.state.snapshot.siloTargets?.[0];
+    const hay = silo?.hay ?? 0;
+    client.state.snapshot = {
+      ...client.state.snapshot,
+      revision: 2,
+      siloTargets: [{ ...silo, hay: hay + 1 }],
+    };
+    return {
+      requestId: request.requestId,
+      executionId: "silo-hay-execution",
+      state: "succeeded",
+      reasonCode: "silo_hay_deposited",
+      revision: 2,
+      evidence: { detail: `silo_id=${String(silo?.targetId)};hay_before=${hay};hay_after=${hay + 1}` },
+    };
+  }
   if (kind === "clear_fish_pond") {
     const pond = client.state.snapshot.fishPondTargets?.[0];
     if (pond !== undefined && request.args.expectedTargetId === pond.targetId) {
@@ -214,6 +317,75 @@ function answer(kind, client, request) {
       evidence: { detail: `pond_id=none;fish_type_after=none;occupants_after=0` },
     };
   }
+  if (kind === "craft_item") {
+    // The craft names its recipe, not a world row: the argument is the fixture's alias, and the receipt's own numbers
+    // are the postcondition the runner and the contract both read.
+    client.state.snapshot = { ...client.state.snapshot, revision: 2 };
+    return {
+      requestId: request.requestId,
+      executionId: "craft-item-execution",
+      state: "succeeded",
+      reasonCode: "crafted_item_created",
+      revision: 2,
+      evidence: {
+        detail:
+          "count_before=2;count_after=3;disposition=added_to_inventory;materials_consumed_exactly=true" +
+          ";inventory_postcondition=true;count_postcondition=true;native_menu_opened=false",
+      },
+    };
+  }
+  if (kind === "claim_museum_reward") {
+    const reward = client.state.snapshot.museumRewardTargets?.[0];
+    // A set that is no longer advertised is the stale case: the runner re-sends the consumed id and expects this.
+    if (reward === undefined)
+      return {
+        requestId: request.requestId,
+        executionId: "museum-reward-execution-stale",
+        state: "rejected",
+        reasonCode: "museum_rewards_empty",
+        revision: client.state.snapshot.revision,
+        evidence: { detail: "rewards_after=0" },
+      };
+    client.state.snapshot = { ...client.state.snapshot, revision: 2, museumRewardTargets: [] };
+    return {
+      requestId: request.requestId,
+      executionId: "museum-reward-execution",
+      state: "succeeded",
+      reasonCode: "museum_rewards_collected",
+      revision: 2,
+      evidence: {
+        detail:
+          `target=${reward.targetId};location=ArchaeologyHouse;rewards_before=${reward.rewardCount}` +
+          `;rewards_returned=${reward.rewardCount};rewards_delivered=${reward.rewardCount}` +
+          `;rewards_recorded=${reward.rewardCount};rewards_after=0;mail_flags_before=12;mail_flags_after=16` +
+          `;inventory_units_before=40;inventory_units_after=43;rewards_collected=true`,
+      },
+    };
+  }
+  if (kind === "pet_animal") {
+    // The immediate answer is `accepted` and the terminal arrives on the receipt buffer, as the bridge does it: the
+    // runner refuses an immediate receipt that claims a terminal state.
+    const pet = client.state.snapshot.petTargets?.[0];
+    client.state.snapshot = { ...client.state.snapshot, revision: 2, petTargets: [] };
+    const accepted = {
+      requestId: request.requestId,
+      executionId: "pet-execution",
+      state: "accepted",
+      reasonCode: "accepted",
+      revision: 2,
+    };
+    receipts.push({
+      ...accepted,
+      state: "succeeded",
+      reasonCode: "pet_completed",
+      evidence: {
+        detail:
+          `day_recorded=true;friendship_after=12;friendship_before=0;friendship_callback=true;location=Farm` +
+          `;pet_day=1;target=${String(pet?.targetId)};tile=${pet?.x},${pet?.y}`,
+      },
+    });
+    return accepted;
+  }
   const live = client.state.snapshot.animalDoorTargets?.[0];
   if (request.args.expectedTargetId === live.targetId) {
     client.state.snapshot = {
@@ -247,9 +419,39 @@ function answer(kind, client, request) {
   };
 }
 
+/**
+ * The hand-written runner for each action whose contract still stands beside it, keyed by the action id.
+ *
+ * Each entry supplies only what ITS runner needs beyond the fake world: `pet_animal` reads the topology out of a client
+ * config, so the one its own test uses is here rather than a second hand-written copy of the fixture's config.
+ */
+const PET_ANIMAL_CONFIG = Object.freeze({
+  SaveId: "save",
+  WorldId: "world",
+  PlayerId: "player",
+  CompanionId: "companion",
+  PipeName: "pipe",
+  BridgeToken: "token",
+  DeniedActions: [],
+  DeniedActionFamilies: [],
+  ExperimentalActions: [],
+  NativeLocalPlayerFixture: {
+    Enable: true,
+    Bootstrap: { Enable: false },
+    FixtureScenario: "native_pet_animal_v1",
+    LogicalSaveName: "GameBuddyFixturePet",
+    ObservedSaveSlot: "GameBuddyFixturePet_1",
+  },
+});
+
 const HANDS_WRITTEN = Object.freeze({
   accept_special_order: (client, receipts) =>
     runAcceptSpecialOrderSmoke(client, receipts, {}, { terminalTimeoutMs: 1_000 }),
+  claim_museum_reward: (client, receipts) =>
+    runClaimMuseumRewardSmoke(client, receipts, {}, { terminalTimeoutMs: 1_000 }),
+  craft_item: (client, receipts) => runCraftItemSmoke(client, receipts, {}, { terminalTimeoutMs: 1_000 }),
+  pet_animal: (client, receipts) =>
+    runPetAnimalSmoke(client, receipts, PET_ANIMAL_CONFIG, { terminalTimeoutMs: 1_000 }),
 });
 
 const contractOf = (actionId) => loadSmokeContractFile(join(CONTRACTS_DIR, `${actionId}.json`));
@@ -300,14 +502,45 @@ test("every contract derives from its own declaration and agrees with the gate t
 });
 
 /**
- * THE AGREEMENT: the engine's verdict equals the hand-written runner's, over the same world.
+ * THE POPULATION OF THE AGREEMENT IS DERIVED FROM WHAT IS ON DISK, NOT LISTED HERE.
+ *
+ * A contract and its hand-written runner both still present is the one shape where the two readings CAN be compared;
+ * the day a conversion lands, its pair disappears and so does this obligation. What must never happen is a pair whose
+ * runner is still on disk and whose agreement nobody takes - that is the emptiness the retirement is supposed to end,
+ * not a reading that passed.
+ */
+test("every contract that still stands beside a hand-written runner is driven by the agreement", () => {
+  const pairs = readdirSync(CONTRACTS_DIR)
+    .filter((name) => name.endsWith(".json"))
+    .map((name) => JSON.parse(readFileSync(join(CONTRACTS_DIR, name), "utf8")).action)
+    .filter((action) => existsSync(join(import.meta.dirname, runnerFileName(action))))
+    .sort();
+  assert.ok(
+    pairs.length > 0,
+    "no contract stands beside a runner, so the request comparison examined nothing - that is a blocked reading, not a pass",
+  );
+  assert.deepEqual(
+    Object.keys(HANDS_WRITTEN).sort(),
+    pairs,
+    "a contract whose runner is still on disk needs a driver here; a pair with no driver is an agreement nobody reads",
+  );
+});
+
+/**
+ * THE AGREEMENT: the two drivers send the same requests, and reach the same verdict over the same world.
  *
  * `checks` is deliberately compared where they overlap rather than for equality: the runner may make an assertion
  * the contract does not, and the engine names those keys in `unassertedEvidence` instead of silently passing them.
- * What must never differ is the verdict.
+ * What must never differ is the verdict - and, since a verdict is worthless if the two drivers asked different
+ * questions, the requests themselves.
+ *
+ * WHAT THIS STILL DOES NOT PROVE. The fake world answers success to any arguments it is handed; it knows nothing of
+ * the bridge's envelope rules (an exact argument set, a deadline window, a scope, a revision). Request equality and
+ * verdict equality together say the two drivers send the same object and agree about a world that invents its own
+ * rules - they do not say the frame is sendable. Only a live run answers that.
  */
 for (const actionId of Object.keys(HANDS_WRITTEN)) {
-  test(`${actionId}: the contract engine and the hand-written runner reach the same verdict`, async () => {
+  test(`${actionId}: the contract engine and the hand-written runner send the same request`, async () => {
     const contract = contractOf(actionId);
 
     const handed = makeWorld(actionId);
@@ -328,8 +561,20 @@ for (const actionId of Object.keys(HANDS_WRITTEN)) {
     );
     assert.equal(engineResult.state, "passed", `the engine must pass the same world: ${engineResult.reasonCode}`);
     assert.equal(engineResult.reasonCode, runnerResult.reasonCode, "both must name the same success word");
-    // One execution frame plus the contract's own stale re-send, and nothing else: a slice is not a program.
-    assert.equal(sliced.callCount(), 2, "the engine dispatches exactly one frame plus its stale re-send");
+    // One execution frame, plus the contract's own stale re-send when it declares one, and nothing else: a slice is
+    // not a program. The runner's own frames are not asserted here - `compareRequests` below compares the two
+    // sequences whole, which is both the count and the contents.
+    assert.equal(
+      sliced.callCount(),
+      contract.stale === null ? 1 : 2,
+      "the engine dispatches one frame, plus the stale re-send the contract declares",
+    );
+    // THE READING THE VERDICT COMPARISON COULD NOT TAKE. Same count, same word, and two different questions.
+    const agreement = compareRequests(actionId, handed.requests, sliced.requests);
+    assert.ok(
+      agreement.identical,
+      `${agreement.finding} - request equality plus verdict equality still does not prove the frame is sendable; only a live run does`,
+    );
     // The engine reports every receipt key it did not constrain, derived from the receipt it actually read: that
     // list is the honest measure of what the contract could not cover for this action. A key either side of a
     // `delta` entry is constrained by it.
@@ -345,6 +590,90 @@ for (const actionId of Object.keys(HANDS_WRITTEN)) {
       assert.equal(value, true, `${actionId}: engine check '${name}' is not true (${JSON.stringify(value)})`);
   });
 }
+
+/**
+ * THE CLAIM THE OLD EQUIVALENCE COULD NOT TEST, ON THE PAIR THAT REFUTED IT.
+ *
+ * `deposit_silo_hay`'s contract was reverted (`9942bf38`) after its live slice answered `bridge_rejected:invalid_envelope`
+ * with `dispatchMs` 0 - the frame was never sent. Its args were `{x, y, expectedTargetId}`; the action's declaration
+ * carries `{x, y, slot, expectedTargetId}`, and `slot` is the backpack slot HOLDING the hay, which the hand-written
+ * runner reads from `inventoryItemFacts` at request time and the contract's single-row `$target.<field>` substitution
+ * cannot express.
+ *
+ * BOTH ARG SETS ARE REAL: the runner's comes from driving `runDepositSiloHaySmoke` over the fake world, and the
+ * contract's from `buildRequestArgs` - the function the engine itself calls - over the reverted contract file's own
+ * `args`. Driven through the engine, that contract PASSES this world, because the fake world answers success to
+ * whatever arguments it is handed. Verdict equality, success-word equality and dispatch-count equality all said
+ * AGREE; the difference is visible only in what was sent.
+ */
+test("deposit_silo_hay: the requests the two drivers send differ on `slot`, which no verdict could see", async () => {
+  const handed = makeWorld("deposit_silo_hay");
+  const runnerResult = await runDepositSiloHaySmoke(handed.client, handed.receipts, {}, { terminalTimeoutMs: 1_000 });
+  assert.equal(runnerResult.state, "passed", `the runner's own world: ${runnerResult.reasonCode}`);
+
+  // Verbatim `git show 352293e4:contracts/smoke/deposit_silo_hay.json`, with the fields the format fills in for a
+  // draft that states only discovery and args.
+  const draftedArgs = { x: "$target.x", y: "$target.y", expectedTargetId: "$target.targetId" };
+  const drafted = Object.freeze({
+    action: "deposit_silo_hay",
+    expectedState: "succeeded",
+    expectedReasonCode: "silo_hay_deposited",
+    discovery: {
+      source: "siloTargets",
+      cardinality: "at_least_one",
+      select: "first",
+      requiredFields: ["targetId", "x", "y"],
+      require: {},
+    },
+    args: draftedArgs,
+    evidence: {},
+    worldAfter: [],
+    afterStale: [],
+    stale: null,
+    delta: [],
+    unasserted: {},
+    assertion: null,
+    derived: deriveActionFacts("deposit_silo_hay"),
+  });
+  const sliced = makeWorld("deposit_silo_hay");
+  const engineResult = await runActionSlice({
+    client: sliced.client,
+    receipts: sliced.receipts,
+    contract: drafted,
+    terminalTimeoutMs: 1_000,
+  });
+  // THE BLIND READING, asserted rather than described: this world cannot tell the two requests apart.
+  assert.equal(engineResult.state, "passed", `the fake world answers the drafted frame: ${engineResult.reasonCode}`);
+  assert.equal(engineResult.reasonCode, runnerResult.reasonCode);
+  assert.equal(sliced.callCount(), handed.callCount(), "both dispatch one frame");
+
+  assert.equal(handed.requests.length, 1);
+  assert.equal(sliced.requests.length, 1);
+  assert.deepEqual(
+    buildRequestArgs({ args: draftedArgs }, { x: 6, y: 5, targetId: "silo_0123456789abcdef" }),
+    sliced.requests[0].args,
+    "the contract side of the comparison is the engine's own builder, over the reverted args",
+  );
+
+  const agreement = compareRequests("deposit_silo_hay", handed.requests, sliced.requests);
+  assert.equal(agreement.identical, false, "the two requests are not the same request");
+  assert.match(agreement.finding, /^equivalence_requests_differ:deposit_silo_hay:/u);
+  const [runnerArgs, contractArgs] = /:(\{[^}]*\}):(\{[^}]*\})$/u.exec(agreement.finding).slice(1);
+  assert.equal(JSON.parse(runnerArgs).slot, 3, "the runner sends the backpack slot holding the hay");
+  assert.deepEqual(
+    Object.keys(JSON.parse(contractArgs)).sort(),
+    ["expectedTargetId", "x", "y"],
+    "the contract sends the frame the Mod refused, and the finding names it",
+  );
+  // The falsifier for the comparison itself: the same two frames with `slot` restored agree, so a reader knows this
+  // reading is about the arguments and not about the two drivers having been given different worlds.
+  assert.deepEqual(
+    compareRequests("deposit_silo_hay", handed.requests, [
+      { action: "deposit_silo_hay", args: handed.requests[0].args },
+    ]),
+    { identical: true, finding: null },
+  );
+});
 
 test("accept_special_order: the engine names the evidence keys it could not assert", async () => {
   // `orders_after - orders_before === 1` used to be the shape the contract format could not express, and the engine
@@ -594,8 +923,14 @@ test("a contract may not restate what the declaration already owns", () => {
   refuses({ fixtureScenario: "native_x_v1" }, /smoke_contract_rederived_key:fixtureScenario/u);
   refuses({ expectedReasonCode: "daily_quest_accepted" }, /smoke_contract_reason_code_redeclared/u);
   refuses({ unforeseen: true }, /smoke_contract_unknown_key:contract\.unforeseen/u);
-  refuses({ args: { nonexistentArgument: "x" } }, /smoke_contract_args_undeclared/u);
-  refuses({ args: { expectedTargetId: 7 } }, /smoke_contract_args_type_mismatch/u);
+  refuses(
+    { args: { nonexistentArgument: "x" } },
+    /smoke_contract_contract_args_disagree_with_the_declaration:accept_daily_quest:missing:expectedTargetId:extra:nonexistentArgument/u,
+  );
+  refuses(
+    { args: { expectedTargetId: 7 } },
+    /smoke_contract_contract_args_disagree_with_the_declaration:accept_daily_quest:wrongtype:expectedTargetId/u,
+  );
   refuses(
     { discovery: { cardinality: "exactly_one", source: "specialOrderTargets" } },
     /smoke_contract_discovery_source_disagrees_with_declaration/u,
