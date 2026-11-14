@@ -2,7 +2,7 @@ import { type ReactElement, useEffect, useState } from "react";
 import { assertNever } from "../assert-never";
 import { type AppearanceChoice, isAppearanceChoice } from "../appearance";
 import { problemTextWithCode } from "../composed-problem-view";
-import { type Locale, messages, recordLabel } from "../i18n";
+import { type Locale, type messages, recordLabel } from "../i18n";
 import { fieldError } from "./field-error";
 import { memoryNotebookLabels, type MemoryNotebookLabels } from "./memory-notebook-labels";
 import {
