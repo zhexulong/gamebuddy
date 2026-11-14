@@ -1,11 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-
+import { publishedActionRegistrations } from "./lib/stardew-native-smoke-harness-v1.mjs";
 import {
   assertBuildFarmBuildingPostconditions,
   runBuildFarmBuildingSmoke,
 } from "./run-stardew-native-local-player-build-farm-building-smoke.mjs";
-import { publishedActionRegistrations } from "./lib/stardew-native-smoke-harness-v1.mjs";
 
 /**
  * The build_farm_building live judgement, tested DIRECTLY.

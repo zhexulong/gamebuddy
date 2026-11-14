@@ -21,12 +21,11 @@
  */
 import assert from "node:assert/strict";
 import test from "node:test";
-
+import { publishedActionRegistrations } from "./lib/stardew-native-smoke-harness-v1.mjs";
 import {
   assertPrizeTicketRedemption,
   runRedeemPrizeTicketSmoke,
 } from "./run-stardew-native-local-player-prize-ticket-smoke.mjs";
-import { publishedActionRegistrations } from "./lib/stardew-native-smoke-harness-v1.mjs";
 
 const TICKET = "(O)PrizeTicket";
 const PRIZE = "(O)688";

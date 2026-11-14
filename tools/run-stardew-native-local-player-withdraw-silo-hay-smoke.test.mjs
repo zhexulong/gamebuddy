@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { runWithdrawSiloHaySmoke } from "./run-stardew-native-local-player-withdraw-silo-hay-smoke.mjs";
 import { publishedActionRegistrations } from "./lib/stardew-native-smoke-harness-v1.mjs";
+import { runWithdrawSiloHaySmoke } from "./run-stardew-native-local-player-withdraw-silo-hay-smoke.mjs";
 
 const HAY = "(O)178";
 
