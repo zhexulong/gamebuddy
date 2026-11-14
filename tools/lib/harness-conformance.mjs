@@ -1029,6 +1029,18 @@ const GATES_WITHOUT_FALSIFIER = Object.freeze([
       "without the observation summary, and asserts the --fail-on-ungranted arming itself",
   },
   {
+    gate: "check-stardew-instance-property-coverage.mjs",
+    reason:
+      "its falsifier is tools/check-stardew-observation-gap.test.mjs too, which drives the verdict's own judges against " +
+      "the real protocol/bridge-v1.schema.json and the real Mod sources: a published verdict that holds passes the wire, " +
+      "the Mod record and the builder; the same-spelling coincidence (`cropTargets.isRaised` is filled from the crop DATA, " +
+      "so `Crop.raisedSeeds` has no witness) is red naming what the builder does pass; a field the row does not carry is " +
+      "red with the row's fields named; a field on another entity's row is red; an absence expires when a row carries the " +
+      "field or the engine stops declaring the property; a `not_measured` verdict names an instance case, from run data " +
+      "(`the Furniture at (6,6)`) or from the engine's closed values; and a zero population is blocked rather than green. " +
+      "Its default run prints the population line, one line per finding and a `{gate, population, checks[]}` report",
+  },
+  {
     gate: "check-stardew-crop-row-derivation.mjs",
     reason:
       "its falsifier is tools/check-stardew-crop-row-derivation.test.mjs, which drives the checker's own overrides against" +
