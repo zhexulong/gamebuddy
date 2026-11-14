@@ -89,7 +89,7 @@ async function withPreset(work: (bound: Bound) => Promise<void>): Promise<void> 
 }
 
 const render = (bound: Bound, markers: Readonly<Record<string, string>> = MARKERS): Promise<PresetPass | null> =>
-  renderPresetPass({ presets: bound.presets, binding: bound.binding, macros: MACROS, markers });
+  renderPresetPass({ presets: bound.presets, binding: bound.binding, macros: async () => MACROS, markers });
 
 const identifiers = (segments: readonly { identifier: string }[]): readonly string[] =>
   segments.map((segment) => segment.identifier);

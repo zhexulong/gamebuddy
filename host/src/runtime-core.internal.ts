@@ -101,7 +101,9 @@ import {
   boundPresetSampling,
   presetRequestMacros,
   publishPresetRequestSegments,
+  type PresetThreadSources,
 } from "./tavern/preset-request-segments.js";
+import type { MacroContext } from "./tavern/preset-macros.js";
 import { createPresetStore } from "./tavern/preset-store.js";
 import { TAVERN_ENVIRONMENT_PROVIDER_ID } from "./tavern/provider-catalog.js";
 import { resolveTavernPaths } from "./tavern/tavern-paths.js";
@@ -725,6 +727,7 @@ export async function createChatRuntimeConstructionInternal(
     "chat",
     undefined,
     construction.tavernNarrativeGateNonceSha256,
+    Object.freeze({ presetThreadSources: construction.presetThreadSources }),
   );
   let appliedModelConfig = construction.modelConfig;
   /**
@@ -841,9 +844,25 @@ export type GameCompanionRuntimeAttachment = Readonly<{
   disableMagicContextMemory?: true;
 }>;
 
+/** Construction-scoped facts only the Chat surface's construction holds. */
+export type ChatSurfaceConstructionFacts = Readonly<{
+  /** The chat thread's bound persona and scenario: the two values `presetRequestMacros` cannot read here. */
+  presetThreadSources: PresetThreadSources;
+}>;
+
 /**
  * Generic Companion runtime construction. This Chat-callable path intentionally
  * has no Game Operational Gate marker parameter.
+ *
+ * `chatSurface` is the Chat surface's construction facts and is absent on every other surface.
+ *
+ * SCOPE: Chat surface only. It is not a bag for another surface's facts and not a place to put a value this module
+ * could read itself - it exists because `presetRequestMacros` renders the chat THREAD's bound persona and scenario, and
+ * the thread lives in `continuity-semantic-chat-runtime-construction`, which this module cannot see.
+ *
+ * CONSOLIDATION TRIGGER: if a second Chat-only member is needed, consolidate this function's Chat-only parameters
+ * (`tavernNarrativeGateNonceSha256` beside this one) into this object then, and delete the scalars. Otherwise this
+ * object is how a 17-scalar signature becomes 18 scalars plus a bag.
  */
 export async function createCompanionRuntime(
   identity: CompanionIdentity,
@@ -860,6 +879,7 @@ export async function createCompanionRuntime(
   internalMagicContextFeatureTestOverride?: MagicContextFeatureTestOverride,
 
   tavernNarrativeGateNonceSha256?: string,
+  chatSurface?: ChatSurfaceConstructionFacts,
 ): Promise<RuntimeSession> {
   return await createRuntimeWithFixedToolsCore(
     identity,
@@ -880,6 +900,9 @@ export async function createCompanionRuntime(
     undefined,
     {},
     Object.freeze([]),
+    undefined,
+    false,
+    chatSurface,
   );
 }
 
@@ -997,6 +1020,8 @@ export async function createRuntimeWithFixedToolsCore(
    * tools do, so it is the only action surface on that runtime.
    */
   planActionSurface = false,
+  /** Chat-surface construction facts; see `createCompanionRuntime` for the scope and the consolidation trigger. */
+  chatSurface?: ChatSurfaceConstructionFacts,
 ): Promise<RuntimeSession> {
   // A surface session ID identifies a persistent session; it must never be
   // used to infer the product surface because both Chat and Game have them.
@@ -1372,17 +1397,22 @@ export async function createRuntimeWithFixedToolsCore(
     chatPreset === null
       ? undefined
       : async (): Promise<void> => {
+          // The provider is what makes this cost nothing when no preset is bound: `renderPresetPass` reads the binding
+          // first and only then asks for the context.
+          const macros = async (): Promise<MacroContext> =>
+            presetRequestMacros({
+              profile,
+              ...(presentation?.profile.locale === undefined ? {} : { locale: presentation.profile.locale }),
+              // The chat thread's bound persona and scenario. Only the Chat construction holds them
+              // (`PresetThreadSources`), and a Game runtime passes none, so its preset's `{{persona}}` and
+              // `{{scenario}}` keep their token and are reported.
+              ...(chatSurface?.presetThreadSources ?? {}),
+            });
           await publishPresetRequestSegments({
             projectDir: chatPreset.projectDir,
             presets: chatPreset.presets,
             binding: chatPreset.binding,
-            // The player-facing half of the preset's macros is the profile and the locale - the two authorities a
-            // runtime mount holds. The chat thread's bound persona and scenario are not reachable from here
-            // (`preset-request-segments.ts` states which macros therefore keep their token and are reported).
-            macros: presetRequestMacros({
-              profile,
-              ...(presentation?.profile.locale === undefined ? {} : { locale: presentation.profile.locale }),
-            }),
+            macros,
             // No marker content is supplied yet: the companion card's fields and the bound world book are the Chat
             // pipeline's to hand over, and until they are, `unfilled` names every slot that stayed empty
             // (`preset-request-segments.ts` prints them) instead of the request carrying a blank region.

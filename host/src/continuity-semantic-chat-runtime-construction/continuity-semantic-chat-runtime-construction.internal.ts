@@ -12,13 +12,21 @@ import {
   materializeTavernAuthoredStableCatalog,
   type TavernAuthoredContextCatalog,
   type TavernCompanionWorldBookSource,
+  readBoundStableArtifact,
 } from "../tavern/catalog-service.js";
 import { createManagedWorldInfoBindingResolver } from "../tavern/world-info-binding/managed-world-info-binding.js";
 import { createWorldInfoManagementRepository } from "../tavern/world-info-management/world-info-management.js";
 import { hasUnrenderedMacro, macroTable, renderMacros, type MacroTable } from "../tavern/macro-engine.js";
 import { readWorldBook, worldBookMetadata, type WorldBookEntry } from "../worldbook.js";
-import { createChatThreadStore, type ChatThreadState, type ChatThreadStore } from "../tavern/chat-thread-store.js";
-import { resolveTavernPaths } from "../tavern/tavern-paths.js";
+import {
+  createChatThreadStore,
+  type ChatThread,
+  type ChatThreadState,
+  type ChatThreadStore,
+} from "../tavern/chat-thread-store.js";
+import type { PresetThreadSources } from "../tavern/preset-request-segments.js";
+import { resolveTavernPaths, type TavernPaths } from "../tavern/tavern-paths.js";
+import type { Scenario, UserPersona } from "../tavern/types.js";
 
 /**
  * Immutable construction facts for exactly one selected Chat runtime. This is
@@ -40,6 +48,13 @@ export type ExactChatRuntimeConstruction = Readonly<{
    */
   resolveModelSelection(): Promise<ExactChatRuntimeModelSelection>;
   presentation: PresentationRuntime;
+  /**
+   * The chat thread's own contribution to the preset's macros: the persona and the scenario this chat bound.
+   *
+   * It is a construction fact rather than a per-request read because a thread's `stableArtifactBindings` are
+   * written when the thread is created and never updated (`readThreadPresetSources`).
+   */
+  presetThreadSources: PresetThreadSources;
   /** Construction-owned materialization for the currently applied Chat catalog. */
   materializeStableContextForPiSession(piSessionId: string): Promise<TavernAuthoredContextCatalog>;
   /** Construction-private desired-state rebuild used only after terminal settlement. */
@@ -151,6 +166,12 @@ async function buildExactChatRuntimeConstruction(
     createWorldInfoManagementRepository(execution.runtimeRoot),
   );
   const selectedThread = state.thread;
+  let presetThreadSources: PresetThreadSources;
+  try {
+    presetThreadSources = await readThreadPresetSources(artifactStore, tavernPaths, selectedThread);
+  } catch {
+    throw new Error("chat_runtime_exact_content_unavailable");
+  }
   let profileMetadata;
   try {
     profileMetadata = identityProfileMetadata(
@@ -266,6 +287,7 @@ async function buildExactChatRuntimeConstruction(
       surface: "chat",
       sessionId: permit.chatSurfaceSessionId,
     }),
+    presetThreadSources,
     materializeStableContextForPiSession,
     materializeDesiredStableContextForPiSession,
     openingGreeting: openingGreetingOf(state),
@@ -338,6 +360,37 @@ function openingGreetingOf(state: ChatThreadState): string | null {
   return state.thread.openingSelection.kind === "greeting" && opening !== undefined && opening.kind === "opening"
     ? opening.text
     : null;
+}
+
+/**
+ * The persona and the scenario the chat thread bound, as the preset's `{{persona}}` and `{{scenario}}` read them.
+ *
+ * These are the THREAD's bindings, never `resolvePlayerOwnPersona` / `resolveCompanionOwnScenario`: a chat that bound a
+ * different persona must render that one, or the preset would describe a player the authored context is not carrying.
+ * Where a bound artifact lives and how its hash is verified is `catalog-service.ts`'s one reading
+ * (`readBoundStableArtifact`), so the preset and the catalogue cannot resolve two different files for one binding.
+ *
+ * Read ONCE at mount, and that is not an optimisation. A thread's `stableArtifactBindings` are written when the thread
+ * is created (`chat-thread-store.ts`) and copied with a fork; nothing updates `persona_id`, `scenario_id` or the binding
+ * rows, so a different persona or scenario is a different chat. A per-request read here would return the same value
+ * while paying a full transcript read on every prompt.
+ */
+async function readThreadPresetSources(
+  store: TavernArtifactStore,
+  paths: TavernPaths,
+  thread: ChatThread,
+): Promise<PresetThreadSources> {
+  const bindings = thread.stableArtifactBindings ?? [];
+  const personaBinding = bindings.find((binding) => binding.kind === "persona");
+  const scenarioBinding = bindings.find((binding) => binding.kind === "scenario");
+  const [persona, scenario] = await Promise.all([
+    personaBinding === undefined ? undefined : readBoundStableArtifact(store, paths, personaBinding),
+    scenarioBinding === undefined ? undefined : readBoundStableArtifact(store, paths, scenarioBinding),
+  ]);
+  return Object.freeze({
+    ...(persona === undefined ? {} : { persona: persona.artifact as UserPersona }),
+    ...(scenario === undefined ? {} : { scenario: scenario.artifact as Scenario }),
+  });
 }
 
 function assertExactPermit(execution: ChatRuntimeBindingExecution, permit: ProductionChatRuntimePermit): void {

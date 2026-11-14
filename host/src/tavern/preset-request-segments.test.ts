@@ -173,7 +173,7 @@ const publish = (bound: Bound, macros: MacroContext = presetRequestMacros({ prof
     projectDir: bound.projectDir,
     presets: bound.presets,
     binding: bound.binding,
-    macros,
+    macros: async () => macros,
     markers: Object.freeze({}),
   });
 
@@ -356,8 +356,7 @@ test("a macro this assembly was not handed keeps its token and is reported by na
  * Empty is an answer only when the authority says the field is empty: a companion whose card wrote no description has
  * no description, and that must not be dressed up as `{{description}}` - a token would claim this assembly could not
  * read a profile it is holding.
- */
-test("a field the companion genuinely has not renders empty, and is not reported as unresolved", async () => {
+ */ test("a field the companion genuinely has not renders empty, and is not reported as unresolved", async () => {
   const bare: IdentityProfile = Object.freeze({
     schemaVersion: 1,
     profileId: "lane-macros.bare",
@@ -496,5 +495,41 @@ test("a publication for another directory is not visible to this one", async () 
     });
     assert.equal(__gamebuddyReadPresetSegments(join(bound.root, "elsewhere")) !== undefined, true);
     assert.notEqual(__gamebuddyReadPresetSegments(bound.projectDir), undefined);
+  });
+});
+
+/**
+ * The macro provider is what keeps an unbound preset free, and the count is the reading - not a stopwatch.
+ *
+ * A Chat's context costs a thread read to assemble (`PresetThreadSources`), and a request with nothing bound renders
+ * nothing: the binding is read first, so the provider must not be asked at all. When a preset IS bound it is asked
+ * exactly once per request, whether or not the document uses any macro.
+ */
+test("the macro provider is asked once per published request, and never when nothing is bound", async () => {
+  await withBoundPreset(async (bound) => {
+    let calls = 0;
+    const counted = async () => {
+      calls += 1;
+      return presetRequestMacros({ profile: PROFILE });
+    };
+    const publishCounted = () =>
+      publishPresetRequestSegments({
+        projectDir: bound.projectDir,
+        presets: bound.presets,
+        binding: bound.binding,
+        macros: counted,
+        markers: Object.freeze({}),
+      });
+
+    assert.ok((await publishCounted()) !== null);
+    assert.equal(calls, 1, "a bound preset reads its context exactly once");
+
+    assert.ok((await publishCounted()) !== null);
+    assert.equal(calls, 2, "a second request reads it again rather than reusing the previous one");
+
+    await bound.binding.clear();
+    calls = 0;
+    assert.equal(await publishCounted(), null);
+    assert.equal(calls, 0, "an unbound preset renders nothing, so its context is never read");
   });
 });

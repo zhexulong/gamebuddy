@@ -93,6 +93,8 @@ type FixtureOptions = Readonly<{
   ownWorldBookPath?: string;
   /** A scenario artifact bound on the thread, as a card-provisioned companion binds one. */
   scenario?: Readonly<{ text: string }>;
+  /** A player persona artifact bound on the thread, as the Characters panel's own record binds one. */
+  persona?: Readonly<{ name: string; description?: string }>;
 }>;
 
 async function fixture(options: FixtureOptions = {}) {
@@ -162,6 +164,30 @@ async function fixture(options: FixtureOptions = {}) {
   let scenarioBinding:
     | Readonly<{ kind: "scenario"; sourceId: string; revision: number; canonicalHash: string }>
     | undefined;
+  let personaBinding:
+    | Readonly<{ kind: "persona"; sourceId: string; revision: number; canonicalHash: string }>
+    | undefined;
+  if (options.persona !== undefined) {
+    const tavernPaths = resolveTavernPaths(profilePaths, principal);
+    const sourceId = "persona";
+    const written = await new TavernArtifactStore(runtimeRoot).write(
+      tavernRevisionPath(join(tavernPaths.playerRoot, "personas", sourceId), 1),
+      {
+        schemaVersion: 1 as const,
+        revision: 1,
+        personaId: sourceId,
+        name: options.persona.name,
+        ...(options.persona.description === undefined ? {} : { description: options.persona.description }),
+      },
+      validateTavernArtifact,
+    );
+    personaBinding = Object.freeze({
+      kind: "persona" as const,
+      sourceId,
+      revision: 1,
+      canonicalHash: written.canonicalHash,
+    });
+  }
   if (options.scenario !== undefined) {
     const tavernPaths = resolveTavernPaths(profilePaths, principal);
     const sourceId = "scenario";
@@ -198,9 +224,16 @@ async function fixture(options: FixtureOptions = {}) {
     continuityId: principal.continuityId,
     ...(companionWorldBookBinding === undefined ? {} : { companionWorldBookBinding }),
     ...(managedWorldInfoBinding === undefined ? {} : { managedWorldInfoBinding }),
-    ...(scenarioBinding === undefined
+    ...(scenarioBinding === undefined ? {} : { scenarioId: scenarioBinding.sourceId }),
+    ...(personaBinding === undefined ? {} : { personaId: personaBinding.sourceId }),
+    ...(scenarioBinding === undefined && personaBinding === undefined
       ? {}
-      : { scenarioId: scenarioBinding.sourceId, stableArtifactBindings: [scenarioBinding] }),
+      : {
+          stableArtifactBindings: Object.freeze([
+            ...(scenarioBinding === undefined ? [] : [scenarioBinding]),
+            ...(personaBinding === undefined ? [] : [personaBinding]),
+          ]),
+        }),
     opening: "blank",
   });
   return Object.freeze({ root, runtimeRoot, binding, threads });
@@ -856,5 +889,52 @@ test("Chat construction renders the bound scenario's own macros into the catalog
   } finally {
     await value.binding.close();
     await releaseConstructionAndFixture(prepared, value);
+  }
+});
+
+/**
+ * The preset's `{{persona}}` and `{{scenario}}` read the artifacts the THREAD bound, at the revision it bound - the same
+ * two records the catalogue above renders, resolved by the same `readBoundStableArtifact`.
+ *
+ * The pair of readings is the point. Bound: both arrive, so a preset's Main Prompt renders the character instead of two
+ * literal tokens. Unbound: neither key exists at all, because "this chat bound no persona" is what makes the macro keep
+ * its token and report its name - an empty value would read as a persona that exists and is blank.
+ */
+test("Chat construction carries the thread's bound persona and scenario for the preset's macros", async () => {
+  const bound = await fixture({
+    persona: { name: "阿远", description: "星谷唯一会修水泵的人。" },
+    scenario: { text: "夏末的傍晚，两人刚收完最后一筐防风草。" },
+  });
+  let preparedBound: Awaited<ReturnType<typeof prepareExactChatRuntimeConstruction>> | undefined;
+  try {
+    preparedBound = await bound.binding.executeWithBinding((token) =>
+      withConsumedChatRuntimeBinding(token, (execution) =>
+        prepareExactChatRuntimeConstruction(execution, permit(execution)),
+      ),
+    );
+    assert.equal(preparedBound.presetThreadSources.persona?.name, "阿远");
+    assert.equal(preparedBound.presetThreadSources.persona?.description, "星谷唯一会修水泵的人。");
+    assert.equal(preparedBound.presetThreadSources.scenario?.text, "夏末的傍晚，两人刚收完最后一筐防风草。");
+  } finally {
+    await bound.binding.close();
+    await releaseConstructionAndFixture(preparedBound, bound);
+  }
+
+  const bare = await fixture();
+  let preparedBare: Awaited<ReturnType<typeof prepareExactChatRuntimeConstruction>> | undefined;
+  try {
+    preparedBare = await bare.binding.executeWithBinding((token) =>
+      withConsumedChatRuntimeBinding(token, (execution) =>
+        prepareExactChatRuntimeConstruction(execution, permit(execution)),
+      ),
+    );
+    assert.deepEqual(
+      preparedBare.presetThreadSources,
+      Object.freeze({}),
+      "a chat with no bound persona or scenario carries neither, so those two macros keep their tokens",
+    );
+  } finally {
+    await bare.binding.close();
+    await releaseConstructionAndFixture(preparedBare, bare);
   }
 });

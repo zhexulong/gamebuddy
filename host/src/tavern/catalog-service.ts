@@ -15,6 +15,7 @@ import type { GameSessionPresetPrompt } from "./preset-game-session.js";
 import { decidePresetTailBlock } from "./preset-tail-block.js";
 import type {
   ChatThread,
+  TavernStableArtifactBinding,
   TavernStableManagedWorldInfoBinding,
   TavernStableWorldBookBinding,
   TavernStableWorldInfoBinding,
@@ -168,23 +169,7 @@ export async function materializeTavernAuthoredContextCatalog(
     throw new Error("tavern_stable_context_source_binding_missing");
   const sources: Array<TavernAuthoredContextCatalog["stableSources"][number]> = [];
   for (const [index, selected] of selectedBindings.entries()) {
-    const directory =
-      selected.kind === "persona"
-        ? join(paths.playerRoot, "personas", selected.sourceId)
-        : selected.kind === "scenario"
-          ? join(paths.companionRoot, "scenarios", selected.sourceId)
-          : join(paths.companionRoot, "dialogue-examples", selected.sourceId);
-    const envelope = await store.read(tavernRevisionPath(directory, selected.revision), validateTavernArtifact);
-    if (envelope.canonicalHash !== selected.canonicalHash)
-      throw new Error("tavern_stable_context_source_hash_mismatch");
-    const artifact = envelope.artifact;
-    const valid =
-      selected.kind === "persona"
-        ? "personaId" in artifact && artifact.personaId === selected.sourceId
-        : selected.kind === "scenario"
-          ? "scenarioId" in artifact && artifact.scenarioId === selected.sourceId
-          : "examplesId" in artifact && artifact.examplesId === selected.sourceId;
-    if (!valid) throw new Error("tavern_stable_context_source_mismatch");
+    const { artifact, canonicalHash } = await readBoundStableArtifact(store, paths, selected);
     const content =
       selected.kind === "persona"
         ? personaStableContent(artifact as UserPersona, macros)
@@ -216,7 +201,7 @@ export async function materializeTavernAuthoredContextCatalog(
         selected.kind,
         selected.sourceId,
         selected.revision,
-        envelope.canonicalHash,
+        canonicalHash,
         content,
         String(index + 1).padStart(4, "0"),
       ),
@@ -454,6 +439,46 @@ function personaStableContent(persona: UserPersona, macros: MacroTable): string 
     authoredHeading(renderMacros(persona.name, macros)),
     persona.description === undefined ? undefined : renderMacros(persona.description, macros),
   ]);
+}
+
+/**
+ * One bound authored artifact, read from the exact revision its binding names and verified against it.
+ *
+ * A binding is `{ kind, sourceId, revision, canonicalHash }` (`chat-thread-store.ts`), and where an artifact of that
+ * kind lives is THIS module's knowledge. It is exported because a second reader now needs the same three facts: the
+ * preset's `{{persona}}` and `{{scenario}}` are the chat thread's bound artifacts (`preset-request-segments.ts`),
+ * and a second spelling of "which file a persona lives in" is how the catalogue and the preset end up describing two
+ * different characters while both look correct.
+ *
+ * The hash check is what makes the read EXACT: `revision` alone would silently carry a rewritten artifact whose bytes
+ * no longer match what the thread bound.
+ */
+export async function readBoundStableArtifact(
+  store: TavernArtifactStore,
+  paths: Pick<TavernPaths, "playerRoot" | "companionRoot">,
+  selected: TavernStableArtifactBinding,
+): Promise<Readonly<{ artifact: UserPersona | Scenario | DialogueExamples; canonicalHash: string }>> {
+  const directory =
+    selected.kind === "persona"
+      ? join(paths.playerRoot, "personas", selected.sourceId)
+      : selected.kind === "scenario"
+        ? join(paths.companionRoot, "scenarios", selected.sourceId)
+        : join(paths.companionRoot, "dialogue-examples", selected.sourceId);
+  const envelope = await store.read(tavernRevisionPath(directory, selected.revision), validateTavernArtifact);
+  if (envelope.canonicalHash !== selected.canonicalHash) throw new Error("tavern_stable_context_source_hash_mismatch");
+  // The kind is what the binding and the artifact must agree on, and the check IS the narrowing: an artifact whose own
+  // identifier is not the `sourceId` the thread bound is not that source, whatever file it was found in.
+  const artifact = envelope.artifact;
+  const bound =
+    selected.kind === "persona" && "personaId" in artifact && artifact.personaId === selected.sourceId
+      ? (artifact as UserPersona)
+      : selected.kind === "scenario" && "scenarioId" in artifact && artifact.scenarioId === selected.sourceId
+        ? (artifact as Scenario)
+        : selected.kind === "dialogue_examples" && "examplesId" in artifact && artifact.examplesId === selected.sourceId
+          ? (artifact as DialogueExamples)
+          : undefined;
+  if (bound === undefined) throw new Error("tavern_stable_context_source_mismatch");
+  return Object.freeze({ artifact: bound, canonicalHash: envelope.canonicalHash });
 }
 /**
  * The card's own example exchanges, as prose.

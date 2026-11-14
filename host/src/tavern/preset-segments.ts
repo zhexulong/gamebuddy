@@ -63,12 +63,16 @@ export type PresetPass = Readonly<{
  * `markers` is the assembly's slot content and the caller owns it (the companion card's fields, the bound world book,
  * the player's persona): this function never invents a slot's content, and every slot it is not given is named in
  * `unfilled`.
+ *
+ * `macros` is a PROVIDER, called only once a preset is actually going to be rendered. The Chat half of that context
+ * costs a chat-thread read (`preset-request-segments.ts`), and an unbound preset renders nothing: a request must not
+ * pay for a value it will not use. The call is exactly one per render.
  */
 export async function renderPresetPass(
   input: Readonly<{
     presets: PresetStore;
     binding: PresetBindingStore;
-    macros: MacroContext;
+    macros: () => Promise<MacroContext>;
     markers: Readonly<Record<string, string>>;
   }>,
 ): Promise<PresetPass | null> {
@@ -77,7 +81,8 @@ export async function renderPresetPass(
   // The store's own read re-derives and re-checks the stored summary, so the rendering and the panel's row can never
   // describe two different revisions of the same preset.
   const record = await input.presets.read(bound.presetId);
-  const assembly = assemblePreset(record.document, { macros: input.macros, markers: input.markers });
+  const macros = await input.macros();
+  const assembly = assemblePreset(record.document, { macros, markers: input.markers });
   const before = assembly.before.map(segmentOf);
   const after = assembly.after.map(segmentOf);
   const depth = assembly.depth.map((block) => Object.freeze({ ...segmentOf(block), depth: block.depth }));

@@ -74,18 +74,21 @@ export type PresetRequestAssembly = Readonly<{
  * scenario), so a macro can re-state character context but can never reach host secrets, paths, credentials, settings
  * or arbitrary host state. Adding a member here is a product decision, not a plumbing convenience.
  *
- * `persona` and `scenario` are optional because they are the CHAT THREAD's bindings (`chat-thread-store.ts`), and a
- * caller that does not hold the thread cannot honestly answer for them. `undefined` is not "empty" - see
- * `presetRequestMacros`.
+ * `persona` and `scenario` are optional because they are the CHAT THREAD's bindings (`chat-thread-store.ts`), which
+ * the Chat construction holds and a Game runtime does not. `undefined` is not "empty" - see `presetRequestMacros`.
  */
-export type PresetMacroSources = Readonly<{
-  profile: IdentityProfile;
-  locale?: string | undefined;
+export type PresetThreadSources = Readonly<{
   /** The `UserPersona` the chat bound: A4 §7.2 makes `{{user}}` its name and `{{persona}}` its description. */
   persona?: UserPersona | undefined;
   /** The `Scenario` the chat bound: A4 §7.2's `{{scenario}}`. */
   scenario?: Scenario | undefined;
 }>;
+
+export type PresetMacroSources = PresetThreadSources &
+  Readonly<{
+    profile: IdentityProfile;
+    locale?: string | undefined;
+  }>;
 
 /**
  * The macro context one Chat request renders its preset with, read from the authorities that own each value.
@@ -172,7 +175,8 @@ export async function publishPresetRequestSegments(
     projectDir: string;
     presets: PresetStore;
     binding: PresetBindingStore;
-    macros: MacroContext;
+    /** Read only when a preset is bound - see `renderPresetPass`. */
+    macros: () => Promise<MacroContext>;
     markers: Readonly<Record<string, string>>;
   }>,
 ): Promise<PresetRequestAssembly | null> {
