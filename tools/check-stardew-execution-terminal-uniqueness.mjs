@@ -35,13 +35,20 @@
  * mint, or by the answer being counted as a fact - and both of those are `duplicate_fact` on one executionId.
  *
  * THE POPULATION IS THE ARTIFACT, and the verdict prints how many receipt frames it examined: `answers N, facts M,
- * unsolicited K`. An artifact with no receipt frame at all is `not_measured`, never green.
+ * unsolicited K`. An artifact that carries no receipt frame is BLOCKED, never green: the file exists, so a reader
+ * believes it describes a run, and `examined 0` over a run nobody measured is the same reading as `duplicated 0` over
+ * one that was - which is how this gate printed `passed` on a run it had not looked at.
+ *
+ * The other zero is kept apart from it. A caller who named NO artifact supplied no reading at all; that is
+ * `not_measured` - the `*_skipped:` line, exit 0, and `tools/check-ci-coverage.mjs` counts it as a skip rather than
+ * a pass. The difference is what the caller handed over: a file that says nothing about terminals is a claim, and
+ * having no file is not.
  *
  * USAGE:
  *   node tools/check-stardew-execution-terminal-uniqueness.mjs --artifact <path> [--artifact <path> ...]
  *   node tools/check-stardew-execution-terminal-uniqueness.mjs <path> [<path> ...]         # positional form
  *
- * Exit 1 on any finding, 0 with a `*_skipped:` line when there is nothing to measure.
+ * Exit 1 on any finding and on an empty population, 0 with a `*_skipped:` line when no artifact was named.
  *
  * red-proof: inject  one request's terminal duplicated on the answer channel of a two-channel artifact ->
  *   `duplicate_answer:request_feed_01` with `"duplicated":1` and exit 1, while the same artifact unduplicated
@@ -49,6 +56,9 @@
  * red-proof: inject  the same terminal reaching the fact listeners twice -> `duplicate_fact:execution_feed_01:` +
  *   `hay_placed_in_trough,hay_placed_in_trough`, `"duplicated":1`, exit 1
  *   (tools/check-stardew-execution-terminal-uniqueness.test.mjs)
+ * red-proof: inject  an artifact carrying no terminal frame -> `{"status":"blocked","population":0}` and
+ *   `examined 0 receipt frames in 1 artifact(s), so no terminal was compared`, exit 1 - the empty reading
+ *   this gate used to skip green (tools/check-stardew-execution-terminal-uniqueness.test.mjs)
  */
 import { readFileSync, statSync } from "node:fs";
 import { resolve } from "node:path";
@@ -210,10 +220,18 @@ function main(argv) {
   }
   const reading = classifyTerminals({ facts, answers, answerChannelPresent });
   if (reading.examined === 0) {
+    // A file that names no terminal frame is a reading, not an absence: it says the run was clean, and nothing in
+    // it was compared. The judge in `tools/lib/assert-non-vacuous.mjs` already blocks a zero population, so the
+    // exit status agrees with it instead of excusing it with a skip.
     process.stdout.write(
-      `${GATE_SKIP_MARKER} examined 0 receipt frames in ${paths.length} artifact(s), so no terminal was compared\n`,
+      `{"gate":"${GATE_ID}","status":"blocked","population":0,"artifacts":${paths.length},"why":"no_terminal_frame"}\n`,
     );
-    return 0;
+    process.stderr.write(
+      `${GATE_ID}_blocked: examined 0 receipt frames in ${paths.length} artifact(s), so no terminal was compared; ` +
+        "the population this gate needs is one finished run's terminal frames - the frames its fact listeners emitted " +
+        "and the answers its caller received - and an artifact carrying neither cannot say the run was clean\n",
+    );
+    return 1;
   }
   for (const finding of reading.findings) process.stderr.write(`${finding.code} ${finding.detail}\n`);
   process.stdout.write(

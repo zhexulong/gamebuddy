@@ -8,6 +8,9 @@
  * red-proof: inject  one request answered twice in a hand-built artifact -> `duplicate_answer:request_feed_01` and
  *   `"duplicated":1`, exit 1, asserted at process level by `runGate` below
  *   (tools/check-stardew-execution-terminal-uniqueness.test.mjs)
+ * red-proof: inject  an artifact that carries no terminal frame -> `"status":"blocked","population":0` and
+ *   `examined 0 receipt frames in 1 artifact(s), so no terminal was compared`, exit 1 - the empty reading
+ *   this gate used to skip green (tools/check-stardew-execution-terminal-uniqueness.test.mjs)
  * red-proof: inject  one terminal twice on the fact channel -> `duplicate_fact:execution_feed_01:` +
  *   `hay_placed_in_trough,hay_placed_in_trough`, exit 1, the pre-fix double this gate exists for
  *   (tools/check-stardew-execution-terminal-uniqueness.test.mjs)
@@ -150,10 +153,13 @@ test("a fact-stream duplicate of the same terminal fails the gate by name", () =
   assert.match(duplicated.stdout, /"duplicated":1/u);
 });
 
-test("an artifact with no receipt frame is not_measured, never green", () => {
+test("an artifact with no receipt frame is blocked, never green", () => {
   const empty = runGate({ terminals: [] });
-  assert.equal(empty.status, 0);
-  assert.match(empty.stdout, /^stardew_execution_terminal_uniqueness_skipped:/mu);
+  assert.equal(empty.status, 1, "a file that names no terminal is a reading with an empty population");
+  assert.match(empty.stdout, /"status":"blocked","population":0,"artifacts":1/u);
+  assert.match(empty.stderr, /examined 0 receipt frames in 1 artifact/u);
+  assert.match(empty.stderr, /the population this gate needs is one finished run's terminal frames/u);
+  // The other zero is a different fact: no artifact was named, so nothing was read and nothing is claimed.
   const missing = spawnSync(process.execPath, [GATE], { encoding: "utf8" });
   assert.equal(missing.status, 0);
   assert.match(missing.stdout, /^stardew_execution_terminal_uniqueness_skipped: needs --artifact/mu);

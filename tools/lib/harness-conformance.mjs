@@ -983,7 +983,7 @@ const GATES_WITHOUT_FALSIFIER = Object.freeze([
       "tools/check-stardew-execution-terminal-uniqueness.test.mjs builds one artifact per defect - one request answered " +
       "twice (duplicate_answer), the same terminal reaching the fact listeners twice (duplicate_fact, the measured " +
       "2026-11-09 double), a legitimate replayed answer that must stay clean, a fact-stream artifact that records no " +
-      "answer channel, and a zero-frame artifact that must read not_measured instead of green",
+      "answer channel, and a zero-frame artifact that must read blocked instead of green",
   },
   {
     gate: "check-prelive-gate-registry.mjs",
