@@ -1656,7 +1656,8 @@ for (const operation of ["archive", "trash"] as const) {
  * `#ui-language` 1408x44), so a label and its own control read as two unrelated
  * lines. The two `<select>`s the review called "native" (`#connection-provider`,
  * 渠道; `#connection-api-shape`, API 协议) are in fact the app's own `.form-select`
- * treatment: `appearance: none`, the drawn gradient arrow, `color-scheme: dark`.
+ * treatment: `appearance: none`, the drawn gradient arrow, and the popup's scheme
+ * taken from the token roots rather than stated by the control.
  * This pins the measure and the treatment together.
  */
 test("the Settings field groups keep a form measure and the app's own select treatment", async ({ page }) => {

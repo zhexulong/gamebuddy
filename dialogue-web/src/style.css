@@ -59,6 +59,14 @@
 /* Layer 1: Primitive Tokens */
 :root,
 :root[data-theme="dark"] {
+  /* The appearance the platform draws its own widgets in - an `<option>` popup, a scrollbar, a
+   date picker's calendar - for the widgets no rule of ours reaches. It is stated per token root
+   rather than once as `light dark` because this product's appearance is `data-theme`, not
+   `prefers-color-scheme`: `light dark` defers the choice to the media query, so a player who picks
+   the light appearance on a machine set to dark gets a dark popup on a light page (measured: the
+   document then reports `light dark` in both cells). `appearance.ts` resolves the choice and writes
+   the attribute; these two roots state what follows from it. */
+  color-scheme: dark;
   --motion-ease-out: cubic-bezier(0.23, 1, 0.32, 1);
   --motion-ease-drawer: cubic-bezier(0.32, 0.72, 0, 1);
   /* The plan's own motion: 150-200 ms, one spring-like ease, native CSS only. */
@@ -205,6 +213,8 @@
    light theme's token table and holds every pair to the same AA floor as the
    dark set. */
 :root[data-theme="light"] {
+  /* The platform's own widgets, in the appearance this root paints. */
+  color-scheme: light;
   --surface-canvas: #e9e2d6;
   --surface-panel: #f6f1e9;
   --surface-card: #fdfaf4;
@@ -3580,15 +3590,14 @@
    arrow in the middle of the dark surface. This is the treatment the chat model
    drawer's own select already carried; every other select in the product was
    still native, so it is the shared class that carries it now and the drawer's
-   select joins that class. `appearance: none` retires the chrome, the arrow is
-   drawn from the two 45-degree gradients in `--text-disabled` - the same
-   drawing and the same token the drawer had - and `color-scheme: dark` is what
-   makes the *popup* dark as well (the option list is the platform's own widget
-   and no rule of ours reaches it). */
+   select joins that class. `appearance: none` retires the chrome, and the arrow
+   is drawn from the two 45-degree gradients in `--text-disabled` - the same
+   drawing and the same token the drawer had. The *popup* is the platform's own
+   widget and no rule of ours reaches it, so it is the token roots' `color-scheme`
+   that decides it, in the appearance the page is painted in. */
   .form-select {
     appearance: none;
     -webkit-appearance: none;
-    color-scheme: dark;
     cursor: pointer;
     padding-right: 30px;
     background-image:
