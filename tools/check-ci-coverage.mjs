@@ -215,7 +215,12 @@ const REGISTER = Object.freeze([
     reason: "debt",
     detail: "measured 4 findings (3 out_of_scope_reference, 1 read_before_declaration) over 731 files at HEAD",
   },
-  { script: "lint:eslint", reason: "debt", detail: "measured 11 errors in dialogue-web/src at HEAD" },
+  {
+    script: "lint:eslint",
+    reason: "debt",
+    detail:
+      "measured 2 errors in dialogue-web/src at HEAD, both on one row's pointer-wide select gesture; 0c129f89, 45fdf829, cb47d0f4 and 3f324b38 cleared the other 60 (the register said 11 when the tree carried 62)",
+  },
   {
     script: "check:sandbox-acceptance",
     reason: "arguments",
