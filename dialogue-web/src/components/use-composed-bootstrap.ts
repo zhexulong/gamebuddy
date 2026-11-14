@@ -8,6 +8,7 @@ import {
   createReferencePipelineApi,
 } from "../reference-pipeline-api";
 import {
+  type PendingSubmission,
   ReferencePipelineSessionError,
   applyStatus,
   createReferencePipelineSession,
@@ -74,8 +75,8 @@ export type ComposedBootstrap = Readonly<{
   cancelledRef: RefObject<boolean>;
   streamLiveRef: RefObject<boolean>;
   streamFailedRef: RefObject<boolean>;
-  pollFailure: boolean;
-  setPollFailure: Dispatch<SetStateAction<boolean>>;
+  pollFailure: PendingSubmission | null;
+  setPollFailure: Dispatch<SetStateAction<PendingSubmission | null>>;
   startPolling: () => void;
 }>;
 
@@ -98,10 +99,10 @@ export function useComposedBootstrap(
   // reconnects, so a flapping stream cannot starve the fallback of a window.
   const streamLiveRef = useRef(false);
   const streamFailedRef = useRef(false);
-  // Set when the fallback poll spends its whole budget without an authoritative
-  // settlement: the pending record is then cleared and this line says the turn
-  // failed rather than silently leaving the composer disabled.
-  const [pollFailure, setPollFailure] = useState(false);
+  // The pending record the fallback poll spent without an authoritative settlement, or null. The
+  // poll publishes WHICH submission went unanswered, not that something did: the shell hands that
+  // press's paragraph back to the field, and a flag could not tell it which words those were.
+  const [pollFailure, setPollFailure] = useState<PendingSubmission | null>(null);
 
   const commit = useCallback((next: ViewState): void => {
     viewRef.current = next;
@@ -196,6 +197,7 @@ export function useComposedBootstrap(
         pollActiveRef.current = false;
         return;
       }
+      const pending = current.session.pending;
       // The stream is the live channel and this poll is only its fallback, so a
       // hop costs nothing while the stream is open and has not failed for this
       // turn: the authoritative reread it would perform is the stream's own job.
@@ -212,12 +214,12 @@ export function useComposedBootstrap(
         pollActiveRef.current = false;
         // No authoritative settlement arrived inside the budget. Drop the
         // content-free pending record so the composer - and Stop, for a turn the
-        // snapshot still marks cancellable - work again, and report the failure.
+        // snapshot still marks cancellable - work again, and hand the record to the
+        // shell: it is the one fact that says which submission's outcome is unknown.
         commit({ ...current, session: current.session.withPending(null) });
-        setPollFailure(true);
+        setPollFailure(pending);
         return;
       }
-      const pending = current.session.pending;
       try {
         const { root, draft } = await resolvePollDraft();
         let session = current.session.applySnapshot(root.chat);

@@ -402,7 +402,10 @@ test("sending shows the player's text immediately with a pending marker, then co
     });
   });
   await page.route("**/api/tavern/v1/message-submission-status", (route) =>
-    route.fulfill(jsonOk({ apiVersion: 1, disposition: "terminal" })),
+    // The status is the same Host's answer as `/state`: nothing has settled while the submit is held,
+    // so the submission is pending until the turn it started is in the snapshot. An always-terminal
+    // fixture contradicts itself once the client asks during the press rather than after it.
+    route.fulfill(jsonOk({ apiVersion: 1, disposition: submitted ? "terminal" : "pending" })),
   );
 
   await page.goto(`/#profile=composed-reference-game&boot=${token}`);

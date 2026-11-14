@@ -370,6 +370,13 @@ test("a healthy event stream suspends the fallback poll, and a stream that fails
  * The fixture holds the turn running and keeps answering the submission status
  * as non-terminal, so only the budget can end the poll. The clock is
  * virtualized, because the subject is the budget's shape, not 130 real seconds.
+ *
+ * What the budget ends the wait WITH is `chatRequestUnconfirmed`, not the
+ * failure sentence: the Host never said this turn failed - it is still running as
+ * far as the Host has said anything - so the surface states the one fact it has
+ * (it could not find out) and names the evidence the player can look at. The reply
+ * sentence was the same sentence a real failure earns, which made two opposite
+ * facts one sentence.
  */
 test("a turn that never settles ends the poll with the composer usable and the failure reported", async ({ page }) => {
   test.setTimeout(120_000);
@@ -453,10 +460,12 @@ test("a turn that never settles ends the poll with the composer usable and the f
     await page.clock.runFor(1_000);
     await page.waitForTimeout(10);
   }
-  // Past the budget: the pending record is cleared, the failure is reported, and
-  // the player can try again. The budget itself must outlast the Host's 120 s
-  // ceiling, or the client would abandon a turn the Host still believes runs.
+  // Past the budget: the pending record is cleared, the unconfirmed outcome is reported - not the
+  // reply-failure sentence, which no fact on this Host supports - and the player can try again. The
+  // budget itself must outlast the Host's 120 s ceiling, or the client would abandon a turn the Host
+  // still believes runs.
   await expect(composer).toBeEnabled();
-  await expect(chatSurface).toContainText("The reply failed. You can try again.");
+  await expect(chatSurface).toContainText("GameBuddy could not confirm that your last request arrived.");
+  await expect(chatSurface).not.toContainText("The reply failed.");
   expect(statusReads, "the poll budget outlasts the Host's 120 s ceiling").toBeGreaterThanOrEqual(121);
 });

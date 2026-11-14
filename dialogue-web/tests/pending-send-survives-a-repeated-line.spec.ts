@@ -115,7 +115,11 @@ test("a send of a phrase already in the transcript keeps its pending line until 
     });
   });
   await page.route("**/api/tavern/v1/message-submission-status", (route) =>
-    route.fulfill(jsonOk({ apiVersion: 1, disposition: "terminal" })),
+    // The status is the same Host's answer as `/state`: while the submit is still held nothing has
+    // settled, so the submission is pending; the terminal disposition is what it reports once the turn
+    // it started is in the snapshot. (An always-terminal fixture asked the client to clear a
+    // submission whose row its own read could not see yet - a Host that contradicts itself.)
+    route.fulfill(jsonOk({ apiVersion: 1, disposition: submitted ? "terminal" : "pending" })),
   );
 
   await page.goto(`/#profile=composed-reference-game&boot=${token}`);

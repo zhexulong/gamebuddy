@@ -281,6 +281,26 @@ export function ComposedReferenceGameApp() {
   const eventStreamEpoch =
     view.kind === "ready" ? `${view.session.snapshot.eventStream?.epoch ?? ""}#${mountedChatRevision}` : undefined;
 
+  /**
+   * The paragraph an unanswered submission still owed the player.
+   *
+   * When the fallback poll spends its budget without a settlement it clears the pending record, and
+   * the sending line goes with it - which is right, that line was the claim the record made. The
+   * words inside it are the player's and nothing else holds them: the field was cleared at the
+   * press. They come back here, keyed on the record the poll actually spent (so a regenerate's
+   * unanswered request never returns a paragraph that was not its own), and only into an empty
+   * field - a player who started writing again owns it now.
+   */
+  useEffect(() => {
+    if (pollFailure === null) return;
+    const held = optimistic;
+    if (held === null || held.idempotencyKey !== pollFailure.idempotencyKey) return;
+    setOptimistic(null);
+    if (inputTextRef.current.length > 0) return;
+    setInputText(held.text);
+    inputTextRef.current = held.text;
+  }, [pollFailure, optimistic]);
+
   useEffect(() => {
     if (view.kind !== "ready" || view.session.snapshot.eventStream === null) return;
     let disposed = false;
@@ -532,6 +552,15 @@ export function ComposedReferenceGameApp() {
    * starting a poll that is dead on its first tick; a mutation that starts no
    * turn (swipe) publishes nothing and polls nothing.
    *
+   * The poll is started here, at the publication, and not by the callers after
+   * their wire call returns. A mutation's answer is one of the things that can
+   * simply never arrive - a request left open, a proxy that never closes - and
+   * the poll is the only reader that can resolve the record beside
+   * `chat.submission_status`. Started after the answer, it never ran for exactly
+   * the submission that needed it: the record stayed set, so the field stayed
+   * locked and the action slot stayed a spinner, with no Send, no Stop and no
+   * sentence, for as long as the tab lived.
+   *
    * Returns null - having committed the rejected projection, or having found no
    * available `chat.submit` - and the caller must then send nothing.
    */
@@ -545,6 +574,9 @@ export function ComposedReferenceGameApp() {
       // rather than in the handler because this is the seam both turn-starting mutations share - send and
       // regenerate - so neither can leave a sentence about an attempt it already superseded on screen.
       setSendFailure(null);
+      // The last poll failure described the last attempt too, and this attempt is the answer to it.
+      setPollFailure(null);
+      startPolling();
       return pending;
     } catch (error) {
       commit(problemView(error, messages(current.locale)));
@@ -578,17 +610,14 @@ export function ComposedReferenceGameApp() {
    *     that can say what happened, and it spends the record when the turn settles.
    *
    * Send and regenerate publish the same record through the same seam (`beginTurnMutation`), so they
-   * resolve it through the same one.
+   * resolve it through the same one, and that seam is also where the poll that resolves it starts.
    *
    * Read from `viewRef` rather than from the caller's own view: this runs after the mutation's await
    * (and, for regenerate, after its reread), so the view the caller captured is no longer the view
    * the record lives in.
    */
   const settleFailedTurnMutation = (error: unknown): void => {
-    if (!hostAnswered(error)) {
-      startPolling();
-      return;
-    }
+    if (!hostAnswered(error)) return;
     const latest = viewRef.current;
     if (latest.kind === "ready" && latest.session.pending !== null)
       commit({ ...latest, session: latest.session.withPending(null) });
@@ -616,7 +645,6 @@ export function ComposedReferenceGameApp() {
         submittedAfterRows: current.session.snapshot.chat?.transcript.length ?? 0,
       }),
     );
-    setPollFailure(false);
     setInputText("");
     inputTextRef.current = "";
     // Sending clears the field, and the empty field is the new seed: the
@@ -674,11 +702,11 @@ export function ComposedReferenceGameApp() {
       // earns, and its `detail` is what a one-line notice has room for. The read that leaves the chat unreadable
       // is a different failure, and that path still commits the problem view.
       setSendFailure(problemView(error, messages(current.locale)).detail);
-      // An answered refusal costs the record this send published; an unanswered attempt keeps it.
+      // An answered refusal costs the record this send published; an unanswered attempt keeps it, and
+      // the poll that started with the record is what decides what becomes of it.
       settleFailedTurnMutation(error);
       return;
     }
-    startPolling();
   };
 
   /**
@@ -960,9 +988,8 @@ export function ComposedReferenceGameApp() {
       handle: messageHandle,
       // Regeneration starts a real turn, so it begins the way a send does: only while the profile
       // offers an available `chat.submit` (one turn at a time) and under a published pending record.
-      // That record is what makes the fallback poll live; without it the poll this handler starts
-      // dies on its first tick (nothing is pending), and on a dropped event stream the transcript
-      // never leaves the pre-regenerate variant.
+      // That record is what makes the fallback poll live: `beginTurnMutation` starts it at the
+      // publication, so a regenerate whose answer never arrives is still resolved by it.
       before: (current) => {
         if (beginTurnMutation(idempotencyKey, current) === null) return false;
         // The turn-key discipline is `handleSend`'s, word for word, and it is here for the same
@@ -985,12 +1012,10 @@ export function ComposedReferenceGameApp() {
         return accepted;
       },
     });
-    if (outcome.kind === "landed") {
-      startPolling();
-    } else if (outcome.kind === "failed") {
+    if (outcome.kind === "failed") {
       // After the envelope's own reread, so the record's fate is decided against the view that read
       // left behind: a refusal spends the record this regenerate published, and an unanswered
-      // attempt keeps it and hands it to the poll.
+      // attempt keeps it for the poll that is already reading it.
       settleFailedTurnMutation(outcome.error);
     }
   };
@@ -1463,8 +1488,8 @@ export function ComposedReferenceGameApp() {
                   pending={chatMutation}
                   uiState={chatUIState}
                   notice={
-                    pollFailure
-                      ? labels().chatFailed
+                    pollFailure !== null
+                      ? labels().chatRequestUnconfirmed
                       : (streamNotice ??
                         sendFailure ??
                         messageMutationNotice ??

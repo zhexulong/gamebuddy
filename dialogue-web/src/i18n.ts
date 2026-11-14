@@ -251,6 +251,15 @@ const en = {
   chatStopped: "Reply stopped. You can send another message.",
   chatFailed: "The reply failed. You can try again.",
   /**
+   * The fallback poll spent its budget without finding out what became of the request it was holding
+   * (`use-composed-bootstrap`). That is neither a failure nor a success, and saying either would be
+   * prose the Host never said: the request may have arrived and still be running. The second half is
+   * the action the player actually has - the conversation above is the evidence, so look at it before
+   * sending the same thing a second time.
+   */
+  chatRequestUnconfirmed:
+    "GameBuddy could not confirm that your last request arrived. It may still be running - check the conversation before trying again.",
+  /**
    * The Chat arrival read that could not finish. It says what the screen is (the last conversation
    * the Host confirmed), never asks the player to retry: every arrival is another read.
    */
@@ -1464,6 +1473,8 @@ const zh: Messages = {
   stop: "停止生成",
   chatStopped: "回复已停止。你可以发送另一条消息。",
   chatFailed: "回复失败。你可以重试。",
+  // 最后一次请求的结果未知（英文目录同名字段的说明）：既不是失败也不是成功，对话本身就是证据。
+  chatRequestUnconfirmed: "GameBuddy 没能确认上一次请求是否送到。它可能仍在处理中，再试之前请先看一眼对话。",
   // 聊天页面到达时的读取未能完成。句子只说屏幕上是什么（宿主最后一次确认的对话），不请玩家重试：每次到达就是一次新的读取。
   chatArrivalNotice: "GameBuddy 刚才未能完成这次对话同步。屏幕上显示的消息和草稿是它最后一次确认的内容。",
   // 回合失败的四种情况，见英文目录同名字段的说明。未知代码回退到 chatFailed。
