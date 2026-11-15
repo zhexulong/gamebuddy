@@ -2841,6 +2841,43 @@ type RouteDescriptor = Readonly<{
   success: Readonly<{ status: number; contentType: string; schema: TSchema }>;
 }>;
 const route = <T extends RouteDescriptor>(descriptor: T) => Object.freeze(descriptor);
+/**
+ * One companion sub-resource's two routes: the read, and the CSRF-bound write CASed on the revision that read
+ * projected, both addressed by the opaque handle the roster projected. The directive and the example dialogues are
+ * that pair twice - same addressing, same CAS, same access - so the pair is declared once here and instantiated
+ * with the suffix and the two schemas that are the whole difference, rather than written out in the table twice.
+ */
+const companionSubResourceRoutes = (name: "voice" | "examples", schema: TSchema, updateSchema: TSchema) => [
+  route({
+    routeId: `character.${name}.read`,
+    method: "GET",
+    path: `/api/tavern/v1/companions/:companionHandle/${name}`,
+    operationId: `character.${name}.read`,
+    auth: "browser_session",
+    origin: "same-origin",
+    csrf: "none",
+    idempotency: "none",
+    headers: EmptyHeaders,
+    pathParams: CompanionPath,
+    query: noQuery,
+    success: { status: 200, contentType: "application/json", schema },
+  }),
+  route({
+    routeId: `character.${name}.update`,
+    method: "PUT",
+    path: `/api/tavern/v1/companions/:companionHandle/${name}`,
+    operationId: `character.${name}.update`,
+    auth: "browser_session",
+    origin: "same-origin",
+    csrf: "required",
+    idempotency: "none",
+    headers: CsrfHeaders,
+    pathParams: CompanionPath,
+    query: noQuery,
+    request: updateSchema,
+    success: { status: 200, contentType: "application/json", schema },
+  }),
+];
 const RouteDescriptors = Object.freeze([
   route({
     routeId: "bootstrap",
@@ -3758,64 +3795,8 @@ const RouteDescriptors = Object.freeze([
     request: CreateCompanionCommandV1Schema,
     success: { status: 200, contentType: "application/json", schema: CompanionDetailV1Schema },
   }),
-  route({
-    routeId: "character.voice.read",
-    method: "GET",
-    path: "/api/tavern/v1/companions/:companionHandle/voice",
-    operationId: "character.voice.read",
-    auth: "browser_session",
-    origin: "same-origin",
-    csrf: "none",
-    idempotency: "none",
-    headers: EmptyHeaders,
-    pathParams: CompanionPath,
-    query: noQuery,
-    success: { status: 200, contentType: "application/json", schema: CompanionVoiceV1Schema },
-  }),
-  route({
-    routeId: "character.voice.update",
-    method: "PUT",
-    path: "/api/tavern/v1/companions/:companionHandle/voice",
-    operationId: "character.voice.update",
-    auth: "browser_session",
-    origin: "same-origin",
-    csrf: "required",
-    idempotency: "none",
-    headers: CsrfHeaders,
-    pathParams: CompanionPath,
-    query: noQuery,
-    request: UpdateCompanionVoiceCommandV1Schema,
-    success: { status: 200, contentType: "application/json", schema: CompanionVoiceV1Schema },
-  }),
-  route({
-    routeId: "character.examples.read",
-    method: "GET",
-    path: "/api/tavern/v1/companions/:companionHandle/examples",
-    operationId: "character.examples.read",
-    auth: "browser_session",
-    origin: "same-origin",
-    csrf: "none",
-    idempotency: "none",
-    headers: EmptyHeaders,
-    pathParams: CompanionPath,
-    query: noQuery,
-    success: { status: 200, contentType: "application/json", schema: CompanionExamplesV1Schema },
-  }),
-  route({
-    routeId: "character.examples.update",
-    method: "PUT",
-    path: "/api/tavern/v1/companions/:companionHandle/examples",
-    operationId: "character.examples.update",
-    auth: "browser_session",
-    origin: "same-origin",
-    csrf: "required",
-    idempotency: "none",
-    headers: CsrfHeaders,
-    pathParams: CompanionPath,
-    query: noQuery,
-    request: UpdateCompanionExamplesCommandV1Schema,
-    success: { status: 200, contentType: "application/json", schema: CompanionExamplesV1Schema },
-  }),
+  ...companionSubResourceRoutes("voice", CompanionVoiceV1Schema, UpdateCompanionVoiceCommandV1Schema),
+  ...companionSubResourceRoutes("examples", CompanionExamplesV1Schema, UpdateCompanionExamplesCommandV1Schema),
   route({
     routeId: "character.import.stage",
     method: "POST",
