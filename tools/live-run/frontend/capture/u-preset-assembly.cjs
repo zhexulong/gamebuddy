@@ -22,14 +22,15 @@
 // and closes with one `unobserved:<fact>:<reason>` line per fact that had no value to read. See the run's own
 // facts file for which of the two shapes this run produced.
 //
-// READ A RED `entries-total` HERE AS "NO PRODUCER", NOT "THE PANEL IS WRONG". No Host route answers that read
-// in this tree: the producer (`host/src/preset-assembly-surface.ts`) and the store behind it
-// (`createPresetStore`) are reachable from tests only, and the browser mirror's route is served by nothing. A
-// real Host therefore answers 404 and the panel settles on its own read-failure line — which is the honest
-// sentence for a readout it could not read. The FAIL says the assembled facts were not there to compare, so
-// the two claims below (entry count = the document's `prompts.length`, every unfilled marker a name the
-// document carries) were never exercised. It goes green by itself, with no change here, on the day a route
-// serves the readout.
+// THE TWO CLAIMS ARE UNOBSERVED ON THIS RUN, BY THE FIXTURE'S OWN DESIGN, NOT BECAUSE NOTHING WAS SERVED.
+// The readout's one read is `GET /api/tavern/v1/presets` (`PRESET_ASSEMBLY_ROUTE` in
+// `dialogue-web/src/preset-assembly-surface.ts`), and the launch phase seeds and binds this run's own preset
+// through the product's store (`lib/preset-seed.mjs`), so the Host answers it: the run of 2026-11-15 read
+// `status=200 parsed=true` and the panel painted one row. That row is the FIXTURE (`lib/preset-fixture.mjs`
+// `R1 preset claim fixture`), and no document under `assets/tavern/presets/` carries that name - so
+// `entries-total` and `unfilled-carried-by-document` are UNOBSERVED here (a side that is not there is not a
+// pass), which is the outcome `preset-fixture.mjs` documents for this driver. The panel is not the thing
+// under suspicion: it prints the entry count and the markers of the document it was served.
 //
 // HOW THE SURFACE IS REACHED, AND WHERE IT RETURNS TO. `cc53d510` (`3e80c552` before it) took `预设装配` out
 // of the app bar: it is not a place a player goes on purpose, so it is now ONE disclosure inside Settings —
