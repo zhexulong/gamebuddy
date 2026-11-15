@@ -174,6 +174,11 @@ function projectInstanceStatus(
     case "pending":
     case "awaiting_attestation":
       return "launching";
+    case "attested":
+      // A GameBuddy-launched Player Host whose own advertisement correlated. This is the
+      // `running` the whole surface hangs off, and it was unreachable until the coordinator
+      // stopped overriding this slot with an attestation state it never left.
+      return "running";
     case "authenticated":
       return "running";
     case "unavailable":

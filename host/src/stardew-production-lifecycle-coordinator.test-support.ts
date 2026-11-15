@@ -1479,8 +1479,8 @@ export /**
  * Explicit-endgame lifecycle setup for the close/create interaction tests below:
  * activate, launch and attest the Player Host, bind the semantic attachment
  * through the cabin confirmation, then drive the successful explicit endgame.
- * The endgame terminates the world but leaves `activationState` at
- * `awaiting_player_host_attestation` and the exact owner in place, which is why
+ * The endgame terminates the world but leaves the lifecycle state at
+ * `player_host_attested` and the exact owner in place, which is why
  * a create is still admissible afterwards.
  */
 async function startEndgameLifecycle(fixture: Awaited<ReturnType<typeof createFixture>>): Promise<void> {
