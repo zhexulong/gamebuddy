@@ -293,6 +293,93 @@ test("the production settlement path advances the owner to contained and release
   assert.equal(record.aiClientState, "contained");
 });
 
+/**
+ * The durable blocker that makes `launch_quarantined` a declared trapped terminal.
+ *
+ * `STARDEW_GAME_LIFECYCLE_TRAPPED_TERMINALS` explains that state by naming a fact about THIS engine -
+ * "settlement ... advances the record from a non-terminal predecessor (its first step requires
+ * `reserved`)" - and that claim is what makes the missing egress a missing capability rather than a
+ * missing button. A comment cannot keep it true, so it is driven here against the real composition:
+ * the exact settlement path a discard would reuse is asked to settle an attempt a quarantine already
+ * claimed, and the engine refuses it at its first transition with the pointer still bound and no byte
+ * of the record changed.
+ *
+ * The two readings that would let such an operation exist are therefore red here rather than in prose:
+ * an owner in `quarantined` is not an accepted predecessor of `arm` - nor of any other transition in
+ * the engine - and the registration release therefore never runs. When a durable egress out of
+ * `quarantined` is added, this test goes red, and it is replaced by that operation's own two-direction
+ * proof together with the removal of the trapped entry: the two are one unit, not two.
+ */
+test("only a `reserved` predecessor can be settled: a quarantined attempt is refused at its first transition and keeps the pointer bound", async (t) => {
+  const prepareAttempt = async () => {
+    const harness = createHarness();
+    const root = await createRoot();
+    await publishStardewInstallationRegistration(root, null, {
+      schema: "gamebuddy-stardew-installation-registration/v1",
+      binding: { rootLayoutVersion: 1 },
+      revision: 1,
+      state: "ready",
+      locator: "C:\\Games\\Stardew Valley",
+      activeAttempt: null,
+    });
+    const claim = harness.composition.broker
+      .confirm({
+        playerId: "player-1",
+        companionId: "companion-1",
+        browserSessionId: "browser-1",
+        expiresAtMs: 5_000,
+      })
+      .consume("browser-1");
+    const owner = await harness.testCore.reserveOwnedPlayerHostBootstrapForActivation(root, claim);
+    return { harness, root, owner };
+  };
+  const recordOf = async (root: string) =>
+    JSON.parse(await readFile(ownerPath(root), "utf8")) as Record<string, unknown>;
+
+  // The FALSIFIER reading, and the reason the refusal below is a fact about the predecessor instead
+  // of about the call: the same settlement, on an attempt a quarantine has not claimed, advances the
+  // record to `contained` and releases the pointer.
+  const reserved = await prepareAttempt();
+  await reserved.harness.testCore.settleOwnedPlayerHostRegistrationForTesting(reserved.owner, [
+    "playerHost",
+    "aiClient",
+  ]);
+  assert.equal((await recordOf(reserved.root)).state, "contained");
+  assert.equal((await readStardewInstallationRegistration(reserved.root))?.activeAttempt, null);
+
+  // The property. `launch_quarantined` is the lifecycle's name for this durable attempt, and the
+  // settlement path a discard would reuse cannot move it.
+  const quarantined = await prepareAttempt();
+  await quarantined.harness.testCore.quarantineOwnedPlayerHostOwner(quarantined.owner);
+  const before = await recordOf(quarantined.root);
+  assert.equal(before.state, "quarantined");
+  assert.deepEqual((await readStardewInstallationRegistration(quarantined.root))?.activeAttempt, {
+    bootstrapCorrelation: "bootstrap-1",
+  });
+
+  await assert.rejects(
+    quarantined.harness.testCore.settleOwnedPlayerHostRegistrationForTesting(quarantined.owner, [
+      "playerHost",
+      "aiClient",
+    ]),
+    /stardew_bootstrap_owner_transition_invalid/,
+    "the settlement's first transition (`arm`) requires the `reserved` predecessor a quarantine consumed",
+  );
+
+  // A refusal that released, mutated or half-advanced anything would be the same trap with a
+  // quieter failure mode: the attempt must be exactly where the quarantine left it, pointer included.
+  const after = await recordOf(quarantined.root);
+  assert.equal(after.state, "quarantined");
+  assert.equal(after.guardianState, "quarantined");
+  assert.equal(after.ownerRecordRevision, before.ownerRecordRevision);
+  assert.deepEqual((await readStardewInstallationRegistration(quarantined.root))?.activeAttempt, {
+    bootstrapCorrelation: "bootstrap-1",
+  });
+  t.diagnostic(
+    `reserved => contained, pointer released; quarantined => ${String(after.state)} at revision ` +
+      `${String(after.ownerRecordRevision)}, pointer still bound to ${String(JSON.stringify((await readStardewInstallationRegistration(quarantined.root))?.activeAttempt))}`,
+  );
+});
 test("settlement rejects a terminal owner replacement unless its exact fence and revision are restored", async () => {
   // The four mutations the release rule must reject: any change to the immutable
   // fence (player, companion, guardian) or to the exact terminal revision means
