@@ -5,9 +5,9 @@ import type { CompanionLiveSourceEvidenceSink } from "./companion-live-source-at
 import { isRefusedTurnEvent } from "./companion-turn-refusal.js";
 import {
   CompanionEventPump,
-  TURN_PRODUCTION,
   TURN_SUPPRESSION,
   turnAccountLine,
+  turnProductionOf,
   type CompanionTurnOutcome,
   type DeliveryDisposition,
   type PendingBatch,
@@ -467,6 +467,11 @@ export class CompanionLoop {
         }
         if (assistantFacts.hasToolCall) producedToolCall = true;
         if (assistantFacts.failed) assistantFailed = true;
+        // THE UNIT OF SILENCE IS THIS RECORD. The pump's counters are keyed by the DELIVERED BATCH, so a batch that said
+        // a line and then worked without one is `worked` and its silence disappears - a batch carrying any text can never
+        // be tool-only (`round60`: 169 assistant turns, 36 of them silent, every counter `0`). A message is a turn in
+        // Pi's own record, so it is counted the moment it lands, in the same member vocabulary the batch uses.
+        this.#pump.noteAssistantTurn(assistantFacts);
       };
       /**
        * Open this turn's presentation lineage and its listeners, at the moment Pi consumed the exact batch.
@@ -750,13 +755,7 @@ export class CompanionLoop {
       // with "did the work and said nothing about it". `producedText` and not `presentedTextPieces` is the second half: a
       // part the surface withheld is a delivery gap with its own accounting (`delivery_mismatch`, `suppressed{...}`), and
       // reading it as her silence would name a defect in the pipeline as a choice she made.
-      this.pump.turnProduction = producedWork
-        ? producedText
-          ? TURN_PRODUCTION.worked
-          : TURN_PRODUCTION.workedSilently
-        : producedText
-          ? TURN_PRODUCTION.spoke
-          : TURN_PRODUCTION.saidNothing;
+      this.pump.turnProduction = turnProductionOf(producedWork, producedText);
       // One line per turn that had text to deliver: THREE populations, each counted where it was measured - the parts Pi's
       // stream produced, the parts the projection reported as presented, and the parts it named as withheld with a reason.
       // The record carries no residual: a stored difference reads like a fourth measurement and, summed across turns with

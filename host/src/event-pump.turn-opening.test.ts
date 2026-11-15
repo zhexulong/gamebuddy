@@ -7,6 +7,11 @@ import test from "node:test";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import ts from "typescript";
 import {
+  ASSISTANT_TURNS_EXAMINED,
+  ASSISTANT_TURNS_TOOL_ONLY,
+  ASSISTANT_TURNS_WITH_TEXT,
+  assistantTurnsToolOnly,
+  assistantTurnsWithText,
   AUTO_OBSERVE_AGED_TURNS,
   AUTO_OBSERVE_ON_STALE,
   AUTO_OBSERVE_UNAVAILABLE,
@@ -21,10 +26,12 @@ import {
   HOST_MINTED_FACT_SOURCE,
   MAX_DELIVERED_FACT_IDENTITIES,
   type PendingBatch,
+  PER_DELIVERED_BATCH,
   SILENT_SETTLED_OPENINGS,
   TURN_OPENING,
   TURN_OPENINGS,
   TURN_PRODUCTION,
+  TURN_PRODUCTIONS,
   TURN_SETTLED_SILENT,
   TURN_SETTLED_WITH_EXECUTION_IN_FLIGHT,
   TURN_SUPPRESSION,
@@ -648,14 +655,20 @@ function parseCountsAndProducers(inner: string): Readonly<{
   return Object.freeze({ counts, producers });
 }
 
-/** One `label N {counts}` segment, or one `label N` segment with no histogram. */
+/**
+ * One `label N {counts}` segment, or one `label N` segment with no histogram.
+ *
+ * The label is whatever the printer wrote, including a colon or a hyphen: `per delivered batch: turns opened` carries the
+ * unit in its own name, and `tool-only` is hyphenated on purpose. The ordered list asserted below is what pins the segments
+ * - a character class here would only pin the alphabet.
+ */
 function parseSegment(segment: string): Readonly<{
   label: string;
   total: number;
   counts: Record<string, number>;
   producers: Record<string, Record<string, number>>;
 }> {
-  const matched = /^([\w ]+) (\d+)(?: \{(.*)\})?$/u.exec(segment);
+  const matched = /^(.+?) (\d+)(?: \{(.*)\})?$/u.exec(segment);
   assert.ok(matched !== null, `the account line carries a segment this reader cannot parse: ${segment}`);
   const label = matched[1];
   const total = matched[2];
@@ -671,13 +684,20 @@ function parseSegment(segment: string): Readonly<{
  * The account line READ BACK, so the assertion is the inverse of the printer rather than a copy of its output.
  *
  * A hand-written expected string can only pin what its author remembered; this reader refuses a line that lost a
- * segment, so a printer that silently dropped the opener histogram fails here by name. The seven labels are the things a
- * run's account has to answer: how many turns opened and why, how many flushes were suppressed and why, how many were
- * examined, how many turns closed on speech alone and of which shape, how many settled with work and no word and what
+ * segment, so a printer that silently dropped the opener histogram fails here by name. The labels are the things a run's
+ * account has to answer, IN THE ORDER THE LINE PRINTS THEM - the assistant turns Pi wrote, the two readings derived from
+ * them, and then the delivered batches: how many turns opened and why, how many flushes were suppressed and why, how many
+ * were examined, how many turns closed on speech alone and of which shape, how many settled with work and no word and what
  * opened them, how many of those settlements had her own execution still running, and what the stale path did instead of a
  * turn.
  */
 function readTurnAccountLine(line: string): Readonly<{
+  assistantTurns: Readonly<{
+    examined: number;
+    counts: Record<string, number>;
+    withText: number;
+    toolOnly: number;
+  }>;
   opened: number;
   byReason: Record<string, number>;
   /** The producers printed inside each opener's braces: the reasons a FACT opened, and which entrance it came in by. */
@@ -699,7 +719,10 @@ function readTurnAccountLine(line: string): Readonly<{
 }> {
   const segments = line.split(SEGMENT_SEPARATOR).map(parseSegment);
   const labels = [
-    "turns opened",
+    ASSISTANT_TURNS_EXAMINED,
+    ASSISTANT_TURNS_WITH_TEXT,
+    ASSISTANT_TURNS_TOOL_ONLY,
+    `${PER_DELIVERED_BATCH} turns opened`,
     "suppressed",
     "flushes examined",
     TURN_WITHOUT_ACTION,
@@ -715,6 +738,9 @@ function readTurnAccountLine(line: string): Readonly<{
     `the account line's segments are ${labels.join(", ")}: a missing one is a reading nobody can recover`,
   );
   const [
+    assistantSegment,
+    withTextSegment,
+    toolOnlySegment,
     openedSegment,
     suppressedSegment,
     examinedSegment,
@@ -734,8 +760,17 @@ function readTurnAccountLine(line: string): Readonly<{
     ReturnType<typeof parseSegment>,
     ReturnType<typeof parseSegment>,
     ReturnType<typeof parseSegment>,
+    ReturnType<typeof parseSegment>,
+    ReturnType<typeof parseSegment>,
+    ReturnType<typeof parseSegment>,
   ];
   return Object.freeze({
+    assistantTurns: Object.freeze({
+      examined: assistantSegment.total,
+      counts: assistantSegment.counts,
+      withText: withTextSegment.total,
+      toolOnly: toolOnlySegment.total,
+    }),
     opened: openedSegment.total,
     byReason: openedSegment.counts,
     openedProducers: openedSegment.producers,
@@ -767,6 +802,13 @@ function silentSettledCounts(overrides: Readonly<Record<string, number>>): Recor
 function emptyTurnShapeCounts(overrides: Readonly<Record<string, number>>): Record<string, number> {
   const counts: Record<string, number> = {};
   for (const shape of emptyTurnShapes()) counts[shape] = overrides[shape] ?? 0;
+  return counts;
+}
+
+/** Every production member, with the given ones counted: the population is the pump's own closed list. */
+function assistantProductionCounts(overrides: Readonly<Record<string, number>>): Record<TurnProduction, number> {
+  const counts = {} as Record<TurnProduction, number>;
+  for (const production of TURN_PRODUCTIONS) counts[production] = overrides[production] ?? 0;
   return counts;
 }
 
@@ -841,6 +883,16 @@ test("the account line reads back into the account it names", () => {
       }),
     ),
     examined: 24,
+    assistantTurns: Object.freeze({
+      examined: 6,
+      byProduction: Object.freeze(
+        assistantProductionCounts({
+          [TURN_PRODUCTION.worked]: 2,
+          [TURN_PRODUCTION.workedSilently]: 1,
+          [TURN_PRODUCTION.spoke]: 3,
+        }),
+      ),
+    }),
     emptyTurns: Object.freeze({
       total: 3,
       byShape: Object.freeze(
@@ -891,6 +943,35 @@ test("the account line reads back into the account it names", () => {
   );
   assert.deepEqual(parsed.suppressed.counts, account.suppressed);
   assert.equal(parsed.examined, account.examined);
+  assert.equal(
+    parsed.assistantTurns.examined,
+    account.assistantTurns.examined,
+    "the assistant-turn population reads back: the unit Pi writes, not the batch the pump counts in",
+  );
+  assert.deepEqual(parsed.assistantTurns.counts, account.assistantTurns.byProduction);
+  assert.equal(
+    parsed.assistantTurns.examined,
+    Object.values(parsed.assistantTurns.counts).reduce((total, count) => total + count, 0),
+    "the assistant-turn total is the SUM of its members, so an assistant turn cannot be counted and then disappear",
+  );
+  assert.equal(
+    parsed.assistantTurns.withText,
+    (parsed.assistantTurns.counts[TURN_PRODUCTION.worked] ?? 0) +
+      (parsed.assistantTurns.counts[TURN_PRODUCTION.spoke] ?? 0),
+    "`with text` is derived from the members beside it, not a second count of the same turns",
+  );
+  assert.equal(
+    parsed.assistantTurns.toolOnly,
+    parsed.assistantTurns.counts[TURN_PRODUCTION.workedSilently] ?? 0,
+    "and `tool-only` is work without text, asked of the same closed list",
+  );
+  assert.equal(
+    parsed.assistantTurns.withText +
+      parsed.assistantTurns.toolOnly +
+      (parsed.assistantTurns.counts[TURN_PRODUCTION.saidNothing] ?? 0),
+    parsed.assistantTurns.examined,
+    "the trio + `said_nothing` IS the population: the three readings cannot be added to the batch group below them",
+  );
   assert.equal(parsed.emptyTurns.total, account.emptyTurns.total);
   assert.deepEqual(parsed.emptyTurns.counts, account.emptyTurns.byShape);
   assert.equal(
@@ -940,6 +1021,10 @@ test("the account line names a member that never fired, in both histograms", () 
     }),
     suppressedByProducer: Object.freeze(producerHistograms(TURN_SUPPRESSIONS)),
     examined: 1,
+    assistantTurns: Object.freeze({
+      examined: 0,
+      byProduction: Object.freeze(assistantProductionCounts({})),
+    }),
     emptyTurns: Object.freeze({ total: 0, byShape: Object.freeze(emptyTurnShapeCounts({})) }),
     silentSettled: Object.freeze({ total: 0, byOpener: Object.freeze(silentSettledCounts({})) }),
     settledWithExecutionInFlight: 0,
@@ -964,6 +1049,11 @@ test("the account line names a member that never fired, in both histograms", () 
     [...SILENT_SETTLED_OPENINGS],
     "the silent openers are derived from the opener list, so the one a turn cannot fall silent on never appears",
   );
+  assert.deepEqual(
+    Object.keys(parsed.assistantTurns.counts),
+    [...TURN_PRODUCTIONS],
+    "the assistant-turn population is the production list itself: a member nobody reached is a declared zero",
+  );
   assert.deepEqual(Object.keys(parsed.suppressed.counts), [...TURN_SUPPRESSIONS]);
   assert.deepEqual(
     Object.keys(parsed.autoObserve.unavailable.counts),
@@ -979,9 +1069,167 @@ test("the account line this repo printed before the change is REFUSED by the rea
     "turns opened 55 · suppressed 0 {observation_restated: 0, world_fact_restated: 0, nothing_pending: 0} · flushes examined 55";
   assert.throws(
     () => readTurnAccountLine(measured),
-    /turns opened, suppressed, flushes examined, turn_closed_without_action, turn_settled_silent, turn_settled_with_execution_in_flight, aged readings, auto_observe_on_stale, auto_observe_unavailable/u,
+    /assistant turns examined, with text, tool-only, per delivered batch: turns opened, suppressed, flushes examined, turn_closed_without_action, turn_settled_silent, turn_settled_with_execution_in_flight, aged readings, auto_observe_on_stale, auto_observe_unavailable/u,
     "a line that cannot say what opened its turns is not an account, and must not read as one",
   );
+});
+
+/* ---------------------------------------------------------------------------------------------------------------- */
+/* Silence in the unit it happens in: one assistant turn, inside whatever batch it landed in.                        */
+/* ---------------------------------------------------------------------------------------------------------------- */
+
+/**
+ * The two units answer different questions, and the same run can only be read if both are on the line.
+ *
+ * <p>
+ * THE MEASUREMENT THIS EXISTS FOR (`round60`, one Game session): **169** assistant records - 84 ended `stop` and all 84
+ * carried a line, 85 ended `tool_use` and 49 of those carried one too, so **133 with text** and **36 tool-only**. The pump
+ * re-segmented the same run into **86** delivered batches: 29 spoke, 57 worked, and `turn_settled_silent` printed **0**
+ * because every one of the 36 silent turns sat inside a `worked` batch - a batch carrying any line cannot be tool-only by
+ * construction (`turnProduction` ORs `producedText` over the whole batch).
+ * </p>
+ * <p>
+ * The replay below is that population, fed in the unit Pi wrote it: the same 169 records, the same one delivered batch
+ * that carried text. It does NOT re-read the session file - that artifact lives outside this worktree - so the provenance of
+ * the numbers is the measurement above, and what this test proves is that the counter reproduces them.
+ * </p>
+ */
+test("assistant turns: round60's 169 records reproduce as 169 examined / 133 with text / 36 tool-only", async () => {
+  const pump = new CompanionEventPump();
+  pump.enqueueFact(readingAt(14, 0, BODY_FREE), FACT_PRODUCER.adapterIngress);
+  pump.enqueueFact(settlementFact("program_settled_plan_r60_replay", WINDOW_AT_MS), FACT_PRODUCER.adapterIngress);
+  // 84 records that only spoke, 49 that acted and spoke, 36 that acted and said nothing.
+  for (let index = 0; index < 84; index += 1) pump.noteAssistantTurn({ hasText: true, hasToolCall: false });
+  for (let index = 0; index < 49; index += 1) pump.noteAssistantTurn({ hasText: true, hasToolCall: true });
+  for (let index = 0; index < 36; index += 1) pump.noteAssistantTurn({ hasText: false, hasToolCall: true });
+  // The batch those records landed in carried a line, so the batch counter reads `worked` - which is the whole defect.
+  await pump.flush(settledSink(pump, TURN_PRODUCTION.worked));
+
+  const account = pump.turnAccount;
+  assert.deepEqual(
+    account.assistantTurns.byProduction,
+    {
+      [TURN_PRODUCTION.worked]: 49,
+      [TURN_PRODUCTION.workedSilently]: 36,
+      [TURN_PRODUCTION.spoke]: 84,
+      [TURN_PRODUCTION.saidNothing]: 0,
+    },
+    "every assistant record is classified once, in the same vocabulary the batch uses",
+  );
+  assert.equal(account.assistantTurns.examined, 169, "the population is the records Pi wrote");
+  assert.equal(assistantTurnsWithText(account.assistantTurns), 133, "133 carried text: 49 acting + 84 narrating");
+  assert.equal(assistantTurnsToolOnly(account.assistantTurns), 36, "and 36 ran a tool and said nothing");
+  assert.equal(
+    account.silentSettled.total,
+    0,
+    "while the batch counter says 0 - both numbers are true, and neither is the other's unit",
+  );
+  const printed = turnAccountLine(account);
+  const parsed = readTurnAccountLine(printed);
+  assert.equal(parsed.assistantTurns.examined, 169);
+  assert.equal(parsed.assistantTurns.withText, 133);
+  assert.equal(parsed.assistantTurns.toolOnly, 36);
+  assert.equal(parsed.silentSettled.total, 0, "and the batch reading is printed beside it under its own unit");
+  assert.ok(
+    printed.startsWith(`${ASSISTANT_TURNS_EXAMINED} 169 {`),
+    `the unit is stated at the head of the line: ${printed}`,
+  );
+  assert.ok(
+    printed.includes(`· ${PER_DELIVERED_BATCH} turns opened 1 {`),
+    `and again at the head of the batch group: ${printed}`,
+  );
+});
+
+/**
+ * THE FALSIFIER: a batch carrying two assistant records, one with a line and one without.
+ *
+ * <p>
+ * This is the case that could not be counted before, in its smallest form. Through the BATCH it is one `worked` turn -
+ * "with text 2, tool-only 0" - because any text in the batch speaks for all of it. Per assistant turn it is one that
+ * carried text and one that ran a tool and said nothing. A counter that fired per batch would give `2 / 0` here and would
+ * have passed the round60 replay above by accident of the batch it landed in.
+ * </p>
+ */
+test("assistant turns: TWO records in one batch read as with text 1 · tool-only 1, not with text 2 · tool-only 0", async () => {
+  const pump = new CompanionEventPump();
+  pump.enqueueFact(readingAt(14, 0, BODY_FREE), FACT_PRODUCER.adapterIngress);
+  pump.enqueueFact(settlementFact("program_settled_plan_two_records", WINDOW_AT_MS), FACT_PRODUCER.adapterIngress);
+  pump.noteAssistantTurn({ hasText: true, hasToolCall: false });
+  pump.noteAssistantTurn({ hasText: false, hasToolCall: true });
+  await pump.flush(settledSink(pump, TURN_PRODUCTION.worked));
+
+  const account = pump.turnAccount;
+  assert.equal(account.opened, 1, "one delivered batch carried both records");
+  assert.equal(assistantTurnsWithText(account.assistantTurns), 1, "the first record carried a line");
+  assert.equal(assistantTurnsToolOnly(account.assistantTurns), 1, "the second ran a tool and said nothing");
+  assert.equal(
+    account.silentSettled.total,
+    0,
+    "the batch reading is what this unit corrects: a batch with any line is never silent, whatever its records did",
+  );
+  assert.equal(
+    account.emptyTurns.total,
+    0,
+    "and it is not `turn_closed_without_action` either: the batch ran a tool, so no batch-level counter sees the silence",
+  );
+});
+
+/**
+ * The same two records the OTHER way round, and both speaking: the counter must follow the records, not the batch.
+ *
+ * Without this, `with text 1 · tool-only 1` above could be a counter that simply split every batch in half.
+ */
+test("assistant turns: two records that both spoke read as with text 2 · tool-only 0", async () => {
+  const pump = new CompanionEventPump();
+  pump.enqueueFact(readingAt(14, 0, BODY_FREE), FACT_PRODUCER.adapterIngress);
+  pump.enqueueFact(settlementFact("program_settled_plan_both_spoke", WINDOW_AT_MS), FACT_PRODUCER.adapterIngress);
+  pump.noteAssistantTurn({ hasText: true, hasToolCall: false });
+  pump.noteAssistantTurn({ hasText: true, hasToolCall: true });
+  await pump.flush(settledSink(pump, TURN_PRODUCTION.worked));
+
+  const account = pump.turnAccount;
+  assert.equal(account.assistantTurns.examined, 2);
+  assert.equal(assistantTurnsWithText(account.assistantTurns), 2);
+  assert.equal(
+    assistantTurnsToolOnly(account.assistantTurns),
+    0,
+    "nothing was silent here, so nothing is counted as silence",
+  );
+});
+
+/**
+ * A message with neither text nor a tool call is counted as `said_nothing`, not dropped.
+ *
+ * It is the member `PROVIDER_EMPTY_COMPLETION` already refuses to bless: a provider that answered with nothing. Dropping
+ * it would make `examined` a population that silently lost a member - `round60`'s "neither 0" is a measurement, and a
+ * measurement has to be able to come out non-zero.
+ */
+test("assistant turns: a record with neither text nor a tool call is `said_nothing`, and the population still adds up", () => {
+  const pump = new CompanionEventPump();
+  pump.noteAssistantTurn({ hasText: false, hasToolCall: false });
+  pump.noteAssistantTurn({ hasText: true, hasToolCall: false });
+
+  const tally = pump.turnAccount.assistantTurns;
+  assert.equal(tally.byProduction[TURN_PRODUCTION.saidNothing], 1);
+  assert.equal(tally.examined, 2);
+  assert.equal(
+    Object.values(tally.byProduction).reduce((total, count) => total + count, 0),
+    tally.examined,
+    "every member is in the population, so an empty message cannot vanish into the difference",
+  );
+});
+
+/**
+ * `clear()` is a session boundary: nothing carries across it, in either unit.
+ */
+test("assistant turns: a cleared pump carries no assistant turn into the next session", () => {
+  const pump = new CompanionEventPump();
+  pump.noteAssistantTurn({ hasText: false, hasToolCall: true });
+  assert.equal(pump.turnAccount.assistantTurns.examined, 1);
+  pump.clear();
+  const tally = pump.turnAccount.assistantTurns;
+  assert.equal(tally.examined, 0);
+  assert.deepEqual(tally.byProduction, assistantProductionCounts({}));
 });
 
 test("the account line that counts its turns but not the reading it aged is REFUSED: a diagnosis needs its numerator", () => {
@@ -1552,29 +1800,29 @@ test("turn_settled_silent: the account line this tree printed before this unit c
 });
 
 /**
- * `9bbadccf`'s `event-pump.ts` - the module BEFORE this unit - emitted and made importable, or `undefined` when that
+ * One revision's `event-pump.ts` - the module BEFORE a unit - emitted and made importable, or `undefined` when that
  * revision is not reachable from this clone.
  *
  * Written outside the repository: `dist-test` is a locked, inventoried artifact, and a stray module in it would be
  * indistinguishable from a half-written build. The relative imports are rewritten against this file's own directory, which
  * is the compiled tree at run time, so the pre-change module imports the SAME collaborators this one does.
  */
-function compilePreChangePump(): string | undefined {
+function compilePreChangePump(revision: string, mustNotCarry: string): string | undefined {
   let source: string;
   try {
-    source = execFileSync("git", ["-C", HOST_ROOT, "show", `${PRE_CHANGE_REVISION}:host/src/event-pump.ts`], {
+    source = execFileSync("git", ["-C", HOST_ROOT, "show", `${revision}:host/src/event-pump.ts`], {
       encoding: "utf8",
       maxBuffer: 8 * 1024 * 1024,
     });
   } catch {
     return undefined;
   }
-  // The pin must BE the pre-change module: if it ever named a tree that already carries this unit, the red proof below
+  // The pin must BE the pre-change module: if it ever named a tree that already carries the unit, the red proof below
   // would pass by agreeing with itself.
   assert.equal(
-    source.includes(TURN_SETTLED_SILENT),
+    source.includes(mustNotCarry),
     false,
-    `${PRE_CHANGE_REVISION}:host/src/event-pump.ts already carries ${TURN_SETTLED_SILENT}, so it is not the pre-change module`,
+    `${revision}:host/src/event-pump.ts already carries ${mustNotCarry}, so it is not the pre-change module`,
   );
   const emitted = ts.transpileModule(source, {
     compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
@@ -1585,7 +1833,7 @@ function compilePreChangePump(): string | undefined {
     (_match, specifier: string) => `from "${pathToFileURL(resolve(HERE, specifier)).href}"`,
   );
   const directory = mkdtempSync(join(tmpdir(), "gamebuddy-pre-change-silence-"));
-  const file = join(directory, "event-pump.pre-change.mjs");
+  const file = join(directory, `event-pump.${revision}.pre-change.mjs`);
   writeFileSync(file, rewritten, "utf8");
   return file;
 }
@@ -1596,11 +1844,14 @@ const HOST_ROOT = resolve(HERE, "..");
 /** The commit whose `event-pump.ts` is the module BEFORE this unit: `9bbadccf` is the tree this unit lands on. */
 const PRE_CHANGE_REVISION = "9bbadccf";
 
+/** The commit whose `event-pump.ts` is the module BEFORE the per-assistant-turn unit: `9c539da8` is the tree it lands on. */
+const PRE_ASSISTANT_TURN_REVISION = "9c539da8";
+
 test("turn_settled_silent: the pre-change module refuses the name, and this one prints it on the same fixture", async () => {
   // THE RED PROOF, on the REAL module: the same receipt batch, the same `workedSilently` delivery, one module compiled out
   // of `f11b519d` and one this tree. Before, the run's account had no `turn_settled_silent` at all and its account object
   // had no reading to ask - so the silent turn was invisible, not merely uncounted. After, the same turn is named.
-  const before = compilePreChangePump();
+  const before = compilePreChangePump(PRE_CHANGE_REVISION, TURN_SETTLED_SILENT);
   if (before === undefined) {
     console.log(
       `not_measured: the pre-change module was not compiled, so the red reading is BLOCKED - ` +
@@ -1647,4 +1898,76 @@ test("turn_settled_silent: the pre-change module refuses the name, and this one 
   assert.equal(pump.turnAccount.silentSettled.total, 1);
   assert.ok(afterLine.includes(TURN_SETTLED_SILENT), `the same turn, on this tree: ${afterLine}`);
   console.log(`silent fixture AFTER:  ${afterLine}`);
+});
+
+test("assistant turns: the module this unit replaced delivered the silent turns and could not name one", async () => {
+  // THE RED PROOF, on the REAL pre-change module: the same receipt batch, a `worked` delivery, one module compiled out of
+  // `9c539da8` and one this tree. Before, an assistant turn was not a thing the pump could record - no hook took one, and no
+  // counter was keyed by it - so `round60`'s 36 tool-only records had nowhere to land while the account printed
+  // `turn_settled_silent 0`.
+  const before = compilePreChangePump(PRE_ASSISTANT_TURN_REVISION, ASSISTANT_TURNS_EXAMINED);
+  if (before === undefined) {
+    console.log(
+      `not_measured: the pre-change module was not compiled, so the red reading is BLOCKED - ` +
+        `${PRE_ASSISTANT_TURN_REVISION}:host/src/event-pump.ts is not reachable from this clone`,
+    );
+    return;
+  }
+  const pre = (await import(pathToFileURL(before).href)) as {
+    CompanionEventPump: new () => CompanionEventPump;
+    turnAccountLine(account: never): string;
+  };
+  const pump = new pre.CompanionEventPump();
+  pump.enqueueFact(readingAt(14, 0, BODY_FREE), FACT_PRODUCER.adapterIngress);
+  pump.enqueueFact(settlementFact("program_settled_plan_r60_before", WINDOW_AT_MS), FACT_PRODUCER.adapterIngress);
+  await pump.flush({
+    async deliver() {
+      // The batch carried a line AND the silent work after it: `worked`, which is what 57 of round60's 86 batches were.
+      pump.turnProduction = TURN_PRODUCTION.worked;
+      return "completed" as const;
+    },
+  });
+  const beforeLine = pre.turnAccountLine(pump.turnAccount as never);
+  assert.equal(
+    "noteAssistantTurn" in pump,
+    false,
+    "the pre-change pump had no hook that could record one assistant turn, so the unit did not exist",
+  );
+  assert.equal(
+    beforeLine.includes(ASSISTANT_TURNS_EXAMINED),
+    false,
+    `and its account line carries no such unit: ${beforeLine}`,
+  );
+  assert.equal(
+    beforeLine.includes(ASSISTANT_TURNS_TOOL_ONLY),
+    false,
+    "so `ran a tool and said nothing` was not a count any reader could ask for",
+  );
+  assert.equal(
+    "assistantTurns" in pump.turnAccount,
+    false,
+    "and nothing on its account answered the question, so the 36 could only be recovered by reading the session file",
+  );
+  assert.equal(
+    pump.turnAccount.silentSettled.total,
+    0,
+    "its own silence counter reads 0 for the batch that carried the line - the `0` round60 printed",
+  );
+  console.log(`assistant-turn fixture BEFORE: ${beforeLine}`);
+
+  // The same batch, the same two records, on this tree: one with text, one tool-only, counted where they happened.
+  const after = new CompanionEventPump();
+  after.enqueueFact(readingAt(14, 0, BODY_FREE), FACT_PRODUCER.adapterIngress);
+  after.enqueueFact(settlementFact("program_settled_plan_r60_before", WINDOW_AT_MS), FACT_PRODUCER.adapterIngress);
+  after.noteAssistantTurn({ hasText: true, hasToolCall: false });
+  after.noteAssistantTurn({ hasText: false, hasToolCall: true });
+  await after.flush(settledSink(after, TURN_PRODUCTION.worked));
+  const afterLine = turnAccountLine(after.turnAccount);
+  assert.equal(assistantTurnsWithText(after.turnAccount.assistantTurns), 1);
+  assert.equal(assistantTurnsToolOnly(after.turnAccount.assistantTurns), 1);
+  assert.ok(
+    afterLine.includes(`${ASSISTANT_TURNS_EXAMINED} 2 {`),
+    `the same batch and the same two records, on this tree: ${afterLine}`,
+  );
+  console.log(`assistant-turn fixture AFTER:  ${afterLine}`);
 });

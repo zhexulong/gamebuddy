@@ -4,7 +4,20 @@ import { GAME_DELIVERY_PACING, selectReactionSound } from "./companion-delivery-
 import { CompanionLoop } from "./companion-loop.js";
 import { MAGIC_CONTEXT_REFUSED_TURN_ENTRY_TYPE } from "./companion-turn-refusal.js";
 import { programSettledDigest } from "./program-settlement-digest.js";
-import { FACT_PRODUCER, TURN_OPENING, TURN_SETTLED_SILENT, TURN_SUPPRESSION, turnAccountLine } from "./event-pump.js";
+import {
+  ASSISTANT_TURNS_EXAMINED,
+  ASSISTANT_TURNS_TOOL_ONLY,
+  ASSISTANT_TURNS_WITH_TEXT,
+  assistantTurnsToolOnly,
+  assistantTurnsWithText,
+  FACT_PRODUCER,
+  PER_DELIVERED_BATCH,
+  TURN_OPENING,
+  TURN_PRODUCTION,
+  TURN_SETTLED_SILENT,
+  TURN_SUPPRESSION,
+  turnAccountLine,
+} from "./event-pump.js";
 
 /**
  * What the player receives for one Game turn: ONE bubble - the turn's reaction sound at its head, then the words.
@@ -2523,6 +2536,137 @@ test("acting_turn_settled_silent_is_unreachable: a turn that acted and said noth
 });
 
 /**
+ * A batch carrying TWO assistant records: it says one line, then runs a tool and says nothing about it.
+ *
+ * This is `round60`'s 85 `tool_use` records in miniature: 49 of them carried a line and 36 did not, and the batch that
+ * held them was `worked` either way. The record order is Pi's own - a message ends, its tool runs, the next message follows
+ * - so the silence is the SECOND record, inside a turn that spoke earlier.
+ */
+function sessionSpeakingThenWorkingSilently(text: string) {
+  const listeners = new Set<(event: unknown) => void>();
+  const emit = (event: unknown) => {
+    for (const listener of [...listeners]) listener(event);
+  };
+  return {
+    async sendUserMessage(batch: string) {
+      emit({ type: "message_start", message: { role: "user", content: [{ type: "text", text: batch }] } });
+      const spoken = { id: "assistant_said_a_line", role: "assistant", content: [], stopReason: "pending" };
+      emit({ type: "message_start", message: spoken });
+      emit({
+        type: "message_update",
+        message: spoken,
+        assistantMessageEvent: { type: "text_start", contentIndex: 0, partial: spoken },
+      });
+      emit({
+        type: "message_update",
+        message: spoken,
+        assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: text, partial: spoken },
+      });
+      emit({
+        type: "message_end",
+        message: {
+          id: "assistant_said_a_line",
+          role: "assistant",
+          content: [{ type: "text", text }],
+          stopReason: "stop",
+        },
+      });
+      emit({ type: "tool_execution_start", toolCallId: "call_after_the_line", toolName: "stardew_plan_work" });
+      emit({ type: "tool_execution_end", toolCallId: "call_after_the_line", toolName: "stardew_plan_work" });
+      emit({
+        type: "message_end",
+        message: {
+          id: "assistant_worked_silently",
+          role: "assistant",
+          content: [{ type: "toolCall", id: "call_after_the_line", name: "stardew_plan_work", arguments: {} }],
+          stopReason: "toolUse",
+        },
+      });
+      emit({ type: "agent_settled" });
+    },
+    async abort() {},
+    clearQueue() {},
+    async waitForIdle() {},
+    subscribe(next: (event: unknown) => void) {
+      listeners.add(next);
+      return () => {
+        listeners.delete(next);
+      };
+    },
+  };
+}
+
+/**
+ * THE DEFECT THIS UNIT EXISTS FOR, end to end through the real loop: one batch, two assistant records, one silence.
+ *
+ * <p>
+ * MEASURED 2026-11-15 (`round60`): 169 assistant turns, 133 with text, 36 tool-only - and the account printed
+ * `turn_settled_silent 0`, because the pump re-segmented the same run into 86 delivered batches and every one of those 36
+ * sat inside a batch that also carried a line. Through the BATCH this fixture is `worked` (any text in it speaks for all
+ * of it), which is the reading that made the silence invisible; per assistant record it is one `spoke` and one
+ * `worked_silently`.
+ * </p>
+ */
+test("assistant turns: a batch that speaks and then works silently reads as with text 1 · tool-only 1", async () => {
+  const text = "先把这片浇了。";
+  const loop = new CompanionLoop(sessionSpeakingThenWorkingSilently(text) as never, {
+    beginPlayerBatch() {},
+    endBatch() {},
+    async presentNativeAssistantContent() {},
+  });
+  const stderrWrite = process.stderr.write;
+  let printed = "";
+  process.stderr.write = ((chunk: string | Uint8Array) => {
+    printed += String(chunk);
+    return true;
+  }) as typeof process.stderr.write;
+  try {
+    // A refused settlement, for the same reason as the pair above: a success-only settlement is progress and opens no
+    // turn, and this fixture is about what a TURN's two records are.
+    loop.pump.enqueueFact(settledDigest("plan_60_two_records", "rejected"), FACT_PRODUCER.adapterIngress);
+    await loop.flush();
+  } finally {
+    process.stderr.write = stderrWrite;
+  }
+
+  const account = loop.pump.turnAccount;
+  assert.equal(account.opened, 1, "the premise: ONE delivered batch carried both records");
+  assert.equal(
+    loop.pump.turnProduction,
+    TURN_PRODUCTION.worked,
+    "and in the batch's unit it is `worked` - it said something, so no batch-shaped counter can call it silence",
+  );
+  assert.deepEqual(
+    account.assistantTurns.byProduction,
+    {
+      [TURN_PRODUCTION.worked]: 0,
+      [TURN_PRODUCTION.workedSilently]: 1,
+      [TURN_PRODUCTION.spoke]: 1,
+      [TURN_PRODUCTION.saidNothing]: 0,
+    },
+    `each assistant record is one turn: ${turnAccountLine(account)}`,
+  );
+  assert.equal(account.assistantTurns.examined, 2, "two records, one batch: the two numbers are not the same fact");
+  assert.equal(assistantTurnsWithText(account.assistantTurns), 1);
+  assert.equal(assistantTurnsToolOnly(account.assistantTurns), 1);
+  assert.equal(
+    account.silentSettled.total,
+    0,
+    "and the batch counter still reads 0 - which is why it could never have answered this question",
+  );
+  assert.ok(
+    printed.includes(
+      `${ASSISTANT_TURNS_EXAMINED} 2 {worked: 0, worked_silently: 1, spoke: 1, said_nothing: 0} · ${ASSISTANT_TURNS_WITH_TEXT} 1 · ${ASSISTANT_TURNS_TOOL_ONLY} 1`,
+    ),
+    `the run's own account line states it, in its own unit: ${printed}`,
+  );
+  assert.ok(
+    printed.includes(`${PER_DELIVERED_BATCH} turns opened 1 {`),
+    `and the batch group that follows is named as batches: ${printed}`,
+  );
+});
+
+/**
  * The same turn with one word in it: the act stays, the silence goes. It exists to make the gate above falsifiable - a
  * counter that fired on every acting turn would pass there and fail here.
  */
@@ -2602,4 +2746,9 @@ test("acting_turn_settled_silent_is_unreachable: the same act WITH a word is not
     `a turn that acted AND spoke is not silence: ${turnAccountLine(loop.pump.turnAccount)}`,
   );
   assert.equal(loop.pump.turnAccount.emptyTurns.total, 0, "and it is not a turn spent on speech instead of work");
+  assert.equal(
+    loop.pump.turnAccount.assistantTurns.byProduction[TURN_PRODUCTION.worked],
+    1,
+    "the per-assistant-turn tally agrees with the batch counter exactly where the batch COULD see the turn",
+  );
 });

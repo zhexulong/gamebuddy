@@ -99,6 +99,23 @@ export const TURN_PRODUCTION = Object.freeze({
 
 export type TurnProduction = (typeof TURN_PRODUCTION)[keyof typeof TURN_PRODUCTION];
 
+/** Every member of the closed list, derived - the population of every histogram over it and of the printer below. */
+export const TURN_PRODUCTIONS = Object.freeze(Object.values(TURN_PRODUCTION));
+
+/**
+ * What one turn produced, from the two raw facts, in ONE spelling over the closed list.
+ *
+ * <p>
+ * The loop asks it per delivered batch (work executed, text delivered) and the pump asks it per assistant RECORD (a tool
+ * asked for, text carried), so the two units cannot be classified by two expressions that disagree - see
+ * `AssistantTurnTally`.
+ * </p>
+ */
+export function turnProductionOf(producedWork: boolean, producedText: boolean): TurnProduction {
+  if (producedWork) return producedText ? TURN_PRODUCTION.worked : TURN_PRODUCTION.workedSilently;
+  return producedText ? TURN_PRODUCTION.spoke : TURN_PRODUCTION.saidNothing;
+}
+
 /**
  * Did the turn carry any assistant text? One spelling of that question, over the closed list.
  *
@@ -321,6 +338,62 @@ export function turnWithoutActionToken(opener: TurnOpening, reason: TurnWithoutA
 }
 
 /**
+ * Silence in the unit Pi writes it: the ASSISTANT TURN - one assistant record inside a delivered batch.
+ *
+ * <p>
+ * EVERY OTHER COUNTER IN THIS ACCOUNT IS COUNTED PER DELIVERED BATCH (`#observeTurnProduction`), which is the unit the
+ * product pays for and not the unit silence happens in. MEASURED 2026-11-15 (`round60`, one Game session): **169** assistant
+ * records, **133** with text, **36** that ran a tool and said no word - and `turn_settled_silent` printed `0`. The pump
+ * re-segmented the same run into 86 batches (29 spoke, 57 worked), and a batch carrying any line is `worked` by
+ * construction because `turnProduction` ORs `producedText` over the whole batch. So none of the 36 landed in any counter: a
+ * batch-shaped number and a turn-shaped number are different facts about the same run, and neither can stand for the other.
+ * </p>
+ * <p>
+ * The population is the same closed list `turnProduction` uses, classified by the same `turnProductionOf`, so the two units
+ * cannot disagree about what a member means. `examined` is DERIVED from `byProduction`, so the members sum to it and an
+ * assistant turn cannot be counted and then disappear from the account.
+ * </p>
+ */
+export type AssistantTurnTally = Readonly<{
+  examined: number;
+  byProduction: Readonly<Record<TurnProduction, number>>;
+}>;
+
+/** The assistant turns that carried text - `worked` + `spoke`, derived over the closed list. */
+export function assistantTurnsWithText(tally: AssistantTurnTally): number {
+  return countAssistantTurns(tally, turnProducedSpeech);
+}
+
+/**
+ * The assistant turns that ran a tool and said nothing: work without text, derived from the two predicates rather than
+ * named, so it stays the same question `turn_settled_silent` asks - in the other unit.
+ */
+export function assistantTurnsToolOnly(tally: AssistantTurnTally): number {
+  return countAssistantTurns(tally, (production) => turnProducedWork(production) && !turnProducedSpeech(production));
+}
+
+function countAssistantTurns(tally: AssistantTurnTally, counted: (production: TurnProduction) => boolean): number {
+  return TURN_PRODUCTIONS.reduce(
+    (total, production) => (counted(production) ? total + tally.byProduction[production] : total),
+    0,
+  );
+}
+
+/** The account line's label for the assistant-turn group: the unit is named in the label, not in a reader's memory. */
+export const ASSISTANT_TURNS_EXAMINED = "assistant turns examined";
+/** The two headline readings inside that group, both derived from the members beside them. */
+export const ASSISTANT_TURNS_WITH_TEXT = "with text";
+export const ASSISTANT_TURNS_TOOL_ONLY = "tool-only";
+/**
+ * The unit of every segment that follows this one on the account line: one DELIVERED BATCH.
+ *
+ * It is stated once, at the head of the group it governs, because repeating it on nine segments would say the same word
+ * nine times - and because a reader who adds `assistant turns examined` to `turns opened` is the defect this whole unit
+ * exists to close.
+ */
+export const PER_DELIVERED_BATCH = "per delivered batch:";
+
+/**
  * Turns that delivered speech, ran no action, and closed - counted by BOTH halves of the shape.
  *
  * The opener is half of it because the two mean different things: a `player_input` turn that spoke and did nothing was
@@ -354,6 +427,11 @@ export type TurnAccount = Readonly<{
   /** Which producer's fact decided each suppressed flush: the re-stated fact, or the reading held as state. */
   suppressedByProducer: Readonly<Record<TurnSuppression, Readonly<Record<FactProducer, number>>>>;
   examined: number;
+  /**
+   * The assistant turns Pi wrote, per production member: the unit silence is counted in, beside the batch counters that
+   * cannot see it - see `AssistantTurnTally`.
+   */
+  assistantTurns: AssistantTurnTally;
   emptyTurns: TurnWithoutActionResult;
   /** The turns that settled silently: work delivered, no text - see `TurnSettledSilentResult`. */
   silentSettled: TurnSettledSilentResult;
@@ -367,10 +445,24 @@ export type TurnAccount = Readonly<{
 /**
  * The account as the one line a run's log carries, in the shape the invariant is read back in.
  *
- * `turns opened N · by reason {opener: count} · suppressed M {reason: count} · flushes examined F` (F derived, so the
- * arithmetic closes) `· turn_closed_without_action E {opener:reason: count}` `· turn_settled_silent S {opener: count}` `·
- * turn_settled_with_execution_in_flight I` `· aged readings A · auto_observe_on_stale R {ageTurns}` `·
- * auto_observe_unavailable U {reason: count}`. A reason that has
+ * <p>
+ * THE LINE IS TWO READING GROUPS, AND EACH GROUP'S HEAD NAMES ITS UNIT. First the ASSISTANT TURNS - one assistant record
+ * Pi wrote: `assistant turns examined N {worked: count, worked_silently: count, spoke: count, said_nothing: count}`, then
+ * the two headline readings derived from those members, `with text T` and `tool-only O`. Then the DELIVERED BATCHES, from
+ * `per delivered batch:` to the end of the line: `turns opened N {opener: count} · suppressed M {reason: count} · flushes
+ * examined F` (F derived, so the arithmetic closes) `· turn_closed_without_action E {opener:reason: count}` `·
+ * turn_settled_silent S {opener: count}` `· turn_settled_with_execution_in_flight I` `· aged readings A ·
+ * auto_observe_on_stale R {ageTurns}` `· auto_observe_unavailable U {reason: count}`.
+ * </p>
+ * <p>
+ * WHY THE TWO GROUPS ARE NAMED. MEASURED 2026-11-15 (`round60`): one run had 169 assistant turns, 36 of which said
+ * nothing, and an account that printed `turn_settled_silent 0` - because every one of those turns sat inside a batch that
+ * also carried a line, and the batch is the unit every counter on the second half of the line is counted in. A reader who
+ * adds the two groups together reads a number nobody measured, so the unit is stated at each group's head rather than
+ * left to the doc.
+ * </p>
+ *
+ * A reason that has
  * never fired is still printed as `0`: it is a declared member of a closed list, and a reader must be able to see that it
  * exists and never happened rather than guess from its absence. The opener histogram is printed for the same reason at the level above: `opened 55` said a number and nothing
  * about what opened them, so "she was woken by the clock fifty times" and "the person spoke fifty times" were the same
@@ -391,6 +483,9 @@ export type TurnAccount = Readonly<{
  * short of it is one nobody has accounted for.
  */
 export function turnAccountLine(account: TurnAccount): string {
+  const assistantProductions = TURN_PRODUCTIONS.map(
+    (production) => `${production}: ${String(account.assistantTurns.byProduction[production])}`,
+  ).join(", ");
   const opened = TURN_OPENINGS.map(
     (reason) => `${reason}: ${String(account.byReason[reason])}${producerBlock(account.openedByProducer[reason])}`,
   ).join(", ");
@@ -417,7 +512,7 @@ export function turnAccountLine(account: TurnAccount): string {
     (total, reason) => total + account.autoObserve.unavailable[reason],
     0,
   );
-  return `turns opened ${String(account.opened)} {${opened}} · suppressed ${String(suppressedTotal(account))} {${suppressed}} · flushes examined ${String(account.examined)} · ${TURN_WITHOUT_ACTION} ${String(account.emptyTurns.total)} {${empty}} · ${TURN_SETTLED_SILENT} ${String(account.silentSettled.total)} {${silent}} · ${TURN_SETTLED_WITH_EXECUTION_IN_FLIGHT} ${String(account.settledWithExecutionInFlight)} · ${AUTO_OBSERVE_AGED_TURNS} ${String(account.autoObserve.agedTurns)} · ${refreshed} · ${AUTO_OBSERVE_UNAVAILABLE_TOKEN} ${String(declined)} {${unavailable}}`;
+  return `${ASSISTANT_TURNS_EXAMINED} ${String(account.assistantTurns.examined)} {${assistantProductions}} · ${ASSISTANT_TURNS_WITH_TEXT} ${String(assistantTurnsWithText(account.assistantTurns))} · ${ASSISTANT_TURNS_TOOL_ONLY} ${String(assistantTurnsToolOnly(account.assistantTurns))} · ${PER_DELIVERED_BATCH} turns opened ${String(account.opened)} {${opened}} · suppressed ${String(suppressedTotal(account))} {${suppressed}} · flushes examined ${String(account.examined)} · ${TURN_WITHOUT_ACTION} ${String(account.emptyTurns.total)} {${empty}} · ${TURN_SETTLED_SILENT} ${String(account.silentSettled.total)} {${silent}} · ${TURN_SETTLED_WITH_EXECUTION_IN_FLIGHT} ${String(account.settledWithExecutionInFlight)} · ${AUTO_OBSERVE_AGED_TURNS} ${String(account.autoObserve.agedTurns)} · ${refreshed} · ${AUTO_OBSERVE_UNAVAILABLE_TOKEN} ${String(declined)} {${unavailable}}`;
 }
 
 /**
@@ -527,6 +622,14 @@ function initializedByProducer<Reason extends string>(
  * flight. The counter was gated on "nothing of hers is still settling", and she submits a programme on nearly every turn,
  * so the shape it exists to name was excluded by the state it most often lands in. That condition is gone from the
  * classification; the number it was hiding behind is printed beside this one.
+ * </p>
+ * <p>
+ * COUNTED PER DELIVERED BATCH, WHICH IS WHY IT READ `0` AGAIN. MEASURED 2026-11-15 (`round60`): 169 assistant turns, 36 of
+ * them silent, and this counter `0` - every one of those 36 sat inside a batch that also carried a line, and a batch with
+ * any text in it is `worked` by construction. So the silence of a turn is counted where the turn is written
+ * (`AssistantTurnTally`, printed as `assistant turns examined N {…} · with text T · tool-only O`), and this counter keeps
+ * the question it CAN answer: how many DELIVERIES spent themselves on work with no word. The two are different populations
+ * of the same run and neither is the other's total.
  * </p>
  */
 export const TURN_SETTLED_SILENT = "turn_settled_silent";
@@ -1364,6 +1467,14 @@ export class CompanionEventPump {
    */
   #settledWithExecutionInFlight = 0;
   /**
+   * Assistant turns Pi wrote, one count per production member - the population is `TURN_PRODUCTIONS`.
+   *
+   * Counted where the record is (`noteAssistantTurn`, from the loop's `message_end`), not at settlement: a batch's own
+   * settlement sees one aggregate per delivery and cannot see that one of the two assistant turns inside it said nothing,
+   * which is exactly the reading `round60`'s 36 silent turns had nowhere to land in.
+   */
+  readonly #assistantTurnsByProduction: Record<TurnProduction, number> = initializedByReason(TURN_PRODUCTIONS);
+  /**
    * One timing record per execution the pump has seen and not seen settle.
    *
    * A record of its own rather than a reading of `#receipts`, because `takeBatch` empties that window on every delivery
@@ -1634,6 +1745,7 @@ export class CompanionEventPump {
     for (const opener of SILENT_SETTLED_OPENINGS) this.#silentSettledByOpener[opener] = 0;
     this.#silentSettledTurns = 0;
     this.#settledWithExecutionInFlight = 0;
+    for (const production of TURN_PRODUCTIONS) this.#assistantTurnsByProduction[production] = 0;
     this.#lastTurnDecision = undefined;
   }
 
@@ -1669,6 +1781,13 @@ export class CompanionEventPump {
       suppressed: Object.freeze({ ...this.#suppressedByReason }),
       suppressedByProducer: freezeProducerHistograms(this.#suppressedByProducer, TURN_SUPPRESSIONS),
       examined: this.#openedTurns + suppressed,
+      assistantTurns: Object.freeze({
+        examined: TURN_PRODUCTIONS.reduce(
+          (total, production) => total + this.#assistantTurnsByProduction[production],
+          0,
+        ),
+        byProduction: Object.freeze({ ...this.#assistantTurnsByProduction }),
+      }),
       emptyTurns: Object.freeze({ total: this.#emptyTurns, byShape: Object.freeze({ ...this.#emptyTurnsByShape }) }),
       silentSettled: Object.freeze({
         total: this.#silentSettledTurns,
@@ -1697,6 +1816,26 @@ export class CompanionEventPump {
    * </p>
    */
   public turnProduction: TurnProduction = TURN_PRODUCTION.saidNothing;
+
+  /**
+   * Record ONE assistant turn: one assistant record Pi wrote, inside whatever batch it landed in.
+   *
+   * <p>
+   * This is the hook the loop did not have. `turnProduction` is published once per DELIVERED BATCH, so a batch that
+   * carried a line and then worked silently is `worked` and its silence is invisible (`round60`: 36 such records, every
+   * counter `0`). A message is a turn in Pi's own record, so it is classified here as it arrives, in the same member
+   * vocabulary, with the same `turnProductionOf`.
+   * </p>
+   * <p>
+   * The two facts are the record's own content, not the turn's: a message either carried text or asked for a tool. A
+   * message that carries neither is `said_nothing` - a provider that answered with nothing, or a message whose tool call
+   * never ran - and it is counted rather than dropped, because a population with a silently missing member is not a
+   * population.
+   * </p>
+   */
+  public noteAssistantTurn(facts: Readonly<{ hasText: boolean; hasToolCall: boolean }>): void {
+    this.#assistantTurnsByProduction[turnProductionOf(facts.hasToolCall, facts.hasText)] += 1;
+  }
 
   /**
    * The steer currently queued into a running turn, until Pi settles it.
