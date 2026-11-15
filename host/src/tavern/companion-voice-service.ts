@@ -1,4 +1,4 @@
-import { type IdentityProfile } from "../identity-profile.js";
+import type { IdentityProfile } from "../identity-profile.js";
 import { keepAuthoredText } from "./companion-authored-text.js";
 import { type MacroTable, renderMacros } from "./macro-engine.js";
 import { type CompanionProfileBindingRefresh, writeMountedIdentityProfile } from "./mounted-identity-profile-write.js";
