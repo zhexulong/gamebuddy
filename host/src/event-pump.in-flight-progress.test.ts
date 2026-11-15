@@ -9,11 +9,14 @@ import {
   HOST_MINTED_WAKE_KINDS,
   IN_FLIGHT_SEMANTIC_PROGRESS_KINDS,
   type PendingBatch,
+  SETTLED_PROGRAM_OUTCOMES,
+  type SettledProgramOutcome,
   TURN_SUPPRESSION,
   type WorldFact,
 } from "./event-pump.js";
+import { programSettledDigest } from "./program-settlement-digest.js";
+import type { PlanAnswerNode, InFlightProgrammeReading } from "./program-status-wait.js";
 import { EXECUTION_STATES } from "./protocol.js";
-import type { InFlightProgrammeReading } from "./program-status-wait.js";
 
 /**
  * A step of a programme the journal still shows running is PROGRESS, not a decision.
@@ -110,25 +113,49 @@ function nodeRejected(tile: string, revision: number): WorldFact {
   };
 }
 
-/** The turn the plan itself owes: what the Mod's settlement watch mints when the journal stops naming the plan. */
-function programSettled(): WorldFact {
+/** One node row of the Mod's own journal, as the settlement read sees it. */
+type JournalRow = Readonly<{ nodeId: string; state: string; rejectionCode?: string; failureCode?: string }>;
+
+function planNode(nodeId: string): PlanAnswerNode {
   return {
-    source: "host_game_session",
-    kind: "world_fact",
-    eventId: "program_settled_plan_harvest_cauli",
-    sourceEventId: "program_settled_plan_harvest_cauli",
-    correlationId: "plan_harvest_cauli",
-    revision: 61,
-    semanticKind: "program_settled",
-    payload: {
-      programId: "plan_harvest_cauli",
-      state: "succeeded",
-      succeeded: 3,
-      failed: 0,
-      refused: 0,
-      decided: 3,
+    nodeId,
+    actionId: "move_to_tile",
+    arguments: {
+      x: { type: "integer", canonicalValue: "60" },
+      y: { type: "integer", canonicalValue: "10" },
     },
   };
+}
+
+/**
+ * The settlement fact, built by the PRODUCER rather than written out here.
+ *
+ * A hand-written payload is a second copy of `program-settlement-digest.ts`'s own shape, and the two agree on the day one
+ * is written. This one cannot disagree: what the pump classifies is what `programSettledDigest` actually mints, counts,
+ * rows and all.
+ */
+function settledFact(rows: readonly JournalRow[], programId = "plan_harvest_cauli"): WorldFact {
+  const fact = programSettledDigest({
+    programId,
+    settledAtMs: 4_242,
+    compiled: rows.map((row) => planNode(row.nodeId)),
+    status: {
+      code: "found",
+      snapshot: { programId, state: "succeeded", catalogRevision: 3, stopEpoch: 0, eventHighWater: 90, nodes: rows },
+    },
+    nowMs: 9,
+  });
+  assert.ok(fact !== undefined, `the producer must state a settled ${programId}`);
+  return fact;
+}
+
+/** A programme that did every node it was given: the shape round59 produced 72 times. */
+function programSettled(): WorldFact {
+  return settledFact([
+    { nodeId: "n001", state: "succeeded" },
+    { nodeId: "n002", state: "succeeded" },
+    { nodeId: "n003", state: "succeeded" },
+  ]);
 }
 
 function recorder(): { batches: PendingBatch[]; sink: { deliver(batch: PendingBatch): Promise<void> } } {
@@ -173,24 +200,142 @@ test("a node's success inside a still-running programme does not open a turn", a
   );
 });
 
-test("the settlement opens the turn, and it carries the nodes that finished inside it", async () => {
-  const pump = new CompanionEventPump(() => harvestPlan(2));
+test("a turn that only carries 'programme N succeeded' opens none, and the next turn carries its outcome", async () => {
+  // THE DEFECT THIS CLOSES. MEASURED 2026-11-15 (`round59`): `turns opened 88 {player_input: 4, world_fact: 84
+  // {adapter_ingress: 79, companion_arrival: 1, program_settlement: 4}}` against 72 submissions, and every one of the 42
+  // settled turns the audit read carried text. The shape was: programme N settles, nothing else is in flight, it opens a
+  // turn, she submits N+1 and writes a line - one utterance bought with one plan.
+  //
+  // A programme that did what it was told states work she already dispatched. Nothing in it changes what she does next,
+  // so it belongs in the next turn's block with every other progress fact - and the property below is that it is still
+  // THERE, in `<execution-result>`, when that turn comes.
+  const pump = new CompanionEventPump(() => NOTHING_IN_FLIGHT);
+  const turns = recorder();
+
+  pump.enqueueFact(settledFact([{ nodeId: "n001", state: "succeeded" }]), FACT_PRODUCER.programSettlement);
+  await pump.flush(turns.sink);
+
+  assert.equal(
+    pump.turnAccount.opened,
+    0,
+    "a turn that only carries 'programme N succeeded, nothing else' must not open one - that is the turn round59 bought 72 times",
+  );
+  assert.equal(turns.batches.length, 0, "and no turn means no delivery yet");
+  assert.equal(
+    pump.turnAccount.suppressed[TURN_SUPPRESSION.progress],
+    1,
+    "the flush is COUNTED as progress, not as a re-stated reading: a reading is re-stated before every flush",
+  );
+
+  pump.enqueuePlayerInput({
+    source: "player_text",
+    inputId: "player_1",
+    text: "收完了吗？",
+    locale: "zh-CN",
+    timestampMs: 1_000,
+  });
+  await pump.flush(turns.sink);
+
+  const batch = turns.batches[0]!;
+  assert.match(batch.text, /<execution-result>\n/u, "the outcome still arrives, in the next turn's own block");
+  assert.match(batch.text, /1\/1 步做成了/u, "in the producer's own counts, not a paraphrase");
+});
+
+test("at a programme's boundary the receipt and its settlement travel together into the next turn", async () => {
+  // The shape `round59` produced 79 times: the last node's `succeeded` receipt arrives while the journal still names the
+  // plan (every node terminal, `remaining` `0`), and the settlement follows it within a second. Neither is a turn; both
+  // are carried by the next one that opens for a decision, so the outcome and the receipts it summarises arrive together.
+  const pump = new CompanionEventPump(() => harvestPlan(0));
+  const turns = recorder();
+
+  pump.enqueueFact(nodeSucceeded("60,10", 60), FACT_PRODUCER.adapterIngress);
+  pump.enqueueFact(settledFact([{ nodeId: "n001", state: "succeeded" }]), FACT_PRODUCER.programSettlement);
+  await pump.flush(turns.sink);
+
+  assert.equal(pump.turnAccount.opened, 0, "a boundary receipt and a successful settlement state work she dispatched");
+
+  pump.enqueuePlayerInput({
+    source: "player_text",
+    inputId: "player_1",
+    text: "收完了吗？",
+    locale: "zh-CN",
+    timestampMs: 1_000,
+  });
+  await pump.flush(turns.sink);
+
+  const batch = turns.batches[0]!;
+  assert.deepEqual(
+    batch.facts.filter((fact) => fact.kind === "execution_receipt").map((fact) => fact.payload.reasonCode),
+    ["crop_harvested"],
+    "the receipt the settlement summarises is delivered: the change moves WHERE it arrives, never whether",
+  );
+  assert.match(batch.text, /harvest_crop 做成了：crop_harvested/u, "in the Mod's own words");
+  assert.match(batch.text, /<execution-result>\n/u, "beside the settlement that states it");
+  assert.match(batch.text, /1\/1 步做成了/u);
+});
+
+test("a settlement that REFUSED a node still opens the turn: a refusal is a decision, and this change must not silence it", async () => {
+  // THE FALSIFIER THAT MATTERS. If this direction is not proven, the change does not remove narration - it removes bad
+  // news. A refused node is the one thing inside a plan she can act on, so the settlement states it and opens.
+  const pump = new CompanionEventPump(() => NOTHING_IN_FLIGHT);
+  const turns = recorder();
+
+  pump.enqueueFact(
+    settledFact([
+      { nodeId: "n001", state: "succeeded" },
+      { nodeId: "n002", state: "rejected", rejectionCode: "tool_not_held" },
+    ]),
+    FACT_PRODUCER.programSettlement,
+  );
+  await pump.flush(turns.sink);
+
+  assert.equal(pump.turnAccount.opened, 1, "a plan that was refused has to reach her, whatever else is quiet");
+  const batch = turns.batches[0]!;
+  assert.match(batch.text, /<execution-result>\n/u);
+  assert.match(batch.text, /1\/2 步做成了/u, "the count says one of two done, not 'done'");
+  assert.match(batch.text, /move_to_tile 没做成（tool_not_held）/u, "and the refusal is named with the Mod's own code");
+});
+
+test("a settlement that only PARTIALLY did a node opens the turn too", async () => {
+  // `partially_succeeded` is the polite lie the state exists to refuse (`settledSummary`): it did part of its work, so it
+  // is not success, and a settlement carrying one is not progress.
+  const pump = new CompanionEventPump(() => NOTHING_IN_FLIGHT);
+  const turns = recorder();
+
+  pump.enqueueFact(
+    settledFact([
+      { nodeId: "n001", state: "succeeded" },
+      { nodeId: "n002", state: "partially_succeeded", failureCode: "partially_watered" },
+    ]),
+    FACT_PRODUCER.programSettlement,
+  );
+  await pump.flush(turns.sink);
+
+  assert.equal(pump.turnAccount.opened, 1, "a partial node is not a programme that did what it was told");
+  assert.match(turns.batches[0]!.text, /move_to_tile 没做成（partially_watered）/u);
+});
+
+test("the step that CLOSES a programme is progress: the boundary receipt does not open a turn", async () => {
+  // THE OTHER HALF OF THE 79. `in_flight_progress` caught 290 receipts while the journal showed the plan running; the ones
+  // that arrived after its last node went terminal did not match `remaining > 0`, so each opened a turn - and the plan was
+  // still ACTIVE in the journal, which is why `harvestPlan(0)` (every node terminal, programme still named) is the reading
+  // this test drives. Those are the boundary receipts of round59: 79 ingress-opened turns against 72 submissions.
+  const pump = new CompanionEventPump(() => harvestPlan(0));
   const turns = recorder();
 
   pump.enqueueFact(nodeSucceeded("60,10", 60), FACT_PRODUCER.adapterIngress);
   await pump.flush(turns.sink);
 
-  pump.enqueueFact(programSettled(), FACT_PRODUCER.programSettlement);
-  await pump.flush(turns.sink);
-
-  assert.equal(pump.turnAccount.opened, 1, "one plan, one turn: the settlement is the decision");
-  const batch = turns.batches[0]!;
-  assert.deepEqual(
-    batch.facts.filter((fact) => fact.kind === "execution_receipt").map((fact) => fact.payload.reasonCode),
-    ["crop_harvested"],
-    "the suppressed receipt is still delivered: the fix is WHERE it arrives, not whether",
+  assert.equal(
+    pump.turnAccount.opened,
+    0,
+    "the last node of a plan still named by the journal is a step: the settlement is what states it",
   );
-  assert.match(batch.text, /harvest_crop 做成了：crop_harvested/u, "and in the Mod's own words");
+  assert.equal(
+    pump.turnAccount.suppressed[TURN_SUPPRESSION.inFlightProgress],
+    1,
+    "and it is COUNTED as that step, so a rerun can see how many boundary turns the rule removed",
+  );
 });
 
 test("a plan still running when a turn opens for another reason states the programme AND its finished steps", async () => {
@@ -327,6 +472,21 @@ function semanticKindPopulation(): readonly string[] {
   ].sort();
 }
 
+/**
+ * One settlement per outcome the pump DECLARES, built by the producer.
+ *
+ * The population comes from `SETTLED_PROGRAM_OUTCOMES`, not from this list, so an outcome added there appears in the gate
+ * below without anyone remembering to extend it - and one whose classification drifts fails by name.
+ */
+function settledFactOf(outcome: SettledProgramOutcome): WorldFact {
+  return outcome === "succeeded"
+    ? settledFact([{ nodeId: "n001", state: "succeeded" }])
+    : settledFact([
+        { nodeId: "n001", state: "succeeded" },
+        { nodeId: "n002", state: "rejected", rejectionCode: "tool_not_held" },
+      ]);
+}
+
 function shapePopulation(): readonly ShapeCase[] {
   const cases: ShapeCase[] = [
     { shape: "snapshot", fact: snapshotFact() },
@@ -335,6 +495,8 @@ function shapePopulation(): readonly ShapeCase[] {
   ];
   for (const state of EXECUTION_STATES) cases.push({ shape: `receipt:${state}`, fact: receiptOf(state) });
   for (const kind of semanticKindPopulation()) cases.push({ shape: `semantic:${kind}`, fact: semanticEventOf(kind) });
+  for (const outcome of Object.keys(SETTLED_PROGRAM_OUTCOMES) as SettledProgramOutcome[])
+    cases.push({ shape: `settled:${outcome}`, fact: settledFactOf(outcome) });
   return cases;
 }
 
@@ -352,19 +514,25 @@ async function openingOf(fact: WorldFact, inFlight: InFlightProgrammeReading): P
   return { opened: pump.turnAccount.opened, reason: pump.turnAccount.lastDecision?.reason };
 }
 
-/** One shape, driven twice: inside a running programme, and with nothing in flight. */
-type ShapeReading = Readonly<{ shape: string; inProgramme: OpeningReading; alone: OpeningReading }>;
+/** One shape, driven three times: a running programme, the programme's boundary, and nothing named at all. */
+type ShapeReading = Readonly<{
+  shape: string;
+  inProgramme: OpeningReading;
+  boundary: OpeningReading;
+  alone: OpeningReading;
+}>;
 
 /**
  * `in_flight_progress_opened_a_turn:<producer>:<factKind>`: a shape classified as progress must not open a turn, and a
  * shape classified as a decision must not be swallowed.
  *
  * <p>
- * POPULATION IS THE SHAPE TABLE, derived in `shapePopulation` from the protocol's `EXECUTION_STATES` and the pump's own
- * kind tables, so a state or kind added to either is examined here without anyone extending a list. Each shape is driven
- * TWICE, because the two failure directions are different defects: inside a running programme a step must be silent, and
- * with nothing in flight a lone outcome must speak. Only the second drive can catch over-suppression - which is the
- * silence of 2026-11-07 (`program_settled` was held, and she went quiet for 816.5 s).
+ * POPULATION IS THE SHAPE TABLE, derived in `shapePopulation` from the protocol's `EXECUTION_STATES`, the pump's own
+ * kind tables and its settlement outcomes, so a state, kind or outcome added to any of them is examined here without
+ * anyone extending a list. Each shape is driven THREE times, because the failure directions are different defects: inside
+ * a running programme a step must be silent, at a programme's boundary a step must still be silent (the settlement is
+ * what speaks), and with nothing named a lone outcome must speak. Only the last drive can catch over-suppression - which
+ * is the silence of 2026-11-07 (`program_settled` was held, and she went quiet for 816.5 s).
  * </p>
  *
  * The verdict comes from the readings, not from the pump's exit: zero population is BLOCKED with a reason rather than
@@ -391,15 +559,21 @@ function inFlightProgressGate(readings: readonly ShapeReading[]): Readonly<{
   for (const reading of readings) {
     const consequence = FACT_TURN_CONSEQUENCE[reading.shape];
     if (consequence === undefined) violations.push(`unclassified_fact_shape:${reading.shape}`);
-    // The shape's own meaning decides what the two drives must show.
+    // The shape's own meaning decides what the drives must show.
     const silentInProgramme = consequence === "progress" || consequence === "in_flight_progress";
     const speaksAlone = consequence === "decision" || consequence === "in_flight_progress";
     if (silentInProgramme) progress += 1;
     else decision += 1;
     if (silentInProgramme && reading.inProgramme.opened > 0)
       violations.push(`${IN_FLIGHT_PROGRESS_OPENED_A_TURN}:${FACT_PRODUCER.adapterIngress}:${reading.shape}`);
+    if (silentInProgramme && reading.boundary.opened > 0)
+      violations.push(`${IN_FLIGHT_PROGRESS_OPENED_A_TURN}:boundary:${FACT_PRODUCER.adapterIngress}:${reading.shape}`);
     if (speaksAlone && reading.alone.opened === 0)
       violations.push(`decision_swallowed:${FACT_PRODUCER.adapterIngress}:${reading.shape}`);
+    // The falsifier's own direction, derived rather than remembered: a decision must still speak at the boundary, or the
+    // change that silenced a programme's steps also silenced a refusal inside one.
+    if (consequence === "decision" && reading.boundary.opened === 0)
+      violations.push(`boundary_swallowed:${FACT_PRODUCER.adapterIngress}:${reading.shape}`);
     // A step of a programme must be COUNTED, not silently skipped: the reason is the only evidence a run's account has
     // that the fact arrived and was held on purpose.
     if (consequence === "in_flight_progress" && reading.inProgramme.reason !== TURN_SUPPRESSION.inFlightProgress)
@@ -422,6 +596,8 @@ async function readEveryShape(): Promise<readonly ShapeReading[]> {
     readings.push({
       shape,
       inProgramme: await openingOf(fact, harvestPlan(2)),
+      // The boundary: every node terminal, the plan still ACTIVE in the journal - the reading `round59` opened 79 turns in.
+      boundary: await openingOf(fact, harvestPlan(0)),
       alone: await openingOf(fact, NOTHING_IN_FLIGHT),
     });
   return readings;
@@ -451,6 +627,7 @@ test("in_flight_progress_opened_a_turn: the gate is red on a shape that opened a
     {
       shape: "receipt:succeeded",
       inProgramme: { opened: 1, reason: "world_fact" },
+      boundary: { opened: 1, reason: "world_fact" },
       alone: { opened: 1, reason: "world_fact" },
     },
   ]);
@@ -459,6 +636,8 @@ test("in_flight_progress_opened_a_turn: the gate is red on a shape that opened a
     recorded.violations,
     [
       `${IN_FLIGHT_PROGRESS_OPENED_A_TURN}:adapter_ingress:receipt:succeeded`,
+      // The boundary is the same defect stated at the second reading: round59's 79 ingress-opened turns are exactly these.
+      `${IN_FLIGHT_PROGRESS_OPENED_A_TURN}:boundary:adapter_ingress:receipt:succeeded`,
       // Both halves of the defect, because the tree that opened this turn also had no way to say it had been a step:
       // the fact arrived, opened a turn, and left nothing in the account that a rerun could read as "held on purpose".
       `in_flight_progress_unnamed:adapter_ingress:receipt:succeeded:world_fact`,
@@ -475,11 +654,38 @@ test("in_flight_progress_opened_a_turn: the gate is red on a decision it swallow
     {
       shape: "receipt:rejected",
       inProgramme: { opened: 0, reason: "in_flight_progress" },
+      boundary: { opened: 0, reason: "in_flight_progress" },
       alone: { opened: 0, reason: "nothing_pending" },
     },
   ]);
 
-  assert.deepEqual(overSuppressed.violations, ["decision_swallowed:adapter_ingress:receipt:rejected"]);
+  assert.deepEqual(overSuppressed.violations, [
+    "decision_swallowed:adapter_ingress:receipt:rejected",
+    "boundary_swallowed:adapter_ingress:receipt:rejected",
+  ]);
+});
+
+test("boundary_swallowed: the gate is red when a REFUSED settlement is silenced at the boundary", () => {
+  // THE FALSIFIER FOR THE DIRECTION THAT MATTERS. The settlement that refuses a node is the fact this change must never
+  // make progress: silencing it turns "fewer turns" into "bad news nobody delivered".
+  assert.equal(
+    FACT_TURN_CONSEQUENCE["settled:refused"],
+    "decision",
+    "the refused settlement is a decision in the table before the gate is asked to police it",
+  );
+  const silenced = inFlightProgressGate([
+    {
+      shape: "settled:refused",
+      inProgramme: { opened: 0, reason: "in_flight_progress" },
+      boundary: { opened: 0, reason: "in_flight_progress" },
+      alone: { opened: 0, reason: "in_flight_progress" },
+    },
+  ]);
+
+  assert.deepEqual(silenced.violations, [
+    "decision_swallowed:adapter_ingress:settled:refused",
+    "boundary_swallowed:adapter_ingress:settled:refused",
+  ]);
 });
 
 test("in_flight_progress_opened_a_turn: zero population is blocked, never green", () => {
@@ -491,8 +697,8 @@ test("in_flight_progress_opened_a_turn: zero population is blocked, never green"
 
 test("the shape the ingress delivers is classified once, in the table the pump reads", () => {
   // The class-closing property: the table's population is derived from the protocol's state list plus the pump's own
-  // kind tables, and every member of those is in it. A state the protocol adds fails HERE by name rather than arriving
-  // in a running bridge as an unclassified fact.
+  // kind and outcome tables, and every member of those is in it. A state the protocol adds, a kind or a settlement
+  // outcome the pump declares, fails HERE by name rather than arriving in a running bridge as an unclassified fact.
   const examined = shapePopulation();
   assert.ok(examined.length > 0, "an empty population proves nothing");
   assert.deepEqual(
@@ -500,11 +706,56 @@ test("the shape the ingress delivers is classified once, in the table the pump r
     [],
     "every shape the ingress can deliver must be classified as a decision or as progress",
   );
+  // Derived, so an outcome added to `SETTLED_PROGRAM_OUTCOMES` is examined rather than forgotten.
+  assert.deepEqual(
+    (Object.keys(SETTLED_PROGRAM_OUTCOMES) as SettledProgramOutcome[])
+      .filter((outcome) => FACT_TURN_CONSEQUENCE[`settled:${outcome}`] === undefined)
+      .map((outcome) => `settled:${outcome}`),
+    [],
+    "every settlement outcome the pump declares is in the classification",
+  );
   assert.equal(
     factTurnConsequence(nodeSucceeded("60,10", 60)),
     "in_flight_progress",
     "and the fact the measured run opened fifty-seven turns with is the one the table calls a step",
   );
-  assert.equal(factTurnConsequence(programSettled()), "decision", "while the plan's own settlement stays a decision");
-  assert.equal(factTurnConsequence(nodeRejected("60,10", 60)), "decision", "and so does every refusal");
+  assert.equal(
+    factTurnConsequence(programSettled()),
+    "progress",
+    "a programme that did every node is work restated: round59's 72 settlements each bought one utterance",
+  );
+  assert.equal(
+    factTurnConsequence(settledFactOf("refused")),
+    "decision",
+    "while a settlement with a refusal in it is the one thing she has to find out",
+  );
+  assert.equal(factTurnConsequence(nodeRejected("60,10", 60)), "decision", "and so does every refusal receipt");
+});
+
+test("the classification table, printed with its population", () => {
+  // The table itself, as the reading a commit message and a run audit quote. Names and counts only: a shape the pump
+  // classifies is one a rerun's account can attribute a turn to.
+  const rows = Object.entries(FACT_TURN_CONSEQUENCE).sort(([left], [right]) => left.localeCompare(right));
+  const shapeStartsWithSettled = ([shape]: readonly [string, string]): boolean => shape.startsWith("settled:");
+  const byConsequence: Record<string, number> = {};
+  for (const [, consequence] of rows) byConsequence[consequence] = (byConsequence[consequence] ?? 0) + 1;
+  const family = (prefix: string): number => rows.filter(([shape]) => shape.startsWith(prefix)).length;
+  console.log(
+    `fact_turn_consequence: shapes ${String(rows.length)} · decision ${String(byConsequence.decision ?? 0)} · progress ${String(byConsequence.progress ?? 0)} · in_flight_progress ${String(byConsequence.in_flight_progress ?? 0)} · receipts ${String(family("receipt:"))} · semantic ${String(family("semantic:"))} · settled ${String(family("settled:"))}`,
+  );
+  console.log(rows.map(([shape, consequence]) => `${shape}=${consequence}`).join(" · "));
+
+  assert.ok(rows.length > 0, "an empty table prints nothing and proves nothing");
+  assert.equal(
+    rows.length,
+    shapePopulation().length,
+    "the table and the population the gate drives are the same set: a shape the ingress delivers and the table has no row for would take the silent `decision` default",
+  );
+  assert.deepEqual(
+    rows.filter((row) => row[1] === "progress" && shapeStartsWithSettled(row)).map(([shape]) => shape),
+    (Object.keys(SETTLED_PROGRAM_OUTCOMES) as SettledProgramOutcome[])
+      .filter((outcome) => SETTLED_PROGRAM_OUTCOMES[outcome].consequence === "progress")
+      .map((outcome) => `settled:${outcome}`),
+    "the settlement rows the table calls progress are exactly the outcomes that DECLARE it, so a second spelling cannot drift",
+  );
 });

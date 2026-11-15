@@ -829,6 +829,7 @@ test("the account line reads back into the account it names", () => {
       [TURN_SUPPRESSION.observationMoved]: 1,
       [TURN_SUPPRESSION.worldFactRestated]: 4,
       [TURN_SUPPRESSION.inFlightProgress]: 3,
+      [TURN_SUPPRESSION.progress]: 6,
       [TURN_SUPPRESSION.nothingPending]: 5,
     }),
     suppressedByProducer: Object.freeze(
@@ -883,7 +884,11 @@ test("the account line reads back into the account it names", () => {
       account.suppressed[readingHeld],
       `and the same for \`${readingHeld}\`: every flush that held a reading names the producer that put it there`,
     );
-  assert.equal(parsed.suppressed.total, 15);
+  assert.equal(
+    parsed.suppressed.total,
+    Object.values(account.suppressed).reduce((total, count) => total + count, 0),
+    "the suppressed total is the SUM of its reasons, derived: a member added to `TURN_SUPPRESSION` cannot leave the printed total behind",
+  );
   assert.deepEqual(parsed.suppressed.counts, account.suppressed);
   assert.equal(parsed.examined, account.examined);
   assert.equal(parsed.emptyTurns.total, account.emptyTurns.total);
@@ -930,6 +935,7 @@ test("the account line names a member that never fired, in both histograms", () 
       [TURN_SUPPRESSION.observationMoved]: 0,
       [TURN_SUPPRESSION.worldFactRestated]: 0,
       [TURN_SUPPRESSION.inFlightProgress]: 0,
+      [TURN_SUPPRESSION.progress]: 0,
       [TURN_SUPPRESSION.nothingPending]: 0,
     }),
     suppressedByProducer: Object.freeze(producerHistograms(TURN_SUPPRESSIONS)),

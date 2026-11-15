@@ -4,7 +4,7 @@ import { GAME_DELIVERY_PACING, selectReactionSound } from "./companion-delivery-
 import { CompanionLoop } from "./companion-loop.js";
 import { MAGIC_CONTEXT_REFUSED_TURN_ENTRY_TYPE } from "./companion-turn-refusal.js";
 import { programSettledDigest } from "./program-settlement-digest.js";
-import { FACT_PRODUCER, TURN_OPENING, TURN_SETTLED_SILENT, turnAccountLine } from "./event-pump.js";
+import { FACT_PRODUCER, TURN_OPENING, TURN_SETTLED_SILENT, TURN_SUPPRESSION, turnAccountLine } from "./event-pump.js";
 
 /**
  * What the player receives for one Game turn: ONE bubble - the turn's reaction sound at its head, then the words.
@@ -2190,7 +2190,7 @@ async function turnAccount(run: () => Promise<unknown>): Promise<Record<string, 
 }
 
 /** The settled digest for one program, minted by the module that owns it rather than spelled here. */
-function settledDigest(programId: string, nodeState: "succeeded" | "failed") {
+function settledDigest(programId: string, nodeState: "succeeded" | "failed" | "rejected") {
   const digest = programSettledDigest({
     programId,
     settledAtMs: 4_242,
@@ -2219,11 +2219,15 @@ function settledDigest(programId: string, nodeState: "succeeded" | "failed") {
 }
 
 test("a settled program opens a presentation lease, because an outcome nobody was told about does not exist", async () => {
-  // The pump already treats a settlement as news that opens a turn (`event-pump.ts:isHeldProgressFact`:
-  // `program_settled` is deliberately not held). The presentation lease disagreed, so the companion was
-  // asked to answer an outcome and the answer was counted as text nobody was shown - the exact shape
-  // round40 lost 40 of its 79 parts to. The presenter below is the only thing that can report delivery,
-  // so the lease and the delivery are two separate facts and both are asserted.
+  // WHY THIS FIXTURE IS `rejected`. A settlement whose every node SUCCEEDED is `progress` and opens no turn at all - its
+  // outcome travels in the next turn's block (`event-pump.ts`, `SETTLED_PROGRAM_OUTCOMES`). The settlement that opens a turn
+  // is one something was refused in, so that is the one whose batch this test can inspect - and the lease is the subject
+  // here, not the success.
+  //
+  // The lesson this test was written for still holds: a settlement batch must be granted a presentation lease rather than
+  // the companion answering an outcome whose answer is counted as text nobody was shown - the shape round40 lost 40 of its
+  // 79 parts to. That `program_settled` is in the lease allowlist is what the assertion below proves; that a SUCCESSFUL
+  // settlement still reaches the player is the next test.
   const text = "程序跑完了，井也修好了。";
   const presented: { sourceEventId: string; text: string }[] = [];
   const loop = new CompanionLoop(sessionSaying(text) as never, {
@@ -2233,7 +2237,7 @@ test("a settled program opens a presentation lease, because an outcome nobody wa
       presented.push(content as { sourceEventId: string; text: string });
     },
   });
-  const digest = settledDigest("plan_41", "succeeded");
+  const digest = settledDigest("plan_41", "rejected");
   loop.pump.enqueueFact(digest, FACT_PRODUCER.adapterIngress);
   const account = await turnAccount(() => loop.flush());
 
@@ -2253,6 +2257,57 @@ test("a settled program opens a presentation lease, because an outcome nobody wa
     messages: { count: 1, ids: ["assistant_settlement"] },
     bubble: { chars: text.length, truncatedChars: 0, sentencesDropped: 0 },
   });
+});
+
+test("a succeeded settlement opens no turn, and the NEXT turn still delivers and presents it", async () => {
+  // THE OTHER HALF OF THE RETARGET ABOVE, and the property the brief is named for: do not lose the information. A
+  // programme that did what it was told is progress and opens no turn of its own; what that must NOT mean is that its
+  // outcome is dropped. It keeps its place in the window and arrives in the next turn that opens for a decision, with the
+  // lease that turn already has - so the retarget of the lease test cannot hide a regression in this one.
+  const text = "都浇完了，回头再看一眼。";
+  const presented: { sourceEventId: string; text: string }[] = [];
+  const batches: string[] = [];
+  const session = sessionSaying(text);
+  const loop = new CompanionLoop(
+    {
+      ...session,
+      async sendUserMessage(batch: string) {
+        batches.push(batch);
+        await session.sendUserMessage(batch);
+      },
+    } as never,
+    {
+      beginPlayerBatch() {},
+      endBatch() {},
+      async presentNativeAssistantContent(content) {
+        presented.push(content as { sourceEventId: string; text: string });
+      },
+    },
+  );
+  loop.pump.enqueueFact(settledDigest("plan_42", "succeeded"), FACT_PRODUCER.adapterIngress);
+  await loop.flush();
+
+  assert.equal(loop.pump.turnAccount.opened, 0, "a programme that did its work opens no turn of its own");
+  assert.equal(
+    loop.pump.turnAccount.suppressed[TURN_SUPPRESSION.progress],
+    1,
+    `the flush is counted as progress rather than as nothing: ${turnAccountLine(loop.pump.turnAccount)}`,
+  );
+  assert.deepEqual(batches, [], "and nothing was asked of Pi yet");
+
+  loop.pump.enqueuePlayerInput({
+    source: "player_text",
+    inputId: "player_1",
+    text: "好了吗？",
+    locale: "zh-CN",
+    timestampMs: 1_000,
+  });
+  await loop.flush();
+
+  assert.equal(batches.length, 1, "the next turn that opens for a decision is the one it arrives in");
+  assert.match(batches[0]!, /<execution-result>\n/u, "carrying the settlement's outcome, not a summary of it");
+  assert.match(batches[0]!, /1\/1 步做成了/u, "in the producer's own counts");
+  assert.equal(presented.length, 1, "and the answer reaches the player under that turn's lease");
 });
 
 test("an ordinary execution outcome still opens no lease, so volume cannot creep", async () => {
@@ -2437,7 +2492,10 @@ test("acting_turn_settled_silent_is_unreachable: a turn that acted and said noth
     return true;
   }) as typeof process.stderr.write;
   try {
-    loop.pump.enqueueFact(settledDigest("plan_58", "succeeded"), FACT_PRODUCER.adapterIngress);
+    // A REFUSED settlement, because this test is about the TURN and not about success: a settlement whose every node
+    // succeeded is progress and opens no turn (`event-pump.ts`, `SETTLED_PROGRAM_OUTCOMES`), so it could not host a turn
+    // that acts and says nothing. The refused one is a decision and does open one.
+    loop.pump.enqueueFact(settledDigest("plan_58", "rejected"), FACT_PRODUCER.adapterIngress);
     await loop.flush();
   } finally {
     process.stderr.write = stderrWrite;
@@ -2530,7 +2588,9 @@ test("acting_turn_settled_silent_is_unreachable: the same act WITH a word is not
     },
   });
   const account = await turnAccount(async () => {
-    loop.pump.enqueueFact(settledDigest("plan_58_spoken", "succeeded"), FACT_PRODUCER.adapterIngress);
+    // A REFUSED settlement, for the same reason as its gate above: a success-only settlement is progress and opens no turn,
+    // and this pair is about what a TURN settles as.
+    loop.pump.enqueueFact(settledDigest("plan_58_spoken", "rejected"), FACT_PRODUCER.adapterIngress);
     await loop.flush();
   });
 
