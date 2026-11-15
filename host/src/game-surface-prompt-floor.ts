@@ -91,9 +91,10 @@ import type { GamePromptAddition } from "./settings/player-preference-store.js";
 
 /**
  * How many characters one Game bubble delivers, read from the pacing policy that
- * actually splits the reply (`GAME_DELIVERY_PACING`). The conduct states this number,
- * so it has to be the number the surface uses; `lengthBudget` is nullable only because
- * Chat switches it off, so its absence on Game is a wiring fault, not a vague sentence.
+ * cuts the turn's speech (`GAME_DELIVERY_PACING`). The conduct states this number
+ * and what happens past it, so it has to be the number the surface uses; `lengthBudget`
+ * is nullable only because Chat switches it off, so its absence on Game is a wiring
+ * fault, not a vague sentence.
  */
 function gameBubbleMaxChars(): number {
   const budget = GAME_DELIVERY_PACING.lengthBudget;
@@ -154,6 +155,14 @@ function gameBubbleMaxChars(): number {
  * box's measured size, DERIVED from the delivery policy that splits the reply and never
  * restated, plus the markdown the renderer draws as prose. How many lines a reply carries,
  * and when a line belongs, are the persona's.
+ *
+ * THE SIZE ALONE UNDER-STATED WHAT THE SURFACE DOES WITH THE EXCESS, and "about N characters" was the
+ * under-statement. Measured 2026-11-16 on `round62`'s session (90 turns that carried text, 70 bubbles): 18 turns
+ * were cut at the ceiling - 533 characters and 26 whole sentences deleted before the player saw them. The turn lane
+ * cannot deliver the tail (`native-companion-content.ts` `deliverTurn`: one commit per turn is the bubble's whole
+ * contract), so the rule states the deletion rather than a soft target, because she budgets by whatever the rule says
+ * and the surface deletes. `game-surface-prompt-floor.test.ts` joins the two halves: every turn whose delivery reports
+ * a cut must be one the model was told about, at the same ceiling.
  *
  * Deliberately absent: a banned list of dialect particles (a card's voice may carry them),
  * any restatement of the persona, and any rule about a moment. The observation-honesty and
@@ -259,8 +268,8 @@ export const GAME_SURFACE_CONDUCT_RULES = {
   one_bubble_of_size: {
     class: "CHANNEL",
     reason:
-      "the bubble is the surface's delivery unit and cannot be retracted; its size is read from GAME_DELIVERY_PACING.",
-    text: `One bubble holds about ${gameBubbleMaxChars()} characters and cannot be retracted once it is shown.`,
+      "the bubble is the surface's delivery unit and cannot be retracted; its size, and the deletion of anything past it, are read from GAME_DELIVERY_PACING.",
+    text: `One bubble holds ${gameBubbleMaxChars()} characters and cannot be retracted once it is shown, and the sound that opens it is spent from that same count. Anything you say past the bubble's ceiling is deleted before your partner sees it: the tail does not arrive as a second bubble, and it does not arrive later either.`,
   },
   one_utterance_per_reply: {
     class: "CHANNEL",

@@ -1939,6 +1939,119 @@ test("CompanionLoop prints one delivery account per turn: the parts it had, the 
   });
   // The three populations add up, so the turn states no mismatch: 2 presented + 1 withheld is 3 produced.
   assert.doesNotMatch(printed, /delivery_mismatch:/u);
+  // And this bubble fitted, so no speech was deleted: the notice is a fact about a cut, never a line printed per turn.
+  assert.doesNotMatch(printed, /speech_truncated:/u);
+});
+
+test("a turn the bubble cuts prints the loss it could not deliver", async () => {
+  // MEASURED 2026-11-16 (`round62`, one session, 90 turns that carried text): 18 turns were cut and 533 characters were
+  // deleted before the player saw them. The loss was counted (`bubble.truncatedChars`) and reported on stderr as
+  // `bubble_truncated:`, a name that says the container was short rather than that her words were removed. The conduct
+  // now states that anything past the ceiling is deleted (`game-surface-prompt-floor.ts`), and this line is the turn it
+  // happened on - so the record and the statement share one vocabulary and one ceiling.
+  const listeners = new Set<(event: unknown) => void>();
+  const emit = (event: unknown) => {
+    for (const listener of [...listeners]) listener(event);
+  };
+  const toolCall = { type: "toolCall", id: "tool_1", name: "action", arguments: {} };
+  const said = Object.freeze([
+    "三格宽二十格长，种子还差五十八颗——先去把地方看明白，再盘算钱够不够跑一趟镇上。",
+    "先从屋里出去，站到门口才能量出那条长垄的边。",
+    "门前这片草和石头还横着呢，等脚踩上去才知道要从哪头下手。",
+  ]);
+  const presented: { text: string }[] = [];
+  const loop = new CompanionLoop(
+    {
+      async sendUserMessage(text: string) {
+        emit({ type: "message_start", message: { role: "user", content: [{ type: "text", text }] } });
+        said.forEach((value, index) => {
+          const snapshot = { id: `assistant_${String(index)}`, role: "assistant", content: [], stopReason: "pending" };
+          emit({ type: "message_start", message: snapshot });
+          emit({
+            type: "message_update",
+            message: snapshot,
+            assistantMessageEvent: { type: "text_start", contentIndex: 0, partial: snapshot },
+          });
+          emit({
+            type: "message_update",
+            message: snapshot,
+            assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: value, partial: snapshot },
+          });
+          const last = index === said.length - 1;
+          emit({
+            type: "message_end",
+            message: {
+              id: `assistant_${String(index)}`,
+              role: "assistant",
+              content: [...[{ type: "text", text: value }], ...(last ? [] : [toolCall])],
+              stopReason: last ? "stop" : "toolUse",
+            },
+          });
+        });
+        emit({ type: "agent_settled" });
+      },
+      async abort() {},
+      clearQueue() {},
+      async waitForIdle() {},
+      subscribe(next: (event: unknown) => void) {
+        listeners.add(next);
+        return () => {
+          listeners.delete(next);
+        };
+      },
+    } as never,
+    {
+      beginPlayerBatch() {},
+      endBatch() {},
+      async presentNativeAssistantContent(content) {
+        presented.push(content as { text: string });
+      },
+    },
+  );
+  const stderrWrite = process.stderr.write;
+  let printed = "";
+  process.stderr.write = ((chunk: string | Uint8Array) => {
+    printed += String(chunk);
+    return true;
+  }) as typeof process.stderr.write;
+  try {
+    loop.pump.enqueuePlayerInput({
+      source: "player_text",
+      inputId: "input_truncation",
+      eventId: "player_source_truncation",
+      text: "去把菜收了",
+      locale: "zh-CN",
+      timestampMs: 1,
+    });
+    await loop.flush();
+  } finally {
+    process.stderr.write = stderrWrite;
+  }
+
+  const account =
+    printed.split("\n").find((entry) => entry.startsWith("NATIVE_COMPANION_TURN_DELIVERY ")) ??
+    assert.fail(`no account; ${printed}`);
+  const bubble = (
+    JSON.parse(account.slice("NATIVE_COMPANION_TURN_DELIVERY ".length)) as {
+      bubble: { chars: number; truncatedChars: number; sentencesDropped: number };
+    }
+  ).bubble;
+  // The loss is real before anything is asserted about the notice: her speech does not fit, the player got less.
+  assert.ok(bubble.truncatedChars > 0, `this case must actually truncate; it dropped ${String(bubble.truncatedChars)}`);
+  assert.ok(
+    presented[0]!.text.length < said.join(" ").length,
+    "the delivered bubble is shorter than what she said, which is the loss this notice is about",
+  );
+
+  const line = printed.split("\n").find((entry) => entry.startsWith("speech_truncated:"));
+  assert.notEqual(line, undefined, `a cut turn printed no truncation notice; stderr was: ${printed}`);
+  const [code, turn, chars, sentences] = line!.split(":");
+  assert.equal(code, "speech_truncated");
+  assert.equal(turn, "player_source_truncation", "the notice names the turn the player was short of speech on");
+  // One authority for the numbers: the delivery account and the notice are the same measurement, so neither can drift.
+  assert.equal(Number(chars), bubble.truncatedChars);
+  assert.equal(Number(sentences), bubble.sentencesDropped);
+  assert.ok(bubble.sentencesDropped > 0, "whole sentences were dropped, and the notice says how many");
 });
 
 test("a turn with no presentation source accounts for its text instead of leaving it in the remainder", async () => {

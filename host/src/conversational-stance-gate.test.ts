@@ -444,9 +444,9 @@ test("the rule reader turns red on the rules this unit moved, and on one nobody 
 test("what the floor may still say is not a finding", () => {
   const clean = (text: string): readonly string[] => speechGovernance(text);
   assert.deepEqual(
-    clean("One bubble holds about 80 characters and cannot be retracted once it is shown."),
+    clean(GAME_SURFACE_CONDUCT_RULES.one_bubble_of_size.text),
     [],
-    "the bubble's size is what the surface does",
+    "the bubble's size, and the deletion past it, are what the surface does",
   );
   assert.deepEqual(
     clean(

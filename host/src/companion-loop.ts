@@ -830,14 +830,17 @@ export class CompanionLoop {
           process.stderr.write(
             `delivery_mismatch:produced=${String(assistantTextParts)};presented=${String(presentedTextParts)};suppressed=${String(suppressedParts)};missing=${String(missingParts)}\n`,
           );
-        // The bubble's ceiling, when it cut the turn's speech. Named with the turn's own identity because it is a
-        // CADENCE fact: more than one bubble's worth was said inside one turn, and the answer to that is fewer, shorter
-        // turns - not a bigger bubble (`identity-profile.ts` states this same ceiling to the model). A non-zero count of
-        // characters with ZERO sentences dropped is the one shape where no complete sentence fitted at all, so the cut
-        // landed inside a sentence.
-        if (turnBubble !== null && turnBubble.truncatedChars > 0)
+        // The bubble's ceiling cut the turn's speech, and the tail had nowhere to go: one bubble per turn is the whole
+        // contract, `onFinalText` is this surface's only channel, and nothing can be retracted. The conduct therefore
+        // states that anything past the ceiling is deleted (`game-surface-prompt-floor.ts` `one_bubble_of_size`, the
+        // same number `GAME_DELIVERY_PACING` gives the delivery), and this line is the turn it happened on - the record
+        // and the statement share the ceiling and the vocabulary. It is a CADENCE fact as well: more than one bubble's
+        // worth was said inside one turn, and the answer to that is fewer, shorter turns rather than a bigger bubble.
+        // A non-zero count of characters with ZERO sentences dropped is the one shape where no complete sentence fitted
+        // at all, so the cut landed inside a sentence.
+        if (turnBubble !== null && (turnBubble.truncatedChars > 0 || turnBubble.sentencesDropped > 0))
           process.stderr.write(
-            `bubble_truncated:${String(sourceEventId ?? batchId ?? "unknown")}:${String(turnBubble.truncatedChars)}:${String(turnBubble.sentencesDropped)}\n`,
+            `speech_truncated:${String(sourceEventId ?? batchId ?? "unknown")}:${String(turnBubble.truncatedChars)}:${String(turnBubble.sentencesDropped)}\n`,
           );
       }
       if (batchId !== undefined) {

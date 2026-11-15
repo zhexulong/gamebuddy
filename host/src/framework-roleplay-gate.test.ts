@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 
 import ts from "typescript";
 
-import { buildGameCompanionSystemPrompt } from "./game-surface-prompt-floor.js";
+import { buildGameCompanionSystemPrompt, GAME_SURFACE_CONDUCT_RULES } from "./game-surface-prompt-floor.js";
 import { DEFAULT_IDENTITY_PROFILE, type IdentityProfile, identityProfileMacros } from "./identity-profile.js";
 import {
   buildChatCompanionSystemPrompt,
@@ -890,9 +890,9 @@ test("the classifier reds a restated card fact of every claim, and blocks when t
     "the identity block's own sentence is not a Host rule",
   );
   assert.deepEqual(
-    claimsOf(["One bubble holds about 80 characters and cannot be retracted once it is shown."]),
+    claimsOf([GAME_SURFACE_CONDUCT_RULES.one_bubble_of_size.text]),
     [],
-    "the bubble's size is the surface's own delivery unit and belongs to the floor",
+    "the bubble's size and the deletion past it are the surface's own delivery unit and belong to the floor",
   );
   // The premise itself must be able to fail: a directive that states no form blocks the reading instead of passing.
   const form = facts.find((fact) => fact.claim === "form");

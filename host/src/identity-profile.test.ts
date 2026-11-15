@@ -176,7 +176,7 @@ test("the Game floor states the bubble and asks for no line on any turn", () => 
   // surface mounts says what she does about it. `conversational-stance-gate.test.ts` reads
   // every rule in the floor and fails on any that states a moment or a count.
   const game = buildGameCompanionSystemPrompt(DEFAULT_IDENTITY_PROFILE);
-  assert.match(game, /One bubble holds about \d+ characters/);
+  assert.match(game, /One bubble holds \d+ characters/);
   assert.doesNotMatch(game, /the surface carries one per reply/);
   assert.doesNotMatch(game, /say it as you begin a stretch of work/);
   assert.doesNotMatch(game, /work quietly until you are done/);
@@ -210,7 +210,7 @@ test("the Game floor does not command speech before every action, so the card ke
   assert.doesNotMatch(game, /Speak before you act/);
   assert.doesNotMatch(game, /Never run tools in total silence/);
   assert.doesNotMatch(game, /land your first reaction on what they said/);
-  assert.match(game, /One bubble holds about \d+ characters/);
+  assert.match(game, /One bubble holds \d+ characters/);
   assert.doesNotMatch(game, /One utterance per reply/);
   assert.match(buildGameCompanionSystemPrompt(DEFAULT_COMPANION_PRESET.profile), /先接住人/u);
 });
@@ -350,7 +350,7 @@ test("the Game floor carries no pacing bound at all", () => {
     /You may speak while you work/u,
   ])
     assert.doesNotMatch(game, gone, `${String(gone)} paces her speech, which the persona owns`);
-  assert.match(game, /One bubble holds about \d+ characters/);
+  assert.match(game, /One bubble holds \d+ characters/);
 });
 
 test("the Game conduct fits one spoken turn inside the bubble the player reads from", () => {
@@ -365,8 +365,17 @@ test("the Game conduct fits one spoken turn inside the bubble the player reads f
   const budget = GAME_DELIVERY_PACING.lengthBudget;
   assert.ok(budget !== null, "the Game surface must declare a bubble budget for this case to mean anything");
   assert.ok(
-    game.includes(`One bubble holds about ${budget.maxChars} characters`),
+    game.includes(`One bubble holds ${budget.maxChars} characters`),
     `the conduct must state the ${budget.maxChars}-character bubble it is spoken into`,
+  );
+  // And it must say what happens PAST that size, because the surface deletes: measured 2026-11-16 (`round62`, 90 turns
+  // that carried text) 18 turns were cut and 533 characters were deleted before the player saw them. A size on its own
+  // reads as a soft target, and she budgets by it. `game-surface-prompt-floor.test.ts` joins this statement to the
+  // delivery itself, one truncated turn at a time.
+  assert.match(
+    game,
+    /past the bubble's ceiling is deleted/u,
+    "the conduct states the bubble's size and not that the tail is deleted, so she budgets by a number nothing enforces gently",
   );
   assert.match(game, /No markdown headings, lists, bold or block quotes/);
   // How MANY utterances one reply carries is the preset's (2026-11-15): the floor states the box, and
