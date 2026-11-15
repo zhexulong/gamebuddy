@@ -30,6 +30,16 @@
 // the two claims below (entry count = the document's `prompts.length`, every unfilled marker a name the
 // document carries) were never exercised. It goes green by itself, with no change here, on the day a route
 // serves the readout.
+//
+// HOW THE SURFACE IS REACHED, AND WHERE IT RETURNS TO. `cc53d510` (`3e80c552` before it) took `预设装配` out
+// of the app bar: it is not a place a player goes on purpose, so it is now ONE disclosure inside Settings —
+// `<details data-settings-presets-disclosure>`, collapsed by default, holding one button
+// (`labels.presetsOpen`) — and it is left through its own `data-testid="presets-back"`, which returns to
+// Settings. This driver used to call `activateSurface(page, "预设装配")`, which looks for
+// `.app-bar-actions .nav-button[aria-label="预设装配"]`; on the run of 2026-11-15 that click waited its full
+// 30 s for a control the bar no longer carries. The path a player walks is walked here instead —
+// 设置 → the disclosure's summary → its one control — and every step asserts the state it asked for.
+// `preset-assembly-is-reached-through-settings.spec.ts` is the product's own statement of the same path.
 const { readFileSync, readdirSync } = require("node:fs");
 const { spawnSync } = require("node:child_process");
 const { join, relative } = require("node:path");
@@ -50,8 +60,13 @@ const WIDTHS = [
   { w: 400, h: 800, tag: "400x800" },
 ];
 
-/** The app bar entry's accessible name (`labels.presetsPanel`), which is also the surface's heading. */
-const ENTRY_LABEL = "预设装配";
+/** The Settings surface's bar entry (`labels.settingsPanel`): the surface that carries the disclosure. */
+const SETTINGS_LABEL = "设置";
+/** The disclosure's one control (`labels.presetsOpen`), which is how the readout is opened. */
+const READOUT_CONTROL_LABEL = "查看预设装配";
+/** Settings' own block for the readout, and the readout's own way back to it. */
+const DISCLOSURE_SELECTOR = "[data-settings-presets-disclosure]";
+const BACK_SELECTOR = '[data-testid="presets-back"]';
 /** The route the surface's one read uses — the constant the panel calls, spelled once here. */
 const READOUT_ROUTE = "/api/tavern/v1/presets";
 /** Where this checkout's own SillyTavern presets live (the `assets` root the macro census walks). */
@@ -172,6 +187,63 @@ const readHostReadout = async (route) => {
     return { status: 0, ok: false, parsed: false, contentType: null, body: null, networkError: String(error).slice(0, 200) };
   }
 };
+
+/**
+ * Walk to the readout the way the product publishes the path, and say what each step found.
+ *
+ * Settings carries one disclosure for the readout and nothing else points at it, so every step here is
+ * asserted: the Settings surface's own block is present, its fold really opened (a summary that missed
+ * leaves the control behind a shut `<details>`, which is the same 30 s wait by another name), the one
+ * control is there and enabled, and the readout mounted. A step that cannot be taken fails this driver
+ * BY NAME instead of timing out on a selector the product no longer carries.
+ */
+async function openReadout(page) {
+  const entered = await activateSurface(page, SETTINGS_LABEL);
+  const disclosure = page.locator(DISCLOSURE_SELECTOR);
+  if ((await disclosure.count()) === 0)
+    throw new Error(
+      `settings_carries_no_preset_disclosure: ${DISCLOSURE_SELECTOR} is not on the Settings surface (bar entry ` +
+        `${JSON.stringify(SETTINGS_LABEL)} reached it as ${entered}), so the readout has no path this driver knows`,
+    );
+  if ((await disclosure.evaluate((node) => node.open)) !== true) await disclosure.locator("summary").click();
+  if ((await disclosure.evaluate((node) => node.open)) !== true)
+    throw new Error(
+      `the_settings_disclosure_did_not_open: ${DISCLOSURE_SELECTOR} is still shut after pressing its summary, so ` +
+        `its control is behind a fold - the readout is not reachable from this reading`,
+    );
+  const control = disclosure.getByRole("button", { name: READOUT_CONTROL_LABEL, exact: true });
+  if ((await control.count()) === 0)
+    throw new Error(
+      `the_settings_disclosure_offers_no_readout_control: no button named ${JSON.stringify(READOUT_CONTROL_LABEL)} ` +
+        `inside ${DISCLOSURE_SELECTOR}, so the disclosure leads nowhere`,
+    );
+  await control.click();
+  const surface = page.locator('[data-testid="presets-surface"]');
+  if ((await surface.count()) === 0)
+    throw new Error(
+      `the_readout_did_not_mount: pressing ${JSON.stringify(READOUT_CONTROL_LABEL)} left no ` +
+        `[data-testid="presets-surface"] on the page`,
+    );
+  return { entered, disclosureOpen: true, control: READOUT_CONTROL_LABEL, back: BACK_SELECTOR };
+}
+
+/** The readout's own way out, pressed and read back: it returns to the surface that opened it. */
+async function leaveReadout(page) {
+  const back = page.locator(BACK_SELECTOR);
+  if ((await back.count()) === 0)
+    throw new Error(
+      `the_readout_offers_no_way_back: no ${BACK_SELECTOR} control, and the surface it is reached from is Settings`,
+    );
+  await back.first().click();
+  const settings = await page.locator('[data-testid="settings-surface"]').count();
+  const readout = await page.locator('[data-testid="presets-surface"]').count();
+  if (settings === 0 || readout !== 0)
+    throw new Error(
+      `the_readout's back control did not return to Settings: settings-surface present=${settings}, ` +
+        `presets-surface still present=${readout}`,
+    );
+  return { returnedTo: "settings-surface", readoutClosed: readout === 0 };
+}
 
 /**
  * The readout's own settle, named so a failure says what it waited for.
@@ -404,8 +476,11 @@ function documentSide(document, relativePath, tracked) {
     await page.setViewportSize({ width: size.w, height: size.h });
     await page.waitForTimeout(800);
     say(`===== PRESET SURFACE @${size.tag} =====`);
-    const opened = await activateSurface(page, ENTRY_LABEL);
-    say(`surface selected through the app bar entry ${JSON.stringify(ENTRY_LABEL)} (${opened})`);
+    const walked = await openReadout(page);
+    say(
+      `the readout reached the way the product publishes it: ${JSON.stringify(SETTINGS_LABEL)} (bar entry reached it as ` +
+        `${walked.entered}) -> ${DISCLOSURE_SELECTOR} opened -> ${JSON.stringify(walked.control)}`,
+    );
     const settled = await waitForReadout(page, { name: `@${size.tag}` });
     say(`the panel's own settle: ${JSON.stringify(settled)}`);
     readout = await page.evaluate(readReadout);
@@ -449,6 +524,7 @@ function documentSide(document, relativePath, tracked) {
     reconcile(`@${size.tag}`, readout);
     await shot(page, `92-preset-assembly-${size.tag}.png`);
     await shot(page, `92-preset-assembly-${size.tag}-full.png`, { fullPage: true });
+    say(`the readout's own way back @${size.tag}: ${JSON.stringify(await leaveReadout(page))}`);
   }
 
   // ── The Host's own answer for the same moment, through the route the panel reads ──
