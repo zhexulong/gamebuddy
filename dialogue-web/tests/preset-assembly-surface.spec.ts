@@ -25,7 +25,7 @@
  */
 import { type PresetSamplingRowV1, presetAssemblySurface } from "../../host/src/preset-assembly-surface.ts";
 import { PRESET_SAMPLING_KEYS, presetSamplingParams } from "../../host/src/tavern/preset-sampling.ts";
-import { messages } from "../src/i18n";
+import { type Messages, messages } from "../src/i18n";
 import { validatePresetAssemblyRead } from "../src/preset-assembly-surface";
 import { type Page, expect, test } from "./frontend-coverage";
 
@@ -46,6 +46,10 @@ const PRESET_DOCUMENT = {
   description: "A preset with markers, a post-history tail and two depth injections.",
   temperature: 0.9,
   top_p: 1,
+  // A context budget and the "pick randomly" seed sentinel, as SillyTavern itself writes them: both are fields this
+  // product recognises and does not send, so both must reach the panel as named absences.
+  openai_max_context: 4095,
+  seed: -1,
   prompts: [
     {
       identifier: "main",
@@ -500,7 +504,46 @@ async function expectPresetReadout(
     ).not.toContain(`= ${written} (`);
   }
 
+  // 6. Recognised and not sent: the fields the preset states that this product leaves out, each with the class of
+  // reason. Without this the sampler rows above read as everything the preset said, and a `seed` the player can see in
+  // their own file becomes invisible the moment it is imported.
+  const notAppliedList = page.locator("[data-preset-not-applied]");
+  await notAppliedList.scrollIntoViewIfNeeded();
+  const renderedNotApplied = await notAppliedList
+    .locator("[data-preset-not-applied-field]")
+    .evaluateAll((nodes) => nodes.map((node) => node.getAttribute("data-preset-not-applied-field") ?? ""));
+  expect(
+    [...renderedNotApplied].sort(),
+    "the panel names every field the producer reports as recognised and not sent",
+  ).toEqual(SURFACE.notApplied.map((row) => row.field).sort());
+  expect(SURFACE.notApplied.length, "the fixture really states at least one field this product leaves out").toBeGreaterThan(0);
+  for (const entry of SURFACE.notApplied) {
+    const sentence = notAppliedSentence(entry.code, catalogue);
+    await expect(
+      page.locator(`[data-preset-not-applied-field="${entry.field}"]`),
+      `"${entry.field}" says why it is not sent, in the player's language rather than the Host's prose`,
+    ).toHaveText(`${entry.field} ${sentence}`);
+    // Reported is not sent: a field named here must have no sampler row, or the panel contradicts itself.
+    await expect(
+      page.locator(`[data-preset-sampling-row="${entry.field}"]`),
+      `"${entry.field}" is reported as not sent, so it cannot also carry a sampler row`,
+    ).toHaveCount(0);
+  }
   return rendered;
+}
+
+/** The sentence the catalogue carries for one reason class, spelled out rather than indexed so a missing line fails. */
+function notAppliedSentence(code: SURFACE["notApplied"][number]["code"], catalogue: Messages): string {
+  switch (code) {
+    case "model_owned_setting":
+      return catalogue.presetNotAppliedReasonModelOwnedSetting;
+    case "host_owned_transport":
+      return catalogue.presetNotAppliedReasonHostOwnedTransport;
+    case "no_value_to_send":
+      return catalogue.presetNotAppliedReasonNoValueToSend;
+    case "one_completion_per_call":
+      return catalogue.presetNotAppliedReasonOneCompletionPerCall;
+  }
 }
 
 /**
@@ -552,6 +595,7 @@ test("a preset with nothing to report says so on all four counts", async ({ page
   expect(clean.unfilledMarkers, "the fixture really fills every marker").toEqual([]);
   expect(clean.macros, "the fixture really spells no unusable macro").toEqual([]);
   expect(clean.depth.count, "the fixture really injects at no depth").toBe(0);
+  expect(clean.notApplied, "the fixture really states no field this product leaves out").toEqual([]);
 
   await stubPresetSurface(page, [clean]);
   await page.goto(`/#profile=composed-reference-game&boot=${token}&panel=presets`);
@@ -560,6 +604,8 @@ test("a preset with nothing to report says so on all four counts", async ({ page
   await expect(surface.locator("[data-preset-unfilled-none]")).toHaveText(catalogue.presetUnfilledNone);
   await expect(surface.locator("[data-preset-macros-none]")).toHaveText(catalogue.presetMacrosNone);
   await expect(surface.locator("[data-preset-depth-none]")).toHaveText(catalogue.presetDepthNone);
+  await expect(surface.locator("[data-preset-not-applied-none]")).toHaveText(catalogue.presetNotAppliedNone);
+  await expect(surface.locator("[data-preset-not-applied-field]"), "no field is listed as recognised and not sent").toHaveCount(0);
   await expect(surface.locator("[data-preset-marker]"), "no marker is listed as unfilled").toHaveCount(0);
   await expect(surface.locator("[data-preset-depth-blocks]"), "no depth block is listed").toHaveCount(0);
 });
@@ -838,6 +884,21 @@ test("a readout that contradicts itself is refused instead of shown", async ({ p
     {
       what: "a reason this surface has no line for",
       body: { ...SURFACE, sampling: { unavailable: "no_provider_configured" } },
+    },
+    {
+      what: "a not-sent field whose reason class this surface does not know",
+      body: {
+        ...SURFACE,
+        notApplied: SURFACE.notApplied.map((row, index) => (index === 0 ? { ...row, code: "budget_of_the_provider" } : row)),
+      },
+    },
+    {
+      what: "one field reported as recognised and not sent twice",
+      body: { ...SURFACE, notApplied: [SURFACE.notApplied[0], SURFACE.notApplied[0]] },
+    },
+    {
+      what: "a not-sent field that carries the Host's prose beside its class",
+      body: { ...SURFACE, notApplied: SURFACE.notApplied.map((row) => ({ ...row, reason: "the preset has no budget" })) },
     },
     { what: "a member this surface has no line for", body: { ...SURFACE, samplingParams: { temperature: 0.9 } } },
   ];

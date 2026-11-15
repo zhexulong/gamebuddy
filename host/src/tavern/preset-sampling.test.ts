@@ -13,6 +13,7 @@ import { mergeModelProviderEntry, modelProviderEntry, type PiProviderEntry } fro
 import {
   effectivePresetSampling,
   PRESET_FIELDS_NOT_APPLIED,
+  PRESET_NOT_APPLIED_CODES,
   PRESET_SAMPLING_KEYS,
   presetFieldsNotApplied,
   presetSamplingParams,
@@ -168,6 +169,19 @@ test("a preset's budget and transport fields are recognised by name and reported
   assert.equal(reported.find((entry) => entry.field === "openai_max_context")?.value, 4095);
   for (const entry of reported)
     assert.ok(entry.reason.length > 0, `${entry.field} must say why it is not ours, or the report is a shrug`);
+  // Each field names a reason CLASS from the closed union, because that code is what the readout publishes: a
+  // declaration outside the union would be a field a panel has no line for.
+  for (const [field, declaration] of Object.entries(PRESET_FIELDS_NOT_APPLIED)) {
+    assert.ok(
+      PRESET_NOT_APPLIED_CODES.includes(declaration.code),
+      `${field} declares "${declaration.code}", which is none of ${PRESET_NOT_APPLIED_CODES.join(", ")}`,
+    );
+    assert.equal(
+      reported.find((entry) => entry.field === field)?.code,
+      declaration.code,
+      `${field} reports the code its declaration names`,
+    );
+  }
   // Reported is not carried: the same field must still be absent from the sampling bag.
   for (const entry of reported)
     assert.equal(entry.field in presetSamplingParams(document), false, `${entry.field} is reported, not sent`);

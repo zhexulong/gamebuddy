@@ -3,6 +3,7 @@ import { Compile, type Validator } from "typebox/compile";
 import { Format } from "typebox/format";
 
 import { ST_CARD_DECODER_LIMITS_V1 } from "../compatibility-manifest.v1.js";
+import { PRESET_NOT_APPLIED_CODES } from "../../tavern/preset-sampling.js";
 import { PROVIDER_FAILURE_CLASSES, type ProviderFailureClass } from "../../provider-failure-classification.js";
 
 export const TAVERN_BROWSER_API_V1 = "tavern_browser_api/v1" as const;
@@ -1900,6 +1901,18 @@ export const PresetAssemblyMacroV1Schema = strictObject({
   name: Type.String({ minLength: 1, maxLength: 128 }),
   entries: Type.Array(Type.String({ minLength: 1, maxLength: 128 }), { minItems: 1 }),
 });
+/**
+ * One preset field this product recognises and does not send, by name and reason class.
+ *
+ * The code union is DERIVED from `preset-sampling.ts`'s `PRESET_NOT_APPLIED_CODES` rather than restated: the table
+ * that decides which fields are reported is also the table that decides which reasons exist, and two spellings of
+ * that set is how a wire grows a reason no producer emits. The prose sentence beside each code stays in the Host - a
+ * reason the browser has no line for cannot be published as prose.
+ */
+export const PresetNotAppliedV1Schema = strictObject({
+  field: Type.String({ minLength: 1, maxLength: 64 }),
+  code: Type.Union(PRESET_NOT_APPLIED_CODES.map((code) => Type.Literal(code))),
+});
 /** One entry placed inside the transcript by `injection_depth`. */
 export const PresetAssemblyDepthBlockV1Schema = strictObject({
   identifier: Type.String({ minLength: 1, maxLength: 128 }),
@@ -1940,6 +1953,7 @@ export const PresetAssemblySurfaceV1Schema = strictObject({
     blocks: Type.Array(PresetAssemblyDepthBlockV1Schema),
   }),
   sampling: Type.Union([Type.Array(PresetSamplingRowV1Schema, { maxItems: 8 }), PresetSamplingUnavailableV1Schema]),
+  notApplied: Type.Array(PresetNotAppliedV1Schema, { maxItems: 16 }),
 });
 /**
  * Which preset is IN FORCE for this installation: one fact, three named states.
@@ -4099,6 +4113,10 @@ export type PresetAssemblyMacroV1 = Readonly<{
   entries: readonly string[];
 }>;
 export type PresetAssemblyDepthBlockV1 = Readonly<{ identifier: string; depth: number }>;
+export type PresetNotAppliedV1 = Readonly<{
+  field: string;
+  code: "model_owned_setting" | "host_owned_transport" | "no_value_to_send" | "one_completion_per_call";
+}>;
 export type PresetAssemblySurfaceV1 = Readonly<{
   presetId: string;
   name: string | null;
@@ -4109,6 +4127,7 @@ export type PresetAssemblySurfaceV1 = Readonly<{
   macros: readonly PresetAssemblyMacroV1[];
   depth: Readonly<{ count: number; depths: readonly number[]; blocks: readonly PresetAssemblyDepthBlockV1[] }>;
   sampling: readonly PresetSamplingRowV1[] | PresetSamplingUnavailableV1;
+  notApplied: readonly PresetNotAppliedV1[];
 }>;
 export type PresetActiveBindingV1 =
   | Readonly<{ state: "none" }>

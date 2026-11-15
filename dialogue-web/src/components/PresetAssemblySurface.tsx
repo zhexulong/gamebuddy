@@ -16,7 +16,10 @@
  *    `thinking-level` / `unset`). This is the one fact the preset's own file cannot answer (§5): the model or the
  *    thinking level may override a value the preset wrote, so a panel that echoed the written value would be telling
  *    the player about a request nobody sends. Every key gets a row, `unset` ones included - an omitted row reads as
- *    "there is no such setting" rather than "nothing is sent".
+ *    "there is no such setting" rather than "nothing is sent";
+ *  - which fields the preset states that this product recognises and does NOT send, each with the class of reason. The
+ *    sampler rows above are not everything a preset can say: a `seed`, an `n` or a context budget is silently inert,
+ *    and a readout that stays silent about them makes this panel an incomplete answer to "did my file take effect".
  *
  * The read is one GET on mount. A read that fails says which of the two things went wrong, and never renders an empty
  * assembly: "no preset was imported", "the Host would not serve the read" and "the Host served something this build
@@ -30,6 +33,7 @@ import {
   type PresetActiveBindingV1,
   type PresetAssemblySurfaceV1,
   type PresetAssemblyReadV1,
+  type PresetNotAppliedV1,
   PresetAssemblyProtocolError,
   readPresetAssemblySurface,
 } from "../preset-assembly-surface";
@@ -262,6 +266,41 @@ function PresetAssemblyRow({
           ))}
         </ul>
       )}
+
+      <h4>{labels.presetNotAppliedTitle}</h4>
+      {preset.notApplied.length === 0 ? (
+        <p className="management-settings-hint" data-preset-not-applied-none>
+          {labels.presetNotAppliedNone}
+        </p>
+      ) : (
+        <ul data-preset-not-applied>
+          {preset.notApplied.map((row) => (
+            <li key={row.field} data-preset-not-applied-field={row.field} data-preset-not-applied-code={row.code}>
+              <code>{row.field}</code> {notAppliedReason(row, labels)}
+            </li>
+          ))}
+        </ul>
+      )}
     </section>
   );
+}
+
+/**
+ * The sentence for one recognised-and-not-sent field, keyed by the reason class the Host published.
+ *
+ * The class and not the Host's own prose: this panel speaks the interface language, and a sentence authored for a
+ * reader of the Host would arrive here untranslated. The union is closed on both sides, so a class this build has no
+ * line for cannot reach here - the validator refuses that body first.
+ */
+function notAppliedReason(row: PresetNotAppliedV1, labels: Messages): string {
+  switch (row.code) {
+    case "model_owned_setting":
+      return labels.presetNotAppliedReasonModelOwnedSetting;
+    case "host_owned_transport":
+      return labels.presetNotAppliedReasonHostOwnedTransport;
+    case "no_value_to_send":
+      return labels.presetNotAppliedReasonNoValueToSend;
+    case "one_completion_per_call":
+      return labels.presetNotAppliedReasonOneCompletionPerCall;
+  }
 }

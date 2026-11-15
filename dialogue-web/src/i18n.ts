@@ -988,6 +988,14 @@ const en = {
     "What each sampler key is actually sent as, and which layer decided it - a preset value can be overridden by the model or the thinking level, and unset means nothing is sent.",
   presetSamplingUnavailable:
     "Sampling not measured: no composed model exists for this preset yet, so nothing states what would be sent.",
+  presetNotAppliedTitle: "Recognised and not sent",
+  presetNotAppliedNone: "This preset states no field this product recognises and leaves out.",
+  presetNotAppliedReasonModelOwnedSetting:
+    "is not sent: the context window and output reserve belong to the selected model.",
+  presetNotAppliedReasonHostOwnedTransport: "is not sent: this runtime always streams, so the transport is the Host's.",
+  presetNotAppliedReasonNoValueToSend:
+    'is not sent: SillyTavern writes -1 for "pick randomly", so there is no seed there to send.',
+  presetNotAppliedReasonOneCompletionPerCall: "is not sent: one completion per call is how this product asks.",
 
   // Shell (design/104 §2): brand mark, single contextual drawer, panel groups.
   appMark: "GB",
@@ -2048,6 +2056,12 @@ const zh: Messages = {
   presetSamplingHint:
     "每个采样键真正下发的值，以及是哪一层决定的——预设里的值可能被模型或思考等级覆盖；unset 表示不发这个键。",
   presetSamplingUnavailable: "未测量采样参数：这个预设还没有合成后的模型，因此无法说明会下发什么。",
+  presetNotAppliedTitle: "已识别但不下发",
+  presetNotAppliedNone: "这个预设没有填写本产品会识别但不下发的字段。",
+  presetNotAppliedReasonModelOwnedSetting: "不下发：上下文窗口与输出上限属于所选模型。",
+  presetNotAppliedReasonHostOwnedTransport: "不下发：本运行时始终流式传输，传输方式由 Host 决定。",
+  presetNotAppliedReasonNoValueToSend: "不下发：SillyTavern 用 -1 表示“随机”，因此没有种子可下发。",
+  presetNotAppliedReasonOneCompletionPerCall: "不下发：本产品每次只请求一个补全。",
 
   // 外壳（design/104 §2）：品牌标记、唯一上下文抽屉、面板分组。
   appMark: "GB",

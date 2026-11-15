@@ -45,7 +45,7 @@ export const PRESET_SAMPLING_KEYS = Object.freeze([
   "frequency_penalty",
 ] as const);
 
-export type PresetSamplingKey = (typeof PRESET_SAMPLING_KEYS)[number];
+type PresetSamplingKey = (typeof PRESET_SAMPLING_KEYS)[number];
 
 /** The sampling values one preset carries. Absent means the preset says nothing about that key. */
 export type PresetSamplingValues = Readonly<Partial<Record<PresetSamplingKey, number>>>;
@@ -70,6 +70,23 @@ export function presetSamplingParams(document: Readonly<Record<string, unknown>>
 }
 
 /**
+ * Why a field this product recognises is not sent. A closed union, one member per class of reason.
+ *
+ * A CODE and not the sentence: the sentence beside it in the table below is for a reader of this repository, while
+ * the panel shows the player a line in their own language. The wire therefore carries the code (`preset-assembly-
+ * surface.ts`), the way every other absence on this product's readouts carries a code and never prose - "a reason the
+ * browser has no line for cannot be published as prose" (`browser-contract/index.ts`).
+ */
+export const PRESET_NOT_APPLIED_CODES = Object.freeze([
+  "model_owned_setting",
+  "host_owned_transport",
+  "no_value_to_send",
+  "one_completion_per_call",
+] as const);
+
+export type PresetNotAppliedCode = (typeof PRESET_NOT_APPLIED_CODES)[number];
+
+/**
  * The preset fields this product recognises on import and does NOT send, and why each one is not ours.
  *
  * A reading, not a rejection list: import keeps every field an authored preset carries (design §2.2), so a preset
@@ -83,20 +100,39 @@ export function presetSamplingParams(document: Readonly<Record<string, unknown>>
  * disagreeing cap for one fact - and a preset authored against one endpoint would reshape every request to another.
  * The product's own shipped preset therefore states none of these; only an imported one may.
  */
-export const PRESET_FIELDS_NOT_APPLIED = Object.freeze({
-  openai_max_context:
-    "the context window is the selected model's own (provider-catalog.ts contextWindow); the preset has no budget of its own",
-  openai_max_tokens: "the output reserve is the provider entry's own models[0].maxTokens (pi-provider-store.ts)",
-  stream_openai: "the transport is the Host's: this runtime always streams and never reads the flag",
-  seed: 'SillyTavern writes -1 as its "pick randomly" sentinel, so there is no value here to send',
-  n: "one completion per call is the product's shape, so asking for several is not a request this Host makes",
-} as const);
+export const PRESET_FIELDS_NOT_APPLIED: Readonly<
+  Record<string, Readonly<{ code: PresetNotAppliedCode; reason: string }>>
+> = Object.freeze({
+  openai_max_context: Object.freeze({
+    code: "model_owned_setting" as const,
+    reason:
+      "the context window is the selected model's own (provider-catalog.ts contextWindow); the preset has no budget of its own",
+  }),
+  openai_max_tokens: Object.freeze({
+    code: "model_owned_setting" as const,
+    reason: "the output reserve is the provider entry's own models[0].maxTokens (pi-provider-store.ts)",
+  }),
+  stream_openai: Object.freeze({
+    code: "host_owned_transport" as const,
+    reason: "the transport is the Host's: this runtime always streams and never reads the flag",
+  }),
+  seed: Object.freeze({
+    code: "no_value_to_send" as const,
+    reason: 'SillyTavern writes -1 as its "pick randomly" sentinel, so there is no value here to send',
+  }),
+  n: Object.freeze({
+    code: "one_completion_per_call" as const,
+    reason: "one completion per call is the product's shape, so asking for several is not a request this Host makes",
+  }),
+});
 
 /** One preset field that was recognised on import and deliberately not sent. */
 export type PresetNotAppliedField = Readonly<{
   field: string;
   value: unknown;
   disposition: "not_applied";
+  /** Which class of reason, for the readout that carries it to a player in their own language. */
+  code: PresetNotAppliedCode;
   reason: string;
 }>;
 
@@ -109,9 +145,17 @@ export type PresetNotAppliedField = Readonly<{
  */
 export function presetFieldsNotApplied(document: Readonly<Record<string, unknown>>): readonly PresetNotAppliedField[] {
   const reported: PresetNotAppliedField[] = [];
-  for (const [field, reason] of Object.entries(PRESET_FIELDS_NOT_APPLIED)) {
+  for (const [field, declaration] of Object.entries(PRESET_FIELDS_NOT_APPLIED)) {
     if (!(field in document)) continue;
-    reported.push(Object.freeze({ field, value: document[field], disposition: "not_applied" as const, reason }));
+    reported.push(
+      Object.freeze({
+        field,
+        value: document[field],
+        disposition: "not_applied" as const,
+        code: declaration.code,
+        reason: declaration.reason,
+      }),
+    );
   }
   return Object.freeze(reported);
 }

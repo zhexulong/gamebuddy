@@ -68,6 +68,25 @@ type PresetSamplingUnavailableReasonV1 = (typeof PRESET_SAMPLING_UNAVAILABLE_REA
 /** The named absence: no rows exist, and this says why. Never accompanied by rows. */
 type PresetSamplingUnavailableV1 = Readonly<{ unavailable: PresetSamplingUnavailableReasonV1 }>;
 
+/**
+ * Why a field this product recognises is not sent. Mirrors the Host's `PRESET_NOT_APPLIED_CODES`.
+ *
+ * A closed union rather than free text, for the reason the sampling absence is one: the sentence explaining a field is
+ * the Host's, and this surface says the same thing in the player's own language. A code it has no line for is refused
+ * by name instead of being printed as whatever the Host happened to send.
+ */
+const PRESET_NOT_APPLIED_CODES = Object.freeze([
+  "model_owned_setting",
+  "host_owned_transport",
+  "no_value_to_send",
+  "one_completion_per_call",
+] as const);
+
+type PresetNotAppliedCodeV1 = (typeof PRESET_NOT_APPLIED_CODES)[number];
+
+/** One preset field this product recognises and does not send. */
+export type PresetNotAppliedV1 = Readonly<{ field: string; code: PresetNotAppliedCodeV1 }>;
+
 export type PresetAssemblySurfaceV1 = Readonly<{
   presetId: string;
   name: string | null;
@@ -83,6 +102,14 @@ export type PresetAssemblySurfaceV1 = Readonly<{
    * from "nobody looked".
    */
   sampling: readonly PresetSamplingRowV1[] | PresetSamplingUnavailableV1;
+  /**
+   * The fields this preset states that this product recognises and does not send.
+   *
+   * Always present, and an empty list is the fact "this preset states none of them" rather than a missing measurement:
+   * without it a preset's `seed`, `n` and context budget would be invisibly inert, and a panel that lists only the
+   * sampler rows reads as though those rows were everything the preset said.
+   */
+  notApplied: readonly PresetNotAppliedV1[];
 }>;
 
 export type PresetActiveBindingV1 =
@@ -187,6 +214,7 @@ function presetOf(value: unknown, path: string): PresetAssemblySurfaceV1 {
     "macros",
     "depth",
     "sampling",
+    "notApplied",
   ]);
   if (typeof value.presetId !== "string" || value.presetId.length === 0) refuse(`${path}.presetId`, "is not a name");
   if (value.name !== null && typeof value.name !== "string") refuse(`${path}.name`, "is neither a string nor null");
@@ -226,6 +254,7 @@ function presetOf(value: unknown, path: string): PresetAssemblySurfaceV1 {
   if (!Array.isArray(value.sampling) && (typeof value.sampling !== "object" || value.sampling === null))
     refuse(`${path}.sampling`, "is neither rows nor the reason there are none");
   const sampling = samplingReadingOf(value.sampling, `${path}.sampling`);
+  const notApplied = notAppliedList(value.notApplied, `${path}.notApplied`);
 
   return Object.freeze({
     presetId: value.presetId,
@@ -237,7 +266,40 @@ function presetOf(value: unknown, path: string): PresetAssemblySurfaceV1 {
     macros: Object.freeze(macros),
     depth: Object.freeze({ count, depths: Object.freeze(depths), blocks: Object.freeze(blocks) }),
     sampling: Object.freeze(sampling),
+    notApplied,
   });
+}
+
+/**
+ * The fields the preset states and this product does not send, or the refusal naming the member that drifted.
+ *
+ * The code is matched against the closed union rather than trusted: an unrecognised code would have to be rendered as
+ * some other reason, and every available guess (`model_owned_setting`, `no_value_to_send`) is a claim about why the
+ * player's own file is being ignored. A field named twice is refused too - one field is one fact.
+ */
+function notAppliedList(value: unknown, path: string): readonly PresetNotAppliedV1[] {
+  if (!Array.isArray(value)) refuse(path, "is not a list");
+  const rows = value.map((row, index) => {
+    expectRecord(row, `${path}[${index}]`);
+    expectExactKeys(row, `${path}[${index}]`, ["field", "code"]);
+    if (typeof row.field !== "string" || row.field.length === 0)
+      refuse(`${path}[${index}].field`, `is ${String(row.field)}, not a preset field name`);
+    const declared = row.code;
+    if (typeof declared !== "string")
+      refuse(`${path}[${index}].code`, `is ${String(declared)}, which is not a reason class`);
+    const code = PRESET_NOT_APPLIED_CODES.find((candidate) => candidate === declared);
+    if (code === undefined)
+      refuse(
+        `${path}[${index}].code`,
+        `is "${declared}", which is none of ${PRESET_NOT_APPLIED_CODES.join(", ")} - this surface has no line for a ` +
+          "reason it cannot name",
+      );
+    return Object.freeze({ field: row.field, code });
+  });
+  const repeated = rows.map((row) => row.field).filter((field, index, fields) => fields.indexOf(field) !== index);
+  if (repeated.length > 0)
+    refuse(path, `names ${[...new Set(repeated)].join(", ")} twice, so one field is reported as two`);
+  return Object.freeze(rows);
 }
 
 /**

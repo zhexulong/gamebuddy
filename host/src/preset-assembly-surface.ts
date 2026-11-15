@@ -31,14 +31,16 @@ import { assemblePreset } from "./tavern/preset-assembler.js";
 import { type MacroContext, presetMacroEntryFor, presetMacroTokens } from "./tavern/preset-macros.js";
 import { type PresetDocument, validatePresetDocument } from "./tavern/preset-document.js";
 import {
+  type PresetNotAppliedCode,
   type SamplingRuntimeModel,
   type SamplingSource,
   effectivePresetSampling,
+  presetFieldsNotApplied,
   presetSamplingParams,
 } from "./tavern/preset-sampling.js";
 
 /** One macro the preset spells that this product will not evaluate, with the code that says why. */
-export type PresetAssemblyMacroV1 = Readonly<{
+type PresetAssemblyMacroV1 = Readonly<{
   /** `macro_not_implemented:<name>` or `macro_unknown:<name>` - the code the design names the case by. */
   code: string;
   name: string;
@@ -46,8 +48,11 @@ export type PresetAssemblyMacroV1 = Readonly<{
   entries: readonly string[];
 }>;
 
+/** One preset field this product recognises and does not send, by name and reason class. */
+type PresetNotAppliedRowV1 = Readonly<{ field: string; code: PresetNotAppliedCode }>;
+
 /** One entry placed inside the transcript by `injection_depth`. */
-export type PresetAssemblyDepthBlockV1 = Readonly<{ identifier: string; depth: number }>;
+type PresetAssemblyDepthBlockV1 = Readonly<{ identifier: string; depth: number }>;
 
 /**
  * One sampling key's effective value and the layer that decided it (§5).
@@ -67,7 +72,7 @@ export type PresetSamplingRowV1 = Readonly<{ key: string; value: number | null; 
  * is a NAMED absence rather than an empty row list or the preset's own values: an omitted row reads as "no such
  * setting" and the written value reads as "this is what will be sent", and neither is true while no model exists.
  */
-export type PresetSamplingUnavailableReasonV1 = "no_composed_model";
+type PresetSamplingUnavailableReasonV1 = "no_composed_model";
 
 /**
  * The fifth answer: the rows in force, or the named reason no reading exists.
@@ -76,7 +81,7 @@ export type PresetSamplingUnavailableReasonV1 = "no_composed_model";
  * the same fact, and a body carrying neither would leave the player unable to tell "nothing is sent" from "nobody
  * looked".
  */
-export type PresetSamplingReadingV1 =
+type PresetSamplingReadingV1 =
   | readonly PresetSamplingRowV1[]
   | Readonly<{ unavailable: PresetSamplingUnavailableReasonV1 }>;
 
@@ -86,7 +91,8 @@ export type PresetSamplingReadingV1 =
  * `entries`, `disabledEntries`, `unfilledMarkers`, `macros` and `depth` are the four answers: the switch is
  * observable, every unfilled slot is named, every unusable macro is named with its code, and the depth injection
  * is visible as a count and as the depths themselves. `sampling` is the fifth: what each sampler key will actually
- * be sent as, and which layer decided it.
+ * be sent as, and which layer decided it. `notApplied` is the sixth: the fields the preset states that this product
+ * recognises and does not send, so the sampler rows are not mistaken for the whole of what a preset can say.
  */
 export type PresetAssemblySurfaceV1 = Readonly<{
   presetId: string;
@@ -106,6 +112,16 @@ export type PresetAssemblySurfaceV1 = Readonly<{
   }>;
   /** Every sampling key, with the value in force and its layer: never the value the preset wrote. */
   sampling: PresetSamplingReadingV1;
+  /**
+   * The fields this preset states that this product RECOGNISES and does not send.
+   *
+   * A fourth answer beside the sampler rows, and the one that keeps them from reading as the whole story: a preset's
+   * `seed`, `n` and context budget are silently inert without it, and a field a player can see in the file they
+   * imported but not on this panel is a field nobody can reason about. The population is
+   * `PRESET_FIELDS_NOT_APPLIED`, so a field added there is reported from every preset that states it, and the member is
+   * always present - an empty list is "this preset states none of them", which is a fact and not an absence.
+   */
+  notApplied: readonly PresetNotAppliedRowV1[];
 }>;
 
 /**
@@ -154,6 +170,7 @@ export function presetAssemblySurface(
       input.sampling === null
         ? Object.freeze({ unavailable: "no_composed_model" as const })
         : presetSurfaceSampling(document, input.sampling),
+    notApplied: presetSurfaceNotApplied(document),
   });
 }
 
@@ -182,6 +199,19 @@ function presetSurfaceSampling(
         throw new Error(`preset_sampling_not_a_number:${reading.key}:${reading.source}:${String(value)}`);
       return Object.freeze({ key: reading.key, value, source: reading.source });
     }),
+  );
+}
+
+/**
+ * The fields this preset states that this product recognises and does not send, read from the one authority table.
+ *
+ * The reason travels as a CODE (`preset-sampling.ts` `PRESET_NOT_APPLIED_CODES`) rather than the sentence the table
+ * carries beside it: the sentence is for a reader of this repository, and the panel says the same thing in the
+ * player's language. Nothing here decides membership - `presetFieldsNotApplied` does, from the document it is given.
+ */
+function presetSurfaceNotApplied(document: PresetDocument): readonly PresetNotAppliedRowV1[] {
+  return Object.freeze(
+    presetFieldsNotApplied(document).map((entry) => Object.freeze({ field: entry.field, code: entry.code })),
   );
 }
 

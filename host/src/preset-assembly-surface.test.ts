@@ -7,7 +7,7 @@ import {
 } from "./preset-assembly-surface.js";
 import { assemblePreset } from "./tavern/preset-assembler.js";
 import type { MacroContext } from "./tavern/preset-macros.js";
-import { PRESET_SAMPLING_KEYS } from "./tavern/preset-sampling.js";
+import { PRESET_FIELDS_NOT_APPLIED, PRESET_SAMPLING_KEYS } from "./tavern/preset-sampling.js";
 
 /**
  * The producer behind the read-only preset surface, held to the four facts plus the sampling reading it publishes.
@@ -52,6 +52,10 @@ const PRESET_DOCUMENT = {
   name: "Chat completion - depth aware",
   temperature: 0.7,
   top_p: 1,
+  // Two of the fields this product recognises and does not send, as SillyTavern itself writes them: a context budget
+  // and the "pick randomly" seed sentinel. They must be NAMED on the readout rather than vanish with the sampler.
+  openai_max_context: 4095,
+  seed: -1,
   prompts: [
     {
       identifier: "main",
@@ -328,6 +332,29 @@ test("a layer that sets a key to something no request can carry is refused, neve
   );
 });
 
+test("a preset field this product recognises and does not send is named on the surface, with its reason class", () => {
+  const surface = surfaceOf();
+
+  // The population is the declared table filtered by the document, not a list spelled here: `openai_max_context` and
+  // `seed` are the fixture's own fields, and every one of them must be reported.
+  assert.deepEqual(
+    surface.notApplied,
+    Object.keys(PRESET_FIELDS_NOT_APPLIED)
+      .filter((field) => field in PRESET_DOCUMENT)
+      .map((field) => ({ field, code: PRESET_FIELDS_NOT_APPLIED[field]!.code })),
+  );
+  assert.deepEqual(surface.notApplied, [
+    { field: "openai_max_context", code: "model_owned_setting" },
+    { field: "seed", code: "no_value_to_send" },
+  ]);
+
+  // Reported is not sent, read on the same surface: a field cannot be both named as refused and carried as a sampler
+  // row, and this is the pairing that would otherwise let a panel show a control for something nothing reads.
+  const samplerKeys = samplingRows(surface).map((entry) => entry.key);
+  for (const entry of surface.notApplied)
+    assert.equal(samplerKeys.includes(entry.field), false, `${entry.field} is reported, not sent`);
+});
+
 test("a composed model that disagrees with what the preset wrote fails closed and names the key", () => {
   assert.throws(
     () => surfaceOf({}, { model: { samplingParams: { temperature: 0.2 } }, thinkingLevel: "high" }),
@@ -366,6 +393,7 @@ test("a preset with nothing to report says so on every count, and its sampling r
   assert.deepEqual(clean.disabledEntries, []);
   assert.deepEqual(clean.unfilledMarkers, []);
   assert.deepEqual(clean.macros, []);
+  assert.deepEqual(clean.notApplied, []);
   assert.deepEqual(clean.depth, { count: 0, depths: [], blocks: [] });
   assert.equal(samplingRows(clean).length, PRESET_SAMPLING_KEYS.length);
   assert.ok(samplingRows(clean).every((entry) => entry.source === "unset" && entry.value === null));
