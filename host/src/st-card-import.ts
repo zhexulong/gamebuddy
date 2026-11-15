@@ -40,11 +40,37 @@ const MAX_REPORTED_MACRO_TOKEN_CHARS = 64;
  * its exact count, if a reported reason is not one the gate declares, or if the
  * reported counts do not account for every droppable item in the card. A new drop
  * that reports nothing, or reports a reason with no fixture, turns the gate red.
+ *
+ * The three reasons below that name a SETTING are not caps like the others: each says the durable
+ * `WorldBookEntry` has no member for something the card stated, so the entry itself is kept and only the
+ * setting is lost. They are here rather than under a store change because carrying any of them is a
+ * prompt-layout decision (an entry interleaved into the message list at a depth with a role, a regex
+ * evaluator, a chained scan pass), not a field to copy - and a setting nobody can honour is worse than
+ * one the import has said it cannot.
  */
 const ST_CARD_IMPORT_LOSS_REASONS = [
   "unparsed_example_blocks",
   "worldbook_keys_truncated",
   "worldbook_entry_content_unreadable",
+  /**
+   * The card placed the entry AT A DEPTH in the message history (`position: "at_depth"` with its
+   * `depth` and `role`) and this product has no such seam: an entry reaches the prompt either as
+   * part of the always-on background block or as a per-turn volatile source.
+   */
+  "worldbook_entry_position_unsupported",
+  /**
+   * The card's trigger list is a list of REGEX SOURCES (`use_regex: true`) and this product matches
+   * trigger words literally. Executing a card-authored regex is prohibited outright
+   * (`COMPATIBILITY_MANIFEST_V1.prohibitedExecution`), so the sources are carried verbatim, readable
+   * and exportable, and the matching rule is what is lost.
+   */
+  "worldbook_regex_keys_unsupported",
+  /**
+   * The card asked for this entry to wait for a CHAINED pass (`delay_until_recursion: true`). Nothing
+   * here scans one entry's content for another entry's keys, so an entry that waits for such a pass
+   * can never be activated at all.
+   */
+  "worldbook_recursion_only_entry_unreachable",
   "character_voice_too_long",
   "post_history_instructions_too_long",
   "unrenderable_post_history_instructions",
@@ -698,6 +724,26 @@ function readSelectiveLogic(value: unknown): 0 | 1 | 2 | 3 | undefined {
     : undefined;
 }
 
+/**
+ * Whether the card placed this entry AT A DEPTH in the message history, which is a different mechanism
+ * from "somewhere in her background".
+ *
+ * `position: "at_depth"` is the card format's own spelling and `position: 4` is SillyTavern's internal
+ * numeric form, which real exported cards carry: both mean "inject this entry as a message of `role`,
+ * `depth` messages from the end of the chat". That is a seam this product does not have - an entry
+ * reaches the prompt either inside the always-on background block or as a per-turn volatile source
+ * (`catalog-service.ts`), never interleaved into the message list - so the placement is reported rather
+ * than silently dropped.
+ *
+ * The remaining positions (`before_char`, `after_char`, and SillyTavern's 0-3) all choose a place
+ * relative to the character card, and this product has no character-card block to be before or after:
+ * every entry joins the book's one background block, so there is no choice there to lose. `depth` and
+ * `role` alone are reported because neither means anything outside an at-depth entry.
+ */
+function declaresDepthPlacement(raw: Record<string, unknown>): boolean {
+  return raw.position === "at_depth" || raw.position === 4 || raw.depth !== undefined || raw.role !== undefined;
+}
+
 function extractCharacterBook(
   value: unknown,
   format: "st-v2" | "st-v3",
@@ -728,6 +774,9 @@ function extractCharacterBook(
   let unreadableContent = 0;
   let truncatedKeys = 0;
   let truncatedSecondaryKeys = 0;
+  let depthPlacedEntries = 0;
+  let regexKeyEntries = 0;
+  let recursionOnlyEntries = 0;
   entries.forEach((raw, index) => {
     if (!isRecord(raw)) return;
     // The card's own `enabled: false` is the author switching one entry off. That is a state
@@ -783,6 +832,19 @@ function extractCharacterBook(
     const { keys: secondaryKeys, dropped: droppedSecondaryKeys } = playableKeys(raw.secondary_keys);
     truncatedSecondaryKeys += droppedSecondaryKeys;
     const selectiveLogic = readSelectiveLogic(raw.selectiveLogic);
+    // Three SETTINGS of this entry that no member of `WorldBookEntry` can hold, each counted so the ledger
+    // names it instead of the entry arriving flattened. They are counted, not resolved: the entry is the
+    // player's either way, and none of these is a reason to lose it.
+    //
+    // The two recursion flags the format also carries are deliberately NOT among them. `exclude_recursion`
+    // ("do not scan this entry's content for other entries' keys") and `prevent_recursion` ("do not
+    // activate this entry from another entry") forbid something no selector in this product does, so an
+    // entry that asks for either already has exactly what it asked for. `delay_until_recursion` is the
+    // opposite request - "activate me only on a chained pass" - and with no chained pass it can never be
+    // activated at all, which IS a loss.
+    if (declaresDepthPlacement(raw)) depthPlacedEntries += 1;
+    if (raw.use_regex === true) regexKeyEntries += 1;
+    if (raw.delay_until_recursion === true) recursionOnlyEntries += 1;
     candidates.push(
       Object.freeze({
         entryId: `st-${format}-${index + 1}`,
@@ -809,6 +871,13 @@ function extractCharacterBook(
   losses.record("character_book.entries", "worldbook_entry_content_unreadable", unreadableContent);
   losses.record("character_book.keys", "worldbook_keys_truncated", truncatedKeys);
   losses.record("character_book.secondary_keys", "worldbook_keys_truncated", truncatedSecondaryKeys);
+  losses.record("character_book.position", "worldbook_entry_position_unsupported", depthPlacedEntries);
+  losses.record("character_book.keys", "worldbook_regex_keys_unsupported", regexKeyEntries);
+  losses.record(
+    "character_book.delay_until_recursion",
+    "worldbook_recursion_only_entry_unreachable",
+    recursionOnlyEntries,
+  );
   return Object.freeze({
     entries: Object.freeze(candidates),
     ...(scanDepth === undefined ? {} : { scanDepth }),

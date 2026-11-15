@@ -21,7 +21,7 @@ import {
   type StCardImportLossReason,
 } from "./st-card-import.js";
 import { DEFAULT_COMPANION_PRESET } from "./tavern/default-companion-preset.js";
-import { ST_CARD_DECODER_LIMITS_V1 } from "./tavern/compatibility-manifest.v1.js";
+import { COMPATIBILITY_MANIFEST_V1, ST_CARD_DECODER_LIMITS_V1 } from "./tavern/compatibility-manifest.v1.js";
 import { isLeftLiteralStandardMacro, renderWorldBookText, unrenderedMacros } from "./tavern/macro-engine.js";
 import { PRESET_MACROS } from "./tavern/preset-macros.js";
 import { selectAuthoredContextVolatileSourceRefs } from "./tavern/chat-thread-store.js";
@@ -322,6 +322,143 @@ test("a card's `enabled: false` entry is imported switched off rather than dropp
   assert.deepEqual(
     preview.losses.filter((loss) => loss.field === "character_book.entries"),
     [],
+  );
+});
+
+/**
+ * The claim this lane was given, as one card: three world-book entries that each state a SETTING the durable
+ * `WorldBookEntry` has no member for - an at-depth placement with its depth and role, a regex trigger list, and the
+ * recursion flags.
+ *
+ * The card is the population the claim names, one entry per setting, and every entry is also a setting the product
+ * cannot honour: nothing in this codebase scans for entries from another entry's content (`grep -i recursion host/src`
+ * finds no selector, no recursion limit, no chained pass), and the volatile selector matches trigger words LITERALLY
+ * (`triggerKeyMatches`, `chat-thread-store.ts:251`), so a card-authored regex is never evaluated. What the import owes
+ * the player is therefore not a member it does not have: it is a NAME for what was dropped.
+ */
+const WORLDBOOK_SETTINGS_CARD_DATA = Object.freeze({
+  name: "Settings Rae",
+  description: "calm",
+  character_book: {
+    entries: [
+      {
+        comment: "Depth",
+        content: "The mill runs at dawn.",
+        keys: ["mill"],
+        position: "at_depth",
+        depth: 4,
+        role: "system",
+      },
+      {
+        comment: "Regex",
+        content: "The ferry leaves at seven.",
+        keys: ["/[Ff]erry\\s+leaves/"],
+        use_regex: true,
+      },
+      {
+        comment: "Chained",
+        content: "The harbourmaster knows.",
+        keys: ["harbourmaster"],
+        exclude_recursion: true,
+        prevent_recursion: true,
+      },
+    ],
+  },
+}) as Readonly<Record<string, unknown>>;
+
+/**
+ * The reproduction, field by field: which member of each entry survived the import, and which did not.
+ *
+ * Asserting the WHOLE entry is the point - a deep-equal that passes says every member the durable schema has is there,
+ * and that no member the card wrote was quietly invented back in. The loss rows below are the other half: a setting
+ * this product cannot carry is not allowed to leave the report silent.
+ */
+test("a book's at-depth placement, regex keys and recursion flags are named, never silently flattened", () => {
+  const report = decodeStCard(JSON.stringify({ spec: "chara_card_v3", data: WORLDBOOK_SETTINGS_CARD_DATA }));
+  const entries = report.candidate?.worldBookCandidates ?? [];
+  assert.equal(entries.length, 3, "no entry disappears: the loss is a setting, never the entry");
+  // Entry 1 keeps everything the store has for it. `position`/`depth`/`role` have no member to land in.
+  assert.deepEqual(entries[0], {
+    entryId: "st-st-v3-1",
+    title: "Depth",
+    content: "The mill runs at dawn.",
+    scope: "setting",
+    provenance: "st-card-import",
+    tokenBudget: "small",
+    keys: ["mill"],
+  });
+  // Entry 2 keeps its keys VERBATIM: the regex source is the author's text and stays readable and exportable, it is the
+  // matching rule that is not applied.
+  assert.deepEqual(entries[1], {
+    entryId: "st-st-v3-2",
+    title: "Regex",
+    content: "The ferry leaves at seven.",
+    scope: "setting",
+    provenance: "st-card-import",
+    tokenBudget: "small",
+    keys: ["/[Ff]erry\\s+leaves/"],
+  });
+  // Entry 3 is the one where the two flags lose NOTHING: `exclude_recursion` ("do not scan this entry's content for
+  // other entries' keys") and `prevent_recursion` ("do not activate this entry from another entry") both forbid
+  // something this selector never does, so an entry asking for them already gets exactly what it asked for.
+  assert.deepEqual(entries[2], {
+    entryId: "st-st-v3-3",
+    title: "Chained",
+    content: "The harbourmaster knows.",
+    scope: "setting",
+    provenance: "st-card-import",
+    tokenBudget: "small",
+    keys: ["harbourmaster"],
+  });
+  assertNoSilentImportLoss(report, [
+    { field: "character_book.position", reason: "worldbook_entry_position_unsupported", count: 1 },
+    { field: "character_book.keys", reason: "worldbook_regex_keys_unsupported", count: 1 },
+  ]);
+});
+
+/**
+ * The recursion fact the three-flag card above cannot state: `delay_until_recursion`.
+ *
+ * The two flags the card wrote are restrictive, and a selector that never recurses satisfies both by construction. This
+ * one is the opposite - "activate me only on a chained pass" - so with no chained pass the entry can never be
+ * activated at all, and the import has to say so instead of parking unreachable prose in the player's book.
+ */
+test("an entry that asked to wait for a chained pass is named as unreachable", () => {
+  const report = decodeStCard(
+    JSON.stringify({
+      spec: "chara_card_v3",
+      data: {
+        name: "Delayed Rae",
+        description: "calm",
+        character_book: {
+          entries: [
+            {
+              comment: "Seeded",
+              content: "Only a chained pass would wake this.",
+              keys: ["harbour"],
+              delay_until_recursion: true,
+            },
+          ],
+        },
+      },
+    }),
+  );
+  assert.equal(report.candidate?.worldBookCandidates.length, 1, "the entry is still the player's to fix");
+  assertNoSilentImportLoss(report, [
+    { field: "character_book.delay_until_recursion", reason: "worldbook_recursion_only_entry_unreachable", count: 1 },
+  ]);
+});
+
+/**
+ * The regex loss is a DECISION, not a gap, and the decision lives in the compatibility manifest
+ * (`prohibitedExecution: ["regex", ...]`, `compatibility-manifest.v1.ts:190`). This gate expires with it: the day a
+ * release evaluates card-authored regexes, `worldbook_regex_keys_unsupported` must be deleted rather than left
+ * telling the player about a loss that no longer happens.
+ */
+test("rule: the regex loss stands only while the manifest prohibits executing card regexes", () => {
+  assert.ok(
+    COMPATIBILITY_MANIFEST_V1.prohibitedExecution.includes("regex"),
+    "the manifest no longer prohibits regex execution: apply card regex keys and delete worldbook_regex_keys_unsupported",
   );
 });
 
@@ -873,6 +1010,62 @@ const IMPORT_LOSS_FIXTURES: Readonly<Record<StCardImportLossReason, ImportLossFi
           {
             comment: "Lore",
             content: "x".repeat(ST_CARD_DECODER_LIMITS_V1.characterBookEntryBytes + 1),
+          },
+        ],
+      },
+    },
+  },
+  worldbook_entry_position_unsupported: {
+    field: "character_book.position",
+    count: 1,
+    data: {
+      name: "Rin",
+      description: "calm",
+      character_book: {
+        // SillyTavern's "inject as a message of `role` at `depth` messages from the end". Nothing in the
+        // world-book layer or the assembly places an entry at a depth, so the placement is what is lost.
+        entries: [
+          {
+            comment: "Mill",
+            content: "The mill runs at dawn.",
+            keys: ["mill"],
+            position: "at_depth",
+            depth: 4,
+            role: "system",
+          },
+        ],
+      },
+    },
+  },
+  worldbook_regex_keys_unsupported: {
+    field: "character_book.keys",
+    count: 1,
+    data: {
+      name: "Rin",
+      description: "calm",
+      character_book: {
+        entries: [
+          { comment: "Ferry", content: "The ferry leaves at seven.", keys: ["/[Ff]erry\\s+leaves/"], use_regex: true },
+        ],
+      },
+    },
+  },
+  worldbook_recursion_only_entry_unreachable: {
+    field: "character_book.delay_until_recursion",
+    count: 1,
+    data: {
+      name: "Rin",
+      description: "calm",
+      character_book: {
+        // The one recursion flag whose value DISAGREES with this selector. `exclude_recursion` and
+        // `prevent_recursion` forbid something that never happens here, so they cost nothing; this one waits
+        // for a chained pass that no selector in this product runs, so the entry can never be activated.
+        entries: [
+          {
+            comment: "Harbour",
+            content: "Only a chained pass would wake this.",
+            keys: ["harbour"],
+            delay_until_recursion: true,
           },
         ],
       },
