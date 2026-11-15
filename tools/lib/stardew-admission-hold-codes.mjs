@@ -34,7 +34,7 @@ export const ADMISSION_HOLD_CODES = Object.freeze([
   "body_owned_by_travel",
   "body_owned_by_approach",
   "body_owned_by_ride",
-  "body_owned_by_day_advance",
+  "body_owned_by_night",
   "body_owned_by_activity",
   // the defensive fallback for an owner this build cannot name
   "body_owned",

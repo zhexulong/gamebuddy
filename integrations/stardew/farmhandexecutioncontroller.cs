@@ -433,7 +433,21 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
     internal const string BodyOwnedByMovement = "body_owned_by_movement";
     internal const string BodyOwnedByApproach = "body_owned_by_approach";
     internal const string BodyOwnedByRide = "body_owned_by_ride";
-    internal const string BodyOwnedByDayAdvance = "body_owned_by_day_advance";
+
+    /// <summary>
+    /// The kind `body_owned_by_night`: the cross-day lifecycle owns the actor's body once its night can begin.
+    ///
+    /// <para>
+    /// A KIND, not an action id, and that is what the spelling has to say. It was <c>body_owned_by_day_advance</c> - the
+    /// word-order twin of `advance_day`, an action id this catalog does not have (the action that crosses a night is
+    /// `sleep`, and its id is published in the same receipt as <c>owner_action=sleep</c>). A hold code that reads as an
+    /// action name sends the next reader looking for a request that cannot be made, which is the defect
+    /// <c>tools/check-refusal-action-names.mjs</c> refuses by name. This family's kinds are one word each (navigation,
+    /// travel, movement, approach, ride, activity), so this one is too.
+    /// </para>
+    /// </summary>
+    internal const string BodyOwnedByNight = "body_owned_by_night";
+
     internal const string BodyOwnedByActivity = "body_owned_by_activity";
 
     /// <summary>
@@ -442,7 +456,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
     ///
     /// <para>
     /// It exists because the alternative was silence. Measured 2026-11-10 (<c>round43</c>, 22:10, FarmHouse): a first
-    /// <c>sleep</c> was accepted and waited, the retry was refused <c>body_owned_by_day_advance</c> against it, and the
+    /// <c>sleep</c> was accepted and waited, the retry was refused <c>body_owned_by_night</c> against it, and the
     /// first one then sat <c>running</c> with no terminal receipt and no fact for over three minutes. A request that is
     /// replaced has to end as something a reader can name, or "still running" is the only thing the run can say about
     /// it forever.

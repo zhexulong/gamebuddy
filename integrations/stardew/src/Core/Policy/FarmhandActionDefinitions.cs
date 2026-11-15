@@ -978,6 +978,22 @@ E("enter_exit", "movement_navigation", FarmhandActionHandlerGroup.Movement, Tran
         Registrations.Where(registration => registration.HandlerGroup == FarmhandActionHandlerGroup.Modal).Select(registration => registration.ActionId),
         StringComparer.Ordinal);
 
+    /// <summary>
+    /// THE ONE ACTION THAT CROSSES A NIGHT WITH A RECEIPT: the registration whose descriptor declares the
+    /// <c>day_advanced</c> postcondition (<c>sleep</c>, <c>world_lifecycle</c>).
+    ///
+    /// <para>
+    /// DERIVED, because three gates must point at it by name and two hand-written copies of the id is exactly how the
+    /// pump came to advise `answer_dialogue` for a box only this action answers. `GameLocation.cs:3763-3765` raises the
+    /// engine's bed prompt as the `Sleep` touch action, answering it `Yes` runs `startSleep` -&gt; `NewDay`, and that
+    /// calendar crossing is this action's own work: the answer and the receipt are the same act, which is why no other
+    /// route may take it.
+    /// </para>
+    /// </summary>
+    public static readonly string DayCrossingActionId = Registrations
+        .Single(registration => string.Equals(registration.Descriptor?.Postcondition, "day_advanced", StringComparison.Ordinal))
+        .ActionId;
+
     /// <summary>Whether an action's working precondition is an open modal. Unknown ids are not.</summary>
     public static bool IsModalResolving(string? actionId) => actionId is not null && ModalResolvingActionIds.Contains(actionId);
 

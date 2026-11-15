@@ -89,9 +89,10 @@ public sealed class BodyProgramDispatchGateTests
     [Fact]
     public void EachModalKind_NamesTheRemedyThatClearsIt_AndThatRemedyIsAPublishedAction()
     {
-        string actionId = BodyOwningActions().First();
+        // An action the bed prompt does NOT own, so the row for that kind has a hold to read.
+        string actionId = BodyOwningActions().First(candidate => candidate != FarmhandActionCatalog.DayCrossingActionId);
         var rows = new List<(BodyProgramModalKind Kind, string Evidence)>();
-        foreach (BodyProgramModalKind kind in MountedKinds())
+        foreach (BodyProgramModalKind kind in AllMountedKinds())
         {
             BodyProgramHold? hold = BodyProgramDispatchGate.HoldOf(
                 actionId,
@@ -120,7 +121,72 @@ public sealed class BodyProgramDispatchGateTests
             .Should().Be("held_by=dialogue_box;dismiss_it=dismiss_modal");
         rows.Single(row => row.Kind == BodyProgramModalKind.Shop).Evidence
             .Should().Be("held_by=shop_menu;shop_purchase_opens_its_own=true");
+        // The bed prompt's remedy is its OWNER, not the answer seam that refuses it: the evidence a hold carries is the
+        // advice the next step follows, and `answer_it=answer_dialogue` is a route this very box closes (round60).
+        rows.Single(row => row.Kind == BodyProgramModalKind.SleepPrompt).Evidence
+            .Should().Be($"held_by=dialogue_box;answer_it={FarmhandActionCatalog.DayCrossingActionId}")
+            .And.NotContain("answer_dialogue");
     }
+
+    /// <summary>
+    /// THE DEADLOCK THIS KIND EXISTS FOR. The pump held every non-modal action behind the bed prompt with
+    /// `answer_it=answer_dialogue`, and the night's own node was one of them - so the only action that can answer the
+    /// prompt was held by the prompt, and the action the hold named refused it. Measured round60: `move_to_tile` settled
+    /// on the bed's own tile, the prompt stood, `node_held action=sleep held_by=dialogue_box;answer_it=answer_dialogue`
+    /// (19:51:32), `answer_dialogue` refused `Yes` (19:59:02), and the orchestrator's night never began.
+    /// </summary>
+    [Fact]
+    public void TheBedPromptReleasesTheNightThatAnswersIt_AndHoldsEverythingElseByTheOwnersName()
+    {
+        string owner = FarmhandActionCatalog.DayCrossingActionId;
+        FarmhandActionCatalog.Registrations.Count(
+                registration => string.Equals(registration.Descriptor?.Postcondition, "day_advanced", StringComparison.Ordinal))
+            .Should().Be(1, "the owner is derived by `Single`, so the catalog must declare exactly one day-crossing action");
+        FarmhandActionCatalog.IsModalResolving(owner).Should().BeFalse(
+            "the night is not one of the actions whose working precondition is an open modal; it answers a prompt that is its own precondition");
+
+        var prompt = new BodyProgramModalFact(BodyProgramModalKind.SleepPrompt, "DialogueBox");
+        BodyProgramDispatchGate.HoldOf(owner, cutsceneUp: false, modal: prompt, actorCanMove: false)
+            .Should().BeNull(
+                $"a hold whose owner is the thing it holds is a deadlock, not a guard: the prompt IS this action's working precondition (owner='{owner}')");
+
+        string[] others = FarmhandActionCatalog.Registrations
+            .Select(registration => registration.ActionId)
+            .Where(actionId => actionId != owner)
+            .OrderBy(actionId => actionId, StringComparer.Ordinal)
+            .ToArray();
+        others.Should().NotBeEmpty("the catalog declares the population; an empty one agrees with itself");
+        foreach (string actionId in others)
+        {
+            BodyProgramHold? hold = BodyProgramDispatchGate.HoldOf(actionId, cutsceneUp: false, modal: prompt, actorCanMove: false);
+            hold.Should().NotBeNull($"the bed prompt is not {actionId}'s to answer, so it waits for the night");
+            hold!.Value.IsModal.Should().BeTrue($"a START gate that reads this flag refuses the mint for {actionId}");
+            hold.Value.Evidence.Should().Be(
+                $"held_by=dialogue_box;answer_it={owner}",
+                $"one hold one spelling: the advice must name the owner, and every other action reads the same box:{actionId}");
+        }
+
+        this.output.WriteLine($"examined {others.Length + 1} catalog actions against the standing bed prompt: released 1 ({owner}), held {others.Length}");
+    }
+
+    /// <summary>Every kind a live menu can be, which is the population the two faces of this defect share.</summary>
+    private static BodyProgramModalKind[] MountedKinds() => new[]
+    {
+        BodyProgramModalKind.Question,
+        BodyProgramModalKind.PlainDialogue,
+        BodyProgramModalKind.Shop,
+        BodyProgramModalKind.OperationMenu,
+        BodyProgramModalKind.Menu,
+    };
+
+    /// <summary>
+    /// Every kind on screen, INCLUDING the one whose remedy is an execution: the bed prompt is not one of the modal
+    /// family's preconditions (see <see cref="TheBedPromptReleasesTheNightThatAnswersIt_AndHoldsEverythingElseByTheOwnersName"/>),
+    /// so the two populations are separate and this one is the union.
+    /// </summary>
+    private static BodyProgramModalKind[] AllMountedKinds() => MountedKinds()
+        .Append(BodyProgramModalKind.SleepPrompt)
+        .ToArray();
 
     [Fact]
     public void ACutsceneAndATransientLock_AreNotModalHolds()
@@ -140,16 +206,6 @@ public sealed class BodyProgramDispatchGateTests
         BodyProgramDispatchGate.HoldOf(actionId, cutsceneUp: false, BodyProgramModalFact.None, actorCanMove: true)
             .Should().BeNull("a free body and an empty screen hold nothing");
     }
-
-    /// <summary>Every kind a live menu can be, which is the population the two faces of this defect share.</summary>
-    private static BodyProgramModalKind[] MountedKinds() => new[]
-    {
-        BodyProgramModalKind.Question,
-        BodyProgramModalKind.PlainDialogue,
-        BodyProgramModalKind.Shop,
-        BodyProgramModalKind.OperationMenu,
-        BodyProgramModalKind.Menu,
-    };
 
     /// <summary>The action ids an evidence string names as its remedy, in whichever field it names them.</summary>
     private static IEnumerable<string> RemedyActions(string evidence)

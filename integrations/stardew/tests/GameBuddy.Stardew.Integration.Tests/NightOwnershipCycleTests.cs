@@ -5,6 +5,7 @@ using System.Runtime.CompilerServices;
 using System.Runtime.Serialization;
 using FluentAssertions;
 using GameBuddy.Stardew.Core.Abstractions;
+using GameBuddy.Stardew.Core.BodyPrograms;
 using GameBuddy.Stardew.Core.Models;
 using GameBuddy.Stardew.Core.Policy;
 using Netcode;
@@ -121,7 +122,7 @@ public sealed class NightOwnershipCycleTests
         });
 
         receipt.Should().NotBeNull("a night past its eligibility gate is committed and holds the actor");
-        receipt!.ReasonCode.Should().Be(ExecutionManager.BodyOwnedByDayAdvance);
+        receipt!.ReasonCode.Should().Be(ExecutionManager.BodyOwnedByNight);
         receipt.Evidence.Should().Be(
             $"owner_execution_id={PendingExecutionId};owner_action=sleep;interruptible=false;phase=committed;cancel_safe=false");
     }
@@ -198,7 +199,7 @@ public sealed class NightOwnershipCycleTests
 
         refusal.Should().NotBeNull("the answer that ends a day without a receipt is still refused");
         refusal!.State.Should().Be(ExecutionState.Rejected);
-        refusal.ReasonCode.Should().Be("native_sleep_prompt_owned_by_advance_day");
+        refusal.ReasonCode.Should().Be("native_sleep_prompt_owned_by_sleep");
         refusal.Evidence.Should().Contain(
             "owning_action=sleep",
             "the refusal names the action it hands the night to, which is what makes its hint a remedy rather than a circle");
@@ -206,7 +207,79 @@ public sealed class NightOwnershipCycleTests
 
         remedy.Should().BeNull(
             "the action the refusal names must be admissible in that very state; refusing it with "
-                + "`body_owned_by_day_advance` owned by itself is the cycle this test exists for");
+                + "`body_owned_by_night` owned by itself is the cycle this test exists for");
+    }
+
+    /// <summary>
+    /// THE PUMP'S HALF OF THE SAME RULE, on the real box. The refusal above tells the caller to dispatch the night's own
+    /// action; if the pump holds that node behind the prompt, the advice cannot be followed and the run deadlocks. That
+    /// is round60 exactly: `move_to_tile(10,9)` settled on the bed's own tile, the engine's prompt stood, the pump wrote
+    /// `node_held action=sleep held_by=dialogue_box;answer_it=answer_dialogue` (19:51:32), `answer_dialogue` refused the
+    /// only answer (19:59:02), and the orchestrator's `nightBegan()` never became true.
+    ///
+    /// THE FALSIFIER RIDES IN THE SAME TEST: the same box with no `Sleep` question key is an ORDINARY question, whose
+    /// remedy is `answer_dialogue` and which keeps the night held. The exemption is one identity (`NativeSleepPrompt`),
+    /// never "a question is up" - widening it would let every question hand the calendar to `sleep`.
+    /// </summary>
+    [Fact]
+    public void TheStandingBedPromptReleasesTheNightToAnswerItself_AndAnOrdinaryQuestionDoesNot()
+    {
+        DialogueBox prompt = BedPrompt();
+        Func<string?>? keyBefore = NativeSleepPrompt.QuestionKeyProvider;
+        BodyProgramModalFact promptFact = BodyProgramModalFact.None;
+        BodyProgramModalFact ordinaryFact = BodyProgramModalFact.None;
+        BodyProgramHold? nightUnderPrompt = null;
+        BodyProgramHold? otherUnderPrompt = null;
+        BodyProgramHold? nightUnderOrdinaryQuestion = null;
+        ModalFamily.Dismissal dismissal = null!;
+        try
+        {
+            NativeSleepPrompt.QuestionKeyProvider = () => NativeSleepPrompt.QuestionKey;
+            RunWithGameState(
+                () =>
+                {
+                    promptFact = WorldModel.MountedModal(prompt, dialogueUp: true);
+                    nightUnderPrompt = BodyProgramDispatchGate.HoldOf(
+                        FarmhandActionCatalog.DayCrossingActionId, cutsceneUp: false, modal: promptFact, actorCanMove: false);
+                    otherUnderPrompt = BodyProgramDispatchGate.HoldOf(
+                        "harvest_crop", cutsceneUp: false, modal: promptFact, actorCanMove: false);
+                    dismissal = ModalFamily.DecideDismissal(prompt, CreateActor(1001));
+                },
+                prompt,
+                new BedPromptLocation());
+
+            NativeSleepPrompt.QuestionKeyProvider = () => null;
+            RunWithGameState(
+                () =>
+                {
+                    ordinaryFact = WorldModel.MountedModal(prompt, dialogueUp: true);
+                    nightUnderOrdinaryQuestion = BodyProgramDispatchGate.HoldOf(
+                        FarmhandActionCatalog.DayCrossingActionId, cutsceneUp: false, modal: ordinaryFact, actorCanMove: false);
+                },
+                prompt,
+                new BedPromptLocation());
+        }
+        finally
+        {
+            NativeSleepPrompt.QuestionKeyProvider = keyBefore;
+        }
+
+        promptFact.Kind.Should().Be(BodyProgramModalKind.SleepPrompt, "the bed prompt is its own kind, and `Sleep` is its identity");
+        nightUnderPrompt.Should().BeNull(
+            "the prompt is this action's working precondition (`TryEnterEligibility`, the `Overnight` admission profile), so holding it is the deadlock");
+        otherUnderPrompt.Should().NotBeNull("no other action answers the bed prompt; it waits for the night to cross");
+        otherUnderPrompt!.Value.Evidence.Should().Be(
+            $"held_by=dialogue_box;answer_it={FarmhandActionCatalog.DayCrossingActionId}",
+            "the hold must name the owner: `answer_dialogue` is refused by this very box");
+
+        dismissal.Should().BeOfType<ModalFamily.Dismissal.Unavailable>("a question is never `dismiss_modal`'s to close");
+        var refused = (ModalFamily.Dismissal.Unavailable)dismissal;
+        refused.Evidence.Should().Contain($"answer_it={FarmhandActionCatalog.DayCrossingActionId}");
+        refused.Evidence.Should().NotContain("answer_dialogue", "the close channel must not name a route the answer seam refuses");
+
+        ordinaryFact.Kind.Should().Be(BodyProgramModalKind.Question, "any other question stays `answer_dialogue`'s");
+        nightUnderOrdinaryQuestion.Should().NotBeNull(
+            "an ordinary question is not the night's precondition, so the night stays held behind the answer seam");
     }
 
     // ---- helpers -------------------------------------------------------------

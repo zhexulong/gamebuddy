@@ -291,13 +291,18 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
                 hint: OfferedResponseHint(offeredResponses, promptText));
         }
 
-        // THE DAY THIS QUESTION ENDS BELONGS TO `advance_day`, WHICH RECEIPTS IT.
+        // THE DAY THIS QUESTION ENDS BELONGS TO THE ACTION THAT CROSSES IT (`FarmhandActionCatalog.DayCrossingActionId`),
+        // WHICH RECEIPTS IT.
         //
         // `Yes` on the engine's bed prompt runs `Sleep_Yes` -> `startSleep` -> `NewDay` (`GameLocation.cs:3763-3765`):
         // a calendar crossing with no execution behind it. Measured 2026-11-09 (`round41`): such an answer crossed a
         // day, the still-pending `sleep` intent crossed a second one 9 s later, and neither the run's tally nor the
         // Agent could tell the two apart. `No` stays answerable - declining crosses nothing - because refusing the
         // whole prompt would leave it holding the actor with no forward action at all.
+        //
+        // ONE OWNER, NAMED BY THE CATALOG. The refusal used to be spelled `..._owned_by_advance_day`, after an action id
+        // this catalog does not have: the day-crossing action is `sleep`, and a code that names a missing action sends
+        // the next reader (and the next lane) looking for a request that cannot be made (round60).
         if (offeredIndex >= 0
             && NativeSleepPrompt.IsStanding(dialogue)
             && string.Equals(
@@ -305,14 +310,15 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
                 NativeSleepPrompt.AcceptResponseKey,
                 StringComparison.Ordinal))
         {
+            string owner = FarmhandActionCatalog.DayCrossingActionId;
             return this.RememberTerminal(
                 request.RequestId,
                 executionId,
                 ExecutionState.Rejected,
-                "native_sleep_prompt_owned_by_advance_day",
+                "native_sleep_prompt_owned_by_sleep",
                 $"modal_type=DialogueBox;question=true;response_key={offeredResponses[offeredIndex].responseKey}"
-                    + $";question_key={NativeSleepPrompt.QuestionKey};owning_action=sleep",
-                hint: "Answering Yes here ends the day. Dispatch `sleep` instead - it crosses the night with a receipt.");
+                    + $";question_key={NativeSleepPrompt.QuestionKey};owning_action={owner}",
+                hint: $"Answering Yes here ends the day. Dispatch `{owner}` instead - it answers this prompt and crosses the night with a receipt.");
         }
 
         // The offered response ITSELF, key and text together: it is the object the native click path answers with

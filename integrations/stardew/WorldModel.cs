@@ -305,8 +305,16 @@ internal static class WorldModel
     /// </summary>
     internal static BodyProgramModalFact MountedModal(IClickableMenu? menu, bool dialogueUp) => menu switch
     {
+        // THE BED PROMPT IS ITS OWN KIND. It is a question like any other, and the similarity is the trap: answering it is
+        // the calendar crossing `sleep` exists to do WITH a receipt, so `answer_dialogue` is refused for it
+        // (`native_sleep_prompt_owned_by_sleep`) and the pump must release the night's own action instead of holding it
+        // behind a remedy that refuses. ONE identity (`NativeSleepPrompt`), never "a question is up".
         DialogueBox dialogue => new BodyProgramModalFact(
-            dialogue.isQuestion ? BodyProgramModalKind.Question : BodyProgramModalKind.PlainDialogue,
+            !dialogue.isQuestion
+                ? BodyProgramModalKind.PlainDialogue
+                : NativeSleepPrompt.IsStanding(dialogue)
+                    ? BodyProgramModalKind.SleepPrompt
+                    : BodyProgramModalKind.Question,
             DialogueBoxTypeName),
         // A counter belongs to `shop_purchase`, which opens it and closes it itself (see the refusal in
         // `RequestLocalDismissModal`) - so it is a kind of its own, not an operation menu this channel may close.
@@ -319,8 +327,7 @@ internal static class WorldModel
     };
 
     /// <summary>
-    /// The event-acting family member that ANSWERS a question, whose sibling closes an informational box.
-    ///
+    /// The event-acting family member that ANSWERS a question, whose sibling closes an informational box.    ///
     /// <para>
     /// The split is this file's, because it is this file that publishes what the caller may do; the id itself is the
     /// catalog's, and the assertion that the two agree is a test rather than a comment
