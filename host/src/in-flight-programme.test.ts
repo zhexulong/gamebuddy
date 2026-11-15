@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { FACT_PRODUCER, CompanionEventPump, type WorldFact } from "./event-pump.js";
+import { CompanionEventPump, FACT_PRODUCER, type WorldFact } from "./event-pump.js";
 import { composeFactBrief, FACT_BRIEF_BLOCKS, NOTHING_IN_FLIGHT } from "./fact-brief.js";
 import { PROGRAM_SETTLEMENT_WATCH_INTERVAL_MS } from "./program-settlement-digest.js";
 import {
@@ -9,8 +9,10 @@ import {
   IN_FLIGHT_READING_MAX_AGE_MS,
   MAX_IN_FLIGHT_NODE_ROWS,
   MAX_IN_FLIGHT_PROGRAMMES,
+  programmesNamed,
   programStatusProgress,
   readInFlightProgrammes,
+  SETTLING_GRACE_MS,
 } from "./program-status-wait.js";
 import { BODY_PROGRAM_NODE_STATES, bodyProgramNodeStateVerdict } from "./protocol.js";
 
@@ -48,6 +50,7 @@ function journalStatus(
   programId: string,
   state: string,
   nodes: readonly Readonly<{ nodeId: string; actionId: string; state: string }>[],
+  stopEpoch = 0,
 ): Readonly<Record<string, unknown>> {
   return Object.freeze({
     code: "found",
@@ -55,7 +58,7 @@ function journalStatus(
       programId,
       state,
       catalogRevision: 3,
-      stopEpoch: 0,
+      stopEpoch,
       eventHighWater: 7,
       nodes: Object.freeze(
         nodes.map((node) =>
@@ -377,4 +380,176 @@ test("steer_batch_carries_it_too: a steer joining a running turn states the prog
   });
   assert.equal(texts.length, 1, "the steer delivered one batch");
   assert.match(texts[0] ?? "", /in_flight:settled=0;total=1;remaining=1/u, "and it says what is outstanding");
+});
+
+// ---------------------------------------------------------------------------------------------------------------
+// The lifetime: named, then clockless, then gone.
+// ---------------------------------------------------------------------------------------------------------------
+
+/**
+ * A programme is not forgotten the instant its status turns terminal.
+ *
+ * <p>
+ * MEASURED 2026-11-15 (`round62`): `program_settlement` suppressed 168 times as `progress`, and `adapter_ingress` still
+ * opened 71 turns. The ledger deleted a programme at the same instant its status turned terminal, and the LAST node's
+ * receipt - which arrives after that read and before the settlement that states it - then had no programme to belong to:
+ * it fell through to `decision` and bought a turn for a step whose own settlement was already queued behind it.
+ * </p>
+ * <p>
+ * The name cannot live forever: a later plan may reuse the id, and a stale anchor would report another plan's work as
+ * this one's (the reason the delete existed at all). So the lifetime has exactly two exits, and both are held below.
+ * </p>
+ */
+test("settling_lifetime: a stopped programme stays NAMED for its tail receipts, and is never reported in flight", () => {
+  const observer = createProgramProgressObserver();
+  observer.observe(
+    journalStatus("plan_tail", "active", [
+      { nodeId: "n001", actionId: "harvest_crop", state: "succeeded" },
+      { nodeId: "n002", actionId: "harvest_crop", state: "running" },
+    ]),
+    0,
+  );
+  assert.equal(programmesNamed(observer.inFlight(0)), true, "while it runs it is named");
+
+  // The read that sees the last node finish, 2 s later: the boundary the tail receipt arrives on.
+  observer.observe(
+    journalStatus("plan_tail", "succeeded", [
+      { nodeId: "n001", actionId: "harvest_crop", state: "succeeded" },
+      { nodeId: "n002", actionId: "harvest_crop", state: "succeeded" },
+    ]),
+    2_000,
+  );
+  const settled = observer.inFlight(2_000);
+  assert.equal(
+    settled.programmes.length,
+    0,
+    "it is not in flight: every node has settled, and a block saying otherwise lies",
+  );
+  assert.deepEqual(
+    settled.settling.map((programme) => [programme.programId, programme.settledAgeMs]),
+    [["plan_tail", 0]],
+    "but its NAME is still there, aged from the read that saw it stop",
+  );
+  assert.equal(
+    programmesNamed(settled),
+    true,
+    "which is what stops the tail receipt from being read as a lone outcome",
+  );
+});
+
+test("settling_lifetime: the grace is the second exit, and it is read from one bound", () => {
+  // Both ends of the same edge, in the style the reading bound is held in above: AT the grace the name is still there,
+  // one millisecond past it the name is gone and a receipt is a lone outcome again.
+  const observer = createProgramProgressObserver();
+  observer.observe(
+    journalStatus("plan_grace", "active", [{ nodeId: "n001", actionId: "water_crop", state: "running" }]),
+    0,
+  );
+  observer.observe(
+    journalStatus("plan_grace", "succeeded", [{ nodeId: "n001", actionId: "water_crop", state: "succeeded" }]),
+    1_000,
+  );
+  assert.equal(
+    observer.inFlight(1_000 + SETTLING_GRACE_MS).settling.length,
+    1,
+    "the last read inside the grace still names it",
+  );
+  assert.equal(
+    observer.inFlight(1_000 + SETTLING_GRACE_MS + 1).settling.length,
+    0,
+    "past the grace the name is gone: a programme nothing is owed for must not keep answering for other receipts",
+  );
+});
+
+test("settling_lifetime: a new plan taking the id ends the old name, and cannot inherit its clocks", () => {
+  // THE FIRST EXIT, in its in-place form: `plan_273` stops and a later `plan_273` starts under the SAME key, so the name
+  // is replaced rather than left behind - and the settled plan's frozen anchors must not come with it. (The cross-key form
+  // of the same exit - a new STOP epoch - is the test below, and it is the one the eviction loop itself answers for.)
+  const observer = createProgramProgressObserver();
+  observer.observe(
+    journalStatus("plan_reuse", "active", [{ nodeId: "n001", actionId: "till_soil", state: "running" }]),
+    0,
+  );
+  observer.observe(
+    journalStatus("plan_reuse", "succeeded", [{ nodeId: "n001", actionId: "till_soil", state: "succeeded" }]),
+    4_000,
+  );
+  assert.equal(observer.inFlight(4_000).settling.length, 1, "the stopped plan is named while the id is free");
+
+  const again = observer.observe(
+    journalStatus("plan_reuse", "active", [{ nodeId: "n001", actionId: "till_soil", state: "running" }]),
+    9_000,
+  );
+  const reading = observer.inFlight(9_000);
+  assert.deepEqual(
+    reading.settling.map((programme) => programme.programId),
+    [],
+    "the id is the live plan's now: the settling name it replaced is gone",
+  );
+  assert.deepEqual(
+    reading.programmes.map((programme) => programme.programId),
+    ["plan_reuse"],
+    "and the live plan is in flight under that same id",
+  );
+  assert.equal(again?.current?.observedInStateMs, 0, "with its own clock, not the one the stopped plan left behind");
+});
+
+test("settling_lifetime: a STOP epoch is a new plan, so it ends the previous epoch's name too", () => {
+  // The key is the id AND the stop epoch: a STOP cancels the nodes and the same ids are re-dispatched, so the settling
+  // name of epoch 0 must not answer for epoch 1's steps. This is the exit the eviction loop exists for - the new plan's
+  // key is different, so nothing overwrites the old entry.
+  const observer = createProgramProgressObserver();
+  observer.observe(
+    journalStatus("plan_epoch", "active", [{ nodeId: "n001", actionId: "enter_exit", state: "running" }]),
+    0,
+  );
+  observer.observe(
+    journalStatus("plan_epoch", "cancelled", [{ nodeId: "n001", actionId: "enter_exit", state: "cancelled" }]),
+    1_000,
+  );
+  assert.equal(
+    observer.inFlight(1_000).settling.length,
+    1,
+    "the cancelled plan is named while nothing has replaced it",
+  );
+  observer.observe(
+    journalStatus("plan_epoch", "active", [{ nodeId: "n001", actionId: "enter_exit", state: "pending" }], 1),
+    3_000,
+  );
+  assert.deepEqual(
+    observer.inFlight(3_000).settling.map((programme) => programme.programId),
+    [],
+    "the new epoch took the id: one id has one lifetime",
+  );
+});
+
+test("settling_lifetime: a plan this ledger never saw active was never forgotten, so it starts no lifetime", () => {
+  // The precision that keeps the name from being a blanket silence: the lifetime exists for a programme a PRIOR status
+  // update removed. A first read that already shows the plan stopped removed nothing, and answering for it would suppress
+  // the first `succeeded` receipt of a run.
+  const observer = createProgramProgressObserver();
+  observer.observe(
+    journalStatus("plan_first_seen_stopped", "succeeded", [
+      { nodeId: "n001", actionId: "harvest_crop", state: "succeeded" },
+    ]),
+    0,
+  );
+  const reading = observer.inFlight(0);
+  assert.deepEqual(reading.programmes, [], "nothing is in flight");
+  assert.deepEqual(reading.settling, [], "and nothing was forgotten here, so nothing is named");
+  assert.equal(programmesNamed(reading), false);
+});
+
+test("settling_lifetime: the grace outlasts the watch that reports the stop and stays inside the reading bound", () => {
+  // A named programme must outlive the tick that saw it stop - the tail receipt is already in flight at that moment - and
+  // it must not outlive the bound that exists because a dead watch's last read is not evidence. Both ends are stated as
+  // properties so neither number can drift into the other's territory.
+  assert.ok(
+    SETTLING_GRACE_MS > PROGRAM_SETTLEMENT_WATCH_INTERVAL_MS * 2,
+    `the name expires after ${String(SETTLING_GRACE_MS)} ms while the watch re-reads every ${String(PROGRAM_SETTLEMENT_WATCH_INTERVAL_MS)} ms`,
+  );
+  assert.ok(
+    SETTLING_GRACE_MS < IN_FLIGHT_READING_MAX_AGE_MS,
+    `the name outlives the reading bound it belongs to: ${String(SETTLING_GRACE_MS)} ms against ${String(IN_FLIGHT_READING_MAX_AGE_MS)} ms`,
+  );
 });

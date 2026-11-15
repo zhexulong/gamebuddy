@@ -8,7 +8,7 @@ import {
   worldStateStaleThreshold,
 } from "./fact-brief.js";
 import { PROGRAM_SETTLED_DIGEST_SEMANTIC_KIND } from "./program-settlement-digest.js";
-import { type InFlightProgrammeReading, readInFlightProgrammes } from "./program-status-wait.js";
+import { type InFlightProgrammeReading, programmesNamed, readInFlightProgrammes } from "./program-status-wait.js";
 import { EXECUTION_STATES, type ExecutionState, type Snapshot } from "./protocol.js";
 // The Mod's evidence detail is one format with one reader (`key=value;...`), and the body-owner refusal puts the owner
 // it names inside it. Reusing that reader is what keeps the pump and the Agent's refusal guidance from disagreeing
@@ -2359,21 +2359,27 @@ export class CompanionEventPump {
    * poll of the bridge.
    * </p>
    * <p>
-   * THE BOUNDARY IS INSIDE THIS READING ON PURPOSE, and it is the 79 turns of `round59`. The ledger only holds a plan the
-   * journal still reports ACTIVE (`program-status-wait.ts`, `observe`), so a plan whose last node has gone terminal is
-   * still named here - with `remaining` at `0` - for the gap between that node and its settlement. Those receipts match
-   * nothing about a RUNNING programme, so they fell through to `decision`: `turns opened 88 {adapter_ingress: 79}` against
-   * 72 submissions, one boundary turn per plan. A programme the journal still names is one whose own settlement will
-   * state its nodes, which is what makes them progress and its settlement the fact that speaks.
+   * THE BOUNDARY IS INSIDE THIS READING ON PURPOSE, and it is the 79 turns of `round59` and the 71 of `round62`. The
+   * ledger holds a plan the journal still reports ACTIVE (`program-status-wait.ts`, `observe`), and - for the grace its
+   * own tail receipts need - one the journal has reported stopped. A plan whose last node has gone terminal is therefore
+   * still named here, with `remaining` at `0`, for the gap between that node and its settlement. Those receipts match
+   * nothing about a RUNNING programme, so without the settling half they fell through to `decision`: `turns opened 88
+   * {adapter_ingress: 79}` against 72 submissions in `round59`, and in `round62` 71 ingress-opened turns beside 168
+   * suppressed settlements. A programme still named is one whose own settlement will state its nodes, which is what makes
+   * them progress and its settlement the fact that speaks.
    * </p>
    * <p>
-   * IT ERRS TOWARD A TURN. `IN_FLIGHT_READING_MAX_AGE_MS` stops a stopped watch from keeping a programme alive, and a
-   * reading that names nothing makes every fact a decision - so the failure of this answer is one extra turn, never a
-   * lost outcome.
+   * IT ERRS TOWARD A TURN, EXCEPT INSIDE THE GRACE. `IN_FLIGHT_READING_MAX_AGE_MS` stops a stopped watch from keeping a
+   * programme alive, and a reading that names nothing makes every fact a decision - so the ordinary failure of this
+   * answer is one extra turn, never a lost outcome. The settling half inverts that for ONE bounded window
+   * (`SETTLING_GRACE_MS`): inside it a `succeeded` receipt is filed as a step even if its programme was not the one that
+   * stopped, so the cost is that receipt waiting in the window for the next turn that opens for a decision - not being
+   * dropped. That is the trade the tail receipt of `round62` requires, and the window is bounded on both sides
+   * (`in-flight-programme.test.ts`).
    * </p>
    */
   #programmeNamed(): boolean {
-    return this.#inFlight().programmes.length > 0;
+    return programmesNamed(this.#inFlight());
   }
 
   /**

@@ -11,11 +11,16 @@ import {
   type PendingBatch,
   SETTLED_PROGRAM_OUTCOMES,
   type SettledProgramOutcome,
+  TURN_OPENING,
   TURN_SUPPRESSION,
   type WorldFact,
 } from "./event-pump.js";
 import { programSettledDigest } from "./program-settlement-digest.js";
-import type { PlanAnswerNode, InFlightProgrammeReading } from "./program-status-wait.js";
+import {
+  createProgramProgressObserver,
+  type InFlightProgrammeReading,
+  type PlanAnswerNode,
+} from "./program-status-wait.js";
 import { EXECUTION_STATES } from "./protocol.js";
 
 /**
@@ -73,12 +78,14 @@ function harvestPlan(remaining: number): InFlightProgrammeReading {
       },
     ],
     omittedProgrammes: 0,
+    settling: [],
   };
 }
 
 const NOTHING_IN_FLIGHT: InFlightProgrammeReading = Object.freeze({
   programmes: Object.freeze([]),
   omittedProgrammes: 0,
+  settling: Object.freeze([]),
 });
 
 /** One node of the plan finishing: the receipt that opened `#69`, `#71` and `#73` of the transcript. */
@@ -757,5 +764,305 @@ test("the classification table, printed with its population", () => {
       .filter((outcome) => SETTLED_PROGRAM_OUTCOMES[outcome].consequence === "progress")
       .map((outcome) => `settled:${outcome}`),
     "the settlement rows the table calls progress are exactly the outcomes that DECLARE it, so a second spelling cannot drift",
+  );
+});
+
+// ---------------------------------------------------------------------------------------------------------------
+// The lifetime: a programme is not forgotten the instant its status turns terminal.
+// ---------------------------------------------------------------------------------------------------------------
+
+/**
+ * `receipt_for_a_forgotten_program:<program>:<receiptKind>` - a receipt belonging to a programme a PRIOR status update
+ * removed still opened a turn.
+ *
+ * <p>
+ * THE RACE, MEASURED 2026-11-15 (`round62`): `program_settlement` was suppressed 168 times as `progress` and
+ * `adapter_ingress` still opened 71 turns. The ledger deleted a programme at the same instant its status turned terminal
+ * (`program-status-wait.ts`, `observe`), so the LAST node's receipt - which arrives one microsecond after that read and
+ * before the settlement that states it - found no programme to belong to, fell through to `decision`, and bought a turn
+ * for a step whose own settlement was already queued behind it.
+ * </p>
+ * <p>
+ * WHY A UNIT GATE AND NOT THE ROUND62 COUNT. The pump cannot attribute a receipt to a programme: `execution_receipt`
+ * carries an `executionId`, not a `nodeId` (the same reason `#programmeNamed` exists), so the 71 cannot be re-derived
+ * from a run's log by joining on a name. What CAN be replayed exactly is the ordering, and the population it runs over is
+ * every fact shape this pump classifies as `in_flight_progress` - the shapes the lifetime governs, derived from
+ * `FACT_TURN_CONSEQUENCE` rather than listed. At run scale the same population produced the 71; here it produces one
+ * violation per shape, and the token names the programme and the shape so a rerun's account can be joined to it.
+ * </p>
+ */
+const RECEIPT_FOR_A_FORGOTTEN_PROGRAM = "receipt_for_a_forgotten_program";
+
+/** One `program_status` payload as the settlement watch and every status call read it: the journal's own rows. */
+function journalStatus(
+  programId: string,
+  state: string,
+  nodes: readonly Readonly<{ nodeId: string; actionId: string; state: string }>[],
+): Readonly<Record<string, unknown>> {
+  return Object.freeze({
+    code: "found",
+    snapshot: Object.freeze({
+      programId,
+      state,
+      catalogRevision: 3,
+      stopEpoch: 0,
+      eventHighWater: 90,
+      nodes: Object.freeze(
+        nodes.map((node) =>
+          Object.freeze({
+            nodeId: node.nodeId,
+            state: node.state,
+            nodeAttempt: 0,
+            admissionAttempt: 0,
+            actionId: node.actionId,
+          }),
+        ),
+      ),
+    }),
+  });
+}
+
+/** What one replayed ordering did with one shape. */
+type BoundaryReading = Readonly<{
+  shape: string;
+  program: string;
+  /** Turns the tail receipt opened after the read that saw the programme stop. Must be `0`. */
+  openedByTailReceipt: number;
+  /** What that flush was decided as. Must be `in_flight_progress`: it is the programme's own last step. */
+  tailReason: string | undefined;
+  /** Turns the flush holding the programme's own settlement opened, in the window the receipt waits in. `0`. */
+  settlementOpened: number;
+  /** What a flush holding ONLY that settlement is decided as, off the same ledger. Must be `progress`. */
+  settlementReason: string | undefined;
+  /** Turns a receipt for an id NO ledger read ever named opened. Must NOT be `0`: that is a genuine lone outcome. */
+  loneOutcomeOpened: number;
+}>;
+
+/**
+ * Replay the ordering for one shape: `active` read -> the read that sees it stop -> tail receipt -> settlement.
+ *
+ * The pump is handed the REAL ledger (`createProgramProgressObserver`), not a literal reading: the defect is in the
+ * lifetime, so a fixture that stated the reading itself could not reproduce it.
+ */
+async function readBoundaryOrdering({ shape, fact }: ShapeCase): Promise<BoundaryReading> {
+  const program = `plan_forgotten_${shape.replace(/:/gu, "_")}`;
+  const observer = createProgramProgressObserver();
+  observer.observe(
+    journalStatus(program, "active", [
+      { nodeId: "n001", actionId: "harvest_crop", state: "succeeded" },
+      { nodeId: "n002", actionId: "harvest_crop", state: "running" },
+    ]),
+    1_000,
+  );
+  // The read that sees the last node finish: the programme is no longer `active`, and the settlement watch is about to
+  // state it. This is the read the ledger used to answer by forgetting everything it knew.
+  observer.observe(
+    journalStatus(program, "succeeded", [
+      { nodeId: "n001", actionId: "harvest_crop", state: "succeeded" },
+      { nodeId: "n002", actionId: "harvest_crop", state: "succeeded" },
+    ]),
+    2_000,
+  );
+  const settlement = settledFact(
+    [
+      { nodeId: "n001", state: "succeeded" },
+      { nodeId: "n002", state: "succeeded" },
+    ],
+    program,
+  );
+
+  const pump = new CompanionEventPump(() => observer.inFlight(2_000));
+  const turns = recorder();
+  pump.enqueueFact(fact, FACT_PRODUCER.adapterIngress);
+  await pump.flush(turns.sink);
+  const openedByTailReceipt = pump.turnAccount.opened;
+  const tail = pump.turnAccount.lastDecision;
+  const tailReason = tail?.kind === "suppressed" ? tail.reason : undefined;
+
+  // The settlement that states the programme arrives behind that receipt, into the same window.
+  pump.enqueueFact(settlement, FACT_PRODUCER.programSettlement);
+  await pump.flush(turns.sink);
+  const settlementOpened = pump.turnAccount.opened - openedByTailReceipt;
+
+  // ... and on its own, off the SAME ledger: what a flush carrying only a stopped programme's outcome is decided as. The
+  // waiting receipt would otherwise be the answer, because a step outranks an outcome in `#suppressionReason`.
+  const settledAlone = new CompanionEventPump(() => observer.inFlight(2_000));
+  settledAlone.enqueueFact(settlement, FACT_PRODUCER.programSettlement);
+  await settledAlone.flush(recorder().sink);
+  const alone = settledAlone.turnAccount.lastDecision;
+  const settlementReason = alone?.kind === "suppressed" ? alone.reason : undefined;
+
+  // THE INVERSE, IN THE SAME DRIVE: an id no ledger read ever named. Nothing was forgotten, so nothing may be silenced.
+  const lone = new CompanionEventPump(() => createProgramProgressObserver().inFlight(2_000));
+  lone.enqueueFact(fact, FACT_PRODUCER.adapterIngress);
+  await lone.flush(recorder().sink);
+
+  return Object.freeze({
+    shape,
+    program,
+    openedByTailReceipt,
+    tailReason,
+    settlementOpened,
+    settlementReason,
+    loneOutcomeOpened: lone.turnAccount.opened,
+  });
+}
+
+/** The population: every shape this pump classifies as a step of a programme, derived from the classification. */
+function inFlightProgressShapes(): readonly ShapeCase[] {
+  return shapePopulation().filter(({ shape }) => FACT_TURN_CONSEQUENCE[shape] === "in_flight_progress");
+}
+
+async function readEveryBoundaryOrdering(): Promise<readonly BoundaryReading[]> {
+  const readings: BoundaryReading[] = [];
+  for (const shapeCase of inFlightProgressShapes()) readings.push(await readBoundaryOrdering(shapeCase));
+  return readings;
+}
+
+/**
+ * The verdict over the replayed orderings, with zero population BLOCKED rather than green.
+ *
+ * Three defects, three directions: a forgotten programme's receipt opening a turn (the race), the settlement that states
+ * it no longer suppressed as `progress` (the same flush counted differently), and a lone outcome silenced (what an
+ * over-broad lifetime costs - a fact nothing else will ever state).
+ */
+function receiptForAForgottenProgramGate(readings: readonly BoundaryReading[]): Readonly<{
+  examined: number;
+  opened: number;
+  violations: readonly string[];
+  blocked: string | null;
+}> {
+  if (readings.length === 0)
+    return Object.freeze({
+      examined: 0,
+      opened: 0,
+      violations: Object.freeze([]),
+      blocked: "zero_population:no_in_flight_progress_shape_was_examined",
+    });
+  const violations: string[] = [];
+  let opened = 0;
+  for (const reading of readings) {
+    if (reading.openedByTailReceipt > 0) {
+      opened += reading.openedByTailReceipt;
+      violations.push(`${RECEIPT_FOR_A_FORGOTTEN_PROGRAM}:${reading.program}:${reading.shape}`);
+    }
+    if (reading.tailReason !== TURN_SUPPRESSION.inFlightProgress)
+      violations.push(`forgotten_tail_not_a_step:${reading.program}:${reading.shape}:${String(reading.tailReason)}`);
+    if (reading.settlementOpened > 0) {
+      opened += reading.settlementOpened;
+      violations.push(`${RECEIPT_FOR_A_FORGOTTEN_PROGRAM}:${reading.program}:settled:succeeded`);
+    }
+    if (reading.settlementReason !== TURN_SUPPRESSION.progress)
+      violations.push(
+        `settlement_not_progress_for_a_forgotten_program:${reading.program}:${reading.shape}:${String(reading.settlementReason)}`,
+      );
+    if (reading.loneOutcomeOpened === 0)
+      violations.push(`lone_outcome_swallowed:${FACT_PRODUCER.adapterIngress}:${reading.shape}`);
+  }
+  return Object.freeze({ examined: readings.length, opened, violations: Object.freeze(violations), blocked: null });
+}
+
+test("receipt_for_a_forgotten_program: the tail receipt of a stopped programme opens no turn, and its settlement stays progress", async () => {
+  const gate = receiptForAForgottenProgramGate(await readEveryBoundaryOrdering());
+
+  assert.equal(gate.blocked, null, `the gate measured nothing: ${String(gate.blocked)}`);
+  assert.ok(gate.examined > 0, "zero population is blocked, never green");
+  // Printed for the same reason the shape gate prints its own population: "0 violations" over an unstated population
+  // agrees with itself.
+  console.log(
+    `receipt_for_a_forgotten_program: turns examined ${String(gate.examined)} · opened by a forgotten programme's receipt ${String(gate.opened)}`,
+  );
+  assert.deepEqual(
+    gate.violations,
+    [],
+    "a receipt that arrives after the read which saw its programme stop is that programme's own last step, not a lone outcome",
+  );
+});
+
+test("receipt_for_a_forgotten_program: the gate is red on the ordering round62 measured, and names the programme and the shape", () => {
+  // THE FALSIFIER. The same gate over the reading the tree produced before the lifetime was fixed: the read that saw the
+  // programme stop removed it, so the tail receipt opened a turn.
+  const recorded = receiptForAForgottenProgramGate([
+    {
+      shape: "receipt:succeeded",
+      program: "plan_273",
+      openedByTailReceipt: 1,
+      tailReason: TURN_OPENING.worldFact,
+      settlementOpened: 0,
+      settlementReason: TURN_SUPPRESSION.progress,
+      loneOutcomeOpened: 1,
+    },
+  ]);
+
+  assert.deepEqual(
+    recorded.violations,
+    [
+      `${RECEIPT_FOR_A_FORGOTTEN_PROGRAM}:plan_273:receipt:succeeded`,
+      `forgotten_tail_not_a_step:plan_273:receipt:succeeded:${TURN_OPENING.worldFact}`,
+    ],
+    "the violation must name the programme and the receipt kind, or the next reader is told 'expected 0, got 1'",
+  );
+  assert.equal(recorded.opened, 1, "and the headline number is the turns it opened, not the shapes it examined");
+});
+
+test("receipt_for_a_forgotten_program: an over-broad lifetime that silences a lone outcome is red too", () => {
+  // The other direction, which "fewer turns" alone can never detect: a receipt no plan ever owned is the only fact that
+  // will ever say the action happened.
+  const swallowed = receiptForAForgottenProgramGate([
+    {
+      shape: "receipt:succeeded",
+      program: "plan_gone",
+      openedByTailReceipt: 0,
+      tailReason: TURN_SUPPRESSION.inFlightProgress,
+      settlementOpened: 0,
+      settlementReason: TURN_SUPPRESSION.progress,
+      loneOutcomeOpened: 0,
+    },
+  ]);
+  assert.deepEqual(swallowed.violations, ["lone_outcome_swallowed:adapter_ingress:receipt:succeeded"]);
+
+  const miscounted = receiptForAForgottenProgramGate([
+    {
+      shape: "receipt:succeeded",
+      program: "plan_gone",
+      openedByTailReceipt: 0,
+      tailReason: TURN_SUPPRESSION.inFlightProgress,
+      settlementOpened: 1,
+      settlementReason: TURN_SUPPRESSION.observationRestated,
+      loneOutcomeOpened: 1,
+    },
+  ]);
+  assert.deepEqual(
+    miscounted.violations,
+    [
+      `${RECEIPT_FOR_A_FORGOTTEN_PROGRAM}:plan_gone:settled:succeeded`,
+      "settlement_not_progress_for_a_forgotten_program:plan_gone:receipt:succeeded:observation_restated",
+    ],
+    "the settlement that states a stopped programme is progress, and a count of the turn it did not open says so",
+  );
+});
+
+test("receipt_for_a_forgotten_program: zero population is blocked, never green", () => {
+  const empty = receiptForAForgottenProgramGate([]);
+  assert.equal(empty.blocked, "zero_population:no_in_flight_progress_shape_was_examined");
+  assert.deepEqual(empty.violations, []);
+  assert.equal(empty.examined, 0);
+});
+
+test("receipt_for_a_forgotten_program: the population is the classification's own in_flight_progress rows", () => {
+  const population = inFlightProgressShapes();
+  assert.ok(population.length > 0, "an empty population proves nothing");
+  assert.deepEqual(
+    population.filter(({ shape }) => FACT_TURN_CONSEQUENCE[shape] !== "in_flight_progress").map(({ shape }) => shape),
+    [],
+    "every examined shape is one the classification calls a step",
+  );
+  assert.deepEqual(
+    Object.entries(FACT_TURN_CONSEQUENCE)
+      .filter(([, consequence]) => consequence === "in_flight_progress")
+      .map(([shape]) => shape)
+      .filter((shape) => !population.some((entry) => entry.shape === shape)),
+    [],
+    "and every row the classification calls a step is examined here, so a shape added to it cannot go unreplayed",
   );
 });

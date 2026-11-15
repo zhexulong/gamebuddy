@@ -193,10 +193,11 @@ export type FactBriefInput = Readonly<{
   locale: string;
 }>;
 
-/** No programme in flight: the reading a batch carries when the journal has nothing unsettled to name. */
+/** No programme in flight and none settling: the reading a batch carries when the journal has nothing to name at all. */
 export const NOTHING_IN_FLIGHT: InFlightProgrammeReading = Object.freeze({
   programmes: Object.freeze([]),
   omittedProgrammes: 0,
+  settling: Object.freeze([]),
 });
 
 /**
