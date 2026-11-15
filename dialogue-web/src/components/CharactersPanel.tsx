@@ -13,6 +13,7 @@ import { problemTextWithCode } from "../composed-problem-view";
 import { TavernProblemError } from "../management-pipeline-api";
 import { deriveCompanionActivationControls } from "../companion-activation-controls";
 import { CharacterCardImport } from "./CharacterCardImport";
+import { useArmedConfirmation } from "./armed-confirmation";
 import { CompanionAvatar } from "./CompanionAvatar";
 import { CompanionExamplesSection } from "./CompanionExamplesSection";
 import { CompanionInspectorDrawer, type InspectedCompanion } from "./CompanionInspectorDrawer";
@@ -177,6 +178,16 @@ export function CharactersPanel({
   const [mountedHandle, setMountedHandle] = useState<string | null>(null);
   const [voiceSaving, setVoiceSaving] = useState(false);
   const [voiceClearing, setVoiceClearing] = useState(false);
+  /**
+   * Whether the directive's clear is armed (`armed-confirmation.ts`).
+   *
+   * The directive is the player's own writing - up to 8192 characters of how this companion performs - and
+   * clearing it is durable: `characterVoice` is null from then on, so every reply stops using it and nothing
+   * on this screen holds the words to put back. It is therefore the second press of a pair, exactly like the
+   * row removals and her own deletion, rather than the one press it used to be.
+   */
+  const [voiceClearArmed, setVoiceClearArmed] = useState(false);
+  const voiceClearPair = useArmedConfirmation(voiceClearArmed, () => setVoiceClearArmed(false));
   const [voiceNotice, setVoiceNotice] = useState<VoiceNotice>(null);
 
   const [scenario, setScenario] = useState<ScenarioV1 | "loading" | "unavailable">("loading");
@@ -345,6 +356,9 @@ export function CharactersPanel({
         const value = await api.readCompanionVoice(current.handle);
         if (!active) return;
         setVoice({ kind: "ready", value });
+        // An arm is about the directive that was on screen: a fresh read (a different companion in play,
+        // or a re-read after a save) answers a different fact, so the pair closes with it.
+        setVoiceClearArmed(false);
       } catch {
         if (active) setVoice({ kind: "unavailable" });
       }
@@ -383,6 +397,9 @@ export function CharactersPanel({
 
   const handleClearVoice = async (): Promise<void> => {
     if (voice.kind !== "ready" || mountedHandle === null || voiceSaving || voiceClearing) return;
+    // The press that confirms is the one that ends the pair, spent before the request so a stale
+    // confirmation can never answer for a second clear.
+    setVoiceClearArmed(false);
     setVoiceClearing(true);
     setVoiceNotice(null);
     try {
@@ -837,16 +854,52 @@ export function CharactersPanel({
                     >
                       {voiceSaving ? labels.saving : labels.voiceSave}
                     </button>
-                    <button
-                      type="button"
-                      className="small-button"
-                      data-character-voice-clear
-                      disabled={voiceSaving || voiceClearing}
-                      onClick={() => void handleClearVoice()}
-                    >
-                      {voiceClearing ? labels.saving : labels.voiceClear}
-                    </button>
+                    {/* The clear is the pair's TRIGGER: it arms and says nothing durable. It steps aside
+                        while armed, so the confirmation below is the row's only answer to the press. */}
+                    {!voiceClearArmed && (
+                      <button
+                        ref={voiceClearPair.triggerRef}
+                        type="button"
+                        className="small-button"
+                        data-character-voice-clear
+                        disabled={voiceSaving || voiceClearing}
+                        onClick={() => {
+                          setVoiceNotice(null);
+                          setVoiceClearArmed(true);
+                        }}
+                      >
+                        {labels.voiceClear}
+                      </button>
+                    )}
                   </div>
+                  {voiceClearArmed && (
+                    <div data-character-voice-clear-confirm onKeyDown={voiceClearPair.onConfirmKeyDown} role="group">
+                      <p role="status">{labels.voiceClearConfirm}</p>
+                      <div className="composer-actions">
+                        <button
+                          type="button"
+                          className="small-button danger"
+                          data-character-voice-clear-confirm-yes
+                          disabled={voiceSaving || voiceClearing}
+                          onClick={() => void handleClearVoice()}
+                        >
+                          {voiceClearing ? labels.saving : labels.voiceClearConfirmYes}
+                        </button>
+                        {/* The safe answer is the one focus lands on when the pair opens, so a stray
+                            Enter keeps her direction instead of clearing it. */}
+                        <button
+                          ref={voiceClearPair.cancelRef}
+                          type="button"
+                          className="small-button"
+                          data-character-voice-clear-confirm-no
+                          disabled={voiceSaving || voiceClearing}
+                          onClick={voiceClearPair.cancel}
+                        >
+                          {labels.voiceClearConfirmNo}
+                        </button>
+                      </div>
+                    </div>
+                  )}
                 </>
               ) : voiceAdding.value ? (
                 <>

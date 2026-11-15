@@ -199,6 +199,14 @@ export type CharacterLabels = Readonly<{
   voiceCancel: string;
   voiceSaveFailed: string;
   voiceCleared: string;
+  /**
+   * The directive's clear, as the pair asks it. The sentence names the consequence - the words leave her
+   * profile and every reply stops using them - and the one thing this screen cannot do about it, which is
+   * why the press is a pair rather than one button.
+   */
+  voiceClearConfirm: string;
+  voiceClearConfirmYes: string;
+  voiceClearConfirmNo: string;
 
   examplesTitle: string;
   examplesHint: string;
@@ -616,6 +624,11 @@ const en: CharacterLabels = Object.freeze({
   voiceCancel: "Cancel",
   voiceSaveFailed: "Could not save the directive. It changed elsewhere; reload and retry.",
   voiceCleared: "Cleared.",
+  voiceClearConfirm:
+    "Clear her performance directive? The words are removed from her profile and every reply stops using them, " +
+    "and nothing on this screen brings them back - keep a copy if you want them again.",
+  voiceClearConfirmYes: "Clear the directive",
+  voiceClearConfirmNo: "Keep the directive",
 
   examplesTitle: "Dialogue examples",
   examplesHint:
@@ -942,6 +955,10 @@ const zh: CharacterLabels = Object.freeze({
   voiceCancel: "取消",
   voiceSaveFailed: "无法保存指令。内容已在其他位置更改；请重新加载后再试。",
   voiceCleared: "已清除。",
+  voiceClearConfirm:
+    "清除她的演出指导？这些文字会从她的档案里移除，之后的回复都不再使用它们；这个界面无法把它们恢复，想再要请先自己留一份。",
+  voiceClearConfirmYes: "确认清除指令",
+  voiceClearConfirmNo: "保留指令",
 
   examplesTitle: "对话示例",
   examplesHint:

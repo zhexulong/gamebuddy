@@ -9,7 +9,9 @@ import { expect, test, type Page } from "./frontend-coverage";
  * This suite holds the two player-facing halves of that ruling:
  *
  *   - the imported directive is VISIBLE on the Characters surface with its
- *     provenance, edits it, and can be cleared in one click;
+ *     provenance, is editable, and is cleared by an armed pair - the first
+ *     press asks what the second one destroys, and this screen cannot restore
+ *     the words;
  *   - a cleared directive is ABSENT - the editor is not rendered at all rather
  *     than left as an empty box (design/26 §1) - and a later re-import of the
  *     same card does not resurrect it.
@@ -162,7 +164,7 @@ test("editing the directive issues the update route and flips the provenance to 
   await expect(voice.locator("[data-character-voice-source]")).toHaveText("Edited by you");
 });
 
-test("one-click clear removes the field, and a re-import of the same card does not resurrect it", async ({ page }) => {
+test("clearing the directive is two presses, and a re-import of the same card does not resurrect it", async ({ page }) => {
   const calls = { puts: [] as Array<{ method: string; csrf: string | undefined; body: unknown }> };
   await stubCharactersSurface(
     page,
@@ -201,10 +203,18 @@ test("one-click clear removes the field, and a re-import of the same card does n
   const surface = page.getByTestId("characters-surface");
   const voice = surface.locator("[data-character-voice]");
   await expect(voice).toBeVisible();
+  // The first press only ARMS: nothing is sent, the directive is still there, and the confirmation names
+  // what the second press would destroy - her words leave the profile, and this screen cannot put them back.
   await voice.locator("[data-character-voice-clear]").click();
+  const confirm = voice.locator("[data-character-voice-clear-confirm]");
+  await expect(confirm).toBeVisible();
+  await expect(confirm).toContainText("nothing on this screen brings them back");
+  await expect(surface.locator("#character-voice-text")).toHaveValue("Keep it terse.");
+  expect(calls.puts).toHaveLength(0);
 
-  // One action clears the field; the durable read-back is empty, so the editor
-  // is absent rather than left behind as an empty box (design/26 §1).
+  // The second press is the one that clears: the durable read-back is empty, so the editor is absent
+  // rather than left behind as an empty box (design/26 §1).
+  await voice.locator("[data-character-voice-clear-confirm-yes]").click();
   await expect.poll(() => calls.puts.length).toBe(1);
   expect(calls.puts[0]?.body).toEqual({ apiVersion: 1, expectedProfileRevision: 2, clear: true });
   await expect(surface.locator("#character-voice-text")).toHaveCount(0);
@@ -226,6 +236,34 @@ test("one-click clear removes the field, and a re-import of the same card does n
   await review.locator("[data-card-import-review-confirm]").click();
   await expect(surface.locator("[data-card-import-result=created]")).toContainText("Imported Nova.");
   await expect(surface.locator("#character-voice-text")).toHaveCount(0);
+});
+
+/**
+ * The pair's own contract, from the keyboard (`armed-confirmation.ts`): the arming press unmounts the
+ * control that held focus, so the hook moves focus into the safe answer and Escape answers with it. A
+ * player who armed the clear by accident keeps her direction, and the screen says nothing happened.
+ */
+test("Escape keeps the directive and hands focus back to the control that armed it", async ({ page }) => {
+  const calls = { puts: [] as Array<{ method: string; csrf: string | undefined; body: unknown }> };
+  await stubCharactersSurface(
+    page,
+    { profileRevision: 9, characterVoice: { text: "Speak in short lines.", source: "player" } },
+    calls,
+  );
+  await openCharactersSurface(page);
+
+  const surface = page.getByTestId("characters-surface");
+  const voice = surface.locator("[data-character-voice]");
+  await voice.locator("[data-character-voice-clear]").click();
+  // The safe answer is what holds the focus the arming press took away: a stray Enter keeps her words.
+  await expect(voice.locator("[data-character-voice-clear-confirm-no]")).toBeFocused();
+  await page.keyboard.press("Escape");
+
+  await expect(voice.locator("[data-character-voice-clear-confirm]")).toHaveCount(0);
+  await expect(surface.locator("#character-voice-text")).toHaveValue("Speak in short lines.");
+  await expect(surface.locator("[data-character-voice-notice]")).toHaveCount(0);
+  expect(calls.puts).toHaveLength(0);
+  await expect(voice.locator("[data-character-voice-clear]")).toBeFocused();
 });
 
 test("an absent directive keeps an entry point, and saving one sends the value", async ({ page }) => {
