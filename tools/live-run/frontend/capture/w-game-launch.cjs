@@ -629,13 +629,16 @@ async function hostAnswers(port) {
    * The driver's own cells (`record` above) say what it looked at; this says how far the PRODUCT got,
    * which is the question a reader has after a run that did not reach the end. A rung is recorded once,
    * at the moment the fact it names was first true, so the elapsed time is the chain's own cost and not
-   * the driver's polling cadence.
+   * the driver's polling cadence. `atMs` is that moment when the caller knows it and it is not now: the
+   * confirmation's rung is written after the attachment wait that FOLLOWS it, and stamping it then printed
+   * `cabin confirm @204s` for a press taken at 16 s - an elapsed that belonged to the wait, not to the step.
    */
-  const chainReached = (rung, proof) => {
+  const chainReached = (rung, proof, atMs = null) => {
     if (!CHAIN_STEP_NAMES.includes(rung)) throw new Error(`chain_step_unknown:${rung}`);
     if (facts.chain.some((entry) => entry.name === rung)) return;
-    facts.chain.push({ name: rung, atMs: Date.now() - started, proof });
-    say(`CHAIN RUNG: ${rung} @${Math.round((Date.now() - started) / 1000)}s - ${proof}`);
+    const reachedAt = Number.isFinite(atMs) ? atMs : Date.now();
+    facts.chain.push({ name: rung, atMs: reachedAt - started, proof });
+    say(`CHAIN RUNG: ${rung} @${Math.round((reachedAt - started) / 1000)}s - ${proof}`);
   };
 
   /** The chain as the next reader wants it, printed on every way out. */
@@ -1172,9 +1175,15 @@ async function hostAnswers(port) {
       attached = await page.evaluate(readGameState);
     }
     const confirmAnswer = answers.filter((entry) => entry.route === "game/stardew/cabins/confirm").at(-1) ?? null;
+    /*
+     * The rung is stamped at the PRESS, not here: the wait below belongs to the attachment the confirmation
+     * was supposed to start, and printing it as this rung's elapsed reads as if the confirmation itself took
+     * minutes when it was answered in one round trip.
+     */
     chainReached(
       CHAIN_STEPS.cabinConfirm,
-      `the choice ${JSON.stringify(presses[0]?.choices?.join(", ") ?? null)} was confirmed after ${String(Date.now() - confirmPressedAtMs)}ms of waiting; the confirm route answered ${describeConfirmAnswer(confirmAnswer)}`,
+      `the choice ${JSON.stringify(presses[0]?.choices?.join(", ") ?? null)} was pressed and the confirm route answered ${describeConfirmAnswer(confirmAnswer)}; this driver then waited up to ${String(BUDGET.cabinConfirmMs)}ms for the attachment`,
+      confirmPressedAtMs,
     );
     const attachLanded = attached.ok === true && attached.attachmentStatus === "attached";
     if (attachLanded) chainReached(CHAIN_STEPS.attach, `the Host published attachment=attached (${describeGameState(attached)}) ${String(Date.now() - attachBegan)}ms after the confirmation`);
