@@ -5,7 +5,6 @@ import {
   MAX_CARD_FILE_BYTES,
   type ManagementPipelineApi,
   type StCardImportHistoryV1,
-  type StCardImportOmittedEntryV1,
   type StCardImportOmittedMacroV1,
   type StCardImportStageResultV1,
   type StageStCardImportCommandV1,
@@ -33,14 +32,6 @@ type StagedReport = Readonly<{
   voiceCarried: boolean;
   /** The card's directive was dropped by the decoder's own loss ledger. */
   voiceDropped: boolean;
-  /**
-   * World-book entries the importer could not render, each with the macros that kept it out.
-   *
-   * `lorebookCount` above says how many arrived; this says how many did NOT and why. A count of lost
-   * entries is not actionable - the player cannot search a card for "3" - so the Host names the entry
-   * and the macro, and this row repeats both.
-   */
-  omittedWorldBookEntries: readonly StCardImportOmittedEntryV1[];
   /**
    * The macros behind the closing direction the companion's context will omit WHOLE.
    *
@@ -81,9 +72,6 @@ function reportOf(staged: StCardImportStageResultV1): StagedReport {
     voiceDropped: (staged.losses ?? []).some(
       (loss) => loss.field === "system_prompt" && loss.reason === "character_voice_too_long",
     ),
-    omittedWorldBookEntries: (staged.losses ?? [])
-      .filter((loss) => loss.reason === "unrenderable_worldbook_entry")
-      .flatMap((loss) => loss.omitted ?? []),
     closingDirectionMacros: (staged.losses ?? [])
       .filter((loss) => loss.reason === "unrenderable_post_history_instructions")
       .flatMap((loss) => loss.macros ?? []),
@@ -129,23 +117,6 @@ function reportRows(report: StagedReport, labels: CharacterLabels): ReactElement
         ]
       : []),
     /*
-     * One row per omitted world-book entry, naming the entry AND the macro that kept it out.
-     *
-     * The Host already reports the count, and a count is not actionable: "3 entries lost" gives the
-     * player nothing to search for in the card they are importing. Naming both things turns the same
-     * fact into an edit they can make.
-     */
-    ...report.omittedWorldBookEntries.map((entry, index) => (
-      <li key={`${entry.title}\u0000${index}`} data-card-import-omitted-entry>
-        {labels.importWorldBookOmitted
-          .replace("{{entry}}", entry.title)
-          .replace(
-            "{{macros}}",
-            entry.macros.map((macro) => omittedMacroLabel(macro, labels)).join(labels.fieldSeparator),
-          )}
-      </li>
-    )),
-    /*
      * The card's closing direction is stored verbatim and omitted whole at assembly, so the loss
      * happens far from here. Naming the macro now is what turns "her closing direction is missing"
      * into an edit the player can make in the card they just imported.
@@ -165,7 +136,7 @@ function reportRows(report: StagedReport, labels: CharacterLabels): ReactElement
   ];
 }
 
-/** One macro in an omitted-entry row, in the player's words, told apart from an unrecognised token. */
+/** One macro in an omitted field's row, in the player's words, told apart from an unrecognised token. */
 function omittedMacroLabel(macro: StCardImportOmittedMacroV1, labels: CharacterLabels): string {
   return (
     macro.standard ? labels.importWorldBookOmittedStandardMacro : labels.importWorldBookOmittedUnknownMacro

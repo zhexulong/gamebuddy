@@ -580,9 +580,9 @@ export type StCardImportOmittedEntryV1 = Readonly<{
  * `reason: "character_voice_too_long"` - the decoder's own ledger, so a review
  * reports the loss rather than inferring one.
  *
- * `omitted` names the lost items where the player can act on them, so the review
- * can say which entry and which macro instead of only how many. It is capped, so
- * it can be shorter than `count`.
+ * `omitted` names the lost items of a record an OLDER build of the Host wrote: that build dropped a
+ * world-book entry its macro probe could not render, and the member is still accepted so those
+ * records read. This build carries every entry, so it sends none.
  *
  * `macros` is the same idea for a FIELD-level loss - one field the companion's
  * context will omit as a whole, as a closing direction carrying `{{time}}` is. It

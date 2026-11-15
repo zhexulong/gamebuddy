@@ -39,11 +39,9 @@ export type CharacterLabels = Readonly<{
   importLongField: string;
   importVoiceCarried: string;
   importVoiceDropped: string;
-  /** One omitted world-book entry, naming the entry and the macros that kept it out. */
-  importWorldBookOmitted: string;
-  /** A macro in that row that SillyTavern defines but this importer cannot fill. */
+  /** A macro in an omitted field that SillyTavern defines but this importer cannot fill. */
   importWorldBookOmittedStandardMacro: string;
-  /** A macro in that row this importer does not recognise at all. */
+  /** A macro in an omitted field this importer does not recognise at all. */
   importWorldBookOmittedUnknownMacro: string;
   /** Her closing direction will be omitted as a whole, naming the macros that cost it. */
   importClosingDirectionOmitted: string;
@@ -472,7 +470,6 @@ const en: CharacterLabels = Object.freeze({
   importLongField: "This description is long ({{chars}} chars); it may raise per-turn token use.",
   importVoiceCarried: "Keeps the card's own performance directive.",
   importVoiceDropped: "The card's own performance directive was too long and was not kept.",
-  importWorldBookOmitted: "Could not import the entry \u201c{{entry}}\u201d: it contains {{macros}}.",
   importWorldBookOmittedStandardMacro:
     "{{macro}} (a standard SillyTavern macro this companion cannot fill in at import)",
   importWorldBookOmittedUnknownMacro: "{{macro}} (not recognised - possibly a typo)",
@@ -778,7 +775,6 @@ const zh: CharacterLabels = Object.freeze({
   importLongField: "该描述较长（{{chars}} 字符），可能会增加每轮 Token 消耗。",
   importVoiceCarried: "保留卡片自带的演出指导。",
   importVoiceDropped: "卡片自带的演出指导过长，未能保留。",
-  importWorldBookOmitted: "词条「{{entry}}」未能导入：其中包含 {{macros}}。",
   importWorldBookOmittedStandardMacro: "{{macro}}（SillyTavern 标准宏，本伙伴在导入时无法取值）",
   importWorldBookOmittedUnknownMacro: "{{macro}}（无法识别，可能是拼写错误）",
   importClosingDirectionOmitted: "她的收尾指令未能使用：其中包含 {{macros}}。",
