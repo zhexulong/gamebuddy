@@ -59,6 +59,7 @@ import { TavernArtifactStore } from "../tavern/artifact-store.js";
 import { type MacroTable, macroTable } from "../tavern/macro-engine.js";
 import type { ChatEventStream } from "../tavern/chat-event-stream.js";
 import { createChatManagementService } from "../tavern/chat-management/chat-management-service.js";
+import { createChatForkService } from "../tavern/chat-fork-service.js";
 import type { ChatManagementService } from "../tavern/chat-management/chat-management-service.js";
 import { createChatThreadStore } from "../tavern/chat-thread-store.js";
 import {
@@ -231,6 +232,8 @@ type TavernManagementDomains = Readonly<
     presetAssemblyRead: NonNullable<TavernManagementDialogueWebOptions["presetAssemblyRead"]>;
     modelProfileStore: ModelProfileStore;
     playerPreferenceStore: PlayerPreferenceStore;
+    /** Present only when the mounted profile advertises `chat.fork`. */
+    chatForkService?: TavernManagementDialogueWebOptions["chatForkService"];
     /** Present only when the shared semantic authority supplied the ADR 0009 selection capability. */
     chatSelectProvisioner?: TavernManagementDialogueWebOptions["chatSelectProvisioner"];
   }
@@ -334,6 +337,15 @@ function createTavernManagementDomains(
   // The library service owns one lazily opened thread connection; it is opened
   // only if a Chat-creating route ever runs and is closed with this owner's drain.
   const libraryThreads = createChatThreadStore(manifest.runtimeRoot, identityKey(manifest.principal));
+  /**
+   * Branching the conversation: the same durable thread store the other Chat-creating routes already use,
+   * over the exact mounted lease. It is created only for a profile that advertises `chat.fork`, so a mount
+   * whose slice has no branch control builds no branch seam at all (and the dispatcher refuses the route
+   * before it could be reached).
+   */
+  const chatForkService = profile.routeIds.includes("chat.fork")
+    ? createChatForkService({ threads: libraryThreads, lease, profile })
+    : undefined;
   owned.push({
     close: async () => {
       libraryThreads.close?.();
@@ -801,6 +813,7 @@ function createTavernManagementDomains(
       modelProfileStore,
       playerPreferenceStore,
       libraryService,
+      ...(chatForkService === undefined ? {} : { chatForkService }),
       companionVoiceService,
       companionExamplesService,
       companionWorldBookService,
@@ -1301,6 +1314,9 @@ export function composeTavernManagementProfile(): ComposedTavernProfile {
       // Chat selection (ADR 0009) follows New Chat: choosing an existing Chat the
       // next runtime start mounts.
       "chat.select",
+      // Branching the conversation from one message follows Chat selection: the one route that
+      // MINTS a second Chat and leaves this one exactly as the player is reading it.
+      "chat.fork",
       // The managed World Info library's authoring surface follows the last group in
       // the dispatcher's own canonical order.
       "world-info.detail",

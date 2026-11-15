@@ -70,6 +70,7 @@ import {
   type TavernDeliveryPreferenceV1,
   type TavernSamplerPreferenceCommandV1,
   type TavernSamplerPreferenceV1,
+  type ForkChatCommandV1,
   type TavernGamePromptAdditionCommandV1,
   type TavernGamePromptAdditionV1,
   type TavernLanguagePreferenceCommandV1,
@@ -94,6 +95,7 @@ import type { CompanionCardFormat } from "./tavern/companion-card-export.js";
 import type { CompanionCardExportResult } from "./tavern/companion-card-export-service.js";
 import type { CompanionAvatarService } from "./tavern/companion-avatar/index.js";
 import type { CompanionDeletionService } from "./tavern/companion-deletion-service.js";
+import type { ChatForkService } from "./tavern/chat-fork-service.js";
 import type { CompanionActivationService } from "./tavern/companion-activation-service.js";
 import type { ProfileBackupExport } from "./profile-backup/profile-backup-export.js";
 import type { PresetAssemblyRead } from "./tavern/preset-assembly-read.js";
@@ -304,6 +306,15 @@ const MANAGEMENT_CHAT_CREATE_ROUTES = ["chat.create"] as const;
  * at composition. */
 const MANAGEMENT_CHAT_SELECT_ROUTES = ["chat.select"] as const;
 /**
+ * Optional branch-from-a-message extension: one route, `POST /api/tavern/v1/chats/fork`, which mints a
+ * SECOND Chat from the prefix of the one being read and leaves the source untouched.
+ *
+ * A route and not an operation, like the other message mutations: the browser gates the control on the
+ * message's own projection, so the Host projects no `state.operations` row for it. A profile that
+ * advertises it without the bound fork seam fails closed at composition.
+ */
+const MANAGEMENT_CHAT_FORK_ROUTES = ["chat.fork"] as const;
+/**
  * Optional World Info authoring extension: only a profile that declares these routes mounts the
  * managed library's own surface on `/api/tavern/v1/world-info/item` (read one item's content, and
  * create, rewrite or remove an item). Like every other option it follows the core in the frozen
@@ -427,6 +438,7 @@ const deliveryPreferenceUpdateValidator = Compile(
 const samplerPreferenceUpdateValidator = Compile(
   TavernBrowserContractV1.schemas.TavernSamplerPreferenceCommandV1Schema,
 );
+const forkChatValidator = Compile(TavernBrowserContractV1.schemas.ForkChatCommandV1Schema);
 const gamePromptAdditionUpdateValidator = Compile(
   TavernBrowserContractV1.schemas.TavernGamePromptAdditionCommandV1Schema,
 );
@@ -549,6 +561,13 @@ export type TavernManagementDialogueWebOptions = Readonly<{
      */
     listCompanions(): Promise<readonly Readonly<{ handle: string; name: string; isCurrent: boolean }>[]>;
   }>;
+  /**
+   * The one branch entry over the mounted conversation: the transcript up to a message the player is
+   * reading, copied into a SECOND Chat. It is lease-bound like `managementService` - the handle it receives
+   * is this mount's projection of a durable row, and the branch is cut at that row - and it never selects
+   * what it created, because a failed switch must leave a branch the player can still see and open.
+   */
+  chatForkService?: ChatForkService;
   /**
    * The mounted companion's own performance directive (the reviewed card's
    * `system_prompt`). `read` projects the durable identity profile; `update`
@@ -936,6 +955,7 @@ export function createTavernManagementDialogueWebRequestHandler(
   const libraryService = options.libraryService;
   const companionVoiceService = options.companionVoiceService;
   const companionExamplesService = options.companionExamplesService;
+  const chatForkService = options.chatForkService;
   const companionWorldBookService = options.companionWorldBookService;
   const companionProfileService = options.companionProfileService;
   const companionCardExportService = options.companionCardExportService;
@@ -969,6 +989,11 @@ export function createTavernManagementDialogueWebRequestHandler(
   if (delegatedAdmission === undefined && managementStateFacade === undefined)
     throw new Error("tavern_management_composition_unavailable");
   assertManagementProfile(profile);
+  // Branching the conversation MINTS a durable Chat, so the route is mounted only when the
+  // lease-bound fork seam is injected: a profile that advertises it without one fails closed
+  // before any route, as every other optional group here does.
+  if (profile.routeIds.includes("chat.fork") && chatForkService === undefined)
+    throw new Error("tavern_management_composition_unavailable");
   // The production profile declares `memory.read`; it is reachable only when a
   // Host-owned MemoryManagementService is injected. A profile that advertises
   // the capability without the bound service fails closed before any route.
@@ -2748,6 +2773,27 @@ export function createTavernManagementDialogueWebRequestHandler(
         if (!TavernBrowserValidatorsV1.GreetingV1Schema.Check(result)) throw new Error("greeting_service_unavailable");
         return sendJson(response, 200, result);
       }
+      // Branching the conversation from one message. The ONE route here that mints a durable Chat, which
+      // is why the key is required rather than optional (`chat.create` tolerates a duplicate; a duplicated
+      // half-conversation cannot be told apart from the one the player meant). The seam derives the new
+      // Chat's identity from the key, so a replay lands on the Chat the first attempt created.
+      if (request.method === "POST" && url.pathname === "/api/tavern/v1/chats/fork") {
+        if (url.search !== "" || !isSameOrigin(request, origin)) return sendProblem(response, 401, "unauthorized");
+        const session = admitRequest(request, origin);
+        if (session === null) return sendProblem(response, 401, "unauthorized");
+        if (!tokensEqual(singleHeader(request.headers["x-csrf-token"]) ?? "", session.csrf))
+          return sendProblem(response, 403, "csrf_failed");
+        if (!profile.routeIds.includes("chat.fork") || chatForkService === undefined)
+          return sendProblem(response, 404, "profile_operation_unavailable");
+        const idempotencyKey = singleHeader(request.headers["idempotency-key"]);
+        if (idempotencyKey === null || idempotencyKey === "") return sendProblem(response, 400, "invalid_request");
+        const body = await readJsonBody(request, MAX_BODY_BYTES);
+        if (!forkChatValidator.Check(body)) return sendProblem(response, 400, "invalid_request");
+        const result = await chatForkService.fork(body as ForkChatCommandV1, idempotencyKey);
+        if (!TavernBrowserValidatorsV1.ForkChatResultV1Schema.Check(result))
+          throw new Error("chat_management_service_unavailable");
+        return sendJson(response, 200, result);
+      }
       {
         const retentionRoute = matchRetentionRoute(request.method, url.pathname);
         if (retentionRoute !== null) {
@@ -3015,6 +3061,7 @@ export function managementProfileFitsCanonicalGroups(profile: ComposedTavernProf
     MANAGEMENT_CHAT_OPENING_ROUTES,
     MANAGEMENT_CHAT_CREATE_ROUTES,
     MANAGEMENT_CHAT_SELECT_ROUTES,
+    MANAGEMENT_CHAT_FORK_ROUTES,
     MANAGEMENT_WORLD_INFO_AUTHORING_ROUTES,
     MANAGEMENT_COMPANION_PROFILE_ROUTES,
     MANAGEMENT_COMPANION_CARD_EXPORT_ROUTES,
@@ -3076,10 +3123,10 @@ function assertManagementProfile(profile: ComposedTavernProfile): void {
  * mount threw `tavern_management_profile_operation_unavailable` at provisioning, so the
  * management surface was unreachable while every focused suite stayed green. Sorting the
  * groups by some authority would only relocate the agreement every future addendum has to
- * make, and the contract's own route table is not that authority either (its descriptors are
- * ordered by feature island, not by this surface's slices). What a profile declares here is a
- * SET of groups this dispatcher serves, so a set is what this compares - and a route that
- * belongs to two groups is refused, because then "this group is declared" would be ambiguous.
+ * make, and the contract's own route table is not that authority either (it groups routes by
+ * feature island, not by this surface's slices). What a profile declares here is a SET of
+ * groups this dispatcher serves, so a set is what this compares - and a route that belongs to
+ * two groups is refused, because then "this group is declared" would be ambiguous.
  */
 function isCanonicalGroupSelection(
   values: readonly string[],
@@ -3341,6 +3388,15 @@ function problemFor(error: unknown): Readonly<{ status: number; code: ProblemCod
   // target deserves - not a 409 selection conflict about a selection the request never made.
   if (message === "chat_not_found") return { status: 404, code: "chat_not_found" };
   if (message === "chat_management_revision_conflict") return { status: 409, code: "draft_conflict" };
+  // Branching a conversation: each refusal is the point the player asked about. The row is gone from this
+  // Chat, the Chat is mid-answer, or the point IS the retained opening (a branch of it would be a second
+  // Chat with one message and no turn). A key that already minted a different branch is a conflict rather
+  // than a second Chat.
+  if (message === "chat_fork_target_not_found") return { status: 404, code: "chat_fork_target_not_found" };
+  if (message === "chat_fork_turn_active") return { status: 409, code: "chat_fork_turn_active" };
+  if (message === "chat_fork_opening_retained") return { status: 409, code: "chat_fork_opening_retained" };
+  if (message === "idempotency_conflict") return { status: 409, code: "idempotency_conflict" };
+  if (message === "chat_fork_unavailable") return { status: 503, code: "storage_unavailable" };
   // The companion directive is CASed on the exact profile revision the browser read;
   // a stale edit is a bounded, player-actionable refusal rather than a lost write.
   if (message === "character_voice_conflict") return { status: 409, code: "character_voice_conflict" };
