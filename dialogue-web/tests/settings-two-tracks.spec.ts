@@ -326,14 +326,21 @@ test("the Settings surface buys height with width: two tracks of the measure, an
   // 2. WIDTH BUYS HEIGHT. The page a player scrolls is shorter where the tracks are, and the second track fills a share
   //    of the region that one column left empty. Before this lane both readings were a single column at every cell: the
   //    page was 2822 px at 1280x720 and at 2560x1440 alike.
-  const singleTrack = rows.filter((row) => row.reading.columns.length === 1);
+  //
+  //    The reference is the one-track arrangement, and which cells are in it is the region's own arithmetic - the rule
+  //    assertion 1 proves the tracks follow: a region narrower than two measures cannot hold two of them. Taking the
+  //    reference from that rule rather than from the count of tracks a reading grouped means the comparison is made
+  //    against the width the surface derives from, and every cell whose region does hold two measures is held to it
+  //    below.
+  const singleTrack = rows.filter((row) => row.content < row.reading.measure * 2);
   const tallestSingle = singleTrack.reduce((tallest, row) => Math.max(tallest, row.reading.pageHeight), 0);
   for (const row of rows) {
     if (row.reading.columns.length < 2) continue;
     if (row.reading.pageHeight >= tallestSingle)
       failures.push(
         `${row.cell.name}: the ${row.cell.width}x${row.cell.height} surface is ${row.reading.pageHeight}px tall, and a ` +
-          `one-track surface is ${tallestSingle}px - the extra width bought no height`,
+          `region that cannot hold two ${row.reading.measure}px measures is ${tallestSingle}px - the extra width bought ` +
+          `no height`,
       );
     // The share one column leaves empty is the number to beat: a second track that does not beat it has not taken
     // any of the width the single column was not using.
