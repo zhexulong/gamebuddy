@@ -296,6 +296,18 @@ export type CharacterLabels = Readonly<{
   worldBookEntrySelectiveLogicHint: string;
   worldBookEntryAdd: string;
   worldBookEntryRemove: string;
+  /**
+   * The removal of ONE entry from the form being authored, armed before it acts.
+   *
+   * An entry is the player's own writing - a summary of up to 4000 characters - and removing it from
+   * the form drops it from the draft with nothing to put back, so the press that removes it is the
+   * second press of a pair. The sentence names the entry when it has a title, and says so when it has
+   * none, because the row the player is looking at may be the blank one they just added.
+   */
+  worldBookEntryRemoveConfirm: string;
+  worldBookEntryRemoveConfirmUntitled: string;
+  worldBookEntryRemoveConfirmYes: string;
+  worldBookEntryRemoveConfirmNo: string;
   worldBookDeleted: string;
   worldBookCreateFailed: string;
   worldBookSaveFailed: string;
@@ -681,6 +693,12 @@ const en: CharacterLabels = Object.freeze({
     "With no second condition words this does nothing. If you add them and leave this not set, any one of them is enough.",
   worldBookEntryAdd: "Add entry",
   worldBookEntryRemove: "Remove entry",
+  worldBookEntryRemoveConfirm:
+    'Remove the entry "{{title}}" from this world book? Its words leave this draft, and this screen cannot bring them back - saving is what deletes them for good, and cancelling keeps the saved copy.',
+  worldBookEntryRemoveConfirmUntitled:
+    "Remove this entry? It has no title yet, and its words leave this draft - this screen cannot bring them back, saving is what deletes them for good, and cancelling keeps the saved copy.",
+  worldBookEntryRemoveConfirmYes: "Remove the entry",
+  worldBookEntryRemoveConfirmNo: "Keep the entry",
   worldBookDeleted: "Removed from the library.",
   worldBookCreateFailed: "The world book could not be created.",
   worldBookSaveFailed: "The world book could not be saved.",
@@ -994,6 +1012,12 @@ const zh: CharacterLabels = Object.freeze({
   worldBookEntrySelectiveLogicHint: "没有填附加条件词时，这一项不起作用；填了词却没有选择时，其中任意一个出现就够。",
   worldBookEntryAdd: "添加词条",
   worldBookEntryRemove: "移除词条",
+  worldBookEntryRemoveConfirm:
+    "要把「{{title}}」这条词条从这本世界书里移除吗？它的文字会离开这份草稿，而这个界面无法把它找回来——保存才会真正删掉，取消则保留已保存的那份。",
+  worldBookEntryRemoveConfirmUntitled:
+    "要移除这条词条吗？它还没有标题，文字会离开这份草稿——这个界面无法把它找回来，保存才会真正删掉，取消则保留已保存的那份。",
+  worldBookEntryRemoveConfirmYes: "移除这条词条",
+  worldBookEntryRemoveConfirmNo: "保留这条词条",
   worldBookDeleted: "已从书库中删除。",
   worldBookCreateFailed: "无法创建这本世界书。",
   worldBookSaveFailed: "无法保存这本世界书。",

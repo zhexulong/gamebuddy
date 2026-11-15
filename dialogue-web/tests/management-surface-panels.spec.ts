@@ -3394,3 +3394,97 @@ test("a Chats list that could not be read offers the read again", async ({ page 
   await expect(surface.locator("[data-chat-list-unavailable]")).toHaveCount(0);
   await expect(surface.getByTestId("chat-select")).toHaveText("New chat 1");
 });
+
+/**
+ * Removing one entry from the form being authored is armed too.
+ *
+ * The red this file was written against: one press on the row's `Remove entry` filtered the entry out of
+ * the draft immediately - measured as `entriesBefore=2 ... entriesAfterOneClick=1` with no confirmation
+ * anywhere in the form and the focus dropped to `<body>`. An entry is the player's own writing (the
+ * summary field holds up to 4000 characters), and the form keeps no copy to put back.
+ *
+ * So the row takes the product's armed pair (`armed-confirmation.ts`), the same one the library row's
+ * own delete and the companion's removal take: the first press replaces the row's action with a
+ * confirmation that names the entry and says the words leave the draft, focus lands on the safe answer,
+ * Escape and `Keep the entry` both leave the entry where it is, and only the second press removes it.
+ */
+test("removing a world-book entry arms first, and one press leaves the entry in the draft", async ({ page }) => {
+  const revisionSeed = opaqueFrom("W");
+  const handle = opaqueFrom("V");
+  const library = fakeWorldBook(
+    [
+      {
+        handle,
+        publicTitle: "Pelican Town",
+        summary: "A valley town.",
+        revision: 1,
+        entries: [
+          { scope: "setting", publicTitle: "The square", summary: "Benches and a fountain." },
+          { scope: "setting", publicTitle: "The clinic", summary: "One doctor, one bed, one machine." },
+        ],
+      },
+    ],
+    revisionSeed,
+  );
+  const panel = await mountCharactersWithLibrary(page, library);
+  await panel.getByRole("button", { name: "Edit: Pelican Town" }).click();
+  const draft = panel.locator("[data-world-book-draft]");
+  const rows = draft.locator("[data-world-book-entry-draft]");
+  await expect(rows).toHaveCount(2);
+  const first = rows.first();
+
+  // ONE press: the entry is still in the form, its words are still in its field, and the confirmation is
+  // what replaced the row's action.
+  await first.locator("[data-world-book-entry-remove]").click();
+  const confirm = first.locator("[data-world-book-entry-confirm]");
+  await expect(confirm).toBeVisible();
+  await expect(rows, "one press must not remove the entry").toHaveCount(2);
+  await expect(first.locator("#world-book-entry-0-summary")).toHaveValue("Benches and a fountain.");
+  // The confirmation names the entry and the consequence: the words leave this draft, and this screen
+  // cannot bring them back.
+  await expect(confirm.locator("[data-world-book-entry-confirm-prompt]")).toHaveText(
+    'Remove the entry "The square" from this world book? Its words leave this draft, and this screen cannot bring them back - saving is what deletes them for good, and cancelling keeps the saved copy.',
+  );
+  await expect(confirm.locator("[data-world-book-entry-confirm-yes]")).toHaveText("Remove the entry");
+  await expect(confirm.locator("[data-world-book-entry-confirm-no]")).toHaveText("Keep the entry");
+  // The safe answer holds the focus, so a stray Enter keeps the entry.
+  await expect(confirm.locator("[data-world-book-entry-confirm-no]")).toBeFocused();
+  // While armed the row's own action steps aside rather than sharing the line with its confirmation.
+  await expect(first.locator("[data-world-book-entry-remove]")).toHaveCount(0);
+
+  // Escape leaves without removing, and gives the focus back to the control that was pressed.
+  await page.keyboard.press("Escape");
+  await expect(confirm).toHaveCount(0);
+  await expect(rows).toHaveCount(2);
+  await expect(first.locator("#world-book-entry-0-summary")).toHaveValue("Benches and a fountain.");
+  await expect(first.locator("[data-world-book-entry-remove]")).toBeFocused();
+
+  // A cancel answers the pair the same way.
+  await first.locator("[data-world-book-entry-remove]").click();
+  await first.locator("[data-world-book-entry-confirm-no]").click();
+  await expect(first.locator("[data-world-book-entry-confirm]")).toHaveCount(0);
+  await expect(rows).toHaveCount(2);
+
+  // TWO presses: arm, then confirm. The entry leaves the draft, and the row that is left keeps its own
+  // words - the filter removes one row, not the one beside it.
+  await first.locator("[data-world-book-entry-remove]").click();
+  await first.locator("[data-world-book-entry-confirm-yes]").click();
+  await expect(rows).toHaveCount(1);
+  await expect(rows.first().locator("#world-book-entry-0-title")).toHaveValue("The clinic");
+  await expect(rows.first().locator("#world-book-entry-0-summary")).toHaveValue("One doctor, one bed, one machine.");
+  // The draft is the form's own state: nothing was sent, and the saved item is unchanged until it is saved.
+  expect(library.requests.updates.length, "removing an entry sends nothing").toBe(0);
+  // The last remaining entry offers no removal at all, so the form can never be emptied of every row.
+  await expect(rows.first().locator("[data-world-book-entry-remove]")).toBeDisabled();
+
+  // An entry with no title is named as such rather than by an empty pair of quotes.
+  await draft.locator("[data-world-book-entry-add]").click();
+  const added = rows.nth(1);
+  await expect(rows).toHaveCount(2);
+  await added.locator("[data-world-book-entry-remove]").click();
+  await expect(added.locator("[data-world-book-entry-confirm-prompt]")).toHaveText(
+    "Remove this entry? It has no title yet, and its words leave this draft - this screen cannot bring them back, saving is what deletes them for good, and cancelling keeps the saved copy.",
+  );
+  await added.locator("[data-world-book-entry-confirm-no]").click();
+  await expect(rows).toHaveCount(2);
+});

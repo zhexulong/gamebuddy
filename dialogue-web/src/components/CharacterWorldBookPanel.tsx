@@ -865,6 +865,176 @@ function WorldBookItemRow({
 }
 
 /**
+ * One entry being authored, inside the form.
+ *
+ * It is a component for the same reason `WorldBookItemRow` is: the entry's removal is the product's
+ * armed pair (`armed-confirmation.ts`), and a pair owns its own two states, its own focus refs and
+ * its own Escape. A single pair shared by the whole form would hand a cancel back to whichever row
+ * mounted last.
+ *
+ * The removal is armed because the entry's text is the player's writing: a summary of up to 4000
+ * characters leaves this form on one press otherwise, and the form keeps no copy to put back.
+ */
+function WorldBookEntryDraftRow({
+  entry,
+  index,
+  canRemove,
+  labels,
+  onChange,
+  onRemove,
+}: Readonly<{
+  entry: WorldBookEntryDraft;
+  /** The row's position in the form, which is also what its field ids are built from. */
+  index: number;
+  /** The form keeps at least one entry, so the last remaining row offers no removal at all. */
+  canRemove: boolean;
+  labels: CharacterLabels;
+  onChange: (entry: WorldBookEntryDraft) => void;
+  onRemove: () => void;
+}>): ReactElement {
+  const [armed, setArmed] = useState(false);
+  const removal = useArmedConfirmation(armed, () => setArmed(false));
+  const remove = (): void => {
+    setArmed(false);
+    onRemove();
+  };
+  const title = entry.publicTitle.trim();
+  return (
+    <div data-world-book-entry-draft>
+      <label className="management-settings-label" htmlFor={`world-book-entry-${index}-scope`}>
+        {labels.worldBookEntryScope}
+      </label>
+      <select
+        id={`world-book-entry-${index}-scope`}
+        className="form-select"
+        value={entry.scope}
+        onChange={(event) =>
+          onChange({ ...entry, scope: event.target.value === "companion" ? "companion" : "setting" })
+        }
+      >
+        <option value="setting">{labels.worldBookEntryScopeSetting}</option>
+        <option value="companion">{labels.worldBookEntryScopeCompanion}</option>
+      </select>
+      <label className="management-settings-label" htmlFor={`world-book-entry-${index}-title`}>
+        {labels.worldBookEntryTitle}
+      </label>
+      <input
+        id={`world-book-entry-${index}-title`}
+        className="form-input"
+        type="text"
+        maxLength={128}
+        value={entry.publicTitle}
+        onChange={(event) => onChange({ ...entry, publicTitle: event.target.value })}
+      />
+      <label className="management-settings-label" htmlFor={`world-book-entry-${index}-summary`}>
+        {labels.worldBookEntrySummary}
+      </label>
+      <textarea
+        id={`world-book-entry-${index}-summary`}
+        className="form-textarea"
+        rows={3}
+        maxLength={4000}
+        value={entry.summary}
+        onChange={(event) => onChange({ ...entry, summary: event.target.value })}
+      />
+      <label className="management-settings-label" htmlFor={`world-book-entry-${index}-keys`}>
+        {labels.worldBookEntryKeys}
+      </label>
+      <input
+        id={`world-book-entry-${index}-keys`}
+        className="form-input"
+        type="text"
+        value={entry.keys}
+        onChange={(event) => onChange({ ...entry, keys: event.target.value })}
+      />
+      <p className="management-settings-hint">{labels.worldBookEntryKeysHint}</p>
+      <label className="management-settings-label" htmlFor={`world-book-entry-${index}-secondary-keys`}>
+        {labels.worldBookEntrySecondaryKeys}
+      </label>
+      <input
+        id={`world-book-entry-${index}-secondary-keys`}
+        className="form-input"
+        type="text"
+        data-world-book-entry-secondary-keys
+        value={entry.secondaryKeys}
+        onChange={(event) => onChange({ ...entry, secondaryKeys: event.target.value })}
+      />
+      <p className="management-settings-hint">{labels.worldBookEntrySecondaryKeysHint}</p>
+      <label className="management-settings-label" htmlFor={`world-book-entry-${index}-selective-logic`}>
+        {labels.worldBookEntrySelectiveLogic}
+      </label>
+      <select
+        id={`world-book-entry-${index}-selective-logic`}
+        className="form-select"
+        data-world-book-entry-selective-logic
+        value={entry.selectiveLogic === null ? "" : String(entry.selectiveLogic)}
+        onChange={(event) => onChange({ ...entry, selectiveLogic: selectiveLogicOf(event.target.value) })}
+      >
+        <option value="">{labels.worldBookEntrySelectiveLogicNone}</option>
+        <option value="0">{labels.worldBookEntrySelectiveLogicAndAny}</option>
+        <option value="1">{labels.worldBookEntrySelectiveLogicNotAll}</option>
+        <option value="2">{labels.worldBookEntrySelectiveLogicNotAny}</option>
+        <option value="3">{labels.worldBookEntrySelectiveLogicAndAll}</option>
+      </select>
+      <p className="management-settings-hint">{labels.worldBookEntrySelectiveLogicHint}</p>
+      {/* The switch that decides whether the entry takes part at all. A switched-off entry
+          stays in the item and in this list, and reaches neither the always-on block nor a
+          per-turn candidate, which is how a player parks it without losing it. */}
+      <label className="companion-world-book-constant">
+        <input
+          id={`world-book-entry-${index}-enabled`}
+          className="companion-world-book-constant-box"
+          type="checkbox"
+          data-world-book-entry-enabled
+          checked={entry.enabled}
+          onChange={(event) => onChange({ ...entry, enabled: event.target.checked })}
+        />
+        <span>{labels.worldBookEntryEnabled}</span>
+      </label>
+      {/* The row's removal, and while it is armed the confirmation is the row's only action. */}
+      {armed ? (
+        <div data-world-book-entry-confirm onKeyDown={removal.onConfirmKeyDown} role="group">
+          <p role="status" data-world-book-entry-confirm-prompt>
+            {(title.length > 0
+              ? labels.worldBookEntryRemoveConfirm
+              : labels.worldBookEntryRemoveConfirmUntitled
+            ).replace("{{title}}", title)}
+          </p>
+          <div className="composer-actions">
+            <button type="button" className="small-button danger" data-world-book-entry-confirm-yes onClick={remove}>
+              {labels.worldBookEntryRemoveConfirmYes}
+            </button>
+            {/* The safe answer holds the focus the pair opens with, so a stray Enter keeps the entry. */}
+            <button
+              ref={removal.cancelRef}
+              type="button"
+              className="small-button"
+              data-world-book-entry-confirm-no
+              onClick={removal.cancel}
+            >
+              {labels.worldBookEntryRemoveConfirmNo}
+            </button>
+          </div>
+        </div>
+      ) : (
+        <div className="composer-actions">
+          <button
+            ref={removal.triggerRef}
+            type="button"
+            className="small-button"
+            data-world-book-entry-remove
+            disabled={!canRemove}
+            onClick={() => setArmed(true)}
+          >
+            {labels.worldBookEntryRemove}
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
  * The one authoring form, used for a new item and for an existing one: the same
  * content, the same fields and the same validation, so the two cannot drift.
  *
@@ -889,8 +1059,6 @@ function WorldBookDraftEditor({
   onCancel: () => void;
 }>): ReactElement {
   const editing = draft.handle !== null;
-  const updateEntry = (index: number, entry: WorldBookEntryDraft): void =>
-    onChange({ ...draft, entries: draft.entries.map((item, itemIndex) => (itemIndex === index ? entry : item)) });
   return (
     <section data-world-book-draft>
       <h3>
@@ -921,111 +1089,20 @@ function WorldBookDraftEditor({
       />
       <p className="management-settings-label">{labels.worldBookEntriesLabel}</p>
       {draft.entries.map((entry, index) => (
-        <div key={entry.rowId} data-world-book-entry-draft>
-          <label className="management-settings-label" htmlFor={`world-book-entry-${index}-scope`}>
-            {labels.worldBookEntryScope}
-          </label>
-          <select
-            id={`world-book-entry-${index}-scope`}
-            className="form-select"
-            value={entry.scope}
-            onChange={(event) =>
-              updateEntry(index, { ...entry, scope: event.target.value === "companion" ? "companion" : "setting" })
-            }
-          >
-            <option value="setting">{labels.worldBookEntryScopeSetting}</option>
-            <option value="companion">{labels.worldBookEntryScopeCompanion}</option>
-          </select>
-          <label className="management-settings-label" htmlFor={`world-book-entry-${index}-title`}>
-            {labels.worldBookEntryTitle}
-          </label>
-          <input
-            id={`world-book-entry-${index}-title`}
-            className="form-input"
-            type="text"
-            maxLength={128}
-            value={entry.publicTitle}
-            onChange={(event) => updateEntry(index, { ...entry, publicTitle: event.target.value })}
-          />
-          <label className="management-settings-label" htmlFor={`world-book-entry-${index}-summary`}>
-            {labels.worldBookEntrySummary}
-          </label>
-          <textarea
-            id={`world-book-entry-${index}-summary`}
-            className="form-textarea"
-            rows={3}
-            maxLength={4000}
-            value={entry.summary}
-            onChange={(event) => updateEntry(index, { ...entry, summary: event.target.value })}
-          />
-          <label className="management-settings-label" htmlFor={`world-book-entry-${index}-keys`}>
-            {labels.worldBookEntryKeys}
-          </label>
-          <input
-            id={`world-book-entry-${index}-keys`}
-            className="form-input"
-            type="text"
-            value={entry.keys}
-            onChange={(event) => updateEntry(index, { ...entry, keys: event.target.value })}
-          />
-          <p className="management-settings-hint">{labels.worldBookEntryKeysHint}</p>
-          <label className="management-settings-label" htmlFor={`world-book-entry-${index}-secondary-keys`}>
-            {labels.worldBookEntrySecondaryKeys}
-          </label>
-          <input
-            id={`world-book-entry-${index}-secondary-keys`}
-            className="form-input"
-            type="text"
-            data-world-book-entry-secondary-keys
-            value={entry.secondaryKeys}
-            onChange={(event) => updateEntry(index, { ...entry, secondaryKeys: event.target.value })}
-          />
-          <p className="management-settings-hint">{labels.worldBookEntrySecondaryKeysHint}</p>
-          <label className="management-settings-label" htmlFor={`world-book-entry-${index}-selective-logic`}>
-            {labels.worldBookEntrySelectiveLogic}
-          </label>
-          <select
-            id={`world-book-entry-${index}-selective-logic`}
-            className="form-select"
-            data-world-book-entry-selective-logic
-            value={entry.selectiveLogic === null ? "" : String(entry.selectiveLogic)}
-            onChange={(event) => updateEntry(index, { ...entry, selectiveLogic: selectiveLogicOf(event.target.value) })}
-          >
-            <option value="">{labels.worldBookEntrySelectiveLogicNone}</option>
-            <option value="0">{labels.worldBookEntrySelectiveLogicAndAny}</option>
-            <option value="1">{labels.worldBookEntrySelectiveLogicNotAll}</option>
-            <option value="2">{labels.worldBookEntrySelectiveLogicNotAny}</option>
-            <option value="3">{labels.worldBookEntrySelectiveLogicAndAll}</option>
-          </select>
-          <p className="management-settings-hint">{labels.worldBookEntrySelectiveLogicHint}</p>
-          {/* The switch that decides whether the entry takes part at all. A switched-off entry
-              stays in the item and in this list, and reaches neither the always-on block nor a
-              per-turn candidate, which is how a player parks it without losing it. */}
-          <label className="companion-world-book-constant">
-            <input
-              id={`world-book-entry-${index}-enabled`}
-              className="companion-world-book-constant-box"
-              type="checkbox"
-              data-world-book-entry-enabled
-              checked={entry.enabled}
-              onChange={(event) => updateEntry(index, { ...entry, enabled: event.target.checked })}
-            />
-            <span>{labels.worldBookEntryEnabled}</span>
-          </label>
-          <div className="composer-actions">
-            <button
-              type="button"
-              className="small-button"
-              data-world-book-entry-remove
-              disabled={draft.entries.length <= 1}
-              onClick={() =>
-                onChange({ ...draft, entries: draft.entries.filter((_, itemIndex) => itemIndex !== index) })
-              }
-            >
-              {labels.worldBookEntryRemove}
-            </button>
-          </div>
-        </div>
+        <WorldBookEntryDraftRow
+          key={entry.rowId}
+          entry={entry}
+          index={index}
+          canRemove={draft.entries.length > 1}
+          labels={labels}
+          onChange={(next) =>
+            onChange({
+              ...draft,
+              entries: draft.entries.map((item, itemIndex) => (itemIndex === index ? next : item)),
+            })
+          }
+          onRemove={() => onChange({ ...draft, entries: draft.entries.filter((_, itemIndex) => itemIndex !== index) })}
+        />
       ))}
       <div className="composer-actions">
         <button
