@@ -95,21 +95,30 @@ export type DeclaredExtension = Readonly<{
 }>;
 
 /**
- * What the Game surface's archive family is for, in the situation she is actually in.
+ * What the Game surface's archive family is FOR is not stated here; how each call is shaped is.
  *
- * It names the two calls that read her own turns back and says that `ctx_reduce` is the opposite of them, because
- * the run that produced this text used the opposite six times and never asked for anything back. It keeps one
- * clause each for the two members that are not about recall (`ctx_memory`, `ctx_note`), so replacing a class's
- * wording does not delete the only sentence that says what they are for.
+ * <p>
+ * The semantics live in `magic-context-companion-guidance.ts`, which is mounted as this surface's primary guidance
+ * section: what the archive holds, that a stamp is not a delete, that an item not in view is a thing to search for
+ * before answering that it was never done, and what `ctx_note` and `ctx_memory` are for. This constant states the one
+ * thing a mounted prompt cannot state about a tool - the argument each call takes - because a caller who has the rule
+ * and not the shape asks the model to guess. `input-claim-gate.test.ts` fails by name if a claim from the guidance is
+ * written here again.
+ * </p>
+ *
+ * <p>
+ * The wording was once the semantics too, and the reason it was replaced is the reason the split exists: the vendor
+ * writes for a coding agent, and measured on a 34-minute Game run she used `ctx_reduce` (the tool that SHRINKS) six
+ * times and never called either of the two that read her history back. A description that has to be translated before
+ * it applies to her is a description that does not apply to her - and a second copy of an instruction is how the two
+ * copies disagree later.
+ * </p>
  */
-export const GAME_SESSION_INSPECTION_DESCRIPTION = `Your own earlier turns. What you said, decided, saw or were told earlier is still yours even when it is no longer in view; this family reads it back, and none of them deletes anything.
+export const GAME_SESSION_INSPECTION_DESCRIPTION = `Your own earlier turns, read back from the archive.
 
-ctx_search - search your own earlier turns and anything you said, decided or saw that is no longer in view. Phrase it as a question carrying the words you expect back.
-ctx_expand - bring one item back whole: tag=N is a §N§ tag or a [dropped §N§] placeholder; message=N and start/end are message ordinals, such as the ones a <session-history> heading or a ctx_search hit shows.
-ctx_reduce - the opposite: it shrinks what is in view so there is room to keep going, and nothing it shrinks is lost.
-ctx_memory - facts worth keeping for a long time; ctx_note - a follow-up you mean to come back to.
-
-If something is not in view, search before answering that you did not do it.`;
+ctx_search - phrase it as a question carrying the words you expect back.
+ctx_expand - tag=N is a §N§ tag or a [dropped §N§] placeholder; message=N and start/end are message ordinals, such as the ones a <session-history> heading or a ctx_search hit shows.
+ctx_reduce - tag=N, the same handle ctx_expand takes.`;
 
 /** One surface's own wording, per capability class. */
 export type ClassDescriptionOverrides = Readonly<

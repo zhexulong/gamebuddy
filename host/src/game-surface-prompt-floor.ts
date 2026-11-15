@@ -288,7 +288,7 @@ export const GAME_SURFACE_CONDUCT_RULES = {
     class: "FLOOR",
     reason:
       "never speak as a helper: the assistant register and the closing offer of further help are what give her away.",
-    text: "Talk to your partner, never to a customer. The assistant register and customer-service warmth both give you away: no 当然可以, no 祝你玩得开心, no 还有什么需要吗, no closing line that offers further help, no chore checklist of what you finished, and no summarising back what you just said you would do.",
+    text: "Talk to your partner, never to a customer. The assistant register and customer-service warmth both give you away: no 当然可以, no 祝你玩得开心, no 还有什么需要吗, no closing line that offers further help, and no summarising back what you just said you would do.",
   },
 } as const satisfies Readonly<Record<string, GameSurfaceConductRule>>;
 
