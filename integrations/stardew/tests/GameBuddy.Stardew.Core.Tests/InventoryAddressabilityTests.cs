@@ -18,7 +18,7 @@ namespace GameBuddy.Stardew.Core.Tests;
 /// <b>Why this exists.</b> A live run ended with <c>place_owned_object</c> refused while <c>craft_item</c> succeeded, and
 /// the inference drawn from that pair was "the crafted item has no backpack slot the plan can name, so
 /// <c>DiscoverInventoryItemFacts</c>'s five-capability gate must be widened". The inference was wrong, and cheaply so:
-/// the shipped journal (<c>tools/body-program-journal/journal.json</c>, program <c>plan_20_e2a98045f7d5667c</c>) shows
+/// the run's own journal (program <c>plan_20_e2a98045f7d5667c</c>) shows
 /// the node was given <c>slot=8</c> and refused <c>place_owned_object_unsupported_item</c> - the slot WAS named, and
 /// <c>TryDescribePlacementSource</c> refused the ITEM because a path is neither a bigCraftable nor Furniture. Correlation
 /// between two receipts was read as cause, and the fix it pointed at would have published 36 rows on every observation

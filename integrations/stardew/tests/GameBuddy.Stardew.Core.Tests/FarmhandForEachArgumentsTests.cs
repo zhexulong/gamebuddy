@@ -171,8 +171,7 @@ public sealed class FarmhandForEachArgumentsTests
     /// <para>
     /// WHAT IT CLOSES. The Host's compiler and the wire accepted <c>{"field":"kind","in":["weed"]}</c> while this
     /// reader refused it as <c>for_each_where_unrecognised:in</c> - a word that named nothing the caller could write
-    /// instead, for a document two thirds of the pipeline had already accepted. Measured: that exact failureCode sits in
-    /// <c>tools/body-program-journal/journal.json</c>.
+    /// instead, for a document two thirds of the pipeline had already accepted.
     /// </para>
     /// </summary>
     [Fact]

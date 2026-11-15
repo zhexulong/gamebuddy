@@ -1,8 +1,11 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
+import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 import {
   bodyProgramJournalPath,
   createBodyProgramJournalFallback,
@@ -301,4 +304,71 @@ test("the journal is opened once, and only when an outcome is actually asked for
   fallback.outcomeFor(programId);
   fallback.state();
   assert.equal(reads, 1, "six failed queries read the journal once, not once per program");
+});
+
+/**
+ * THE REPOSITORY'S JOURNAL DIRECTORY HOLDS A FROZEN SAMPLE, NEVER A LIVE RUN'S OUTPUT.
+ *
+ * The defect this closes: `tools/body-program-journal/` was a copy of one Mod journal SCOPE - `journal.json` plus the
+ * `.journal.lock` lease `WindowsBodyProgramJournalStore` creates beside it - committed as if it were source. A run
+ * re-harvested it, so `git status` showed it modified whenever anyone looked, and the change it hid was a real one.
+ *
+ * POPULATION is what git tracks under that directory (not a scan of the worktree, which holds the live copy by
+ * design). PROPERTY is that no tracked path is one of the two names the Mod's store writes, both of those names are
+ * git-ignored so a re-harvest cannot dirty the tree, every tracked file is a frozen `sample-<date>.json` or the
+ * README that explains the pair, and the sample's bytes are pinned - "frozen" has to mean "will not be regenerated",
+ * and a pin is the only reading of that which can turn red.
+ */
+test("the repo's body-program-journal directory holds frozen samples, never a live run's journal", () => {
+  const directory = "tools/body-program-journal";
+  const root = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
+  const git = (...args) => execFileSync("git", args, { cwd: root, encoding: "utf8" });
+  const ignored = (path) => {
+    try {
+      git("check-ignore", "--quiet", "--", path);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
+  const tracked = git("ls-files", "-z", "--", directory)
+    .split("\0")
+    .filter((path) => path.length > 0)
+    .map((path) => path.slice(directory.length + 1));
+  assert.ok(tracked.length > 0, `blocked: git tracks nothing under ${directory}, so this gate examined nothing`);
+
+  // The two names a scope directory holds. `journal.json` is the journal and `.journal.lock` is the store's lease -
+  // both are written by a run, so a tracked one means a harvested copy is source again.
+  for (const live of ["journal.json", ".journal.lock"]) {
+    assert.ok(
+      !tracked.includes(live),
+      `live_journal_tracked:${live} - a run rewrites ${directory}/${live}; freeze the bytes as sample-<date>.json instead`,
+    );
+    assert.ok(
+      ignored(`${directory}/${live}`),
+      `live_journal_not_ignored:${live} - a re-harvest of ${directory}/${live} would make the tree dirty and hide real changes`,
+    );
+  }
+
+  for (const path of tracked) {
+    assert.match(
+      path,
+      /^(README\.md|sample-\d{4}-\d{2}-\d{2}\.json)$/u,
+      `unexpected_tracked:${path} - only a frozen sample and the README that explains it may be tracked here`,
+    );
+  }
+
+  const samples = tracked.filter((path) => path.startsWith("sample-"));
+  assert.ok(samples.length > 0, `blocked: ${directory} tracks no frozen sample, so no measurement is preserved`);
+
+  // The pin is the property, not a registration: rewriting a committed sample is exactly the defect this refuses.
+  const sample = "sample-2026-11-15.json";
+  assert.equal(
+    createHash("sha256")
+      .update(readFileSync(join(root, directory, sample)))
+      .digest("hex"),
+    "38246d9dbaf9ccbfb91fa1a303b9766f0f17ebdbee6cb8d2e46ec7cd6264c387",
+    `frozen_sample_rewritten:${sample} - a frozen sample keeps its bytes; a fresher journal is a NEW dated sample`,
+  );
 });

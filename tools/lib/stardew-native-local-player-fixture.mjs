@@ -1392,6 +1392,18 @@ function bodyProgramJournalScopeDirectory(options) {
   return join(bodyProgramJournalRoot(options.stardewSaveRoot), "BodyProgramJournal-v1", "stardew", ...segments);
 }
 
+/**
+ * The journal's own name, and the marker file the transaction writes beside its scope copy.
+ *
+ * ONE SPELLING FOR THREE DESTINATIONS: the scope copy inside the transaction's backup, the marker beside it, and
+ * the copy inside the run's evidence bundle. The names were literals at each site, so a writer could be added in a
+ * fourth place that no restore and no reader knows about - and the journal is the one authority a leftover program
+ * survives in (`body_program_journal_unavailable` on the next run). The marker is this same name with `.json`
+ * because it is written beside the directory it describes, not because the two are independent facts.
+ */
+const JOURNAL_NAME = "body-program-journal";
+const JOURNAL_MARKER_FILE = `${JOURNAL_NAME}.json`;
+
 async function backupBodyProgramJournal(options, backup) {
   // The bootstrap-phase prepare has no binding yet (the game has not created the
   // save whose ids scope the journal), and offline callers declare no save root.
@@ -1400,7 +1412,7 @@ async function backupBodyProgramJournal(options, backup) {
   // alone for that path.
   const scopeDirectory = bodyProgramJournalScopeDirectory(options);
   if (scopeDirectory === null) {
-    await writeJson(join(backup, "body-program-journal.json"), {
+    await writeJson(join(backup, JOURNAL_MARKER_FILE), {
       version: 1,
       path: null,
       existed: null,
@@ -1408,7 +1420,7 @@ async function backupBodyProgramJournal(options, backup) {
     });
     return { path: null, existed: null };
   }
-  const scopeBackup = join(backup, "body-program-journal");
+  const scopeBackup = join(backup, JOURNAL_NAME);
   const existed = await exists(scopeDirectory);
   if (existed) {
     await mkdir(dirname(scopeBackup), { recursive: true });
@@ -1426,7 +1438,7 @@ async function backupBodyProgramJournal(options, backup) {
   // The backup above is what makes this honest: `restore` puts the caller's own bytes back, so the world OUTSIDE the
   // transaction is unchanged while the run itself starts coherent.
   await rm(scopeDirectory, { recursive: true, force: true });
-  await writeJson(join(backup, "body-program-journal.json"), {
+  await writeJson(join(backup, JOURNAL_MARKER_FILE), {
     version: 1,
     path: scopeDirectory,
     existed,
@@ -1464,8 +1476,8 @@ function ownedJournalScopePath(marker) {
 }
 
 async function restoreBodyProgramJournal(backup, evidenceDir) {
-  const scopeBackup = join(backup, "body-program-journal");
-  const markerPath = join(backup, "body-program-journal.json");
+  const scopeBackup = join(backup, JOURNAL_NAME);
+  const markerPath = join(backup, JOURNAL_MARKER_FILE);
   const marker = await readJson(markerPath);
   if (marker?.version !== 1) throw new Error("invalid_fixture_backup_manifest");
   const { path, existed } = marker;
@@ -1498,9 +1510,6 @@ async function restoreBodyProgramJournal(backup, evidenceDir) {
   }
   return archive;
 }
-
-/** The directory inside a run's evidence bundle that receives the journal copy. */
-const JOURNAL_ARCHIVE_DIRECTORY = "body-program-journal";
 
 /**
  * One record of the archive attempt: `archived` is true exactly when no refusal reason was recorded.
@@ -1567,7 +1576,7 @@ async function archiveBodyProgramJournal(scopePath, evidenceDir) {
   if (typeof evidenceDir !== "string" || evidenceDir.length === 0)
     return journalArchiveRecord({ reason: "no_bundle_path" });
   if (!isAbsolute(evidenceDir)) return journalArchiveRecord({ reason: "bundle_path_not_absolute" });
-  const directory = join(evidenceDir, JOURNAL_ARCHIVE_DIRECTORY);
+  const directory = join(evidenceDir, JOURNAL_NAME);
   // A bundle inside the scope would be copied and then deleted by the removal one line below, leaving a marker that
   // claims an archive nobody can read. Refused as a refusal rather than trusted.
   const containment = relative(resolve(scopePath), resolve(directory));
