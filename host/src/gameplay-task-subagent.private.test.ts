@@ -521,7 +521,12 @@ async function withScriptedMod(
       state.latestReceipt = receipt;
       revision = Math.max(revision, receipt.revision ?? revision);
       peer.write(
-        frame({ ...request, messageId: "mod_execution_receipt", type: "execution_receipt", payload: receipt }),
+        frame({
+          ...request,
+          messageId: "mod_execution_receipt",
+          type: "execution_receipt",
+          payload: { ...receipt, origin: { kind: "standalone" } },
+        }),
       );
       return;
     }
@@ -537,7 +542,14 @@ async function withScriptedMod(
         evidence: null,
       };
       state.latestReceipt = receipt;
-      peer.write(frame({ ...request, messageId: "mod_cancel_receipt", type: "execution_receipt", payload: receipt }));
+      peer.write(
+        frame({
+          ...request,
+          messageId: "mod_cancel_receipt",
+          type: "execution_receipt",
+          payload: { ...receipt, origin: { kind: "standalone" } },
+        }),
+      );
       return;
     }
     peer.write(
@@ -598,7 +610,7 @@ async function withScriptedMod(
           timestampMs: Date.now(),
           scope: BRIDGE_SCOPE,
           type: "execution_receipt",
-          payload: receipt,
+          payload: { ...receipt, origin: receipt.origin ?? { kind: "standalone" } },
         }),
       );
       await until(() => {
