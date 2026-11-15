@@ -1050,6 +1050,15 @@ export function debtLine(reading) {
   return `debt: ${groups} groups · ${sites} sites · of which runners ${runnerGroups} groups / ${runnerSites} sites`;
 }
 
+/**
+ * The report of a reading a WRITE has just produced: `evaluateGroups` returns a population without a verdict, and a
+ * report that omits `status` is the ambiguity this file exists to remove - so the verdict is derived from the findings
+ * the recorded payload produces, not from the run that preceded the write.
+ */
+function writtenReport(reading) {
+  return reportLine({ ...reading, status: (reading.findings ?? []).length === 0 ? "passed" : "failed" });
+}
+
 export function censusLine(reading) {
   if (reading.status === "blocked")
     return `files examined ${reading.examined} · clone groups 0 · BLOCKED ${reading.reason}`;
@@ -1131,11 +1140,17 @@ export function recordShrinks({ reading, baseline }) {
  * Its power is bounded by what it refuses, not by what it accepts. A group is refused when any of its sites sits in a
  * file an uncommitted change has moved (`uncommitted`), or when no commit holds the group at all (`attribution`): only
  * debt a commit already carries can be banked, so a lane's own in-flight work can never ride in behind somebody else's
- * residue. Nothing is lowered or deleted here - every existing entry is kept byte-identical - and a refused group keeps
- * its finding, so the gate stays red until the group is paid or committed.
+ * residue. Nothing is lowered or deleted here - every entry it does not target is kept byte-identical - and a refused
+ * group keeps its finding, so the gate stays red until the group is paid or committed.
  *
- * `payload` is what the file becomes; `after` is the reading that file would produce, so the caller prints the truth it
- * has just recorded rather than a hopeful verdict.
+ * A group that is new has no entry and one is added; a group that GREW already has one, and it is RAISED onto the sites
+ * the tree has, in place. Appending a second entry for the same hash would leave a line the reading can never name
+ * again - the record is keyed by hash, so one of the two would be dead weight no `stale` or `grown` finding could ever
+ * report.
+ *
+ * `payload` is what the file becomes; `added` is what was recorded, `raised` the subset that replaced an existing entry;
+ * `after` is the reading that file would produce, so the caller prints the truth it has just recorded rather than a
+ * hopeful verdict.
  */
 export function recordCeiling({ reading, baseline, attribution = new Map(), uncommitted = new Set() }) {
   if (reading.counted === undefined)
@@ -1171,17 +1186,21 @@ export function recordCeiling({ reading, baseline, attribution = new Map(), unco
     added.push({ group, attribution: reading_ });
   }
   if (refused.length > 0) return { refused };
+  const entryFor = (group) => ({
+    hash: group.hash,
+    tokens: group.tokens,
+    sites: group.sites.map((site) => `${site.file}:${site.line}`),
+  });
+  const recorded = new Map(added.map(({ group }) => [group.hash, entryFor(group)]));
+  const existing = new Set(baseline.groups.map((entry) => entry.hash));
+  const raised = added.filter(({ group }) => existing.has(group.hash)).map(({ group }) => group.hash);
   const payload = {
     groups: [
-      ...baseline.groups,
-      ...added.map(({ group }) => ({
-        hash: group.hash,
-        tokens: group.tokens,
-        sites: group.sites.map((site) => `${site.file}:${site.line}`),
-      })),
+      ...baseline.groups.map((entry) => recorded.get(entry.hash) ?? entry),
+      ...added.filter(({ group }) => !existing.has(group.hash)).map(({ group }) => recorded.get(group.hash)),
     ].sort((left, right) => left.hash.localeCompare(right.hash)),
   };
-  return { payload, added, after: evaluateGroups({ groups: reading.counted, baseline: payload }) };
+  return { payload, added, raised, after: evaluateGroups({ groups: reading.counted, baseline: payload }) };
 }
 
 /** One recorded group's attribution, as the line a reader checks: the commit, its date and its subject. */
@@ -1264,18 +1283,18 @@ function main(argv) {
     if (outcome.added.length === 0) {
       lines.push("ceiling: nothing to record · no structural group is new or grew");
       process.stdout.write(`${lines.join("\n")}\n`);
-      process.stdout.write(`${reportLine(outcome.after)}\n`);
+      process.stdout.write(`${writtenReport(outcome.after)}\n`);
       return;
     }
     fs.writeFileSync(path.join(root, BASELINE), serialiseBaseline(outcome.payload), "utf8");
     lines.push(
       `ceiling recorded: ${outcome.added.length} group(s) · ${outcome.added.reduce((total, entry) => total + entry.group.sites.length, 0)} sites · ` +
-        "nothing lowered",
+        `nothing lowered${outcome.raised.length === 0 ? "" : ` · of which raised ${outcome.raised.length}`}`,
     );
     for (const entry of outcome.added)
       lines.push(`  ceiling:${entry.group.hash}: last touched ${attributionLine(entry.attribution)}`);
     process.stdout.write(`${lines.join("\n")}\n`);
-    process.stdout.write(`${reportLine(outcome.after)}\n`);
+    process.stdout.write(`${writtenReport(outcome.after)}\n`);
     return;
   }
   if (recordingShrinks) {
@@ -1299,7 +1318,7 @@ function main(argv) {
           "remove or lower an entry, so these stay findings for --write-baseline",
       );
     process.stdout.write(`${lines.join("\n")}\n`);
-    process.stdout.write(`${reportLine(outcome.after)}\n`);
+    process.stdout.write(`${writtenReport(outcome.after)}\n`);
     return;
   }
   if (writeBaseline) {

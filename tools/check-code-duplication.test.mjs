@@ -1313,3 +1313,42 @@ test("a baseline that records the floor is named by its own code, and --record-s
   assert.deepEqual(outcome.payload.groups, []);
   assert.deepEqual(outcome.after.findings, []);
 });
+
+test("--record-ceiling raises the entry of a group that grew instead of appending a duplicate of it", () => {
+  // A group that GREW while the rule changed is exactly what the ceiling exists for, and it already has an entry. Adding
+  // a second one leaves two lines with one hash: the reading keys by hash, so one of them is dead weight the record can
+  // never show - a duplicate that no `stale` or `grown` finding will ever name again.
+  const four = groupClones(
+    [
+      pair({ fragment: FRAGMENT, first: "host/src/a.ts", second: "host/src/b.ts" }),
+      pair({ fragment: FRAGMENT, first: "host/src/a.ts", second: "host/src/c.ts" }),
+      pair({ fragment: FRAGMENT, first: "host/src/a.ts", second: "host/src/d.ts" }),
+    ],
+    REPO,
+  );
+  const hash = groupHash(FRAGMENT);
+  const recorded = baselinePayload(threeCopies());
+  const reading = evaluateGroups({ groups: four, baseline: recorded });
+  assert.deepEqual(
+    reading.findings.map((entry) => entry.code),
+    ["clone_group_grew"],
+  );
+  const outcome = recordCeiling({
+    reading,
+    baseline: recorded,
+    attribution: new Map([CEILING_ATTRIBUTION(hash)]),
+    uncommitted: new Set(),
+  });
+  assert.equal(outcome.payload.groups.length, 1, "one hash, one entry");
+  assert.deepEqual(outcome.payload.groups[0], {
+    hash,
+    tokens: 50,
+    sites: ["host/src/a.ts:1", "host/src/b.ts:1", "host/src/c.ts:1", "host/src/d.ts:1"],
+  });
+  assert.deepEqual(outcome.raised, [hash]);
+  assert.deepEqual(
+    outcome.after.findings,
+    [],
+    `the raised ceiling is green: ${JSON.stringify(outcome.after.findings)}`,
+  );
+});
