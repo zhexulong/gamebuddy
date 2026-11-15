@@ -4692,7 +4692,13 @@ function isCanonicalGroupSelection(
   return expected.length === values.length && expected.every((entry, index) => entry === values[index]);
 }
 
-function sameOrderedValues(values: readonly string[], expected: readonly string[]): boolean {
+/**
+ * The one comparison a composed profile is held to: two ordered projections are the same capability only when
+ * they carry the same values in the same order. Exported because the two dispatchers that serve these profiles
+ * assert the identical thing about their own declarations, and a second spelling of "the same list" is how the
+ * dispatcher and the profile would come to disagree about what a profile declared.
+ */
+export function sameOrderedValues(values: readonly string[], expected: readonly string[]): boolean {
   return values.length === expected.length && values.every((value, index) => value === expected[index]);
 }
 

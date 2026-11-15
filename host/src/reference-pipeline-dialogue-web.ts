@@ -12,6 +12,7 @@ import {
   type RegenerateMessageCommandV1,
   type SwipeSelectCommandV1,
   projectSnapshotDraftV1,
+  sameOrderedValues,
 } from "./tavern/browser-contract/index.js";
 import type { ChatEventStream, ResyncReason } from "./tavern/chat-event-stream.js";
 import type { ChatPipelineService } from "./tavern/chat-pipeline-service.js";
@@ -423,10 +424,6 @@ function assertReferenceProfile(profile: ComposedTavernProfile): void {
     !sameOrderedValues(profile.navigationItemIds, REFERENCE_NAVIGATION_ITEM_IDS)
   )
     throw new Error("reference_pipeline_profile_operation_unavailable");
-}
-
-function sameOrderedValues(values: readonly string[], expected: readonly string[]): boolean {
-  return values.length === expected.length && values.every((value, index) => value === expected[index]);
 }
 
 function problemFor(error: unknown): Readonly<{ status: number; code: ProblemCode }> {

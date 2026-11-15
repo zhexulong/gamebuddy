@@ -90,6 +90,7 @@ import {
   type WorldInfoStateV1,
   type WorldInfoUpdateCommandV1,
   projectSnapshotDraftV1,
+  sameOrderedValues,
 } from "./tavern/browser-contract/index.js";
 import type { CompanionCardFormat } from "./tavern/companion-card-export.js";
 import type { CompanionCardExportResult } from "./tavern/companion-card-export-service.js";
@@ -3146,10 +3147,6 @@ function isCanonicalGroupSelection(
     }
   }
   return covered.size === declared.size && [...declared].every((entry) => covered.has(entry));
-}
-
-function sameOrderedValues(values: readonly string[], expected: readonly string[]): boolean {
-  return values.length === expected.length && values.every((value, index) => value === expected[index]);
 }
 
 /**
