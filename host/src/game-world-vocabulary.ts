@@ -962,46 +962,86 @@ export function nearbyTargetFamilies(snapshot: Snapshot): readonly NearbyTargetF
   for (const [family, label] of Object.entries(TARGET_FAMILY_LABELS)) {
     const value = (snapshot as unknown as Record<string, unknown>)[family];
     if (!Array.isArray(value)) continue;
-    const state = ROW_STATE_FIELDS[family];
-    const tiles: { x: number; y: number; name: string | undefined; state: string; w: number; h: number }[] = [];
-    for (const row of value) {
-      if (row === null || typeof row !== "object") continue;
-      const candidate = row as Record<string, unknown>;
-      const tile = rowTile(candidate);
-      if (tile === undefined) continue;
-      const named =
-        typeof candidate.kind === "string" &&
-        typeof candidate.displayName === "string" &&
-        candidate.displayName.trim().length > 0;
-      tiles.push({
-        x: tile.x,
-        y: tile.y,
-        name: named ? (candidate.displayName as string) : undefined,
-        state: state === undefined ? "" : stateSuffix(state, candidate[state.field]),
-        w: extentSide(candidate.w),
-        h: extentSide(candidate.h),
-      });
-    }
+    const tiles = placedTargetTiles(value, ROW_STATE_FIELDS[family]);
     const distance = (tile: { x: number; y: number }): number =>
       readable ? Math.max(Math.abs(tile.x - actor.x), Math.abs(tile.y - actor.y)) : 0;
     tiles.sort((left, right) => distance(left) - distance(right) || left.x - right.x || left.y - right.y);
     const shown = tiles.slice(0, MAX_TARGET_TILES_SHOWN);
     const omitted = value.length - shown.length;
     const nearest = shown[0] === undefined ? undefined : { x: shown[0].x, y: shown[0].y, distance: distance(shown[0]) };
-    const rendered =
-      value.length === 0
-        ? undefined
-        : shown.length === 0
-          ? `${label} 其余 ${String(value.length)} 格未列出（这些行没有坐标）`
-          : `${label} ${shown
-              .map(
-                (tile) =>
-                  `${tile.name === undefined ? "" : `${tile.name} `}(${tile.x},${tile.y}${footprintSuffix(tile)})${tile.state}`,
-              )
-              .join(" ")}${omitted > 0 ? ` 其余 ${omitted} 格未列出` : ""}`;
-    families.push(Object.freeze({ family, label, nearest, total: value.length, omitted, rendered }));
+    families.push(
+      Object.freeze({
+        family,
+        label,
+        nearest,
+        total: value.length,
+        omitted,
+        rendered: renderTargetFamily(label, value.length, shown, omitted),
+      }),
+    );
   }
   return Object.freeze(families);
+}
+
+/**
+ * The rows of one family this line can PLACE, in wire order, each with the name and state it prints.
+ *
+ * A row with no readable tile is left out here and counted by the caller as an omission, so the two facts the line
+ * reports - what it named and what it could not - come from one reading of the array.
+ */
+function placedTargetTiles(
+  value: readonly unknown[],
+  state: Readonly<{ field: string; label: string }> | undefined,
+): { x: number; y: number; name: string | undefined; state: string; w: number; h: number }[] {
+  const tiles: { x: number; y: number; name: string | undefined; state: string; w: number; h: number }[] = [];
+  for (const row of value) {
+    if (row === null || typeof row !== "object") continue;
+    const candidate = row as Record<string, unknown>;
+    const tile = rowTile(candidate);
+    if (tile === undefined) continue;
+    tiles.push({
+      x: tile.x,
+      y: tile.y,
+      name: rowDisplayName(candidate),
+      state: state === undefined ? "" : stateSuffix(state, candidate[state.field]),
+      w: extentSide(candidate.w),
+      h: extentSide(candidate.h),
+    });
+  }
+  return tiles;
+}
+
+/** The row's own name, for a family whose rows are not one thing; `undefined` rather than the word `undefined`. */
+function rowDisplayName(candidate: Record<string, unknown>): string | undefined {
+  const named =
+    typeof candidate.kind === "string" &&
+    typeof candidate.displayName === "string" &&
+    candidate.displayName.trim().length > 0;
+  return named ? (candidate.displayName as string) : undefined;
+}
+
+/**
+ * The sentence one family prints, or `undefined` for a family the Mod published as empty.
+ *
+ * Three shapes and no more: empty is silent (it belongs to the "nothing here" line), rows that could not be placed
+ * say so and how many, and rows that were placed name the cap's cost. `omitted` counts both, which is why it is
+ * passed in rather than derived from `shown`.
+ */
+function renderTargetFamily(
+  label: string,
+  total: number,
+  shown: readonly { x: number; y: number; name: string | undefined; state: string; w: number; h: number }[],
+  omitted: number,
+): string | undefined {
+  if (total === 0) return undefined;
+  if (shown.length === 0) return `${label} 其余 ${String(total)} 格未列出（这些行没有坐标）`;
+  const tiles = shown
+    .map(
+      (tile) =>
+        `${tile.name === undefined ? "" : `${tile.name} `}(${tile.x},${tile.y}${footprintSuffix(tile)})${tile.state}`,
+    )
+    .join(" ");
+  return `${label} ${tiles}${omitted > 0 ? ` 其余 ${omitted} 格未列出` : ""}`;
 }
 
 /**

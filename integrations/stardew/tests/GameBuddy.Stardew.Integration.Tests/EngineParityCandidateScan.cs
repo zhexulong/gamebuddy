@@ -124,38 +124,50 @@ internal static class EngineParityCandidateScan
             {
                 foreach (FieldInfo field in type.GetFields(BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.DeclaredOnly))
                 {
-                    if (!field.FieldType.IsArray) continue;
-                    Type element = field.FieldType.GetElementType()!;
-                    if (element != typeof(Point) && element != typeof(ValueTuple<int, int>)) continue;
-
-                    Array? value;
-                    try
-                    {
-                        value = field.GetValue(null) as Array;
-                    }
-                    catch (TypeInitializationException)
-                    {
-                        continue;
-                    }
-
-                    if (value is null || (value.Length != 4 && value.Length != 8)) continue;
-                    var offsets = new List<(int X, int Y)>(value.Length);
-                    foreach (object? entry in value)
-                    {
-                        offsets.Add(entry switch
-                        {
-                            Point point => (point.X, point.Y),
-                            ValueTuple<int, int> pair => pair,
-                            _ => throw new InvalidOperationException($"unexpected offset element {entry?.GetType().Name ?? "null"}"),
-                        });
-                    }
-
+                    if (ReadOffsets(field) is not { } offsets) continue;
                     tables.Add(($"{type.Name}.{field.Name}", offsets));
                 }
             }
         }
 
         return tables.OrderBy(table => table.Item1, StringComparer.Ordinal).ToList();
+    }
+
+    /// <summary>
+    /// One static field's value as neighbour offsets, or <see langword="null"/> when the field is not such a table.
+    ///
+    /// The four-or-eight rule is the type rule's other half: a candidate table is a ring around one tile, so a
+    /// three-element array is a different kind of fact and is not compared.
+    /// </summary>
+    private static List<(int X, int Y)>? ReadOffsets(FieldInfo field)
+    {
+        if (!field.FieldType.IsArray) return null;
+        Type element = field.FieldType.GetElementType()!;
+        if (element != typeof(Point) && element != typeof(ValueTuple<int, int>)) return null;
+
+        Array? value;
+        try
+        {
+            value = field.GetValue(null) as Array;
+        }
+        catch (TypeInitializationException)
+        {
+            return null;
+        }
+
+        if (value is null || (value.Length != 4 && value.Length != 8)) return null;
+        var offsets = new List<(int X, int Y)>(value.Length);
+        foreach (object? entry in value)
+        {
+            offsets.Add(entry switch
+            {
+                Point point => (point.X, point.Y),
+                ValueTuple<int, int> pair => pair,
+                _ => throw new InvalidOperationException($"unexpected offset element {entry?.GetType().Name ?? "null"}"),
+            });
+        }
+
+        return offsets;
     }
 
     /// <summary>Whether the declaration that starts at <paramref name="index"/> actually holds digits.</summary>

@@ -404,55 +404,78 @@ internal static class TargetBaitRowArgumentGate
             char character = characters[index];
             if (character is '"' or '\'' && !blank)
             {
-                int close = index;
-                bool verbatim = index > 0 && characters[index - 1] == '@';
-                do
-                {
-                    close++;
-                    if (!verbatim && close < characters.Length && characters[close] == '\\') close++;
-                    if (verbatim && close + 1 < characters.Length && characters[close] == '"' && characters[close + 1] == '"') close++;
-                }
-                while (close < characters.Length && characters[close] != character);
-
-                for (int inside = index + 1; inside < close && inside < characters.Length; inside++) inLiteral[inside] = true;
-                index = close;
+                index = SkipLiteral(characters, index, character, inLiteral);
                 continue;
             }
 
-            if (!blank && character == '/' && index + 1 < characters.Length && characters[index + 1] == '/') blank = true;
+            if (!blank && character == '/' && index + 1 < characters.Length && characters[index + 1] == '/')
+            {
+                blank = true;
+            }
             else if (!blank && character == '/' && index + 1 < characters.Length && characters[index + 1] == '*')
             {
-                characters[index] = ' ';
-                characters[index + 1] = ' ';
-                index++;
-                while (index + 1 < characters.Length && !(characters[index] == '*' && characters[index + 1] == '/'))
-                {
-                    if (characters[index] != '\n') characters[index] = ' ';
-                    index++;
-                }
-
-                if (index + 1 < characters.Length)
-                {
-                    characters[index] = ' ';
-                    characters[index + 1] = ' ';
-                    index++;
-                }
-
+                index = SkipBlockComment(characters, index);
                 continue;
             }
 
             if (blank)
             {
                 if (character is '\r' or '\n') blank = false;
-                else
-                {
-                    characters[index] = ' ';
-                    continue;
-                }
+                else characters[index] = ' ';
             }
         }
 
         return new string(characters);
+    }
+
+    /// <summary>
+    /// The literal opening at <paramref name="open"/> flagged from <paramref name="inLiteral"/> inward, returning the
+    /// index of the quote that closes it.
+    ///
+    /// Escapes and verbatim doubling are read here because they are the two ways a quote inside a literal stops being
+    /// its end: without them a backslash-escaped quote ends the literal early, and every argument after it is then read
+    /// out of context.
+    /// </summary>
+    private static int SkipLiteral(char[] characters, int open, char quote, bool[] inLiteral)
+    {
+        int close = open;
+        bool verbatim = open > 0 && characters[open - 1] == '@';
+        do
+        {
+            close++;
+            if (!verbatim && close < characters.Length && characters[close] == '\\') close++;
+            if (verbatim && close + 1 < characters.Length && characters[close] == '"' && characters[close + 1] == '"') close++;
+        }
+        while (close < characters.Length && characters[close] != quote);
+
+        for (int inside = open + 1; inside < close && inside < characters.Length; inside++) inLiteral[inside] = true;
+        return close;
+    }
+
+    /// <summary>
+    /// The block comment opening at <paramref name="open"/> blanked to spaces with its newlines kept, returning the index
+    /// of the `*` that closes it: the loop then steps onto the `/` and past both.
+    /// </summary>
+    private static int SkipBlockComment(char[] characters, int open)
+    {
+        int index = open;
+        characters[index] = ' ';
+        characters[index + 1] = ' ';
+        index++;
+        while (index + 1 < characters.Length && !(characters[index] == '*' && characters[index + 1] == '/'))
+        {
+            if (characters[index] != '\n') characters[index] = ' ';
+            index++;
+        }
+
+        if (index + 1 < characters.Length)
+        {
+            characters[index] = ' ';
+            characters[index + 1] = ' ';
+            index++;
+        }
+
+        return index;
     }
 
     private static int Line(string text, int index)
