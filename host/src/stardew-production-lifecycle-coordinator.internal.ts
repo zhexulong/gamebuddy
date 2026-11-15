@@ -1551,10 +1551,12 @@ function createCoordinator(
    *
    * The Player Host may have started, so its containment cannot be proven from inside this
    * process: the attempt is quarantined, which is the durable state that records exactly
-   * that. The distinct shape - an attempt that CAN be contained and settled, leaving its
-   * installation registration free for the next launch - has no authenticated operation yet,
-   * so it is not reachable and no `settle` is called here. That is the gap this unit names
-   * rather than papers over: see `STARDEW_GAME_LIFECYCLE_TRAPPED_TERMINALS` in
+   * that. Settlement is deliberately not called and could not help: a launch that never reached
+   * the contained runtime has no runtime to contain, and where it did, the settlement's first
+   * durable transition (`arm`) requires the `reserved` predecessor the quarantine consumed. The
+   * exit this shape needs is a proof of non-existence - `never_spawned` - not a containment, so
+   * no `settle` belongs here. That is the gap named rather than papered over: see
+   * `STARDEW_GAME_LIFECYCLE_TRAPPED_TERMINALS` in
    * `stardew-game-lifecycle-state.internal.ts`.
    */
   const failPlayerHostAttempt = async (owner: StardewOwnedPlayerHostBootstrap): Promise<void> => {

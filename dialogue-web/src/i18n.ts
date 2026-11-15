@@ -107,10 +107,12 @@ const en = {
   // and the reason is durable, not procedural: the failed attempt leaves an owner record in the
   // terminal `quarantined` state, and that record holds the installation registration this
   // lifecycle's next launch must reserve (`prepareAndBindOwnedRegistrationAttempt` refuses any
-  // non-null active attempt). Settlement is the only thing that releases it, settlement needs a
-  // non-terminal predecessor, and no later process can do it either - so a restart arrives at
-  // the same refusal. The sentence says what is true: the attempt is spent, and the operation
-  // that would clear it is not in the product yet.
+  // non-null active attempt). Settlement cannot release it: containment is what settlement is, so a
+  // launch that never reached the contained runtime has nothing to contain, and where one did, the
+  // settlement's first durable transition needs the `reserved` predecessor the quarantine consumed.
+  // No later process can do it either - the record is durable - so a restart arrives at the same
+  // refusal. The exit is a `never_spawned` proof that no runtime was ever created, which is the next
+  // unit's; until it exists, the sentence says what is true: the attempt is spent.
   gameLaunchQuarantined:
     "This attempt is spent: the game process it started could not be confirmed, so GameBuddy will not start the game again for this installation. Restarting GameBuddy does not clear it - the block is recorded in GameBuddy's own state, not in its memory. Reporting this is what helps: nothing on this page can make companion play work again until GameBuddy can close the failed attempt out.",
   gameWaitingForGame:

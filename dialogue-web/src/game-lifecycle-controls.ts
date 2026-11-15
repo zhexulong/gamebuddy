@@ -148,9 +148,13 @@ export type GameSessionPhase =
    * A restart does NOT help, and the surface must not say it does: the failed attempt leaves an
    * owner record in the terminal `quarantined` state, and that record holds the installation
    * registration the next launch has to reserve, so a fresh process arrives at the same refusal.
-   * Releasing it takes settlement, settlement needs a non-terminal predecessor, and the
-   * authenticated operation that would abandon such an attempt is not in the product yet - that
-   * gap is declared, with its reason, in `STARDEW_GAME_LIFECYCLE_TRAPPED_TERMINALS`.
+   * Settlement cannot release it: a launch that never reached the contained runtime has no runtime
+   * to contain, and where one did, the settlement's first durable transition (`arm`) needs the
+   * `reserved` predecessor the quarantine consumed. Nothing mints a settlement proof for a
+   * quarantined revision either, and one would free the registration for a process whose
+   * containment was never observed. The exit is a `never_spawned` proof - that no runtime was ever
+   * created - which belongs to the next unit and not to this page. That gap is declared, with its
+   * reason, in `STARDEW_GAME_LIFECYCLE_TRAPPED_TERMINALS`.
    *
    * So the phase names the honest step (`restart_gamebuddy`, kept because it is the only thing
    * this page can even name) and the sentence says it is not the cure.

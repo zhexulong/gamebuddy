@@ -297,18 +297,18 @@ test("the production settlement path advances the owner to contained and release
  * The durable blocker that makes `launch_quarantined` a declared trapped terminal.
  *
  * `STARDEW_GAME_LIFECYCLE_TRAPPED_TERMINALS` explains that state by naming a fact about THIS engine -
- * "settlement ... advances the record from a non-terminal predecessor (its first step requires
- * `reserved`)" - and that claim is what makes the missing egress a missing capability rather than a
- * missing button. A comment cannot keep it true, so it is driven here against the real composition:
- * the exact settlement path a discard would reuse is asked to settle an attempt a quarantine already
- * claimed, and the engine refuses it at its first transition with the pointer still bound and no byte
- * of the record changed.
+ * that the settlement's first durable transition (`arm`) requires the `reserved` predecessor a
+ * quarantine has already consumed, so settlement cannot reach a quarantined record at all - and that
+ * claim is what makes the missing egress a missing proof kind rather than a missing button. A comment
+ * cannot keep it true, so it is driven here against the real composition: the exact settlement path a
+ * discard would reuse is asked to settle an attempt a quarantine already claimed, and the engine
+ * refuses it at its first transition with the pointer still bound and no byte of the record changed.
  *
- * The two readings that would let such an operation exist are therefore red here rather than in prose:
- * an owner in `quarantined` is not an accepted predecessor of `arm` - nor of any other transition in
- * the engine - and the registration release therefore never runs. When a durable egress out of
- * `quarantined` is added, this test goes red, and it is replaced by that operation's own two-direction
- * proof together with the removal of the trapped entry: the two are one unit, not two.
+ * The reading that would let such an operation exist is therefore red here rather than in prose: an
+ * owner in `quarantined` is not an accepted predecessor of `arm` - nor of any other transition in the
+ * engine - and the registration release therefore never runs. The exit that does become possible is a
+ * different proof (`never_spawned`: no runtime was ever created for this owner), and it lands with its
+ * own two-direction proof here together with the removal of the trapped entry: one unit, not two.
  */
 test("only a `reserved` predecessor can be settled: a quarantined attempt is refused at its first transition and keeps the pointer bound", async (t) => {
   const prepareAttempt = async () => {

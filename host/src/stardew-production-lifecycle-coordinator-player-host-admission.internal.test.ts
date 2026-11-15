@@ -289,9 +289,10 @@ for (const failure of ["spawn", "probe"] as const) {
           "the failed launch IS its own lifecycle state, not a boolean beside the state",
         );
         assert.equal((await ownerRecord(fixture.runtimeRoot)).state, "quarantined");
-        // The refusal is derived from that state, and it is the honest answer: no
-        // authenticated operation abandons a quarantined attempt yet, so a later launch
-        // cannot be honest about one. `STARDEW_GAME_LIFECYCLE_TRAPPED_TERMINALS` in
+        // The refusal is derived from that state, and it is the honest answer: the exit from a
+        // quarantined attempt is a `never_spawned` proof (no runtime was ever created for this
+        // owner), which does not exist, so a later launch cannot be honest about one.
+        // `STARDEW_GAME_LIFECYCLE_TRAPPED_TERMINALS` in
         // `stardew-game-lifecycle-state.internal.ts` is where that is declared, and the
         // reachability gate fails if a state arrives with no egress and no declaration.
         await assert.rejects(

@@ -43,7 +43,8 @@ export type StardewGameLifecycleState =
    * A launch failed and the attempt could NOT be settled: containment of the process it may
    * have started cannot be verified from inside this process, so the durable record is the
    * terminal `quarantined` one and keeps occupying the installation registration. This is
-   * the state the old `launchTerminal` boolean was, and it has no egress yet - see
+   * the state the old `launchTerminal` boolean was, and its only exit is a proof kind this product does
+   * not have - `never_spawned` - rather than a settlement: see
    * `STARDEW_GAME_LIFECYCLE_TRAPPED_TERMINALS`.
    */
   | "launch_quarantined"
@@ -80,10 +81,11 @@ const TRANSITIONS: Record<StardewGameLifecycleState, readonly StardewGameLifecyc
   awaiting_player_host_attestation: ["player_host_attested", "launch_quarantined", "closing"],
   player_host_attested: ["closing"],
   // Deliberately absent: an edge out of either failed state. An attempt that failed cannot
-  // be re-staged in place, and the authenticated operation that would abandon it (and, for
-  // the quarantined shape, settle it) does not exist yet. Declaring the edge anyway would
-  // make the graph agree with a capability the product does not have - see
-  // `STARDEW_GAME_LIFECYCLE_TRAPPED_TERMINALS`.
+  // be re-staged in place, and the operation that would abandon it does not exist. For the
+  // quarantined shape it cannot be settlement at all - an attempt the runtime never held has
+  // nothing to contain - so the missing capability is a `never_spawned` proof of
+  // non-existence, not a containment. Declaring the edge anyway would make the graph agree with
+  // a capability the product does not have - see `STARDEW_GAME_LIFECYCLE_TRAPPED_TERMINALS`.
   activation_failed: ["closing"],
   launch_quarantined: ["closing"],
   closing: ["closed"],
@@ -151,13 +153,20 @@ export const STARDEW_GAME_LIFECYCLE_TARGETS: readonly Readonly<{
 export const STARDEW_GAME_LIFECYCLE_TRAPPED_TERMINALS: Readonly<Partial<Record<StardewGameLifecycleState, string>>> =
   Object.freeze({
     launch_quarantined:
-      "Containment of the process the failed launch may have started cannot be verified from inside this process, so " +
-      "the attempt's durable record is the terminal `quarantined` one and keeps occupying the installation " +
-      "registration. Settlement is the only thing that releases that registration, and it advances the record from " +
-      "a non-terminal predecessor (its first step requires `reserved`), so no operation in this process - and none " +
-      "in a later one, because the record is durable - can release it. The egress is a missing capability, not a " +
-      "product rule: an authenticated operation that contains and settles an attempt which never reached an " +
-      "attested attachment. Until it exists, a quarantine is terminal for the installation.",
+      "Settlement is not the way out, and this attempt cannot reach it. Containment is what settlement is: its entry " +
+      "asks the contained runtime for this owner, and a launch that never reached that runtime has no runtime to " +
+      "contain at all (`stardew_contained_runtime_for_owner_missing`) - there is nothing to settle, so settlement is " +
+      "the wrong mechanism rather than an unavailable one. Where the launch DID reach the runtime, the settlement's " +
+      "first durable transition is `arm`, which requires the `reserved` predecessor the quarantine has already " +
+      "consumed: the engine refuses it (`stardew_bootstrap_owner_transition_invalid`), the record cannot advance, and " +
+      "the registration stays occupied. The release half is not a way around either half of that: " +
+      "`settleOwnedPlayerHostRegistrationAttempt` does accept a terminal record, `quarantined` included, but nothing " +
+      "in this process mints a settlement proof for that revision - and minting one would free the installation " +
+      "registration for a process whose containment was never observed, which is the exact incident this state exists " +
+      "to record. The egress is therefore a different proof and not a later version of settlement: `never_spawned`, " +
+      "that no runtime was ever created for this owner, releasing the registration on evidence of non-existence and " +
+      "refusing wherever a runtime record exists (there settlement or the explicit endgame is the path). Until that " +
+      "proof kind exists, a quarantine is terminal for the installation.",
     activation_failed:
       "Activation failed before a Player Host launch was asked for. The accepted admission is retained (so a second " +
       "`lifecycle_activation` is refused with `stardew_lifecycle_activation_conflict`), and a reservation the failed " +
