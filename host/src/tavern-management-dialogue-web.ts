@@ -21,6 +21,7 @@ import {
   type CompanionListV1,
   type CompanionProfileV1,
   type CompanionCharacterVoiceV1,
+  type CompanionExamplesV1,
   type CompanionVoiceV1,
   type UpdateCompanionWorldBookCommandV1,
   type ComposedTavernProfile,
@@ -67,6 +68,8 @@ import {
   type TavernConnectionRevisionCommandV1,
   type TavernDeliveryPreferenceCommandV1,
   type TavernDeliveryPreferenceV1,
+  type TavernSamplerPreferenceCommandV1,
+  type TavernSamplerPreferenceV1,
   type TavernGamePromptAdditionCommandV1,
   type TavernGamePromptAdditionV1,
   type TavernLanguagePreferenceCommandV1,
@@ -76,6 +79,7 @@ import {
   type TavernProblemV1,
   type TavernStateSnapshotV1,
   type UpdateCompanionVoiceCommandV1,
+  type UpdateCompanionExamplesCommandV1,
   type TavernVoicePreferenceConsentCommandV1,
   type TavernVoicePreferenceV1,
   type TavernVoiceDevicesV1,
@@ -219,6 +223,13 @@ const MANAGEMENT_VOICE_DEVICES = ["settings.voice.devices"] as const;
  * never shown a voice editor the Host cannot serve.
  */
 const MANAGEMENT_CHARACTER_VOICE_ROUTES = ["character.voice.read", "character.voice.update"] as const;
+/**
+ * Optional example-dialogue extension: the same shape as the directive's pair, one durable member
+ * over - only a profile that declares both mounts her few-shot rows, and a profile that advertises
+ * them without the bound service fails closed at composition (see the pairs below), so the browser
+ * is never shown an editor the Host cannot save.
+ */
+const MANAGEMENT_CHARACTER_EXAMPLES_ROUTES = ["character.examples.read", "character.examples.update"] as const;
 // Legal navigation projections paired with the route sets above: a profile
 // that declares `memory.read` must also declare the `memory` navigation item,
 // and a profile without the Memory route must not. Both derive from the same
@@ -238,6 +249,14 @@ const MANAGEMENT_CONNECTION_ROUTES = [
  * reads and rewrites (design/28 §2.3). Mounted only when the exact Host store is
  * injected; a profile that advertises a route without the store fails closed. */
 const MANAGEMENT_MODEL_PROFILE_ROUTES = ["settings.profiles.read", "settings.profiles.update"] as const;
+/**
+ * Optional sampler-temperature extension: the one sampler value the player owns rather than a preset.
+ *
+ * Its own group rather than a member of any neighbour above, and it sits after every group the contract declares
+ * before it, because a profile's slice is ordered: a group spliced into the middle would be a capability no released
+ * profile can name.
+ */
+const MANAGEMENT_SAMPLER_ROUTES = ["settings.sampler.read", "settings.sampler.update"] as const;
 const MANAGEMENT_NAVIGATION_ITEM_IDS_WITHOUT_MEMORY = ["chat", "characters"] as const;
 const MANAGEMENT_NAVIGATION_ITEM_IDS_WITH_MEMORY = ["chat", "memory", "characters"] as const;
 /** Legacy navigation variants before the Characters surface (no characters item). */
@@ -405,6 +424,9 @@ const languagePreferenceUpdateValidator = Compile(
 const deliveryPreferenceUpdateValidator = Compile(
   TavernBrowserContractV1.schemas.TavernDeliveryPreferenceCommandV1Schema,
 );
+const samplerPreferenceUpdateValidator = Compile(
+  TavernBrowserContractV1.schemas.TavernSamplerPreferenceCommandV1Schema,
+);
 const gamePromptAdditionUpdateValidator = Compile(
   TavernBrowserContractV1.schemas.TavernGamePromptAdditionCommandV1Schema,
 );
@@ -415,6 +437,9 @@ const uiLanguagePreferenceUpdateValidator = Compile(
   TavernBrowserContractV1.schemas.TavernUiLanguagePreferenceCommandV1Schema,
 );
 const createCompanionValidator = Compile(TavernBrowserContractV1.schemas.CreateCompanionCommandV1Schema);
+const updateCompanionExamplesValidator = Compile(
+  TavernBrowserContractV1.schemas.UpdateCompanionExamplesCommandV1Schema,
+);
 const personaUpdateValidator = Compile(TavernBrowserContractV1.schemas.PersonaUpdateCommandV1Schema);
 const scenarioUpdateValidator = Compile(TavernBrowserContractV1.schemas.ScenarioUpdateCommandV1Schema);
 const greetingUpdateValidator = Compile(TavernBrowserContractV1.schemas.GreetingUpdateCommandV1Schema);
@@ -539,6 +564,29 @@ export type TavernManagementDialogueWebOptions = Readonly<{
       handle: string,
       command: Readonly<{ expectedProfileRevision: number; text?: string; clear?: true }>,
     ): Promise<Readonly<{ profileRevision: number; characterVoice: CompanionCharacterVoiceV1 | null }> | null>;
+  }>;
+  /**
+   * The mounted companion's example dialogues (the reviewed card's `mes_example`): the few-shot
+   * rows that decide her register. `read` projects the durable identity profile's set, rendered
+   * through the run's macros; `update` replaces the whole set, CASed on the exact profile revision
+   * the browser read. Only the mounted companion's handle resolves - the same addressing as the
+   * directive, because they are members of the same mounted record - and any other handle is
+   * reported 404 rather than written as a different identity.
+   */
+  companionExamplesService?: Readonly<{
+    read(
+      handle: string,
+    ): Promise<Readonly<{
+      profileRevision: number;
+      examples: readonly Readonly<{ user: string; companion: string }>[];
+    }> | null>;
+    update(
+      handle: string,
+      command: UpdateCompanionExamplesCommandV1,
+    ): Promise<Readonly<{
+      profileRevision: number;
+      examples: readonly Readonly<{ user: string; companion: string }>[];
+    }> | null>;
   }>;
   /**
    * The companion's own world book: the reviewed card's `character_book`, as the
@@ -889,6 +937,7 @@ export function createTavernManagementDialogueWebRequestHandler(
   const modelProfileStore = options.modelProfileStore;
   const libraryService = options.libraryService;
   const companionVoiceService = options.companionVoiceService;
+  const companionExamplesService = options.companionExamplesService;
   const companionWorldBookService = options.companionWorldBookService;
   const companionProfileService = options.companionProfileService;
   const companionCardExportService = options.companionCardExportService;
@@ -954,7 +1003,9 @@ export function createTavernManagementDialogueWebRequestHandler(
       profile.routeIds.includes("settings.appearance.read") ||
       profile.routeIds.includes("settings.appearance.update") ||
       profile.routeIds.includes("settings.ui-language.read") ||
-      profile.routeIds.includes("settings.ui-language.update")) &&
+      profile.routeIds.includes("settings.ui-language.update") ||
+      profile.routeIds.includes("settings.sampler.read") ||
+      profile.routeIds.includes("settings.sampler.update")) &&
     playerPreferenceStore === undefined
   )
     throw new Error("tavern_management_composition_unavailable");
@@ -1009,6 +1060,12 @@ export function createTavernManagementDialogueWebRequestHandler(
   // the Host cannot serve.
   for (const routeId of MANAGEMENT_CHARACTER_VOICE_ROUTES) {
     if (profile.routeIds.includes(routeId) && companionVoiceService === undefined)
+      throw new Error("tavern_management_composition_unavailable");
+    if (profile.routeIds.includes(routeId) && !profile.operationIds.includes(routeId))
+      throw new Error("tavern_management_composition_unavailable");
+  }
+  for (const routeId of MANAGEMENT_CHARACTER_EXAMPLES_ROUTES) {
+    if (profile.routeIds.includes(routeId) && companionExamplesService === undefined)
       throw new Error("tavern_management_composition_unavailable");
     if (profile.routeIds.includes(routeId) && !profile.operationIds.includes(routeId))
       throw new Error("tavern_management_composition_unavailable");
@@ -1443,6 +1500,48 @@ export function createTavernManagementDialogueWebRequestHandler(
           await playerPreferenceStore.update(command.expectedRevision, { action: "setPaced", paced: command.paced }),
         );
         if (!TavernBrowserValidatorsV1.TavernDeliveryPreferenceV1Schema.Check(preference))
+          throw new Error("player_preference_store_unavailable");
+        return sendJson(response, 200, preference);
+      }
+      // One sampler value the player owns rather than a preset. Same record, same revision CAS: the field is a
+      // settings write like every other group here, and what it changes reaches that surface's NEXT mount (the value
+      // is spliced into `models.json` at construction, design tavern-preset-compatibility §5).
+      if (request.method === "GET" && url.pathname === "/api/tavern/v1/settings/sampler") {
+        if (url.search !== "" || (await hasRequestBody(request))) return sendProblem(response, 400, "invalid_request");
+        if (admitRequest(request, origin) === null) return sendProblem(response, 401, "unauthorized");
+        if (
+          !profile.routeIds.includes("settings.sampler.read") ||
+          !profile.operationIds.includes("settings.sampler.read") ||
+          playerPreferenceStore === undefined
+        )
+          return sendProblem(response, 404, "profile_operation_unavailable");
+        const preference: TavernSamplerPreferenceV1 = samplerPreference(await playerPreferenceStore.read());
+        if (!TavernBrowserValidatorsV1.TavernSamplerPreferenceV1Schema.Check(preference))
+          throw new Error("player_preference_store_unavailable");
+        return sendJson(response, 200, preference);
+      }
+      if (request.method === "PUT" && url.pathname === "/api/tavern/v1/settings/sampler") {
+        if (url.search !== "" || !isSameOrigin(request, origin)) return sendProblem(response, 401, "unauthorized");
+        const session = admitRequest(request, origin);
+        if (session === null) return sendProblem(response, 401, "unauthorized");
+        if (!tokensEqual(singleHeader(request.headers["x-csrf-token"]) ?? "", session.csrf))
+          return sendProblem(response, 403, "csrf_failed");
+        if (
+          !profile.routeIds.includes("settings.sampler.update") ||
+          !profile.operationIds.includes("settings.sampler.update") ||
+          playerPreferenceStore === undefined
+        )
+          return sendProblem(response, 404, "profile_operation_unavailable");
+        const body = await readJsonBody(request, MAX_BODY_BYTES);
+        if (!samplerPreferenceUpdateValidator.Check(body)) return sendProblem(response, 400, "invalid_request");
+        const command = body as TavernSamplerPreferenceCommandV1;
+        const preference = samplerPreference(
+          await playerPreferenceStore.update(command.expectedRevision, {
+            action: "setSamplingTemperature",
+            temperature: command.temperature,
+          }),
+        );
+        if (!TavernBrowserValidatorsV1.TavernSamplerPreferenceV1Schema.Check(preference))
           throw new Error("player_preference_store_unavailable");
         return sendJson(response, 200, preference);
       }
@@ -2206,6 +2305,57 @@ export function createTavernManagementDialogueWebRequestHandler(
           return sendJson(response, 200, result);
         }
       }
+      {
+        const examplesHandle = matchCompanionExamplesRoute(request.method, url.pathname);
+        if (examplesHandle !== null) {
+          // The mounted companion's example dialogues - the few-shot rows that teach her register.
+          // Same addressing and same CAS as the directive beside them: the exact opaque handle the
+          // list projected resolves, any other handle is answered by the bound service as null
+          // (404), a read is a same-origin browser fetch, and a save is a CSRF-bound write against
+          // the profile revision the browser read.
+          if (request.method === "GET") {
+            if (url.search !== "" || (await hasRequestBody(request)))
+              return sendProblem(response, 400, "invalid_request");
+            if (admitRequest(request, origin) === null) return sendProblem(response, 401, "unauthorized");
+            if (!profile.routeIds.includes("character.examples.read") || companionExamplesService === undefined)
+              return sendProblem(response, 404, "profile_operation_unavailable");
+            const examples = await companionExamplesService.read(examplesHandle);
+            if (examples === null) return sendProblem(response, 404, "companion_not_found");
+            const result: CompanionExamplesV1 = Object.freeze({
+              apiVersion: TAVERN_BROWSER_API_VERSION,
+              profileRevision: examples.profileRevision,
+              examples: examples.examples.map((example) => ({ user: example.user, companion: example.companion })),
+            });
+            if (!TavernBrowserValidatorsV1.CompanionExamplesV1Schema.Check(result))
+              throw new Error("character_examples_service_unavailable");
+            return sendJson(response, 200, result);
+          }
+          if (url.search !== "") return sendProblem(response, 400, "invalid_request");
+          if (!isSameOrigin(request, origin)) return sendProblem(response, 401, "unauthorized");
+          const session = admitRequest(request, origin);
+          if (session === null) return sendProblem(response, 401, "unauthorized");
+          if (!tokensEqual(singleHeader(request.headers["x-csrf-token"]) ?? "", session.csrf))
+            return sendProblem(response, 403, "csrf_failed");
+          if (
+            !profile.routeIds.includes("character.examples.update") ||
+            !profile.operationIds.includes("character.examples.update") ||
+            companionExamplesService === undefined
+          )
+            return sendProblem(response, 404, "profile_operation_unavailable");
+          const body = await readJsonBody(request, MAX_BODY_BYTES);
+          if (!updateCompanionExamplesValidator.Check(body)) return sendProblem(response, 400, "invalid_request");
+          const saved = await companionExamplesService.update(examplesHandle, body as UpdateCompanionExamplesCommandV1);
+          if (saved === null) return sendProblem(response, 404, "companion_not_found");
+          const result: CompanionExamplesV1 = Object.freeze({
+            apiVersion: TAVERN_BROWSER_API_VERSION,
+            profileRevision: saved.profileRevision,
+            examples: saved.examples.map((example) => ({ user: example.user, companion: example.companion })),
+          });
+          if (!TavernBrowserValidatorsV1.CompanionExamplesV1Schema.Check(result))
+            throw new Error("character_examples_service_unavailable");
+          return sendJson(response, 200, result);
+        }
+      }
       if (request.method === "POST" && url.pathname === "/api/tavern/v1/companions") {
         if (url.search !== "" || !isSameOrigin(request, origin)) return sendProblem(response, 401, "unauthorized");
         const session = admitRequest(request, origin);
@@ -2863,6 +3013,7 @@ export function managementProfileFitsCanonicalGroups(profile: ComposedTavernProf
     MANAGEMENT_MODEL_PROFILE_ROUTES,
     MANAGEMENT_P9_ROUTES,
     MANAGEMENT_CHARACTER_VOICE_ROUTES,
+    MANAGEMENT_CHARACTER_EXAMPLES_ROUTES,
     MANAGEMENT_IMPORT_ROUTES,
     MANAGEMENT_CHAT_OPENING_ROUTES,
     MANAGEMENT_CHAT_CREATE_ROUTES,
@@ -2878,6 +3029,7 @@ export function managementProfileFitsCanonicalGroups(profile: ComposedTavernProf
     MANAGEMENT_CHAT_EXPORT_ROUTES,
     MANAGEMENT_PROFILE_BACKUP_ROUTES,
     MANAGEMENT_PRESET_ROUTES,
+    MANAGEMENT_SAMPLER_ROUTES,
   ] as const;
   const operationGroups = [
     coreOperations,
@@ -2891,6 +3043,7 @@ export function managementProfileFitsCanonicalGroups(profile: ComposedTavernProf
     MANAGEMENT_MODEL_PROFILE_ROUTES,
     MANAGEMENT_P9_ROUTES,
     MANAGEMENT_CHARACTER_VOICE_ROUTES,
+    MANAGEMENT_CHARACTER_EXAMPLES_ROUTES,
     MANAGEMENT_IMPORT_ROUTES,
     MANAGEMENT_CHAT_OPENING_ROUTES,
     MANAGEMENT_CHAT_CREATE_ROUTES,
@@ -2901,6 +3054,7 @@ export function managementProfileFitsCanonicalGroups(profile: ComposedTavernProf
     MANAGEMENT_COMPANION_AVATAR_ROUTES,
     MANAGEMENT_COMPANION_DELETE_ROUTES,
     MANAGEMENT_COMPANION_ACTIVATE_ROUTES,
+    MANAGEMENT_SAMPLER_ROUTES,
   ] as const;
   if (!isCanonicalGroupSelection(profile.routeIds, routeGroups, coreRoutes)) return false;
   if (!isCanonicalGroupSelection(profile.operationIds, operationGroups, coreOperations)) return false;
@@ -2997,6 +3151,13 @@ function matchRetentionRoute(
 function matchCompanionVoiceRoute(method: string | undefined, pathname: string): string | null {
   if (method !== "GET" && method !== "PUT") return null;
   const match = /^\/api\/tavern\/v1\/companions\/([A-Za-z0-9_-]{22,128})\/voice$/.exec(pathname);
+  return match === null ? null : match[1]!;
+}
+
+/** character.examples.read / character.examples.update: the mounted companion's few-shot rows. */
+function matchCompanionExamplesRoute(method: string | undefined, pathname: string): string | null {
+  if (method !== "GET" && method !== "PUT") return null;
+  const match = /^\/api\/tavern\/v1\/companions\/([A-Za-z0-9_-]{22,128})\/examples$/.exec(pathname);
   return match === null ? null : match[1]!;
 }
 
@@ -3104,6 +3265,13 @@ function deliveryPreference(preference: PlayerPreference): TavernDeliveryPrefere
   return { revision: preference.revision, paced: preference.paced };
 }
 
+/** The sampler-temperature field group of the one player preference record. */
+function samplerPreference(preference: PlayerPreference): TavernSamplerPreferenceV1 {
+  // `?? null` for the same reason the addition reads `?? ""`: the store always sets it, and a fixture that does not
+  // care about this setting must not have to learn it.
+  return { revision: preference.revision, temperature: preference.samplingTemperature ?? null };
+}
+
 /** The Game-prompt-addition field group of the one player preference record. */
 function gamePromptAddition(preference: PlayerPreference): TavernGamePromptAdditionV1 {
   // `?? ""` here rather than a required field on `PlayerPreference`: the store always sets it, and a fixture that
@@ -3165,6 +3333,10 @@ function problemFor(error: unknown): Readonly<{ status: number; code: ProblemCod
   // The companion directive is CASed on the exact profile revision the browser read;
   // a stale edit is a bounded, player-actionable refusal rather than a lost write.
   if (message === "character_voice_conflict") return { status: 409, code: "character_voice_conflict" };
+  // Her example dialogues are the same durable profile field over: the set is CASed on the
+  // revision the browser read, and a stale save reads as the ordinary stale edit.
+  if (message === "character_examples_conflict") return { status: 409, code: "character_examples_conflict" };
+  if (message === "character_examples_binding_unavailable") return { status: 503, code: "storage_unavailable" };
   // The save carries the profile revision to the Chats that pin it, and a Chat of this companion is
   // answering right now. The accepted turn's plan pins the same triple and is write-once, so the
   // refusal says to save again once the reply finishes rather than rewriting the turn's evidence.

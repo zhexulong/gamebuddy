@@ -213,6 +213,10 @@ const ProblemCode = Type.Union([
   // The companion's performance directive is a durable profile field edited against an exact
   // profile revision; a stale edit is its own bounded, non-retryable-by-repeating fact.
   Type.Literal("character_voice_conflict"),
+  // Her example dialogues are the same kind of durable profile field: the whole set is CASed on
+  // the profile revision the browser read, so a stale save is its own bounded fact with the
+  // ordinary stale-edit answer (read again, save again) rather than a lost write.
+  Type.Literal("character_examples_conflict"),
   // ...and a save that would carry the profile to the Chats that pin it is refused while one of
   // them is answering: the accepted turn's authored-context plan pins the same profile triple and
   // is write-once, so moving it under the turn would make that record describe a state the turn
@@ -954,6 +958,11 @@ const OperationId = Type.Union([
   Type.Literal("chat.trash"),
   Type.Literal("character.voice.read"),
   Type.Literal("character.voice.update"),
+  // Her example dialogues (the card's `mes_example`): the few-shot rows that teach her register.
+  // Same addressing as the directive - the mounted companion's identity profile, CASed on its
+  // revision - because they live in the same durable record and are read on the same prompt path.
+  Type.Literal("character.examples.read"),
+  Type.Literal("character.examples.update"),
   Type.Literal("draft.save"),
   Type.Literal("draft.discard"),
   Type.Literal("chat.rename"),
@@ -1027,6 +1036,10 @@ const OperationId = Type.Union([
   Type.Literal("settings.connection.remove"),
   Type.Literal("settings.profiles.read"),
   Type.Literal("settings.profiles.update"),
+  // The one sampler value the player owns rather than a preset (design tavern-preset-compatibility §5). `update` is
+  // a read-modify-write of the shared preference record, and what it changes lands on that surface's NEXT mount.
+  Type.Literal("settings.sampler.read"),
+  Type.Literal("settings.sampler.update"),
 ]);
 const LabelKey = Type.Union([
   Type.Literal("tavern.nav.chat"),
@@ -1051,6 +1064,8 @@ const LabelKey = Type.Union([
   Type.Literal("tavern.operation.chat.trash"),
   Type.Literal("tavern.operation.character.voice.read"),
   Type.Literal("tavern.operation.character.voice.update"),
+  Type.Literal("tavern.operation.character.examples.read"),
+  Type.Literal("tavern.operation.character.examples.update"),
   Type.Literal("tavern.operation.companion.list"),
   Type.Literal("tavern.operation.companion.worldbook.read"),
   Type.Literal("tavern.operation.companion.worldbook.update"),
@@ -1081,6 +1096,8 @@ const LabelKey = Type.Union([
   Type.Literal("tavern.operation.settings.game-prompt.update"),
   Type.Literal("tavern.operation.settings.appearance.read"),
   Type.Literal("tavern.operation.settings.appearance.update"),
+  Type.Literal("tavern.operation.settings.sampler.read"),
+  Type.Literal("tavern.operation.settings.sampler.update"),
   Type.Literal("tavern.operation.settings.ui-language.read"),
   Type.Literal("tavern.operation.settings.ui-language.update"),
   Type.Literal("tavern.operation.settings.connection.read"),
@@ -1718,6 +1735,54 @@ export const UpdateCompanionVoiceCommandV1Schema = Type.Union([
     clear: Type.Literal(true),
   }),
 ]);
+/**
+ * The most example dialogues the browser may send or receive: the identity profile's own
+ * few-shot ceiling (`MAX_EXAMPLES`), so a set this surface accepted is a set the durable
+ * validator accepts.
+ */
+export const MAX_COMPANION_EXAMPLES = 64;
+/**
+ * One few-shot example: a player turn and her reply, as the durable profile holds them.
+ *
+ * The pair is two fields and not one block of text: the prompt renders each half on its own
+ * line (`renderIdentityProfile`), and a single field would make the browser parse two
+ * speakers back out of prose the player typed.
+ */
+export const CompanionExamplePairV1Schema = strictObject({
+  user: Type.String({
+    minLength: 1,
+    maxLength: COMPANION_PROFILE_TEXT_MAX_LENGTH,
+    format: "tavern-browser-nfc-utf8-text-v1",
+  }),
+  companion: Type.String({
+    minLength: 1,
+    maxLength: COMPANION_PROFILE_TEXT_MAX_LENGTH,
+    format: "tavern-browser-nfc-utf8-text-v1",
+  }),
+});
+/**
+ * Her example dialogues as the durable identity profile holds them (the reviewed card's
+ * `mes_example`), plus the profile revision the browser CASes against.
+ *
+ * An empty list is an empty list: the profile does not carry the member at all, which is the
+ * state the card export writes no `mes_example` for and the state the prompt renders nothing
+ * for. The read is not the place to tell those apart - there is nothing to show either way.
+ */
+export const CompanionExamplesV1Schema = strictObject({
+  apiVersion: ApiVersion,
+  profileRevision: Revision,
+  examples: Type.Array(CompanionExamplePairV1Schema, { maxItems: MAX_COMPANION_EXAMPLES }),
+});
+/**
+ * One save of her example dialogues: the whole set, CASed on the profile revision the browser
+ * read. An empty array clears them, which removes the profile member rather than storing an
+ * empty list - the shape the prompt and the card export both read as "she has none".
+ */
+export const UpdateCompanionExamplesCommandV1Schema = strictObject({
+  apiVersion: ApiVersion,
+  expectedProfileRevision: Revision,
+  examples: Type.Array(CompanionExamplePairV1Schema, { maxItems: MAX_COMPANION_EXAMPLES }),
+});
 /** Create companion from a player-supplied display name; Host mints all IDs. */
 export const CreateCompanionCommandV1Schema = strictObject({
   apiVersion: ApiVersion,
@@ -1876,6 +1941,7 @@ export const ProfileBackupExportV1Schema = Type.Union([
 /** Where an effective sampler value came from. `unset` means no layer sets it, so nothing is sent. */
 export const PresetSamplingSourceV1Schema = Type.Union([
   Type.Literal("preset"),
+  Type.Literal("player"),
   Type.Literal("model"),
   Type.Literal("thinking-level"),
   Type.Literal("unset"),
@@ -2125,6 +2191,23 @@ export const TavernDeliveryPreferenceV1Schema = strictObject({
 export const TavernDeliveryPreferenceCommandV1Schema = strictObject({
   expectedRevision: Revision,
   paced: Type.Boolean(),
+});
+
+/**
+ * The sampler temperature this installation sends instead of the bound preset's.
+ *
+ * ONE field, because one field is what the product carries (`preset-sampling.ts` `withPlayerSamplingTemperature`): the
+ * other seven sampler keys stay the preset's, and a wire that offered them would be offering control that does not
+ * reach the request. `null` is "follow the preset" - a real choice, not an absence - and a number is the player's own,
+ * bounded by the range the store and this schema state once.
+ */
+export const TavernSamplerPreferenceV1Schema = strictObject({
+  revision: Revision,
+  temperature: Type.Union([Type.Number({ minimum: 0, maximum: 2 }), Type.Null()]),
+});
+export const TavernSamplerPreferenceCommandV1Schema = strictObject({
+  expectedRevision: Revision,
+  temperature: Type.Union([Type.Number({ minimum: 0, maximum: 2 }), Type.Null()]),
 });
 
 /**
@@ -3298,6 +3381,35 @@ const RouteDescriptors = Object.freeze([
     success: { status: 200, contentType: "application/json", schema: TavernDeliveryPreferenceV1Schema },
   }),
   route({
+    routeId: "settings.sampler.read",
+    method: "GET",
+    path: "/api/tavern/v1/settings/sampler",
+    operationId: "settings.sampler.read",
+    auth: "browser_session",
+    origin: "same-origin",
+    csrf: "none",
+    idempotency: "none",
+    headers: EmptyHeaders,
+    pathParams: noPath,
+    query: noQuery,
+    success: { status: 200, contentType: "application/json", schema: TavernSamplerPreferenceV1Schema },
+  }),
+  route({
+    routeId: "settings.sampler.update",
+    method: "PUT",
+    path: "/api/tavern/v1/settings/sampler",
+    operationId: "settings.sampler.update",
+    auth: "browser_session",
+    origin: "same-origin",
+    csrf: "required",
+    idempotency: "none",
+    headers: CsrfHeaders,
+    pathParams: noPath,
+    query: noQuery,
+    request: TavernSamplerPreferenceCommandV1Schema,
+    success: { status: 200, contentType: "application/json", schema: TavernSamplerPreferenceV1Schema },
+  }),
+  route({
     routeId: "settings.game-prompt.read",
     method: "GET",
     path: "/api/tavern/v1/settings/game-prompt",
@@ -3676,6 +3788,35 @@ const RouteDescriptors = Object.freeze([
     success: { status: 200, contentType: "application/json", schema: CompanionVoiceV1Schema },
   }),
   route({
+    routeId: "character.examples.read",
+    method: "GET",
+    path: "/api/tavern/v1/companions/:companionHandle/examples",
+    operationId: "character.examples.read",
+    auth: "browser_session",
+    origin: "same-origin",
+    csrf: "none",
+    idempotency: "none",
+    headers: EmptyHeaders,
+    pathParams: CompanionPath,
+    query: noQuery,
+    success: { status: 200, contentType: "application/json", schema: CompanionExamplesV1Schema },
+  }),
+  route({
+    routeId: "character.examples.update",
+    method: "PUT",
+    path: "/api/tavern/v1/companions/:companionHandle/examples",
+    operationId: "character.examples.update",
+    auth: "browser_session",
+    origin: "same-origin",
+    csrf: "required",
+    idempotency: "none",
+    headers: CsrfHeaders,
+    pathParams: CompanionPath,
+    query: noQuery,
+    request: UpdateCompanionExamplesCommandV1Schema,
+    success: { status: 200, contentType: "application/json", schema: CompanionExamplesV1Schema },
+  }),
+  route({
     routeId: "character.import.stage",
     method: "POST",
     path: "/api/tavern/v1/imports",
@@ -3955,6 +4096,8 @@ export const TavernBrowserContractV1 = Object.freeze({
     TavernLanguagePreferenceCommandV1Schema,
     TavernDeliveryPreferenceV1Schema,
     TavernDeliveryPreferenceCommandV1Schema,
+    TavernSamplerPreferenceV1Schema,
+    TavernSamplerPreferenceCommandV1Schema,
     TavernGamePromptAdditionV1Schema,
     TavernGamePromptAdditionCommandV1Schema,
     TavernAppearancePreferenceV1Schema,
@@ -4028,6 +4171,9 @@ export const TavernBrowserContractV1 = Object.freeze({
     CompanionVoiceV1Schema,
     CompanionCharacterVoiceV1Schema,
     UpdateCompanionVoiceCommandV1Schema,
+    CompanionExamplePairV1Schema,
+    CompanionExamplesV1Schema,
+    UpdateCompanionExamplesCommandV1Schema,
     CreateCompanionCommandV1Schema,
     StCardImportFieldSummaryV1Schema,
     StCardImportDispositionV1Schema,
@@ -4092,6 +4238,8 @@ export type TavernLanguagePreferenceV1 = Static<typeof TavernLanguagePreferenceV
 export type TavernLanguagePreferenceCommandV1 = Static<typeof TavernLanguagePreferenceCommandV1Schema>;
 export type TavernDeliveryPreferenceV1 = Static<typeof TavernDeliveryPreferenceV1Schema>;
 export type TavernDeliveryPreferenceCommandV1 = Static<typeof TavernDeliveryPreferenceCommandV1Schema>;
+export type TavernSamplerPreferenceV1 = Static<typeof TavernSamplerPreferenceV1Schema>;
+export type TavernSamplerPreferenceCommandV1 = Static<typeof TavernSamplerPreferenceCommandV1Schema>;
 export type TavernGamePromptAdditionV1 = Static<typeof TavernGamePromptAdditionV1Schema>;
 export type TavernGamePromptAdditionCommandV1 = Static<typeof TavernGamePromptAdditionCommandV1Schema>;
 export type TavernAppearanceChoiceV1 = Static<typeof TavernAppearanceChoiceV1Schema>;
@@ -4165,7 +4313,7 @@ export type WorldInfoExportV1 = Static<typeof WorldInfoExportV1Schema>;
  *
  * `sampling` is the schema's union as well: rows, or `{ unavailable }` naming why no reading exists.
  */
-export type PresetSamplingSourceV1 = "preset" | "model" | "thinking-level" | "unset";
+export type PresetSamplingSourceV1 = "preset" | "player" | "model" | "thinking-level" | "unset";
 export type PresetSamplingRowV1 = Readonly<{
   key: string;
   value: number | null;
@@ -4259,6 +4407,9 @@ export type UpdateCompanionWorldBookCommandV1 = Readonly<{
 export type CompanionCharacterVoiceV1 = Static<typeof CompanionCharacterVoiceV1Schema>;
 export type CompanionVoiceV1 = Static<typeof CompanionVoiceV1Schema>;
 export type UpdateCompanionVoiceCommandV1 = Static<typeof UpdateCompanionVoiceCommandV1Schema>;
+export type CompanionExamplePairV1 = Static<typeof CompanionExamplePairV1Schema>;
+export type CompanionExamplesV1 = Static<typeof CompanionExamplesV1Schema>;
+export type UpdateCompanionExamplesCommandV1 = Static<typeof UpdateCompanionExamplesCommandV1Schema>;
 export type CreateCompanionCommandV1 = Static<typeof CreateCompanionCommandV1Schema>;
 export type PersonaV1 = Static<typeof PersonaV1Schema>;
 export type PersonaUpdateCommandV1 = Static<typeof PersonaUpdateCommandV1Schema>;

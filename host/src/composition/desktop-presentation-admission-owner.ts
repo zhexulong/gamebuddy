@@ -7,6 +7,12 @@ import {
   renderCompanionVoiceText,
   updateMountedCompanionVoice,
 } from "../tavern/companion-voice-service.js";
+import {
+  type CompanionExamplesProjection,
+  renderCompanionExamples,
+  updateMountedCompanionExamples,
+} from "../tavern/companion-examples-service.js";
+import type { CompanionProfileBindingRefresh } from "../tavern/mounted-identity-profile-write.js";
 import { projectRenderedCompanionWorldBook, updateCompanionWorldBook } from "../tavern/companion-world-book-service.js";
 import { createCompanionProfileService } from "../tavern/companion-profile-service.js";
 import { createCompanionCardExportService } from "../tavern/companion-card-export-service.js";
@@ -395,6 +401,26 @@ function createTavernManagementDomains(
    */
   const refreshCompanionProfileBinding = libraryThreads.refreshCompanionProfileBinding;
   if (refreshCompanionProfileBinding === undefined) throw new Error("tavern_management_composition_unavailable");
+  /**
+   * Carries one profile revision to every Chat thread of this companion pinned to the one it
+   * replaced. Two authored members of that record are edited from this surface - her directive
+   * and her example dialogues - and both have to carry their threads, so the repin is one fact.
+   */
+  const repinProfile: CompanionProfileBindingRefresh = async (previous, next) =>
+    await refreshCompanionProfileBinding({
+      companionId: manifest.principal.companionId,
+      continuityId: manifest.principal.continuityId,
+      previous: Object.freeze({
+        profileId: previous.profileId,
+        revision: previous.revision,
+        canonicalHash: previous.canonicalHash,
+      }),
+      binding: Object.freeze({
+        profileId: next.profileId,
+        revision: next.revision,
+        canonicalHash: next.canonicalHash,
+      }),
+    });
   const companionVoiceService = Object.freeze({
     async read(handle: string) {
       if (handle !== companionHandleFor(currentCompanionId)) return null;
@@ -416,21 +442,44 @@ function createTavernManagementDomains(
         expectedProfileRevision: command.expectedProfileRevision,
         macros,
         voice: command.clear === true || command.text === undefined ? null : { text: command.text },
-        refreshThreadBindings: async (previous, next) =>
-          await refreshCompanionProfileBinding({
-            companionId: manifest.principal.companionId,
-            continuityId: manifest.principal.continuityId,
-            previous: Object.freeze({
-              profileId: previous.profileId,
-              revision: previous.revision,
-              canonicalHash: previous.canonicalHash,
-            }),
-            binding: Object.freeze({
-              profileId: next.profileId,
-              revision: next.revision,
-              canonicalHash: next.canonicalHash,
-            }),
-          }),
+        refreshThreadBindings: repinProfile,
+      });
+    },
+  });
+  /**
+   * The mounted companion's example dialogues (the reviewed card's `mes_example`).
+   *
+   * These are the few-shot rows the prompt renders under `[Dialogue Examples]`, and until this
+   * pair of routes existed they were the one authored member of her profile with no editor at
+   * all: a card could carry them and the card export wrote them back, while a companion the
+   * player made directly kept the shipped default's rows for good. Same addressing and same CAS
+   * as her directive - the same record, one member over - and the same repin, because a Chat
+   * that mounts against this profile mounts against all of it.
+   */
+  const companionExamplesService = Object.freeze({
+    async read(handle: string) {
+      if (handle !== companionHandleFor(currentCompanionId)) return null;
+      const profile = await readIdentityProfile(runtimePaths.identityProfilePath);
+      return Object.freeze({
+        profileRevision: profile.revision,
+        examples: renderCompanionExamples(profile, await mountedMacros()),
+      });
+    },
+    async update(
+      handle: string,
+      command: Readonly<{ expectedProfileRevision: number; examples: CompanionExamplesProjection }>,
+    ) {
+      if (handle !== companionHandleFor(currentCompanionId)) return null;
+      const macros = await mountedMacros();
+      return await updateMountedCompanionExamples({
+        identityProfilePath: runtimePaths.identityProfilePath,
+        runtimeCwd: runtimePaths.runtimeCwd,
+        containmentRoot: runtimePaths.root,
+        identityKey: identityKey(manifest.principal),
+        expectedProfileRevision: command.expectedProfileRevision,
+        macros,
+        examples: command.examples,
+        refreshThreadBindings: repinProfile,
       });
     },
   });
@@ -535,12 +584,22 @@ function createTavernManagementDomains(
    *
    * The two producer inputs this mount cannot supply yet are stated rather than guessed:
    *
-   *  - `sampling` is null. The composed model this mount would have to read is the Chat runtime's, and this
-   *    assembly holds no Chat session; the surface reports `no_composed_model` rather than values nothing
-   *    sends (design §5);
+   *  - `sampling` is null, and that is a NAMED absence rather than a shrug: the row then reports
+   *    `{ unavailable: "no_composed_model" }` (design §5). The composed model is the mounted Chat
+   *    runtime's own (`session.agent.state.model` / `.thinkingLevel`, the two facts
+   *    `runtime-core.internal.ts` already reads for the Game publication), and this assembly holds no
+   *    Chat session - `MountedChatRuntimeLease` exposes `Pick<RuntimeSession, "profile">` and a
+   *    read-only live model selection nowhere. What unblocks it is one read-only accessor on that lease
+   *    plus a composed-model reader beside the one writer of `models.json`; both are outside this
+   *    mount, so nothing here invents them, and the rows say why they are empty instead of printing the
+   *    preset's own values as if they were in force;
    *  - `macros` and `markers` are empty. Both are the Chat pipeline's to fill when it assembles a
    *    preset (the companion card's fields and the bound world book); until it does, every marker reads
    *    as a slot with no source, which is the assembly's own answer about the content it was given.
+   *
+   * Only the BOUND row may carry a sampling reading (`preset-assembly-read.ts`): the runtime composes
+   * `models.json` from the preset in force, so a stored preset that is not bound has no composed model of
+   * its own, and `preset_sampling_not_applied` stays the signal that the splice did not take.
    *
    * None of the other facts depends on them: the entry partition, the macro findings, the depth injection and
    * the active binding are read from the stored document and the binding record alone.
@@ -743,6 +802,7 @@ function createTavernManagementDomains(
       playerPreferenceStore,
       libraryService,
       companionVoiceService,
+      companionExamplesService,
       companionWorldBookService,
       companionProfileService,
       companionCardExportService,
@@ -1100,6 +1160,7 @@ const LANE_SERVICE_METHODS: Readonly<Record<string, readonly string[]>> = Object
   connectionService: ["read", "create", "test", "activate", "selectModel", "remove"],
   libraryService: ["listCompanions"],
   companionVoiceService: ["read", "update"],
+  companionExamplesService: ["read", "update"],
   companionWorldBookService: ["read", "update"],
   companionProfileService: ["read"],
   companionCardExportService: ["read"],
@@ -1194,6 +1255,8 @@ export function composeTavernManagementProfile(): ComposedTavernProfile {
       "settings.language.update",
       "settings.delivery.read",
       "settings.delivery.update",
+      "settings.sampler.read",
+      "settings.sampler.update",
       "settings.game-prompt.read",
       "settings.game-prompt.update",
       "settings.appearance.read",
@@ -1223,6 +1286,8 @@ export function composeTavernManagementProfile(): ComposedTavernProfile {
       "chat.trash",
       "character.voice.read",
       "character.voice.update",
+      "character.examples.read",
+      "character.examples.update",
       "character.import.stage",
       "character.import.read",
       "character.import.review",
@@ -1288,6 +1353,8 @@ export function composeTavernManagementProfile(): ComposedTavernProfile {
       "settings.language.update",
       "settings.delivery.read",
       "settings.delivery.update",
+      "settings.sampler.read",
+      "settings.sampler.update",
       "settings.game-prompt.read",
       "settings.game-prompt.update",
       "settings.appearance.read",
@@ -1317,6 +1384,8 @@ export function composeTavernManagementProfile(): ComposedTavernProfile {
       "chat.trash",
       "character.voice.read",
       "character.voice.update",
+      "character.examples.read",
+      "character.examples.update",
       "character.import.stage",
       "character.import.read",
       "character.import.review",

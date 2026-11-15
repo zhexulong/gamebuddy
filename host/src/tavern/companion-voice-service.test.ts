@@ -22,11 +22,8 @@ import {
   acceptMountedPlayerMessage,
   createProfileAwareChatThreadCreationCapability,
 } from "./chat-thread-store.js";
-import {
-  type CompanionProfileBindingRefresh,
-  projectCompanionVoice,
-  updateMountedCompanionVoice,
-} from "./companion-voice-service.js";
+import { projectCompanionVoice, updateMountedCompanionVoice } from "./companion-voice-service.js";
+import type { CompanionProfileBindingRefresh } from "./mounted-identity-profile-write.js";
 import { macroTable } from "./macro-engine.js";
 import { provisionNewCompanion, type NewCompanionReview } from "./new-companion-service.js";
 import type { CharacterCandidate } from "./types.js";
