@@ -860,6 +860,53 @@ export const MAX_TARGET_FAMILIES_SHOWN = 12;
 /** Families named on a counting line - the one "nothing here" line, or the one the family cap left out - before that line counts the rest. */
 export const MAX_COUNTED_FAMILIES_NAMED = 8;
 
+/**
+ * How a row spells the tile it stands on, in the wire's own field names - the renderer's whole placement contract.
+ *
+ * `<p>`
+ * TWO SPELLINGS, ONE FACT. Seventy-two families name the tile `x`/`y`; `warps` and `doorTargets` name their SOURCE tile
+ * `sourceX`/`sourceY` (`isWarp` in `protocol.ts`, and the Mod's `FarmhandActionArgument` for `move_to_tile` says the
+ * argument is "copied exactly from the `sourceX` and `sourceY` of a `doorTargets` entry"). Reading only the first pair
+ * was not a formatting choice: measured 2026-11-23 on `round62`'s own snapshot, the FarmHouse door sat at (3,12)
+ * - Chebyshev 4 from her, inside the radius-6 discovery envelope - and the block printed no door at all, because every
+ * row of that family failed the `x`/`y` test and was dropped by `continue`. The counts agreed with the silence: `total`
+ * read 1, `omitted` read 1, and the family printed on neither line, so nothing said a door existed.
+ * </p>
+ * `<p>`
+ * `targetX`/`targetY` ARE NOT THIS PAIR. They are the arrival tile on the DESTINATION map, so printing them as where the
+ * door is would move the door to the far side of it. Only the source pair is a tile in the map she is standing in.
+ * </p>
+ * `<p>`
+ * This table is the placement contract the gate `tools/check-inventory-row-field-rendering.mjs` crosses with the wire's
+ * row records: a family in `TARGET_FAMILY_LABELS` whose rows carry neither pair is a family this line cannot place a
+ * single row of, and it fails there by name instead of printing nothing.
+ * </p>
+ */
+export const ROW_TILE_FIELD_PAIRS: readonly (readonly [string, string])[] = Object.freeze([
+  Object.freeze(["x", "y"] as const),
+  Object.freeze(["sourceX", "sourceY"] as const),
+]);
+
+/**
+ * The one value each family prints beside its row, for a family whose rows are told apart by a state rather than a name.
+ *
+ * WHY A TABLE AND NOT A GUESS. `nearbyTargetFamilies` prints a row's tile, and adds its `displayName` when the row
+ * carries one - which is enough for a family of one kind (weeds, rocks) and for a family of named pieces (furniture).
+ * `colorTargets` is neither: its rows are chests the repaint action addresses, and the only thing that distinguishes the
+ * row from any other chest is the colour the write would change. Measured on `round62`: the row carried
+ * `color: "119,191,255"`, the block printed 「可染色处 (3,7)」, and two predicates then disagreed about one object - the
+ * repaint could not be checked from the line, and the same revision printed 「本图箱子: 0」 about that very chest.
+ *
+ * THE VALUE IS THE WIRE'S OWN, NOT A PALETTE INDEX. `color` is published as `r,g,b`; `color_placed_object` takes
+ * `colorSelection`, an index into the game's own `DiscreteColorPicker` palette
+ * (`FarmhandActionDefinitions.cs:898`). So the colour she reads here lets her CHECK a repaint and not yet CHOOSE one - a
+ * gap in what the Mod publishes, not in this line, and the reason the field prints as its own `r,g,b` rather than a
+ * number this file would have to invent.
+ */
+export const ROW_STATE_FIELDS: Readonly<Record<string, Readonly<{ field: string; label: string }>>> = Object.freeze({
+  colorTargets: Object.freeze({ field: "color", label: "色" }),
+});
+
 /** One family the snapshot published, as the state line prints it. */
 export type NearbyTargetFamily = Readonly<{
   /** The wire key the rows came from, so a reader can check the label against it. */
@@ -871,7 +918,11 @@ export type NearbyTargetFamily = Readonly<{
   total: number;
   /** How many this line did not name: the cap, plus any row that carried no coordinate. */
   omitted: number;
-  /** `undefined` for a family with rows the Mod published but did not address. */
+  /**
+   * The sentence this line prints for the family, or `undefined` for a family the Mod published as empty (which prints
+   * on the "nothing here" line instead). A family with rows ALWAYS renders something, even when not one row could be
+   * placed: a family that printed nothing while `total` read 1 is a row that vanished.
+   */
   rendered: string | undefined;
 }>;
 
@@ -894,6 +945,15 @@ export type NearbyTargetFamily = Readonly<{
  * 「可交互的物件 (9,8) (6,8) (4,4) (5,4) (8,4)」; she guessed 「大概是床、壁炉之类」 and then spent four turns moving and
  * replacing a piece she could not name. The name is not interpolated blind: a row with no readable `displayName` prints
  * its tile alone, never the word `undefined`.
+ *
+ * A FAMILY WHOSE ROWS IT CANNOT PLACE STILL PRINTS. The tile is read through `ROW_TILE_FIELD_PAIRS`, so a `doorTargets`
+ * row is placed at its `sourceX`/`sourceY` exactly as an `animalDoorTargets` row is placed at its `x`/`y` - `round62`'s
+ * falsifier: 畜舍门 (70,13) printed, and the FarmHouse door did not. The families that carry no tile at all -
+ * `craftingRecipeTargets`, `shopTargets`, `wearableTargets`, `dailyQuestTargets` and their kin - still get a sentence
+ * naming how many rows the line could not place, because the previous shape returned `rendered: undefined` for a family
+ * with six rows, and `composeNearbyTargets` prints only the families with a sentence and the families with `total === 0`:
+ * so those rows were on neither line and said nothing. A row this line cannot place is an OMISSION, and an omission is
+ * counted.
  */
 export function nearbyTargetFamilies(snapshot: Snapshot): readonly NearbyTargetFamily[] {
   const actor = snapshot.tile;
@@ -902,27 +962,22 @@ export function nearbyTargetFamilies(snapshot: Snapshot): readonly NearbyTargetF
   for (const [family, label] of Object.entries(TARGET_FAMILY_LABELS)) {
     const value = (snapshot as unknown as Record<string, unknown>)[family];
     if (!Array.isArray(value)) continue;
-    const tiles: { x: number; y: number; name: string | undefined; w: number; h: number }[] = [];
+    const state = ROW_STATE_FIELDS[family];
+    const tiles: { x: number; y: number; name: string | undefined; state: string; w: number; h: number }[] = [];
     for (const row of value) {
       if (row === null || typeof row !== "object") continue;
-      const candidate = row as {
-        x?: unknown;
-        y?: unknown;
-        kind?: unknown;
-        displayName?: unknown;
-        w?: unknown;
-        h?: unknown;
-      };
-      if (typeof candidate.x !== "number" || typeof candidate.y !== "number") continue;
-      if (!Number.isFinite(candidate.x) || !Number.isFinite(candidate.y)) continue;
+      const candidate = row as Record<string, unknown>;
+      const tile = rowTile(candidate);
+      if (tile === undefined) continue;
       const named =
         typeof candidate.kind === "string" &&
         typeof candidate.displayName === "string" &&
         candidate.displayName.trim().length > 0;
       tiles.push({
-        x: candidate.x,
-        y: candidate.y,
+        x: tile.x,
+        y: tile.y,
         name: named ? (candidate.displayName as string) : undefined,
+        state: state === undefined ? "" : stateSuffix(state, candidate[state.field]),
         w: extentSide(candidate.w),
         h: extentSide(candidate.h),
       });
@@ -937,16 +992,45 @@ export function nearbyTargetFamilies(snapshot: Snapshot): readonly NearbyTargetF
       value.length === 0
         ? undefined
         : shown.length === 0
-          ? undefined
+          ? `${label} 其余 ${String(value.length)} 格未列出（这些行没有坐标）`
           : `${label} ${shown
               .map(
                 (tile) =>
-                  `${tile.name === undefined ? "" : `${tile.name} `}(${tile.x},${tile.y}${footprintSuffix(tile)})`,
+                  `${tile.name === undefined ? "" : `${tile.name} `}(${tile.x},${tile.y}${footprintSuffix(tile)})${tile.state}`,
               )
               .join(" ")}${omitted > 0 ? ` 其余 ${omitted} 格未列出` : ""}`;
     families.push(Object.freeze({ family, label, nearest, total: value.length, omitted, rendered }));
   }
   return Object.freeze(families);
+}
+
+/**
+ * The tile a row stands on, through the first spelling of `ROW_TILE_FIELD_PAIRS` the row carries whole.
+ *
+ * `undefined` is a row this line cannot place, and the caller counts it rather than dropping it: a row with no readable
+ * pair says the Mod published a subject whose place this renderer cannot name, which is a fact about the line and not
+ * an absence of the subject.
+ */
+function rowTile(row: Record<string, unknown>): { x: number; y: number } | undefined {
+  for (const [xField, yField] of ROW_TILE_FIELD_PAIRS) {
+    const x = row[xField];
+    const y = row[yField];
+    if (typeof x === "number" && typeof y === "number" && Number.isFinite(x) && Number.isFinite(y)) return { x, y };
+  }
+  return undefined;
+}
+
+/**
+ * The state one row prints after its tile: `` ` 色 119,191,255` ``, or `""` when the row carries nothing to read.
+ *
+ * A value the wire published as an empty string, a missing member, or a non-scalar is SILENCE rather than the word
+ * `undefined` - the same rule the row's own `displayName` follows, and the reason a family that declares a state field
+ * does not become unreadable when one row of it is short.
+ */
+function stateSuffix(state: Readonly<{ field: string; label: string }>, value: unknown): string {
+  if (typeof value === "number" && Number.isFinite(value)) return ` ${state.label} ${String(value)}`;
+  if (typeof value === "string" && value.trim().length > 0) return ` ${state.label} ${value.trim()}`;
+  return "";
 }
 
 /**
