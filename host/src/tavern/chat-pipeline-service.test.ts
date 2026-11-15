@@ -2114,9 +2114,11 @@ test(
     ]);
     assert.equal((output.afterTexts as string[])[0], (output.beforeTexts as string[])[0]);
     // The edit's OTHER durable consequence, and the one the surface owes the player: the two replies that
-    // follow the corrected line were written while it said something else, so every row under it now says
-    // it answered the earlier wording - and the greeting and the corrected row itself say nothing.
-    assert.deepEqual(output.afterMarks, [null, null, true, true, true]);
+    // follow the corrected line were written while it said something else, so those two replies now say
+    // they answered the earlier wording - and the greeting, the corrected row itself and the player's own
+    // second line say nothing. That second line is the next thing the player ASKED, so it answers the words
+    // on screen; a mark under a question would read as a warning about the player's own words.
+    assert.deepEqual(output.afterMarks, [null, null, true, null, true]);
     // Her reply is the other message the player may correct, and the answer is the row the read-back
     // holds, projected as the companion's own.
     const editedReply = output.editedReply as {

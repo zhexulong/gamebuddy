@@ -129,7 +129,9 @@ export type ChatThreadMessage = Readonly<{
    * It is derived on every read from the durable `edit_tail_ordinal` stamps, never stored on the row:
    * the transcript's own order plus the one column that records where a rewrite swept is the whole
    * fact, and a stored flag would be a second copy of it. Absent is the ordinary row - either nothing
-   * above it was rewritten, or it was written after the last rewrite above it.
+   * above it was rewritten, or it was written after the last rewrite above it. Only her replies carry
+   * it: the stamp covers every row the rewrite swept, but a player line under a correction is the next
+   * thing the player asked, so it is never told it answered the earlier wording.
    */
   answeredEarlierWording?: true;
 }>;
@@ -4005,13 +4007,22 @@ function readMessages(db: DatabaseSync, threadId: string): ChatThreadMessage[] {
   // see `MESSAGE_EDIT_TAIL_ORDINAL_V12`), and the rows arrive in `append_ordinal` order, so one sweep
   // decides every row: the sweep is the transcript's own order, which is the position this store
   // already means everywhere else.
+  //
+  // The mark lands on her replies only. The stamp records the sweep either way, but the sentence it
+  // feeds - "a message above this one was corrected after it was written, so it still answers the earlier
+  // wording" - is about an ANSWER. The player's own line under a correction is the next thing the player
+  // asked, so it answers the words on screen; a warning under a question reads as nonsense, and a long
+  // thread would grow a warning after every corrected row. So the sweep decides which replies are told,
+  // and this predicate is the one place that decides it.
   let rewrittenThrough = -1;
   return (
     db.prepare("SELECT * FROM tavern_messages WHERE thread_id = ? ORDER BY append_ordinal").all(threadId) as any[]
   ).map((row) => {
     const swipeValues = swipes.get(row.message_id);
     const answeredEarlierWording =
-      row.append_ordinal <= rewrittenThrough ? ({ answeredEarlierWording: true } as const) : {};
+      row.role === "companion" && row.append_ordinal <= rewrittenThrough
+        ? ({ answeredEarlierWording: true } as const)
+        : {};
     if (row.edit_tail_ordinal !== null) rewrittenThrough = Math.max(rewrittenThrough, row.edit_tail_ordinal as number);
     if (row.role === "companion") {
       if (swipeValues === undefined) throw new Error("invalid_chat_thread_swipe_order");

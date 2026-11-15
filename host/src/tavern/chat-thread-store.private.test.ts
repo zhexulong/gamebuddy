@@ -2137,11 +2137,14 @@ test("an edit rewrites the player's own row in place and leaves the transcript e
     assert.equal(after.turnLedger?.status, "completed");
     assert.equal(after.idempotency.length, 2);
     // The one thing an edit DOES change about the rows below it, and the reason the stamp exists: those
-    // rows were written while this one said something else, so the durable read-back marks every row that
-    // was already under it - and nothing above it, and not the row itself.
+    // rows were written while this one said something else, so the durable read-back marks every REPLY that
+    // was already under it - and nothing above it, and not the row itself. The player's own line beneath
+    // the correction is unmarked on purpose: it is the next thing the player ASKED, so it answers the words
+    // on screen, and a warning under a question reads as nonsense. `edit_tail_ordinal` still records the
+    // whole sweep; what changes is which rows are told they answered the earlier wording.
     assert.deepEqual(
       after.messages.map((message) => message.answeredEarlierWording),
-      [undefined, undefined, true, true, true],
+      [undefined, undefined, true, undefined, true],
     );
     // The greeting the Chat opened on is the same operation on row zero, and it is local to this session:
     // its text and the active variant its row carries move together, no other row moves, and the thread's
@@ -2166,10 +2169,11 @@ test("an edit rewrites the player's own row in place and leaves the transcript e
     assert.equal(editedOpening.turnLedger?.turnId, second.turnId);
     assert.equal(editedOpening.idempotency.length, 2);
     // The greeting is row zero, so correcting it puts the WHOLE exchange behind a wording that is gone:
-    // every row below now says it answered the earlier one, and the greeting itself says nothing.
+    // every reply below now says it answered the earlier one, and the greeting itself says nothing. Her two
+    // replies are the rows that answer; the player's two lines are what the player asked next.
     assert.deepEqual(
       editedOpening.messages.map((message) => message.answeredEarlierWording),
-      [undefined, true, true, true, true],
+      [undefined, undefined, true, undefined, true],
     );
     const durable = await reopened.resumeThread("thread_01", "surface_01");
     assert.deepEqual(
@@ -2189,7 +2193,7 @@ test("an edit rewrites the player's own row in place and leaves the transcript e
     // the same root derives the same answer from the transcript and the stamp alone.
     assert.deepEqual(
       durable.messages.map((message) => message.answeredEarlierWording),
-      [undefined, true, true, true, true],
+      [undefined, undefined, true, undefined, true],
     );
 
     const unchanged = durable.messages.map((message) => message.text);
@@ -2913,7 +2917,8 @@ test("a rewind lets the next line take an ordinal an old correction swept, and i
     const first = await completeOneTurn(root, t0, 1, "First line", "reply_01");
     const second = await completeOneTurn(root, t0, 2, "Second line", "reply_02");
 
-    // The correction sweeps the whole tail: rows 2, 3 and 4 answered the words it replaced.
+    // The correction sweeps the whole tail, and the sweep still covers rows 2, 3 and 4 - but only her two
+    // replies say so: the player's line at 3 is the next thing asked, so it carries no mark.
     const edited = await s.editTranscriptMessage!(testTransitionAuthority.authority, "thread_01", {
       messageId: first.playerId,
       expectedOrder: 1,
@@ -2921,11 +2926,11 @@ test("a rewind lets the next line take an ordinal an old correction swept, and i
     });
     assert.deepEqual(
       edited.messages.map((message) => message.answeredEarlierWording),
-      [undefined, undefined, true, true, true],
+      [undefined, undefined, true, undefined, true],
     );
 
-    // Cut back to the second line: her second reply goes, and the two rows that answered the old wording
-    // and survive keep the mark they earned.
+    // Cut back to the second line: her second reply goes, and the row that answered the old wording and
+    // survives keeps the mark it earned - the player's line beside it keeps none.
     const rewound = await s.rewindTranscript!(testTransitionAuthority.authority, "thread_01", {
       messageId: second.playerId,
       expectedOrder: 3,
@@ -2936,7 +2941,7 @@ test("a rewind lets the next line take an ordinal an old correction swept, and i
     );
     assert.deepEqual(
       rewound.messages.map((message) => message.answeredEarlierWording),
-      [undefined, undefined, true, true],
+      [undefined, undefined, true, undefined],
     );
 
     // The next line lands on ordinal 4, which the old sweep (4) covered. It answered the corrected words,
@@ -2967,7 +2972,7 @@ test("a rewind lets the next line take an ordinal an old correction swept, and i
     );
     assert.deepEqual(
       after.messages.map((message) => message.answeredEarlierWording),
-      [undefined, undefined, true, true, undefined],
+      [undefined, undefined, true, undefined, undefined],
     );
   } finally {
     s.close?.();
