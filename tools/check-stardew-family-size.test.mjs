@@ -1,3 +1,11 @@
+// The falsifiers for `tools/check-stardew-family-size.mjs`.
+//
+// red-proof: inject  one code line appended to a family file in a copy of the tree -> `family_code_exceeded` at the
+//   ceiling plus one, exit 1, the member named; one COMMENT line deleted from the same copy -> `delta 0`, exit 0,
+//   which is the unit (tools/check-stardew-family-size.test.mjs)
+// red-proof: inject  one code line deleted from a family file -> `family_ceiling_stale` at the ceiling minus one, exit
+//   1, because a ceiling that outlives a deletion is slack for the next raise
+//   (tools/check-stardew-family-size.test.mjs)
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";

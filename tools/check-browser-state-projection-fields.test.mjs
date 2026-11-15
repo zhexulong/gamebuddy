@@ -12,6 +12,10 @@
  *      `stale_constant_field_reason`, so the list cannot become a place facts go to be forgotten.
  *   4. BOTH DIRECTIONS OF THE CONTRACT are policed: a contract field the producer never writes, and a producer field the
  *      contract does not declare.
+ *
+ * red-proof: inject  the capability summary's producer rewritten to a literal in a copy of the tree ->
+ *   `published_field_is_a_constant` and `published_field_reports_a_zero_it_did_not_measure` naming the field
+ *   (tools/check-browser-state-projection-fields.test.mjs)
  */
 import assert from "node:assert/strict";
 import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";

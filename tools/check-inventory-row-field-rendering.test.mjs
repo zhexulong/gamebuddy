@@ -15,6 +15,10 @@
  *      `inventory_row_field_reader_stale`. That is what keeps the population level with the code.
  *   4. THE POPULATION IS DERIVED, both ways. A row field added to the schema and named by an argument the validator
  *      already declares is demanded with no edit here; a schema whose row fields no argument names is BLOCKED.
+ *
+ * red-proof: inject  one composer's slot interpolation deleted in a copy of the tree -> `inventory_row_field_dropped`
+ *   naming that composer, while the sibling composer still prints the field
+ *   (tools/check-inventory-row-field-rendering.test.mjs)
  */
 import assert from "node:assert/strict";
 import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
