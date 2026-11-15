@@ -141,8 +141,22 @@ test("says nothing while the choice is still open", async ({ page }) => {
   await mount(page, [row(OPENINGS[1]!.text, 0, "companion", { index: 1, count: 3, locked: false })]);
 
   const opening = page.locator(".message.companion").first();
-  await expect(opening.locator(".swipe-controls")).toHaveCount(1);
+  const pager = opening.locator(".swipe-controls");
+  await expect(pager).toHaveCount(1);
+  // What the player reads between the arrows: the opening this Chat is ON, and its place in the
+  // three the card ships. The seal is what takes this row's words away, so they are the reading
+  // that has to be there while the choice is open.
+  await expect(pager.locator(".swipe-indicator")).toHaveText("Rainy evening 2/3");
+  // And both ways off this opening are really offered: the choice is open on both sides, and an
+  // arrow left disabled would be the same silence one control over.
+  await expect(pager.getByRole("button", { name: "Previous variant" })).toBeEnabled();
+  await expect(pager.getByRole("button", { name: "Next variant" })).toBeEnabled();
+
+  // The row says nothing about a seal - neither the element nor the sentence. The count alone
+  // passes on a surface that printed the sentence somewhere else on the row, which is the way
+  // this claim regresses, so the words are read too.
   await expect(opening.getByTestId("message-opening-sealed")).toHaveCount(0);
+  await expect(opening).not.toContainText("This opening was fixed by your first message");
 });
 
 test("says nothing on a reply, or on a Chat that opened on a blank one", async ({ page }) => {
