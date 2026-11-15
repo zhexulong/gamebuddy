@@ -26,11 +26,23 @@
  *   `reason` starts with a class from `REASON_CLASSES` and then says the concrete thing - which input prelive has not
  *            got, which argument the gate needs, which measurement is red at HEAD. A reason too short to name anything
  *            is a finding, not an exemption.
- *   `runsIn` is one of `pnpm <script>` / `suite:<script>` (the script must exist and name this gate's path),
- *            `ci:<workflow>` (that workflow must name the path), or `on-demand` (no scheduled home at all - printed
- *            under `no_scheduled_home`, so the gates nothing runs are a line of output rather than an assumption).
+ *   `runsIn` is one of `pnpm <script>` (the script must exist and name this gate's path), `suite:<script>` (the script
+ *            runs a `node --test` suite, and one of the test files it runs names this gate - the form a gate whose rule
+ *            lives in its own falsifier needs), `hook:<file>` (a git hook runs the named file, and that file spawns this
+ *            gate), `ci:<workflow>` (that workflow must name the path), or `on-demand` (no scheduled home at all -
+ *            printed under `no_scheduled_home`, so the gates nothing runs are a line of output rather than an
+ *            assumption).
  *            An `elsewhere` exemption additionally asserts that the script runs on every push, and that assertion is
- *            checked against `gates/meta/check-ci-coverage.mjs`, which owns the fact.
+ *            checked against `gates/meta/check-ci-coverage.mjs`, which owns the fact. An `unrun` exemption asserts the
+ *            opposite - that nothing names the gate or its falsifier anywhere - and is checked against both
+ *            `package.json` tables and every workflow, so the row expires the day someone wires the gate.
+ *
+ * GATES NO SCAN REACHES. `UNSCANNED_GATES` declares the gate files whose directory is not a published gate directory:
+ * `tools/scripts/check-lockfile-freeze.mjs` (runs from the `pre-commit` hook) and
+ * `tools/live-run/chat/check-post-history-instructions-live.mjs` (typed by hand). They are members of the population
+ * the register judges - `outside_the_scan=` prints them apart from the scanned members - because a gate that no
+ * derivation reaches is invisible to every census at once, which is the defect this register exists to prevent. Each
+ * row is an exemption like any other, and `unscanned_but_scanned` retires it the moment a scan reaches the path.
  *
  * The table is validated in both directions, so it cannot rot into a list nobody looked at:
  *   - a population member neither wired nor exempt is `gate_forgotten`, and the message names the FILE;
@@ -43,7 +55,11 @@
  *   - an entry carrying no `runsIn` at all is `exempt_runs_in_missing`. It used to reach the `elsewhere` assertion and
  *     crash there (`Cannot read properties of undefined (reading 'startsWith')`), and a gate that dies on a stack
  *     trace has named nothing - the same defect as a register that passes on an empty population. A missing `reason`
- *     is `exempt_unreasoned` for the same reason rather than a second crash.
+ *     is `exempt_unreasoned` for the same reason rather than a second crash;
+ *   - an `unrun` entry that a script or a workflow does name is `exempt_unrun_but_named`: the row says nothing runs the
+ *     gate, and something started to;
+ *   - a declared unscanned gate that a population scan now reaches is `unscanned_but_scanned`, and one that is not on
+ *     disk is `unscanned_gate_missing`.
  *
  * WHICH `package.json`. `runsIn` is resolved against the scripts `HEAD` has AND the scripts on disk: a script
  * committed through a private index is in `HEAD` and absent from the worktree copy, and reading only the worktree
@@ -63,6 +79,17 @@
  *   for a script `HEAD` declares, i.e. a passing gate called unreachable because of a stale local file
  * red-proof: inject  reading `HEAD`'s script table from the file on disk -> `{}` where the commit's table was
  *   expected, and the disagreement between the two trees went unprinted
+ * red-proof: inject  accepting a `suite:` row on the gate's own path alone, the rule the class was unusable under ->
+ *   "a suite: row is wired by the suite's own case, and a suite that never names the gate is red" failed, and so did
+ *   both real-tree cases: seven rows whose suite names `<gate>.test.mjs` clear nothing
+ * red-proof: inject  never re-checking the `unrun` claim -> "an unrun row states that nothing runs the gate, and
+ *   reddens the moment anything names it" failed on the script that names it
+ * red-proof: inject  not recognising `hook:` at all -> "a hook: row is checked against the hook file that spawns the
+ *   gate" failed with `exempt_runs_in_unrecognised`, and the real tree with the lockfile row unverifiable
+ * red-proof: inject  never retiring an unscanned row -> "a declared unscanned gate is a population member, and the row
+ *   retires once a scan reaches it" failed on the path a scan does reach
+ * red-proof: inject  a reason class no row uses -> "every declared reason class has a meaning, every exemption uses one,
+ *   and no class sits unused" named the class, which is the defect `suite` itself was
  */
 
 export const gateDeclaration = {
@@ -78,7 +105,7 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { deriveCiCoverage } from "./check-ci-coverage.mjs";
-import { isGateFile, GATE_DIRECTORIES } from "../registry.mjs";
+import { isGateFile, isGateName, GATE_DIRECTORIES } from "../registry.mjs";
 import { PRELUDE_RUNGS } from "../../tools/prelive.mjs";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
@@ -102,6 +129,52 @@ export const POPULATION_SCAN = Object.freeze([
   { dir: STARDEW_TESTS, include: (name) => /(?:-drift|-reconciliation)\.test\.mjs$/u.test(name) },
 ]);
 
+/** The directory a repo-relative path is filed in, and its file name: the two halves a scan is asked about. */
+const directoryOf = (path) =>
+  String(path)
+    .replace(/\\/gu, "/")
+    .replace(/\/[^/]*$/u, "");
+const basenameOf = (path) => String(path).replace(/\\/gu, "/").replace(/^.*\//u, "");
+
+/** Does a scan reach this path? Asked of the scans themselves, so a published directory needs no edit in two places. */
+export function inAPopulationScan(path) {
+  const directory = directoryOf(path);
+  const name = basenameOf(path);
+  return POPULATION_SCAN.some((scan) => scan.dir === directory && scan.include(name));
+}
+
+/**
+ * Gate files no scan reaches, because their directory is not one this repository publishes as a gate directory.
+ *
+ * WHY THIS EXISTS. The derivation is a scan of `GATE_DIRECTORIES`, and two directories hold a command-shaped gate that
+ * the tree never published: `tools/scripts/` (where the `check:*` ratchets live beside the pre-commit machinery) and
+ * `tools/live-run/chat/` (the live Chat harness). A gate there is invisible to this register AND to
+ * `tools/lib/gate-population.mjs` whenever its only launcher is not a `pnpm` script - measured 2026-11-15: the
+ * lockfile-freeze gate runs only from the `pre-commit` hook, and the post-history gate is typed by hand, so nothing
+ * derived either of them and neither appeared in any population. That is a gate that can stop running with no symptom.
+ *
+ * WHY PER FILE AND NOT A DIRECTORY. `tools/live-run/chat/` also holds `audit-trace.mjs`, which the name rule calls a
+ * gate and which is a library (the chat audit contract, no command). Publishing the directory would make a library a
+ * gate; a declared row names the command and its trigger instead. Each row is an exemption like any other, so it is
+ * checked the same way - and `unscanned_but_scanned` retires the row the moment a scan reaches the path.
+ */
+export const UNSCANNED_GATES = Object.freeze([
+  {
+    path: "tools/live-run/chat/check-post-history-instructions-live.mjs",
+    reason:
+      "environment: needs two real Chat turns against a provider, with the card's post_history_instructions edited " +
+      "between them, so no offline rung can run it; nothing runs it on a schedule and an operator types it by hand",
+    runsIn: "on-demand",
+  },
+  {
+    path: "tools/scripts/check-lockfile-freeze.mjs",
+    reason:
+      "fixup: fires only when the commit itself changes a lockfile, so it reads git state rather than the tree; the " +
+      "repository's pre-commit hook (core.hooksPath=tools/git-hooks) runs tools/scripts/pre-commit.mjs, which spawns it",
+    runsIn: "hook:tools/scripts/pre-commit.mjs",
+  },
+]);
+
 /** Why a gate in the population does not run in prelive, as closed classes so the count is a measurement. */
 export const REASON_CLASSES = Object.freeze({
   elsewhere:
@@ -118,7 +191,13 @@ export const REASON_CLASSES = Object.freeze({
   report: "measures and prints while exiting 0, so a rung would call it green while it reports a disagreement",
   fixup: "reads or repairs git/worktree state rather than the tree",
   debt: "measured red at HEAD; adopting it needs the fix, not the wiring",
-  suite: "its measurements are made by the named node --test suite, not by running this file as a gate",
+  suite:
+    "its measurements are made by the named node --test suite, which runs a test file that imports this gate - the " +
+    "gate file itself has no run of its own, so its verdict on the real tree has never been produced",
+  unrun:
+    "nothing runs this gate: no package.json script names it or its falsifier and no workflow step does, so its verdict " +
+    "on the real tree has never been produced; the row makes that absence a printed line, and it reddens the moment " +
+    "anything names the file",
 });
 
 /**
@@ -126,6 +205,12 @@ export const REASON_CLASSES = Object.freeze({
  * they are the gates that already run on every push, and the register's job is to say so rather than to duplicate them.
  */
 export const EXEMPTIONS = Object.freeze([
+  {
+    path: "tools/check-viewport-population.mjs",
+    reason:
+      "elsewhere: static scan of the first-viewport population, runs on every push in the CI gates job through `check:viewport-population`",
+    runsIn: "pnpm check:viewport-population",
+  },
   {
     path: "tools/check-presentation-delivery-account.mjs",
     reason:
@@ -264,6 +349,12 @@ export const EXEMPTIONS = Object.freeze([
     runsIn: "pnpm audit:stardew-open-ground-claims",
   },
   {
+    path: "tools/audit-stardew-clearing-vocabulary.mjs",
+    reason:
+      "unrun: no package.json script names it or its falsifier and no workflow step does, so the vocabulary its own scan reports over `TileOccupantKind` has never been produced by a run; `tools/check-code-duplication.mjs` names it as a subject, which is friction in a baseline and not a run",
+    runsIn: "on-demand",
+  },
+  {
     path: "tools/audit-stardew-decision-closure.mjs",
     reason: "elsewhere: static decision-closure audit over the action surface, runs on every push in the CI gates job",
     runsIn: "pnpm audit:stardew-decision-closure",
@@ -311,9 +402,21 @@ export const EXEMPTIONS = Object.freeze([
     runsIn: "on-demand",
   },
   {
+    path: "tools/check-assertion-hooks.mjs",
+    reason:
+      "elsewhere: static scan of assertion hooks, runs on every push in the CI gates job through `check:assertion-hooks`",
+    runsIn: "pnpm check:assertion-hooks",
+  },
+  {
     path: "tools/check-assertion-substance.mjs",
     reason: "elsewhere: static surface-journey assertion scan, runs on every push in the CI gates job",
     runsIn: "pnpm check:assertion-substance",
+  },
+  {
+    path: "tools/check-baseline-paths.mjs",
+    reason:
+      "suite: nothing runs this file as a gate; its rule is exercised by `tools/check-baseline-paths.test.mjs`, inside `test:baseline-paths`, a member of the tool-test corpus that ci.yml runs on every push",
+    runsIn: "suite:test:baseline-paths",
   },
   {
     path: "tools/check-build-artifact-producers.mjs",
@@ -326,6 +429,12 @@ export const EXEMPTIONS = Object.freeze([
       "environment: needs the Host's live DB (`--require-db`) and a synthetic transcript fixture, which the smoke " +
       "script supplies and the ladder does not have",
     runsIn: "pnpm smoke:chat-conversational-quality-gate",
+  },
+  {
+    path: "tools/check-browser-state-projection-fields.mjs",
+    reason:
+      "elsewhere: static scan of the fields the browser projection declares, runs on every push in the CI gates job through `check:browser-state-projection-fields`",
+    runsIn: "pnpm check:browser-state-projection-fields",
   },
   {
     path: "gates/meta/check-ci-dead-conditions.mjs",
@@ -447,6 +556,12 @@ export const EXEMPTIONS = Object.freeze([
     runsIn: "pnpm check:duplicated-authority",
   },
   {
+    path: "tools/check-engine-affordance-census.mjs",
+    reason:
+      "suite: nothing runs this file as a gate; its rule is exercised by `tools/check-engine-affordance-census.test.mjs`, inside `test:engine-affordance-census`, a member of the tool-test corpus that ci.yml runs on every push; the file's own only launcher is `census:engine-affordances`, a prefix neither the gate namespace nor the corpus derives",
+    runsIn: "suite:test:engine-affordance-census",
+  },
+  {
     path: "tools/check-error-identity-classification.mjs",
     reason: "elsewhere: static scan for failure classification by message text, runs on every push",
     runsIn: "pnpm check:error-identity-classification",
@@ -507,6 +622,12 @@ export const EXEMPTIONS = Object.freeze([
     runsIn: "pnpm check:host-windows-test-preflight",
   },
   {
+    path: "tools/check-inventory-row-field-rendering.mjs",
+    reason:
+      "elsewhere: static scan of inventory-row field rendering, runs on every push in the CI gates job through `check:inventory-row-field-rendering`",
+    runsIn: "pnpm check:inventory-row-field-rendering",
+  },
+  {
     path: "tools/check-live-run-failure-dump.mjs",
     reason: "elsewhere: static scan of the live-run failure dump, runs on every push in the CI gates job",
     runsIn: "pnpm check:live-run-failure-dump",
@@ -524,9 +645,21 @@ export const EXEMPTIONS = Object.freeze([
     runsIn: "pnpm check:live-run-multiday-baseline",
   },
   {
+    path: "tools/check-live-run-preset-surface.mjs",
+    reason:
+      "suite: nothing runs this file as a gate; its rule is exercised by `tools/live-run/core/persona.test.mjs`, inside `suite:live-run-harness`, a member of the tool-test corpus that ci.yml runs on every push",
+    runsIn: "suite:suite:live-run-harness",
+  },
+  {
     path: "tools/check-live-run-silence.mjs",
     reason: "elsewhere: static scan for silent live-run outcomes, runs on every push in the CI gates job",
     runsIn: "pnpm check:live-run-silence",
+  },
+  {
+    path: "tools/check-native-local-runner-scaffold.mjs",
+    reason:
+      "suite: nothing runs this file as a gate; its rule is exercised by `tools/check-native-local-runner-scaffold.test.mjs`, inside `test:stardew-native-local-runner-scaffold`, a member of the tool-test corpus that ci.yml runs on every push",
+    runsIn: "suite:test:stardew-native-local-runner-scaffold",
   },
   {
     path: "tools/check-parser-agreement.mjs",
@@ -586,6 +719,12 @@ export const EXEMPTIONS = Object.freeze([
       "the derived corpus, green, through `test:rederivation-parity`. What would make it schedulable is the two parity " +
       "tests, not the wiring · measured rederivations examined 4 · with a parity test 2 · engine members 4 · " +
       "without parity 2 · call sites examined 1 at 1b906910",
+    runsIn: "on-demand",
+  },
+  {
+    path: "tools/check-refusal-action-names.mjs",
+    reason:
+      "unrun: no package.json script names it or its falsifier and no workflow step does, so the 2679 refusal codes its own scan reports have never been reported by a run; its only other references are `<c>` doc comments in `integrations/stardew/**`, where the product source cites the gate that is not running",
     runsIn: "on-demand",
   },
   {
@@ -663,6 +802,12 @@ export const EXEMPTIONS = Object.freeze([
     runsIn: "pnpm check:stardew-execution-terminal-uniqueness",
   },
   {
+    path: "tools/check-stardew-family-size.mjs",
+    reason:
+      "elsewhere: static scan of the action family sizes, runs on every push in the CI gates job through `check:stardew-family-size`",
+    runsIn: "pnpm check:stardew-family-size",
+  },
+  {
     path: "tools/check-stardew-fixture-scenario-wiring.mjs",
     reason: "elsewhere: static fixture-scenario wiring gate, runs on every push in the CI gates job",
     runsIn: "pnpm audit:stardew-fixture-scenario-wiring",
@@ -671,6 +816,24 @@ export const EXEMPTIONS = Object.freeze([
     path: "tools/check-stardew-gameplay-completeness.mjs",
     reason: "arguments: requires `--report <direct-inspector-report.json>`, a report a live lane produces",
     runsIn: "pnpm check:stardew-gameplay-completeness",
+  },
+  {
+    path: "tools/check-stardew-lifecycle-pins.mjs",
+    reason:
+      "suite: nothing runs this file as a gate; its rule is exercised by `tools/check-stardew-lifecycle-pins.test.mjs`, inside `test:stardew-lifecycle-pins`, a member of the tool-test corpus that ci.yml runs on every push",
+    runsIn: "suite:test:stardew-lifecycle-pins",
+  },
+  {
+    path: "tools/check-stardew-live-runner-coverage.mjs",
+    reason:
+      "suite: nothing runs this file as a gate; its rule is exercised by `tools/check-stardew-live-runner-coverage.test.mjs`, inside `test:stardew-live-runner-coverage`, a member of the tool-test corpus that ci.yml runs on every push",
+    runsIn: "suite:test:stardew-live-runner-coverage",
+  },
+  {
+    path: "tools/check-stardew-instance-property-coverage.mjs",
+    reason:
+      "suite: nothing runs this file as a gate; its rule is exercised by `tools/check-stardew-observation-gap.test.mjs`, inside `test:stardew-observation-gap`, a member of the tool-test corpus that ci.yml runs on every push, which is `tools/check-stardew-observation-gap.mjs`'s own falsifier",
+    runsIn: "suite:test:stardew-observation-gap",
   },
   {
     path: "tools/check-stardew-loop-closure.mjs",
@@ -729,6 +892,12 @@ export const EXEMPTIONS = Object.freeze([
     path: "tools/check-stardew-receipt-attribution.mjs",
     reason: "elsewhere: static receipt-attribution gate, runs on every push in the CI gates job",
     runsIn: "pnpm check:stardew-receipt-attribution",
+  },
+  {
+    path: "tools/check-stardew-shop-purchase-pays-for-goods.mjs",
+    reason:
+      "unrun: no package.json script names it or its falsifier and no workflow step does, so neither the receipt fixture it reads nor the invariant the Mod's shop handlers cite in `<c>` comments is checked by a run",
+    runsIn: "on-demand",
   },
   {
     path: "tools/check-stardew-snapshot-family-bounds.mjs",
@@ -812,19 +981,29 @@ export function preludeGatePaths({ rungs = PRELUDE_RUNGS } = {}) {
 }
 
 /**
- * Does `runsIn` actually lead to this gate? The three claim forms are checked against the file they name, so an
- * exemption cannot outlive the script that stopped running it.
+ * Does `runsIn` actually lead to this gate? Every claim form is checked against the file it names, so an exemption
+ * cannot outlive the script that stopped running it.
  *
  * A script is read from both `package.json` trees - `HEAD`'s and the worktree's - because a script either of them has
  * is a script that runs somewhere, and a worktree copy that has not caught up is not evidence about the commit.
+ *
+ * `suite:` and `hook:` are the two forms whose file does not name the gate by path:
+ *   `suite:<script>`  the script runs `node --test` over test files, and the claim is that this gate's own case is in
+ *                     one of them. A falsifier names `<gate>.test.mjs`, so the path is not a substring of the command;
+ *                     the test files the command runs are read instead, and one of them has to name the gate. That is
+ *                     the claim being checked - not "some suite exists", which any script with a test file would pass.
+ *   `hook:<file>`     a git hook runs the named file, and the named file runs the gate. `core.hooksPath` in this
+ *                     repository is `tools/git-hooks`, whose pre-commit hook runs `tools/scripts/pre-commit.mjs`; the
+ *                     row names the file that spawns the gate, and that file's text has to name it.
  */
-export function verifyRunsIn(entry, { scripts, headScripts = {}, workflow }) {
+export function verifyRunsIn(entry, { scripts, headScripts = {}, workflow, read = readText }) {
   if (entry.runsIn === "on-demand") return null;
   const fromPnpm = /^pnpm (\S+)$/u.exec(entry.runsIn);
   const fromSuite = /^suite:(\S+)$/u.exec(entry.runsIn);
   if (fromPnpm !== null || fromSuite !== null) {
     const name = fromPnpm?.[1] ?? fromSuite?.[1];
     const head = headScripts ?? {};
+    const commands = [scripts[name], head[name]].filter((command) => typeof command === "string");
     const readings = [
       typeof scripts[name] === "string" ? `worktree ${name} runs: ${scripts[name]}` : null,
       typeof head[name] === "string" ? `HEAD ${name} runs: ${head[name]}` : null,
@@ -835,7 +1014,17 @@ export function verifyRunsIn(entry, { scripts, headScripts = {}, workflow }) {
         detail: `${name} is in neither the worktree nor HEAD's package.json`,
       };
     if (readings.some((reading) => reading.includes(entry.path))) return null;
+    if (fromSuite !== null)
+      for (const file of commands.flatMap(testFilesOf))
+        if ((read(file) ?? "").includes(basenameOf(entry.path))) return null;
     return { code: "exempt_runs_in_script_does_not_name_the_gate", detail: readings.join("; ") };
+  }
+  const fromHook = /^hook:(\S+)$/u.exec(entry.runsIn);
+  if (fromHook !== null) {
+    const text = read(fromHook[1]);
+    if (text === null) return { code: "exempt_runs_in_unknown_hook", detail: fromHook[1] };
+    if (!text.includes(entry.path)) return { code: "exempt_runs_in_hook_does_not_name_the_gate", detail: fromHook[1] };
+    return null;
   }
   const fromWorkflow = /^ci:(\S+)$/u.exec(entry.runsIn);
   if (fromWorkflow !== null) {
@@ -848,8 +1037,41 @@ export function verifyRunsIn(entry, { scripts, headScripts = {}, workflow }) {
   return { code: "exempt_runs_in_unrecognised", detail: entry.runsIn };
 }
 
+/** The test files a script command runs: the only tokens `node --test` can be given that name a case. */
+function testFilesOf(command) {
+  return command
+    .split(/\s+/u)
+    .map((token) => token.replace(/^["']|["']$/gu, ""))
+    .filter((token) => /\.test\.(?:mjs|ts)$/u.test(token));
+}
+
 /** Reason classes that assert the gate runs on every push; that claim is checked against the CI coverage gate. */
 const RUNS_ON_EVERY_PUSH = "elsewhere";
+
+/** The class that says nothing runs the gate; the claim is checked the same way, in the opposite direction. */
+const NOTHING_RUNS_IT = "unrun";
+
+const escapeRegExp = (text) => text.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+
+/**
+ * Does this text name the gate, or the falsifier that lives beside it?
+ *
+ * The stem is what a caller writes: `tools/check-x.mjs`, `tools/check-x.test.mjs` and `tools/check-x.mutation.mjs` are
+ * one gate and its two falsifier shapes, so three spellings of "names this gate" would be three places to forget one.
+ */
+export function namesGate(text, path) {
+  const stem = String(path).replace(/\.mjs$/u, "");
+  return new RegExp(`${escapeRegExp(stem)}(?:\\.(?:test|mutation))?\\.mjs`, "u").test(text);
+}
+
+/** The scripts in these `package.json` tables whose command names the gate, as `worktree <name>` / `HEAD <name>`. */
+function entriesNaming(path, tables) {
+  return tables.flatMap((table, index) =>
+    Object.entries(table ?? {})
+      .filter(([, command]) => typeof command === "string" && namesGate(command, path))
+      .map(([name]) => `${index === 0 ? "worktree" : "HEAD"} ${name}`),
+  );
+}
 
 /**
  * The classes whose reason states a MEASUREMENT of this tree, and therefore goes stale in both directions.
@@ -904,19 +1126,31 @@ function declaredClass(entry) {
  * The register, checked in both directions. Every finding names the file it is about, because the file is the thing
  * the reader has to open. `headScripts` is `HEAD`'s script table, or `null` when git could not read it; passing it
  * is what keeps a stale worktree copy from deciding whether an exemption's `runsIn` resolves.
+ *
+ * `population` stays what `derivePopulation()` derives - the scans' answer - and `unscanned` is the declared set of gate
+ * files no scan reaches (`UNSCANNED_GATES`). They are two arguments rather than one merged list because the derivation
+ * is what `check-gate-population-agreement.mjs` reads, and widening it would have taught that gate a second rule.
+ *
+ * `read` is how a `suite:` or `hook:` claim is verified; `workflowText` is every workflow concatenated, so `unrun`
+ * ("nothing names this file") can be checked rather than asserted. Null means nobody passed it and the claim is
+ * printed as unverified instead of passing quietly.
  */
 export function checkRegistry({
   population,
+  unscanned = [],
   wired,
   exemptions = EXEMPTIONS,
   scripts,
   headScripts = {},
   workflow,
+  workflowText = null,
   ciCoverage,
   releases = releasesSince,
+  read = readText,
 }) {
   const wiredPaths = new Set(wired.keys());
-  const populationMembers = new Set(population);
+  const members = [...population, ...unscanned];
+  const populationMembers = new Set(members);
   const exempt = new Map();
   const findings = [];
   const unverified = [];
@@ -927,8 +1161,18 @@ export function checkRegistry({
     if (exempt.has(entry.path)) findings.push({ code: "exempt_duplicated", path: entry.path });
     exempt.set(entry.path, entry);
   }
-  const forgotten = population.filter((path) => !wiredPaths.has(path) && !exempt.has(path));
+  const forgotten = members.filter((path) => !wiredPaths.has(path) && !exempt.has(path));
   for (const path of forgotten) findings.push({ code: "gate_forgotten", path });
+  for (const path of unscanned) {
+    if (inAPopulationScan(path))
+      findings.push({
+        code: "unscanned_but_scanned",
+        path,
+        detail: "a population scan reaches it now; delete the row from UNSCANNED_GATES",
+      });
+    if (read(path) === null)
+      findings.push({ code: "unscanned_gate_missing", path, detail: "the declared file is not on disk" });
+  }
   const exemptOnly = exemptions.filter((entry) => !wiredPaths.has(entry.path));
   for (const entry of exemptions) {
     if (wiredPaths.has(entry.path)) {
@@ -964,7 +1208,7 @@ export function checkRegistry({
       });
       continue;
     }
-    const dangling = verifyRunsIn(entry, { scripts, headScripts, workflow });
+    const dangling = verifyRunsIn(entry, { scripts, headScripts, workflow, read });
     if (dangling !== null) findings.push({ ...dangling, path: entry.path });
     // A reason in a measured class states a reading; this is where it says when it was taken, and where a reading too
     // old to trust is named. Printed rather than found: a register that reddens on ninety unstamped rows teaches nobody
@@ -984,6 +1228,15 @@ export function checkRegistry({
         else if (since >= RELEASES_BEFORE_UNVERIFIED)
           unverified.push({ path: entry.path, why: `${since} release(s) since ${stamp.revision}` });
       }
+    }
+    if (className === NOTHING_RUNS_IT) {
+      const naming = entriesNaming(entry.path, [scripts, headScripts]);
+      if (naming.length > 0)
+        findings.push({ code: "exempt_unrun_but_named", path: entry.path, detail: `${naming.join(", ")} names it` });
+      else if (workflowText === null)
+        unverified.push({ path: entry.path, why: "no workflow text was read, so `nothing runs it` is unchecked" });
+      else if (namesGate(workflowText, entry.path))
+        findings.push({ code: "exempt_unrun_but_named", path: entry.path, detail: "a workflow step names it" });
     }
     if (className === RUNS_ON_EVERY_PUSH && entry.runsIn.startsWith("pnpm ")) {
       const script = entry.runsIn.slice("pnpm ".length);
@@ -1009,11 +1262,12 @@ export function checkRegistry({
   const onDemand = exemptions.filter((entry) => entry.runsIn === "on-demand").map((entry) => entry.path);
   return {
     status: findings.length === 0 ? "passed" : "failed",
-    wired: population.filter((path) => wiredPaths.has(path)).length,
-    total: population.length,
+    wired: members.filter((path) => wiredPaths.has(path)).length,
+    total: members.length,
     exempt: exemptOnly.length,
     byClass: Object.fromEntries([...counts.entries()].sort()),
     onDemand,
+    unscanned,
     unverified,
     scriptTrees: {
       head: headScripts === null ? null : Object.keys(headScripts).length,
@@ -1023,7 +1277,8 @@ export function checkRegistry({
   };
 }
 
-function readWorkflow(file) {
+/** A repo-relative file's text, or null when it is not there: the one reader the register asks for any file. */
+function readText(file) {
   try {
     return readFileSync(resolve(ROOT, file), "utf8");
   } catch {
@@ -1079,14 +1334,17 @@ export function auditRegistry() {
   const files = readdirSync(resolve(ROOT, WORKFLOW_DIR))
     .filter((name) => name.endsWith(".yml"))
     .map((name) => `${WORKFLOW_DIR}/${name}`);
-  const texts = new Map(files.map((file) => [file, readWorkflow(file) ?? ""]));
+  const texts = new Map(files.map((file) => [file, readText(file) ?? ""]));
   const coverage = deriveCiCoverage({ scripts, workflowText: [...texts.values()].join("\n") });
   return checkRegistry({
     population: derivePopulation(),
+    unscanned: UNSCANNED_GATES.map((entry) => entry.path),
     wired: preludeGatePaths(),
+    exemptions: [...EXEMPTIONS, ...UNSCANNED_GATES],
     scripts,
     headScripts,
     workflow: (file) => texts.get(file) ?? null,
+    workflowText: [...texts.values()].join("\n"),
     ciCoverage: {
       runs: new Set([...coverage.workflow, ...coverage.derived]),
       registered: new Map(coverage.register.map((entry) => [entry.script, entry])),
@@ -1119,6 +1377,10 @@ export function renderRegistry(result) {
     );
   if (result.onDemand.length > 0)
     lines.push(`prelive_gate_registry: no_scheduled_home=${result.onDemand.length} ${result.onDemand.join(",")}`);
+  // Printed apart from the population on purpose: these are gate files the derivation does not scan, and a reader has to
+  // see that they are declared rather than counted among the members a scan found.
+  if (result.unscanned.length > 0)
+    lines.push(`prelive_gate_registry: outside_the_scan=${result.unscanned.length} ${result.unscanned.join(",")}`);
   if (result.unverified.length > 0)
     lines.push(
       `prelive_gate_registry: reason_unverified=${result.unverified.length} ${result.unverified

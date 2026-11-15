@@ -10,6 +10,7 @@ import {
   checkRegistry,
   derivePopulation,
   EXEMPTIONS,
+  inAPopulationScan,
   POPULATION_SCAN,
   preludeGatePaths,
   REASON_CLASSES,
@@ -18,6 +19,7 @@ import {
   renderRegistry,
   scriptTreeDisagreements,
   STARDEW_TESTS,
+  UNSCANNED_GATES,
   verifyRunsIn,
 } from "./check-prelive-gate-registry.mjs";
 import { GATE_DIRECTORIES } from "../registry.mjs";
@@ -161,12 +163,22 @@ test("a reason with no declared class, or too short to name anything, is not an 
   assert.match(tooShort.findings[0].detail, /too short/u);
 });
 
-test("every declared reason class has a meaning, and every exemption uses one", () => {
-  for (const entry of EXEMPTIONS) {
+test("every declared reason class has a meaning, every exemption uses one, and no class sits unused", () => {
+  for (const entry of [...EXEMPTIONS, ...UNSCANNED_GATES]) {
     const className = entry.reason.split(":")[0].trim();
     assert.ok(Object.hasOwn(REASON_CLASSES, className), `${entry.path} uses undeclared class ${className}`);
     assert.ok(REASON_CLASSES[className].length > 40, `${className} must say why, not just name a bucket`);
   }
+  // A class no row can use is a mechanism that exists and cannot be used - measured 2026-11-15: `suite` was declared and
+  // unusable, because `verifyRunsIn` looked for the gate's path in a command that names the gate's falsifier, so a lane
+  // that reached for the register's own vocabulary got a second red finding. A declared class is a claim that some row
+  // can state it, and this is the line where that claim is held.
+  const used = new Set([...EXEMPTIONS, ...UNSCANNED_GATES].map((entry) => entry.reason.split(":")[0].trim()));
+  assert.deepEqual(
+    Object.keys(REASON_CLASSES).filter((className) => !used.has(className)),
+    [],
+    "a reason class no row uses is a class nobody can use",
+  );
 });
 
 test("a runsIn that names no script, or a script that does not name the gate, is dangling", () => {
@@ -304,6 +316,144 @@ test("verifyRunsIn reads on-demand as a claim with no scheduled home, not as a p
   });
 });
 
+test("a suite: row is wired by the suite's own case, and a suite that never names the gate is red", () => {
+  const base = {
+    population: ["tools/check-suite.mjs"],
+    wired: new Map(),
+    scripts: { "test:suite": "node --test tools/check-suite.test.mjs" },
+    workflow: () => "",
+    ciCoverage: { runs: new Set(), registered: new Map() },
+  };
+  const entry = {
+    path: "tools/check-suite.mjs",
+    reason:
+      "suite: its rule is exercised by its own falsifier inside the tool-test corpus, and no script runs the gate",
+    runsIn: "suite:test:suite",
+  };
+  // The falsifier's command names `<gate>.test.mjs`, which does not contain `<gate>.mjs`: the test file the suite runs is
+  // read instead, and its import is the case this row claims.
+  const naming = checkRegistry({ ...base, exemptions: [entry], read: () => '} from "./check-suite.mjs";' });
+  assert.equal(naming.status, "passed");
+  // FALSIFIER: a suite whose test file names another gate is not this gate's case, so accepting any test file - the
+  // loosening this rule could rot into - is red.
+  const other = checkRegistry({ ...base, exemptions: [entry], read: () => '} from "./check-other.mjs";' });
+  assert.deepEqual(codesFor(other), ["exempt_runs_in_script_does_not_name_the_gate:tools/check-suite.mjs"]);
+  // FALSIFIER: a test file nobody can read is not a case either, so an unreadable tree cannot pass on faith.
+  const unreadable = checkRegistry({ ...base, exemptions: [entry], read: () => null });
+  assert.deepEqual(codesFor(unreadable), ["exempt_runs_in_script_does_not_name_the_gate:tools/check-suite.mjs"]);
+});
+
+test("an unrun row states that nothing runs the gate, and reddens the moment anything names it", () => {
+  const entry = {
+    path: "tools/check-orphan.mjs",
+    reason: "unrun: no script names it or its falsifier, so its verdict on the real tree has never been produced",
+    runsIn: "on-demand",
+  };
+  const base = {
+    population: ["tools/check-orphan.mjs"],
+    wired: new Map(),
+    scripts: {},
+    workflow: () => "",
+    workflowText: "run: pnpm test",
+    ciCoverage: { runs: new Set(), registered: new Map() },
+  };
+  assert.equal(checkRegistry({ ...base, exemptions: [entry] }).status, "passed");
+  const byScript = checkRegistry({
+    ...base,
+    exemptions: [entry],
+    scripts: { "check:orphan": "node tools/check-orphan.mjs" },
+  });
+  assert.deepEqual(codesFor(byScript), ["exempt_unrun_but_named:tools/check-orphan.mjs"]);
+  assert.match(byScript.findings[0].detail, /worktree check:orphan/u);
+  // The falsifier counts as a run of the rule: a `test:` script that runs it means the rule is measured somewhere.
+  const byFalsifier = checkRegistry({
+    ...base,
+    exemptions: [entry],
+    scripts: { "test:orphan": "node --test tools/check-orphan.test.mjs" },
+  });
+  assert.deepEqual(codesFor(byFalsifier), ["exempt_unrun_but_named:tools/check-orphan.mjs"]);
+  const byWorkflow = checkRegistry({
+    ...base,
+    exemptions: [entry],
+    workflowText: "      - run: node tools/check-orphan.mjs",
+  });
+  assert.deepEqual(codesFor(byWorkflow), ["exempt_unrun_but_named:tools/check-orphan.mjs"]);
+  assert.match(byWorkflow.findings[0].detail, /a workflow step names it/u);
+  // With no workflow text the claim is unchecked, which is printed as unverified rather than passed quietly.
+  const unread = checkRegistry({ ...base, exemptions: [entry], workflowText: null });
+  assert.deepEqual(codesFor(unread), []);
+  assert.equal(unread.unverified.length, 1);
+});
+
+test("a hook: row is checked against the hook file that spawns the gate", () => {
+  const entry = {
+    path: "tools/scripts/check-hooked.mjs",
+    reason: "fixup: reads git state and runs only from the pre-commit hook, so no pnpm script names it at all",
+    runsIn: "hook:tools/scripts/pre-commit.mjs",
+  };
+  const base = {
+    population: [],
+    unscanned: ["tools/scripts/check-hooked.mjs"],
+    wired: new Map(),
+    scripts: {},
+    workflow: () => "",
+    ciCoverage: { runs: new Set(), registered: new Map() },
+  };
+  const naming = checkRegistry({
+    ...base,
+    exemptions: [entry],
+    read: () => 'execFileSync("node", ["tools/scripts/check-hooked.mjs"]);',
+  });
+  assert.equal(naming.status, "passed");
+  const other = checkRegistry({ ...base, exemptions: [entry], read: () => "process.exitCode = 0;" });
+  assert.deepEqual(codesFor(other), ["exempt_runs_in_hook_does_not_name_the_gate:tools/scripts/check-hooked.mjs"]);
+  // A hook file that is gone, and a declared gate that is gone, are both named: neither is a pass.
+  const missing = checkRegistry({ ...base, exemptions: [entry], read: () => null });
+  assert.deepEqual(codesFor(missing), [
+    "exempt_runs_in_unknown_hook:tools/scripts/check-hooked.mjs",
+    "unscanned_gate_missing:tools/scripts/check-hooked.mjs",
+  ]);
+});
+
+test("a declared unscanned gate is a population member, and the row retires once a scan reaches it", () => {
+  const entry = {
+    path: "tools/scripts/check-hook-gate.mjs",
+    reason: "fixup: runs from a git hook, in a directory no population scan reaches, so nothing derives it at all",
+    runsIn: "on-demand",
+  };
+  const base = {
+    population: [],
+    wired: new Map(),
+    scripts: {},
+    workflow: () => "",
+    ciCoverage: { runs: new Set(), registered: new Map() },
+  };
+  const declared = checkRegistry({
+    ...base,
+    unscanned: [entry.path],
+    exemptions: [entry],
+    read: () => "#!/usr/bin/env node",
+  });
+  assert.equal(declared.status, "passed");
+  assert.equal(declared.total, 1, "a declared gate is a member of the population, not a footnote beside it");
+  assert.equal(declared.exempt, 1);
+  assert.deepEqual(
+    declared.unscanned,
+    [entry.path],
+    "and it is printed as outside the scan, not counted among the found",
+  );
+  // FALSIFIER: the row is a claim that no scan reaches the path, so a path a scan does reach makes it stale.
+  const scanned = checkRegistry({
+    ...base,
+    population: ["tools/check-a.mjs"],
+    unscanned: ["tools/check-a.mjs"],
+    exemptions: [{ path: "tools/check-a.mjs", reason: entry.reason, runsIn: "on-demand" }],
+    read: () => "export {};",
+  });
+  assert.deepEqual(codesFor(scanned), ["unscanned_but_scanned:tools/check-a.mjs"]);
+  assert.match(scanned.findings[0].detail, /delete the row from UNSCANNED_GATES/u);
+});
+
 test("the derivation excludes both kinds of falsifier and includes the tree-guarding stardew tests", () => {
   const population = derivePopulation({
     list: (dir) =>
@@ -360,6 +510,13 @@ test("the real tree: the wired set is exactly what the ladder declares, and no g
   assert.ok(result.total > 90, `the population is the tree's gates, not a sample: ${result.total}`);
   assert.equal(result.wired, wired.size);
   assert.equal(result.wired + result.exempt, result.total);
+  // The declaration is a claim that no scan reaches these paths, and the derived and declared halves must agree on it.
+  assert.ok(result.unscanned.length > 0, "the gate files no scan reaches are declared here, not silently absent");
+  assert.deepEqual(
+    result.unscanned.filter((path) => inAPopulationScan(path)),
+    [],
+    "a path declared outside the scan is one a population scan does not reach",
+  );
   assert.equal([...PRELUDE_RUNGS].length, 2);
 });
 
@@ -373,7 +530,7 @@ test("the real tree: every withdrawn gate names the input or the measurement tha
   );
   for (const path of result.onDemand)
     assert.ok(
-      EXEMPTIONS.find((entry) => entry.path === path)?.reason.length > 40,
+      [...EXEMPTIONS, ...UNSCANNED_GATES].find((entry) => entry.path === path)?.reason.length > 40,
       `${path} has no scheduled home and must still say why`,
     );
 });
