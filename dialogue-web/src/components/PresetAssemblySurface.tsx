@@ -302,5 +302,7 @@ function notAppliedReason(row: PresetNotAppliedV1, labels: Messages): string {
       return labels.presetNotAppliedReasonNoValueToSend;
     case "one_completion_per_call":
       return labels.presetNotAppliedReasonOneCompletionPerCall;
+    default:
+      return assertNever(row.code);
   }
 }
