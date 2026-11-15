@@ -17,6 +17,7 @@ export const CHAT_MUTATION_KINDS = [
   "rewind",
   "edit",
   "delete",
+  "fork",
 ] as const;
 
 /** One of them, named. */
@@ -99,7 +100,8 @@ export type MessageMutationInput = Readonly<{
  * Written seven times by hand these were seven copies, and each copy was free to drop one of the
  * three. `handleSend` and `handleStop` are deliberately not callers: neither takes this latch (send
  * is gated by the pending record it publishes, stop belongs to a turn that is already running), and
- * folding them in would change behaviour rather than shape.
+ * folding them in would change behaviour rather than shape. The fork's press IS a caller: it mints a
+ * durable Chat on the same latch, so a second press in the same tick cannot mint a second branch.
  */
 export function createMessageMutation(input: MessageMutationInput): MessageMutation {
   return async (request) => {

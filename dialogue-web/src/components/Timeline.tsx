@@ -28,10 +28,11 @@ export function Timeline({
   swipeRemoveArmedHandle = null,
   onRegenerate,
   onOpeningVariant,
-  onRewind,
-  onRewindConfirm,
-  onRewindCancel,
-  rewindArmedHandle = null,
+  onActFromHere,
+  onActRewind,
+  onActFork,
+  onActCancel,
+  actArmedHandle = null,
   onEdit,
   onDelete,
   onDeleteConfirm,
@@ -117,6 +118,13 @@ export function Timeline({
     deleteConfirmPrompt: string;
     deleteConfirmYes: string;
     deleteConfirmNo: string;
+    /** The branch control and the confirmation it opens, on the row it would cut at. */
+    /** The one entry a message has for changing what comes after it, and the two answers it opens. */
+    actFromHere: string;
+    actFromHereName: string;
+    actChoicePrompt: string;
+    forkFromHere: string;
+    forkFromHereName: string;
     /**
      * The copy control and the one line it leaves behind. It mutates nothing, so its name says what it
      * does rather than what it costs, and its confirmation is the transient receipt.
@@ -141,17 +149,21 @@ export function Timeline({
   /** The new-chat opening choice for the first message; offered only when the Host publishes one. */
   onOpeningVariant?: (messageHandle: string, direction: "prev" | "next") => void;
   /**
-   * The rewind point and its confirmation: the arm names the message and the order the timeline
-   * rendered it at, the confirm sends the mutation, and the cancel closes the arm.
+   * The one entry a message has for changing what comes after it, and the two answers it opens: a fork
+   * (the prefix becomes a second Chat, the origin keeps everything) and a rewind (the messages after this
+   * one are removed). The arm names the message and the order the timeline rendered it at; the two answers
+   * send their own operation; the cancel closes the arm.
    */
-  onRewind?: (messageHandle: string, expectedOrder: number) => void;
-  onRewindConfirm?: (messageHandle: string, expectedOrder: number) => void;
-  onRewindCancel?: () => void;
-  /** The one message whose rewind is armed, if any. */
-  rewindArmedHandle?: string | null /**
+  onActFromHere?: (messageHandle: string, expectedOrder: number) => void;
+  onActRewind?: (messageHandle: string, expectedOrder: number) => void;
+  onActFork?: (messageHandle: string) => void;
+  onActCancel?: () => void;
+  /** The one message whose choice is open, if any. */
+  actArmedHandle?: string | null;
+  /**
    * The edit control: the player's own message sends the text they rewrote and the order the timeline
    * rendered it at, so the Host can refuse a row that moved under the editor.
-   */;
+   */
   onEdit?: (messageHandle: string, expectedOrder: number, text: string) => void;
   /**
    * The delete point and its confirmation: the arm names the message and the order the timeline
@@ -170,7 +182,7 @@ export function Timeline({
    * regenerate affordance of another.
    */
   pending?: Readonly<{
-    kind: "swipe" | "swipeRemove" | "regenerate" | "opening" | "rewind" | "edit" | "delete";
+    kind: "swipe" | "swipeRemove" | "regenerate" | "opening" | "rewind" | "edit" | "delete" | "fork";
     handle: string;
   }> | null;
   /**
@@ -243,9 +255,10 @@ export function Timeline({
   const onSwipeRemoveCancelRef = useRef(onSwipeRemoveCancel);
   const onRegenerateRef = useRef(onRegenerate);
   const onOpeningVariantRef = useRef(onOpeningVariant);
-  const onRewindRef = useRef(onRewind);
-  const onRewindConfirmRef = useRef(onRewindConfirm);
-  const onRewindCancelRef = useRef(onRewindCancel);
+  const onActFromHereRef = useRef(onActFromHere);
+  const onActRewindRef = useRef(onActRewind);
+  const onActForkRef = useRef(onActFork);
+  const onActCancelRef = useRef(onActCancel);
   const onEditRef = useRef(onEdit);
   const onDeleteRef = useRef(onDelete);
   const onDeleteConfirmRef = useRef(onDeleteConfirm);
@@ -263,9 +276,10 @@ export function Timeline({
     onSwipeRemoveCancelRef.current = onSwipeRemoveCancel;
     onRegenerateRef.current = onRegenerate;
     onOpeningVariantRef.current = onOpeningVariant;
-    onRewindRef.current = onRewind;
-    onRewindConfirmRef.current = onRewindConfirm;
-    onRewindCancelRef.current = onRewindCancel;
+    onActFromHereRef.current = onActFromHere;
+    onActRewindRef.current = onActRewind;
+    onActForkRef.current = onActFork;
+    onActCancelRef.current = onActCancel;
     onEditRef.current = onEdit;
     onDeleteRef.current = onDelete;
     onDeleteConfirmRef.current = onDeleteConfirm;
@@ -290,14 +304,17 @@ export function Timeline({
   const handleOpeningVariant = useCallback((messageHandle: string, direction: "prev" | "next") => {
     onOpeningVariantRef.current?.(messageHandle, direction);
   }, []);
-  const handleRewind = useCallback((messageHandle: string, expectedOrder: number) => {
-    onRewindRef.current?.(messageHandle, expectedOrder);
+  const handleActFromHere = useCallback((messageHandle: string, expectedOrder: number) => {
+    onActFromHereRef.current?.(messageHandle, expectedOrder);
   }, []);
-  const handleRewindConfirm = useCallback((messageHandle: string, expectedOrder: number) => {
-    onRewindConfirmRef.current?.(messageHandle, expectedOrder);
+  const handleActRewind = useCallback((messageHandle: string, expectedOrder: number) => {
+    onActRewindRef.current?.(messageHandle, expectedOrder);
   }, []);
-  const handleRewindCancel = useCallback(() => {
-    onRewindCancelRef.current?.();
+  const handleActFork = useCallback((messageHandle: string) => {
+    onActForkRef.current?.(messageHandle);
+  }, []);
+  const handleActCancel = useCallback(() => {
+    onActCancelRef.current?.();
   }, []);
   const handleEdit = useCallback((messageHandle: string, expectedOrder: number, text: string) => {
     onEditRef.current?.(messageHandle, expectedOrder, text);
@@ -318,8 +335,9 @@ export function Timeline({
   const swipeRemoveConfirmHandler = onSwipeRemoveConfirm === undefined ? undefined : handleSwipeRemoveConfirm;
   const regenerateHandler = onRegenerate === undefined ? undefined : handleRegenerate;
   const openingVariantHandler = onOpeningVariant === undefined ? undefined : handleOpeningVariant;
-  const rewindHandler = onRewind === undefined ? undefined : handleRewind;
-  const rewindConfirmHandler = onRewindConfirm === undefined ? undefined : handleRewindConfirm;
+  const actFromHereHandler = onActFromHere === undefined ? undefined : handleActFromHere;
+  const actRewindHandler = onActRewind === undefined ? undefined : handleActRewind;
+  const actForkHandler = onActFork === undefined ? undefined : handleActFork;
   const editHandler = onEdit === undefined ? undefined : handleEdit;
   const deleteHandler = onDelete === undefined ? undefined : handleDelete;
   const deleteConfirmHandler = onDeleteConfirm === undefined ? undefined : handleDeleteConfirm;
@@ -509,10 +527,11 @@ export function Timeline({
               swipeRemoveArmed={swipeRemoveArmedHandle === message.handle}
               onRegenerate={message.handle === regenerateHandle ? regenerateHandler : undefined}
               onOpeningVariant={openingVariantHandler}
-              onRewind={rewindHandler}
-              onRewindConfirm={rewindConfirmHandler}
-              onRewindCancel={onRewindCancel === undefined ? undefined : handleRewindCancel}
-              rewindArmed={rewindArmedHandle === message.handle}
+              onActFromHere={actFromHereHandler}
+              onActRewind={actRewindHandler}
+              onActFork={actForkHandler}
+              onActCancel={onActCancel === undefined ? undefined : handleActCancel}
+              actArmed={actArmedHandle === message.handle}
               onEdit={editHandler}
               onDelete={deleteHandler}
               onDeleteConfirm={deleteConfirmHandler}

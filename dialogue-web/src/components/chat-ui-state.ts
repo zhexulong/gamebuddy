@@ -15,17 +15,22 @@ import type { ChatModelRoute } from "../chat-model-route";
  */
 
 /**
- * The one destructive act the surface is asking the player to confirm, with the fact the row it
- * belongs to was rendered at.
+ * The one act the surface is asking the player to confirm, with the fact the row it belongs to was
+ * rendered at.
  *
  * It is one value rather than one nullable handle per verb: two confirmations open at once would
  * leave the player unable to tell what the next press removes, so the shell holds exactly one of
  * these and arming a second act replaces the first by construction instead of by three handlers each
  * remembering to clear the other two.
+ *
+ * `from_here` is the choice a message offers over what comes after it - fork the conversation here, or
+ * rewind back to it - and it is armed like the destructive ones even though only one of its two answers
+ * removes anything: the player has to be told what each branch does before the press that does it, and the
+ * destructive answer must never be the button beside a quiet one.
  */
 export type ChatArmedAction =
   | Readonly<{ action: "delete"; targetId: string; expectedOrder: number }>
-  | Readonly<{ action: "rewind"; targetId: string; expectedOrder: number }>
+  | Readonly<{ action: "from_here"; targetId: string; expectedOrder: number }>
   | Readonly<{ action: "swipe_remove"; targetId: string }>;
 
 /**
@@ -152,7 +157,7 @@ export function replyHasNoModel(send: ChatSendGate): boolean {
 }
 
 /**
- * The row each destructive confirmation is open on, if any.
+ * The row each confirmation is open on, if any.
  *
  * `Timeline` takes one nullable handle per verb because a row asks only "is this mine"; this is the
  * one place the surface's single arm is spelled back into that per-row shape, so no second reader
@@ -160,13 +165,13 @@ export function replyHasNoModel(send: ChatSendGate): boolean {
  */
 export function armedRows(state: ChatUIState): Readonly<{
   swipeRemove: string | null;
-  rewind: string | null;
+  fromHere: string | null;
   delete: string | null;
 }> {
   const armed = state.armed;
   return {
     swipeRemove: armed?.action === "swipe_remove" ? armed.targetId : null,
-    rewind: armed?.action === "rewind" ? armed.targetId : null,
+    fromHere: armed?.action === "from_here" ? armed.targetId : null,
     delete: armed?.action === "delete" ? armed.targetId : null,
   };
 }

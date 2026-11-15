@@ -1187,14 +1187,20 @@ test("defect 6: the narrow strip is one row and the player's own line is as wide
       regenerate: read(".regenerate-btn"),
     };
   });
-  const rewindControl = measured.strip.controls.find((control) => String(control.className).includes("rewind-btn"));
+  // The entry the row offers over what comes after it: its class names the control, and its glyph is the cut
+  // rather than the friendly arrow beside it.
+  const rewindControl = measured.strip.controls.find((control) => String(control.className).includes("act-btn"));
   expect(rewindControl?.glyph, "the rewind draws a cut").toBe("lucide-scissors");
   expect(glyphs.regenerate?.glyph, "Regenerate keeps its circular arrow").toBe("lucide-refresh-cw");
   expect(rewindControl?.glyph, "so the destructive control is not the friendly one").not.toBe(
     glyphs.regenerate?.glyph,
   );
-  expect(rewindControl?.name, "and the rewind still names what it keeps and removes").toContain("回退到此处");
-  expect(rewindControl?.name, "including the count it would remove").toContain("（共 2 条）");
+  // The entry names the POINT rather than one of its two answers now: pressing it opens the choice between
+  // forking from here and rewinding back to here, so naming it "Rewind to here" would be the lie this fold
+  // exists to avoid. The count it would remove is still stated - inside the choice, on the rewind answer's
+  // own name, which `chat-rewind.spec.ts` pins.
+  expect(rewindControl?.name, "the entry names both answers it opens").toContain("从这里分出新对话");
+  expect(rewindControl?.name, "including the destructive one").toContain("回退到这条消息");
   expect(glyphs.regenerate?.name, "while Regenerate is still named by its own word").toBe("重新生成");
   expect(rewindControl?.width, "the rewind's box did not move with its glyph").toBe(44);
   expect(rewindControl?.height, "and neither did its target").toBe(44);
@@ -1240,9 +1246,11 @@ test("defect 6: the narrow strip is one row and the player's own line is as wide
   // 403 was what this strip's contents gave it before copy joined (the pager plus the three controls
   // wearing their words). 479 was what they gave it with Copy at 70 px on the end. 527 is the same
   // contents with the variant discard inside the pager: its 44 px control plus two 4 px inner gaps,
-  // 48 px, is the whole of the difference (measured). Nothing was made smaller to reach it: this is the
-  // width its contents ask for, and at 1440 the reply has that much column to give.
-  expect(wide.strip.width, "and the strip keeps the width its contents give it").toBe(527);
+  // 48 px, is the whole of the difference (measured). 512 is the same five children after the rewind's
+  // entry became the one control a message offers over what comes after it, wearing "From here…" instead
+  // of "Rewind to here" - the words changed, the contents did not, and nothing was made smaller to reach
+  // it: this is the width its contents ask for, and at 1440 the reply has that much column to give.
+  expect(wide.strip.width, "and the strip keeps the width its contents give it").toBe(512);
 });
 
 // --- the strip's narrow form is keyed on its own column, not on the window (defect 7) ---

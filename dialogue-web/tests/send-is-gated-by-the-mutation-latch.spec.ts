@@ -109,8 +109,8 @@ test("a send is not offered into a transcript a rewind is truncating", async ({ 
   await expect(composer).toBeEnabled();
 
   // The player rewinds to their own line: everything after it is about to be destroyed.
-  await page.locator(`li[data-handle='${playerHandle}']`).locator('[data-testid="message-rewind"]').click();
-  await page.locator('[data-testid="message-rewind-confirm-yes"]').click();
+  await page.locator(`li[data-handle='${playerHandle}']`).locator('[data-testid="message-act"]').click();
+  await page.locator('[data-testid="message-rewind-to-here"]').click();
   await expect.poll(() => rewind.inFlight).toBe(true);
 
   const measured = await page.evaluate(() => ({

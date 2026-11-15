@@ -137,8 +137,8 @@ async function press(page: Page, refusal: (typeof REFUSALS)[number]): Promise<vo
   const reply = row(page, replyHandle);
   switch (refusal.name) {
     case "rewind":
-      await player.locator('[data-testid="message-rewind"]').click();
-      await page.locator('[data-testid="message-rewind-confirm-yes"]').click();
+      await player.locator('[data-testid="message-act"]').click();
+      await page.locator('[data-testid="message-rewind-to-here"]').click();
       return;
     case "delete":
       await reply.locator('[data-testid="message-delete"]').click();

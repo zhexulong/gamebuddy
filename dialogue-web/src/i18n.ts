@@ -602,10 +602,28 @@ const en = {
   // follows, as Pi and SillyTavern both do, so the count is the rows AFTER this one and a player row
   // is a legal point - their line survives, their reply does not.
   rewindHere: "Rewind to here",
-  rewindHereName: "Rewind to here: keeps this message and removes everything after it ({{count}} in all)",
+  rewindHereName:
+    "Rewind to here: keeps this message and removes everything after it ({{count}} in all) - this screen cannot bring them back",
   rewindConfirmPrompt: "Confirm rewind to here (keeps this message, deletes everything after it)",
   rewindConfirmYes: "Rewind to here",
   rewindConfirmNo: "Cancel",
+  // The one entry a message has for changing what is after it: a fork and a rewind are the same question
+  // asked two ways (read on from here, or cut back to here), so they are two answers in one place rather
+  // than two controls in a strip that already holds every target it can carry. The prompt carries BOTH
+  // branches' consequences, because the player is choosing between them: a fork keeps every later message
+  // in both chats and both chats share her memory (a fork copies the continuity), and a rewind removes the
+  // later messages from this one with no way back from this screen.
+  actFromHere: "From here…",
+  actFromHereName: "From this message: fork the conversation from here, or rewind back to it",
+  actChoicePrompt:
+    "From here: fork keeps every later message in both chats, and both chats share her memory. Rewind removes the {{count}} later messages from this chat, and this screen cannot bring them back.",
+  // The branch's own answer inside that choice. Its name repeats the two facts the prompt states, because a
+  // screen reader reaches the answer without the sentence above it.
+  forkFromHere: "Fork from here",
+  forkFromHereName: "Fork from here: this chat keeps every later message, and both chats share her memory",
+  // Said when the branch was created and this window could not move to it: two outcomes, one sentence. The
+  // branch is durable and in the Chats list, so the player is not told the fork failed.
+  chatForkSwitchFailed: "The branch was created, but this window could not switch to it. Open it from Chats.",
   // The edit control: the player's own row carries one button, and pressing it opens the field their
   // words came from. Its accessible name says what saving does to the conversation - the model reads
   // the new words from the next turn on - because an edit that only changed the bubble would be a lie.
@@ -1783,10 +1801,24 @@ const zh: Messages = {
   // 消息、只删掉其后的内容（与 Pi、SillyTavern 一致），所以数目是这条之后的条数，玩家自己那一行也是合法
   // 的回退点——他们的话留着，回答没了，等着被重新回答。
   rewindHere: "回退到此处",
-  rewindHereName: "回退到此处：保留这条消息，删除其后的全部内容（共 {{count}} 条）",
+  rewindHereName: "回退到此处：保留这条消息，删除其后的全部内容（共 {{count}} 条），这个界面找不回来",
   rewindConfirmPrompt: "确认回退到此处（保留本条，删除其后全部消息）",
   rewindConfirmYes: "回退到此处",
   rewindConfirmNo: "取消",
+  // 一条消息只有这一个入口来改变它之后的内容：分叉与回退是同一个问题的两种答法（从这里往下读，还是剪回这里），
+  // 所以它们是同一个地方的两个答案，而不是操作条上的第二个控件——那条操作条已经装满了它所能承载的靶点。提示语
+  // 同时说清两条分支的后果，因为玩家正在两者之间选：分叉在两个会话里都保留其后全部消息，而且两个会话共享她的记忆
+  // （分叉会复制 continuity）；回退则从这个会话里删掉其后消息，这个界面找不回来。
+  actFromHere: "从这里…",
+  actFromHereName: "从这条消息出发：从这里分出新对话，或者回退到这条消息",
+  actChoicePrompt:
+    "从这里出发：分叉会在两个会话里保留其后的全部消息，两个会话共享她的记忆。回退会从本会话删掉其后的 {{count}} 条消息，这个界面找不回来。",
+  // 那个选择里属于分支的答案。它的名称重述了提示语里的两个事实，因为读屏软件可能直接落到按钮上，听不到上面那句。
+  forkFromHere: "从这里分出新对话",
+  forkFromHereName: "从这里分出新对话：本会话保留其后的全部消息，两个会话共享她的记忆",
+  // 分支已经建好、但这个窗口没能切过去时说的话：两个结果，一句话。分支是持久的，也在会话列表里，所以不能
+  // 告诉玩家分叉失败了。
+  chatForkSwitchFailed: "分支已经建好，但这个窗口没能切过去。请到会话列表里打开它。",
   // 编辑控件：玩家自己的那一行只带一个按钮，按下后打开写这句话的输入框。无障碍名称说清保存后对话会发生什么
   // ——模型从下一轮开始读到你改写后的文字，因为只改气泡不改模型所见就是一种欺骗。
   editMessage: "编辑",

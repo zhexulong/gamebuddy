@@ -1029,10 +1029,10 @@
     cursor: not-allowed;
   }
 
-  /* The rewind control. It is the destructive affordance in this row, so it carries the same 44 px
-   target as the rest of the strip and, once armed, the row shows the confirmation instead of the
-   controls it would cut away. */
-  .rewind-btn {
+  /* The entry a message offers over what comes after it (branch here, or rewind back to it). It is the
+   destructive affordance in this row ONCE its choice is answered, so it carries the same 44 px target as the
+   rest of the strip, and the row shows the choice instead of the controls it would replace. */
+  .act-btn {
     display: inline-flex;
     align-items: center;
     gap: var(--space-1);
@@ -1049,13 +1049,13 @@
     cursor: pointer;
   }
 
-  .rewind-btn:hover:not(:disabled) {
+  .act-btn:hover:not(:disabled) {
     color: var(--text-primary);
     background-color: var(--surface-hover);
     border-color: var(--border-strong);
   }
 
-  .rewind-btn:disabled {
+  .act-btn:disabled {
     opacity: 0.5;
     cursor: not-allowed;
   }
@@ -1077,6 +1077,9 @@
     display: flex;
     align-items: center;
     gap: var(--space-2);
+    /* Two answers and the way out: the choice carries one more answer than the confirmations this block
+       used to hold, so it wraps rather than widening the row at a narrow width. */
+    flex-wrap: wrap;
   }
 
   /* The two destructive confirmations on a message row - the rewind's and the delete's - are ONE
@@ -1091,6 +1094,8 @@
   .rewind-confirm-no,
   .delete-confirm-yes,
   .delete-confirm-no,
+  .fork-confirm-yes,
+  .act-confirm-no,
   .swipe-remove-confirm-yes,
   .swipe-remove-confirm-no {
     display: inline-flex;
@@ -1116,14 +1121,36 @@
 
   .rewind-confirm-no,
   .delete-confirm-no,
+  .act-confirm-no,
   .swipe-remove-confirm-no {
     color: var(--text-secondary);
     background-color: transparent;
     border: 1px solid var(--border-subtle);
   }
 
+  /* The branch's answer is NOT painted with `--danger`: nothing is cut away, the conversation the player
+     is reading keeps every message, and the branch is what they asked for. It is the quiet plate's
+     opposite number - the raised surface and the strong border - so it reads as the act it is, and its
+     cancel keeps the quiet treatment beside it. */
+  .fork-confirm-yes {
+    color: var(--text-primary);
+    background-color: var(--surface-raised);
+    border: 1px solid var(--border-strong);
+  }
+
+  .fork-confirm-yes:hover:not(:disabled) {
+    background-color: var(--surface-hover);
+    border-color: var(--border-strong);
+  }
+
+  .fork-confirm-yes:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
   .rewind-confirm-no:hover:not(:disabled),
-  .delete-confirm-no:hover:not(:disabled) {
+  .delete-confirm-no:hover:not(:disabled),
+  .act-confirm-no:hover:not(:disabled) {
     background-color: var(--surface-hover);
     color: var(--text-primary);
   }

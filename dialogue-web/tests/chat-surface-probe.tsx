@@ -69,7 +69,7 @@ type Model = Readonly<{
   /** The chat mutation in flight, exactly as the shell projects it to Timeline. */
   pending: Readonly<{ kind: "swipe" | "regenerate" | "opening" | "rewind" | "edit" | "delete"; handle: string }> | null;
   /** The one message whose rewind is armed, exactly as the shell projects it to Timeline. */
-  rewindArmedHandle: string | null;
+  actArmedHandle: string | null;
   /** The one message whose delete is armed, exactly as the shell projects it to Timeline. */
   deleteArmedHandle: string | null;
   /** The one message whose variant discard is armed, exactly as the shell projects it. */
@@ -98,7 +98,7 @@ let model: Model = {
   preview: null,
   voice: null,
   pending: null,
-  rewindArmedHandle: null,
+  actArmedHandle: null,
   deleteArmedHandle: null,
   swipeRemoveArmed: null,
   replyTruncated: false,
@@ -152,22 +152,22 @@ function Probe() {
          * here, exactly as the shell keeps it, and the confirm is what a journey observes on the
          * way to the Host.
          */
-        onRewind={(handle, order) => {
+        onActFromHere={(handle, order) => {
           rewindCalls.push({ kind: "arm", handle, order });
-          model = { ...model, rewindArmedHandle: handle };
+          model = { ...model, actArmedHandle: handle };
           rerender?.();
         }}
-        onRewindConfirm={(handle, order) => {
+        onActRewind={(handle, order) => {
           rewindCalls.push({ kind: "confirm", handle, order });
-          model = { ...model, rewindArmedHandle: null };
+          model = { ...model, actArmedHandle: null };
           rerender?.();
         }}
-        onRewindCancel={() => {
+        onActCancel={() => {
           rewindCalls.push({ kind: "cancel", handle: "", order: -1 });
-          model = { ...model, rewindArmedHandle: null };
+          model = { ...model, actArmedHandle: null };
           rerender?.();
         }}
-        rewindArmedHandle={model.rewindArmedHandle}
+        actArmedHandle={model.actArmedHandle}
         onEdit={(handle, order, text) => {
           editCalls.push({ handle, order, text });
         }}
@@ -386,7 +386,7 @@ const chatProbe = {
       no: confirm.querySelector('[data-testid="message-swipe-remove-confirm-no"]')?.textContent ?? null,
       ordinaryControls:
         li?.querySelectorAll(
-          '.swipe-controls, .regenerate-btn, [data-testid="message-rewind"], [data-testid="message-edit"], [data-testid="message-delete"]',
+          '.swipe-controls, .regenerate-btn, [data-testid="message-act"], [data-testid="message-edit"], [data-testid="message-delete"]',
         ).length ?? 0,
     };
   },
@@ -444,7 +444,7 @@ const chatProbe = {
       no: confirm.querySelector('[data-testid="message-delete-confirm-no"]')?.textContent ?? null,
       ordinaryControls:
         li?.querySelectorAll(
-          '.swipe-controls, .regenerate-btn, [data-testid="message-rewind"], [data-testid="message-edit"], [data-testid="message-delete"]',
+          '.swipe-controls, .regenerate-btn, [data-testid="message-act"], [data-testid="message-edit"], [data-testid="message-delete"]',
         ).length ?? 0,
     };
   },
@@ -608,7 +608,7 @@ const chatProbe = {
     height: number;
   } | null {
     const li = document.querySelector(`li[data-handle="${handle}"]`);
-    const button = li?.querySelector('[data-testid="message-rewind"]') as HTMLButtonElement | null;
+    const button = li?.querySelector('[data-testid="message-act"]') as HTMLButtonElement | null;
     if (button === null || button === undefined) return null;
     const rect = button.getBoundingClientRect();
     return {
@@ -631,14 +631,14 @@ const chatProbe = {
     ordinaryControls: number;
   } | null {
     const li = document.querySelector(`li[data-handle="${handle}"]`);
-    const confirm = li?.querySelector('[data-testid="message-rewind-confirm"]');
+    const confirm = li?.querySelector('[data-testid="message-act-choice"]');
     if (confirm === null || confirm === undefined) return null;
     return {
       prompt: confirm.querySelector(".message-confirm-prompt")?.textContent ?? null,
-      yes: confirm.querySelector('[data-testid="message-rewind-confirm-yes"]')?.textContent ?? null,
-      no: confirm.querySelector('[data-testid="message-rewind-confirm-no"]')?.textContent ?? null,
+      yes: confirm.querySelector('[data-testid="message-rewind-to-here"]')?.textContent ?? null,
+      no: confirm.querySelector('[data-testid="message-act-cancel"]')?.textContent ?? null,
       ordinaryControls:
-        (li?.querySelectorAll('.swipe-controls, .regenerate-btn, [data-testid="message-rewind"]').length ?? 0),
+        (li?.querySelectorAll('.swipe-controls, .regenerate-btn, [data-testid="message-act"]').length ?? 0),
     };
   },
   /**
@@ -877,7 +877,7 @@ const chatProbe = {
       switcherDisabled,
       regenerateDisabled: (li.querySelector(".regenerate-btn") as HTMLButtonElement | null)?.disabled ?? false,
       rewindDisabled:
-        (li.querySelector('[data-testid="message-rewind"]') as HTMLButtonElement | null)?.disabled ?? false,
+        (li.querySelector('[data-testid="message-act"]') as HTMLButtonElement | null)?.disabled ?? false,
     };
   },
   voiceState(): string | null {

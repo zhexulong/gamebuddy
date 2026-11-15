@@ -1119,32 +1119,37 @@ export function ComposedReferenceGameApp() {
   };
 
   /**
-   * The arm and its confirmation. It names the message AND the order the page rendered it at (or, for a
-   * variant discard, just the reply), and it is dropped the moment that pairing stops holding, so a stale
-   * arm can never fire a destructive command on a message the player is no longer looking at. The Host
-   * re-checks the same pairing anyway: this only keeps the surface honest.
+   * The arm and its confirmation. It names the message AND, for the two acts that rewrite or drop rows,
+   * the order the page rendered it at (a variant discard and a branch name just the row), and it is
+   * dropped the moment that pairing stops holding, so a stale arm can never fire a command on a message
+   * the player is no longer looking at. The Host re-checks the same pairing anyway: this only keeps the
+   * surface honest.
    */
   const mountedTranscript = view.kind === "ready" ? (view.session.snapshot.chat?.transcript ?? null) : null;
   useEffect(() => {
     if (arm === null) return;
+    const positional = arm.action === "delete" || arm.action === "from_here";
     const held = mountedTranscript?.some((message) =>
-      arm.action === "swipe_remove"
-        ? message.handle === arm.targetId
-        : message.handle === arm.targetId && message.order === arm.expectedOrder,
+      positional
+        ? message.handle === arm.targetId && message.order === arm.expectedOrder
+        : message.handle === arm.targetId,
     );
     if (held === true) return;
     setArm(null);
   }, [arm, mountedTranscript]);
 
-  const handleRewindArm = (messageHandle: string, expectedOrder: number): void => {
-    setArm(Object.freeze({ action: "rewind", targetId: messageHandle, expectedOrder }));
+  const handleActFromHere = (messageHandle: string, expectedOrder: number): void => {
+    // Opening the choice is a new intent, so the last refusal's sentence - about a different press - goes
+    // with it.
+    setMessageMutationNotice(null);
+    setArm(Object.freeze({ action: "from_here", targetId: messageHandle, expectedOrder }));
   };
 
-  const handleRewindCancel = (): void => {
+  const handleActCancel = (): void => {
     setArm(null);
   };
 
-  const handleRewindConfirm = (messageHandle: string, expectedOrder: number): Promise<MessageMutationOutcome> =>
+  const handleActRewind = (messageHandle: string, expectedOrder: number): Promise<MessageMutationOutcome> =>
     mutateMessage({
       kind: "rewind",
       handle: messageHandle,
@@ -1318,6 +1323,96 @@ export function ComposedReferenceGameApp() {
         commitChatProblem(error);
       }
     })();
+  };
+
+  /**
+   * The idempotency key of the fork attempt whose outcome is not known yet, and the row it names.
+   *
+   * A fork MINTS a durable Chat, and the Host derives that Chat's identity from this key: the same key
+   * always names the same branch, which is what makes a retried attempt land on the branch it already
+   * created instead of a second identical one. So the key's lifetime is the attempt's, not the press's:
+   * it is minted once, kept while no answer has come back (a dropped connection, a Host that failed
+   * without naming a refusal), and spent the moment the attempt is answered - by the branch existing, or
+   * by a refusal that says nothing ran. A new press after either gets a new key, because it is a new
+   * attempt at a branch that does not exist yet.
+   */
+  const forkAttemptRef = useRef<Readonly<{ messageHandle: string; key: string }> | null>(null);
+
+  /**
+   * The branch's key, minted per attempt rather than per press: the held one is reused while the attempt
+   * that minted it has no answer, and a press naming a different row starts its own.
+   */
+  const forkKeyFor = (messageHandle: string): string => {
+    const held = forkAttemptRef.current;
+    if (held !== null && held.messageHandle === messageHandle) return held.key;
+    const minted = newIdempotencyKey();
+    forkAttemptRef.current = Object.freeze({ messageHandle, key: minted });
+    return minted;
+  };
+
+  /**
+   * Moves this window onto a branch that is already durable.
+   *
+   * The fork and the switch are two operations on purpose (`chat.fork` does not select what it mints),
+   * and that separation is what lets a failed switch leave the player a branch they can still see and
+   * open from Chats. It is therefore NOT reported as a failed fork: the branch exists, so the sentence
+   * states the one thing that did not happen and where the branch is.
+   */
+  const switchToForkedChat = async (forkedHandle: string): Promise<void> => {
+    const current = viewRef.current;
+    if (current.kind !== "ready") return;
+    const selection = current.session.snapshot.selection;
+    if (selection === null) return;
+    try {
+      await managementPipelineApiRef.current.selectChat(
+        { apiVersion: 1, selectionGeneration: selection.generation, chatHandle: forkedHandle },
+        current.session.snapshot.csrfToken,
+      );
+    } catch (error) {
+      setMessageMutationNotice(declaredProblemSentence(error, labels()) ?? labels().chatForkSwitchFailed);
+      return;
+    }
+    // The switch mounted another conversation: the shell adopts it, restarts its live cursor on it and
+    // moves the player to it, exactly as choosing a row of the Chats list does (ADR-0010 Class A).
+    handleChatSwitched();
+  };
+
+  /**
+   * Branches the mounted conversation at the message the choice named, then moves to the branch.
+   *
+   * The press runs through the same envelope as every other message mutation (single flight, named
+   * refusal said first, authoritative reread after), so a refused fork cannot leave the player looking at
+   * a surface that silently did nothing. What the envelope's reread reads is still the ORIGIN - the Host
+   * does not select what it mints - so the switch above is what changes the conversation on screen.
+   */
+  const handleActFork = async (messageHandle: string): Promise<MessageMutationOutcome> => {
+    const idempotencyKey = forkKeyFor(messageHandle);
+    let forkedHandle: string | null = null;
+    const outcome = await mutateMessage({
+      kind: "fork",
+      handle: messageHandle,
+      // The arm is spent by the press it confirmed, and only after the guards admitted that press.
+      before: () => setArm(null),
+      send: async ({ selectionGeneration, csrfToken }) => {
+        try {
+          const result = await managementPipelineApiRef.current.forkChat(
+            { apiVersion: 1, selectionGeneration, messageHandle },
+            { csrfToken, idempotencyKey },
+          );
+          forkedHandle = result.chat.handle;
+          // Answered: the branch exists, so this key has done its work.
+          forkAttemptRef.current = null;
+        } catch (error) {
+          // A named refusal is the Host stating it did not run the fork, so the attempt is answered and
+          // the next press is a new one. An answer the Host could not give keeps the key, and the press
+          // after it replays the attempt that may already have minted a branch.
+          if (declaredProblemSentence(error, labels()) !== null) forkAttemptRef.current = null;
+          throw error;
+        }
+      },
+    });
+    if (forkedHandle !== null) await switchToForkedChat(forkedHandle);
+    return outcome;
   };
 
   /**
@@ -1633,11 +1728,10 @@ export function ComposedReferenceGameApp() {
                   onSwipeRemoveCancel={handleSwipeRemoveCancel}
                   onRegenerate={(messageHandle) => void handleRegenerate(messageHandle)}
                   onOpeningVariant={(messageHandle, direction) => void handleOpeningVariant(messageHandle, direction)}
-                  onRewind={handleRewindArm}
-                  onRewindConfirm={(messageHandle, expectedOrder) =>
-                    void handleRewindConfirm(messageHandle, expectedOrder)
-                  }
-                  onRewindCancel={handleRewindCancel}
+                  onActFromHere={handleActFromHere}
+                  onActRewind={(messageHandle, expectedOrder) => void handleActRewind(messageHandle, expectedOrder)}
+                  onActFork={(messageHandle) => void handleActFork(messageHandle)}
+                  onActCancel={handleActCancel}
                   onEdit={(messageHandle, expectedOrder, text) => void handleEdit(messageHandle, expectedOrder, text)}
                   onDelete={handleDeleteArm}
                   onDeleteConfirm={(messageHandle, expectedOrder) =>

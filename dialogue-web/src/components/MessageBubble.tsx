@@ -3,6 +3,7 @@ import {
   ChevronRight,
   CircleMinus,
   Copy,
+  GitBranch,
   LoaderCircle,
   Pencil,
   RefreshCw,
@@ -311,10 +312,11 @@ export const MessageBubble = memo(function MessageBubble({
   swipeRemoveArmed = false,
   onRegenerate,
   onOpeningVariant,
-  onRewind,
-  onRewindConfirm,
-  onRewindCancel,
-  rewindArmed = false,
+  onActFromHere,
+  onActRewind,
+  onActFork,
+  onActCancel,
+  actArmed = false,
   onEdit,
   onDelete,
   onDeleteConfirm,
@@ -362,16 +364,24 @@ export const MessageBubble = memo(function MessageBubble({
    */
   onOpeningVariant?: (messageHandle: string, direction: "prev" | "next") => void;
   /**
-   * The rewind control's first half: it removes this message and everything after it, so the click
-   * only ARMS the action and the confirm below the prompt is what sends it. The accessor is handed
-   * the order the page rendered this message at, because the Host refuses a message that is no
-   * longer there - the transcript is what a position means.
+   * The one entry a message has for changing what comes after it, and the two answers it opens.
+   *
+   * A FORK and a REWIND are the same question asked two ways - read on from this message, or cut the
+   * conversation back to it - so they are two answers behind one control rather than two controls in a strip
+   * that already carries every target it can hold. `onActFromHere` opens the choice; the two below send
+   * their own operation, each under the shell's single-flight latch. The fork answer is absent where the
+   * caller serves no `chat.fork` (the probe, a profile without the route), and the block is then the plain
+   * rewind confirmation it was.
+   *
+   * The accessor is handed the order the page rendered this message at, because the Host refuses a rewind
+   * naming a message that is no longer there - the transcript is what a position means.
    */
-  onRewind?: (messageHandle: string, expectedOrder: number) => void;
-  onRewindConfirm?: (messageHandle: string, expectedOrder: number) => void;
-  onRewindCancel?: () => void;
-  /** True for the one message whose rewind is armed: its strip becomes that confirmation. */
-  rewindArmed?: boolean;
+  onActFromHere?: (messageHandle: string, expectedOrder: number) => void;
+  onActRewind?: (messageHandle: string, expectedOrder: number) => void;
+  onActFork?: (messageHandle: string) => void;
+  onActCancel?: () => void;
+  /** True for the one message whose choice is open: its strip becomes that choice. */
+  actArmed?: boolean;
   /**
    * The edit control's save. The player's own message carries the text they rewrote AND the order the
    * page rendered it at, because the Host refuses a row that has moved. The editor itself is this
@@ -403,7 +413,7 @@ export const MessageBubble = memo(function MessageBubble({
    * command with its single-flight ref, and the control saying so is what keeps a
    * double click from looking like it did nothing.
    */
-  pending?: "swipe" | "swipeRemove" | "regenerate" | "opening" | "rewind" | "edit" | "delete" | null;
+  pending?: "swipe" | "swipeRemove" | "regenerate" | "opening" | "rewind" | "edit" | "delete" | "fork" | null;
   /**
    * True only for the live streaming preview: the bubble then carries the
    * reading caret. The caret is inserted into the bubble's last block on every
@@ -480,6 +490,13 @@ export const MessageBubble = memo(function MessageBubble({
       deleteConfirmPrompt: string;
       deleteConfirmYes: string;
       deleteConfirmNo: string;
+      /** The branch control and the confirmation it opens, on the row it would cut at. */
+      /** The one entry a message has for changing what comes after it, and the two answers it opens. */
+      actFromHere: string;
+      actFromHereName: string;
+      actChoicePrompt: string;
+      forkFromHere: string;
+      forkFromHereName: string;
       /**
        * The copy control and the one line it leaves behind. It is the only control on the strip that
        * mutates nothing, so its name states that rather than a consequence, and its confirmation is
@@ -513,24 +530,26 @@ export const MessageBubble = memo(function MessageBubble({
    */
   const swipeRemovePoint = swipeSet === undefined || onSwipeRemove === undefined ? undefined : swipeSet.currentIndex;
   /**
-   * One destructive arm at a time, so an armed discard steps the row's other controls aside exactly
-   * as an armed rewind does: a confirmation rendered among the controls it replaces is a mis-click
-   * waiting to happen.
+   * One confirmation at a time, so an armed discard steps the row's other controls aside exactly as the
+   * armed choice does: a confirmation rendered among the controls it replaces is a mis-click waiting to
+   * happen.
    */
-  const stripReplaced = rewindArmed || swipeRemoveArmed;
+  const stripReplaced = actArmed || swipeRemoveArmed;
   /**
-   * The rewind point is the row the conversation is cut back TO, and the cut KEEPS that row: it
-   * drops everything after it, which is what makes a PLAYER row a legal point - their own line
-   * survives, the reply that answered it does not, and they are ready to be answered again (the
-   * owner's ruling, 2026-10-20: rewind the way Pi and SillyTavern do).
+   * The point the entry names: the row the conversation can be cut back TO, and the row it can be branched
+   * FROM. The cut KEEPS that row and drops everything after it, which is what makes a PLAYER row a legal
+   * point - their own line survives, the reply that answered it does not, and they are ready to be answered
+   * again (the owner's ruling, 2026-10-20: rewind the way Pi and SillyTavern do).
    *
-   * The greeting is still never a point: the Host refuses it, because a cut there would leave
-   * nothing but the conversation's own opening. And a row with nothing after it is not a rewind at
-   * all - the count has to be more than this row - which is the earlier ruling kept: on the
-   * transcript's LAST row a rewind and a delete would be the same act, so the row offers the delete
-   * alone.
+   * The greeting is still never a point: the Host refuses both acts there (a cut would leave nothing but the
+   * conversation's opening, and a branch of nothing but the greeting is not a second view of the exchange).
+   * And a row with nothing after it offers neither: the rewind would remove nothing, and the entry is ONE
+   * control for both answers - so offering it there would mean either a fork beside a rewind that cannot run,
+   * or a sixth target in a strip that already carries every one it can hold (see the narrow-strip block in
+   * `style.css`). The consequence, stated honestly: the newest message is branched from by choosing the row
+   * BEFORE it.
    */
-  const rewindPoint = onRewind !== undefined && removedCount > 1 && message.order > 0 ? removedCount - 1 : undefined;
+  const actPoint = onActFromHere !== undefined && removedCount > 1 && message.order > 0 ? removedCount - 1 : undefined;
   /**
    * The count the accessible name states is what the press REMOVES. `removedCount` also counts this
    * row, and this row survives the cut - so it is one less.
@@ -630,11 +649,11 @@ export const MessageBubble = memo(function MessageBubble({
     return () => document.removeEventListener("keydown", onKeyDown);
   }, [editing, pending]);
   /**
-   * The two destructive pairs on this row, each with its own keyboard path: the control that arms
-   * one is UNMOUNTED by the press that arms it, so focus has to be moved by hand into the
+   * The three pairs on this row, each with its own keyboard path: the control that opens
+   * one is UNMOUNTED by the press that opens it, so focus has to be moved by hand into the
    * confirmation and back to the control on a cancel (`armed-confirmation.ts`).
    */
-  const rewindPair = useArmedConfirmation(rewindArmed, () => onRewindCancel?.());
+  const actPair = useArmedConfirmation(actArmed, () => onActCancel?.());
   const deletePair = useArmedConfirmation(deleteArmed, () => onDeleteCancel?.());
   const swipeRemovePair = useArmedConfirmation(swipeRemoveArmed, () => onSwipeRemoveCancel?.());
   /**
@@ -803,41 +822,73 @@ export const MessageBubble = memo(function MessageBubble({
       </button>
     );
   /**
-   * The rewind's own two-step pair, hoisted out of either side's strip. Both sides of the exchange
-   * carry it now - a player rewinds to their own line to be answered again, and her reply keeps the
-   * words the cut is named after - so the confirmation and the control that arms it are ONE
-   * presentation rather than one markup per role. An armed rewind is the row's only control: the
-   * pager, regenerate, the edit and the destructive Delete step aside, because a destructive press
-   * rendered beside Save and Cancel is a mis-click waiting to happen.
+   * The one entry a message has for changing what comes after it, and the two answers it opens.
+   *
+   * A FORK and a REWIND are the same question asked two ways - read on from this message, or cut the
+   * conversation back to it - so they are two answers behind one control rather than two controls in a strip
+   * that already carries every target it can hold (`style.css`: a sixth action in this row is what stranded a
+   * control at 520x900). Both sides of the exchange carry it: a player branches from their own line to take a
+   * different answer, and rewinds to it to be answered again.
+   *
+   * The prompt states BOTH branches' consequences, because the player is choosing between them: a fork keeps
+   * every later message in both chats and both chats are one conversation to her Memory (a fork copies the
+   * continuity), and a rewind removes the later messages from this one with no way back from this screen. A
+   * player who means to truncate their transcript therefore has to say so, rather than pressing a control that
+   * looks like its non-destructive neighbour.
+   *
+   * The block is the row's only control while it is open, on the rule every other confirmation here follows: a
+   * destructive answer rendered beside Save and Cancel is a mis-click waiting to happen.
    */
-  const rewindConfirmation = rewindArmed ? (
-    <div
-      className="message-confirm"
-      data-testid="message-rewind-confirm"
-      onKeyDown={rewindPair.onConfirmKeyDown}
-      role="group"
-    >
+  const actChoice = actArmed ? (
+    <div className="message-confirm" data-testid="message-act-choice" onKeyDown={actPair.onConfirmKeyDown} role="group">
       <p className="message-confirm-prompt" role="status">
-        {labels.rewindConfirmPrompt}
+        {onActFork === undefined
+          ? labels.rewindConfirmPrompt
+          : labels.actChoicePrompt.replace("{{count}}", String(removedCount - 1))}
       </p>
       <div className="message-confirm-actions">
+        {onActFork === undefined ? null : (
+          <button
+            type="button"
+            className="action-btn fork-confirm-yes"
+            data-testid="message-fork-from-here"
+            disabled={busy}
+            {...(pending === "fork" ? { "data-busy": "true" as const } : {})}
+            onClick={() => onActFork(message.handle)}
+            title={labels.forkFromHereName}
+            aria-label={labels.forkFromHereName}
+          >
+            {pending === "fork" ? (
+              <LoaderCircle className="message-spinner" size={14} aria-hidden="true" />
+            ) : (
+              <GitBranch size={14} aria-hidden="true" />
+            )}
+            {labels.forkFromHere}
+          </button>
+        )}
         <button
           type="button"
           className="action-btn rewind-confirm-yes"
-          data-testid="message-rewind-confirm-yes"
+          data-testid="message-rewind-to-here"
           disabled={busy}
-          onClick={() => onRewindConfirm?.(message.handle, message.order)}
-          title={labels.rewindConfirmYes}
-          aria-label={labels.rewindConfirmYes}
+          {...(pending === "rewind" ? { "data-busy": "true" as const } : {})}
+          onClick={() => onActRewind?.(message.handle, message.order)}
+          title={rewindName}
+          aria-label={rewindName}
         >
+          {pending === "rewind" ? (
+            <LoaderCircle className="message-spinner" size={14} aria-hidden="true" />
+          ) : (
+            <Scissors size={14} aria-hidden="true" />
+          )}
           {labels.rewindConfirmYes}
         </button>
         <button
-          ref={rewindPair.cancelRef}
+          ref={actPair.cancelRef}
           type="button"
-          className="action-btn rewind-confirm-no"
-          data-testid="message-rewind-confirm-no"
-          onClick={rewindPair.cancel}
+          className="action-btn act-confirm-no"
+          data-testid="message-act-cancel"
+          onClick={actPair.cancel}
           title={labels.rewindConfirmNo}
           aria-label={labels.rewindConfirmNo}
         >
@@ -846,32 +897,27 @@ export const MessageBubble = memo(function MessageBubble({
       </div>
     </div>
   ) : null;
-  // The rewind's own glyph is a CUT, not a circular arrow. It used to be `Undo2`, which is one stroke
-  // away from the `RefreshCw` the Regenerate button beside it wears: a player reading `[ ↶ ]` as
-  // "answer me again" pressed the one control in this strip that DELETES the rest of the conversation.
-  // Scissors is the metaphor for severing a branch - the cut point is this row, which survives - and it
-  // keeps the row's two destructive controls apart: this one cuts the conversation here, Delete
-  // (`Trash2`) removes one message. The word and the accessible name still state what the press keeps,
-  // what it removes and how much (`rewindHere` / `rewindHereName`).
-  const rewindControl =
-    !rewindArmed && rewindPoint !== undefined ? (
+  /**
+   * The entry itself. Its glyph is a CUT rather than a circular arrow: `Undo2` was one stroke away from the
+   * `RefreshCw` the Regenerate button beside it wears, and a player reading `[ ↶ ]` as "answer me again"
+   * pressed the one control in this strip that shortens the conversation. The word states the POINT rather
+   * than one of the two answers - a control named "Rewind" that offers a fork would be the lie this fold
+   * exists to avoid - and where the caller serves no `chat.fork` the entry keeps the rewind's own words.
+   */
+  const actEntry =
+    !actArmed && actPoint !== undefined ? (
       <button
-        ref={rewindPair.triggerRef}
+        ref={actPair.triggerRef}
         type="button"
-        className="action-btn rewind-btn"
-        data-testid="message-rewind"
+        className="action-btn act-btn"
+        data-testid="message-act"
         disabled={busy}
-        {...(pending === "rewind" ? { "data-busy": "true" as const } : {})}
-        onClick={() => onRewind?.(message.handle, message.order)}
-        title={rewindName}
-        aria-label={rewindName}
+        onClick={() => onActFromHere?.(message.handle, message.order)}
+        title={onActFork === undefined ? rewindName : labels.actFromHereName}
+        aria-label={onActFork === undefined ? rewindName : labels.actFromHereName}
       >
-        {pending === "rewind" ? (
-          <LoaderCircle className="message-spinner" size={14} aria-hidden="true" />
-        ) : (
-          <Scissors size={14} aria-hidden="true" />
-        )}
-        <span className="action-word">{labels.rewindHere}</span>
+        <Scissors size={14} aria-hidden="true" />
+        <span className="action-word">{onActFork === undefined ? labels.rewindHere : labels.actFromHere}</span>
       </button>
     ) : null;
   // The Host's per-message language, painted on the text only: the author line
@@ -950,7 +996,7 @@ export const MessageBubble = memo(function MessageBubble({
             names these four, and style.css's narrow strip block is where that is
             argued and measured. */}
         {!(isPlayer || deleteArmed) &&
-          (hasControls || onRegenerate || rewindPoint !== undefined || rewindArmed || swipeRemoveArmed) && (
+          (hasControls || onRegenerate || actPoint !== undefined || actArmed || swipeRemoveArmed) && (
             <div className={editing ? "message-actions message-actions-editing" : "message-actions"}>
               {/* Her editor replaces the WHOLE strip rather than joining it, on the same rule the
                 player's row follows: the pager, the variant switcher, regenerate, the rewind and the
@@ -976,7 +1022,7 @@ export const MessageBubble = memo(function MessageBubble({
                   {/* An armed rewind, or an armed variant discard, is this message's only control: the
                 pager and regenerate step aside for the confirmation the same way a Chats row's own
                 strip does. */}
-                  {rewindConfirmation}
+                  {actChoice}
                   {swipeRemoveConfirmation}
                   {copyControl}
                   {copyReceipt}
@@ -1042,7 +1088,7 @@ export const MessageBubble = memo(function MessageBubble({
                       <span className="action-word">{labels.regenerateVariant}</span>
                     </button>
                   )}
-                  {rewindControl}
+                  {actEntry}
                   {/* Her rows' own edit control, in the strip she already has rather than a second row of
                 buttons, and in the same spot the player row's edit control takes (immediately before
                 the destructive Delete, which is where both rows end their strip). It is offered on every
@@ -1093,7 +1139,7 @@ export const MessageBubble = memo(function MessageBubble({
                       <span className="action-word">{labels.deleteMessage}</span>
                     </button>
                   )}
-                  {!rewindArmed && waitingNote !== null && (
+                  {!actArmed && waitingNote !== null && (
                     <span className="message-waiting" role="status">
                       {waitingNote}
                     </span>
@@ -1110,25 +1156,25 @@ export const MessageBubble = memo(function MessageBubble({
             first in the strip - and an armed rewind leaves this strip with nothing but itself. */}
         {isPlayer &&
           !deleteArmed &&
-          (rewindPoint !== undefined ||
-            rewindArmed ||
+          (actPoint !== undefined ||
+            actArmed ||
             onEdit !== undefined ||
             onRegenerate !== undefined ||
             deletePoint !== undefined ||
             copyPoint) && (
             <div className={editing ? "message-actions message-actions-editing" : "message-actions"}>
-              {rewindConfirmation}
+              {actChoice}
               {editor === null && copyControl}
               {copyReceipt}
               {/* While the field is open the strip is the editor: the destructive rewind sits out, exactly as
                 the destructive Delete does, because a control that cuts the conversation away beside Save
                 and Cancel is a mis-click waiting to happen. */}
-              {editor === null && rewindControl}
+              {editor === null && actEntry}
               {/* Asking her again for THIS line, offered when nothing answered it (a turn that failed
                 or was stopped). It sits beside the rewind for the same reason the rewind is here at
                 all: both answer the player's own words. The words are the same operation the reply
                 row offers, so they are the same word rather than a second name for it. */}
-              {!rewindArmed && editor === null && onRegenerate && (
+              {!actArmed && editor === null && onRegenerate && (
                 <button
                   type="button"
                   className="action-btn regenerate-btn"
@@ -1146,7 +1192,7 @@ export const MessageBubble = memo(function MessageBubble({
                   <span className="action-word">{labels.regenerateVariant}</span>
                 </button>
               )}
-              {!rewindArmed &&
+              {!actArmed &&
                 onEdit !== undefined &&
                 (editor !== null ? (
                   <MessageEditor
@@ -1187,7 +1233,7 @@ export const MessageBubble = memo(function MessageBubble({
               {/* While the editor is open the strip is the editor: a destructive Delete sitting beside
                 Save and Cancel is a mis-click waiting to happen, and this row's own armed confirm
                 already follows that rule (it replaces the other controls rather than joining them). */}
-              {!rewindArmed && deletePoint !== undefined && editor === null && (
+              {!actArmed && deletePoint !== undefined && editor === null && (
                 <button
                   ref={deletePair.triggerRef}
                   type="button"

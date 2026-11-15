@@ -27,6 +27,12 @@ import { LAYOUT_PAIR } from "./viewport-policy";
  * 4. `keeps the row it names and drops exactly the rows after it` - from either role: the clicked row
  *    stays where it was, the rows after it go, and the transcript's length changes by exactly the
  *    number the control named.
+ *
+ * THE ENTRY IS SHARED NOW, and this probe is where its rewind-only shape is pinned. In the shipped shell
+ * the same control also offers a BRANCH (`chat-fork.spec.ts`), because a fork and a rewind are the same
+ * question asked two ways and the strip had no room for a sixth action. This mount passes no fork answer,
+ * so the control keeps the rewind's own words and the block keeps the rewind's own prompt - which is what
+ * the assertions below read: the shape a caller with no `chat.fork` gets, unchanged.
  */
 
 const CONVERSATION = [
@@ -143,7 +149,7 @@ test("the rewind is offered on both sides of the exchange, and nowhere the cut w
   expect(await page.evaluate(() => window.chatProbe.rewindControl("h4"))).toBeNull();
   expect(await page.evaluate(() => window.chatProbe.deleteControl("h4"))).not.toBeNull();
   // Read by name on the page itself: the last row carries no rewind control and one delete.
-  await expect(page.locator('[data-handle="h4"] [data-testid="message-rewind"]')).toHaveCount(0);
+  await expect(page.locator('[data-handle="h4"] [data-testid="message-act"]')).toHaveCount(0);
   await expect(page.locator('[data-handle="h4"] [data-testid="message-delete"]')).toHaveCount(1);
 
   // Counted on the page that renders it: the rows the control is measured on are the transcript's.
@@ -178,7 +184,7 @@ test("arming replaces the row's own controls with the confirmation, which measur
     expect(rowBefore, where).not.toBeNull();
     expect(columnBox, where).not.toBeNull();
 
-    await page.click('[data-handle="h2"] [data-testid="message-rewind"]');
+    await page.click('[data-handle="h2"] [data-testid="message-act"]');
 
     const armed = await page.evaluate(() => window.chatProbe.rewindConfirm("h2"));
     expect(armed, where).not.toBeNull();
@@ -195,7 +201,7 @@ test("arming replaces the row's own controls with the confirmation, which measur
     // The block's own geometry, not only its text. The earlier defect blew a row to 3148 px when the
     // confirmation sat inside a horizontal flex row, so the block is measured against the row it
     // lives in: it must fit inside it, and be a short block rather than a stretched one.
-    const confirmBox = await page.locator('[data-handle="h2"] [data-testid="message-rewind-confirm"]').boundingBox();
+    const confirmBox = await page.locator('[data-handle="h2"] [data-testid="message-act-choice"]').boundingBox();
     const rowBox = await page.locator('[data-handle="h2"]').boundingBox();
     expect(confirmBox, where).not.toBeNull();
     expect(rowBox, where).not.toBeNull();
@@ -214,7 +220,7 @@ test("arming replaces the row's own controls with the confirmation, which measur
     // And nothing on the row pushed the page sideways.
     expect(await horizontalOverflow(page), where).toBeLessThanOrEqual(0);
 
-    await page.click('[data-testid="message-rewind-confirm-no"]');
+    await page.click('[data-testid="message-act-cancel"]');
     expect(await page.evaluate(() => window.chatProbe.rewindConfirm("h2")), where).toBeNull();
     expect(await page.evaluate(() => window.chatProbe.rewindControl("h2")), where).not.toBeNull();
     // Cancelling gives the row back at the box it had: the pair is a state of the row, not a growth of
@@ -237,8 +243,8 @@ test("arming replaces the row's own controls with the confirmation, which measur
   await page.evaluate(() => window.chatProbe.resetRewindCalls());
 
   // The confirm sends the handle and the order the page rendered it at.
-  await page.click('[data-handle="h2"] [data-testid="message-rewind"]');
-  await page.click('[data-testid="message-rewind-confirm-yes"]');
+  await page.click('[data-handle="h2"] [data-testid="message-act"]');
+  await page.click('[data-testid="message-rewind-to-here"]');
   expect(await page.evaluate(() => window.chatProbe.rewindCalls())).toEqual([
     { kind: "arm", handle: "h2", order: 2 },
     { kind: "confirm", handle: "h2", order: 2 },
@@ -256,8 +262,8 @@ test("rewinding at a companion reply keeps that reply and drops exactly what fol
   const removes = Number(named?.ariaLabel?.match(/\((\d+) in all\)/u)?.[1]);
   expect(removes).toBe(2);
 
-  await page.click('[data-handle="h2"] [data-testid="message-rewind"]');
-  await page.click('[data-testid="message-rewind-confirm-yes"]');
+  await page.click('[data-handle="h2"] [data-testid="message-act"]');
+  await page.click('[data-testid="message-rewind-to-here"]');
 
   // The Host answers by truncating; the surface renders the authoritative reread and nothing it
   // dropped locally.
@@ -303,7 +309,7 @@ test("rewinding at a player row keeps their words and drops the reply and everyt
   expect(named?.ariaLabel).toContain("3");
   expect(named?.ariaLabel).toContain("keeps this message");
 
-  await page.click('[data-handle="h1"] [data-testid="message-rewind"]');
+  await page.click('[data-handle="h1"] [data-testid="message-act"]');
   // The player's row arms the same confirmation as her reply: it is one presentation, not one per role.
   const armed = await page.evaluate(() => window.chatProbe.rewindConfirm("h1"));
   expect(armed?.prompt).toBe("Confirm rewind to here (keeps this message, deletes everything after it)");
@@ -312,7 +318,7 @@ test("rewinding at a player row keeps their words and drops the reply and everyt
   expect(armed?.ordinaryControls).toBe(0);
   expect(await page.evaluate(() => window.chatProbe.rewindCalls())).toEqual([{ kind: "arm", handle: "h1", order: 1 }]);
 
-  await page.click('[data-testid="message-rewind-confirm-yes"]');
+  await page.click('[data-testid="message-rewind-to-here"]');
   expect(await page.evaluate(() => window.chatProbe.rewindCalls())).toEqual([
     { kind: "arm", handle: "h1", order: 1 },
     { kind: "confirm", handle: "h1", order: 1 },
@@ -356,9 +362,9 @@ test("rewinding at a player row keeps their words and drops the reply and everyt
 test("the destructive answer is painted as one, and the keyboard keeps its place", async ({ page }) => {
   await openConversation(page);
 
-  const trigger = '[data-handle="h2"] [data-testid="message-rewind"]';
-  const confirmYes = '[data-testid="message-rewind-confirm-yes"]';
-  const confirmNo = '[data-testid="message-rewind-confirm-no"]';
+  const trigger = '[data-handle="h2"] [data-testid="message-act"]';
+  const confirmYes = '[data-testid="message-rewind-to-here"]';
+  const confirmNo = '[data-testid="message-act-cancel"]';
 
   /** Where focus is, named by the key whose selector matches the focused element. */
   const focused = async (selectors: Record<string, string>): Promise<string> =>
@@ -398,7 +404,7 @@ test("the destructive answer is painted as one, and the keyboard keeps its place
   console.log(`MEASURE destructive-confirm focus: before="${await focused(rewindPair)}"`);
   expect(await focused(rewindPair), "the pressed control is the one that holds focus").toBe("trigger");
   await page.keyboard.press("Enter");
-  await expect(page.locator('[data-testid="message-rewind-confirm"]')).toHaveCount(1);
+  await expect(page.locator('[data-testid="message-act-choice"]')).toHaveCount(1);
 
   // Moment two: the confirmation is open and focus went INTO it - onto its cancel answer, the safe
   // one, not onto the button that deletes. It used to fall to <body>, because arming unmounts the very
@@ -424,7 +430,7 @@ test("the destructive answer is painted as one, and the keyboard keeps its place
   // Moment three: cancelling puts the player back on the control they pressed. The control was
   // unmounted while the pair was open, so this is the pair's own restoration, not the browser's.
   await page.click(confirmNo);
-  await expect(page.locator('[data-testid="message-rewind-confirm"]')).toHaveCount(0);
+  await expect(page.locator('[data-testid="message-act-choice"]')).toHaveCount(0);
   console.log(`MEASURE destructive-confirm focus: after cancel="${await focused(rewindPair)}"`);
   expect(await focused(rewindPair), "cancel returns focus to the control that armed the pair").toBe("trigger");
 
@@ -432,9 +438,9 @@ test("the destructive answer is painted as one, and the keyboard keeps its place
   // still gives the control back.
   await page.locator(trigger).focus();
   await page.keyboard.press("Enter");
-  await expect(page.locator('[data-testid="message-rewind-confirm"]')).toHaveCount(1);
+  await expect(page.locator('[data-testid="message-act-choice"]')).toHaveCount(1);
   await page.keyboard.press("Escape");
-  await expect(page.locator('[data-testid="message-rewind-confirm"]')).toHaveCount(0);
+  await expect(page.locator('[data-testid="message-act-choice"]')).toHaveCount(0);
   expect(await focused(rewindPair), "Escape dismisses the pair and returns focus too").toBe("trigger");
 
   // The delete pair is the same presentation, so the same three moments are read on it: the last row

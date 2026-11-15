@@ -37,9 +37,10 @@ export function ChatSurface({
   onSwipeRemoveCancel,
   onRegenerate,
   onOpeningVariant,
-  onRewind,
-  onRewindConfirm,
-  onRewindCancel,
+  onActFromHere,
+  onActRewind,
+  onActFork,
+  onActCancel,
   onEdit,
   onDelete,
   onDeleteConfirm,
@@ -71,7 +72,7 @@ export function ChatSurface({
   labels: Messages;
   /** The chat mutation in flight and the message it belongs to, if any. */
   pending: Readonly<{
-    kind: "swipe" | "swipeRemove" | "regenerate" | "opening" | "rewind" | "edit" | "delete";
+    kind: "swipe" | "swipeRemove" | "regenerate" | "opening" | "rewind" | "edit" | "delete" | "fork";
     handle: string;
   }> | null;
   /**
@@ -100,9 +101,15 @@ export function ChatSurface({
   onSwipeRemoveCancel: () => void;
   onRegenerate: (messageHandle: string) => void;
   onOpeningVariant: (messageHandle: string, direction: "prev" | "next") => void;
-  onRewind: (messageHandle: string, expectedOrder: number) => void;
-  onRewindConfirm: (messageHandle: string, expectedOrder: number) => void;
-  onRewindCancel: () => void;
+  /**
+   * The one entry a message has for changing what comes after it, and the two answers it opens: a fork
+   * (the prefix becomes a second Chat, this conversation keeps everything) and a rewind (the messages
+   * after this one are removed).
+   */
+  onActFromHere: (messageHandle: string, expectedOrder: number) => void;
+  onActRewind: (messageHandle: string, expectedOrder: number) => void;
+  onActFork: (messageHandle: string) => void;
+  onActCancel: () => void;
   /** The player's own row's edit: the new text and the order the page rendered the row at. */
   onEdit: (messageHandle: string, expectedOrder: number, text: string) => void;
   /** The delete point and its confirmation. */
@@ -153,10 +160,11 @@ export function ChatSurface({
         swipeRemoveArmedHandle={rows.swipeRemove}
         onRegenerate={onRegenerate}
         onOpeningVariant={onOpeningVariant}
-        onRewind={onRewind}
-        onRewindConfirm={onRewindConfirm}
-        onRewindCancel={onRewindCancel}
-        rewindArmedHandle={rows.rewind}
+        onActFromHere={onActFromHere}
+        onActRewind={onActRewind}
+        onActFork={onActFork}
+        onActCancel={onActCancel}
+        actArmedHandle={rows.fromHere}
         onEdit={onEdit}
         onDelete={onDelete}
         onDeleteConfirm={onDeleteConfirm}
