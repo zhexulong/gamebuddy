@@ -519,8 +519,8 @@ export const StCardImportDispositionV1Schema = strictObject({
   reason: Type.String({ minLength: 1, maxLength: 128 }),
 });
 /**
- * One macro that kept authored material out of the imported companion: a world-book entry, or a
- * field-level loss such as a closing direction the catalog will omit whole.
+ * One macro that kept authored material out of the imported companion: a field-level loss such as a closing direction
+ * the catalog will omit whole.
  *
  * `standard` is whether SillyTavern itself defines the macro - rendered by the reader, or deliberately left literal. It
  * is only ever a statement about the macros this importer knows, which is why `false` reads as "unrecognised" rather
@@ -531,8 +531,11 @@ export const StCardImportOmittedMacroV1Schema = strictObject({
   standard: Type.Boolean(),
 });
 /**
- * One world-book entry this import could not carry, named the way the card names it, so the player can find the entry and
- * the macro to remove instead of being handed a count with nothing to search for.
+ * One world-book entry an OLDER build dropped, named the way the card named it.
+ *
+ * Declared because the member is accepted on read: an import record written by that build still carries one, and a
+ * reader with an exact key set must keep reading it. This build produces none - a world-book entry is carried whatever
+ * macros it holds (`st-card-import.ts`).
  */
 export const StCardImportOmittedEntryV1Schema = strictObject({
   title: Type.String({ minLength: 1, maxLength: 256 }),
@@ -544,7 +547,8 @@ export const StCardImportOmittedEntryV1Schema = strictObject({
  * decoder's own loss ledger, surfaced so a review never has to infer a loss.
  *
  * `omitted` names the lost items where the player can act on them. It is capped, so it can be shorter than `count` - the
- * count is the truth and the list is the sample the player is shown.
+ * count is the truth and the list is the sample the player is shown. Older records only (see
+ * `StCardImportOmittedEntryV1Schema`); this build never sends it.
  */
 export const StCardImportLossV1Schema = strictObject({
   field: Type.String({ minLength: 1, maxLength: 128 }),
@@ -553,8 +557,8 @@ export const StCardImportLossV1Schema = strictObject({
   omitted: Type.Optional(Type.Array(StCardImportOmittedEntryV1Schema, { maxItems: 32 })),
   /**
    * The macros behind a field-level loss. Declared-optional and additive, and a DIFFERENT member from
-   * `omitted` on purpose: `omitted` names one dropped world-book entry per row (with that entry's
-   * `title`), while a field has no title of its own - `field` already names it.
+   * `omitted` on purpose: that one names a dropped world-book entry (with its own `title`), while a field
+   * has no title of its own - `field` already names it.
    */
   macros: Type.Optional(Type.Array(StCardImportOmittedMacroV1Schema, { maxItems: 8 })),
 });

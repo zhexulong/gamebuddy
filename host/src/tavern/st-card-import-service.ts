@@ -297,7 +297,6 @@ function reportFromDecode(
                 field: loss.field,
                 reason: loss.reason,
                 count: loss.count,
-                ...(loss.omitted === undefined ? {} : { omitted: loss.omitted }),
                 ...(loss.macros === undefined ? {} : { macros: loss.macros }),
               }),
             ),

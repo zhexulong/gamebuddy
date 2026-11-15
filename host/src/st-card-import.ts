@@ -1,16 +1,10 @@
 import { inflateSync } from "node:zlib";
 import type { IdentityProfile } from "./identity-profile.js";
-import {
-  hasUnrenderedMacro,
-  isLeftLiteralStandardMacro,
-  isStandardSillyTavernMacro,
-  renderWorldBookText,
-  unrenderedMacros,
-} from "./tavern/macro-engine.js";
+import { isLeftLiteralStandardMacro, renderWorldBookText, unrenderedMacros } from "./tavern/macro-engine.js";
 import { ST_CARD_DECODER_LIMITS_V1 } from "./tavern/compatibility-manifest.v1.js";
 import { isCompletePngFile } from "./tavern/companion-avatar/index.js";
 import { MAX_WORLDBOOK_SCAN_DEPTH, type WorldBookEntry } from "./worldbook.js";
-import type { StCardImportOmittedEntry, StCardImportOmittedMacro } from "./tavern/types.js";
+import type { StCardImportOmittedMacro } from "./tavern/types.js";
 
 const MAX_JSON_DEPTH = ST_CARD_DECODER_LIMITS_V1.jsonDepth;
 const MAX_JSON_NODES = ST_CARD_DECODER_LIMITS_V1.jsonNodes;
@@ -18,32 +12,28 @@ const MAX_PNG_CHUNKS = ST_CARD_DECODER_LIMITS_V1.pngChunks;
 const PNG_SIGNATURE = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10]);
 /** Bounded rejection code for a malformed `alternate_greetings` entry. */
 const INVALID_ALTERNATE_GREETINGS = "invalid_alternate_greetings";
-/**
- * How many dropped world-book entries one import names individually.
- *
- * The LIST is what the player can act on, and a card with a thousand entries must not turn that list into a
- * thousand-row response: `count` stays the true total, this only bounds the named rows.
- */
-const MAX_REPORTED_OMITTED_ENTRIES = 32;
-/** How many macros one named entry lists. An entry is still named when it carries more than this. */
-const MAX_REPORTED_OMITTED_MACROS = 8;
+/** How many macros one report row lists. The row is still emitted when it carries more than this. */
+const MAX_REPORTED_MACROS = 8;
 /**
  * The most characters of a macro token one report row carries.
  *
- * `hasUnrenderedMacro`'s own pattern accepts `{{` followed by any run without braces, so a card can author a token far
- * longer than any real macro. The wire bound has to hold for those too, or one pathological entry would fail the whole
- * staged response instead of being reported as the loss it is.
+ * `unrenderedMacros` returns whatever a card wrote between its braces, so a card can author a token far longer than any
+ * real macro. The wire bound has to hold for those too, or one pathological field would fail the whole staged response
+ * instead of being reported as the loss it is.
  */
 const MAX_REPORTED_MACRO_TOKEN_CHARS = 64;
 
 /**
  * Bounded reasons an import can LOSE card material it was handed.
  *
- * A loss is a deliberate, bounded decision inside a field the card did supply -
- * a cap (the key list), a label the speaker parser does not accept, content
- * beyond the declared entry bound, an entry the macro set cannot render. Unlike
- * `dispositions` (whole fields accepted, kept opaque or refused) a loss is
- * *within* an accepted field, so it needs a count as well as a reason.
+ * A loss is a deliberate, bounded decision inside a field the card did supply - a cap (the key list), a label the
+ * speaker parser does not accept, content beyond the declared entry bound. Unlike `dispositions` (whole fields
+ * accepted, kept opaque or refused) a loss is *within* an accepted field, so it needs a count as well as a reason.
+ *
+ * A MACRO is not one of these reasons, and the absence is the rule: which macro this product can fill is a fact about
+ * the reader's table and the turn's context, not about the card, so a world-book entry carrying `{{time}}` or
+ * `{{random::a::b}}` is carried verbatim and each reader decides (see `extractCharacterBook` below). The one entry-level
+ * reason left is content this decoder physically cannot read.
  *
  * The rule is "no import loss is silent": `st-card-import.test.ts` declares one
  * fixture card per reason below and fails if a fixture's loss is not reported with
@@ -54,7 +44,6 @@ const MAX_REPORTED_MACRO_TOKEN_CHARS = 64;
 const ST_CARD_IMPORT_LOSS_REASONS = [
   "unparsed_example_blocks",
   "worldbook_keys_truncated",
-  "unrenderable_worldbook_entry",
   "worldbook_entry_content_unreadable",
   "character_voice_too_long",
   "post_history_instructions_too_long",
@@ -68,28 +57,15 @@ export type StCardImportLoss = Readonly<{
   /** How many items were lost, always at least 1. */
   count: number;
   /**
-   * Which items were lost, named so the player can find them in the card and fix them.
-   *
-   * A count is not actionable: "3 entries lost" leaves the player with nothing to search for, while "entry lost:
-   * contains {{original}}" names both the entry and the thing to remove. Present only for a loss whose items the player
-   * can act on; a truncated key list, for instance, has none. Capped at `MAX_REPORTED_OMITTED_ENTRIES`, so this can be
-   * shorter than `count` - the count is the truth, this is the sample the player is shown.
-   */
-  omitted?: readonly StCardImportOmittedEntry[];
-  /**
    * The macros behind a FIELD-level loss: one field the catalogue will omit as a whole, as
-   * `post_history_instructions` is.
-   *
-   * A different fact from `omitted`, which is one dropped world-book entry per row. A field has no
-   * title of its own - `field` already names it - so putting the field name in `title` would give one
-   * slot two meanings. `count` is 1 here and always will be: one field is one loss.
+   * `post_history_instructions` is. The field has no title of its own - `field` already names it -
+   * so `count` is 1 here and always will be: one field is one loss.
    */
   macros?: readonly StCardImportOmittedMacro[];
 }>;
 
-/** What a loss row can name about the items it lost: one row per dropped entry, or one field's macros. */
+/** What a loss row can name about the items it lost: the macros of the one field it lost. */
 type StCardImportLossNamedItems = Readonly<{
-  omitted?: readonly StCardImportOmittedEntry[];
   macros?: readonly StCardImportOmittedMacro[];
 }>;
 
@@ -108,9 +84,6 @@ function createLossLedger(): StCardImportLossLedger {
             field,
             reason,
             count,
-            ...(named?.omitted === undefined || named.omitted.length === 0
-              ? {}
-              : { omitted: Object.freeze([...named.omitted]) }),
             ...(named?.macros === undefined || named.macros.length === 0
               ? {}
               : { macros: Object.freeze([...named.macros]) }),
@@ -511,7 +484,7 @@ function previewFromValue(value: Record<string, unknown>, fallbackProfileId: str
     if (leftLiteral.length > 0)
       losses.record("post_history_instructions", "unrenderable_post_history_instructions", 1, {
         macros: Object.freeze(
-          leftLiteral.slice(0, MAX_REPORTED_OMITTED_MACROS).map((token) =>
+          leftLiteral.slice(0, MAX_REPORTED_MACROS).map((token) =>
             Object.freeze({
               token:
                 token.length <= MAX_REPORTED_MACRO_TOKEN_CHARS ? token : token.slice(0, MAX_REPORTED_MACRO_TOKEN_CHARS),
@@ -753,11 +726,8 @@ function extractCharacterBook(
   if (entries === undefined) return Object.freeze({ entries: Object.freeze([]) });
   const candidates: WorldBookEntry[] = [];
   let unreadableContent = 0;
-  let unrenderableContent = 0;
   let truncatedKeys = 0;
   let truncatedSecondaryKeys = 0;
-  /** The dropped entries this import names, bounded by `MAX_REPORTED_OMITTED_ENTRIES`. */
-  const omittedEntries: StCardImportOmittedEntry[] = [];
   entries.forEach((raw, index) => {
     if (!isRecord(raw)) return;
     // The card's own `enabled: false` is the author switching one entry off. That is a state
@@ -772,9 +742,6 @@ function extractCharacterBook(
       if (raw.content !== undefined) unreadableContent += 1;
       return;
     }
-    // The title is resolved BEFORE the render probe so a dropped entry can still be named in the report: the player
-    // has to be able to find it in the card, and the card's own `comment` ("大肥鱼家族") is what they will search
-    // for. The AUTHOR's text, not a rendering - a report row is a label, not model context.
     const authoredTitle =
       boundedText(raw.comment, ST_CARD_DECODER_LIMITS_V1.characterBookTitleBytes) ??
       boundedText(raw.name, ST_CARD_DECODER_LIMITS_V1.characterBookTitleBytes) ??
@@ -789,38 +756,16 @@ function extractCharacterBook(
     // text straight back, so a re-exported card no longer said `{{char}}` and was no longer the
     // same character in another Tavern.
     //
-    // The render is still performed, but ONLY as the probe: an entry whose macro set cannot fully
-    // render is dropped rather than written into her world book, and the drop is named below,
-    // never silent. The value STORED is the author's own text; the value TESTED is the rendering.
-    //
-    // The probe gets the card's own scenario, because the card wrote the entry that refers to it:
-    // `{{scenario}}` resolves in `macro-engine.ts` and an entry using it is readable, so probing
-    // without it dropped a legitimate entry as "renderable never" when the truth was "this probe
-    // did not look".
-    const probe = renderWorldBookText(content, { char: charName, scenario });
-    if (!disabled && hasUnrenderedMacro(probe)) {
-      unrenderableContent += 1;
-      if (omittedEntries.length < MAX_REPORTED_OMITTED_ENTRIES)
-        omittedEntries.push(
-          Object.freeze({
-            title: authoredTitle,
-            macros: Object.freeze(
-              unrenderedMacros(probe)
-                .slice(0, MAX_REPORTED_OMITTED_MACROS)
-                .map((token) =>
-                  Object.freeze({
-                    token:
-                      token.length <= MAX_REPORTED_MACRO_TOKEN_CHARS
-                        ? token
-                        : token.slice(0, MAX_REPORTED_MACRO_TOKEN_CHARS),
-                    standard: isStandardSillyTavernMacro(token),
-                  }),
-                ),
-            ),
-          }),
-        );
-      return;
-    }
+    // The entry is stored VERBATIM, whatever macros it carries - and this decoder renders it for no
+    // reason, not even as a probe. A probe asked "can this be rendered?" with one table and one
+    // context, and answered for every reader at once: a card writing `现在是{{time}}` or
+    // `{{random::安静::话多}}` - both legal Tavern macros, `random` among them implemented by this
+    // product's own evaluator (`preset-macros.ts`) - lost the whole entry, and an entry mentioning
+    // `{{description}}` lost it too because this probe held the card's name but not its description.
+    // The question has no answer here: which macro a reader can fill is a fact about THAT reader's
+    // table and THAT turn's context, so each seam decides (`worldbook.ts` keeps a bucket-2 macro
+    // literal rather than dropping the player's entry; the Game catalog omits a source it cannot
+    // publish, named at that seam). Nothing is lost at import, so nothing is reported as lost.
     const title = renderWorldBookText(authoredTitle, { char: charName, scenario });
     // The card's OWN trigger words. The title is the author-facing `comment` ("大肥鱼家族"), while a
     // player says "大肥鱼"; volatile selection matches `corpus.includes(key)`, so dropping `keys` made
@@ -862,9 +807,6 @@ function extractCharacterBook(
     );
   });
   losses.record("character_book.entries", "worldbook_entry_content_unreadable", unreadableContent);
-  losses.record("character_book.entries", "unrenderable_worldbook_entry", unrenderableContent, {
-    omitted: omittedEntries,
-  });
   losses.record("character_book.keys", "worldbook_keys_truncated", truncatedKeys);
   losses.record("character_book.secondary_keys", "worldbook_keys_truncated", truncatedSecondaryKeys);
   return Object.freeze({

@@ -77,7 +77,7 @@ export type TavernCompanion = ArtifactRevision &
     profileRevision: number;
     profileHash: string;
   }>;
-/** One macro that kept a world-book entry out of a decoded card. */
+/** One macro that kept a field out of the imported companion (`{{time}}` in a closing direction). */
 export type StCardImportOmittedMacro = Readonly<{
   /** The macro as the card wrote it, e.g. `{{original}}`. */
   token: string;
@@ -85,12 +85,12 @@ export type StCardImportOmittedMacro = Readonly<{
   standard: boolean;
 }>;
 /**
- * One world-book entry a decode could not carry, named the way the card names it.
+ * One world-book entry an OLDER build of this decoder dropped, named the way the card named it.
  *
- * The audit record holds this so a review surface can say which entry and which macro
- * instead of only how many: `{{original}}` inside 大肥鱼家族 is something the player can
- * go and edit, while "3 entries lost" is not. Capped upstream, so a list here can be
- * shorter than the loss's own `count`.
+ * No longer produced: the decoder carries every entry the card wrote, whatever macros it holds (`st-card-import.ts`).
+ * It stays declared because an import record written by that older build is still on disk and its reader
+ * (`importRecord`) accepts an exact key set - a record that carried a dropped entry must keep reading as the record it
+ * is, not fail as malformed.
  */
 export type StCardImportOmittedEntry = Readonly<{
   /** The card's own `comment`/`name` for the entry - what the player searches for. */
@@ -120,7 +120,7 @@ export type StCardImportRecord = ArtifactRevision &
       field: string;
       reason: string;
       count: number;
-      /** Which items were lost, where the player can act on them. */
+      /** Which items were lost, where the player can act on them. Older records only - see `StCardImportOmittedEntry`. */
       omitted?: readonly StCardImportOmittedEntry[];
       /**
        * The macros behind a FIELD-level loss - one field the catalog omits as a whole, as a closing

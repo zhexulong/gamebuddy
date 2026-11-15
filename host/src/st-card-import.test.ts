@@ -17,7 +17,8 @@ import {
 } from "./st-card-import.js";
 import { DEFAULT_COMPANION_PRESET } from "./tavern/default-companion-preset.js";
 import { ST_CARD_DECODER_LIMITS_V1 } from "./tavern/compatibility-manifest.v1.js";
-import { renderWorldBookText } from "./tavern/macro-engine.js";
+import { isLeftLiteralStandardMacro, renderWorldBookText, unrenderedMacros } from "./tavern/macro-engine.js";
+import { PRESET_MACROS } from "./tavern/preset-macros.js";
 import { selectAuthoredContextVolatileSourceRefs } from "./tavern/chat-thread-store.js";
 import { readWorldBook, validateWorldBook, writeWorldBook } from "./worldbook.js";
 import { buildCompanionCard } from "./tavern/companion-card-export.js";
@@ -319,10 +320,47 @@ test("a card's `enabled: false` entry is imported switched off rather than dropp
   );
 });
 
-test("imported character-book entries keep the author's macros, and an unrenderable entry is dropped", () => {
-  // The failure this catches, in both directions: the worldbook candidate used to carry the
-  // rendering instead of the authored text (so it could not be exported back), and a fix that
-  // simply stopped rendering would carry a raw placeholder the runtime has to drop later.
+/**
+ * The claim this lane was given, as one card: a world-book entry whose text carries a Tavern macro the import's own
+ * macro table leaves literal (`{{time}}`) or draws on every evaluation (`{{random::a::b}}`) is not lost.
+ *
+ * A Tavern card author writes `{{random::安静::话多}}` and `现在是{{time}}` in a character book as the normal thing - the
+ * format documents both - and `preset-macros.ts` is this product's own table for exactly them (`random` is implemented,
+ * content-addressed; `time` is declared and deliberately not filled). Neither is a reason to delete a player's entry:
+ * the decoder's job is to carry the AUTHOR's text, and every reader decides what it can render at its own seam. The
+ * three entries are the whole population of the claim - one static, one drawn, one clocked.
+ */
+test("a card's dynamic Tavern macros cost it no world-book entry", () => {
+  const preview = previewStCard({
+    spec: "chara_card_v3",
+    data: {
+      name: "Macro Rae",
+      description: "calm",
+      character_book: {
+        entries: [
+          { comment: "Static", content: "The greenhouse is hers." },
+          { comment: "Draw", content: "她今天{{random::安静::话多}}。" },
+          { comment: "Clock", content: "现在是{{time}}。" },
+        ],
+      },
+    },
+  });
+  assert.deepEqual(
+    preview.worldBookCandidates.map((entry) => [entry.title, entry.content]),
+    [
+      ["Static", "The greenhouse is hers."],
+      ["Draw", "她今天{{random::安静::话多}}。"],
+      ["Clock", "现在是{{time}}。"],
+    ],
+    "every entry the card wrote is carried, its macros intact",
+  );
+  assert.deepEqual(preview.losses, [], "nothing was lost, so the ledger has nothing to report");
+});
+
+test("imported character-book entries keep the author's macros, in whatever bucket the macro sits", () => {
+  // The failure this catches: the worldbook candidate used to carry the rendering instead of the authored
+  // text (so it could not be exported back). The second entry is the halt of the drop this decoder used to
+  // take - a macro the render cannot fill is the READER's question, not the decoder's.
   const preview = previewStCard({
     spec: "chara_card_v3",
     data: {
@@ -331,44 +369,33 @@ test("imported character-book entries keep the author's macros, and an unrendera
       character_book: {
         entries: [
           { comment: "Farm pact", content: "{{char}} and {{user}} share the farm.", constant: true },
-          { comment: "Broken", content: "This references {{unknown_macro}}.", constant: true },
+          { comment: "Draw", content: "她今天{{random::安静::话多}}。", constant: true },
         ],
       },
     },
   });
-  assert.equal(preview.worldBookCandidates.length, 1);
-  const entry = preview.worldBookCandidates[0]!;
-  assert.equal(entry.title, "Farm pact");
-  // The AUTHOR's text, macros intact - this is the round-trip half.
-  assert.equal(entry.content, "{{char}} and {{user}} share the farm.");
-  // The title is a player-facing label rather than authored prose the model reads, so it stays
-  // rendered: the surface prints it as the entry's name, and a name is not a macro channel.
-  assert.equal(entry.title, "Farm pact");
-  assert.doesNotMatch(entry.title, /\{\{/u);
-  // The unrenderable entry left the set, was counted, and was NAMED: a count alone would leave the player with
-  // nothing to search for in the card.
   assert.deepEqual(
-    preview.losses.filter((loss) => loss.reason === "unrenderable_worldbook_entry"),
+    preview.worldBookCandidates.map((entry) => [entry.title, entry.content]),
     [
-      {
-        field: "character_book.entries",
-        reason: "unrenderable_worldbook_entry",
-        count: 1,
-        omitted: [{ title: "Broken", macros: [{ token: "{{unknown_macro}}", standard: false }] }],
-      },
+      ["Farm pact", "{{char}} and {{user}} share the farm."],
+      ["Draw", "她今天{{random::安静::话多}}。"],
     ],
   );
+  // The title is a player-facing label rather than authored prose the model reads, so it stays rendered:
+  // the surface prints it as the entry's name, and a name is not a macro channel.
+  assert.doesNotMatch(preview.worldBookCandidates[0]!.title, /\{\{/u);
+  assert.deepEqual(preview.losses, [], "an entry was carried, so nothing was lost");
 });
 
 /**
- * The report a count could not give: which entry, and what to remove from it.
+ * The half a careless fix would miss: a token NO table knows (`{{unknwon}}`, a typo) is not a reason either.
  *
- * The defect this pins is a player-facing one. A card author writing `{{time}}` in a world-book entry is doing the normal
- * thing, and the entry was dropped with only "1 entry lost" - nothing to search for in the card and nothing to fix. Both
- * the entry's own title and the macro that caused the drop are now reported, and a standard macro is told apart from a
- * token this importer does not recognise at all, because those are two different things to do about it.
+ * The decoder has no standing to judge it: the entry is the player's, the readers keep it or withhold it and say so at
+ * their own seam, and the card export writes back exactly what the author typed. Dropping it here meant a typo in one
+ * entry deleted that entry from a book the player had already paid for - and a decoder that guessed at the author's
+ * intent is the same defect as one that guessed at renderability.
  */
-test("an omitted entry is reported by title and macro, and a standard macro is told apart from an unrecognised one", () => {
+test("a macro token this product does not know costs no world-book entry", () => {
   const preview = previewStCard({
     spec: "chara_card_v3",
     data: {
@@ -385,57 +412,22 @@ test("an omitted entry is reported by title and macro, and a standard macro is t
   });
   assert.deepEqual(
     preview.worldBookCandidates.map((entry) => entry.title),
-    ["Layout"],
-    "only the fixed-value macro entry survives",
+    ["大肥鱼家族", "Typo", "Layout"],
   );
-  assert.deepEqual(preview.losses, [
-    {
-      field: "character_book.entries",
-      reason: "unrenderable_worldbook_entry",
-      count: 2,
-      omitted: [
-        { title: "大肥鱼家族", macros: [{ token: "{{time}}", standard: true }] },
-        { title: "Typo", macros: [{ token: "{{unknwon}}", standard: false }] },
-      ],
-    },
-  ]);
+  assert.deepEqual(preview.losses, []);
 });
 
 /**
- * The report is bounded but the count is not: a card cannot turn its loss row into an unbounded response, and the total it
- * lost must still be the truth rather than the size of the sample the player is shown.
+ * What replaced the probe: the decoder renders nothing, and each reader decides with its own tables - at the seam that
+ * owns the answer.
+ *
+ * The standing rule survives one layer later, and this asserts the SPLIT the readers consume: a bucket-2 macro
+ * (`{{time}}`, `{{lastMessage}}`) is a card doing the normal thing, so the World Info tools keep the entry as prose with
+ * the token literal (`worldbook.ts`); a token no table defines is withheld from a tool result and named, so no raw
+ * placeholder reaches the model from there either. Both answers come from `macro-engine.ts`'s two tables, which is why a
+ * change to either shows up here.
  */
-test("a card with more dropped entries than the report lists still counts them all", () => {
-  const preview = previewStCard({
-    spec: "chara_card_v3",
-    data: {
-      name: "Many",
-      description: "calm",
-      character_book: {
-        entries: Array.from({ length: 40 }, (_, index) => ({
-          comment: `Entry ${index + 1}`,
-          content: "{{original}}",
-        })),
-      },
-    },
-  });
-  const loss = preview.losses.find((candidate) => candidate.reason === "unrenderable_worldbook_entry");
-  assert.equal(loss?.count, 40);
-  assert.equal(loss?.omitted?.length, 32);
-  assert.deepEqual(loss?.omitted?.[0], { title: "Entry 1", macros: [{ token: "{{original}}", standard: true }] });
-  assert.deepEqual(
-    preview.losses.find((candidate) => candidate.reason === "unrenderable_worldbook_entry")?.omitted?.[31],
-    { title: "Entry 32", macros: [{ token: "{{original}}", standard: true }] },
-  );
-});
-
-/**
- * The standing rule the fix must not weaken: no `{{...}}` placeholder reaches the model's context, however the entry was
- * dropped. The imported candidate stores the author's own text - that is the round-trip rule - so what has to hold is
- * that every KEPT entry renders clean at the reader's own seam, the same renderer this import probes with. The only
- * surface that ever carries a macro token is the report.
- */
-test("every kept entry renders without a placeholder at the reader's seam, whatever the drop was reported as", () => {
+test("the decoder carries every entry, and the reader's own tables decide what it renders", () => {
   const preview = previewStCard({
     spec: "chara_card_v3",
     data: {
@@ -453,11 +445,19 @@ test("every kept entry renders without a placeholder at the reader's seam, whate
   });
   assert.deepEqual(
     preview.worldBookCandidates.map((entry) => entry.title),
-    ["Clean"],
-    "only the entry that renders clean is kept",
+    ["Clean", "Clock", "Conversation", "Unknown"],
+    "every entry the card wrote is carried",
   );
-  for (const entry of preview.worldBookCandidates)
-    assert.doesNotMatch(renderWorldBookText(entry.content, { char: "Rae" }), /\{\{/u);
+  // The reader's rule, read off the reader's tables: what it still cannot fill from a bucket-2/3 token.
+  const withheldFromAToolResult = (content: string): readonly string[] =>
+    unrenderedMacros(renderWorldBookText(content, { char: "Rae" })).filter(
+      (token) => !isLeftLiteralStandardMacro(token),
+    );
+  assert.deepEqual(
+    preview.worldBookCandidates.map((entry) => withheldFromAToolResult(entry.content)),
+    [[], [], [], ["{{bogus_macro}}"]],
+    "the clock reads as prose, the typo is the one the reader withholds",
+  );
 });
 
 test("a card's world-book macro survives a durable round trip, and the model still reads the name", async () => {
@@ -467,8 +467,8 @@ test("a card's world-book macro survives a durable round trip, and the model sti
   //
   // The failure this catches: when the decoder stored the RENDERING, `{{char}}` left her book as "琥珀" and
   // the export wrote that back, so the re-exported card was a different character in another Tavern. The
-  // second half catches the careless fix - a decoder that simply stopped rendering would keep a raw
-  // placeholder in the book, so the DROP is asserted here too.
+  // other half is why the decoder does not render for its own purposes either: the value that is tested is
+  // not the value that is stored, and where a reader cannot fill a macro it says so at its own seam.
   const card = JSON.stringify({
     spec: "chara_card_v3",
     spec_version: "3.0",
@@ -857,15 +857,6 @@ const IMPORT_LOSS_FIXTURES: Readonly<Record<StCardImportLossReason, ImportLossFi
       },
     },
   },
-  unrenderable_worldbook_entry: {
-    field: "character_book.entries",
-    count: 1,
-    data: {
-      name: "Rin",
-      description: "calm",
-      character_book: { entries: [{ comment: "Lore", content: "this references {{unknown_macro}}." }] },
-    },
-  },
   worldbook_entry_content_unreadable: {
     field: "character_book.entries",
     count: 1,
@@ -921,9 +912,11 @@ const IMPORT_LOSS_FIXTURES: Readonly<Record<StCardImportLossReason, ImportLossFi
 });
 
 /**
- * A card that loses material on all three paths at once: an unusual example
- * label, more trigger words than the entry carries, and an entry whose macro the
- * macro set cannot resolve.
+ * A card that loses material on two paths at once: an unusual example label and more trigger words
+ * than an entry carries.
+ *
+ * It used to hold a third - an entry whose macro the macro set could not resolve - and that entry is
+ * now the point of the gate below instead of a loss: `{{unknown_macro}}` is carried, verbatim.
  */
 const THREE_LOSS_CARD_DATA = Object.freeze({
   name: "Loss Ledger",
@@ -932,14 +925,13 @@ const THREE_LOSS_CARD_DATA = Object.freeze({
   character_book: {
     entries: [
       { comment: "Many keys", content: "carried", keys: Array.from({ length: 18 }, (_, index) => `key_${index}`) },
-      { comment: "Broken macro", content: "this references {{unknown_macro}}." },
+      { comment: "Macro", content: "this references {{unknown_macro}}." },
     ],
   },
 }) as Readonly<Record<string, unknown>>;
 
 const THREE_LOSS_CARD_EXPECTED: readonly StCardImportLoss[] = [
   { field: "mes_example", reason: "unparsed_example_blocks", count: 1 },
-  { field: "character_book.entries", reason: "unrenderable_worldbook_entry", count: 1 },
   { field: "character_book.keys", reason: "worldbook_keys_truncated", count: 2 },
 ];
 
@@ -980,9 +972,59 @@ test("rule: every declared import loss is produced by its own card and reported 
 });
 
 /**
- * The field-level loss, which is a different fact from an entry-level one: `omitted` names one dropped
- * world-book entry per row, while this row names the macros in the ONE field the catalog will omit.
- * Two shapes, because a field name in an entry title slot would give one member two meanings.
+ * The class this lane closed, as a gate rather than an instance: a world-book entry is never lost to a MACRO.
+ *
+ * The population derives from the authority instead of a hand-kept list: every name this product's one macro grammar
+ * knows (`PRESET_MACROS`, A4 §7.2) becomes a card's own entry, and the only question asked of the decoder is whether
+ * the entry is still there, byte for byte. A name added to that table joins this gate the day it is added, so the gate
+ * cannot drift behind the grammar it guards - and the drift was the defect: `random` and `pick` are IMPLEMENTED there
+ * and were dropped here as unrenderable, `time`/`date` are declared there and were dropped here as well.
+ *
+ * The second half guards the vocabulary rather than one reason: a drop from `character_book.entries` may only be one the
+ * decoder can NAME, and the only one it can name is content it cannot read. A new entry-level reason - macro-shaped or
+ * not - turns this red until the fixture record above and this expectation are brought in line.
+ */
+test("rule: no world-book entry is lost to a macro, for every name the one macro grammar knows", () => {
+  const tokens = PRESET_MACROS.map((entry) =>
+    entry.family === undefined
+      ? `{{${entry.name}}}`
+      : `{{${entry.family.sigil}${entry.family.form === "assign" ? " mood = calm" : "mood"}}}`,
+  );
+  // Fail loudly on an empty population: "no entry was lost" measured over nothing is not a measurement.
+  if (tokens.length === 0) assert.fail("examined 0 macro names: PRESET_MACROS is the population this gate reads");
+  const contents = tokens.map((token, index) => `第${index + 1}条：${token}。`);
+  const preview = previewStCard({
+    spec: "chara_card_v3",
+    data: {
+      name: "Every Name",
+      description: "calm",
+      character_book: {
+        entries: contents.map((content, index) => ({ comment: `Entry ${index + 1}`, content })),
+      },
+    },
+  });
+  const lost = tokens.filter((_token, index) => preview.worldBookCandidates[index]?.content !== contents[index]);
+  assert.deepEqual(lost, [], `entries lost: ${lost.join(", ")}`);
+  assert.equal(preview.worldBookCandidates.length, tokens.length, `examined ${tokens.length} macro names`);
+  assert.deepEqual(
+    preview.losses.filter((loss) => loss.field === "character_book.entries"),
+    [],
+    "an entry-level loss was taken for a macro",
+  );
+
+  const entryLevelReasons = Object.keys(IMPORT_LOSS_FIXTURES).filter(
+    (reason) => IMPORT_LOSS_FIXTURES[reason as StCardImportLossReason].field === "character_book.entries",
+  );
+  assert.deepEqual(
+    entryLevelReasons,
+    ["worldbook_entry_content_unreadable"],
+    "an entry may only be dropped for content this decoder cannot read",
+  );
+});
+
+/**
+ * The field-level loss, and why it is not an entry-level one: this row names the macros behind the ONE field the catalog
+ * will omit whole, in the member a field can carry (a field has no title of its own - `field` already names it).
  */
 test("rule: a closing direction the catalog will omit names its macros, not only a count", () => {
   const report = decodeStCard(
@@ -1032,7 +1074,7 @@ test("rule: the gate rejects a report whose ledger hides a loss (planted silent 
   );
   // A partially-silent ledger is refused too (one row missing, not all of them).
   assert.throws(
-    () => assertNoSilentImportLoss({ losses: report.losses.slice(0, 2) }, THREE_LOSS_CARD_EXPECTED),
+    () => assertNoSilentImportLoss({ losses: report.losses.slice(0, 1) }, THREE_LOSS_CARD_EXPECTED),
     /an import loss went unreported/u,
   );
   // And an unbounded count is not a report.
@@ -1314,12 +1356,15 @@ test("an example block with a label outside the accepted speakers is reported, n
   assert.deepEqual(previewStCard({ spec: "chara_card_v3", data: { name: "Rin", description: "calm" } }).losses, []);
 });
 
-test("a world-book entry's dropped trigger words and dropped entries are reported with their counts", () => {
+test("a world-book entry's dropped trigger words, and the one entry the decoder cannot read, are reported with their counts", () => {
   // The failure this catches: `playableKeys` cut the card's own trigger words to
-  // 16 with no report, and `extractCharacterBook` dropped an unrenderable entry
-  // (or one whose content was unreadable) with no report either. A dropped
-  // trigger word is what makes a keyword-gated entry unreachable, and a dropped
-  // entry is card material the player paid for.
+  // 16 with no report, and `extractCharacterBook` dropped content it could not read
+  // with no report either. A dropped trigger word is what makes a keyword-gated
+  // entry unreachable, and an entry lost whole is card material the player paid for.
+  //
+  // The macro entry in the middle is the contrast the same card now draws: the
+  // decoder has no reading of a macro to act on, so that entry is carried with the
+  // two entries either side of it.
   const keys = Array.from({ length: 20 }, (_, index) => `\u5173\u952e\u8bcd${index + 1}`);
   const preview = previewStCard({
     spec: "chara_card_v3",
@@ -1329,7 +1374,7 @@ test("a world-book entry's dropped trigger words and dropped entries are reporte
       character_book: {
         entries: [
           { comment: "Capped", content: "carried", keys },
-          { comment: "Unrenderable", content: "this references {{unknown_macro}}." },
+          { comment: "Macro", content: "this references {{unknown_macro}}." },
           { comment: "Unreadable", content: "x".repeat(ST_CARD_DECODER_LIMITS_V1.characterBookEntryBytes + 1) },
           { comment: "Fine", content: "kept" },
         ],
@@ -1338,17 +1383,11 @@ test("a world-book entry's dropped trigger words and dropped entries are reporte
   });
   assert.deepEqual(
     preview.worldBookCandidates.map((entry) => entry.title),
-    ["Capped", "Fine"],
+    ["Capped", "Macro", "Fine"],
   );
   assert.equal(preview.worldBookCandidates[0]?.keys?.length, 16);
   assert.deepEqual(preview.losses, [
     { field: "character_book.entries", reason: "worldbook_entry_content_unreadable", count: 1 },
-    {
-      field: "character_book.entries",
-      reason: "unrenderable_worldbook_entry",
-      count: 1,
-      omitted: [{ title: "Unrenderable", macros: [{ token: "{{unknown_macro}}", standard: false }] }],
-    },
     { field: "character_book.keys", reason: "worldbook_keys_truncated", count: 4 },
   ]);
   // The decode report carries the same ledger: an import result that drops this
@@ -1359,18 +1398,16 @@ test("a world-book entry's dropped trigger words and dropped entries are reporte
         data: {
           name: "Book Losses",
           description: "calm",
-          character_book: { entries: [{ comment: "U", content: "{{nope}}" }] },
+          character_book: {
+            entries: [
+              { comment: "U", content: "x".repeat(ST_CARD_DECODER_LIMITS_V1.characterBookEntryBytes + 1) },
+              { comment: "Nope", content: "{{nope}}" },
+            ],
+          },
         },
       }),
     ).losses,
-    [
-      {
-        field: "character_book.entries",
-        reason: "unrenderable_worldbook_entry",
-        count: 1,
-        omitted: [{ title: "U", macros: [{ token: "{{nope}}", standard: false }] }],
-      },
-    ],
+    [{ field: "character_book.entries", reason: "worldbook_entry_content_unreadable", count: 1 }],
   );
   // A book whose entries all survive reports nothing.
   assert.deepEqual(
@@ -2007,20 +2044,22 @@ test("a block where she speaks twice in a row keeps both lines instead of losing
   assert.deepEqual(playerTwice.losses, [{ field: "mes_example", reason: "unparsed_example_blocks", count: 1 }]);
 });
 
-test("a world-book entry that refers to the card's own scenario is read, not dropped", () => {
-  // The probe used to render with `{ char }` only. `{{scenario}}` resolves in the macro engine, so the
-  // entry was readable; dropping it said the macro could never render, which was a statement about the
-  // probe rather than about the card.
+test("a world-book entry that refers to the card's own prose is read, not dropped", () => {
+  // The probe used to render with `{ char }` only, so `{{scenario}}` was called unrenderable when the truth
+  // was "this probe was not handed the card's scenario". `{{scenario}}`, `{{description}}` and
+  // `{{personality}}` are the card's OWN fields, and each was a way to lose a whole entry to a value one
+  // seam held and another did not - which is the reason the decoder no longer asks the question at all.
   const card = JSON.stringify({
     spec: "chara_card_v3",
     data: {
       name: "琥珀",
-      description: "calm",
+      description: "嘴上说不，手上却把伞递过来",
+      personality: "嘴硬心软",
       scenario: "雨夜，屋檐下",
       character_book: {
         entries: [
           { comment: "天气", keys: ["雨"], content: "{{scenario}}——她把伞往你那边倾。" },
-          // A macro the engine genuinely cannot resolve is still dropped and still named.
+          { comment: "性情", keys: ["伞"], content: "{{personality}}，她把 {{description}} 做了一遍。" },
           { comment: "未知", keys: ["雾"], content: "{{no_such_macro}} 起雾了。" },
         ],
       },
@@ -2029,15 +2068,12 @@ test("a world-book entry that refers to the card's own scenario is read, not dro
   const read = decodeStCard(card);
   assert.deepEqual(
     read.candidate?.worldBookCandidates.map((entry) => entry.content),
-    ["{{scenario}}——她把伞往你那边倾。"],
-    "the scenario entry survives; the authored text is stored unrendered",
+    [
+      "{{scenario}}——她把伞往你那边倾。",
+      "{{personality}}，她把 {{description}} 做了一遍。",
+      "{{no_such_macro}} 起雾了。",
+    ],
+    "every entry survives; the authored text is stored unrendered",
   );
-  assert.deepEqual(read.losses, [
-    {
-      field: "character_book.entries",
-      reason: "unrenderable_worldbook_entry",
-      count: 1,
-      omitted: [{ title: "未知", macros: [{ token: "{{no_such_macro}}", standard: false }] }],
-    },
-  ]);
+  assert.deepEqual(read.losses, []);
 });
