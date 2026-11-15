@@ -65,14 +65,13 @@ internal enum CompanionCabinOutcome
 /// Why the question is about an OWNERLESS cabin
 /// --------------------------------------------
 /// The companion's identity is created by the Mod's own attachment authority:
-/// <c>HostFarmhandProvisioner.HandleRequest</c> calls the vanilla
-/// <c>Cabin.CreateFarmhand()</c> and then initializes that native Farmhand's
-/// profile (<c>InitializeCreatedFarmhand</c>), because a Farmhand that is not
-/// <c>isCustomized</c> would send the AI client into the native
-/// CharacterCustomization screen. It refuses any other starting point on
-/// purpose: an owned cabin with an empty expected id is <c>cabin_busy</c>, and
-/// an owned-but-uncustomized one is <c>farmhand_not_initialized</c>. So the only
-/// world state that can be provisioned is a Cabin with <c>HasOwner == false</c>
+/// <c>HostFarmhandProvisioner.HandleRequest</c> takes whatever Farmhand a Cabin owns and initializes its profile through
+/// the one initializer (<c>HostFarmhandProvisioner.InitializeFarmhandProfile</c>), because a Farmhand that is not
+/// <c>isCustomized</c> would send the AI client into the native CharacterCustomization screen. That includes a Farmhand
+/// an earlier run created and did not finish initializing: such a save is NOT refused, the identity is repaired in place.
+/// The states this path refuses are the ones a Cabin owns a Farmhand it must not convert - an owned cabin with an empty
+/// expected id is <c>cabin_busy</c>, and a request naming a different id is <c>expected_farmhand_mismatch</c>. So the
+/// world state this path provisions from is a Cabin with <c>HasOwner == false</c>
 /// (<c>design/.migration-sources/research/stardew-farmhand-provisioning.md</c>
 /// §3 names exactly this route: "host 中的空 cabin 调用原版 Cabin.CreateFarmhand()").
 ///

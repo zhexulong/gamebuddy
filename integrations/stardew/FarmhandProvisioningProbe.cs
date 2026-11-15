@@ -115,6 +115,8 @@ internal sealed class FarmhandProvisioningProbe
             return;
         }
 
+        // The profile is the Host's to write: it initializes a Farmhand before issuing a manifest, so an uncustomized
+        // one here names a Host-authority inconsistency the diagnostic must not paper over.
         if (!selected.isCustomized.Value)
         {
             this.Finish($"expected_farmhand_not_profile_initialized expected_farmhand_id={expectedId}");

@@ -518,84 +518,29 @@ internal sealed class HostFarmhandProvisioner
         if (Game1.game1.IsSaving)
             return new("rejected", "save_in_progress");
 
-        Farmer? farmhand = cabin.owner;
-        bool createdFarmhand = false;
         if (existingBinding is not null)
         {
             if (existingBinding.CabinId != request.CabinId || (request.ExpectedFarmhandId.Length > 0 && request.ExpectedFarmhandId != existingBinding.FarmhandId.ToString()))
                 return new("rejected", "binding_conflict");
-            farmhand = Game1.GetPlayer(existingBinding.FarmhandId, onlyOnline: false);
-            if (farmhand is null || cabin.OwnerId != existingBinding.FarmhandId)
+            if (Game1.GetPlayer(existingBinding.FarmhandId, onlyOnline: false) is null || cabin.OwnerId != existingBinding.FarmhandId)
                 return new("rejected", "bound_farmhand_missing");
         }
-        else
-        {
-            if (farmhand is null)
-            {
-                if (request.ExpectedFarmhandId.Length > 0)
-                    return new("rejected", "new_binding_requires_empty_expected_id");
-                try
-                {
-                    cabin.CreateFarmhand();
-                    farmhand = cabin.owner;
-                    createdFarmhand = farmhand is not null;
-                }
-                catch (Exception exception)
-                {
-                    this.monitor.Log($"GameBuddy failed to create a native Farmhand through Cabin.CreateFarmhand(): {exception.GetType().Name}.", LogLevel.Error);
-                    return new("rejected", "native_farmhand_creation_failed");
-                }
-                if (farmhand is null)
-                    return new("rejected", "native_farmhand_creation_failed");
-                try
-                {
-                    this.InitializeCreatedFarmhand(farmhand);
-                    this.pendingCreatedCabin = cabin;
-                    this.pendingCreatedFarmhandId = farmhand.UniqueMultiplayerID;
-                }
-                catch (Exception exception)
-                {
-                    this.RollbackCreatedFarmhand(cabin, farmhand);
-                    this.monitor.Log($"GameBuddy failed to initialize the native Farmhand profile: {exception.GetType().Name}.", LogLevel.Error);
-                    return new("rejected", "farmhand_profile_initialization_failed");
-                }
-            }
-            else if (request.ExpectedFarmhandId.Length == 0)
-            {
-                return new("rejected", "cabin_busy");
-            }
-            else if (request.ExpectedFarmhandId != farmhand.UniqueMultiplayerID.ToString())
-            {
-                return new("rejected", "expected_farmhand_mismatch");
-            }
 
-            if (!farmhand.isCustomized.Value)
-            {
-                if (createdFarmhand)
-                    this.RollbackCreatedFarmhand(cabin, farmhand);
-                this.monitor.Log(
-                    $"GameBuddy refused a first binding: the created Farmhand was not initialized (customized={farmhand.isCustomized.Value}, id={farmhand.UniqueMultiplayerID}, name='{farmhand.Name}'); the request expected an empty id ({request.ExpectedFarmhandId.Length}).",
-                    LogLevel.Error);
-                return new("rejected", "farmhand_not_initialized");
-            }
-
-        }
+        TargetFarmhand target = this.PrepareTargetFarmhand(cabin, request.ExpectedFarmhandId);
+        if (target.RefusalReason.Length > 0)
+            return new("rejected", target.RefusalReason);
+        Farmer farmhand = target.Farmhand!;
+        bool createdFarmhand = target.Created;
 
         string expectedName = Utility.FilterDirtyWords(this.config.FarmhandName);
-        if (farmhand.UniqueMultiplayerID <= 0 || !farmhand.isCustomized.Value || farmhand.Name != expectedName || farmhand.displayName != expectedName)
+        if (farmhand.UniqueMultiplayerID <= 0 || farmhand.Name != expectedName || farmhand.displayName != expectedName)
         {
             if (createdFarmhand)
                 this.RollbackCreatedFarmhand(cabin, farmhand);
             this.monitor.Log(
                 $"GameBuddy refused a first binding: id={farmhand.UniqueMultiplayerID}, customized={farmhand.isCustomized.Value}, name='{farmhand.Name}', displayName='{farmhand.displayName}', expected='{expectedName}'.",
                 LogLevel.Error);
-            return new("rejected", "farmhand_not_initialized");
-        }
-        if (request.ExpectedFarmhandId.Length > 0 && request.ExpectedFarmhandId != farmhand.UniqueMultiplayerID.ToString())
-        {
-            if (createdFarmhand)
-                this.RollbackCreatedFarmhand(cabin, farmhand);
-            return new("rejected", "expected_farmhand_mismatch");
+            return new("rejected", "farmhand_profile_mismatch");
         }
         if (cabin.OwnerId != farmhand.UniqueMultiplayerID)
         {
@@ -731,7 +676,106 @@ internal sealed class HostFarmhandProvisioner
             && request.WorldId == Game1.MasterPlayer.UniqueMultiplayerID.ToString(System.Globalization.CultureInfo.InvariantCulture);
     }
 
-    private void InitializeCreatedFarmhand(Farmer farmhand)
+    /// <summary>
+    /// What a Cabin's Farmhand resolved to: the identity this request binds, or the reason there is none.
+    /// <see cref="RefusalReason"/> is empty exactly when <see cref="Farmhand"/> is the companion profile.
+    /// </summary>
+    private readonly record struct TargetFarmhand(Farmer? Farmhand, bool Created, string RefusalReason)
+    {
+        internal static TargetFarmhand Refused(string reasonCode) => new(null, false, reasonCode);
+    }
+
+    /// <summary>
+    /// Resolves the Cabin's Farmhand into the companion identity this request binds, and INITIALIZES it when it carries
+    /// no profile yet.
+    ///
+    /// <para>
+    /// WHY AN EXISTING FARMHAND IS INITIALIZED HERE AND NOT ONLY A CREATED ONE. <c>isCustomized</c> is not a property of
+    /// "created a moment ago" - it is a property of "no profile yet" - and a run that created the Farmhand and did not
+    /// finish (a crash, a native save that failed, a request refused after the identity had been written) leaves
+    /// exactly that Farmhand in the Cabin. Treating it as a precondition made such a save permanently unbindable: every
+    /// later request named the identity the Cabin already owned, was refused before anything was attempted, and the
+    /// only route left was deleting a Farmhand the save had already written. So the initializer runs for whichever
+    /// Farmhand the Cabin owns, and this method answers a refusal only when the attempt itself does not take.
+    /// </para>
+    /// <para>
+    /// WHAT IS NEVER ROLLED BACK. Only a Farmhand THIS call created is tracked for rollback, so a refusal can never
+    /// delete an identity that existed before the request: the next request finds it, initializes it, and binds it.
+    /// </para>
+    /// </summary>
+    private TargetFarmhand PrepareTargetFarmhand(Cabin cabin, string expectedFarmhandId)
+    {
+        Farmer? farmhand = cabin.owner;
+        bool created = false;
+        if (farmhand is null)
+        {
+            if (expectedFarmhandId.Length > 0)
+                return TargetFarmhand.Refused("new_binding_requires_empty_expected_id");
+            try
+            {
+                cabin.CreateFarmhand();
+                farmhand = cabin.owner;
+                created = farmhand is not null;
+            }
+            catch (Exception exception)
+            {
+                this.monitor.Log($"GameBuddy failed to create a native Farmhand through Cabin.CreateFarmhand(): {exception.GetType().Name}.", LogLevel.Error);
+                return TargetFarmhand.Refused("native_farmhand_creation_failed");
+            }
+            if (farmhand is null)
+                return TargetFarmhand.Refused("native_farmhand_creation_failed");
+        }
+        else
+        {
+            if (expectedFarmhandId.Length == 0)
+                return TargetFarmhand.Refused("cabin_busy");
+            if (expectedFarmhandId != farmhand.UniqueMultiplayerID.ToString(System.Globalization.CultureInfo.InvariantCulture))
+                return TargetFarmhand.Refused("expected_farmhand_mismatch");
+        }
+
+        if (!farmhand.isCustomized.Value)
+        {
+            try
+            {
+                this.InitializeFarmhandProfile(farmhand);
+            }
+            catch (Exception exception)
+            {
+                if (created)
+                    this.RollbackCreatedFarmhand(cabin, farmhand);
+                this.monitor.Log($"GameBuddy failed to initialize the native Farmhand profile: {exception.GetType().Name}.", LogLevel.Error);
+                return TargetFarmhand.Refused("farmhand_profile_initialization_failed");
+            }
+            if (!farmhand.isCustomized.Value)
+            {
+                // The attempt above ran and the profile still reports no customization. This is the ONLY place this
+                // code is produced: it is the postcondition of the attempt, never a precondition on the request.
+                if (created)
+                    this.RollbackCreatedFarmhand(cabin, farmhand);
+                this.monitor.Log($"GameBuddy refused a binding: the Farmhand profile did not take the initialization (id={farmhand.UniqueMultiplayerID}, name='{farmhand.Name}').", LogLevel.Error);
+                return TargetFarmhand.Refused("farmhand_not_initialized");
+            }
+        }
+        if (created)
+        {
+            this.pendingCreatedCabin = cabin;
+            this.pendingCreatedFarmhandId = farmhand.UniqueMultiplayerID;
+        }
+        return new TargetFarmhand(farmhand, created, string.Empty);
+    }
+
+    /// <summary>
+    /// Gives a Farmhand the profile this Host is configured for: name, favourite thing, customization, clothing, and the
+    /// version it was written by.
+    ///
+    /// <para>
+    /// It makes no assumption that this process created the Farmer. Everything it writes is a plain field or a NetField
+    /// on an instance that is ALREADY in the save, which is why the same call is the answer for both a Farmhand created a
+    /// moment ago and one an earlier run left without a profile (<see cref="PrepareTargetFarmhand"/>). A Farmhand that is
+    /// not customized is exactly the state in which the native client would otherwise open CharacterCustomization.
+    /// </para>
+    /// </summary>
+    private void InitializeFarmhandProfile(Farmer farmhand)
     {
         string filteredName = Utility.FilterDirtyWords(this.config.FarmhandName);
         farmhand.Name = filteredName;

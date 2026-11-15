@@ -217,6 +217,10 @@ internal sealed class FarmhandProvisioner
             return;
         }
         Farmer selected = matches[0];
+        // The Host initializes the profile before it issues a manifest (`HostFarmhandProvisioner.PrepareTargetFarmhand`),
+        // and the Farmer the server publishes IS that initialized instance, so a Farmhand arriving here uncustomized
+        // names a Host-authority inconsistency. This client cannot attempt the initialization itself: the profile lives in
+        // the Host's save, and activating an uncustomized copy would open the native CharacterCustomization screen.
         if (!selected.isCustomized.Value)
         {
             this.Fail("target_farmhand_not_initialized");

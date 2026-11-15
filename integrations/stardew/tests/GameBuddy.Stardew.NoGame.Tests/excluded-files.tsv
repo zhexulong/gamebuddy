@@ -254,3 +254,5 @@ WateringWhereaboutsFreshnessTests.cs	game	WhereaboutsWorld (StardewValley, GameL
 WhereaboutsWorld.cs	game	StardewValley, Game1, GameLocation, Farmer, Netcode, Microsoft.Xna
 CharacterBlockedWalkTests.cs	mod-assembly	FarmhandExecutionJournal, RefusalLayerKind, RefusalLayerToken, StardewBodyController
 BuildFarmBuildingAccountTests.cs	mod-assembly	ExecutionManager
+FarmhandInitializationReachabilityGateTests.cs	reference-tree	DecompiledSource@DecompiledSource.cs (the shared comment stripper); that helper's own file is excluded, so this one cannot compile in the game-free subset
+HostFarmhandProvisioningInitializationTests.cs	game	StardewValley, Game1, Farmer, Cabin, Netcode, SDKHelper, DummyMonitor@NativeFarmingContractTests.cs, HostFarmhandProvisioner
