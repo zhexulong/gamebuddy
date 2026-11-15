@@ -445,6 +445,9 @@ export const PROBLEM_CODES = [
   // ...and a save that would carry the profile to the Chats pinning it, while one of them is
   // answering. Its own code: the next step is "save again once the reply finishes".
   "character_voice_turn_active",
+  // Her example dialogues are the same kind of durable profile field one member over: the
+  // whole set is CASed on the profile revision the browser read.
+  "character_examples_conflict",
   // The managed World Info library's own refusals (`world-info.create`/`update`/`delete`/`detail`).
   "world_info_not_found",
   "world_info_already_exists",

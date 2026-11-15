@@ -501,8 +501,11 @@ test("problem-code.5: the authorities and the sender signatures are read, not as
   // one in play, so there is nothing to record) and `companion_switch_requires_no_session` (a Game
   // session is bound to the companion it started with) - moved it 63 to 65. It still fails the
   // moment the reader stops seeing a member. `chat.export`'s own refusal - a Chat whose file is over
-  // the ceiling the wire carries, which no retry can shrink - moved it 65 to 66.
-  assert.equal(tavern.size, 66, `the tavern problem union should have 66 members, read ${tavern.size}`);
+  // the ceiling the wire carries, which no retry can shrink - moved it 65 to 66. Her example
+  // dialogues' stale save (`character.examples_conflict`, the same durable profile field the
+  // directive owns one member over) is this lane's one addition; the number below is the union as
+  // it stands on the branch, where the preset/branch work landed three more ahead of it.
+  assert.equal(tavern.size, 70, `the tavern problem union should have 70 members, read ${tavern.size}`);
   // ...and the game process itself ending (`stardew_player_host_exited`, the cabin read answered
   // against a game the Guardian watched die) moved the game count 24 to 25, and the cabin read's
   // other named answer, declared at last (`stardew_player_host_cabin_missing`, a live farm with no

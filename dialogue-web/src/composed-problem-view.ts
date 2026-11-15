@@ -504,6 +504,7 @@ const PROBLEM_SENTENCES: Readonly<Record<TavernProblemCode, ProblemSentence>> = 
   scenario_conflict: revisionConflict,
   greeting_conflict: revisionConflict,
   character_voice_conflict: revisionConflict,
+  character_examples_conflict: revisionConflict,
   character_voice_turn_active: characterVoiceTurnActive,
   companion_world_book_conflict: revisionConflict,
   world_info_revision_conflict: revisionConflict,

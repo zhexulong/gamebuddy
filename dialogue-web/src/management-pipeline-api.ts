@@ -141,7 +141,9 @@ type TavernBrowserOperationV1 = Readonly<{
     | "chat.restore"
     | "chat.trash"
     | "character.voice.read"
-    | "character.voice.update";
+    | "character.voice.update"
+    | "character.examples.read"
+    | "character.examples.update";
   labelKey:
     | "tavern.nav.chat"
     | "tavern.nav.memory"
@@ -173,6 +175,8 @@ type TavernBrowserOperationV1 = Readonly<{
     | "tavern.operation.settings.appearance.update"
     | "tavern.operation.settings.ui-language.read"
     | "tavern.operation.settings.ui-language.update"
+    | "tavern.operation.settings.sampler.read"
+    | "tavern.operation.settings.sampler.update"
     | "tavern.operation.settings.connection.read"
     | "tavern.operation.settings.connection.create"
     | "tavern.operation.settings.connection.test"
@@ -204,7 +208,9 @@ type TavernBrowserOperationV1 = Readonly<{
     | "tavern.operation.chat.restore"
     | "tavern.operation.chat.trash"
     | "tavern.operation.character.voice.read"
-    | "tavern.operation.character.voice.update";
+    | "tavern.operation.character.voice.update"
+    | "tavern.operation.character.examples.read"
+    | "tavern.operation.character.examples.update";
   availability: "available" | "busy" | "unavailable";
   routeId: string;
 }>;
@@ -519,6 +525,25 @@ export type CompanionVoiceV1 = Readonly<{
 export type UpdateCompanionVoiceCommandV1 =
   | Readonly<{ apiVersion: 1; expectedProfileRevision: number; text: string }>
   | Readonly<{ apiVersion: 1; expectedProfileRevision: number; clear: true }>;
+/** One example dialogue: a player turn and her reply, as the durable profile holds them. */
+export type CompanionExamplePairV1 = Readonly<{ user: string; companion: string }>;
+/**
+ * The mounted companion's example dialogues - the reviewed card's `mes_example`, the few-shot rows
+ * that decide her register - plus the profile revision a save CASes against. The rows arrive
+ * rendered: `{{char}}` is her name and `{{user}}` the run's word for the player, exactly as the
+ * directive beside it arrives.
+ */
+export type CompanionExamplesV1 = Readonly<{
+  apiVersion: 1;
+  profileRevision: number;
+  examples: readonly CompanionExamplePairV1[];
+}>;
+/** One save of the whole set, in the order the player sees them. An empty set clears them. */
+export type UpdateCompanionExamplesCommandV1 = Readonly<{
+  apiVersion: 1;
+  expectedProfileRevision: number;
+  examples: readonly CompanionExamplePairV1[];
+}>;
 /**
  * The largest card file the stage route accepts, mirroring the Host's own limit
  * (`ST_CARD_DECODER_LIMITS_V1.inputBytesPng`, the card decoder's PNG input
@@ -734,6 +759,26 @@ export type TavernDeliveryPreferenceV1 = Readonly<{
 export type TavernDeliveryPreferenceCommandV1 = Readonly<{
   expectedRevision: number;
   paced: boolean;
+}>;
+
+/**
+ * Mirrors the Host's TavernSamplerPreferenceV1: the one sampler value the player owns rather than a preset.
+ *
+ * `null` is "follow the preset" - a real choice, not an absence - so this client substitutes no default. The range is
+ * the Host's own, stated once here so the field and the wire refuse the same input at the same point.
+ */
+export const SAMPLING_TEMPERATURE_MIN = 0;
+export const SAMPLING_TEMPERATURE_MAX = 2;
+
+export type TavernSamplerPreferenceV1 = Readonly<{
+  revision: number;
+  temperature: number | null;
+}>;
+
+/** Mirrors the Host's TavernSamplerPreferenceCommandV1. */
+export type TavernSamplerPreferenceCommandV1 = Readonly<{
+  expectedRevision: number;
+  temperature: number | null;
 }>;
 
 /**
@@ -1235,6 +1280,8 @@ const OPERATION_IDS = [
   "settings.appearance.update",
   "settings.ui-language.read",
   "settings.ui-language.update",
+  "settings.sampler.read",
+  "settings.sampler.update",
   "settings.connection.read",
   "settings.connection.create",
   "settings.connection.test",
@@ -1264,6 +1311,10 @@ const OPERATION_IDS = [
   // directive (the reviewed card's `system_prompt`), read/edit/clear.
   "character.voice.read",
   "character.voice.update",
+  // design/28 §2 her example dialogues: the same durable profile, one member over - the
+  // few-shot rows the Chat prompt prints under `[Dialogue Examples]`.
+  "character.examples.read",
+  "character.examples.update",
   // design/28 §2 import/export row: reviewed ST-card import pipeline.
   "character.import.stage",
   "character.import.read",
@@ -1310,6 +1361,8 @@ const MANAGEMENT_LABEL_KEYS = [
   "tavern.operation.settings.appearance.update",
   "tavern.operation.settings.ui-language.read",
   "tavern.operation.settings.ui-language.update",
+  "tavern.operation.settings.sampler.read",
+  "tavern.operation.settings.sampler.update",
   "tavern.operation.settings.connection.read",
   "tavern.operation.settings.connection.create",
   "tavern.operation.settings.connection.test",
@@ -1343,6 +1396,8 @@ const MANAGEMENT_LABEL_KEYS = [
   "tavern.operation.chat.trash",
   "tavern.operation.character.voice.read",
   "tavern.operation.character.voice.update",
+  "tavern.operation.character.examples.read",
+  "tavern.operation.character.examples.update",
 ] as const;
 const OPERATION_AVAILABILITY = ["available", "busy", "unavailable"] as const;
 const NAVIGATION_ITEM_IDS = ["chat", "memory", "characters"] as const;
@@ -1387,6 +1442,8 @@ const PROBLEM_CODES = [
   // the browser read; a stale edit is its own bounded refusal.
   "character_voice_conflict",
   "character_voice_turn_active",
+  // Her example dialogues are the same kind of durable profile field one member over.
+  "character_examples_conflict",
   // design/28 §2 import/export row: the staged-card pipeline has its own closed
   // problem codes (rejected card, unknown import, unreviewed confirm).
   "st_card_import_rejected",
@@ -1589,6 +1646,8 @@ const LANGUAGE_PREFERENCE_KEYS = ["revision", "locale"] as const;
 const LANGUAGE_PREFERENCE_COMMAND_KEYS = ["expectedRevision", "locale"] as const;
 const DELIVERY_PREFERENCE_KEYS = ["revision", "paced"] as const;
 const DELIVERY_PREFERENCE_COMMAND_KEYS = ["expectedRevision", "paced"] as const;
+const SAMPLER_PREFERENCE_KEYS = ["revision", "temperature"] as const;
+const SAMPLER_PREFERENCE_COMMAND_KEYS = ["expectedRevision", "temperature"] as const;
 const GAME_PROMPT_ADDITION_KEYS = ["revision", "addition"] as const;
 const GAME_PROMPT_ADDITION_COMMAND_KEYS = ["expectedRevision", "addition"] as const;
 const APPEARANCE_PREFERENCE_KEYS = ["revision", "appearance"] as const;
@@ -2132,6 +2191,34 @@ function isCompanionCharacterVoice(value: unknown): value is CompanionCharacterV
     hasExactKeys(value, COMPANION_CHARACTER_VOICE_KEYS) &&
     isLengthBoundedString(value.text, 1, 8_192) &&
     (value.source === "card" || value.source === "player")
+  );
+}
+
+const COMPANION_EXAMPLES_KEYS = ["apiVersion", "profileRevision", "examples"] as const;
+const COMPANION_EXAMPLE_PAIR_KEYS = ["user", "companion"] as const;
+/** The most rows the Host accepts: the identity profile's own few-shot ceiling. */
+const MAX_COMPANION_EXAMPLES = 64;
+/**
+ * The value the example-dialogue read returns: the revision a save must CAS on, plus her rows.
+ *
+ * `hasExactKeys` on each pair is the point of the mirror: the wire carries two fields, and a
+ * client that admitted a third would silently accept a shape the Host never sends.
+ */
+function isCompanionExamples(value: unknown): value is CompanionExamplesV1 {
+  return (
+    isRecord(value) &&
+    hasExactKeys(value, COMPANION_EXAMPLES_KEYS) &&
+    value.apiVersion === TAVERN_BROWSER_API_VERSION &&
+    isNonNegativeSafeInteger(value.profileRevision) &&
+    Array.isArray(value.examples) &&
+    value.examples.length <= MAX_COMPANION_EXAMPLES &&
+    value.examples.every(
+      (pair: unknown) =>
+        isRecord(pair) &&
+        hasExactKeys(pair, COMPANION_EXAMPLE_PAIR_KEYS) &&
+        isLengthBoundedString(pair.user, 1, 8_192) &&
+        isLengthBoundedString(pair.companion, 1, 8_192),
+    )
   );
 }
 
@@ -3005,6 +3092,38 @@ function isDeliveryPreferenceCommand(value: unknown): value is TavernDeliveryPre
   );
 }
 
+export function validateSamplerPreference(value: unknown): TavernSamplerPreferenceV1 {
+  if (!isRecord(value) || !hasExactKeys(value, SAMPLER_PREFERENCE_KEYS)) throw new TavernProtocolError();
+  if (!isNonNegativeSafeInteger(value.revision) || !isSamplingTemperature(value.temperature))
+    throw new TavernProtocolError();
+  return { revision: value.revision, temperature: value.temperature };
+}
+
+/**
+ * A temperature the Host could have stored: `null` follows the preset, a number sits inside the stated range.
+ *
+ * Refused rather than clamped, exactly as the Host refuses it: a body carrying `3` is not a value this product sends,
+ * and drawing `2` in its place would show the player a number she never chose.
+ */
+function isSamplingTemperature(value: unknown): value is number | null {
+  if (value === null) return true;
+  return (
+    typeof value === "number" &&
+    Number.isFinite(value) &&
+    value >= SAMPLING_TEMPERATURE_MIN &&
+    value <= SAMPLING_TEMPERATURE_MAX
+  );
+}
+
+function isSamplerPreferenceCommand(value: unknown): value is TavernSamplerPreferenceCommandV1 {
+  return (
+    isRecord(value) &&
+    hasExactKeys(value, SAMPLER_PREFERENCE_COMMAND_KEYS) &&
+    isNonNegativeSafeInteger(value.expectedRevision) &&
+    isSamplingTemperature(value.temperature)
+  );
+}
+
 /**
  * The addition is read back as stored, bounded by the same ceiling the field enforces: a
  * record longer than the field would be text no control could ever shorten to its own limit
@@ -3418,6 +3537,11 @@ export function validateCompanionVoice(value: unknown): CompanionVoiceV1 {
   return value;
 }
 
+export function validateCompanionExamples(value: unknown): CompanionExamplesV1 {
+  if (!isCompanionExamples(value)) throw new TavernProtocolError();
+  return value;
+}
+
 export function validateCompanionWorldBook(value: unknown): CompanionWorldBookV1 {
   if (!isCompanionWorldBook(value)) throw new TavernProtocolError();
   return value;
@@ -3731,6 +3855,20 @@ export type ManagementPipelineApi = Readonly<{
    */
   readDeliveryPreference(): Promise<TavernDeliveryPreferenceV1>;
   /**
+   * GET /api/tavern/v1/settings/sampler (browser session; no CSRF header): the sampler temperature this installation
+   * sends instead of the bound preset's, or null when the preset decides.
+   */
+  readSamplerPreference(): Promise<TavernSamplerPreferenceV1>;
+  /**
+   * PUT /api/tavern/v1/settings/sampler with browser-session CSRF protection. The reply is the Host's validated
+   * read-back, which is the only value the surface then shows. The value reaches a surface's NEXT mount: it is spliced
+   * into `models.json` when that runtime is constructed, not per turn, and the panel says so.
+   */
+  updateSamplerPreference(
+    command: TavernSamplerPreferenceCommandV1,
+    csrfToken: string,
+  ): Promise<TavernSamplerPreferenceV1>;
+  /**
    * PUT /api/tavern/v1/settings/delivery with browser-session CSRF protection. The
    * reply is the Host's validated read-back, which is the only value the surface
    * then shows.
@@ -3820,6 +3958,12 @@ export type ManagementPipelineApi = Readonly<{
   /** GET /api/tavern/v1/companions/:handle/voice: the mounted companion's performance directive. */
   readCompanionVoice(handle: string): Promise<CompanionVoiceV1>;
   /**
+   * GET /api/tavern/v1/companions/:handle/examples: her example dialogues, the few-shot rows the
+   * prompt renders under `[Dialogue Examples]`. Rendered, so the surface paints words rather than
+   * `{{char}}` / `{{user}}`.
+   */
+  readCompanionExamples(handle: string): Promise<CompanionExamplesV1>;
+  /**
    * GET /api/tavern/v1/companions/:handle/worldbook: the companion's OWN world
    * book (the reviewed card's `character_book`), which is a different thing from
    * the World Info items a conversation can attach.
@@ -3872,6 +4016,16 @@ export type ManagementPipelineApi = Readonly<{
     command: UpdateCompanionVoiceCommandV1,
     csrfToken: string,
   ): Promise<CompanionVoiceV1>;
+  /**
+   * PUT /api/tavern/v1/companions/:handle/examples: replace the whole set, CASed on the revision
+   * the read carried. The reply is the Host's own re-projection, so the surface re-renders from
+   * what it returned and never from what it asked for.
+   */
+  updateCompanionExamples(
+    handle: string,
+    command: UpdateCompanionExamplesCommandV1,
+    csrfToken: string,
+  ): Promise<CompanionExamplesV1>;
   /** POST /api/tavern/v1/companions: creates a Host-owned namespace from a display name. */
   createCompanion(name: string, csrfToken: string): Promise<CompanionDetailV1>;
   /** GET /api/tavern/v1/persona: the player's own persona projection. */
@@ -4232,6 +4386,26 @@ export function createManagementPipelineApi(
       observe("settings.delivery.update", "passed", String(result.revision));
       return result;
     },
+    async readSamplerPreference(): Promise<TavernSamplerPreferenceV1> {
+      return exchange(fetchLike, "GET", "/api/tavern/v1/settings/sampler", 200, validateSamplerPreference);
+    },
+    async updateSamplerPreference(
+      command: TavernSamplerPreferenceCommandV1,
+      csrfToken: string,
+    ): Promise<TavernSamplerPreferenceV1> {
+      if (!isSamplerPreferenceCommand(command) || !isOpaqueHandle(csrfToken)) throw new TavernProtocolError();
+      const result = await exchange(
+        fetchLike,
+        "PUT",
+        "/api/tavern/v1/settings/sampler",
+        200,
+        validateSamplerPreference,
+        { "Content-Type": "application/json", "x-csrf-token": csrfToken },
+        command,
+      );
+      observe("settings.sampler.update", "passed", String(result.revision));
+      return result;
+    },
     async readGamePromptAddition(): Promise<TavernGamePromptAdditionV1> {
       return exchange(fetchLike, "GET", "/api/tavern/v1/settings/game-prompt", 200, validateGamePromptAddition);
     },
@@ -4439,6 +4613,10 @@ export function createManagementPipelineApi(
       if (!isOpaqueHandle(handle)) throw new TavernProtocolError();
       return exchange(fetchLike, "GET", `/api/tavern/v1/companions/${handle}/voice`, 200, validateCompanionVoice);
     },
+    async readCompanionExamples(handle: string): Promise<CompanionExamplesV1> {
+      if (!isOpaqueHandle(handle)) throw new TavernProtocolError();
+      return exchange(fetchLike, "GET", `/api/tavern/v1/companions/${handle}/examples`, 200, validateCompanionExamples);
+    },
     async readCompanionWorldBook(handle: string): Promise<CompanionWorldBookV1> {
       if (!isOpaqueHandle(handle)) throw new TavernProtocolError();
       return exchange(
@@ -4563,6 +4741,30 @@ export function createManagementPipelineApi(
         },
       );
       observe("character.voice.update", "passed", String(result.profileRevision));
+      return result;
+    },
+    async updateCompanionExamples(
+      handle: string,
+      command: UpdateCompanionExamplesCommandV1,
+      csrfToken: string,
+    ): Promise<CompanionExamplesV1> {
+      if (!isOpaqueHandle(handle) || !isOpaqueHandle(csrfToken)) throw new TavernProtocolError();
+      // The rows leave as the pair the contract declares and nothing else: a client-side re-spelling
+      // of an entry shape is how a field stops reaching the Host while the editor shows it saved.
+      const result = await exchange(
+        fetchLike,
+        "PUT",
+        `/api/tavern/v1/companions/${handle}/examples`,
+        200,
+        validateCompanionExamples,
+        { "Content-Type": "application/json", "x-csrf-token": csrfToken },
+        {
+          apiVersion: TAVERN_BROWSER_API_VERSION,
+          expectedProfileRevision: command.expectedProfileRevision,
+          examples: command.examples.map((example) => ({ user: example.user, companion: example.companion })),
+        },
+      );
+      observe("character.examples.update", "passed", String(result.profileRevision));
       return result;
     },
     async createCompanion(name: string, csrfToken: string): Promise<CompanionDetailV1> {

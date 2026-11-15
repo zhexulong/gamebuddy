@@ -196,6 +196,16 @@ export type CharacterLabels = Readonly<{
   voiceSaveFailed: string;
   voiceCleared: string;
 
+  examplesTitle: string;
+  examplesHint: string;
+  examplesAbsent: string;
+  examplesUserTurn: string;
+  examplesCompanionTurn: string;
+  examplesAdd: string;
+  examplesSave: string;
+  examplesSaveFailed: string;
+  examplesUnavailable: string;
+
   personaTitle: string;
   personaHint: string;
   personaName: string;
@@ -569,6 +579,17 @@ const en: CharacterLabels = Object.freeze({
   voiceSaveFailed: "Could not save the directive. It changed elsewhere; reload and retry.",
   voiceCleared: "Cleared.",
 
+  examplesTitle: "Dialogue examples",
+  examplesHint:
+    "Short exchanges that show how she answers - one turn from you, one from her. They are sent to the model with her description, and they teach her register better than any adjective, so write them the way you want her to sound. Saving with every row blank removes them all.",
+  examplesAbsent: "She has no examples yet, so nothing teaches the model how she talks.",
+  examplesUserTurn: "You say",
+  examplesCompanionTurn: "She answers",
+  examplesAdd: "Add an example",
+  examplesSave: "Save examples",
+  examplesSaveFailed: "Could not save her examples. Try saving again.",
+  examplesUnavailable: "Her examples could not be read, so there is nothing to edit here.",
+
   personaTitle: "Persona",
   personaHint: "How your companion sees you.",
   personaName: "Your display name",
@@ -712,7 +733,7 @@ const en: CharacterLabels = Object.freeze({
   exportUnreadable: "Her records could not be read, so no card was made.",
   exportTooLarge: "Her records are too large to fit in a character card, so nothing was saved.",
   exportImageAbsent:
-    "She has no picture, so there is no PNG card to make. Use the JSON card — it carries her records without a picture.",
+    "She has no picture yet, so a PNG card has no image to carry. Open her row, use Give her a picture, then export again — or save the JSON card, which carries her records without a picture.",
   exportFailed: "The character card could not be exported.",
 
   dispositionAccepted: "used",
@@ -869,6 +890,17 @@ const zh: CharacterLabels = Object.freeze({
   voiceSaveFailed: "无法保存指令。内容已在其他位置更改；请重新加载后再试。",
   voiceCleared: "已清除。",
 
+  examplesTitle: "对话示例",
+  examplesHint:
+    "用几段短短的对话示范她怎么答——你说一句，她答一句。这些会连同她的描述一起送给模型，比任何形容词都更能教出她的语感，所以请照你希望她说话的样子写。所有行都留空保存，就会清掉全部示例。",
+  examplesAbsent: "她还没有对话示例，所以模型没有任何样本可以学她怎么说话。",
+  examplesUserTurn: "你说",
+  examplesCompanionTurn: "她答",
+  examplesAdd: "添加一段示例",
+  examplesSave: "保存示例",
+  examplesSaveFailed: "无法保存她的对话示例，请再试一次。",
+  examplesUnavailable: "读不到她的对话示例，所以这里没有可编辑的内容。",
+
   personaTitle: "用户设定",
   personaHint: "你希望伙伴如何认识你。",
   personaName: "你的显示名称",
@@ -1006,7 +1038,8 @@ const zh: CharacterLabels = Object.freeze({
   exportNothing: "还没有可以导出的伙伴。",
   exportUnreadable: "无法读取她的档案，未能生成角色卡。",
   exportTooLarge: "她的档案太大，放不进一张角色卡，因此没有导出。",
-  exportImageAbsent: "她没有画像，无法生成 PNG 角色卡。请用 JSON 角色卡——它同样携带她的设定，只是没有画像。",
+  exportImageAbsent:
+    "她还没有画像，PNG 角色卡里没有图片可放。打开她的资料，用「给她一张图片」，再导出；或者改存 JSON 角色卡——它同样携带她的设定，只是没有画像。",
   exportFailed: "无法导出这张角色卡。",
 
   dispositionAccepted: "已使用",

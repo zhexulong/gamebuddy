@@ -14,6 +14,7 @@ import { TavernProblemError } from "../management-pipeline-api";
 import { deriveCompanionActivationControls } from "../companion-activation-controls";
 import { CharacterCardImport } from "./CharacterCardImport";
 import { CompanionAvatar } from "./CompanionAvatar";
+import { CompanionExamplesSection } from "./CompanionExamplesSection";
 import { CompanionInspectorDrawer, type InspectedCompanion } from "./CompanionInspectorDrawer";
 import { characterLabels, type CharacterLabels } from "./character-domain-labels";
 import { isImeProcessingKey } from "./ime-composition";
@@ -168,7 +169,12 @@ export function CharactersPanel({
   const [personaNotice, setPersonaNotice] = useState<SaveNotice>(null);
 
   const [voice, setVoice] = useState<VoiceView>({ kind: "loading" });
-  const [voiceHandle, setVoiceHandle] = useState<string | null>(null);
+  /**
+   * The companion in play, whose identity profile both the directive editor and the example
+   * editor write. One handle, because it is one record: the roster read names her once and both
+   * sections save into it.
+   */
+  const [mountedHandle, setMountedHandle] = useState<string | null>(null);
   const [voiceSaving, setVoiceSaving] = useState(false);
   const [voiceClearing, setVoiceClearing] = useState(false);
   const [voiceNotice, setVoiceNotice] = useState<VoiceNotice>(null);
@@ -329,11 +335,11 @@ export function CharactersPanel({
     const current = companionList.companions.find((entry) => entry.isCurrent);
     if (current === undefined) {
       setVoice({ kind: "absent" });
-      setVoiceHandle(null);
+      setMountedHandle(null);
       return;
     }
     let active = true;
-    setVoiceHandle(current.handle);
+    setMountedHandle(current.handle);
     void (async () => {
       try {
         const value = await api.readCompanionVoice(current.handle);
@@ -349,14 +355,14 @@ export function CharactersPanel({
   }, [api, companionList]);
 
   const handleSaveVoice = async (): Promise<void> => {
-    if (voice.kind !== "ready" || voiceHandle === null || voiceSaving || voiceClearing) return;
+    if (voice.kind !== "ready" || mountedHandle === null || voiceSaving || voiceClearing) return;
     const text = voiceText.value.trim();
     if (text.length === 0) return;
     setVoiceSaving(true);
     setVoiceNotice(null);
     try {
       const saved = await api.updateCompanionVoice(
-        voiceHandle,
+        mountedHandle,
         { apiVersion: 1, expectedProfileRevision: voice.value.profileRevision, text },
         csrfToken,
       );
@@ -376,12 +382,12 @@ export function CharactersPanel({
   };
 
   const handleClearVoice = async (): Promise<void> => {
-    if (voice.kind !== "ready" || voiceHandle === null || voiceSaving || voiceClearing) return;
+    if (voice.kind !== "ready" || mountedHandle === null || voiceSaving || voiceClearing) return;
     setVoiceClearing(true);
     setVoiceNotice(null);
     try {
       const cleared = await api.updateCompanionVoice(
-        voiceHandle,
+        mountedHandle,
         { apiVersion: 1, expectedProfileRevision: voice.value.profileRevision, clear: true },
         csrfToken,
       );
@@ -911,6 +917,12 @@ export function CharactersPanel({
               )}
             </section>
           )}
+
+          {/* Her example dialogues sit directly after the directive: they are the other member of
+              the same durable profile, and the two are the halves of one question (how she sounds).
+              Mounted always, because an editor that only appears once she HAS examples is an editor
+              no companion without examples can ever reach. */}
+          <CompanionExamplesSection api={api} csrfToken={csrfToken} handle={mountedHandle} locale={locale} />
 
           {persona !== "unavailable" && (
             <section aria-label={labels.personaTitle} data-persona-editor>
