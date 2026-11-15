@@ -18,6 +18,7 @@ import {
 } from "./stardew-production-lifecycle-coordinator.test-support.js";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
+import { readSourceShape } from "./test-support/source-shape.test-support.js";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
@@ -1230,15 +1231,12 @@ test("the boot reconcile line counts what it examined and prints a counted zero"
 
 test("the coordinator binds the boot reconcile to the production OS probe, and both boots run it before they serve", async () => {
   const moduleRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..", "src");
-  const coordinatorSource = await readFile(
-    join(moduleRoot, "stardew-production-lifecycle-coordinator.internal.ts"),
-    "utf8",
-  );
+  const coordinatorSource = readSourceShape(join(moduleRoot, "stardew-production-lifecycle-coordinator.internal.ts"));
   // The production probe is bound here, once: a boot that could not ask the OS
   // would leave every held pointer exactly where it is.
   assert.match(
-    coordinatorSource,
-    /reconcileHeldBootstrapRegistration: \(\) =>\s*\n\s*internal\.reconcileHeldBootstrapRegistration\(runtimeRoot, probeWindowsStardewGuardianObjects\)/u,
+    coordinatorSource.shape,
+    /reconcileHeldBootstrapRegistration: \(\) => internal\.reconcileHeldBootstrapRegistration\(runtimeRoot, probeWindowsStardewGuardianObjects\)/u,
   );
   const providerSource = await readFile(join(moduleRoot, "games", "stardew", "provider.ts"), "utf8");
   const boot = providerSource.slice(providerSource.indexOf("async createLifecycleCoordinator"));
@@ -1248,6 +1246,6 @@ test("the coordinator binds the boot reconcile to the production OS probe, and b
     reconcileCall < boot.indexOf("return Object.freeze({"),
     "the reconcile runs before the lifecycle capability is published",
   );
-  const mainSource = await readFile(join(moduleRoot, "main.ts"), "utf8");
-  assert.match(mainSource, /await coordinator\.reconcileHeldBootstrapRegistration\(\)/u);
+  const mainSource = readSourceShape(join(moduleRoot, "main.ts"));
+  assert.match(mainSource.shape, /await coordinator\.reconcileHeldBootstrapRegistration\(\)/u);
 });
