@@ -82,8 +82,37 @@ test("an edit row built from a projection carrying an undeclared member is refus
   };
   assert.throws(
     () => editRow(projected),
-    /carries \[constant, content, enabled, keys, priority, title\] while this kit's edit row declares/,
+    /a world-book projection carries \[priority\], which this kit's edit row does not declare/,
     "the refusal names the member the contract grew, so the next one is not carried blind into a write",
+  );
+});
+
+/**
+ * The optional half is optional on BOTH sides.
+ *
+ * `secondaryKeys` and `selectiveLogic` are `Type.Optional` in the contract, so a book whose cards never
+ * declared a second condition projects without them - which is the population the live run's companion
+ * reads. A row check spelled as equality would refuse that projection, and the refusal would land on the
+ * one write that exists to move the book's revision while an editor pins the old one.
+ */
+test("an edit row accepts a projection without the optional members, and carries them when they are there", () => {
+  const withoutOptional = {
+    title: "Greenhouse",
+    keys: ["greenhouse"],
+    constant: false,
+    enabled: true,
+    content: "Her greenhouse.",
+  };
+  assert.deepEqual(
+    editRow(withoutOptional, "The glass is new."),
+    { ...withoutOptional, content: "The glass is new." },
+    "a card that declares no second condition projects no second condition, and the row keeps it that way",
+  );
+  const withOptional = { ...withoutOptional, secondaryKeys: ["glass"], selectiveLogic: 0 };
+  assert.deepEqual(
+    editRow(withOptional, "The glass is new."),
+    { ...withOptional, content: "The glass is new." },
+    "a card that DOES declare one keeps both members: a save must not mint a mode, nor drop the one it read",
   );
 });
 

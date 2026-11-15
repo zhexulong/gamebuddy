@@ -15,10 +15,27 @@
 // So a row is built by SPREADING the projection the Host sent: nothing can be dropped, because nothing is
 // re-listed. `WORLD_BOOK_ENTRY_FIELDS` is the one place the members are named; `editRow` refuses a
 // projection it does not declare, and `world-book-entry.test.mjs` checks the list against the contract's
-// own schema, so the next required member fails in milliseconds instead of twenty minutes into a run.
+// own schema, so the next declared member fails in milliseconds instead of twenty minutes into a run.
 
-/** The members of `CompanionWorldBookEntryV1Schema`, as an edit row carries them. */
-const WORLD_BOOK_ENTRY_FIELDS = Object.freeze(["constant", "content", "enabled", "keys", "title"]);
+/**
+ * The members of `CompanionWorldBookEntryV1Schema`, as an edit row carries them.
+ *
+ * `secondaryKeys` and `selectiveLogic` are the OPTIONAL half: the panel draws the second condition only
+ * when the card declares one, and a save must not mint a mode the card never wrote. So a projection may
+ * carry them or not, and the population this driver reads carries neither - which is why the check below
+ * is "nothing undeclared was carried" and not "the members are exactly these". Spelled as equality, the
+ * gate went red the day the contract grew the pair (`secondaryKeys, selectiveLogic`) and stayed red, and
+ * the write it guards is the one Q needs to move the book's revision.
+ */
+const WORLD_BOOK_ENTRY_FIELDS = Object.freeze([
+  "constant",
+  "content",
+  "enabled",
+  "keys",
+  "secondaryKeys",
+  "selectiveLogic",
+  "title",
+]);
 
 /**
  * One edit row: the projected entry, with the field this edit changes replaced.
@@ -30,11 +47,11 @@ const WORLD_BOOK_ENTRY_FIELDS = Object.freeze(["constant", "content", "enabled",
  */
 function editRow(entry, content) {
   const carried = Object.keys(entry).sort();
-  const declared = [...WORLD_BOOK_ENTRY_FIELDS].sort();
-  if (carried.join(",") !== declared.join(","))
+  const undeclared = carried.filter((member) => !WORLD_BOOK_ENTRY_FIELDS.includes(member));
+  if (undeclared.length > 0)
     throw new Error(
-      `a world-book projection carries [${carried.join(", ")}] while this kit's edit row declares ` +
-        `[${declared.join(", ")}]: CompanionWorldBookEntryV1Schema ` +
+      `a world-book projection carries [${undeclared.join(", ")}], which this kit's edit row does not ` +
+        `declare ([${[...WORLD_BOOK_ENTRY_FIELDS].sort().join(", ")}]): CompanionWorldBookEntryV1Schema ` +
         `(host/src/tavern/browser-contract/index.ts) and WORLD_BOOK_ENTRY_FIELDS ` +
         `(tools/live-run/frontend/capture/world-book-entry.cjs) must name the same members`,
     );
