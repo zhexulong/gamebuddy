@@ -26,6 +26,7 @@ import {
   TURN_OPENINGS,
   TURN_PRODUCTION,
   TURN_SETTLED_SILENT,
+  TURN_SETTLED_WITH_EXECUTION_IN_FLIGHT,
   TURN_SUPPRESSION,
   TURN_SUPPRESSIONS,
   TURN_WITHOUT_ACTION,
@@ -670,10 +671,11 @@ function parseSegment(segment: string): Readonly<{
  * The account line READ BACK, so the assertion is the inverse of the printer rather than a copy of its output.
  *
  * A hand-written expected string can only pin what its author remembered; this reader refuses a line that lost a
- * segment, so a printer that silently dropped the opener histogram fails here by name. The six labels are the things a
+ * segment, so a printer that silently dropped the opener histogram fails here by name. The seven labels are the things a
  * run's account has to answer: how many turns opened and why, how many flushes were suppressed and why, how many were
- * examined, how many turns closed on speech alone and of which shape, how many settled with nothing said and what opened
- * them, and what the stale path did instead of a turn.
+ * examined, how many turns closed on speech alone and of which shape, how many settled with work and no word and what
+ * opened them, how many of those settlements had her own execution still running, and what the stale path did instead of a
+ * turn.
  */
 function readTurnAccountLine(line: string): Readonly<{
   opened: number;
@@ -688,6 +690,7 @@ function readTurnAccountLine(line: string): Readonly<{
   examined: number;
   emptyTurns: Readonly<{ total: number; counts: Record<string, number> }>;
   silentSettled: Readonly<{ total: number; counts: Record<string, number> }>;
+  settledWithExecutionInFlight: number;
   autoObserve: Readonly<{
     agedTurns: number;
     refreshed: Readonly<{ total: number; counts: Record<string, number> }>;
@@ -701,6 +704,7 @@ function readTurnAccountLine(line: string): Readonly<{
     "flushes examined",
     TURN_WITHOUT_ACTION,
     TURN_SETTLED_SILENT,
+    TURN_SETTLED_WITH_EXECUTION_IN_FLIGHT,
     AUTO_OBSERVE_AGED_TURNS,
     AUTO_OBSERVE_ON_STALE,
     AUTO_OBSERVE_UNAVAILABLE_TOKEN,
@@ -716,10 +720,12 @@ function readTurnAccountLine(line: string): Readonly<{
     examinedSegment,
     emptySegment,
     silentSegment,
+    inFlightSegment,
     agedSegment,
     observedSegment,
     declinedSegment,
   ] = segments as [
+    ReturnType<typeof parseSegment>,
     ReturnType<typeof parseSegment>,
     ReturnType<typeof parseSegment>,
     ReturnType<typeof parseSegment>,
@@ -741,6 +747,7 @@ function readTurnAccountLine(line: string): Readonly<{
     examined: examinedSegment.total,
     emptyTurns: Object.freeze({ total: emptySegment.total, counts: emptySegment.counts }),
     silentSettled: Object.freeze({ total: silentSegment.total, counts: silentSegment.counts }),
+    settledWithExecutionInFlight: inFlightSegment.total,
     autoObserve: Object.freeze({
       agedTurns: agedSegment.total,
       refreshed: Object.freeze({ total: observedSegment.total, counts: observedSegment.counts }),
@@ -845,6 +852,7 @@ test("the account line reads back into the account it names", () => {
       total: 2,
       byOpener: Object.freeze(silentSettledCounts({ [TURN_OPENING.worldFact]: 2 })),
     }),
+    settledWithExecutionInFlight: 3,
     autoObserve: autoObserveAccount({ refreshed: 4, lastAgeTurns: 20 }, { [AUTO_OBSERVE_UNAVAILABLE.refused]: 1 }),
     lastDecision: undefined,
   });
@@ -892,6 +900,11 @@ test("the account line reads back into the account it names", () => {
     Object.values(parsed.silentSettled.counts).reduce((total, count) => total + count, 0),
     "and the silent total is the sum of its openers, for the same reason",
   );
+  assert.equal(
+    parsed.settledWithExecutionInFlight,
+    account.settledWithExecutionInFlight,
+    "and the in-flight settlement count reads back: the condition that used to exclude silence is now a number on the line",
+  );
   assert.equal(parsed.autoObserve.agedTurns, account.autoObserve.agedTurns);
   assert.equal(
     parsed.autoObserve.agedTurns,
@@ -923,6 +936,7 @@ test("the account line names a member that never fired, in both histograms", () 
     examined: 1,
     emptyTurns: Object.freeze({ total: 0, byShape: Object.freeze(emptyTurnShapeCounts({})) }),
     silentSettled: Object.freeze({ total: 0, byOpener: Object.freeze(silentSettledCounts({})) }),
+    settledWithExecutionInFlight: 0,
     autoObserve: autoObserveAccount({ refreshed: 0, lastAgeTurns: undefined }),
     lastDecision: undefined,
   });
@@ -959,7 +973,7 @@ test("the account line this repo printed before the change is REFUSED by the rea
     "turns opened 55 · suppressed 0 {observation_restated: 0, world_fact_restated: 0, nothing_pending: 0} · flushes examined 55";
   assert.throws(
     () => readTurnAccountLine(measured),
-    /turns opened, suppressed, flushes examined, turn_closed_without_action, turn_settled_silent, aged readings, auto_observe_on_stale, auto_observe_unavailable/u,
+    /turns opened, suppressed, flushes examined, turn_closed_without_action, turn_settled_silent, turn_settled_with_execution_in_flight, aged readings, auto_observe_on_stale, auto_observe_unavailable/u,
     "a line that cannot say what opened its turns is not an account, and must not read as one",
   );
 });
@@ -978,7 +992,7 @@ test("the account line that counts its turns but not the reading it aged is REFU
     "refresh_attempts_spent: 0, refresh_refused: 0}";
   assert.throws(
     () => readTurnAccountLine(measured),
-    new RegExp(`turn_settled_silent, ${AUTO_OBSERVE_AGED_TURNS}, auto_observe_on_stale`, "u"),
+    new RegExp(`turn_settled_silent, ${TURN_SETTLED_WITH_EXECUTION_IN_FLIGHT}, ${AUTO_OBSERVE_AGED_TURNS}`, "u"),
     "a run whose one aged turn is not printed cannot say whether the world was ever asked about it",
   );
 });
@@ -996,7 +1010,7 @@ test("the account line that named its turns but not its refreshes is REFUSED: a 
     "observation:nothing_pending: 0, due:world_stale: 0, due:body_held: 0, due:nothing_pending: 0}";
   assert.throws(
     () => readTurnAccountLine(previous),
-    new RegExp(`turn_settled_silent, ${AUTO_OBSERVE_AGED_TURNS}, auto_observe_on_stale`, "u"),
+    new RegExp(`turn_settled_silent, ${TURN_SETTLED_WITH_EXECUTION_IN_FLIGHT}, ${AUTO_OBSERVE_AGED_TURNS}`, "u"),
     "a turn the refresh removed leaves no trace in that line, which is why the removal was uncountable",
   );
 });
@@ -1209,8 +1223,8 @@ test("turn_closed_without_action: a held body is its own reason, and a fresh obs
  * <p>
  * It is a READING and not a ban: no prompt rule, no suppression, no refusal. The falsifiers below hold the halves apart -
  * a turn that spoke is `turn_closed_without_action` and never this, a turn that acted AND spoke is neither, a turn that
- * acted and said nothing IS this, a body still working is silence-as-waiting rather than nothing to say, and the person's
- * own opener is never silence.
+ * acted and said nothing IS this whether or not its own receipt is still open, a turn that did nothing at all is neither,
+ * and the person's own opener is never silence.
  * </p>
  */
 
@@ -1231,10 +1245,11 @@ function settledSink(
 }
 
 /**
- * The window in the brief: one free body reading, one settlement, and a turn that delivered neither speech nor action.
+ * The window in the brief: one free body reading, one settlement, and a turn that delivered work with no word about it.
  *
- * The receipt batch is the fact that opens it (`world_fact`), and `saidNothing` is the loop's own report that the delivery
- * carried no assistant text - so this fixture is the shape the run could not count, not a shape invented for the counter.
+ * The receipt batch is the fact that opens it (`world_fact`), and `workedSilently` is the loop's own report that the
+ * delivery ran a tool and carried no assistant text - so this fixture is the shape the run could not count, not a shape
+ * invented for the counter.
  */
 test("turn_settled_silent: a receipt batch that carried no speech is named, with the opener that owed the turn", async () => {
   const pump = new CompanionEventPump();
@@ -1243,7 +1258,7 @@ test("turn_settled_silent: a receipt batch that carried no speech is named, with
     settlementFact("program_settled_plan_r47_silent", WINDOW_AT_MS + 1_000),
     FACT_PRODUCER.adapterIngress,
   );
-  await pump.flush(settledSink(pump, TURN_PRODUCTION.saidNothing));
+  await pump.flush(settledSink(pump, TURN_PRODUCTION.workedSilently));
 
   const account = pump.turnAccount;
   assert.equal(
@@ -1269,7 +1284,7 @@ test("turn_settled_silent: a receipt batch that carried no speech is named, with
   );
 });
 
-test("turn_settled_silent: a due wake that found nothing to say is counted under its own opener", async () => {
+test("turn_settled_silent: a due wake that worked without a word is counted under its own opener", async () => {
   // The other opener the closed list names. A Host-owned schedule coming due (`HOST_MINTED_WAKE_KINDS`) is not a receipt
   // and not a person: the counter must name `due`, or the histogram says the world owed every silent turn when a third of
   // them were her own schedule. The reading rides along and decides nothing, as it does on every turn.
@@ -1293,7 +1308,7 @@ test("turn_settled_silent: a due wake that found nothing to say is counted under
     },
     FACT_PRODUCER.adapterIngress,
   );
-  await pump.flush(settledSink(pump, TURN_PRODUCTION.saidNothing));
+  await pump.flush(settledSink(pump, TURN_PRODUCTION.workedSilently));
 
   const account = pump.turnAccount;
   assert.equal(account.opened, 2);
@@ -1307,7 +1322,7 @@ test("turn_settled_silent: a due wake that found nothing to say is counted under
   );
 });
 
-test("turn_settled_silent: spoke, still working and the person's own are not silence - and acted-and-spoke is not either", async () => {
+test("turn_settled_silent: spoke, acted-and-spoke and the person's own are not silence, in flight or not", async () => {
   // THE FALSIFIERS. Each case is the fixture above with exactly one thing changed, so a counter that fired on any
   // completed turn, or on any quiet one, would fail here while passing the test above.
   const spoke = new CompanionEventPump();
@@ -1378,14 +1393,16 @@ test("turn_settled_silent: spoke, still working and the person's own are not sil
     "silent work still resets the narration run: what the counter separates is speech, not work",
   );
 
-  // Her body still working: the delivery carried no speech because there was something to WAIT for. Counting it as
-  // "nothing to say" would name a busy companion silent, which is the mistake the narration counter already refuses.
+  // AND THE ONE THE IN-FLIGHT CONDITION USED TO DECIDE: the same open receipt, on a turn that SPOKE. `round59`'s probe B
+  // could not tell "she said nothing" from "her own receipt was still open", because both produced `0`. This case keeps
+  // the two apart from the other side: a receipt in flight is not what makes a turn silent, and it is not what stops a
+  // speaking turn from counting here - only the speech does.
   const working = new CompanionEventPump();
   working.enqueueFact(readingAt(14, 0, BODY_FREE), FACT_PRODUCER.adapterIngress);
   working.enqueueFact(settlementFact("program_settled_plan_r47_working", WINDOW_AT_MS), FACT_PRODUCER.adapterIngress);
   await working.flush({
     async deliver() {
-      working.turnProduction = TURN_PRODUCTION.saidNothing;
+      working.turnProduction = TURN_PRODUCTION.worked;
       working.enqueueFact(
         {
           source: "stardew_mod",
@@ -1401,7 +1418,12 @@ test("turn_settled_silent: spoke, still working and the person's own are not sil
     },
   });
   assert.equal(working.hasExecutionInFlight, true, "the receipt that arrived DURING the turn is the one that matters");
-  assert.equal(working.turnAccount.silentSettled.total, 0, "silence with work behind it is a wait, not an ending");
+  assert.equal(
+    working.turnAccount.silentSettled.total,
+    0,
+    "she worked AND said what she did: the receipt still open changes neither reading",
+  );
+  assert.equal(working.turnAccount.settledWithExecutionInFlight, 1, "and the settlement says the receipt was open");
 
   // The person's own turn: a turn someone opened is owed an answer, and its emptiness is a different defect with its own
   // name. The counter's population is derived from `SILENT_SETTLED_OPENINGS`, which is `TURN_OPENINGS` minus this member.
@@ -1425,6 +1447,85 @@ test("turn_settled_silent: spoke, still working and the person's own are not sil
   assert.equal(ended.turnAccount.silentSettled.total, 0, "an aborted or errored turn settled nothing at all");
 });
 
+/**
+ * THE SHAPE THE COUNTER COULD NOT SEE: work delivered, no text, and her own programme still running when the turn closed.
+ *
+ * <p>
+ * MEASURED 2026-11-15 (`round59`, `42 settled turns · with text 42 · tool-only 0`): this counter printed `0`, and the two
+ * probes that produced it - one turn with an `accepted`/`running` receipt of its own in flight, one with nothing in flight -
+ * differed in exactly one bit. The counter required that NOTHING was in flight, so the silent worker had nowhere to land:
+ * she submits a programme on nearly every turn, which means her own receipt was in flight at settlement on 28 of 36
+ * programme turns, and a run in which she said nothing on all of them would still have printed `turn_settled_silent 0`.
+ * The `0` therefore measured the counter's own condition rather than her choice.
+ * </p>
+ * <p>
+ * THE SHAPE OF SILENCE IS THE ONE `TURN_PRODUCTION` ALREADY NAMES: work delivered and no text (`workedSilently`). Whether
+ * a receipt is still in flight says how long the turn's own work has left to run - it is not whether the turn was silent,
+ * and it is now COUNTED rather than used to exclude: `turn_settled_with_execution_in_flight` says how many settled turns
+ * closed with one of her executions running, so the next reader does not have to reconstruct the condition from logs.
+ * </p>
+ */
+test("turn_settled_silent: a turn that submits a programme and settles with its own receipt in flight IS silence", async () => {
+  const pump = new CompanionEventPump();
+  pump.enqueueFact(readingAt(14, 0, BODY_FREE), FACT_PRODUCER.adapterIngress);
+  pump.enqueueFact(settlementFact("program_settled_plan_r59_self", WINDOW_AT_MS), FACT_PRODUCER.adapterIngress);
+  await pump.flush({
+    async deliver() {
+      // The turn ran the plan tool and delivered no text: that is `workedSilently`. Its programme is executing as it closes.
+      pump.turnProduction = TURN_PRODUCTION.workedSilently;
+      pump.enqueueFact(
+        {
+          source: "stardew_mod",
+          kind: "execution_receipt",
+          correlationId: "execution_r59_self_weed_row",
+          revision: 15,
+          occurredAtMs: WINDOW_AT_MS + 2_000,
+          payload: { state: "running" },
+        },
+        FACT_PRODUCER.adapterIngress,
+      );
+      return "completed" as const;
+    },
+  });
+
+  assert.equal(pump.hasExecutionInFlight, true, "the premise: her own programme is still running as the turn closes");
+  const account = pump.turnAccount;
+  assert.equal(
+    account.silentSettled.total,
+    1,
+    `a turn that worked and said nothing is silence whether or not its receipt is still open: ${turnAccountLine(account)}`,
+  );
+  assert.equal(account.silentSettled.byOpener[TURN_OPENING.worldFact], 1, "and under the opener that owed the turn");
+  assert.equal(
+    account.settledWithExecutionInFlight,
+    1,
+    "and the account says the receipt was open at settlement, which is the number a reader had to infer from logs",
+  );
+  assert.equal(account.emptyTurns.total, 0, "it delivered no speech, so it is not the turn spent on speech either");
+});
+
+test("turn_settled_silent: a settled turn that produced neither work nor text is not silence", async () => {
+  // THE FALSIFIER for the shape above: the counter names WORK without a word, not the absence of both. A completed turn
+  // that reached `said_nothing` asked for no tool and produced no text - it did nothing, and "there was nothing to say" is
+  // a statement about a turn that had something to do. Reading it as silence would count a provider answering nothing as a
+  // choice she made.
+  const pump = new CompanionEventPump();
+  pump.enqueueFact(readingAt(14, 0, BODY_FREE), FACT_PRODUCER.adapterIngress);
+  pump.enqueueFact(settlementFact("program_settled_plan_r59_idle", WINDOW_AT_MS), FACT_PRODUCER.adapterIngress);
+  await pump.flush(settledSink(pump, TURN_PRODUCTION.saidNothing));
+  assert.equal(pump.turnAccount.opened, 1, "the premise: the turn opened");
+  assert.equal(
+    pump.turnAccount.silentSettled.total,
+    0,
+    "nothing was done and nothing was said, which is not the shape this counter exists to name",
+  );
+  assert.equal(
+    pump.turnAccount.settledWithExecutionInFlight,
+    0,
+    "and nothing of hers was running, so that number is zero",
+  );
+});
+
 test("turn_settled_silent: the account line this tree printed before this unit cannot name a silent turn", () => {
   // THE FALSIFIER for the segment, on the exact line the printer produced before this unit: `round47`'s counted shapes,
   // the two refresh segments, and not one word about a turn that delivered nothing. A run reading that line can only
@@ -1439,7 +1540,7 @@ test("turn_settled_silent: the account line this tree printed before this unit c
     "refresh_refused: 0}";
   assert.throws(
     () => readTurnAccountLine(before),
-    new RegExp(`${TURN_SETTLED_SILENT}, ${AUTO_OBSERVE_AGED_TURNS}, auto_observe_on_stale`, "u"),
+    new RegExp(`${TURN_SETTLED_SILENT}, ${TURN_SETTLED_WITH_EXECUTION_IN_FLIGHT}, ${AUTO_OBSERVE_AGED_TURNS}`, "u"),
     "a line that cannot say a turn settled with nothing said is refused rather than read as an account",
   );
 });
@@ -1490,7 +1591,7 @@ const HOST_ROOT = resolve(HERE, "..");
 const PRE_CHANGE_REVISION = "9bbadccf";
 
 test("turn_settled_silent: the pre-change module refuses the name, and this one prints it on the same fixture", async () => {
-  // THE RED PROOF, on the REAL module: the same receipt batch, the same `saidNothing` delivery, one module compiled out
+  // THE RED PROOF, on the REAL module: the same receipt batch, the same `workedSilently` delivery, one module compiled out
   // of `f11b519d` and one this tree. Before, the run's account had no `turn_settled_silent` at all and its account object
   // had no reading to ask - so the silent turn was invisible, not merely uncounted. After, the same turn is named.
   const before = compilePreChangePump();
@@ -1509,7 +1610,7 @@ test("turn_settled_silent: the pre-change module refuses the name, and this one 
     pump.enqueueFact(settlementFact("program_settled_plan_r47_before", WINDOW_AT_MS), FACT_PRODUCER.adapterIngress);
     await pump.flush({
       async deliver() {
-        pump.turnProduction = TURN_PRODUCTION.saidNothing;
+        pump.turnProduction = TURN_PRODUCTION.workedSilently;
         return "completed" as const;
       },
     });
@@ -1535,7 +1636,7 @@ test("turn_settled_silent: the pre-change module refuses the name, and this one 
   const pump = new CompanionEventPump();
   pump.enqueueFact(readingAt(14, 0, BODY_FREE), FACT_PRODUCER.adapterIngress);
   pump.enqueueFact(settlementFact("program_settled_plan_r47_before", WINDOW_AT_MS), FACT_PRODUCER.adapterIngress);
-  await pump.flush(settledSink(pump, TURN_PRODUCTION.saidNothing));
+  await pump.flush(settledSink(pump, TURN_PRODUCTION.workedSilently));
   const afterLine = turnAccountLine(pump.turnAccount);
   assert.equal(pump.turnAccount.silentSettled.total, 1);
   assert.ok(afterLine.includes(TURN_SETTLED_SILENT), `the same turn, on this tree: ${afterLine}`);

@@ -343,8 +343,10 @@ export type TurnAccount = Readonly<{
   suppressedByProducer: Readonly<Record<TurnSuppression, Readonly<Record<FactProducer, number>>>>;
   examined: number;
   emptyTurns: TurnWithoutActionResult;
-  /** The turns that settled with nothing said and nothing done - see `TurnSettledSilentResult`. */
+  /** The turns that settled silently: work delivered, no text - see `TurnSettledSilentResult`. */
   silentSettled: TurnSettledSilentResult;
+  /** The settled turns that closed with one of her own executions still running - see `TURN_SETTLED_WITH_EXECUTION_IN_FLIGHT`. */
+  settledWithExecutionInFlight: number;
   /** The flushes a stale reading decided, and why - see `AutoObserveAccount`. */
   autoObserve: AutoObserveAccount;
   lastDecision: TurnDecision | undefined;
@@ -355,7 +357,8 @@ export type TurnAccount = Readonly<{
  *
  * `turns opened N · by reason {opener: count} · suppressed M {reason: count} · flushes examined F` (F derived, so the
  * arithmetic closes) `· turn_closed_without_action E {opener:reason: count}` `· turn_settled_silent S {opener: count}` `·
- * aged readings A · auto_observe_on_stale R {ageTurns}` `· auto_observe_unavailable U {reason: count}`. A reason that has
+ * turn_settled_with_execution_in_flight I` `· aged readings A · auto_observe_on_stale R {ageTurns}` `·
+ * auto_observe_unavailable U {reason: count}`. A reason that has
  * never fired is still printed as `0`: it is a declared member of a closed list, and a reader must be able to see that it
  * exists and never happened rather than guess from its absence. The opener histogram is printed for the same reason at the level above: `opened 55` said a number and nothing
  * about what opened them, so "she was woken by the clock fifty times" and "the person spoke fifty times" were the same
@@ -402,7 +405,7 @@ export function turnAccountLine(account: TurnAccount): string {
     (total, reason) => total + account.autoObserve.unavailable[reason],
     0,
   );
-  return `turns opened ${String(account.opened)} {${opened}} · suppressed ${String(suppressedTotal(account))} {${suppressed}} · flushes examined ${String(account.examined)} · ${TURN_WITHOUT_ACTION} ${String(account.emptyTurns.total)} {${empty}} · ${TURN_SETTLED_SILENT} ${String(account.silentSettled.total)} {${silent}} · ${AUTO_OBSERVE_AGED_TURNS} ${String(account.autoObserve.agedTurns)} · ${refreshed} · ${AUTO_OBSERVE_UNAVAILABLE_TOKEN} ${String(declined)} {${unavailable}}`;
+  return `turns opened ${String(account.opened)} {${opened}} · suppressed ${String(suppressedTotal(account))} {${suppressed}} · flushes examined ${String(account.examined)} · ${TURN_WITHOUT_ACTION} ${String(account.emptyTurns.total)} {${empty}} · ${TURN_SETTLED_SILENT} ${String(account.silentSettled.total)} {${silent}} · ${TURN_SETTLED_WITH_EXECUTION_IN_FLIGHT} ${String(account.settledWithExecutionInFlight)} · ${AUTO_OBSERVE_AGED_TURNS} ${String(account.autoObserve.agedTurns)} · ${refreshed} · ${AUTO_OBSERVE_UNAVAILABLE_TOKEN} ${String(declined)} {${unavailable}}`;
 }
 
 /**
@@ -475,8 +478,8 @@ function initializedByProducer<Reason extends string>(
 }
 
 /**
- * The emitted name of a turn that settled SILENT: it delivered no speech, ran no action, and nothing of hers was still
- * settling - counted by the opener beside it.
+ * The emitted name of a turn that settled SILENT: it produced work and delivered no speech - counted by the opener beside
+ * it.
  *
  * <p>
  * MEASURED 2026-11-13 (`round47`): 188 planned nodes across 55 turns, `turn_closed_without_action` 41 of 64 assistant
@@ -488,17 +491,23 @@ function initializedByProducer<Reason extends string>(
  * count it.
  * </p>
  * <p>
- * It is the OTHER HALF of `turn_closed_without_action`, not a second name for it: that one is a turn that delivered
- * speech and no action, this one is a turn that delivered neither. With both on the line a reader can tell "she spent the
- * turn talking" from "there was nothing to say", which is the distinction no artifact of that run carried.
+ * It is the OTHER HALF of `turn_closed_without_action`, not a second name for it: that one delivered speech and no action,
+ * this one delivered action and no speech. With both on the line a reader can tell "she spent the turn talking" from "she
+ * spent the turn working", which is the distinction no artifact of that run carried.
  * </p>
  * <p>
  * A READING, NOT A PERMISSION. Nothing here forbids speech, suppresses it, or asks for silence: the counter reports how a
- * turn ended, and it cannot make a turn end that way. What it counts is the turn whose delivery carried no speech, whether
- * it acted or not - `workedSilently` is the acting one, `saidNothing` the one that did nothing at all. Measured
- * 2026-11-15 (`round58`): 21 opened turns, 21 bubbles, this counter `0`, because the reading only recognised
- * `said_nothing` - a member a completed turn cannot reach - so the act-without-a-word shape had no name and every count of
- * "one bubble per turn" had to be inferred from the difference between two other numbers.
+ * turn ended, and it cannot make a turn end that way. Measured 2026-11-15 (`round58`): 21 opened turns, 21 bubbles, this
+ * counter `0`, because the reading only recognised `said_nothing` - the one member a completed turn cannot reach - so the
+ * act-without-a-word shape had no name and every count of "one bubble per turn" had to be inferred from the difference
+ * between two other numbers.
+ * </p>
+ * <p>
+ * MEASURED AGAIN 2026-11-15 (`round59`): 42 settled turns, all 42 with text, this counter `0` - and a probe of the same
+ * tree returned `0` for a quiet turn whose own receipt was in flight while returning `1` for the same turn with nothing in
+ * flight. The counter was gated on "nothing of hers is still settling", and she submits a programme on nearly every turn,
+ * so the shape it exists to name was excluded by the state it most often lands in. That condition is gone from the
+ * classification; the number it was hiding behind is printed beside this one.
  * </p>
  */
 export const TURN_SETTLED_SILENT = "turn_settled_silent";
@@ -521,14 +530,16 @@ export const SILENT_SETTLED_OPENINGS = Object.freeze(
 );
 
 /**
- * Turns that delivered no speech and closed with nothing of hers still settling, counted by opener.
+ * Turns that produced work and delivered no speech, counted by opener.
  *
  * The opener is half of it for the reason the empty-turn counter gives: a fact arriving is a turn the HOST owed, the
  * world's own clock or notice is a turn the WORLD owed, and a due wake is a turn her own schedule owed - three different
  * statements about why a companion had a turn and used it for nothing.
  *
- * The turn may have ACTED: `workedSilently` is work done without a word about it, which is the shape a run needs to be
- * able to see before it can tell "one bubble per acting turn" from a product property.
+ * What it counts is the turn that had something to do and did it without a word: `workedSilently`, or - stated as the two
+ * properties rather than the member's name - work produced and no text produced. A turn that did nothing at all produces
+ * neither and is not counted here, and a turn whose own receipt was still in flight when it closed is silence like any
+ * other; how many turns closed that way is `settledWithExecutionInFlight` beside it.
  */
 export type TurnSettledSilentResult = Readonly<{
   total: number;
@@ -541,6 +552,25 @@ function initializedSilentSettled(): Record<SilentSettledOpening, number> {
   for (const opener of SILENT_SETTLED_OPENINGS) counts[opener] = 0;
   return counts;
 }
+
+/**
+ * The emitted name of the settled turns that closed with one of her own executions still running: `28` of `36` programme
+ * turns, on the one run that was read to find this.
+ *
+ * <p>
+ * THIS IS THE CONDITION THAT USED TO EXCLUDE, written down instead of acted on. `turn_settled_silent` counts the turn that
+ * worked and said nothing, and a receipt still in flight describes how much of that work is left - not whether anything was
+ * said. But until this segment existed the in-flight bit was only a discount on the other counter, so a run whose every
+ * working turn was quiet (`round59`: `42 settled turns · with text 42 · tool-only 0`, `turn_settled_silent 0`) could not
+ * say whether the silence was hers or whether the counter's own gate had been shut 28 times. A reader asked to reconstruct
+ * that from session logs is being asked to re-derive a number this pump already held at the only moment it could be asked.
+ * </p>
+ * <p>
+ * It is a POPULATION OF ALL SETTLED TURNS, not a subclass of the silent ones: a turn that worked, spoke and was still
+ * running when it closed counts here and in neither silence counter.
+ * </p>
+ */
+export const TURN_SETTLED_WITH_EXECUTION_IN_FLIGHT = "turn_settled_with_execution_in_flight";
 
 /**
  * One delivered batch: the model-facing TEXT, and the frame its readers hang on it.
@@ -1304,13 +1334,21 @@ export class CompanionEventPump {
   readonly #emptyTurnsByShape: Record<TurnWithoutActionShape, number> = initializedEmptyTurns();
   #emptyTurns = 0;
   /**
-   * Turns that settled with no speech and no action, one count per opener, beside `#emptyTurns`.
+   * Turns that produced work and delivered no speech, one count per opener, beside `#emptyTurns`.
    *
-   * The two counters answer one question between them - did a delivered turn spend itself on speech, or on nothing? - and
-   * they are counted in the same place, from the same settlement, so they cannot disagree about which turns existed.
+   * The two counters answer one question between them - did a delivered turn spend itself on speech, or on work it did not
+   * narrate? - and they are counted in the same place, from the same settlement, so they cannot disagree about which turns
+   * existed.
    */
   readonly #silentSettledByOpener: Record<SilentSettledOpening, number> = initializedSilentSettled();
   #silentSettledTurns = 0;
+  /**
+   * Settled turns that closed with one of her own executions still running.
+   *
+   * Taken from `hasExecutionInFlight` at the same settlement, and published rather than used to decide anything: the turn
+   * was silent or it was not, and this says whether its work was still running when it said so.
+   */
+  #settledWithExecutionInFlight = 0;
   /**
    * One timing record per execution the pump has seen and not seen settle.
    *
@@ -1581,6 +1619,7 @@ export class CompanionEventPump {
     this.#emptyTurns = 0;
     for (const opener of SILENT_SETTLED_OPENINGS) this.#silentSettledByOpener[opener] = 0;
     this.#silentSettledTurns = 0;
+    this.#settledWithExecutionInFlight = 0;
     this.#lastTurnDecision = undefined;
   }
 
@@ -1621,6 +1660,7 @@ export class CompanionEventPump {
         total: this.#silentSettledTurns,
         byOpener: Object.freeze({ ...this.#silentSettledByOpener }),
       }),
+      settledWithExecutionInFlight: this.#settledWithExecutionInFlight,
       autoObserve: Object.freeze({
         agedTurns: this.#autoObserveAgedTurns,
         refreshed: this.#autoObserveRefreshed,
@@ -2845,19 +2885,26 @@ export class CompanionEventPump {
    * "41 of 64 turns were this shape" without anyone opening a session file.
    * </p>
    * <p>
-   * AND THE THIRD: a turn that delivered no speech is counted as `turn_settled_silent` instead - the other half of the
-   * same distinction, taken at the same moment and from the same production the loop published. Two conditions keep it
-   * honest. Something of hers still settling means the silence was a WAIT rather than nothing to say, so that turn is
-   * neither counter's; and the person's own opener is never silence, because a turn someone opened is owed an answer and
-   * its emptiness is a different defect than this one.
+   * AND THE THIRD: a turn that produced work and delivered no speech is counted as `turn_settled_silent` - the other half
+   * of the same distinction, taken at the same moment and from the same production the loop published. Two properties keep
+   * it honest, and neither is a state the receipt window is in: WORK was produced (a turn that did nothing is not a
+   * companion who chose quiet), and no text was (the speaking members are the other counter's). The person's own opener is
+   * never silence, because a turn someone opened is owed an answer and its emptiness is a different defect than this one.
    * </p>
    * <p>
-   * WHICH TURNS THAT INCLUDES IS THE LOOP'S OWN ANSWER, NOT A GUESS FROM `worked`. `workedSilently` is "ran a tool and
-   * said nothing" and `saidNothing` is "said nothing at all", so the two silent members are counted and the two speaking
-   * ones are not - `turnProducedSpeech` is that question asked once. MEASURED 2026-11-15 (`round58`): 21 turns opened,
-   * 21 bubbles, and this counter printed `0` because the only member it read as silence was `said_nothing`, a state no
-   * completed turn can reach (the loop raises `PROVIDER_EMPTY_COMPLETION` for the message that carries neither text nor
-   * a tool call). A turn that acted and chose not to speak had nowhere to land.
+   * A RECEIPT STILL IN FLIGHT IS A QUALIFIER, NOT AN EXCLUSION. MEASURED 2026-11-15 (`round59`): this counter printed `0`
+   * for 42 settled turns that all carried text, and the same tree answered `0` for a silent working turn whose own
+   * programme was running at settlement while answering `1` for the same turn with nothing in flight - 28 of 36 programme
+   * turns closed with her own receipt open, so the counter was structurally unable to say anything about the turns it
+   * exists to describe. The number is COUNTED instead (`settledWithExecutionInFlight`), so "she was quiet while her work ran"
+   * is a reading rather than an inference from logs.
+   * </p>
+   * <p>
+   * WHICH TURNS THE SILENT COUNTER INCLUDES IS THE LOOP'S OWN ANSWER, NOT A GUESS FROM `worked`. `turnProducedWork` and
+   * `turnProducedSpeech` are the two properties, asked once over the closed list: work without text is silence, and both
+   * speaking members are not. MEASURED 2026-11-15 (`round58`): 21 turns opened, 21 bubbles, and this counter printed `0`
+   * because the only member it read as silence was `said_nothing`, a state a completed turn can only reach when Pi reported
+   * no message at all. A turn that acted and chose not to speak had nowhere to land.
    * </p>
    */
   #observeTurnProduction(
@@ -2871,12 +2918,14 @@ export class CompanionEventPump {
     }
     const producedSpeech = turnProducedSpeech(this.turnProduction);
     const producedWork = turnProducedWork(this.turnProduction);
-    if (this.turnProduction === TURN_PRODUCTION.spoke && !this.hasExecutionInFlight) {
+    const inFlight = this.hasExecutionInFlight;
+    if (inFlight) this.#settledWithExecutionInFlight += 1;
+    if (this.turnProduction === TURN_PRODUCTION.spoke && !inFlight) {
       const shape = turnWithoutActionShape(opening, this.#emptyTurnReason(broughtObservation));
       this.#emptyTurns += 1;
       this.#emptyTurnsByShape[shape] += 1;
     }
-    if (!producedSpeech && !this.hasExecutionInFlight && opening !== TURN_OPENING.playerInput) {
+    if (producedWork && !producedSpeech && opening !== TURN_OPENING.playerInput) {
       this.#silentSettledTurns += 1;
       this.#silentSettledByOpener[opening] += 1;
     }
@@ -2886,7 +2935,7 @@ export class CompanionEventPump {
       return;
     }
     this.#turnsWithoutWork =
-      this.turnProduction === TURN_PRODUCTION.spoke && !this.hasExecutionInFlight ? this.#turnsWithoutWork + 1 : 0;
+      this.turnProduction === TURN_PRODUCTION.spoke && !inFlight ? this.#turnsWithoutWork + 1 : 0;
   }
 
   /**
