@@ -166,9 +166,11 @@ test("a card whose lorebook entries import produces them on the character's own 
         entries: [
           // The body is part of the entry's shape and the client mirror validates
           // it exactly, so a fixture without it is rejected whole and the section
-          // then renders nothing at all.
-          { title: "Observatory", keys: [], constant: true, content: "The old observatory on the ridge." },
-          { title: "Comet", keys: ["comet"], constant: false, content: "A comet is expected next week." },
+          // then renders nothing at all. `enabled` is that same fact since
+          // `efbff381` made it required: a reply without it is not one the Host can
+          // produce, so the mirror refuses it whole.
+          { title: "Observatory", keys: [], constant: true, enabled: true, content: "The old observatory on the ridge." },
+          { title: "Comet", keys: ["comet"], constant: false, enabled: true, content: "A comet is expected next week." },
         ],
       },
   });
