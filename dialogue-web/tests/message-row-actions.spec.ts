@@ -1,4 +1,5 @@
 import { expect, test, type Page } from "./frontend-coverage";
+import { DESKTOP, LAYOUT_PAIR, PHONE } from "./viewport-policy";
 
 /**
  * One row's actions are split around the bubble, and the words are prose again.
@@ -27,6 +28,12 @@ import { expect, test, type Page } from "./frontend-coverage";
  * abstract: at 520x900 five worded-or-iconed actions plus the pager did not fit the column, so her paged
  * reply paid 98 px of controls for a 46 px bubble. Three actions plus the overflow fit on one line with
  * the pager at that width, and at 400x800 the pager keeps the line of its own the narrow rule gives it.
+ *
+ * WHICH CELLS, AND WHAT EACH ONE PROVES. The strip's cost is measured across `LAYOUT_PAIR`, because the
+ * split moved both ends: the wide strip was two rows tall (102 px) and is one 46 px row now (1440x900),
+ * while the phone's two-row box kept its 98 px and what shrank in it is the actions line, five 44 px
+ * targets to four (400x800). 520x900 is pinned on its own - it is the width the split was made for and it
+ * is not a declared cell - so the one-line strip there is stated rather than borrowed from a neighbour.
  *
  * Nothing about the confirmations moved: the rewind still arms, the delete still arms, and the fork is
  * still one press whose name carries the memory clause. What moved is where they are PRESSED from.
@@ -172,12 +179,9 @@ test("the edit control is the row's own icon: top right, above the words, 44 px,
 }) => {
   await openConversation(page);
 
-  for (const viewport of [
-    { width: 1440, height: 900 },
-    { width: 400, height: 800 },
-  ]) {
+  for (const viewport of LAYOUT_PAIR) {
     await page.setViewportSize(viewport);
-    const where = `${viewport.width}x${viewport.height}`;
+    const where = viewport.name;
     const row = await page.evaluate(() => window.chatProbe.rowActions("h2"));
     console.log(`[edit ${where}] ${JSON.stringify(row?.edit)}`);
 
@@ -273,47 +277,64 @@ test("the strip keeps the three frequent actions and the other three move into o
 test("the row's controls cost the reply less room than the five-action strip did", async ({ page }) => {
   await openConversation(page);
 
-  const readAt = async (width: number, height: number): Promise<RowReading> => {
-    await page.setViewportSize({ width, height });
+  const readAt = async (viewport: { width: number; height: number }): Promise<RowReading> => {
+    await page.setViewportSize(viewport);
     return (await page.evaluate(() => window.chatProbe.rowActions("h2")))!;
   };
 
-  // 400x800: the pager still owns the line beneath the actions here - the narrow rule is unchanged - so the
-  // strip's HEIGHT is the same two-row box it was (98 px). What shrank there is the actions line: five 44 px
-  // targets became three plus the overflow (236 px -> 140 px), which is what let the pager's own break move
-  // in from an 833 px column to 430.
-  const phone = await readAt(400, 800);
-  // 520x900: the width at which five actions plus the pager stopped fitting, and the strip paid two rows for
-  // a one-line reply. Three actions plus the overflow fit beside the pager, so the same reply is one row here.
-  const laptop = await readAt(520, 900);
+  // 1440x900: the WIDE layout, where the split moved the shape as well as the height - five worded-or-iconed
+  // actions and the pager made a strip two rows tall (102 px), and the same four targets draw one 46 px row
+  // beside the pager now, so a short reply pays one row of controls here too.
+  const wide = await readAt(DESKTOP);
+  // 400x800: the PHONE layout, where the pager still owns the line beneath the actions - the narrow rule is
+  // unchanged - so the strip's HEIGHT is the same two-row box it was (98 px). What shrank there is the actions
+  // line: five 44 px targets became three plus the overflow (236 px -> 140 px), which is what let the pager's
+  // own break move in from an 833 px column to 430.
+  const phone = await readAt(PHONE);
   for (const [where, reading] of [
-    ["400x800", phone],
-    ["520x900", laptop],
+    [DESKTOP.name, wide],
+    [PHONE.name, phone],
   ] as const) {
     console.log(
       `[block ${where}] ${JSON.stringify({
         block: reading.blockHeight,
         bubble: reading.bubble?.height,
         strip: reading.strip?.height,
+        stripWidth: Math.round(reading.strip?.width ?? 0),
         children: reading.stripChildren.length,
       })}`,
     );
   }
 
-  expect(phone.strip!.height, "400x800: the two-row paged strip, unchanged in height").toBeLessThanOrEqual(98);
-  expect(
-    phone.stripChildren.length,
-    "400x800: and its actions line is three targets plus the overflow - the five that stranded it, gone",
-  ).toBe(4);
-  expect(
-    laptop.strip!.height,
-    "520x900: copy, pager, Regenerate and the overflow on ONE line",
-  ).toBeLessThanOrEqual(48);
-  // The block the bubble and its controls make together - what a short reply pays for them. Both ceilings
-  // are the AFTER: the phone measurement never moved (152 -> 152, because its strip was already two rows),
-  // and the 520 measurement is the whole point of the split (152 -> 100).
-  expect(phone.blockHeight, "400x800: the bubble plus the two-row strip").toBeLessThanOrEqual(152);
-  expect(laptop.blockHeight, "520x900: the bubble plus one row of controls").toBeLessThanOrEqual(100);
+  // The fact both layouts share, because it is the structure and not the width: three frequent actions and
+  // ONE overflow, whatever the column does with the pager under them.
+  expect(wide.stripChildren.length, "desktop: three targets plus the overflow, the five that stranded it gone").toBe(4);
+  expect(phone.stripChildren.length, "phone: the same four, on the two-row strip").toBe(4);
+
+  // The ceilings are the AFTER, per layout. The wide one moved: its strip was 102 px and is 46, so its block
+  // gets the same 100 px ceiling the one-row strip gives 520x900. The phone's never moved - 152 px before,
+  // because its strip was already two rows there.
+  expect(wide.strip!.height, "desktop: copy, pager, Regenerate and the overflow on ONE line").toBeLessThanOrEqual(48);
+  expect(wide.blockHeight, "desktop: the bubble plus one row of controls").toBeLessThanOrEqual(100);
+  expect(phone.strip!.height, "phone: the two-row paged strip, unchanged in height").toBeLessThanOrEqual(98);
+  expect(phone.blockHeight, "phone: the bubble plus the two-row strip").toBeLessThanOrEqual(152);
+
+  // 520x900: the width five actions plus the pager stopped fitting at, where a one-line reply paid 98 px of
+  // controls for a 46 px bubble. Pinned rather than iterated: 520 is not a declared cell, and it is the one
+  // width the report named, so the one-line strip here is stated on its own number and not inferred.
+  await page.setViewportSize({ width: 520, height: 900 });
+  const stranded = (await page.evaluate(() => window.chatProbe.rowActions("h2")))!;
+  console.log(
+    `[block 520x900] ${JSON.stringify({
+      block: stranded.blockHeight,
+      bubble: stranded.bubble?.height,
+      strip: stranded.strip?.height,
+      stripWidth: Math.round(stranded.strip?.width ?? 0),
+      children: stranded.stripChildren.length,
+    })}`,
+  );
+  expect(stranded.strip!.height, "520x900: copy, pager, Regenerate and the overflow on ONE line").toBeLessThanOrEqual(48);
+  expect(stranded.blockHeight, "520x900: the bubble plus one row of controls").toBeLessThanOrEqual(100);
 });
 
 test("a row's keyboard order is the order it draws: edit, copy, pager, Regenerate, overflow", async ({ page }) => {
