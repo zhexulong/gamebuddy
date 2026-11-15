@@ -252,9 +252,9 @@ const MANAGEMENT_MODEL_PROFILE_ROUTES = ["settings.profiles.read", "settings.pro
 /**
  * Optional sampler-temperature extension: the one sampler value the player owns rather than a preset.
  *
- * Its own group rather than a member of any neighbour above, and it sits after every group the contract declares
- * before it, because a profile's slice is ordered: a group spliced into the middle would be a capability no released
- * profile can name.
+ * Its own group rather than a member of any neighbour above, because the settings surface mounts it
+ * only when the one Host-owned preference record is bound. Where this group is listed is not a fact
+ * about the capability - see `isCanonicalGroupSelection`.
  */
 const MANAGEMENT_SAMPLER_ROUTES = ["settings.sampler.read", "settings.sampler.update"] as const;
 const MANAGEMENT_NAVIGATION_ITEM_IDS_WITHOUT_MEMORY = ["chat", "characters"] as const;
@@ -574,9 +574,7 @@ export type TavernManagementDialogueWebOptions = Readonly<{
    * reported 404 rather than written as a different identity.
    */
   companionExamplesService?: Readonly<{
-    read(
-      handle: string,
-    ): Promise<Readonly<{
+    read(handle: string): Promise<Readonly<{
       profileRevision: number;
       examples: readonly Readonly<{ user: string; companion: string }>[];
     }> | null>;
@@ -2982,17 +2980,16 @@ export function managementProfileFitsCanonicalGroups(profile: ComposedTavernProf
         : MANAGEMENT_NAVIGATION_ITEM_IDS_LEGACY_WITHOUT_MEMORY,
     );
   if (!navigationMatches) return false;
-  // The core surface and the extension groups are declared per profile
-  // revision. A profile may declare any subset of the optional groups, and only
-  // them, in the frozen canonical order: core, output devices, language,
-  // delivery, Game prompt addition, appearance, interface language, connections, model profiles,
-  // companions/personas/retention, card import,
-  //  new-chat opening, new chat, chat selection, World Info authoring, companion
-  //  profile, card export, companion avatar, lorebook import, lorebook export, chat export, the
-  //  whole-profile backup and the preset readout. A partially applied
-  //  group, an undeclared
-  // route or a reordered list fails closed, so no route is mounted that this
-  // dispatcher cannot serve.
+  // The core surface and the extension groups are declared per profile revision. A
+  // profile may declare any subset of the optional groups and only them: a partially
+  // declared group is a capability it claims and the mounted dispatcher cannot serve,
+  // and a route in no group is a route this surface never mounts. MEMBERSHIP is the
+  // check - the ORDER of the declaration is not part of the capability, and requiring a
+  // position is exactly what made `settings.sampler.*` unreachable: the group was
+  // appended last BELOW while the production declaration named it beside the other
+  // settings groups, so provisioning refused a profile that declared exactly the groups
+  // this dispatcher serves and the whole management surface failed to mount. A slot in
+  // an array is not a fact about a capability; see `isCanonicalGroupSelection`.
   const coreRoutes = withMemory
     ? profile.operationIds.includes("memory.mutate")
       ? MANAGEMENT_ROUTE_IDS
@@ -3069,25 +3066,39 @@ function assertManagementProfile(profile: ComposedTavernProfile): void {
 }
 
 /**
- * True when `values` is exactly the required core group plus any subset of the
- * optional groups that follow it, always in the declared order. A group is
- * all-or-nothing: a partially declared group is a capability the profile claims
- * but the mounted dispatcher cannot serve. Ordering is part of the check, so a
- * reordered profile is a different capability slice and is rejected.
+ * True when `values` is the required core group plus any subset of the optional groups,
+ * every declared group whole, and no member outside a group.
+ *
+ * MEMBERSHIP, not order, and the distinction is the fix for a real outage. Two hand-ordered
+ * lists had to agree for a profile to mount - the group array in this module and the
+ * production declaration in `desktop-presentation-admission-owner.ts` - and they stopped
+ * agreeing the moment a group was appended to one and named in the middle of the other: the
+ * mount threw `tavern_management_profile_operation_unavailable` at provisioning, so the
+ * management surface was unreachable while every focused suite stayed green. Sorting the
+ * groups by some authority would only relocate the agreement every future addendum has to
+ * make, and the contract's own route table is not that authority either (its descriptors are
+ * ordered by feature island, not by this surface's slices). What a profile declares here is a
+ * SET of groups this dispatcher serves, so a set is what this compares - and a route that
+ * belongs to two groups is refused, because then "this group is declared" would be ambiguous.
  */
 function isCanonicalGroupSelection(
   values: readonly string[],
   groups: readonly (readonly string[])[],
   required: readonly string[],
 ): boolean {
-  const expected: string[] = [];
+  const declared = new Set(values);
+  if (declared.size !== values.length) return false;
+  const covered = new Set<string>();
   for (const group of groups) {
-    const present = group === required || values.some((value) => group.includes(value));
+    const present = group === required || group.some((entry) => declared.has(entry));
     if (!present) continue;
-    if (!group.every((entry) => values.includes(entry))) return false;
-    expected.push(...group);
+    if (!group.every((entry) => declared.has(entry))) return false;
+    for (const entry of group) {
+      if (covered.has(entry)) return false;
+      covered.add(entry);
+    }
   }
-  return expected.length === values.length && expected.every((entry, index) => entry === values[index]);
+  return covered.size === declared.size && [...declared].every((entry) => covered.has(entry));
 }
 
 function sameOrderedValues(values: readonly string[], expected: readonly string[]): boolean {
