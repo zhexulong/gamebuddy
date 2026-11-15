@@ -131,7 +131,10 @@ async function stubShell(
           // The client mirror validates the entry exactly, and the body is part of
           // that shape (the Host renders it through the macro table before sending
           // it). A fixture without it is rejected whole, and the section then renders
-          // nothing at all - which is what this stub did until the shape grew.
+          // nothing at all - which is what this stub did until the shape grew. The
+          // switch is the same fact since `efbff381` made it required: an entry
+          // without it is not a reply the Host can produce.
+          enabled: true,
           content: `第 ${index} 条正文。`,
         })),
       }),
