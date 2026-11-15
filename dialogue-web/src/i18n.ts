@@ -514,6 +514,13 @@ const en = {
   connectionActivate: "Save and activate",
   connectionActivateRequiresReady: "Test the connection before activating it.",
   connectionRemove: "Remove",
+  // The removal is the product's armed pair (`armed-confirmation.ts`), so this sentence is the moment of
+  // the act: it names what goes and that this screen cannot put it back. The credential is the reason -
+  // the key the player typed is write-only from here on, and the Host deletes it with the record.
+  connectionRemoveConfirm:
+    "Remove the {{provider}} connection? Its endpoint, model and the API key you entered are deleted from this machine, and this screen cannot bring them back - you would have to type them again.",
+  connectionRemoveConfirmYes: "Remove the connection",
+  connectionRemoveConfirmNo: "Keep the connection",
   connectionRemoveActiveRefused: "An active connection cannot be removed. Activate another connection first.",
   connectionPending: "Working…",
   connectionFailureInvalidEndpoint: "This endpoint cannot be used.",
@@ -1754,6 +1761,10 @@ const zh: Messages = {
   connectionActivate: "保存并启用",
   connectionActivateRequiresReady: "请先测试连接，再启用它。",
   connectionRemove: "删除",
+  connectionRemoveConfirm:
+    "要删除「{{provider}}」这个连接吗？它的端点、模型以及你输入的 API 密钥都会从这台机器上删掉，而这个界面无法把它们找回来——你需要重新输入。",
+  connectionRemoveConfirmYes: "删除这个连接",
+  connectionRemoveConfirmNo: "保留这个连接",
   connectionRemoveActiveRefused: "当前启用的连接不能删除。请先启用另一个连接。",
   connectionPending: "处理中…",
   connectionFailureInvalidEndpoint: "该端点不可用。",

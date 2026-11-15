@@ -3,6 +3,7 @@ import { assertNever } from "../assert-never";
 import { type AppearanceChoice, isAppearanceChoice } from "../appearance";
 import { problemTextWithCode } from "../composed-problem-view";
 import { type Locale, type messages, recordLabel } from "../i18n";
+import { useArmedConfirmation } from "./armed-confirmation";
 import { fieldError } from "./field-error";
 import { memoryNotebookLabels, type MemoryNotebookLabels } from "./memory-notebook-labels";
 import {
@@ -960,6 +961,17 @@ export function ConnectionRow({
   onRemove: (connectionId: string) => void;
 }>): ReactElement {
   const failure = connectionFailureText(connection.failure, labels);
+  // The row's removal is the product's armed pair (`armed-confirmation.ts`), not a bare button:
+  // one press asks, the second answers, and a cancel or Escape leaves the record where it is.
+  // It has to be armed because the record IS the credential - the key the player typed is
+  // write-only from here on, so a removal that happened on the first press would destroy the one
+  // value this screen can never read back to restore.
+  const [removalArmed, setRemovalArmed] = useState(false);
+  const removal = useArmedConfirmation(removalArmed, () => setRemovalArmed(false));
+  const remove = (): void => {
+    setRemovalArmed(false);
+    onRemove(connection.connectionId);
+  };
   // Offer exactly what the chosen model accepts. The Host refuses a level the model
   // does not advertise, so listing every level would hand the player options that
   // cannot be saved. The record's own `allowedThinkingLevels` is the authority.
@@ -1038,93 +1050,130 @@ export function ConnectionRow({
           {nothingActive ? labels.connectionTestEnablesNotice : labels.connectionActivateRequiresReady}
         </p>
       )}
-      <div className="composer-actions">
-        {/*
-         * What this endpoint actually served, once a probe has read it. The model a record names
-         * is always an option, so the control never misrepresents the state it is showing, and
-         * the list is offered rather than enforced: the probe still decides, on the next test.
-         */}
-        {connection.modelIds !== null && (
-          <>
-            <label className="visually-hidden" htmlFor={`connection-model-${connection.connectionId}`}>
-              {labels.connectionModel}
-            </label>
-            <select
-              id={`connection-model-${connection.connectionId}`}
-              className="form-select"
+      {/* The row's strip, and while its removal is armed the strip steps aside: the confirmation is
+          the row's only action until it is answered, and it never shares a line with the controls it
+          replaces (`armed-confirmation.ts`). */}
+      {removalArmed ? (
+        <div data-connection-remove-confirm onKeyDown={removal.onConfirmKeyDown} role="group">
+          <p role="status" data-connection-remove-confirm-prompt>
+            {labels.connectionRemoveConfirm.replace("{{provider}}", connection.providerLabel)}
+          </p>
+          <div className="composer-actions">
+            <button
+              type="button"
+              className="small-button danger"
+              data-connection-remove-confirm-yes
               disabled={pending}
-              value={connection.modelId}
-              onChange={(event) => onSelectModel(connection.connectionId, event.target.value, connection.thinkingLevel)}
+              onClick={remove}
             >
-              {[connection.modelId, ...connection.modelIds.filter((id) => id !== connection.modelId)].map((id) => (
-                <option key={id} value={id}>
-                  {id}
-                </option>
-              ))}
-            </select>
-          </>
-        )}
-        <label className="visually-hidden" htmlFor={`connection-level-${connection.connectionId}`}>
-          {/* This select writes one saved connection's own level, so its label names that
+              {labels.connectionRemoveConfirmYes}
+            </button>
+            {/* The safe answer holds the focus the pair opens with, so a stray Enter keeps the
+                record and its key. */}
+            <button
+              ref={removal.cancelRef}
+              type="button"
+              className="small-button"
+              data-connection-remove-confirm-no
+              onClick={removal.cancel}
+            >
+              {labels.connectionRemoveConfirmNo}
+            </button>
+          </div>
+        </div>
+      ) : (
+        <div className="composer-actions">
+          {/*
+           * What this endpoint actually served, once a probe has read it. The model a record names
+           * is always an option, so the control never misrepresents the state it is showing, and
+           * the list is offered rather than enforced: the probe still decides, on the next test.
+           */}
+          {connection.modelIds !== null && (
+            <>
+              <label className="visually-hidden" htmlFor={`connection-model-${connection.connectionId}`}>
+                {labels.connectionModel}
+              </label>
+              <select
+                id={`connection-model-${connection.connectionId}`}
+                className="form-select"
+                disabled={pending}
+                value={connection.modelId}
+                onChange={(event) =>
+                  onSelectModel(connection.connectionId, event.target.value, connection.thinkingLevel)
+                }
+              >
+                {[connection.modelId, ...connection.modelIds.filter((id) => id !== connection.modelId)].map((id) => (
+                  <option key={id} value={id}>
+                    {id}
+                  </option>
+                ))}
+              </select>
+            </>
+          )}
+          <label className="visually-hidden" htmlFor={`connection-level-${connection.connectionId}`}>
+            {/* This select writes one saved connection's own level, so its label names that
               connection rather than restating the bare field word the two profile editors and
               this row were all announcing. */}
-          {recordLabel(labels.thinkingLevelOf, connection.label)}
-        </label>
-        <select
-          id={`connection-level-${connection.connectionId}`}
-          className="form-select"
-          disabled={pending}
-          value={connection.thinkingLevel}
-          onChange={(event) =>
-            onSelectModel(
-              connection.connectionId,
-              connection.modelId,
-              event.target.value as TavernConnectionThinkingLevelV1,
-            )
-          }
-        >
-          {levels.map((level) => (
-            <option key={level} value={level}>
-              {
+            {recordLabel(labels.thinkingLevelOf, connection.label)}
+          </label>
+          <select
+            id={`connection-level-${connection.connectionId}`}
+            className="form-select"
+            disabled={pending}
+            value={connection.thinkingLevel}
+            onChange={(event) =>
+              onSelectModel(
+                connection.connectionId,
+                connection.modelId,
+                event.target.value as TavernConnectionThinkingLevelV1,
+              )
+            }
+          >
+            {levels.map((level) => (
+              <option key={level} value={level}>
                 {
-                  off: labels.connectionLevelOff,
-                  minimal: labels.connectionLevelMinimal,
-                  low: labels.connectionLevelLow,
-                  medium: labels.connectionLevelMedium,
-                  high: labels.connectionLevelHigh,
-                  xhigh: labels.connectionLevelXHigh,
-                  max: labels.connectionLevelMax,
-                }[level]
-              }
-            </option>
-          ))}
-        </select>
-        <button
-          type="button"
-          className={nextActionClass("test")}
-          disabled={pending}
-          onClick={() => onTest(connection.connectionId)}
-        >
-          {labels.connectionTest}
-        </button>
-        <button
-          type="button"
-          className={nextActionClass("activate")}
-          disabled={pending || connection.readiness !== "ready" || connection.active}
-          onClick={() => onActivate(connection.connectionId)}
-        >
-          {labels.connectionActivate}
-        </button>
-        <button
-          type="button"
-          className="small-button"
-          disabled={pending || connection.active}
-          title={connection.active ? labels.connectionRemoveActiveRefused : undefined}
-          onClick={() => onRemove(connection.connectionId)}
-        >
-          {labels.connectionRemove}
-        </button>
-      </div>
+                  {
+                    off: labels.connectionLevelOff,
+                    minimal: labels.connectionLevelMinimal,
+                    low: labels.connectionLevelLow,
+                    medium: labels.connectionLevelMedium,
+                    high: labels.connectionLevelHigh,
+                    xhigh: labels.connectionLevelXHigh,
+                    max: labels.connectionLevelMax,
+                  }[level]
+                }
+              </option>
+            ))}
+          </select>
+          <button
+            type="button"
+            className={nextActionClass("test")}
+            disabled={pending}
+            onClick={() => onTest(connection.connectionId)}
+          >
+            {labels.connectionTest}
+          </button>
+          <button
+            type="button"
+            className={nextActionClass("activate")}
+            disabled={pending || connection.readiness !== "ready" || connection.active}
+            onClick={() => onActivate(connection.connectionId)}
+          >
+            {labels.connectionActivate}
+          </button>
+          <button
+            ref={removal.triggerRef}
+            type="button"
+            className="small-button"
+            data-connection-remove-arm
+            disabled={pending || connection.active}
+            title={connection.active ? labels.connectionRemoveActiveRefused : undefined}
+            onClick={() => setRemovalArmed(true)}
+          >
+            {labels.connectionRemove}
+          </button>
+        </div>
+      )}
     </li>
   );
 }

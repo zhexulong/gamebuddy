@@ -661,3 +661,146 @@ test("the endpoint's own listing is what the form offers, and a typed id it does
 });
 
 
+/**
+ * Removing a connection is armed, because the record IS the credential (design/28 §1, §5.1).
+ *
+ * The red this file was written against: one press on the row's `Remove` sent
+ * `DELETE /settings/connections/{id}` immediately, and the Host deletes the stored key with the record
+ * (`connection-store.ts`: `removeConnectionKey`). The key is write-only from the panel on, so the player
+ * could not read it back to restore what the press had destroyed.
+ *
+ * The pair is the product's own (`armed-confirmation.ts`): the first press replaces the row's strip with a
+ * confirmation that names what goes and that this screen cannot bring it back, focus lands on the safe
+ * answer, Escape and `Keep the connection` both leave the record where it is, and only the second press
+ * sends the delete.
+ */
+test("removing a connection arms first, names the key it deletes, and one press removes nothing", async ({ page }) => {
+  const connectionId = "K".repeat(42) + "A";
+  const baseUrl = "http://127.0.0.1:11434/v1";
+  const modelId = "qwen2.5-coder:7b";
+  const providerLabel = "OpenAI-compatible";
+  const escapeHatch = {
+    providerId: "openai-compatible",
+    label: providerLabel,
+    setupFields: ["apiKey", "apiKeyRequired", "baseUrl", "apiShape", "modelId"],
+    allowedPlayerModels: [],
+    escapeHatch: true,
+    environmentManaged: false,
+  };
+  const deletes: Array<{ path: string; method: string; body: unknown; csrf: string | undefined }> = [];
+  let recordPresent = true;
+  const connectionState = () => ({
+    apiVersion: 1,
+    revision: 1,
+    active: null,
+    connections: recordPresent
+      ? [
+          {
+            connectionId,
+            label: `${providerLabel} \u00b7 ${modelId}`,
+            providerId: escapeHatch.providerId,
+            providerLabel,
+            configured: true,
+            readiness: "configured" as const,
+            active: false,
+            modelId,
+            modelLabel: modelId,
+            thinkingLevel: "high",
+            allowedThinkingLevels: ["low", "high", "max"],
+            modelIds: [modelId],
+            baseUrl,
+            failure: null,
+            lastCheckedAtMs: null,
+          },
+        ]
+      : [],
+    providers: [escapeHatch],
+  });
+
+  await page.route("**/api/composed-reference-game/v1/bootstrap", (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(root) }),
+  );
+  await page.route("**/api/tavern/v1/draft", (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(draft) }),
+  );
+  await page.route("**/api/tavern/v1/settings/language", (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ revision: 1, locale: "en-US" }) }),
+  );
+  await page.route("**/api/tavern/v1/settings/voice-preference", (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ revision: 1, disclosureVersion: null, consent: "undecided", decidedAtMs: null, outputDevice: null, persona: null }),
+    }),
+  );
+  await page.route("**/api/tavern/v1/settings/voice-devices", (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ devices: [], defaultSelectable: true }) }),
+  );
+  await page.route(/\/api\/tavern\/v1\/settings\/connection$/, (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(connectionState()) }),
+  );
+  await page.route(/\/api\/tavern\/v1\/settings\/connections\/[^/]+$/, async (route) => {
+    deletes.push({
+      path: new URL(route.request().url()).pathname,
+      method: route.request().method(),
+      body: route.request().postDataJSON(),
+      csrf: route.request().headers()["x-csrf-token"],
+    });
+    recordPresent = false;
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(connectionState()) });
+  });
+
+  await page.goto(`/#profile=composed-reference-game&boot=${token}`);
+  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  const panel = page.getByTestId("settings-surface").locator("[data-connection-settings]");
+  const row = panel.locator("[data-connection-row]");
+  await expect(row).toHaveCount(1);
+
+  // ONE press: the row is still there, no request left the page, and the confirmation is what replaced
+  // the row's strip.
+  const arm = row.locator("[data-connection-remove-arm]");
+  await arm.click();
+  const confirm = row.locator("[data-connection-remove-confirm]");
+  await expect(confirm).toBeVisible();
+  await expect(row, "one press must not remove the connection").toHaveCount(1);
+  expect(deletes, "the delete fired before it was confirmed").toHaveLength(0);
+  // The confirmation names the consequence at the moment of the act: what is deleted, and that this
+  // screen cannot put it back. Both clauses are asserted because a sentence that drops either one is
+  // the defect this pair exists to prevent.
+  const prompt = confirm.locator("[data-connection-remove-confirm-prompt]");
+  await expect(prompt).toHaveText(
+    `Remove the ${providerLabel} connection? Its endpoint, model and the API key you entered are deleted from this machine, and this screen cannot bring them back - you would have to type them again.`,
+  );
+  await expect(confirm.locator("[data-connection-remove-confirm-yes]")).toHaveText("Remove the connection");
+  await expect(confirm.locator("[data-connection-remove-confirm-no]")).toHaveText("Keep the connection");
+  // The safe answer is the one focus lands on, so a stray Enter keeps the record and its key.
+  await expect(confirm.locator("[data-connection-remove-confirm-no]")).toBeFocused();
+  // While armed the strip steps aside: the controls it replaced are gone, not merely dimmed.
+  await expect(row.locator("[data-connection-remove-arm]")).toHaveCount(0);
+
+  // Escape leaves without deleting, and gives the focus back to the control that was pressed.
+  await page.keyboard.press("Escape");
+  await expect(confirm).toHaveCount(0);
+  await expect(row).toHaveCount(1);
+  expect(deletes).toHaveLength(0);
+  await expect(row.locator("[data-connection-remove-arm]")).toBeFocused();
+
+  // A cancel answers the pair the same way.
+  await row.locator("[data-connection-remove-arm]").click();
+  await row.locator("[data-connection-remove-confirm-no]").click();
+  await expect(row.locator("[data-connection-remove-confirm]")).toHaveCount(0);
+  await expect(row).toHaveCount(1);
+  expect(deletes).toHaveLength(0);
+
+  // TWO presses: arm, then confirm. That one sends the delete, with the revision the row was read at.
+  await row.locator("[data-connection-remove-arm]").click();
+  await row.locator("[data-connection-remove-confirm-yes]").click();
+  await expect.poll(() => deletes.length).toBe(1);
+  expect(deletes[0]).toEqual({
+    path: `/api/tavern/v1/settings/connections/${connectionId}`,
+    method: "DELETE",
+    body: { apiVersion: 1, expectedRevision: 1 },
+    csrf: csrfToken,
+  });
+  await expect(panel.locator("[data-connection-row]")).toHaveCount(0);
+});
