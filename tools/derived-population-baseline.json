@@ -292,6 +292,15 @@
       "reason": "[not-a-population] a guard inside a validator's quantifier parser (`if (witnesses.length === 0) return null`)."
     },
     {
+      "file": "host/src/st-card-import.test.ts",
+      "authority": "tokens",
+      "literal": "0",
+      "shape": "unresolved",
+      "sites": 1,
+      "line": 999,
+      "reason": "[not-a-population] an anti-vacuity guard, required by the `Fail Loudly on Zero` standard: the population is the import `PRESET_MACROS` mapped to tokens, and `if (tokens.length === 0) assert.fail(...)` rejects measuring zero macro names. The emptiness IS the condition being rejected; the value is already the import and no product edit can grow the literal."
+    },
+    {
       "file": "host/src/stardew-game-install/desktop-entry-mod-deployment.test.ts",
       "authority": "inputs",
       "literal": "1",
