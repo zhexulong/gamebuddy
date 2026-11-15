@@ -4729,6 +4729,36 @@ function validateOpeningSelection(value: unknown): OpeningSelection {
   throw new Error("invalid_chat_thread_opening");
 }
 
+/**
+ * The message row's optional columns, read back from the values the store kept for them.
+ *
+ * An absent key is the only spelling of "this row does not carry the field". `parentId`, `swipes` and
+ * `activeSwipeIndex` that do not read back as themselves read as absent, which is what they meant on the row
+ * that wrote them; `answeredEarlierWording` may only be `true` or absent, because any other value is a row the
+ * validator cannot describe and refusing it here is the same refusal it would get below.
+ */
+function readMessageOptionalFields(
+  value: Record<string, unknown>,
+): Readonly<Pick<ChatThreadMessage, "parentId" | "swipes" | "activeSwipeIndex" | "answeredEarlierWording">> {
+  const parentId = typeof value.parentId === "string" ? value.parentId : value.parentId === null ? null : undefined;
+  const swipes =
+    Array.isArray(value.swipes) && value.swipes.every(isText) ? Object.freeze([...value.swipes]) : undefined;
+  const activeSwipeIndex =
+    typeof value.activeSwipeIndex === "number" &&
+    Number.isSafeInteger(value.activeSwipeIndex) &&
+    value.activeSwipeIndex >= 0
+      ? value.activeSwipeIndex
+      : undefined;
+  if (value.answeredEarlierWording !== undefined && value.answeredEarlierWording !== true)
+    throw new Error("invalid_chat_thread_message");
+  return Object.freeze({
+    ...(parentId !== undefined ? { parentId } : {}),
+    ...(swipes !== undefined ? { swipes } : {}),
+    ...(activeSwipeIndex !== undefined ? { activeSwipeIndex } : {}),
+    ...(value.answeredEarlierWording === true ? { answeredEarlierWording: true as const } : {}),
+  });
+}
+
 function validateMessage(value: unknown): ChatThreadMessage {
   if (
     !isRecord(value) ||
@@ -4752,21 +4782,7 @@ function validateMessage(value: unknown): ChatThreadMessage {
   const text = value.text;
   const occurredAtMs = value.occurredAtMs;
   const greetingSourceValue = value.greetingSource;
-  const parentId = typeof value.parentId === "string" ? value.parentId : value.parentId === null ? null : undefined;
-  const swipes =
-    Array.isArray(value.swipes) && value.swipes.every(isText) ? Object.freeze([...value.swipes]) : undefined;
-  const activeSwipeIndex =
-    typeof value.activeSwipeIndex === "number" &&
-    Number.isSafeInteger(value.activeSwipeIndex) &&
-    value.activeSwipeIndex >= 0
-      ? value.activeSwipeIndex
-      : undefined;
-  const answeredEarlierWording =
-    value.answeredEarlierWording === true
-      ? ({ answeredEarlierWording: true } as const)
-      : value.answeredEarlierWording === undefined
-        ? {}
-        : undefined;
+  const optional = readMessageOptionalFields(value);
 
   if (
     !isId(messageId) ||
@@ -4774,7 +4790,6 @@ function validateMessage(value: unknown): ChatThreadMessage {
     (kind !== "opening" && kind !== "player" && kind !== "response") ||
     !isText(text) ||
     !isTimestamp(occurredAtMs) ||
-    answeredEarlierWording === undefined ||
     (greetingSourceValue !== null && !isRecord(greetingSourceValue))
   )
     throw new Error("invalid_chat_thread_message");
@@ -4784,11 +4799,16 @@ function validateMessage(value: unknown): ChatThreadMessage {
     (kind === "response" && role === "companion" && greetingSourceValue === null);
   if (!validGrammar) throw new Error("invalid_chat_thread_message");
   if (
-    swipes !== undefined &&
-    (swipes.length === 0 || activeSwipeIndex === undefined || activeSwipeIndex >= swipes.length)
+    optional.swipes !== undefined &&
+    (optional.swipes.length === 0 ||
+      optional.activeSwipeIndex === undefined ||
+      optional.activeSwipeIndex >= optional.swipes.length)
   )
     throw new Error("invalid_chat_thread_message");
-  if (kind === "player" && (swipes !== undefined || activeSwipeIndex !== undefined || parentId !== undefined))
+  if (
+    kind === "player" &&
+    (optional.swipes !== undefined || optional.activeSwipeIndex !== undefined || optional.parentId !== undefined)
+  )
     throw new Error("invalid_chat_thread_message");
   let greetingSource: GreetingSource | null;
   if (greetingSourceValue === null) {
@@ -4804,10 +4824,7 @@ function validateMessage(value: unknown): ChatThreadMessage {
     text,
     occurredAtMs,
     greetingSource,
-    ...(parentId !== undefined ? { parentId } : {}),
-    ...(swipes !== undefined ? { swipes } : {}),
-    ...(activeSwipeIndex !== undefined ? { activeSwipeIndex } : {}),
-    ...answeredEarlierWording,
+    ...optional,
   });
 }
 
