@@ -8,7 +8,7 @@ import {
   worldStateStaleThreshold,
 } from "./fact-brief.js";
 import { type InFlightProgrammeReading, readInFlightProgrammes } from "./program-status-wait.js";
-import type { ExecutionState, Snapshot } from "./protocol.js";
+import { EXECUTION_STATES, type ExecutionState, type Snapshot } from "./protocol.js";
 // The Mod's evidence detail is one format with one reader (`key=value;...`), and the body-owner refusal puts the owner
 // it names inside it. Reusing that reader is what keeps the pump and the Agent's refusal guidance from disagreeing
 // about who holds the body.
@@ -213,6 +213,10 @@ type FlushDecision<Decision extends string> = Readonly<{ decision: Decision; pro
  *
  * `nothing_pending` is not a lost turn: there was nothing to deliver, and counting it keeps the arithmetic closed
  * (`examined === opened + every suppressed reason`).
+ *
+ * `in_flight_progress` is the same rule applied to INGRESS rather than to the reading: a step of a programme the
+ * journal still shows running is standing state too, and the programme's settlement is the turn that carries it
+ * (`IN_FLIGHT_RECEIPT_PROGRESS_STATES`).
  */
 export const TURN_SUPPRESSION = Object.freeze({
   /** The flush held a copy of the reading the pump already held: nothing this flush saw was different. */
@@ -220,6 +224,8 @@ export const TURN_SUPPRESSION = Object.freeze({
   /** The flush held a reading that says something the held one did not, and a reading opens no turn. */
   observationMoved: "observation_moved",
   worldFactRestated: `${TURN_OPENING.worldFact}_restated`,
+  /** The flush held a step of a programme that is still running: its own settlement is the turn that states it. */
+  inFlightProgress: "in_flight_progress",
   nothingPending: "nothing_pending",
 });
 
@@ -1241,6 +1247,7 @@ export class CompanionEventPump {
     [TURN_SUPPRESSION.observationRestated]: 0,
     [TURN_SUPPRESSION.observationMoved]: 0,
     [TURN_SUPPRESSION.worldFactRestated]: 0,
+    [TURN_SUPPRESSION.inFlightProgress]: 0,
     [TURN_SUPPRESSION.nothingPending]: 0,
   };
   /** The nested half of both histograms above: which `FACT_PRODUCER` entrance the deciding fact came in through. */
@@ -1999,7 +2006,7 @@ export class CompanionEventPump {
     // at zero for this decision instead of one of them being credited with a turn it did not cause.
     if (this.#inputs.length > 0) return Object.freeze({ decision: TURN_OPENING.playerInput, producedBy: undefined });
     for (const fact of this.#ordinaryFacts()) {
-      if (isHeldFact(fact) || this.#isRestatement(fact)) continue;
+      if (!this.#owesTurn(fact) || this.#isRestatement(fact)) continue;
       return Object.freeze({
         decision: isDueFact(fact) ? TURN_OPENING.due : TURN_OPENING.worldFact,
         producedBy: this.#producedBy.get(factSlotKey(fact)),
@@ -2035,6 +2042,41 @@ export class CompanionEventPump {
     return readingContentIdentity(fact) !== shown;
   }
 
+  /**
+   * Whether the journal still shows a programme running: the one reading that tells a step from an outcome.
+   *
+   * <p>
+   * The pump holds receipts and world events, and none of them names the programme a step belongs to - an
+   * `execution_receipt` carries an `executionId`, and the journal keys its nodes by `nodeId` (`program-status-wait.ts`
+   * states the same reason for the `<in-flight>` block). The ledger the submit echo and the settlement watch already
+   * write is therefore the only layer that can answer, and `#inFlight` is that ledger's own reading rather than a second
+   * poll of the bridge.
+   * </p>
+   * <p>
+   * IT ERRS TOWARD A TURN. `IN_FLIGHT_READING_MAX_AGE_MS` stops a stopped watch from keeping a programme "running", and
+   * a reading that names nothing makes every fact a decision - so the failure of this answer is one extra turn, never a
+   * lost outcome.
+   * </p>
+   */
+  #programmeInFlight(): boolean {
+    return this.#inFlight().programmes.some((programme) => programme.remaining > 0);
+  }
+
+  /**
+   * Whether this fact is one STEP of a programme that is still running (see `IN_FLIGHT_RECEIPT_PROGRESS_STATES`).
+   *
+   * Asked of the shape first, so a flush holding an ordinary fact - a settlement, a milestone, a person's word - never
+   * reads the journal to decide whether it may open a turn.
+   */
+  #isInFlightProgress(fact: WorldFact): boolean {
+    return factTurnConsequence(fact) === "in_flight_progress" && this.#programmeInFlight();
+  }
+
+  /** Whether this fact can open a turn: not held latest-only, and not a step of a programme that is still running. */
+  #owesTurn(fact: WorldFact): boolean {
+    return !isHeldFact(fact) && !this.#isInFlightProgress(fact);
+  }
+
   /** Every fact waiting in an ordinary window: the population the fact members of the closed list are read from. */
   #ordinaryFacts(): readonly WorldFact[] {
     return [
@@ -2049,13 +2091,26 @@ export class CompanionEventPump {
    * Which member a suppressed flush was answered by absence of.
    *
    * An ordinary fact that is waiting but NOT an opening one is a fact whose content she already received (`#opening`
-   * skipped it for that reason). A snapshot slot holding a reading is a READING AND NOTHING ELSE, and which of the two
-   * members it is depends on the reading alone: a copy of the one the pump already held is `observation_restated` - the
-   * world's last statement, asked about again - and a reading that says something else is `observation_moved`, which is
-   * standing state she has not been handed rather than a wake (`TURN_OPENING`). `nothing_pending` is the rest.
+   * skipped it for that reason). A step of a programme that is still running is its own reason (`in_flight_progress`):
+   * the fact is not a re-statement - she has never seen it - and it still opens no turn, because the programme's
+   * settlement is what she has to decide on. A snapshot slot holding a reading is a READING AND NOTHING ELSE, and which
+   * of the two members it is depends on the reading alone: a copy of the one the pump already held is
+   * `observation_restated` - the world's last statement, asked about again - and a reading that says something else is
+   * `observation_moved`, which is standing state she has not been handed rather than a wake (`TURN_OPENING`).
+   * `nothing_pending` is the rest.
    */
   #suppressionReason(): FlushDecision<TurnSuppression> {
-    for (const fact of this.#ordinaryFacts()) {
+    const facts = this.#ordinaryFacts();
+    // The step first, because it is the answer `#opening` skipped the fact for (`#owesTurn`); the re-statement below is
+    // the older reason and means the same flush was already told this once.
+    for (const fact of facts) {
+      if (!this.#isInFlightProgress(fact)) continue;
+      return Object.freeze({
+        decision: TURN_SUPPRESSION.inFlightProgress,
+        producedBy: this.#producedBy.get(factSlotKey(fact)),
+      });
+    }
+    for (const fact of facts) {
       if (isHeldFact(fact) || !this.#isRestatement(fact)) continue;
       return Object.freeze({
         decision: TURN_SUPPRESSION.worldFactRestated,
@@ -2313,13 +2368,13 @@ export class CompanionEventPump {
     let chosen = facts;
     let composed = compose(
       chosen,
-      chosen.filter((fact) => !isHeldFact(fact)),
+      chosen.filter((fact) => this.#owesTurn(fact)),
     );
     while (composed.text.length > MAX_BATCH_BYTES && chosen.length > 1) {
       chosen = chosen.slice(1);
       composed = compose(
         chosen,
-        chosen.filter((fact) => !isHeldFact(fact)),
+        chosen.filter((fact) => this.#owesTurn(fact)),
       );
     }
 
@@ -2902,6 +2957,105 @@ export const HOST_MINTED_WAKE_KINDS: Readonly<Record<string, string>> = Object.f
   [NARRATION_WITHOUT_WORK_SEMANTIC_KIND]:
     "the Host reads wakeReason when a flush settles, and when it answers narration_without_work it mints the fact with takeNarrationWithoutWorkFact and hands it to acceptHostMintedFact, which enqueues it and flushes a turn",
 });
+
+/**
+ * Receipt states that say a STEP of a programme DID what it was told, WHILE that programme is still running.
+ *
+ * <p>
+ * THE STEP IS NOT THE OUTCOME. Measured 2026-11-15 (`round57`, `tools/_multiday_routine-round57-live-runner.log`):
+ * `turns opened 66 {player_input: 4, world_fact: 62 {adapter_ingress: 57, companion_arrival: 1, program_settlement: 4}}`.
+ * Fifty-seven of sixty-six turns were one adapter fact. The run's transcript says what they were: she submitted
+ * `builder.harvest_crop` for three cauliflowers, and every node that finished arrived as its own `succeeded` receipt
+ * and opened its own turn - five utterances for one micro-action (#68, #70, #72, #76, #78).
+ * </p>
+ * <p>
+ * ONLY THE STATES THAT MEAN "IT RAN AND WORKED". A `rejected`, `failed`, `cancelled`, `blocked` or `uncertain` step is
+ * the one thing mid-plan she can act on, and a refusal is a decision (`TURN_OPENING`), so those states stay ordinary
+ * facts. Nothing here is suppressed when NO programme is in flight: a lone action's terminal receipt is the only fact
+ * that will ever say it happened - the 816.5 s silence of 2026-11-07 was a terminal outcome nothing delivered.
+ * </p>
+ * <p>
+ * THE SETTLEMENT IS THE TURN. `program_settled` states the plan's outcome per node in `<execution-result>`, and the
+ * batch it opens carries these receipts into `<world-facts>`, so nothing is lost by moving where they are delivered.
+ * </p>
+ */
+export const IN_FLIGHT_RECEIPT_PROGRESS_STATES: Readonly<Record<string, string>> = Object.freeze({
+  succeeded:
+    "the programme's own settlement states this node in <execution-result>, and the turn it opens carries the receipt in <world-facts>",
+  partially_succeeded:
+    "the programme's own settlement states this node in <execution-result>, and the turn it opens carries the receipt in <world-facts>",
+});
+
+/**
+ * Semantic-event kinds that are the same STEP, stated a second way: the Mod publishes both a body trace and a receipt
+ * for one node finishing, and neither is news while the plan that owns it is still running.
+ *
+ * The settled FAILED/CANCELLED/INVALIDATED kinds are deliberately absent: those are refusals, and a refusal is a
+ * decision no settlement can soften.
+ */
+export const IN_FLIGHT_SEMANTIC_PROGRESS_KINDS: Readonly<Record<string, string>> = Object.freeze({
+  execution_settled_succeeded:
+    "the receipt for the same step and the programme's own settlement both state it, and the settlement opens the turn",
+});
+
+/**
+ * What one fact SHAPE owes her, as the one classification this pump and its gate read.
+ *
+ * <ul>
+ *   <li>`decision` - it can change what she does next, so it may open a turn.</li>
+ *   <li>`progress` - standing state inside work already answered: never a turn, always delivered by the next one.</li>
+ *   <li>`in_flight_progress` - a step of a programme the journal still shows running: progress WHILE it runs (its
+ *       settlement is the turn that carries it), and a decision when nothing is running, because a lone action's
+ *       outcome is news nobody else will state.</li>
+ * </ul>
+ *
+ * <p>
+ * THE POPULATION IS DERIVED, NOT LISTED: every `EXECUTION_STATES` member is classified as a receipt, and every kind the
+ * pump's own tables declare (`HELD_SEMANTIC_PROGRESS_KINDS`, `IN_FLIGHT_SEMANTIC_PROGRESS_KINDS`,
+ * `HOST_MINTED_WAKE_KINDS`) is classified as a semantic event. A state the protocol adds, or a kind added to one of
+ * those tables, appears here or fails `event-pump.in-flight-progress.test.ts` by name - which is also why the table is
+ * built by code rather than typed out: two hand-written copies of one vocabulary disagree eventually.
+ * </p>
+ */
+function buildFactTurnConsequence(): Readonly<Record<string, FactTurnConsequence>> {
+  const table: Record<string, FactTurnConsequence> = {
+    // A reading is the `<world-state>` block every turn re-states: standing state, never news (`TURN_OPENING`).
+    snapshot: "progress",
+    // The world speaking, and the transport going away: nothing else will ever state either.
+    world_fact: "decision",
+    lifecycle: "decision",
+  };
+  for (const state of EXECUTION_STATES) table[`receipt:${state}`] = "decision";
+  for (const state of Object.keys(HELD_RECEIPT_PROGRESS_STATES)) table[`receipt:${state}`] = "progress";
+  for (const state of Object.keys(IN_FLIGHT_RECEIPT_PROGRESS_STATES)) table[`receipt:${state}`] = "in_flight_progress";
+  for (const kind of Object.keys(HELD_SEMANTIC_PROGRESS_KINDS)) table[`semantic:${kind}`] = "progress";
+  for (const kind of Object.keys(IN_FLIGHT_SEMANTIC_PROGRESS_KINDS)) table[`semantic:${kind}`] = "in_flight_progress";
+  for (const kind of Object.keys(HOST_MINTED_WAKE_KINDS)) table[`semantic:${kind}`] = "decision";
+  return Object.freeze(table);
+}
+
+export type FactTurnConsequence = "decision" | "progress" | "in_flight_progress";
+
+export const FACT_TURN_CONSEQUENCE: Readonly<Record<string, FactTurnConsequence>> = buildFactTurnConsequence();
+
+/** The table key one fact occupies: its kind, split by the state or the semantic kind that says what it means. */
+export function factTurnShape(fact: WorldFact): string {
+  if (fact.kind === "execution_receipt") return `receipt:${String(fact.payload.state)}`;
+  if (fact.kind === "semantic_event") return `semantic:${String(fact.payload.kind)}`;
+  return fact.kind;
+}
+
+/**
+ * What a fact of this shape owes her - the ONE reading of the classification above.
+ *
+ * A shape outside the table is a `decision`, and that direction is deliberate: the pump forwards facts verbatim and the
+ * Mod's semantic vocabulary is open, so an unknown kind must cost a turn rather than a fact. The gate is what keeps
+ * this from being a silent default for the pump's OWN vocabulary - it derives the population from the tables and
+ * `EXECUTION_STATES`, so a member added there is classified here or fails by name.
+ */
+export function factTurnConsequence(fact: WorldFact): FactTurnConsequence {
+  return FACT_TURN_CONSEQUENCE[factTurnShape(fact)] ?? "decision";
+}
 
 /** Receipt progress is latest-only; terminal and invalidating states remain ordinary facts. */
 function isMeaningfulProgressFact(fact: WorldFact): boolean {
