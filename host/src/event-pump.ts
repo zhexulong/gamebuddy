@@ -452,7 +452,8 @@ export type TurnAccount = Readonly<{
  * `per delivered batch:` to the end of the line: `turns opened N {opener: count} · suppressed M {reason: count} · flushes
  * examined F` (F derived, so the arithmetic closes) `· turn_closed_without_action E {opener:reason: count}` `·
  * turn_settled_silent S {opener: count}` `· turn_settled_with_execution_in_flight I` `· aged readings A ·
- * auto_observe_on_stale R {ageTurns}` `· auto_observe_unavailable U {reason: count}`.
+ * auto_observe_on_stale R {ageTurns}` `· auto_observe_unavailable U {reason: count}` `· refresh_rearmed W {reason:
+ * count}`.
  * </p>
  * <p>
  * WHY THE TWO GROUPS ARE NAMED. MEASURED 2026-11-15 (`round60`): one run had 169 assistant turns, 36 of which said
@@ -480,7 +481,10 @@ export type TurnAccount = Readonly<{
  * would print the same line; with them, `A` is how many examined flushes reached their decision holding a reading they
  * did not bring, `R` is how many of those asked the world and were answered, and `U` is how many could not be asked,
  * split by why. `A` is printed first because it is the population the other two partition: an aged reading with `R + U`
- * short of it is one nobody has accounted for.
+ * short of it is one nobody has accounted for. `W` is not in that partition - it is not a turn - and it exists because
+ * `U`'s `refresh_attempts_spent` hides the one question a frozen world forces: WHAT earned the budget back. After
+ * `round61` the answer can be the world's own statement that it moved while the snapshot stayed frozen, and a reader who
+ * could not see that number would read the pump as deaf for ten and a half minutes.
  */
 export function turnAccountLine(account: TurnAccount): string {
   const assistantProductions = TURN_PRODUCTIONS.map(
@@ -512,7 +516,14 @@ export function turnAccountLine(account: TurnAccount): string {
     (total, reason) => total + account.autoObserve.unavailable[reason],
     0,
   );
-  return `${ASSISTANT_TURNS_EXAMINED} ${String(account.assistantTurns.examined)} {${assistantProductions}} · ${ASSISTANT_TURNS_WITH_TEXT} ${String(assistantTurnsWithText(account.assistantTurns))} · ${ASSISTANT_TURNS_TOOL_ONLY} ${String(assistantTurnsToolOnly(account.assistantTurns))} · ${PER_DELIVERED_BATCH} turns opened ${String(account.opened)} {${opened}} · suppressed ${String(suppressedTotal(account))} {${suppressed}} · flushes examined ${String(account.examined)} · ${TURN_WITHOUT_ACTION} ${String(account.emptyTurns.total)} {${empty}} · ${TURN_SETTLED_SILENT} ${String(account.silentSettled.total)} {${silent}} · ${TURN_SETTLED_WITH_EXECUTION_IN_FLIGHT} ${String(account.settledWithExecutionInFlight)} · ${AUTO_OBSERVE_AGED_TURNS} ${String(account.autoObserve.agedTurns)} · ${refreshed} · ${AUTO_OBSERVE_UNAVAILABLE_TOKEN} ${String(declined)} {${unavailable}}`;
+  const rearmed = AUTO_OBSERVE_REARM_REASONS.map(
+    (reason) => `${reason}: ${String(account.autoObserve.rearmed[reason])}`,
+  ).join(", ");
+  const rearmedAgain = AUTO_OBSERVE_REARM_REASONS.reduce(
+    (total, reason) => total + account.autoObserve.rearmed[reason],
+    0,
+  );
+  return `${ASSISTANT_TURNS_EXAMINED} ${String(account.assistantTurns.examined)} {${assistantProductions}} · ${ASSISTANT_TURNS_WITH_TEXT} ${String(assistantTurnsWithText(account.assistantTurns))} · ${ASSISTANT_TURNS_TOOL_ONLY} ${String(assistantTurnsToolOnly(account.assistantTurns))} · ${PER_DELIVERED_BATCH} turns opened ${String(account.opened)} {${opened}} · suppressed ${String(suppressedTotal(account))} {${suppressed}} · flushes examined ${String(account.examined)} · ${TURN_WITHOUT_ACTION} ${String(account.emptyTurns.total)} {${empty}} · ${TURN_SETTLED_SILENT} ${String(account.silentSettled.total)} {${silent}} · ${TURN_SETTLED_WITH_EXECUTION_IN_FLIGHT} ${String(account.settledWithExecutionInFlight)} · ${AUTO_OBSERVE_AGED_TURNS} ${String(account.autoObserve.agedTurns)} · ${refreshed} · ${AUTO_OBSERVE_UNAVAILABLE_TOKEN} ${String(declined)} {${unavailable}} · ${AUTO_OBSERVE_REARMED} ${String(rearmedAgain)} {${rearmed}}`;
 }
 
 /**
@@ -839,6 +850,13 @@ export const WORLD_STATE_REFRESH_REFUSED_SEMANTIC_KIND = "world_state_refresh_re
  * </p>
  *
  * <p>
+ * THE READING IS NOT THE ONLY RE-ARM KEY, and it cannot be (`AUTO_OBSERVE_REARM`, measured in `round61`): its content is
+ * produced by the ask this bound gates, so a snapshot channel that stopped publishing was a budget that could never come
+ * back while the clock kept advancing. The world saying it moved earns the next ask. Neither key is the flush, so the
+ * cadence this refuses to poll at is still refused.
+ * </p>
+ *
+ * <p>
  * One would cover the ordinary case - the bridge is up and the answer moves the reading. The other two exist because the
  * first can land on a transient (a `bridge_response_timeout` at the exact moment the world crossed), and the cost of not
  * asking again is the whole defect this exists for: fifty turns on a picture the Host already knows is wrong.
@@ -867,7 +885,8 @@ export const WORLD_STATE_REFRESH_ATTEMPTS = 3;
 export const AUTO_OBSERVE_UNAVAILABLE = Object.freeze({
   /** No port is attached: this pump structurally cannot ask (a reduced composition, or a wiring bug). */
   noBridge: "no_bridge",
-  /** This reading has already spent `WORLD_STATE_REFRESH_ATTEMPTS`; asking again asks the same question. */
+  /** This reading has already spent `WORLD_STATE_REFRESH_ATTEMPTS`, and the world has said nothing new since the last
+   * ask; asking again asks the same question. */
   attemptsSpent: "refresh_attempts_spent",
   /** The route was asked and refused - `world_state_refresh_refused` carries the route's own words. */
   refused: "refresh_refused",
@@ -876,6 +895,46 @@ export const AUTO_OBSERVE_UNAVAILABLE = Object.freeze({
 export const AUTO_OBSERVE_UNAVAILABLE_REASONS = Object.freeze(Object.values(AUTO_OBSERVE_UNAVAILABLE));
 
 export type AutoObserveUnavailableReason = (typeof AUTO_OBSERVE_UNAVAILABLE_REASONS)[number];
+
+/**
+ * The two signals that earn a spent refresh budget again, one spelling each.
+ *
+ * <p>
+ * MEASURED 2026-11-15 (`round61`): `GAME_CLOCK_STALLED` reported `sinceLastSnapshotMs 630353` while `GAME_CLOCK_READ` read
+ * the clock every 30 s all the way to day 6 - the bridge answered and the world moved, the snapshot never arrived - and
+ * the pump had spent its three asks before that, so `refresh_attempts_spent` was every aged turn it could state for ten
+ * and a half minutes. Thirteen turns closed `world_stale` and the companion had no world to act in.
+ * </p>
+ *
+ * <p>
+ * The defect was the SHAPE of the bound, not its size: the re-arm key was the reading's own content, and the only producer
+ * of a different reading is the ask that budget gates - so a frozen snapshot was a budget that could never come back, and
+ * the reset condition was the success of the operation it bounds. The two signals here are the two independent things that
+ * make "is there a reading other than this one" a NEW question: the reading moved (an ask was answered), or the world
+ * SAID it moved while the reading did not (the Mod's own clock, day, pass-out and `snapshot_changed` facts, as
+ * `describeWorldChange` reads them). The clock is the member that carries the second in practice, and it is proof the
+ * bridge is answering - so a frozen snapshot is a publish problem, not a world that is not answering.
+ * </p>
+ *
+ * <p>
+ * NEITHER SIGNAL IS THE FLUSH. A flush that brings no statement from the world re-arms nothing, however many of them
+ * there are: the re-arm is what the world said, never the fact that a turn happened, which is what keeps the flush cadence
+ * from becoming a probe cadence in a world that is genuinely still (`WORLD_STATE_REFRESH_ATTEMPTS`).
+ * </p>
+ */
+export const AUTO_OBSERVE_REARM = Object.freeze({
+  /** The reading's content changed: the ask was answered with a different world. */
+  readingMoved: "reading_moved",
+  /** The world said it moved - the clock, the day, a pass-out, a warp - while the reading stayed frozen. */
+  worldMoved: "world_moved",
+});
+
+export const AUTO_OBSERVE_REARM_REASONS = Object.freeze(Object.values(AUTO_OBSERVE_REARM));
+
+export type AutoObserveRearmReason = (typeof AUTO_OBSERVE_REARM_REASONS)[number];
+
+/** The emitted name of the budget's re-arm: `refresh_rearmed W {reason: count}`, once per signal. */
+export const AUTO_OBSERVE_REARMED = "refresh_rearmed";
 
 /** The emitted name of one refresh: `auto_observe_on_stale:<ageTurns>`, one per refresh. */
 export const AUTO_OBSERVE_ON_STALE = "auto_observe_on_stale";
@@ -931,6 +990,14 @@ export type AutoObserveAccount = Readonly<{
   refreshed: number;
   lastAgeTurns: number | undefined;
   unavailable: Readonly<Record<AutoObserveUnavailableReason, number>>;
+  /**
+   * How a SPENT budget was earned again, one count per `AUTO_OBSERVE_REARM` member.
+   *
+   * The two are different readings of one recovery and a reader must be able to tell them apart: `readingMoved` is the ask
+   * being answered, `worldMoved` is the world saying it moved while the snapshot stayed frozen (`round61`). Neither is a
+   * turn count, so neither belongs in the `agedTurns` partition above.
+   */
+  rearmed: Readonly<Record<AutoObserveRearmReason, number>>;
 }>;
 
 /**
@@ -1335,16 +1402,24 @@ export class CompanionEventPump {
    */
   #worldStateRefreshPort: WorldStateRefreshPort | undefined;
   /**
-   * The crossed READING whose probes have been spent, and whether its refusal has already been said.
+   * The crossed READING whose probes have been spent, whether its refusal has already been said, and how far the world had
+   * said it moved when the last ask was made.
    *
-   * The re-arm key is the reading's own CONTENT (`readingContentIdentity`), not the turn and not the Mod's revision: a probe
-   * can only be answered by a reading that says something else, so a second probe under the same content asks the
-   * question the first one asked. Keyed on the revision instead, a re-observation that only bumped the counter re-armed
-   * the budget and a frozen world became a spin; keyed on content, `WORLD_STATE_REFRESH_ATTEMPTS` is spent by the reading
-   * and only a reading that actually moved earns a new one. `revision` is kept beside the key because the refusal fact
-   * names the reading it could not replace in the Mod's own numbering.
+   * The reading's own CONTENT (`readingContentIdentity`) is one of the two re-arm keys, not the turn and not the Mod's
+   * revision: a probe can only be answered by a reading that says something else, so a second probe under the same content
+   * asks the question the first one asked. Keyed on the revision instead, a re-observation that only bumped the counter
+   * re-armed the budget and a frozen world became a spin; keyed on content, `WORLD_STATE_REFRESH_ATTEMPTS` is spent by the
+   * reading and only a reading that actually moved earns a new one. `revision` is kept beside the key because the refusal
+   * fact names the reading it could not replace in the Mod's own numbering.
+   *
+   * CONTENT ALONE WAS THE DEADLOCK (`round61`, `AUTO_OBSERVE_REARM`): it is produced by the ask this budget gates, so a
+   * snapshot channel that stopped publishing while the clock kept advancing was a budget that could never come back.
+   * `worldChanges` is the second key - `#worldChangesSinceReading` as of the last ask - so a world statement made after the
+   * budget was spent earns the next ask once, and the same statement cannot earn a second one.
    */
-  #worldStateRefreshFor: { identity: string; revision: number; probes: number; refusalPublished: boolean } | undefined;
+  #worldStateRefreshFor:
+    | { identity: string; revision: number; probes: number; refusalPublished: boolean; worldChanges: number }
+    | undefined;
   #worldStateRefreshProbes = 0;
   #worldStateRefreshRefusals = 0;
   /**
@@ -1362,6 +1437,11 @@ export class CompanionEventPump {
     [AUTO_OBSERVE_UNAVAILABLE.noBridge]: 0,
     [AUTO_OBSERVE_UNAVAILABLE.attemptsSpent]: 0,
     [AUTO_OBSERVE_UNAVAILABLE.refused]: 0,
+  };
+  /** Spent budgets the world earned back, one count per `AUTO_OBSERVE_REARM` member. */
+  readonly #autoObserveRearmed: Record<AutoObserveRearmReason, number> = {
+    [AUTO_OBSERVE_REARM.readingMoved]: 0,
+    [AUTO_OBSERVE_REARM.worldMoved]: 0,
   };
   /**
    * Facts since the current reading that say the WORLD moved: the clock, the day, a pass-out, a warp, or a body that is
@@ -1714,6 +1794,7 @@ export class CompanionEventPump {
     this.#autoObserveRefreshed = 0;
     this.#autoObserveLastAgeTurns = undefined;
     for (const reason of AUTO_OBSERVE_UNAVAILABLE_REASONS) this.#autoObserveUnavailable[reason] = 0;
+    for (const reason of AUTO_OBSERVE_REARM_REASONS) this.#autoObserveRearmed[reason] = 0;
     this.#worldChangesSinceReading = 0;
     this.#lastWorldChange = undefined;
     this.#receipts.clear();
@@ -1799,6 +1880,7 @@ export class CompanionEventPump {
         refreshed: this.#autoObserveRefreshed,
         lastAgeTurns: this.#autoObserveLastAgeTurns,
         unavailable: Object.freeze({ ...this.#autoObserveUnavailable }),
+        rearmed: Object.freeze({ ...this.#autoObserveRearmed }),
       }),
       lastDecision: this.#lastTurnDecision,
     });
@@ -2875,15 +2957,25 @@ export class CompanionEventPump {
    * </p>
    * <ol>
    *   <li>`WORLD_STATE_REFRESH_ATTEMPTS` per reading: one reading she has already been shown is asked about three times and
-   *     then declined with `refresh_attempts_spent`. The re-arm key is the reading's own CONTENT, so a world that never
-   *     moves cannot turn the flush cadence into a probe cadence, and a counter that moved without the world does not
-   *     re-arm it.</li>
+   *     then declined with `refresh_attempts_spent`. The re-arm keys are the reading's own CONTENT and the world's own
+   *     statement that it MOVED (`AUTO_OBSERVE_REARM`), so a world that never moves cannot turn the flush cadence into a
+   *     probe cadence, and a counter that moved without the world does not re-arm it.</li>
    *   <li>An ask is made for every examined flush whose reading it did not bring (`flush` -> `#beginAgedReadingAsk`), before
    *     the flush decides whether to open a turn - never from a timer or a publication: there is one trigger and it is the
    *     staleness condition itself.</li>
-   *   <li>The episode is re-armed by the READING moving, not by time and not by a counter, and a refusal is published once
-   *     per reading (`#refuseWorldStateRefresh`) - so a bridge that never answers produces one statement, not a stream.</li>
+   *   <li>The episode is re-armed by the READING moving or by the WORLD saying it moved, never by time and never by a flush,
+   *     and a refusal is published once per reading (`#refuseWorldStateRefresh`) - so a bridge that never answers produces
+   *     one statement, not a stream.</li>
    * </ol>
+   *
+   * <p>
+   * THE SECOND RE-ARM KEY IS WHAT `round61` PROVED NECESSARY. The first one alone is self-defeating: the only producer of a
+   * different reading is this ask, so a snapshot channel that stopped publishing while the clock kept walking was a budget
+   * that could never come back - ten and a half minutes and thirteen `world_stale` turns on a bridge that was answering.
+   * The world's own statement is independent of the channel it is not arriving on, and it is asked for ONCE per statement:
+   * several movements between two flushes are one question ("read the world now"), and a statement already answered by an
+   * ask cannot earn a second one.
+   * </p>
    *
    * <p>
    * THE ANSWER IS WAITED FOR when a caller can wait: the request travels the integration's own observation route
@@ -2900,13 +2992,21 @@ export class CompanionEventPump {
     const episode = this.#worldStateRefreshFor;
     const same = episode !== undefined && episode.identity === identity;
     const probes = same ? episode.probes : 0;
-    if (probes >= WORLD_STATE_REFRESH_ATTEMPTS)
+    // The world said it moved after the last ask: `#worldChangesSinceReading` is the SAME count `world_state_stale` names
+    // as its evidence, so "the world moved" has one spelling in this pump rather than two that can disagree.
+    const worldMoved = same && this.#worldChangesSinceReading > episode.worldChanges;
+    if (probes >= WORLD_STATE_REFRESH_ATTEMPTS && !worldMoved)
       return Object.freeze({ declined: AUTO_OBSERVE_UNAVAILABLE.attemptsSpent });
+    // Which signal earned this budget, counted where it is decided rather than inferred from two counters later.
+    if (episode !== undefined && episode.probes >= WORLD_STATE_REFRESH_ATTEMPTS) {
+      this.#autoObserveRearmed[same ? AUTO_OBSERVE_REARM.worldMoved : AUTO_OBSERVE_REARM.readingMoved] += 1;
+    }
     this.#worldStateRefreshFor = {
       identity,
       revision: reading.revision,
       probes: probes + 1,
       refusalPublished: same ? episode.refusalPublished : false,
+      worldChanges: this.#worldChangesSinceReading,
     };
     this.#worldStateRefreshProbes += 1;
     const inFlight = (async (): Promise<void> => {
@@ -3561,7 +3661,8 @@ export function factContentIdentity(fact: WorldFact): string {
  *
  * <p>
  * ONE spelling, used by the two questions that are really one: is the block's header allowed to say `本轮无新观察`
- * (`#worldStateReading`), and has the probe budget for this reading been spent (`#worldStateRefreshFor`). The third
+ * (`#worldStateReading`), and has the probe budget for this reading been spent (`#worldStateRefreshFor`, beside the second
+ * key `AUTO_OBSERVE_REARM.worldMoved`). The third
  * question this used to answer - does the reading open a turn - is gone with the opener: a reading is standing state.
  * </p>
  */

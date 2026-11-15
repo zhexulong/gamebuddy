@@ -77,19 +77,21 @@ function snapshotFact(revision: number): WorldFact {
   });
 }
 
-/** A fact the world really published: the clock moving is what says the held reading is no longer the world. */
-function movedFact(revision: number, index: number): WorldFact {
-  const kind = "time_milestone";
+/**
+ * A fact the world published that says nothing about where the world IS: a modal opening.
+ *
+ * The population a spent refresh budget must NOT be earned back by: a turn the world opened without moving, which is what
+ * separates "the bound is per world statement" from "the bound is per flush" (`AUTO_OBSERVE_REARM`).
+ */
+function silentFact(index: number): WorldFact {
   return Object.freeze({
     source: "stardew_mod",
-    kind: "world_fact" as const,
-    eventId: `${kind}_${String(revision)}_${String(index)}`,
-    correlationId: `${kind}_${String(revision)}_${String(index)}`,
-    revision: revision + 500,
+    kind: "semantic_event" as const,
+    eventId: `modal_presented_${String(index)}`,
+    correlationId: `modal_presented_${String(index)}`,
+    revision: 500,
     observedTick: index,
-    gameTime: "1200",
-    semanticKind: kind,
-    payload: Object.freeze({ kind, revision: revision + 500 }) as Readonly<Record<string, unknown>>,
+    payload: Object.freeze({ kind: "modal_presented", index }),
   });
 }
 
@@ -161,9 +163,9 @@ test("the pump the composition builds reports its stale-refresh port attached, a
     "attaching asks nothing: the first question belongs to a turn about to be composed from an aged reading",
   );
 
-  // One aged reading, read from its first aged turn: the held observation, then the clock walking past its bound.
+  // One aged reading, read from its first aged turn: the held observation, then turns the world did not move in.
   await deliverTurn(loop.pump, snapshotFact(352), true);
-  for (let turn = 1; turn <= FIRST_STALE_TURN; turn += 1) await deliverTurn(loop.pump, movedFact(352, turn));
+  for (let turn = 1; turn <= FIRST_STALE_TURN; turn += 1) await deliverTurn(loop.pump, silentFact(turn));
   await drained();
 
   assert.equal(
@@ -192,7 +194,7 @@ test("a connection with no observation route is refused by name rather than answ
     },
   });
   await deliverTurn(loop.pump, snapshotFact(352), true);
-  for (let turn = 1; turn <= LAST_PROBE_TURN; turn += 1) await deliverTurn(loop.pump, movedFact(352, turn));
+  for (let turn = 1; turn <= LAST_PROBE_TURN; turn += 1) await deliverTurn(loop.pump, silentFact(turn));
   await drained();
 
   assert.equal(published.length, 1, "one crossing, one statement");
@@ -206,8 +208,9 @@ test("a connection with no observation route is refused by name rather than answ
 
 test("one crossed reading spends its bounded probes and is refused once; the next crossing re-arms", async () => {
   // The bound the run depends on. A bridge that refuses every observation cannot be turned into a spin by a world that
-  // never moves: the probe is re-armed by the READING, so each crossing spends `WORLD_STATE_REFRESH_ATTEMPTS` and says one
-  // refusal naming the revision it could not replace.
+  // does not move: the probe is re-armed by the READING, so each crossing spends `WORLD_STATE_REFRESH_ATTEMPTS` and says one
+  // refusal naming the revision it could not replace. Every turn here is one the world opened without moving, so the second
+  // re-arm signal (`AUTO_OBSERVE_REARM.worldMoved`) is never present and the reading's own budget is the whole allowance.
   const refusals: WorldFact[] = [];
   const loop = createGameCompanionLoop({
     session: {} as never,
@@ -223,8 +226,7 @@ test("one crossed reading spends its bounded probes and is refused once; the nex
   const readings = [352, 400, 448];
   for (const [index, revision] of readings.entries()) {
     await deliverTurn(loop.pump, snapshotFact(revision), index === 0);
-    for (let turn = 1; turn <= LAST_PROBE_TURN; turn += 1)
-      await deliverTurn(loop.pump, movedFact(revision, index * 100 + turn));
+    for (let turn = 1; turn <= LAST_PROBE_TURN; turn += 1) await deliverTurn(loop.pump, silentFact(index * 100 + turn));
     await drained();
   }
 

@@ -14,6 +14,9 @@ import {
   assistantTurnsWithText,
   AUTO_OBSERVE_AGED_TURNS,
   AUTO_OBSERVE_ON_STALE,
+  AUTO_OBSERVE_REARM,
+  AUTO_OBSERVE_REARM_REASONS,
+  AUTO_OBSERVE_REARMED,
   AUTO_OBSERVE_UNAVAILABLE,
   AUTO_OBSERVE_UNAVAILABLE_REASONS,
   AUTO_OBSERVE_UNAVAILABLE_TOKEN,
@@ -715,6 +718,7 @@ function readTurnAccountLine(line: string): Readonly<{
     agedTurns: number;
     refreshed: Readonly<{ total: number; counts: Record<string, number> }>;
     unavailable: Readonly<{ total: number; counts: Record<string, number> }>;
+    rearmed: Readonly<{ total: number; counts: Record<string, number> }>;
   }>;
 }> {
   const segments = line.split(SEGMENT_SEPARATOR).map(parseSegment);
@@ -731,6 +735,7 @@ function readTurnAccountLine(line: string): Readonly<{
     AUTO_OBSERVE_AGED_TURNS,
     AUTO_OBSERVE_ON_STALE,
     AUTO_OBSERVE_UNAVAILABLE_TOKEN,
+    AUTO_OBSERVE_REARMED,
   ];
   assert.deepEqual(
     segments.map((segment) => segment.label),
@@ -750,7 +755,9 @@ function readTurnAccountLine(line: string): Readonly<{
     agedSegment,
     observedSegment,
     declinedSegment,
+    rearmedSegment,
   ] = segments as [
+    ReturnType<typeof parseSegment>,
     ReturnType<typeof parseSegment>,
     ReturnType<typeof parseSegment>,
     ReturnType<typeof parseSegment>,
@@ -787,6 +794,7 @@ function readTurnAccountLine(line: string): Readonly<{
       agedTurns: agedSegment.total,
       refreshed: Object.freeze({ total: observedSegment.total, counts: observedSegment.counts }),
       unavailable: Object.freeze({ total: declinedSegment.total, counts: declinedSegment.counts }),
+      rearmed: Object.freeze({ total: rearmedSegment.total, counts: rearmedSegment.counts }),
     }),
   });
 }
@@ -838,9 +846,12 @@ function firedProducers(counts: Readonly<Record<FactProducer, number>>): Record<
 function autoObserveAccount(
   refreshed: Readonly<{ refreshed: number; lastAgeTurns: number | undefined; agedTurns?: number }>,
   unavailable: Readonly<Record<string, number>> = {},
+  rearmed: Readonly<Record<string, number>> = {},
 ): TurnAccount["autoObserve"] {
   const byReason: Record<string, number> = {};
   for (const reason of AUTO_OBSERVE_UNAVAILABLE_REASONS) byReason[reason] = unavailable[reason] ?? 0;
+  const byRearm: Record<string, number> = {};
+  for (const reason of AUTO_OBSERVE_REARM_REASONS) byRearm[reason] = rearmed[reason] ?? 0;
   const declined = AUTO_OBSERVE_UNAVAILABLE_REASONS.reduce((total, reason) => total + (byReason[reason] ?? 0), 0);
   return Object.freeze({
     // The population is the sum by construction here: an account that named aged turns and then neither refreshed nor
@@ -849,6 +860,7 @@ function autoObserveAccount(
     refreshed: refreshed.refreshed,
     lastAgeTurns: refreshed.lastAgeTurns,
     unavailable: Object.freeze(byReason),
+    rearmed: Object.freeze(byRearm),
   });
 }
 
@@ -906,7 +918,11 @@ test("the account line reads back into the account it names", () => {
       byOpener: Object.freeze(silentSettledCounts({ [TURN_OPENING.worldFact]: 2 })),
     }),
     settledWithExecutionInFlight: 3,
-    autoObserve: autoObserveAccount({ refreshed: 4, lastAgeTurns: 20 }, { [AUTO_OBSERVE_UNAVAILABLE.refused]: 1 }),
+    autoObserve: autoObserveAccount(
+      { refreshed: 4, lastAgeTurns: 20 },
+      { [AUTO_OBSERVE_UNAVAILABLE.refused]: 1 },
+      { [AUTO_OBSERVE_REARM.readingMoved]: 2, [AUTO_OBSERVE_REARM.worldMoved]: 1 },
+    ),
     lastDecision: undefined,
   });
   const parsed = readTurnAccountLine(turnAccountLine(account));
@@ -998,6 +1014,16 @@ test("the account line reads back into the account it names", () => {
       Object.values(parsed.autoObserve.unavailable.counts).reduce((total, count) => total + count, 0),
     "every aged turn is printed as refreshed or as a named reason, so a turn cannot be aged and then unaccounted for",
   );
+  assert.deepEqual(
+    parsed.autoObserve.rearmed.counts,
+    account.autoObserve.rearmed,
+    "and WHICH signal earned a spent budget reads back: `the reading moved` and `the world moved` are different readings",
+  );
+  assert.equal(
+    parsed.autoObserve.rearmed.total,
+    Object.values(parsed.autoObserve.rearmed.counts).reduce((total, count) => total + count, 0),
+    "the re-arm total is the sum of its signals, so a budget cannot be earned back without the account saying how",
+  );
 });
 
 test("the account line names a member that never fired, in both histograms", () => {
@@ -1060,6 +1086,11 @@ test("the account line names a member that never fired, in both histograms", () 
     [...AUTO_OBSERVE_UNAVAILABLE_REASONS],
     "and the reasons a refresh could not be asked are all printed, so `nobody asked` is a stated zero",
   );
+  assert.deepEqual(
+    Object.keys(parsed.autoObserve.rearmed.counts),
+    [...AUTO_OBSERVE_REARM_REASONS],
+    "and so is every signal that can earn a spent budget back: a re-arm nobody can see is a budget that looks deaf",
+  );
 });
 
 test("the account line this repo printed before the change is REFUSED by the reader", () => {
@@ -1069,7 +1100,7 @@ test("the account line this repo printed before the change is REFUSED by the rea
     "turns opened 55 · suppressed 0 {observation_restated: 0, world_fact_restated: 0, nothing_pending: 0} · flushes examined 55";
   assert.throws(
     () => readTurnAccountLine(measured),
-    /assistant turns examined, with text, tool-only, per delivered batch: turns opened, suppressed, flushes examined, turn_closed_without_action, turn_settled_silent, turn_settled_with_execution_in_flight, aged readings, auto_observe_on_stale, auto_observe_unavailable/u,
+    /assistant turns examined, with text, tool-only, per delivered batch: turns opened, suppressed, flushes examined, turn_closed_without_action, turn_settled_silent, turn_settled_with_execution_in_flight, aged readings, auto_observe_on_stale, auto_observe_unavailable, refresh_rearmed/u,
     "a line that cannot say what opened its turns is not an account, and must not read as one",
   );
 });

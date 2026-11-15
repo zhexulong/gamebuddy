@@ -11,6 +11,7 @@ import {
   FACT_PRODUCER,
   AUTO_OBSERVE_AGED_TURNS,
   AUTO_OBSERVE_ON_STALE,
+  AUTO_OBSERVE_REARM,
   AUTO_OBSERVE_UNAVAILABLE,
   AUTO_OBSERVE_UNAVAILABLE_REASONS,
   AUTO_OBSERVE_UNAVAILABLE_TOKEN,
@@ -79,21 +80,6 @@ function snapshotFact(revision: number, observedTick: number, moved = false): Wo
     revision,
     occurredAtMs: 1_790_000_000_000 + observedTick,
     payload: { ...FREE_BODY, revision, ...(moved ? { gameTime: "0750" } : {}) },
-  });
-}
-
-/** A fact the world really published: the clock moving is what makes the held reading a picture the world contradicted. */
-function movedFact(index: number): WorldFact {
-  return Object.freeze({
-    source: "stardew_mod",
-    kind: "world_fact" as const,
-    eventId: `time_milestone_${String(index)}`,
-    correlationId: `time_milestone_${String(index)}`,
-    revision: 900,
-    observedTick: index,
-    occurredAtMs: 1_790_000_000_000 + index * 1_000,
-    semanticKind: "time_milestone",
-    payload: Object.freeze({ kind: "time_milestone", milestone: 1200 }),
   });
 }
 
@@ -291,9 +277,11 @@ test("the pre-change module composes the same turn from the aged block and asks 
 });
 
 test("the bound: three aged turns of one revision, then `refresh_attempts_spent` instead of a fourth ask", async () => {
-  // THE BOUND, and the reason this cannot become a poll. A world that answers an observation with the SAME revision - the
-  // ordinary case for a frozen bridge, and the honest case for a world that truly did not move - re-arms nothing, so the
-  // revision's own budget is the only thing standing between a turn cadence and a probe cadence.
+  // THE BOUND, and the reason this cannot become a poll. A world that answers an observation with NOTHING - the ordinary
+  // case for a frozen bridge, and the honest case for a world that truly did not move - re-arms nothing: the turns here are
+  // a person speaking in a world that says nothing, so the reading's own budget is the only thing standing between a turn
+  // cadence and a probe cadence. (The OTHER case - the world saying it moved while the snapshot stays frozen - is what
+  // `round61` measured and what earns the next ask; see `AUTO_OBSERVE_REARM`.)
   const pump = new CompanionEventPump();
   const asked: number[] = [];
   pump.attachWorldStateRefresh(
@@ -306,7 +294,7 @@ test("the bound: three aged turns of one revision, then `refresh_attempts_spent`
     }),
   );
   await openSession(pump);
-  for (let turn = 1; turn <= 10; turn += 1) await deliverTurn(pump, [movedFact(turn)]);
+  for (let turn = 1; turn <= 10; turn += 1) await deliverTurn(pump, [], AGED_TURN_INPUT);
 
   assert.equal(
     asked.length,
@@ -470,6 +458,7 @@ test("the account prints the three stale numbers, and a zero population blocks t
       [AUTO_OBSERVE_UNAVAILABLE.attemptsSpent]: 0,
       [AUTO_OBSERVE_UNAVAILABLE.refused]: 0,
     }),
+    rearmed: Object.freeze({ [AUTO_OBSERVE_REARM.readingMoved]: 0, [AUTO_OBSERVE_REARM.worldMoved]: 0 }),
   });
   assert.throws(() => staleReading(unclosed), /not partitioned into 1 refreshed \+ 0 declined/u);
   assert.equal(
