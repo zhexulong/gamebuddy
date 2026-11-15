@@ -97,6 +97,11 @@ export function Timeline({
     /** The catalogue's words for the Host's own greeting-variant labels. */
     openingVariantDefault: string;
     openingVariantAlternate: string;
+    /**
+     * The sentence an opening row carries once the Host has sealed the choice: the fact, and the one
+     * place another opening still exists.
+     */
+    openingSealed: string;
     /** The rewind control and the confirmation it opens. */
     rewindHere: string;
     rewindHereName: string;

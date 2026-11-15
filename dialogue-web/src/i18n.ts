@@ -670,6 +670,12 @@ const en = {
   // position the indicator already shows beside it.
   openingVariantDefault: "Default",
   openingVariantAlternate: "Alternate {{index}}",
+  // The other half of the same fact, for the moment the choice is gone: the Host seals an opening
+  // on the first row that is not it (`openingLockedAtEventIdOf`), so the switcher above simply
+  // disappears. The row it disappears from is where the player looks, so the sentence stands there
+  // and names the one place another opening is still available - a NEW Chat, which is a second
+  // conversation rather than a rewrite of this one.
+  openingSealed: "This opening was fixed by your first message. Start a New Chat to open on a different one.",
 
   problemBootstrapUnavailableTitle: "Unable to open chat",
   problemBootstrapUnavailableDetail: "The bootstrap handoff is unavailable.",
@@ -1848,6 +1854,10 @@ const zh: Messages = {
   copyNoticeFailed: "未能复制。请选中消息文字手动复制。",
   openingVariantDefault: "默认",
   openingVariantAlternate: "备用 {{index}}",
+  // 同一个事实的另一半，落在选择已经没有了的时刻：第一条不属于开场白的消息就把它封住了
+  // （`openingLockedAtEventIdOf`），所以上面那个翻页器直接消失。消失的位置就是玩家会去看的位置，
+  // 所以这句话落在那里，并点名另一个开场白唯一还在的地方——新建会话，那是另一场对话，而不是改写这一场。
+  openingSealed: "你发出第一条消息后，这条开场白就固定了。想换个开场白，请新建会话。",
 
   problemBootstrapUnavailableTitle: "无法打开聊天",
   problemBootstrapUnavailableDetail: "Bootstrap 令牌不可用。",

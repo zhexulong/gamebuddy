@@ -990,7 +990,8 @@
    stretch the strip under it. With its inline size excluded from the parent's intrinsic width, this
    line takes the width the reply already had and wraps inside it - the bubble, the strip and every
    control in it keep the exact boxes they had before the line existed. */
-  .message-truncated {
+  .message-truncated,
+  .message-opening-sealed {
     contain: inline-size;
     margin: var(--space-1) 0 0;
     font-size: 12px;

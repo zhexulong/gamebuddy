@@ -467,6 +467,8 @@ export const MessageBubble = memo(function MessageBubble({
       regenerateVariant: string;
       openingVariantDefault: string;
       openingVariantAlternate: string;
+      /** The sentence the opening row carries once the Host has sealed the choice. */
+      openingSealed: string;
       rewindHere: string;
       rewindHereName: string;
       rewindConfirmPrompt: string;
@@ -519,6 +521,21 @@ export const MessageBubble = memo(function MessageBubble({
     !isPlayer && openingVariant !== undefined && !openingVariant.locked && openingVariant.count > 1
       ? openingVariant
       : undefined;
+  /**
+   * The other half of that fact: the Host sealed the choice, so the pager above is gone - and the row
+   * it disappeared from says so instead of going quiet.
+   *
+   * A card ships several openings, and choosing one happens while a Chat is being created (the picker)
+   * or while it is still nothing but its opening (this pager). After the first message the Host refuses
+   * the choice by name (`chat_opening_locked`, `commitGreetingOpeningVariant`), because swapping the row
+   * the whole exchange was written on would rewrite the record rather than the conversation. That is a
+   * deliberate line, not a defect - and the player who wants a different opening is owed the one place
+   * it still exists: a NEW Chat, which is a second conversation and leaves this one as it is.
+   */
+  const openingSealedNote =
+    !isPlayer && openingVariant !== undefined && openingVariant.locked && openingVariant.count > 1
+      ? labels.openingSealed
+      : null;
   // The message's own swipe set, when the Host published more than one variant of
   // it. It is the same shape as the opening choice, and it reads the same way.
   const swipeSet = swipeInfo !== undefined && swipeInfo.totalSwipes > 1 ? swipeInfo : undefined;
@@ -1305,6 +1322,15 @@ export const MessageBubble = memo(function MessageBubble({
         {!isPlayer && truncatedNote !== null && (
           <p className="message-truncated" data-testid="message-truncated">
             {truncatedNote}
+          </p>
+        )}
+        {/* The sealed opening's line, on the row whose switcher the seal took and in the same place
+            and shape as the length-ceiling note: information under the strip, with no control of its
+            own - the alternative it names is a New Chat, which is another conversation rather than a
+            press on this row. */}
+        {openingSealedNote !== null && (
+          <p className="message-opening-sealed" data-testid="message-opening-sealed">
+            {openingSealedNote}
           </p>
         )}
       </div>
