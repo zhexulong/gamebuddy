@@ -1,14 +1,14 @@
 {
   "schema": "gamebuddy-stardew-family-size-baseline/v1",
   "note": "The class family's size ceiling, measured - not an accepted gap. It is checked in both directions: growth above it is `family_lines_exceeded` and a stale ceiling below it is `family_ceiling_stale`. It may only fall except by `--update --because`, which records the number it raised from.",
-  "ceiling": 27388,
-  "raisedFrom": null,
-  "because": null,
-  "measuredAt": "f63c3ba6",
+  "ceiling": 27412,
+  "raisedFrom": 27388,
+  "because": "the clearing-vocabulary unit (6e74b420) added 24 lines to worldobjectactions and buildfarmbuildingactions after this ceiling was measured; the family at dacfed9c is 27412",
+  "measuredAt": "dacfed9c",
   "files": {
     "farmhandexecutioncontroller.actorstateactions.cs": 564,
     "farmhandexecutioncontroller.animaldooractions.cs": 305,
-    "farmhandexecutioncontroller.buildfarmbuildingactions.cs": 631,
+    "farmhandexecutioncontroller.buildfarmbuildingactions.cs": 639,
     "farmhandexecutioncontroller.buildingchestactions.cs": 629,
     "farmhandexecutioncontroller.busactions.cs": 272,
     "farmhandexecutioncontroller.chatactions.cs": 102,
@@ -55,6 +55,6 @@
     "farmhandexecutioncontroller.transportactions.cs": 574,
     "farmhandexecutioncontroller.treebushactions.cs": 275,
     "farmhandexecutioncontroller.verdicts.cs": 26,
-    "farmhandexecutioncontroller.worldobjectactions.cs": 1043
+    "farmhandexecutioncontroller.worldobjectactions.cs": 1059
   }
 }
