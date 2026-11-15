@@ -886,8 +886,16 @@ test("exit 0 is an ending and a non-zero code is a crash, and the two differ onl
     );
     assert.notEqual(labels.gameEndedQuarantined, labels.gameLaunchQuarantined);
   }
-  assert.match(en.gameEndedQuarantined, /Close GameBuddy completely/u);
-  assert.match(zh.gameEndedQuarantined, /完全关闭 GameBuddy/u);
+  assert.match(en.gameEndedQuarantined, /quit GameBuddy itself/u);
+  assert.match(zh.gameEndedQuarantined, /退出 GameBuddy 本身/u);
+  // …and both say that the page is not where that step is carried out: the lock is in GameBuddy's
+  // own process, so no control here lifts it and reloading comes back to this same screen. The
+  // instruction that sent the player looking for a control this page does not have is gone.
+  for (const labels of [en, zh]) {
+    assert.match(labels.gameLaunchQuarantined, /no control on this page|本页没有任何控件/u);
+    assert.match(labels.gameLaunchQuarantined, /reloading this page does not|刷新本页也不行/u);
+    assert.doesNotMatch(labels.gameLaunchQuarantined, /then play with your companion|然后再启动伙伴陪玩/u);
+  }
   t.diagnostic(`game-ended: quit -> ${quitControls.phase}, crashed -> ${crashedControls.phase}`);
 });
 

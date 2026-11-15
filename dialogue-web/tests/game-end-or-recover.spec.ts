@@ -510,11 +510,14 @@ test("a launch that failed for good names the only step out of it instead of a g
   await openGame(page);
   const panel = panelOf(page);
 
-  // The state says what happened and what the step is, in one sentence that names
-  // restarting rather than a control that could only fail.
+  // The state says what happened and what the step is, in one sentence that names quitting
+  // GameBuddy itself rather than a control that could only fail - and says that no control on this
+  // page lifts the lock and that reloading does not either.
   const quarantined = panel.getByTestId("game-launch-quarantined");
   await expect(quarantined).toBeVisible();
-  await expect(quarantined).toContainText("Close GameBuddy completely, open it again");
+  await expect(quarantined).toContainText("quit GameBuddy itself and start it again");
+  await expect(quarantined).toContainText("no control on this page lifts it");
+  await expect(quarantined).toContainText("reloading this page does not either");
   await expect(panel).toContainText("Last resultDid not complete");
   await expect(panel).toContainText("InstanceStardew Valley");
 
