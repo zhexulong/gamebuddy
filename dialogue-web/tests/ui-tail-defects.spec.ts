@@ -356,7 +356,9 @@ test("item 4: a queued turn reads as busy instead of a greyed-out send button", 
   });
   console.log(`[item-4 queued] ${JSON.stringify(measured)}`);
 
-  expect(measured.fieldDisabled, "the Host projects chat.submit as busy, so the field is locked").toBe(true);
+  expect(measured.fieldDisabled, "a queued turn refuses the send, never the field the next line is written in").toBe(
+    false,
+  );
 
   expect(measured.sendButtons, "no greyed send button stands in for a running turn").toBe(0);
   expect(measured.stopButtons, "and no Stop is offered where the Host cannot cancel").toBe(0);

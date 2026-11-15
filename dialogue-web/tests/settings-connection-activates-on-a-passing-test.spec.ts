@@ -256,8 +256,10 @@ async function readChat(page: Page, settlesTo: "no-model" | "model") {
   // The route is re-read on arrival (`readChatModelRoute`), so the surface settles a beat after the
   // conversation is visible: waiting for the count is waiting for the Host's answer, not for a timer.
   await expect(noModel).toHaveCount(settlesTo === "no-model" ? 1 : 0);
-  // The field's own lock is the Host's answer to "would a submission be accepted now"
-  // (`fieldLocked(uiState.send)` in Composer.tsx), so it is read before anything is typed into it.
+  // The field is the player's in every phase: `Composer` never disables it, and what a surface with
+  // nowhere to send refuses is the SEND (`sendRefused(uiState.send)`). It is still read before
+  // anything is typed into it, so a future state that did take the box away reports itself in one
+  // line here instead of hanging inside `fill`.
   const field = chat.getByRole("textbox", { name: /Type a message/u });
   const canType = await field.isEnabled();
   if (!canType)

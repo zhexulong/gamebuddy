@@ -12,7 +12,9 @@ import { expect, test } from "./frontend-coverage";
  * rewind's then raced for the same rows.
  *
  * The two facts are one: a surface that is rewriting the conversation is not a surface to submit
- * into. The gate reads the same latch the mutations take.
+ * into. The gate reads the same latch the mutations take. What it refuses is the SEND - the field
+ * keeps taking the next line while the cut lands, because the rewrite is of the transcript and not
+ * of the box the player writes in.
  */
 
 const token = "A".repeat(43);
@@ -121,17 +123,16 @@ test("a send is not offered into a transcript a rewind is truncating", async ({ 
     rowBusy: document.querySelectorAll("li[data-pending]").length,
   }));
   // If the composer is still offered, taking the offer is the defect: the send request is measured
-  // rather than assumed.
-  if (measured.fieldDisabled === false) {
-    await composer.fill("Into the cut.");
-    if ((await send.count()) > 0 && (await send.isEnabled())) await send.click();
-  }
+  // rather than assumed. The field is the player's even mid-rewind, so the offer is taken.
+  await composer.fill("Into the cut.");
+  if ((await send.count()) > 0 && (await send.isEnabled())) await send.click();
   console.log(`MEASURE rewind in flight: ${JSON.stringify(measured)} submits=${JSON.stringify(submits)}`);
 
   // THE DEFECT: the gate and the mutation latch were disjoint, so a press was admitted into a
   // transcript the rewind was truncating. The control is still drawn - the idle band always offers
-  // Send - and what must hold is that it refuses the press and that nothing left the surface.
-  await expect(composer).toBeDisabled();
+  // Send - and what must hold is that it refuses the press and that nothing left the surface. The
+  // field itself stays enabled: taking it away would be a second, unrelated refusal.
+  await expect(composer).toBeEnabled();
   await expect(send).toBeDisabled();
   expect(submits).toHaveLength(0);
 

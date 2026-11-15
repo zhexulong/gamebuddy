@@ -133,23 +133,26 @@ test("a send the Host never answers is settled by the submission's own status", 
   // 10 s: still open.
   await advance(9_000);
   const atTenSeconds = await reading(10);
-  // Past every budget the client is allowed.
-  for (let step = 0; step < 400 && (await composer.isDisabled()); step += 1) await advance(1_000);
+  // Past every budget the client is allowed: the wait is held open by the spinner the submission
+  // draws, because the field never leaves the player - it is the same box the words go back into.
+  for (let step = 0; step < 400 && (await page.locator("[data-composer-busy]").count()) > 0; step += 1)
+    await advance(1_000);
   const afterTheBudget = await reading(200);
 
   // The record the press published starts the one reader that can say what happened to it.
   expect(statusReads, "the shell asks the Host what happened to the submission it published").toBeGreaterThan(0);
   expect(atOneSecond, "and the attempt is still held while the answer is open").toMatchObject({
-    fieldDisabled: true,
+    fieldDisabled: false,
     busy: 1,
     send: 0,
     stop: 0,
     optimistic: 1,
   });
 
-  // Still held at 10 s: the lock is not weakened by the wait.
+  // Still held at 10 s: ten seconds of silence is not a settlement, and it is not a reason to take the
+  // field away from the player either - the wait is the spinner's fact, not the box's.
   expect(atTenSeconds, "ten seconds of silence is not a settlement").toMatchObject({
-    fieldDisabled: true,
+    fieldDisabled: false,
     busy: 1,
     send: 0,
     stop: 0,
@@ -158,9 +161,7 @@ test("a send the Host never answers is settled by the submission's own status", 
 
   // Past the budget: the record is spent, the paragraph comes back, and the surface says the one
   // thing it knows - that it could not find out.
-  expect(afterTheBudget.fieldDisabled, "the poll's budget ends the wait instead of locking the field forever").toBe(
-    false,
-  );
+  expect(afterTheBudget.fieldDisabled, "the field was never the thing that waited").toBe(false);
   expect(afterTheBudget.send, "and the player has a control again").toBe(1);
   expect(afterTheBudget.busy, "the spinner is the wait, so it leaves with it").toBe(0);
   expect(afterTheBudget.optimistic, "the unconfirmed line stops claiming to be sending").toBe(0);

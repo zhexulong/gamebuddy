@@ -2,7 +2,6 @@ import { expect, test, type Page } from "./frontend-coverage";
 import {
   armedRows,
   deriveChatUIState,
-  fieldLocked,
   isTurnInFlight,
   replyHasNoModel,
   sendRefused,
@@ -28,11 +27,14 @@ import type { ChatModelRoute } from "../src/chat-model-route";
  *    nullable handles whose mutual exclusion was a convention re-stated in three handlers.
  *    One value means an arm can never name two rows, and the per-row flags are a total
  *    function of it.
- * 3. `the send gate answers both questions at once` - the field's lock (`disabled`) and "a
- *    reply has no model" (`sendUnavailable`) were two booleans for one question, and the
- *    standing banner read the second fact a second time (`modelRoute.kind === "none"` in
- *    ChatSurface, twice). Every gate is cross-checked against the two inputs it is built from,
- *    so a predicate that drifts from the pair fails here instead of on one of the two readers.
+ * 3. `the send gate answers both questions at once` - "a reply has no model" (`sendUnavailable`)
+ *    and the Host's refusal of a submission were two booleans for one question, and the standing
+ *    banner read the second fact a second time (`modelRoute.kind === "none"` in ChatSurface,
+ *    twice). Every gate is cross-checked against the two inputs it is built from, so a predicate
+ *    that drifts from the pair fails here instead of on one of the two readers. The gate answers
+ *    for SENDING and never for the field: the box stays writable in every phase (the mounted bands
+ *    below read `fieldDisabled: false` in all three), because the player writes the next line while
+ *    this one is answered.
  * 4. `the phases partition the turn facts` - the three phases are the whole answer: a mounted
  *    turn is `streaming`, a held submission with no turn is `submitting`, neither is `idle`,
  *    and `isTurnInFlight` agrees with the pair it was derived from.
@@ -101,17 +103,19 @@ test("one armed act names exactly one row", () => {
   });
 });
 
-test("the send gate answers all three questions at once", () => {
+test("the send gate answers both of its questions at once", () => {
   const routes: readonly ChatModelRoute[] = [{ kind: "connection" }, { kind: "none" }, { kind: "unknown" }];
   for (const submitAvailable of [true, false]) {
     for (const messageMutationInFlight of [true, false]) {
       for (const modelRoute of routes) {
         const { send } = deriveChatUIState(inputs({ submitAvailable, messageMutationInFlight, modelRoute }));
         const where = `submitAvailable=${submitAvailable} mutation=${messageMutationInFlight} route=${modelRoute.kind}`;
-        // The field follows "would a submission be admitted now": the Host's own answer, and the fact
-        // that this surface is not mid-rewrite of the transcript it would be written into.
+        // The refusal follows "would a submission be admitted now": the Host's own answer, and the fact
+        // that this surface is not mid-rewrite of the transcript it would be written into. Nothing in
+        // the gate answers for the field - it has no field-lock member to answer with any more, which
+        // is the point: `Composer` never disables the box, and the mounted bands below read
+        // `fieldDisabled: false` in all three phases.
         const admitted = submitAvailable && !messageMutationInFlight;
-        expect(fieldLocked(send), `field lock at ${where}`).toBe(!admitted);
         // The standing sentence follows the model route, and nothing else.
         expect(replyHasNoModel(send), `no-model banner at ${where}`).toBe(modelRoute.kind === "none");
         // Send is refused for any of the reasons - which is why the facts had to become one answer.
@@ -191,7 +195,7 @@ test("idle with no model keeps the field writable and refuses the send", async (
   });
 });
 
-test("submitting is busy, with the field locked and nothing to stop", async ({ page }) => {
+test("submitting is busy, with nothing to stop, and the field still takes the next line", async ({ page }) => {
   await openProbe(page);
   await page.locator(".composer-textarea").fill("Are you there?");
   await setState(page, deriveChatUIState(inputs({ submissionInFlight: true, pendingLine: PENDING, submitAvailable: false })));
@@ -200,8 +204,10 @@ test("submitting is busy, with the field locked and nothing to stop", async ({ p
     send: 0,
     stop: 0,
     busy: 1,
-    // The Host projects `chat.submit` busy while it holds the submission.
-    fieldDisabled: true,
+    // The Host projects `chat.submit` busy while it holds the submission. That is a fact about the
+    // SEND - the slot says so - and not about the box: the player's next line is written here, and a
+    // disabled field could not even hold focus while they wrote it.
+    fieldDisabled: false,
     sendDisabled: null,
   });
 });
@@ -215,7 +221,9 @@ test("streaming the Host can cancel offers Stop, and only Stop", async ({ page }
     send: 0,
     stop: 1,
     busy: 0,
-    fieldDisabled: true,
+    // A running turn is the action slot's fact, not the field's: Send becomes Stop and the box keeps
+    // taking the next line (tests/composer-keeps-the-next-line-while-generating.spec.ts).
+    fieldDisabled: false,
     sendDisabled: null,
   });
 });
@@ -229,7 +237,7 @@ test("streaming the Host cannot cancel says it is busy instead of greying out Se
     send: 0,
     stop: 0,
     busy: 1,
-    fieldDisabled: true,
+    fieldDisabled: false,
     sendDisabled: null,
   });
 });

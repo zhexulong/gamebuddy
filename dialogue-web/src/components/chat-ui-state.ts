@@ -39,19 +39,25 @@ export type ChatArmedAction =
  * Two facts, four states: the Host would not take a submission now (`chat.submit` is not available -
  * a turn exists, a submission is in flight, or the surface is not mounted), and a reply has no model
  * to reach (`ChatModelRoute` is `none`). They are independent - a turn can be streaming while the
- * connection it started on has since been deactivated - and they answer different questions: only
- * the first locks the field, while both disable Send. One value, so the button's disabled state and
- * the standing sentence above it are read from the same answer instead of two spellings of it.
+ * connection it started on has since been deactivated - and both refuse the SEND. One value, so the
+ * button's disabled state and the standing sentence above it are read from the same answer instead
+ * of two spellings of it.
+ *
+ * Neither is a fact about the FIELD. The box is where the next line is written while this one is
+ * answered - the ordinary case, and what every mainstream chat client does - so no state here may
+ * disable it. The variants are named `refused` rather than `locked` for exactly that reason: the
+ * gate answers a question about sending, and a reader who mistakes it for the field's lock re-creates
+ * the defect this vocabulary was renamed out of.
  */
 export type ChatSendGate =
   /** A send would be accepted and would reach a model. */
   | Readonly<{ gate: "open" }>
-  /** The Host would not take a submission now, or this surface is rewriting the transcript. The field is locked too. */
-  | Readonly<{ gate: "locked" }>
-  /** The Host would take it, but nothing would answer it. The field stays writable. */
+  /** The Host would not take a submission now, or this surface is rewriting the transcript. */
+  | Readonly<{ gate: "refused" }>
+  /** The Host would take it, but nothing would answer it. */
   | Readonly<{ gate: "no_model" }>
-  /** Both: the field is locked, and there is still nothing to send to. */
-  | Readonly<{ gate: "locked_no_model" }>;
+  /** Both: the send is refused, and there is still nothing to send to. */
+  | Readonly<{ gate: "refused_no_model" }>;
 
 /**
  * The optimistic player line: the text just sent, shown on the transcript until the authoritative
@@ -137,13 +143,8 @@ function sendGate(
   modelRoute: ChatModelRoute,
 ): ChatSendGate {
   const noModel = modelRoute.kind === "none";
-  if (!submitAvailable || messageMutationInFlight) return { gate: noModel ? "locked_no_model" : "locked" };
+  if (!submitAvailable || messageMutationInFlight) return { gate: noModel ? "refused_no_model" : "refused" };
   return { gate: noModel ? "no_model" : "open" };
-}
-
-/** The field's own lock: the Host would not take a submission now, so it is not writable. */
-export function fieldLocked(send: ChatSendGate): boolean {
-  return send.gate === "locked" || send.gate === "locked_no_model";
 }
 
 /** Send is refused whenever the gate is anything but open; the draft text decides the rest. */
@@ -153,7 +154,7 @@ export function sendRefused(send: ChatSendGate): boolean {
 
 /** A reply written here would have no model to reach, which is the standing sentence's own fact. */
 export function replyHasNoModel(send: ChatSendGate): boolean {
-  return send.gate === "no_model" || send.gate === "locked_no_model";
+  return send.gate === "no_model" || send.gate === "refused_no_model";
 }
 
 /**

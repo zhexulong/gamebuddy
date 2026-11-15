@@ -10,7 +10,7 @@ import {
   useState,
 } from "react";
 import type { Messages } from "../i18n";
-import { assertKnownPhase, fieldLocked, sendRefused, type ChatUIState } from "./chat-ui-state";
+import { assertKnownPhase, sendRefused, type ChatUIState } from "./chat-ui-state";
 import { fieldSizingSupported } from "./field-sizing";
 import { isImeProcessingKey } from "./ime-composition";
 
@@ -109,9 +109,10 @@ export function Composer({
   onSend: () => void;
   onStop: () => void;
   /**
-   * What this conversation is doing, and the two facts the field answers to - whether the Host would
+   * What this conversation is doing, and the two facts the SEND answers to - whether the Host would
    * take a submission now, and whether a reply has a model to reach. Every control in the band reads
-   * its enablement, its disabled state and its label from this one value (see `chat-ui-state`).
+   * its enablement, its disabled state and its label from this one value (see `chat-ui-state`); the
+   * field itself reads nothing from it, because none of these facts is about writing.
    */
   uiState: ChatUIState;
   labels: Messages;
@@ -279,12 +280,12 @@ export function Composer({
           onKeyDown={handleKeyDown}
           placeholder={placeholder}
           rows={1}
-          // The field's own lock is the Host's answer to "would a submission be
-          // accepted now". A turn in flight is therefore shown by the action slot
-          // below, not by a second, client-side lock here: the poll's own budget
-          // ending must leave the field usable the moment the Host would take a
-          // message again.
-          disabled={fieldLocked(uiState.send)}
+          // The field is never disabled. A turn in flight is the action slot's fact (below), not a
+          // reason to take the box away: the player writes the next line while this one is answered,
+          // and a disabled textarea cannot even hold focus - the browser blurs it the moment the turn
+          // starts, so the keystrokes go nowhere for the length of the reply. What a running turn (or a
+          // transcript rewrite, or a reply with no model) does gate is the SEND, and that is what
+          // `uiState.send` is read for (`sendRefused`).
           aria-label={placeholder}
         />
         <div className="composer-actions">
