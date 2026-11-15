@@ -273,6 +273,14 @@ export const L0_GATES = Object.freeze([
   // every silent omission named and every unreadable reading blocked instead of green. Measured here: `actions examined 106 ·
   // surfaces 6 · pairs checked 307`, 0.1 s of file reads and no child process.
   "tools/check-action-surface-parity.mjs",
+  // The destructive press: every call in `dialogue-web/src` that removes player content by name or by a `{clear: true}`
+  // field must spend an arm before it acts, and the arm must be this repository's own confirmation primitive. Population
+  // derived from the frontend's tsconfig and each browser-API module's declared signature, not a hand-written list: tonight
+  // five of the six such presses were guarded and three were not - the connection, the world-book entry and the companion's
+  // 8192-character performance direction, each gone on one press with nothing on the screen able to bring it back. Measured
+  // `examined 6 · armed 3 · exempt 3` in 0.2 s; zero population is blocked, not green, and an exemption that matches no site
+  // is `exemption_expired` rather than a permanent way through.
+  "tools/check-armed-destructive-actions.mjs",
 ]);
 
 /**

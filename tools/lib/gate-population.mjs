@@ -244,3 +244,15 @@ export function gateFileNames(population) {
 export function gateMemberNames(gate) {
   return [gate.id, ...gate.entryFiles.map((file) => file.replace(/^tools\//u, "").replace(/^.*\//u, ""))];
 }
+
+/**
+ * The zero-population verdict, said once.
+ *
+ * Four gates hand-wrote this line and the duplication gate counted them as one 65-token group: the fact is the same - a
+ * gate that measured nothing has not passed - and only the reason belongs to the gate. The wrapper is shared so the
+ * wording cannot drift into five spellings, and each gate keeps its own reason and its own exit code.
+ */
+export function blockedOnEmptyPopulation(gateName, reason) {
+  console.error(`[${gateName}] blocked: ${reason}`);
+  return 1;
+}

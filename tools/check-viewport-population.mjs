@@ -49,6 +49,7 @@ import { createRequire } from "node:module";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
+import { blockedOnEmptyPopulation } from "./lib/gate-population.mjs";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const WEB_ROOT = join(ROOT, "dialogue-web");
@@ -688,7 +689,9 @@ function main() {
     }),
   );
   if (verdict.status === "blocked") {
-    console.error("[viewport-population] blocked: the reading covered no viewport call site, which is not a pass");
+    process.exit(
+      blockedOnEmptyPopulation("viewport-population", "the reading covered no viewport call site, which is not a pass"),
+    );
     process.exit(1);
   }
   process.exit(verdict.findings.length === 0 ? 0 : 1);

@@ -510,8 +510,7 @@ function main() {
     }),
   );
   if (verdict.status === "blocked") {
-    console.error("[armed-destructive] blocked: this gate examined no destructive call");
-    process.exit(1);
+    process.exit(blockedOnEmptyPopulation("armed-destructive", "this gate examined no destructive call"));
   }
   process.exit(verdict.findings.length === 0 ? 0 : 1);
 }

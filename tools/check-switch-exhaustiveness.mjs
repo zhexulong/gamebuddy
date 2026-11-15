@@ -49,6 +49,7 @@ import { createRequire } from "node:module";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
+import { blockedOnEmptyPopulation } from "./lib/gate-population.mjs";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const DEFAULT_WEB_ROOT = join(ROOT, "dialogue-web");
@@ -365,7 +366,7 @@ function main() {
     }),
   );
   if (verdict.status === "blocked") {
-    console.error("[switch-exhaustiveness] blocked: this gate examined no switch");
+    process.exit(blockedOnEmptyPopulation("switch-exhaustiveness", "this gate examined no switch"));
     process.exit(1);
   }
   process.exit(verdict.findings.length === 0 ? 0 : 1);
