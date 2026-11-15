@@ -25,7 +25,7 @@
  * mock anywhere in this module.
  */
 
-import { TavernProblemError, TavernProtocolError } from "./reference-pipeline-api";
+import { TavernProblemError, TavernProtocolError, isIdempotencyKey } from "./reference-pipeline-api";
 // The appearance union is the application's, not this wire's: it is imported as a TYPE so this module keeps its
 // runtime closure (nothing is emitted for it), and the guard below re-spells the three members the way this module
 // re-spells every other frozen union. The authority is the Host contract's `TavernAppearanceChoiceV1Schema`, and a
@@ -973,6 +973,27 @@ export type ChatSelectResultV1 = Readonly<{
   status: "switched" | "turn_in_flight";
 }>;
 
+/**
+ * Branching the mounted conversation at one message (`chat.fork`): the transcript from its start up to
+ * the named row becomes a SECOND Chat, and the one it was cut from is left exactly as it is.
+ *
+ * The command names the row and nothing durable, and it carries no expected order: a fork takes a prefix
+ * of an append-only transcript, so the row the player pressed still means the same thing after a turn
+ * lands behind it. The key that mints the new Chat's identity is the header, not a field - a lost
+ * answer would otherwise leave two identical branches.
+ */
+export type ForkChatCommandV1 = Readonly<{
+  apiVersion: 1;
+  selectionGeneration: number;
+  messageHandle: string;
+}>;
+
+/** The created Chat, projected exactly as a `chat.list` row. It is not selected: that is `chat.select`. */
+export type ForkChatResultV1 = Readonly<{
+  apiVersion: 1;
+  chat: ChatListEntryV1;
+}>;
+
 export type MemoryItemV1 = Readonly<{
   handle: string;
   title: string;
@@ -1637,6 +1658,8 @@ const CREATE_CHAT_COMMAND_KEYS = ["apiVersion", "selectionGeneration"] as const;
 const CHAT_CREATE_RESULT_KEYS = ["apiVersion", "chat", "opening"] as const;
 const SELECT_CHAT_COMMAND_KEYS = ["apiVersion", "selectionGeneration", "chatHandle"] as const;
 const CHAT_SELECT_RESULT_KEYS = ["apiVersion", "status"] as const;
+const FORK_CHAT_COMMAND_KEYS = ["apiVersion", "selectionGeneration", "messageHandle"] as const;
+const FORK_CHAT_RESULT_KEYS = ["apiVersion", "chat"] as const;
 const OPENING_COMMAND_REQUIRED_KEYS = ["apiVersion", "selectionGeneration"] as const;
 const OPENING_COMMAND_ALLOWED_KEYS = ["apiVersion", "selectionGeneration", "direction", "targetIndex"] as const;
 const OPENING_VARIANT_ID_PATTERN = /^[A-Za-z0-9._-]{1,128}$/;
@@ -3730,6 +3753,30 @@ function validateChatSelectResult(value: unknown): ChatSelectResultV1 {
   return value;
 }
 
+function isForkChatCommand(value: unknown): value is ForkChatCommandV1 {
+  return (
+    isRecord(value) &&
+    hasExactKeys(value, FORK_CHAT_COMMAND_KEYS) &&
+    value.apiVersion === TAVERN_BROWSER_API_VERSION &&
+    isPositiveSafeInteger(value.selectionGeneration) &&
+    isOpaqueHandle(value.messageHandle)
+  );
+}
+
+function isForkChatResult(value: unknown): value is ForkChatResultV1 {
+  return (
+    isRecord(value) &&
+    hasExactKeys(value, FORK_CHAT_RESULT_KEYS) &&
+    value.apiVersion === TAVERN_BROWSER_API_VERSION &&
+    isChatListEntry(value.chat)
+  );
+}
+
+function validateForkChatResult(value: unknown): ForkChatResultV1 {
+  if (!isForkChatResult(value)) throw new TavernProtocolError();
+  return value;
+}
+
 function validateChatTitle(value: unknown): ChatTitleV1 {
   if (!isChatTitle(value)) throw new TavernProtocolError();
   return value;
@@ -3782,6 +3829,14 @@ export type ManagementPipelineApi = Readonly<{
   createChat(command: CreateChatCommandV1, csrfToken: string): Promise<ChatCreateResultV1>;
   /** PUT /api/tavern/v1/chat/select: chooses which existing Chat the next runtime start mounts. */
   selectChat(command: SelectChatCommandV1, csrfToken: string): Promise<ChatSelectResultV1>;
+  /**
+   * POST /api/tavern/v1/chats/fork: the conversation up to one message as a second Chat, under the
+   * `idempotency-key` that is what makes a retried attempt land on the branch it already created.
+   */
+  forkChat(
+    command: ForkChatCommandV1,
+    options: Readonly<{ csrfToken: string; idempotencyKey: string }>,
+  ): Promise<ForkChatResultV1>;
   /** GET /api/tavern/v1/draft for the exact mounted Chat. */
   readDraft(): Promise<BrowserDraftV1>;
   /** PUT /api/tavern/v1/draft with durable revision CAS. */
@@ -4147,6 +4202,26 @@ export function createManagementPipelineApi(
         command,
       );
       observe("chat.select", "passed", result.status);
+      return result;
+    },
+    async forkChat(command, options): Promise<ForkChatResultV1> {
+      if (!isForkChatCommand(command)) throw new TavernProtocolError();
+      if (!isOpaqueHandle(options.csrfToken) || !isIdempotencyKey(options.idempotencyKey))
+        throw new TavernProtocolError();
+      const result = await exchange(
+        fetchLike,
+        "POST",
+        "/api/tavern/v1/chats/fork",
+        200,
+        validateForkChatResult,
+        {
+          "Content-Type": "application/json",
+          "x-csrf-token": options.csrfToken,
+          "idempotency-key": options.idempotencyKey,
+        },
+        command,
+      );
+      observe("chat.fork", "passed", result.chat.handle);
       return result;
     },
     async readDraft(): Promise<BrowserDraftV1> {

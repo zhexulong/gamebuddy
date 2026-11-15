@@ -606,7 +606,7 @@ function isOpaqueHandle(value: unknown): value is string {
 }
 
 /** Canonical idempotency key: exactly 22 chars, base64url alphabet, canonical unpadded encoding. */
-function isIdempotencyKey(value: unknown): value is string {
+export function isIdempotencyKey(value: unknown): value is string {
   return typeof value === "string" && IDEMPOTENCY_KEY_PATTERN.test(value) && isCanonicalUnpaddedBase64Url(value);
 }
 

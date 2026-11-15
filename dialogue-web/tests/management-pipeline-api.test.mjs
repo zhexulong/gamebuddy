@@ -19,11 +19,14 @@ import {
   validateSnapshot,
   validateStCardImportHistory,
   validateCompanionAvatar,
+  validateCompanionWorldBook,
+  validateCompanionWorldBookUpdateCommand,
   validateWorldInfoState,
   validateVoiceDevices,
   validateVoicePreference,
 } from "../src/management-pipeline-api.ts";
 import { problemTextWithCode } from "../src/composed-problem-view.ts";
+import { TavernBrowserValidatorsV1 } from "../../host/src/tavern/browser-contract/index.ts";
 import { messages } from "../src/i18n.ts";
 
 const HANDLE = "A".repeat(43);
@@ -208,6 +211,160 @@ test("management Memory validators and client use exact read and CSRF-bound muta
   assert.equal(calls[1].init.method, "PUT");
   assert.deepEqual(calls[1].init.headers, { "Content-Type": "application/json", "x-csrf-token": HANDLE });
   assert.equal(calls[1].init.body, JSON.stringify(command));
+});
+
+test("the fork client sends ONE exact CSRF- and key-bound POST, and refuses a key the Host would refuse", async () => {
+  // A fork MINTS a durable Chat, so the key is what makes a retry land on the branch it already made
+  // rather than a second one. It is a header, and it is the whole of the client's idempotency, so the
+  // request this client writes is asserted member by member: route, method, both headers, and the body
+  // the published command schema declares - no `expectedOrder` (a prefix of an append-only transcript
+  // still means the same thing after a turn lands behind it), and no durable identity of any kind.
+  const messageHandle = `${"C".repeat(42)}A`;
+  const forkedHandle = `${"D".repeat(42)}A`;
+  const key = `${"A".repeat(21)}Q`;
+  const entry = {
+    handle: forkedHandle,
+    title: null,
+    status: "active",
+    managementRevision: 1,
+    isSelected: false,
+    updatedAtMs: 1_760_000_000_000,
+    preview: "Evening to you.",
+  };
+  const result = { apiVersion: 1, chat: entry };
+  // The reply is the created row exactly as `chat.list` projects one, read through the published schema:
+  // a mirror looser than the contract is what let a second shape of the same row exist.
+  assert.deepEqual(TavernBrowserValidatorsV1.ForkChatResultV1Schema.Check(result), true);
+
+  const observations = [];
+  const calls = [];
+  const api = createManagementPipelineApi(
+    async (path, init) => {
+      calls.push({ path, init });
+      return response(result);
+    },
+    (observation) => observations.push(observation),
+  );
+  const command = { apiVersion: 1, selectionGeneration: 1, messageHandle };
+  assert.deepEqual(
+    TavernBrowserValidatorsV1.ForkChatCommandV1Schema.Check(command),
+    true,
+    "the command this client sends is the command the contract declares",
+  );
+  assert.deepEqual(await api.forkChat(command, { csrfToken: HANDLE, idempotencyKey: key }), result);
+  assert.deepEqual(calls[0], {
+    path: "/api/tavern/v1/chats/fork",
+    init: {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "Content-Type": "application/json", "x-csrf-token": HANDLE, "idempotency-key": key },
+      body: JSON.stringify(command),
+    },
+  });
+  assert.deepEqual(observations, [{ operationId: "chat.fork", outcome: "passed", projectionRevision: forkedHandle }]);
+
+  // The client refuses before the wire what the Host would refuse after it: a key that is not 22
+  // canonical base64url characters, a CSRF token that is not an opaque handle, a command with an extra
+  // field, and a command with no row to cut at. Nothing is sent for any of them.
+  const before = calls.length;
+  for (const badKey of [`${"A".repeat(21)}B`, "A".repeat(21), `${"A".repeat(22)}=`]) {
+    await assert.rejects(
+      api.forkChat(command, { csrfToken: HANDLE, idempotencyKey: badKey }),
+      TavernProtocolError,
+      `${badKey} is not a canonical idempotency key`,
+    );
+  }
+  await assert.rejects(api.forkChat(command, { csrfToken: "not-a-token", idempotencyKey: key }), TavernProtocolError);
+  await assert.rejects(
+    api.forkChat({ ...command, expectedOrder: 2 }, { csrfToken: HANDLE, idempotencyKey: key }),
+    TavernProtocolError,
+    "a fork names no position",
+  );
+  await assert.rejects(
+    api.forkChat({ apiVersion: 1, selectionGeneration: 1 }, { csrfToken: HANDLE, idempotencyKey: key }),
+    TavernProtocolError,
+  );
+  assert.equal(calls.length, before, "a refused fork is never sent");
+
+  // A reply the contract does not declare is protocol corruption rather than a created Chat: the
+  // `opening` member belongs to `chat.create`, and `chat` is required.
+  for (const malformed of [{ apiVersion: 1, chat: entry, opening: null }, { apiVersion: 1 }, { apiVersion: 1, chat: { ...entry, handle: "short" } }]) {
+    const refusing = createManagementPipelineApi(async () => response(malformed));
+    await assert.rejects(refusing.forkChat(command, { csrfToken: HANDLE, idempotencyKey: key }), TavernProtocolError);
+  }
+});
+
+test("the companion world book's save sends the command the contract publishes, entry switch included", async () => {
+  // The read the panel draws and the write it makes are the SAME entry shape: `enabled` is required on
+  // both (`CompanionWorldBookEntryV1Schema`, which the update command reuses), because a switch with no
+  // value to draw is a control the player cannot read. The browser re-spelled the entry by hand on the
+  // way out and dropped the switch, so
+  //  - the Host's own command validator refused every save of her own book (`invalid_request`), and
+  //  - the mirror refused the reply the Host would have sent, had it got that far.
+  // A hand-written second spelling of a contract shape is the defect family `efbff381` named in
+  // `managed-world-info-binding`; this is the same list, in the outbound direction.
+  const entry = { title: "Greenhouse", keys: ["greenhouse"], constant: false, enabled: false, content: "Hers." };
+  const book = { apiVersion: 1, present: true, revision: 3, entries: [entry] };
+  assert.deepEqual(validateCompanionWorldBook(book), book);
+  // The four-key entry the world book journeys used to stub is not a reply the browser can read.
+  assert.throws(
+    () => validateCompanionWorldBook({ ...book, entries: [{ ...entry, enabled: undefined }] }),
+    TavernProtocolError,
+  );
+
+  const calls = [];
+  const api = createManagementPipelineApi(async (path, init) => {
+    calls.push({ path, init });
+    return response(book);
+  });
+  const command = { apiVersion: 1, expectedRevision: 3, entries: [entry] };
+  assert.deepEqual(await api.updateCompanionWorldBook(HANDLE, command, HANDLE), book);
+  assert.equal(calls[0].path, `/api/tavern/v1/companions/${HANDLE}/worldbook`);
+  assert.equal(calls[0].init.method, "PUT");
+  assert.deepEqual(calls[0].init.headers, { "Content-Type": "application/json", "x-csrf-token": HANDLE });
+  // The wire body IS the command the client just validated, so no field the contract requires can be
+  // dropped between the validator and the request: read back through the published validator, the
+  // body a journey's stub or the Host itself receives is still a legal command.
+  const sent = JSON.parse(calls[0].init.body);
+  assert.deepEqual(sent, command);
+  assert.deepEqual(validateCompanionWorldBookUpdateCommand(sent), command);
+});
+
+test("the world-info entry the panel authors is an entry the published contract accepts", () => {
+  // The library entry's own on/off switch is `enabled`, the mirror carries it as an OPTIONAL key
+  // (absent means enabled, exactly as the library stores it) and the panel sends it on every create
+  // and every edit. The published schema did not declare it, so both directions of that route were
+  // refused by `strictObject`: the create/update command as an unexpected key, and the detail reply
+  // of any item that holds a switched-off entry. A field on one side of a boundary and not the
+  // other is not a wording difference - it is a control the player can press that can never save.
+  const enabledEntry = { scope: "setting", publicTitle: "The square", summary: "Benches and a fountain.", enabled: true };
+  const disabledEntry = { scope: "companion", publicTitle: "Her greenhouse", summary: "The glass is hers.", enabled: false };
+  const createCommand = {
+    apiVersion: 1,
+    selectionGeneration: 1,
+    expectedRevision: HANDLE,
+    item: { publicTitle: "Pelican Town", summary: "A valley town.", entries: [enabledEntry] },
+  };
+  assert.equal(TavernBrowserValidatorsV1.WorldInfoCreateCommandV1Schema.Check(createCommand), true);
+  // The reply side is the half that fails silently: the library projects the stored entry whole, so
+  // a switched-off entry must survive the reply schema or the read of that item fails closed.
+  assert.equal(
+    TavernBrowserValidatorsV1.WorldInfoItemV1Schema.Check({
+      revision: 3,
+      publicTitle: "Mira's notebook",
+      summary: "Things she wrote down.",
+      entries: [disabledEntry],
+    }),
+    true,
+  );
+  // …and the schema is still strict about what nobody declares.
+  assert.equal(
+    TavernBrowserValidatorsV1.WorldInfoCreateCommandV1Schema.Check({
+      ...createCommand,
+      item: { ...createCommand.item, entries: [{ ...enabledEntry, switchedOff: true }] },
+    }),
+    false,
+  );
 });
 
 test("management avatar upload is one base64 PUT on the roster companion's own route, and its reply is the digest", async () => {
@@ -1052,6 +1209,7 @@ test("the appearance client refuses a fourth appearance before it sends a write"
     { path: "/api/tavern/v1/settings/appearance", method: "PUT" },
   ]);
 });
+
 /**
  * The sampler temperature's two halves, on the browser side of the wire.
  *
