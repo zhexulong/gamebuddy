@@ -316,7 +316,7 @@ test("a refused export states the fact it was refused for", async ({ page }) => 
   );
 });
 
-test("a companion with no picture is refused the PNG form in her own sentence", async ({ page }) => {
+test("a companion with no picture is refused the PNG form in a sentence that names both ways out", async ({ page }) => {
   await stubCharacters(page, {
     companions: oneCompanion,
     onCard: async (route) =>
@@ -336,9 +336,17 @@ test("a companion with no picture is refused the PNG form in her own sentence", 
   const surface = await openCharacters(page);
   const section = surface.locator("[data-companion-card-export-section]");
   await section.locator("[data-companion-card-export-png]").click();
-  await expect(section.locator("[data-companion-card-export-notice]")).toHaveText(
-    "她没有画像，无法生成 PNG 角色卡。请用 JSON 角色卡——它同样携带她的设定，只是没有画像。",
+  // The refusal stays - this Host does not invent art, because a picture that is not her is a card
+  // that lies about its companion - so the sentence has to do the work instead: it names BOTH
+  // ways out, by the labels of the two controls that take them. "Use the JSON card" alone told a
+  // player who wanted a PNG card everything except the one step that would get her one.
+  const notice = section.locator("[data-companion-card-export-notice]");
+  await expect(notice).toHaveText(
+    "她还没有画像，PNG 角色卡里没有图片可放。打开她的资料，用「给她一张图片」，再导出；或者改存 JSON 角色卡——它同样携带她的设定，只是没有画像。",
   );
+  // Both remedies are named by the label of the control the player can actually press.
+  await expect(notice).toContainText("给她一张图片");
+  await expect(section.locator("[data-companion-avatar-choose]")).toHaveCount(0);
 });
 
 test("a roster with no companion in play says there is nothing to export", async ({ page }) => {
