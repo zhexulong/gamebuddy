@@ -116,6 +116,8 @@ const {
   GAME_LAUNCH_PREFIX,
   LAUNCH_PLATEAU_MS,
   LAUNCH_STEPS,
+  LIFECYCLE_SHAPES,
+  PRODUCT_GAPS,
   VERDICTS,
   blockedByProductLine,
   chainStepsLine,
@@ -126,6 +128,7 @@ const {
   describeGameState,
   describeLaunchPlateau,
   describeLaunchProgress,
+  lifecycleShapeOf,
   notMeasuredLine,
   readinessOf,
   responseStampForPress,
@@ -1377,8 +1380,16 @@ async function hostAnswers(port) {
   // ---- 2. the lifecycle activation ----
   state = await page.evaluate(readGameState);
   record("state after registration", state);
-  const activated = () => state.instanceStatus === "none" && typeof state.instanceGeneration === "number" && state.instanceGeneration >= 1;
-  if (!activated()) {
+  /*
+   * The shape, from the run's one state model (`game-launch-verdict.mjs` `lifecycleShapeOf`): activation is
+   * offered for `none` with no generation and for nothing else. Reading "activated" as
+   * `instanceStatus === "none" && generation >= 1` was the same defect the state drivers had - it read an
+   * instance that EXISTS (`launching`, `running`, `stopped`, `crashed`) as a lifecycle nobody had activated,
+   * so the driver hunted a control the product forbids in that state for 30 s and then named the whole
+   * lifecycle `lifecycle_activation_refused`. A stage re-run in the same Host meets exactly that shape.
+   */
+  const lifecycleShape = lifecycleShapeOf(state);
+  if (lifecycleShape === LIFECYCLE_SHAPES.unactivated) {
     const activationReady = await waitForControl("activate", BUDGET.controlMs);
     record("activation control", activationReady);
     if (!activationReady.settled)
@@ -1393,9 +1404,7 @@ async function hostAnswers(port) {
       (reading) =>
         reading.ok === true &&
         reading.prerequisites === "met" &&
-        reading.instanceStatus === "none" &&
-        typeof reading.instanceGeneration === "number" &&
-        reading.instanceGeneration >= 1,
+        lifecycleShapeOf(reading) === LIFECYCLE_SHAPES.activated,
       BUDGET.activationMs,
     );
     record("activation", activation);
@@ -1411,7 +1420,7 @@ async function hostAnswers(port) {
       );
     }
   } else {
-    say(`the lifecycle is already activated for generation ${String(state.instanceGeneration)}`);
+    say(`the lifecycle needs no activation: shape=${lifecycleShape} at ${describeGameState(state)} (generation ${String(state.instanceGeneration)})`);
   }
 
   // ---- 3. the launch request. Everything above ran whatever the refusal below turns out to be. ----
