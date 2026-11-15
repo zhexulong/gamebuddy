@@ -205,8 +205,22 @@ const COMMAND_STATUS = Object.freeze({
  */
 const NATIVE_CONTROL_KEYS = Object.freeze({
   arm_attempt: Object.freeze(["schemaVersion", "operation", "guardianInstanceId", "guardianEpoch", "attemptId"]),
-  launch_role: Object.freeze(["schemaVersion", "operation", "guardianInstanceId", "guardianEpoch", "attemptId", "role"]),
-  contain_role: Object.freeze(["schemaVersion", "operation", "guardianInstanceId", "guardianEpoch", "attemptId", "role"]),
+  launch_role: Object.freeze([
+    "schemaVersion",
+    "operation",
+    "guardianInstanceId",
+    "guardianEpoch",
+    "attemptId",
+    "role",
+  ]),
+  contain_role: Object.freeze([
+    "schemaVersion",
+    "operation",
+    "guardianInstanceId",
+    "guardianEpoch",
+    "attemptId",
+    "role",
+  ]),
 });
 
 /** The environment the Desktop hands the Guardian, and nothing else (`GuardianSupervisor.cs:143-162`). */
@@ -271,8 +285,7 @@ export async function admitGuardianImage({ generationRoot }) {
     throw new Error(`role_broker_guardian_image_missing:${paths.image}`);
   }
   const sha256 = createHash("sha256").update(imageBytes).digest("hex");
-  if (sha256 !== manifest.sha256)
-    throw new Error(`role_broker_guardian_image_mismatch:${paths.image}:${sha256}`);
+  if (sha256 !== manifest.sha256) throw new Error(`role_broker_guardian_image_mismatch:${paths.image}:${sha256}`);
   return Object.freeze({ path: paths.image, sha256 });
 }
 
@@ -312,7 +325,7 @@ export function validateGuardianCommandFrame(value, expected) {
   if (!Number.isSafeInteger(value.guardianEpoch) || value.guardianEpoch < 1) return undefined;
   if (typeof value.attemptId !== "string" || !OPAQUE.test(value.attemptId)) return undefined;
   const role = "role" in value ? value.role : undefined;
-  if ("role" in value && (role !== "player_host" && role !== "ai_client")) return undefined;
+  if ("role" in value && role !== "player_host" && role !== "ai_client") return undefined;
   if ("privateFrame" in value) {
     const privateFrame = value.privateFrame;
     if (typeof privateFrame !== "string" || !PRIVATE_FRAME.test(privateFrame)) return undefined;
@@ -797,7 +810,8 @@ export function createGuardianRoleBroker({
 
   async function writeThenFlush(stream, frame) {
     if (frame.length === 0 || frame.length > MAX_PRIVATE_FRAME_BYTES) throw refuse("role_broker_private_frame_invalid");
-    if (frame.includes(10) || frame.includes(13) || frame.includes(0)) throw refuse("role_broker_private_frame_invalid");
+    if (frame.includes(10) || frame.includes(13) || frame.includes(0))
+      throw refuse("role_broker_private_frame_invalid");
     await writeStream(stream, frame);
     await writeStream(stream, Buffer.from("\n"));
   }
@@ -831,8 +845,7 @@ export function createGuardianRoleBroker({
   async function relay(command) {
     const operation = command.operation;
     const budget = operation === "launch_role" ? command.deadlineUnixMs - now() : command.operationWaitBudgetMs;
-    if (budget <= 0)
-      throw refuse(`role_broker_${commandFamily(operation)}_timeout:${milliseconds(0)}`);
+    if (budget <= 0) throw refuse(`role_broker_${commandFamily(operation)}_timeout:${milliseconds(0)}`);
     if (operation === "launch_role" && budget > MAX_DEADLINE_HORIZON_MS)
       throw refuse(`role_broker_launch_refused:deadline_out_of_horizon:${milliseconds(budget)}`);
     const running = guardian ?? (await startGuardian());

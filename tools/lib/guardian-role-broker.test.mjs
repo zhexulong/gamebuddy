@@ -46,7 +46,15 @@ const GUARDIAN_IMAGE = join(
   "win-x64",
   "GameBuddy.WindowsBootstrapGuardian.exe",
 );
-const ROLE_FIXTURE = join(REPO_ROOT, "host", "native", "windows-bootstrap-guardian", ".dist", "fixtures", "RoleRootFixture.exe");
+const ROLE_FIXTURE = join(
+  REPO_ROOT,
+  "host",
+  "native",
+  "windows-bootstrap-guardian",
+  ".dist",
+  "fixtures",
+  "RoleRootFixture.exe",
+);
 
 const binding = Object.freeze({
   bootstrapId: "b".repeat(64),
@@ -121,10 +129,7 @@ const containFrame = (overrides = {}) => ({
 
 test("the endpoint is the one spelling the Host dials, and nothing else is accepted", () => {
   assert.equal(GUARDIAN_PIPE_PREFIX, "GameBuddy.HostGuardian.");
-  assert.equal(
-    guardianPipeEndpoint("a".repeat(64)),
-    `\\\\.\\pipe\\GameBuddy.HostGuardian.${"a".repeat(64)}`,
-  );
+  assert.equal(guardianPipeEndpoint("a".repeat(64)), `\\\\.\\pipe\\GameBuddy.HostGuardian.${"a".repeat(64)}`);
   for (const bad of ["", "A".repeat(64), "a".repeat(63), "g".repeat(64), `${"a".repeat(64)}\n`])
     assert.throws(() => guardianPipeEndpoint(bad), /role_broker_bootstrap_id_invalid/u);
 });
@@ -225,7 +230,14 @@ test("every acknowledgement is written in the key order the Host reads", () => {
     "runtimeAdmissionSha256",
   ]);
   assert.deepEqual(
-    Object.keys(composeGuardianRoleExit({ binding, correlation: { guardianInstanceId: instanceId, guardianEpoch: 1, attemptId }, role: "player_host", exitCode: 0 })),
+    Object.keys(
+      composeGuardianRoleExit({
+        binding,
+        correlation: { guardianInstanceId: instanceId, guardianEpoch: 1, attemptId },
+        role: "player_host",
+        exitCode: 0,
+      }),
+    ),
     [
       "schema",
       "protocolVersion",
@@ -247,8 +259,15 @@ test("the guardian image is admitted by the digest its generation published, nev
   const root = await mkdtemp(join(tmpdir(), "role-broker-image-"));
   try {
     const paths = guardianImagePaths(root);
-    assert.equal(paths.image, join(root, "native", "windows-bootstrap-guardian", "win-x64", "GameBuddy.WindowsBootstrapGuardian.exe"));
-    assert.equal(await admitGuardianImage({ generationRoot: root }), null, "a generation with no publication is hello-only, not an error");
+    assert.equal(
+      paths.image,
+      join(root, "native", "windows-bootstrap-guardian", "win-x64", "GameBuddy.WindowsBootstrapGuardian.exe"),
+    );
+    assert.equal(
+      await admitGuardianImage({ generationRoot: root }),
+      null,
+      "a generation with no publication is hello-only, not an error",
+    );
 
     await mkdir(paths.directory, { recursive: true });
     const bytes = Buffer.from("not really a guardian", "utf8");
@@ -303,7 +322,8 @@ function connectHost(endpoint) {
       for (;;) {
         const index = frames.findIndex(match);
         if (index >= 0) return frames.splice(index, 1)[0];
-        if (Date.now() - began > budgetMs) throw new Error(`host_wait_timeout:${frames.map((frame) => frame.operation).join(",")}`);
+        if (Date.now() - began > budgetMs)
+          throw new Error(`host_wait_timeout:${frames.map((frame) => frame.operation).join(",")}`);
         await new Promise((resolveWait) => setTimeout(resolveWait, 25));
       }
     },
@@ -332,7 +352,9 @@ test(
     const manifest = JSON.parse(
       await readFile(join(dirname(GUARDIAN_IMAGE), "windows-bootstrap-guardian.manifest.json"), "utf8"),
     );
-    const imageSha256 = createHash("sha256").update(await readFile(GUARDIAN_IMAGE)).digest("hex");
+    const imageSha256 = createHash("sha256")
+      .update(await readFile(GUARDIAN_IMAGE))
+      .digest("hex");
     assert.equal(imageSha256, manifest.sha256, "the built fixture publication is self-consistent");
     const image = Object.freeze({ path: GUARDIAN_IMAGE, sha256: imageSha256 });
     const broker = createGuardianRoleBroker({
@@ -464,5 +486,3 @@ test(
     }
   },
 );
-
-
