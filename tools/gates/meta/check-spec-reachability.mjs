@@ -66,6 +66,7 @@ import { dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { untrackedFiles } from "../../lib/journey-source.mjs";
 import { corpusFiles } from "../../run-tool-test-corpus.mjs";
+import { rootFromArgv } from "../../lib/gate-preamble.mjs";
 
 const REPOSITORY_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 const BASELINE_PATH = "tools/spec-reachability-baseline.json";
@@ -458,9 +459,7 @@ function report({ reading, findings, held, gaps }) {
 }
 
 function main(argv) {
-  const rootIndex = argv.indexOf("--root");
-  const root =
-    rootIndex >= 0 && typeof argv[rootIndex + 1] === "string" ? resolve(argv[rootIndex + 1]) : REPOSITORY_ROOT;
+  const root = rootFromArgv(argv, REPOSITORY_ROOT);
   const reading = auditSpecReachability({ root });
   if (argv.includes("--update")) {
     const files = reading.unreached.map((entry) => entry.file).sort();

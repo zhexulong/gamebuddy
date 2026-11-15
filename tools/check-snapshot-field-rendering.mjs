@@ -80,6 +80,7 @@ export const gateDeclaration = {
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { withoutComments } from "./lib/gate-preamble.mjs";
 
 const REPOSITORY_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -229,15 +230,6 @@ export const RENDERING_EXEMPTIONS = Object.freeze({
     owedBy: "host/src/snapshot-projection.ts",
   },
 });
-
-/** A line comment, a block comment: text a reader wrote for a person, never a read of a field. */
-function withoutComments(source) {
-  return source
-    .replace(/\/\*[\s\S]*?\*\//gu, "")
-    .split("\n")
-    .map((line) => line.replace(/^\s*\/\/.*$/u, ""))
-    .join("\n");
-}
 
 /** Whether a source reads a snapshot field: `.field`, `"field"`, `source.field`, or a destructure binding. */
 export function rendersField(source, field) {

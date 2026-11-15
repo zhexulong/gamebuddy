@@ -556,7 +556,7 @@ const STATEMENT_TEXT =
  * statement boundary, so `return { a: 1 };` stays one statement ending where its `;` is, and the brace around it is not
  * credited with a body it does not have.
  */
-const LITERAL_INTRODUCER = /[=(\[,:]|\b(?:return|yield|new|case|else)\s*$/u;
+const LITERAL_INTRODUCER = /[=([,:]|\b(?:return|yield|new|case|else)\s*$/u;
 
 /**
  * Does the matched text contain a BLOCK OF STATEMENTS - a body - or only the floor the language forces on every file of
@@ -810,6 +810,7 @@ export function evaluateGroups({ groups, baseline, declarations = [], minTokens 
     duplication,
     debt: debtCensus(debtGroups),
     declared: declaredGroups,
+    declarations,
     undeclared: duplication.filter((group) => !declared.has(group.hash)),
     baselined: debtGroups.length,
     newGroups: findings.filter((entry) => entry.code === "clone_group").length,
@@ -1060,7 +1061,7 @@ export function checkCodeDuplication({
   for (const duplicate of run.report.duplicates ?? []) {
     const first = normaliseSitePath(duplicate.firstFile.name, root);
     const second = normaliseSitePath(duplicate.secondFile.name, root);
-    if (!untracked.files.has(first) && !untracked.files.has(second)) {
+    if (!(untracked.files.has(first) || untracked.files.has(second))) {
       pairs.push(duplicate);
       continue;
     }
@@ -1271,7 +1272,12 @@ export function recordShrinks({ reading, baseline }) {
     groups.push(entry);
   }
   const payload = { groups };
-  return { payload, removed, lowered, after: evaluateGroups({ groups: reading.counted, baseline: payload }) };
+  return {
+    payload,
+    removed,
+    lowered,
+    after: evaluateGroups({ groups: reading.counted, baseline: payload, declarations: reading.declarations ?? [] }),
+  };
 }
 
 /** One recorded group's attribution, as the line a reader checks: the commit, its date and its subject. */

@@ -15,13 +15,7 @@ import path from "node:path";
 import { validateNativeMechanismReviewRegister } from "./lib/stardew-native-mechanism-review-register.mjs";
 import { validateNativeTransitionLedger } from "./lib/stardew-native-transition-ledger.mjs";
 import { validateNativeTransitionScopeManifest } from "./lib/stardew-native-transition-scope-manifest.mjs";
-
-function fail(code, message, details = {}) {
-  const error = new Error(message);
-  error.code = code;
-  error.details = details;
-  throw error;
-}
+import { fail } from "./lib/gate-preamble.mjs";
 
 function parseArgs(argv) {
   const result = {};

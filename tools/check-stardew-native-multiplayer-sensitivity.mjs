@@ -32,6 +32,7 @@ export const gateDeclaration = {
 import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import { assertStardewDecompileRoot } from "./lib/stardew-decompile-root.mjs";
+import { fail } from "./lib/gate-preamble.mjs";
 import {
   collectDispatchUnit,
   indexMethodBodies,
@@ -41,13 +42,6 @@ import {
 /** Admission tokens that constitute an outright multiplayer rejection. */
 const MP_REJECT_PATTERN =
   /Context\.IsMultiplayer|!Game1\.IsMasterGame|getAllFarmers\(\)\.Count\(\)\s*!=\s*1|Game1\.server\s+is not null/;
-
-function fail(code, message, details = {}) {
-  const error = new Error(message);
-  error.code = code;
-  error.details = details;
-  throw error;
-}
 
 function parseArgs(argv) {
   const result = { report: false };

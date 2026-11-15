@@ -57,6 +57,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
+import { bracesFrom } from "./lib/gate-preamble.mjs";
 
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -99,15 +100,7 @@ export function tableBody(source, name) {
   if (declaration === null) return null;
   const open = code.indexOf("{", declaration.index);
   if (open < 0) return null;
-  let depth = 0;
-  for (let index = open; index < code.length; index += 1) {
-    if (code[index] === "{") depth += 1;
-    else if (code[index] === "}") {
-      depth -= 1;
-      if (depth === 0) return code.slice(open, index + 1);
-    }
-  }
-  return null;
+  return bracesFrom(code, open);
 }
 
 /**
@@ -122,15 +115,7 @@ export function memberBody(source, name, declaration = `${name}(`) {
   if (start < 0) return null;
   const open = code.indexOf("{", start);
   if (open < 0) return null;
-  let depth = 0;
-  for (let index = open; index < code.length; index += 1) {
-    if (code[index] === "{") depth += 1;
-    else if (code[index] === "}") {
-      depth -= 1;
-      if (depth === 0) return code.slice(open, index + 1);
-    }
-  }
-  return null;
+  return bracesFrom(code, open);
 }
 
 /**

@@ -58,6 +58,7 @@ export const gateDeclaration = {
 import { existsSync, globSync, readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { withoutComments } from "../../lib/gate-preamble.mjs";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 
@@ -85,15 +86,6 @@ export const GATE_PREMISES = Object.freeze([
 
 /** A repo-relative path: the roots this tree's gates read from. A string outside these is prose, not an input. */
 const REPO_PATH = /^(?:host|tools|integrations|dialogue-web|design|ref|protocol|desktop|docs)\//u;
-
-/** A line comment, a block comment: text a reader wrote for a person, never a declaration of an input. */
-function withoutComments(source) {
-  return source
-    .replace(/\/\*[\s\S]*?\*\//gu, "")
-    .split("\n")
-    .map((line) => line.replace(/^\s*\/\/.*$/u, ""))
-    .join("\n");
-}
 
 /**
  * The repo-relative paths a module DECLARES it reads.

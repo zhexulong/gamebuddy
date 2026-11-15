@@ -52,9 +52,9 @@ import { after, test } from "node:test";
 import { fileURLToPath } from "node:url";
 
 import {
+  attributionLine,
   baselinePayload,
   baselineWriteRefusal,
-  attributionLine,
   censusLine,
   checkCodeDuplication,
   configDisagreements,
@@ -80,8 +80,8 @@ import {
   recordShrinks,
   runJscpd,
   SOURCE_TREES,
-  serialiseBaseline,
   STRUCTURAL,
+  serialiseBaseline,
   tokenCountLine,
   untrackedSources,
 } from "./check-code-duplication.mjs";
@@ -1252,6 +1252,17 @@ test("--write-baseline records the undeclared population, so a declared group is
   });
   assert.deepEqual(baselinePayload(reading.undeclared).groups, []);
   assert.equal(baselinePayload(reading.duplication).groups.length, 1);
+});
+
+test("--record-shrinks reads the declarations, so the reading it prints after a write is the tree it recorded", () => {
+  const groups = threeCopies();
+  const declarations = [declarationOf(groups[0].hash, 3)];
+  const reading = evaluateGroups({ groups, baseline: { groups: [] }, declarations });
+  const outcome = recordShrinks({ reading, baseline: { groups: [] } });
+  assert.deepEqual(outcome.removed, []);
+  assert.equal(outcome.after.newGroups, 0, "a declared group is not new debt after the write");
+  assert.equal(outcome.after.declared.length, 1);
+  assert.match(censusLine({ ...outcome.after, status: "passed", examined: 0 }), /declared 1 · new 0 · grown 0/);
 });
 
 test("a declaration with no reason, no owner, no site count, or a duplicated hash is an error, not a reading", () => {

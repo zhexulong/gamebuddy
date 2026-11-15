@@ -77,6 +77,7 @@ import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { readWireSurface } from "./check-action-surface-parity.mjs";
+import { bracesFrom } from "./lib/gate-preamble.mjs";
 
 const REPOSITORY_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -217,15 +218,7 @@ export function functionBody(source, name) {
   if (at < 0) return null;
   const open = code.indexOf("{", at);
   if (open < 0) return null;
-  let depth = 0;
-  for (let index = open; index < code.length; index += 1) {
-    if (code[index] === "{") depth += 1;
-    else if (code[index] === "}") {
-      depth -= 1;
-      if (depth === 0) return code.slice(open, index + 1);
-    }
-  }
-  return null;
+  return bracesFrom(code, open);
 }
 
 /**

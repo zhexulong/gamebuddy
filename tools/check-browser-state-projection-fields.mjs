@@ -61,6 +61,8 @@ export const gateDeclaration = {
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { rootFromArgv } from "./lib/gate-preamble.mjs";
+import { bracesFrom, withoutComments } from "./lib/gate-preamble.mjs";
 
 const REPOSITORY_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -106,28 +108,6 @@ const read = (root, path) => {
     return null;
   }
 };
-
-/** A line comment, a block comment: text a reader wrote for a person, never a value. */
-function withoutComments(source) {
-  return source
-    .replace(/\/\*[\s\S]*?\*\//gu, "")
-    .split("\n")
-    .map((line) => line.replace(/^\s*\/\/.*$/u, ""))
-    .join("\n");
-}
-
-/** The text from an opening brace to its match, or null. */
-function bracesFrom(source, open) {
-  let depth = 0;
-  for (let index = open; index < source.length; index += 1) {
-    if (source[index] === "{") depth += 1;
-    else if (source[index] === "}") {
-      depth -= 1;
-      if (depth === 0) return source.slice(open, index + 1);
-    }
-  }
-  return null;
-}
 
 /**
  * One object literal's top-level members, as `[name, expression]`, comments already stripped.
@@ -371,9 +351,7 @@ export function auditBrowserStateProjection({
 }
 
 function main(argv) {
-  const rootIndex = argv.indexOf("--root");
-  const root =
-    rootIndex >= 0 && typeof argv[rootIndex + 1] === "string" ? resolve(argv[rootIndex + 1]) : REPOSITORY_ROOT;
+  const root = rootFromArgv(argv, REPOSITORY_ROOT);
   const reading = auditBrowserStateProjection({ root });
   const report = {
     gate: "browser-state-projection-fields",

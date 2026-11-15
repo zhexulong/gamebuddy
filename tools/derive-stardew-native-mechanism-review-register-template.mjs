@@ -1,26 +1,21 @@
 import { readFile, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { fail } from "./lib/gate-preamble.mjs";
 import { validateMechanismReport } from "./lib/stardew-native-mechanism-review-register.mjs";
 
-function fail(code, message, details = {}) {
-  const error = new Error(message);
-  error.code = code;
-  error.details = details;
-  throw error;
-}
 function parseArgs(argv) {
   const result = {};
   for (let index = 0; index < argv.length; index += 1) {
     const option = argv[index];
     const value = argv[++index];
-    if (!option?.startsWith("--") || !value || value.startsWith("--"))
+    if (!(option?.startsWith("--") && value) || value.startsWith("--"))
       fail(
         "mechanism_review_template_arguments_invalid",
         "Usage: --mechanism-report <exact-report.json> --out <template.json>",
       );
     result[option.slice(2)] = value;
   }
-  if (!result["mechanism-report"] || !result.out)
+  if (!(result["mechanism-report"] && result.out))
     fail(
       "mechanism_review_template_arguments_required",
       "Usage: --mechanism-report <exact-report.json> --out <template.json>",

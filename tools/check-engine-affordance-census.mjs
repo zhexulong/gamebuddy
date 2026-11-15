@@ -145,6 +145,7 @@ import { fileURLToPath } from "node:url";
 import { Language, Parser } from "web-tree-sitter";
 
 import { assertStardewDecompileRoot, STARDEW_DECOMPILE_ROOT_RELATIVE_PATH } from "./lib/stardew-decompile-root.mjs";
+import { fail } from "./lib/gate-preamble.mjs";
 
 const REPOSITORY_ROOT = fileURLToPath(new URL("..", import.meta.url));
 const require = createRequire(import.meta.url);
@@ -250,13 +251,6 @@ export const AFFORDANCE_DECLARATIONS = Object.freeze([
 const OWNER_KINDS = new Set(["class_declaration", "struct_declaration", "record_declaration", "interface_declaration"]);
 const MENU_ASSIGNMENT = /activeClickableMenu\s*=\s*new\s+(?:StardewValley(?:\.Menus)?\.)?([A-Za-z_][\w.]*)/g;
 const SELECTOR_LABEL = /case\s+"([^"\n]+)"\s*:/g;
-
-function fail(code, message, details = {}) {
-  const error = new Error(message);
-  error.code = code;
-  error.details = details;
-  throw error;
-}
 
 /** The marker a census key names: the half after `::`. */
 function markerOf(key) {

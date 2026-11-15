@@ -81,6 +81,7 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { parseJavaScript } from "./lib/javascript-ast.mjs";
+import { rootFromArgv } from "./lib/gate-preamble.mjs";
 
 const REPOSITORY_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -283,9 +284,7 @@ function statusOf({ examined, violations }) {
 }
 
 function main(argv) {
-  const rootIndex = argv.indexOf("--root");
-  const root =
-    rootIndex >= 0 && typeof argv[rootIndex + 1] === "string" ? resolve(argv[rootIndex + 1]) : REPOSITORY_ROOT;
+  const root = rootFromArgv(argv, REPOSITORY_ROOT);
   const json = argv.includes("--json");
   auditDerivedPopulation({ root })
     .then(({ examined, violations, unparsed }) => {

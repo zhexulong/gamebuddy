@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
+import { fail } from "./lib/gate-preamble.mjs";
 import {
   assertCSharpSyntaxParseClean,
   parseCSharpSyntaxStructure,
@@ -18,13 +19,6 @@ const MANIFEST_PATH = path.join(
   "stardew-csharp-syntax-structural-manifest.json",
 );
 const execFileAsync = promisify(execFile);
-
-function fail(code, message, details = {}) {
-  const error = new Error(message);
-  error.code = code;
-  error.details = details;
-  throw error;
-}
 
 function canonicalJson(value) {
   if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;

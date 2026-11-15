@@ -61,15 +61,9 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { basename, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
-
 import {
-  STARDEW_EXPERIMENTAL_ACTION_RUNNERS,
-  STARDEW_PUBLISHED_ACTION_GATES,
-} from "./stardew-action-gate-descriptors.mjs";
-import { fixtureActions, fixtureScenario } from "./lib/stardew-native-local-player-fixture.mjs";
-import {
-  PRIMITIVE_DETECTORS,
   localFunctions,
+  PRIMITIVE_DETECTORS,
   readBaseline,
   readPrimitiveExports,
   readRunner,
@@ -77,12 +71,17 @@ import {
 } from "./check-native-local-runner-scaffold.mjs";
 import * as PRIMITIVE_MODULE from "./lib/native-local-runner-primitives.mjs";
 import {
+  ADOPTED_FIXTURE_PROBES,
   fixtureConfigProbes,
   fixtureConfigVerdict,
   fixtureCopyParameterisations,
   fixtureCopyRunner,
-  ADOPTED_FIXTURE_PROBES,
 } from "./lib/native-local-runner-primitives-corpus.mjs";
+import { fixtureActions, fixtureScenario } from "./lib/stardew-native-local-player-fixture.mjs";
+import {
+  STARDEW_EXPERIMENTAL_ACTION_RUNNERS,
+  STARDEW_PUBLISHED_ACTION_GATES,
+} from "./stardew-action-gate-descriptors.mjs";
 
 const ROOT = resolve(import.meta.dirname, "..");
 
@@ -146,28 +145,33 @@ export function blankComments(source) {
   const out = text.split("");
   let index = 0;
   while (index < text.length) {
-    const char = text[index];
-    if (char === '"' || char === "'" || char === "`") {
-      index = skipString(text, index);
+    const stop = skipNonCode(text, index);
+    if (stop === null) {
+      index++;
       continue;
     }
-    if (char === "/" && text[index + 1] === "/") {
-      const end = text.indexOf("\n", index);
-      const stop = end < 0 ? text.length : end;
-      for (let i = index; i < stop; i++) out[i] = " ";
-      index = stop;
-      continue;
-    }
-    if (char === "/" && text[index + 1] === "*") {
-      const end = text.indexOf("*/", index + 2);
-      const stop = end < 0 ? text.length : end + 2;
-      for (let i = index; i < stop; i++) if (out[i] !== "\n") out[i] = " ";
-      index = stop;
-      continue;
-    }
-    index++;
+    if (text[index] === "/") for (let i = index; i < stop; i++) if (out[i] !== "\n") out[i] = " ";
+    index = stop;
   }
   return out.join("");
+}
+
+/**
+ * Where the non-code token at `index` ends - a string literal, a line comment, a block comment - or `null` when the
+ * character there is code, so each caller's own scan carries on. Three loops in this file ask the same question.
+ */
+function skipNonCode(text, index) {
+  const char = text[index];
+  if (char === '"' || char === "'" || char === "`") return skipString(text, index);
+  if (char === "/" && text[index + 1] === "/") {
+    const end = text.indexOf("\n", index);
+    return end < 0 ? text.length : end;
+  }
+  if (char === "/" && text[index + 1] === "*") {
+    const end = text.indexOf("*/", index + 2);
+    return end < 0 ? text.length : end + 2;
+  }
+  return null;
 }
 
 /** The index just past the string literal that starts at `start`. */
@@ -269,22 +273,9 @@ export function splitStatements(source, { firstLine = 1 } = {}) {
   };
   while (index < text.length) {
     const char = text[index];
-    if (char === '"' || char === "'" || char === "`") {
-      index = skipString(text, index);
-      continue;
-    }
-    if (char === "/" && text[index + 1] === "/") {
-      const end = text.indexOf("\n", index);
-      index = end < 0 ? text.length : end;
-      continue;
-    }
-    if (char === "/" && text[index + 1] === "*") {
-      const end = text.indexOf("*/", index + 2);
-      index = end < 0 ? text.length : end + 2;
-      continue;
-    }
-    if (char === "/" && regexAllowed(text, index)) {
-      index = skipRegex(text, index);
+    const skip = skipNonCode(text, index);
+    if (skip !== null) {
+      index = skip;
       continue;
     }
     if (OPENERS.has(char)) {
@@ -399,18 +390,9 @@ function matchingClose(text, openIndex) {
   let index = openIndex;
   while (index < text.length) {
     const char = text[index];
-    if (char === '"' || char === "'" || char === "`") {
-      index = skipString(text, index);
-      continue;
-    }
-    if (char === "/" && text[index + 1] === "/") {
-      const end = text.indexOf("\n", index);
-      index = end < 0 ? text.length : end;
-      continue;
-    }
-    if (char === "/" && text[index + 1] === "*") {
-      const end = text.indexOf("*/", index + 2);
-      index = end < 0 ? text.length : end + 2;
+    const skip = skipNonCode(text, index);
+    if (skip !== null) {
+      index = skip;
       continue;
     }
     if (char === open) depth++;
