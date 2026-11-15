@@ -277,6 +277,23 @@ async function main(): Promise<void> {
     { namedExports: { createWorldInfoManagementRepository: () => Object.freeze({}) } },
   );
 
+  // The branch seam validates the mounted lease it is handed, and this fixture supplies a STRUCTURAL lane rather
+  // than a minted one - the same reason the domain factories above are replaced. Its export set is republished
+  // whole, so a module that grows one cannot break this fixture.
+  const forkModuleUrl = pathToFileURL(join(moduleDirectory, "..", "tavern", "chat-fork-service.js")).href;
+  const realChatForkService = await import(forkModuleUrl);
+  await mock.module(forkModuleUrl, {
+    namedExports: {
+      ...realChatForkService,
+      createChatForkService: () =>
+        Object.freeze({
+          async fork() {
+            throw new Error("chat_fork_not_used");
+          },
+        }),
+    },
+  });
+
   const { startChatOnlyPresentationAdmission } = await import(
     pathToFileURL(join(moduleDirectory, "..", "composition", "desktop-presentation-admission-owner.js")).href
   );

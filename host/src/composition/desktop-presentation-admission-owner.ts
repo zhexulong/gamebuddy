@@ -1184,6 +1184,9 @@ const LANE_SERVICE_METHODS: Readonly<Record<string, readonly string[]>> = Object
   newCompanionProvisioner: ["create"],
   newChatProvisioner: ["create"],
   chatSelectProvisioner: ["select"],
+  // Lane-bound like the services above: a turn-level Chat switch replaces the mounted lease, and with it
+  // the handle projection every branch is cut through.
+  chatForkService: ["fork"],
   personaService: ["read", "update"],
   scenarioService: ["read", "update"],
   greetingService: ["read", "update"],

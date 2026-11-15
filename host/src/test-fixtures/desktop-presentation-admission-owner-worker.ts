@@ -408,6 +408,24 @@ async function main(): Promise<void> {
     },
   });
 
+  // The branch seam validates the mounted lease it is handed, and this fixture supplies a STRUCTURAL lane rather
+  // than a minted one - the same reason the domain factories above are replaced. Its export set is republished
+  // whole, so a module that grows one cannot break this fixture.
+  const realChatForkService = await import(
+    pathToFileURL(join(moduleDirectory, "..", "tavern", "chat-fork-service.js")).href
+  );
+  await mock.module(pathToFileURL(join(moduleDirectory, "..", "tavern", "chat-fork-service.js")).href, {
+    namedExports: {
+      ...realChatForkService,
+      createChatForkService: () =>
+        Object.freeze({
+          async fork() {
+            throw new Error("chat_fork_not_used");
+          },
+        }),
+    },
+  });
+
   const { startDesktopPresentationAdmission } = await import(
     pathToFileURL(join(moduleDirectory, "..", "composition", "desktop-presentation-admission-owner.js")).href
   );
