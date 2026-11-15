@@ -16,6 +16,8 @@ import {
   openGameDrawer,
   openStagingAlternate,
   stagedGame,
+  cabinChoiceHandle,
+  expiresAtMs,
 } from "./composed-reference-game-fixtures";
 
 test("cancelled Game setup rereads unknown and a later player retry uses a fresh key", async ({ page }) => {
@@ -168,9 +170,27 @@ test("Game setup projects Host-owned launch generation and launch rereads actual
   await page.route("**/api/composed-reference-game/v1/bootstrap", (route) =>
     route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(root) }),
   );
-  await page.route("**/api/composed-reference-game/v1/game/stardew/cabins", (route) =>
-    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ apiVersion: 1, choices: [] }) }),
-  );
+  // The mount read finds no cabin - the farm is not loaded - and the post-launch wait's first ask
+  // finds hers. That is what ends the wait, so this journey spends no budget: the launch's own
+  // reread is the last state read before it, and the wait's attempt is the one after.
+  let cabinReads = 0;
+  await page.route("**/api/composed-reference-game/v1/game/stardew/cabins", (route) => {
+    cabinReads += 1;
+    return route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify(
+        cabinReads === 1
+          ? { apiVersion: 1, choices: [] }
+          : {
+              apiVersion: 1,
+              choices: [
+                { displayLabel: "Cabin 1", availability: "available", choiceHandle: cabinChoiceHandle, expiresAtMs },
+              ],
+            },
+      ),
+    });
+  });
   await page.route("**/api/composed-reference-game/v1/game/prerequisites/setup", async (route) => {
     setupRequests += 1;
     expect(route.request().method()).toBe("POST");
@@ -214,7 +234,11 @@ test("Game setup projects Host-owned launch generation and launch rereads actual
   await expect(panel).not.toContainText("C:\\Games\\Stardew Valley");
   await launch.dblclick();
   await expect.poll(() => launchRequests).toBe(1);
-  await expect.poll(() => stateReads).toBe(3);
+  // Four reads: the mount's own, the setup's authoritative reread (the two the assertions above
+  // count), the launch's authoritative reread, and the one the post-launch cabin wait takes before it
+  // finds her cabin and stops.
+  await expect.poll(() => stateReads).toBe(4);
+  await expect.poll(() => cabinReads).toBe(2);
   await expect(panel).toContainText("InstanceStardew Valley");
   await expect(launch).toHaveCount(0);
   // The conversation is a peer surface, so proving it stayed independent of the

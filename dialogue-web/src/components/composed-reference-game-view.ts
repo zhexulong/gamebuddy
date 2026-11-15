@@ -61,6 +61,24 @@ export const RESUME_REREAD_INTERVAL_MS = 500;
 export const RESUME_REREAD_MAX_ATTEMPTS = 60;
 
 /**
+ * The cabin handoff's own bounded wait, which an admitted launch starts.
+ *
+ * A launch's only forward path is the cabin handoff: confirming a cabin is what launches the AI
+ * client and publishes the attachment, so a launch with nobody reading the cabin sits in
+ * `launching` until the player presses "Read cabins again". Measured in a live run (2026-11-15, the
+ * real game): the driver pressed it and the Host answered `Cabin 1` in 45 ms - one request the
+ * panel never made on its own.
+ *
+ * The shape is the resume budget above, and the cadence is deliberately the slower of the two: the
+ * fact it waits for is the player loading a farm, which is a human act rather than a Host
+ * transition, so a second per read answers it without spending boundary queries on a screen the
+ * player is not looking at. Thirty reads is the whole budget: after it, the wait is over and the
+ * refresh control is the player's again, as a second chance rather than the only path.
+ */
+export const CABIN_REREAD_INTERVAL_MS = 1_000;
+export const CABIN_REREAD_MAX_ATTEMPTS = 30;
+
+/**
  * Redacted connection presentations that were attached and then dropped in a
  * way a player may recover with the generation-bound `game.resume` command.
  * `reconnecting` is already under backend recovery, and `stopped` is the

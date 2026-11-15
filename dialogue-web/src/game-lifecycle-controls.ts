@@ -622,6 +622,66 @@ export function deriveCabinHandoffActions(state: CabinViewState): readonly Cabin
   }
 }
 
+/**
+ * What the panel's own post-launch cabin reads are doing.
+ *
+ * The handoff was read once, on mount, and a launch then left it alone: the only way forward out
+ * of `launching` is a confirmed cabin, so the surface sat there until the player found the refresh
+ * control. Measured in a live run (2026-11-15): the Host answered `Cabin 1` in 45 ms once asked.
+ *
+ * The shell owns the asking (it is the one holding the admitted launch and the budget) and this
+ * union is what it tells the panel: `not_launching` is every ordinary screen, `reading` names the
+ * attempt the budget is on, and `expired` is the budget spent with no cabin - a fact the copy has
+ * to answer with a step, not a silence.
+ */
+export type CabinLaunchWaitState =
+  | Readonly<{ kind: "not_launching" }>
+  | Readonly<{ kind: "reading"; attempt: number; attempts: number }>
+  | Readonly<{ kind: "expired"; attempts: number }>;
+
+/**
+ * The one line the launch wait puts above the handoff's own state, carrying its own numbers.
+ *
+ * `launching` with a cabin in hand and `launching` with nothing yet are different facts about the
+ * same word, and a player reading the second as the first would think the choice had gone. So the
+ * line is derived from the cabin view, the wait and the projection together rather than from any
+ * one of them, and `none` means the handoff's ordinary copy is the whole of it.
+ */
+export type CabinLaunchLine =
+  | Readonly<{ kind: "none" }>
+  | Readonly<{ kind: "reading"; attempt: number; attempts: number }>
+  | Readonly<{ kind: "cabin_ready" }>
+  | Readonly<{ kind: "wait_expired"; attempts: number }>;
+
+/**
+ * Which line, if any, the launch wait adds.
+ *
+ * `launching` is the precondition of every one of them: with the launch in flight the panel is
+ * asking, and the only question is what it has found. A cabin in hand wins over everything (§ once
+ * the list is there the player's next act is the choice, and nothing else about the wait matters);
+ * below it are the two shapes of "nothing yet" - still asking, with the attempt the budget is on so
+ * the panel's own asking is visible instead of a screen that changes for no stated reason, and done
+ * asking.
+ */
+export function deriveCabinLaunchLine(
+  view: Readonly<{ cabin: CabinViewState; wait: CabinLaunchWaitState; launchInFlight: boolean }>,
+): CabinLaunchLine {
+  if (!view.launchInFlight) return Object.freeze({ kind: "none" });
+  if (view.cabin.kind === "choices") return Object.freeze({ kind: "cabin_ready" });
+  switch (view.wait.kind) {
+    case "reading":
+      return Object.freeze({ kind: "reading", attempt: view.wait.attempt, attempts: view.wait.attempts });
+    case "expired":
+      return Object.freeze({ kind: "wait_expired", attempts: view.wait.attempts });
+    case "not_launching":
+      return Object.freeze({ kind: "none" });
+    // The assertion travels with the switch for the reason `deriveCabinHandoffActions` states: the
+    // declaration already refuses a new kind, and the guard keeps that refusal in the switch itself.
+    default:
+      return assertNever(view.wait);
+  }
+}
+
 /** Every kind the union above declares, for the handoff's totality gate to enumerate. */
 export const CABIN_HANDOFF_KINDS: readonly CabinViewState["kind"][] = Object.freeze([
   "loading",

@@ -40,6 +40,7 @@ import { createGameBrowserStateProvider } from "../../host/src/game-browser/game
 import { composeGameProfile } from "../../host/src/game-browser-contract/index.js";
 import {
   deriveCabinHandoffActions,
+  deriveCabinLaunchLine,
   deriveGameLifecycleControlAvailability,
   deriveGameSessionControls,
   GAME_SESSION_INPUTS,
@@ -715,6 +716,95 @@ test("cabin-forward-path.5 (mutation): a kind whose state offers nothing is repo
     "the real kind in the same population passes: the comparison is not simply always-red",
   );
   t.diagnostic(`cabin-forward-path.5: planted -> ${findings.join(" | ")}`);
+});
+
+/**
+ * The line the post-launch wait puts above the handoff, and the two `launching` shapes it separates.
+ *
+ * The panel used to read the cabin once, on mount, so a launch left it alone: the only way out of
+ * `launching` is a confirmed cabin, and the player had to find the refresh control to get there.
+ * Measured live (2026-11-15): the Host answered `Cabin 1` in 45 ms once asked. The shell now asks by
+ * itself inside a named budget (`CABIN_REREAD_MAX_ATTEMPTS`), and this is the rule over what it
+ * says: every wait state has exactly one line, `launching` with a cabin in hand is not `launching`
+ * with nothing yet, and the budget's end names the control the player still has.
+ */
+const CABIN_LAUNCH_WAIT_KINDS = (() => {
+  const source = readFileSync(MODULE, "utf8");
+  const start = source.indexOf("export type CabinLaunchWaitState");
+  assert.notEqual(start, -1, "the launch-wait union is declared where this gate reads it");
+  const end = source.indexOf("export type CabinLaunchLine", start);
+  assert.notEqual(end, -1, "the line union follows the wait union");
+  return [...source.slice(start, end).matchAll(/kind:\s*"([a-z_]+)"/gu)].map((match) => match[1]);
+})();
+
+const CABIN_LAUNCH_WAIT_INPUTS = Object.freeze({
+  not_launching: Object.freeze({ kind: "not_launching" }),
+  reading: Object.freeze({ kind: "reading", attempt: 3, attempts: 30 }),
+  expired: Object.freeze({ kind: "expired", attempts: 30 }),
+});
+
+test("cabin-forward-path.6: every launch-wait state says one thing, and the two launching shapes differ", (t) => {
+  const findings = [];
+  const lines = [];
+  for (const kind of CABIN_LAUNCH_WAIT_KINDS) {
+    const wait = CABIN_LAUNCH_WAIT_INPUTS[kind];
+    if (wait === undefined) {
+      findings.push(`${kind}: reachable wait state with no declared input, so nothing can reach it`);
+      continue;
+    }
+    const nothing = deriveCabinLaunchLine({ cabin: CABIN_HANDOFF_INPUTS.missing, wait, launchInFlight: true });
+    lines.push(`${kind}->${nothing.kind}`);
+    if (kind === "reading" && (nothing.kind !== "reading" || nothing.attempt !== 3 || nothing.attempts !== 30))
+      findings.push(`${kind}: the reading must carry the attempt and the whole budget, saw ${JSON.stringify(nothing)}`);
+    if (kind === "expired" && nothing.kind !== "wait_expired") findings.push(`${kind}: the spent budget must be stated`);
+    if (kind === "not_launching" && nothing.kind !== "none")
+      findings.push(`${kind}: an idle panel must add no launch copy at all`);
+    // A launch that is no longer in flight has nothing for the wait to say, whatever the wait's last
+    // attempt reported: the projection's own sentence is the whole of the reading then.
+    for (const cabinKind of CABIN_HANDOFF_KINDS) {
+      const idle = deriveCabinLaunchLine({ cabin: CABIN_HANDOFF_INPUTS[cabinKind], wait, launchInFlight: false });
+      if (idle.kind !== "none")
+        findings.push(
+          `${cabinKind} + ${kind} with no launch in flight: the handoff's ordinary copy is the whole of it, saw ${idle.kind}`,
+        );
+    }
+    // A cabin in hand while the launch is in flight is the other shape, and it wins over whatever the
+    // wait's last attempt said: the player's next act is the choice, not another read.
+    for (const waitKind of CABIN_LAUNCH_WAIT_KINDS) {
+      const withCabin = deriveCabinLaunchLine({
+        cabin: CABIN_HANDOFF_INPUTS.choices,
+        wait: CABIN_LAUNCH_WAIT_INPUTS[waitKind],
+        launchInFlight: true,
+      });
+      if (withCabin.kind !== "cabin_ready")
+        findings.push(`choices + ${waitKind}: a cabin in hand during a launch must say so, saw ${withCabin.kind}`);
+    }
+  }
+  t.diagnostic(`cabin-forward-path.6: ${CABIN_LAUNCH_WAIT_KINDS.length} wait state(s): ${lines.join(", ")}`);
+  assert.deepEqual(findings, [], "a launching game must say whether her cabin is in hand or still being asked for");
+});
+
+test("cabin-forward-path.7: the budget's end names the step the player still has, in both languages", (t) => {
+  const en = MESSAGES;
+  const zh = messages("zh-CN");
+  assert.match(en.stardewCabinsLaunchReading, /\{\{attempt\}\}/u, "the reading prints which attempt it is on");
+  assert.match(en.stardewCabinsLaunchReading, /\{\{attempts\}\}/u, "and the budget it is inside");
+  assert.match(zh.stardewCabinsLaunchReading, /\{\{attempt\}\}/u);
+  assert.match(zh.stardewCabinsLaunchReading, /\{\{attempts\}\}/u);
+  // The one line that has to be a step rather than a report: the budget is spent, so the control it
+  // names is the player's, and the sentence says what to do before pressing it.
+  assert.ok(
+    en.stardewCabinsLaunchWaitExpired.includes(en.stardewCabinsRefresh),
+    "the expired wait names the refresh control by its own name, so the player can find it",
+  );
+  assert.match(en.stardewCabinsLaunchWaitExpired, /Load your farm/u);
+  assert.ok(
+    zh.stardewCabinsLaunchWaitExpired.includes(zh.stardewCabinsRefresh),
+    "and the same sentence in the other catalogue names that catalogue's own control",
+  );
+  t.diagnostic(
+    `cabin-forward-path.7: budget spent -> ${JSON.stringify(en.stardewCabinsLaunchWaitExpired.slice(0, 48))}…`,
+  );
 });
 
 /**

@@ -140,6 +140,16 @@ const en = {
   stardewCabinsAwaitingSession:
     "There is no game session to read cabins from yet. Finish steps 1 and 2 above: loading the farm is what puts her cabin in play, and confirming one here is what moves her in.",
   stardewCabinConfirm: "Confirm cabin",
+  // The panel's own post-launch asking, which is why the refresh control the handoff already offers
+  // is a second chance rather than the only path. `reading` names the attempt so a screen that keeps
+  // asking says so, and `waitExpired` is the budget spent: it names the step that is left, on this
+  // same connection.
+  stardewCabinsLaunchReading:
+    "Your game is starting. Reading the cabins for you now: read {{attempt}} of {{attempts}}.",
+  stardewCabinsLaunchFound:
+    "Your game is starting, and her cabin is ready: confirm the one that is hers below, and she moves in.",
+  stardewCabinsLaunchWaitExpired:
+    'Your game is still starting, and the cabins have not come back yet. Load your farm, then press "Read cabins again" - that asks this same game once more without leaving this page.',
   stardewManifestAdmitted: "Cabin request admitted. Waiting for the next game setup step.",
   stardewCabinConfirmationUncertain:
     "Confirmation is still awaiting verification. Do not confirm again. Wait for recovery or reload the page to recover manually.",
@@ -1392,6 +1402,10 @@ const zh: Messages = {
   stardewCabinsAwaitingSession:
     "还没有可以读取小屋的游戏会话。先完成上面第 1、2 步；农场载入后，属于她的小屋就已经在那里了，在这里确认哪一间，她才住进去。",
   stardewCabinConfirm: "确认小屋",
+  stardewCabinsLaunchReading: "游戏正在启动，正在自动为你读取小屋：第 {{attempt}} / {{attempts}} 次。",
+  stardewCabinsLaunchFound: "游戏还在启动，她的小屋已经就绪：在下面确认哪一间是她的，她就住进去。",
+  stardewCabinsLaunchWaitExpired:
+    "游戏仍在启动，小屋还没有读取结果。先载入农场，然后按“再读一次小屋”：它会在当前页面上再问一次这个游戏。",
   stardewManifestAdmitted: "小屋请求已接纳，正在等待下一步游戏设置。",
   stardewCabinConfirmationUncertain: "确认结果仍在等待验证。请勿再次确认；等待恢复，或重新加载页面进行手动恢复。",
   stardewCabinCheckGame: "再查一次游戏状态",

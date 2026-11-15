@@ -11,7 +11,11 @@ import {
   type GameResumeResultV1,
   type StardewCabinChoiceV1,
 } from "../composed-reference-game-browser-api";
-import { deriveGameLifecycleControlAvailability, deriveGameSessionControls } from "../game-lifecycle-controls";
+import {
+  deriveGameLifecycleControlAvailability,
+  deriveGameSessionControls,
+  type CabinLaunchWaitState,
+} from "../game-lifecycle-controls";
 import { gameOperationFailure, type GameOperationFailure } from "../composed-problem-view";
 import {
   type GameAttachmentEvent,
@@ -28,6 +32,8 @@ import { StardewInstallationDiscovery } from "./StardewInstallationDiscovery";
 import { SurfaceModelSettings } from "./SurfaceModelSettings";
 import { SurfaceView } from "./SurfaceView";
 import {
+  CABIN_REREAD_INTERVAL_MS,
+  CABIN_REREAD_MAX_ATTEMPTS,
   delay,
   newIdempotencyKey,
   RESUMABLE_CONNECTION_STATUSES,
@@ -37,6 +43,24 @@ import {
   type ViewState,
 } from "./composed-reference-game-view";
 import { terminalTurn } from "./use-composed-bootstrap";
+
+/**
+ * Who asked for the cabin read, which decides how the panel reports it.
+ *
+ * `launch_wait` is the one origin that is not a player's act and must not rewrite the screen to
+ * `loading` on every attempt: it states its own progress instead. `refresh_pressed` is the one
+ * origin whose answer the panel acknowledges ("just read again: this is still the answer"), because
+ * it is the press whose result the player would otherwise read as an identical screen.
+ */
+type CabinReadOrigin = "surface_ready" | "refresh_pressed" | "stale_choice" | "launch_wait";
+
+/**
+ * What a cabin read found.
+ *
+ * Returned as well as published because the launch wait's stop condition is this fact: re-deriving
+ * "a cabin arrived" from the state the read just set would be one fact spelled twice.
+ */
+type CabinHandoffAnswer = "choices" | "missing" | "unavailable";
 
 /**
  * The Game peer surface.
@@ -106,6 +130,14 @@ export function GameSurface({
   restoreFocusTo: RefObject<HTMLElement | null>;
 }) {
   const [cabinView, setCabinView] = useState<CabinViewState>({ kind: "loading" });
+  /**
+   * What this surface's own post-launch cabin reads are doing (`CabinLaunchWaitState`).
+   *
+   * `not_launching` is every ordinary screen, so the panel's launch copy can never be reached from a
+   * state where nobody is asking anything.
+   */
+  const [cabinLaunchWait, setCabinLaunchWait] = useState<CabinLaunchWaitState>({ kind: "not_launching" });
+  const cabinLaunchWaitActiveRef = useRef(false);
   const cabinConfirmationActiveRef = useRef(false);
   const gameActivationActiveRef = useRef(false);
   const [gameActivationActive, setGameActivationActive] = useState(false);
@@ -198,28 +230,39 @@ export function GameSurface({
   /**
    * Reads the cabin handoff.
    *
-   * `reread` is true only when the player pressed the panel's own refresh control. An empty candidate list is the
-   * same fact as the Host's `stardew_player_host_cabin_missing` refusal - this world has no cabin the companion may
-   * use - so both land on `missing`, which is the one state that offers the cure and the control that asks again.
-   * Rendering the empty list as its own "nothing to confirm" note was the dead end: no control, and copy that sent
-   * the player to reload the page, which drops the Host connection and this surface's attachment with it.
+   * `origin` says who asked, because the panel owes each of them a different answer: the surface's
+   * first read, the player's own press and a choice that expired under the player all show the read
+   * in flight - and only the press is acknowledged as a `reread`, the evidence their click did
+   * something - while the post-launch wait states its own progress and must not rewrite the screen
+   * to `loading` once a second.
+   *
+   * An empty candidate list is the same fact as the Host's `stardew_player_host_cabin_missing`
+   * refusal - this world has no cabin the companion may use - so both land on `missing`, which is the
+   * one state that offers the cure and the control that asks again. Rendering the empty list as its
+   * own "nothing to confirm" note was the dead end: no control, and copy that sent the player to
+   * reload the page, which drops the Host connection and this surface's attachment with it.
    */
   const readCabins = useCallback(
-    async (reread = false): Promise<void> => {
-      setCabinView({ kind: "loading" });
+    async (origin: CabinReadOrigin): Promise<CabinHandoffAnswer> => {
+      if (origin !== "launch_wait") setCabinView({ kind: "loading" });
       try {
         const result = await composedApi.readStardewCabins();
         cabinIdempotencyKeysRef.current = new Map(
           result.choices.map((choice) => [choice.choiceHandle, newIdempotencyKey()]),
         );
-        setCabinView(
-          result.choices.length === 0 ? { kind: "missing", reread } : { kind: "choices", choices: result.choices },
-        );
+        if (result.choices.length === 0) {
+          setCabinView({ kind: "missing", reread: origin === "refresh_pressed" });
+          return "missing";
+        }
+        setCabinView({ kind: "choices", choices: result.choices });
+        return "choices";
       } catch (error) {
         // Two different situations, two different answers. `stardew_player_host_cabin_missing` means this world has no
         // cabin for her YET and Robin can build one; everything else is a read that could not be made. Flattening them
         // was why a player with no cabin retried the same read instead of building one.
-        setCabinView(cabinViewFor(error, reread));
+        const view = cabinViewFor(error, origin === "refresh_pressed");
+        setCabinView(view);
+        return view.kind === "missing" ? "missing" : "unavailable";
       }
     },
     [composedApi],
@@ -227,8 +270,78 @@ export function GameSurface({
 
   useEffect(() => {
     if (!ready) return;
-    void readCabins();
+    void readCabins("surface_ready");
   }, [ready, readCabins]);
+
+  /**
+   * Whether the admitted launch can still be the reason no cabin has appeared.
+   *
+   * `launching` is the projection's word for the Player Host slot, but it is not the only ending this
+   * wait has to honour: the Host publishes `crashed`/`stopped` and `latestOutcome: "failed"` for a
+   * launch it could not attest, and an attachment means the companion is in the farm and the handoff
+   * is over. Any of them ends the wait, instead of spending the budget asking a game that is gone.
+   */
+  const launchCanStillAnswer = (): boolean => {
+    const current = readView();
+    if (current.kind !== "ready" || current.root.game === null) return false;
+    const { attachment, instance, latestOutcome } = current.root.game.game;
+    return (
+      attachment.status !== "attached" &&
+      latestOutcome !== "failed" &&
+      instance.status !== "crashed" &&
+      instance.status !== "stopped"
+    );
+  };
+
+  /**
+   * The panel's own post-launch cabin reads.
+   *
+   * A launch's only forward path is this handoff: confirming a cabin is what launches the AI client
+   * and publishes the attachment, so a launch nobody reads the cabin for sits in `launching` until the
+   * player happens to press "Read cabins again". Measured in a live run (2026-11-15, the real game):
+   * the driver pressed that control and the Host answered `Cabin 1` in 45 ms - the fact was one
+   * request away the whole time.
+   *
+   * So the admitted launch starts this wait, and every attempt is a fact rather than a pause: the game
+   * projection is re-read first (a launch can end as a failure or as an attachment, and either ends
+   * the wait), then the cabins are asked for, and a cabin in hand is the answer. The budget
+   * (`CABIN_REREAD_MAX_ATTEMPTS` reads `CABIN_REREAD_INTERVAL_MS` apart) is the only ending that is
+   * not a fact about the game, and the panel says so and leaves the player the refresh control.
+   */
+  const cabinAwaitAnswer = async (
+    attempts: number,
+  ): Promise<"answered" | "launch_ended" | "budget_spent" | "cancelled"> => {
+    if (isCancelled()) return "cancelled";
+    if (attempts > CABIN_REREAD_MAX_ATTEMPTS) return "budget_spent";
+    setCabinLaunchWait({ kind: "reading", attempt: attempts, attempts: CABIN_REREAD_MAX_ATTEMPTS });
+    try {
+      await rereadGame();
+    } catch {
+      // An inconclusive read of the game answers nothing about the launch, so it ends neither the wait
+      // nor the launch: the cabins below are still the fact the player is waiting for.
+    }
+    if (!launchCanStillAnswer()) return "launch_ended";
+    if ((await readCabins("launch_wait")) === "choices") return "answered";
+    await delay(CABIN_REREAD_INTERVAL_MS);
+    return cabinAwaitAnswer(attempts + 1);
+  };
+
+  /** Runs the post-launch wait once, and publishes what ended it. */
+  const keepAskingForCabin = async (): Promise<void> => {
+    if (cabinLaunchWaitActiveRef.current) return;
+    cabinLaunchWaitActiveRef.current = true;
+    try {
+      const outcome = await cabinAwaitAnswer(1);
+      if (outcome === "cancelled") return;
+      setCabinLaunchWait(
+        outcome === "budget_spent"
+          ? { kind: "expired", attempts: CABIN_REREAD_MAX_ATTEMPTS }
+          : { kind: "not_launching" },
+      );
+    } finally {
+      cabinLaunchWaitActiveRef.current = false;
+    }
+  };
 
   /**
    * Authoritative reread for a Game-owned operation. A Game operation's subject
@@ -263,7 +376,7 @@ export function GameSurface({
   const handleCabinConfirmation = async (choice: StardewCabinChoiceV1): Promise<void> => {
     if (cabinConfirmationActiveRef.current || cabinView.kind !== "choices") return;
     if (choice.expiresAtMs <= Date.now()) {
-      void readCabins();
+      void readCabins("stale_choice");
       return;
     }
     const idempotencyKey = cabinIdempotencyKeysRef.current.get(choice.choiceHandle);
@@ -284,7 +397,7 @@ export function GameSurface({
     } catch (error) {
       if (error instanceof ComposedReferenceGameProblemError && error.code === "stardew_cabin_choice_stale") {
         cabinConfirmationActiveRef.current = false;
-        await readCabins();
+        await readCabins("stale_choice");
         return;
       }
       // An explicit uncertain outcome or a missing/malformed response may have
@@ -473,12 +586,14 @@ export function GameSurface({
     const existingKey = gameLaunchKeysRef.current.get(generation);
     const idempotencyKey = existingKey ?? newIdempotencyKey();
     gameLaunchKeysRef.current.set(generation, idempotencyKey);
+    let launched = false;
     try {
       await composedApi.launchGame({
         apiVersion: 1,
         idempotencyKey,
         expectedInstanceGeneration: generation,
       });
+      launched = true;
       await rereadGame();
     } catch (error) {
       const notStaged = isNotStagedRefusal(error);
@@ -507,6 +622,10 @@ export function GameSurface({
     } finally {
       setAttachment({ type: "finished" });
     }
+    // The admitted launch's next step is a READ of the game, not another command: `launching` has no
+    // forward path except the cabin handoff below step 2. So this surface keeps asking for it while
+    // the answer is still on the other side, instead of waiting for the player to find the refresh.
+    if (launched) await keepAskingForCabin();
   };
 
   const handleDisconnect = async (): Promise<void> => {
@@ -1136,6 +1255,7 @@ export function GameSurface({
         continuityIdentity: continuityIdentityInput,
       }}
       cabin={cabinView}
+      cabinLaunchWait={cabinLaunchWait}
       handlers={{
         activate: () => void handleLifecycleActivate(),
         setup: () => void handleGameSetup(),
@@ -1152,7 +1272,7 @@ export function GameSurface({
         toggleCreateForm: () => setCreateFormOpen((open) => !open),
         setContinuityIdentity: setContinuityIdentityInput,
         confirmCabin: (choice) => void handleCabinConfirmation(choice),
-        refreshCabins: () => void readCabins(true),
+        refreshCabins: () => void readCabins("refresh_pressed"),
         reread: () => void rereadGame(),
       }}
     />

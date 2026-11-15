@@ -19,8 +19,13 @@ import type { ReactNode } from "react";
 import { gameOperationFailureSentence, type GameOperationFailure } from "../composed-problem-view";
 import type { Messages } from "../i18n";
 import type { GameBrowserStateV1, StardewCabinChoiceV1 } from "../composed-reference-game-browser-api";
-import { deriveCabinHandoffActions } from "../game-lifecycle-controls";
-import type { CabinViewState, GameSessionControls } from "../game-lifecycle-controls";
+import { deriveCabinHandoffActions, deriveCabinLaunchLine } from "../game-lifecycle-controls";
+import type {
+  CabinLaunchLine,
+  CabinLaunchWaitState,
+  CabinViewState,
+  GameSessionControls,
+} from "../game-lifecycle-controls";
 import {
   compatibilityLabel,
   connectionLabel,
@@ -183,6 +188,13 @@ export type GameStatePanelProps = Readonly<{
     continuityIdentity: string;
   }>;
   cabin: CabinViewState;
+  /**
+   * What this surface's own post-launch cabin reads are doing (`CabinLaunchWaitState`).
+   *
+   * The shell owns the asking and its budget; the panel owns what it says, so a player reading
+   * `launching` knows whether the cabin is in hand or still being asked for.
+   */
+  cabinLaunchWait: CabinLaunchWaitState;
   handlers: Readonly<{
     activate(): void;
     setup(): void;
@@ -255,6 +267,7 @@ export function GameStatePanel({
   reopen,
   create,
   cabin,
+  cabinLaunchWait,
   handlers,
 }: GameStatePanelProps) {
   // The companion is in the farm once the Host publishes an attachment for it.
@@ -307,6 +320,15 @@ export function GameStatePanel({
       // is waiting for, and reserves the read-failure sentence for a read that
       // really failed.
       awaitsSession={game !== null && game.game.instance.status === "none"}
+      // `launching` is the projection's word for the Player Host slot this Host launched and has not
+      // attested yet, and for a GameBuddy-launched game it is the durable shape of "a launch is in
+      // flight" (`game-browser-state-provider.ts` maps `pending`/`awaiting_attestation` to it; a game
+      // the player started themselves is the one that reads `running`).
+      launchLine={deriveCabinLaunchLine({
+        cabin,
+        wait: cabinLaunchWait,
+        launchInFlight: game !== null && game.game.instance.status === "launching",
+      })}
       onConfirm={handlers.confirmCabin}
       onRefresh={handlers.refreshCabins}
       onReread={handlers.reread}
@@ -914,6 +936,7 @@ function CabinHandoff({
   state,
   labels,
   awaitsSession,
+  launchLine,
   onConfirm,
   onRefresh,
   onReread,
@@ -921,15 +944,26 @@ function CabinHandoff({
   state: CabinViewState;
   labels: Messages;
   awaitsSession: boolean;
+  /**
+   * The panel's own post-launch asking, and the two `launching` shapes the projection's one word
+   * cannot tell apart (`deriveCabinLaunchLine`): a cabin in hand, and nothing found yet while this
+   * surface is still asking. It renders above the state's own sentence because it is the newer
+   * fact, and because it says who is asking - the panel, until the budget is spent, and then the
+   * player's own refresh control.
+   */
+  launchLine: CabinLaunchLine;
   onConfirm(choice: StardewCabinChoiceV1): void;
   /**
    * Re-read the cabin projection.
    *
    * Without this the panel could only ever show what was true at mount. Measured 2026-10-28: `readCabins()`
-   * runs from one `useEffect` keyed on `ready` (`GameSurface.tsx:146-150`), so a player who started the game
-   * and loaded the farm SAW `stardewCabinsUnavailable` forever - there is no poll, no game event stream, and
-   * there was no control here to ask again. The only recovery was reloading the browser, which loses the
-   * Game surface's own attachment.
+   * ran from one `useEffect` keyed on `ready`, so a player who started the game and loaded the farm SAW
+   * `stardewCabinsUnavailable` forever - there is no poll and no game event stream. The only recovery was
+   * reloading the browser, which loses the Game surface's own attachment.
+   *
+   * It is the SECOND chance, not the only path: an admitted launch now starts the panel's own bounded
+   * wait (`GameSurface.tsx`, `CABIN_REREAD_MAX_ATTEMPTS`), and this control is what the budget's end
+   * leaves the player - stated by `stardewCabinsLaunchWaitExpired`, which names it.
    */
   onRefresh(): void;
   /**
@@ -943,6 +977,26 @@ function CabinHandoff({
   return (
     <section className="stardew-cabin-handoff game-subpanel" aria-label={labels.stardewCabinSelection}>
       <h4 className="section-subtitle">{labels.stardewCabinSelection}</h4>
+      {/* The launch's own two readings. `reading` names the attempt the budget is on, so a panel that
+          keeps asking says so instead of looking like a control that did nothing; `wait_expired` is
+          the budget spent with no cabin, and it names the step that is left. */}
+      {launchLine.kind === "reading" && (
+        <p className="game-status" data-tone="progress" role="status" data-testid="cabin-launch-reading">
+          {labels.stardewCabinsLaunchReading
+            .replace("{{attempt}}", String(launchLine.attempt))
+            .replace("{{attempts}}", String(launchLine.attempts))}
+        </p>
+      )}
+      {launchLine.kind === "cabin_ready" && (
+        <p className="game-status" data-tone="progress" role="status" data-testid="cabin-launch-found">
+          {labels.stardewCabinsLaunchFound}
+        </p>
+      )}
+      {launchLine.kind === "wait_expired" && (
+        <p className="game-status" data-tone="action" role="status" data-testid="cabin-launch-wait-expired">
+          {labels.stardewCabinsLaunchWaitExpired}
+        </p>
+      )}
       {state.kind === "loading" && <p className="game-subpanel-note">{labels.stardewCabinsLoading}</p>}
       {state.kind === "missing" && (
         <p className="game-status" data-tone="action" role="status">
