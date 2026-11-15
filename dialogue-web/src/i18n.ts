@@ -1006,6 +1006,13 @@ const en = {
    * heading names nothing it does.
    */
   presetsOpen: "Open the preset assembly",
+  /**
+   * The readout's way back. Settings opened it, so Settings is where it returns: the surface is a
+   * full-region page reached from a disclosure, and a player who is done reading has no other exit
+   * than the bar. It names the destination rather than the gesture, because "Back" alone says
+   * nothing about where the press lands.
+   */
+  presetBackToSettings: "Back to Settings",
   presetReadOnlyHint:
     "A preset is imported once and read from then on, so this surface shows what the assembly does with it and changes nothing.",
   presetEntriesLine: "Entries: {{total}} · {{enabled}} enabled · {{disabled}} disabled",
@@ -2120,6 +2127,8 @@ const zh: Messages = {
   presetsPanel: "预设装配",
   // 打开只读页面的控件（英文目录同名字段的说明）：它带着目的地的名字，前面加动词，因为紧挨着同名标题的按钮什么也没说。
   presetsOpen: "查看预设装配",
+  // 只读页面的返回路径：是设置打开了它，所以回到设置。它说的是目的地，不是手势——单说“返回”说不出按下去会到哪里。
+  presetBackToSettings: "返回设置",
   presetReadOnlyHint: "预设只导入一次，之后只读；这个页面显示装配如何使用它，不会改动它。",
   presetEntriesLine: "条目：{{total}} · {{enabled}} 启用 · {{disabled}} 关闭",
   presetDisabledTitle: "已关闭",

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type RefObject } from "react";
+import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
 
 /**
  * The single contextual panel this profile can open (design/26 §4.2). The open
@@ -68,11 +68,29 @@ function markSwitch(surface: string, stage: "start" | "done"): void {
  * because the place is the product's to name - the shell used to reach it by the class the composer
  * renders, so renaming that class would have silently dropped the keyboard player on `<body>`.
  */
-export function useSurfaceRoute(options: Readonly<{ returnFocusTo?: RefObject<HTMLElement | null> }> = {}): Readonly<{
+export function useSurfaceRoute(
+  options: Readonly<{
+    returnFocusTo?: RefObject<HTMLElement | null>;
+    /**
+     * Which surface a nested panel belongs to, when it has one.
+     *
+     * One entry today: the preset readout is opened from the Settings surface's disclosure rather
+     * than from the bar, so leaving it means Settings. Without an entry a surface returns to the
+     * conversation, which is right for every peer (they are all one press away in the bar).
+     */
+    parentOf?: Readonly<Record<string, string>>;
+  }> = {},
+): Readonly<{
   shownSurface: string;
   openPanelOf: (panel: string, entryRef: React.RefObject<HTMLButtonElement | null>) => () => void;
+  /** Leave a surface towards its declared parent, or towards the conversation if it has none. */
+  leaveSurface: (from: string) => void;
 }> {
   const returnFocusTo = options.returnFocusTo;
+  // The map is a literal at the call site, so it is held by reference: `leaveSurface` is called from
+  // a listener registered once, and a new object every render would re-register it every render.
+  const parentOfRef = useRef(options.parentOf);
+  parentOfRef.current = options.parentOf;
   // The open contextual panel, as the URL states it. A refresh with
   // `#…&panel=game` comes back with the drawer already open.
   const [openPanel, setOpenPanel] = useState<string | null>(() => readPanelFromUrl());
@@ -83,34 +101,45 @@ export function useSurfaceRoute(options: Readonly<{ returnFocusTo?: RefObject<HT
 
   // Browser Back moves between surfaces, because the selected surface is a
   // history entry rather than hidden state (design/26 §7.2). Escape returns to
-  // the conversation from any other surface.
+  // the conversation from any other surface - or to the surface a nested panel was
+  // opened from, which is the same rule with that surface's parent in place of none.
   useEffect(() => {
     const syncPanelWithHistory = (): void => setOpenPanel(readPanelFromUrl());
     window.addEventListener("popstate", syncPanelWithHistory);
     return () => window.removeEventListener("popstate", syncPanelWithHistory);
   }, []);
 
+  /**
+   * Leaving a surface, which is a move in history because the URL is the authority for what is shown.
+   *
+   * The entry that selected this surface is popped when this session pushed one, so a later refresh
+   * cannot resurrect it; a surface restored from a URL this session never pushed is replaced in place
+   * by its parent, or by the conversation when it has none.
+   */
+  const leaveSurface = useCallback((from: string): void => {
+    const parent = parentOfRef.current?.[from] ?? null;
+    if (window.history.state?.gbPanel !== undefined) {
+      window.history.back();
+      return;
+    }
+    const url = new URL(window.location.href);
+    const params = new URLSearchParams(url.hash.slice(1));
+    if (parent === null) params.delete(PANEL_PARAM);
+    else params.set(PANEL_PARAM, parent);
+    url.hash = params.toString();
+    window.history.replaceState(null, "", url.toString());
+    setOpenPanel(parent);
+  }, []);
+
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent): void => {
       if (event.key !== "Escape") return;
       if (shownSurface === CHAT_PANEL) return;
-      // Stepping the history back removes the entry that selected this surface,
-      // so a later refresh cannot resurrect it; a surface restored from a URL
-      // this session never pushed returns to the conversation in place instead.
-      if (window.history.state?.gbPanel !== undefined) {
-        window.history.back();
-        return;
-      }
-      const url = new URL(window.location.href);
-      const params = new URLSearchParams(url.hash.slice(1));
-      params.delete(PANEL_PARAM);
-      url.hash = params.toString();
-      window.history.replaceState(null, "", url.toString());
-      setOpenPanel(null);
+      leaveSurface(shownSurface);
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [shownSurface]);
+  }, [shownSurface, leaveSurface]);
 
   // Returning to the conversation puts the player back where they type. A
   // surface's own landing place is its heading (`SurfaceView`), which is right
@@ -146,5 +175,5 @@ export function useSurfaceRoute(options: Readonly<{ returnFocusTo?: RefObject<HT
       setOpenPanel(panel);
     };
 
-  return { shownSurface, openPanelOf };
+  return { shownSurface, openPanelOf, leaveSurface };
 }

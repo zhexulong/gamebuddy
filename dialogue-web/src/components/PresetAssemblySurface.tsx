@@ -25,8 +25,8 @@
  * assembly: "no preset was imported", "the Host would not serve the read" and "the Host served something this build
  * cannot read" are three different facts and a player acts differently on each.
  */
-import { ScrollText } from "lucide-react";
-import { type ReactElement, useEffect, useState } from "react";
+import { ArrowLeft, ScrollText } from "lucide-react";
+import { type ReactElement, type RefObject, useEffect, useState } from "react";
 import { assertNever } from "../assert-never";
 import type { Messages } from "../i18n";
 import {
@@ -66,9 +66,37 @@ function presetAssemblyReadFailure(error: unknown): "failed" | "unreadable" {
   return error instanceof PresetAssemblyProtocolError ? "unreadable" : "failed";
 }
 
-export function PresetAssemblySurface({ labels }: Readonly<{ labels: Messages }>): ReactElement {
+export function PresetAssemblySurface({
+  labels,
+  onBack,
+  restoreFocusTo,
+}: Readonly<{
+  labels: Messages;
+  /**
+   * Where the readout returns to: the Settings surface that opened it. The shell owns the route, so
+   * this surface is handed the move rather than deciding where the player goes next.
+   */
+  onBack: () => void;
+  /** The disclosure's own button, which is the control this surface was opened from. */
+  restoreFocusTo: RefObject<HTMLElement | null>;
+}>): ReactElement {
   return (
-    <SurfaceView title={labels.presetsPanel} testId="presets-surface" icon={ScrollText} className="surface-panel">
+    <SurfaceView
+      title={labels.presetsPanel}
+      testId="presets-surface"
+      icon={ScrollText}
+      className="surface-panel"
+      restoreFocusTo={restoreFocusTo}
+    >
+      {/* The readout's way out. It is a full-region page reached from a disclosure inside Settings,
+          so leaving it is a step BACK to the surface that opened it - not a jump to the
+          conversation, which would skip the page the player was working in. It sits above the
+          panel's own prose and is the first thing in the tab order, so a keyboard player lands on
+          it before the read-only facts. */}
+      <button type="button" className="small-button" data-testid="presets-back" onClick={onBack}>
+        <ArrowLeft size={16} aria-hidden="true" />
+        {labels.presetBackToSettings}
+      </button>
       <PresetAssemblyPanel labels={labels} />
     </SurfaceView>
   );

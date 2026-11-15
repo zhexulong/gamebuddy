@@ -277,7 +277,12 @@ export function ComposedReferenceGameApp() {
   // player who chose the light appearance never sees the dark one while the conversation loads.
   const appearance = useAppearance(managementPipelineApiRef.current);
 
-  const { shownSurface, openPanelOf } = useSurfaceRoute({ returnFocusTo: composerFieldRef });
+  const { shownSurface, openPanelOf, leaveSurface } = useSurfaceRoute({
+    returnFocusTo: composerFieldRef,
+    // The preset readout is the one surface opened from inside another surface (Settings' own
+    // disclosure), so leaving it is a step back to Settings rather than to the conversation.
+    parentOf: { [PRESETS_PANEL]: SETTINGS_PANEL },
+  });
 
   const bootstrap = useComposedBootstrap(localeRef, setPreview, managementPipelineApiRef.current);
   const {
@@ -1828,7 +1833,13 @@ export function ComposedReferenceGameApp() {
                   restoreFocusTo={memoryEntryRef}
                 />
               )}
-              {shownSurface === PRESETS_PANEL && <PresetAssemblySurface labels={labels()} />}
+              {shownSurface === PRESETS_PANEL && (
+                <PresetAssemblySurface
+                  labels={labels()}
+                  onBack={() => leaveSurface(PRESETS_PANEL)}
+                  restoreFocusTo={presetsOpenRef}
+                />
+              )}
             </main>
             {/* This surface's own model settings, over the conversation rather than
               in it (design/104 §3: Chat owns its model choice and the Host stores

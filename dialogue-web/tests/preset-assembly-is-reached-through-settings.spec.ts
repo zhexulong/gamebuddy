@@ -1,6 +1,7 @@
 import { type Page, expect, test } from "./frontend-coverage";
 import { draft, jsonOk, root, token } from "./composed-reference-game-fixtures";
 import { messages } from "../src/i18n";
+import { SETTINGS_PANEL } from "../src/composed-surface-route";
 import { LAYOUT_PAIR } from "./viewport-policy";
 
 /**
@@ -20,8 +21,12 @@ import { LAYOUT_PAIR } from "./viewport-policy";
  *   2. the Settings surface carries the ONE path that remains: a `details` disclosure, collapsed by
  *      default, holding the read-only hint and one button;
  *   3. that button opens the readout - the region appears, the URL names it, and the surface takes
- *      focus - and Escape returns to the conversation. A disclosure whose control does nothing is
- *      a path that exists and does not lead anywhere.
+ *      focus - and Escape returns to the surface that opened it. A disclosure whose control does
+ *      nothing is a path that exists and does not lead anywhere;
+ *   4. the readout has its own way BACK, and the back control's DESTINATION is asserted rather than
+ *      its presence: pressing it lands on Settings with the focus inside that surface, and Escape
+ *      lands in the same place. The readout is a full-region page opened from a settings
+ *      disclosure, so returning to the conversation would skip the surface the player came from.
  *
  * The path is NAMED so a reader can walk it: 设置 (Settings) → 预设装配 disclosure → 查看预设装配.
  *
@@ -107,10 +112,35 @@ for (const cell of LAYOUT_PAIR) {
     await expect(page).toHaveURL(new RegExp(`#profile=composed-reference-game&panel=presets$`, "u"));
     await expect(surface.getByRole("heading", { name: catalogue.presetsPanel, exact: true })).toBeFocused();
 
-    // And back out: the surface is a peer, so Escape returns to the conversation rather than
-    // trapping the player on a readout they opened by accident.
+    // And back out: the surface's own control returns to Settings, which is the surface that opened
+    // it, and Escape does the same. The assertion is the destination and the focus, not the presence
+    // of a button - a Back that lands on the conversation is the dead end by another route.
+    const back = surface.getByRole("button", { name: catalogue.presetBackToSettings, exact: true });
+    await expect(back, "the readout offers its way back").toBeEnabled();
+    await expect(back, "it is a control, so the keyboard reaches it").toHaveAttribute("type", "button");
+    await back.focus();
+    expect(
+      await back.evaluate((element) => document.activeElement === element),
+      "the back control takes focus, so it can be pressed without a pointer",
+    ).toBe(true);
+    await back.click();
+    await expect(surface, "the readout closed").toHaveCount(0);
+    const settings = page.getByTestId("settings-surface");
+    await expect(settings, "and it returned to the Settings surface it was opened from").toBeVisible();
+    await expect(page).toHaveURL(new RegExp(`#profile=composed-reference-game&panel=${SETTINGS_PANEL}$`, "u"));
+    await expect(
+      settings.getByRole("heading", { name: catalogue.settingsPanel, exact: true }),
+      "the return lands inside that surface, not on the conversation behind it",
+    ).toBeFocused();
+
+    // Escape is the same way out as the control: a player who opened the readout by accident does
+    // not have to find a particular button to leave it.
+    await disclosure.locator("summary").click();
+    await open.click();
+    await expect(surface).toBeVisible();
     await page.keyboard.press("Escape");
     await expect(surface).toHaveCount(0);
-    await expect(page.getByTestId("chat-surface")).toBeVisible();
+    await expect(page.getByTestId("settings-surface"), "Escape goes where the control goes").toBeVisible();
+    await expect(page).toHaveURL(new RegExp(`&panel=${SETTINGS_PANEL}$`, "u"));
   });
 }
