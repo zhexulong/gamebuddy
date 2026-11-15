@@ -33,6 +33,13 @@
  * source order. Gate 2.3 accepts that selector shape and nothing else, and it
  * reads the rule's own body: a token root that declares anything but a custom
  * property is a component rule wearing a token root's selector.
+ *
+ * Gate 2.3 also accepts a `@property` registration, because a registration has no
+ * selector: it states what a custom property IS (its syntax, and whether it
+ * inherits) and therefore competes with no rule the way an unlayered selector
+ * does. `style.css` registers `--exceeds-form-measure` that way, which is what
+ * keeps a block's written reason for exceeding the form measure on that block
+ * instead of inheriting it over every card inside it.
  */
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
@@ -108,6 +115,14 @@ function onlyCustomProperties(body) {
 }
 
 /**
+ * A `@property` registration states a custom property's syntax and inheritance. It carries no selector, so it cannot
+ * out-rank a layered rule - it is a fact about a token, which is what the unlayered remainder is for.
+ */
+function isPropertyRegistration(item) {
+  return item.ruleset && item.prelude.startsWith("@property ");
+}
+
+/**
  * The top-level items of the unlayered remainder: `@layer a, b;` statements
  * (order declarations, not rules) and, if any leaked, rulesets. Each item is
  * `{ prelude, body, ruleset }`, where a ruleset's prelude is its selector list.
@@ -180,6 +195,7 @@ test("gate 2.3: the unlayered remainder is the order statement and the token roo
   const items = unlayeredItems(css);
   const leaked = items.filter((item) => {
     if (!item.ruleset) return !item.prelude.startsWith("@layer ");
+    if (isPropertyRegistration(item)) return false;
     return !TOKEN_ROOT_SELECTOR.test(item.prelude) || !onlyCustomProperties(item.body);
   });
   t.diagnostic(`gate 2.3: ${items.length} unlayered top-level item(s): ${items.map((item) => item.prelude).join(", ")}`);
@@ -191,6 +207,7 @@ test("gate 2.3: the unlayered remainder is the order statement and the token roo
     leaked.map((item) => item.prelude),
     [],
     "an unlayered rule wins over every layered rule regardless of specificity; a component rule must name its layer, " +
-      "and only the token roots (`:root` and `:root[data-theme=\u2026]`, declaring custom properties only) stay unlayered",
+      "and only the token roots (`:root` and `:root[data-theme=\u2026]`, declaring custom properties only) and `@property` " +
+      "registrations, which have no selector, stay unlayered",
   );
 });

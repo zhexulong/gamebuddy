@@ -245,6 +245,21 @@
   --banner-wash: 6%;
 }
 
+/* THE ONE WAY A BLOCK MAY EXCEED THE FORM MEASURE, and why this is a registered property rather than a class or a
+   list in a test. `--management-form-measure` is one column; a block that genuinely needs more room than that - a set
+   of cards packed into columns that follow its own box, a table with many columns - says so on itself, in this
+   property, with its reason. `tests/management-measure-holds-one-column.spec.ts` reads that reason off the element and
+   exempts the block by the declaration, so the exemption is stated where the layout decision is made and no test
+   carries a selector list that could drift from this sheet.
+
+   `inherits: false` is the whole point of registering it: the claim is about the block that wrote it. Unregistered, a
+   custom property is inherited, so a declaration on a wide container would exempt every card inside it - which is the
+   opposite of naming one block. */
+@property --exceeds-form-measure {
+  syntax: "*";
+  inherits: false;
+}
+
 /* ==========================================================================
    Shared panel/chrome surface layer
    ========================================================================== */
@@ -4163,12 +4178,28 @@
      last one missing the measure: measured at 1440x900, it spanned 16..1414 inside a 1408 px region
      while the five groups above it sat at 395..1035 - one surface, two columns, and a section title
      with its own button at opposite ends of the window. It takes the same measure as its siblings
-     (`tests/profile-backup-keeps-the-management-measure.spec.ts` asserts the shared edges). */
+     (`tests/profile-backup-keeps-the-management-measure.spec.ts` asserts the shared edges).
+
+     And then the same defect a third time, which is the pass that gated it. `[data-appearance-settings]`,
+     `[data-sampler-temperature]` and `[data-settings-presets-disclosure]` on this surface, and
+     `[data-companion-card-export-section]` and `[data-companion-world-book]` on Characters, were each
+     appended after the measure went in: measured at 1440x900, all five were 1398 px wide on a left edge
+     of 16 while the blocks around them sat at 395..1035, and at 2560x1440 they read 2518 against the
+     same 640. They take the measure here. The gate that ends the family is
+     `tests/management-measure-holds-one-column.spec.ts`: it reads the measure off this token, derives the
+     population from the surface itself, and fails naming any block wider than the measure that has not
+     declared in `--exceeds-form-measure` why it is - so the next block appended to either surface is
+     caught without anyone having to remember this list. */
   [data-language-settings],
   [data-voice-settings],
   [data-connection-settings],
   [data-model-profiles],
   [data-game-prompt-addition],
+  [data-appearance-settings],
+  [data-sampler-temperature],
+  [data-settings-presets-disclosure],
+  [data-companion-card-export-section],
+  [data-companion-world-book],
   .surface-content > .button-group,
   [data-profile-backup-section] {
     width: 100%;
@@ -6071,6 +6102,12 @@
    independent of any card's height: measured, growing any single card by up to
    700 px moves no card into another column. */
   [data-characters-panel] {
+    /* The one block on these two surfaces that may be wider than the form measure, and it says so in the
+       property the gate reads instead of in a selector the gate would have to carry. The reason is this
+       rule's own comment above: the cards use the region they are given, packed into columns whose count is
+       a function of THIS box's width, so a form measure here would be a second ceiling fighting the first
+       and the forced breaks below would manufacture columns the panel has no room for. */
+    --exceeds-form-measure: "the companion cards are packed into columns that follow this panel's own width";
     /* The panel is its own container. `columns` resolves against this box, so this is the box a
        column count is a function of - not the window, and not an ancestor with a scrollbar between
        the two (`style.css`'s app bar reads its parent for the same reason; here the panel IS the
