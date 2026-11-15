@@ -647,7 +647,6 @@ test("the production reference profile declares the message-mutation group and f
     "chat.rewind",
     "chat.edit",
     "chat.delete",
-    "chat.fork",
   ]);
   assert.deepEqual(production.operationIds, ["chat.submit", "chat.cancel"]);
 });

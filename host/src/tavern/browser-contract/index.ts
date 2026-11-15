@@ -4455,12 +4455,16 @@ const REFERENCE_TAVERN_ROUTE_IDS = [
 ] as const;
 /**
  * The optional message-mutation extension of the reference Chat profile: Swipe, Swipe variant
- * removal, Regenerate, Rewind, Edit, Delete and Fork.
+ * removal, Regenerate, Rewind, Edit and Delete.
  *
- * The browser client posts all of them from its own message controls, so the dispatcher mounted on the
+ * The browser client posts all five from its own message controls, so the dispatcher mounted on the
  * composed Chat surface must reach them or the player's controls answer 404. They are routes, not
- * operations: the browser gates Regenerate on the `chat.submit` affordance and Swipe/Rewind/Edit/Delete/
- * Fork on the message's own projection, so the Host projects no `state.operations` row for any of them.
+ * operations: the browser gates Regenerate on the `chat.submit` affordance and Swipe/Rewind/Edit/Delete
+ * on the message's own projection, so the Host projects no `state.operations` row for any of them.
+ *
+ * `chat.fork` is deliberately NOT here yet. It is declared in the contract (schemas, problem codes and a
+ * route descriptor) and it has an ingress seam (`chat-fork-service.ts`), but no dispatcher serves it and
+ * no profile may advertise a route the mounted surface cannot answer.
  *
  * Declared as an optional group rather than folded into the core list so every existing reference
  * profile - the standalone handler's own declaration and the API-level test slices - stays a valid
@@ -4475,7 +4479,6 @@ const REFERENCE_TAVERN_MESSAGE_MUTATION_ROUTE_IDS = [
   "chat.rewind",
   "chat.edit",
   "chat.delete",
-  "chat.fork",
 ] as const;
 const REFERENCE_TAVERN_ROUTE_GROUPS = [
   REFERENCE_TAVERN_ROUTE_IDS,
