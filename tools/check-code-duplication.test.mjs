@@ -59,6 +59,7 @@ import {
   checkCodeDuplication,
   configDisagreements,
   debtLine,
+  declaredLine,
   evaluateGroups,
   FACADE,
   FORMATS,
@@ -75,6 +76,7 @@ import {
   MIN_TOKENS,
   normaliseSitePath,
   readBaseline,
+  readDeclarations,
   recordShrinks,
   runJscpd,
   SOURCE_TREES,
@@ -1171,4 +1173,132 @@ test("a baseline that records the floor is named by its own code, and --record-s
   assert.deepEqual(outcome.removed, [groupHash(fragment)]);
   assert.deepEqual(outcome.payload.groups, []);
   assert.deepEqual(outcome.after.findings, []);
+});
+
+/**
+ * THE DECLARATION DOOR. The door exists so a group whose fix belongs to another lane is named with an owner instead of
+ * being read as "predates this lane", and every case below is the door refusing something: a fourth copy, a shrunken
+ * group, a group that is gone, an entry with no reason, and a baseline write that would bank the entry as debt.
+ */
+const declarationOf = (hash, sites, overrides = {}) => ({
+  hash,
+  sites,
+  tokens: 50,
+  owner: "a lane that owns the partial",
+  reason: "the copies share an admission preamble that lane folds",
+  ...overrides,
+});
+
+test("a declared group passes at its declared size, stays in the duplication census, and is printed with its owner", () => {
+  const groups = threeCopies();
+  const reading = evaluateGroups({
+    groups,
+    baseline: { groups: [] },
+    declarations: [declarationOf(groups[0].hash, 3)],
+  });
+  assert.deepEqual(reading.findings, []);
+  assert.equal(reading.declared.length, 1);
+  assert.equal(reading.duplication.length, 1);
+  assert.match(
+    censusLine({ ...reading, status: "passed", examined: 1342 }),
+    /duplication 1 \(3 sites\) · declared 1 · new 0/,
+  );
+  assert.match(
+    declaredLine(groups[0], declarationOf(groups[0].hash, 3)),
+    /^ {2}declared:[0-9a-f]{12}: 3 sites at 50 tokens · a lane that owns the partial · the copies share an admission preamble that lane folds :: function replay\(receipt\) \{$/,
+  );
+});
+
+test("a declared group that gained a site is red: a declaration never buys the copy that arrives tomorrow", () => {
+  const groups = threeCopies();
+  const reading = evaluateGroups({
+    groups,
+    baseline: { groups: [] },
+    declarations: [declarationOf(groups[0].hash, 2)],
+  });
+  assert.equal(reading.findings.length, 1);
+  assert.equal(reading.findings[0].code, "clone_group_grew");
+  assert.match(
+    reading.findings[0].detail,
+    /^clone_group_grew:[0-9a-f]{12}: now 3 sites at 50 tokens, tools\/duplicate-code-declarations\.json declared 2 sites \(a lane that owns the partial\)/,
+  );
+});
+
+test("a declared group that lost a site, or left the population, is a stale declaration the reader must delete", () => {
+  const groups = threeCopies();
+  const shrank = evaluateGroups({
+    groups,
+    baseline: { groups: [] },
+    declarations: [declarationOf(groups[0].hash, 4)],
+  });
+  assert.equal(shrank.findings[0].code, "stale_clone_declaration");
+  assert.match(shrank.findings[0].detail, /declares 4 sites and the tree has 3/);
+  assert.equal(shrank.staleDeclarations, 1);
+  const gone = evaluateGroups({
+    groups: [],
+    baseline: { groups: [] },
+    declarations: [declarationOf("0123456789ab", 3)],
+  });
+  assert.equal(gone.findings[0].code, "stale_clone_declaration");
+  assert.match(gone.findings[0].detail, /no longer has as duplication/);
+});
+
+test("--write-baseline records the undeclared population, so a declared group is never banked as debt", () => {
+  const groups = threeCopies();
+  const reading = evaluateGroups({
+    groups,
+    baseline: { groups: [] },
+    declarations: [declarationOf(groups[0].hash, 3)],
+  });
+  assert.deepEqual(baselinePayload(reading.undeclared).groups, []);
+  assert.equal(baselinePayload(reading.duplication).groups.length, 1);
+});
+
+test("a declaration with no reason, no owner, no site count, or a duplicated hash is an error, not a reading", () => {
+  const root = mkdtempSync(join(tmpdir(), "gamebuddy-declarations-"));
+  workspaces.push(root);
+  mkdirSync(join(root, "tools"), { recursive: true });
+  const file = join(root, "tools/duplicate-code-declarations.json");
+  const write = (declarations) => writeFileSync(file, JSON.stringify({ declarations }), "utf8");
+  const valid = declarationOf("0123456789ab", 3);
+  write([valid]);
+  assert.deepEqual(readDeclarations({ root }), [valid]);
+  write([{ ...valid, reason: "  " }]);
+  assert.throws(() => readDeclarations({ root }), /duplicate_code_declarations_malformed:reason:0123456789ab/u);
+  write([{ ...valid, owner: "" }]);
+  assert.throws(() => readDeclarations({ root }), /duplicate_code_declarations_malformed:owner:0123456789ab/u);
+  write([{ ...valid, sites: 2 }]);
+  assert.throws(() => readDeclarations({ root }), /duplicate_code_declarations_malformed:sites:0123456789ab/u);
+  write([valid, valid]);
+  assert.throws(() => readDeclarations({ root }), /duplicate_code_declarations_malformed:duplicate_hash:0123456789ab/u);
+  rmSync(file);
+  assert.deepEqual(readDeclarations({ root }), [], "no file is nothing declared, not an error");
+});
+
+test("a declared group turns the CLI green with its owner printed, and the entry expires when the copies move", () => {
+  const { root } = repoShaped(copies(["Alpha", "Bravo", "Charlie"]));
+  const residuals = cli(root, "--residuals");
+  const hash = residuals.stdout.match(/residual:([0-9a-f]{12}):/u)?.[1];
+  assert.ok(hash, residuals.stdout);
+  mkdirSync(join(root, "tools"), { recursive: true });
+  writeFileSync(
+    join(root, "tools/duplicate-code-declarations.json"),
+    JSON.stringify({
+      declarations: [{ hash, sites: 3, tokens: 50, owner: "another lane", reason: "that lane folds this preamble" }],
+    }),
+    "utf8",
+  );
+  git(root, ["add", "-A"]);
+
+  const green = cli(root);
+  assert.equal(green.status, 0, green.stdout);
+  assert.match(green.stdout, /declared 1 · new 0 · grown 0/u);
+  assert.match(green.stdout, new RegExp(` {2}declared:${hash}: 3 sites at \\d+ tokens · another lane · `, "u"));
+  assert.match(green.stdout, /"declared":1/u);
+
+  writeFileSync(join(root, "host/src/Delta.cs"), copies(["Delta"])["host/src/Delta.cs"], "utf8");
+  git(root, ["add", "-A"]);
+  const grew = cli(root);
+  assert.equal(grew.status, 1, grew.stdout);
+  assert.match(grew.stdout, new RegExp(`clone_group_grew:${hash}: now 4 sites`, "u"));
 });

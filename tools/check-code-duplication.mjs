@@ -174,6 +174,37 @@
  *   d34e7372ee12   3 sites  73 tokens  tools/migrate-runner-to-template.mjs:147  0b875a3f 2026-11-15  refactor(stardew): eight runners stop spelling th...
  *   6b4320dbe568   3 sites  62 tokens  host/src/continuity-semantic-game-runtime-materializer/continuity-semantic-game-runtime-materializer.ts:1340  9e209214 2026-11-15  the pump's fact producers are a declared set, and...
  *
+ * THE DECLARATION DOOR, AND WHY IT IS NOT THE BASELINE WEARING A SECOND NAME. The paragraph above says the residue is
+ * owed and that recording it in the baseline would be banking another lane's refactor as debt. The residue is still
+ * unowned by any READER, though: `new 29` names a hash and a commit and leaves the question "is anyone going to fix
+ * this?" to whoever is holding the tree. So `tools/duplicate-code-declarations.json` records the groups whose fix is
+ * owned by a lane this one may not edit, and it records them with three facts the baseline cannot hold - an OWNER, a
+ * REASON, and an EXPIRY. What it is not:
+ *
+ *   - not a reclassification. A declared group stays STRUCTURAL, stays in `duplication`, stays in its sites total and is
+ *     printed one line per run (`declared:<hash>: ... · <owner> · <reason> :: <first line>`). The census reads
+ *     `duplication 165 (741 sites) · declared 29`, so the door can never hide what walked through it;
+ *   - not a ratchet entry. Nothing writes this file but a hand: `--write-baseline` records the UNDECLARED population and
+ *     says how many declared groups it left out, and `--record-shrinks` does not read it at all. A lane that wants its
+ *     own new duplication accepted has nowhere to put it, because the file is not a write target;
+ *   - not a growth licence. An entry declares a SITE COUNT, and a declared group that gains a site is `clone_group_grew`
+ *     like any other - the one thing a declaration may never do is buy the copy that arrives tomorrow;
+ *   - not permanent. A group that SHRANK, or that left the duplication population (fixed, or now read as the floor or a
+ *     facade), turns its entry into `stale_clone_declaration`, which fails the gate and names the entry to delete. An
+ *     exemption that outlives its cause is the defect this whole family of gates exists for, so the expiry is a finding
+ *     and not a comment.
+ *
+ * The reason is the load-bearing field, and the gate can only check that it is a sentence. An entry that says "historical"
+ * or "predates this lane" is refused by review and by the note in the file itself; what an entry may say is which text
+ * the copies share, which lane owns folding them, and why that lane is not this one. Measured 2026-11-15 at `38629989`:
+ * 29 entries - 6 controller partials the receipt-store extraction holds, 22 native-local runners the L1 extraction holds,
+ * 1 Host store shape - and the 7 `tools/` groups in that same reading are NOT declared, because this lane can extract
+ * them and a declaration there would be a fix it declined to make.
+ *
+ *   6. a group DECLARED in `tools/duplicate-code-declarations.json` at the same site count passes and is printed with its
+ *      owner and reason; one that gained a site is `clone_group_grew`, one that lost a site or left the population is
+ *      `stale_clone_declaration` (THE DECLARATION DOOR, above).
+ *
  * WHAT IT ASSERTS, per clone group - the sites jscpd reports for one repeated text, grouped by that text:
  *
  *   1. a STRUCTURAL group with >= MIN_TOKENS tokens at >= MIN_SITES sites is a finding, named with EVERY site, the
@@ -296,6 +327,15 @@
  * red-proof: inject  one recorded group at three runner sites beside a host file's own recorded group ->
  *                    `debt: 2 groups · 4 sites · of which runners 1 groups / 3 sites`
  *
+ * red-proof: inject  a structural group at three sites with a matching declaration -> the census reads `declared 1` and
+ *                    `new 0`, status `passed`, and `declared:<hash>: 3 sites at 50 tokens · <owner> · <reason> :: <first
+ *                    line>` is printed; a fourth copy of the same text -> `clone_group_grew:<hash>: now 4 sites at 50
+ *                    tokens, tools/duplicate-code-declarations.json declared 3 sites (<owner>)`; the same text at two
+ *                    sites -> `stale_clone_declaration:<hash>`; an entry whose hash the tree does not have ->
+ *                    `stale_clone_declaration:<hash>`; an entry with no `reason` ->
+ *                    `duplicate_code_declarations_malformed:reason:<hash>`; and `--write-baseline` records the undeclared
+ *                    population only, saying how many it left out.
+ *
  * USAGE:
  *   node tools/check-code-duplication.mjs                   # the verdict; exit 1 on a new/grown/stale structural group
  *   node tools/check-code-duplication.mjs --record-shrinks   # delete and lower entries only; adds nothing
@@ -359,6 +399,7 @@ import { RUNNER_FILE } from "./check-native-local-runner-scaffold.mjs";
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const BASELINE = "tools/duplicate-code-baseline.json";
+const DECLARATIONS = "tools/duplicate-code-declarations.json";
 const JSCPD_CONFIG = "jscpd.json";
 const JSCPD_ENTRY = "jscpd/run-jscpd.js";
 
@@ -642,16 +683,41 @@ function debtCensus(groups) {
  * same bytes by construction, so a different `tokens` there says how far the run matched within that slice, not that more
  * text was copied (THE TOKEN COUNT IS PUBLISHED, above).
  */
-export function evaluateGroups({ groups, baseline, minTokens = MIN_TOKENS, minSites = MIN_SITES }) {
+export function evaluateGroups({ groups, baseline, declarations = [], minTokens = MIN_TOKENS, minSites = MIN_SITES }) {
   const counted = groups.filter((group) => group.tokens >= minTokens && group.sites.length >= minSites);
   const facade = counted.filter((group) => group.kind === FACADE);
   const syntaxFloor = counted.filter((group) => group.kind === SYNTAX_FLOOR);
   const duplication = counted.filter((group) => group.kind === STRUCTURAL);
   const recorded = new Map((baseline?.groups ?? []).map((entry) => [entry.hash, entry]));
+  const declared = new Map(declarations.map((entry) => [entry.hash, entry]));
   const findings = [];
   const tokenCountUnstable = [];
   const debtGroups = [];
+  const declaredGroups = [];
   for (const group of duplication) {
+    const declaration = declared.get(group.hash);
+    if (declaration !== undefined) {
+      declaredGroups.push(group);
+      if (group.sites.length > declaration.sites)
+        findings.push(
+          violation(
+            "clone_group_grew",
+            `clone_group_grew:${group.hash}: now ${group.sites.length} sites at ${group.tokens} tokens, ${DECLARATIONS} ` +
+              `declared ${declaration.sites} sites (${declaration.owner})`,
+            group,
+          ),
+        );
+      else if (group.sites.length < declaration.sites)
+        findings.push({
+          code: "stale_clone_declaration",
+          hash: group.hash,
+          detail:
+            `stale_clone_declaration:${group.hash}: ${DECLARATIONS} declares ${declaration.sites} sites and the tree has ` +
+            `${group.sites.length} (${describeSites(group.sites)}) - delete the entry, because a declaration may not outlive ` +
+            "the copies it names",
+        });
+      continue;
+    }
     const entry = recorded.get(group.hash);
     if (entry === undefined) {
       findings.push(violation("clone_group", `clone_group:${group.tokens}tokens:${group.sites.length}sites`, group));
@@ -692,6 +758,17 @@ export function evaluateGroups({ groups, baseline, minTokens = MIN_TOKENS, minSi
   const live = new Set(duplication.map((group) => group.hash));
   const facades = new Set(facade.map((group) => group.hash));
   const floors = new Set(syntaxFloor.map((group) => group.hash));
+  for (const declaration of declared.values()) {
+    if (live.has(declaration.hash)) continue;
+    findings.push({
+      code: "stale_clone_declaration",
+      hash: declaration.hash,
+      detail:
+        `stale_clone_declaration:${declaration.hash}: ${DECLARATIONS} declares ${declaration.sites} sites for a group ` +
+        `(${declaration.owner}) the tree no longer has as duplication - delete the entry, because a declaration may not ` +
+        "outlive the copies it names",
+    });
+  }
   for (const entry of recorded.values()) {
     if (live.has(entry.hash)) continue;
     if (facades.has(entry.hash)) {
@@ -732,12 +809,15 @@ export function evaluateGroups({ groups, baseline, minTokens = MIN_TOKENS, minSi
     syntaxFloor,
     duplication,
     debt: debtCensus(debtGroups),
+    declared: declaredGroups,
+    undeclared: duplication.filter((group) => !declared.has(group.hash)),
     baselined: debtGroups.length,
     newGroups: findings.filter((entry) => entry.code === "clone_group").length,
     grown: findings.filter((entry) => entry.code === "clone_group_grew").length,
     stale: findings.filter((entry) => entry.code === "stale_clone_baseline").length,
     reclassified: findings.filter((entry) => entry.code === "facade_only_clone_baselined").length,
     floorBaselined: findings.filter((entry) => entry.code === "syntax_floor_clone_baselined").length,
+    staleDeclarations: findings.filter((entry) => entry.code === "stale_clone_declaration").length,
     tokenCountUnstable,
     findings,
   };
@@ -859,6 +939,32 @@ export function readBaseline({ root = REPO } = {}) {
 }
 
 /**
+ * The declaration file: groups whose fix is owned by a lane this one may not edit. It is READ, never written - nothing in
+ * this gate adds a declaration, exactly as nothing in it adds a baseline entry (THE DECLARATION DOOR, in the header). A
+ * missing file is "nothing is declared", and a malformed one is an error rather than a reading: an entry with no reason
+ * is the thing the door exists to refuse.
+ */
+export function readDeclarations({ root = REPO } = {}) {
+  const file = path.join(root, DECLARATIONS);
+  if (!fs.existsSync(file)) return [];
+  const parsed = JSON.parse(fs.readFileSync(file, "utf8"));
+  if (!Array.isArray(parsed.declarations)) throw new Error("duplicate_code_declarations_malformed:declarations");
+  const seen = new Set();
+  for (const entry of parsed.declarations) {
+    if (typeof entry.hash !== "string" || !/^[0-9a-f]{12}$/u.test(entry.hash))
+      throw new Error(`duplicate_code_declarations_malformed:hash:${JSON.stringify(entry.hash)}`);
+    if (seen.has(entry.hash)) throw new Error(`duplicate_code_declarations_malformed:duplicate_hash:${entry.hash}`);
+    seen.add(entry.hash);
+    if (!Number.isInteger(entry.sites) || entry.sites < MIN_SITES)
+      throw new Error(`duplicate_code_declarations_malformed:sites:${entry.hash}`);
+    for (const field of ["owner", "reason"])
+      if (typeof entry[field] !== "string" || entry[field].trim() === "")
+        throw new Error(`duplicate_code_declarations_malformed:${field}:${entry.hash}`);
+  }
+  return parsed.declarations;
+}
+
+/**
  * The files under `trees` that are in the worktree but not in the index: the complement of the population
  * (THE POPULATION IS THE INDEX, above).
  *
@@ -931,6 +1037,7 @@ export function checkCodeDuplication({
   formats = FORMATS,
   ignores = IGNORES,
   baseline = readBaseline({ root }),
+  declarations = readDeclarations({ root }),
   spawn = spawnSync,
   config,
 } = {}) {
@@ -980,7 +1087,7 @@ export function checkCodeDuplication({
       disagreements,
       examined,
     };
-  const reading = evaluateGroups({ groups, baseline });
+  const reading = evaluateGroups({ groups, baseline, declarations });
   const ruleFindings = [
     ...disagreements.map((entry) => ({
       code: "jscpd_config_disagrees",
@@ -1040,6 +1147,7 @@ function reportLine(reading) {
           facadeOnly: reading.facade.length,
           syntaxFloor: reading.syntaxFloor.length,
           duplication: reading.duplication.length,
+          declared: reading.declared.length,
         }),
     checks,
   });
@@ -1058,6 +1166,14 @@ export function tokenCountLine(entry) {
   return (
     `  token_count_unstable:${entry.hash}: ${entry.recorded} -> ${entry.measured} tokens at ${entry.sites} sites - the ` +
     "fragment is unchanged, so this is the matched run over the same text, not a new copy"
+  );
+}
+
+/** One declared group, printed every run: the door is only honest while a reader can see who walked through it. */
+export function declaredLine(group, declaration) {
+  return (
+    `  declared:${group.hash}: ${group.sites.length} sites at ${group.tokens} tokens · ${declaration.owner} · ` +
+    `${declaration.reason} :: ${firstLineOf(group.fragment)}`
   );
 }
 
@@ -1089,10 +1205,13 @@ export function censusLine(reading) {
   return (
     `files examined ${reading.examined} · clone groups ${reading.counted.length} · of which facade-only ` +
     `${reading.facade.length} · syntax-floor ${reading.syntaxFloor.length} (${sitesOf(reading.syntaxFloor)} sites) · ` +
-    `duplication ${reading.duplication.length} (${sitesOf(reading.duplication)} sites) · new ${reading.newGroups} · ` +
+    `duplication ${reading.duplication.length} (${sitesOf(reading.duplication)} sites) · ` +
+    `${(reading.declared ?? []).length === 0 ? "" : `declared ${reading.declared.length} · `}` +
+    `new ${reading.newGroups} · ` +
     `grown ${reading.grown} · baselined ${reading.baselined}` +
     `${reading.stale === 0 ? "" : ` · stale ${reading.stale}`}` +
     `${reading.reclassified === 0 ? "" : ` · reclassified ${reading.reclassified}`}` +
+    `${(reading.staleDeclarations ?? 0) === 0 ? "" : ` · stale_declarations ${reading.staleDeclarations}`}` +
     `${(reading.floorBaselined ?? 0) === 0 ? "" : ` · syntax_floor_baselined ${reading.floorBaselined}`}` +
     `${reading.tokenCountUnstable === undefined || reading.tokenCountUnstable.length === 0 ? "" : ` · token_count_unstable ${reading.tokenCountUnstable.length}`}` +
     `${reading.untrackedNotCounted === undefined || reading.untrackedNotCounted === 0 ? "" : ` · untracked_not_counted ${reading.untrackedNotCounted}`}`
@@ -1181,6 +1300,8 @@ function main(argv) {
   }
   const lines = [censusLine(reading), debtLine(reading)];
   for (const group of reading.facade ?? []) lines.push(facadeLine(group));
+  const declarations = new Map((readDeclarations({ root }) ?? []).map((entry) => [entry.hash, entry]));
+  for (const group of reading.declared ?? []) lines.push(declaredLine(group, declarations.get(group.hash)));
   for (const entry of reading.tokenCountUnstable ?? []) lines.push(tokenCountLine(entry));
   for (const entry of reading.findings ?? [])
     lines.push(
@@ -1249,10 +1370,11 @@ function main(argv) {
       process.exitCode = 1;
       return;
     }
-    const payload = baselinePayload(reading.duplication);
+    const payload = baselinePayload(reading.undeclared ?? reading.duplication);
     fs.writeFileSync(path.join(root, BASELINE), serialiseBaseline(payload), "utf8");
     lines.push(
-      `${creating ? "baseline_created" : "baseline_written"}: ${payload.groups.length} group(s) -> ${BASELINE}`,
+      `${creating ? "baseline_created" : "baseline_written"}: ${payload.groups.length} group(s) -> ${BASELINE}` +
+        `${(reading.declared ?? []).length === 0 ? "" : ` · ${reading.declared.length} declared group(s) are not recorded here`}`,
     );
     process.stdout.write(`${lines.join("\n")}\n`);
     process.stdout.write(`${reportLine({ ...reading, status: "passed" })}\n`);
