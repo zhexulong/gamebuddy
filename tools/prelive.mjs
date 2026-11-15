@@ -117,6 +117,14 @@ export const L0_GATES = Object.freeze([
   // `dialogue-web/tsconfig.json`'s own `include`, so a new source file joins without an edit here. Authored
   // outside this lane and left untracked; wired here because a gate that runs in no rung cannot fail.
   "tools/check-switch-exhaustiveness.mjs",
+  // The destructive press, as a population rather than a habit. Five lanes each armed one control by hand (her
+  // whole record, the connection that IS the credential, a reply, a world-book entry) and the sixth - the
+  // companion's performance directive - stayed bare until this gate was written: a derived population of every
+  // call whose name (or request field) destroys something on a durable Host route, each either behind
+  // `useArmedConfirmation` or declared with the module that arms it and an expiry. 1.1 s measured here over the
+  // workspace's own TypeScript program (the same parse `check-switch-exhaustiveness` already pays for), and it prints
+  // `examined 6 · armed 3 · exempt 3` rather than a verdict over nothing.
+  "tools/check-armed-destructive-actions.mjs",
   // The promotion pair. `check-stardew-action-promotion` already ran on every push in CI; the ladder runs it too
   // because it is the gate a lane reads as "may this action be visible to the Agent", and reading it 100 ms before a
   // live run is cheaper than discovering its verdict after one. Its sibling asks the other half of the question the

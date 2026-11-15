@@ -324,6 +324,14 @@ export function checkExperimentalRunners({
  * 2026-10-20; `checkGateFalsifiers` runs each of them again and reads the report it prints.
  */
 const GATES_WITH_FALSIFIER = Object.freeze([
+  // Prints `examined N · armed X · exempt Y` over a derived population of every call in `dialogue-web/src` that
+  // destroys durable player content on a Host route, plus a `checks[]` verdict per rule (the press is armed, the
+  // confirmation is the primitive, the exemptions are current), so its default run is the report this suite reads.
+  // Its falsifier is tools/check-armed-destructive-actions.test.mjs, which drives the same reader over throwaway
+  // workspaces: a bare press named by file:line and handler, an arm without `useArmedConfirmation`, a clear that
+  // travels as a request field, the same verbs on content the player can retype (examined 0, blocked), and both
+  // directions of the exemption rule including an arm owner that stopped arming.
+  "check-armed-destructive-actions.mjs",
   "check-build-artifact-producers.mjs",
   // Prints `functions examined N · over the bound K · worst <name> @ <file>:<line> = <n>` per producer, the class
   // line and the class-size line, then a `checks[]` verdict enumerating its five rules (each language's function
