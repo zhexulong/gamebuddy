@@ -13,9 +13,9 @@
 const { randomBytes } = require("node:crypto");
 const { readFileSync } = require("node:fs");
 const path = require("node:path");
-const { REPO_ROOT } = require("./common.cjs");
+const { REPO_ROOT, reporter, connect, PAGE_HELPERS, activateSurface } = require("./common.cjs");
 const { classifyLaunchRefusal, classifySilentLaunch, notMeasuredLine, describeGameState, readinessOf } = require("./game-launch-verdict.mjs");
-const { GAME_STATES_PREFIX, verdictLine } = require("./game-states-verdict.mjs");
+const { GAME_STATES_PREFIX, verdictLine, NOT_MEASURED_REASONS } = require("./game-states-verdict.mjs");
 
 /** One line, in the language the product is set to: the same line the launch driver says. */
 const PLAYER_LINE = "你好，你在我旁边吗？";
@@ -380,6 +380,77 @@ async function conclude({ browser, say, flush, driver, scenario, reading, facts,
 }
 
 /**
+ * The step recorder every driver in this family writes through: a step is a NAME and the value that proves it,
+ * kept in `facts.steps` and printed as it happens. One spelling, because the report a reader opens after a run
+ * that stopped half way is the only account of which steps ran.
+ */
+function stepRecorder(facts, say) {
+  return (step, value) => {
+    facts.steps.push(step);
+    say(`--- step ${step} ---`);
+    say(JSON.stringify(value, null, 1));
+  };
+}
+
+/**
+ * The prologue the three state drivers share: the run's report writer, the facts object and the step recorder
+ * its verdict is reached through, the guardian probe, the page attached to the product, the launch through the
+ * product's own controls, and the exact game pid THIS run created. What a driver then does to that game - kill
+ * it under a turn, end it explicitly, disconnect the surface from it - is the scenario, and stays in the driver.
+ *
+ * A machine that owes a prerequisite concludes the driver here as `not_measured`, through the same `conclude`
+ * every verdict leaves by, because a driver with no game has no reading to take.
+ */
+async function startStateDriver({ driver, scenario, reportFile }) {
+  const launch = readLaunchState();
+  const gameDir = launch.run?.gameDir ?? null;
+  const { say, flush } = reporter(reportFile);
+  const started = Date.now();
+  const facts = { steps: [], scenario };
+  const record = stepRecorder(facts, say);
+  const notMeasured = async (browser, reason, detail) =>
+    await conclude({ browser, say, flush, driver, scenario, facts, reading: { verdict: "not_measured", reason, detail } });
+
+  if (typeof gameDir !== "string" || gameDir.length === 0) {
+    say("not_measured: the run config names no game directory");
+    say(`DONE-${driver.toUpperCase()}`);
+    flush();
+    process.exit(0);
+  }
+
+  const guardian = await probeGuardian();
+  record("guardian", guardian);
+  const { browser, page } = await connect();
+  const problems = attachProblems(page);
+  await page.evaluate(`${PAGE_HELPERS};undefined`);
+  await page.setViewportSize({ width: 1440, height: 900 });
+  const surfaceSwitch = await activateSurface(page, "游戏");
+  const panel = await page.evaluate(readGameFacts);
+  record("surface", { switchKind: surfaceSwitch, surfacePresent: panel.surfacePresent });
+  if (panel.surfacePresent !== true)
+    return await notMeasured(browser, NOT_MEASURED_REASONS.gameSurfaceAbsent, "the Game surface did not mount");
+
+  const launched = await activateAndLaunch({ page, say, record, guardian, problems });
+  if (launched.kind !== "ready")
+    return await notMeasured(browser, launched.reason, launched.detail ?? "the launch did not reach ready");
+
+  // The game's own process, created after this driver started. Both filters are needed: the installation
+  // folder is shared with the player's own game, and the start time separates this run's launch from their
+  // session.
+  const pids = gamePids({ gameDir, sinceMs: started });
+  record("game pids", pids);
+  const target = pids.client[0] ?? pids.loader[0] ?? null;
+  if (target === null)
+    return await notMeasured(
+      browser,
+      NOT_MEASURED_REASONS.noGamePid,
+      `no process under ${gameDir} was created by this run (${String(pids.examined ?? "unreadable")} processes examined)`,
+    );
+
+  return { say, flush, facts, record, notMeasured, browser, page, problems, gameDir, target };
+}
+
+/**
  * The guardian endpoint population, read exactly as driver W reads it: the preflight's probe for the pipe
  * namespace, plus the pid of the launch driver this run recorded. `onlyRunOwnGatePeer` states the BASIS on
  * which a launch refusal may be excused - exactly one endpoint, and the process that created it is this run's
@@ -469,4 +540,6 @@ module.exports = {
   probeGuardian,
   attachProblems,
   conclude,
+  stepRecorder,
+  startStateDriver,
 };

@@ -130,6 +130,7 @@ const {
   readinessOf,
   responseStampForPress,
 } = require("./game-launch-verdict.mjs");
+const { stepRecorder } = require("./game-surface-states.cjs");
 
 /** The line the player says into the game surface. One line, in the language the product is set to. */
 const PLAYER_LINE = "你好，你在我旁边吗？";
@@ -641,11 +642,7 @@ async function hostAnswers(port) {
   const { say, flush } = reporter("w-game-launch.txt");
   const started = Date.now();
   const facts = { steps: [], chain: [], detail: null, reply: null };
-  const record = (step, value) => {
-    facts.steps.push(step);
-    say(`--- step ${step} ---`);
-    say(JSON.stringify(value, null, 1));
-  };
+  const record = stepRecorder(facts, say);
 
   /*
    * The chain, rung by rung: what the launch actually got through, when, and the fact that proved it.

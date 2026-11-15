@@ -13,53 +13,16 @@
 // separate, named finding, not a reason to skip the invariant.
 //
 // Same death as driver X, and the same exact-pid rule.
-const { reporter, connect, PAGE_HELPERS, activateSurface, shot } = require("./common.cjs");
+const { shot } = require("./common.cjs");
 const S = require("./game-surface-states.cjs");
 const { classifyEndgame, NOT_MEASURED_REASONS } = require("./game-states-verdict.mjs");
 
 (async () => {
-  const launch = S.readLaunchState();
-  const gameDir = launch.run?.gameDir ?? null;
-  const { say, flush } = reporter("y-game-endgame.txt");
-  const started = Date.now();
-  const facts = { steps: [], scenario: "endgame_after_exit" };
-  const record = (step, value) => {
-    facts.steps.push(step);
-    say(`--- step ${step} ---`);
-    say(JSON.stringify(value, null, 1));
-  };
-  const notMeasured = async (browser, reason, detail) =>
-    await S.conclude({ browser, say, flush, driver: "y", scenario: "endgame_after_exit", facts, reading: { verdict: "not_measured", reason, detail } });
-
-  if (typeof gameDir !== "string" || gameDir.length === 0) {
-    say("not_measured: the run config names no game directory");
-    say("DONE-Y");
-    flush();
-    process.exit(0);
-  }
-
-  const guardian = await S.probeGuardian();
-  record("guardian", guardian);
-  const { browser, page } = await connect();
-  const problems = S.attachProblems(page);
-  await page.evaluate(`${PAGE_HELPERS};undefined`);
-  await page.setViewportSize({ width: 1440, height: 900 });
-  await activateSurface(page, "游戏");
-  const panel = await page.evaluate(S.readGameFacts);
-  if (panel.surfacePresent !== true) return await notMeasured(browser, NOT_MEASURED_REASONS.gameSurfaceAbsent, "the Game surface did not mount");
-
-  const launched = await S.activateAndLaunch({ page, say, record, guardian, problems });
-  if (launched.kind !== "ready") return await notMeasured(browser, launched.reason, launched.detail ?? "the launch did not reach ready");
-
-  const pids = S.gamePids({ gameDir, sinceMs: started });
-  record("game pids", pids);
-  const target = pids.client[0] ?? pids.loader[0] ?? null;
-  if (target === null)
-    return await notMeasured(
-      browser,
-      NOT_MEASURED_REASONS.noGamePid,
-      `no process under ${gameDir} was created by this run (${String(pids.examined ?? "unreadable")} processes examined)`,
-    );
+  const { say, flush, facts, record, notMeasured, browser, page, problems, target } = await S.startStateDriver({
+    driver: "y",
+    scenario: "endgame_after_exit",
+    reportFile: "y-game-endgame.txt",
+  });
   const kill = S.killExactPid(target.pid);
   record("kill", { pid: target.pid, name: target.name, outcome: kill });
   if (kill === "unavailable")

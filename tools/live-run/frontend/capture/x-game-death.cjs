@@ -16,68 +16,14 @@
 // NOT-MEASURED, never a fabricated pass: no guardian server on this machine (`guardian_pipe_unreachable`, the
 // pipe population travels in the detail), no registered installation, a launch that never reached ready, or no
 // game process to kill. Each is a prerequisite this machine owes, not a fault in the product.
-const { reporter, connect, PAGE_HELPERS, activateSurface, shot } = require("./common.cjs");
+const { shot } = require("./common.cjs");
 const S = require("./game-surface-states.cjs");
 const { classifyDeath, NOT_MEASURED_REASONS } = require("./game-states-verdict.mjs");
 
 (async () => {
-  const launch = S.readLaunchState();
-  const gameDir = launch.run?.gameDir ?? null;
-  const { say, flush } = reporter("x-game-death.txt");
-  const started = Date.now();
-  const facts = { steps: [], scenario: "death" };
-  const record = (step, value) => {
-    facts.steps.push(step);
-    say(`--- step ${step} ---`);
-    say(JSON.stringify(value, null, 1));
-  };
-
-  const notMeasured = async (browser, reason, detail) =>
-    await S.conclude({
-      browser,
-      say,
-      flush,
-      driver: "x",
-      scenario: "death",
-      facts,
-      reading: { verdict: "not_measured", reason, detail },
-    });
-
-  if (typeof gameDir !== "string" || gameDir.length === 0) {
-    say("not_measured: the run config names no game directory");
-    say("DONE-X");
-    flush();
-    process.exit(0);
-  }
-
-  const guardian = await S.probeGuardian();
-  record("guardian", guardian);
-
-  const { browser, page } = await connect();
-  const problems = S.attachProblems(page);
-  await page.evaluate(`${PAGE_HELPERS};undefined`);
-  await page.setViewportSize({ width: 1440, height: 900 });
-  const surfaceSwitch = await activateSurface(page, "游戏");
-  const panel = await page.evaluate(S.readGameFacts);
-  record("surface", { switchKind: surfaceSwitch, surfacePresent: panel.surfacePresent });
-  if (panel.surfacePresent !== true) return await notMeasured(browser, NOT_MEASURED_REASONS.gameSurfaceAbsent, "the Game surface did not mount");
-
-  const launched = await S.activateAndLaunch({ page, say, record, guardian, problems });
-  if (launched.kind !== "ready")
-    return await notMeasured(browser, launched.reason, launched.detail ?? "the launch did not reach ready");
+  const { say, flush, facts, record, notMeasured, browser, page, problems, gameDir, target } =
+    await S.startStateDriver({ driver: "x", scenario: "death", reportFile: "x-game-death.txt" });
   await shot(page, "95-game-death-ready.png");
-
-  // The game's own process, created after this driver started. Both filters are needed: the installation
-  // folder is shared with the player's own game, and the start time separates our launch from their session.
-  const pids = S.gamePids({ gameDir, sinceMs: started });
-  record("game pids", pids);
-  const target = pids.client[0] ?? pids.loader[0] ?? null;
-  if (target === null)
-    return await notMeasured(
-      browser,
-      NOT_MEASURED_REASONS.noGamePid,
-      `no process under ${gameDir} was created by this run (${String(pids.examined ?? "unreadable")} processes examined): ${JSON.stringify(pids.reason ?? "none matched")}`,
-    );
 
   // A turn in flight: the player says one line and the world dies before the companion can answer.
   const transcriptBefore = await page.evaluate(S.readGameTranscript);
