@@ -11,6 +11,14 @@
 // pins its revision at open time and never rebases it, so this driver produces that staleness the
 // only way it can be produced inside one tab — a second writer on the page's own session — and then
 // measures the sentence the surface shows when the save it still offers is pressed.
+//
+// THE EDITOR'S ROWS ARE FOLDS TOO. `c7ea35eb` made every entry in the editor a `<details>` that starts
+// shut (`CompanionWorldBookSection.tsx:624` starts with an empty open-set, `:689` renders `open` from
+// it), which is what keeps a book of eleven entries scannable — and what made the fills below resolve
+// their field and then wait 30 s for it: on the run of 2026-11-15 `#companion-world-book-entry-1-keys`
+// resolved to the right input, holding the right value, and was simply inside a shut fold. The fold is
+// opened BY NAME before anything is typed or pressed in it, and `openDraftRow` reads the row back and
+// refuses to continue unless it is open — a summary press that silently misses leaves the same bug.
 const { connect, reporter, PAGE_HELPERS, activateSurface, shot , observe, observationStart } = require("./common.cjs");
 const { editRow, entryReading } = require("./world-book-entry.cjs");
 
@@ -69,6 +77,7 @@ const draftFacts = () => {
     box: rect(draft),
     rowCount: rows.length,
     rows: rows.map((row) => ({
+      open: row.open,
       title: row.querySelector('input[type="text"]')?.value ?? null,
       keys: row.querySelectorAll('input[type="text"]')[1]?.value ?? null,
       body: (row.querySelector("textarea")?.value ?? "").slice(0, 60),
@@ -82,6 +91,34 @@ const draftFacts = () => {
     notice: (document.querySelector('[data-companion-world-book-notice]')?.textContent ?? "").trim() || null,
   };
 };
+
+/**
+ * One row of the editor, OPENED — and read back, so the opening is a fact and not a press.
+ *
+ * A row is shut until the player opens it, and everything it writes is behind that fold. Playwright's
+ * fill/click resolves the control and then waits for it to become visible; behind a shut `<details>`
+ * that wait is the whole 30 s timeout, and the message it ends with ("element is not visible") says
+ * nothing about the fold that caused it. So the fold is opened first, and the row is re-read: a press
+ * on a summary that missed - a stale row index, a re-render between the read and the click - would
+ * otherwise leave exactly the timeout this replaced.
+ */
+async function openDraftRow(page, index, purpose) {
+  const row = page.locator("[data-companion-world-book-entry-draft]").nth(index);
+  const rows = await page.locator("[data-companion-world-book-entry-draft]").count();
+  if (index >= rows)
+    throw new Error(
+      `openDraftRow(${index}, ${purpose}): the editor holds ${rows} row(s), so there is no row ${index} to open`,
+    );
+  if ((await row.evaluate((node) => node.open)) !== true) await row.locator("summary").click();
+  const opened = await row.evaluate((node) => node.open);
+  if (opened !== true)
+    throw new Error(
+      `openDraftRow(${index}, ${purpose}): the row is still SHUT after pressing its summary ` +
+        `(<details open=${JSON.stringify(opened)}>), so its fields are behind a fold and every fill below would ` +
+        `wait on a control that is there and not visible`,
+    );
+  return row;
+}
 
 const removeArmedFacts = () => {
   const block = document.querySelector("[data-companion-world-book-remove-confirm]");
@@ -202,6 +239,9 @@ const stimulusWrite = async ({ handle, token, expectedRevision, entries }) => {
   const originalKeys = draftOpen.rows[target]?.keys ?? "";
   const newKeys = "雨天, 雨声";
   const newBody = `${originalBody}（这一句是玩家改的。）`;
+  say(`row ${target}'s fold as the editor mounts it: open=${draftOpen.rows[target]?.open} (the rows start shut)`);
+  await openDraftRow(page, target, "the body and trigger words changed");
+  say(`row ${target} after the press that opens it: open=${(await page.evaluate(draftFacts)).rows[target]?.open}`);
   await page.locator(`#companion-world-book-entry-${target}-keys`).fill(newKeys);
   await page.locator(`#companion-world-book-entry-${target}-body`).fill(newBody);
   await page.waitForTimeout(500);
@@ -234,6 +274,10 @@ const stimulusWrite = async ({ handle, token, expectedRevision, entries }) => {
   await page.locator("[data-companion-world-book-add]").first().click();
   await page.waitForTimeout(600);
   const addedIndex = (await page.evaluate(draftFacts)).rowCount - 1;
+  // The product opens a row the player just added and puts the keyboard on its title, because a row that
+  // arrived shut below fifteen others is a press that looks like it did nothing. The driver reads that
+  // back rather than assuming it: the fold has to be open for the fields to be filled.
+  await openDraftRow(page, addedIndex, "the entry added");
   await page.locator(`#companion-world-book-entry-${addedIndex}-title`).fill("演示条目");
   await page.locator(`#companion-world-book-entry-${addedIndex}-keys`).fill("演示, 测试");
   await page.locator(`#companion-world-book-entry-${addedIndex}-body`).fill("这条是这一轮加上去的。");
@@ -256,6 +300,7 @@ const stimulusWrite = async ({ handle, token, expectedRevision, entries }) => {
   await page.waitForTimeout(1000);
   const draftRows = await page.evaluate(draftFacts);
   const removeIndex = draftRows.rowCount - 1;
+  await openDraftRow(page, removeIndex, "the entry removed through the arm-then-confirm");
   const removeRow = page.locator("[data-companion-world-book-entry-draft]").nth(removeIndex);
   await removeRow.locator("[data-companion-world-book-remove]").click();
   await page.waitForTimeout(700);
@@ -297,6 +342,8 @@ const stimulusWrite = async ({ handle, token, expectedRevision, entries }) => {
     await page.locator("[data-companion-world-book-edit]").first().click();
     await page.waitForTimeout(1200);
     const openDraft = await page.evaluate(draftFacts);
+    say(`the editor's rows are all shut again on reopen: ${JSON.stringify(openDraft.rows.map((row) => row.open))}`);
+    await openDraftRow(page, 0, "the book changed after the editor was opened");
     await page.locator("#companion-world-book-entry-0-body").fill(`${openDraft.rows[0]?.body ?? ""}（编辑器开着时写的。）`);
     await page.waitForTimeout(400);
     const beforeStimulus = await page.evaluate(durableBook, handle);
@@ -359,6 +406,7 @@ const stimulusWrite = async ({ handle, token, expectedRevision, entries }) => {
     await page.waitForTimeout(800);
     await page.locator("[data-companion-world-book-edit]").first().click();
     await page.waitForTimeout(1200);
+    await openDraftRow(page, 0, "saved again after the refusal");
     await page.locator("#companion-world-book-entry-0-body").fill("重开之后写下的这一段。");
     await page.waitForTimeout(400);
     await page.locator("[data-companion-world-book-save]").first().click();
