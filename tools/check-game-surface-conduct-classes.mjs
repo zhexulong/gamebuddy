@@ -111,7 +111,8 @@ export const CONDUCT_OWNERS = Object.freeze([
   { module: "host/src/games/stardew/prompt/stardew-game-conduct.ts", table: "STARDEW_GAME_CONDUCT_CLASSES" },
 ]);
 
-const COMPOSED_DECLARATION = "const GAME_SURFACE_INTERACTION_CONDUCT = [";
+/** The composed list's own declaration: the anchor this gate and its suite both read the floor by. */
+export const COMPOSED_DECLARATION = "const GAME_SURFACE_INTERACTION_CONDUCT = [";
 const RULE_DECLARATION = /^export const ([A-Z][A-Z0-9_]*) =\s*$/u;
 
 /** The three kinds the doctrine names. A class outside this set is a finding, not a fourth kind. */

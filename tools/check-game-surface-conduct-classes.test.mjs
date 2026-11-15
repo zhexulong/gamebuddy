@@ -8,6 +8,8 @@ import { fileURLToPath } from "node:url";
 
 import {
   auditConductClasses,
+  COMPOSED_DECLARATION,
+  conductRules,
   CONDUCT_OWNERS,
   CONDUCT_RULE_CODES,
   CONDUCT_SOURCE,
@@ -25,6 +27,15 @@ import {
 // behind, a class outside the three kinds, a class with no reason, a composed name no module declares, a renamed
 // declaration (blocked, exit 2 - never green), and a list whose elements are no longer one per line (blocked, because a
 // reader that mis-parsed the floor and passed would be worse than no gate).
+//
+// DERIVED, NOT PINNED, measured 2026-11-22. Nine cases here pinned an index, a count, or the sentence of the rule next
+// door, all read off the 19-rule floor, and the floor then lost nine rules in two commits - seven in af080cb6
+// (partner_words_first, company_not_step_reports, no_dispatcher_logging, tangible_specifics, refusal_in_person,
+// decide_yourself, concrete_question_ok), two in 6cc7915c (LIVE_STATE_GROUNDING, HOUSE_HAS_NO_KITCHEN) - so the suite read
+// 5 pass / 9 fail while the gate itself stayed green (`examined 10 · FLOOR 2 · CHANNEL 8 · FORM 0`). Every expectation a
+// deletion can move is now read from the table the gate classifies: the population is the count the two tables declare,
+// a rule's position is looked up by its id, the class counts come from the entries, and a fixture edits the list by the
+// rule's own element instead of by a neighbour's prose - so the next rule that leaves moves the expectation with it.
 //
 // THE SHIFT THIS GATE COULD NOT SEE, measured 2026-11-15 on the previous shape: the rules were one array and their
 // classes another, joined only by index. Swapping the markdown/delivery rule with the observation-honesty rule - two
@@ -45,6 +56,23 @@ const FLOOR_MODULE = CONDUCT_SOURCE;
 const STARDEW_MODULE = CONDUCT_OWNERS.find((owner) => owner.module !== CONDUCT_SOURCE)?.module;
 const REAL_FLOOR = readReal(FLOOR_MODULE);
 const REAL_STARDEW = readReal(STARDEW_MODULE);
+
+/**
+ * The tree's own reading, taken once, and the population the floor's two tables declare.
+ *
+ * Every expectation below that a rule's deletion can move is read from these instead of being pinned: a pinned index is
+ * the position a list happened to have on the day it was written, and the floor lost nine rules after these pins were
+ * (af080cb6, 6cc7915c), which left nine cases asserting numbers of a list that no longer existed.
+ */
+const REAL_READING = auditConductClasses({ root: REPOSITORY_ROOT });
+const DECLARED = conductRules(
+  new Map([
+    [FLOOR_MODULE, REAL_FLOOR],
+    [STARDEW_MODULE, REAL_STARDEW],
+  ]),
+).declared.size;
+/** The position an element appended after the composed list's last rule lands at. */
+const APPENDED_INDEX = String(REAL_READING.examined);
 
 const RULES_OPEN = "const GAME_SURFACE_CONDUCT_RULES = {\n";
 const RULES_CLOSE = '].join("\\n");';
@@ -92,10 +120,72 @@ const withComposedElement = (source, element) => source.replace(RULES_CLOSE, `  
 const withRestatedTable = (source, rows) =>
   source.replace(TABLE_PROJECTION, `}>[] = Object.freeze([\n${rows.join("\n")}\n]);`);
 
+/** The composed list as the floor writes it: the lines before it, its own elements, and the lines that follow. */
+function composedList(source) {
+  const at = source.indexOf(COMPOSED_DECLARATION);
+  assert.notEqual(at, -1, `the composed list is not declared as "${COMPOSED_DECLARATION}" any more`);
+  const lines = source.slice(at).split("\n");
+  const close = lines.findIndex((line) => line.trim().startsWith("]"));
+  assert.notEqual(close, -1, 'the composed list is never closed by a line starting with "]"');
+  return { before: source.slice(0, at), open: lines[0], elements: lines.slice(1, close), after: lines.slice(close) };
+}
+
+const rebuild = ({ before, open, elements, after }) => [before + open, ...elements, ...after].join("\n");
+
+/**
+ * The position, in the composed list, of the element that carries the rule with this id.
+ *
+ * The fixtures below edit the list by the rule's own element, never by the sentence of the rule beside it: a neighbour
+ * is the anchor that rots. `refusal_in_person` and `partner_words_first` both left in af080cb6 and took three of this
+ * file's anchors with them, so the fixture for a rule then reached nothing.
+ */
+function elementIndex(list, id) {
+  const needles = [`GAME_SURFACE_CONDUCT_RULES.${id}.text,`, `${id.toUpperCase()},`];
+  const index = list.elements.findIndex((line) => needles.includes(line.trim()));
+  assert.notEqual(index, -1, `the composed list carries no element for ${id}: this fixture would prove nothing`);
+  return index;
+}
+
+/** One classed entry with one field's string rewritten - the entry found by its id, never by a neighbour's prose. */
+function withEntryField(source, id, field, value) {
+  const at = source.indexOf(`  ${id}: {\n`);
+  assert.notEqual(at, -1, `${id} is not an entry of GAME_SURFACE_CONDUCT_RULES: this fixture would prove nothing`);
+  const end = source.indexOf("\n  },", at);
+  assert.notEqual(end, -1, `the entry ${id} is not closed on a line of its own`);
+  const match = new RegExp(`${field}:\\s*"(?:[^"\\\\]|\\\\.)*"`, "u").exec(source.slice(at, end));
+  assert.notEqual(match, null, `the entry ${id} carries no ${field} string: ${source.slice(at, at + 80)}`);
+  const start = at + match.index;
+  const [before, after] = [source.slice(0, start), source.slice(start + match[0].length)];
+  return `${before}${field}: ${JSON.stringify(value)}${after}`;
+}
+
+/** The first rule the floor module itself declares with this class, read from the tree's own table. */
+function floorRuleOfClass(klass) {
+  const rule = REAL_READING.rules.find((row) => row.module === FLOOR_MODULE && row.class === klass);
+  assert.ok(rule, `the floor declares no ${klass} rule, so this case has nothing to break`);
+  return rule;
+}
+
+/** Two composed rules that sit next to each other and are not of one class - the swap a positional table cannot survive. */
+function differentClassNeighbours() {
+  for (let index = 0; index + 1 < REAL_READING.rules.length; index += 1) {
+    const [left, right] = [REAL_READING.rules[index], REAL_READING.rules[index + 1]];
+    if (right.index === left.index + 1 && left.class !== right.class) return [left, right];
+  }
+  assert.fail("the floor composes no adjacent pair of different classes, so a swap could not move a class");
+}
+
 test("every composed rule carries a class from the entry it names, and none of them governs form", () => {
   const reading = auditConductClasses({ root: REPOSITORY_ROOT });
   assert.deepEqual(codes(reading), [], "the tree's own conduct is fully classified");
-  assert.ok(reading.examined >= 15, `examined ${String(reading.examined)} rules, too few to be the floor's own list`);
+  // Re-derived from the tables (this read `examined >= 15` for the 19-rule floor): the composed list is exactly the
+  // population the two tables declare, so a shorter reading is a truncated list and a longer one is an element no
+  // table classifies.
+  assert.equal(
+    reading.examined,
+    DECLARED,
+    `the composed list carries ${String(reading.examined)} rules and the floor's tables declare ${String(DECLARED)}`,
+  );
   assert.equal(
     reading.classes.FLOOR + reading.classes.CHANNEL + reading.classes.FORM,
     reading.examined,
@@ -141,19 +231,24 @@ test("a form rule restored to the floor is named with the module that carries it
 test("reordering the composed list moves the prompt, not a class", async () => {
   // The shift that was invisible: two composed rules of different classes swapped positions. The element is a reference
   // to its entry, so the class travels with it - the swap changes the reading order and nothing else.
-  const floor = REAL_FLOOR.replace(
-    "  GAME_SURFACE_CONDUCT_RULES.one_utterance_per_reply.text,\n  GAME_SURFACE_CONDUCT_RULES.observed_only.text,",
-    "  GAME_SURFACE_CONDUCT_RULES.observed_only.text,\n  GAME_SURFACE_CONDUCT_RULES.one_utterance_per_reply.text,",
-  );
+  // The pair is read from the tables rather than pinned at 10 and 11, which was where these two rules sat in the
+  // 19-rule list: the pair only has to be adjacent and of different classes for the swap to be able to move a class.
+  const [left, right] = differentClassNeighbours();
+  const list = composedList(REAL_FLOOR);
+  const [leftAt, rightAt] = [elementIndex(list, left.id), elementIndex(list, right.id)];
+  assert.equal(rightAt, leftAt + 1, `${left.id} and ${right.id} are no longer neighbours in the composed list`);
+  const elements = [...list.elements];
+  [elements[leftAt], elements[rightAt]] = [elements[rightAt], elements[leftAt]];
+  const floor = rebuild({ ...list, elements });
   assert.notEqual(floor, REAL_FLOOR, "the fixture must really reorder the composed list");
   const reading = await withFixtureRoot({ floor }, (root) => auditConductClasses({ root }));
   assert.deepEqual(codes(reading), [], "a reordering is an order change: it cannot move a class off its rule");
   const at = (index) => reading.rules.find((rule) => rule.index === index);
   assert.deepEqual(
-    [at(10), at(11)].map((rule) => [rule?.id, rule?.class]),
+    [at(left.index), at(right.index)].map((rule) => [rule?.id, rule?.class]),
     [
-      ["observed_only", "FLOOR"],
-      ["one_utterance_per_reply", "CHANNEL"],
+      [right.id, right.class],
+      [left.id, left.class],
     ],
     "each element still reads as the class its own entry declares, whatever position it sits at",
   );
@@ -182,7 +277,14 @@ test("a class restated in a table beside the rules is named with both classes", 
     "FLOOR",
     "the rule is still read as its own entry classifies it: the table cannot move it",
   );
-  assert.equal(reading.classes.CHANNEL, 9, "the counts are the entries', not the restated table's");
+  // Re-derived from the entries (this read `CHANNEL === 9`, the 19-rule floor's count): the table below moves one FLOOR
+  // rule into CHANNEL and one CHANNEL rule into FLOOR, so a table that won would leave both counts off by one.
+  assert.equal(
+    reading.classes.CHANNEL,
+    REAL_READING.classes.CHANNEL,
+    "the counts are the entries', not the restated table's",
+  );
+  assert.equal(reading.classes.FLOOR, REAL_READING.classes.FLOOR, "the restated table moves no rule out of FLOOR");
 });
 
 // The report is the half `tools/lib/harness-conformance.mjs` reads, so it is driven over the CLI rather than the library:
@@ -264,22 +366,24 @@ test("a rule's text spelled into the composed list is named by its position and 
   const reading = await withFixtureRoot({ floor }, (root) => auditConductClasses({ root }));
   assert.deepEqual(
     codes(reading),
-    ["conduct_rule_without_a_class:19:Speak before you act: when"],
+    [`conduct_rule_without_a_class:${APPENDED_INDEX}:Speak before you act: when`],
     "a rule written into the prompt has no entry for its class to live in, so the gate says which position and words",
   );
   assert.match(reading.violations[0].detail, /compose it as a reference to that entry/u);
 });
 
 test("a Stardew rule taken out of the floor leaves its class behind, and that is stale rather than harmless", async () => {
-  // The anchor is the composed element AND the line that follows it: the name also appears once in this module's import
-  // list, and a fixture that removed that occurrence instead would be testing the import sorter.
-  const floor = REAL_FLOOR.replace(
-    "  CONTENT_IDS_IN_WORDS,\n  GAME_SURFACE_CONDUCT_RULES.refusal_in_person.text,",
-    "  GAME_SURFACE_CONDUCT_RULES.refusal_in_person.text,",
-  );
+  // The element is located inside the composed list and removed there: the name also appears once in this module's import
+  // list, and the anchor this case used to carry was the line of the rule that followed it (`refusal_in_person`, gone in
+  // af080cb6), so the fixture stopped dropping the element at all.
+  const removed = REAL_READING.rules.find((rule) => rule.module === STARDEW_MODULE);
+  assert.ok(removed, `${STARDEW_MODULE} contributes no rule to the floor, so this case has nothing to remove`);
+  const list = composedList(REAL_FLOOR);
+  const at = elementIndex(list, removed.id);
+  const floor = rebuild({ ...list, elements: list.elements.filter((_, index) => index !== at) });
   assert.notEqual(floor, REAL_FLOOR, "the fixture must really drop the element, or it proves nothing");
   const reading = await withFixtureRoot({ floor }, (root) => auditConductClasses({ root }));
-  assert.deepEqual(codes(reading), ["stale_conduct_class:content_ids_in_words"]);
+  assert.deepEqual(codes(reading), [`stale_conduct_class:${removed.id}`]);
   assert.match(reading.violations[0].detail, /removing a rule must remove its class entry/u);
 });
 
@@ -287,25 +391,26 @@ test("a name the floor composes but no module declares is unowned, not silently 
   const reading = await withFixtureRoot({ floor: withComposedElement(REAL_FLOOR, "GHOST_RULE,") }, (root) =>
     auditConductClasses({ root }),
   );
-  assert.deepEqual(codes(reading), ["conduct_rule_unowned:19:GHOST_RULE"]);
+  assert.deepEqual(codes(reading), [`conduct_rule_unowned:${APPENDED_INDEX}:GHOST_RULE`]);
 });
 
 test("a class outside the three kinds is a finding, not a fourth kind", async () => {
-  // `class: "FLOOR"` alone also matches other entries, so the anchor carries this entry's own reason.
-  const floor = REAL_FLOOR.replace(
-    'class: "FLOOR",\n    reason: "the person before the work',
-    'class: "STYLE",\n    reason: "the person before the work',
-  );
+  // The entry is chosen from the reading and edited inside its own braces: the anchor this case used to carry was the
+  // reason sentence of `partner_words_first`, and that rule left the floor in af080cb6.
+  const target = floorRuleOfClass("FLOOR");
+  const floor = withEntryField(REAL_FLOOR, target.id, "class", "STYLE");
   assert.notEqual(floor, REAL_FLOOR, "the fixture must really change an entry's class");
   const reading = await withFixtureRoot({ floor }, (root) => auditConductClasses({ root }));
-  assert.deepEqual(codes(reading), ["conduct_class_unknown:partner_words_first"]);
+  assert.deepEqual(codes(reading), [`conduct_class_unknown:${target.id}`]);
   assert.match(reading.violations[0].detail, /is not one of FLOOR \/ CHANNEL \/ FORM/u);
 });
 
 test("a class with no reason is a label nobody argued for", async () => {
-  const floor = REAL_FLOOR.replace(/reason: "the person before the work[^"]*",/u, 'reason: "",');
+  const target = floorRuleOfClass("FLOOR");
+  const floor = withEntryField(REAL_FLOOR, target.id, "reason", "");
+  assert.notEqual(floor, REAL_FLOOR, "the fixture must really blank an entry's reason");
   const reading = await withFixtureRoot({ floor }, (root) => auditConductClasses({ root }));
-  assert.deepEqual(codes(reading), ["conduct_class_without_reason:partner_words_first"]);
+  assert.deepEqual(codes(reading), [`conduct_class_without_reason:${target.id}`]);
 });
 
 test("an unreadable conduct is blocked, and the CLI never calls it green", async () => {
@@ -327,11 +432,11 @@ test("an unreadable conduct is blocked, and the CLI never calls it green", async
 
 test("a list no longer written one rule per line is blocked, not silently mis-read", async () => {
   // The reader's premise is the file's own doc (one element per line). An element split across two lines is a shape this
-  // gate cannot read, and reporting a shorter population would hide whatever the floor now contains.
-  const floor = REAL_FLOOR.replace(
-    "  GAME_SURFACE_CONDUCT_RULES.partner_words_first.text,",
-    "  GAME_SURFACE_CONDUCT_RULES.partner_words_first.text\n  .text,",
-  );
+  // gate cannot read, and reporting a shorter population would hide whatever the floor now contains. The element is the
+  // first reference in the list itself: this case used to name `partner_words_first`, which left in af080cb6.
+  const element = composedList(REAL_FLOOR).elements.find((line) => line.trim().endsWith(".text,"));
+  assert.ok(element !== undefined, "the composed list carries no rule reference to split across two lines");
+  const floor = REAL_FLOOR.replace(element, element.replace(/\.text,$/u, "\n  .text,"));
   assert.notEqual(floor, REAL_FLOOR, "the fixture must really split an element across two lines");
   const reading = await withFixtureRoot({ floor }, (root) => auditConductClasses({ root }));
   assert.equal(reading.status, "blocked");
