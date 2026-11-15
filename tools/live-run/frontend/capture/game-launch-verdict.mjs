@@ -36,7 +36,7 @@ export const NOT_MEASURED_PREFIX = "NOT-MEASURED:";
  * A driver whose chain stopped at a gap the PRODUCT cannot cross says so, in its own word.
  *
  * The launch chain's own target - `instance=running` with `attachment=attached` - cannot be reached by
- * any launch this product performs today, for two reasons that are each a missing state rather than a
+ * any launch this product performs today, for reasons that are each a missing state rather than a
  * slow one (`PRODUCT_GAPS`). A driver that reported `failed` on that target would fail on every run of
  * every machine, and an instrument that fails on an impossible target teaches its readers to ignore it.
  * `failed` therefore keeps its meaning - the product refused something it was asked to do - and the
@@ -45,7 +45,7 @@ export const NOT_MEASURED_PREFIX = "NOT-MEASURED:";
 export const BLOCKED_BY_PRODUCT_PREFIX = "BLOCKED-BY-PRODUCT:";
 
 /**
- * The two gaps, by the name the verdict carries. Each is one named missing state, not a symptom:
+ * The three gaps, by the name the verdict carries. Each is one named missing state, not a symptom:
  *
  *   `instance_status_never_running` - a GameBuddy-launched Player Host is projected as
  *     `launching` for its whole life: the coordinator overrides the slot in
@@ -72,12 +72,33 @@ export const BLOCKED_BY_PRODUCT_PREFIX = "BLOCKED-BY-PRODUCT:";
  *     run proves this gap only by making the press the panel would make and reading BOTH sides: the
  *     confirmation went out, the game refused it `stardew_cabin_choice_stale`, and every cabin read in that
  *     run carried a window no longer than `CABIN_OFFER_USABLE_WINDOW_MS`.
+ *
+ *   `farmhand_not_initialized` - the confirmation reaches the Mod, the Mod creates a farmhand for the cabin
+ *     through the engine's own `Cabin.CreateFarmhand()` (`HostFarmhandProvisioner.cs:539`), finds the created
+ *     farmhand unusable, rolls it back and answers `rejected`/`farmhand_not_initialized`
+ *     (`integrations/stardew/HostFarmhandProvisioner.cs:572-580`, and the same reason code at :585-593 for the
+ *     id/name guard). No farmhand is left to bind, no binding is written, no manifest is published, and the
+ *     Host can only report its handoff `409 stardew_manifest_handoff_uncertain`. Measured 2026-11-15
+ *     (`.live-runs/runconfirm`): the press at 1794705319241, the Mod's rejected stamp at 1794705319293 (52 ms
+ *     later), the Host's 409 110 ms after that - and the game's own log names which guard fired:
+ *     "GameBuddy refused a first binding: id=-339058954489388311, customized=True, name='琥珀',
+ *     displayName='琥珀', expected='琥珀'". Three terms of that guard are satisfied by the
+ *     values it prints; the only one left standing is `UniqueMultiplayerID <= 0`, on an id the engine's own
+ *     creation path produced. That is the game owner's question, not this instrument's, and this gap only
+ *     records where the chain really stops.
  */
 export const PRODUCT_GAPS = Object.freeze({
   instanceStatusNeverRunning: "instance_status_never_running",
   attachNeedsNativeSave: "attach_needs_native_save",
   cabinOfferExpiresBeforeAnyUiCanAnswer: "cabin_offer_expires_before_any_ui_can_answer",
+  farmhandNotInitialized: "farmhand_not_initialized",
 });
+
+/** The Mod's own reason code for "the farmhand this cabin needed was never usable". */
+const FARMHAND_NOT_INITIALIZED_CODE = "farmhand_not_initialized";
+
+/** The Host's own answer when the manifest the attachment needs was never settled. */
+const MANIFEST_HANDOFF_UNCERTAIN_CODE = "stardew_manifest_handoff_uncertain";
 
 /**
  * The longest offer window that still leaves no room for a page to answer.
@@ -337,6 +358,11 @@ function describeGameLog(game) {
  * panel asking the Host by itself (the admitted launch's own bounded wait), and `cabin read(pressed)`
  * is the same read after this driver pressed the panel's refresh control - the second chance the
  * budget's end leaves a player, and a different fact about the fix under measurement.
+ *
+ * `cabin confirm accepted` is a rung of its own because the confirmation's ACCEPTANCE and its ANSWER
+ * are different facts: the answer can be a refusal (a lapsed choice, an uncertain handoff) while the
+ * game took the choice, and a reader who only saw "cabin confirm" could not tell the two apart. The
+ * proof is the Mod's own stamp for that confirmation, so the rung carries the press-to-stamp latency.
  */
 export const CHAIN_STEPS = Object.freeze({
   launchAdmitted: "launch admitted",
@@ -347,6 +373,7 @@ export const CHAIN_STEPS = Object.freeze({
   cabinReadAuto: "cabin read(auto)",
   cabinReadPressed: "cabin read(pressed)",
   cabinConfirm: "cabin confirm",
+  cabinConfirmAccepted: "cabin confirm accepted",
   attach: "attach",
 });
 
@@ -358,6 +385,7 @@ export const CHAIN_RUNGS = Object.freeze([
   Object.freeze([CHAIN_STEPS.cabinBuilt]),
   Object.freeze([CHAIN_STEPS.cabinReadAuto, CHAIN_STEPS.cabinReadPressed]),
   Object.freeze([CHAIN_STEPS.cabinConfirm]),
+  Object.freeze([CHAIN_STEPS.cabinConfirmAccepted]),
   Object.freeze([CHAIN_STEPS.attach]),
 ]);
 
@@ -401,7 +429,9 @@ export function chainStepsLine(chain) {
  * word still read `launching` proves the projection gap and nothing else - the chain did everything it
  * was asked. A confirmation the Mod answered with `awaiting_save` proves the save gap: the Mod's own
  * published word for "this binding is waiting for the engine to save", written at the confirmation and
- * never replaced because no save cycle ever came to persist it.
+ * never replaced because no save cycle ever came to persist it. A confirmation the Mod answered with
+ * `rejected`/`farmhand_not_initialized` proves the farmhand gap, which is further along than either: the
+ * Mod took the choice, could not use what the engine's creation path produced, and rolled it back.
  *
  * Anything else is `null`: no proof, no verdict, and the caller keeps reporting `failed`.
  */
@@ -425,6 +455,13 @@ export function classifyChainStop({
       verdict: VERDICTS.blockedByProduct,
       gap: PRODUCT_GAPS.attachNeedsNativeSave,
       detail: awaiting,
+    });
+  const rolledBack = farmhandNotInitializedReading(cabinConfirm, attachmentResponse, confirmPressedAtMs);
+  if (rolledBack !== null)
+    return Object.freeze({
+      verdict: VERDICTS.blockedByProduct,
+      gap: PRODUCT_GAPS.farmhandNotInitialized,
+      detail: rolledBack,
     });
   const stale = staleOfferReading(cabinConfirm);
   if (stale !== null)
@@ -479,13 +516,52 @@ function staleOfferReading(cabinConfirm) {
 function awaitingSaveReading(response, confirmPressedAtMs) {
   if (response === null || typeof response !== "object") return null;
   if (response.state !== "awaiting_save") return null;
-  const stamp = Number(response.updatedAtUnixMs);
-  const pressed = Number(confirmPressedAtMs);
-  // A response this run did not cause proves nothing about this run: no press, no freshness to check.
-  const writtenForThisRun =
-    Number.isFinite(stamp) && Number.isFinite(pressed) && pressed > 0 && stamp + 5_000 >= pressed;
-  if (!writtenForThisRun) return null;
+  const stamp = responseStampForPress(response, confirmPressedAtMs);
+  if (stamp === null) return null;
   const reason =
     typeof response.reasonCode === "string" && response.reasonCode.length > 0 ? response.reasonCode : "no_reason_code";
   return `the confirmation reached the Mod and the Mod answered state=awaiting_save/reason=${reason} (stardew-attachment-response.json, updated ${new Date(stamp).toISOString()}): the first binding is written by the engine's own Saving/Saved cycle (HostFarmhandProvisioner.cs:180-222), and the only trigger for one is HostAutomation.Enable (ModEntry.cs, TryTriggerNativeAutomationSave), which production never writes into the Mod's config`;
+}
+
+/**
+ * The Mod's own stamp when it wrote that response for THIS run's confirmation, or `null` when it did not.
+ *
+ * A response this run did not cause proves nothing about this run: a file with no press behind it, or one
+ * stamped further from the press than a round trip takes, is a write from an earlier launch that survived in
+ * the run root. The window is the same one the confirmation's own round trip is held to, and the driver uses
+ * this function for its chain rung so "stamped for this press" has one spelling.
+ */
+export function responseStampForPress(response, confirmPressedAtMs) {
+  const stamp = Number(response?.updatedAtUnixMs);
+  const pressed = Number(confirmPressedAtMs);
+  if (!Number.isFinite(stamp) || !Number.isFinite(pressed) || !(pressed > 0)) return null;
+  return stamp + 5_000 >= pressed ? stamp : null;
+}
+
+/**
+ * The Mod's own word for a confirmation it took and rolled back, or `null` when this run proved nothing of the
+ * kind.
+ *
+ * Three facts, all of them this run's own: a confirmation was SENT (a press the page answered itself never
+ * reaches the game, so it can prove nothing about the game's answer), the Mod answered THAT press with
+ * `state=rejected` and the reason code it gives a farmhand it could not use, and the Host answered the same
+ * confirmation with `409` and its own code for a handoff it could not settle. Both halves are required and
+ * neither is sufficient: the Mod's file is a write an earlier bootstrap directory could hold, and the Host's
+ * `409` names an uncertainty rather than its cause. Whatever one of the two the run holds alone, the
+ * classification stays silent and the caller keeps `failed`.
+ */
+function farmhandNotInitializedReading(cabinConfirm, attachmentResponse, confirmPressedAtMs) {
+  const requested = Number(cabinConfirm?.requested);
+  if (!Number.isFinite(requested) || requested <= 0) return null;
+  if (attachmentResponse === null || typeof attachmentResponse !== "object") return null;
+  if (attachmentResponse.state !== "rejected" || attachmentResponse.reasonCode !== FARMHAND_NOT_INITIALIZED_CODE)
+    return null;
+  const stamp = responseStampForPress(attachmentResponse, confirmPressedAtMs);
+  if (stamp === null) return null;
+  const refusals = (Array.isArray(cabinConfirm.refusals) ? cabinConfirm.refusals : []).filter(
+    (entry) => entry?.code === MANIFEST_HANDOFF_UNCERTAIN_CODE && Number(entry?.status) === 409,
+  );
+  if (refusals.length === 0) return null;
+  const latencyMs = stamp - Number(confirmPressedAtMs);
+  return `the confirmation was sent ${String(requested)} time(s) and the Mod answered it state=rejected/reason=${FARMHAND_NOT_INITIALIZED_CODE}, stamped ${new Date(stamp).toISOString()} (${String(latencyMs)}ms after the press, ${String(attachmentResponse.file)}/session/stardew-attachment-response.json), while the Host answered the same confirmation HTTP 409 ${MANIFEST_HANDOFF_UNCERTAIN_CODE}: the Mod creates the cabin's farmhand through the engine's own Cabin.CreateFarmhand(), finds the created farmhand unusable, rolls it back (integrations/stardew/HostFarmhandProvisioner.cs:572-580,585-593) and never writes the binding, so no manifest is published and the Host has nothing to admit`;
 }

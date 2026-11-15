@@ -21,6 +21,18 @@
  *                   THIS run's confirmation" - and the suite returned `pass 15 fail 2`. That is the shape a
  *                   classifier would leave behind if it reported `blocked_by_product` for a state it had not
  *                   proved, which is the one thing this vocabulary must never do.
+ *
+ * red-proof: inject  measured 2026-11-15, for the farmhand gap, twice: deleting the gap from `PRODUCT_GAPS`
+ *                   turned the gap assertion red with `actual: 'BLOCKED-BY-PRODUCT: undefined: x'` against
+ *                   `expected: 'BLOCKED-BY-PRODUCT: farmhand_not_initialized: x'` (the assertion pins the
+ *                   literal name for exactly that reason: comparing against the same object stayed green at
+ *                   first, which is the shape a self-referential test leaves behind), and short-circuiting
+ *                   `farmhandNotInitializedReading` turned it red with `TypeError: Cannot read properties of
+ *                   null (reading 'verdict')`. The suite returned `pass 21 fail 1` both times. Driving the same
+ *                   classifier with `.live-runs/runconfirm`'s recorded facts returned
+ *                   `blocked_by_product/farmhand_not_initialized`; with either half stripped from that copy it
+ *                   returned `null`, which is the run reading `failed
+ *                   cabin_handoff_did_not_attach:instance=launching/attachment=none`.
  */
 import assert from "node:assert/strict";
 import { test } from "node:test";
@@ -47,6 +59,7 @@ import {
   readinessOf,
   readBlockedByProduct,
   readNotMeasured,
+  responseStampForPress,
 } from "./game-launch-verdict.mjs";
 
 const GATE_PEER = Object.freeze({
@@ -251,10 +264,12 @@ test("the chain prints every rung, the elapsed each took, and every rung it neve
   ];
   const lines = describeChain(chain);
   assert.equal(lines.length, CHAIN_RUNGS.length);
-  assert.match(lines[0], /^CHAIN 1\/8 launch admitted @4s - the launch route answered HTTP 200$/u);
-  assert.match(lines[5], /^CHAIN 6\/8 cabin read\(auto\) @14s - /u);
-  // The rung the run never reached is printed BY NAME: a reader must not have to infer the stop.
-  assert.equal(lines[7], "CHAIN 8/8 attach - not reached");
+  assert.match(lines[0], /^CHAIN 1\/9 launch admitted @4s - the launch route answered HTTP 200$/u);
+  assert.match(lines[5], /^CHAIN 6\/9 cabin read\(auto\) @14s - /u);
+  // The rungs the run never reached are printed BY NAME: a reader must not have to infer the stop, and
+  // "the confirmation went out" is not the same fact as "the game took it".
+  assert.equal(lines[7], "CHAIN 8/9 cabin confirm accepted - not reached");
+  assert.equal(lines[8], "CHAIN 9/9 attach - not reached");
   assert.deepEqual(
     chain.filter((entry) => entry.name === CHAIN_STEPS.cabinReadAuto).map((entry) => entry.name),
     ["cabin read(auto)"],
@@ -264,8 +279,9 @@ test("the chain prints every rung, the elapsed each took, and every rung it neve
     { name: CHAIN_STEPS.launchAdmitted, atMs: 1_000, proof: "admitted" },
     { name: CHAIN_STEPS.cabinReadPressed, atMs: 2_000, proof: "after this driver pressed the refresh control" },
   ]);
-  assert.match(pressed[5], /^CHAIN 6\/8 cabin read\(pressed\) @2s - /u);
-  assert.equal(pressed[6], "CHAIN 7/8 cabin confirm - not reached");
+  assert.match(pressed[5], /^CHAIN 6\/9 cabin read\(pressed\) @2s - /u);
+  assert.equal(pressed[6], "CHAIN 7/9 cabin confirm - not reached");
+  assert.equal(pressed[7], "CHAIN 8/9 cabin confirm accepted - not reached");
   assert.equal(describeChain([])[0], "CHAIN: no rung of the launch chain was reached");
 });
 
@@ -335,6 +351,8 @@ test("the save gap needs the Mod's own fresh word for THIS run's confirmation", 
     }),
     null,
   );
+  // Including the Mod's `farmhand_not_initialized` word: on its own it proves nothing, because the gap it
+  // names needs the Host's own 409 beside it (the test below holds that half).
   for (const attachmentResponse of [
     null,
     { state: "ready", reasonCode: "none", updatedAtUnixMs: 1_000_000 },
@@ -403,4 +421,94 @@ test("the offer's window is proved by the run, so a refusal alone or a long wind
     }),
     null,
   );
+});
+
+/*
+ * The run the farmhand gap is named after (2026-11-15, `.live-runs/runconfirm/w-game-launch.txt`): the
+ * choice was pressed at 1794705319241, the Mod answered `rejected`/`farmhand_not_initialized` at
+ * 1794705319293 (52 ms), and the Host answered the SAME confirmation 409 at 1794705319403.
+ */
+const FARMHAND_RUN = Object.freeze({
+  state: Object.freeze({ ok: true, instanceStatus: "launching", attachmentStatus: "none" }),
+  confirmPressedAtMs: 1_794_705_319_241,
+  attachmentResponse: Object.freeze({
+    file: "56d27312-f52b-401f-bd6a-eb10a60e85ad",
+    schemaVersion: 1,
+    requestId: "37c8454b589b4b0eaf858d9a910dafad",
+    state: "rejected",
+    reasonCode: "farmhand_not_initialized",
+    updatedAtUnixMs: 1_794_705_319_293,
+    signature: "cMSpz5fKHFbZOoaFun9DJtkZO4PvLmE40Wz_TUAwMRE",
+  }),
+  cabinConfirm: Object.freeze({
+    requested: 1,
+    refusals: Object.freeze([{ status: 409, code: "stardew_manifest_handoff_uncertain" }]),
+    offers: Object.freeze([{ readAtMs: 1_794_705_318_314, expiresAtMs: 1_794_705_320_401 }]),
+  }),
+});
+const farmhandReading = (overrides = {}) => classifyChainStop({ ...FARMHAND_RUN, ...overrides });
+
+test("a farmhand the Mod created and rolled back proves its own gap, with both sides quoted", () => {
+  const reading = farmhandReading();
+  assert.equal(reading.verdict, VERDICTS.blockedByProduct);
+  assert.equal(reading.gap, PRODUCT_GAPS.farmhandNotInitialized);
+  // The word the report and the run's totals print, as a LITERAL: a comparison against the same object
+  // would stay green if the gap left `PRODUCT_GAPS`, and the driver would then print a gap with no name.
+  assert.equal(blockedByProductLine(reading.gap, "x"), "BLOCKED-BY-PRODUCT: farmhand_not_initialized: x");
+  // The Mod's side: its own word, its own stamp, and the latency the press caused.
+  assert.match(reading.detail, /state=rejected\/reason=farmhand_not_initialized/u);
+  assert.match(reading.detail, /52ms after the press/u);
+  // The Host's side: the code it answered the same confirmation with.
+  assert.match(reading.detail, /HTTP 409 stardew_manifest_handoff_uncertain/u);
+  assert.match(reading.detail, /HostFarmhandProvisioner\.cs/u);
+});
+
+test("one side of the farmhand gap is not the gap, so a run holding one stays failed", () => {
+  // The Host's 409 without the Mod's file is an uncertainty with no named cause.
+  assert.equal(farmhandReading({ attachmentResponse: null }), null);
+  // The Mod's file without the Host's answer is a write this run cannot tie to its own confirmation.
+  assert.equal(farmhandReading({ cabinConfirm: { ...FARMHAND_RUN.cabinConfirm, refusals: [] } }), null);
+  // A different Host code is a different answer, whatever the Mod wrote.
+  assert.equal(
+    farmhandReading({
+      cabinConfirm: { ...FARMHAND_RUN.cabinConfirm, refusals: [{ status: 409, code: "stardew_cabin_choice_stale" }] },
+    }),
+    null,
+  );
+  assert.equal(
+    farmhandReading({
+      cabinConfirm: {
+        ...FARMHAND_RUN.cabinConfirm,
+        refusals: [{ status: 400, code: "stardew_manifest_handoff_uncertain" }],
+      },
+    }),
+    null,
+  );
+  // A different reason code is a different cause, whatever the Host answered.
+  assert.equal(
+    farmhandReading({ attachmentResponse: { ...FARMHAND_RUN.attachmentResponse, reasonCode: "binding_conflict" } }),
+    null,
+  );
+  assert.equal(
+    farmhandReading({ attachmentResponse: { ...FARMHAND_RUN.attachmentResponse, state: "uncertain" } }),
+    null,
+  );
+  // A stamp from an earlier launch, or a confirmation this run never sent, proves nothing about this run.
+  assert.equal(
+    farmhandReading({ attachmentResponse: { ...FARMHAND_RUN.attachmentResponse, updatedAtUnixMs: 1_000 } }),
+    null,
+  );
+  assert.equal(farmhandReading({ confirmPressedAtMs: null }), null);
+  assert.equal(farmhandReading({ cabinConfirm: { ...FARMHAND_RUN.cabinConfirm, requested: 0 } }), null);
+});
+
+test("the Mod's stamp belongs to the press only within the freshness window, and the driver reads the same rule", () => {
+  assert.equal(
+    responseStampForPress(FARMHAND_RUN.attachmentResponse, FARMHAND_RUN.confirmPressedAtMs),
+    1_794_705_319_293,
+  );
+  // A response the press did not cause is not this run's: too old to belong to it, or no press at all.
+  assert.equal(responseStampForPress(FARMHAND_RUN.attachmentResponse, 1_794_705_400_000), null);
+  assert.equal(responseStampForPress(FARMHAND_RUN.attachmentResponse, null), null);
+  assert.equal(responseStampForPress(null, FARMHAND_RUN.confirmPressedAtMs), null);
 });

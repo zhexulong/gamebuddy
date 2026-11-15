@@ -53,12 +53,34 @@
 //
 // THREE VERDICTS, NOT TWO. The chain's own target - `instance=running` with `attachment=attached` - is
 // unreachable by construction for a GameBuddy-launched Player Host (`PRODUCT_GAPS` in
-// `game-launch-verdict.mjs` names both missing states, with the code that makes them missing). A driver
+// `game-launch-verdict.mjs` names each missing state, with the code that makes it missing). A driver
 // that failed on that target would fail on every machine, every run, for a reason no operator can act
 // on, and its readers would learn to ignore it. So the run prints the chain rung by rung - how far the
 // launch got, when, and the fact that proved it - and reports `blocked_by_product:<gap>` ONLY when this
 // run's own readings prove the gap it names. Everything else keeps its old word: `failed` is still the
 // product refusing something it was asked to do.
+//
+// WHERE THE CHAIN REALLY STOPPED ON 2026-11-15, and the two things that run REFUTED. The last run
+// (`.live-runs/runconfirm`, artifact `w-game-launch.txt`) pressed the cabin choice once and the game
+// TOOK it: the press at 1794705319241, the Mod's own stamp 52 ms later, and no
+// `stardew_cabin_choice_stale` anywhere in the run. What stopped the chain is the step after that: the
+// Mod created a farmhand for the cabin, found it unusable, rolled it back
+// (`integrations/stardew/HostFarmhandProvisioner.cs:572-580`) and answered
+// `rejected`/`farmhand_not_initialized` - stamped 1794705319293, 110 ms BEFORE the Host answered
+// `409 stardew_manifest_handoff_uncertain`. Both facts are in that run's artifact, which is why the stop
+// is now `blocked_by_product:farmhand_not_initialized` and not `failed`. Neither hypothesis below should
+// be re-derived:
+//
+//   - the 3 s advertisement was NOT the blocker. The one offer this run read carried a 2087 ms window
+//     (`expiresAtMs=1794705320401` read at 01:15:18.314Z) and the press landed 927 ms after that read,
+//     leaving 1160 ms of the window unspent. A page that answers inside two thirds of the Mod's beat is
+//     not a page the beat starved.
+//   - whether `expiresAtMs` is minted once per advertisement or refreshed on every read is UNMEASURED,
+//     and that absence is not a zero: the ten cabin reads before the offer was live all answered
+//     `state_unavailable` (409 at 1794705309009 .. 1794705317299) and the eleventh, at 1794705318314, was
+//     the run's only live offer - so there is no second one to compare it with. "Permanently stale" is
+//     therefore not a finding of this run either, and `staleOfferReading` in `game-launch-verdict.mjs`
+//     still requires two consecutive live reads before it will say the window is the cause.
 //
 // Named outcomes, never a bare timeout:
 //   NOT-MEASURED: guardian_pipe_unreachable | game_prerequisites_missing | game_install_absent |
@@ -66,7 +88,8 @@
 //                 installation_registration_refused | lifecycle_activation_refused |
 //                 no_installation_panel | no_installation_discovered | game_state_unreadable |
 //                 game_surface_cannot_start_turn | cabin_handoff_not_offered
-//   BLOCKED-BY-PRODUCT: instance_status_never_running | attach_needs_native_save
+//   BLOCKED-BY-PRODUCT: instance_status_never_running | attach_needs_native_save |
+//                 cabin_offer_expires_before_any_ui_can_answer | farmhand_not_initialized
 //   game_never_reached_ready:<instance>/<attachment>
 //   cabin_read_never_fired | cabin_handoff_no_cabin:<state> | cabin_handoff_not_admitted |
 //   cabin_handoff_did_not_attach:<state>
@@ -105,6 +128,7 @@ const {
   describeLaunchProgress,
   notMeasuredLine,
   readinessOf,
+  responseStampForPress,
 } = require("./game-launch-verdict.mjs");
 
 /** The line the player says into the game surface. One line, in the language the product is set to. */
@@ -1155,6 +1179,13 @@ async function hostAnswers(port) {
 
     /* The confirmation is in flight: the Mod provisions the farmhand and the Host admits its manifest. */
     say(`the cabin choice was confirmed; waiting up to ${String(BUDGET.cabinConfirmMs)}ms for the attachment`);
+    /*
+     * The Mod's own answer to THIS press, read once here rather than after the wait: it is what the press
+     * caused, it arrives within milliseconds of it, and the rung below carries that latency. The same
+     * reading is returned with the step, so the chain rung and the classification quote one file.
+     */
+    const attachmentResponse = readAttachmentResponse(launch.state?.declaredDataRoot ?? null);
+    const acceptStamp = responseStampForPress(attachmentResponse, confirmPressedAtMs);
     const attachBegan = Date.now();
     let attached = await page.evaluate(readGameState);
     let attachProgressAt = attachBegan;
@@ -1185,6 +1216,18 @@ async function hostAnswers(port) {
       `the choice ${JSON.stringify(presses[0]?.choices?.join(", ") ?? null)} was pressed and the confirm route answered ${describeConfirmAnswer(confirmAnswer)}; this driver then waited up to ${String(BUDGET.cabinConfirmMs)}ms for the attachment`,
       confirmPressedAtMs,
     );
+    /*
+     * The next rung, and it is a different fact from the one above: the game TOOK the choice. The proof is
+     * the Mod's own stamp for this press, which arrives in milliseconds and carries the latency here; a
+     * confirmation the page answered itself, or one written by an earlier launch, has no such stamp and the
+     * rung stays "not reached".
+     */
+    if (acceptStamp !== null)
+      chainReached(
+        CHAIN_STEPS.cabinConfirmAccepted,
+        `the game took the choice and the Mod answered this press ${String(acceptStamp - Number(confirmPressedAtMs))}ms later: state=${String(attachmentResponse.state)}/reason=${String(attachmentResponse.reasonCode ?? "no_reason_code")}, stamped ${new Date(acceptStamp).toISOString()} (${String(attachmentResponse.file)}/session/stardew-attachment-response.json)`,
+        acceptStamp,
+      );
     const attachLanded = attached.ok === true && attached.attachmentStatus === "attached";
     if (attachLanded) chainReached(CHAIN_STEPS.attach, `the Host published attachment=attached (${describeGameState(attached)}) ${String(Date.now() - attachBegan)}ms after the confirmation`);
     return {
@@ -1198,7 +1241,7 @@ async function hostAnswers(port) {
       confirmAnswer,
       confirms: { ...cabinConfirms },
       offers: cabinOffers,
-      attachmentResponse: readAttachmentResponse(launch.state?.declaredDataRoot ?? null),
+      attachmentResponse,
       elapsedMs: Date.now() - began,
       confirmMs: Date.now() - attachBegan,
       problems: [...problems.entries()],
@@ -1502,7 +1545,7 @@ async function hostAnswers(port) {
    * -> `host/src/game-browser/game-browser-state-provider.ts:167-172`). For a GameBuddy-launched host that
    * word can never be `running` (see `PRODUCT_GAPS` in `game-launch-verdict.mjs`), so a run that waited for
    * it would wait out its budget on every machine for ever. What is measured instead is the chain: how far
-   * it got, and whether the step that is left is one of the two gaps the product owns (`classifyChainStop`,
+   * it got, and whether the step that is left is one of the gaps the product owns (`classifyChainStop`,
    * which says nothing at all unless this run's own readings prove the gap it names).
    */
   let instanceGap = null;
