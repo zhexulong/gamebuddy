@@ -668,9 +668,16 @@ function main() {
   const inherited = verdict.inherited.declared ? "" : " (not declared)";
   for (const row of verdict.rows) {
     const cells = row.cells.length === 0 ? "unresolved" : row.cells.join(",");
-    console.log(
-      `[viewport-population] ${row.file}:${row.line} cells=${cells} — ${row.verdict ?? "unresolved: " + row.unresolved.join("; ")}`,
-    );
+    // A pinned one-cell site owes nothing and has no verdict, which is not the same fact as a reading the reader could
+    // not take. Printing both as "unresolved" made 106 of 155 sites read like failures, and a lane was sent to fix three
+    // of them before anyone noticed the sentence was the defect: `unresolved` here means the reader was refused, and a
+    // pinned site says what it pinned.
+    const state =
+      row.verdict ??
+      (row.unresolved.length === 0
+        ? `pinned to ${row.cells.length === 1 ? "one cell" : "cells"}`
+        : `unresolved: ${row.unresolved.join("; ")}`);
+    console.log(`[viewport-population] ${row.file}:${row.line} cells=${cells} — ${state}`);
   }
   console.log(
     `[viewport-population] examined ${verdict.examinedFiles} spec file(s) and ${verdict.examinedSites} viewport call ` +
