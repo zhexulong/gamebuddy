@@ -2,7 +2,6 @@ import assert from "node:assert/strict";
 import { readFile, rm } from "node:fs/promises";
 import test from "node:test";
 import {
-  buildChatCompanionSystemPrompt,
   createIdentityProfileBinding,
   identityProfileHash,
   type IdentityProfile,
@@ -12,6 +11,7 @@ import {
   writeIdentityProfile,
   writeIdentityProfileBinding,
 } from "../identity-profile.js";
+import { buildChatCompanionSystemPrompt } from "../companion-prompt-assembly.js";
 import { bindWindowsStaleLockReclaimer } from "../path-lock.js";
 import { identityKey, resolveRuntimePaths, type CompanionIdentity } from "../runtime-identity.js";
 import { canonicalTestRoot } from "../test-support/canonical-test-root.test-support.js";
@@ -119,8 +119,8 @@ test("clearing the directive removes the field and the mount prompt stays byte-i
       text: "Open every reply with a *micro-action*.",
       source: "card",
     });
-    // The directive is real: it renders a labelled section after the Host floor.
-    assert.ok(buildChatCompanionSystemPrompt(withVoice).includes("【角色演出指导（Character Voice & Directives）】"));
+    // The directive is real: it renders after the identity block, loaded bare.
+    assert.ok(buildChatCompanionSystemPrompt(withVoice).includes("Open every reply with a *micro-action*."));
 
     const cleared = await updateMountedCompanionVoice({
       identityProfilePath: profilePath,

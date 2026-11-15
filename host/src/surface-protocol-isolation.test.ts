@@ -3,7 +3,8 @@ import test from "node:test";
 
 import { buildGameCompanionSystemPrompt } from "./game-surface-prompt-floor.js";
 import { MOUNTED_GAME_SURFACE_TOOL_NAMES } from "./game-surface-prompt-floor.test-support.js";
-import { buildChatCompanionSystemPrompt, COMPANION_ACTION_SYNTAX } from "./identity-profile.js";
+import { buildChatCompanionSystemPrompt } from "./companion-prompt-assembly.js";
+import { COMPANION_ACTION_SYNTAX } from "./chat-surface-block.js";
 import { DEFAULT_COMPANION_PRESET } from "./tavern/default-companion-preset.js";
 
 /**

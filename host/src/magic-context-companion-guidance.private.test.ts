@@ -30,7 +30,8 @@ import { join } from "node:path";
 import test from "node:test";
 
 import { buildGameCompanionSystemPrompt } from "./game-surface-prompt-floor.js";
-import { buildChatCompanionSystemPrompt, CHAT_SURFACE_SKIP_SIGNATURE } from "./identity-profile.js";
+import { buildChatCompanionSystemPrompt } from "./companion-prompt-assembly.js";
+import { CHAT_SURFACE_SKIP_SIGNATURE } from "./chat-surface-block.js";
 import {
   buildCompanionDeskGuidance,
   COMPANION_DESK_GUIDANCE_FILE_NAME,

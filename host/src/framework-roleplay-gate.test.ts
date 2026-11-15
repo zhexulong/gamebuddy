@@ -4,49 +4,73 @@ import { dirname, join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
+import ts from "typescript";
+
 import { buildGameCompanionSystemPrompt } from "./game-surface-prompt-floor.js";
+import { DEFAULT_IDENTITY_PROFILE, type IdentityProfile, identityProfileMacros } from "./identity-profile.js";
 import {
-  DEFAULT_IDENTITY_PROFILE,
   buildChatCompanionSystemPrompt,
-  companionFrameworkLines,
-} from "./identity-profile.js";
+  COMPANION_FORMAT_TEMPLATES,
+  fillTemplate,
+  renderIdentityProfile,
+} from "./companion-prompt-assembly.js";
+import { renderMacros } from "./tavern/macro-engine.js";
+import { DEFAULT_COMPANION_PRESET } from "./tavern/default-companion-preset.js";
 
 /**
- * THE SHARED FRAMEWORK STATES THE WRAPPER, AND A ROLEPLAY RULE IS THE PRESET'S.
+ * THE FRAMEWORK EMITS NO INPUT AT ALL, AND THIS FILE HOLDS THAT STRUCTURALLY - BESIDE THE TWO LEDGERS THE
+ * DELETIONS LEFT.
  *
  * <p>
- * WHAT THE DEFECT IS. `companionFrameworkLines` is the immutable head of both surfaces' Tier-1 prefix - it renders
- * before the surface block, before the identity block, and before the card's own directive - so a behaviour rule
- * written there beats the preset the player actually mounted. Five sentences were written there anyway: how long a turn
- * is, whose voice the turn may use, the reply's pacing, the fourth wall, and the assistant register. SillyTavern's own
- * division puts every one of those in the PRESET (Main Prompt: "global roleplay rules - tone, structure, behavior";
- * Post-History Instructions: reply length and pacing), so the framework was carrying a second authority over the
- * player's own preset, and the one that spoke first.
+ * THE DEFECT, IN THREE MOVES. (1) `identity-profile.ts` holds the PROFILE and used to RENDER it: a data module doing
+ * the assembly layer's job, which is why it grew sentences that were nobody's to write. (2) The sentences it grew - a
+ * binding line, a form line, and a language constraint - sat at the immutable head of the Tier-1 prefix, so whatever
+ * was written there outranked the preset the player mounted and the card they imported. (3) The card's own text was
+ * wrapped in an invented header (`【角色演出指导…】`), an invented framing sentence ("Your author wrote what follows…") and
+ * a closing precedence bound, and the player's addition got the same treatment - a wrapper that trusted neither, and
+ * whose "what is stated above wins" formula asked the MODEL to arbitrate two statements that should never have been
+ * made twice.
  * </p>
  *
  * <p>
- * THE PROPERTY, and why it is not a phrase list. The population is the framework's OWN shared sentences, read from the
- * function that builds them rather than transcribed here, so a sentence added tomorrow is examined without an edit in
- * this file. The property is a KIND, not a wording: a sentence that constrains tone, length, pacing, roleplay scope or
- * the fourth wall belongs to the preset, and the shapes below are the kinds that kind appears in. A rule reworded into
- * words no phrase list anticipates still matches a shape, because the shape names what the rule DOES.
+ * WHAT REPLACED IT, and the canon's own words for it. SillyTavern's Format Templates are "string templates used to
+ * WRAP the information pulled from World Info and Character Cards" - wrapping, no content - and its precedence is
+ * POSITIONAL: Main, then the character's fields, then the world info, then the history, then the post-history
+ * instructions. The canon writes no "what is stated above wins" anywhere, because position IS the mechanism. So the
+ * identity block renders through one declared table of templates (`COMPANION_FORMAT_TEMPLATES`), the card's directive
+ * loads bare where the card's voice belongs, the player's words load under the player-turn template, and the ORDER - the
+ * whole of the precedence rule - is declared once, as a list, at the top of `companion-prompt-assembly.ts`.
  * </p>
  *
  * <p>
- * THE OTHER HALF: A DELETION IS ONLY A MOVE IF SOMEBODY STILL SAYS IT. The five sentences this unit removed are listed
- * below with the owner that states each one, and each owner is read from the product's own text - the persona corpus
- * (the card's `system_prompt`/`post_history_instructions` and every preset's `prompts[].content`) or the Chat surface
- * block. A rule that leaves the framework and is stated nowhere reds as
- * `retired_roleplay_rule_without_owner:<slug>`, which is the failure a bare deletion produces: the rule silently stops
- * existing, and the next run measures a companion nobody told. The corpus is the files a session mounts, and a zero
- * population there is blocked rather than passed.
+ * GATE ONE, `framework_emits_an_input_sentence:<sentence>`. Population: every string and template literal in the two
+ * modules that may emit prompt text, read out of their sources rather than transcribed here. Property: a FIELD LABEL or
+ * a TEMPLATE DELIMITER. A string that states a second person, a modal rule, a precedence claim, or runs longer than a
+ * label fails. The profile's own stored values (`DEFAULT_IDENTITY_PROFILE`) are counted separately and never classified:
+ * a value the framework CARRIES is the card-shaped data a player replaces, not a sentence the framework WRITES.
+ * </p>
+ *
+ * <p>
+ * GATE TWO, `assembled_block_has_no_instruction:<block>`. Population: every line of the assembled identity block, as the
+ * product really renders it. Property: each line is explained by exactly one declared template bound to a field value,
+ * so a sentence added to the block reds even if it is written in words no classifier anticipates.
+ * </p>
+ *
+ * <p>
+ * THE TWO LEDGERS, because a deletion is only a MOVE if somebody still says it. Every sentence this unit removed is
+ * listed with the owner that states it now, and each owner is read from the product's own text - the persona corpus
+ * (the card's `system_prompt`/`post_history_instructions`, every preset's `prompts[].content`), the surface blocks, or
+ * the profile's own rendering. A rule that leaves and is stated nowhere reds as
+ * `retired_roleplay_rule_without_owner:<slug>` or `retired_card_restatement_without_owner:<claim>`. Zero population in
+ * either ledger is blocked, never passed.
  * </p>
  *
  * <p>
  * WHAT THIS GATE DOES NOT READ, stated so the next reader does not mistake its boundary for the whole authority split:
- * the Game floor's own rules (its class table and `conversational-stance-gate.test.ts` hold those), and the Chat surface
- * block's own sentences - which now legitimately carry one surface-scoped roleplay rule, because it is true on Chat and
- * false on Game. What this gate holds is the SHARED list: the text both surfaces read before their own.
+ * the surface blocks' own sentences (`game-surface-prompt-floor.ts` and `chat-surface-block.ts` hold those, with their
+ * own class tables and gates - `input-claim-gate.test.ts` measures them against every other writer), and the preset's
+ * own prose, which `presetOverlaps` reports. What this file holds is the FRAMEWORK's own emission and the two ledgers
+ * of what left it.
  * </p>
  */
 
@@ -63,7 +87,7 @@ const REPOSITORY_ROOT = (() => {
 const PRESETS_DIRECTORY = "assets/tavern/presets";
 const DEFAULT_CARD = join(PRESETS_DIRECTORY, "default-companion", "card.json");
 
-/** The language this gate renders the framework with. Any locale works: no shape below reads it. */
+/** The language the shared head renders with. Any locale works: no shape below reads it. */
 const LANGUAGE = "en-US";
 
 /** One kind of roleplay rule, with the property it protects - so a failure says what to do, not which string matched. */
@@ -141,10 +165,226 @@ export function roleplayRuleFindings(sentences: readonly string[]): readonly str
   return findings;
 }
 
-/** The framework's shared sentences: the population, derived from the builder both surfaces call. */
-const FRAMEWORK_SENTENCES: readonly string[] = companionFrameworkLines(DEFAULT_IDENTITY_PROFILE, LANGUAGE).filter(
-  (line) => line.trim().length > 0,
-);
+/**
+ * THE STRINGS THE FRAMEWORK MODULE EMITS: every string and template literal in its source, attributed to the
+ * declaration that holds it.
+ *
+ * The population is the MODULE, not a list of sentences: a line added tomorrow is examined without an edit here.
+ * `DEFAULT_IDENTITY_PROFILE`'s own text is counted separately and never classified - those strings are the placeholder
+ * profile's FIELDS (the card-shaped data a player replaces), and a value the framework CARRIES is not a sentence the
+ * framework WRITES. The split is printed on every run so the count cannot hide a shrinking population.
+ */
+type SourceString = Readonly<{ where: string; text: string; profileValue: boolean }>;
+
+function declarationPath(node: ts.Node): string {
+  const names: string[] = [];
+  let current: ts.Node | undefined = node.parent;
+  while (current !== undefined) {
+    if (ts.isVariableDeclaration(current) && ts.isIdentifier(current.name)) names.push(current.name.text);
+    if (ts.isPropertyAssignment(current) && (ts.isIdentifier(current.name) || ts.isStringLiteral(current.name)))
+      names.push(current.name.text);
+    if (ts.isFunctionDeclaration(current) && current.name !== undefined) names.push(current.name.text);
+    current = current.parent;
+  }
+  return names.slice(0, 2).reverse().join(".");
+}
+
+function sourceStrings(file: string): readonly SourceString[] {
+  const path = join(REPOSITORY_ROOT, file);
+  const source = ts.createSourceFile(path, readFileSync(path, "utf8"), ts.ScriptTarget.ESNext, true);
+  const strings: SourceString[] = [];
+  const visit = (node: ts.Node): void => {
+    const isLiteral =
+      ts.isStringLiteral(node) ||
+      ts.isNoSubstitutionTemplateLiteral(node) ||
+      ts.isTemplateHead(node) ||
+      ts.isTemplateMiddle(node) ||
+      ts.isTemplateTail(node);
+    if (isLiteral) {
+      let profileValue = false;
+      let moduleSpecifier = false;
+      for (let ancestor: ts.Node | undefined = node.parent; ancestor !== undefined; ancestor = ancestor.parent) {
+        if (
+          ts.isVariableDeclaration(ancestor) &&
+          ts.isIdentifier(ancestor.name) &&
+          ancestor.name.text === "DEFAULT_IDENTITY_PROFILE"
+        )
+          profileValue = true;
+        if (ts.isImportDeclaration(ancestor) || ts.isExportDeclaration(ancestor)) moduleSpecifier = true;
+      }
+      // An import specifier is a path this module reads, never text it hands the model.
+      if (moduleSpecifier) {
+        ts.forEachChild(node, visit);
+        return;
+      }
+      strings.push(
+        Object.freeze({
+          where: `${file.replace(/^host\/src\//u, "")}:${declarationPath(node)}`,
+          text: node.text,
+          profileValue,
+        }),
+      );
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(source);
+  return strings;
+}
+
+/**
+ * A string that instructs, in the shapes an instruction takes.
+ *
+ * THE PROPERTY IS A KIND, NOT A WORDING: a sentence aimed at her (a second person or an imperative verb), a precedence
+ * claim ("wins", "holds", "still", "above"), or a rule with a modal ("never", "always", "must"). A field label and a
+ * template delimiter carry none of those, which is why they pass and a sentence cannot.
+ */
+const INSTRUCTION_KINDS: readonly Readonly<{ id: string; pattern: RegExp }>[] = Object.freeze([
+  Object.freeze({
+    id: "second-person",
+    pattern: /\b(?:you|your|yours|yourself|you're)\b|你|您|自己/iu,
+  }),
+  Object.freeze({
+    id: "modal-rule",
+    pattern:
+      /\b(?:never|always|must|should|do not|don't|only|unless|instead|follow|keep|avoid)\b|不要|不准|绝不|严禁|一律|始终|必须|不得|千万别/iu,
+  }),
+  Object.freeze({
+    id: "precedence-claim",
+    pattern:
+      /\b(?:wins?|winning|holds?|above|below|supreme|outranks?|overrides?|still|regardless)\b|以上|上面|仍然|为准|优先/iu,
+  }),
+  Object.freeze({
+    id: "imperative-verb",
+    pattern:
+      /^\s*(?:reply|speak|write|say|think|reason|answer|render|produce|perform|remember|never|keep|stay|address|describe|consider|maintain|follow)\b/imu,
+  }),
+]);
+
+/** A sentence ends, or clauses join: a label never carries one. */
+const SENTENCE_PUNCTUATION = /[.!?;。！？；，,]/u;
+
+/**
+ * The gate's reading: every emitted string that is not a field label or a template delimiter, as the failure code that
+ * names it.
+ *
+ * Exported so the falsifier drives the SAME classifier with text the product does not carry.
+ */
+export function frameworkInstructionFindings(strings: readonly SourceString[]): readonly string[] {
+  const findings: string[] = [];
+  for (const string of strings) {
+    if (string.profileValue) continue;
+    const withoutSlots = string.text.replace(/\{\d+\}/gu, "");
+    const core = withoutSlots
+      .replace(/[\[\]<>【】（）()「」"'`]/gu, "")
+      .replace(/[:：]/gu, "")
+      .trim();
+    if (core.length === 0) continue;
+    const words = core.split(/\s+/u).filter((word) => word.length > 0);
+    const cjk = [...core].filter((character) => /[\u3400-\u9fff]/u.test(character)).length;
+    // A label is short by definition - a pronoun, a field name, a delimiter - and a string that short cannot carry an
+    // instruction, so the cues below are not asked about it. `你` labels the player's turn; `You are 琥珀` is a sentence.
+    if (words.length <= 2 && cjk <= 3) continue;
+    const kind = INSTRUCTION_KINDS.find((candidate) => candidate.pattern.test(core));
+    const tooLong = words.length > 4 || cjk > 4;
+    if (kind === undefined && !SENTENCE_PUNCTUATION.test(core) && !tooLong) continue;
+    findings.push(
+      `framework_emits_an_input_sentence:${slugOf(string.text)}\n    ${string.where}: "${string.text}"\n    ${kind === undefined ? `shaped like a sentence (${String(words.length)} words, ${String(cjk)} CJK characters)` : `states a ${kind.id}`}\n    -> emit a field label or a template delimiter here; an instruction is the preset's, the card's, or the surface's`,
+    );
+  }
+  return findings;
+}
+
+/** The modules that may emit prompt text: the data module first, because an empty population there is the goal. */
+const FRAMEWORK_MODULES: readonly string[] = Object.freeze([
+  "host/src/identity-profile.ts",
+  "host/src/companion-prompt-assembly.ts",
+]);
+
+const FRAMEWORK_STRINGS: readonly SourceString[] = FRAMEWORK_MODULES.flatMap((file) => sourceStrings(file));
+
+/**
+ * GATE TWO: the identity block is the declared templates filled with the profile's fields, and nothing else.
+ *
+ * The population is the block the product really renders, for both profiles a session can mount and both locales. The
+ * expected lines are built from ONE thing - the declared template table - plus the profile's own values and the product's
+ * own macro table: no sentence is written in this file. A line the product renders that this composition does not
+ * contain is text the assembler invented, and it is named whether or not the classifier above anticipated its wording.
+ *
+ * Exported so the falsifier drives the SAME reading on a block the product does not render.
+ */
+export function unexplainedBlockLines(block: string, profile: IdentityProfile, locale: string): readonly string[] {
+  const templates = COMPANION_FORMAT_TEMPLATES;
+  const macros = identityProfileMacros(profile, locale);
+  const render = (text: string): string => renderMacros(text, macros);
+  const expected = new Set<string>([""]);
+  const add = (template: string | undefined, values: readonly string[]): void => {
+    for (const line of fillTemplate(template ?? "", values).split("\n")) expected.add(line);
+  };
+  add(templates.character, [profile.identity.name]);
+  add(templates.role, [profile.identity.role]);
+  add(templates.continuity, [profile.identity.continuity]);
+  if (profile.persona?.core !== undefined) add(templates.coreDisposition, [render(profile.persona.core)]);
+  if (profile.persona?.interactionStyle !== undefined)
+    add(templates.interactionStyle, [render(profile.persona.interactionStyle)]);
+  if (profile.persona?.expressionStyle !== undefined)
+    add(templates.expressionStyle, [render(profile.persona.expressionStyle)]);
+  if (profile.examples !== undefined && profile.examples.length > 0) {
+    expected.add(templates.dialogueExamples ?? "");
+    const playerLabel = locale.toLowerCase().startsWith("zh") ? "你" : "You";
+    for (const example of profile.examples)
+      add(templates.exampleTurn, [playerLabel, render(example.user), profile.identity.name, render(example.companion)]);
+  }
+  const unexplained: string[] = [];
+  for (const line of block.split("\n")) {
+    if (expected.has(line)) continue;
+    unexplained.push(
+      `assembled_block_has_no_instruction:identity:${slugOf(line)}\n    "${line}"\n    -> the declared templates and the profile's fields do not produce this line, so the assembler wrote a sentence of its own`,
+    );
+  }
+  return unexplained;
+}
+
+test("the identity block is the declared templates and the card's fields, and nothing else", () => {
+  let examined = 0;
+  const findings: string[] = [];
+  for (const profile of [DEFAULT_IDENTITY_PROFILE, DEFAULT_COMPANION_PRESET.profile])
+    for (const locale of ["zh-CN", "en-US"]) {
+      const block = renderIdentityProfile(profile, locale);
+      examined += block.split("\n").filter((line) => line.length > 0).length;
+      findings.push(...unexplainedBlockLines(block, profile, locale));
+    }
+  process.stdout.write(`identity block lines examined ${String(examined)} · unexplained ${String(findings.length)}\n`);
+  assert.ok(examined > 0, "the identity block rendered no line, so nothing was examined");
+  assert.deepEqual(findings, []);
+});
+
+test("the block reading reds an invented line, and passes the card's own text in its slot", () => {
+  // THE FALSIFIER: same reading, a block the product does not render. A sentence appended after the identity block has to
+  // red - and the SAME sentence placed inside a field's slot must not, because that is the card's text, in the card's
+  // field, and the template is what makes the difference rather than the words.
+  const profile = DEFAULT_COMPANION_PRESET.profile;
+  const base = renderIdentityProfile(profile, "zh-CN");
+  const invented = "Remember to be kind, and never break character.";
+  assert.deepEqual(
+    unexplainedBlockLines(base, profile, "zh-CN"),
+    [],
+    "the product's own block must be explained before this falsifier means anything",
+  );
+  assert.deepEqual(
+    unexplainedBlockLines(`${base}\n${invented}`, profile, "zh-CN").map((finding) => finding.split("\n")[0]),
+    [`assembled_block_has_no_instruction:identity:${slugOf(invented)}`],
+    "a line the templates do not produce is the framework writing a sentence",
+  );
+  const inSlot = Object.freeze({
+    ...profile,
+    identity: Object.freeze({ ...profile.identity, role: invented }),
+  });
+  assert.deepEqual(
+    unexplainedBlockLines(renderIdentityProfile(inSlot, "zh-CN"), inSlot, "zh-CN"),
+    [],
+    "the same words in a field's slot are the field's value, not a rule",
+  );
+});
 
 /** One retired sentence, and every owner whose own text may carry it. */
 type RetiredRule = Readonly<{
@@ -195,7 +435,7 @@ function ownerTexts(): readonly Readonly<{ source: string; where: string; text: 
 }
 
 /**
- * The five sentences this unit took out of the framework, verbatim, and the owner that states each one now.
+ * The five roleplay rules this unit took out of the head, verbatim, and the owner that states each one now.
  *
  * The list is CLOSED on purpose: it is the ledger of what left, so the property "every rule that leaves has an owner"
  * is checkable at all. A new deletion adds a row here, which is the moment to name where it went.
@@ -235,34 +475,97 @@ const RETIRED_RULES: readonly RetiredRule[] = Object.freeze([
   }),
 ]);
 
-test("the shared framework states the wrapper and no roleplay rule", () => {
-  // The population is non-empty, or this gate would agree with itself.
+/**
+ * THE THIRD SURVIVOR: the chain-of-thought language constraint, which is a RUNTIME instruction and not a roleplay rule -
+ * the canon has no dedicated language setting and puts general instructions about the conversation in the preset's Main.
+ *
+ * It left the framework with the rest of the head and is stated by every preset's `main` now (in that preset's own
+ * language: a preset is authored text, and a player who wants another language binds another preset). The `locale` fact
+ * stays in the assembler, where it labels the player's turn; the INSTRUCTION is the preset's. This ledger is what stops
+ * it from being dropped on the way instead of moved: the pattern below reads the preset corpus, so a preset that stops
+ * saying it reds.
+ */
+const RETIRED_LANGUAGE_CONSTRAINT: RetiredRule = Object.freeze({
+  slug: "consistently-think-reason-and-converse-in-the-runs-language",
+  sentence:
+    "Consistently think, reason, and converse in <language>. Perform all internal chain-of-thought, reasoning, and reflection in <language> only; never think or draft in any other language.",
+  homes: Object.freeze([Object.freeze({ source: "persona corpus", pattern: /一律使用中文|一律用中文/u })]),
+});
+
+test("the framework emits no input sentence - every string it writes is a field label or a delimiter", () => {
+  const framework = FRAMEWORK_STRINGS.filter((string) => !string.profileValue);
+  const values = FRAMEWORK_STRINGS.length - framework.length;
+  // Zero population is BLOCKED, not passed: a module that emits nothing has to say so with the reason, and a module that
+  // was simply not read must not agree with itself.
   assert.ok(
-    FRAMEWORK_SENTENCES.length > 0,
-    "the shared framework rendered no sentence, so there is nothing to classify and no verdict to give",
+    FRAMEWORK_STRINGS.length > 0,
+    "no string was read from the framework module, so 'it emits no sentence' was never measured",
   );
-  const findings = roleplayRuleFindings(FRAMEWORK_SENTENCES);
+  const findings = frameworkInstructionFindings(framework);
   process.stdout.write(
-    `sentences examined ${String(FRAMEWORK_SENTENCES.length)} · roleplay rules ${String(findings.length)}\n`,
+    `strings examined ${String(framework.length)} · labels/delimiters ${String(framework.length - findings.length)} · sentences ${String(findings.length)} · profile values carried ${String(values)}\n`,
   );
+  assert.deepEqual(findings, []);
+});
+
+test("the classifier reds an instruction of every kind, and passes the labels this tree emits", () => {
+  // THE FALSIFIER. Same classifier, over strings the product no longer carries - the two bounds, the two invented headers,
+  // the language line, and one sentence written tomorrow in words none of them uses. If these came back green the gate
+  // above would be decoration.
+  const retired: readonly Readonly<{ where: string; text: string }>[] = Object.freeze([
+    Object.freeze({
+      where: "the card block's bound",
+      text: "Speak from that voice: the lines above describe your situation - who you are speaking with, the language you both use, what is really happening - and a voice changes how you sound, not the situation you are in.",
+    }),
+    Object.freeze({
+      where: "the player block's bound",
+      text: "Follow it in how you sound and what you turn your attention to: the lines above still describe the situation you are both in, and what your player wrote shapes your part in it, not the situation itself.",
+    }),
+    Object.freeze({
+      where: "the card block's invented header",
+      text: "【角色演出指导（Character Voice & Directives）】",
+    }),
+    Object.freeze({
+      where: "the player block's invented header",
+      text: "【玩家补充（Your Player's Own Instructions）】",
+    }),
+    Object.freeze({
+      where: "the card block's framing sentence",
+      text: "Your author wrote what follows as direction for how you speak and carry yourself.",
+    }),
+    Object.freeze({
+      where: "the player block's framing sentence",
+      text: "Your player wrote what follows, for how you play beside them.",
+    }),
+    Object.freeze({
+      where: "the shared head's language line",
+      text: "Consistently think, reason, and converse in Chinese (Simplified).",
+    }),
+    Object.freeze({ where: "the shared head's binding line", text: "You are 琥珀, accompanying the player." }),
+    Object.freeze({
+      where: "a rule written tomorrow",
+      text: "End every reply with a question so your partner has something to answer.",
+    }),
+  ]);
+  const findings = frameworkInstructionFindings(retired.map((row) => Object.freeze({ ...row, profileValue: false })));
+  assert.equal(
+    findings.length,
+    retired.length,
+    `each of the ${String(retired.length)} retired instructions must red, or the gate cannot see the class:\n${findings.join("\n")}`,
+  );
+  // And the labels this tree really emits stay green: a classifier that reds everything is as useless as one that reds
+  // nothing, and the two below are the whole of what the identity block writes.
   assert.deepEqual(
-    findings,
+    frameworkInstructionFindings([
+      Object.freeze({ where: "label", text: "[Character: 琥珀]", profileValue: false }),
+      Object.freeze({ where: "delimiter", text: "<START>", profileValue: false }),
+      Object.freeze({ where: "template", text: "Core disposition: ", profileValue: false }),
+    ]),
     [],
-    [
-      `${String(findings.length)} of ${String(FRAMEWORK_SENTENCES.length)} shared framework sentences state a roleplay rule:`,
-      ...findings.map((finding) => {
-        const sentence =
-          FRAMEWORK_SENTENCES.find(
-            (candidate) => `framework_states_a_roleplay_rule:${slugOf(candidate)}` === finding,
-          ) ?? "";
-        const shape = ROLEPLAY_SHAPES.find((candidate) => candidate.pattern.test(sentence));
-        return `  ${finding}\n    "${sentence}"\n    ${shape?.property ?? ""}\n    -> the preset owns this; delete it here (or move it to the preset that states it)`;
-      }),
-    ].join("\n"),
   );
 });
 
-test("the classifier reds a roleplay rule of each shape, and passes the wrapper's own sentences", () => {
+test("the classifier reds a roleplay rule of each shape, and passes the head's own line", () => {
   // THE FALSIFIER. It drives the same classifier the gate runs, over text the product no longer carries: the five
   // sentences this unit removed, verbatim, plus one written tomorrow in words none of them uses. If the classifier
   // could not red these, the gate above would be decoration.
@@ -279,15 +582,15 @@ test("the classifier reds a roleplay rule of each shape, and passes the wrapper'
     [`framework_states_a_roleplay_rule:${slugOf(tomorrow)}`],
     "a rule reworded tomorrow must match on its shape, not on a phrase this file remembers",
   );
-  // And the three sentences that stay are the wrapper: a binding, and the runtime's language. None of them may match.
+  // And the classifier must not call a field label a rule: a label names a slot, it does not constrain her.
   assert.deepEqual(
-    roleplayRuleFindings(FRAMEWORK_SENTENCES),
+    roleplayRuleFindings(["[Character: 琥珀]", "[Dialogue Examples]"]),
     [],
-    "the framework's own lines are the wrapper, so the classifier must not call them roleplay rules",
+    "a field label is not a roleplay rule, or every label in the prompt would red",
   );
 });
 
-test("every roleplay rule the framework gave up is stated by an owner that still mounts it", () => {
+test("every rule the framework gave up is stated by an owner that still mounts it", () => {
   const owners = ownerTexts();
   assert.ok(
     owners.length > 0,
@@ -301,7 +604,7 @@ test("every roleplay rule the framework gave up is stated by an owner that still
     Object.freeze({ source: "Chat surface block", where: "buildChatCompanionSystemPrompt", text: chatPrompt }),
   ];
   const orphaned: string[] = [];
-  for (const rule of RETIRED_RULES) {
+  for (const rule of [...RETIRED_RULES, RETIRED_LANGUAGE_CONSTRAINT]) {
     const stated = homes.filter((home) =>
       rule.homes.some((candidate) => candidate.source === home.source && candidate.pattern.test(home.text)),
     );
@@ -311,7 +614,7 @@ test("every roleplay rule the framework gave up is stated by an owner that still
       );
   }
   process.stdout.write(
-    `retired rules examined ${String(RETIRED_RULES.length)} · stated by an owner ${String(RETIRED_RULES.length - orphaned.length)}\n`,
+    `retired rules examined ${String(RETIRED_RULES.length + 1)} · stated by an owner ${String(RETIRED_RULES.length + 1 - orphaned.length)}\n`,
   );
   assert.deepEqual(orphaned, []);
 
@@ -323,5 +626,294 @@ test("every roleplay rule the framework gave up is stated by an owner that still
     gamePrompt,
     /not a reader of a story/iu,
     "the Game prompt must not carry the Chat frame rule: its preset says the game",
+  );
+});
+
+// ---------------------------------------------------------------------------
+// THE SECOND PROPERTY: THE HOST'S HEAD MAY NOT RESTATE WHAT THE CARD ALREADY
+// SAYS. A roleplay rule is one way the head can overreach; saying a fact a
+// second time is the other, and the two sentences that did it were invisible to
+// every shape above - "You are <name>, accompanying the player" is not a tone,
+// length, scope or frame rule, and neither is "in the first person, directly to
+// the player". Both were the card's: the name is `data.name` and already renders
+// as `[Character: <name>]`, and the address is `data.system_prompt`'s first line
+// (「始终使用第一人称「我」对 {{user}} 说话，称呼直接叫「你」或直呼名字」).
+// ---------------------------------------------------------------------------
+
+/**
+ * One fact the card carries, and the shape a Host sentence restates it in.
+ *
+ * `carriedBy` is printed on failure: a reader has to be able to see the two spellings side by side.
+ */
+type CardFact = Readonly<{
+  claim: string;
+  carriedBy: string;
+  /** A KIND, never a sentence: a restatement written tomorrow in new words still matches. */
+  restatedBy: RegExp;
+  /** The card text that states it, when stating it is the card's to do at all. */
+  statedBy?: RegExp;
+}>;
+
+/** The card's own statement of how a turn is addressed. Its first line states it; a card that stops saying so blocks. */
+const FORM_STATED_BY = /(?:第一人称|first person|直接叫|directly to)/u;
+/** A Host sentence prescribing the person or the addressee of the reply. Length is NOT here - see `cardFacts`. */
+const FORM_RESTATED_BY =
+  /(?:\b(?:first|third)[ -]person\b|\bdirectly to (?:the player|them)\b|\bwhose voice the turn may use\b|\baddress(?:ing)? the player\b)/iu;
+
+/**
+ * The facts THIS profile's card carries, derived from the profile rather than written down here.
+ *
+ * <p>
+ * The name, role and continuity are the three renderings `renderIdentityProfile` prints, and they are the profile's -
+ * which for an imported companion is the card's `data.name` and the reviewed text built from `data.description`. A
+ * Host sentence carrying one of them verbatim says nothing the identity block below it does not already say.
+ * </p>
+ *
+ * <p>
+ * Form is a KIND rather than a rendering, because the card states it in prose: `data.system_prompt` opens with the
+ * person and the addressee ("始终使用第一人称…称呼直接叫「你」"), and that text reaches the prompt as the profile's
+ * `characterVoice`. The claim is therefore only in the population when a card directive is mounted at all
+ * (`statedBy`), and a card that stops stating it is BLOCKED rather than passed.
+ * </p>
+ *
+ * <p>
+ * Length is deliberately NOT a card fact: the Game floor's "one bubble holds about 80 characters" is the surface's own
+ * delivery unit, read from `GAME_DELIVERY_PACING`, and `roleplayRuleFindings` is what decides that question.
+ * </p>
+ */
+export function cardFacts(profile: IdentityProfile): readonly CardFact[] {
+  const escaped = (text: string): string => text.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+  const name = profile.identity.name;
+  return Object.freeze([
+    Object.freeze({
+      claim: "name",
+      carriedBy: `[Character: ${name}]`,
+      restatedBy: new RegExp(`(?:^|[^\\p{L}\\p{N}])${escaped(name)}(?![\\p{L}\\p{N}])`, "u"),
+    }),
+    Object.freeze({
+      claim: "role",
+      carriedBy: `Role: ${profile.identity.role}`,
+      restatedBy: new RegExp(escaped(profile.identity.role), "u"),
+    }),
+    Object.freeze({
+      claim: "continuity",
+      carriedBy: `Continuity: ${profile.identity.continuity}`,
+      restatedBy: new RegExp(escaped(profile.identity.continuity), "u"),
+    }),
+    // Only a profile that mounts a card has a form to defer to; the placeholder carries no directive, so claiming one
+    // would be a premise nobody stated.
+    ...(profile.characterVoice === undefined
+      ? []
+      : [
+          Object.freeze({
+            claim: "form",
+            carriedBy: "the card's directive, carried as `characterVoice`",
+            restatedBy: FORM_RESTATED_BY,
+            statedBy: FORM_STATED_BY,
+          }),
+        ]),
+  ]);
+}
+
+/**
+ * The gate's reading: every Host line that says again something the card already says, as the claim it restates.
+ *
+ * Exported so the falsifier drives the SAME classifier with lines the product does not carry - a gate whose red case
+ * runs a different code path has been shown able to fail for a reason the product will never produce.
+ */
+export function cardRestatementFindings(
+  lines: readonly string[],
+  facts: readonly CardFact[],
+): readonly Readonly<{ claim: string; line: string }>[] {
+  const findings: { claim: string; line: string }[] = [];
+  for (const line of lines)
+    for (const fact of facts)
+      if (fact.restatedBy.test(line)) findings.push({ claim: `framework_restates_the_card:${fact.claim}`, line });
+  return findings;
+}
+
+/**
+ * The Host's own text in an assembled prompt: every non-blank line before the identity block.
+ *
+ * The boundary is the identity rendering itself rather than a marker typed here, so a renamed label moves the boundary
+ * with it. What this covers is the head - the shared constraint and the surface block - because everything after it is
+ * authored text (persona, examples, the card's directive, the player's addition) and quoting the card is what those
+ * sections are FOR.
+ */
+function hostHeadLines(prompt: string, profile: IdentityProfile, locale: string): readonly string[] {
+  const identity = renderIdentityProfile(profile, locale);
+  const at = prompt.indexOf(identity);
+  if (at <= 0) throw new Error("identity_block_not_found_in_assembled_prompt");
+  return prompt
+    .slice(0, at)
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
+}
+
+/** Both profiles a session can mount: the placeholder, and the shipped card. */
+const CARD_PROFILES: readonly Readonly<{ label: string; profile: IdentityProfile }>[] = Object.freeze([
+  Object.freeze({ label: "DEFAULT_IDENTITY_PROFILE", profile: DEFAULT_IDENTITY_PROFILE }),
+  Object.freeze({ label: "DEFAULT_COMPANION_PRESET.profile", profile: DEFAULT_COMPANION_PRESET.profile }),
+]);
+
+/**
+ * The two sentences the head gave up because the card already says them, and the card line that says each one now.
+ *
+ * The ledger is CLOSED, like `RETIRED_RULES`: a deletion is only a move if somebody still says it, so each row names
+ * the place it went and a predicate over the PRODUCT's own text decides whether it is still there. `<name>` stands for
+ * the profile's own, because the two sentences were built from it.
+ */
+type RetiredRestatement = Readonly<{
+  claim: string;
+  sentence: string;
+  carriedBy: string;
+  stated: (input: RestatementInput) => boolean;
+}>;
+
+/** The product's own text one restatement is looked for in: the assembled prompt, the directive, and her name. */
+type RestatementInput = Readonly<{ prompt: string; directive: string; name: string }>;
+
+const RETIRED_CARD_RESTATEMENTS: readonly RetiredRestatement[] = Object.freeze([
+  Object.freeze({
+    claim: "name",
+    sentence: "You are <name>, accompanying the player.",
+    carriedBy: "the identity rendering (`[Character: <name>]`, built from the card's `data.name`)",
+    stated: (input: RestatementInput) => input.prompt.includes(`[Character: ${input.name}]`),
+  }),
+  Object.freeze({
+    claim: "form",
+    sentence: "Reply as <name> would, in the first person, directly to the player.",
+    carriedBy: "the card's own directive (`data.system_prompt`, mounted as `characterVoice`)",
+    stated: (input: RestatementInput) => FORM_STATED_BY.test(input.directive),
+  }),
+]);
+
+/** Every retired restatement that nothing states any more, as the failure code that names it. */
+export function retiredRestatementGaps(input: RestatementInput): readonly string[] {
+  const gaps: string[] = [];
+  for (const row of RETIRED_CARD_RESTATEMENTS)
+    if (!row.stated(input))
+      gaps.push(
+        `retired_card_restatement_without_owner:${row.claim} - "${row.sentence}" left the Host's head and ${row.carriedBy} no longer states it`,
+      );
+  return gaps;
+}
+
+test("every fact the head stopped restating is still stated by the card that owns it", () => {
+  const profile = DEFAULT_COMPANION_PRESET.profile;
+  const prompt = buildGameCompanionSystemPrompt(profile, LANGUAGE);
+  const input = Object.freeze({ prompt, directive: profile.characterVoice?.text ?? "", name: profile.identity.name });
+  process.stdout.write(`retired restatements examined ${String(RETIRED_CARD_RESTATEMENTS.length)}\n`);
+  assert.ok(
+    RETIRED_CARD_RESTATEMENTS.length > 0,
+    "a ledger with no rows would pass while every claim in it went unstated",
+  );
+  assert.deepEqual(retiredRestatementGaps(input), []);
+
+  // THE FALSIFIER: the same reading over a prompt with no identity block and a directive that states no form. Both rows
+  // must red, or the ledger is decoration.
+  assert.deepEqual(
+    retiredRestatementGaps({
+      prompt: "",
+      directive: "Speak like a person on a farm.",
+      name: profile.identity.name,
+    }).map((gap) => gap.split(" ")[0]),
+    RETIRED_CARD_RESTATEMENTS.map((row) => `retired_card_restatement_without_owner:${row.claim}`),
+    "a deletion whose owner stopped saying it must be reported, not silently accepted",
+  );
+});
+
+test("the Host's head restates no fact the card already carries", () => {
+  let examined = 0;
+  const failures: string[] = [];
+  for (const { label, profile } of CARD_PROFILES) {
+    const facts = cardFacts(profile);
+    // The premise, or `form` would leave the population without anyone noticing: a card fact claimed here must be
+    // stated by the card that is mounted.
+    for (const fact of facts) {
+      if (fact.statedBy === undefined) continue;
+      const directive = profile.characterVoice?.text ?? "";
+      if (!fact.statedBy.test(directive))
+        failures.push(
+          `card_states_no_${fact.claim}: ${label} mounts a directive that never states the ${fact.claim}, so the Host has nobody to defer to - state it in the card`,
+        );
+    }
+    for (const surface of ["chat", "game"] as const) {
+      const prompt =
+        surface === "chat"
+          ? buildChatCompanionSystemPrompt(profile, LANGUAGE)
+          : buildGameCompanionSystemPrompt(profile, LANGUAGE);
+      const lines = hostHeadLines(prompt, profile, LANGUAGE);
+      examined += lines.length * facts.length;
+      for (const finding of cardRestatementFindings(lines, facts))
+        failures.push(`${label}/${surface}: ${finding.claim}\n    "${finding.line}"`);
+    }
+  }
+  process.stdout.write(`head lines x card facts examined ${String(examined)}\n`);
+  assert.ok(examined > 0, "no Host head line and no card fact met, so there is nothing to classify");
+  const restated = failures.filter((failure) => failure.includes("framework_restates_the_card:"));
+  process.stdout.write(`restated card facts ${String(restated.length)}\n`);
+  assert.deepEqual(
+    failures,
+    [],
+    [
+      `${String(failures.length)} problem(s) in the Host's head:`,
+      ...failures.map(
+        (failure) =>
+          `  ${failure}\n    -> the card already carries this (its name, role, continuity, or its form); delete it from the head, or put it in the card`,
+      ),
+    ].join("\n"),
+  );
+});
+
+test("the classifier reds a restated card fact of every claim, and blocks when the card states none", () => {
+  // THE FALSIFIER. Same classifier, text the product does not carry.
+  const profile = DEFAULT_COMPANION_PRESET.profile;
+  const facts = cardFacts(profile);
+  const claimsOf = (lines: readonly string[]): readonly string[] =>
+    cardRestatementFindings(lines, facts).map((finding) => finding.claim);
+
+  assert.deepEqual(
+    claimsOf([`You are ${profile.identity.name}, ready to help.`]),
+    ["framework_restates_the_card:name"],
+    "a line naming her is the card's name said twice",
+  );
+  assert.deepEqual(
+    claimsOf(["Answer in the third person, and let a narrator describe your partner."]),
+    ["framework_restates_the_card:form"],
+    "a line prescribing the person of the reply is the card's form, in words this file need not anticipate",
+  );
+  assert.deepEqual(
+    claimsOf([profile.identity.continuity]),
+    ["framework_restates_the_card:continuity"],
+    "the identity block's own sentence is not a Host rule",
+  );
+  assert.deepEqual(
+    claimsOf(["One bubble holds about 80 characters and cannot be retracted once it is shown."]),
+    [],
+    "the bubble's size is the surface's own delivery unit and belongs to the floor",
+  );
+  // The premise itself must be able to fail: a directive that states no form blocks the reading instead of passing.
+  const form = facts.find((fact) => fact.claim === "form");
+  assert.ok(form?.statedBy !== undefined, "the form fact must carry the card text that states it");
+  assert.equal(
+    form.statedBy.test("Speak like a person on a farm."),
+    false,
+    "a card that never states the person or the addressee must leave `form` unowned, which the gate reports as blocked",
+  );
+});
+
+test("the shipped card is the profile's single authority for the facts the head may not restate", () => {
+  // A second spelling of the name or the directive would make the gate above pass against text no session mounts.
+  const card = JSON.parse(readFileSync(join(REPOSITORY_ROOT, DEFAULT_CARD), "utf8")) as {
+    data?: Record<string, unknown>;
+  };
+  const shipped = DEFAULT_COMPANION_PRESET.profile;
+  assert.equal(card.data?.name, shipped.identity.name, "the profile's name must be the card's `data.name`");
+  assert.equal(
+    card.data?.system_prompt,
+    shipped.characterVoice?.text,
+    "the profile's directive must be the card's `data.system_prompt`, byte for byte",
   );
 });

@@ -243,6 +243,8 @@ function population(): readonly Unit[] {
   );
   for (const file of [
     "host/src/identity-profile.ts",
+    "host/src/companion-prompt-assembly.ts",
+    "host/src/chat-surface-block.ts",
     "host/src/fact-brief.ts",
     "host/src/companion-arrival-fact.ts",
     "host/src/native-notice-fact.ts",
@@ -351,20 +353,9 @@ const RECORDED: readonly Readonly<{
   blockedBy?: string;
 }>[] = Object.freeze([
   Object.freeze({
-    slug: "speak-voice-lines-above",
-    first: "identity-profile.ts:CARD_VOICE_BOUND",
-    second: "identity-profile.ts:PLAYER_ADDITION_BOUND",
-    kind: "projection",
-    why:
-      "one bound per authored insertion point: CARD_VOICE_BOUND closes the card's directive and PLAYER_ADDITION_BOUND closes " +
-      "the player's own addition, so the second is a projection of the first onto a second insertion point. The two blocks " +
-      "are edited by two different people at two different times, and a block without its own closing line leaves that " +
-      "insertion point holding the last word of the prompt.",
-  }),
-  Object.freeze({
-    slug: "write-bracketed-stage-direction",
-    first: "game-surface-prompt-floor.ts:body_language_is_native",
-    second: "identity-profile.ts:CHAT_SURFACE_DIVERGENCE",
+    slug: "surface-draws-asterisk-form",
+    first: "chat-surface-block.ts:CHAT_SURFACE_DIVERGENCE",
+    second: "game-surface-prompt-floor.ts:body_language_is_native",
     kind: "distinct",
     why:
       "the same construct with two opposite behaviours: the Chat renderer paints the asterisk beat as the action beat and a " +
@@ -372,9 +363,9 @@ const RECORDED: readonly Readonly<{
       "either sentence deletes a fact about a surface, not a duplicate.",
   }),
   Object.freeze({
-    slug: "write-bracketed-stage-direction",
-    first: "game-surface-prompt-floor.ts:body_language_is_native",
-    second: "identity-profile.ts:CHAT_SURFACE_ACTION_FORM",
+    slug: "often-reach-whether-reach",
+    first: "chat-surface-block.ts:CHAT_SURFACE_ACTION_FORM",
+    second: "game-surface-prompt-floor.ts:body_language_is_native",
     kind: "distinct",
     why:
       "the Game floor forbids writing a bracketed stage direction at all, while CHAT_SURFACE_ACTION_FORM hands the frequency " +
@@ -382,8 +373,8 @@ const RECORDED: readonly Readonly<{
   }),
   Object.freeze({
     slug: "often-reach-whether-reach",
-    first: "identity-profile.ts:CHAT_SURFACE_ACTION_FORM",
-    second: "identity-profile.ts:CHAT_SURFACE_DIVERGENCE",
+    first: "chat-surface-block.ts:CHAT_SURFACE_ACTION_FORM",
+    second: "chat-surface-block.ts:CHAT_SURFACE_DIVERGENCE",
     kind: "distinct",
     why:
       "CHAT_SURFACE_DIVERGENCE says what the surface DRAWS and CHAT_SURFACE_ACTION_FORM says who decides how often; they " +
@@ -416,6 +407,24 @@ const RECORDED: readonly Readonly<{
     why:
       "the preset says who she is playing with and in what game; the desk guidance says what her context is. The shared " +
       "words are 一起 and 星露谷, the game both are about.",
+  }),
+  Object.freeze({
+    slug: "反全知与元语言禁用-anti-omniscience-只说你自己的",
+    first: "assets/tavern/presets/amber-chat.json:prompts.content",
+    second: "assets/tavern/presets/amber-game.json:prompts.content",
+    kind: "distinct",
+    why:
+      "these are two ALTERNATIVE Main Prompts, never both mounted: a session binds exactly one preset, so the rule is the " +
+      "preset's once and each document has to state it or a session on the other surface loses it.",
+  }),
+  Object.freeze({
+    slug: "反全知与元语言禁用-anti-omniscience-只说你自己的",
+    first: "assets/tavern/presets/amber-chat.json:prompts.content",
+    second: "companion-arrival-fact.ts:arrivalText",
+    kind: "distinct",
+    why:
+      "the arrival fact hands the turn to her first words on the morning she arrives; the preset states whose voice may " +
+      "speak and whose reactions stay the player's. They share the second person and say different things with it.",
   }),
 ]);
 

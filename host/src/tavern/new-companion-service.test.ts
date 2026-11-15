@@ -3,12 +3,8 @@ import { createHash } from "node:crypto";
 import { access, lstat, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import test from "node:test";
-import {
-  buildChatCompanionSystemPrompt,
-  DEFAULT_IDENTITY_PROFILE,
-  identityProfileHash,
-  identityProfileMetadata,
-} from "../identity-profile.js";
+import { buildChatCompanionSystemPrompt } from "../companion-prompt-assembly.js";
+import { DEFAULT_IDENTITY_PROFILE, identityProfileHash, identityProfileMetadata } from "../identity-profile.js";
 import { bindWindowsStaleLockReclaimer } from "../path-lock.js";
 import { canonicalTestRoot } from "../test-support/canonical-test-root.test-support.js";
 import { pngCardFile } from "../test-support/png-card.test-support.js";

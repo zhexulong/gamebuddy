@@ -7,12 +7,9 @@ import { join, resolve } from "node:path";
 import test from "node:test";
 import { deflateSync } from "node:zlib";
 import { buildGameCompanionSystemPrompt } from "./game-surface-prompt-floor.js";
-import {
-  buildChatCompanionSystemPrompt,
-  COMPANION_ACTION_SYNTAX,
-  renderIdentityProfile,
-  validateIdentityProfile,
-} from "./identity-profile.js";
+import { validateIdentityProfile } from "./identity-profile.js";
+import { buildChatCompanionSystemPrompt, renderIdentityProfile } from "./companion-prompt-assembly.js";
+import { COMPANION_ACTION_SYNTAX } from "./chat-surface-block.js";
 import {
   candidateToIdentityProfile,
   decodeStCard,
@@ -1554,7 +1551,13 @@ test("a card's system_prompt becomes the profile's characterVoice and reaches th
     prompt.indexOf("动率先于言") > prompt.indexOf(COMPANION_ACTION_SYNTAX),
     "the card's directive must render after the floor",
   );
-  assert.ok(prompt.includes("【角色演出指导（Character Voice & Directives）】"));
+  // The card's directive is the prompt's OWN last block, loaded bare: no Host header, no closing bound. Re-derived
+  // from the text the card wrote rather than from the header the framework used to invent around it.
+  assert.ok(
+    prompt.trimEnd().endsWith("包裹在 * * 中。"),
+    "the card's directive is the last block of the prompt, unwrapped",
+  );
+  assert.doesNotMatch(prompt, /角色演出指导|CARD DIRECTIVES/u, "the framework invents no header around it");
   // A default companion without a card voice renders unchanged.
   assert.equal("characterVoice" in candidateToIdentityProfile(previewStCard({ data: { name: "Plain" } }), 1), false);
 });

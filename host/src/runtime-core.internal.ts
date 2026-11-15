@@ -37,8 +37,6 @@ import { GameplayTaskSubagent } from "./gameplay-task-subagent.js";
 import { buildGameCompanionSystemPrompt } from "./game-surface-prompt-floor.js";
 import {
   assertProfileMatchesBinding,
-  buildChatCompanionSystemPrompt,
-  CHAT_SURFACE_SKIP_SIGNATURE,
   createIdentityProfileBinding,
   DEFAULT_IDENTITY_PROFILE,
   type IdentityProfile,
@@ -49,6 +47,8 @@ import {
   writeIdentityProfile,
   writeIdentityProfileBinding,
 } from "./identity-profile.js";
+import { buildChatCompanionSystemPrompt } from "./companion-prompt-assembly.js";
+import { CHAT_SURFACE_SKIP_SIGNATURE } from "./chat-surface-block.js";
 import { buildCompanionDeskGuidance, COMPANION_DESK_GUIDANCE_FILE_NAME } from "./magic-context-companion-guidance.js";
 import { magicContextContentLanguage } from "./magic-context-content-language.js";
 import { projectHistorianModel } from "./magic-context-historian-projection.internal.js";

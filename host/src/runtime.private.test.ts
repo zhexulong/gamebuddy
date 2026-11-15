@@ -14,7 +14,8 @@ import {
 
 import { defineTool } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
-import { CHAT_SURFACE_SKIP_SIGNATURE, DEFAULT_IDENTITY_PROFILE, identityProfileHash } from "./identity-profile.js";
+import { DEFAULT_IDENTITY_PROFILE, identityProfileHash } from "./identity-profile.js";
+import { CHAT_SURFACE_SKIP_SIGNATURE } from "./chat-surface-block.js";
 import { GAMEPLAY_SUBAGENT_MODEL_CONFIG } from "./gameplay-task-subagent.js";
 import { createIntegrationActionCatalog, type GameIntegrationAdapter } from "./game-integration-adapter.js";
 import type { KnowledgeBundle } from "./knowledge.js";

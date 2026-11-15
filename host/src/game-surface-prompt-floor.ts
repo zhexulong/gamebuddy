@@ -7,7 +7,8 @@ import {
   LIVE_STATE_GROUNDING,
   SLEEPING_IS_AN_ACTION,
 } from "./games/stardew/prompt/stardew-game-conduct.js";
-import { buildCompanionSystemPrompt, type IdentityProfile } from "./identity-profile.js";
+import { type IdentityProfile } from "./identity-profile.js";
+import { buildCompanionSystemPrompt } from "./companion-prompt-assembly.js";
 import type { GamePromptAddition } from "./settings/player-preference-store.js";
 
 /**

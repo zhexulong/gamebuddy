@@ -4,12 +4,8 @@ import test from "node:test";
 import { GAME_DELIVERY_PACING } from "./companion-delivery-pacing.js";
 import { dehydrateCompanionSpeech, isEmptyAfterDehydration } from "./companion-speech-dehydration.js";
 import { buildGameCompanionSystemPrompt } from "./game-surface-prompt-floor.js";
-import {
-  buildChatCompanionSystemPrompt,
-  DEFAULT_IDENTITY_PROFILE,
-  renderIdentityProfile,
-  validateIdentityProfile,
-} from "./identity-profile.js";
+import { DEFAULT_IDENTITY_PROFILE, validateIdentityProfile } from "./identity-profile.js";
+import { buildChatCompanionSystemPrompt, renderIdentityProfile } from "./companion-prompt-assembly.js";
 import { DEFAULT_COMPANION_PRESET } from "./tavern/default-companion-preset.js";
 
 /**
