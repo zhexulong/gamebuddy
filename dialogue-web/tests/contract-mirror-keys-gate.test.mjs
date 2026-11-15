@@ -243,6 +243,16 @@ function looksLikeValidator(validator) {
  * shape's required keys) but do not know a key the contract declares for it: the
  * mirror is stricter than the contract, and a legal response is refused.
  *
+ * A REQUIRED-key set is not a shape's identity. Two commands can require the same members and differ
+ * only in what they admit on top: `SwipeSelectCommandV1Schema` and `ForkChatCommandV1Schema` are both
+ * `{apiVersion, selectionGeneration, messageHandle}`, and the first also declares `direction` and
+ * `targetIndex`. Read as "the first shape with that required set", the rule reported the fork client's
+ * own strict mirror as stricter than the contract - it was strict about a DIFFERENT shape that happens
+ * to share the required members. So the candidates are read as the set they are: a validator that
+ * claims such a set mirrors ONE of them, and it is a finding only when it knows none of them
+ * completely - and then the finding says how many shapes it could have been and which keys it leaves
+ * out, because the single-shape wording would name the wrong contract.
+ *
  * `shapes` and `validators` are parameters so the mutation test below runs the
  * exact rule the real gate runs.
  */
@@ -253,15 +263,17 @@ export function mirrorStricterThanContract(validators, shapes = contractShapes()
     if (!looksLikeValidator(validator)) continue;
     const known = new Set(validator.known);
     for (const accepted of validator.accepted) {
-      const shape = shapes.find((candidate) => sameKeys(accepted.keys, candidate.required));
-      if (shape === undefined) continue;
-      for (const key of shape.declared) {
-        if (known.has(key)) continue;
-        const finding = `${validator.file}:${validator.line}: ${validator.name} claims the contract's required keys [${shape.required.join(", ")}] but does not know the declared key ${key}`;
-        if (seen.has(finding)) continue;
-        seen.add(finding);
-        findings.push(finding);
-      }
+      const candidates = shapes.filter((candidate) => sameKeys(accepted.keys, candidate.required));
+      if (candidates.length === 0) continue;
+      const complete = candidates.filter((candidate) => candidate.declared.every((key) => known.has(key)));
+      if (complete.length > 0) continue;
+      const finding =
+        candidates.length === 1
+          ? `${validator.file}:${validator.line}: ${validator.name} claims the contract's required keys [${accepted.keys.join(", ")}] but does not know the declared key ${candidates[0].declared.filter((key) => !known.has(key)).join(", ")}`
+          : `${validator.file}:${validator.line}: ${validator.name} claims the contract's required keys [${accepted.keys.join(", ")}], which ${candidates.length} contract shapes declare, but knows none of them: it omits ${[...new Set(candidates.flatMap((candidate) => candidate.declared.filter((key) => !known.has(key))))].join(", ")}`;
+      if (seen.has(finding)) continue;
+      seen.add(finding);
+      findings.push(finding);
     }
   }
   return findings;
@@ -453,8 +465,7 @@ test("mirror-keys.3 (mutation): a planted contract key the validator omits is re
   t.diagnostic("mirror-keys.3: the planted omission is reported with its location; knowing the declared key clears it");
 });
 
-test("mirror-keys.6 (mutation): a Set-built allowance is read, and a key it really leaves out is still a finding", (t) => {
-  const shapes = [{ declared: ["handle", "role", "swipeInfo"], required: ["handle", "role"], optional: ["swipeInfo"] }];
+test("mirror-keys.6 (mutation): a Set-built allowance is read, and a key it really leaves out is still a finding", (t) => {  const shapes = [{ declared: ["handle", "role", "swipeInfo"], required: ["handle", "role"], optional: ["swipeInfo"] }];
   const module = (optionalKeys) =>
     [
       'const PLANTED_REQUIRED_KEYS = ["handle", "role"] as const;',
@@ -478,4 +489,45 @@ test("mirror-keys.6 (mutation): a Set-built allowance is read, and a key it real
     "planted-mirror.ts:4: hasPlantedKeys claims the contract's required keys [handle, role] but does not know the declared key swipeInfo",
   ]);
   t.diagnostic("mirror-keys.6: the Set-built allowance is read; dropping the optional member from it is the finding");
+});
+
+/**
+ * Two commands can require the same members and differ only in what they admit on top, and then the
+ * required set names no single shape.
+ *
+ * The measured defect: the fork client's own strict mirror claims `[apiVersion, selectionGeneration,
+ * messageHandle]` - exactly `ForkChatCommandV1Schema`'s required members, and exactly its whole declared
+ * set. The rule read that claim as the FIRST contract shape declaring those required keys, which is
+ * `SwipeSelectCommandV1Schema` (`direction` and `targetIndex` on top), so a correct mirror was reported
+ * as "stricter than the contract" for a shape it does not send.
+ */
+test("mirror-keys.7 (mutation): a required set two shapes share is judged against the shape the validator mirrors", (t) => {
+  const shapes = [
+    {
+      declared: ["apiVersion", "selectionGeneration", "messageHandle", "direction", "targetIndex"],
+      required: ["apiVersion", "selectionGeneration", "messageHandle"],
+      optional: ["direction", "targetIndex"],
+    },
+    { declared: ["apiVersion", "selectionGeneration", "messageHandle"], required: ["apiVersion", "selectionGeneration", "messageHandle"], optional: [] },
+  ];
+  const fork = {
+    file: "management-pipeline-api.ts",
+    name: "isForkChatCommand",
+    line: 3756,
+    accepted: [{ name: "FORK_CHAT_COMMAND_KEYS", keys: ["apiVersion", "selectionGeneration", "messageHandle"], line: 1640 }],
+    known: ["apiVersion", "selectionGeneration", "messageHandle"],
+  };
+  assert.deepEqual(
+    mirrorStricterThanContract([fork], shapes),
+    [],
+    "a mirror of the narrower of two shapes that share a required set is not stricter than the contract",
+  );
+
+  // ... and a validator stricter than BOTH is still a finding, naming how many shapes it could have
+  // been and every key it leaves out - the single-shape wording would name a contract it never sends.
+  const stricter = { ...fork, known: ["apiVersion", "selectionGeneration"] };
+  assert.deepEqual(mirrorStricterThanContract([stricter], shapes), [
+    "management-pipeline-api.ts:3756: isForkChatCommand claims the contract's required keys [apiVersion, selectionGeneration, messageHandle], which 2 contract shapes declare, but knows none of them: it omits messageHandle, direction, targetIndex",
+  ]);
+  t.diagnostic("mirror-keys.7: the shared required set admits the narrower mirror and still reports a validator stricter than both");
 });
