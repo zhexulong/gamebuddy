@@ -790,6 +790,11 @@ function readTurnAccountLine(line: string): Readonly<{
     emptyTurns: Object.freeze({ total: emptySegment.total, counts: emptySegment.counts }),
     silentSettled: Object.freeze({ total: silentSegment.total, counts: silentSegment.counts }),
     settledWithExecutionInFlight: inFlightSegment.total,
+    executionProvenance: Object.freeze({
+      facts: Object.freeze({ programme: 0, standalone: 0, unattributed: 0, unstated: 0 }),
+      unattributedExecutions: Object.freeze([]),
+      omittedUnattributed: 0,
+    }),
     autoObserve: Object.freeze({
       agedTurns: agedSegment.total,
       refreshed: Object.freeze({ total: observedSegment.total, counts: observedSegment.counts }),
@@ -918,6 +923,11 @@ test("the account line reads back into the account it names", () => {
       byOpener: Object.freeze(silentSettledCounts({ [TURN_OPENING.worldFact]: 2 })),
     }),
     settledWithExecutionInFlight: 3,
+    executionProvenance: Object.freeze({
+      facts: Object.freeze({ programme: 0, standalone: 0, unattributed: 0, unstated: 0 }),
+      unattributedExecutions: Object.freeze([]),
+      omittedUnattributed: 0,
+    }),
     autoObserve: autoObserveAccount(
       { refreshed: 4, lastAgeTurns: 20 },
       { [AUTO_OBSERVE_UNAVAILABLE.refused]: 1 },
@@ -1054,6 +1064,11 @@ test("the account line names a member that never fired, in both histograms", () 
     emptyTurns: Object.freeze({ total: 0, byShape: Object.freeze(emptyTurnShapeCounts({})) }),
     silentSettled: Object.freeze({ total: 0, byOpener: Object.freeze(silentSettledCounts({})) }),
     settledWithExecutionInFlight: 0,
+    executionProvenance: Object.freeze({
+      facts: Object.freeze({ programme: 0, standalone: 0, unattributed: 0, unstated: 0 }),
+      unattributedExecutions: Object.freeze([]),
+      omittedUnattributed: 0,
+    }),
     autoObserve: autoObserveAccount({ refreshed: 0, lastAgeTurns: undefined }),
     lastDecision: undefined,
   });

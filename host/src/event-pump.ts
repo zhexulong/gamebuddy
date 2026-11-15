@@ -8,8 +8,8 @@ import {
   worldStateStaleThreshold,
 } from "./fact-brief.js";
 import { PROGRAM_SETTLED_DIGEST_SEMANTIC_KIND } from "./program-settlement-digest.js";
-import { type InFlightProgrammeReading, programmesNamed, readInFlightProgrammes } from "./program-status-wait.js";
-import { EXECUTION_STATES, type ExecutionState, type Snapshot } from "./protocol.js";
+import { type InFlightProgrammeReading, readInFlightProgrammes } from "./program-status-wait.js";
+import { EXECUTION_STATES, type ExecutionOrigin, type ExecutionState, type Snapshot } from "./protocol.js";
 // The Mod's evidence detail is one format with one reader (`key=value;...`), and the body-owner refusal puts the owner
 // it names inside it. Reusing that reader is what keeps the pump and the Agent's refusal guidance from disagreeing
 // about who holds the body.
@@ -259,9 +259,10 @@ type FlushDecision<Decision extends string> = Readonly<{ decision: Decision; pro
  * `nothing_pending` is not a lost turn: there was nothing to deliver, and counting it keeps the arithmetic closed
  * (`examined === opened + every suppressed reason`).
  *
- * `in_flight_progress` is the same rule applied to INGRESS rather than to the reading: a step of a programme the
- * journal still shows running is standing state too, and the programme's settlement is the turn that carries it
- * (`IN_FLIGHT_RECEIPT_PROGRESS_STATES`).
+ * `in_flight_progress` is the same rule applied to INGRESS rather than to the reading: a step of a programme she already
+ * dispatched is standing state too, and the programme's settlement is the turn that carries it
+ * (`IN_FLIGHT_RECEIPT_PROGRESS_STATES`). What makes it a step is the fact's own `origin`, not what the ledger happens to
+ * be naming - see `factExecutionOrigin`.
  */
 export const TURN_SUPPRESSION = Object.freeze({
   /** The flush held a copy of the reading the pump already held: nothing this flush saw was different. */
@@ -269,7 +270,10 @@ export const TURN_SUPPRESSION = Object.freeze({
   /** The flush held a reading that says something the held one did not, and a reading opens no turn. */
   observationMoved: "observation_moved",
   worldFactRestated: `${TURN_OPENING.worldFact}_restated`,
-  /** The flush held a step of a programme the journal still names: its own settlement is the turn that states it. */
+  /**
+   * The flush held a step of a programme: the receipt's own provenance says a programme owns its execution, and that
+   * settlement is the turn which states it.
+   */
   inFlightProgress: "in_flight_progress",
   /**
    * The flush held facts the classification calls progress and she has not been shown: they travel in the next turn that
@@ -394,6 +398,25 @@ export const ASSISTANT_TURNS_TOOL_ONLY = "tool-only";
 export const PER_DELIVERED_BATCH = "per delivered batch:";
 
 /**
+ * The label of the provenance reading: every fact that stated which programme its execution belongs to.
+ *
+ * MEASURED, THRICE. `round57` `turns opened 66 {adapter_ingress: 57}`, `round59` `88 {adapter_ingress: 79}`, `round62`
+ * `82 {adapter_ingress: 82}` against 224 programme dispatches - and no artifact could say how many of those receipts even
+ * claimed a programme, because the wire had no field for it. This segment is that reading: `programme` + `standalone` must
+ * equal the receipts a run delivered, and `unstated` must be 0 for a bridge that validates its frames.
+ */
+export const RECEIPTS_WITH_PROVENANCE = "receipts with provenance";
+
+/**
+ * A defect token, not a counter: the Mod's journal could not say which programme owns an execution.
+ *
+ * It prints the count and the executions (bounded), so `unattributed_execution 3 {exec_a, exec_b, exec_c}` is joinable to
+ * the Mod's own diagnostic and to a body-program status read. An execution nobody can attribute is the condition that made
+ * every previous fix a guess.
+ */
+export const UNATTRIBUTED_EXECUTION_TOKEN = "unattributed_execution";
+
+/**
  * Turns that delivered speech, ran no action, and closed - counted by BOTH halves of the shape.
  *
  * The opener is half of it because the two mean different things: a `player_input` turn that spoke and did nothing was
@@ -405,6 +428,24 @@ export type TurnWithoutActionResult = Readonly<{
   total: number;
   byShape: Readonly<Record<TurnWithoutActionShape, number>>;
 }>;
+
+/**
+ * The provenance reading: what the Mod's journal said about the executions whose facts this pump admitted.
+ *
+ * One count per `ExecutionOrigin` member plus `unstated` (a fact that carried none), and the executions that could not be
+ * attributed - the ones whose `unattributed_execution:<id>` a run's account has to be able to name.
+ */
+export type ExecutionProvenanceAccount = Readonly<{
+  facts: Readonly<{ programme: number; standalone: number; unattributed: number; unstated: number }>;
+  unattributedExecutions: readonly string[];
+  omittedUnattributed: number;
+}>;
+
+/**
+ * How many unattributed executions the account names. A defect is not traffic: past this many, the count still closes and
+ * the names stop, which is what keeps a stuck journal from growing the account with the session.
+ */
+export const MAX_NAMED_UNATTRIBUTED_EXECUTIONS = 8;
 
 /**
  * What this pump has done with the flushes it examined: one counter per member, one per suppression reason.
@@ -437,6 +478,14 @@ export type TurnAccount = Readonly<{
   silentSettled: TurnSettledSilentResult;
   /** The settled turns that closed with one of her own executions still running - see `TURN_SETTLED_WITH_EXECUTION_IN_FLIGHT`. */
   settledWithExecutionInFlight: number;
+  /**
+   * Every fact this pump admitted that stated an execution's provenance, by what it said.
+   *
+   * The reading `round62` could not produce: `unattributed` is a NAMED defect (the Mod's journal could not say which
+   * programme owns an execution), and `unstated` is a fact that said nothing at all - the shape the wire now refuses. Both
+   * are counted rather than inferred from an absence, because an absence is what the Host used to resolve by time.
+   */
+  executionProvenance: ExecutionProvenanceAccount;
   /** The flushes a stale reading decided, and why - see `AutoObserveAccount`. */
   autoObserve: AutoObserveAccount;
   lastDecision: TurnDecision | undefined;
@@ -523,7 +572,22 @@ export function turnAccountLine(account: TurnAccount): string {
     (total, reason) => total + account.autoObserve.rearmed[reason],
     0,
   );
-  return `${ASSISTANT_TURNS_EXAMINED} ${String(account.assistantTurns.examined)} {${assistantProductions}} · ${ASSISTANT_TURNS_WITH_TEXT} ${String(assistantTurnsWithText(account.assistantTurns))} · ${ASSISTANT_TURNS_TOOL_ONLY} ${String(assistantTurnsToolOnly(account.assistantTurns))} · ${PER_DELIVERED_BATCH} turns opened ${String(account.opened)} {${opened}} · suppressed ${String(suppressedTotal(account))} {${suppressed}} · flushes examined ${String(account.examined)} · ${TURN_WITHOUT_ACTION} ${String(account.emptyTurns.total)} {${empty}} · ${TURN_SETTLED_SILENT} ${String(account.silentSettled.total)} {${silent}} · ${TURN_SETTLED_WITH_EXECUTION_IN_FLIGHT} ${String(account.settledWithExecutionInFlight)} · ${AUTO_OBSERVE_AGED_TURNS} ${String(account.autoObserve.agedTurns)} · ${refreshed} · ${AUTO_OBSERVE_UNAVAILABLE_TOKEN} ${String(declined)} {${unavailable}} · ${AUTO_OBSERVE_REARMED} ${String(rearmedAgain)} {${rearmed}}`;
+  // The provenance reading, and the defect it exists to name. A run whose journal cannot attribute an execution says
+  // `unattributed_execution <id>` here, in the same line a reader already greps for turns: the missing field that let
+  // `round62` open 82 ingress turns was invisible in every artifact a run produced.
+  const provenance = account.executionProvenance;
+  const unattributed = `${UNATTRIBUTED_EXECUTION_TOKEN} ${String(provenance.facts.unattributed)}${
+    provenance.unattributedExecutions.length === 0
+      ? ""
+      : ` {${provenance.unattributedExecutions.join(", ")}${provenance.omittedUnattributed === 0 ? "" : `, +${String(provenance.omittedUnattributed)}`}}`
+  }`;
+  const receiptProvenance = `${RECEIPTS_WITH_PROVENANCE} ${String(
+    provenance.facts.programme +
+      provenance.facts.standalone +
+      provenance.facts.unattributed +
+      provenance.facts.unstated,
+  )} {programme: ${String(provenance.facts.programme)}, standalone: ${String(provenance.facts.standalone)}, unattributed: ${String(provenance.facts.unattributed)}, unstated: ${String(provenance.facts.unstated)}}`;
+  return `${ASSISTANT_TURNS_EXAMINED} ${String(account.assistantTurns.examined)} {${assistantProductions}} · ${ASSISTANT_TURNS_WITH_TEXT} ${String(assistantTurnsWithText(account.assistantTurns))} · ${ASSISTANT_TURNS_TOOL_ONLY} ${String(assistantTurnsToolOnly(account.assistantTurns))} · ${PER_DELIVERED_BATCH} turns opened ${String(account.opened)} {${opened}} · suppressed ${String(suppressedTotal(account))} {${suppressed}} · flushes examined ${String(account.examined)} · ${TURN_WITHOUT_ACTION} ${String(account.emptyTurns.total)} {${empty}} · ${TURN_SETTLED_SILENT} ${String(account.silentSettled.total)} {${silent}} · ${TURN_SETTLED_WITH_EXECUTION_IN_FLIGHT} ${String(account.settledWithExecutionInFlight)} · ${AUTO_OBSERVE_AGED_TURNS} ${String(account.autoObserve.agedTurns)} · ${refreshed} · ${AUTO_OBSERVE_UNAVAILABLE_TOKEN} ${String(declined)} {${unavailable}} · ${AUTO_OBSERVE_REARMED} ${String(rearmedAgain)} {${rearmed}} · ${receiptProvenance} · ${unattributed}`;
 }
 
 /**
@@ -1498,6 +1562,29 @@ export class CompanionEventPump {
    * </p>
    */
   readonly #deliveredFactIdentities = new Set<string>();
+  /**
+   * What each execution's provenance said, so "a receipt nobody could attribute" is a READING rather than an absence.
+   *
+   * <p>
+   * One count per fact that stated a provenance, and the names of the executions the Mod's journal could not attribute.
+   * `unattributed` is a defect the Mod names (`unattributed_execution:<id>`, `OpenBodyProgramJournalAuthority`'s
+   * `AttributeExecution`), and a pump that filed such a fact and said nothing would be the same silence that let the
+   * missing field last three rounds.
+   * </p>
+   * <p>
+   * BOUNDED, WITH A DRAIN: the names stop at `MAX_NAMED_UNATTRIBUTED_EXECUTIONS` and the remainder is counted in
+   * `omittedUnattributed`, so the total is always exact and the list never grows with the session. A session that keeps
+   * producing unattributed executions is naming a defect, not traffic to keep.
+   * </p>
+   */
+  readonly #executionProvenance = {
+    programme: 0,
+    standalone: 0,
+    unattributed: 0,
+    unstated: 0,
+    unattributedExecutions: [] as string[],
+    omittedUnattributed: 0,
+  };
   /** Turns this pump opened, one count per `TURN_OPENINGS` member. */
   readonly #openedByReason: Record<TurnOpening, number> = {
     [TURN_OPENING.playerInput]: 0,
@@ -1617,6 +1704,7 @@ export class CompanionEventPump {
     const frozen = Object.freeze({ ...fact });
     this.#observeWorldTransition(frozen);
     this.#observeExecutionProgress(frozen);
+    this.#observeExecutionProvenance(frozen);
     if (fact.kind === "snapshot") {
       const previous = this.#lastSnapshot;
       // An OLDER reading describes an older world (`takeBatch` applies the same rule to a batch that is too large), so
@@ -1875,6 +1963,16 @@ export class CompanionEventPump {
         byOpener: Object.freeze({ ...this.#silentSettledByOpener }),
       }),
       settledWithExecutionInFlight: this.#settledWithExecutionInFlight,
+      executionProvenance: Object.freeze({
+        facts: Object.freeze({
+          programme: this.#executionProvenance.programme,
+          standalone: this.#executionProvenance.standalone,
+          unattributed: this.#executionProvenance.unattributed,
+          unstated: this.#executionProvenance.unstated,
+        }),
+        unattributedExecutions: Object.freeze([...this.#executionProvenance.unattributedExecutions]),
+        omittedUnattributed: this.#executionProvenance.omittedUnattributed,
+      }),
       autoObserve: Object.freeze({
         agedTurns: this.#autoObserveAgedTurns,
         refreshed: this.#autoObserveRefreshed,
@@ -2163,6 +2261,37 @@ export class CompanionEventPump {
   }
 
   /**
+   * Count what one admitted fact said about the programme its execution belongs to.
+   *
+   * <p>
+   * Counted HERE and not where the filing happens, because the filing asks the same question more than once per flush
+   * (`#opening` skims the window, `#suppressionReason` explains it) and a fact is admitted once. The population is
+   * "facts that state an execution's provenance", which is every `execution_receipt` and every body trace - the two
+   * spellings of one step.
+   * </p>
+   */
+  #observeExecutionProvenance(fact: WorldFact): void {
+    const statesAnExecution =
+      fact.kind === "execution_receipt" || (fact.kind === "semantic_event" && fact.payload.bodyTrace !== undefined);
+    if (!statesAnExecution) return;
+    const origin = factExecutionOrigin(fact);
+    if (origin === undefined) {
+      this.#executionProvenance.unstated += 1;
+      return;
+    }
+    this.#executionProvenance[origin.kind] += 1;
+    if (origin.kind !== "unattributed") return;
+    const executionId = fact.executionId;
+    if (executionId === undefined || executionId.length === 0) return;
+    if (this.#executionProvenance.unattributedExecutions.includes(executionId)) return;
+    if (this.#executionProvenance.unattributedExecutions.length >= MAX_NAMED_UNATTRIBUTED_EXECUTIONS) {
+      this.#executionProvenance.omittedUnattributed += 1;
+      return;
+    }
+    this.#executionProvenance.unattributedExecutions.push(executionId);
+  }
+
+  /**
    * Keep the stall timing for whichever execution this fact belongs to.
    *
    * <p>
@@ -2349,64 +2478,36 @@ export class CompanionEventPump {
   }
 
   /**
-   * Whether the journal still NAMES a programme: the one reading that tells a step from an outcome.
-   *
-   * <p>
-   * The pump holds receipts and world events, and none of them names the programme a step belongs to - an
-   * `execution_receipt` carries an `executionId`, and the journal keys its nodes by `nodeId` (`program-status-wait.ts`
-   * states the same reason for the `<in-flight>` block). The ledger the submit echo and the settlement watch already
-   * write is therefore the only layer that can answer, and `#inFlight` is that ledger's own reading rather than a second
-   * poll of the bridge.
-   * </p>
-   * <p>
-   * THE BOUNDARY IS INSIDE THIS READING ON PURPOSE, and it is the 79 turns of `round59` and the 71 of `round62`. The
-   * ledger holds a plan the journal still reports ACTIVE (`program-status-wait.ts`, `observe`), and - for the grace its
-   * own tail receipts need - one the journal has reported stopped. A plan whose last node has gone terminal is therefore
-   * still named here, with `remaining` at `0`, for the gap between that node and its settlement. Those receipts match
-   * nothing about a RUNNING programme, so without the settling half they fell through to `decision`: `turns opened 88
-   * {adapter_ingress: 79}` against 72 submissions in `round59`, and in `round62` 71 ingress-opened turns beside 168
-   * suppressed settlements. A programme still named is one whose own settlement will state its nodes, which is what makes
-   * them progress and its settlement the fact that speaks.
-   * </p>
-   * <p>
-   * IT ERRS TOWARD A TURN, EXCEPT INSIDE THE GRACE. `IN_FLIGHT_READING_MAX_AGE_MS` stops a stopped watch from keeping a
-   * programme alive, and a reading that names nothing makes every fact a decision - so the ordinary failure of this
-   * answer is one extra turn, never a lost outcome. The settling half inverts that for ONE bounded window
-   * (`SETTLING_GRACE_MS`): inside it a `succeeded` receipt is filed as a step even if its programme was not the one that
-   * stopped, so the cost is that receipt waiting in the window for the next turn that opens for a decision - not being
-   * dropped. That is the trade the tail receipt of `round62` requires, and the window is bounded on both sides
-   * (`in-flight-programme.test.ts`).
-   * </p>
-   */
-  #programmeNamed(): boolean {
-    return programmesNamed(this.#inFlight());
-  }
-
-  /**
-   * Whether this fact is one STEP of a programme the journal still names (see `IN_FLIGHT_RECEIPT_PROGRESS_STATES`).
+   * Whether this fact is one STEP of a programme: the fact's OWN provenance says so (`factExecutionOrigin`).
    *
    * Asked of the shape first, so a flush holding an ordinary fact - a settlement, a milestone, a person's word - never
-   * reads the journal to decide whether it may open a turn.
+   * reads a provenance to decide whether it may open a turn.
    */
   #isInFlightProgress(fact: WorldFact): boolean {
-    return factTurnConsequence(fact) === "in_flight_progress" && this.#programmeNamed();
+    return factTurnConsequence(fact) === "in_flight_progress" && factExecutionOrigin(fact)?.kind === "programme";
   }
 
   /**
-   * Whether this fact can open a turn: the classification's own answer, with the ledger read only where it is asked for.
+   * Whether this fact can open a turn: the classification's answer, with the fact's own provenance read where the step is.
    *
    * <p>
-   * `decision` opens, `progress` never does, and `in_flight_progress` opens only when the journal names no programme for
-   * the step to belong to. What is NOT asked here is whether the fact is held latest-only: that is a property of the
-   * pending WINDOW (one slot per moving state), and it coincided with "opens no turn" only because every `progress` shape
-   * happened to be held. A settlement that succeeded is progress and is NOT held - it keeps its place in the window and is
-   * delivered whole by the next turn - so the coincidence is gone and the classification has to be asked directly.
+   * `decision` opens, `progress` never does, and `in_flight_progress` opens only when the fact does NOT state that a
+   * programme owns the execution. What is NOT asked here is whether the fact is held latest-only: that is a property of
+   * the pending WINDOW (one slot per moving state), and it coincided with "opens no turn" only because every `progress`
+   * shape happened to be held. A settlement that succeeded is progress and is NOT held - it keeps its place in the window
+   * and is delivered whole by the next turn - so the coincidence is gone and the classification has to be asked directly.
+   * </p>
+   * <p>
+   * NOTHING HERE READS A CLOCK OR A LEDGER. `round62` filed such a receipt inside a ten-second window because the ledger
+   * that named its programme had just been told the programme stopped, and the window was the fix for that: a duration
+   * standing in for a fact. The provenance travels WITH the receipt (`protocol.ts#ExecutionOrigin`), so the same receipt
+   * is filed the same way whether its programme is running, stopped a second ago, or never read at all.
    * </p>
    */
   #owesTurn(fact: WorldFact): boolean {
     const consequence = factTurnConsequence(fact);
     if (consequence === "decision") return true;
-    if (consequence === "in_flight_progress") return !this.#programmeNamed();
+    if (consequence === "in_flight_progress") return factExecutionOrigin(fact)?.kind !== "programme";
     return false;
   }
 
@@ -2424,7 +2525,7 @@ export class CompanionEventPump {
    * Which member a suppressed flush was answered by absence of.
    *
    * An ordinary fact that is waiting but NOT an opening one is a fact whose content she already received (`#opening`
-   * skipped it for that reason). A step of a programme the journal still names is its own reason (`in_flight_progress`):
+   * skipped it for that reason). A step of a programme is its own reason (`in_flight_progress`):
    * the fact is not a re-statement - she has never seen it - and it still opens no turn, because the programme's
    * settlement is what she has to decide on. A snapshot slot holding a reading is a READING AND NOTHING ELSE, and which
    * of the two members it is depends on the reading alone: a copy of the one the pump already held is
@@ -3337,7 +3438,8 @@ export const HOST_MINTED_WAKE_KINDS: Readonly<Record<string, string>> = Object.f
 });
 
 /**
- * Receipt states that say a STEP of a programme DID what it was told, WHILE that programme is named by the journal.
+ * Receipt states that say a STEP of a programme DID what it was told, when the receipt's own `origin` says a programme owns
+ * the execution.
  *
  * <p>
  * THE STEP IS NOT THE OUTCOME. Measured 2026-11-15 (`round57`, `tools/_multiday_routine-round57-live-runner.log`):
@@ -3369,7 +3471,7 @@ export const IN_FLIGHT_RECEIPT_PROGRESS_STATES: Readonly<Record<string, string>>
 
 /**
  * Semantic-event kinds that are the same STEP, stated a second way: the Mod publishes both a body trace and a receipt
- * for one node finishing, and neither is news while the plan that owns it is still named.
+ * for one node finishing, and neither is news while the plan that owns it is settling.
  *
  * The settled FAILED/CANCELLED/INVALIDATED kinds are deliberately absent: those are refusals, and a refusal is a
  * decision no settlement can soften.
@@ -3437,9 +3539,9 @@ export function settledProgramOutcome(fact: WorldFact): SettledProgramOutcome {
  * <ul>
  *   <li>`decision` - it can change what she does next, so it may open a turn.</li>
  *   <li>`progress` - standing state inside work already answered: never a turn, always delivered by the next one.</li>
- *   <li>`in_flight_progress` - a step of a programme the journal still names: progress WHILE it runs or while it is
- *       settling (its settlement is the turn that carries it), and a decision when no programme is named, because a lone
- *       action's outcome is news nobody else will state.</li>
+ *   <li>`in_flight_progress` - a step of a programme, as the fact's OWN provenance states it: progress WHILE it runs or
+ *       while its programme is still settling (its settlement is the turn that carries it), and a decision when the fact
+ *       states no programme owns the execution, because a lone outcome is news nobody else will state.</li>
  * </ul>
  *
  * <p>
@@ -3500,6 +3602,46 @@ export function factTurnShape(fact: WorldFact): string {
  */
 export function factTurnConsequence(fact: WorldFact): FactTurnConsequence {
   return FACT_TURN_CONSEQUENCE[factTurnShape(fact)] ?? "decision";
+}
+
+/**
+ * Which programme the fact's execution belongs to, as the MOD's OWN JOURNAL stated it on the wire.
+ *
+ * <p>
+ * THE ONE READING OF A STEP'S CAUSE. Both statements of one step carry it - the `execution_receipt` itself and the body
+ * trace that restates it (`IN_FLIGHT_SEMANTIC_PROGRESS_KINDS`) - and both come from one journal lookup in the Mod
+ * (`BridgeSession#OriginOf`), so they cannot disagree about which programme owns an execution.
+ * </p>
+ * <p>
+ * `undefined` means THIS FACT SAYS NOTHING ABOUT AN EXECUTION: a settlement, a milestone, the world speaking. A fact that
+ * DOES state an execution but carries no readable provenance is the other case, and it is the caller's to treat as
+ * `unattributed` - never as "no programme, so it is a lone outcome", because that reading is the guess this field exists
+ * to replace. An origin this reader cannot read is therefore NO statement: the fact owes a turn (the direction that
+ * cannot lose an outcome) and the account counts it in `unstated`.
+ * </p>
+ */
+export function factExecutionOrigin(fact: WorldFact): ExecutionOrigin | undefined {
+  if (fact.kind === "execution_receipt") return statedOrigin(fact.payload.origin);
+  if (fact.kind !== "semantic_event") return undefined;
+  const trace = fact.payload.bodyTrace;
+  if (trace === null || typeof trace !== "object") return undefined;
+  return statedOrigin((trace as { origin?: unknown }).origin);
+}
+
+/** `payload.origin` when it is one of the three statements `protocol.ts` declares, and nothing otherwise. */
+function statedOrigin(value: unknown): ExecutionOrigin | undefined {
+  if (value === null || typeof value !== "object") return undefined;
+  const kind = (value as { kind?: unknown }).kind;
+  if (kind === "standalone" || kind === "unattributed") return value as ExecutionOrigin;
+  if (kind !== "programme") return undefined;
+  const named = value as { programId?: unknown; nodeId?: unknown };
+  // HALF A NAME IS NOT A NAME: a programme origin with one id is a broken frame, not a step of that programme.
+  return typeof named.programId === "string" &&
+    named.programId.length > 0 &&
+    typeof named.nodeId === "string" &&
+    named.nodeId.length > 0
+    ? (value as ExecutionOrigin)
+    : undefined;
 }
 
 /** Receipt progress is latest-only; terminal and invalidating states remain ordinary facts. */

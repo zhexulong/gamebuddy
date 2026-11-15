@@ -256,32 +256,6 @@ export interface InFlightProgramme {
 export interface InFlightProgrammeReading {
   readonly programmes: readonly InFlightProgramme[];
   readonly omittedProgrammes: number;
-  /**
-   * The programmes the journal has reported STOPPED and this ledger still NAMES (`SETTLING_GRACE_MS`).
-   *
-   * SEPARATE FROM `programmes` ON PURPOSE. That list is rendered as `<in-flight>` with the line "还没结算，就等于一步都还
-   * 没做成", which would be a lie about a programme whose every node has settled. These are named, and never reported as
-   * in flight: they exist for the one question the pump asks - is there a programme a receipt could belong to.
-   */
-  readonly settling: readonly SettlingProgramme[];
-}
-
-/** A programme the journal has reported stopped, still named for the bounded grace its own tail receipts need. */
-export interface SettlingProgramme {
-  readonly programId: string;
-  /** How long ago the journal first reported this programme stopped, as this ledger read it. */
-  readonly settledAgeMs: number;
-}
-
-/**
- * Does this reading still NAME a programme a step could belong to - one running, or one still settling?
- *
- * ONE SPELLING of the pump's question: `#owesTurn` and `#isInFlightProgress` both ask this, so "a programme is named"
- * cannot be answered two ways about one reading. It is deliberately not `programmes.length` anywhere: the name outlives
- * the clock, and that gap is where `round62`'s 71 turns were opened.
- */
-export function programmesNamed(reading: InFlightProgrammeReading): boolean {
-  return reading.programmes.length > 0 || reading.settling.length > 0;
 }
 
 /**
@@ -313,42 +287,10 @@ const MAX_OBSERVED_PROGRAMS = 64;
 /** How long an unread plan keeps its clock: longer than any action, shorter than a session, so ids cannot be inherited. */
 const OBSERVATION_RETENTION_MS = 10 * 60_000;
 
-/**
- * How long a programme stays NAMED after the journal reports it stopped.
- *
- * <p>
- * IT IS NOT A CLOCK, and it is not the `active` state either: it is the lifetime of the NAME. Both ends of it are a
- * measured failure, which is why it is declared here rather than left to whoever reads the ledger next.
- * </p>
- * <p>
- * TOO SHORT, and the plan's own tail receipt finds nothing to belong to. MEASURED 2026-11-15 (`round62`):
- * `program_settlement` suppressed 168 times as progress and `adapter_ingress` still opened 71 turns. The read that saw
- * the last node finish deleted the programme at that instant, the `succeeded` receipt for that node arrived a moment
- * later, and a step whose settlement was already queued behind it fell through to `decision` and bought its own turn.
- * The gap being covered is one bridge delivery plus the settlement watch's tick
- * (`PROGRAM_SETTLEMENT_WATCH_INTERVAL_MS`, 1 s) - the receipt is already in flight when the journal says stopped -
- * so this is an order of magnitude above the thing it must outlast.
- * </p>
- * <p>
- * TOO LONG, and a genuinely lone action pays for somebody else's stop: its own `succeeded` receipt would be filed as a
- * step of a programme that had nothing to do with it, and the only fact that will ever say it happened waits for the next
- * turn that opens for a decision. So the grace is bounded well below the reading bound (`IN_FLIGHT_READING_MAX_AGE_MS`),
- * and `in-flight-programme.test.ts` holds both ends of it.
- * </p>
- */
-export const SETTLING_GRACE_MS = 10_000;
-
 /** One plan's node clocks: when the Host first saw each node in the state it is in now, and that node's action. */
 type ObservedProgram = {
   readonly programId: string;
   lastSeen: number;
-  /**
-   * When the journal first reported this plan STOPPED, or `null` while it is still `active`.
-   *
-   * A non-null value is the SETTLING lifetime: the plan is still NAMED, holds no clock, and is no longer reported in
-   * flight (`SETTLING_GRACE_MS`).
-   */
-  settledAtMs: number | null;
   nodes: Map<string, { state: string; since: number; actionId?: string }>;
 };
 
@@ -356,12 +298,12 @@ export interface ProgramProgressObserver {
   /** The progress a `program_status` payload describes, or `null` when that payload is not a found plan. */
   observe(payload: unknown, nowMs?: number): ProgramStatusProgress | null;
   /**
-   * Every programme this observer has read and the journal still calls `active`, with nothing settled left out, plus the
-   * ones the journal has reported stopped and this ledger still NAMES (`SETTLING_GRACE_MS`).
+   * Every programme this observer has read and the journal still calls `active`, with nothing settled left out.
    *
    * A READING, not a poll: it never reads the journal, never mints a fact and never starts a turn. The pump asks it when
-   * it composes a batch, which is the only moment the answer is model-visible - and when it decides whether a receipt is
-   * a step of a programme or a lone outcome.
+   * it composes a batch, which is the only moment the answer is model-visible - and NOT when it decides whether a receipt
+   * is a step or a lone outcome, because the receipt states that itself
+   * (`event-pump.ts#factExecutionOrigin`).
    */
   inFlight(nowMs?: number): InFlightProgrammeReading;
 }
@@ -384,8 +326,7 @@ export function createProgramProgressObserver(): ProgramProgressObserver {
       // cancelled and re-dispatched, so inheriting the previous epoch's clock would time work that no longer exists.
       const key = `${plan.programId}|${plan.stopEpoch}`;
       const previous = programs.get(key);
-      const active = plan.programId.length > 0 && plan.state === ACTIVE_PROGRAM_STATE;
-      const anchors = continuingAnchors(active, previous);
+      const anchors = new Map(previous?.nodes ?? []);
       let settled = 0;
       let running = 0;
       let current: ProgramStatusProgress["current"] = null;
@@ -400,7 +341,11 @@ export function createProgramProgressObserver(): ProgramProgressObserver {
           if (current === null) current = view;
         } else if (next === null) next = view;
       }
-      recordLifetime(programs, key, plan.programId, active, previous, anchors, nowMs);
+      // A plan that has stopped keeps no clock: a later plan may reuse the id, and a stale anchor would report another
+      // plan's work as this one's.
+      if (plan.programId.length > 0 && plan.state === ACTIVE_PROGRAM_STATE)
+        programs.set(key, { programId: plan.programId, lastSeen: nowMs, nodes: anchors });
+      else programs.delete(key);
       pruneObservations(programs, nowMs);
       const remaining = plan.nodes.length - settled;
       return Object.freeze({
@@ -415,16 +360,7 @@ export function createProgramProgressObserver(): ProgramProgressObserver {
     },
     inFlight(nowMs: number = Date.now()): InFlightProgrammeReading {
       const live: InFlightProgramme[] = [];
-      const settling: SettlingProgramme[] = [];
       for (const program of programs.values()) {
-        if (program.settledAtMs !== null) {
-          // THE SECOND EXIT FROM THE SETTLING LIFETIME: the grace. Past it the name is gone and a receipt is a lone
-          // outcome again, which is the honest reading for a programme nothing is still owed.
-          const settledAgeMs = Math.max(0, nowMs - program.settledAtMs);
-          if (settledAgeMs <= SETTLING_GRACE_MS)
-            settling.push(Object.freeze({ programId: program.programId, settledAgeMs }));
-          continue;
-        }
         const readAgeMs = Math.max(0, nowMs - program.lastSeen);
         if (readAgeMs > IN_FLIGHT_READING_MAX_AGE_MS) continue;
         const rows = [...program.nodes.entries()];
@@ -454,67 +390,11 @@ export function createProgramProgressObserver(): ProgramProgressObserver {
       // two batches composed from the same ledger render the same bytes.
       live.sort((left, right) => left.readAgeMs - right.readAgeMs || left.programId.localeCompare(right.programId));
       const shown = live.slice(0, MAX_IN_FLIGHT_PROGRAMMES);
-      // Stopped programmes are only NAMED, so they need no row bound: the map they come from is bounded
-      // (`MAX_OBSERVED_PROGRAMS`) and the grace drains it. By id, so two readings of one ledger agree.
-      settling.sort((left, right) => left.programId.localeCompare(right.programId));
       return Object.freeze({
         programmes: Object.freeze(shown),
         omittedProgrammes: live.length - shown.length,
-        settling: Object.freeze(settling),
       });
     },
-  });
-}
-
-/**
- * The clocks one read continues: only a plan this ledger is STILL holding as `active` keeps its own.
- *
- * A plan that has stopped keeps no clock, so a clock cannot come back from the dead with it - and a settling plan's frozen
- * clocks stay unreachable to the next plan to take the id (`recordLifetime`).
- */
-function continuingAnchors(active: boolean, previous: ObservedProgram | undefined): ObservedProgram["nodes"] {
-  return active && previous !== undefined && previous.settledAtMs === null ? new Map(previous.nodes) : new Map();
-}
-
-/**
- * What one read does to a plan's LIFETIME: continue it, start it, or end its clock while keeping its NAME.
- *
- * <p>
- * A plan that has stopped keeps no clock: a later plan may reuse the id, and a stale anchor would report another plan's
- * work as this one's. It keeps its NAME for a bounded grace, though, because its own last receipt can arrive after the read
- * that saw it stop - and a ledger that forgot it there opened a turn for a step of a programme whose settlement was already
- * queued (`SETTLING_GRACE_MS`).
- * </p>
- * <p>
- * A plan this ledger never held as `active` starts no lifetime at all: nothing removed it, so nothing was forgotten, and
- * naming it would silence the first `succeeded` receipt of a run.
- * </p>
- */
-function recordLifetime(
-  programs: Map<string, ObservedProgram>,
-  key: string,
-  programId: string,
-  active: boolean,
-  previous: ObservedProgram | undefined,
-  anchors: ObservedProgram["nodes"],
-  nowMs: number,
-): void {
-  if (active) {
-    // ID REUSE IS THE FIRST EXIT FROM THE SETTLING LIFETIME. A new plan taking this id ends the old name here, before it
-    // can answer for the live plan's steps.
-    for (const [settlingKey, entry] of programs)
-      if (entry.programId === programId && entry.settledAtMs !== null) programs.delete(settlingKey);
-    programs.set(key, { programId, lastSeen: nowMs, settledAtMs: null, nodes: anchors });
-    return;
-  }
-  if (previous === undefined) return;
-  // The read that saw it stop, named from THIS instant with the clocks frozen where the stop left them (the second read of
-  // the same stop keeps the first instant, so a repeated poll cannot extend the grace).
-  programs.set(key, {
-    programId: previous.programId,
-    lastSeen: nowMs,
-    settledAtMs: previous.settledAtMs ?? nowMs,
-    nodes: previous.nodes,
   });
 }
 
@@ -1053,13 +933,10 @@ function readPlanProgressSource(payload: unknown): {
   };
 }
 
-/** Drop clocks nobody will read again - and settling names past their grace - oldest first, so a long session cannot grow
- * this without bound. */
+/** Drop clocks nobody will read again, oldest first, so a long session cannot grow this without bound. */
 function pruneObservations(programs: Map<string, ObservedProgram>, nowMs: number): void {
-  for (const [programId, entry] of programs) {
-    const settledPastGrace = entry.settledAtMs !== null && nowMs - entry.settledAtMs > SETTLING_GRACE_MS;
-    if (settledPastGrace || nowMs - entry.lastSeen > OBSERVATION_RETENTION_MS) programs.delete(programId);
-  }
+  for (const [programId, entry] of programs)
+    if (nowMs - entry.lastSeen > OBSERVATION_RETENTION_MS) programs.delete(programId);
   while (programs.size > MAX_OBSERVED_PROGRAMS) {
     let oldestId: string | undefined;
     let oldestSeen = Number.POSITIVE_INFINITY;

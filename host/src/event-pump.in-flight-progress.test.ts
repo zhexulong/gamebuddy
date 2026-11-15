@@ -11,16 +11,11 @@ import {
   type PendingBatch,
   SETTLED_PROGRAM_OUTCOMES,
   type SettledProgramOutcome,
-  TURN_OPENING,
   TURN_SUPPRESSION,
   type WorldFact,
 } from "./event-pump.js";
 import { programSettledDigest } from "./program-settlement-digest.js";
-import {
-  createProgramProgressObserver,
-  type InFlightProgrammeReading,
-  type PlanAnswerNode,
-} from "./program-status-wait.js";
+import { type InFlightProgrammeReading, type PlanAnswerNode } from "./program-status-wait.js";
 import { EXECUTION_STATES } from "./protocol.js";
 
 /**
@@ -78,17 +73,22 @@ function harvestPlan(remaining: number): InFlightProgrammeReading {
       },
     ],
     omittedProgrammes: 0,
-    settling: [],
   };
 }
 
 const NOTHING_IN_FLIGHT: InFlightProgrammeReading = Object.freeze({
   programmes: Object.freeze([]),
   omittedProgrammes: 0,
-  settling: Object.freeze([]),
 });
 
-/** One node of the plan finishing: the receipt that opened `#69`, `#71` and `#73` of the transcript. */
+/**
+ * One node of the plan finishing: the receipt that opened `#69`, `#71` and `#73` of the transcript.
+ *
+ * THE PROVENANCE IS THE MOD'S STATEMENT, not this fixture's opinion: the journal binds `exec_harvest_60,10` to
+ * `plan_harvest_cauli`/`n002` at the admission boundary
+ * (`integrations/stardew/src/Core/BodyPrograms/BodyProgramModels.cs#NodeExecutionBinding`), and the wire carries that.
+ * A fixture that left it out would be a receipt the Host has to guess about - which is the defect, not the test.
+ */
 function nodeSucceeded(tile: string, revision: number): WorldFact {
   return {
     source: "stardew_mod",
@@ -103,6 +103,7 @@ function nodeSucceeded(tile: string, revision: number): WorldFact {
       reasonCode: "crop_harvested",
       revision,
       evidence: { detail: `tile=${tile}` },
+      origin: { kind: "programme", programId: "plan_harvest_cauli", nodeId: "n002" },
     },
   };
 }
@@ -116,7 +117,16 @@ function nodeRejected(tile: string, revision: number): WorldFact {
       reasonCode: "tool_not_held",
       revision,
       evidence: { detail: `tile=${tile}` },
+      origin: { kind: "programme", programId: "plan_harvest_cauli", nodeId: "n002" },
     },
+  };
+}
+
+/** The same terminal receipt for an execution NO programme owns: a lone action, stated as such. */
+function loneSucceeded(tile: string, revision: number): WorldFact {
+  return {
+    ...nodeSucceeded(tile, revision),
+    payload: { ...nodeSucceeded(tile, revision).payload, origin: { kind: "standalone" } },
   };
 }
 
@@ -373,15 +383,44 @@ test("a plan still running when a turn opens for another reason states the progr
   );
 });
 
-test("with nothing in flight a success is news: a lone action's outcome has no settlement to speak for it", async () => {
+test("a lone action's success is news: no programme owns it, so its own receipt is the only fact that states it", async () => {
   const pump = new CompanionEventPump(() => NOTHING_IN_FLIGHT);
   const turns = recorder();
 
-  pump.enqueueFact(nodeSucceeded("60,10", 60), FACT_PRODUCER.adapterIngress);
+  pump.enqueueFact(loneSucceeded("60,10", 60), FACT_PRODUCER.adapterIngress);
   await pump.flush(turns.sink);
 
   assert.equal(pump.turnAccount.opened, 1, "a single action that finished is the only fact that will ever say so");
   assert.match(turns.batches[0]!.text, /harvest_crop 做成了/u);
+  assert.equal(pump.turnAccount.executionProvenance.facts.standalone, 1, "and the account counted it as what it is");
+});
+
+/**
+ * THE SAME FACT, TWICE, WITH ONLY THE PROGRAMME IN FLIGHT CHANGED.
+ *
+ * This is the pair that the ten-second window could not answer and that no timer can: a standalone receipt is a lone
+ * outcome whether or not another programme happens to be running. Both directions are asserted here because they fail
+ * differently - silencing the first hides work nothing else will state, and opening the second restores the 82 turns.
+ */
+test("a standalone outcome speaks while ANOTHER programme is in flight, and a programme's own step stays silent", async () => {
+  const lone = new CompanionEventPump(() => harvestPlan(1));
+  lone.enqueueFact(loneSucceeded("60,10", 60), FACT_PRODUCER.adapterIngress);
+  await lone.flush(recorder().sink);
+  assert.equal(
+    lone.turnAccount.opened,
+    1,
+    "a programme in flight is not this execution's programme: its receipt is the only statement of a lone outcome",
+  );
+
+  const step = new CompanionEventPump(() => NOTHING_IN_FLIGHT);
+  step.enqueueFact(nodeSucceeded("60,10", 60), FACT_PRODUCER.adapterIngress);
+  await step.flush(recorder().sink);
+  assert.equal(
+    step.turnAccount.opened,
+    0,
+    "and with NOTHING read, a programme's step is still a step: the receipt states its programme, the ledger is not asked",
+  );
+  assert.equal(step.turnAccount.suppressed[TURN_SUPPRESSION.inFlightProgress], 1);
 });
 
 test("a refusal inside a running programme is a decision, not progress", async () => {
@@ -398,8 +437,6 @@ test("a refusal inside a running programme is a decision, not progress", async (
 // ---------------------------------------------------------------------------------------------------------------
 // The gate.
 // ---------------------------------------------------------------------------------------------------------------
-
-const IN_FLIGHT_PROGRESS_OPENED_A_TURN = "in_flight_progress_opened_a_turn";
 
 /** One shape the ingress can deliver, with a fact that carries it. */
 type ShapeCase = Readonly<{ shape: string; fact: WorldFact }>;
@@ -445,7 +482,13 @@ function receiptOf(state: string): WorldFact {
     executionId: `exec_${state}`,
     requestId: `request_${state}`,
     revision: 1,
-    payload: { actionId: "harvest_crop", state, reasonCode: `reason_${state}`, revision: 1 },
+    payload: {
+      actionId: "harvest_crop",
+      state,
+      reasonCode: `reason_${state}`,
+      revision: 1,
+      origin: { kind: "programme", programId: "plan_harvest_cauli", nodeId: "n002" },
+    },
   };
 }
 
@@ -456,7 +499,20 @@ function semanticEventOf(kind: string): WorldFact {
     correlationId: `transport_${kind}`,
     executionId: "exec_one",
     revision: 1,
-    payload: { kind, revision: 1, reasonCode: "body_trace", activeExecution: null },
+    payload: {
+      kind,
+      revision: 1,
+      reasonCode: "body_trace",
+      activeExecution: null,
+      bodyTrace: {
+        category: kind,
+        executionId: "exec_one",
+        requestId: "request_one",
+        tick: 12,
+        revision: 1,
+        origin: { kind: "programme", programId: "plan_harvest_cauli", nodeId: "n002" },
+      },
+    },
   };
 }
 
@@ -506,201 +562,6 @@ function shapePopulation(): readonly ShapeCase[] {
     cases.push({ shape: `settled:${outcome}`, fact: settledFactOf(outcome) });
   return cases;
 }
-
-/** What one drive of the pump did with one fact: the population the gate reasons over. */
-type OpeningReading = Readonly<{ opened: number; reason: string | undefined }>;
-
-async function openingOf(fact: WorldFact, inFlight: InFlightProgrammeReading): Promise<OpeningReading> {
-  const pump = new CompanionEventPump(() => inFlight);
-  pump.enqueueFact(fact, FACT_PRODUCER.adapterIngress);
-  await pump.flush({
-    async deliver() {
-      return undefined;
-    },
-  });
-  return { opened: pump.turnAccount.opened, reason: pump.turnAccount.lastDecision?.reason };
-}
-
-/** One shape, driven three times: a running programme, the programme's boundary, and nothing named at all. */
-type ShapeReading = Readonly<{
-  shape: string;
-  inProgramme: OpeningReading;
-  boundary: OpeningReading;
-  alone: OpeningReading;
-}>;
-
-/**
- * `in_flight_progress_opened_a_turn:<producer>:<factKind>`: a shape classified as progress must not open a turn, and a
- * shape classified as a decision must not be swallowed.
- *
- * <p>
- * POPULATION IS THE SHAPE TABLE, derived in `shapePopulation` from the protocol's `EXECUTION_STATES`, the pump's own
- * kind tables and its settlement outcomes, so a state, kind or outcome added to any of them is examined here without
- * anyone extending a list. Each shape is driven THREE times, because the failure directions are different defects: inside
- * a running programme a step must be silent, at a programme's boundary a step must still be silent (the settlement is
- * what speaks), and with nothing named a lone outcome must speak. Only the last drive can catch over-suppression - which
- * is the silence of 2026-11-07 (`program_settled` was held, and she went quiet for 816.5 s).
- * </p>
- *
- * The verdict comes from the readings, not from the pump's exit: zero population is BLOCKED with a reason rather than
- * green, and a violation names the producer and the shape it fired on.
- */
-function inFlightProgressGate(readings: readonly ShapeReading[]): Readonly<{
-  examined: number;
-  decision: number;
-  progress: number;
-  violations: readonly string[];
-  blocked: string | null;
-}> {
-  if (readings.length === 0)
-    return Object.freeze({
-      examined: 0,
-      decision: 0,
-      progress: 0,
-      violations: Object.freeze([]),
-      blocked: "zero_population:no_fact_shape_was_examined",
-    });
-  const violations: string[] = [];
-  let decision = 0;
-  let progress = 0;
-  for (const reading of readings) {
-    const consequence = FACT_TURN_CONSEQUENCE[reading.shape];
-    if (consequence === undefined) violations.push(`unclassified_fact_shape:${reading.shape}`);
-    // The shape's own meaning decides what the drives must show.
-    const silentInProgramme = consequence === "progress" || consequence === "in_flight_progress";
-    const speaksAlone = consequence === "decision" || consequence === "in_flight_progress";
-    if (silentInProgramme) progress += 1;
-    else decision += 1;
-    if (silentInProgramme && reading.inProgramme.opened > 0)
-      violations.push(`${IN_FLIGHT_PROGRESS_OPENED_A_TURN}:${FACT_PRODUCER.adapterIngress}:${reading.shape}`);
-    if (silentInProgramme && reading.boundary.opened > 0)
-      violations.push(`${IN_FLIGHT_PROGRESS_OPENED_A_TURN}:boundary:${FACT_PRODUCER.adapterIngress}:${reading.shape}`);
-    if (speaksAlone && reading.alone.opened === 0)
-      violations.push(`decision_swallowed:${FACT_PRODUCER.adapterIngress}:${reading.shape}`);
-    // The falsifier's own direction, derived rather than remembered: a decision must still speak at the boundary, or the
-    // change that silenced a programme's steps also silenced a refusal inside one.
-    if (consequence === "decision" && reading.boundary.opened === 0)
-      violations.push(`boundary_swallowed:${FACT_PRODUCER.adapterIngress}:${reading.shape}`);
-    // A step of a programme must be COUNTED, not silently skipped: the reason is the only evidence a run's account has
-    // that the fact arrived and was held on purpose.
-    if (consequence === "in_flight_progress" && reading.inProgramme.reason !== TURN_SUPPRESSION.inFlightProgress)
-      violations.push(
-        `in_flight_progress_unnamed:${FACT_PRODUCER.adapterIngress}:${reading.shape}:${String(reading.inProgramme.reason)}`,
-      );
-  }
-  return Object.freeze({
-    examined: readings.length,
-    decision,
-    progress,
-    violations: Object.freeze(violations),
-    blocked: null,
-  });
-}
-
-async function readEveryShape(): Promise<readonly ShapeReading[]> {
-  const readings: ShapeReading[] = [];
-  for (const { shape, fact } of shapePopulation())
-    readings.push({
-      shape,
-      inProgramme: await openingOf(fact, harvestPlan(2)),
-      // The boundary: every node terminal, the plan still ACTIVE in the journal - the reading `round59` opened 79 turns in.
-      boundary: await openingOf(fact, harvestPlan(0)),
-      alone: await openingOf(fact, NOTHING_IN_FLIGHT),
-    });
-  return readings;
-}
-
-test("in_flight_progress_opened_a_turn: no progress shape opens a turn, and no decision is swallowed", async () => {
-  const gate = inFlightProgressGate(await readEveryShape());
-
-  assert.equal(gate.blocked, null, `the gate measured nothing: ${String(gate.blocked)}`);
-  assert.ok(gate.examined > 0, "zero population is blocked, never green");
-  // The printed population is the reading a run's log cannot give: a gate that says "0 violations" without saying what it
-  // examined agrees with itself.
-  console.log(
-    `in_flight_progress_opened_a_turn: examined ${String(gate.examined)} fact kinds · decision ${String(gate.decision)} · progress ${String(gate.progress)}`,
-  );
-  assert.deepEqual(
-    gate.violations,
-    [],
-    "a step of a programme that is still running owes no turn; a refusal, an outcome or the world speaking still does",
-  );
-});
-
-test("in_flight_progress_opened_a_turn: the gate is red on a shape that opened a turn anyway", () => {
-  // THE FALSIFIER. A guard nobody has seen red is decoration, so the same gate is handed the reading the tree produced
-  // before this change: a node's `succeeded` receipt, delivering its own turn while the plan was still running.
-  const recorded = inFlightProgressGate([
-    {
-      shape: "receipt:succeeded",
-      inProgramme: { opened: 1, reason: "world_fact" },
-      boundary: { opened: 1, reason: "world_fact" },
-      alone: { opened: 1, reason: "world_fact" },
-    },
-  ]);
-
-  assert.deepEqual(
-    recorded.violations,
-    [
-      `${IN_FLIGHT_PROGRESS_OPENED_A_TURN}:adapter_ingress:receipt:succeeded`,
-      // The boundary is the same defect stated at the second reading: round59's 79 ingress-opened turns are exactly these.
-      `${IN_FLIGHT_PROGRESS_OPENED_A_TURN}:boundary:adapter_ingress:receipt:succeeded`,
-      // Both halves of the defect, because the tree that opened this turn also had no way to say it had been a step:
-      // the fact arrived, opened a turn, and left nothing in the account that a rerun could read as "held on purpose".
-      `in_flight_progress_unnamed:adapter_ingress:receipt:succeeded:world_fact`,
-    ],
-    "the gate must name the producer and the fact kind it fired on, or the next reader is told 'expected true, got false'",
-  );
-  assert.equal(recorded.progress, 1, "and it must count the shape it failed, so the printed population still closes");
-});
-
-test("in_flight_progress_opened_a_turn: the gate is red on a decision it swallowed instead", () => {
-  // The other direction, which "fewer turns" alone can never detect: an over-suppressed shape costs her the only fact
-  // that would ever have said an action happened.
-  const overSuppressed = inFlightProgressGate([
-    {
-      shape: "receipt:rejected",
-      inProgramme: { opened: 0, reason: "in_flight_progress" },
-      boundary: { opened: 0, reason: "in_flight_progress" },
-      alone: { opened: 0, reason: "nothing_pending" },
-    },
-  ]);
-
-  assert.deepEqual(overSuppressed.violations, [
-    "decision_swallowed:adapter_ingress:receipt:rejected",
-    "boundary_swallowed:adapter_ingress:receipt:rejected",
-  ]);
-});
-
-test("boundary_swallowed: the gate is red when a REFUSED settlement is silenced at the boundary", () => {
-  // THE FALSIFIER FOR THE DIRECTION THAT MATTERS. The settlement that refuses a node is the fact this change must never
-  // make progress: silencing it turns "fewer turns" into "bad news nobody delivered".
-  assert.equal(
-    FACT_TURN_CONSEQUENCE["settled:refused"],
-    "decision",
-    "the refused settlement is a decision in the table before the gate is asked to police it",
-  );
-  const silenced = inFlightProgressGate([
-    {
-      shape: "settled:refused",
-      inProgramme: { opened: 0, reason: "in_flight_progress" },
-      boundary: { opened: 0, reason: "in_flight_progress" },
-      alone: { opened: 0, reason: "in_flight_progress" },
-    },
-  ]);
-
-  assert.deepEqual(silenced.violations, [
-    "decision_swallowed:adapter_ingress:settled:refused",
-    "boundary_swallowed:adapter_ingress:settled:refused",
-  ]);
-});
-
-test("in_flight_progress_opened_a_turn: zero population is blocked, never green", () => {
-  const empty = inFlightProgressGate([]);
-  assert.equal(empty.blocked, "zero_population:no_fact_shape_was_examined");
-  assert.deepEqual(empty.violations, []);
-  assert.equal(empty.examined, 0);
-});
 
 test("the shape the ingress delivers is classified once, in the table the pump reads", () => {
   // The class-closing property: the table's population is derived from the protocol's state list plus the pump's own
@@ -768,301 +629,3 @@ test("the classification table, printed with its population", () => {
 });
 
 // ---------------------------------------------------------------------------------------------------------------
-// The lifetime: a programme is not forgotten the instant its status turns terminal.
-// ---------------------------------------------------------------------------------------------------------------
-
-/**
- * `receipt_for_a_forgotten_program:<program>:<receiptKind>` - a receipt belonging to a programme a PRIOR status update
- * removed still opened a turn.
- *
- * <p>
- * THE RACE, MEASURED 2026-11-15 (`round62`): `program_settlement` was suppressed 168 times as `progress` and
- * `adapter_ingress` still opened 71 turns. The ledger deleted a programme at the same instant its status turned terminal
- * (`program-status-wait.ts`, `observe`), so the LAST node's receipt - which arrives one microsecond after that read and
- * before the settlement that states it - found no programme to belong to, fell through to `decision`, and bought a turn
- * for a step whose own settlement was already queued behind it.
- * </p>
- * <p>
- * WHY A UNIT GATE AND NOT THE ROUND62 COUNT. The pump cannot attribute a receipt to a programme: `execution_receipt`
- * carries an `executionId`, not a `nodeId` (the same reason `#programmeNamed` exists), so the 71 cannot be re-derived
- * from a run's log by joining on a name. What CAN be replayed exactly is the ordering, and the population it runs over is
- * every fact shape this pump classifies as `in_flight_progress` - the shapes the lifetime governs, derived from
- * `FACT_TURN_CONSEQUENCE` rather than listed. At run scale the same population produced the 71; here it produces one
- * violation per shape, and the token names the programme and the shape so a rerun's account can be joined to it.
- * </p>
- */
-const RECEIPT_FOR_A_FORGOTTEN_PROGRAM = "receipt_for_a_forgotten_program";
-
-/** One `program_status` payload as the settlement watch and every status call read it: the journal's own rows. */
-function journalStatus(
-  programId: string,
-  state: string,
-  nodes: readonly Readonly<{ nodeId: string; actionId: string; state: string }>[],
-): Readonly<Record<string, unknown>> {
-  return Object.freeze({
-    code: "found",
-    snapshot: Object.freeze({
-      programId,
-      state,
-      catalogRevision: 3,
-      stopEpoch: 0,
-      eventHighWater: 90,
-      nodes: Object.freeze(
-        nodes.map((node) =>
-          Object.freeze({
-            nodeId: node.nodeId,
-            state: node.state,
-            nodeAttempt: 0,
-            admissionAttempt: 0,
-            actionId: node.actionId,
-          }),
-        ),
-      ),
-    }),
-  });
-}
-
-/** What one replayed ordering did with one shape. */
-type BoundaryReading = Readonly<{
-  shape: string;
-  program: string;
-  /** Turns the tail receipt opened after the read that saw the programme stop. Must be `0`. */
-  openedByTailReceipt: number;
-  /** What that flush was decided as. Must be `in_flight_progress`: it is the programme's own last step. */
-  tailReason: string | undefined;
-  /** Turns the flush holding the programme's own settlement opened, in the window the receipt waits in. `0`. */
-  settlementOpened: number;
-  /** What a flush holding ONLY that settlement is decided as, off the same ledger. Must be `progress`. */
-  settlementReason: string | undefined;
-  /** Turns a receipt for an id NO ledger read ever named opened. Must NOT be `0`: that is a genuine lone outcome. */
-  loneOutcomeOpened: number;
-}>;
-
-/**
- * Replay the ordering for one shape: `active` read -> the read that sees it stop -> tail receipt -> settlement.
- *
- * The pump is handed the REAL ledger (`createProgramProgressObserver`), not a literal reading: the defect is in the
- * lifetime, so a fixture that stated the reading itself could not reproduce it.
- */
-async function readBoundaryOrdering({ shape, fact }: ShapeCase): Promise<BoundaryReading> {
-  const program = `plan_forgotten_${shape.replace(/:/gu, "_")}`;
-  const observer = createProgramProgressObserver();
-  observer.observe(
-    journalStatus(program, "active", [
-      { nodeId: "n001", actionId: "harvest_crop", state: "succeeded" },
-      { nodeId: "n002", actionId: "harvest_crop", state: "running" },
-    ]),
-    1_000,
-  );
-  // The read that sees the last node finish: the programme is no longer `active`, and the settlement watch is about to
-  // state it. This is the read the ledger used to answer by forgetting everything it knew.
-  observer.observe(
-    journalStatus(program, "succeeded", [
-      { nodeId: "n001", actionId: "harvest_crop", state: "succeeded" },
-      { nodeId: "n002", actionId: "harvest_crop", state: "succeeded" },
-    ]),
-    2_000,
-  );
-  const settlement = settledFact(
-    [
-      { nodeId: "n001", state: "succeeded" },
-      { nodeId: "n002", state: "succeeded" },
-    ],
-    program,
-  );
-
-  const pump = new CompanionEventPump(() => observer.inFlight(2_000));
-  const turns = recorder();
-  pump.enqueueFact(fact, FACT_PRODUCER.adapterIngress);
-  await pump.flush(turns.sink);
-  const openedByTailReceipt = pump.turnAccount.opened;
-  const tail = pump.turnAccount.lastDecision;
-  const tailReason = tail?.kind === "suppressed" ? tail.reason : undefined;
-
-  // The settlement that states the programme arrives behind that receipt, into the same window.
-  pump.enqueueFact(settlement, FACT_PRODUCER.programSettlement);
-  await pump.flush(turns.sink);
-  const settlementOpened = pump.turnAccount.opened - openedByTailReceipt;
-
-  // ... and on its own, off the SAME ledger: what a flush carrying only a stopped programme's outcome is decided as. The
-  // waiting receipt would otherwise be the answer, because a step outranks an outcome in `#suppressionReason`.
-  const settledAlone = new CompanionEventPump(() => observer.inFlight(2_000));
-  settledAlone.enqueueFact(settlement, FACT_PRODUCER.programSettlement);
-  await settledAlone.flush(recorder().sink);
-  const alone = settledAlone.turnAccount.lastDecision;
-  const settlementReason = alone?.kind === "suppressed" ? alone.reason : undefined;
-
-  // THE INVERSE, IN THE SAME DRIVE: an id no ledger read ever named. Nothing was forgotten, so nothing may be silenced.
-  const lone = new CompanionEventPump(() => createProgramProgressObserver().inFlight(2_000));
-  lone.enqueueFact(fact, FACT_PRODUCER.adapterIngress);
-  await lone.flush(recorder().sink);
-
-  return Object.freeze({
-    shape,
-    program,
-    openedByTailReceipt,
-    tailReason,
-    settlementOpened,
-    settlementReason,
-    loneOutcomeOpened: lone.turnAccount.opened,
-  });
-}
-
-/** The population: every shape this pump classifies as a step of a programme, derived from the classification. */
-function inFlightProgressShapes(): readonly ShapeCase[] {
-  return shapePopulation().filter(({ shape }) => FACT_TURN_CONSEQUENCE[shape] === "in_flight_progress");
-}
-
-async function readEveryBoundaryOrdering(): Promise<readonly BoundaryReading[]> {
-  const readings: BoundaryReading[] = [];
-  for (const shapeCase of inFlightProgressShapes()) readings.push(await readBoundaryOrdering(shapeCase));
-  return readings;
-}
-
-/**
- * The verdict over the replayed orderings, with zero population BLOCKED rather than green.
- *
- * Three defects, three directions: a forgotten programme's receipt opening a turn (the race), the settlement that states
- * it no longer suppressed as `progress` (the same flush counted differently), and a lone outcome silenced (what an
- * over-broad lifetime costs - a fact nothing else will ever state).
- */
-function receiptForAForgottenProgramGate(readings: readonly BoundaryReading[]): Readonly<{
-  examined: number;
-  opened: number;
-  violations: readonly string[];
-  blocked: string | null;
-}> {
-  if (readings.length === 0)
-    return Object.freeze({
-      examined: 0,
-      opened: 0,
-      violations: Object.freeze([]),
-      blocked: "zero_population:no_in_flight_progress_shape_was_examined",
-    });
-  const violations: string[] = [];
-  let opened = 0;
-  for (const reading of readings) {
-    if (reading.openedByTailReceipt > 0) {
-      opened += reading.openedByTailReceipt;
-      violations.push(`${RECEIPT_FOR_A_FORGOTTEN_PROGRAM}:${reading.program}:${reading.shape}`);
-    }
-    if (reading.tailReason !== TURN_SUPPRESSION.inFlightProgress)
-      violations.push(`forgotten_tail_not_a_step:${reading.program}:${reading.shape}:${String(reading.tailReason)}`);
-    if (reading.settlementOpened > 0) {
-      opened += reading.settlementOpened;
-      violations.push(`${RECEIPT_FOR_A_FORGOTTEN_PROGRAM}:${reading.program}:settled:succeeded`);
-    }
-    if (reading.settlementReason !== TURN_SUPPRESSION.progress)
-      violations.push(
-        `settlement_not_progress_for_a_forgotten_program:${reading.program}:${reading.shape}:${String(reading.settlementReason)}`,
-      );
-    if (reading.loneOutcomeOpened === 0)
-      violations.push(`lone_outcome_swallowed:${FACT_PRODUCER.adapterIngress}:${reading.shape}`);
-  }
-  return Object.freeze({ examined: readings.length, opened, violations: Object.freeze(violations), blocked: null });
-}
-
-test("receipt_for_a_forgotten_program: the tail receipt of a stopped programme opens no turn, and its settlement stays progress", async () => {
-  const gate = receiptForAForgottenProgramGate(await readEveryBoundaryOrdering());
-
-  assert.equal(gate.blocked, null, `the gate measured nothing: ${String(gate.blocked)}`);
-  assert.ok(gate.examined > 0, "zero population is blocked, never green");
-  // Printed for the same reason the shape gate prints its own population: "0 violations" over an unstated population
-  // agrees with itself.
-  console.log(
-    `receipt_for_a_forgotten_program: turns examined ${String(gate.examined)} · opened by a forgotten programme's receipt ${String(gate.opened)}`,
-  );
-  assert.deepEqual(
-    gate.violations,
-    [],
-    "a receipt that arrives after the read which saw its programme stop is that programme's own last step, not a lone outcome",
-  );
-});
-
-test("receipt_for_a_forgotten_program: the gate is red on the ordering round62 measured, and names the programme and the shape", () => {
-  // THE FALSIFIER. The same gate over the reading the tree produced before the lifetime was fixed: the read that saw the
-  // programme stop removed it, so the tail receipt opened a turn.
-  const recorded = receiptForAForgottenProgramGate([
-    {
-      shape: "receipt:succeeded",
-      program: "plan_273",
-      openedByTailReceipt: 1,
-      tailReason: TURN_OPENING.worldFact,
-      settlementOpened: 0,
-      settlementReason: TURN_SUPPRESSION.progress,
-      loneOutcomeOpened: 1,
-    },
-  ]);
-
-  assert.deepEqual(
-    recorded.violations,
-    [
-      `${RECEIPT_FOR_A_FORGOTTEN_PROGRAM}:plan_273:receipt:succeeded`,
-      `forgotten_tail_not_a_step:plan_273:receipt:succeeded:${TURN_OPENING.worldFact}`,
-    ],
-    "the violation must name the programme and the receipt kind, or the next reader is told 'expected 0, got 1'",
-  );
-  assert.equal(recorded.opened, 1, "and the headline number is the turns it opened, not the shapes it examined");
-});
-
-test("receipt_for_a_forgotten_program: an over-broad lifetime that silences a lone outcome is red too", () => {
-  // The other direction, which "fewer turns" alone can never detect: a receipt no plan ever owned is the only fact that
-  // will ever say the action happened.
-  const swallowed = receiptForAForgottenProgramGate([
-    {
-      shape: "receipt:succeeded",
-      program: "plan_gone",
-      openedByTailReceipt: 0,
-      tailReason: TURN_SUPPRESSION.inFlightProgress,
-      settlementOpened: 0,
-      settlementReason: TURN_SUPPRESSION.progress,
-      loneOutcomeOpened: 0,
-    },
-  ]);
-  assert.deepEqual(swallowed.violations, ["lone_outcome_swallowed:adapter_ingress:receipt:succeeded"]);
-
-  const miscounted = receiptForAForgottenProgramGate([
-    {
-      shape: "receipt:succeeded",
-      program: "plan_gone",
-      openedByTailReceipt: 0,
-      tailReason: TURN_SUPPRESSION.inFlightProgress,
-      settlementOpened: 1,
-      settlementReason: TURN_SUPPRESSION.observationRestated,
-      loneOutcomeOpened: 1,
-    },
-  ]);
-  assert.deepEqual(
-    miscounted.violations,
-    [
-      `${RECEIPT_FOR_A_FORGOTTEN_PROGRAM}:plan_gone:settled:succeeded`,
-      "settlement_not_progress_for_a_forgotten_program:plan_gone:receipt:succeeded:observation_restated",
-    ],
-    "the settlement that states a stopped programme is progress, and a count of the turn it did not open says so",
-  );
-});
-
-test("receipt_for_a_forgotten_program: zero population is blocked, never green", () => {
-  const empty = receiptForAForgottenProgramGate([]);
-  assert.equal(empty.blocked, "zero_population:no_in_flight_progress_shape_was_examined");
-  assert.deepEqual(empty.violations, []);
-  assert.equal(empty.examined, 0);
-});
-
-test("receipt_for_a_forgotten_program: the population is the classification's own in_flight_progress rows", () => {
-  const population = inFlightProgressShapes();
-  assert.ok(population.length > 0, "an empty population proves nothing");
-  assert.deepEqual(
-    population.filter(({ shape }) => FACT_TURN_CONSEQUENCE[shape] !== "in_flight_progress").map(({ shape }) => shape),
-    [],
-    "every examined shape is one the classification calls a step",
-  );
-  assert.deepEqual(
-    Object.entries(FACT_TURN_CONSEQUENCE)
-      .filter(([, consequence]) => consequence === "in_flight_progress")
-      .map(([shape]) => shape)
-      .filter((shape) => !population.some((entry) => entry.shape === shape)),
-    [],
-    "and every row the classification calls a step is examined here, so a shape added to it cannot go unreplayed",
-  );
-});
