@@ -13,7 +13,6 @@ import {
 import {
   memo,
   type KeyboardEvent as ReactKeyboardEvent,
-  type MouseEvent as ReactMouseEvent,
   type PointerEvent as ReactPointerEvent,
   useEffect,
   useLayoutEffect,
@@ -537,9 +536,9 @@ export const MessageBubble = memo(function MessageBubble({
       rewindConfirmYes: string;
       rewindConfirmNo: string;
       /**
-       * The message body's own edit affordance. With no control to press, the sentence a screen reader reads
-       * when the body takes focus is the only thing that says the words can be rewritten - so it is named
-       * here rather than left to the pencil the sighted player sees on hover.
+       * What the plate's button is called: the sentence that says these words can be rewritten and how.
+       * The plate itself is a pencil, which is not a name, so the words are the control's own label rather
+       * than a description of something else.
        */
       editHint: string;
       editMessageField: string;
@@ -713,15 +712,16 @@ export const MessageBubble = memo(function MessageBubble({
     editorDraft.type(Object.freeze({ text: message.text, sent: null }));
   };
   /**
-   * The body the editor replaced, and the request to give the focus back to it.
+   * The plate the editor replaced, and the request to give the focus back to it.
    *
-   * The body is not in the DOM while the field is open, so the press that closes the field cannot
+   * The plate is not in the DOM while the field is open, so the press that closes the field cannot
    * focus it directly: it ASKS (`restoreEditFocusRef`), and the effect below runs after the render
-   * that brings the body back. Cancelling is the case that drops focus today - Escape and Cancel
-   * both come from a field that the same state change unmounts - and the message itself is where the
-   * player was reading, so it is also where the next press starts.
+   * that brings the plate back. Cancelling is the case that drops focus - Escape and Cancel both come
+   * from a field that the same state change unmounts - and the plate is this row's one stop that opens
+   * an editor, so it is where the keyboard was and where the next press starts. Asking the BODY for it
+   * instead would drop the focus on `<body>`: the body is not a tab stop any more.
    */
-  const editTargetRef = useRef<HTMLDivElement | null>(null);
+  const editRevealerRef = useRef<HTMLButtonElement | null>(null);
   const restoreEditFocusRef = useRef(false);
   const closeEditor = (): void => {
     restoreEditFocusRef.current = true;
@@ -735,22 +735,29 @@ export const MessageBubble = memo(function MessageBubble({
   useEffect(() => {
     if (editing || !restoreEditFocusRef.current) return;
     restoreEditFocusRef.current = false;
-    editTargetRef.current?.focus();
+    editRevealerRef.current?.focus();
   }, [editing]);
   /**
    * The press that opens the editor, and the four presses that must NOT.
    *
-   * The body is the affordance now (owner ruling, 2026-11-16), so every press in a message's prose arrives
-   * here - including the ones a reader makes to do something else with those words:
+   * The body is the pointer's affordance (owner ruling, 2026-11-16), so every press in a message's prose
+   * arrives here - including the ones a reader makes to do something else with those words:
    *
    *  - a DRAG selects text; a press that travelled more than `EDIT_DRAG_SLOP_PX`, or one made while the
    *    document's selection is not collapsed, is a selection and never an edit;
-   *  - a DOUBLE CLICK is how a reader selects one word, and its first click arrives as an ordinary press,
+   *  - a DOUBLE CLICK is how a reader selects one word, and its first press arrives as an ordinary one,
    *    so the open waits out `EDIT_PRESS_SETTLE_MS` and `dblclick` cancels it;
-   *  - a press on a LINK, or on any other control the reply contains, belongs to that control;
+   *  - a press on a LINK or on any other control the reply contains - the pencil plate included, since it
+   *    is a button now - belongs to that control;
    *  - a press while the row is busy or a confirmation is armed never reaches here at all (`editOpens`).
    *
-   * What is left is the honest press: one click on the words, nothing selected, nothing dragged.
+   * What is left is the honest press: one press on the words, nothing selected, nothing dragged.
+   *
+   * It is read as a POINTER gesture - `pointerdown` for where it began, `pointerup` for where it ended -
+   * rather than as a `click`. A click is what the browser also hands to a focused element that was
+   * activated from the keyboard, which is exactly the second path this body no longer carries: the
+   * keyboard has its own button on the plate (see `onEditRevealerKeyDown`), so a release with no press of
+   * these words is not a press of these words and opens nothing.
    */
   const pressStartRef = useRef<Readonly<{ x: number; y: number }> | null>(null);
   const pendingPressRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -764,10 +771,11 @@ export const MessageBubble = memo(function MessageBubble({
     pressStartRef.current = Object.freeze({ x: event.clientX, y: event.clientY });
   };
   const onEditDoubleClick = (): void => cancelPendingPress();
-  const onEditClick = (event: ReactMouseEvent<HTMLDivElement>): void => {
+  const onEditPointerUp = (event: ReactPointerEvent<HTMLDivElement>): void => {
     const start = pressStartRef.current;
     pressStartRef.current = null;
-    if (start !== null && Math.hypot(event.clientX - start.x, event.clientY - start.y) > EDIT_DRAG_SLOP_PX) return;
+    if (start === null) return;
+    if (Math.hypot(event.clientX - start.x, event.clientY - start.y) > EDIT_DRAG_SLOP_PX) return;
     const pressed = event.target;
     if (pressed instanceof Element && pressed.closest(MESSAGE_EDIT_INTERACTIVE) !== null) return;
     const selection = document.getSelection();
@@ -779,23 +787,33 @@ export const MessageBubble = memo(function MessageBubble({
     }, EDIT_PRESS_SETTLE_MS);
   };
   /**
-   * The keyboard path - what keeps a pointer-only affordance from being an accessibility regression.
+   * The keyboard's way in: one labelled button per editable message, on the plate.
    *
-   * The body carries no widget role: it is prose, and `role="button"` on a paragraph would make every
-   * screen reader announce a control that does not exist while swallowing the reading of the words. What
-   * it carries instead is the honest pair - a tab stop, and a DESCRIPTION (`editHint`) that says these
-   * words can be rewritten and how - so focus reads as "this message, which you can edit" rather than as
-   * a button. Enter is what activates a focused thing and F2 is the platform's own "edit the focused
-   * field" key; both are accepted, which is also what `aria-keyshortcuts` declares.
+   * This is a deliberate reversal of half of the 2026-11-16 affordance ruling, taken the same day when
+   * the accessibility gate landed. The half it keeps is the ruling's subject: there is still no Edit
+   * button in any strip, and pressing the words is still what asks to rewrite them. The half it gives up
+   * is the body's tab stop, and the body's own role is why - a control that IS the whole message has no
+   * honest role. `role="button"` on the body makes a screen reader announce a whole reply as the NAME of
+   * a button, on every editable row of a transcript, which is the one place a reader came to read prose;
+   * and every role that would not do that is a non-interactive one, which the same accessibility rules
+   * refuse to carry a press. So the prose keeps what only prose can do (the pointer press on the words),
+   * and what the keyboard and a screen reader meet is the pencil plate as a real `<button>`:
+   *
+   *  - named by `labels.editHint`, so the reader hears what the press will do rather than meeting a
+   *    paragraph that has to describe itself; the pencil inside it stays decoration;
+   *  - `aria-keyshortcuts="F2"`, with Enter and Space as the button's own, and F2 handled here because no
+   *    element activates on it by default;
+   *  - revealed on `:focus-visible` as well as on hover, because a control nobody can see while focused is
+   *    the trap this shape would otherwise trade for the one it removes;
+   *  - the element the focus comes back to when the editor closes (`editRevealerRef`), since the body it
+   *    used to come back to is no longer a tab stop.
    */
-  const onEditKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>): void => {
-    if (event.target !== event.currentTarget) return;
-    if (event.key !== "Enter" && event.key !== "F2") return;
+  const onEditRevealerKeyDown = (event: ReactKeyboardEvent<HTMLButtonElement>): void => {
+    if (event.key !== "F2") return;
     event.preventDefault();
     cancelPendingPress();
     openEditor();
   };
-  const editHintId = editOpens ? `message-edit-hint-${message.handle}` : null;
   /**
    * What saving an in-place edit does to the rows after it, or `null` where there are none.
    *
@@ -1170,8 +1188,9 @@ export const MessageBubble = memo(function MessageBubble({
             rewrite them, on both sides of the exchange and on the opening, so the strip does not
             spend one of its five targets on an Edit button. The press is only the honest one: a
             drag-selection, a double-click word selection, a press made while text is selected and a
-            press on a link inside the message all leave the editor closed (`onEditClick`), and the
-            body is a real tab stop whose description says so (`onEditKeyDown`).
+            press on a link inside the message all leave the editor closed (`onEditPointerUp`). The
+            keyboard's way in is the plate's button (`onEditRevealerKeyDown`): the body is prose, it
+            carries no role and it is not a tab stop.
 
             While this row is being rewritten the bubble GIVES WAY to the editor: the words then
             stand on screen once, in the field, because the editor takes the bubble's own place in
@@ -1181,21 +1200,11 @@ export const MessageBubble = memo(function MessageBubble({
             bubble back at the box it had. */}
         {!editing && (
           <div
-            ref={editTargetRef}
             className="message-edit-target"
             {...(editPoint === undefined || streaming || waitingNote !== null ? {} : { "data-testid": "message-edit" })}
-            {...(editOpens
-              ? {
-                  tabIndex: 0,
-                  "aria-keyshortcuts": "F2",
-                  "data-draft-revealer": true,
-                  ...(editHintId === null ? {} : { "aria-describedby": editHintId }),
-                }
-              : {})}
             onPointerDown={editOpens ? onEditPointerDown : undefined}
-            onClick={editOpens ? onEditClick : undefined}
+            onPointerUp={editOpens ? onEditPointerUp : undefined}
             onDoubleClick={editOpens ? onEditDoubleClick : undefined}
-            onKeyDown={editOpens ? onEditKeyDown : undefined}
           >
             <MarkdownMessage
               className="message-bubble"
@@ -1204,22 +1213,26 @@ export const MessageBubble = memo(function MessageBubble({
               lang={languageTag}
               speaker={isPlayer ? "player" : "companion"}
             />
-            {/* The visible half of the affordance, and the invisible half that makes it honest. The
-                pencil plate is decoration (`aria-hidden`): it appears on hover AND on `:focus-visible`,
-                so the two ways into the editor are told the same thing, and it takes no press of its
-                own - the body under it does. The sentence beside it is the description a screen reader
-                reads with the body, and it is what stops a focusable paragraph from being a mystery. */}
+            {/* The keyboard's way in, and the press the player sees: the plate IS a button now (see
+                `onEditRevealerKeyDown` for why the tab stop left the body). It is named by the sentence
+                the body used to be described by, so a reader meets "edit this message's words, button"
+                instead of a paragraph that has to say it about itself. The pencil inside it stays
+                decoration (`aria-hidden`), and `style.css` shows the plate on `:focus-visible` as well as
+                on hover: a control nobody can see while focused would be the trap this shape trades
+                against, and the body under it keeps the pointer press. */}
             {editOpens && (
-              <>
-                <span className="message-edit-hint" aria-hidden="true">
-                  <Pencil size={12} />
-                </span>
-                {editHintId === null ? null : (
-                  <span className="visually-hidden" id={editHintId}>
-                    {labels.editHint}
-                  </span>
-                )}
-              </>
+              <button
+                ref={editRevealerRef}
+                type="button"
+                className="message-edit-hint"
+                data-draft-revealer
+                aria-keyshortcuts="F2"
+                aria-label={labels.editHint}
+                onClick={openEditor}
+                onKeyDown={onEditRevealerKeyDown}
+              >
+                <Pencil size={12} aria-hidden="true" />
+              </button>
             )}
           </div>
         )}

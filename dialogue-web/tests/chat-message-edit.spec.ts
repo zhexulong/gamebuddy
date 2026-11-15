@@ -55,9 +55,13 @@ type EditProbe = {
     isButton: boolean;
     tabStop: boolean;
     keyShortcuts: string | null;
-    describedByText: string | null;
+    name: string | null;
+    opacity: number;
+    width: number;
+    height: number;
     inStrip: boolean;
     bubbleWidth: number;
+    prose: { role: string | null; tabStop: boolean; keyShortcuts: string | null };
   } | null;
   editForm(handle: string): { value: string | null; save: string | null; cancel: string | null } | null;
   editInPlace(
@@ -111,16 +115,18 @@ test("the edit affordance IS the message: not a button, not in the strip, and re
     const affordance = await page.evaluate(() => window.chatProbe.editAffordance("h1"));
     const where = `${viewport.width}x${viewport.height}`;
     expect(affordance, where).not.toBeNull();
-    // The ruling: pressing the words is the request to rewrite them, so there is no Edit button anywhere - and
-    // the thing that took its place is the message, which is a div and says so.
-    expect(affordance?.tag, where).toBe("div");
-    expect(affordance?.isButton, where).toBe(false);
+    // The ruling: pressing the words is the request to rewrite them, so there is no Edit button in the
+    // strip anywhere. The keyboard's way in is the pencil plate ON the body - a real button, named by the
+    // edit sentence, in the tab order - while the body itself stays prose (see `chat-editor-focus.spec.ts`
+    // for the reversal that separated the two halves and why).
+    expect(affordance?.tag, where).toBe("button");
+    expect(affordance?.isButton, where).toBe(true);
     expect(affordance?.inStrip, where).toBe(false);
-    // A pointer-only affordance would be an accessibility regression, so it is a tab stop and it describes
-    // the interaction: there is no control to announce, so the sentence is the only thing that says so.
     expect(affordance?.tabStop, where).toBe(true);
     expect(affordance?.keyShortcuts, where).toBe("F2");
-    expect(affordance?.describedByText, where).toContain("to edit its words");
+    expect(affordance?.name, where).toContain("to edit its words");
+    expect(affordance?.prose.role, where).toBeNull();
+    expect(affordance?.prose.tabStop, where).toBe(false);
     // The body is still the message's own box: the wrapper adds no geometry of its own.
     expect(affordance?.bubbleWidth, where).toBeGreaterThan(0);
   }

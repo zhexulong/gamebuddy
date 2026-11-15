@@ -467,39 +467,74 @@ const chatProbe = {
     editCalls.length = 0;
   },
   /**
-   * The edit affordance as the player meets it - and it is the MESSAGE, not a control (owner ruling,
-   * 2026-11-16): pressing the words opens the field they came from.
+   * The edit affordance as the player meets it - two halves, and neither of them lies (owner ruling,
+   * 2026-11-16; the shape was reversed the same day by the accessibility gate).
    *
-   * `null` means this row is not one the player may rewrite (a streaming preview, the optimistic echo,
-   * a row with a mutation or a confirmation in flight), which is the same fact the strip used to state
-   * by disabling its Edit button. What is read here is what makes the affordance honest rather than
-   * hidden: it is not a button, it is a real tab stop, it declares its shortcut, and it names the
-   * sentence a screen reader reads with it.
+   * The PLATE is the keyboard's and the screen reader's way in: a real button, in the tab order, named by
+   * the sentence that says what it does, declaring its shortcut, and perceivable while it holds the
+   * focus. It is hover-and-focus revealed, so `opacity` is read before and after a focus: a control in the
+   * tab order that paints nothing while focused is the trap this shape exists to avoid. The PROSE is what
+   * the pointer presses, and it is read for the opposite reason - it must carry no role, no tab stop and
+   * no keyboard claim, because a body-wide widget role announces a whole reply as a button's name.
+   *
+   * `null` means this row is not one the player may rewrite (a streaming preview, the optimistic echo, a
+   * row with a mutation or a confirmation in flight): the plate is only rendered while the row really is a
+   * press away from the editor, so its absence IS that fact.
    */
   editAffordance(handle: string): {
     tag: string;
     isButton: boolean;
     tabStop: boolean;
     keyShortcuts: string | null;
-    describedByText: string | null;
+    name: string | null;
+    opacity: number;
+    width: number;
+    height: number;
     inStrip: boolean;
     bubbleWidth: number;
+    prose: { role: string | null; tabStop: boolean; keyShortcuts: string | null };
   } | null {
     const li = document.querySelector(`li[data-handle="${handle}"]`);
-    const target = li?.querySelector('[data-testid="message-edit"]') as HTMLElement | null;
-    if (target === null || target === undefined) return null;
-    const describedBy = target.getAttribute("aria-describedby");
-    const hint = describedBy === null ? null : document.getElementById(describedBy);
-    const bubble = target.querySelector(".message-bubble");
+    const plate = li?.querySelector(".message-edit-hint") as HTMLElement | null;
+    if (plate === null || plate === undefined) return null;
+    const target = plate.closest(".message-edit-target") as HTMLElement | null;
+    const box = plate.getBoundingClientRect();
+    const bubble = li?.querySelector(".message-bubble");
     return {
-      tag: target.tagName.toLowerCase(),
-      isButton: target.tagName === "BUTTON",
-      tabStop: target.tabIndex >= 0,
-      keyShortcuts: target.getAttribute("aria-keyshortcuts"),
-      describedByText: hint === null ? null : (hint.textContent ?? "").trim(),
-      inStrip: li?.querySelector(".message-actions")?.contains(target) ?? false,
+      tag: plate.tagName.toLowerCase(),
+      isButton: plate.tagName === "BUTTON",
+      tabStop: plate.tabIndex >= 0,
+      keyShortcuts: plate.getAttribute("aria-keyshortcuts"),
+      name: plate.getAttribute("aria-label"),
+      opacity: Number.parseFloat(getComputedStyle(plate).opacity),
+      width: Math.round(box.width),
+      height: Math.round(box.height),
+      inStrip: li?.querySelector(".message-actions")?.contains(plate) ?? false,
       bubbleWidth: bubble === null ? 0 : Math.round(bubble.getBoundingClientRect().width),
+      prose: {
+        role: target?.getAttribute("role") ?? null,
+        tabStop: target !== null && target.tabIndex >= 0,
+        keyShortcuts: target?.getAttribute("aria-keyshortcuts") ?? null,
+      },
     };
+  },
+  /**
+   * The keyboard's edit stops across the whole transcript, in the order the rows draw them.
+   *
+   * What a tab walk has to answer is not only "is there one" but "is there exactly one per editable row,
+   * and is the prose beside it a stop of its own": a second stop per message is a wall of buttons in a
+   * reading column, and a prose stop is the shape the accessibility gate removed.
+   */
+  editStops(): readonly { handle: string | null; name: string | null; tag: string; proseStop: boolean }[] {
+    return [...document.querySelectorAll(".message-edit-hint")].map((plate) => {
+      const target = plate.closest(".message-edit-target") as HTMLElement | null;
+      return {
+        handle: plate.closest("[data-handle]")?.getAttribute("data-handle") ?? null,
+        name: plate.getAttribute("aria-label"),
+        tag: plate.tagName.toLowerCase(),
+        proseStop: target !== null && target.tabIndex >= 0,
+      };
+    });
   },
   /**
    * The copy control as the player meets it: what it is called, the target it actually paints, where
@@ -1066,12 +1101,20 @@ const chatProbe = {
    * itself, not a missing attribute on a control that claims to be focused, so the probe reports the
    * element the browser gave the focus to and not a flag the surface set.
    */
-  focusedControl(): { tag: string; testId: string | null; handle: string | null } {
+  focusedControl(): {
+    tag: string;
+    testId: string | null;
+    handle: string | null;
+    revealer: boolean;
+    editTarget: boolean;
+  } {
     const active = document.activeElement ?? document.body;
     return {
       tag: active.tagName.toLowerCase(),
       testId: active.getAttribute("data-testid"),
       handle: active.closest("[data-handle]")?.getAttribute("data-handle") ?? null,
+      revealer: active.hasAttribute("data-draft-revealer"),
+      editTarget: active.classList.contains("message-edit-target"),
     };
   },
   /**

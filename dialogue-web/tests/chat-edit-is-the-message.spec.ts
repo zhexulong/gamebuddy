@@ -18,9 +18,11 @@ import { expect, test, type Page } from "./frontend-coverage";
  *
  *  1. SELECTION. Dragging across the words selects them, and a message that answered a drag with an editor
  *     would make copying a sentence impossible. Only a plain press on collapsed text opens it.
- *  2. KEYBOARD. A pointer-only affordance is an accessibility regression. The body is a tab stop that says
- *     what pressing it does, and it is NOT given a widget role: it is prose, and `role="button"` on a
- *     paragraph would announce a control that does not exist while getting in the way of reading it.
+ *  2. KEYBOARD. A pointer-only affordance is an accessibility regression, and the keyboard's way in is the
+ *     pencil plate on the body: ONE real button per editable message, named by the sentence that says what
+ *     it does, revealed on `:focus-visible` as well as on hover. The body itself is not a control - it is
+ *     prose, and a body-wide widget role would announce a whole reply as a button's name (see
+ *     `chat-editor-focus.spec.ts` for the reversal that separated the two halves, and why).
  *  3. INTERACTIVE CHILDREN. A press on a link or another control inside the message belongs to that
  *     control. (The reply grammar carries no link today, so the harness plants one: the guard is about the
  *     press, not about which construct happened to be renderable on the day it was written.)
@@ -42,9 +44,13 @@ type LaneProbe = {
     isButton: boolean;
     tabStop: boolean;
     keyShortcuts: string | null;
-    describedByText: string | null;
+    name: string | null;
+    opacity: number;
+    width: number;
+    height: number;
     inStrip: boolean;
     bubbleWidth: number;
+    prose: { role: string | null; tabStop: boolean; keyShortcuts: string | null };
   } | null;
 };
 
@@ -86,13 +92,13 @@ test("edit is not a strip action on any row: the message itself is the affordanc
   // opening, which has no other way to have its words corrected.
   for (const handle of ["h0", "h2", "h4"]) {
     const affordance = await page.evaluate((rowHandle) => window.chatProbe.editAffordance(rowHandle), handle);
-    expect(affordance, `${handle} (her row) is editable by pressing it`).not.toBeNull();
-    expect(affordance?.isButton, `${handle} is prose, not a button`).toBe(false);
+    expect(affordance, `${handle} (her row) is editable`).not.toBeNull();
     expect(affordance?.inStrip, `${handle}'s affordance is not in the strip`).toBe(false);
+    expect(affordance?.prose.role, `${handle}: the reply itself is prose, not a control`).toBeNull();
   }
   const player = await page.evaluate(() => window.chatProbe.editAffordance("h1"));
-  expect(player?.isButton, "and the player's own line is the same affordance").toBe(false);
-  expect(player?.inStrip, "outside the strip there too").toBe(false);
+  expect(player?.inStrip, "and the player's own line is outside the strip too").toBe(false);
+  expect(player?.prose.role, "with its own words still prose").toBeNull();
 });
 
 test("fork is its own button, rewind arms its own confirmation, and the strip ends at five actions", async ({
@@ -161,19 +167,20 @@ test("dragging across the words selects them and opens nothing; a plain press op
   await expect(field).toBeFocused();
 });
 
-test("the body is reachable and openable from the keyboard, and says how", async ({ page }) => {
+test("the plate is reachable and openable from the keyboard, and the body it sits on is prose", async ({ page }) => {
   await openConversation(page);
 
   const affordance = await page.evaluate(() => window.chatProbe.editAffordance("h1"));
-  expect(affordance?.tag, "the affordance is a plain element, not a button").toBe("div");
+  expect(affordance?.tag, "the keyboard's way in is a real button").toBe("button");
   expect(affordance?.tabStop, "and it is a real tab stop").toBe(true);
   expect(affordance?.keyShortcuts, "declaring the shortcut a screen reader can announce").toBe("F2");
-  expect(affordance?.describedByText, "with a sentence that says the words can be rewritten").toContain(
+  expect(affordance?.name, "named by the sentence that says the words can be rewritten").toContain(
     "to edit its words",
   );
+  expect(affordance?.prose.tabStop, "while the body itself is no stop of its own").toBe(false);
 
-  const body = page.locator('li[data-handle="h1"] [data-testid="message-edit"]');
-  await body.focus();
+  const plate = page.locator('li[data-handle="h1"] .message-edit-hint');
+  await plate.focus();
   await page.keyboard.press("Enter");
   const field = page.locator('li[data-handle="h1"] [data-testid="message-edit-field"]');
   await expect(field, "Enter opens the editor").toHaveCount(1);
@@ -182,7 +189,7 @@ test("the body is reachable and openable from the keyboard, and says how", async
   await expect(field).toHaveCount(0);
 
   // F2 is the other half of the same declaration.
-  await body.focus();
+  await plate.focus();
   await page.keyboard.press("F2");
   await expect(page.locator('li[data-handle="h1"] [data-testid="message-edit-field"]')).toHaveCount(1);
 });

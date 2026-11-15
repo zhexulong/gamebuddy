@@ -57,9 +57,13 @@ type ReplyEditProbe = {
     isButton: boolean;
     tabStop: boolean;
     keyShortcuts: string | null;
-    describedByText: string | null;
+    name: string | null;
+    opacity: number;
+    width: number;
+    height: number;
     inStrip: boolean;
     bubbleWidth: number;
+    prose: { role: string | null; tabStop: boolean; keyShortcuts: string | null };
   } | null;
   editForm(handle: string): { value: string | null; save: string | null; cancel: string | null } | null;
   editFieldBox(handle: string): {
@@ -137,13 +141,16 @@ test("her reply is editable by pressing it, and the editor has room to write", a
     );
 
     expect(control, where).not.toBeNull();
-    // Her reply is one of the rows the player may rewrite, and the affordance is the reply itself: not a
-    // button, not a target in the strip she already has.
-    expect(control?.isButton, where).toBe(false);
+    // Her reply is one of the rows the player may rewrite, and the keyboard's way in is the plate: a real
+    // button named by the edit sentence, in the tab order, and not a target in the strip she already has.
+    // The prose beside it stays prose - no role, no stop of its own.
+    expect(control?.isButton, where).toBe(true);
     expect(control?.inStrip, where).toBe(false);
     expect(control?.tabStop, where).toBe(true);
     expect(control?.keyShortcuts, where).toBe("F2");
-    expect(control?.describedByText, where).toContain("to edit its words");
+    expect(control?.name, where).toContain("to edit its words");
+    expect(control?.prose.role, where).toBeNull();
+    expect(control?.prose.tabStop, where).toBe(false);
     expect(control?.bubbleWidth, where).toBeGreaterThan(0);
 
     // Opened, the strip IS the editor: Save and Cancel, and nothing beside them.
