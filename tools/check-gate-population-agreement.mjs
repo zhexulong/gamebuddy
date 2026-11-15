@@ -62,6 +62,7 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { runAsEntry } from "./lib/process-entry.mjs";
 
 import { auditGateRedProofs } from "./audit-gate-red-proofs.mjs";
 import { deriveCiCoverage, GATE_NAME } from "./check-ci-coverage.mjs";
@@ -279,6 +280,4 @@ function main(argv) {
   return findings.length === 0 ? 0 : 1;
 }
 
-if (process.argv[1] !== undefined && resolve(process.argv[1]) === resolve(fileURLToPath(import.meta.url))) {
-  process.exitCode = main(process.argv.slice(2));
-}
+runAsEntry(import.meta.url, main);

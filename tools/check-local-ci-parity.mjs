@@ -77,6 +77,7 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { dirname, join, posix, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { runAsEntry } from "./lib/process-entry.mjs";
 
 import { deriveCiCoverage, stripYamlComments, workflowCoveredScripts } from "./check-ci-coverage.mjs";
 import { LADDER_RUNGS, PRELUDE_RUNGS } from "./prelive.mjs";
@@ -447,6 +448,4 @@ export function main(
   return reading.findings.length === 0 ? 0 : 1;
 }
 
-if (process.argv[1] !== undefined && resolve(process.argv[1]) === resolve(fileURLToPath(import.meta.url))) {
-  process.exitCode = main(process.argv.slice(2));
-}
+runAsEntry(import.meta.url, main);
