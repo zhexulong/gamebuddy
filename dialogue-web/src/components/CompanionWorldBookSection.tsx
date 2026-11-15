@@ -1,5 +1,6 @@
 import { ChevronDown } from "lucide-react";
 import { type ReactElement, useEffect, useState } from "react";
+import { assertNever } from "../assert-never";
 import { problemTextWithCode } from "../composed-problem-view";
 import { type Locale, type Messages, messages } from "../i18n";
 import {
@@ -181,8 +182,10 @@ function selectiveLogicLabel(labels: CharacterLabels, logic: 0 | 1 | 2 | 3 | und
       return labels.worldBookEntrySelectiveLogicNotAny;
     case 3:
       return labels.worldBookEntrySelectiveLogicAndAll;
-    default:
+    case undefined:
       return labels.worldBookEntrySelectiveLogicNone;
+    default:
+      return assertNever(logic);
   }
 }
 
