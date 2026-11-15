@@ -156,6 +156,14 @@ const en = {
   stardewCabinCheckGame: "Check the game again",
   stardewCabinCheckGameHint:
     "This only reads the game: the cabin confirmation is never sent a second time. If it had landed, the game shows up here as connected; if it had not, this step keeps waiting for recovery.",
+  // The game's own answer to a confirmation, which is the only party that can give one: the page
+  // sends the choice and the game decides whether it was still good. Both sentences say which party
+  // decided, because a page that enforces this itself is exactly the defect that made step 3
+  // unreachable.
+  stardewCabinChoiceStaleRefused:
+    "The game answered that your choice had already gone stale, so nothing was confirmed. These cabins were read again just now - pick one and confirm it.",
+  stardewCabinsOfferLapsed:
+    "The game keeps each offer only a few seconds, and this one has been on screen longer than that, so it may already have gone stale. Confirm anyway: the game decides, and if it says the choice went stale the cabins are read again.",
 
   // Navigation & Drawers
   chats: "Chats",
@@ -1411,6 +1419,10 @@ const zh: Messages = {
   stardewCabinCheckGame: "再查一次游戏状态",
   stardewCabinCheckGameHint:
     "这一步只重新读取游戏状态，不会再次发送小屋确认。如果确认已经生效，这里会显示游戏已连接；如果还没有，这一步会继续等待恢复。",
+  stardewCabinChoiceStaleRefused:
+    "游戏回答：你刚才的选择已经失效，所以没有确认任何内容。这里的小屋刚刚重新读取过了——重选一间，再确认。",
+  stardewCabinsOfferLapsed:
+    "游戏对每次小屋选择只保留很短的时限，而这个选择在屏幕上停留得比那时限更久，可能已经失效。照样确认即可：由游戏来判定；如果它说这个选择已经失效，就会重新读取小屋。",
 
   // Navigation & Drawers
   chats: "会话",

@@ -51,6 +51,9 @@ import { terminalTurn } from "./use-composed-bootstrap";
  * `loading` on every attempt: it states its own progress instead. `refresh_pressed` is the one
  * origin whose answer the panel acknowledges ("just read again: this is still the answer"), because
  * it is the press whose result the player would otherwise read as an identical screen.
+ * `stale_choice` is the game having refused the choice the player pressed as stale, and it is the
+ * one origin whose answer carries that refusal: the list it brings back is the answer to it, and the
+ * panel names the refusal above that list so a press the game declined is not silence.
  */
 type CabinReadOrigin = "surface_ready" | "refresh_pressed" | "stale_choice" | "launch_wait";
 
@@ -231,8 +234,8 @@ export function GameSurface({
    * Reads the cabin handoff.
    *
    * `origin` says who asked, because the panel owes each of them a different answer: the surface's
-   * first read, the player's own press and a choice that expired under the player all show the read
-   * in flight - and only the press is acknowledged as a `reread`, the evidence their click did
+   * first read, the player's own press and a choice the game refused as stale all show the read in
+   * flight - and only the press is acknowledged as a `reread`, the evidence their click did
    * something - while the post-launch wait states its own progress and must not rewrite the screen
    * to `loading` once a second.
    *
@@ -254,7 +257,7 @@ export function GameSurface({
           setCabinView({ kind: "missing", reread: origin === "refresh_pressed" });
           return "missing";
         }
-        setCabinView({ kind: "choices", choices: result.choices });
+        setCabinView({ kind: "choices", choices: result.choices, staleRefusal: origin === "stale_choice" });
         return "choices";
       } catch (error) {
         // Two different situations, two different answers. `stardew_player_host_cabin_missing` means this world has no
@@ -373,12 +376,33 @@ export function GameSurface({
     commit({ ...current, root, session: current.session.applySnapshot(root.chat) });
   };
 
+  /**
+   * The cabin confirm, whose verdict belongs to the game and not to this page.
+   *
+   * This handler used to open with `if (choice.expiresAtMs <= Date.now()) { void
+   * readCabins("stale_choice"); return; }`, and that guard WILL look reasonable to the next reader:
+   * the Host advertises a deadline on every offer, so why send a command that must be refused?
+   * Measured in a live run (2026-11-17, the real game): it meant the confirmation was never sent at
+   * all. Three presses produced three `game/stardew/cabins` reads and **zero**
+   * `game/stardew/cabins/confirm` requests, so the first run could not pass step 3 - the player
+   * pressed a button whose only effect was to re-read the screen it was already on.
+   *
+   * The reason it was almost always true is that the window is short by design and this page's clock
+   * is not the one that decides: the advertisement is republished every second with a 3 s expiry
+   * (`HostFarmhandProvisioner.cs`), so every cabin read hands the page a window of about two seconds
+   * to look at, read and click. A page that refuses to ask after those two seconds turns a short
+   * window into a permanently unusable one.
+   *
+   * The Host is the party that can answer, because it holds the choice handle, the browser session,
+   * the revision and the deadline together, and it refuses a lapsed offer with
+   * `stardew_cabin_choice_stale` (`stardew-production-lifecycle-coordinator.internal.ts`,
+   * `handle.expiresAtMs <= Date.now()`). That refusal is a fact about the game, and this handler
+   * renders it as one: the cabins are read again and the panel says why. So `expiresAtMs` is read for
+   * exactly one thing now - telling the player an offer may be too old to be taken, in
+   * `CabinHandoff` - and never for deciding whether the game is asked.
+   */
   const handleCabinConfirmation = async (choice: StardewCabinChoiceV1): Promise<void> => {
     if (cabinConfirmationActiveRef.current || cabinView.kind !== "choices") return;
-    if (choice.expiresAtMs <= Date.now()) {
-      void readCabins("stale_choice");
-      return;
-    }
     const idempotencyKey = cabinIdempotencyKeysRef.current.get(choice.choiceHandle);
     if (idempotencyKey === undefined) {
       setCabinView({ kind: "unavailable", reread: false });

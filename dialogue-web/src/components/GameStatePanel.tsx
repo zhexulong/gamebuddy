@@ -1062,24 +1062,45 @@ function CabinHandoff({
           {labels.stardewManifestAdmitted}
         </p>
       )}
+      {/* The game's own answer to the press that got here, immediately above the list it produced.
+          The list IS the answer: those offers were read again after the refusal, so the sentence says
+          what happened and the player's next act is the one the list already offers. Replacing the
+          list with a sentence instead would read as the choice having disappeared. */}
+      {state.kind === "choices" && state.staleRefusal && (
+        <p className="game-status" data-tone="warning" role="status" data-testid="cabin-choice-stale">
+          {labels.stardewCabinChoiceStaleRefused}
+        </p>
+      )}
       {(state.kind === "choices" || state.kind === "confirming") && (
-        <ul className="game-choice-list" data-testid="cabin-choice-list">
-          {state.choices.map((choice) => (
-            <li className="game-choice" key={choice.choiceHandle}>
-              <span className="game-choice-label">{choice.displayLabel}</span>
-              <button
-                type="button"
-                className="game-action"
-                disabled={state.kind === "confirming"}
-                aria-label={labels.stardewCabinConfirm}
-                onClick={() => onConfirm(choice)}
-              >
-                <Check size={16} aria-hidden="true" />
-                {labels.stardewCabinConfirm}
-              </button>
-            </li>
-          ))}
-        </ul>
+        <>
+          {/* The one thing the page still does with an offer's advertised deadline: it says the offer
+              may already be too old to be taken. It never decides that, and the sentence says which
+              party does - a page that enforced the deadline itself made every offer unusable the
+              moment the window passed, and the window is about two seconds (`expiresAtMs` is
+              re-minted on every read, `HostFarmhandProvisioner.cs`). */}
+          {state.choices.some((choice) => choice.expiresAtMs <= Date.now()) && (
+            <p className="game-status" data-tone="info" role="status" data-testid="cabin-offer-lapsed">
+              {labels.stardewCabinsOfferLapsed}
+            </p>
+          )}
+          <ul className="game-choice-list" data-testid="cabin-choice-list">
+            {state.choices.map((choice) => (
+              <li className="game-choice" key={choice.choiceHandle}>
+                <span className="game-choice-label">{choice.displayLabel}</span>
+                <button
+                  type="button"
+                  className="game-action"
+                  disabled={state.kind === "confirming"}
+                  aria-label={labels.stardewCabinConfirm}
+                  onClick={() => onConfirm(choice)}
+                >
+                  <Check size={16} aria-hidden="true" />
+                  {labels.stardewCabinConfirm}
+                </button>
+              </li>
+            ))}
+          </ul>
+        </>
       )}
     </section>
   );

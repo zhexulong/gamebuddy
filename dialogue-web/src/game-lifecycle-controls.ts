@@ -546,7 +546,16 @@ export const GAME_SESSION_INPUTS: Readonly<Record<GameSessionPhase, Parameters<t
 export type CabinViewState =
   /** The handoff's first read is in flight; the answer settles it. */
   | Readonly<{ kind: "loading" }>
-  | Readonly<{ kind: "choices"; choices: readonly StardewCabinChoiceV1[] }>
+  /**
+   * The cabins this companion may use.
+   *
+   * `staleRefusal` is the game having answered the press before this read with
+   * `stardew_cabin_choice_stale`: the offers here are the ones read in answer to it, so the flag says
+   * what the list is, not whether it is usable. It rides the list rather than becoming a state of its
+   * own because the player's next act is the same one either way - confirm one - and the only
+   * difference is the sentence above it.
+   */
+  | Readonly<{ kind: "choices"; choices: readonly StardewCabinChoiceV1[]; staleRefusal: boolean }>
   | Readonly<{ kind: "confirming"; choices: readonly StardewCabinChoiceV1[]; choiceHandle: string }>
   | Readonly<{ kind: "admitted" }>
   | Readonly<{ kind: "uncertain" }>
@@ -696,7 +705,7 @@ export const CABIN_HANDOFF_KINDS: readonly CabinViewState["kind"][] = Object.fre
 /** The cheapest instance of each kind, so the gate drives the real derivation per state. */
 export const CABIN_HANDOFF_INPUTS: Readonly<Record<CabinViewState["kind"], CabinViewState>> = Object.freeze({
   loading: Object.freeze({ kind: "loading" as const }),
-  choices: Object.freeze({ kind: "choices" as const, choices: Object.freeze([]) }),
+  choices: Object.freeze({ kind: "choices" as const, choices: Object.freeze([]), staleRefusal: false }),
   confirming: Object.freeze({ kind: "confirming" as const, choices: Object.freeze([]), choiceHandle: "CHOICE" }),
   admitted: Object.freeze({ kind: "admitted" as const }),
   uncertain: Object.freeze({ kind: "uncertain" as const }),
