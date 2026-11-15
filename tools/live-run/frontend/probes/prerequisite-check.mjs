@@ -33,6 +33,9 @@ const VITE_SIBLINGS = ["rolldown", "postcss", "esbuild", "picomatch", "tinyglobb
  */
 const NON_REQUIRED_PREFIXES = ["credential:", "launch:"];
 
+/** Whether a row's absence must refuse the run: a row is required unless its name says it is a skip. */
+const isRequired = (row) => !(row.ok || NON_REQUIRED_PREFIXES.some((prefix) => row.name.startsWith(prefix)));
+
 async function main() {
   const argv = process.argv.slice(2);
   const commit =
@@ -182,12 +185,10 @@ async function main() {
   console.log(
     JSON.stringify({
       rows,
-      requiredMissing: rows.filter(
-        (row) => !row.ok && !NON_REQUIRED_PREFIXES.some((prefix) => row.name.startsWith(prefix)),
-      ).length,
+      requiredMissing: rows.filter(isRequired).length,
     }),
   );
-  return rows.some((row) => !row.ok && !NON_REQUIRED_PREFIXES.some((prefix) => row.name.startsWith(prefix))) ? 1 : 0;
+  return rows.some(isRequired) ? 1 : 0;
 }
 
 const code = await main().catch((error) => {

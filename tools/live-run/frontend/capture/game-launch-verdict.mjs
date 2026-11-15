@@ -416,7 +416,9 @@ function awaitingSaveReading(response, confirmPressedAtMs) {
   const stamp = Number(response.updatedAtUnixMs);
   const pressed = Number(confirmPressedAtMs);
   // A response this run did not cause proves nothing about this run: no press, no freshness to check.
-  if (!Number.isFinite(stamp) || !Number.isFinite(pressed) || pressed <= 0 || stamp + 5_000 < pressed) return null;
+  const writtenForThisRun =
+    Number.isFinite(stamp) && Number.isFinite(pressed) && pressed > 0 && stamp + 5_000 >= pressed;
+  if (!writtenForThisRun) return null;
   const reason =
     typeof response.reasonCode === "string" && response.reasonCode.length > 0 ? response.reasonCode : "no_reason_code";
   return `the confirmation reached the Mod and the Mod answered state=awaiting_save/reason=${reason} (stardew-attachment-response.json, updated ${new Date(stamp).toISOString()}): the first binding is written by the engine's own Saving/Saved cycle (HostFarmhandProvisioner.cs:180-222), and the only trigger for one is HostAutomation.Enable (ModEntry.cs, TryTriggerNativeAutomationSave), which production never writes into the Mod's config`;
