@@ -78,10 +78,6 @@ internal sealed partial class ExecutionManager
         return this.ExecuteAcceptDailyQuest(executionId, requestId, expectedTargetId);
     }
 
-    /// <summary>
-    /// The one execution body. It re-resolves the offer and re-reads the preconditions against the
-    /// live world, because admission and the body are two separate game-thread reads.
-    /// </summary>
     private LocalExecutionReceipt ExecuteAcceptDailyQuest(string executionId, string requestId, string expectedTargetId)
     {
         DailyQuestTargetResolution resolution = ResolveDailyQuestTarget(expectedTargetId);
@@ -121,10 +117,6 @@ internal sealed partial class ExecutionManager
             : this.RememberTerminal(requestId, executionId, ExecutionState.Uncertain, "daily_quest_postcondition_unavailable", evidence);
     }
 
-    /// <summary>
-    /// One resolved offer, or the named reason the published target no longer matches the live
-    /// world.
-    /// </summary>
     private sealed record DailyQuestTargetResolution(
         bool Accepted,
         string ReasonCode,
@@ -136,10 +128,6 @@ internal sealed partial class ExecutionManager
             new(false, reasonCode, evidence, string.Empty, null);
     }
 
-    /// <summary>
-    /// Re-derives the day's posted quest on the game thread. Every mismatch is a NAMED refusal,
-    /// never a silent re-target, and the final gate is the game's own acceptability predicate.
-    /// </summary>
     private static DailyQuestTargetResolution ResolveDailyQuestTarget(string expectedTargetId)
     {
         Quest? quest = Game1.questOfTheDay;
@@ -191,13 +179,6 @@ internal sealed partial class ExecutionManager
         return $"daily_quest_{Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(raw))).ToLowerInvariant()[..16]}";
     }
 
-    /// <summary>
-    /// The offer the actor can take right now, projected read-only from the game's own predicate:
-    /// at most one entry, published only while `accept_daily_quest` is advertised AND the game
-    /// would accept the posted quest. Nothing is synthesized - a day with no posted quest, an
-    /// already-accepted offer, or an offer with no text is not advertised, because there is nothing
-    /// to accept.
-    /// </summary>
     private static IReadOnlyList<BridgeDailyQuestTarget> DiscoverDailyQuestTargets()
     {
         if (!Game1.CanAcceptDailyQuest() || Game1.questOfTheDay is not Quest quest)
@@ -208,7 +189,6 @@ internal sealed partial class ExecutionManager
         };
     }
 
-    /// <summary>How many entries in the actor's log are the exact quest instance.</summary>
     private static int CountQuestLogEntries(Farmer player, Quest quest)
     {
         int count = 0;

@@ -32,9 +32,6 @@ internal sealed partial class ExecutionManager
     {
         if (this.AdmitLocalExecution(requestId, requestedDeadlineMs, AdmissionActionabilityProfile.General, out string executionId, out long nowMs) is LocalExecutionReceipt admissionRejection)
             return admissionRejection;
-        // Ask before walking: the can is the action's own declared tool, so a pack that cannot satisfy the
-        // `tool:watering_can` claim is refused now rather than after an approach leg the action could never finish,
-        // and a can with nothing to spend is refused for the same reason.
         DeclaredToolResolution can = ResolveDeclaredTool(Game1.player.Items, "water_pet_bowl");
         if (can.RefusalCode is { } toolRefusal)
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, toolRefusal, DescribeDeclaredToolRefusal(Game1.player.Items, "water_pet_bowl", toolRefusal));
@@ -49,14 +46,8 @@ internal sealed partial class ExecutionManager
         if (ResolvePetBowl(location, targetX, targetY) is not { } bowl
             || !string.Equals(BuildPetBowlTargetId(location, targetX, targetY), expectedTargetId, StringComparison.Ordinal))
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "pet_bowl_target_unavailable", $"target={targetX},{targetY}");
-        // The bowl object is read live after the native call too, so the
-        // postcondition is this execution's own before/after observation rather
-        // than a Mod-authored claim.
         if (bowl.watered.Value)
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "pet_bowl_already_watered", $"target={targetX},{targetY}");
-        // 5.2: out of the native radius, walk in rather than refuse. The can and the bowl
-        // are validated above; both are re-resolved after the walk inside the closure,
-        // because the walk takes several ticks and the can can be emptied meanwhile.
         if (!IsTileWithinChebyshevRadius(Game1.player, targetX, targetY, 1))
         {
             return this.TryBeginToolApproach(
@@ -75,17 +66,8 @@ internal sealed partial class ExecutionManager
         return this.ExecuteWaterPetBowl(executionId, requestId, targetX, targetY, expectedTargetId);
     }
 
-    /// <summary>
-    /// Executes water_pet_bowl against the current world, re-validating the can and the
-    /// bowl because an approach leg may have taken several ticks. The can is not the
-    /// caller's to name: the action's own registration claims `tool:watering_can`, so this
-    /// selects the best owned can it needs and restores the actor's own selection afterwards.
-    /// Shared by the in-range path and the post-approach path.
-    /// </summary>
     private LocalExecutionReceipt ExecuteWaterPetBowl(string executionId, string requestId, int targetX, int targetY, string expectedTargetId)
     {
-        // The selection half is appended after `RestoreToolSelection` has run, so `tool_restored` reports what the actor
-        // holds again rather than what this body assumed (`ToolActionEvidence.SelectionSuffix`).
         if (!TrySelectDeclaredTool(Game1.player, "water_pet_bowl", out DeclaredToolSelection selection, out string toolRefusalCode))
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, toolRefusalCode, DescribeDeclaredToolRefusal(Game1.player.Items, "water_pet_bowl", toolRefusalCode));
         ExecutionState state;
@@ -108,7 +90,6 @@ internal sealed partial class ExecutionManager
 
             bool beforeWatered = bowl.watered.Value;
             int beforeWater = wateringCan.WaterLeft;
-            // Observed, not asserted: the native watering path must not mount a menu.
             bool menuBefore = Game1.activeClickableMenu is not null;
             float staminaBefore = Game1.player.Stamina;
             UseNativeToolOnTile(wateringCan, location, targetX, targetY, Game1.player, staminaBefore);
@@ -157,7 +138,6 @@ internal sealed partial class ExecutionManager
         }
     }
 
-    /// <summary>The completed Pet Bowl that accepts watering at this exact tile, or null.</summary>
     private static PetBowl? ResolvePetBowl(GameLocation location, int x, int y) =>
         location.buildings.OfType<PetBowl>()
             .FirstOrDefault(candidate => candidate.daysOfConstructionLeft.Value <= 0

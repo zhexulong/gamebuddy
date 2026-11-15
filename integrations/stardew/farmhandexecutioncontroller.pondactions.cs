@@ -91,11 +91,6 @@ internal sealed partial class ExecutionManager
         return this.ExecuteClearFishPond(executionId, requestId, targetX, targetY, expectedTargetId);
     }
 
-    /// <summary>
-    /// The one execution body, reached both in range and on arrival from the approach leg.
-    /// It re-resolves the target and re-reads the preconditions, because the walk can take
-    /// several ticks.
-    /// </summary>
     private LocalExecutionReceipt ExecuteClearFishPond(string executionId, string requestId, int x, int y, string targetId)
     {
         GameLocation location = Game1.player.currentLocation;
@@ -105,8 +100,6 @@ internal sealed partial class ExecutionManager
 
         FishPond pond = resolution.Pond!;
         string identity = resolution.Identity;
-        // Re-checked here, not only on the request path: this body is also reached on arrival from
-        // the approach leg, and the walk can take several ticks.
         if (!IsWithinBuildingContact(pond, Game1.player))
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "pond_out_of_range",
                 $"{identity};actor_tile={(int)Game1.player.Tile.X},{(int)Game1.player.Tile.Y};contact={DescribeBuildingContact(pond)}");
@@ -118,7 +111,6 @@ internal sealed partial class ExecutionManager
 
         pond.ClearPond();
 
-        // The postcondition is the POND INSTANCE after the call.
         string? fishTypeAfter = pond.fishType.Value;
         int occupantsAfter = pond.currentOccupants.Value;
 
@@ -131,10 +123,6 @@ internal sealed partial class ExecutionManager
             + $"golden_cracker_after={pond.goldenAnimalCracker.Value.ToString().ToLowerInvariant()};"
             + $"fish_ejected={occupantsBefore}";
 
-        // `ClearPond` is `void` and cannot refuse, so a pond that is STILL OCCUPIED after the
-        // call means the world did not change the way the card's postcondition requires. The
-        // card's own code for this is `clear_fish_pond_postcondition_unavailable`, and the
-        // evidence above says exactly what was read, so nothing is guessed.
         return occupantsAfter == 0 && fishTypeAfter is null
             ? this.RememberTerminal(requestId, executionId, ExecutionState.Succeeded, "fish_pond_cleared", evidence)
             : this.RememberTerminal(requestId, executionId, ExecutionState.Uncertain, "clear_fish_pond_postcondition_unavailable", evidence);
@@ -178,10 +166,6 @@ internal sealed partial class ExecutionManager
         return $"fish_pond_{Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(raw))).ToLowerInvariant()[..16]}";
     }
 
-    /// <summary>
-    /// One resolved fish pond, or the named reason the published target no longer matches the
-    /// live world.
-    /// </summary>
     private sealed record FishPondTargetResolution(
         bool Accepted,
         string ReasonCode,
@@ -196,10 +180,6 @@ internal sealed partial class ExecutionManager
         internal Building? Building => this.Pond;
     }
 
-    /// <summary>
-    /// Re-derives the named pond on the game thread. Every mismatch is a NAMED refusal,
-    /// never a silent re-target.
-    /// </summary>
     private static FishPondTargetResolution ResolveFishPondTarget(GameLocation location, int x, int y, string expectedTargetId)
     {
         Building? building = location.buildings.FirstOrDefault(
@@ -216,8 +196,6 @@ internal sealed partial class ExecutionManager
         string identity = $"pond_id={BuildFishPondTargetId(location, building)};location={location.NameOrUniqueName};"
             + $"tile_x={x};tile_y={y};building_origin={building.tileX.Value},{building.tileY.Value}";
 
-        // The building type's own question first: something that is not a fish pond is not
-        // this action's subject at all, whatever its instance state says.
         if (!TryDescribeFishPond(building, out bool hasFish, out int occupants))
             return FishPondTargetResolution.Reject(
                 "pond_target_moved",
@@ -251,12 +229,6 @@ internal sealed partial class ExecutionManager
         return new FishPondTargetResolution(true, "accepted", string.Empty, identity, (FishPond)building);
     }
 
-    /// <summary>
-    /// The ponds the actor can name right now, projected read-only from live state: every
-    /// finished fish pond in the current location that HOLDS fish. Nothing is synthesized - a
-    /// pond that is not there, is still being built, or is empty is not advertised, because an
-    /// empty pond has nothing to clear.
-    /// </summary>
     private static IReadOnlyList<BridgeFishPondTarget> DiscoverFishPondTargets(Farmer player, DiscoveryExclusionRecorder exclusions)
     {
         GameLocation? location = player.currentLocation;
@@ -282,8 +254,6 @@ internal sealed partial class ExecutionManager
                 door.Y,
                 building.buildingType.Value,
                 occupants,
-                // The fish the clearing would eject, so the caller knows WHAT it is about to put on the
-                // ground - the occupants count alone does not say whether they are what it wanted.
                 ((FishPond)building).fishType.Value ?? string.Empty));
             if (result.Count >= 16) break;
         }

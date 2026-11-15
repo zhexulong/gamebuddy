@@ -162,8 +162,6 @@ internal sealed partial class ExecutionManager
         string expectedTargetId,
         long requestedDeadlineMs)
     {
-        // General, not Physical: placement calls no tool and starts no swing, the same
-        // profile `place_wood_fence`'s sibling actions admit under.
         if (this.AdmitLocalExecution(requestId, requestedDeadlineMs, AdmissionActionabilityProfile.General, out string executionId, out long nowMs) is LocalExecutionReceipt admissionRejection)
             return admissionRejection;
 
@@ -208,11 +206,6 @@ internal sealed partial class ExecutionManager
         return this.ExecutePlaceOwnedObject(executionId, requestId, slot, targetX, targetY, expectedQualifiedItemId, expectedTargetId);
     }
 
-    /// <summary>
-    /// Executes place_owned_object against the current world, re-validating the slot,
-    /// the item and the tile because an approach leg may have taken several ticks.
-    /// Shared by the in-range path and the post-approach path so the two cannot drift.
-    /// </summary>
     private LocalExecutionReceipt ExecutePlaceOwnedObject(string executionId, string requestId, int slot, int targetX, int targetY, string expectedQualifiedItemId, string expectedTargetId)
     {
         GameLocation location = Game1.player.currentLocation;
@@ -240,8 +233,6 @@ internal sealed partial class ExecutionManager
         bool tilePlaceable = Utility.playerCanPlaceItemHere(location, source, targetX * 64 + 32, targetY * 64 + 32, Game1.player)
             && source.canBePlacedHere(location, tile);
         if (!tilePlaceable)
-            // Two different facts, and the refusal names both: `map_passable` is the map layer the placement arm reads,
-            // `body_standable` is whether she may stand there at all - the map calls a bush tile open ground.
             return this.RememberTerminal(
                 requestId,
                 executionId,
@@ -321,7 +312,6 @@ internal sealed partial class ExecutionManager
         string expectedTargetId,
         long requestedDeadlineMs)
     {
-        // Physical: this arm swings a real tool through the native DoFunction path.
         if (this.AdmitLocalExecution(requestId, requestedDeadlineMs, AdmissionActionabilityProfile.Physical, out string executionId, out long nowMs) is LocalExecutionReceipt admissionRejection)
             return admissionRejection;
 
@@ -329,12 +319,6 @@ internal sealed partial class ExecutionManager
         Vector2 tile = new(targetX, targetY);
         if (!location.objects.TryGetValue(tile, out StardewValley.Object? target) || target is null)
         {
-            // FURNITURE IS A DIFFERENT COLLECTION, AND SAYING "NOT FOUND" ABOUT IT WOULD BE A LIE.
-            //
-            // `location.furniture` (not `location.objects`) holds the bed, the sofa, the rug - and this lane has no tool that
-            // picks one up. A companion that can SEE the chair (published as `placed_furniture`) and is then told
-            // `target_not_found` learns the wrong lesson: that the chair is gone. Naming the real state is what lets it decide
-            // whether to ask the player or leave it alone.
             Furniture? piece = location.furniture.FirstOrDefault(candidate => candidate is not null && candidate.TileLocation == tile);
             if (piece is not null)
                 return this.RememberTerminal(
@@ -368,13 +352,8 @@ internal sealed partial class ExecutionManager
                 ExecutionState.Rejected,
                 "remove_placed_item_target_not_removable",
                 $"target={targetX},{targetY};location={location.NameOrUniqueName};item={target.QualifiedItemId};type={target.Type ?? "none"};fragility={target.Fragility};big_craftable={target.bigCraftable.Value.ToString().ToLowerInvariant()};slot={slot}");
-        // Ask before walking: a pack that carries neither of the two tools this action's claim names (`tool:axe_or_pickaxe`)
-        // is refused now rather than after an approach leg it could never finish. Which of the two actually removes THIS
-        // object is a target fact, decided in the execution body.
         if (ResolveDeclaredTool(Game1.player.Items, "remove_placed_item").RefusalCode is { } toolRefusal)
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, toolRefusal, $"slot={slot}");
-        // 5.2: out of the native tool reach, walk in rather than refuse. Every
-        // position-independent check above is re-run after the walk.
         if (!IsTileWithinChebyshevRadius(Game1.player, targetX, targetY, 1))
         {
             return this.TryBeginToolApproach(
@@ -393,11 +372,6 @@ internal sealed partial class ExecutionManager
         return this.ExecuteRemovePlacedItem(executionId, requestId, slot, targetX, targetY, expectedTargetId);
     }
 
-    /// <summary>
-    /// Executes remove_placed_item against the current world, re-validating the object,
-    /// its removability and the named tool because an approach leg may have taken
-    /// several ticks. Shared by the in-range path and the post-approach path.
-    /// </summary>
     private LocalExecutionReceipt ExecuteRemovePlacedItem(string executionId, string requestId, int slot, int targetX, int targetY, string expectedTargetId)
     {
         GameLocation location = Game1.player.currentLocation;
@@ -516,16 +490,11 @@ internal sealed partial class ExecutionManager
         string expectedTargetId,
         long requestedDeadlineMs)
     {
-        // General, not Physical: no tool is swung and no DoFunction runs. The piece is lifted by the
-        // native furniture pickup sequence itself, the same profile `place_owned_object` admits under.
         if (this.AdmitLocalExecution(requestId, requestedDeadlineMs, AdmissionActionabilityProfile.General, out string executionId, out long nowMs) is LocalExecutionReceipt admissionRejection)
             return admissionRejection;
 
         GameLocation location = Game1.player.currentLocation;
         Vector2 tile = new(targetX, targetY);
-        // THE PIECE IS RE-RESOLVED FROM THE COLLECTION, not from the id. Furniture is a
-        // `NetCollection<Furniture>` with no key, so a tile is what selects a piece and the id is what
-        // proves it is still the piece the caller saw.
         Furniture? piece = location.furniture.FirstOrDefault(candidate => candidate is not null && candidate.TileLocation == tile);
         if (piece is null)
             return this.RememberTerminal(
@@ -571,9 +540,6 @@ internal sealed partial class ExecutionManager
         }
         catch (Exception nativeException)
         {
-            // The three steps are not atomic, so a throw can leave the piece in neither place. Putting it
-            // back before answering is the same rollback the inventory-full path uses; the receipt is
-            // Uncertain because the native call really did run and its effect is unknown.
             bool restored = RestoreFurniturePiece(location, piece, placedTile, placedRotation, placedFlipped);
             return this.RememberTerminal(
                 requestId,
@@ -586,8 +552,6 @@ internal sealed partial class ExecutionManager
         int carriedAfter = CountQualifiedItem(Game1.player, itemId);
         if (!stored)
         {
-            // A PIECE THAT FIT NOWHERE GOES BACK WHERE IT STOOD. `addItemToInventoryBool` answers false
-            // when the pack had no room, and the piece has already left the collection at that point.
             bool restored = RestoreFurniturePiece(location, piece, placedTile, placedRotation, placedFlipped);
             return this.RememberTerminal(
                 requestId,
@@ -597,8 +561,6 @@ internal sealed partial class ExecutionManager
                 $"target={expectedTargetId};tile={targetX},{targetY};location={location.NameOrUniqueName};item={itemId};stored=false;restored={restored.ToString().ToLowerInvariant()};restored_tile={FormatTile(piece.TileLocation)};restored_rotation={piece.currentRotation.Value};inventory_carried={carriedAfter};inventory_slots={Game1.player.Items.Count}");
         }
 
-        // Re-read the world AFTER the call: the collection is the authority on whether the piece left, and
-        // the pack is the authority on whether it arrived. Neither answer is taken from the native return.
         bool gone = !location.furniture.Contains(piece);
         bool carried = carriedAfter == carriedBefore + 1 && CarriesPiece(Game1.player, piece);
         string evidence =
@@ -612,15 +574,6 @@ internal sealed partial class ExecutionManager
             : this.RememberTerminal(requestId, executionId, ExecutionState.Uncertain, "move_placed_furniture_postcondition_unavailable", evidence);
     }
 
-    /// <summary>
-    /// Puts one piece of furniture back exactly where it stood: the same instance, its own tile and its own
-    /// rotation, appended back to the location's furniture collection.
-    ///
-    /// Only the collection membership is restored through the game's own `NetCollection.Add`; the piece's
-    /// own state was never moved by the pickup sequence, so re-writing the tile and the two rotation fields is
-    /// a no-op that makes the postcondition explicit rather than assumed. Answers whether the piece is in the
-    /// collection afterwards, because a rollback nobody checked is a claim rather than a fact.
-    /// </summary>
     private static bool RestoreFurniturePiece(GameLocation location, Furniture piece, Vector2 tile, int rotation, bool flipped)
     {
         if (!location.furniture.Contains(piece))
@@ -656,7 +609,6 @@ internal sealed partial class ExecutionManager
         string expectedTargetId,
         long requestedDeadlineMs)
     {
-        // Physical: this arm swings a real tool through the native DoFunction path.
         if (this.AdmitLocalExecution(requestId, requestedDeadlineMs, AdmissionActionabilityProfile.Physical, out string executionId, out long nowMs) is LocalExecutionReceipt admissionRejection)
             return admissionRejection;
 
@@ -683,12 +635,8 @@ internal sealed partial class ExecutionManager
                 ExecutionState.Rejected,
                 "break_container_source_target_changed",
                 $"target={targetX},{targetY};location={location.NameOrUniqueName};published={expectedTargetId};live={BuildBreakableContainerTargetId(location, targetX, targetY, probe)};item={probe.QualifiedItemId}");
-        // Ask before walking: a pack that carries no tool this container's seam accepts (`tool:heavy_hitter`) is refused
-        // now rather than after an approach leg the action could never finish. The slot the caller named is recorded,
-        // never obeyed.
         if (ResolveDeclaredTool(Game1.player.Items, "break_container").RefusalCode is { } toolRefusal)
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, toolRefusal, $"slot={slot}");
-        // 5.2: out of the native tool reach, walk in rather than refuse.
         if (!IsTileWithinChebyshevRadius(Game1.player, targetX, targetY, 1))
         {
             return this.TryBeginToolApproach(
@@ -707,11 +655,6 @@ internal sealed partial class ExecutionManager
         return this.ExecuteBreakContainerSource(executionId, requestId, slot, targetX, targetY, expectedTargetId);
     }
 
-    /// <summary>
-    /// Executes break_container_source against the current world, re-validating the
-    /// container, its state identity and the named tool because an approach leg may have
-    /// taken several ticks. Shared by the in-range path and the post-approach path.
-    /// </summary>
     private LocalExecutionReceipt ExecuteBreakContainerSource(string executionId, string requestId, int slot, int targetX, int targetY, string expectedTargetId)
     {
         GameLocation location = Game1.player.currentLocation;
@@ -906,11 +849,6 @@ internal sealed partial class ExecutionManager
         return drops;
     }
 
-    /// <summary>
-    /// Opaque identity of one placement candidate: the location, the backpack slot, the
-    /// tile and the item that would be placed. The slot is part of the identity the same
-    /// way the wood-fence identity carries it, because the item is what would be placed.
-    /// </summary>
     private static string BuildOwnedObjectPlacementTargetId(GameLocation location, int slot, int x, int y, string qualifiedItemId)
     {
         string raw = $"{location.NameOrUniqueName}:{slot}:{x},{y}:{qualifiedItemId}:owned-object";
@@ -930,44 +868,17 @@ internal sealed partial class ExecutionManager
         return $"placed_item_{Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(raw))).ToLowerInvariant()[..16]}";
     }
 
-    /// <summary>
-    /// Opaque identity of one breakable container: the location, the tile and the
-    /// container's own qualified item id plus its runtime type, so a barrel that was
-    /// replaced by a different object is a different target. The container's hit budget
-    /// is deliberately NOT part of the identity — the native health field is private to
-    /// `BreakableContainer` and this Mod cannot observe it, so pretending to bind it
-    /// would be a state the request never really names.
-    /// </summary>
     private static string BuildBreakableContainerTargetId(GameLocation location, int x, int y, StardewValley.Object container)
     {
         string raw = $"{location.NameOrUniqueName}:{x},{y}:{container.QualifiedItemId}:{container.GetType().Name}:breakable-container";
         return $"breakable_container_{Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(raw))).ToLowerInvariant()[..16]}";
     }
 
-    /// <summary>
-    /// The world-object targets the actor can name right now, projected read-only from
-    /// live state:
-    ///   * one <c>placement_candidate</c> per (owned placeable item slot, nearby tile) the
-    ///     game's own placement admission accepts — the item comes from the backpack and
-    ///     the tile from the live world, so a furniture or a mod-provided object works
-    ///     without any content list in this Mod;
-    ///   * one <c>removable_object</c> per nearby object an owned axe or pickaxe removes,
-    ///     <c>non_removable_object</c> for one nothing in this lane removes, and
-    ///     <c>breakable_container</c> for a nearby breakable container whenever a heavy
-    ///     hitter is owned. `Slot` is the backpack slot the named action needs, and -1
-    ///     when no owned tool acts on that object — the Mod never publishes a slot the
-    ///     actor does not have.
-    /// Nothing is synthesized: a tile that cannot be placed on, or an object that is not
-    /// there, is not advertised.
-    /// </summary>
     internal static IReadOnlyList<BridgeWorldObjectTarget> DiscoverWorldObjectTargets(Farmer player)
     {
         GameLocation? location = player.currentLocation;
         if (location is null) return Array.Empty<BridgeWorldObjectTarget>();
         List<BridgeWorldObjectTarget> result = new();
-        // The same object is reachable from every owned lane tool, so it is published
-        // once: the first owned slot that can act on it wins, which is deterministic
-        // (backpack order) and never advertises two slots for one target.
         HashSet<string> publishedTargetIds = new(StringComparer.Ordinal);
         int placementCount = 0;
         int objectCount = 0;
@@ -1003,11 +914,6 @@ internal sealed partial class ExecutionManager
                     placementCount++;
                 }
             }
-            // A heavy-hitter TOOL publishes the removable/breakable objects. This must be its own
-            // branch: `Tool` is NOT a `StardewValley.Object` (both derive from `Item`), so an earlier
-            // version of this loop - which tested `is not StardewValley.Object` and `continue`d - made
-            // the whole scan below unreachable, and three live gates reported a missing object Given
-            // while only placement candidates were ever published.
             Tool? ownedTool = player.Items[slot] as Tool;
             if (objectCount >= WorldObjectTargetLimit || !(ownedTool?.isHeavyHitter() ?? false))
                 continue;
@@ -1090,14 +996,6 @@ internal sealed partial class ExecutionManager
                 piece.rotations.Value));
             furnitureCount++;
         }
-        // EMPTY PEDESTALS, because nothing published them. `pedestalTargets` is the TAKE projection and carries only a
-        // pedestal that already HOLDS something (DiscoverPedestalTargets requires a held item, and its identity binds that
-        // item and its stack), so the one state `place_item_on_pedestal` can address - an empty pedestal - was invisible.
-        //
-        // Published as `empty_pedestal` with `Slot: -1`: the action names the ITEM's backpack slot, not a tool, and this
-        // lane never advertises a slot the actor does not have. The id is its own namespace because the pedestal already
-        // has a row here (as `removable_object`, when an axe can break it), and two actions on one tile must not collide
-        // in the dedupe set.
         int pedestalCount = 0;
         foreach (KeyValuePair<Vector2, StardewValley.Object> pair in location.objects.Pairs)
         {
@@ -1141,6 +1039,5 @@ internal sealed partial class ExecutionManager
         return $"placed_furniture_{Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(raw))).ToLowerInvariant()[..16]}";
     }
 
-    /// <summary>Per-kind cap on published world-object targets, matching the sibling families' bounded discovery.</summary>
     private const int WorldObjectTargetLimit = 16;
 }

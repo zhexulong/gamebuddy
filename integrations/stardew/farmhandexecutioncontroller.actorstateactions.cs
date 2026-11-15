@@ -156,9 +156,6 @@ internal sealed partial class ExecutionManager
         string expectedTargetId,
         long requestedDeadlineMs)
     {
-        // General, not Physical: the seam is one instantaneous native slot write, no tool
-        // lifecycle, no swing, no menu — the same profile `talk_to_npc` and `toggle_tool_light`
-        // admit through.
         if (this.AdmitLocalExecution(requestId, requestedDeadlineMs, AdmissionActionabilityProfile.General, out string executionId, out long nowMs) is LocalExecutionReceipt admissionRejection)
             return admissionRejection;
 
@@ -173,9 +170,6 @@ internal sealed partial class ExecutionManager
 
         string identity = $"body_slot={bodySlot};source_slot={slot};requested={expectedQualifiedItemId}";
 
-        // The already-satisfied path comes FIRST: the actor already wears the requested item, so
-        // the postcondition holds whatever the pack holds and whatever state the id was minted
-        // against. A repeat of a satisfied request must land here, not on an error.
         TryReadWearableBodySlot(player, bodySlot, out Item? occupantBefore);
         if (occupantBefore is not null && string.Equals(occupantBefore.QualifiedItemId, expectedQualifiedItemId, StringComparison.Ordinal))
             return this.RememberTerminal(
@@ -223,8 +217,6 @@ internal sealed partial class ExecutionManager
                 "wearable_body_slot_mismatch",
                 $"{identity};slot_item={source.QualifiedItemId};item_type={source.GetType().Name}");
 
-        // THE SEAM, called before the backpack is touched: if it throws, the item is still in the
-        // pack and the receipt can say so instead of reporting a loss.
         Item? displaced;
         try
         {
@@ -242,9 +234,6 @@ internal sealed partial class ExecutionManager
                 + $"pack_slot_untouched={PackSlotHolds(player, slot, expectedQualifiedItemId).ToString().ToLowerInvariant()};native_exception={nativeException.GetType().Name};native_call_ran_unknown=true");
         }
 
-        // The item left the pack when it was worn (the native click path takes it out of the
-        // inventory through the cursor slot), and the displaced item takes its place: the slot the
-        // new item came from is exactly where a player sees the swap land.
         player.Items[slot] = displaced;
 
         TryReadWearableBodySlot(player, bodySlot, out Item? occupantAfter);
@@ -283,8 +272,6 @@ internal sealed partial class ExecutionManager
 
         string identity = $"body_slot={bodySlot};destination_slot={slot}";
 
-        // Already satisfied, and therefore FIRST: the slot is empty, nothing will move, and no
-        // item can reach the ground — so the inventory-full refusal below cannot apply.
         TryReadWearableBodySlot(player, bodySlot, out Item? occupantBefore);
         if (occupantBefore is null)
             return this.RememberTerminal(
@@ -303,10 +290,6 @@ internal sealed partial class ExecutionManager
                 "wearable_target_changed",
                 $"{identity};published={expectedTargetId};live={liveTargetId};occupant_before={DescribeWearableOccupant(occupantBefore)}");
 
-        // THE FROZEN REFUSAL, checked before the destination is even looked at: with no free
-        // backpack slot the removed wearable has nowhere to land, and the native exit-menu path
-        // would drop it on the ground (`InventoryPage.exitThisMenu` :895-899). Refusing is the
-        // only honest outcome; a receipt reporting success here would be reporting a lost item.
         int freeSlots = FreeInventorySlots(player);
         if (player.isInventoryFull())
             return this.RememberTerminal(
@@ -347,9 +330,6 @@ internal sealed partial class ExecutionManager
                 $"{identity};occupant_before={DescribeWearableOccupant(occupantBefore)};native_exception={nativeException.GetType().Name};native_call_ran_unknown=true");
         }
 
-        // The seam returned what it took off. A null here means the slot emptied between the
-        // staleness check and the call (or was never the state the id named): report that rather
-        // than writing a null into the destination and calling it a move.
         if (removed is null)
             return this.RememberTerminal(
                 requestId,
@@ -377,8 +357,6 @@ internal sealed partial class ExecutionManager
     /// </summary>
     public LocalExecutionReceipt RequestLocalDismountTransport(string requestId, long requestedDeadlineMs)
     {
-        // General, not Physical: this seam drives no tool lifecycle and starts no swing — the
-        // native callers are the clock, a pass-out, a warp and the obelisk.
         if (this.AdmitLocalExecution(requestId, requestedDeadlineMs, AdmissionActionabilityProfile.General, out string executionId, out long nowMs) is LocalExecutionReceipt admissionRejection)
             return admissionRejection;
 
@@ -408,7 +386,6 @@ internal sealed partial class ExecutionManager
         string horseId = mount.HorseId.ToString();
         try
         {
-            // THE SEAM, with the native DEFAULT from_demolish: false.
             mount.dismount();
         }
         catch (Exception nativeException)
@@ -421,9 +398,6 @@ internal sealed partial class ExecutionManager
                 $"horse_id={horseId};location={location};riding_before={ridingBefore.ToString().ToLowerInvariant()};mount_after={(player.mount is not null).ToString().ToLowerInvariant()};native_exception={nativeException.GetType().Name};native_call_ran_unknown=true");
         }
 
-        // Re-read the world AFTER the call. `mount` is what `dismount()` clears; `isRidingHorse()`
-        // is the frozen postcondition (and is also false while an event is up, which admission has
-        // already refused, so the two agree here).
         bool mountAfter = player.mount is not null;
         bool ridingAfter = player.isRidingHorse();
         string evidence =

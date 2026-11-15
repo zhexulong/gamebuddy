@@ -11,11 +11,6 @@ using StardewValley.Tools;
 
 namespace GameBuddy.Stardew;
 
-// TARGET DISCOVERY — the perception half of the execution controller. Every `Discover*`
-// member reads the actor's neighbourhood and turns it into the rows a snapshot publishes;
-// none of them executes anything, and none is read by an execution precondition. They live
-// apart from the dispatcher (`farmhandexecutioncontroller.cs`) because that file is the
-// receipt ledger and the frame update, not a scan of the world.
 internal sealed partial class ExecutionManager
 {
     /// <summary>
@@ -60,9 +55,6 @@ internal sealed partial class ExecutionManager
             if (DescribeDoor(point.X, point.Y, ResolveDoorWarp(location, point)) is { } door)
                 result.TryAdd((door.SourceX, door.SourceY), door);
         }
-        // The location's own warp list, with the `warps` family's predicate: a transition that moves a PLAYER, with a
-        // publishable source and destination. An edge exit's source is -1 on one axis, which is the engine's own
-        // encoding and not a defect, so the range is the ONE declaration of it (`FarmhandWarpCoordinateRange`).
         foreach (StardewValley.Warp warp in location.warps)
         {
             if (warp is null || warp.npcOnly.Value || string.IsNullOrWhiteSpace(warp.TargetName)) continue;
@@ -95,10 +87,6 @@ internal sealed partial class ExecutionManager
             .OfType<StardewValley.NPC>()
             .Where(npc => npc.IsVillager
                 && !string.IsNullOrWhiteSpace(npc.Name)
-                // Read-only inspection targets may be published inside the same bounded
-                // local discovery envelope used by this native-local fixture.
-                // Execution still independently enforces its one-tile native
-                // interaction radius after a separately receipted move.
                 && IsTileWithinChebyshevRadius(player, (int)npc.Tile.X, (int)npc.Tile.Y, TargetDiscoveryRadius))
             .Take(64)
             .Select(npc =>
@@ -165,19 +153,6 @@ internal sealed partial class ExecutionManager
             .ToArray();
     }
 
-    /// <summary>
-    /// How many crops need water on each map, and the nearest one.
-    ///
-    /// <para>
-    /// Whole-map, unlike `DiscoverCropTargets`, which is bounded by `TargetDiscoveryRadius` because a target outside reach
-    /// is not actionable. A COUNT is a different question from a list of targets: the prompt asks "is anything thirsty", and
-    /// answering it from the radius-limited list produced a false zero (measured 2026-10-31).
-    /// </para>
-    /// <para>
-    /// "Needs water" is <see cref="CropNeedsWater"/> - the crop's own need predicate AND the tile's live watered state,
-    /// the same pair `DiscoverCropTargets` and `water_crop` read, so the count cannot advertise a tile the action refuses.
-    /// </para>
-    /// </summary>
     private static IReadOnlyList<BridgeWateringWhereabouts> DiscoverWateringWhereabouts(DiscoveryExclusionRecorder exclusions)
     {
         List<BridgeWateringWhereabouts> result = new();
@@ -197,8 +172,6 @@ internal sealed partial class ExecutionManager
                 if (pair.Value is not StardewValley.TerrainFeatures.HoeDirt dirt
                     || dirt.crop is null)
                     continue;
-                // A dead crop is a subject this COUNT can see and will never count as thirsty, so it says so rather than
-                // leaving the reader to read its absence as "no crop here".
                 if (dirt.crop.dead.Value)
                 {
                     exclusions.Record("wateringWhereabouts", DiscoveryExclusionReasons.Dead);
@@ -207,10 +180,6 @@ internal sealed partial class ExecutionManager
                 if (!CropNeedsWater(dirt))
                     continue;
                 needsWaterCount++;
-                // A DISTANCE ACROSS MAPS IS NOT A DISTANCE. The loop walks every loaded location, and this used to subtract
-                // an off-map tile from the player's own tile - so Desert (10,10) and Farm (10,10) came out as distance 0
-                // and an off-map row could claim the nearest tile. The coordinate of a crop on another map is not an
-                // address the companion can walk to, so only the player's own map computes one.
                 if (!sameMap) continue;
                 float distance = Math.Abs(pair.Key.X - playerTile.X) + Math.Abs(pair.Key.Y - playerTile.Y);
                 if (distance < nearestDistance)
@@ -219,8 +188,6 @@ internal sealed partial class ExecutionManager
                     nearest = pair.Key;
                 }
             }
-            // The row is published for its COUNT, which every loaded map can answer. The coordinate is a separate fact that
-            // only the player's own map has, so an absent one is left ABSENT rather than this row being dropped with it.
             if (needsWaterCount > 0)
             {
                 result.Add(new BridgeWateringWhereabouts(
@@ -235,18 +202,6 @@ internal sealed partial class ExecutionManager
             .ToArray();
     }
 
-    /// <summary>
-    /// Summarize every loaded location's ready-for-harvest crops.
-    ///
-    /// <para>
-    /// Per-location HarvestTargets are Chebyshev-bounded, so this is the only
-    /// planning fact that tells the companion a ripe crop exists elsewhere —
-    /// same role as VillagerWhereabouts. Countable crops only (the same predicate
-    /// the bounded discovery uses), nearest tile is the one closest to the
-    /// player's current tile, and the result is bounded like the other snapshot
-    /// lists (Host accepts up to 64).
-    /// </para>
-    /// </summary>
     private static IReadOnlyList<BridgeHarvestWhereabouts> DiscoverHarvestWhereabouts(DiscoveryExclusionRecorder exclusions)
     {
         List<BridgeHarvestWhereabouts> result = new();
@@ -267,8 +222,6 @@ internal sealed partial class ExecutionManager
                     || dirt.crop is null
                     || dirt.crop.forageCrop.Value)
                     continue;
-                // The count is derived from the SAME pair of engine predicates the bounded `harvestTargets` list uses, so
-                // each one it drops is recorded here rather than leaving an empty list to answer two questions at once.
                 if (!dirt.readyForHarvest())
                 {
                     exclusions.Record("harvestWhereabouts", DiscoveryExclusionReasons.NotReady);
@@ -280,10 +233,6 @@ internal sealed partial class ExecutionManager
                     continue;
                 }
                 readyCount++;
-                // A DISTANCE ACROSS MAPS IS NOT A DISTANCE. The loop walks every loaded location, and this used to subtract
-                // an off-map tile from the player's own tile - so Desert (10,10) and Farm (10,10) came out as distance 0
-                // and an off-map row could claim the nearest tile. The coordinate of a crop on another map is not an
-                // address the companion can walk to, so only the player's own map computes one.
                 if (!sameMap) continue;
                 float distance = Math.Abs(pair.Key.X - playerTile.X) + Math.Abs(pair.Key.Y - playerTile.Y);
                 if (distance < nearestDistance)
@@ -292,8 +241,6 @@ internal sealed partial class ExecutionManager
                     nearest = pair.Key;
                 }
             }
-            // The row is published for its COUNT, which every loaded map can answer. The coordinate is a separate fact that
-            // only the player's own map has, so an absent one is left ABSENT rather than this row being dropped with it.
             if (readyCount > 0)
             {
                 result.Add(new BridgeHarvestWhereabouts(
@@ -313,8 +260,6 @@ internal sealed partial class ExecutionManager
         StardewValley.GameLocation? location = player.currentLocation;
         if (location is null) return Array.Empty<BridgePetTarget>();
         List<BridgePetTarget> result = new();
-        // The window is taken over the pets in RANGE and the day filter runs after it, which is the order this family
-        // has always published in; moving the cap after the filter would change which pets the list can hold.
         foreach (Pet pet in location.characters.OfType<Pet>()
             .Where(pet => Utility.tileWithinRadiusOfPlayer((int)pet.Tile.X, (int)pet.Tile.Y, TargetDiscoveryRadius, player))
             .Take(16))
@@ -326,13 +271,6 @@ internal sealed partial class ExecutionManager
                 pet.petType.Value,
                 pet.friendshipTowardFarmer.Value,
                 pet.lastPetDay.TryGetValue(player.UniqueMultiplayerID, out int lastDay) && lastDay == Game1.Date.TotalDays,
-                // Project the native fact, do not invent a taxonomy. A Pet moves
-                // according to PetData.Behaviors, and the field that decides that
-                // is `WalkInDirection` (Data/Pets): Walk/Sprint/LeapJump set it,
-                // SitDown/SitSide/Flop do not. The game already answers "is this
-                // pet moving right now"; naming it `Stationary` and nothing more
-                // avoids collapsing several native behaviours into phases the Mod
-                // would then own and have to keep in sync.
                 Stationary: !(pet.GetCurrentPetBehavior()?.WalkInDirection ?? false));
             // The row states the day fact either way; the reason states why it is not a target. A pet petted today is
             // excluded rather than published-and-refused because there is nothing left to do with it - the second pet
@@ -419,10 +357,6 @@ internal sealed partial class ExecutionManager
                     // it is - the state, not a Keg id, is what the collect action needs.
                     machine.readyForHarvest.Value && machine.MinutesUntilReady == 0 && machine.heldObject.Value is not null,
                     machine.GetMachineData() is not null,
-                    // What THIS machine takes, from its own Data/Machines rows - the same derivation the load refusal
-                    // names. Every object with machine data used to be published as a load target with no statement of
-                    // its inputs, so a furnace reached the model looking like it took coffee beans (measured 2026-10-31).
-                    // null here means the machine's data could not answer, which is not the same fact as "takes nothing".
                     Accepts: ReadMachineInputAcceptance(machine));
                 if (machine.heldObject.Value is null && !machine.readyForHarvest.Value && machine.MinutesUntilReady <= 0 && IsMachineInteractionObject(machine))
                 {
@@ -550,9 +484,6 @@ internal sealed partial class ExecutionManager
         {
             if (item is not StardewValley.Object sapling || !StardewValley.Object.isWildTreeSeed(sapling.ItemId) || sapling.Stack < 1)
                 continue;
-            // This stack's OWN window, and a stack's rows are its NEAREST: the scan below walks x then y from the far
-            // corner, so ordering happens before the window trims, which is what makes the window mean "nearest"
-            // rather than "whichever tiles the loops reached first".
             List<BridgeTreeSaplingTarget> rowsForThisStack = new();
             for (int x = Math.Max(0, player.TilePoint.X - TargetDiscoveryRadius); x <= player.TilePoint.X + TargetDiscoveryRadius; x++)
             {
@@ -570,12 +501,6 @@ internal sealed partial class ExecutionManager
                 player.TilePoint.Y,
                 target => new TargetCandidate(target.X, target.Y, target.Slot)).Take(rowLimit));
         }
-        // A stack is independent of every other stack - a row in slot A can never address slot B's item - so ordering
-        // each stack's own window IS the whole list's order, and the stacks stay in inventory order. The reason the
-        // order matters at all: `TARGETS_NAMED_PER_PLAN` is 16, so one script uses at most sixteen rows, and Chebyshev is the
-        // metric the range gate will apply (a tile nearer by Manhattan can still be further from being in range).
-        // Measured 2026-10-29, `round7`: 7.2 KB of these rows per observation, in scan order, so the sixteen a script
-        // could reach soonest were scattered.
         return result;
     }
 
@@ -596,13 +521,6 @@ internal sealed partial class ExecutionManager
             .ToArray();
     }
 
-    /// <summary>
-    /// Live grass tufts on the current map (the TerrainFeature `Grass`, not the
-    /// Object-layer weeds `cut_weeds` targets). Swinging a scythe at one deducts
-    /// its <c>numberOfWeeds</c> to zero and, when it dies, feeds Hay into a silo
-    /// (grassType 1/7) or drops rare items (grassType 6) via the native
-    /// <c>Grass.performToolAction</c> → <c>TryDropItemsOnCut</c> chain.
-    /// </summary>
     private static IReadOnlyList<BridgeCaskTarget> DiscoverCaskTargets(Farmer player)
     {
         GameLocation? location = player.currentLocation;
@@ -685,10 +603,6 @@ internal sealed partial class ExecutionManager
                 || (int)pair.Key.X < 0 || (int)pair.Key.X > 1000 || (int)pair.Key.Y < 0 || (int)pair.Key.Y > 1000
                 || !IsTileWithinChebyshevRadius(player, (int)pair.Key.X, (int)pair.Key.Y, TargetDiscoveryRadius))
                 continue;
-            // ONE decision, shared with the execution admission below, so a published row can never be a row the
-            // action refuses - and a dead crop, which no readiness or water radar can see, is published here or it
-            // is lost. See ExecutionManager.ScytheCropTarget. Every input is read ONCE and published: the same four
-            // engine answers decide the row's admission and state the row's own facts.
             bool forageCrop = dirt.crop.forageCrop.Value;
             bool readyForHarvest = dirt.readyForHarvest();
             StardewValley.GameData.Crops.HarvestMethod harvestMethod = dirt.crop.GetHarvestMethod();
@@ -742,23 +656,12 @@ internal sealed partial class ExecutionManager
             .Where(pair => (int)pair.Key.X is >= 0 and <= 1000 && (int)pair.Key.Y is >= 0 and <= 1000
                 && Utility.tileWithinRadiusOfPlayer((int)pair.Key.X, (int)pair.Key.Y, TargetDiscoveryRadius, player)
                 && NativeItemPredicates.IsArtifactSpot(pair.Value)
-                // Artifact spots themselves are object-occupied source tiles;
-                // the legal native interaction position is an adjacent
-                // passable standing tile (checked below), not a passability
-                // predicate on the source tile.
                 && location.isTileOnMap(pair.Key)
                 && !location.terrainFeatures.ContainsKey(pair.Key)
                 && location.GetHoeDirtAtTile(pair.Key) is null
                 && pair.Value is not StardewValley.Objects.IndoorPot
                 && new[] { pair.Key + new Vector2(-1f, 0f), pair.Key + new Vector2(1f, 0f), pair.Key + new Vector2(0f, -1f), pair.Key + new Vector2(0f, 1f) }
-                    // `IsStandableTile` is the one rule for "may the body stop here", and it admits the actor's OWN
-                    // tile without asking the collision test: a live target is not hidden because she already stands
-                    // on its only action tile. A neighbour the map calls open while a bush or a trellis crop holds it
-                    // is refused, which the map-only reading could not see.
                     .Any(standing => StardewBodyController.IsStandableTile(location, player, standing)))
-            // Keep the published list bounded, but make its cap deterministic
-            // so a fixture-selected source is always discoverable when it is
-            // within the existing eight-target publication boundary.
             .OrderBy(pair => pair.Key.X)
             .ThenBy(pair => pair.Key.Y)
             .Take(8)
@@ -981,12 +884,6 @@ internal sealed partial class ExecutionManager
             .ToArray();
     }
 
-    /// <summary>
-    /// The current location's completed Pet Bowl, advertised at each tile the
-    /// native watering gate accepts so the actor plans a walk to an adjacent
-    /// tile. The handler revalidates the exact tile identity and never trusts
-    /// this coordinate as the target of the native call.
-    /// </summary>
     private static IReadOnlyList<BridgePetBowlTarget> DiscoverPetBowlTargets(Farmer player, DiscoveryExclusionRecorder exclusions)
     {
         StardewValley.GameLocation? location = player.currentLocation;
@@ -994,21 +891,16 @@ internal sealed partial class ExecutionManager
         List<BridgePetBowlTarget> result = new();
         foreach (StardewValley.Buildings.PetBowl bowl in location.buildings.OfType<StardewValley.Buildings.PetBowl>())
         {
-            // A bowl still being built exists on the map but is not yet a target; the engine's own countdown says so.
             if (bowl.daysOfConstructionLeft.Value > 0)
             {
                 exclusions.Record("petBowlTargets", DiscoveryExclusionReasons.NotReady);
                 continue;
             }
-            // A watered bowl admits no further watering, so it is not a target.
             if (bowl.watered.Value)
             {
                 exclusions.Record("petBowlTargets", DiscoveryExclusionReasons.AlreadyWatered);
                 continue;
             }
-            // Advertise only the tiles the native watering gate accepts, derived
-            // from the building's own tile-property data rather than assumed to be
-            // the footprint origin.
             foreach (Vector2 tile in PetBowlWaterableTiles(bowl))
             {
                 if (!IsTileWithinChebyshevRadius(player, (int)tile.X, (int)tile.Y, TargetDiscoveryRadius)) continue;
@@ -1019,14 +911,6 @@ internal sealed partial class ExecutionManager
         return result;
     }
 
-    /// <summary>
-    /// The current Slime Hutch's unwatered trough tiles. `SlimeHutch.
-    /// performToolAction` accepts the literal interior tiles x == 16, y in 6..9,
-    /// so discovery advertises exactly those coordinates (and only the ones the
-    /// actor can legally stand beside / walk to) rather than asking the building
-    /// for tile properties; the handler revalidates the coordinate and the
-    /// location identity and never trusts this list.
-    /// </summary>
     private static IReadOnlyList<BridgeSlimeHutchTroughTarget> DiscoverSlimeHutchTroughTargets(Farmer player, DiscoveryExclusionRecorder exclusions)
     {
         if (player.currentLocation is not StardewValley.SlimeHutch hutch)
@@ -1035,7 +919,6 @@ internal sealed partial class ExecutionManager
         for (int y = SlimeHutchTroughFirstRow; y <= SlimeHutchTroughLastRow; y++)
         {
             if (!IsSlimeHutchTroughTile(SlimeHutchTroughColumn, y)) continue;
-            // A watered spot admits no further watering, so it is not a target.
             if (hutch.waterSpots[y - SlimeHutchTroughFirstRow])
             {
                 exclusions.Record("slimeHutchTroughTargets", DiscoveryExclusionReasons.AlreadyWatered);
@@ -1098,31 +981,6 @@ internal sealed partial class ExecutionManager
         return result;
     }
 
-    /// <summary>
-    /// Every eligible storage container as a SENSED ENTITY: one row per container, carrying the container's own
-    /// identity and the contents of EVERY occupied slot in that container's slot order.
-    ///
-    /// <para>
-    /// This is the perception half of a split the two row-per-pair families never made. `chest_store` and
-    /// `chest_retrieve` need an ADDRESS - a container and an item - so discovering them as `containers x items`
-    /// multiplied two independently-sized sets together. That is why every previous fix was a budget tweak rather
-    /// than a correct answer: a budget is what you add when you cannot say why the set is that large. Measured
-    /// 2026-10-31 on the real projection: a 36-item chest reached the model as 16 rows, and four chests of 16
-    /// items saturated the whole 64-row family limit.
-    /// </para>
-    /// <para>
-    /// So the two facts are published separately. Perception is the complete mirror: a container's contents are a
-    /// fact about that container, and a companion told about 16 of its 36 items cannot plan the other 20. Execution
-    /// is the safe slice the handler revalidates. The CONTAINER list is still distance-bounded like every other
-    /// radar family - bounding how many containers are in view is legitimate, truncating one container's contents
-    /// is not.
-    /// </para>
-    /// <para>
-    /// `ChestId` is `BuildContainerTargetId`, the identity an execution already echoes as `expectedTargetId`, so
-    /// the container an observation names and the container a handler revalidates are one spelling rather than a
-    /// second id minted for this family.
-    /// </para>
-    /// </summary>
     private static IReadOnlyList<BridgeChestState> DiscoverChestStates(Farmer player)
     {
         StardewValley.GameLocation? location = player.currentLocation;
@@ -1130,9 +988,6 @@ internal sealed partial class ExecutionManager
         List<BridgeChestState> result = new();
         foreach ((StardewValley.Objects.Chest chest, int x, int y, bool isFridge) in OrderedStorageContainers(player, location))
         {
-            // No cap on the contents and no admission filtering: this is what the container HOLDS, not what this
-            // actor's pack could currently accept. Only an empty slot is skipped, because an empty slot is not an
-            // item the container holds.
             IList<StardewValley.Item> inventory = chest.GetItemsForPlayer();
             List<BridgeChestItem> items = new();
             for (int slot = 0; slot < inventory.Count; slot++)
@@ -1215,8 +1070,6 @@ internal sealed partial class ExecutionManager
         List<BridgeInventoryItemFact> result = new();
         for (int slot = 0; slot < player.Items.Count && result.Count < 36; slot++)
         {
-            // Hat / Clothing / Boots are Item subclasses, not Object; the
-            // mannequin lane needs their slots surfaced to the Agent.
             if (player.Items[slot] is not Item item || string.IsNullOrWhiteSpace(item.QualifiedItemId))
                 continue;
             int stack = item is StardewValley.Object obj ? obj.Stack : 1;
@@ -1258,9 +1111,6 @@ internal sealed partial class ExecutionManager
         StardewValley.GameLocation? location = player.currentLocation;
         if (location is null) return Array.Empty<BridgeItemTarget>();
         List<BridgeItemTarget> result = new();
-        // The actor's count of an item is measured ONCE per publication, at the moment the chunks below are still
-        // on the ground - that is the only moment at which the number can be evidence of anything. Reading it after
-        // the drop was delivered would make the check it feeds a tautology.
         Dictionary<string, int> inventoryAtPublicationByItemId = new(StringComparer.Ordinal);
         for (int debrisIndex = 0; debrisIndex < location.debris.Count && result.Count < 64; debrisIndex++)
         {
@@ -1309,10 +1159,6 @@ internal sealed partial class ExecutionManager
         {
             if (item is not StardewValley.Object seed || seed.Category != StardewValley.Object.SeedsCategory)
                 continue;
-            // THIS STACK'S OWN WINDOW. The guard used to be one family-wide `result.Count < 64`, tested on both loops,
-            // which the first held stack spent in full: 169 candidate tiles against a 64-row budget meant every later
-            // seed slot published nothing at all, so `plant_seed` had no address for the second crop the companion was
-            // carrying. Measured 2026-10-29 (`round7`): 64 rows, all from one stack, on 14 of 33 observations.
             List<BridgeSeedTarget> rowsForThisStack = new();
             for (int x = Math.Max(0, player.TilePoint.X - TargetDiscoveryRadius); x <= player.TilePoint.X + TargetDiscoveryRadius; x++)
             {
@@ -1324,27 +1170,18 @@ internal sealed partial class ExecutionManager
                         || feature is not StardewValley.TerrainFeatures.HoeDirt dirt
                         || (location.objects.TryGetValue(tile, out StardewValley.Object? placed) && placed is StardewValley.Objects.IndoorPot))
                         continue;
-                    // Both published facts are the engine's own answers on this tile, read once: the season/raised-crop
-                    // admission `plant_seed` re-checks, and the crop occupancy that makes the tile unusable for a seed.
                     bool canPlantThisSeedHere = dirt.canPlantThisSeedHere(seed.ItemId, isFertilizer: false);
                     if (dirt.crop is not null || !canPlantThisSeedHere)
                         continue;
                     rowsForThisStack.Add(new BridgeSeedTarget(BuildSeedTargetId(location, slot, x, y, seed.QualifiedItemId), slot, x, y, seed.QualifiedItemId, RequireDisplayName(seed.QualifiedItemId), canPlantThisSeedHere, dirt.crop is not null));
                 }
             }
-            // Nearest first, THEN the window: the scan walks x then y from the far corner, so trimming first would keep
-            // whichever tiles the loops reached first. Chebyshev, through `TargetOrdering`, because that is the metric
-            // the range gate applies - a tile nearer by Manhattan can still be further from being in range.
             result.AddRange(TargetOrdering.NearestFirstByChebyshev(
                 rowsForThisStack,
                 player.TilePoint.X,
                 player.TilePoint.Y,
                 target => new TargetCandidate(target.X, target.Y, target.Slot)).Take(rowLimit));
         }
-        // A stack is independent of every other stack - a row in slot A can never address slot B's item, and
-        // `ExecutePlantSeed` recomputes `BuildSeedTargetId` from slot AND tile and refuses on a mismatch - so ordering
-        // within each stack's window IS the whole list's order, and the stacks stay in inventory order. Nothing is
-        // renumbered: every id here is exactly the one the action will recompute.
         return result;
     }
 
@@ -1395,14 +1232,6 @@ internal sealed partial class ExecutionManager
         return result;
     }
 
-    /// <summary>
-    /// Publishes the live mature crab pots the collect action may settle from.
-    /// collect_crab_pot_output is an advertised capability, but without this
-    /// channel it could never be reached: no other snapshot field carries the
-    /// mature target identity, so the Agent had no way to name a pot. It only
-    /// reads the already-mature 714 state; production alone performs the single
-    /// native collection and owns the receipt/postcondition.
-    /// </summary>
     private static IReadOnlyList<BridgeCrabPotCollectTarget> DiscoverCrabPotCollectTargets(Farmer player)
     {
         GameLocation? location = player.currentLocation;
@@ -1472,8 +1301,6 @@ internal sealed partial class ExecutionManager
                         || feature is not StardewValley.TerrainFeatures.HoeDirt dirt
                         || (location.objects.TryGetValue(tile, out StardewValley.Object? placed) && placed is StardewValley.Objects.IndoorPot))
                         continue;
-                    // The engine's own admission answer on this tile, published beside the tile instead of implied by the
-                    // filter: `fertilize_tile` refuses a row whose `CanApplyFertilizer` no longer holds.
                     bool canApplyFertilizer = dirt.CanApplyFertilizer(fertilizer.QualifiedItemId);
                     if (!canApplyFertilizer)
                         continue;
@@ -1492,8 +1319,6 @@ internal sealed partial class ExecutionManager
         foreach (KeyValuePair<Vector2, StardewValley.TerrainFeatures.TerrainFeature> pair in NearestFirst(location.terrainFeatures.Pairs
             .Where(pair => pair.Value is StardewValley.TerrainFeatures.HoeDirt dirt
                 && dirt.crop is not null
-                // A forage crop in the dirt is `pickup_forage`'s subject rather than a `harvest_crop` row; the kind test
-                // stays in the filter because it is a KIND, not a state the engine refuses.
                 && !dirt.crop.forageCrop.Value
                 && !string.IsNullOrWhiteSpace(dirt.crop.indexOfHarvest.Value)
                 && IsTileWithinChebyshevRadius(player, (int)pair.Key.X, (int)pair.Key.Y, TargetDiscoveryRadius)), player))
@@ -1536,8 +1361,6 @@ internal sealed partial class ExecutionManager
     {
         StardewValley.GameLocation? location = player.currentLocation;
         if (location is null) return Array.Empty<BridgeCropTarget>();
-        // `water_crop` refuses a row that is watered and `harvest_crop` needs the ready flag, so the row states both
-        // from the engine's own predicates on this dirt instead of leaving the reader to infer them from the filter.
         List<BridgeCropTarget> result = new();
         foreach (KeyValuePair<Vector2, StardewValley.TerrainFeatures.TerrainFeature> pair in NearestFirst(location.terrainFeatures.Pairs
             .Where(pair => pair.Value is StardewValley.TerrainFeatures.HoeDirt { crop: not null }
@@ -1602,23 +1425,17 @@ internal sealed partial class ExecutionManager
                 // refuses on and what `plant_seed` requires. Read once, so the row's state and the branch below
                 // cannot disagree.
                 bool hoeDirt = location.GetHoeDirtAtTile(tile) is not null;
-                // A hoed tile is published whatever else occupies it. A TILLABLE one must also be free and
-                // reachable, which is the set `till_soil` admits once the actor walks up to it.
                 if (!hoeDirt && !IsTillableTile(location, x, y))
                     continue;
                 candidates.Add((Math.Max(Math.Abs(x - originX), Math.Abs(y - originY)), new BridgeSoilTile(x, y, hoeDirt)));
             }
         }
-        // Nearest first, then a stable coordinate order so repeated observations
-        // of an unchanged world produce the same bounded list.
         BridgeSoilTile[] ordered = candidates
             .OrderBy(candidate => candidate.Distance)
             .ThenBy(candidate => candidate.Tile.Y)
             .ThenBy(candidate => candidate.Tile.X)
             .Select(candidate => candidate.Tile)
             .ToArray();
-        // Nearest-first truncation, STATED: every dropped tile is farther than every kept one, and the count is
-        // the one number that separates a bounded slice from a complete patch.
         int published = Math.Min(ordered.Length, MaximumDiscoveredSoilTiles);
         omitted = ordered.Length - published;
         return ordered[..published];

@@ -35,7 +35,6 @@ namespace GameBuddy.Stardew;
 internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExecutionLedger
 {
     private const string BusStopLocationName = "BusStop";
-    /// <summary>BusStop.checkAction's ticket-machine tile index (Buildings layer).</summary>
     private const int BusTicketMachineTileIndex = 1057;
     private const string BusDriverName = "Pam";
     private const int BusDriverTileX = 21;
@@ -50,9 +49,6 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
             return alreadyAnswered.Receipt;
 
         if (!this.TryGetBoundActor(out Farmer? actor, out string guardReason) || actor is null)
-            // The guard reason NAMES the failure (no bound actor / wrong scope / world not ready). This body used
-            // to discard it with `out _` and report player_not_actionable for every identity failure, which is
-            // the failure-mode collapse the review flagged.
             return this.RememberTerminal(request.RequestId, executionId, ExecutionState.Rejected, guardReason, null);
 
         GameLocation? location = actor.currentLocation;
@@ -80,7 +76,6 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
                 "bus_ticket_machine_out_of_reach",
                 $"target={ticketX},{ticketY};tile={(int)actor.Tile.X},{(int)actor.Tile.Y}");
 
-        // The native facts, read (not re-implemented) so a refusal is named.
         if (!Game1.MasterPlayer.mailReceived.Contains("ccVault"))
             return this.RememberTerminal(request.RequestId, executionId, ExecutionState.Rejected, "vault_not_completed", null);
 
@@ -101,10 +96,6 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
         string origin = location.NameOrUniqueName;
         long deadlineMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() + 60_000;
 
-        // Native interaction: raise the game's own ticket question, then let the
-        // native dispatcher answer it. Neither call is re-implemented here, so the
-        // fare, the freeze, the walk to the door and the cutscene all stay the
-        // game's own behaviour.
         bool questioned;
         try
         {

@@ -24,48 +24,25 @@ namespace GameBuddy.Stardew;
 internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExecutionLedger, IActiveBodyOwnership, IAdmissionCommit
 {
     private const int DefaultDeadlineTicks = 60 * 20;
-    // The ACTING radius for every interaction stays Chebyshev-adjacent (1); this
-    // discovery-only radius lets the snapshot expose planning targets before the
-    // Agent walks there, matching Item/NPC/Chest discovery. Execution
-    // preconditions never read this constant.
     internal const int TargetDiscoveryRadius = 6;
     // Animal-product discovery is the one place where the ACTING range is wider
     // than adjacency (milk/shear reach). Named for what it gates: the execution
     // precondition, not the snapshot radius (which is TargetDiscoveryRadius).
     private const int AnimalProductActionRadius = 1;
-    // A freshly warped player may report CanMove=false for a few transition
-    // frames. The deferred warp replan waits this many ticks for the player to
-    // become actionable again before failing closed as a locked destination.
     private const int NavigationWarpReplanGraceTicks = 60 * 3;
     private readonly IMonitor monitor;
-    // The one writer of every receipt, request-bound identity and idle transition this Mod holds.
     private readonly ExecutionReceiptStore ledger;
-    /// <summary>
-    /// The stored receipts as this class reads them - the ledger is their only writer. The request prologues read a
-    /// request's receipt here directly; moving those reads onto <see cref="IExecutionLedger.TryGetExistingReceipt"/> is
-    /// the admission seam's work, not this store's, and the read spelling is what
-    /// <c>tools/audit-stardew-action-admission-ledger.mjs</c> counts.
-    /// </summary>
     private IReadOnlyDictionary<string, LocalExecutionReceipt> receiptsByRequestId => this.ledger.ByRequestId;
     private readonly List<ExecutionTrace> trace = new();
-    // What the Mod published about each ground chunk, with the actor's own count of that item as of the last
-    // publication that still saw the chunk on the ground. The magnet can deliver a drop before the request for it
-    // arrives, and this is the only baseline that can prove the delivery was the actor's own (GroundItemPickups.cs).
     private readonly GroundItemPickupLedger groundItemTargets = new();
     private readonly StardewBodyController controller;
-    // The body state, and the only writer of it: the slots, the modal lease and the deferred warp replan.
     private readonly ActiveBodySlots slots;
-    // The shared admission: the bound actor, the mechanical gate every executing action runs and the bounded wait a
-    // request is parked in. It reads the slots and the receipts above and commits its rulings through this class.
     private readonly ExecutionAdmission admission;
     private readonly Func<FarmhandCapabilityPublication> capabilityPublicationProvider;
     private readonly Action<LocalExecutionReceipt>? receiptPublished;
     private readonly Action<ExecutionTrace>? tracePublished;
     private readonly FarmhandExecutionJournal? executionJournal;
     private readonly BridgeScope? executionScope;
-    // The actor's in-flight body state lives in one type (ActiveBodySlots), which is also the only writer of it. These
-    // are read-only projections under the names every family already reads: a write has no setter, so it cannot be
-    // forgotten - it does not compile.
     private LocalMoveSpec? active => this.slots.Active.Peek();
     private LocalTravelSpec? activeTravel => this.slots.Travel.Peek();
     private LocalPettingSpec? activePet => this.slots.Pet.Peek();
@@ -107,11 +84,6 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
     private Func<bool>? navigationPlayerActionableProbe;
     private long lastNavigationDiagnosticUnixMs;
     private long lastWarpDiagnosticUnixMs;
-    // True between a native warp's postcondition pass and the next tick where the
-    // player is actionable again. A freshly warped player may briefly report
-    // CanMove=false during the warp transition; treating that instant as a locked
-    // destination would fail a healthy multi-hop navigation. The deferred replan
-    // is bounded by the grace window and the navigation deadline pass in Update().
     private bool navigationWarpReplanDeferred => this.slots.WarpReplanDeferred;
     private int navigationWarpDeferredAtTick => this.slots.WarpReplanDeferredAtTick;
 
@@ -127,7 +99,6 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
         this.navigationPlayerActionableProbe = probe;
     }
 
-    /// <summary>Production truth for whether the local player may act this frame.</summary>
     private bool IsPlayerActionableNow()
     {
         if (this.navigationPlayerActionableProbe is not null)
@@ -137,11 +108,6 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
             && !Game1.eventUp;
     }
 
-    /// <summary>
-    /// Bounded live diagnostic for the Navigation state machine. It logs at most
-    /// once per 2.5s when a Navigation execution is active, is content-safe, and
-    /// never changes authority or receipt/evidence semantics.
-    /// </summary>
     private void LogNavigationDiagnostic(string phase, string detail)
     {
         long nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
@@ -151,7 +117,6 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
         this.EmitNavigationDiagnostic(phase, detail);
     }
 
-    /// <summary>Warp/settle transitions log on a fast 500ms throttle so they are never swallowed by the tick throttle.</summary>
     private void LogNavigationWarpDiagnostic(string phase, string detail)
     {
         long nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
@@ -186,11 +151,6 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
         this.navigationPiggybackedSceneProvider = provider;
     }
 
-    /// <summary>
-    /// Best-effort destination scene attachment for a succeeded Navigation
-    /// terminal. Returns null when the producer is absent, fails, or returns an
-    /// invalid payload; the already-settled navigation keeps its success.
-    /// </summary>
     private ObserveSceneResultPayload? TryCreatePiggybackedScene()
     {
         if (this.navigationPiggybackedSceneProvider is null)
@@ -218,18 +178,12 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
         this.navigationShopPreflight = preflight;
     }
 
-    /// <summary>Production shop-opening pre-flight; null when the destination may proceed.</summary>
     private string? RunNavigationShopPreflight(string? canonicalDestinationIdentity)
     {
         if (this.navigationShopPreflight is not null)
             return this.navigationShopPreflight(canonicalDestinationIdentity);
         try
         {
-            // Festival days are authoritative asset files named Data/Festivals/
-            // {season}{day} (e.g. spring13, summer11). Checking asset existence
-            // avoids any hard-coded shop schedule and works on the target
-            // version without depending on a method that may not exist. Data
-            // failure passes through to the native execution guard.
             string? season = Game1.currentSeason;
             if (season is not null && Game1.dayOfMonth >= 1 && Game1.dayOfMonth <= 28)
             {
@@ -241,8 +195,6 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
         }
         catch
         {
-            // Pre-flight is advisory: any data failure passes through so the
-            // native execution guard remains the authority.
             return null;
         }
     }
@@ -276,11 +228,6 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         this.navigationLifecycleTestAuthorization = authorization;
     }
 
-    /// <summary>
-    /// Reads the one game-thread-owned current capability publication at each
-    /// admission/observation boundary. The provider cannot create membership;
-    /// it only projects a publication composed by the Mod.
-    /// </summary>
     public ExecutionManager(
         IMonitor monitor,
         Func<FarmhandCapabilityPublication> capabilityPublicationProvider,
@@ -299,22 +246,10 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         this.executionScope = executionScope;
         this.controller = new StardewBodyController(this.RecordControllerTransition, PublishedBlockerTargetId);
         this.slots = new ActiveBodySlots(this.controller);
-        // The idle transition is the one ledger publication this class still writes: it carries this class's tick and
-        // revision and lands in the same bounded trace, so the store calls out for it instead of owning a second one.
-        // The store asks the slots who still owns the body and releases the modal lease there, so this class is not
-        // between the two facts any more.
         this.ledger = new ExecutionReceiptStore(
             this.slots,
             publishBodyIdleTrace: (executionId, requestId) => this.AddPublicTrace("body_idle", executionId, requestId));
         this.admission = new ExecutionAdmission(this.slots, this.controller, this.ledger, this, this.executionJournal, this.executionScope);
-        // WIA §4.2 owner arbitration (review #3, 2026-10-02): the L0 binary
-        // "is the current modal the current action's own modal" is answered by
-        // THIS ledger's single-field lease. Production is single-ExecutionManager
-        // on the game thread; tests that fork several managers must reset their
-        // own lease through RegisterModalOwner/ReleaseModalOwner, and a null
-        // lease (no action ever registered) stays worldOwned — the safe default.
-        // The lease alone is not enough: it names an execution, and the modal is that execution's own only while the
-        // execution is still active (see WorldModel.OwnsCurrentModal).
         WorldModel.ModalActionOwnedCheck = () =>
             WorldModel.OwnsCurrentModal(this.slots.ModalOwnerExecutionId, this.admission.IsExecutionActive);
     }
@@ -358,26 +293,13 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         this.admission.TryAdmitCandidate(request, executionId, out reasonCode);
 
 
-    /// <summary>
-    /// The per-tick world/body projection (WIA §1.2.1). Refreshed once at the
-    /// top of <see cref="Update"/>; consumers read this field, never a fresh
-    /// computation, so every ruling in one tick agrees on the same world.
-    /// </summary>
     private ActorDisposition disposition = ActorDisposition.Idle;
 
     internal void SetTestActorResolver(Func<Farmer?>? resolver) => this.admission.SetTestActorResolver(resolver);
 
-    /// <summary>
-    /// The one actor an admission may bind to: the local player, or a probe supplied by a suite, and only while it is
-    /// the player the execution scope names. <see cref="ExecutionAdmission.TryGetBoundActor"/> is its only describer.
-    /// </summary>
     internal bool TryGetBoundActor(out Farmer? actor, out string reasonCode) =>
         this.admission.TryGetBoundActor(out actor, out reasonCode);
 
-    /// <summary>
-    /// The envelope a dispatch request arrives with: the receipt that already answers it, or the execution identity its
-    /// body runs under. <see cref="ExecutionAdmission.OpenDispatchEnvelope"/> is its only resolver.
-    /// </summary>
     private DispatchEnvelope OpenDispatchEnvelope(
         BridgeExecutionRequest request,
         IExecutionLedger ledger,
@@ -391,36 +313,10 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
     /// </summary>
     internal enum AdmissionActionabilityProfile
     {
-        /// <summary>
-        /// The profile for actions that drive a tool or a native object interaction.
-        ///
-        /// It used to ADD a tool-swing check (`UsingTool` / nonzero `toolPower`) on top of menu / event /
-        /// unmovable. It no longer does, and deliberately: since the WorldModel swap an in-progress swing and
-        /// an eating actor are `Transient` DISPOSITIONS, and every non-Modal profile refuses those. So
-        /// `Physical` and `General` are BEHAVIOURALLY IDENTICAL today (see `ExecutionAdmission.Admit`, which
-        /// branches on `Modal` alone). The label says which family the action belongs to; it does not add a check.
-        /// </summary>
         Physical,
 
-        /// <summary>
-        /// Menu / event / unmovable only — the pre-convergence general profile
-        /// kept for actions that are not tool-driven.
-        /// </summary>
         General,
 
-        /// <summary>
-        /// The modal-handling family profile (actions in
-    /// <see cref="ModalActionFamily"/>: answer_dialogue / dismiss_modal / respond_level_up).
-        /// An open modal (DialogueBox / LetterViewer / ReadyCheck / GameMenu)
-        /// is this profile's WORKING PRECONDITION, not an obstacle — unlike the
-        /// body-owning profiles it must not be refused while a menu is up, or
-        /// the modal-interrupted flow deadlocks (WIA §4.2 closes the §3.2
-        /// admission lock). A modal handling call is an instantaneous native
-        /// invocation (GameLocation.answerDialogue / closeDialogue) that takes
-        /// no body lease and moves no one, so the body_owned check is exempt;
-        /// deadline and identity/scope/revision checks stay exactly as for the
-        /// other profiles.
-        /// </summary>
         Modal,
 
         /// <summary>
@@ -469,19 +365,6 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         .OrderBy(actionId => actionId, StringComparer.Ordinal)
         .ToArray();
 
-    /// <summary>
-    /// WIA disposition projection for admission (§4.2). Local stand-in for Lane
-    /// A's <see cref="WorldModel.ComputeDisposition"/>: it applies the same
-    /// precedence as the landed WorldModel — PassOut &gt; Event &gt; Modal &gt;
-    /// Transient &gt; Idle — so admission, the body loop and the WorldModel share
-    /// one consistent per-tick classification once the swap completes (WIA
-    /// acceptance §6-6).
-    /// TODO(WIA): WorldModel.cs 已落地但 ComputeDisposition 无条件读取
-    /// player.Stamina/UsingTool（netStamina/usingTool NetFields 在现有 probe
-    /// farmer 上为 null），直接换用会让既有准入测试 NRE；待 Lane A 的
-    /// WorldModel 对 probe farmer 安全后，删除本投影与本判定，AdmitExecution
-    /// 单读 WorldModel.ComputeDisposition(actor).Kind。
-    /// </summary>
     internal enum LocalDispositionKind
     {
         Idle,
@@ -510,30 +393,6 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
     /// </summary>
     internal void SetHeldRequestResolver(HeldRequestResolver? resolver) => this.admission.SetHeldRequestResolver(resolver);
 
-    /// <summary>
-    /// HOW LONG the hold the admission projected may be waited out, or null when it may not be waited out at all.
-    ///
-    /// <para>
-    /// It is the second question about the SAME projection <see cref="ProjectAdmissionDisposition"/> produces, asked
-    /// once here so the flat admission and the body-program pump cannot hold opposite beliefs about one world: the pump
-    /// already names its deferral with the same <see cref="BodyHoldWait"/> values
-    /// (<see cref="GameBuddy.Stardew.Core.BodyPrograms.BodyProgramDispatchGate"/>).
-    /// </para>
-    /// <para>
-    /// THE TWO WAITS ARE TWO WORLD FACTS. <see cref="LocalDispositionKind.Transient"/> is a lock the engine releases
-    /// inside <c>WorldModel.TransientRetryWindowMs</c> - a tool swing, an eating pause, a warp fade - which is exactly
-    /// what that window is for. <see cref="LocalDispositionKind.Event"/> is an ENGINE-OWNED condition: a running event
-    /// advances itself or the player advances it, and the measured case (`round56`: the furnace cutscene, 19:55:53 to
-    /// 19:55:59) outlived the retry window by 2.4 s while a request it held was refused `cutscene_active`. Its bound is
-    /// therefore the deadline the request itself declared, which is the instant its admission can no longer be consumed
-    /// at all - the same bound the pump derives from a node's own watchdog.
-    /// </para>
-    /// <para>
-    /// THE REST ARE NOT WAITED OUT, and each for its own reason. A modal is cleared by an ACTION (the catalog's own
-    /// modal-resolving family) or by the player, never by waiting. A pass-out is the day ending: it clears on its own,
-    /// but in minutes, so no deadline a request may declare can outlast it. An idle body is not a hold.
-    /// </para>
-    /// </summary>
     internal static BodyHoldWait? HoldWait(LocalDispositionKind kind) => kind switch
     {
         LocalDispositionKind.Transient => BodyHoldWait.RetryWindow,
@@ -541,8 +400,6 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         LocalDispositionKind.Idle => null,
         LocalDispositionKind.Modal => null,
         LocalDispositionKind.PassOut => null,
-        // Total on purpose, the way `WorldModel.KindForWire` is: a kind nobody classified must fail loudly instead of
-        // silently becoming a refusal of the world's own condition.
         _ => throw new ArgumentOutOfRangeException(nameof(kind), kind, "no wait is declared for this disposition"),
     };
 
@@ -570,9 +427,6 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         return projected;
     }
 
-    // The frozen body-owner vocabulary. ONE definition per code so the refusal vocabulary and the snapshot's
-    // occupant projection cannot drift; the table below (slot -> code + interruptible) is the single judgement.
-    // `body_owned` is the unnameable hold: the code the describer falls back to when no row can name its owner.
     internal const string BodyOwned = "body_owned";
     internal const string BodyOwnedByNavigation = "body_owned_by_navigation";
     internal const string BodyOwnedByTravel = "body_owned_by_travel";
@@ -621,11 +475,6 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
     /// </summary>
     internal const string ActionPastCancelPoint = "action_past_cancel_point";
 
-    /// <summary>
-    /// The SINGLE describer of who owns the body. Every body-exclusivity refusal (the shared admission path and
-    /// each action's own guard) mints its receipt through <see cref="ExecutionAdmission.RejectBodyOwned"/>, and the
-    /// snapshot's occupant projection reads the same result, so no site can carry its own judgement of who is in the way.
-    /// </summary>
     private BodyOwner DescribeBodyOwner() => this.admission.Describe();
 
     /// <summary>
@@ -640,57 +489,14 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
     /// </summary>
     internal const string WaitingForBodyPrefix = "waiting_for_body:";
 
-    /// <summary>
-    /// The named refusal for the ONE ownership the body controller itself can hold: an in-flight local move, which
-    /// a newer movement directive may supersede. Shared with <see cref="StardewBodyController"/> so the code, the
-    /// action and the interruptible verdict keep the single definition the owner table gives them.
-    /// </summary>
     internal static (string ReasonCode, string Evidence) LocalMoveOwner(string? executionId) =>
         ExecutionAdmission.LocalMoveOwner(executionId);
 
-    /// <summary>
-    /// The named body-exclusivity refusal, for the actions that hold their own slot guard instead of going through the
-    /// shared chain: the admission decides it, and this projects the answer onto the receipt those call sites return.
-    /// </summary>
     private LocalExecutionReceipt RejectBodyOwned(string requestId, string executionId) =>
         this.admission.RejectBodyOwned(requestId, executionId).Withholding!;
 
-    /// <summary>
-    /// Whether the accepted night has not begun: it has dispatched nothing native - no walk, no answer, no save - and
-    /// is waiting for the actor to satisfy its eligibility gate.
-    ///
-    /// <para>
-    /// A night in this state reserves NOTHING. It is not an owner in the table above and it does not refuse anything in
-    /// the admission, which is what makes the two requests that had to get through able to get through: a WALK-UP (the
-    /// <c>enter_exit</c> that brings the actor home so the night can start) and the night's own re-dispatch. The slot is
-    /// still "work in flight" for <see cref="IsBodySettled"/>, so a STOP never publishes the actor as idle during an
-    /// accepted night - that is the one place the two readings differ, and they differ because they answer different
-    /// questions: "may a request start?" and "is any work pending?".
-    /// </para>
-    /// <para>
-    /// A slot whose lifecycle is unavailable reads as COMMITTED: on an uninitialised or null handle there is no evidence
-    /// that nothing was dispatched, and releasing the body on a guess is the one thing this must never do.
-    /// </para>
-    /// </summary>
     private bool NightAcceptedButNotBegun => this.slots.NightAcceptedButNotBegun;
 
-    /// <summary>
-    /// Retires the accepted night that has not begun, so the request taking over the slot is the only owner of it.
-    ///
-    /// <para>
-    /// ONE OWNER. Two <c>sleep</c> requests must not become two nights: <see cref="RequestLocalAdvanceDay"/> holds one
-    /// slot, so a second acceptance would overwrite the first handle and leave its request accepted forever - the
-    /// "running with no terminal receipt" the 2026-11-10 measurement recorded. The night being replaced is therefore
-    /// settled FIRST, with its own named code, and only then is the slot free for the request that superseded it. Nothing
-    /// native had been dispatched from the old lifecycle (that is what this state means), so there is nothing to undo:
-    /// it never walked, never answered the prompt and never touched the calendar.
-    /// </para>
-    /// <para>
-    /// This is the executable half of <c>interruptible</c>: a night that has not begun can be taken over by the same
-    /// action that asked for it, exactly as a newer movement directive supersedes a walk in progress. A night that HAS
-    /// begun is not touched here - the table keeps it committed and the refusal keeps its name.
-    /// </para>
-    /// </summary>
     private void SupersedeNightThatHasNotBegun(string incomingExecutionId)
     {
         if (this.activeDayAdvance is not { } pending || !this.NightAcceptedButNotBegun)
@@ -705,24 +511,6 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             $"owner_action=sleep;phase=approaching;superseded_by_execution_id={ActiveBodySlots.OwnerToken(incomingExecutionId)}");
     }
 
-    /// <summary>
-    /// <summary>
-    /// The identity half of an executing action: the replay lookup, the revision advance, the execution identity and the
-    /// admission clock, in that order.
-    ///
-    /// <para>
-    /// The receipt this answers is the one the ledger already holds for the request. A retry gets its first answer back
-    /// byte-identical, which is why the lookup precedes the revision advance; on that path <paramref name="executionId"/>
-    /// and <paramref name="nowMs"/> are never read, because the caller has already been answered.
-    /// </para>
-    ///
-    /// <para>
-    /// The identity is the STORE's answer, never one this method invents: a request a dispatch already bound to an
-    /// execution (every body-program node routes with the node's own id) runs under that id, and an unbound request is
-    /// given a fresh one. Minting here instead made a program node and its own receipt two different identities, which
-    /// the executor's terminal then published as the node's execution.
-    /// </para>
-    /// </summary>
     private LocalExecutionReceipt? BeginLocalExecution(string requestId, out string executionId, out long nowMs)
     {
         if (this.receiptsByRequestId.TryGetValue(requestId, out LocalExecutionReceipt? existing))
@@ -737,12 +525,6 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         return null;
     }
 
-    /// <summary>
-    /// <see cref="BeginLocalExecution"/> followed by <see cref="AdmitExecution"/>: the whole identity-and-admission
-    /// preamble for an action whose own checks come after admission. An action that must refuse a non-scope-bound caller
-    /// before it reads the world calls <see cref="BeginLocalExecution"/> and then <see cref="AdmitExecution"/> itself, in
-    /// that order, because those refusals are named for the reason the caller can act on.
-    /// </summary>
     private LocalExecutionReceipt? AdmitLocalExecution(
         string requestId,
         long requestedDeadlineMs,
@@ -752,52 +534,17 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         this.BeginLocalExecution(requestId, out executionId, out nowMs) is LocalExecutionReceipt existing
             ? existing
             : this.AdmitExecution(requestId, executionId, requestedDeadlineMs, nowMs, profile);
-    /// <summary>
-    /// The shared admission, projected onto the shape every action body reads: the receipt the dispatch must answer
-    /// with instead of doing its work, or <see langword="null"/> when the request is admitted.
-    ///
-    /// <para>
-    /// <see cref="ExecutionAdmission.Admit"/> is the authority, and it answers an <see cref="AdmissionOutcome"/> because a
-    /// refusal and a park are different things. This projects that answer onto the one form the action bodies already
-    /// branch on. It stays private, and stays here: the pre-WIA source pin (<c>ToolApproachContractTests</c>) requires the
-    /// gate's entry point to be this member.
-    /// </para>
-    /// </summary>
     private LocalExecutionReceipt? AdmitExecution(
         string requestId,
         string executionId,
         long requestedDeadlineMs,
         long nowMs,
         AdmissionActionabilityProfile profile,
-        // The deadline ceiling the caller's action family declares. One minute for an ordinary action; the
-        // lifecycle passes its own ten-minute watchdog rather than forking this gate to get one.
         long maxDurationMs = FarmhandActionCatalog.OrdinaryActionCeilingMs) =>
         this.admission.Admit(requestId, executionId, requestedDeadlineMs, nowMs, profile, maxDurationMs).Withholding;
 
-    /// <summary>
-    /// Re-attempts every parked request, once per game tick: the tick's single call into the wait, whose window, hold
-    /// and named refusal live in <see cref="ExecutionAdmission.PumpHeld"/>.
-    /// </summary>
     internal void PumpHeldRequests() => this.admission.PumpHeld();
 
-    /// <summary>
-    /// The named refusal for a request whose bounded wait passed without the actor becoming actionable. The
-    /// shape is the admission's own on arrival - <see cref="ExecutionState.Rejected"/> carrying the hold's
-    /// code and evidence - so an Agent that waited reads what it would have read had the hold been refused
-    /// immediately. The one exception is the wait no bridge was left to take, which names itself through
-    /// <paramref name="reasonCode"/>: its caller passes <see cref="HeldRequestNeverAnsweredPrefix"/> and the hold
-    /// it waited on. The action identity travels on the receipt because no dispatch lineage exists to resolve
-    /// it from: the handler that would have bound it never ran.
-    ///
-    /// <para>
-    /// The DECISION moved to <see cref="ExecutionAdmission"/>, which says which refusal a wait ended in; this member
-    /// writes it. It stays on the class that owns the delivery funnel because it is a store-and-publish pair that cannot
-    /// become <see cref="RememberTerminal"/> without a behaviour change: a request refused while it was still held was
-    /// never dispatched, so it owns no body to release and publishes no <c>body_idle</c>. That debt is recorded against
-    /// this member by <c>tools/terminal-commit-seam-exemptions.json</c>, and a second copy of the pair in the admission
-    /// would be exactly the bypass the seam gate exists to find.
-    /// </para>
-    /// </summary>
     private LocalExecutionReceipt RefuseHeldRequest(string requestId, HeldRequest held, string reasonCode, string holdEvidence)
     {
         LocalExecutionReceipt receipt = new(held.ExecutionId, requestId, ExecutionState.Rejected, reasonCode, this.revision, holdEvidence, ActionId: held.ActionId);
@@ -849,11 +596,6 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             (int)this.revision);
     }
 
-    /// <summary>
-    /// Observation is optional terminal metadata. A native actor whose display
-    /// surfaces are momentarily unready must never turn a candidate terminal
-    /// into an escaped exception, so a failed observation probe degrades to null.
-    /// </summary>
     private BridgeLocalObservation? TryCreateLocalObservation(Farmer actor)
     {
         try
@@ -922,8 +664,6 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
     bool IDispatchExecutionLedger.TryGetBoundExecutionId(string requestId, out string executionId) =>
         this.ledger.TryGetBoundExecutionId(requestId, out executionId);
 
-    // The stored instance is the published one: the funnel publishes what this hands back, so a copy taken here would
-    // differ from the stored record by construction.
     LocalExecutionReceipt IExecutionLedger.Remember(LocalExecutionReceipt receipt) => this.ledger.Remember(receipt);
 
     LocalExecutionReceipt IExecutionLedger.RememberTerminal(string requestId, string executionId, ExecutionState state, string reasonCode, string? evidence, BridgeLocalObservation? observation) =>
@@ -982,10 +722,6 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             || (this.activeNavigate is not null && (this.activeNavigate.RequestId != requestId || this.activeNavigate.ExecutionId != executionId)))
             return new(executionId, requestId, ExecutionState.Rejected, "execution_mismatch", this.revision, null);
 
-        // A MODEL-initiated stop is a REQUEST, and it is refused BY NAME when the holder is past its cancel point -
-        // no vague failure, and the evidence says which phase made it unsafe. The player's STOP and the worker's own
-        // teardown do NOT come through here as this reason code; their semantics are untouched on purpose, because an
-        // interruption after a native side effect has to stay `Uncertain` rather than become a refusal.
         if (string.Equals(reasonCode, ModelStopReasonCode, StringComparison.Ordinal))
         {
             BodyOwner holder = this.DescribeBodyOwner();
@@ -1004,10 +740,6 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             LocalNavigateSpec navigateSpec = this.activeNavigate;            if (navigateSpec.Phase == LocalNavigatePhase.AwaitingWarp)
             {
                 this.slots.ClearWarpReplan();
-                // A cancellation/deadline/unexpected lifecycle after the native warp
-                // has already been signalled is only ever an uncertain terminal: the
-                // destination may have been reached or a delivery left open. It is
-                // never retried and late callbacks cannot overwrite it.
                 this.slots.Navigate.Clear();
                 if (this.active is not null)
                     this.slots.Active.Clear();
@@ -1065,10 +797,6 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
 
         if (this.activeToolApproach is not null)
         {
-            // A tool-family approach that has not yet executed anything native:
-            // walk is abandoned and the action reports the cancellation with the
-            // target it was walking toward, so the caller knows nothing changed in
-            // the world.
             LocalApproachSpec toolApproachSpec = this.activeToolApproach;
             this.slots.ToolApproach.Clear();
             if (this.active is not null)
@@ -1090,8 +818,6 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             LocalItemPickupSpec itemPickupSpec = this.activeItemPickup;
             if (this.active is not null || this.controller.HasActiveExecution)
             {
-                // Preserve the pickup spec until the controller's synchronous
-                // callback records the one authoritative cancellation receipt.
                 this.controller.Cancel(reasonCode);
                 return this.receiptsByRequestId.TryGetValue(itemPickupSpec.RequestId, out LocalExecutionReceipt? controllerReceipt)
                     ? controllerReceipt
@@ -1119,8 +845,6 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
 
         if (this.activeFishing is not null)
         {
-            // A cast stopped before the engine's win path consumes nothing beyond the cast itself, so its terminal is an
-            // honest Cancelled; once the win has been declared the catch may already be in flight, which is Uncertain.
             LocalFishingCastSpec fishingSpec = this.activeFishing;
             ExecutionState cancelledState = fishingSpec.Phase == LocalFishingPhase.AwaitingCredit ? ExecutionState.Uncertain : ExecutionState.Cancelled;
             this.SettleFishingCast(fishingSpec, cancelledState, reasonCode,
@@ -1232,8 +956,6 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
                 this.slots.Active.Clear();
             if (specification.Phase == LocalNavigatePhase.AwaitingWarp)
             {
-                // The warp was already committed natively; an unexpected lifecycle
-                // boundary after that point is only ever an uncertain terminal.
                 this.revision++;
                 this.RememberTerminal(specification.RequestId, specification.ExecutionId, ExecutionState.Uncertain, "navigation_invalidated_after_warp_child", $"destination={specification.CanonicalDestinationIdentity};phase=awaiting_warp;never_retry=true");
             }
@@ -1250,22 +972,11 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             {
                 this.revision++;
                 this.RememberTerminal(specification.RequestId, specification.ExecutionId, ExecutionState.Invalidated, reasonCode, "native_animation_pending=true");
-                // WIA: a world-change interruption releases the body NOW. The native animation
-                // a modal cut short may never report completion (measured live 2026-10-05: the
-                // actor stayed non-actionable and every later action was refused as body-owned),
-                // so deferring the release to the animation would hold the body until the request
-                // deadline. Restoring the held slot is safe here — the running animation already
-                // captured its own tool reference.
                 Game1.player.CurrentToolIndex = specification.PreviousSlot;
                 this.slots.AnimalProduct.Clear();
                 this.ledger.PublishIdleAfterRelease(specification.ExecutionId, specification.RequestId);
             }
         }
-        // A second `activeMountTransport` settle stood here and published the same
-        // `Uncertain/horse_mount_invalidated_after_native_start` as the block at the top of this member - which nulls
-        // the field - so its guard could never be true and nothing ever read what it published. It is deleted rather
-        // than converted: the live settle reaches the seam above now, and converting this one would add a second call
-        // that can only mint the same terminal for an execution already settled.
         if (this.activePet is not null)
         {
             LocalPettingSpec specification = this.activePet;
@@ -1273,13 +984,9 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             this.revision++;
             this.RememberTerminal(specification.RequestId, specification.ExecutionId, ExecutionState.Invalidated, reasonCode, null);
         }
-        // The bus may already have committed its native cutscene, so its terminal is
-        // always Uncertain (see InvalidateBusRide).
         this.InvalidateBusRide(reasonCode);
         if (this.activeToolApproach is not null)
         {
-            // A tool-family approach invalidated before executing anything native:
-            // no world mutation happened, so this is an honest Invalidated terminal.
             LocalApproachSpec specification = this.activeToolApproach;
             this.slots.ToolApproach.Clear();
             if (this.active is not null)
@@ -1297,9 +1004,6 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             this.revision++;
             this.RememberTerminal(specification.RequestId, specification.ExecutionId, ExecutionState.Invalidated, reasonCode, "native_auto_collect_pending=true");
         }
-        // The world moved out from under a cast: a modal, an event or a warp. Everything before the engine's win path has
-        // consumed nothing beyond the cast itself, so the terminal is Invalidated and the rod is reeled in through the
-        // engine's own stop. From the win path onwards the catch may already be in flight, so it is Uncertain instead.
         if (this.activeFishing is not null)
         {
             LocalFishingCastSpec specification = this.activeFishing;
@@ -1314,8 +1018,6 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             {
                 this.revision++;
                 this.RememberTerminal(specification.RequestId, specification.ExecutionId, ExecutionState.Invalidated, reasonCode, "native_animation_pending=true");
-                // Same immediate release as the animal-product slot: the interrupted eating
-                // animation is not a reason to keep owning the body.
                 this.slots.ItemUse.Clear();
                 this.ledger.PublishIdleAfterRelease(specification.ExecutionId, specification.RequestId);
             }
@@ -1336,11 +1038,6 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             location = player?.currentLocation?.NameOrUniqueName,
             tile = new { x = player?.Tile.X ?? 0f, y = player?.Tile.Y ?? 0f },
             stamina = player?.Stamina ?? 0f,
-            // The persistent exhaustion flag. It is what makes fatigue more than a
-            // one-day resource: while it is set, Farmer's day-update restores only
-            // half of MaxStamina next morning. The companion must be able to see the
-            // state it now accrues by exhausting itself, or being tired is invisible
-            // to it and it cannot choose to rest, eat, or tell the player.
             exhausted = player?.exhausted.Value ?? false,
             health = player?.health ?? 0,
             current_tool = DescribeTool(player?.CurrentTool),
@@ -1385,17 +1082,6 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         };
     }
 
-    /// <summary>
-    /// The capabilities whose discovery reports what it withheld, each with the wire family it publishes into.
-    ///
-    /// <para>
-    /// It exists to answer ONE question the recorder cannot: "was any exclusion-reporting family measured at all".
-    /// Without it a snapshot whose `chop_tree` is not advertised would publish `discoveryExclusions: []`, which reads
-    /// as "nothing was withheld" when the truth is "nothing was looked at" - the same distinction `soilTiles` null
-    /// draws against `soilTiles: []`. The families here are the ones whose <c>Discover*</c> takes the recorder;
-    /// <c>tools/check-stardew-discovery-exclusions.mjs</c> is what keeps this table and those call sites agreeing.
-    /// </para>
-    /// </summary>
     private static readonly (string Capability, string Family)[] ExclusionReportingCapabilities =
     {
         ("chop_tree", "treeChopSourceTargets"),
@@ -1406,8 +1092,6 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         ("water_pet_bowl", "petBowlTargets"),
         ("water_slime_hutch_trough", "slimeHutchTroughTargets"),
         ("bait_crab_pot", "baitCrabPotTargets"),
-        // The whole-map counts. They are published whether or not their action is advertised (a count is not a slice of
-        // one action), so the capability here only answers "was this family measured at all".
         ("harvest_crop", "harvestWhereabouts"),
         ("water_crop", "wateringWhereabouts"),
         // The four building families: an under-construction building answers `Building.doAction` with the
@@ -1436,56 +1120,31 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         if (player is null)
             return CreateWorldNotReadyBridgeSnapshot(capabilityPublication);
         BridgeActiveExecution? activeExecution = this.DescribeActiveExecution();
-        // What discovery WITHHELD this snapshot, and why. Created before the first radar runs because the recording
-        // families write into it as they walk the world; published at the end, once every family has had its say.
         DiscoveryExclusionRecorder discoveryExclusions = new();
-        // The container family's SENSED-ENTITY projection: one row per container, whole contents. Published while
-        // EITHER container action is advertised, because both name the same containers, and never derived from the
-        // action arguments - perception is a fact about the world, execution is the slice a handler re-derives.
         bool containerActionsAdvertised = advertisedCapabilities.Contains("chest_store", StringComparer.Ordinal)
             || advertisedCapabilities.Contains("chest_retrieve", StringComparer.Ordinal);
         IReadOnlyList<BridgeChestState>? chests = containerActionsAdvertised ? DiscoverChestStates(player) : null;
-        // The one-row summary beside it, under the same gate: it describes the same containers, so a snapshot that
-        // publishes one and not the other would answer "what is in my chests" in one field and not the other.
         BridgeChestsSummary? chestsSummary = containerActionsAdvertised ? SummarizeChests(player) : null;
-        // The soil family, with the count its cap left out: a list that stops at the bound without saying so reads as
-        // a complete patch, and the actor plans the rest of its tilling from what it believes is the whole set.
         int soilTilesOmitted = 0;
         IReadOnlyList<BridgeSoilTile>? soilTiles = advertisedCapabilities.Contains("till_soil", StringComparer.Ordinal)
             ? DiscoverSoilTiles(player, out soilTilesOmitted)
             : null;
-        // The farm-building family, with the count its cap left out. Declared here rather than at the initializer
-        // because an `out` variable defined inside a ternary is only assigned on the branch that runs.
         int farmBuildingTargetsOmitted = 0;
         IReadOnlyList<BridgeFarmBuildingTarget>? farmBuildingTargets =
             advertisedCapabilities.Contains("build_farm_building", StringComparer.Ordinal)
                 ? DiscoverBuildFarmBuildingTargets(player, out farmBuildingTargetsOmitted)
                 : null;
-        // Whether any family that reports exclusions was measured at all. Null means NOT MEASURED (no such family was
-        // advertised); an empty array means measured and nothing withheld. A world with one tapped tree and a world
-        // with no tree must not answer the same thing, and neither must "not measured" and "nothing withheld".
         bool exclusionFamilyAdvertised = ExclusionReportingCapabilities
             .Any(entry => advertisedCapabilities.Contains(entry.Capability, StringComparer.Ordinal));
-        // The stack rows the inventory families publish. Hoisted because TWO readers need the same rows: the positional
-        // argument below, and the seed-supply fact's `heldCount` - which sums THESE rows rather than counting the pack a
-        // second time, so the two cannot disagree about how many seeds she holds. Null when no such capability is
-        // advertised, and the supply row then says the count is unknown instead of zero.
         IReadOnlyList<BridgeInventoryItemFact>? inventoryItemFacts =
             advertisedCapabilities.Contains("collect_animal_product", StringComparer.Ordinal) || advertisedCapabilities.Contains("interact_npc_with_item", StringComparer.Ordinal) || advertisedCapabilities.Contains("redeem_prize_ticket", StringComparer.Ordinal) || advertisedCapabilities.Contains("equip_wearable", StringComparer.Ordinal) || advertisedCapabilities.Contains("unequip_wearable", StringComparer.Ordinal) || advertisedCapabilities.Contains("put_item_in_fish_tank", StringComparer.Ordinal) || advertisedCapabilities.Contains("place_item_on_pedestal", StringComparer.Ordinal) || advertisedCapabilities.Contains("open_geode", StringComparer.Ordinal)
                 ? DiscoverInventoryItemFacts(player)
                 : null;
-        // ONE shop-target list per snapshot, shared. `shopTargets` publishes it, and the seed-supply row's destination
-        // is SELECTED out of it rather than derived a second time: a second walk of `Data/Shops` could disagree with
-        // the first about what this room sells, and the seed row would then name a counter `shop_purchase` refuses.
-        // Gated on EITHER action, because a shortage fact published for `plant_seed` names a counter too.
         IReadOnlyList<BridgeShopTarget>? shopTargetsHere =
             advertisedCapabilities.Contains("shop_purchase", StringComparer.Ordinal)
             || advertisedCapabilities.Contains("plant_seed", StringComparer.Ordinal)
                 ? this.DiscoverShopTargets(player, discoveryExclusions)
                 : null;
-        // The shortage fact's SUPPLY half, published only while the action whose day it belongs to is advertised: a
-        // companion that cannot sow a tile has no shortage, and a family published for an unadvertised action would be a
-        // fact about a world it cannot act in.
         IReadOnlyList<BridgeSeedSupplyTarget>? seedSupplyTargets = null;
         int seedSupplyTargetsOmitted = 0;
         if (advertisedCapabilities.Contains("plant_seed", StringComparer.Ordinal))
@@ -1507,17 +1166,8 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             player.currentLocation?.warps
                 .Where(warp => !warp.npcOnly.Value
                     && !string.IsNullOrWhiteSpace(warp.TargetName)
-                    // The SOURCE may be `-1` on one axis: that is how a map declares an edge exit (walking off the west
-                    // edge warps from `X = -1`, off the north edge from `Y = -1`). Town declares three of its exits
-                    // that way. The range is the ONE declaration of that fact (`FarmhandWarpCoordinateRange`), shared
-                    // with the navigation topology and with execution acceptance, so a warp published here is a warp
-                    // `travel`/`enter_exit` will admit.
                     && FarmhandWarpCoordinateRange.IsPublishableSource(warp.X, warp.Y)
                     && FarmhandWarpCoordinateRange.IsPublishableDestination(warp.TargetX, warp.TargetY))
-                // The leg's accessibility, from the SAME authority the navigation topology filters its edges with
-                // (`Game1NavigationWorldSource.IsLocationAccessible`, fail-closed), so an agent can tell a usable exit
-                // from a locked door instead of probing. `null` is never produced: an unmeasurable leg fails closed to
-                // the same `false` the topology would have used to drop it.
                 .Select(warp => new BridgeWarp(warp.X, warp.Y, warp.TargetName, warp.TargetX, warp.TargetY,
                     Game1NavigationWorldSource.IsLocationAccessible(warp.TargetName)))
                 .ToArray(),
@@ -1542,8 +1192,6 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             advertisedCapabilities.Contains("bait_crab_pot", StringComparer.Ordinal) ? DiscoverBaitCrabPotTargets(player, discoveryExclusions) : null,
             advertisedCapabilities.Contains("bait_crab_pot", StringComparer.Ordinal) ? this.DiscoverBaitCrabPotResultTargets(player) : null,
             (advertisedCapabilities.Contains("clear_debris", StringComparer.Ordinal) || advertisedCapabilities.Contains("break_resource_clump", StringComparer.Ordinal)) ? DiscoverDebrisTargets(player, discoveryExclusions) : null,
-            // `break_rock`, not `break_rock_source`: the capability word is the ACTION ID, and the old spelling meant this
-            // discovery never ran, so the family it publishes was empty in every snapshot.
             advertisedCapabilities.Contains("break_rock", StringComparer.Ordinal) ? DiscoverRockSourceTargets(player) : null,
             advertisedCapabilities.Contains("clear_hoedirt", StringComparer.Ordinal) ? DiscoverClearHoeDirtTargets(player) : null,
             advertisedCapabilities.Contains("dig_artifact_spot", StringComparer.Ordinal) ? DiscoverArtifactSpotTargets(player) : null,
@@ -1572,8 +1220,6 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             advertisedCapabilities.Contains("feed_animal", StringComparer.Ordinal) ? DiscoverFeedTroughTargets(player) : null,
             chests,
             chestsSummary,
-            // `put_item_in_fish_tank` and `place_item_on_pedestal` name the PACK SLOT their item is taken from, and this row is where that number and the
-            // item identity beside it are published - the tank's own `worldObjectTargets` row carries the tile, never the slot.
             inventoryItemFacts,
             advertisedCapabilities.Contains("use_item", StringComparer.Ordinal) ? DiscoverFoodTargets(player) : null,
             advertisedCapabilities.Contains("ship_item", StringComparer.Ordinal) ? this.DiscoverShippingBinTargets(player) : null,
@@ -1581,15 +1227,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             advertisedCapabilities.Contains("cook_recipe", StringComparer.Ordinal) ? DiscoverCookingRecipeTargets(player) : null,
             advertisedCapabilities.Contains("cook_recipe", StringComparer.Ordinal) ? DiscoverCookingStationTargets(player) : null,
             advertisedCapabilities.Contains("ride_minecart", StringComparer.Ordinal) ? DiscoverMinecartTargets(player) : null,
-            // The floor set is re-derived from the live lowestLevelReached on this
-            // game-thread read; the client's expectedTargetId is only matched against
-            // it later, never trusted as a level.
             advertisedCapabilities.Contains("select_mine_elevator_floor", StringComparer.Ordinal) ? DiscoverMineElevatorFloors() : null,
-            // Shops whose owner is eligible AND standing in the actor's current location.
-            // Discovery walks Data/Shops and asks the game which owner entries are currently
-            // eligible (ShopBuilder.GetCurrentOwners evaluates ShopOwnerData.Condition), rather
-            // than scanning map tiles for "shop tiles" — the game hardcodes which tile opens
-            // which shop per location, so a tile scan cannot generalise.
             advertisedCapabilities.Contains("shop_purchase", StringComparer.Ordinal) ? shopTargetsHere : null,
             advertisedCapabilities.Contains("harvest_bush", StringComparer.Ordinal) ? DiscoverBushTargets(player) : null,
             advertisedCapabilities.Contains("harvest_fruit_tree", StringComparer.Ordinal) ? DiscoverFruitTreeTargets(player) : null,
@@ -1608,37 +1246,19 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             PresentationLocale: string.Empty,
             RaftTargets: advertisedCapabilities.Contains("use_raft", StringComparer.Ordinal) ? DiscoverRaftTargets(player) : null,
             HorseTargets: advertisedCapabilities.Contains("mount_transport", StringComparer.Ordinal) ? DiscoverHorseTargets(player) : null,
-            // Two actions address this one family: `enter_mine` reads the entrance tile and the descent ladder,
-            // `use_mine_ladder` reads the exit ladder. Publishing it for only one of them would withhold the rows the
-            // other action serves, so the gate is the OR of the two.
             MineEntranceTargets: advertisedCapabilities.Contains("enter_mine", StringComparer.Ordinal) || advertisedCapabilities.Contains("use_mine_ladder", StringComparer.Ordinal) ? DiscoverMineEntranceTargets(player) : null,
-            // Last parameter, defaulted, so it can be named here without disturbing the
-            // positional arguments above it (CS1744 if the declaration moves earlier).
             ObeliskTargets: advertisedCapabilities.Contains("use_obelisk", StringComparer.Ordinal) ? DiscoverObeliskTargets(player, discoveryExclusions) : null,
                     AnimalDoorTargets: advertisedCapabilities.Contains("toggle_animal_door", StringComparer.Ordinal) ? DiscoverAnimalDoorTargets(player, discoveryExclusions) : null,
         FishPondTargets: advertisedCapabilities.Contains("clear_fish_pond", StringComparer.Ordinal) ? DiscoverFishPondTargets(player, discoveryExclusions) : null,
     TailoringTargets: advertisedCapabilities.Contains("tailor_clothing", StringComparer.Ordinal) || advertisedCapabilities.Contains("dye_clothing_with_item", StringComparer.Ordinal) ? DiscoverTailoringTargets(player) : null,
-            // Item/tile lane projections, each published only while its own action is advertised.
             WarpItemTargets: advertisedCapabilities.Contains("use_warp_item", StringComparer.Ordinal) ? DiscoverWarpItemTargets(player) : null,
             PanSites: advertisedCapabilities.Contains("pan_ore", StringComparer.Ordinal) ? DiscoverPanSites(player) : null,
             MailboxTargets: advertisedCapabilities.Contains("claim_mail_attachment", StringComparer.Ordinal) ? DiscoverMailboxTargets(player) : null,
 
-            // The actor's OWN wearable body slots. Published when EITHER wearable action is
-            // advertised, because both name the same body-slot targets.
             WearableTargets: advertisedCapabilities.Contains("equip_wearable", StringComparer.Ordinal) || advertisedCapabilities.Contains("unequip_wearable", StringComparer.Ordinal) ? DiscoverWearableTargets(player) : null,
-            // The farm-building commission sites and the buildings already standing, only while the
-            // action is itself advertised. The `out` count is hoisted above the initializer because a ternary that
-            // DEFINES the variable only assigns it on the branch that runs.
             FarmBuildingTargets: farmBuildingTargets,
             BuildingChestTargets: advertisedCapabilities.Contains("load_building_chest", StringComparer.Ordinal) || advertisedCapabilities.Contains("collect_building_chest_output", StringComparer.Ordinal) ? DiscoverBuildingChestTargets(player, discoveryExclusions) : null,
-            // The world-object lane's single shared projection: placement candidates, removable and
-            // non-removable objects, breakable containers, placed furniture and empty pedestals,
-            // published while ANY action that names a target from this one array is advertised -
-            // including the furniture and pedestal actions, which are the only ways to act on the
-            // pieces this array is the sole publication of.
             WorldObjectTargets: advertisedCapabilities.Contains("place_owned_object", StringComparer.Ordinal) || advertisedCapabilities.Contains("remove_placed_item", StringComparer.Ordinal) || advertisedCapabilities.Contains("break_container", StringComparer.Ordinal) || advertisedCapabilities.Contains("move_placed_furniture", StringComparer.Ordinal) || advertisedCapabilities.Contains("rotate_furniture", StringComparer.Ordinal) || advertisedCapabilities.Contains("remove_fence", StringComparer.Ordinal) || advertisedCapabilities.Contains("put_item_in_fish_tank", StringComparer.Ordinal) || advertisedCapabilities.Contains("place_item_on_pedestal", StringComparer.Ordinal) ? DiscoverWorldObjectTargets(player) : null,
-            // The disposition this tick, read from the value Update() already computed: publishing a
-            // second computation would be a second authority.
             ActorDispositionKind: WorldModel.KindForWire(this.disposition.Kind),
             ActorDispositionDetail: this.disposition.ModalType ?? this.disposition.TransientKind,
             ActorDispositionActionOwned: this.disposition.ModalActionOwned,
@@ -1650,30 +1270,17 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             SpecialOrderTargets: advertisedCapabilities.Contains("accept_special_order", StringComparer.Ordinal) ? DiscoverSpecialOrderTargets() : null,
             ActiveSpecialOrderKeys: advertisedCapabilities.Contains("accept_special_order", StringComparer.Ordinal) ? DiscoverActiveSpecialOrderKeys() : null,
             MuseumRewardTargets: advertisedCapabilities.Contains("claim_museum_reward", StringComparer.Ordinal) ? DiscoverMuseumRewardTargets(player) : null,
-            // The chest-repaint lane: the chests this actor can name right now, each with the colour it
-            // already carries, published only while the action is itself advertised.
             ColorTargets: advertisedCapabilities.Contains("color_placed_object", StringComparer.Ordinal) ? DiscoverColorTargets(player) : null,
-            // The slot the tool-family actions' `slot` argument must name, and the slot's occupant whatever it is.
             CurrentToolSlot: player.CurrentToolIndex,
             CurrentToolSlotItem: DescribeSlotItem(player.Items, player.CurrentToolIndex),
-            // The map's own fixed interaction points: whole-map, no entities, no reachability. Published
-            // unconditionally for the same reason `warps` is - a location's topology is not a slice of one
-            // action, and a companion without `enter_mine` still has to name the way out of a mine. The
-            // count of what the cap left out rides beside the list, so truncation is stated.
             FixedInteractionPoints: DiscoverFixedInteractionPoints(player, out int fixedInteractionPointsOmitted),
             FixedInteractionPointsOmitted: fixedInteractionPointsOmitted,
             SoilTilesOmitted: soilTiles is null ? null : soilTilesOmitted,
-            // The cap on `farmBuildingTargets` is 8 `built` rows; the count of what it left out rides beside the
-            // family for the same reason `soilTilesOmitted` does. A farm with more buildings than the bound answered
-            // "eight" whether it had eight or eighty.
             FarmBuildingTargetsOmitted: farmBuildingTargets is null ? null : farmBuildingTargetsOmitted,
             SeedSupplyTargets: seedSupplyTargets,
             SeedSupplyTargetsOmitted: seedSupplyTargets is null ? null : seedSupplyTargetsOmitted,
-            // `fish_here`'s discovery projection: only while the action itself is advertised, like every sibling family.
             WaterTargets: advertisedCapabilities.Contains("fish_here", StringComparer.Ordinal) ? DiscoverWaterTargets(player) : null
         );
-        // The rows are read AFTER every family above has walked the world and recorded into the same recorder, so this
-        // is one publication of one measurement rather than a second pass over the map.
         if (!exclusionFamilyAdvertised) return snapshot;
         return snapshot with
         {
@@ -1720,8 +1327,6 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             this.receiptsByRequestId.TryGetValue(this.activeItemPickup.RequestId, out activeReceipt);
         else if (this.activePedestalTaking is not null)
             this.receiptsByRequestId.TryGetValue(this.activePedestalTaking.RequestId, out activeReceipt);
-        // The phase and its cancel safety come from the SAME describer that names the holder, so an Agent that
-        // sees `cancelSafe=false` cannot be told by a refusal that the hold was releasable, or the reverse.
         BodyOwner activeOwner = this.DescribeBodyOwner();
         BridgeActiveExecution? activeExecution = this.activeNavigate is not null
             ? new(
@@ -1800,8 +1405,6 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
                                   : null;
         if (activeExecution is not null)
         {
-            // The occupant projection is derived from the SAME owner table that names every body-exclusivity
-            // refusal, so a refusal's named code and the snapshot's owner kind cannot disagree.
             BodyOwner owner = this.DescribeBodyOwner();
             activeExecution = activeExecution with { OwnerKind = owner.ReasonCode, Interruptible = owner.Interruptible };
         }
@@ -1869,11 +1472,6 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         return choices.Count == 0 ? Array.Empty<BridgeLevelUpChoice>() : choices.Take(8).ToArray();
     }
 
-    /// <summary>
-    /// The actor's own profession ids, bounded. Published so a caller can read the growth state a `respond_level_up`
-    /// milestone branch just changed from a fresh observation - the chosen id present and the other card absent -
-    /// and can see the level-5 choice a level-10 pair continues from.
-    /// </summary>
     private static IReadOnlyList<int> DescribeProfessions(Farmer player)
     {
         List<int> ids = new();
@@ -1900,27 +1498,11 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         TreeChopSourceTargets: null, TreeChopResultTargets: null, TreeStumpTargets: null, TreeSaplingTargets: null, WeedTargets: null, GrassTargets: null, ScytheCropTargets: null, BushTargets: null, FruitTreeTargets: null, ShakeTreeTargets: null, PedestalTargets: null, FenceGateTargets: null, CaskTargets: null, MannequinTargets: null, SignTargets: null, SiloTargets: null, LanternSlots: null, NpcRelationshipTargets: null, VillagerWhereabouts: null, HarvestWhereabouts: null, WateringWhereabouts: null, PetTargets: null, FarmAnimalPetTargets: null,
         AnimalProductTargets: null, FeedTroughTargets: null, Chests: null, ChestsSummary: null, InventoryItemFacts: null, FoodTargets: null,
         ShippingBinTargets: null, CraftingRecipeTargets: null, CookingRecipeTargets: null, CookingStationTargets: null, MinecartTargets: null, ObeliskTargets: null, MineElevatorFloorTargets: null, ShopTargets: null, RaftTargets: null,
-        // Unspecified while the world is not ready: the world snapshot already
-        // reports Location "unknown" and zeroed stamina/health, and every action
-        // admission rejects with world_not_ready, so no consumer plans from this.
         TimeOfDay: 0, DayOfMonth: 0, SeasonIndex: 0, Year: 0,
         Weather: "unknown",
         PresentationLocale: string.Empty, HorseTargets: null, MineEntranceTargets: null, WorldObjectTargets: null, ActorDispositionKind: "idle", DailyQuestTargets: null, AcceptedDailyQuest: null, PendingLevelUps: null, PendingLevelUpChoices: null, Professions: null);
     }
 
-    /// <summary>
-    /// The location's own warp list, for a source tile that is NOT a door.
-    ///
-    /// <para>
-    /// Edge exits live here and nowhere else: `Town` declares six of its nine exits as `X = -1` or `Y = -1`, and `Farm`
-    /// publishes `40..42,65 -> Forest`. The snapshot surfaces both tables through `warps` and `doorTargets`, but until
-    /// 2026-11-01 only `travel` consulted this one, so `enter_exit` refused a tile the snapshot had just published. That is
-    /// a consumer dictating which table a producer may use.
-    /// </para>
-    /// </summary>
-    /// <param name="location">The location the actor is standing in.</param>
-    /// <param name="sourceX">The source tile's column, as the caller named it.</param>
-    /// <param name="sourceY">The source tile's row, as the caller named it.</param>
     private static StardewValley.Warp? ResolveLocationWarp(StardewValley.GameLocation location, int sourceX, int sourceY)
     {
         foreach (StardewValley.Warp candidate in location.warps)
@@ -1949,10 +1531,6 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         return null;
     }
 
-    /// <summary>
-    /// One door row, or null when this tile cannot be published: the engine resolved no warp for it, the warp names no
-    /// target, or a coordinate lies outside <see cref="FarmhandWarpCoordinateRange"/>'s publishable range.
-    /// </summary>
     private static BridgeDoor? DescribeDoor(int sourceX, int sourceY, StardewValley.Warp? warp)
     {
         if (warp is null || string.IsNullOrWhiteSpace(warp.TargetName)) return null;
@@ -1963,28 +1541,12 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
     }
 
 
-    // Identity must not contain a coordinate. Discovery builds this from the
-    // NPC's live tile while admission checks it against the coordinate captured
-    // at snapshot time, so a villager that walked between the two produced two
-    // different hashes for the same person and the request was refused as if the
-    // target had changed. A villager's identity is (location, name): the name is
-    // unique per location and is what friendshipData is keyed by anyway.
     private static string BuildNpcRelationshipTargetId(StardewValley.GameLocation location, string npcName)
     {
         string raw = $"{location.NameOrUniqueName}:npc:{npcName}";
         return $"npc_relationship_{Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(raw))).ToLowerInvariant()[..16]}";
     }
 
-    /// <summary>
-    /// The villager one request's <c>expectedTargetId</c> names, read from the actor's CURRENT location.
-    ///
-    /// <para>
-    /// The lookup behind every NPC action bound by relationship identity. A villager follows a daily schedule, so
-    /// admitting against the tile it occupied when the snapshot was taken refused requests the caller meant - the
-    /// identity is (location, name), and this is the one place that turns it back into a subject. Null means the person
-    /// the caller named is not here any more; each caller answers that with its own named refusal.
-    /// </para>
-    /// </summary>
     private static StardewValley.NPC? FindVillagerByTargetId(StardewValley.GameLocation location, string expectedTargetId)
     {
         return location.characters
@@ -2005,7 +1567,6 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
     /// </summary>
     private static string ProjectWeather()
     {
-        // Green rain is a rain SUBTYPE: checked first, or `isRaining` answers for it.
         if (Game1.IsGreenRainingHere()) return "green_rain";
         if (Game1.isLightning) return "lightning";
         if (Game1.isRaining) return "rain";
@@ -2161,8 +1722,6 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         "weedTargets" => DiscoverWeedTargets(player).FirstOrDefault(row => row.X == x && row.Y == y)?.TargetId,
         "grassTargets" => DiscoverGrassTargets(player).FirstOrDefault(row => row.X == x && row.Y == y)?.TargetId,
         "rockSourceTargets" => DiscoverRockSourceTargets(player).FirstOrDefault(row => row.X == x && row.Y == y)?.TargetId,
-        // A lookup answers "was this row in the frame", so it records nothing: the frame's own pass is the one that
-        // counts what it withheld, and a second recorder here would count the same clump twice.
         "debrisTargets" => DiscoverDebrisTargets(player, null).FirstOrDefault(row => row.X == x && row.Y == y)?.TargetId,
         "scytheCropTargets" => DiscoverScytheCropTargets(player).FirstOrDefault(row => row.X == x && row.Y == y)?.TargetId,
         _ => null,
@@ -2255,9 +1814,6 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         return $"tree_stump_{Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(raw))).ToLowerInvariant()[..16]}";
     }
 
-    // The readback of the felled phase, identified by the same rule as the source it replaced: the location, the tile and
-    // the species. The durability is what `chop_stump` then spends (5 down to 0), so naming the stump by it would expire
-    // the row on every swing that chipped it.
     private static string BuildTreeChopResultTargetId(StardewValley.GameLocation location, int x, int y, StardewValley.TerrainFeatures.Tree tree)
     {
         string raw = $"{location.NameOrUniqueName}:{x},{y}:tree-chop-result:{tree.treeType.Value}";
@@ -2272,9 +1828,6 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
 
     private static string BuildArtifactSpotTargetId(GameLocation location, int x, int y, string qualifiedItemId)
     {
-        // The identity carries the concrete id so `(O)590` and `(O)SeedSpot` at
-        // the same tile are distinct targets; the raw id already varies, so a
-        // shared prefix would alias them.
         string raw = $"{location.NameOrUniqueName}:{x},{y}:{qualifiedItemId}";
         return $"artifact_spot_{Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(raw))).ToLowerInvariant()[..16]}";
     }
@@ -2412,7 +1965,6 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         {
             if (!IsOwnedOrdinaryChest(chest)) continue;
             chestCount++;
-            // Same reading as the entity family: an empty slot is not an item the container holds.
             IList<StardewValley.Item> inventory = chest.GetItemsForPlayer();
             int occupiedSlots = 0;
             for (int slot = 0; slot < inventory.Count; slot++)
@@ -2427,11 +1979,6 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         return new BridgeChestsSummary(chestCount, itemCount, fullCount);
     }
 
-    /// <summary>
-    /// The eligible storage containers in the order a plan would reach them. `DiscoverStorageContainers` walks the
-    /// object layer, which is a hash map with no spatial order of its own, so the nearest-first ranking is applied
-    /// before the per-container window decides which rows survive.
-    /// </summary>
     private static List<(StardewValley.Objects.Chest Chest, int X, int Y, bool IsFridge)> OrderedStorageContainers(
         Farmer player, StardewValley.GameLocation location) =>
         DiscoverStorageContainers(player, location)
@@ -2440,7 +1987,6 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             .ThenBy(container => container.Y)
             .ToList();
 
-    /// <summary>The map tile holding the built-in kitchen fridge, or null without a kitchen.</summary>
     private static Vector2? KitchenFridgeTile(StardewValley.GameLocation location) => location switch
     {
         StardewValley.Locations.FarmHouse farmHouse when farmHouse.fridgePosition != Point.Zero
@@ -2505,20 +2051,6 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
     {
         return Math.Max(Math.Abs(targetX - (int)player.Tile.X), Math.Abs(targetY - (int)player.Tile.Y));
     }
-    /// <summary>
-    /// Order dictionary-backed targets before a cap truncates them, nearest first.
-    ///
-    /// `location.objects.Pairs`, `terrainFeatures.Pairs` and the rest are Dictionary hash buckets: iteration order is
-    /// an implementation detail of the runtime, not a spatial fact. Taking "the first N" of them publishes N arbitrary
-    /// targets, and a caller that walks the list in the order it was given crosses the farm between consecutive
-    /// targets. Measured 2026-10-27 on the chain-fixed run: the published rock order was hash order, and the Host-side
-    /// nearest-neighbour ordering never ran because it lives in a function with no production caller.
-    ///
-    /// Nearest-first, then X, then Y. The last two are not decoration: without them two equidistant rocks would keep
-    /// whatever order the dictionary produced, and an identical world could yield a different program each run.
-    ///
-    /// The CAP is unchanged everywhere this is used - only which entries fall inside it.
-    /// </summary>
     private static IEnumerable<KeyValuePair<Microsoft.Xna.Framework.Vector2, T>> NearestFirst<T>(
         IEnumerable<KeyValuePair<Microsoft.Xna.Framework.Vector2, T>> pairs, Farmer player) =>
         pairs.OrderBy(pair => ChebyshevDistance(player, (int)pair.Key.X, (int)pair.Key.Y))
@@ -2561,9 +2093,6 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         if (location.doesTileHaveProperty(x, y, "Diggable", "Back") is null)
             return "not_map_diggable";
         Vector2 tile = new(x, y);
-        // The map's own obstruction layers (`isTileLocationOpen` reads Buildings, Front and AlwaysFront): a diggable
-        // tile under a wall was admitted here and then went nowhere when the hoe swung, so the receipt claimed a
-        // postcondition the world never gave.
         if (!location.isTileLocationOpen(tile))
             return "map_blocked";
         if (location.objects.TryGetValue(tile, out StardewValley.Object? placed))
@@ -2625,8 +2154,6 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
                     farmable.Add((Math.Max(Math.Abs(scanX - x), Math.Abs(scanY - y)), scanX, scanY));
         var evidence = new System.Text.StringBuilder();
         evidence.Append(CultureInfo.InvariantCulture, $";diggable_tiles={farmable.Count}");
-        // Nearest first, then Y, then X - the tie order `DiscoverSoilTiles` publishes with, so two readings of an
-        // unchanged world name the same tile.
         if (farmable.Count > 0)
         {
             (int Distance, int X, int Y) nearest = farmable
@@ -2720,8 +2247,6 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             return deltaX > 0 ? 1 : 3;
         if (deltaY != 0)
             return deltaY > 0 ? 2 : 0;
-        // A live target can occupy the same rounded tile only if its position
-        // changes between discovery and input. The binding guard still decides.
         return player.FacingDirection;
     }
 
@@ -2746,20 +2271,10 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
     private static (Debris Debris, int DebrisIndex, int ChunkIndex, Chunk Chunk, string TargetId, string QualifiedItemId, int Stack)? FindItemTarget(StardewValley.GameLocation location, string expectedTargetId, string expectedQualifiedItemId) =>
         FindItemChunk(location, expectedQualifiedItemId, expectedTargetId, tileX: null, tileY: null);
 
-    /// <summary>
-    /// A chunk of this item lying on ONE tile, whatever its opaque identity says.
-    ///
-    /// This is the answer "something else of this item is on the address the caller named" - a stack that lost half its
-    /// count, a chunk re-indexed onto that tile - which is a CHANGED target and never a moved one.
-    /// </summary>
     private static (Debris Debris, int DebrisIndex, int ChunkIndex, Chunk Chunk, string TargetId, string QualifiedItemId, int Stack)? FindChunkOnTile(
         StardewValley.GameLocation location, int tileX, int tileY, string expectedQualifiedItemId) =>
         FindItemChunk(location, expectedQualifiedItemId, expectedTargetId: null, tileX, tileY);
 
-    /// <summary>
-    /// The one enumeration of this item's ground chunks: by opaque identity anywhere in the location, or - when no
-    /// identity is asked for - the first one standing on a named tile.
-    /// </summary>
     private static (Debris Debris, int DebrisIndex, int ChunkIndex, Chunk Chunk, string TargetId, string QualifiedItemId, int Stack)? FindItemChunk(
         StardewValley.GameLocation location, string expectedQualifiedItemId, string? expectedTargetId, int? tileX, int? tileY)
     {
@@ -2836,9 +2351,6 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             && !farm.objects.ContainsKey(tile)
             && Utility.playerCanPlaceItemHere(farm, source, (int)tile.X * 64 + 32, (int)tile.Y * 64 + 32, Game1.player)
             && source.canBePlacedHere(farm, tile)
-            // The fence tile itself must be passable MAP ground, which is the engine's own placement requirement and
-            // stays a map read. Whether the body can stand beside it is a different question, and the stance below
-            // answers that one with the planner's rule.
             && farm.isTilePassable(tile)
             && new[] { tile + new Vector2(1f, 0f), tile + new Vector2(-1f, 0f), tile + new Vector2(0f, 1f), tile + new Vector2(0f, -1f) }
                 .Any(stance => StardewBodyController.IsStandableTile(farm, Game1.player, stance));
@@ -2925,19 +2437,6 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
     /// </summary>
     private static void UseNativeToolOnTile(Tool tool, GameLocation location, int tileX, int tileY, Farmer who, float staminaBefore, int charge = 0)
     {
-        // Face the target before swinging, so the picture and the effect describe the same tile.
-        //
-        // The engine derives the swing point from the bounding box plus one tile in `FacingDirection`
-        // (`Character.GetToolLocation`), which is why a swing only lands on a tile the actor is facing
-        // from a cardinal neighbour. This method names the target tile directly instead, so the action
-        // hits whether or not the actor is looking at it - strictly more reliable, and the reason the
-        // animation could show one tile while another changed.
-        //
-        // Setting the facing where the engine can express it is the part that costs nothing: a diagonal
-        // or out-of-reach target has no such facing, and the swing still lands on the target as before.
-        // That asymmetry is deliberate - this change makes the two agree where agreement is possible, it
-        // does not make a previously-landing swing miss. A charge above zero is the exception, because
-        // there the facing is no longer cosmetic: `RefuseToolCharge` refuses it before this method runs.
         int? facing = SwingFacing.For(((int)who.Tile.X, (int)who.Tile.Y), (tileX, tileY));
         if (facing is { } direction)
             who.FacingDirection = direction;
@@ -3024,8 +2523,6 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         int restingIndex = who.FarmerSprite.currentAnimationIndex;
         try
         {
-            // The facing IS the arc here (the rectangles are rotated by it), so it is written before the first
-            // rectangle is asked for and is not restored: `UseNativeToolOnTile` leaves the facing it swung with too.
             who.FacingDirection = facing;
             foreach (int index in MeleeSweepIndices)
             {
@@ -3051,16 +2548,6 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
     private static int ToolChargeCeiling(Tool tool) =>
         tool.UpgradeLevel + (tool.hasEnchantmentOfType<ReachingToolEnchantment>() ? 1 : 0);
 
-    /// <summary>
-    /// The refusal a requested charge earns BEFORE anything is written, or null when it can be performed: the ladder's
-    /// own range, the held tool's ceiling, and - above zero - the cardinal stance the footprint is rotated by.
-    ///
-    /// <para>
-    /// The ceiling is refused rather than clamped. The engine's own hold does nothing past it, which is the argument
-    /// that the ceiling is real, not an argument for performing less than the caller asked for: a clamp would report a
-    /// successful 18-tile sweep while the actor swung the 5-tile one the request did not name.
-    /// </para>
-    /// </summary>
     private static string? RefuseToolCharge(int charge, Tool tool, Farmer who, int tileX, int tileY)
     {
         if (charge < ToolCharge.Minimum || charge > ToolCharge.Maximum)
@@ -3154,7 +2641,6 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         }
         catch (Exception)
         {
-            // Unknown content must not fail discovery; the caller omits the name.
             return null;
         }
     }
@@ -3242,10 +2728,6 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
 
         if (this.activeItemPickup is { } pickup && pickup.ExecutionId == specification.ExecutionId)
         {
-            // The body controller is only the first phase of pickup_item. Its
-            // arrival is not the action terminal state: target-version
-            // Debris.updateChunks must subsequently magnetize and collect the
-            // same chunk, which Update verifies by identity and inventory.
             if (state is ExecutionState.Running or ExecutionState.MeaningfulProgress)
             {
                 this.revision++;
@@ -3256,9 +2738,6 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             this.slots.Active.Clear();
             if (state == ExecutionState.Succeeded)
             {
-                // The controller reached the bounded adjacent arrival. Keep
-                // pickup ownership through the next native location update,
-                // where Debris.updateChunks may perform magnetic collection.
                 this.revision++;
                 this.RememberTerminal(pickup.RequestId, pickup.ExecutionId, ExecutionState.Running, "item_pickup_approach_completed", evidence);
                 return;
@@ -3273,10 +2752,6 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
 
         if (this.activeToolApproach is { } toolApproach && toolApproach.ExecutionId == specification.ExecutionId)
         {
-            // The approach leg is phase one of a tool-family action; its arrival in
-            // range is not the action terminal. Progress stays observable, and a
-            // successful arrival hands off to the completion pass, which re-validates
-            // the world and then runs the native tool call.
             if (state is ExecutionState.Running or ExecutionState.MeaningfulProgress)
             {
                 this.revision++;
@@ -3292,17 +2767,6 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
                 return;
             }
 
-            // The walk itself failed, or a world change (modal / event / pass-out)
-            // invalidated it before anything native ran. Either way nothing native
-            // ran, so this is the action's terminal, and it reports the actor's real
-            // position so the caller can tell "could not get there" from "target
-            // changed".
-            //
-            // The evidence must agree with the terminal it ships in: WIA §4.3 freezes
-            // world-change interruptions as their own class (modal_interrupted /
-            // event_started / pass_out), so stamping `approach=failed` onto an
-            // Invalidated receipt would contradict the state one field away and tell
-            // the Agent the walk failed when the world actually moved.
             string approachOutcome = state == ExecutionState.Invalidated ? "invalidated" : "failed";
             this.slots.ToolApproach.Clear();
             this.revision++;
@@ -3315,11 +2779,6 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         bool terminal = state is ExecutionState.Succeeded or ExecutionState.Failed or ExecutionState.Cancelled or ExecutionState.Invalidated or ExecutionState.Expired or ExecutionState.Uncertain;
         if (terminal)
             this.slots.Active.Clear();
-        // The one sentence a refusal computed has to travel in the one field a settled node keeps: ADR-006 withholds a
-        // settled failure's evidence, and this receipt used to carry no hint at all. Measured `round41`,
-        // 19:04:10-19:05:26: a `clear_step_blocked` whose evidence held
-        // `clear_step=weed@40,9;stand_at=41,8;remaining_clears=1` reached the model as `Hint=null`, the session contained
-        // `clear_step` 0 times, and 76 seconds went into re-aiming at a corridor one weed closed.
         string? refusalHint = state is ExecutionState.Failed or ExecutionState.Cancelled
             ? ClearingEvidence.DescribeRouteHint(evidence)
             : null;
@@ -3339,7 +2798,6 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
     {
         if (state is ExecutionState.Running or ExecutionState.MeaningfulProgress)
         {
-            // Progress rides the same single navigation lineage; never settles.
             this.revision++;
             this.RememberTerminal(navigation.RequestId, navigation.ExecutionId, state, reasonCode, "navigation=running;phase=approaching");
             return;
@@ -3347,9 +2805,6 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
 
         if (state == ExecutionState.Succeeded)
         {
-            // The body controller reports arrival before its callback has released
-            // ownership. Defer the single native commit until the next Update,
-            // after the controller is observed free.
             LocalNavigateSpec? activeNavigation = this.activeNavigate;
             if (activeNavigation is null || activeNavigation.ExecutionId != navigation.ExecutionId)
             {
@@ -3364,8 +2819,6 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             return;
         }
 
-        // Any approach terminal (Failed/Expired/Cancelled/Invalidated/Uncertain)
-        // settles the navigation exactly once.
         this.LogNavigationWarpDiagnostic("approach_terminal", $"state={state};reason={reasonCode};evidence={evidence ?? "none"}");
         this.slots.Active.Clear();
         this.SettleNavigationTerminal(navigation, state, reasonCode,
@@ -3374,7 +2827,6 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
 
     private void CommitNavigationApproach(LocalNavigateSpec navigation)
     {
-        // Revalidate the exact active phase/IDs/nonterminal state before the one commit.
         if (this.activeNavigate is null
             || this.activeNavigate.ExecutionId != navigation.ExecutionId
             || this.activeNavigate.Phase != LocalNavigatePhase.ApproachReleased)
@@ -3384,7 +2836,6 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         }
         if (this.controller.HasActiveExecution)
         {
-            // The approach body must have fully released ownership before the warp.
             this.SettleNavigationTerminal(navigation, ExecutionState.Uncertain, "navigation_commit_body_still_owned", $"destination={navigation.CanonicalDestinationIdentity};never_retry=true");
             return;
         }
@@ -3400,9 +2851,6 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             return;
         }
 
-        // Reuse the execution-private accepted binding while reading fresh world
-        // and connectivity facts. Public refs may expire after admission and must
-        // not revoke an already accepted execution.
         AcceptedNavigationExecution? coordinator = this.activeNavigationCoordinator;
         if (coordinator is null)
         {
@@ -3509,8 +2957,6 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
     private void SettleNavigationTerminal(LocalNavigateSpec navigation, ExecutionState state, string reasonCode, string? evidence)
     {
         this.slots.ClearWarpReplan();
-        // Unthrottled settle marker; the bounded warp throttle may swallow a
-        // transition log that occurs in the same window as another warp event.
         this.monitor.Log($"[nav-settle-marker] request={navigation.RequestId};state={state};reason={reasonCode};evidence={evidence ?? "none"}", LogLevel.Trace);
         this.LogNavigationWarpDiagnostic("settle", $"state={state};reason={reasonCode};evidence={evidence ?? "none"}");
         this.slots.Active.Clear();
@@ -3553,11 +2999,6 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             return;
         }
 
-        // The correlated native warp is confirmed. Stardew may adjust the exact
-        // landing tile (collision / standability / spawn offset), so the
-        // postcondition is the target map identity, not the warp's declared tile.
-        // Arrival at the final destination itself is still decided only by the
-        // fresh replan's AtDestination rule before any terminal success.
         bool destinationMatches = string.Equals(navigation.Leg.TargetLocation, newLocation, StringComparison.Ordinal);
         if (!isLocalPlayer || !destinationMatches)
         {
@@ -3570,26 +3011,11 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             return;
         }
 
-        // The correlated native warp is confirmed. Decide the next route leg now.
-        // If the fresh replan concludes the player is not actionable yet (a
-        // freshly warped player can report CanMove=false for one transition
-        // frame), defer to the next Update tick instead of misreading that frame
-        // as a locked destination. The Update retry only re-enters after the
-        // player is actionable again; the deadline pass settles it otherwise.
         this.slots.ClearWarpReplan();
         this.LogNavigationWarpDiagnostic("warp_confirmed", $"old={oldLocation};new={newLocation}:{newTileX},{newTileY}");
         this.TryContinueNavigationAfterWarp(navigation);
     }
 
-    /// <summary>
-    /// Decides and arms the next Navigation leg from the confirmed warp state.
-    /// Runs synchronously from the warp callback; if the fresh replan concludes
-    /// the player is not actionable yet (CanMove=false transition frame), sets
-    /// <see cref="navigationWarpReplanDeferred"/> and returns so the Update pass
-    /// retries once the player is actionable again. A genuine locked destination
-    /// (still not actionable on retry) still settles fail-closed via the normal
-    /// terminal path on that retry.
-    /// </summary>
     private void TryContinueNavigationAfterWarp(LocalNavigateSpec navigation)
     {
         if (navigation is null || navigation.Phase != LocalNavigatePhase.AwaitingWarp)
@@ -3619,12 +3045,6 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         }
         this.LogNavigationWarpDiagnostic("warp_planned", $"terminal={nextPlan.IsTerminal};state={nextPlan.Outcome.State};reason={nextPlan.Outcome.TerminalReasonCode};next={nextPlan.Outcome.NextLeg?.TargetLocation ?? "none"}");
 
-        // A freshly warped player can report CanMove=false for one transition
-        // frame. Defer rather than misreading that instant as a locked
-        // destination; the Update pass retries once the player is actionable.
-        // Retry is bounded by a short grace window and the navigation deadline
-        // so a genuinely locked destination still settles fail-closed exactly
-        // once.
         if (nextPlan.IsTerminal && nextPlan.Outcome.TerminalReasonCode == "destination_locked")
         {
             this.slots.DeferWarpReplan(this.tick);
@@ -3767,18 +3187,6 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         LocalExecutionReceipt receipt = new(executionId, requestId, state, reasonCode, this.revision, evidence, ActionId: boundActionId, Observation: observation, Hint: hint);
         this.ledger.Remember(receipt);
         LocalExecutionReceipt published = this.AddTrace(receipt);
-        // Immediate native actions own no continuing controller/animation, so
-        // their receipt is followed by the same centralized release check.
-        //
-        // WHICH STATES ANNOUNCE THE FREE BODY IS `ExecutionStateWire.IsTerminal`, not a copy of it. This list used to
-        // name six of the nine terminal states, so `Rejected`, `Blocked` and `PartiallySucceeded` announced the idle
-        // from a hand-written site (`CompleteToolApproach`, `UpdateActiveDayAdvance`, `SettleNavigationTerminal`) and
-        // stayed silent here: the same settled outcome published `body_idle` or nothing depending on which path wrote
-        // the receipt, and a caller converting a site had to keep the leak to stay neutral. An extra publication costs
-        // the Host one evictable latest-only progress slot (host/src/event-pump.ts reads `body_idle` as progress that
-        // the next receipt or plan settlement supersedes); a missing one leaves a companion holding a settled
-        // execution with no actor-free fact. Reading the declaration is what makes this match by construction rather
-        // than by coincidence.
         if (state.IsTerminal())
             this.ledger.PublishIdleAfterRelease(executionId, requestId);
         return published;
@@ -3797,16 +3205,6 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
     {
         if (receipt.ActionId is null && this.receiptsByRequestId.TryGetValue(receipt.RequestId, out LocalExecutionReceipt? persistedReceipt))
             receipt = persistedReceipt;
-        // The ledger bound the action at dispatch (`BindAction`, from the router), and a
-        // controller-minted terminal is built without it. Stamping it HERE covers every
-        // mint site at once, which is the difference between one fix and eighty call sites.
-        //
-        // This was the reason a whole night of runs reported `multiday.crossings: 0` with
-        // `night_terminal_missing` while the trace showed the work done: 14 terminal receipts
-        // in one run (13x Succeeded/target_reached, 1x Succeeded/enter_exit_completed) were
-        // refused by BridgeSession.TryCreateReceiptEvent because the action identity could not
-        // be resolved, and the refusal was logged as `closed/backpressured bridge` - which sent
-        // the investigation to the pipe writer instead of to this projection.
         if (receipt.ActionId is null && this.ledger.TryGetActionId(receipt.RequestId, out string boundActionId))
             receipt = receipt with { ActionId = boundActionId };
         string? category = receipt.State switch
@@ -3834,11 +3232,6 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             FarmhandExecutionJournalResult<FarmhandExecutionJournalRecord> result = this.executionJournal.TryPersistReceiptTransition(admission, durableReceipt);
             if (!result.IsSuccess)
             {
-                // Intermediate/progress receipts are observational: a persist
-                // failure for them must not poison the request's later durable
-                // terminal receipt. Only a REAL terminal persist failure is a
-                // genuine durability failure (the admission itself remains the
-                // authoritative baseline and is already durable).
                 if (ModEntry.IsUnconfirmedTerminal(receipt.State))
                 {
                     this.ledger.MarkDurabilityFailure(receipt.RequestId);
@@ -3850,36 +3243,11 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         }
         if (this.ledger.HasDurabilityFailure(receipt.RequestId))
             return receipt;
-        // ONE delivery funnel, so the published revision is strictly monotonic PER EXECUTION.
-        //
-        // The Host audits receipt order and refuses a same-revision transition whose content differs
-        // (`execution_receipt_replay_rejected:non_monotonic_revision`, receipt-replay.ts:49), because an equal
-        // revision carrying different content is indistinguishable from a rewrite of a settled transition. The
-        // world revision counter it compares against is shared with the action it is about to perform: a mint site
-        // that read `this.revision` AFTER the native mutation announced `Running/tool_approach_completed` at the
-        // same number as the `Succeeded/crop_harvested` that followed, which the Host correctly refused - and a
-        // refused receipt is a fatal transport fault, so it killed the whole run (measured 2026-10-17, three times
-        // on the first multi-day attempts).
-        //
-        // Bumping here rather than at ~120 mint sites is the smallest fix that cannot regress: the aliasing is
-        // inherent to reading a shared counter on both sides of a mutation, and this is the only place every
-        // receipt passes through on its way out. The comparison is against what was PUBLISHED, not against the
-        // mint-time mirror, so a legitimate redelivery of one transition can still be byte-identical - which is
-        // what the Host's own idempotent path expects - while a genuinely new transition is always strictly higher.
-        // The hold annotation is applied to `receipt` BEFORE anything is stored or published. It used to be added
-        // after the first `Remember`, so the store could keep an un-annotated copy while the publish path sent the
-        // annotated one: a later redelivery of that stored copy then differed from its own predecessor by exactly
-        // `;held_ms=<n>` at the SAME revision, which the Host refuses as `non_monotonic_revision` (named live on
-        // 2026-10-21 by `firstDiffAt=390`, lengths [402, 390] - the twelve characters were the whole difference, and
-        // the refusal closed the bridge at 747 s of a run that had already crossed its first night).
         if (this.ledger.TryGetHeldMs(receipt.RequestId, out long heldMs))
             receipt = receipt with
             {
                 Evidence = string.IsNullOrEmpty(receipt.Evidence) ? $"held_ms={heldMs}" : $"{receipt.Evidence};held_ms={heldMs}",
             };
-        // Store the annotated copy even when the revision needs no bump: otherwise the store keeps whatever the caller
-        // remembered before calling this funnel, and a later redelivery of that stored copy would differ from what
-        // was published by exactly the annotation.
         this.ledger.Remember(receipt);
         LocalExecutionReceipt published = receipt;
         this.ledger.TryGetPublishedRevision(receipt.ExecutionId, out long publishedRevision);
@@ -3889,35 +3257,16 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             published = receipt with { Revision = this.revision };
             this.ledger.Remember(published);
         }
-        // A request that waited out a transient body hold says so on the first receipt it PUBLISHES. This is
-        // the only place every receipt passes through on its way out, so the stored record, the fact the Host
-        // audits and the answer the wait resolves into all carry the identical bytes: a response that differed
-        // from its published fact by one annotation would be refused by the Host's receipt-order audit.
-        // NOT `Remove`: the same receipt reaches the Host through two channels - the fact stream and the response
-        // to the execution_request - and an annotation consumed by the first publish makes the second one differ
-        // from it by exactly that field. Equal revision with different content is `non_monotonic_revision`, which
-        // the Host must refuse, and a refused fact is a fatal transport fault (measured 2026-10-20, run g112attrib:
-        // 402 s in, the bridge closed and the night never happened). Every copy of this request's receipts therefore
-        // carries the same annotation; the entry is cleared when the execution settles.
-        // (`held_ms` was folded into `receipt` above, before the store saw it.)
-        // The annotation has been carried by every copy of this request's receipts; a settled execution cannot publish
-        // again, so the entry can go.
         if (published.State is ExecutionState.Succeeded or ExecutionState.Failed or ExecutionState.Cancelled
             or ExecutionState.Rejected)
             this.ledger.ClearHeldMs(published.RequestId);
         this.ledger.RecordPublishedRevision(receipt.ExecutionId, published.Revision);
-        // The publish span and the marker line are the same fact: the span carries the identity the line reports,
-        // so the trace and the grep log can never disagree about which request a revision was published for.
         Activity? publishSpan = ModTrace.StartReceiptPublish(published);
         this.monitor.Log(ModTrace.ReceiptPublishLogLine(published), LogLevel.Trace);
         if (category is not null && !this.ledger.IsNavigationExecution(published.ExecutionId))
             this.AddPublicTrace(category, published.ExecutionId, published.RequestId);
         this.receiptPublished?.Invoke(published);
         publishSpan?.Dispose();
-        // The CALLER answers with this object, and the fact stream carries it too. Handing back the minted one instead
-        // published a fact without `held_ms` while the response carried it (same revision, different content), which the
-        // Host refuses as `non_monotonic_revision` - named live on 2026-10-21: same execution, same revision 266, same
-        // state and reason, different evidence.
         return published;
     }
 
@@ -3937,11 +3286,6 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
 
     private static string? DescribeTool(Tool? tool) => tool is null ? null : tool.QualifiedItemId ?? tool.Name;
 
-    /// <summary>
-    /// The item identity one inventory slot holds, whatever its KIND - the honest counterpart to
-    /// <see cref="DescribeTool"/>. A slot holding seeds reports the seeds, so an absent `currentTool` beside a
-    /// present identity reads as "holding something that is not a tool", and only an EMPTY slot reports null.
-    /// </summary>
     private static string? DescribeSlotItem(IList<Item?> items, int slot) =>
         slot >= 0 && slot < items.Count ? items[slot]?.QualifiedItemId : null;
 
@@ -3996,11 +3340,6 @@ internal sealed class NavigationApproachNative
 /// </summary>
 internal static class AreaToolFootprint
 {
-    /// <summary>
-    /// The tiles within <see cref="ExecutionManager.AreaToolScanRadius"/> of the named tile that satisfy
-    /// <paramref name="holds"/>. The scan is bounded by the engine's own footprint (see the radius) rather than by a
-    /// Mod budget, and it runs on the game thread inside the swing's tick, on both sides of the one native call.
-    /// </summary>
     internal static HashSet<Vector2> Observe(int tileX, int tileY, Func<Vector2, bool> holds)
     {
         HashSet<Vector2> observed = new();
@@ -4414,10 +3753,6 @@ internal static class ChargedFootprint
         }
     }
 
-    /// <summary>
-    /// What ONE footprint tile holds that this swing would TAKE, in the vocabulary the scythe's arc check already speaks -
-    /// or <see cref="FarmhandForEachHealing.NoOccupant"/> for every tile the engine leaves exactly as it found it.
-    /// </summary>
     internal static MeleeSweepTile Read(GameLocation location, FarmhandForEachFarmWorld world, Vector2 tile)
     {
         // A TILE THAT CARRIES A TERRAIN FEATURE IS SKIPPED WHOLE by `Hoe.DoFunction` (Hoe.cs:69-76): it hands the feature
@@ -4450,10 +3785,6 @@ internal static class ChargedFootprint
         return MeleeSweepOccupancy.Read(location, world, tile);
     }
 
-    /// <summary>
-    /// The footprint tiles a charged use would take without the request naming them, the named tile excluded - the same
-    /// rule <see cref="MeleeSweepOccupancy.Undeclared"/> asks of a scythe's arc. EMPTY is the answer that lets the swing run.
-    /// </summary>
     internal static List<(Vector2 Tile, string Kind)> Undeclared(
         GameLocation location,
         IReadOnlyList<Vector2> footprint,
@@ -4467,10 +3798,6 @@ internal static class ChargedFootprint
             state => !string.Equals(state.Occupant, FarmhandForEachHealing.NoOccupant, StringComparison.Ordinal));
     }
 
-    /// <summary>
-    /// One tile the swing leaves as it found it, spelled in the same vocabulary: an occupant word the caller compares
-    /// against, never a third state.
-    /// </summary>
     private static MeleeSweepTile Untouched(GameLocation location, FarmhandForEachFarmWorld world, Vector2 tile) =>
         MeleeSweepOccupancy.Read(location, world, tile) with { Occupant = FarmhandForEachHealing.NoOccupant };
 }

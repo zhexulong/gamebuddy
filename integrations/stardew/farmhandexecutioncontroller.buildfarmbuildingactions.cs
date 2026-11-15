@@ -108,7 +108,6 @@ namespace GameBuddy.Stardew;
 // (`action_past_cancel_point`) and the Agent waits for the terminal.
 internal sealed partial class ExecutionManager
 {
-    /// <summary>Per-kind cap on published farm-building targets, matching the sibling families' bounded discovery.</summary>
     private const int BuildFarmBuildingTargetLimit = 8;
 
     /// <summary>
@@ -134,9 +133,6 @@ internal sealed partial class ExecutionManager
         if (!resolution.Accepted)
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, resolution.ReasonCode, resolution.Evidence);
 
-        // NO COMMISSION IS TAKEN TONIGHT, and the answer is the engine's own: the same working hours
-        // Robin keeps are the hours a player would have to reach her counter in. Asked here, before the
-        // walk, because a request the clock refuses should not walk the body to the site first.
         if (DescribeBuildFarmBuildingDaylightRefusal(location) is string night)
             return this.RememberTerminal(
                 requestId,
@@ -145,28 +141,18 @@ internal sealed partial class ExecutionManager
                 night,
                 $"{BuildFarmBuildingIdentity(expectedTargetId, location, targetX, targetY, buildingType)};{DescribeBuildFarmBuildingUnspent(resolution.Data!)};blocked_by={RefusalLayerToken.None.Format()}");
 
-        // 5.2: out of the interaction reach, walk in rather than refuse. The reach is this
-        // family's Chebyshev-1 of the named footprint tile; every position-independent check
-        // above is re-run in the shared execution body after the walk.
         if (!IsTileWithinChebyshevRadius(Game1.player, targetX, targetY, 1))
             return this.TryBeginToolApproach(requestId, executionId, "build_farm_building", location, targetX, targetY, expectedTargetId,
                 (arrivalExecutionId, arrivalRequestId) => this.ExecuteBuildFarmBuilding(arrivalExecutionId, arrivalRequestId, buildingType, targetX, targetY, expectedTargetId), nowMs, requestedDeadlineMs);
         return this.ExecuteBuildFarmBuilding(executionId, requestId, buildingType, targetX, targetY, expectedTargetId);
     }
 
-    /// <summary>
-    /// The one execution body, reached both in range and on arrival from the approach leg. It
-    /// re-resolves the site and re-reads the preconditions, because the walk can take several
-    /// ticks.
-    /// </summary>
     private LocalExecutionReceipt ExecuteBuildFarmBuilding(string executionId, string requestId, string buildingType, int x, int y, string targetId)
     {
         GameLocation location = Game1.player.currentLocation;
         BuildFarmBuildingSiteResolution resolution = ResolveBuildFarmBuildingSite(location, buildingType, x, y, targetId);
         if (!resolution.Accepted)
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, resolution.ReasonCode, resolution.Evidence);
-        // Re-asked on the game thread: the walk takes ticks and the clock does not wait for it, so a
-        // commission that was in daylight when it was requested can arrive after dusk.
         if (DescribeBuildFarmBuildingDaylightRefusal(location) is string night)
             return this.RememberTerminal(
                 requestId,
@@ -212,16 +198,10 @@ internal sealed partial class ExecutionManager
                 BuildFarmBuildingIdentity(targetId, location, x, y, buildingType)
                     + $";money_before={moneyBefore};money_after={Game1.player.Money};native_placement=false");
 
-        // The cost, exactly as the menu's own `ConsumeResources` performs it. The structure is
-        // already in the world, so the debit can no longer refuse the placement - it is the
-        // second half of the same transaction.
         Game1.player.Money -= data.BuildCost;
         foreach ((string qualifiedItemId, int amount) in materials)
             Game1.player.Items.ReduceId(qualifiedItemId, amount);
 
-        // The postcondition is the WORLD after the call. Both accounts are read ONCE more here, after both
-        // native statements, and the deltas the receipt publishes are the difference of that pair - never a
-        // literal, which could not tell a paid build from a refused one.
         Building? placed = location.getBuildingAt(new Vector2(x, y));
         int moneyAfter = Game1.player.Money;
         int materialsAfter = CountBuildFarmBuildingMaterials(materials);
@@ -241,19 +221,11 @@ internal sealed partial class ExecutionManager
             + $";tile_building_after={(placed?.buildingType.Value ?? "none")}"
             + $";native_placement={built.ToString().ToLowerInvariant()}";
 
-        // `buildStructure` returns a bool and refuses, so a false return is a REJECTED receipt
-        // (handled above). Everything left is the fresh read: a world that does not show the
-        // building, the debit and the construction days the commission requires is `Uncertain`,
-        // never a success.
         return buildingPlaced && moneyCharged && materialsConsumed
             ? this.RememberTerminal(requestId, executionId, ExecutionState.Succeeded, "farm_building_built", evidence)
             : this.RememberTerminal(requestId, executionId, ExecutionState.Uncertain, "build_farm_building_postcondition_unavailable", evidence);
     }
 
-    /// <summary>
-    /// One resolved commission site, or the named reason the published target no longer
-    /// matches the live world.
-    /// </summary>
     private sealed record BuildFarmBuildingSiteResolution(
         bool Accepted,
         string ReasonCode,
@@ -271,14 +243,6 @@ internal sealed partial class ExecutionManager
     /// </summary>
     internal sealed record BuildFarmBuildingSiteBlockage(int X, int Y, string Why);
 
-    /// <summary>
-    /// Re-derives the named commission on the game thread. Every mismatch is a NAMED refusal,
-    /// never a silent re-target.
-    ///
-    /// Order: the type's own validity first (a type the game does not declare is not this
-    /// action's subject at all), then the location, then the site's live buildability, then the
-    /// published identity, then the actor's own ability to pay.
-    /// </summary>
     private static BuildFarmBuildingSiteResolution ResolveBuildFarmBuildingSite(GameLocation location, string buildingType, int x, int y, string expectedTargetId)
     {
         if (!TryDescribeBuildFarmBuildingType(buildingType, out BuildingData? data))
@@ -303,13 +267,6 @@ internal sealed partial class ExecutionManager
         string identity = $"target={liveId};location={location.NameOrUniqueName};tile={x},{y};building_type={buildingType}";
 
         if (FindFarmBuildingSiteBlockage(location, data, x, y) is { } blockage)
-            // THIS REFUSAL NAMES THE RULE, NOT A BLOCKED LAYER, and that is decided rather than
-            // forgotten: `not_buildable`, `actor_in_footprint`, `additional_placement_tile`,
-            // `human_door_blocked` and `off_map` are each more specific than any word in the closed
-            // `RefusalLayerKind` vocabulary, so a `blocked_by=` here would trade the distinction the
-            // caller acts on for a token that says less. The refusal-naming ratchet is not moved by it:
-            // its population is `RememberTerminal(... Rejected ...)` call sites, and this evidence arrives
-            // through `resolution.Evidence` at calls that existed before this refusal did.
             return BuildFarmBuildingSiteResolution.Reject(
                 "build_farm_building_site_blocked",
                 $"build_site_blocked:{blockage.X},{blockage.Y}:{blockage.Why};{identity};footprint={data.Size.X}x{data.Size.Y};published={expectedTargetId};{DescribeBuildFarmBuildingUnspent(data)}");
@@ -445,25 +402,11 @@ internal sealed partial class ExecutionManager
             + $";materials_before={materialsBefore};materials_after={materialsAfter};materials_delta={materialsAfter - materialsBefore}";
     }
 
-    /// <summary>
-    /// The account a refusal leaves untouched, read the same way the build reads it: once before the refusal
-    /// and once after it, so the zero delta is the difference of two real readings rather than a literal.
-    ///
-    /// <para>
-    /// It exists because the spend is the action's OWN (the engine's seam charges nothing, so the handler
-    /// performs the two native statements `CarpenterMenu.ConsumeResources` does). A `rejected` receipt is
-    /// therefore only evidence of a refusal if it also shows that nothing was charged - a caller reading
-    /// `rejected` beside a wallet that fell has no way to tell a refused build from a purchased one.
-    /// </para>
-    /// </summary>
     private static string DescribeBuildFarmBuildingUnspent(BuildingData data)
     {
         IReadOnlyList<(string QualifiedItemId, int Amount)> materials = BuildFarmBuildingMaterials(data);
         int moneyBefore = Game1.player.Money;
         int materialsBefore = CountBuildFarmBuildingMaterials(materials);
-        // No statement of this action's can spend between these two readings - every refusal that reaches
-        // this helper is decided before `buildStructure` and before the debit - so the pairs are equal and
-        // the deltas they produce are zero. The refusal is the only thing that happened in between.
         int moneyAfter = Game1.player.Money;
         int materialsAfter = CountBuildFarmBuildingMaterials(materials);
         return DescribeBuildFarmBuildingAccount(moneyBefore, moneyAfter, materialsBefore, materialsAfter);
@@ -496,9 +439,6 @@ internal sealed partial class ExecutionManager
     {
         Rectangle buildableRectangle = location.GetBuildableRectangle();
         if (buildableRectangle != Rectangle.Empty && !buildableRectangle.Contains((int)tile.X, (int)tile.Y)) return false;
-        // `isTilePassable` is the engine's own placement arm - map ground, not a body - so it stays. Whether the body
-        // may stand on the same tile is a different question (a human door behind a bush strands the farmer the
-        // building is for), and `IsWalkableTile` is the one place the Mod asks it.
         return location.isTilePassable(tile)
             && StardewBodyController.IsWalkableTile(location, Game1.player, tile)
             && !location.IsTileOccupiedBy(tile, CollisionMask.All, CollisionMask.All);
@@ -598,17 +538,6 @@ internal sealed partial class ExecutionManager
         return $"build_site_{Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(raw))).ToLowerInvariant()[..16]}";
     }
 
-    /// <summary>
-    /// The farm-building facts the actor can name right now, projected read-only from live
-    /// state:
-    ///   * one <c>build_site</c> per building type the game declares, is not upgrade-only, the
-    ///     actor can afford, and for which a free footprint exists in the surrounding window -
-    ///     the structure does not exist yet, and the site's opaque id is what the request names;
-    ///   * one <c>built</c> per building already standing in the current location, so the
-    ///     caller can see the result of its own commission change the published fact.
-    /// Nothing is synthesized: a type the game does not declare, a site that is not free, or a
-    /// building that is not there is not advertised.
-    /// </summary>
     internal static IReadOnlyList<BridgeFarmBuildingTarget> DiscoverBuildFarmBuildingTargets(Farmer player, out int omitted)
     {
         omitted = 0;
@@ -647,10 +576,6 @@ internal sealed partial class ExecutionManager
             siteCount++;
         }
 
-        // CONSTRUCTION FIRST. The countdown below is a published FIELD, and this family is capped at
-        // `BuildFarmBuildingTargetLimit` - so on a farm with more buildings than the cap, whichever building happened
-        // to sit last in `location.buildings` was the one dropped, and that could be the one the player is waiting on.
-        // Ordering by the countdown makes the cap drop finished buildings instead, which is a fact a caller can act on.
         List<Building> standing = location.buildings
             .Where(static building => building is not null)
             .OrderByDescending(static building => building.daysOfConstructionLeft.Value > 0)
@@ -660,8 +585,6 @@ internal sealed partial class ExecutionManager
         {
             if (builtCount >= BuildFarmBuildingTargetLimit)
             {
-                // The cap is a published bound, so what it took is published too: `building.occupiesTile` rows a caller
-                // cannot see are the difference between "this farm has eight buildings" and "this farm has more".
                 omitted += 1;
                 continue;
             }

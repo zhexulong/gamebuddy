@@ -164,9 +164,6 @@ internal sealed partial class ExecutionManager
         string expectedTargetId,
         long requestedDeadlineMs)
     {
-        // General, not Physical: the seam is one instantaneous native item build plus two stack
-        // decrements — no tool lifecycle, no swing, no menu, the same profile `equip_wearable`
-        // and `talk_to_npc` admit through.
         if (this.AdmitLocalExecution(requestId, requestedDeadlineMs, AdmissionActionabilityProfile.General, out string executionId, out long nowMs) is LocalExecutionReceipt admissionRejection)
             return admissionRejection;
 
@@ -214,9 +211,6 @@ internal sealed partial class ExecutionManager
 
         if (product is null)
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "tailoring_output_unavailable", $"{identity};left_item={leftId};right_item={rightId}");
-        // The native clothing/boots branches settle IN PLACE (`CraftItem` :830-846 returns the LEFT
-        // item), i.e. they consume nothing and produce no garment. Reporting that as a tailoring
-        // success would claim two halves that did not happen.
         if (ReferenceEquals(product, leftItem))
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "tailoring_in_place_combination", $"{identity};left_item={leftId};right_item={rightId};native_branch=in_place");
 
@@ -258,8 +252,6 @@ internal sealed partial class ExecutionManager
             return this.RememberTerminal(requestId, executionId, ExecutionState.Succeeded, "clothing_tailored", evidence);
         if (delivered == 0)
             return this.RememberTerminal(requestId, executionId, ExecutionState.Succeeded, "clothing_tailored", evidence);
-        // The garment exists (pack and/or ground) and the reagents did leave, but part of the
-        // output did not reach the backpack: never report a full success for a split delivery.
         return this.RememberTerminal(requestId, executionId, ExecutionState.PartiallySucceeded, "clothing_tailoring_output_dropped", evidence);
     }
 
@@ -314,8 +306,6 @@ internal sealed partial class ExecutionManager
 
         try
         {
-            // THE SEAM, with the native DEFAULT strength override: the strength rule belongs to
-            // `DyeItems` and is read out of the dye item's own tags.
             this.TailoringRecipeTable().DyeItems(garment, dyeItem);
         }
         catch (Exception nativeException)
@@ -331,10 +321,6 @@ internal sealed partial class ExecutionManager
         int dyeAfter = CountTailoringItem(player, dyeId);
         bool consumed = dyeAfter == (spendRight ? dyeBefore - 1 : dyeBefore);
         bool stillOwned = IsTailoringItemInPack(player, garment);
-        // The colour must move when the dye carries a DIFFERENT colour, and must stay where it was
-        // when it carries the same one. How FAR it moves is `Clothing.Dye`'s own blend and is read
-        // back rather than re-derived: the receipt publishes before/expected/strength/after so the
-        // blend is visible to a reader, while this terminal decides only the observable change.
         bool colourApplied = dyeColour.Value.Equals(colourBefore)
             ? colourAfter.Equals(colourBefore)
             : !colourAfter.Equals(colourBefore);
@@ -373,13 +359,6 @@ internal sealed partial class ExecutionManager
                 if (budget-- <= 0 || result.Count >= TailoringTargetMaximum) return result;
                 string? kind = ClassifyTailoringPair(menu, leftItem, rightItem, out _);
                 if (kind is null) continue;
-                // The dye route's product IS the garment (the left item), which is exactly what the
-                // caller needs to see: the target says "this garment, recoloured from this item". Its
-                // CURRENT colour is published with it, because that is the fact
-                // `dye_clothing_with_item`'s postcondition changes and the observation surface carries
-                // no other read of it: the same target id republished after the act IS the proof. A
-                // recipe whose garment cannot be built is not a target: the handler would refuse it,
-                // so publishing it would only lead the Agent into a refusal.
                 string outputId = string.Equals(kind, TailoringDyeKind, StringComparison.Ordinal)
                     ? leftItem.QualifiedItemId
                     : DescribeTailoringRecipeOutput(menu, leftItem, rightItem) ?? string.Empty;
@@ -412,9 +391,6 @@ internal sealed partial class ExecutionManager
     internal static string? ClassifyTailoringPair(TailoringMenu menu, Item leftItem, Item rightItem, out TailorItemRecipe? recipe)
     {
         recipe = null;
-        // Two boots are `CraftItem`'s in-place stat merge (:830-834), not a recipe output: it returns
-        // the LEFT item with the right one's stats applied, consuming nothing. Excluded from the
-        // projection so an Agent is never handed a target that no receiver can settle.
         if (leftItem is Boots && rightItem is Boots) return null;
         bool dyeableGarment = leftItem is Clothing clothing && clothing.dyeable.Value;
         if (dyeableGarment && TailoringMenu.GetDyeColor(rightItem) is not null)
@@ -474,11 +450,6 @@ internal sealed partial class ExecutionManager
         return true;
     }
 
-    /// <summary>
-    /// The recipe output id a pair would settle on, read through the same `CraftItem` branch
-    /// discovery classifies. It is a pure build (`ItemRegistry.Create`), never a mutation of the
-    /// backpack, and it exists only so the projection can NAME the garment the target would make.
-    /// </summary>
     private static string? DescribeTailoringRecipeOutput(TailoringMenu menu, Item leftItem, Item rightItem)
     {
         try
@@ -488,17 +459,10 @@ internal sealed partial class ExecutionManager
         }
         catch (Exception)
         {
-            // A recipe whose output cannot be built is not a target discovery may publish: the
-            // handler would refuse it, and publishing it would only lead the Agent into a refusal.
             return null;
         }
     }
 
-    /// <summary>
-    /// Whether the pair's only native route is the free-RGB picker: a dyeable garment plus a
-    /// `color_prismatic` item that carries no colour of its own. Named separately from "no recipe"
-    /// because it is a DIFFERENT refusal — the intent exists but no single item determines it.
-    /// </summary>
     private static bool IsColourPickerOnlyPair(Item leftItem, Item rightItem) =>
         leftItem is Clothing clothing && clothing.dyeable.Value
         && TailoringMenu.GetDyeColor(rightItem) is null
@@ -559,11 +523,6 @@ internal sealed partial class ExecutionManager
         return false;
     }
 
-    /// <summary>
-    /// How many pieces of a given qualified id lie on this location's floor as native debris.
-    /// An empty id counts every piece, which is the "before" reading; a named id is the "after"
-    /// reading that proves a delivered remainder really landed.
-    /// </summary>
     private static int CountTailoringDebris(GameLocation? location, string qualifiedItemId)
     {
         if (location is null) return 0;

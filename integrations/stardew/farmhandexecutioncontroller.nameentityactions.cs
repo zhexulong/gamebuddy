@@ -95,12 +95,6 @@ internal sealed partial class ExecutionManager
     /// </summary>
     internal const int EntityNameMaximumLength = 64;
 
-    /// <summary>
-    /// The receipt evidence cannot carry a value containing `;` (the field separator) or `=`
-    /// (which would split the field into an unreadable key), so a REQUESTED name containing either
-    /// is refused by name rather than flattened into a field that no longer says which name was
-    /// stored.
-    /// </summary>
     private static readonly char[] EntityNameForbiddenCharacters = { ';', '=' };
 
     /// <summary>
@@ -109,9 +103,6 @@ internal sealed partial class ExecutionManager
     /// </summary>
     public LocalExecutionReceipt RequestLocalNameEntity(string requestId, string name, long requestedDeadlineMs)
     {
-        // General, not Physical: the seam drives no tool lifecycle and starts no swing - it is one
-        // instantaneous name write, the same profile dismount_transport and equip_wearable admit
-        // through.
         if (this.AdmitLocalExecution(requestId, requestedDeadlineMs, AdmissionActionabilityProfile.General, out string executionId, out long nowMs) is LocalExecutionReceipt admissionRejection)
             return admissionRejection;
 
@@ -142,8 +133,6 @@ internal sealed partial class ExecutionManager
 
         try
         {
-            // THE SEAM. The native naming menu's own callback body, called with the same textual
-            // input the menu would have handed it.
             subject.nameHorse(requested);
         }
         catch (Exception nativeException)
@@ -157,8 +146,6 @@ internal sealed partial class ExecutionManager
                 + $"native_exception={nativeException.GetType().Name};native_call_ran_unknown=true");
         }
 
-        // The postcondition is the name the ENTITY now stores, never "we called the method":
-        // `nameHorse` is void and cannot refuse.
         string storedName = subject.Name;
         bool named = string.Equals(storedName, requested, StringComparison.Ordinal);
         string evidence =
@@ -198,11 +185,6 @@ internal sealed partial class ExecutionManager
     /// <summary>An empty native name reads as `none` in the evidence, never as an empty field.</summary>
     internal static string DescribeEntityName(string? name) => string.IsNullOrEmpty(name) ? "none" : name;
 
-    /// <summary>
-    /// The refusal reason for a requested name, or null when it is usable. The three rules exist
-    /// because the name is persisted as saved state, rendered as one label, and echoed through a
-    /// `;`-separated `key=value` list.
-    /// </summary>
     private static string? DescribeInvalidEntityName(string? name)
     {
         if (string.IsNullOrWhiteSpace(name)) return "blank";

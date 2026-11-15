@@ -91,10 +91,6 @@ internal sealed partial class ExecutionManager
         return this.ExecuteAcceptSpecialOrder(executionId, requestId, expectedTargetId);
     }
 
-    /// <summary>
-    /// The one execution body. It re-resolves the offer and re-reads the preconditions against the live
-    /// world, because admission and the body are two separate game-thread reads.
-    /// </summary>
     private LocalExecutionReceipt ExecuteAcceptSpecialOrder(string executionId, string requestId, string expectedTargetId)
     {
         SpecialOrderTargetResolution resolution = ResolveSpecialOrderTarget(expectedTargetId);
@@ -104,9 +100,6 @@ internal sealed partial class ExecutionManager
         SpecialOrder order = resolution.Order!;
         FarmerTeam team = Game1.player.team;
         string orderType = order.orderType.Value;
-        // The town board's own type is the empty string (`Data/SpecialOrders` OrderType "", which
-        // `GetSpecialOrder` trims). Evidence values may not be empty, so it is reported as the literal
-        // `none`, the same encoding the fish-pond receipt uses for its own absent nouns.
         string reportedType = orderType.Length == 0 ? "none" : orderType;
         bool markerBefore = team.acceptedSpecialOrderTypes.Contains(orderType);
         int ordersBefore = team.specialOrders.Count;
@@ -181,23 +174,16 @@ internal sealed partial class ExecutionManager
             $"quest_key={questKey};board_type={reportedType};"
             + $"generation_seed={matched.generationSeed.Value.ToString(CultureInfo.InvariantCulture)};published={expectedTargetId}";
 
-        // AddSpecialOrder's own first guard (:683-686): an order with this key is already active.
         if (team.specialOrders.Any(candidate => string.Equals(candidate.questKey.Value, questKey, StringComparison.Ordinal)))
             return SpecialOrderTargetResolution.Reject("special_order_already_active", $"{identity};active=true");
 
-        // The board's own accept branch is unreachable once the board's type is marked
-        // (SpecialOrdersBoard.UpdateButtons :94-98), so accepting another order for it would perform a
-        // world change the board itself cannot perform.
         if (team.acceptedSpecialOrderTypes.Contains(orderType))
             return SpecialOrderTargetResolution.Reject("special_order_board_already_used", $"{identity};board_marker=true");
 
-        // AddSpecialOrder's own second guard (:687-692): the data id must resolve to an order at all.
         SpecialOrder? rebuilt = SpecialOrder.GetSpecialOrder(questKey, matched.generationSeed.Value);
         if (rebuilt is null)
             return SpecialOrderTargetResolution.Reject("special_order_unavailable", $"{identity};data_missing=true");
 
-        // AddSpecialOrder's own third guard (:693-700): a completed order is only re-acceptable when its
-        // own data declares it repeatable.
         if (team.completedSpecialOrders.Contains(questKey))
         {
             StardewValley.GameData.SpecialOrders.SpecialOrderData? data = rebuilt.GetData();
@@ -271,10 +257,6 @@ internal sealed partial class ExecutionManager
         return keys;
     }
 
-    /// <summary>
-    /// The live candidates, bounded and joined with `|`, for a refusal that has to say WHAT the id no
-    /// longer names. Order keys are `Data/SpecialOrders` ids, so they carry no evidence separator.
-    /// </summary>
     private static string DescribeAvailableSpecialOrders(FarmerTeam team)
     {
         List<string> keys = new();

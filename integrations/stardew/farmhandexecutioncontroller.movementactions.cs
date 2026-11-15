@@ -14,8 +14,6 @@ using GameBuddy.Stardew.Navigation;
 
 namespace GameBuddy.Stardew;
 
-// Native handler bodies remain action/family-owned. All parts share the one
-// ExecutionManager game-thread ledger, receipt store, snapshot, and cancel state.
 internal sealed partial class ExecutionManager
 {
     /// <summary>The native click radius. <c>Game1.checkAction</c> gates the ordinary action path on
@@ -68,11 +66,6 @@ internal sealed partial class ExecutionManager
             return existing;
 
         this.revision++;
-        // Scope-bound actor proof. Authorization precedes the world/location
-        // readiness checks: a caller that is not the scope-bound actor is refused
-        // for that reason rather than for where it happens to be standing.
-        // This handler has no shared executionId; like its other rejections it
-        // mints one here.
         if (!this.TryGetBoundActor(out Farmer? boundActor, out string scopeReason) || boundActor is null)
             return this.RememberTerminal(requestId, Guid.NewGuid().ToString("N"), ExecutionState.Rejected, scopeReason, null);
 
@@ -93,9 +86,6 @@ internal sealed partial class ExecutionManager
             return this.RememberTerminal(requestId, Guid.NewGuid().ToString("N"), ExecutionState.Rejected, "invalid_deadline",
                 $"deadline={deadlineMs};now={nowMs};ceiling={nowMs + (long)TimeSpan.FromMinutes(1).TotalMilliseconds}");
 
-        // A newer accepted directive supersedes the earlier local directive.
-        // The controller is still the sole body owner: it first records a
-        // terminal receipt and halts before the new route may start.
         if (this.activeTravel is not null || this.activePet is not null || this.activeAnimalProduct is not null || this.activeItemUse is not null || this.activeItemPickup is not null)
             return this.RejectBodyOwned(requestId, Guid.NewGuid().ToString("N"));
         if (this.active is not null)
@@ -106,8 +96,6 @@ internal sealed partial class ExecutionManager
         string executionId = Guid.NewGuid().ToString("N");
         if (Game1.player.currentLocation is not { } moveLocation)
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "location_unavailable", null);
-        // The wall-clock deadline is authoritative: body ticks also check it,
-        // so a lagging game tick can never extend a Host/player-bound request.
         int deadlineTicks = Math.Max(1, (int)Math.Ceiling((deadlineMs - nowMs) * 60d / 1000d));
         bool nativeWarpTarget = Game1.player.currentLocation.warps.Any(warp => !warp.npcOnly.Value && warp.X == (int)targetTile.X && warp.Y == (int)targetTile.Y);
         bool adjacentArrival = allowAdjacentArrival || nativeWarpTarget;
@@ -137,31 +125,18 @@ internal sealed partial class ExecutionManager
             Vector2? approach = SelectStandingApproachTile(
                 targetTile,
                 Game1.player.Tile,
-                // "Walkable" answers CROSSING and this substitute is where the walk ENDS, so the stop rule joins
-                // it here (design §3.1.1's three-way warp rule). Without it the substitution picked the exit
-                // blanket whenever that was the nearest walkable ring tile. The NAMED target stays unfiltered: a
-                // warp tile as the destination is a cross-map intent, handled by `nativeWarpTarget` above.
                 candidate => StardewBodyController.IsWalkableTile(moveLocation, Game1.player, candidate)
                     && !IsWarpBufferTile(moveLocation, ((int)candidate.X, (int)candidate.Y)),
-                // The actor's OWN walkable component, not just "is this tile free".
                 StardewBodyController.BuildWalkableComponent(moveLocation, Game1.player)
                     ?? (_ => true));
             if (approach is not null)
             {
                 effectiveTarget = approach.Value;
-                // Exact arrival on the substitute, NOT adjacency to it. The substitute is standable by
-                // construction (that is the predicate it was chosen by) and exists precisely to bring
-                // the actor within INTERACTION RANGE of the requested tile; allowing adjacency lets
-                // the actor stop one tile farther out, which is where the range it was chosen for
-                // ends. Live evidence: move_to_tile(3,12) reported target_reached with the actor two
-                // tiles away, too far to act on the door it was asked to approach.
                 adjacentArrival = false;
                 approachSubstituted = true;
             }
             else if (stoodAsideFor.Refused)
             {
-                // Every ring tile is taken or is a warp buffer, so there is nowhere to stand that reaches this tile
-                // through a body: the refusal names the OCCUPANT, because waiting for them is the only next step.
                 return this.RememberTerminal(
                     requestId,
                     executionId,
@@ -171,17 +146,6 @@ internal sealed partial class ExecutionManager
             }
         }
 
-        // 2. Already inside the arrival contract for the EFFECTIVE destination: the
-        //    actor stands on it, or (when adjacency is allowed) on one of its
-        //    neighbours. The native planner has nothing to plan, so its
-        //    pathToEndPoint comes back empty and this used to be reported as
-        //    `no_native_path` -- a REACHABILITY verdict the Mod's own probe
-        //    contradicts (target_enclosed=false means it found a traversable
-        //    neighbour: the one the actor is standing on). A live ladder run spent
-        //    10 of its 29 movement dispatches on that false verdict and told the
-        //    player the farm was a maze. A satisfied arrival contract is success, and
-        //    saying so moves no native state because nothing needs moving. The check
-        //    is made AFTER substitution so the same rule covers the approached case.
         (int X, int Y) requestedTile = ((int)targetTile.X, (int)targetTile.Y);
         (int X, int Y) actorTile = ((int)Game1.player.Tile.X, (int)Game1.player.Tile.Y);
         bool withinRangeOfRequest = IsWithinRangeOfRequest(requestedTile, Game1.player);
@@ -190,10 +154,6 @@ internal sealed partial class ExecutionManager
             Math.Abs(actorTile.Y - (int)effectiveTarget.Y),
             adjacentArrival))
         {
-            // 2a. The substitution exists to bring the body within INTERACTION RANGE of the requested tile. Where it
-            //     cannot - the body is not on the request and cannot act on it from where it stands - reporting
-            //     success would hand the failure to the NEXT action, which then refuses without saying why. The two
-            //     tiles and the measured verdict are the whole answer: the caller re-aims or chooses another counter.
             if (approachSubstituted && !withinRangeOfRequest)
             {
                 return this.RememberTerminal(
@@ -214,27 +174,13 @@ internal sealed partial class ExecutionManager
         }
 
         LocalMoveSpec specification = new(executionId, requestId, effectiveTarget, adjacentArrival, this.revision, this.tick + deadlineTicks, deadlineMs);
-        // The controller emits its initial Running transition synchronously;
-        // establish ownership first so its authoritative receipt is retained.
         this.slots.Active.Assign(specification);
         if (!this.controller.TryStart(specification, Game1.player, this.tick, out string reasonCode, out string? startEvidence, out string? startHint))
         {
-            // 3. The native finder has no route, but the Mod's own clearing search can name the FIRST step that
-            //    would open one - a rock, an approach tile and a price. Walking to that approach tile is a MOVE, so
-            //    it belongs here, at the level of the other approach legs, and not inside the reachability probe or
-            //    the evidence formatter: those are predicates, and starting a walk from a predicate puts a mutation
-            //    in a query.
-            //
-            //    What this does NOT do is clear anything. Arrival there re-plans (`clear_step_blocked` if the
-            //    blocker is still standing), because swinging is destructive - it costs a tool and stamina, and
-            //    which rock to remove is a policy question the caller owns.
             if (reasonCode == StardewBodyController.NoNativePathReasonCode
                 && this.controller.TryStartClearApproach(specification, Game1.player, this.tick, out string? clearEvidence)
                 && clearEvidence is not null)
             {
-                // `this.active` stays the spec the caller asked for, because it is what the walk comes back to: the
-                // arrival re-plans and either continues to THAT tile or refuses. The controller owns the tile it is
-                // actually walking to for this leg, and the evidence names it.
                 string clearAcceptedEvidence = $"route_revision={specification.RouteRevision};requested={FormatTile(targetTile)};clear_step_approach=true;{clearEvidence}";
                 return this.RememberTerminal(requestId, executionId, ExecutionState.Accepted, "accepted", clearAcceptedEvidence);
             }
@@ -243,9 +189,6 @@ internal sealed partial class ExecutionManager
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, reasonCode, startEvidence, hint: startHint);
         }
 
-        // The substituted leg is walked to the SUBSTITUTE with EXACT arrival (`adjacentArrival` was cleared above), so
-        // this receipt names the substitution rather than reprinting `adjacent_arrival=true`, which promised the
-        // opposite: a body one tile from the substitute satisfied it, and that is the tile the run measured at 4,19.
         string acceptedEvidence = approachSubstituted
             ? $"route_revision={specification.RouteRevision};target={FormatTile(effectiveTarget)};requested={FormatTile(targetTile)};approach=substituted"
             : $"route_revision={specification.RouteRevision};target={FormatTile(effectiveTarget)}"
@@ -309,18 +252,6 @@ internal sealed partial class ExecutionManager
     internal static bool IsWarpBufferTile(GameLocation location, (int X, int Y) tile) =>
         location.warps.Any(warp => !warp.npcOnly.Value && warp.X == tile.X && warp.Y == tile.Y);
 
-    /// <summary>
-    /// Where a tool-family action stands, decided BEFORE any walk is committed, as arithmetic
-    /// over two predicates so the choice is testable without a world.
-    ///
-    /// The two facts that used to be one: a neighbour can be standable and still be walled off
-    /// from the actor, and picking it commits a walk the engine then answers with
-    /// `no_native_path` after spending its whole search budget. Measured 2026-10-25: five such
-    /// refusals in one run and one 57-second gap before the next executable action.
-    ///
-    /// Null is the honest answer: this placement has no approach, which the caller must report
-    /// through <see cref="DescribeNoReachableApproach"/> rather than dispatch.
-    /// </summary>
     internal static (int X, int Y)? SelectToolApproachTile(
         (int X, int Y) target,
         (int X, int Y) actor,
@@ -377,30 +308,16 @@ internal sealed partial class ExecutionManager
         GameLocation? location = null,
         Farmer? player = null)
     {
-        // The standable-neighbour fact is asked of the WHOLE footprint when there is one: a free tile on the south
-        // face of a 2x2 clump is a standable neighbour the anchor's own ring never contains, and answering `none`
-        // there would call a reachable placement unreachable.
         System.Collections.Generic.IReadOnlyList<(int X, int Y)> tiles = footprint ?? new[] { target };
-        // ONE enumeration answers both halves: how many tiles the actor could stand on (the count) and whether there
-        // are any at all (the word). Asking twice is how the two start disagreeing about the same ring.
         int standableTiles = ApproachTileSelector.StandableCandidates(tiles, isStandable).Count;
         string neighbour = standableTiles > 0 ? "unreachable" : "none";
         string evidence = $"target={target.X},{target.Y};actor={actor.X},{actor.Y};reach=1;approach=none;standable_neighbour={neighbour};standable_tiles={standableTiles.ToString(System.Globalization.CultureInfo.InvariantCulture)}";
         if (footprint is not null)
             evidence += $";footprint={footprint.Count}";
-        // The placement's own name names the tile; a caller that has already answered the placement passes its own word
-        // and is answered with the neighbour fact instead (see NoStandingTileCodePrefix).
         string code = reasonCodePrefix is null
             ? $"{NoReachableApproachReasonCode}:{target.X}:{target.Y}"
             : $"{reasonCodePrefix}:{neighbour}";
         string hint = $"no_approach;standable_neighbour={neighbour}";
-        // A RING WITH NO FREE TILE says less than the controller knows. `standable_tiles=0` is the count; WHAT stands on
-        // each of the four approaches - off the map, a named occupant, free ground walled off - is the geometry that
-        // separates "pick another target" from "walk around or clear this". `DescribeTargetApproaches` is the same ring
-        // the walk's own refusal publishes as `approaches=`, asked of the same world: a description, not a second search.
-        //
-        // It is asked with THIS refusal's standability predicate, not the controller's own: a ring that called a tile
-        // `open` beside a sentence that had just counted it unstandable would be two answers to one question.
         if (standableTiles == 0
             && location is not null
             && player is not null
@@ -408,10 +325,6 @@ internal sealed partial class ExecutionManager
         {
             evidence += $";described_by=target_ring;approaches={StardewBodyController.DescribeTargetApproaches(player, location, new Vector2(target.X, target.Y), tile => isStandable(((int)tile.X, (int)tile.Y)))}";
         }
-        // THE RIM of her own walkable component. A pocket is the one refusal distance cannot explain: her component is a
-        // few tiles, the target is outside it, and the fact that ends the loop is WHICH rim tile to cut. Asked of the
-        // world the caller named, and only when that body IS the tile this refusal names - a refusal about a tile nobody
-        // stands on gets no rim claim rather than another body's pocket.
         if (location is not null
             && player is not null
             && ((int)player.Tile.X, (int)player.Tile.Y) == actor
@@ -420,12 +333,8 @@ internal sealed partial class ExecutionManager
             && DescribeFrontierClearance(location, player, actor, target, component) is { } clearance)
         {
             evidence += clearance.Evidence;
-            // The caller's own prefix names ITS question (`no_standing_tile`), so it keeps it; the plain placement code
-            // is replaced, because "nothing here can be cut, and the rim is water" is the answer a settled node needs.
             if (reasonCodePrefix is null && clearance.Code is { } frontierCode)
                 code = frontierCode;
-            // One projection of the one evidence string, bounded by the journal's ceiling: the evidence is withheld for a
-            // settled failure (ADR-006), so the rim has to reach the channel that survives.
             hint = ClearingEvidence.DescribeRouteHint(evidence, hint) ?? hint;
         }
 
@@ -445,33 +354,10 @@ internal sealed partial class ExecutionManager
     /// </summary>
     internal const string NoCuttableBlockerReasonCode = "no_cuttable_blocker";
 
-    /// <summary>What <c>no_cuttable_blocker</c> says when the rim is the edge of the map rather than a thing on it.</summary>
     private const string OutOfMapReason = "out_of_map";
 
-    /// <summary>
-    /// How many tiles one opened-route flood may visit before it makes no claim. A farm's walkable component is as
-    /// large as the map (~80x65), so the budget has to cover a whole location or the answer would be undecided in the
-    /// open field it exists for; past it the flood answers null, which the ranking reads as "no step count" rather
-    /// than as a route.
-    /// </summary>
     private const int FrontierFloodLimit = 8000;
 
-    /// <summary>
-    /// How many of the rim's candidates one refusal PRICES: the nearest to the target by <see cref="FrontierDistance"/>,
-    /// north-most then west-most at the cut.
-    ///
-    /// <para>
-    /// Pricing is not free and it is not shared: each candidate costs its own <see cref="StepsToActAfterClear"/> flood,
-    /// and that flood may visit <see cref="FrontierFloodLimit"/> tiles of collision queries. A weed-choked wall presents
-    /// as many candidates as it has rim tiles - a measured farm corner presented ~200 - so pricing the whole rim is
-    /// ~1.6M collision queries on the game thread inside one refusal. Eight keeps one answer at 8 x 8000, the same
-    /// order as the single flood the rest of this file already spends.
-    /// </para>
-    /// <para>
-    /// The number is visible in the sentence the refusal publishes (<c>candidates=</c> beside <c>described=</c>), which
-    /// is what makes it revisable: raising it costs nothing but price, and the receipt says what was charged.
-    /// </para>
-    /// </summary>
     private const int FrontierPricedCandidateLimit = 8;
 
     /// <summary>One occupant-bearing tile on the rim of the actor's own walkable component that a published action removes.</summary>
@@ -498,31 +384,6 @@ internal sealed partial class ExecutionManager
     /// </summary>
     internal readonly record struct FrontierPick((int X, int Y) Tile, int? StepsToAct);
 
-    /// <summary>
-    /// The order a caller should take the rim's clearable tiles in: the ones that open the way with ONE clear first,
-    /// fewest steps of the walk they open, then the tile nearest the target, then north-most and west-most so one world
-    /// always yields one answer; and after all of those the clearable tiles whose removal does not open it on its own,
-    /// nearest the target first.
-    ///
-    /// <para>
-    /// Arithmetic over two predicates - which tiles a body may walk, and which rim tiles to weigh - so the choice is
-    /// testable without a world, exactly as the approach selector is. <paramref name="clearable"/> is the caller's
-    /// population, taken from the catalog's `Clears` declarations: this decides ORDER and nothing else, which is why it
-    /// cannot grow a list of kinds.
-    /// </para>
-    /// <para>
-    /// "Fewest clears" is the first key because it is the whole promise: one swing, then the route is re-planned
-    /// against a changed world (`ClearStepPlanner` resolves exactly one step for the same reason). A tile that would
-    /// need a second clear before it opens anything is still named - it is still the thing in the way - but it is
-    /// ranked after every tile that opens the way alone.
-    /// </para>
-    /// <para>
-    /// Only the <see cref="FrontierPricedCandidateLimit"/> nearest candidates are priced, so the order is over the part
-    /// of the rim one answer may afford. The caller publishes that population beside the choice
-    /// (<c>candidates=</c>/<c>described=</c>), because an order over a truncated set that did not say so would read as
-    /// an order over the whole rim.
-    /// </para>
-    /// </summary>
     internal static System.Collections.Generic.IReadOnlyList<FrontierPick> OrderFrontierBlockers(
         (int X, int Y) actor,
         (int X, int Y) target,
@@ -537,16 +398,6 @@ internal sealed partial class ExecutionManager
         return picks;
     }
 
-    /// <summary>
-    /// The candidates worth pricing: the <see cref="FrontierPricedCandidateLimit"/> nearest to the target, and the rest
-    /// not at all.
-    ///
-    /// <para>
-    /// "Nearest" is <see cref="FrontierDistance"/>, the same measurement the ranking's third key uses, and the cut is
-    /// decided north-most then west-most on a tie - so a rim listed in a different order prices the same tiles, which is
-    /// the property the whole answer rests on (one world state, one answer).
-    /// </para>
-    /// </summary>
     private static System.Collections.Generic.List<(int X, int Y)> NearestCandidates(
         System.Collections.Generic.IReadOnlyList<(int X, int Y)> clearable,
         (int X, int Y) target)
@@ -564,14 +415,8 @@ internal sealed partial class ExecutionManager
         return ordered;
     }
 
-    /// <summary>The planner's own four-way step set, so this order cannot disagree with the route it prices.</summary>
     private static readonly (int Dx, int Dy)[] FrontierSteps = { (0, -1), (1, 0), (0, 1), (-1, 0) };
 
-    /// <summary>
-    /// Ranking: opened routes before unopened ones, then fewest steps, then nearest the target, then north-most and
-    /// west-most. <c>StepsToAct</c> carries the first two keys in one field - an unopened rim tile has none, and
-    /// <see cref="int.MaxValue"/> is the same "last" the sort would give it by hand.
-    /// </summary>
     private static int CompareFrontierPicks(FrontierPick left, FrontierPick right, (int X, int Y) target)
     {
         int bySteps = (left.StepsToAct ?? int.MaxValue).CompareTo(right.StepsToAct ?? int.MaxValue);
@@ -586,21 +431,6 @@ internal sealed partial class ExecutionManager
     private static int FrontierDistance((int X, int Y) left, (int X, int Y) right) =>
         Math.Abs(left.X - right.X) + Math.Abs(left.Y - right.Y);
 
-    /// <summary>
-    /// How many steps it takes to reach a tile the target can be acted on from once <paramref name="cleared"/> is gone,
-    /// or null when removing that one tile opens nothing.
-    ///
-    /// <para>
-    /// The flood walks the planner's OWN walkable set with the cleared tile added, because "one clear, then she can
-    /// walk" is the promise being priced. It stops at the first tile inside the native interaction radius rather than at
-    /// the target tile: an action needs the radius (<see cref="IsWithinRangeOfRequest"/>), and the target tile usually
-    /// holds the very thing she wants to work, so it is not a tile she may stand on.
-    /// </para>
-    /// <para>
-    /// Null is honest for both "the route is still shut" and "the flood ran past its budget": neither is a step count,
-    /// and zero or a guess would put an unmeasured number in a receipt.
-    /// </para>
-    /// </summary>
     internal static int? StepsToActAfterClear(
         (int X, int Y) actor,
         (int X, int Y) target,
@@ -631,21 +461,8 @@ internal sealed partial class ExecutionManager
         return null;
     }
 
-    /// <summary>
-    /// The rim of her own walkable component, as the refusal publishes it: the `;`-prefixed facts that open it, or the
-    /// reason code that replaces the placement's when nothing on it can be opened.
-    /// </summary>
     private readonly record struct FrontierClearance(string Evidence, string? Code);
 
-    /// <summary>
-    /// What opens her pocket, in the words the clearing path already uses - or the word for why nothing can.
-    ///
-    /// <para>
-    /// The population is the RIM: tiles outside <paramref name="component"/> that a component tile steps onto. Each one
-    /// is either something a published `Clears` declaration removes (a candidate) or the wall the answer names. Null
-    /// means there is no rim to describe at all, and the refusal keeps the words it always had.
-    /// </para>
-    /// </summary>
     private static FrontierClearance? DescribeFrontierClearance(
         GameLocation location,
         Farmer player,
@@ -674,9 +491,6 @@ internal sealed partial class ExecutionManager
                         continue;
                     }
 
-                    // A rim tile is on the component's own step ring, so the tile to swing from always exists; a rim
-                    // tile with no component tile in ITS ring would not be on this rim at all, and skipping it keeps the
-                    // enumeration a statement about places she can actually stand.
                     if (StandingTileFor(rim, component, actor) is not { } standAt)
                         continue;
                     if (StardewBodyController.OccupantAt(location, player, new Vector2(rim.X, rim.Y)) is not { } occupancy)
@@ -689,8 +503,6 @@ internal sealed partial class ExecutionManager
                         ClearingActionSurface.ClearersOf(occupancy.Occupant, FarmhandActionCatalog.Registrations);
                     if (clearers.Count == 0)
                     {
-                        // Named but not clearable is still a cause: `no_cuttable_blocker=bush` says what to wait for or
-                        // walk around, where a layer word would say the wall is a wall.
                         walls.Add((rim, occupancy.Occupant));
                         continue;
                     }
@@ -708,10 +520,6 @@ internal sealed partial class ExecutionManager
                 candidates.ConvertAll(candidate => candidate.Tile),
                 tile => StardewBodyController.IsWalkableTile(location, player, new Vector2(tile.X, tile.Y)));
             (int X, int Y) head = ordered[0].Tile;
-            // WHAT the answer was chosen from. A wall can present more candidates than one answer may price, and a
-            // sentence that named the winner alone would read as "this is the only one there is": `candidates=8;
-            // described=8` says the whole rim was weighed, `candidates=200;described=8` says the nearest eight were and
-            // the rest were not consulted. Both numbers, so the truncation is visible rather than silent.
             string population = $";candidates={candidates.Count.ToString(System.Globalization.CultureInfo.InvariantCulture)};described={ordered.Count.ToString(System.Globalization.CultureInfo.InvariantCulture)}";
             return new FrontierClearance(
                 DescribeFrontierBlocker(candidates.Find(candidate => candidate.Tile == head), player) + population,
@@ -724,11 +532,6 @@ internal sealed partial class ExecutionManager
         return new FrontierClearance($";{NoCuttableBlockerReasonCode}={reason}", $"{NoCuttableBlockerReasonCode}:{reason}");
     }
 
-    /// <summary>
-    /// The tile a swing at <paramref name="blocker"/> reaches from: the component tile in its ring that is nearest to
-    /// her, north-most then west-most on a tie - the same rule `ClearStepPlanner` resolves a `stand_at` by, without a
-    /// second flood, because the rim tile is adjacent to her component by construction.
-    /// </summary>
     private static (int X, int Y)? StandingTileFor((int X, int Y) blocker, Func<Vector2, bool> component, (int X, int Y) actor)
     {
         (int X, int Y)? best = null;
@@ -756,11 +559,6 @@ internal sealed partial class ExecutionManager
         return best;
     }
 
-    /// <summary>
-    /// What <paramref name="tile"/> is made of, in the one word a reason code can carry: the map's own water first
-    /// (`isWaterTile`), then the layer the engine's own reading blames - a building, a map tile, a clump, or the location
-    /// constraint that has no entity behind it.
-    /// </summary>
     private static string FrontierWallReason(GameLocation location, Farmer player, (int X, int Y) tile)
     {
         if (location.isWaterTile(tile.X, tile.Y))
@@ -769,7 +567,6 @@ internal sealed partial class ExecutionManager
         return wall.Refused ? wall.Layer.ToWireValue() : "blocked";
     }
 
-    /// <summary>The rim wall nearest the target, then north-most and west-most, so one world answers one word.</summary>
     private static string NearestWallReason(
         System.Collections.Generic.IReadOnlyList<((int X, int Y) Tile, string Reason)> walls,
         (int X, int Y) target)
@@ -789,23 +586,9 @@ internal sealed partial class ExecutionManager
         return best.Reason;
     }
 
-    /// <summary>
-    /// One rim blocker as the refusal words it: the step `clear_step_blocked` prints (where to stand, how many clears the
-    /// idea is), then that path's blocker facts - the engine's name for it, every declaration that clears it with its
-    /// price, and the id the frame published for it.
-    ///
-    /// <para>
-    /// Composed from <see cref="ClearingEvidence"/>'s two formatters rather than rendered here, so the pocket refusal and
-    /// the arrival refusal cannot describe one weed in two different ways. The id is the FAMILY's own
-    /// (<see cref="PublishedBlockerTargetId"/>), which is what makes the named blocker addressable: an id this refusal
-    /// minted itself would be a request no published row could match.
-    /// </para>
-    /// </summary>
     private static string DescribeFrontierBlocker(FrontierBlocker blocker, Farmer player)
     {
         string? targetId = PublishedBlockerTargetId(player, blocker.TargetFamily, blocker.Tile.X, blocker.Tile.Y);
-        // One clear, then re-plan: the rim answer asks for one swing at one tile, and a count larger than that would
-        // promise a chain this refusal has not resolved.
         string step = ClearingEvidence.DescribeFirstStep(
             new FirstClearStep(true, blocker.Tile, blocker.StandAt, RemainingClears: 1, "frontier"),
             _ => blocker.Occupant) ?? string.Empty;
@@ -848,21 +631,6 @@ internal sealed partial class ExecutionManager
         return best;
     }
 
-    /// <summary>
-    /// The deterministic approach tile for a destination the actor cannot stand on: the
-    /// rule itself is <see cref="ApproachTileSelector.Select"/>, so the choice made here and
-    /// the choice made before a tool-family walk cannot disagree.
-    ///
-    /// The caller supplies BOTH predicates because only it knows how to ask the game:
-    /// <paramref name="isStandable"/> is one answer and <paramref name="isReachable"/> is
-    /// another (the actor's own walkable component). An unreachable-but-standable tile is the
-    /// case this exists for — picking it commits a walk the engine then answers with
-    /// `no_native_path`.
-    ///
-    /// A <paramref name="isReachable"/> that cannot answer (the flood exceeded its budget) is
-    /// passed as `_ =&gt; true`, which leaves the geometry to decide and the native finder to
-    /// rule — an undecided component must not be read as "nothing is reachable".
-    /// </summary>
     internal static Vector2? SelectStandingApproachTile(
         Vector2 targetTile,
         Vector2 actorTile,
@@ -973,52 +741,23 @@ internal sealed partial class ExecutionManager
     private LocalExecutionReceipt RequestLocalDoorTransition(string requestId, int sourceX, int sourceY, long requestedDeadlineMs, bool isDoor)
     {
         if (this.BeginLocalExecution(requestId, out string executionId, out long nowMs) is LocalExecutionReceipt replay) return replay;
-        // Scope-bound actor proof. Authorization precedes the world/location
-        // readiness checks: a caller that is not the scope-bound actor is refused
-        // for that reason rather than for where it happens to be standing.
-        // Scope-bound actor proof. Authorization precedes the world/location
-        // readiness checks: a caller that is not the scope-bound actor is refused
-        // for that reason rather than for where it happens to be standing.
         if (!this.TryGetBoundActor(out Farmer? boundActor, out string scopeReason) || boundActor is null)
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, scopeReason, null);
 
         if (!Context.IsWorldReady || Game1.player is null || Game1.player.currentLocation is null)
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "world_not_ready", null);
-        // Shared mechanical admission (identity → actionability → deadline →
-        // body exclusivity) in the one authority, in that same order: the
-        // refusal now NAMES the hold (actor_held_by_modal / cutscene_active /
-        // actor_passed_out / transient_busy) where the inline copy reported the
-        // anonymous player_not_actionable. One edit serves BOTH travel and
-        // enter_exit; the resolved warp, the native door dispatch and the
-        // Warped postcondition stay action-specific.
-        // General: a location transition is not a tool-driven or object-directed
-        // action (use_warp_item declares the same profile).
         if (this.AdmitExecution(requestId, executionId, requestedDeadlineMs, nowMs, AdmissionActionabilityProfile.General) is { } admissionRefusal)
             return admissionRefusal;
 
         StardewValley.GameLocation location = Game1.player.currentLocation;
         Microsoft.Xna.Framework.Point doorPoint = new(sourceX, sourceY);
         (int X, int Y) actorTile = ((int)Game1.player.Tile.X, (int)Game1.player.Tile.Y);
-        // `enter_exit` and `travel` both mean "leave this location from the tile I named". WHICH internal table holds that
-        // tile - the door table `updateDoors` builds, or the location's own `warps` list - is an artefact of how the map was
-        // authored, and the snapshot publishes both in one shape. Refusing a tile the snapshot published because it lives in
-        // the other table is the provider dictating what a consumer may ask for.
-        //
-        // Measured 2026-11-01 (`round19`): the companion named Farm(41,65), which the snapshot published as
-        // `41,65->Forest`, and `enter_exit` refused it as `door_not_available` seven times over three minutes while it stood
-        // on the adjacent tile. It was doing the right thing with the right coordinate.
         StardewValley.Warp? doorWarp = isDoor ? ResolveDoorWarp(location, doorPoint) : null;
         StardewValley.Warp? warp = doorWarp ?? ResolveLocationWarp(location, sourceX, sourceY);
-        // The native door entry may only run for a tile the DOOR TABLE owns: an edge warp has no click entry, and asking the
-        // Buildings layer about a tile it never described would run whatever Action happened to sit there.
         bool doorOwned = doorWarp is not null;
         string adjacentApproach = string.Empty;
         if (warp is null || warp.TargetName is null or "")
         {
-            // The refusal used to answer "1 warp in this location" and stop, which told a caller that asked for the tile
-            // ONE STEP from the exit neither where the exit was nor that it existed. The exits this location publishes are
-            // asked of the same discovery the snapshot's `doorTargets` and `warps` families publish from - never a second
-            // walk of the map - so a door named here is a door the caller can act on.
             IReadOnlyList<BridgeDoor> exits = DiscoverExitTiles(Game1.player);
             // Measured 2026-11-14 (`round42`, day 6): she stood on `(3,11)`, the farmhouse door was at `(3,12)`, and she
             // named her own tile. One orthogonal step was all that stood between her and the way out, so that request is
@@ -1048,15 +787,6 @@ internal sealed partial class ExecutionManager
         }
         if (!Utility.tileWithinRadiusOfPlayer(sourceX, sourceY, 1, Game1.player))
         {
-            // The refusal used to name only the two tiles it compared, and they were both the caller's OWN values - so a
-            // live receipt read `source=3,12;door=3,12` next to `door_out_of_range`, which looks like the product
-            // refusing a fact it just proved. Measured 2026-10-30 (`round8`): 2 doors and 0 warps refused this way, and
-            // the message named no third tile, so nothing showed WHERE the actor actually was.
-            //
-            // `sourceX,sourceY` is the tile the CALLER named - a snapshot-derived coordinate that may be several tiles
-            // from the actor by the time the request lands. The gate is about the actor, so the actor's own tile is the
-            // one fact that makes this actionable; without it a reader cannot tell "wrong tile asked for" from "actor
-            // drifted since the snapshot".
             return this.RememberTerminal(
                 requestId,
                 executionId,
@@ -1122,12 +852,7 @@ internal sealed partial class ExecutionManager
 
                 case NativeDoorOutcome.NotNative:
                 default:
-                    // No native click entry owns this tile, so the resolved warp
-                    // remains the authority (FarmHouse/Cabin exits).
                     this.slots.Travel.Assign(specification);
-                    // Published first, then the native warp - in that order, because the receipt is what a
-                    // caller reads when the warp throws. The value returned is the one the funnel published, so the
-                    // answer and the fact cannot disagree on the held-body path.
                     LocalExecutionReceipt plainDoorAccepted = this.RememberTerminal(
                         requestId,
                         executionId,
@@ -1181,9 +906,6 @@ internal sealed partial class ExecutionManager
 
         foreach (StardewValley.Warp warp in location.warps)
         {
-            // The `warps` family's own predicate: a transition that moves a PLAYER, with a publishable source and
-            // destination. An npc-only warp moves no farmer, and a row outside these ranges is not published at all,
-            // so naming one would point the caller at a tile the snapshot never described.
             if (warp is null || warp.npcOnly.Value || string.IsNullOrWhiteSpace(warp.TargetName))
                 continue;
             if (!FarmhandWarpCoordinateRange.IsPublishableSource(warp.X, warp.Y)
@@ -1239,16 +961,6 @@ internal sealed partial class ExecutionManager
         return (nearest.SourceX, nearest.SourceY, ExitDistance((nearest.SourceX, nearest.SourceY), actor));
     }
 
-    /// <summary>
-    /// The whole answer to "how do I get out", in one line: the tile the caller named, the count of the raw warp list
-    /// (which distinguishes an empty table from a mismatched tile), the actor's OWN tile, the nearest exit and how far
-    /// it is, then up to <see cref="ExitNamingLimit"/> exits nearest-first as <c>x,y-&gt;target</c>.
-    ///
-    /// <para>
-    /// The actor's tile is the fact that makes the line actionable: `round42` read `source=3,11;warps=1` for an actor
-    /// standing on the tile she named with the door one row below her, and nothing in that receipt said so.
-    /// </para>
-    /// </summary>
     internal static string DescribeExitRefusal(
         (int X, int Y) source,
         int warpCount,
@@ -1266,19 +978,14 @@ internal sealed partial class ExecutionManager
         return $"source={source.X},{source.Y};warps={warpCount};you={actor.X},{actor.Y};{nearest};doors={doors}";
     }
 
-    /// <summary>What the game's own door entry did for one door tile.</summary>
     private enum NativeDoorOutcome
     {
-        /// <summary>No native click entry owns this tile; the resolved warp stays authoritative.</summary>
         NotNative,
 
-        /// <summary>The native gate refused: the game drew its locked-door DialogueBox and did not warp.</summary>
         Refused,
 
-        /// <summary>The native entry started a warp.</summary>
         TransitionStarted,
 
-        /// <summary>The native entry handled the tile but neither warped nor refused.</summary>
         NoEffect,
     }
 
@@ -1347,8 +1054,6 @@ internal sealed partial class ExecutionManager
             return NativeDoorOutcome.Refused;
         }
 
-        // Nothing native owned this tile, so the resolver's warp stays
-        // authoritative (FarmHouse/Cabin exits have no click entry).
         if (!handled)
             entry = "resolved_warp_fallback";
         return handled ? NativeDoorOutcome.NoEffect : NativeDoorOutcome.NotNative;
@@ -1399,15 +1104,6 @@ internal sealed partial class ExecutionManager
 
         this.revision++;
         bool locationMatches = string.Equals(Game1.player.currentLocation.NameOrUniqueName, specification.TargetLocation, StringComparison.Ordinal);
-        // mine entry: the native MineShaft layout repositions the farmer onto the
-        // level's stairs (verified live at 10,4 vs the requested 6,6), so tile
-        // equality is not a legal postcondition for enter_mine; reaching the
-        // target level is.
-        //
-        // select_mine_elevator_floor shares that rule but has two target shapes:
-        // floor 0 targets the mine entrance MAP (a plain location match), while every
-        // other floor targets a generated level and lands somewhere the native layout
-        // chooses, so only "reached that level" is a legal postcondition.
         bool tileMatches = specification.Action switch
         {
             "enter_mine" => Game1.player.currentLocation is StardewValley.Locations.MineShaft mine
@@ -1416,14 +1112,7 @@ internal sealed partial class ExecutionManager
                 ? locationMatches
                 : Game1.player.currentLocation is StardewValley.Locations.MineShaft elevatorMine
                     && elevatorMine.mineLevel == int.Parse(specification.TargetLocation.Substring("UndergroundMine".Length)),
-            // `use_mine_ladder` leaves through the game's own `ExitMine_Leave` warp, so the exact landing tile is the
-            // game's business and only the destination map is a legal postcondition - the same rule `use_obelisk` and
-            // `use_warp_item` follow for a warp the game performs itself.
             "use_mine_ladder" => locationMatches,
-            // The obelisk's landing tile is NOT a legal postcondition: Route A's warpFarmer may
-            // shift the actor to a passable neighbour of the requested tile, and Route B's landing
-            // is chosen inside the game's own delayed callback (WarpTotemEntry, else the whichFarm
-            // fallback). Only "the actor reached the destination location" can be asserted.
             "use_obelisk" => locationMatches,
             // A warp totem's landing tile is also chosen inside the game's own delayed
             // callback (Object.totemWarpForReal), and Game1.warpFarmer may nudge it, so the
@@ -1463,15 +1152,9 @@ internal sealed partial class ExecutionManager
                                     : specification.Action == "use_mine_ladder"
                                         ? "mine_exit_postcondition_mismatch"
                                         : "travel_postcondition_mismatch";
-        // A minecart ride's native terminal is the same Warped postcondition, but
-        // the expected/actual pair alone cannot say which objective was ridden.
-        // The published identity is echoed so the receipt names the ride.
         string minecartEvidence = specification.MinecartNetworkId is null || specification.MinecartDestinationId is null
             ? string.Empty
             : $";network={specification.MinecartNetworkId};destination={specification.MinecartDestinationId}";
-        // The same argument for the mine exit: `expected=…;actual=…` describes the aftermath and hides the DECISION, and
-        // the decision is the whole point of `use_mine_ladder` - the game asked its own question and this execution
-        // answered it. The keys are the constants the handler read off the live box, not a second spelling of them.
         string mineExitDecisionEvidence = specification.Action == "use_mine_ladder"
             ? $";question={MineExitQuestionKey};response={MineExitResponseKey}"
             : string.Empty;
@@ -1637,9 +1320,6 @@ internal sealed partial class ExecutionManager
         }
         catch (Exception nativeException)
         {
-            // A failed native dispatch must still produce the one durable
-            // terminal receipt for this exact execution; it must never escape
-            // while a durable admission is pending.
             return this.RememberTerminal(
                 request.RequestId,
                 executionId,

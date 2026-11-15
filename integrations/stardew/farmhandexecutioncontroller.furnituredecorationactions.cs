@@ -92,15 +92,10 @@ internal sealed partial class ExecutionManager
         string expectedTargetId,
         long requestedDeadlineMs)
     {
-        // General, not Physical: no tool is swung and no DoFunction runs. The piece is turned by its own
-        // native method, the same profile `place_owned_object` and `move_placed_furniture` admit under.
         if (this.AdmitLocalExecution(requestId, requestedDeadlineMs, AdmissionActionabilityProfile.General, out string executionId, out long nowMs) is LocalExecutionReceipt admissionRejection)
             return admissionRejection;
 
         GameLocation location = Game1.player.currentLocation;
-        // THE PIECE IS RE-RESOLVED FROM THE COLLECTION, not from the id - the same discipline
-        // `move_placed_furniture` uses, because `location.furniture` is a collection with no key and a tile is
-        // what selects a piece. The id is what proves it is still the piece the caller saw.
         Furniture? piece = FindPlacedFurniture(location, targetX, targetY);
         if (piece is null)
             return this.RememberTerminal(
@@ -146,7 +141,6 @@ internal sealed partial class ExecutionManager
         Rectangle footprintBefore = piece.GetBoundingBox();
         try
         {
-            // The write: one step of the piece's own rotation cycle, with all of its bookkeeping.
             piece.rotate();
         }
         catch (Exception nativeException)
@@ -170,15 +164,11 @@ internal sealed partial class ExecutionManager
         bool restoredCollection = false;
         try
         {
-            // THE PROBE, and the reason it needs the piece out of the collection is in the file header: the
-            // predicate refuses a piece that is looking at its own footprint.
             location.furniture.Remove(piece);
             fits = piece.canBePlacedHere(location, placedTile);
         }
         finally
         {
-            // A predicate that was asked a question must not have moved or removed the piece: put it back in the
-            // collection and back on the tile it stood on.
             if (!location.furniture.Contains(piece)) location.furniture.Add(piece);
             restoredCollection = location.furniture.Contains(piece) && piece.TileLocation == placedTile;
             if (piece.TileLocation != placedTile) piece.TileLocation = placedTile;
@@ -186,12 +176,7 @@ internal sealed partial class ExecutionManager
 
         if (!fits)
         {
-            // THE TURN IS UNDONE. A piece whose new footprint lands on a neighbour is not a piece that turned: it is
-            // a piece that is still where it was. The revert is the exact inverse (`updateRotation` re-derives from
-            // the value), and the receipt is a REFUSAL because the world shows no change.
             bool reverted = RestoreFurnitureRotation(piece, rotationBefore);
-            // The diagnosis reads the footprint the turn PRODUCED, captured before the revert: asking the piece now would
-            // describe the box it was put back into, which is exactly the box nothing objected to.
             string occupants = DescribeRotationOccupants(location, piece, footprintAfter);
             bool blockedByOccupant = occupants.Length > 0;
             string evidence =
@@ -209,7 +194,6 @@ internal sealed partial class ExecutionManager
                 $"{evidence};blocked_by={DescribeRotationBlockingLayer(location, footprintAfter, blockedByOccupant)}");
         }
 
-        // Re-read AFTER the probe as well: a successful probe still ran a predicate that writes `tileLocation`.
         bool turned = piece.currentRotation.Value != rotationBefore;
         bool standing = location.furniture.Contains(piece) && piece.TileLocation == placedTile;
         bool holdsTheTurn = piece.currentRotation.Value == rotationAfter;
@@ -225,11 +209,6 @@ internal sealed partial class ExecutionManager
             : this.RememberTerminal(requestId, executionId, ExecutionState.Uncertain, "furniture_rotation_postcondition_not_observed", succeededEvidence);
     }
 
-    /// <summary>
-    /// The one place that answers "which piece of furniture stands on this tile", shared by the request body and
-    /// its post-approach sibling so the two cannot disagree. Furniture is addressed by its own tile because
-    /// <c>location.furniture</c> is a collection with no key.
-    /// </summary>
     private static Furniture? FindPlacedFurniture(GameLocation location, int x, int y)
     {
         Vector2 tile = new(x, y);
@@ -241,11 +220,6 @@ internal sealed partial class ExecutionManager
         return null;
     }
 
-    /// <summary>
-    /// Puts a piece's rotation back to a value it really carried, and re-derives everything the engine derives
-    /// from it. Answers whether the piece now reports that value, because a rollback nobody checked is a claim
-    /// rather than a fact.
-    /// </summary>
     private static bool RestoreFurnitureRotation(Furniture piece, int rotation)
     {
         piece.currentRotation.Value = rotation;
@@ -280,11 +254,6 @@ internal sealed partial class ExecutionManager
         return string.Join("|", occupants);
     }
 
-    /// <summary>
-    /// The layer a refused turn blames, in the closed vocabulary every refusal shares. When an occupant was named the
-    /// layer is that occupant; otherwise the LOCATION refused a footprint nothing is standing on (a wall, a
-    /// `NoFurniture` tile, a crop on the ground), and the location's own constraint is the honest answer.
-    /// </summary>
     private static string DescribeRotationBlockingLayer(GameLocation location, Rectangle footprint, bool blockedByOccupant)
     {
         if (blockedByOccupant)
@@ -299,18 +268,11 @@ internal sealed partial class ExecutionManager
         return new RefusalLayerToken(RefusalLayerKind.LocationConstraint, "furniture_placement").Format();
     }
 
-    /// <summary>
-    /// One footprint as the evidence spells it: the covered tile rectangle, so two receipts can be compared
-    /// without re-deriving the geometry from the sprite.
-    /// </summary>
     private static string FormatFootprint(Rectangle box) =>
         string.Create(
             CultureInfo.InvariantCulture,
             $"{box.X / 64},{box.Y / 64}:{box.Width / 64}x{box.Height / 64}");
 
-    // ---------------------------------------------------------------------------------------------------------
-    // remove_fence
-    // ---------------------------------------------------------------------------------------------------------
 
     /// <summary>
     /// Takes down one standing fence through the fence's own <c>Fence.performToolAction</c>. See
@@ -324,7 +286,6 @@ internal sealed partial class ExecutionManager
         string expectedTargetId,
         long requestedDeadlineMs)
     {
-        // Physical: this arm swings a real tool through the native DoFunction path, so it pays the swing's stamina.
         if (this.AdmitLocalExecution(requestId, requestedDeadlineMs, AdmissionActionabilityProfile.Physical, out string executionId, out long nowMs) is LocalExecutionReceipt admissionRejection)
             return admissionRejection;
 
@@ -333,8 +294,6 @@ internal sealed partial class ExecutionManager
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, fenceRefusal, $"{fenceEvidence};{DescribeRefusalLayer(fenceLayer)}");
         if (!TryDescribeFenceTool(slot, fence!, out Tool? tool, out string toolRefusal, out RefusalLayerToken toolLayer, out string toolEvidence))
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, toolRefusal, $"{toolEvidence};{DescribeRefusalLayer(toolLayer)}");
-        // 5.2: out of the native tool reach, walk in rather than refuse. Every position-independent check above is
-        // re-run in the shared execution body after the walk.
         if (!IsTileWithinChebyshevRadius(Game1.player, targetX, targetY, 1))
         {
             return this.TryBeginToolApproach(
@@ -353,10 +312,6 @@ internal sealed partial class ExecutionManager
         return this.ExecuteRemoveFence(executionId, requestId, slot, targetX, targetY, expectedTargetId);
     }
 
-    /// <summary>
-    /// Executes remove_fence against the current world, re-validating the fence and the named tool because an approach
-    /// leg may have taken several ticks. Shared by the in-range path and the post-approach path so they cannot drift.
-    /// </summary>
     private LocalExecutionReceipt ExecuteRemoveFence(string executionId, string requestId, int slot, int targetX, int targetY, string expectedTargetId)
     {
         GameLocation location = Game1.player.currentLocation;
@@ -422,9 +377,6 @@ internal sealed partial class ExecutionManager
         // that destroyed the fence (Fence.cs:473). The postcondition is therefore the world: the fence is GONE from the
         // collection the engine keeps it in, and the drops it produced are named.
         bool removed = !location.objects.TryGetValue(tile, out StardewValley.Object? after) || after is null;
-        // `drops=none` rather than an EMPTY value: `;`-separated evidence with a `key=` and nothing after it splits into a
-        // field the Host's parser must refuse, so a fence that dropped nothing would be a removal the Host cannot read -
-        // the same producer bug `shop_purchase` carried when a tile-opened shop wrote an empty `owner=`.
         string dropsEvidence = drops.Count == 0 ? "none" : string.Join("|", drops);
         string evidence =
             $"target={expectedTargetId};location={location.NameOrUniqueName};tile={targetX},{targetY};item={itemId};is_gate={isGate.ToString().ToLowerInvariant()};"
@@ -447,11 +399,6 @@ internal sealed partial class ExecutionManager
         return $"blocked_by={new RefusalLayerToken(layer.Layer, layer.Detail).Format()}";
     }
 
-    /// <summary>
-    /// Re-derives the named fence on the game thread. A tile that holds something else is a NAMED refusal, never a
-    /// silent re-target, and the target id is the object identity `remove_placed_item` already publishes for the same
-    /// fence - one fence, one id, whichever action takes it down.
-    /// </summary>
     private static bool TryDescribeFence(
         GameLocation location,
         int x,
@@ -533,9 +480,6 @@ internal sealed partial class ExecutionManager
         return true;
     }
 
-    // ---------------------------------------------------------------------------------------------------------
-    // put_item_in_fish_tank
-    // ---------------------------------------------------------------------------------------------------------
 
     /// <summary>
     /// Puts one carried item into a placed fish tank, through the tank's own
@@ -551,8 +495,6 @@ internal sealed partial class ExecutionManager
         string expectedTargetId,
         long requestedDeadlineMs)
     {
-        // General, not Physical: the seam drives no tool and starts no swing. It is one native interaction method on
-        // the tank, the same profile `place_owned_object` and `color_placed_object` admit under.
         if (this.AdmitLocalExecution(requestId, requestedDeadlineMs, AdmissionActionabilityProfile.General, out string executionId, out long nowMs) is LocalExecutionReceipt admissionRejection)
             return admissionRejection;
 
@@ -603,8 +545,6 @@ internal sealed partial class ExecutionManager
                 ExecutionState.Rejected,
                 "fish_tank_out_of_range",
                 $"target={targetX},{targetY};location={location.NameOrUniqueName};actor_tile={(int)Game1.player.Tile.X},{(int)Game1.player.Tile.Y};furniture_tile={FormatTile(tank.TileLocation)};blocked_by={new RefusalLayerToken(RefusalLayerKind.Range, "furniture_reach").Format()}");
-        // The tank's own mutex, read before anything is written. The native method answers TRUE doing nothing while the
-        // lock is held (:231-234), which would be a silent no-op; naming it lets the companion retry or walk away.
         if (tank.mutex.IsLocked())
             return this.RememberTerminal(
                 requestId,
@@ -620,11 +560,6 @@ internal sealed partial class ExecutionManager
         bool depositStarted;
         try
         {
-            // THE ENGINE'S TWO ANSWERS, ASKED BEFORE ANY WRITE. `CanBeDeposited` is the tank's own acceptance rule
-            // (:270-309: the FrogEgg trinket, the listed vanilla fish/decor ids, a hat for a hat-wearing fish, then
-            // `Data/Aquarium`), and `HasRoomForThisItem` (:168-207) is its own per-category capacity. Asking them here
-            // is what lets a refusal name the real reason: the native method's full-tank branch shows a red message and
-            // answers true (:237-241) without depositing anything.
             if (!tank.CanBeDeposited(carried))
                 return this.RememberTerminal(
                     requestId,
@@ -640,9 +575,6 @@ internal sealed partial class ExecutionManager
                     "fish_tank_full",
                     $"target={expectedTargetId};tile={targetX},{targetY};location={location.NameOrUniqueName};item={itemId};grade={tank.GetCategoryFromItem(carried)};capacity={tank.GetCapacityForCategory(tank.GetCategoryFromItem(carried))};held_items={heldBefore};blocked_by={RefusalProbe.ObjectOn(location, new Vector2(targetX, targetY)).Format()}");
 
-            // `checkForAction` reads the HELD item (`who.ActiveObject` / `who.CurrentItem`, :235), so the named slot is
-            // made current for exactly the duration of the call and put back in the `finally` - the same discipline
-            // `place_owned_object` follows, and the one piece of state this action writes around the engine.
             Game1.player.CurrentToolIndex = slot;
             try
             {
@@ -663,8 +595,6 @@ internal sealed partial class ExecutionManager
         }
         catch (Exception nativeException)
         {
-            // Anything thrown here ran AFTER at most the item's removal from the pack, so the outcome is unknown - never
-            // a success, and never a claim that nothing happened.
             return this.RememberTerminal(
                 requestId,
                 executionId,
@@ -673,10 +603,6 @@ internal sealed partial class ExecutionManager
                 $"target={expectedTargetId};tile={targetX},{targetY};location={location.NameOrUniqueName};item={itemId};held_items_before={heldBefore};native_exception={nativeException.GetType().Name};native_call_ran_unknown=true");
         }
 
-        // A DEPOSIT THAT DID NOT SETTLE GOES BACK. `localDepositedItem` is the engine's own hand-off slot, and the native
-        // failure callback (:255-263) is exactly "give it back, then drop it on the floor if the pack is full". This
-        // performs the first half of that callback and clears the slot, so a request can never leave the tank holding an
-        // item that is in neither place.
         if (tank.localDepositedItem is Item pending)
         {
             bool restored = Game1.player.addItemToInventoryBool(pending);
@@ -690,8 +616,6 @@ internal sealed partial class ExecutionManager
                 $"target={expectedTargetId};tile={targetX},{targetY};location={location.NameOrUniqueName};item={itemId};native_answered={depositStarted.ToString().ToLowerInvariant()};held_items_before={heldBefore};held_items_after={tank.heldItems.Count};restored={restored.ToString().ToLowerInvariant()};mutex_locked_after={tank.mutex.IsLocked().ToString().ToLowerInvariant()}");
         }
 
-        // Re-read AFTER the call. The tank's own `heldItems` is the authority on whether the item went in, and the pack is
-        // the authority on whether it left.
         int heldAfter = tank.heldItems.Count;
         int carriedAfter = CountQualifiedItem(Game1.player, itemId);
         string lastHeld = "none";
@@ -715,9 +639,6 @@ internal sealed partial class ExecutionManager
             : this.RememberTerminal(requestId, executionId, ExecutionState.Uncertain, "fish_tank_postcondition_not_observed", evidence);
     }
 
-    // ---------------------------------------------------------------------------------------------------------
-    // place_item_on_pedestal
-    // ---------------------------------------------------------------------------------------------------------
 
     /// <summary>
     /// Puts one carried item onto a placed item pedestal, through the pedestal's own
@@ -733,7 +654,6 @@ internal sealed partial class ExecutionManager
         string expectedTargetId,
         long requestedDeadlineMs)
     {
-        // General, not Physical: no tool is swung. The pedestal's own interaction method is the whole write.
         if (this.AdmitLocalExecution(requestId, requestedDeadlineMs, AdmissionActionabilityProfile.General, out string executionId, out long nowMs) is LocalExecutionReceipt admissionRejection)
             return admissionRejection;
 
@@ -749,8 +669,6 @@ internal sealed partial class ExecutionManager
                 ExecutionState.Rejected,
                 "pedestal_item_not_owned_in_slot",
                 $"slot={slot};slot_item={(slot >= 0 && slot < Game1.player.Items.Count ? Game1.player.Items[slot]?.QualifiedItemId ?? "empty" : "out_of_range")};expected={expectedQualifiedItemId};target={expectedTargetId};blocked_by={RefusalLayerToken.None.Format()}");
-        // 5.2: out of the interaction radius, walk in rather than refuse - the same policy `remove_placed_item` follows,
-        // and every position-independent check above is re-run in the shared body after the walk.
         if (!IsTileWithinChebyshevRadius(Game1.player, targetX, targetY, 1))
         {
             return this.TryBeginToolApproach(
@@ -769,10 +687,6 @@ internal sealed partial class ExecutionManager
         return this.ExecutePlaceItemOnPedestal(executionId, requestId, slot, targetX, targetY, expectedQualifiedItemId, expectedTargetId);
     }
 
-    /// <summary>
-    /// Executes place_item_on_pedestal against the current world, re-validating the pedestal and the item because an
-    /// approach leg may have taken several ticks. Shared by the in-range path and the post-approach path.
-    /// </summary>
     private LocalExecutionReceipt ExecutePlaceItemOnPedestal(string executionId, string requestId, int slot, int targetX, int targetY, string expectedQualifiedItemId, string expectedTargetId)
     {
         GameLocation location = Game1.player.currentLocation;
@@ -807,8 +721,6 @@ internal sealed partial class ExecutionManager
                 ExecutionState.Rejected,
                 "pedestal_occupied",
                 $"target={expectedTargetId};tile={targetX},{targetY};location={location.NameOrUniqueName};held={pedestal.heldObject.Value.QualifiedItemId};item={carried.QualifiedItemId};blocked_by={RefusalProbe.ObjectOn(location, new Vector2(targetX, targetY)).Format()}");
-        // The pedestal's own lock. `locked` is set by `UpdateItemMatch` (:126-141) when the item it wants has been
-        // placed and `lockOnSuccess` is set, and the native method refuses outright while it is true (:89-92).
         if (pedestal.locked.Value)
             return this.RememberTerminal(
                 requestId,
@@ -816,8 +728,6 @@ internal sealed partial class ExecutionManager
                 ExecutionState.Rejected,
                 "pedestal_locked",
                 $"target={expectedTargetId};tile={targetX},{targetY};location={location.NameOrUniqueName};item={carried.QualifiedItemId};match={(pedestal.match.Value.ToString().ToLowerInvariant())};lock_on_success={(pedestal.lockOnSuccess.Value.ToString().ToLowerInvariant())};blocked_by={RefusalProbe.ObjectOn(location, new Vector2(targetX, targetY)).Format()}");
-        // The pedestal's own mutex, read before anything is written: while it is held the native method parks the write in
-        // `RequestLock`, and its FAILURE callback would drop the item on the floor (:113-119) rather than refuse.
         if (pedestal.itemModifyMutex.IsLocked())
             return this.RememberTerminal(
                 requestId,
@@ -831,9 +741,6 @@ internal sealed partial class ExecutionManager
         bool droppedIn;
         try
         {
-            // THE PEDESTAL'S OWN VERDICT, ASKED BEFORE THE WRITE. `probe: true` runs the two acceptance guards - the item must
-            // be trashable (:93-96) and must be EXACTLY a plain `Object` (:102), so a hat, a piece of clothing or a piece of
-            // furniture is not this pedestal's subject - and performs no write at all.
             if (!pedestal.performObjectDropInAction(carried, probe: true, Game1.player))
                 return this.RememberTerminal(
                     requestId,
@@ -842,13 +749,7 @@ internal sealed partial class ExecutionManager
                     "pedestal_rejects_item",
                     $"target={expectedTargetId};tile={targetX},{targetY};location={location.NameOrUniqueName};item={itemId};item_type={carried.GetType().Name};can_be_trashed={(carried.canBeTrashed().ToString().ToLowerInvariant())};blocked_by={RefusalProbe.ObjectOn(location, new Vector2(targetX, targetY)).Format()}");
 
-            // The write. The item is handed to the method directly - it takes the drop item as an argument, so unlike the
-            // fish tank there is no held-slot state to swap around the call.
             droppedIn = pedestal.performObjectDropInAction(carried, probe: false, Game1.player);
-            // THE DEPOSIT SETTLES ON A LATER TICK. The write lives in `itemModifyMutex.RequestLock`'s acquired callback
-            // (:107-113), and `RequestLock` only records the request; the callback runs from `NetMutex.Update`, which the
-            // engine calls once per tick from `ItemPedestal.updateWhenCurrentLocation` (:195-201). Driving that same public
-            // method once settles it inside one receipt.
             if (droppedIn)
                 pedestal.itemModifyMutex.Update(location);
             // The engine's own ingress consumes the stack AFTER a handled drop (GameLocation.cs:7781-7784), and the item
@@ -874,9 +775,6 @@ internal sealed partial class ExecutionManager
             && string.Equals(placed.QualifiedItemId, itemId, StringComparison.Ordinal);
         if (!holdsIt)
         {
-            // THE ITEM DID NOT LAND, SO IT GOES BACK. The stack was already reduced above, and the pedestal's own failure
-            // callback would have dropped the copy as debris (:113-119) - the second half of that callback is "put it in the
-            // pack", which is what this performs before answering.
             bool restored = false;
             if (carriedAfter < carriedBefore)
                 restored = Game1.player.addItemToInventoryBool(carried.getOne());
@@ -914,12 +812,6 @@ internal sealed partial class ExecutionManager
         if (item.Stack <= 0) Game1.player.removeItemFromInventory(item);
     }
 
-    /// <summary>
-    /// Re-derives the named pedestal on the game thread. A tile holding something else is a NAMED refusal, and the target id
-    /// is this action's own: an EMPTY pedestal carries no held item, so it cannot be named through the `pedestalTargets`
-    /// identity the take action uses (that one binds the item and its stack and is published only while the pedestal holds
-    /// something).
-    /// </summary>
     private static bool TryDescribePedestal(
         GameLocation location,
         int x,

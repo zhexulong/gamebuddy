@@ -94,21 +94,8 @@ internal sealed partial class ExecutionManager
             || crabPot.owner.Value != player.UniqueMultiplayerID
             || !string.Equals(BuildCollectCrabPotTargetId(location, targetX, targetY), expectedTargetId, StringComparison.Ordinal))
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "crab_pot_target_changed", $"target={targetX},{targetY}");
-        // Admission hard gate (source-corrected): only the mature 714 branch may
-        // settle. Any other state is rejected without invoking checkForAction, so
-        // the unbaited non-714 removal branch (the second arm of
-        // `CrabPot.checkForAction`) is unreachable.
-        // BAIT IS NOT PART OF THIS GATE: `CrabPot.DayUpdate` fills a pot that
-        // carries no bait at all for a Luremaster - `CrabPot.NeedsBait` is
-        // `bait == null && !professions.Contains(11)`, and the day update returns
-        // early only while `NeedsBait` holds - so demanding bait refused a mature
-        // pot the profession had just filled.
         if (!crabPot.readyForHarvest.Value || crabPot.tileIndexToShow != 714 || crabPot.heldObject.Value is null)
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "crab_pot_not_ready", $"target={targetX},{targetY};ready={crabPot.readyForHarvest.Value.ToString().ToLowerInvariant()};tile_index={crabPot.tileIndexToShow};held={(crabPot.heldObject.Value is null ? "none" : crabPot.heldObject.Value.QualifiedItemId)};bait={(crabPot.bait.Value?.QualifiedItemId ?? "none")}");
-        // 5.2: out of the native radius, walk in rather than refuse. The pot and its
-        // maturity are validated above; both are re-checked after the walk inside the
-        // closure, because `checkAction` is a real player input path whose outcome
-        // depends on the world at the moment it runs.
         if (!IsTileWithinChebyshevRadius(player, targetX, targetY, 1))
         {
             return this.TryBeginToolApproach(
@@ -127,13 +114,6 @@ internal sealed partial class ExecutionManager
         return this.ExecuteCollectCrabPotOutput(executionId, requestId, targetX, targetY, expectedTargetId);
     }
 
-    /// <summary>
-    /// Executes collect_crab_pot_output against the current world, re-validating the
-    /// pot and its maturity because an approach leg may have taken several ticks. Shared
-    /// by the in-range path and the post-approach path. Restores the same required
-    /// order the in-range path had: advancement gate, then the hand the native entry
-    /// needs, then the native checkAction.
-    /// </summary>
     private LocalExecutionReceipt ExecuteCollectCrabPotOutput(string executionId, string requestId, int targetX, int targetY, string expectedTargetId)
     {
         Farmer player = Game1.player;
@@ -192,13 +172,6 @@ internal sealed partial class ExecutionManager
         return this.SettlePostcondition(requestId, executionId, collected, "crab_pot_output_collected", "crab_pot_output_collect_postcondition_unavailable", evidence);
     }
 
-    /// <summary>
-    /// The one opaque identity for the mature-output pot of this action. It is
-    /// derived only from the live location and tile (like the sibling
-    /// BuildMachineTargetId), never from a client-supplied value, and is
-    /// deliberately distinct from the placement/bait target hashes so a
-    /// place/bait identity can never be replayed into collection.
-    /// </summary>
     private static string BuildCollectCrabPotTargetId(StardewValley.GameLocation location, int x, int y)
     {
         string raw = $"{location.NameOrUniqueName}:{x},{y}:(O)710:collect-crab-pot";

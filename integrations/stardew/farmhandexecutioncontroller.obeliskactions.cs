@@ -83,20 +83,8 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
     /// <summary>The map the island obelisk warps to (IslandWest.cs:209).</summary>
     internal const string IslandFarmObeliskDestination = "Farm";
     private const string IslandFarmObeliskDisplayName = "Island Farm Obelisk";
-    /// <summary>The visible radius discovery scans for the island obelisk tile.</summary>
     private const int ObeliskTargetDiscoveryRadius = 12;
 
-    /// <summary>
-    /// The most obelisk targets one observation publishes.
-    ///
-    /// Nothing in the game caps how many obelisk BUILDINGS a farm may hold - `location.buildings`
-    /// grows with the farm, and a player may commission the same obelisk type more than once - so
-    /// this list needs a ceiling of its own. That ceiling is not cosmetic: the Host refuses a
-    /// snapshot family that exceeds its admitted entry cap by CLOSING the bridge, so an unbounded
-    /// list would end the session on a large farm rather than merely truncate. This is the
-    /// producer half of one number; `tools/check-stardew-snapshot-family-bounds.mjs` holds it
-    /// equal to the Host's cap for `obeliskTargets`.
-    /// </summary>
     private const int MaximumPublishedObeliskTargets = 32;
 
     /// <summary>
@@ -208,7 +196,6 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
         return new ObeliskFixtureProbe(inRing, resolution.Route, tileX, tileY);
     }
 
-    /// <summary>The island obelisk tile is identified by its own action string.</summary>
     private static bool IsFarmObeliskAction(string action)
     {
         string[] parts = action.Split(' ', StringSplitOptions.RemoveEmptyEntries);
@@ -238,8 +225,6 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
         }
         catch
         {
-            // A malformed map property falls back to the same whichFarm default the
-            // native callback uses; it is not a refusal.
             hasEntry = false;
         }
 
@@ -258,12 +243,6 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
         return true;
     }
 
-    /// <summary>
-    /// The obelisk structures the actor can name right now, projected read-only from
-    /// live state: every finished obelisk building in the current location, plus
-    /// IslandWest's own tile when the island obelisk upgrade is applied. Nothing is
-    /// synthesized -- an obelisk that is not there is not advertised.
-    /// </summary>
     private IReadOnlyList<BridgeObeliskTarget> DiscoverObeliskTargets(Farmer player, DiscoveryExclusionRecorder exclusions)
     {
         if (player is null || player.currentLocation is not StardewValley.GameLocation location)
@@ -271,7 +250,6 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
 
         List<BridgeObeliskTarget> targets = new();
 
-        // Route A: placed obelisk buildings.
         foreach (Building building in location.buildings)
         {
             if (building is null)
@@ -332,10 +310,6 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
         return targets.Take(MaximumPublishedObeliskTargets).ToArray();
     }
 
-    /// <summary>
-    /// One resolved obelisk, or the named reason the published target no longer
-    /// matches the live world.
-    /// </summary>
     private sealed record ObeliskTargetResolution(
         bool Accepted,
         string ReasonCode,
@@ -351,18 +325,9 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
             new(false, reasonCode, evidence, string.Empty, string.Empty, 0, 0, false, null);
     }
 
-    /// <summary>
-    /// Re-derives the named obelisk on the game thread. The client-supplied id is
-    /// only a selector: the structure at `x,y` decides the route, the destination
-    /// and the identity, and a mismatch is a named refusal rather than a silent
-    /// re-target.
-    /// </summary>
     private static ObeliskTargetResolution ResolveObeliskTarget(
         StardewValley.GameLocation location, int x, int y, string expectedTargetId)
     {
-        // Route A. The named tile may be ANY tile of the building's own footprint;
-        // the canonical identity is the building's origin tile plus its type, so a
-        // different tile of the same building is the same obelisk.
         foreach (Building building in location.buildings)
         {
             if (building is null || !building.occupiesTile(x, y))
@@ -380,8 +345,6 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
             return new(true, "accepted", string.Empty, ObeliskBuildingRoute, destination, warpX, warpY, forceDismount, building);
         }
 
-        // The tile belongs to a building only through its extra tile-property
-        // radius: something is there and it is not an obelisk the caller may name.
         foreach (Building building in location.buildings)
         {
             if (building is null || !building.occupiesTile(x, y, applyTilePropertyRadius: true))
@@ -391,7 +354,6 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
                 $"tile={x},{y};building_type={building.buildingType.Value};building_origin={building.tileX.Value},{building.tileY.Value};tile_outside_owned_footprint=true");
         }
 
-        // Route B.
         string? tileAction = location.doesTileHaveProperty(x, y, "Action", "Buildings");
         if (tileAction is null || !IsFarmObeliskAction(tileAction))
             return ObeliskTargetResolution.Reject(
@@ -436,9 +398,6 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
             return this.RememberTerminal(request.RequestId, executionId, ExecutionState.Rejected, "world_not_ready", null);
 
         long nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-        // Shared mechanical admission (identity → actionability → deadline →
-        // body exclusivity). The single authority names the hold it refuses on;
-        // route resolution, reach and the postcondition stay action-specific.
         if (this.AdmitExecution(request.RequestId, executionId, request.DeadlineMs, nowMs, AdmissionActionabilityProfile.General) is { } admissionRefusal)
             return admissionRefusal;
 
@@ -464,15 +423,6 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
         if (!resolution.Accepted)
             return this.RememberTerminal(request.RequestId, executionId, ExecutionState.Rejected, resolution.ReasonCode, resolution.Evidence);
 
-        // Reach is checked AFTER resolution because the two routes have different interaction
-        // geometry, and checking one shape against the other refuses a correctly-staged actor:
-        //   * Route A names a BUILDING. The native click reaches it from any tile inside the
-        //     building rectangle dilated by one (IsTileWithinBuildingRing), and the published
-        //     tile may be any footprint tile while the actor stands on the ring around the whole
-        //     footprint — for a 3-wide obelisk that is up to three tiles from the origin.
-        //   * Route B names a single map tile, so Chebyshev-1 of that exact tile is right.
-        // This is the same defect the tool family had: requiring adjacency to one nominated tile
-        // rather than to the thing the actor actually interacts with.
         bool withinReach = resolution.Route == ObeliskBuildingRoute && resolution.Building is { } reached
             ? IsTileWithinBuildingRing(
                 actor.TilePoint.X,
@@ -514,8 +464,6 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
         }
         else
         {
-            // The island tile only exists once the upgrade applied the override, so
-            // the world fact that drives it is checked directly as well.
             if (location is not StardewValley.Locations.IslandWest islandWest || !islandWest.farmObelisk.Value)
                 return this.RememberTerminal(
                     request.RequestId,
@@ -549,8 +497,6 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
         {
             if (resolution.Route == ObeliskBuildingRoute)
             {
-                // The shared public UI-free seam. Neither the wand effect, nor the
-                // freeze, nor the delayed warp is re-implemented here.
                 Building.PerformObeliskWarp(
                     resolution.Destination,
                     resolution.DestinationX,
@@ -563,8 +509,6 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
                 actor,
                 new xTile.Dimensions.Location(targetX, targetY)))
             {
-                // A location that does not own this string cannot start the routine;
-                // nothing native ran, so this is a refusal and not an uncertain warp.
                 return this.RememberTerminal(
                     request.RequestId,
                     executionId,

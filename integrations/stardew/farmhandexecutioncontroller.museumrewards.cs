@@ -93,11 +93,6 @@ internal sealed partial class ExecutionManager
         return this.ExecuteClaimMuseumReward(executionId, requestId, expectedTargetId);
     }
 
-    /// <summary>
-    /// The one execution body. It re-resolves the reward set against the live world (admission and the body
-    /// are two separate game-thread reads), calls the native enumeration exactly once, and then re-reads
-    /// the world for the postcondition. See the file header for why nothing may be queried twice.
-    /// </summary>
     private LocalExecutionReceipt ExecuteClaimMuseumReward(string executionId, string requestId, string expectedTargetId)
     {
         MuseumRewardTargetResolution resolution = ResolveMuseumRewardTarget(expectedTargetId);
@@ -113,9 +108,6 @@ internal sealed partial class ExecutionManager
         List<Item> rewards;
         try
         {
-            // THE SEAM, first half. It both returns what may be collected (the items) and grants the
-            // non-item rewards, and it is the only writer of the lookup the callbacks below need. Called
-            // ONCE.
             rewards = museum.getRewardsForPlayer(player);
         }
         catch (Exception nativeException)
@@ -133,9 +125,6 @@ internal sealed partial class ExecutionManager
         int recorded = 0;
         foreach (Item item in rewards)
         {
-            // THE SEAM, second half: the game's own grab callback. It records the item through
-            // `getRewardItemKey` and grants that reward's non-item effects; it resolves the reward id from
-            // `_itemToRewardsLookup`, which is why `item` must be the instance just returned.
             museum.OnRewardCollected(item, player);
             // The menu's own deposit (ItemGrabMenu.cs:845/:990). A deposit that does not fit reports false
             // rather than destroying the item, and is a postcondition failure below.
@@ -146,8 +135,6 @@ internal sealed partial class ExecutionManager
                 recorded++;
         }
 
-        // A FRESH read of the read-only collectable set: the world change the claim is supposed to make is
-        // that there is nothing left to collect.
         List<(string RewardKey, Item Item)> stillCollectable = ReadCollectableMuseumRewards(museum, player);
         int mailAfter = player.mailReceived.Count;
         int unitsAfter = CountInventoryUnits(player);
@@ -229,8 +216,6 @@ internal sealed partial class ExecutionManager
         List<(string RewardKey, Item Item)> result = new();
         foreach (KeyValuePair<string, MuseumRewards> entry in data)
         {
-            // `getRewardsForPlayer` only ever LISTS item rewards; a reward with no item id is granted inside
-            // the enumeration itself and is not part of what the actor sees or picks up.
             if (entry.Value.RewardItemId is null)
                 continue;
             if (!museum.CanCollectReward(entry.Value, entry.Key, player, counts))

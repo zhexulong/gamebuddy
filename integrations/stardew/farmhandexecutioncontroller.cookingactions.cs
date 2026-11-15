@@ -178,15 +178,10 @@ internal sealed partial class ExecutionManager
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "player_not_actionable", "active_object_held;station=cookout_kit");
 
         CraftingRecipe recipe = new(recipeId, isCookingRecipe: true);
-        // Backpack-only ingredient gate: the null container list means no fridge /
-        // mini-fridge material source is consulted (step1_fridge=excluded).
         if (!recipe.doesFarmerHaveIngredientsInInventory(null))
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "recipe_ingredients_unavailable", $"recipe={recipeId};station={stationKind}@{stationX},{stationY}");
 
         Item crafted = recipe.createItem();
-        // Retained, non-aborting space pre-check: reported as evidence to
-        // corroborate the delivery surface, never used to refuse or to decide the
-        // terminal (it cannot see the slots the consumption itself frees).
         bool spacePrechecked = player.couldInventoryAcceptThisItem(crafted);
 
         // Vanilla seasoning gate (CraftingPage.cs:431-448): a quality-0 cooked dish
@@ -253,12 +248,6 @@ internal sealed partial class ExecutionManager
         return this.RememberTerminal(requestId, executionId, state, reasonCode, evidence);
     }
 
-    /// <summary>
-    /// Resolve the wire recipe identity against the live cooking-recipe table.
-    /// The exact key wins; otherwise the underscore alias of a key is accepted
-    /// only when it maps to exactly one live cooking recipe, so an unknown or
-    /// ambiguous identity fails closed instead of silently cooking another dish.
-    /// </summary>
     private static bool TryResolveCookingRecipeId(string expectedRecipeId, out string recipeId, out string reasonCode)
     {
         if (CraftingRecipe.cookingRecipes is null)
@@ -309,19 +298,6 @@ internal sealed partial class ExecutionManager
         return false;
     }
 
-    /// <summary>
-    /// Every learned cooking recipe, published under a sendable identity, so the
-    /// Agent can name a recipe instead of guessing keys from model memory. Only
-    /// learned recipes appear: an unlearned key is not an admissible target and
-    /// publishing it would only lead the Agent into recipe_not_learned.
-    ///
-    /// <para>
-    /// IngredientsAvailable is a pure fact, measured with the same backpack-only
-    /// gate the handler applies (null container list, so the fridge stays out of
-    /// both). It is not admission: the handler still re-resolves the identity and
-    /// re-evaluates learned and ingredient state at dispatch.
-    /// </para>
-    /// </summary>
     private static IReadOnlyList<BridgeRecipeTarget> DiscoverCookingRecipeTargets(Farmer player)
     {
         Dictionary<string, string>? table = CraftingRecipe.cookingRecipes;
@@ -329,43 +305,22 @@ internal sealed partial class ExecutionManager
         List<BridgeRecipeTarget> result = new();
         foreach (string recipeKey in player.cookingRecipes.Keys.OrderBy(key => key, StringComparer.Ordinal))
         {
-            // A learned key with no live recipe (content removed by a mod) is not
-            // a target: the handler would reject it as recipe_unknown.
             if (!table.ContainsKey(recipeKey)) continue;
             if (TryBuildWireRecipeIdentity(table.Keys, recipeKey) is not { } wireIdentity) continue;
             CraftingRecipe recipe = new(recipeKey, isCookingRecipe: true);
             result.Add(new BridgeRecipeTarget(wireIdentity, recipe.DisplayName, recipe.doesFarmerHaveIngredientsInInventory(null)));
         }
-        // Bounded like every other snapshot target list. Craftable-now recipes are
-        // ranked first (the sort is stable, so ordinal order survives inside a
-        // rank) because those are the ones the Agent can act on immediately.
         return result
             .OrderByDescending(target => target.IngredientsAvailable)
             .Take(64)
             .ToArray();
     }
 
-    /// <summary>
-    /// Where a live cooking station is: the vanilla kitchen action tile
-    /// (Buildings "Action" = kitchen/Kitchen, the selector GameLocation.checkAction
-    /// dispatches to ActivateKitchen) or a placed cookout kit (BC)278 (the vanilla
-    /// campfire cooking trigger). This is the same two-predicate derivation the
-    /// dispatch W-rule uses, so the Agent is never told about a station the action
-    /// would refuse.
-    ///
-    /// <para>
-    /// Discovery only. cook_recipe keeps carrying the recipe identity alone and
-    /// re-derives the station from the live world at dispatch, so no coordinate
-    /// published here ever becomes mutation authority.
-    /// </para>
-    /// </summary>
     private static IReadOnlyList<BridgeCookingStationTarget> DiscoverCookingStationTargets(Farmer player)
     {
         GameLocation? location = player.currentLocation;
         if (location is null) return Array.Empty<BridgeCookingStationTarget>();
         List<BridgeCookingStationTarget> result = new();
-        // Kitchens only exist on indoor maps, so the map-wide tile-property scan
-        // is confined to the small interior maps instead of running outdoors.
         if (!location.IsOutdoors)
         {
             int width = location.map.Layers[0].LayerWidth;
@@ -415,12 +370,6 @@ internal sealed partial class ExecutionManager
             : null;
     }
 
-    /// <summary>
-    /// Derive the live cooking station adjacent to the actor (W-rule). Only the
-    /// vanilla kitchen action tile (Buildings "Action" = Kitchen/kitchen) and the
-    /// vanilla cookout kit (BC)278 count; the kitchen tile is preferred. No
-    /// client-supplied coordinate is trusted.
-    /// </summary>
     private static bool TryFindAdjacentCookingStation(GameLocation location, Farmer player, out int stationX, out int stationY, out string stationKind)
     {
         stationX = -1;
