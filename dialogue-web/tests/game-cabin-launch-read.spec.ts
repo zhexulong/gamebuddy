@@ -73,7 +73,7 @@ test("a launch makes the panel read the cabin again until it arrives, and then s
   await expect.poll(() => cabinReads).toBe(1);
   await expect(handoff, "the mount read found no cabin").toContainText("Robin build one on your farm");
 
-  await panel.getByRole("button", { name: "Play with companion" }).click();
+  await panel.getByRole("button", { name: "Start the game" }).click();
   await expect.poll(() => launchRequests).toBe(1);
 
   // The count is the reading: the launch's own reread publishes `launching`, the cabin is one
@@ -133,7 +133,7 @@ test("a launching game says whether the cabin is in hand or still being asked fo
     await page.goto(`/?locale=${locale}#profile=composed-reference-game&boot=${token}`);
     await page.getByRole("button", { name: locale === "zh-CN" ? "游戏" : "Game", exact: true }).click();
     const panel = page.getByRole("region", { name: locale === "zh-CN" ? "游戏状态" : "Game state" });
-    await panel.getByRole("button", { name: locale === "zh-CN" ? "与伙伴一起玩" : "Play with companion" }).click();
+    await panel.getByRole("button", { name: locale === "zh-CN" ? "启动游戏" : "Start the game" }).click();
 
     // Nothing found yet, so the panel says who is asking and how far into the budget it is.
     const reading = panel.getByTestId("cabin-launch-reading");
@@ -193,7 +193,7 @@ test("a launch the game never answers leaves a stated step, and the refresh cont
   await page.goto(`/#profile=composed-reference-game&boot=${token}`);
   await openGameDrawer(page);
   const panel = page.getByRole("region", { name: "Game state" });
-  await panel.getByRole("button", { name: "Play with companion" }).click();
+  await panel.getByRole("button", { name: "Start the game" }).click();
   await expect.poll(() => launchRequests).toBe(1);
   await expect.poll(() => cabinReads, "the launch starts the panel's own asking").toBeGreaterThan(1);
 

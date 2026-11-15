@@ -228,7 +228,7 @@ test("Game setup projects Host-owned launch generation and launch rereads actual
   await panel.getByRole("button", { name: "Set up Stardew Valley" }).click();
   await expect.poll(() => setupRequests).toBe(1);
   await expect.poll(() => stateReads).toBe(2);
-  const launch = panel.getByRole("button", { name: "Play with companion" });
+  const launch = panel.getByRole("button", { name: "Start the game" });
   await expect(launch).toBeVisible();
   await expect(panel).not.toContainText("generation: 1");
   await expect(panel).not.toContainText("C:\\Games\\Stardew Valley");

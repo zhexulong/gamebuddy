@@ -97,7 +97,7 @@ const en = {
     "The game session could not be created. No partial session was left behind; the latest authoritative game state is shown.",
   gameCreateUnavailable: "The game session could not be created right now. Reload the page or try again.",
   gameSyncing: "Syncing the game connection...",
-  gameLaunch: "Play with companion",
+  gameLaunch: "Start the game",
   gameLaunchFailed: "The game launch result is uncertain. The latest authoritative game state is shown.",
   // The two states whose step is not a control on this page. Both names the step a player
   // actually takes, because a panel with nothing to press and no sentence saying why is the
@@ -1261,9 +1261,9 @@ const en = {
   gameBoardActingPaused: "Your companion waits for your word before acting.",
   gameBoardActingUnavailable: "Your companion has no way into your farm yet.",
   gameStartGuide: "Getting started together",
-  gameGuideStepOneTitle: "Start Stardew",
+  gameGuideStepOneTitle: "Prepare for the game",
   gameGuideStepOneDetail:
-    "If you have not chosen your game folder yet, choose it under Game installation on this page. Then press the one button below: it is the next thing left to do.",
+    "Choose your game folder under Game installation on this page if you have not yet, then press the one button below. This step gets the companion and her mod ready and starts nothing: starting the game is the next step.",
   // The one staging action the step does not lead with, put behind a disclosure instead of
   // beside it: the Host refuses setup until companion play has been enabled, so only the
   // player who says that first step is already behind them is offered it here.
@@ -1271,8 +1271,9 @@ const en = {
   // What each staging control is for.
   gameActivationHint: "Gets the companion ready to play in this session.",
   gameSetupHint: "Prepares Stardew Valley and the companion's mod.",
-  gameGuideStepTwoTitle: "Load your farm",
-  gameGuideStepTwoDetail: "Start the game with your companion, then load the farm you want to play.",
+  gameGuideStepTwoTitle: "Start the game",
+  gameGuideStepTwoDetail:
+    "Press the button below and Stardew Valley starts. Load the farm you want to play inside the game.",
   gameGuideStepThreeTitle: "Your companion moves in",
   gameGuideStepThreeDetail: "Confirm which cabin on your farm is hers, and she moves in.",
 
@@ -1468,7 +1469,7 @@ const zh: Messages = {
   gameCreateFailed: "无法创建游戏会话；未留下任何可恢复的部分会话，当前显示的是最新权威游戏状态。",
   gameCreateUnavailable: "目前无法创建游戏会话。请重新加载页面，或稍后重试。",
   gameSyncing: "正在同步游戏连接...",
-  gameLaunch: "与伙伴一起玩",
+  gameLaunch: "启动游戏",
   gameLaunchFailed: "游戏启动结果不确定；当前显示的是最新权威游戏状态。",
   gameLaunchQuarantined:
     "这次启动失败的方式会让 GameBuddy 在重启之前无法再次启动游戏。如果《星露谷物语》还在运行，请先关闭它。请完全关闭 GameBuddy，重新打开，然后再启动伙伴陪玩。",
@@ -2296,14 +2297,14 @@ const zh: Messages = {
   gameBoardActingPaused: "伙伴会先等你发话再动手。",
   gameBoardActingUnavailable: "伙伴还没有接到你的农场。",
   gameStartGuide: "怎么开始",
-  gameGuideStepOneTitle: "启动星露谷",
+  gameGuideStepOneTitle: "先为这次游戏做准备",
   gameGuideStepOneDetail:
-    "如果还没选过游戏目录，请先在本页的「游戏安装」里选好；然后按下面唯一的那个按钮：这是接下来唯一要做的事。",
+    "如果还没选过游戏目录，请先在本页的「游戏安装」里选好，然后按下面唯一的那个按钮。这一步只是把伙伴和她的模组准备好，不会启动任何东西；启动游戏是下一步。",
   gameGuideStepOneAlternate: "已经启用伙伴陪玩？",
   gameActivationHint: "让伙伴为这次会话做好准备。",
   gameSetupHint: "准备好《星露谷物语》和伙伴模组。",
-  gameGuideStepTwoTitle: "载入你的农场",
-  gameGuideStepTwoDetail: "和伙伴一起启动游戏，然后载入你想玩的农场。",
+  gameGuideStepTwoTitle: "启动游戏",
+  gameGuideStepTwoDetail: "按下面的按钮，《星露谷物语》就会启动。农场请在游戏里载入。",
   gameGuideStepThreeTitle: "伙伴住进小屋",
   gameGuideStepThreeDetail: "确认农场里的哪一间小屋是她的，她就住进去。",
   // 高级配置：这里是玩家可见文案，不出现上游工具名、他人的文件名或路由；

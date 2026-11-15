@@ -56,7 +56,7 @@ test("a first run activates the lifecycle with a fieldless POST before launch is
   const panel = page.getByRole("region", { name: "Game state" });
   // Before activation the coordinator owns no staged Player Host, so the exact
   // expected generation is absent and launch must not be on offer at all.
-  await expect(panel.getByRole("button", { name: "Play with companion" })).toHaveCount(0);
+  await expect(panel.getByRole("button", { name: "Start the game" })).toHaveCount(0);
   const activate = panel.getByRole("button", { name: "Enable companion play" });
   await expect(activate).toBeVisible();
   await activate.click();
@@ -65,7 +65,7 @@ test("a first run activates the lifecycle with a fieldless POST before launch is
   expect(activationBody).toBeNull();
   await expect.poll(() => stateReads).toBe(2);
   // 204 is the activation; the authoritative reread is what puts launch on offer.
-  await expect(panel.getByRole("button", { name: "Play with companion" })).toBeVisible();
+  await expect(panel.getByRole("button", { name: "Start the game" })).toBeVisible();
   await expect(activate).toHaveCount(0);
 });
 
@@ -96,7 +96,7 @@ test("a launch refused as not staged names activation as the reason instead of a
   await page.goto(`/#profile=composed-reference-game&boot=${token}`);
   await openGameDrawer(page);
   const panel = page.getByRole("region", { name: "Game state" });
-  await panel.getByRole("button", { name: "Play with companion" }).click();
+  await panel.getByRole("button", { name: "Start the game" }).click();
   await expect.poll(() => launchRequests).toBe(1);
   await expect(panel).toContainText("Companion play is not ready yet. Enable companion play, then try again.");
   await expect(panel).not.toContainText("The game launch result is uncertain");
