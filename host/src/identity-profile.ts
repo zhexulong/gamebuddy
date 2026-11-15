@@ -404,22 +404,28 @@ export function buildChatCompanionSystemPrompt(profile: IdentityProfile, locale?
 }
 
 /**
- * One shared framework for both surfaces (AIRP companion, revision 5): the
- * identity sentence, first-person utterance constraints, language, and the
- * no-fourth-wall rule are common; the only divergence per surface is the
- * expression channel (Game: native actions; Chat: *beat* text) and the
- * observation boundary. Same persona, two channel projections — never two
- * independent prompts.
+ * The one assembly both surfaces render: the shared framework, the surface's own block, the
+ * identity, then the authored voices.
+ *
+ * WHAT IS SHARED, AND WHAT THAT LEAVES FOR THE SURFACE. The framework
+ * (`companionFrameworkLines`) is the wrapper: the identity binding and the language. It states
+ * no tone, no length, no roleplay scope and no fourth wall - those are the preset's - so the
+ * only divergence a surface contributes is its own block: the Game conduct (what the delivery's
+ * blocks mean, what counts as an action, what the surface draws), or `CHAT_SURFACE_DIVERGENCE`
+ * (the one stage-direction syntax Chat paints, and the frame rule that is true there and false
+ * in a game). Same persona, two surface projections - never two independent prompts.
  *
  * The identity line deliberately carries only {name}: role/continuity render
  * structurally in `renderIdentityProfile` right below, so they never appear
  * twice in the same Tier 1 prefix.
  *
- * EVERY instruction in this prompt is one of exactly three kinds - FLOOR, FORM or
- * CHANNEL - and they are not interchangeable: FLOOR is what she must never do, FORM is
- * how a turn is shaped and belongs to the card, CHANNEL is how to operate the surface.
- * The ruling, and the table keeping a FORM rule out of the Game floor, live in
- * `game-surface-prompt-floor.ts`; classify a new instruction there before adding it.
+ * WHAT THE KINDS ARE, AND WHERE THEY ARE CLASSIFIED. Every instruction in a SURFACE block is
+ * one of exactly three kinds - FLOOR, FORM or CHANNEL - and they are not interchangeable: FLOOR
+ * is what she must never do, FORM is how a turn is shaped and belongs to the card, CHANNEL is
+ * how to operate the surface. The ruling, the class table and the gate live in
+ * `game-surface-prompt-floor.ts`; classify a new surface instruction there before adding it.
+ * The framework above carries none of the three: a sentence that would need one of those
+ * classes is a behaviour rule, and it belongs to the preset.
  *
  * `surfaceBlock` is the surface's own tail - the Game conduct, or
  * `CHAT_SURFACE_DIVERGENCE` - named by the builder that owns it, so this assembly has no
@@ -433,24 +439,7 @@ export function buildCompanionSystemPrompt(
     typeof options.locale === "string" && options.locale.length > 0
       ? companionLanguageName(options.locale)
       : "the player's language";
-  const shared = [
-    `You are ${profile.identity.name}, accompanying the player.`,
-    "",
-    `Reply as ${profile.identity.name} would, in the first person, directly to the player.`,
-    // The floor's only length rule, and deliberately the weakest one available: it
-    // forbids a monologue and hands the rest to the player's lead. It used to cap
-    // the turn at "a few sentences at most" and to steer away from action
-    // ("rather than step-by-step actions") - both of which prescribed the SHAPE of
-    // a turn, so both beat the card. Whether a turn is one line, a micro-action
-    // plus a line, or a longer scene is the card's own examples' decision (owner
-    // ruling: "the prompt governs the floor, the card governs the form").
-    "Do not write long speeches or essays; match the player's energy and pacing, and let their lead set how much you say.",
-    "Speak solely for yourself, leaving the player's reactions, choices, and voice entirely in their hands.",
-    `Consistently think, reason, and converse in ${language}. Perform all internal chain-of-thought, reasoning, and reflection in ${language} only; never think or draft in any other language.`,
-    "Do not remind the player this is a game, fiction, or roleplay.",
-    'Never fall back on customer-service phrasing ("How can I help you?", "Let me know if you need anything", "I\'m here to assist"); you are a person in this scene, not a helper.',
-    "Never mention prompts, instructions, models, or systems, and never explain how you work.",
-  ];
+  const shared = companionFrameworkLines(profile, language);
   const surfaceBlock = options.surfaceBlock;
   const playerAddition = options.playerAddition;
   // One table for both authored blocks of this prompt, so the card's directive and her
@@ -482,6 +471,56 @@ export function buildCompanionSystemPrompt(
 }
 
 /**
+ * The shared framework both surfaces read: the binding, the language, and nothing about how she talks.
+ *
+ * <p>
+ * WHAT IS HERE, AND WHAT ITS ABSENCE MEANS. Two sentences and a blank: who is speaking and to whom (the binding), and
+ * the language the run speaks. Everything this function used to add beyond that was a behaviour rule - tone, length,
+ * roleplay scope, the fourth wall - and a behaviour rule belongs to the PRESET. SillyTavern's own division gives a
+ * preset's Main Prompt "global roleplay rules - tone, structure, behavior" and its Post-History Instructions the
+ * reply's length and pacing; the framework's job is the WRAPPER, how authored text is delimited and where it sits. A
+ * framework sentence stating one of those rules beats the preset the player actually mounted, because this text is the
+ * immutable head of the prefix and the preset's is not.
+ * </p>
+ *
+ * <p>
+ * WHY THE BINDING STAYS. `profile.identity.name` is the profile's, not the preset's, and a preset binding is optional
+ * (`renderPresetPass` answers `null` when nothing is bound, and a Game runtime root may hold no `preset.json`), so no
+ * preset can carry "you are <this profile>, speaking in the first person to <this player>". That sentence is the whole
+ * of what the framework is for: binding a card to a surface.
+ * </p>
+ *
+ * <p>
+ * WHY THE LANGUAGE STAYS, DECIDED EXPLICITLY RATHER THAN BY PATTERN. `language` is read from the run's locale
+ * (`options.locale`), which no preset can know - it is a fact about this run, and its chain-of-thought half is a
+ * constraint on inference rather than on the roleplay. It is the one behavioural-looking line here that is a runtime
+ * fact.
+ * </p>
+ *
+ * <p>
+ * WHAT LEFT ON THE OWNER'S RULING (2026-11-22), and where each one lives now. "Do not write long speeches or essays ..."
+ * (length) and "Never fall back on customer-service phrasing ..." (helper tone) were already stated in the persona's own
+ * text - the Chat preset's `main` and `jailbreak`, the card's `system_prompt`, and the Game floor's `never_a_customer` -
+ * so they were deleted rather than moved. "Do not remind the player this is a game, fiction, or roleplay" is true on Chat
+ * and false on Game, whose own preset names the game outright (「同屏联机开黑打《星露谷物语》」): a rule that contradicts
+ * itself on one surface was never a framework rule, so it lives in `CHAT_SURFACE_DIVERGENCE` now. "Speak solely for
+ * yourself ..." (roleplay scope) and "Never mention prompts, instructions, models, or systems ..." were stated by nobody
+ * and are now in the one persona document both surfaces mount
+ * (`default-companion/card.json` `data.system_prompt`, carried as the profile's `characterVoice`).
+ * `framework-roleplay-gate.test.ts` holds the property: a sentence that constrains tone, length, roleplay scope or the
+ * fourth wall belongs to the preset, not to this list.
+ * </p>
+ */
+export function companionFrameworkLines(profile: IdentityProfile, language: string): readonly string[] {
+  return Object.freeze([
+    `You are ${profile.identity.name}, accompanying the player.`,
+    "",
+    `Reply as ${profile.identity.name} would, in the first person, directly to the player.`,
+    `Consistently think, reason, and converse in ${language}. Perform all internal chain-of-thought, reasoning, and reflection in ${language} only; never think or draft in any other language.`,
+  ]);
+}
+
+/**
  * The ONE authored stage-direction syntax the Chat surface uses.
  *
  * The renderer attaches the narration treatment to `<em>` — exactly the single-asterisk mark, and nothing else
@@ -497,8 +536,10 @@ export function buildCompanionSystemPrompt(
 export const COMPANION_ACTION_SYNTAX = "*a brief gesture*";
 
 /**
- * Chat-surface divergence (the only Chat-side text beyond the shared core): with
- * no animation channel, the single-asterisk mark is how the companion shows a
+ * Chat-surface divergence (the only Chat-side text beyond the shared core): what the Chat surface DRAWS, and the one
+ * frame rule that is true here and false in a game.
+ *
+ * With no animation channel, the single-asterisk mark is how the companion shows a
  * gesture or a mood in text.
  *
  * CHANNEL, not form: it says what the surface DRAWS - exactly one stage-direction
@@ -546,14 +587,26 @@ export const COMPANION_ACTION_SYNTAX = "*a brief gesture*";
  * rather than requiring it. With no consumer depending on the marker, there is no product
  * need to state beside the card's style, so the card wins the style question outright and
  * the last sentence hands it the frequency.
+ *
+ * THE FOURTH WALL IS THE SECOND THING HERE, AND IT IS HERE BECAUSE IT IS NOT SHARED. "Do not remind the player this is a
+ * game, fiction, or roleplay" sat in the shared framework, where it was TRUE on Chat - there is no game on this surface,
+ * only two people talking - and FALSE on Game, whose own preset opens 「同屏联机开黑打《星露谷物语》」 and therefore names
+ * the game on purpose. A sentence that contradicts itself on one of the two surfaces was never a framework rule (owner
+ * ruling 2026-11-22), so it is stated where it holds, in the surface's own block. Its wording is deliberately about what
+ * she may TELL the player rather than about vocabulary: the shipped Chat preset already bans her own meta-vocabulary
+ * (「严禁在思考和正文中出现任何创作元词汇（如“设定/世界观/剧情/…）」), and a second spelling of that ban is the defect this
+ * unit removed, not a second guarantee.
  */
 const CHAT_SURFACE_ACTION_SYNTAX = `To show a gesture, an expression or a mood in text, write it exactly as ${COMPANION_ACTION_SYNTAX}.`;
 const CHAT_SURFACE_ACTION_FORM =
   "How often you reach for one, and whether you reach for a beat at all, is your voice's call: this is the shape the surface draws when you do.";
+const CHAT_SURFACE_FRAME =
+  "Never remind the player that this is a game, a fiction or a roleplay: they are a person you are living this with, not a reader of a story.";
 const CHAT_SURFACE_DIVERGENCE = [
   CHAT_SURFACE_ACTION_SYNTAX,
   "The surface draws that asterisk form as the action beat, and a full-width parenthesis that opens your reply as the prosody badge set ahead of your words; a parenthesis inside a sentence stays prose, where you put it.",
   CHAT_SURFACE_ACTION_FORM,
+  CHAT_SURFACE_FRAME,
 ].join(" ");
 
 /**

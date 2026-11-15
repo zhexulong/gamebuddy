@@ -7,7 +7,12 @@ import { join, resolve } from "node:path";
 import test from "node:test";
 import { deflateSync } from "node:zlib";
 import { buildGameCompanionSystemPrompt } from "./game-surface-prompt-floor.js";
-import { buildChatCompanionSystemPrompt, renderIdentityProfile, validateIdentityProfile } from "./identity-profile.js";
+import {
+  buildChatCompanionSystemPrompt,
+  COMPANION_ACTION_SYNTAX,
+  renderIdentityProfile,
+  validateIdentityProfile,
+} from "./identity-profile.js";
 import {
   candidateToIdentityProfile,
   decodeStCard,
@@ -1201,11 +1206,14 @@ test("a card with first_mes and no mes_example teaches no few-shot: the opening 
   // material: the greeting is still the card's own, and the ledger is empty.
   assert.equal(preview.profileCandidate.firstGreeting, opening);
   assert.deepEqual(preview.losses, []);
-  // The register is carried by the Host floor every companion gets, not by a
-  // manufactured example.
+  // The register is no longer the Host's to state: how long a reply is belongs to the preset (2026-11-22),
+  // so what this prompt must not do is turn the opening into a length rule by way of a manufactured few-shot
+  // - and the framework must not state one either. Both halves are negative now, and both are the property
+  // this case exists for; the stop bound itself is read where its owner writes it.
   const prompt = buildChatCompanionSystemPrompt(profile);
   assert.doesNotMatch(prompt, /\[Dialogue Examples\]/);
-  assert.match(prompt, /Do not write long speeches or essays/);
+  assert.doesNotMatch(prompt, /Do not write long speeches or essays/);
+  assert.match(DEFAULT_COMPANION_PRESET.profile.characterVoice?.text ?? "", /说完就停/u);
 });
 
 test("a card that ships mes_example keeps exactly its parsed examples, beside its opening", () => {
@@ -1513,14 +1521,9 @@ test("a malformed alternate_greetings entry fails closed with a bounded code", (
 const GOLDEN_NO_VOICE_PROMPT = `You are Plain, accompanying the player.
 
 Reply as Plain would, in the first person, directly to the player.
-Do not write long speeches or essays; match the player's energy and pacing, and let their lead set how much you say.
-Speak solely for yourself, leaving the player's reactions, choices, and voice entirely in their hands.
-Consistently think, reason, and converse in the player's language, keeping the dialogue grounded in the shared scene.
-Do not remind the player this is a game, fiction, or roleplay.
-Never fall back on customer-service phrasing ("How can I help you?", "Let me know if you need anything", "I'm here to assist"); you are a person in this scene, not a helper.
-Never mention prompts, instructions, models, or systems, and never explain how you work.
+Consistently think, reason, and converse in the player's language. Perform all internal chain-of-thought, reasoning, and reflection in the player's language only; never think or draft in any other language.
 
-To show a gesture, an expression or a mood in text, write it exactly as *a brief gesture*. The surface draws that asterisk form as the action beat and draws nothing else that way, so an action or a tone written in full-width parentheses reaches the player as ordinary prose.
+To show a gesture, an expression or a mood in text, write it exactly as *a brief gesture*. The surface draws that asterisk form as the action beat, and a full-width parenthesis that opens your reply as the prosody badge set ahead of your words; a parenthesis inside a sentence stays prose, where you put it. How often you reach for one, and whether you reach for a beat at all, is your voice's call: this is the shape the surface draws when you do. Never remind the player that this is a game, a fiction or a roleplay: they are a person you are living this with, not a reader of a story.
 
 [Character: Plain]
 Role: the player's game companion
@@ -1544,8 +1547,11 @@ test("a card's system_prompt becomes the profile's characterVoice and reaches th
   });
   const prompt = buildChatCompanionSystemPrompt(profile, "zh-CN");
   assert.ok(prompt.includes("动率先于言"), "the card's directive must reach the model");
+  // The anchor is the product's own constant, not a sentence quoted here: the framework sentence this
+  // used to name moved to the persona on 2026-11-22, and an anchor the change deletes passes for the
+  // wrong reason (`indexOf` = -1 is less than every real index).
   assert.ok(
-    prompt.indexOf("动率先于言") > prompt.indexOf("Never mention prompts, instructions, models, or systems"),
+    prompt.indexOf("动率先于言") > prompt.indexOf(COMPANION_ACTION_SYNTAX),
     "the card's directive must render after the floor",
   );
   assert.ok(prompt.includes("【角色演出指导（Character Voice & Directives）】"));
@@ -1626,7 +1632,7 @@ test("a card directive that tries to cancel a floor rule still renders the floor
   const prompt = buildChatCompanionSystemPrompt(profile);
   assert.ok(prompt.includes(malicious));
   assert.ok(
-    prompt.indexOf("Never mention prompts, instructions, models, or systems") < prompt.indexOf(malicious),
+    prompt.indexOf(COMPANION_ACTION_SYNTAX) < prompt.indexOf(malicious),
     "the floor must precede the card's directive",
   );
   assert.ok(

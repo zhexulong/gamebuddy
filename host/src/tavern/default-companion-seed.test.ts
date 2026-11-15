@@ -5,6 +5,7 @@ import { join } from "node:path";
 import test from "node:test";
 import {
   buildChatCompanionSystemPrompt,
+  COMPANION_ACTION_SYNTAX,
   type IdentityProfile,
   identityProfileMacros,
   identityProfileMetadata,
@@ -244,7 +245,10 @@ test("the seed persists the card's characterVoice and the rendered prompt carrie
     assert.ok(profile.characterVoice !== undefined);
     assert.equal(profile.characterVoice.source, "card");
     const prompt = buildChatCompanionSystemPrompt(profile, "zh-CN");
-    const floorMarker = "Never mention prompts, instructions, models, or systems, and never explain how you work.";
+    // The floor marker is the product's own exported constant, not a sentence transcribed here: the
+    // framework sentence this used to quote moved to the persona on 2026-11-22, and an anchor the
+    // change deletes makes the ordering assertion below pass on `indexOf` = -1.
+    const floorMarker = COMPANION_ACTION_SYNTAX;
     const voiceMarker = "【角色演出指导（Character Voice & Directives）】";
     assert.ok(prompt.includes(voiceMarker), "the rendered prompt must carry the character-voice section");
     // Derived from the card's OWN directive rather than from a phrase quoted here:
