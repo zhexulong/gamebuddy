@@ -245,19 +245,30 @@ export function GameSurface({
    * own "nothing to confirm" note was the dead end: no control, and copy that sent the player to
    * reload the page, which drops the Host connection and this surface's attachment with it.
    */
+  /**
+   * Reads the handoff and mints the press's idempotency keys, WITHOUT writing the panel's state.
+   *
+   * The panel's own reads wrap this (they have a view to set and an origin to name); the confirm press
+   * uses it alone, because a press has to renew the offer before it asks the game to take it.
+   */
+  const readCabinOffers = useCallback(async (): Promise<readonly StardewCabinChoiceV1[]> => {
+    const result = await composedApi.readStardewCabins();
+    cabinIdempotencyKeysRef.current = new Map(
+      result.choices.map((choice) => [choice.choiceHandle, newIdempotencyKey()]),
+    );
+    return result.choices;
+  }, [composedApi]);
+
   const readCabins = useCallback(
     async (origin: CabinReadOrigin): Promise<CabinHandoffAnswer> => {
       if (origin !== "launch_wait") setCabinView({ kind: "loading" });
       try {
-        const result = await composedApi.readStardewCabins();
-        cabinIdempotencyKeysRef.current = new Map(
-          result.choices.map((choice) => [choice.choiceHandle, newIdempotencyKey()]),
-        );
-        if (result.choices.length === 0) {
+        const choices = await readCabinOffers();
+        if (choices.length === 0) {
           setCabinView({ kind: "missing", reread: origin === "refresh_pressed" });
           return "missing";
         }
-        setCabinView({ kind: "choices", choices: result.choices, staleRefusal: origin === "stale_choice" });
+        setCabinView({ kind: "choices", choices, staleRefusal: origin === "stale_choice" });
         return "choices";
       } catch (error) {
         // Two different situations, two different answers. `stardew_player_host_cabin_missing` means this world has no
@@ -268,7 +279,7 @@ export function GameSurface({
         return view.kind === "missing" ? "missing" : "unavailable";
       }
     },
-    [composedApi],
+    [readCabinOffers],
   );
 
   useEffect(() => {
@@ -377,56 +388,79 @@ export function GameSurface({
   };
 
   /**
-   * The cabin confirm, whose verdict belongs to the game and not to this page.
+   * The cabin confirm: the press renews the offer it was drawn with, then asks the game to take it.
    *
-   * This handler used to open with `if (choice.expiresAtMs <= Date.now()) { void
-   * readCabins("stale_choice"); return; }`, and that guard WILL look reasonable to the next reader:
-   * the Host advertises a deadline on every offer, so why send a command that must be refused?
-   * Measured in a live run (2026-11-17, the real game): it meant the confirmation was never sent at
-   * all. Three presses produced three `game/stardew/cabins` reads and **zero**
-   * `game/stardew/cabins/confirm` requests, so the first run could not pass step 3 - the player
-   * pressed a button whose only effect was to re-read the screen it was already on.
+   * This handler used to open with `if (choice.expiresAtMs <= Date.now()) { void readCabins("stale_choice");
+   * return; }`, and that guard WILL look reasonable to the next reader: the Host advertises a deadline
+   * on every offer, so why send a command that must be refused? Measured in a live run (2026-11-17, the
+   * real game): it meant the confirmation was never sent at all. Three presses produced three
+   * `game/stardew/cabins` reads and **zero** `game/stardew/cabins/confirm` requests, so the first run
+   * could not pass step 3 - the player pressed a button whose only effect was to re-read the screen it
+   * was already on. That guard is gone (lane CABINCONFIRM), and with it the page's clock stopped being
+   * a decision.
    *
-   * The reason it was almost always true is that the window is short by design and this page's clock
-   * is not the one that decides: the advertisement is republished every second with a 3 s expiry
-   * (`HostFarmhandProvisioner.cs`), so every cabin read hands the page a window of about two seconds
-   * to look at, read and click. A page that refuses to ask after those two seconds turns a short
-   * window into a permanently unusable one.
+   * What is left is the lease, and it is renewed HERE rather than shown to the player. The advertisement
+   * is republished every second with a 3 s expiry (`HostFarmhandProvisioner.cs`), and every
+   * `game/stardew/cabins` read mints a fresh `choiceHandle` and a fresh deadline
+   * (`stardew-production-lifecycle-coordinator.internal.ts`, `readCabinChoices`), so an offer can be
+   * renewed at the moment the player presses: read the cabins, take the offer with the same label from
+   * that read, and send ITS handle. A press that re-sent the drawn handle instead would be sending a
+   * handle the Host has already replaced - which is what made the old panel warn the player that the
+   * offer "may already have gone stale" and turn a 2 s window into a race (`stardewCabinsOfferLapsed`,
+   * now gone with the warning).
    *
-   * The Host is the party that can answer, because it holds the choice handle, the browser session,
-   * the revision and the deadline together, and it refuses a lapsed offer with
-   * `stardew_cabin_choice_stale` (`stardew-production-lifecycle-coordinator.internal.ts`,
-   * `handle.expiresAtMs <= Date.now()`). That refusal is a fact about the game, and this handler
-   * renders it as one: the cabins are read again and the panel says why. So `expiresAtMs` is read for
-   * exactly one thing now - telling the player an offer may be too old to be taken, in
-   * `CabinHandoff` - and never for deciding whether the game is asked.
+   * The Host remains the party that decides: a refusal named `stardew_cabin_choice_stale` still means the
+   * offer went over between this read and the command, and it is answered the same way - read again, and
+   * say what the game said.
    */
   const handleCabinConfirmation = async (choice: StardewCabinChoiceV1): Promise<void> => {
     if (cabinConfirmationActiveRef.current || cabinView.kind !== "choices") return;
-    const idempotencyKey = cabinIdempotencyKeysRef.current.get(choice.choiceHandle);
-    if (idempotencyKey === undefined) {
-      setCabinView({ kind: "unavailable", reread: false });
-      return;
-    }
     cabinConfirmationActiveRef.current = true;
-    setCabinView({ kind: "confirming", choices: cabinView.choices, choiceHandle: choice.choiceHandle });
     try {
-      await composedApi.confirmStardewCabin({
-        apiVersion: 1,
-        idempotencyKey,
-        choiceHandle: choice.choiceHandle,
-        confirmed: true,
-      });
-      setCabinView({ kind: "admitted" });
-    } catch (error) {
-      if (error instanceof ComposedReferenceGameProblemError && error.code === "stardew_cabin_choice_stale") {
-        cabinConfirmationActiveRef.current = false;
-        await readCabins("stale_choice");
+      let offers: readonly StardewCabinChoiceV1[];
+      try {
+        offers = await readCabinOffers();
+      } catch (error) {
+        // The renewal read is a read like any other: a world that cannot be read is the state the panel
+        // already knows how to state, and nothing was confirmed.
+        setCabinView(cabinViewFor(error, false));
         return;
       }
-      // An explicit uncertain outcome or a missing/malformed response may have
-      // followed successful publication. Never refetch or replay this command.
-      setCabinView({ kind: "uncertain" });
+      const renewed = offers.find((offer) => offer.displayLabel === choice.displayLabel);
+      if (renewed === undefined) {
+        // The list moved under the row: the fresh list IS the answer, and the player's next act is the
+        // one that list offers. Confirming a cabin this world no longer offers would be the opposite.
+        setCabinView(
+          offers.length === 0
+            ? { kind: "missing", reread: false }
+            : { kind: "choices", choices: offers, staleRefusal: false },
+        );
+        return;
+      }
+      const idempotencyKey = cabinIdempotencyKeysRef.current.get(renewed.choiceHandle);
+      if (idempotencyKey === undefined) {
+        setCabinView({ kind: "unavailable", reread: false });
+        return;
+      }
+      setCabinView({ kind: "confirming", choices: offers, choiceHandle: renewed.choiceHandle });
+      try {
+        await composedApi.confirmStardewCabin({
+          apiVersion: 1,
+          idempotencyKey,
+          choiceHandle: renewed.choiceHandle,
+          confirmed: true,
+        });
+        setCabinView({ kind: "admitted" });
+      } catch (error) {
+        if (error instanceof ComposedReferenceGameProblemError && error.code === "stardew_cabin_choice_stale") {
+          cabinConfirmationActiveRef.current = false;
+          await readCabins("stale_choice");
+          return;
+        }
+        // An explicit uncertain outcome or a missing/malformed response may have
+        // followed successful publication. Never refetch or replay this command.
+        setCabinView({ kind: "uncertain" });
+      }
     } finally {
       // Released on every path, not only the stale one. This flag is a re-entrancy guard for the
       // click, not a record of what the Host decided: the outcome lives in `cabinView`. Holding it

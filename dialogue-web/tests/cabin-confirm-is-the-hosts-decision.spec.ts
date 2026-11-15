@@ -123,39 +123,4 @@ test("a live offer confirms on the first press", async ({ page }) => {
   await panel.getByRole("button", { name: "Confirm cabin" }).click();
   await expect.poll(() => cabinConfirmRequests).toBe(1);
   await expect(panel).toContainText("Cabin request admitted");
-  // A live offer is not reported as lapsed: the note belongs to an offer the page has watched pass.
-  await expect(panel.getByTestId("cabin-offer-lapsed"), "a live offer says nothing about going stale").toHaveCount(0);
-});
-
-/**
- * The offer's advertised window is still the page's to *say* and never its to *enforce*, so the one
- * thing left of it is a sentence: an offer already past its window is shown as possibly lapsed, with
- * the step that answers it (confirm; the game decides, and a stale answer reads the cabins again).
- *
- * Both languages, because the sentence is the whole of what the page does with that fact now.
- */
-test("an offer the page has watched pass its window is shown as possibly lapsed, in both languages", async ({ page }) => {
-  const readings: Record<string, string> = {};
-  for (const locale of ["en", "zh-CN"] as const) {
-    await page.addInitScript((value) => localStorage.setItem("gamebuddy.tavern.ui-locale", value), locale);
-    await page.route("**/api/composed-reference-game/v1/bootstrap", (route) => route.fulfill(jsonOk(root)));
-    await page.route("**/api/composed-reference-game/v1/game/stardew/cabins", (route) =>
-      route.fulfill(jsonOk(lapsedChoice(Date.now()))),
-    );
-    await page.route("**/api/composed-reference-game/v1/state", (route) => route.fulfill(jsonOk(root)));
-    await page.route("**/api/tavern/v1/draft", (route) => route.fulfill(jsonOk(draft)));
-
-    await page.goto(`/?locale=${locale}#profile=composed-reference-game&boot=${token}`);
-    await page.getByRole("button", { name: locale === "zh-CN" ? "游戏" : "Game", exact: true }).click();
-    const panel = page.getByRole("region", { name: locale === "zh-CN" ? "游戏状态" : "Game state" });
-    const lapsed = panel.getByTestId("cabin-offer-lapsed");
-    await expect(lapsed, "an offer past its advertised window says so").toBeVisible();
-    await expect(await lapsed.getAttribute("data-tone"), "a display note, not a failure").toBe("info");
-    readings[locale] = (await lapsed.innerText()).replace(/\s+/gu, " ").trim();
-    // The offer is still offered: the note explains a possible refusal, it does not pre-empt one.
-    await expect(panel.getByRole("button", { name: locale === "zh-CN" ? "确认小屋" : "Confirm cabin" })).toBeEnabled();
-  }
-  expect(readings["en"], "the note names what the game does next").toMatch(/stale/iu);
-  expect(readings["zh-CN"], "and it says the same in the player's language").toMatch(/失效/u);
-  console.log(`[cabin-offer-lapsed] ${JSON.stringify(readings)}`);
 });
