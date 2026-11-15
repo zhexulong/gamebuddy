@@ -62,11 +62,32 @@ export const BLOCKED_BY_PRODUCT_PREFIX = "BLOCKED-BY-PRODUCT:";
  *     engine's own `Saving` event (:180-186) and issues the manifest on `Saved` (:217-222). The only
  *     thing that drives that cycle is `HostAutomation.Enable` (:1394-1420 in `ModEntry.cs`, the
  *     `SaveGameMenu` trigger), which is a fixture switch the Host never writes into the Mod's config.
+ *
+ *   `cabin_offer_expires_before_any_ui_can_answer` - the cabin choice is offered with a deadline no page
+ *     can answer inside: the Mod republishes the advertisement every second with a 3 s expiry
+ *     (`integrations/stardew/HostFarmhandProvisioner.cs:152-156,318-358`), and the Host hands the browser
+ *     `Math.min(choice.expiresAtMs, joinDeadlineMs(sessionExpiry))` on every read while holding the handle
+ *     to that same deadline (`host/src/stardew-production-lifecycle-coordinator.internal.ts:2065,2099`), so
+ *     the page gets a window that has to cover a render, a player's look and click, and the round trip. A
+ *     run proves this gap only by making the press the panel would make and reading BOTH sides: the
+ *     confirmation went out, the game refused it `stardew_cabin_choice_stale`, and every cabin read in that
+ *     run carried a window no longer than `CABIN_OFFER_USABLE_WINDOW_MS`.
  */
 export const PRODUCT_GAPS = Object.freeze({
   instanceStatusNeverRunning: "instance_status_never_running",
   attachNeedsNativeSave: "attach_needs_native_save",
+  cabinOfferExpiresBeforeAnyUiCanAnswer: "cabin_offer_expires_before_any_ui_can_answer",
 });
+
+/**
+ * The longest offer window that still leaves no room for a page to answer.
+ *
+ * A budget, named as one rather than measured from what a player takes: the advertisement is 3 s
+ * (`HostFarmhandProvisioner.cs:358`), so a read that hands back five seconds or less is handing back the
+ * Mod's own beat and not a window - a render, a look, a click and a round trip inside one beat. A run whose
+ * reads hand back minutes is not this gap, however a single press turned out, and `staleOfferReading` says no.
+ */
+export const CABIN_OFFER_USABLE_WINDOW_MS = 5_000;
 
 /**
  * The prefix of the one line the game-launch driver contributes to the report's observation
@@ -384,7 +405,12 @@ export function chainStepsLine(chain) {
  *
  * Anything else is `null`: no proof, no verdict, and the caller keeps reporting `failed`.
  */
-export function classifyChainStop({ state, attachmentResponse = null, confirmPressedAtMs = null }) {
+export function classifyChainStop({
+  state,
+  attachmentResponse = null,
+  confirmPressedAtMs = null,
+  cabinConfirm = null,
+}) {
   const readable = state?.ok === true;
   if (readable && state.attachmentStatus === "attached" && state.instanceStatus !== "running")
     return Object.freeze({
@@ -400,7 +426,47 @@ export function classifyChainStop({ state, attachmentResponse = null, confirmPre
       gap: PRODUCT_GAPS.attachNeedsNativeSave,
       detail: awaiting,
     });
+  const stale = staleOfferReading(cabinConfirm);
+  if (stale !== null)
+    return Object.freeze({
+      verdict: VERDICTS.blockedByProduct,
+      gap: PRODUCT_GAPS.cabinOfferExpiresBeforeAnyUiCanAnswer,
+      detail: stale,
+    });
   return null;
+}
+
+/**
+ * The game's own words for a cabin offer that could not be answered in time, or `null` when this run
+ * proved nothing of the kind.
+ *
+ * Three facts, all of them this run's own: a confirmation was SENT (a press the page answered itself is
+ * not a press against a window), the game REFUSED it by the name it gives a lapsed choice, and every offer
+ * the run read handed the page a window no longer than `CABIN_OFFER_USABLE_WINDOW_MS`. The two windows are
+ * quoted side by side because the difference between "the same deadline every time" and "a fresh short one
+ * each time" is what a game owner has to act on, and no single reading can tell them apart.
+ */
+function staleOfferReading(cabinConfirm) {
+  if (cabinConfirm === null || typeof cabinConfirm !== "object") return null;
+  const requested = Number(cabinConfirm.requested);
+  if (!Number.isFinite(requested) || requested <= 0) return null;
+  const refusals = (Array.isArray(cabinConfirm.refusals) ? cabinConfirm.refusals : []).filter(
+    (entry) => entry?.code === "stardew_cabin_choice_stale",
+  );
+  if (refusals.length === 0) return null;
+  const offers = (Array.isArray(cabinConfirm.offers) ? cabinConfirm.offers : []).filter(
+    (entry) => Number.isFinite(entry?.expiresAtMs) && Number.isFinite(entry?.readAtMs),
+  );
+  if (offers.length < 2) return null;
+  if (offers.some((entry) => entry.expiresAtMs - entry.readAtMs > CABIN_OFFER_USABLE_WINDOW_MS)) return null;
+  const quoted = offers
+    .slice(-2)
+    .map(
+      (entry) =>
+        `expiresAtMs=${String(entry.expiresAtMs)} read at ${new Date(entry.readAtMs).toISOString()} (${String(entry.expiresAtMs - entry.readAtMs)}ms left)`,
+    );
+  const refused = refusals.at(-1);
+  return `the confirmation was sent ${String(requested)} time(s) and the game refused it HTTP ${String(refused.status)} ${String(refused.code)}; two consecutive cabin reads: ${quoted.join(" then ")}. The Mod republishes the advertisement every second with a 3 s expiry (integrations/stardew/HostFarmhandProvisioner.cs:152-156,318-358) and the Host hands the page min(that expiry, the join deadline) on every read while holding the choice handle to the same deadline (host/src/stardew-production-lifecycle-coordinator.internal.ts:2065,2099), so the window a page must render, be clicked in, and answer inside is the Mod's own beat`;
 }
 
 /**

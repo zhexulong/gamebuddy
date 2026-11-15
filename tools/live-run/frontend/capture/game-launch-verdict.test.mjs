@@ -351,3 +351,56 @@ test("a ready pair proves no gap, and neither does a launch that never produced 
   assert.equal(classifyChainStop({ state: { ok: false, status: "unreachable:ECONNREFUSED" } }), null);
   assert.equal(classifyChainStop({ state: { ok: true, instanceStatus: "launching", attachmentStatus: "none" } }), null);
 });
+
+test("a confirmation the game refused as stale, against offers of one beat, proves the offer's window", () => {
+  const state = { ok: true, instanceStatus: "launching", attachmentStatus: "none" };
+  const reading = classifyChainStop({
+    state,
+    confirmPressedAtMs: 1_000_000,
+    cabinConfirm: {
+      requested: 3,
+      refusals: [{ status: 409, code: "stardew_cabin_choice_stale" }],
+      offers: [
+        { readAtMs: 990_000, expiresAtMs: 992_871 },
+        { readAtMs: 991_000, expiresAtMs: 993_902 },
+      ],
+    },
+  });
+  assert.equal(reading.verdict, VERDICTS.blockedByProduct);
+  assert.equal(reading.gap, PRODUCT_GAPS.cabinOfferExpiresBeforeAnyUiCanAnswer);
+  // Both sides are quoted: the game's refusal by name, and two consecutive windows side by side.
+  assert.match(reading.detail, /HTTP 409 stardew_cabin_choice_stale/u);
+  assert.match(reading.detail, /expiresAtMs=992871 .*\(2871ms left\) then expiresAtMs=993902 .*\(2902ms left\)/u);
+  assert.match(reading.detail, /HostFarmhandProvisioner\.cs/u);
+});
+
+test("the offer's window is proved by the run, so a refusal alone or a long window proves nothing", () => {
+  const state = { ok: true, instanceStatus: "launching", attachmentStatus: "none" };
+  const refused = { status: 409, code: "stardew_cabin_choice_stale" };
+  const shortOffers = [
+    { readAtMs: 990_000, expiresAtMs: 992_871 },
+    { readAtMs: 991_000, expiresAtMs: 993_902 },
+  ];
+  const classify = (cabinConfirm) => classifyChainStop({ state, confirmPressedAtMs: 1_000_000, cabinConfirm });
+  // The page answered its own press: no confirmation ever reached the game, so no window was tested.
+  assert.equal(classify({ requested: 0, refusals: [refused], offers: shortOffers }), null);
+  // A confirmation went out and was accepted or refused for some other reason: not this gap.
+  assert.equal(classify({ requested: 1, refusals: [], offers: shortOffers }), null);
+  assert.equal(
+    classify({ requested: 1, refusals: [{ status: 409, code: "stardew_cabin_choice_expired" }], offers: shortOffers }),
+    null,
+  );
+  // One reading cannot tell a re-minted window from a fixed one, and a long window is not this gap.
+  assert.equal(classify({ requested: 1, refusals: [refused], offers: [shortOffers[0]] }), null);
+  assert.equal(
+    classify({
+      requested: 1,
+      refusals: [refused],
+      offers: [
+        { readAtMs: 990_000, expiresAtMs: 1_290_000 },
+        { readAtMs: 991_000, expiresAtMs: 1_291_000 },
+      ],
+    }),
+    null,
+  );
+});

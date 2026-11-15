@@ -554,6 +554,47 @@ function readAttachmentResponse(declaredDataRoot) {
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
+/**
+ * The window the game's own offer leaves a page, quoted from the wire rather than from a code reading.
+ *
+ * A cabin read answers with one `expiresAtMs` per choice. What a page can do with it is the difference
+ * between that deadline and the moment the answer arrived: the page still has to render the list, the
+ * player has to see and click it, and the confirmation has to travel back inside whatever is left. The
+ * last two reads are quoted one after the other because "the same deadline every time" and "a fresh short
+ * one each time" are different facts for whoever owns the game, and only two readings side by side say
+ * which one this is. `null` when no read carried a live offer.
+ */
+function describeCabinOffers(offers) {
+  const readable = (Array.isArray(offers) ? offers : []).filter(
+    (entry) =>
+      Array.isArray(entry?.choices) &&
+      entry.choices.length > 0 &&
+      entry.choices.every((choice) => Number.isFinite(choice?.expiresAtMs)),
+  );
+  if (readable.length === 0) return null;
+  const windows = readable.map((entry) => ({
+    readAtMs: entry.readAtMs,
+    label: entry.choices[0].label,
+    expiresAtMs: entry.choices[0].expiresAtMs,
+    windowMs: entry.choices[0].expiresAtMs - entry.readAtMs,
+  }));
+  const quoted = windows
+    .slice(-2)
+    .map(
+      (window) =>
+        `${String(window.windowMs)}ms left (expiresAtMs=${String(window.expiresAtMs)}, read at ${new Date(window.readAtMs).toISOString()}, label=${JSON.stringify(window.label)})`,
+    );
+  const all = windows.map((window) => window.windowMs);
+  return `${String(windows.length)} cabin read(s) in this run carried a live offer; the last ${String(quoted.length)}: ${quoted.join(" then ")}; every window was ${String(Math.min(...all))}..${String(Math.max(...all))}ms`;
+}
+
+/** One answer on the confirm route, as a reader needs it: the status and the game's own refusal code. */
+function describeConfirmAnswer(answer) {
+  if (answer === null || answer === undefined) return "nothing";
+  const code = typeof answer.code === "string" && answer.code.length > 0 ? ` ${answer.code}` : "";
+  return `HTTP ${String(answer.status)}${code}`;
+}
+
 /** The tuple a launch wait is waiting to see move: a change in any of these is a step that happened. */
 const stateKey = (state) =>
   state?.ok !== true
@@ -604,7 +645,30 @@ async function hostAnswers(port) {
     say(`steps=${chainStepsLine(facts.chain)}`);
   };
 
+  /**
+   * The two facts about the cabin step a reader needs on every way out, quoted from the run's own wire:
+   * whether a confirmation was SENT, what the game ANSWERED it, and how much time the offer gave the page.
+   *
+   * The rung list says how far the chain got; this says what the game and the page said to each other at
+   * the rung it stopped at. A press answered by the page and a press answered by the game read the same on
+   * screen, and only these two counts tell them apart.
+   */
+  const sayCabins = () => {
+    const confirmAnswers = answers.filter((entry) => entry.route === "game/stardew/cabins/confirm");
+    say("=== ITEM: the cabin offer and the confirmation, as the wire carried them ===");
+    say(
+      `cabin read requests: ${String(cabinReads.requested)} (${String(cabinReads.afterDriverPress)} of them after this driver pressed the refresh control); confirm requests: ${String(cabinConfirms.requested)}`,
+    );
+    say(
+      `confirm answers: ${confirmAnswers.length === 0 ? "none" : JSON.stringify(confirmAnswers.map((answer) => ({ status: answer.status, code: answer.code ?? null, atMs: answer.atMs })))}`,
+    );
+    say(`the offer's window: ${describeCabinOffers(cabinOffers) ?? "no cabin read in this run carried a live offer"}`);
+    for (const entry of cabinOffers.slice(-2))
+      say(`cabins response at ${new Date(entry.readAtMs).toISOString()}: ${JSON.stringify(entry.choices ?? entry.unreadable)}`);
+  };
+
   const conclude = async (browser, { verdict, code, exit }) => {
+    sayCabins();
     say("=== ITEM: the verdict ===");
     if (verdict === VERDICTS.notMeasured) {
       say(notMeasuredLine(code, facts.detail ?? ""));
@@ -682,6 +746,27 @@ async function hostAnswers(port) {
    */
   const cabinReads = { requested: 0, afterDriverPress: 0 };
   let driverPressedAtMs = null;
+
+  /**
+   * The offers the Host handed the page, read off the wire rather than off the panel.
+   *
+   * A choice carries `expiresAtMs`, and how far ahead that deadline sits decides whether any UI can answer
+   * inside it at all: the page has to render the list, the player has to see and click it, and the
+   * confirmation has to travel back. The panel's DOM does not show the deadline, so the response body is
+   * the only place it can be read. Each entry is `{ readAtMs, choices: [{ label, expiresAtMs }] }`, in
+   * arrival order; `readAtMs` is when this driver saw the answer, which is the page's own clock. The window
+   * a read leaves is `expiresAtMs - readAtMs`.
+   */
+  const cabinOffers = [];
+
+  /**
+   * How many confirmations the page actually SENT, as requests.
+   *
+   * A press the page answers itself - a client-side deadline check re-reading the handoff instead of
+   * confirming - produces a cabin read and no confirmation request, so these two counts are what tells the
+   * page's own refusal apart from the game's.
+   */
+  const cabinConfirms = { requested: 0 };
 
   // ---- the machine, before a browser is touched ----
   const gameDir = readRunGameDir(launch.path) ?? "D:\\Steam\\steamapps\\common\\Stardew Valley";
@@ -763,9 +848,33 @@ async function hostAnswers(port) {
     const route = match[1];
     const status = response.status();
     if (status < 400) {
-      // A success is an answer too: the chain's first rung is the launch route admitting the request,
-      // and nothing else in this run records that fact.
-      answers.push({ route, status, atMs: Date.now() });
+      /*
+       * A success is an answer too: the chain's first rung is the launch route admitting the request,
+       * and nothing else in this run records that fact. A cabin read's body is where the offer's own
+       * deadline lives, so the same answer is also read as the window it left the page.
+       */
+      const seenAtMs = Date.now();
+      answers.push({ route, status, atMs: seenAtMs });
+      if (route !== "game/stardew/cabins") return;
+      response
+        .text()
+        .then((text) => {
+          let body = null;
+          try {
+            body = JSON.parse(text);
+          } catch {
+            cabinOffers.push({ readAtMs: seenAtMs, choices: null, unreadable: "unparseable_cabin_body" });
+            return;
+          }
+          const choices = Array.isArray(body?.choices)
+            ? body.choices.map((choice) => ({
+                label: choice?.displayLabel ?? null,
+                expiresAtMs: Number.isFinite(choice?.expiresAtMs) ? choice.expiresAtMs : null,
+              }))
+            : null;
+          cabinOffers.push({ readAtMs: seenAtMs, choices, unreadable: null });
+        })
+        .catch((error) => cabinOffers.push({ readAtMs: seenAtMs, choices: null, unreadable: String(error) }));
       return;
     }
     response
@@ -788,6 +897,7 @@ async function hostAnswers(port) {
       });
   });
   page.on("request", (request) => {
+    if (/\/game\/stardew\/cabins\/confirm$/u.test(request.url())) cabinConfirms.requested += 1;
     if (!/\/game\/stardew\/cabins$/u.test(request.url())) return;
     cabinReads.requested += 1;
     if (driverPressedAtMs !== null) cabinReads.afterDriverPress += 1;
@@ -938,13 +1048,35 @@ async function hostAnswers(port) {
      * confirming (`GameSurface.tsx:263-268`). "Admitted" is read from the panel's own shapes - the list in
      * `confirming` (every confirm disabled), or no list at all.
      */
+    /*
+     * One press per attempt, and the next attempt presses the FRESH offer the previous one produced.
+     *
+     * A confirmation can come back as a new choice rather than as a confirmation: the game refuses the
+     * handle by name and the panel re-reads, leaving a new, freshly-expiring choice on screen. A press that
+     * stops there measures nothing about the window - it measures a driver that gave up - so the next
+     * attempt presses what a player would press: the choice that is on screen now. "The game answered this
+     * press" is read from the wire (an answer on `game/stardew/cabins/confirm`), never guessed from the DOM,
+     * and it is the fact that tells a fresh offer apart from the same screen re-rendered.
+     *
+     * "Admitted" is read from the panel's own shapes - the list in `confirming` (every confirm disabled),
+     * or no list at all.
+     */
+    const confirmAnswersSince = (atMs) =>
+      answers.filter((entry) => entry.route === "game/stardew/cabins/confirm" && entry.atMs >= atMs);
     const presses = [];
     let inFlight = false;
     let confirmPressedAtMs = null;
     const readsBeforePresses = cabinReads.requested;
     for (let attempt = 1; attempt <= 3 && !inFlight; attempt += 1) {
-      presses.push({ attempt, choices: handoff.choices.map((choice) => choice.label), confirm: handoff.choices[0]?.confirm?.name ?? null });
+      const press = {
+        attempt,
+        choices: handoff.choices.map((choice) => choice.label),
+        confirm: handoff.choices[0]?.confirm?.name ?? null,
+        offerReadAtMs: cabinOffers.at(-1)?.readAtMs ?? null,
+      };
+      presses.push(press);
       confirmPressedAtMs = Date.now();
+      press.pressedAtMs = confirmPressedAtMs;
       await page.locator('[data-testid="cabin-choice-list"] li.game-choice button').first().click();
       const pressedAt = Date.now();
       let goneForMs = 0;
@@ -959,7 +1091,12 @@ async function hostAnswers(port) {
         }
         const offeredAgain = next.choices.some((choice) => choice.confirm !== null && choice.confirm.disabled !== true);
         if (offeredAgain) {
-          // The panel re-read instead of confirming: this press was not the one that counted.
+          const answered = confirmAnswersSince(pressedAt);
+          if (answered.length > 0) {
+            // The game answered this press and a new choice is on screen: press that one, now.
+            press.answer = answered.at(-1);
+            break;
+          }
           goneForMs = 0;
           continue;
         }
@@ -971,7 +1108,24 @@ async function hostAnswers(port) {
         }
       }
     }
-    if (!inFlight)
+    for (const press of presses)
+      if (press.answer === undefined) press.answer = confirmAnswersSince(press.pressedAtMs).at(-1) ?? null;
+    /* The confirmation's own answer, in the order the Host gave them: the fact the chain's rung prints. */
+    const confirmAnswers = answers.filter((entry) => entry.route === "game/stardew/cabins/confirm");
+    const offerWindows = describeCabinOffers(cabinOffers);
+    if (!inFlight) {
+      /*
+       * The confirm step was TAKEN and the game answered it. The rung is recorded here rather than left as
+       * "not reached", because the next reader must see the confirm's own answer: a rung that stays empty
+       * after three confirmations went out would read as if the step had never been attempted.
+       */
+      const last = confirmAnswers.at(-1) ?? null;
+      chainReached(
+        CHAIN_STEPS.cabinConfirm,
+        confirmAnswers.length === 0
+          ? `the panel answered all ${String(presses.length)} confirm press(es) itself: ${String(cabinConfirms.requested)} confirmation request(s) reached the Host, and ${String(cabinReads.requested - readsBeforePresses)} cabin read(s) were sent instead`
+          : `the confirm was SENT ${String(cabinConfirms.requested)} time(s) and the Host ANSWERED ${describeConfirmAnswer(last)}${offerWindows === null ? "" : `; ${offerWindows}`}`,
+      );
       return {
         outcome: "not_admitted",
         reads,
@@ -987,10 +1141,14 @@ async function hostAnswers(port) {
          * control again, so the player's click appears to do nothing. Counting the two requests is the only
          * way to tell those apart from outside the page.
          */
-        mechanism: `${String(presses.length)} confirm press(es) caused ${String(cabinReads.requested - readsBeforePresses)} further cabin read(s) and ${String(answers.filter((entry) => entry.route === "game/stardew/cabins/confirm").length)} confirm request(s): a press that produces a re-read instead of a confirmation was answered by the page, not by the Host`,
+        mechanism: `${String(presses.length)} confirm press(es) caused ${String(cabinReads.requested - readsBeforePresses)} further cabin read(s) and ${String(cabinConfirms.requested)} confirm request(s): a press that produces a re-read instead of a confirmation was answered by the page, not by the Host`,
+        confirmAnswers,
+        confirms: { ...cabinConfirms },
+        offers: cabinOffers,
         elapsedMs: Date.now() - began,
         problems: [...problems.entries()],
       };
+    }
 
     /* The confirmation is in flight: the Mod provisions the farmhand and the Host admits its manifest. */
     say(`the cabin choice was confirmed; waiting up to ${String(BUDGET.cabinConfirmMs)}ms for the attachment`);
@@ -1016,7 +1174,7 @@ async function hostAnswers(port) {
     const confirmAnswer = answers.filter((entry) => entry.route === "game/stardew/cabins/confirm").at(-1) ?? null;
     chainReached(
       CHAIN_STEPS.cabinConfirm,
-      `the choice ${JSON.stringify(presses[0]?.choices?.join(", ") ?? null)} was confirmed after ${String(Date.now() - confirmPressedAtMs)}ms of waiting; the confirm route answered ${confirmAnswer === null ? "nothing" : `HTTP ${String(confirmAnswer.status)}${confirmAnswer.code === null ? "" : ` ${String(confirmAnswer.code)}`}`}`,
+      `the choice ${JSON.stringify(presses[0]?.choices?.join(", ") ?? null)} was confirmed after ${String(Date.now() - confirmPressedAtMs)}ms of waiting; the confirm route answered ${describeConfirmAnswer(confirmAnswer)}`,
     );
     const attachLanded = attached.ok === true && attached.attachmentStatus === "attached";
     if (attachLanded) chainReached(CHAIN_STEPS.attach, `the Host published attachment=attached (${describeGameState(attached)}) ${String(Date.now() - attachBegan)}ms after the confirmation`);
@@ -1029,6 +1187,8 @@ async function hostAnswers(port) {
       cabinReads: { ...cabinReads },
       confirmPressedAtMs,
       confirmAnswer,
+      confirms: { ...cabinConfirms },
+      offers: cabinOffers,
       attachmentResponse: readAttachmentResponse(launch.state?.declaredDataRoot ?? null),
       elapsedMs: Date.now() - began,
       confirmMs: Date.now() - attachBegan,
@@ -1359,13 +1519,28 @@ async function hostAnswers(port) {
     }
     /*
      * The chain's furthest reachable state, and the step that is left. `classifyChainStop` returns a gap
-     * only when this run's own readings prove it: an attachment that landed, or the Mod's own word for
-     * the confirmation it is still waiting on. Anything else is `null` and stays a failure below.
+     * only when this run's own readings prove it: an attachment that landed, the Mod's own word for the
+     * confirmation it is still waiting on, or a game that refused a confirmation the run sent against an
+     * offer whose window no page could answer inside. Anything else is `null` and stays a failure below.
      */
     const gap = classifyChainStop({
       state: launched,
       attachmentResponse: cabin?.attachmentResponse ?? readAttachmentResponse(launch.state?.declaredDataRoot ?? null),
       confirmPressedAtMs: cabin?.confirmPressedAtMs ?? null,
+      /*
+       * Both sides of the confirmation, as this run's wire recorded them: what the page sent, what the game
+       * answered, and the window every offer carried. `classifyChainStop` reads them; this driver only has
+       * the facts, never the judgement.
+       */
+      cabinConfirm: {
+        requested: cabinConfirms.requested,
+        refusals: answers
+          .filter((entry) => entry.route === "game/stardew/cabins/confirm" && typeof entry.code === "string")
+          .map((entry) => ({ status: entry.status, code: entry.code })),
+        offers: cabinOffers
+          .filter((entry) => Array.isArray(entry.choices) && entry.choices.length > 0)
+          .map((entry) => ({ readAtMs: entry.readAtMs, expiresAtMs: entry.choices[0].expiresAtMs })),
+      },
     });
     if (gap !== null) {
       facts.detail = `${observed}; ${gap.detail}`;
