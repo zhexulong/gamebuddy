@@ -837,12 +837,19 @@ export const MessageBubble = memo(function MessageBubble({
    * Escape steps out of a surface, and a player closing a list of this row's actions must not leave the
    * Chat doing it.
    */
-  const onMoreKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>): void => {
-    if (event.key !== "Escape" || !moreOpen) return;
-    event.stopPropagation();
-    setMoreOpen(false);
-    moreTriggerRef.current?.focus();
-  };
+  useEffect(() => {
+    if (!moreOpen) return;
+    const onDocumentKeyDown = (event: KeyboardEvent): void => {
+      if (event.key !== "Escape") return;
+      if (moreRef.current === null || !(event.target instanceof Node)) return;
+      if (!moreRef.current.contains(event.target)) return;
+      event.stopPropagation();
+      setMoreOpen(false);
+      moreTriggerRef.current?.focus();
+    };
+    document.addEventListener("keydown", onDocumentKeyDown, true);
+    return () => document.removeEventListener("keydown", onDocumentKeyDown, true);
+  }, [moreOpen]);
   /**
    * The copy's receipt, and the row's only transient state.
    *
@@ -1168,7 +1175,7 @@ export const MessageBubble = memo(function MessageBubble({
    */
   const moreEntry =
     moreOffered && !stripReplaced && editor === null ? (
-      <div className="message-more" ref={moreRef} onKeyDown={onMoreKeyDown}>
+      <div className="message-more" ref={moreRef}>
         <button
           ref={moreTriggerRef}
           type="button"
