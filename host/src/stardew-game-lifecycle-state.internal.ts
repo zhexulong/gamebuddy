@@ -142,13 +142,14 @@ export const STARDEW_GAME_LIFECYCLE_TARGETS: readonly Readonly<{
  * the gate fails on an entry whose state has since gained an edge. `closed` is not listed -
  * it is the deliberate shutdown, not a trap.
  *
- * Both entries are the SAME defect seen twice, and neither is excused: a failed attempt has
- * no authenticated operation that abandons it. `launch_quarantined` needs containment and
- * settlement (so that the installation registration it occupies is released) and there is
- * no route for it; `activation_failed` needs its accepted admission released so a fresh
- * `lifecycle_activation` can be presented, and the reservation a failed activation may
- * already have made can occupy the same registration. This table is where the missing
- * egress is named until it exists.
+ * Both entries are the same defect seen twice and neither is excused: a failed attempt has no
+ * operation that abandons it, so the installation registration it occupies cannot be released.
+ * `launch_quarantined` cannot be reached by settlement at all - an attempt the runtime never held
+ * has nothing to contain, and one it did hold refuses the settlement's first transition (its entry
+ * states both walls and the proof kind that would replace them); `activation_failed` needs its
+ * accepted admission released so a fresh `lifecycle_activation` can be presented, and the
+ * reservation a failed activation may already have made can occupy the same registration. This
+ * table is where the missing egress is named until it exists.
  */
 export const STARDEW_GAME_LIFECYCLE_TRAPPED_TERMINALS: Readonly<Partial<Record<StardewGameLifecycleState, string>>> =
   Object.freeze({
