@@ -161,6 +161,16 @@ test("a node's success inside a still-running programme does not open a turn", a
     "suppressed",
     `the flush must still be decided and named, got ${JSON.stringify(pump.turnAccount.lastDecision)}`,
   );
+  assert.equal(
+    pump.turnAccount.suppressed[TURN_SUPPRESSION.inFlightProgress],
+    1,
+    "and named as a step, so a rerun's account can count how many turns this rule removed",
+  );
+  assert.equal(
+    pump.turnAccount.suppressedByProducer[TURN_SUPPRESSION.inFlightProgress][FACT_PRODUCER.adapterIngress],
+    1,
+    "with the entrance the fact came in by, or a suppressed fact has no record of where it arrived",
+  );
 });
 
 test("the settlement opens the turn, and it carries the nodes that finished inside it", async () => {
@@ -360,9 +370,7 @@ type ShapeReading = Readonly<{ shape: string; inProgramme: OpeningReading; alone
  * The verdict comes from the readings, not from the pump's exit: zero population is BLOCKED with a reason rather than
  * green, and a violation names the producer and the shape it fired on.
  */
-function inFlightProgressGate(
-  readings: readonly ShapeReading[],
-): Readonly<{
+function inFlightProgressGate(readings: readonly ShapeReading[]): Readonly<{
   examined: number;
   decision: number;
   progress: number;
