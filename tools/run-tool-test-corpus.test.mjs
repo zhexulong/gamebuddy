@@ -114,7 +114,7 @@ test("a script renamed out of test:/suite: is a derivation defect, not a silent 
   assert.match(run.stdout, /^corpus_derivation:defect:1 script\(s\) the corpus does not take$/m);
   assert.match(
     run.stdout,
-    /^ {2}untaken held-suite: runs a tools\/ suite but is neither a `test:`\/`suite:` script nor run by an entry point \(node --test tools\/renamed\.test\.mjs\)$/m,
+    /^ {2}untaken held-suite: runs a gate suite but is neither a `test:`\/`suite:` script nor run by an entry point \(node --test tools\/renamed\.test\.mjs\)$/m,
   );
   assert.match(run.stdout, /^members_failed:0$/m);
 });
@@ -209,4 +209,39 @@ test("a quarantine entry naming no corpus file fails the step", () => {
   const run = runAggregate(root);
   assert.equal(run.status, 1);
   assert.match(run.stderr, /tool_test_corpus_quarantine_unknown_file:tools\/gone\.test\.mjs/);
+});
+
+test("the roots are the registry's, and a gate falsifier outside them is named rather than dropped", () => {
+  const root = makeTree({
+    scripts: {
+      "test:moved": "node --test gates/meta/check-moved.test.mjs",
+      "test:unrooted": "node --test gatez/check-unrooted.test.mjs",
+      "test:owned-elsewhere": "node --test integrations/stardew/tests/stardew-thing.test.mjs",
+    },
+    suites: {
+      "gates/meta/check-moved.test.mjs": PASSING_SUITE,
+      "gatez/check-unrooted.test.mjs": PASSING_SUITE,
+      "integrations/stardew/tests/stardew-thing.test.mjs": PASSING_SUITE,
+    },
+  });
+  const { members, unrooted, notTaken } = corpusMembers({ root });
+  assert.deepEqual(
+    members.map((member) => member.name),
+    ["test:moved"],
+    "a suite in a domain directory is taken, because the roots come from the gate registry and not from this rule",
+  );
+  assert.deepEqual(
+    unrooted.map((entry) => entry.name),
+    ["test:unrooted"],
+    "a gate falsifier no root covers is a defect of the rule, so it is named instead of leaving the corpus in silence",
+  );
+  assert.deepEqual(notTaken, [], "a suite another job owns is neither taken nor reported as a corpus defect");
+
+  const run = runAggregate(root);
+  assert.equal(run.status, 1, "a suite the corpus cannot reach must not leave a green step");
+  assert.match(run.stdout, /^corpus_derivation:defect:1 script\(s\) the corpus does not take$/m);
+  assert.match(
+    run.stdout,
+    /^ {2}unrooted test:unrooted: names a gate falsifier that no `GATE_DIRECTORIES` entry covers, so no command takes it \(gatez\/check-unrooted\.test\.mjs\)$/m,
+  );
 });

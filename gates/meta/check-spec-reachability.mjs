@@ -67,6 +67,7 @@ import { fileURLToPath } from "node:url";
 import { untrackedFiles } from "../../tools/lib/journey-source.mjs";
 import { corpusFiles } from "../../tools/run-tool-test-corpus.mjs";
 import { rootFromArgv } from "../../tools/lib/gate-preamble.mjs";
+import { GATE_TREE_ROOTS } from "../directories.mjs";
 
 const REPOSITORY_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const BASELINE_PATH = "tools/spec-reachability-baseline.json";
@@ -367,21 +368,25 @@ export function auditSpecReachability({ root = REPOSITORY_ROOT } = {}) {
   if (staticSuites.length === 0)
     unassessed.push("unassessed: dialogue-web/tests - no `*.test.mjs` found, so its suites cannot be judged");
 
-  const toolsSuites = existsSync(join(root, "tools"))
-    ? scan(join(root, "tools"), (name) => name.endsWith(".test.mjs") && !name.startsWith("."), root)
-        .filter((file) => !file.split("/").includes("fixtures"))
-        .filter(committed)
-        .map((file) => ({
-          file,
-          reached: named.has(file),
-          reason: named.has(file) ? "named_by_a_reachable_node_test" : "named_by_no_reachable_node_test",
-        }))
-    : [];
+  // A gate may live in `tools/` or in a domain directory under `gates/`, so its falsifier's population is every tree the
+  // registry declares: a scan of one root answers a smaller question the day a gate moves, and a suite that leaves the
+  // population is a suite nobody reads.
+  const toolsSuites = GATE_TREE_ROOTS.filter((directory) => existsSync(join(root, directory)))
+    .flatMap((directory) =>
+      scan(join(root, directory), (name) => name.endsWith(".test.mjs") && !name.startsWith("."), root),
+    )
+    .filter((file) => !file.split("/").includes("fixtures"))
+    .filter(committed)
+    .map((file) => ({
+      file,
+      reached: named.has(file),
+      reason: named.has(file) ? "named_by_a_reachable_node_test" : "named_by_no_reachable_node_test",
+    }));
 
   const groups = [
     { id: "specs", population: specs, rule: "/**/*.spec.ts under the Playwright testDir" },
     { id: "static_suites", population: staticSuites, rule: "dialogue-web/tests/**/*.test.mjs" },
-    { id: "tools_suites", population: toolsSuites, rule: "tools/**/*.test.mjs" },
+    { id: "tools_suites", population: toolsSuites, rule: "every gate tree's **/*.test.mjs" },
   ];
   return {
     groups,

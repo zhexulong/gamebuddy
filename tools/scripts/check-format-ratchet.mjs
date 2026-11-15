@@ -52,11 +52,12 @@ import { fileURLToPath } from "node:url";
 import { describeUntracked, untrackedSources } from "../lib/indexed-sources.mjs";
 import { cleanOutputLines } from "../lib/subprocess-output.mjs";
 import { runWhenEntry } from "./cli-entry.mjs";
+import { GATE_TREE_ROOTS } from "../../gates/directories.mjs";
 
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
 
 /** The roots `package.json`'s `format:check` named before this gate, unchanged. */
-export const SCOPE = ["tools", "host/src", "dialogue-web/src", "vendor/pi-koe/src"];
+export const SCOPE = [...GATE_TREE_ROOTS, "host/src", "dialogue-web/src", "vendor/pi-koe/src"];
 const biomeBinary = join(repositoryRoot, "node_modules", "@biomejs", "biome", "bin", "biome");
 
 const baselineFor = (root) => join(root, "tools", "scripts", "format-baseline.json");

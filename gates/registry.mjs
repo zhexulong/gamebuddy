@@ -74,28 +74,12 @@ import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { parseJavaScript } from "../tools/lib/javascript-ast.mjs";
+import { GATE_DIRECTORIES, GATE_DOMAINS, GATE_KINDS, GATE_TIERS } from "./directories.mjs";
 
 const REPOSITORY_ROOT = resolve(fileURLToPath(import.meta.url), "../..");
 
-/** The three closed sets a declaration is checked against, in the order a reader wants them. */
-export const GATE_DOMAINS = Object.freeze(["product", "data", "arch", "stardew", "meta"]);
-export const GATE_TIERS = Object.freeze(["l0", "l1", "l2"]);
-export const GATE_KINDS = Object.freeze(["contract", "totality", "ratchet"]);
-
-/** The directory a domain's gates live in. One string per domain, derived from the domain list. */
-const DOMAIN_ROOT = "gates";
-
-/**
- * The directories a gate file may live in: `tools/` for the gates no domain has claimed yet, and one directory per
- * domain beneath `gates/`.
- *
- * DERIVED FROM `GATE_DOMAINS`, not written out, so filing a domain in its directory is a `git mv` and no edit at all.
- * Written out, the list was `["tools"]` and this scan is not recursive: measured on the `meta` pilot, moving 14 gates
- * into a domain directory took this registry from 148 declared to 134 with no finding, because a gate that leaves
- * every declared directory leaves the population and an empty answer agrees with itself. The same measurement is why
- * `tools/` remains listed while the other four domains are still there.
- */
-export const GATE_DIRECTORIES = Object.freeze(["tools", ...GATE_DOMAINS.map((domain) => `${DOMAIN_ROOT}/${domain}`)]);
+/** Re-exported: the directory list and the closed sets are owned by `gates/directories.mjs`, which costs no parser. */
+export { GATE_DIRECTORIES, GATE_DOMAINS, GATE_KINDS, GATE_TIERS };
 
 /** A gate file's name, wherever it lives: the rule every consumer now reads instead of restating. */
 const GATE_NAME = /^(?:check|audit)-.*\.mjs$/u;
@@ -130,6 +114,18 @@ export function directoryDomain(path) {
 }
 
 /**
+ * The name half of the rule on its own: `check-*` / `audit-*` `.mjs`, minus the falsifiers that live beside a gate.
+ *
+ * It is exported because the two halves answer two different questions, and the register needs the second answer about
+ * a directory the tree has not published: "is this file shaped like a gate?" is not "the repository publishes it in a
+ * gate directory". One spelling of each, so a consumer that asks only the first cannot restate the regex.
+ */
+export function isGateName(path) {
+  const name = basename(path);
+  return GATE_NAME.test(name) && !SIBLING_FALSIFIER.test(name);
+}
+
+/**
  * Is this path a gate file? The ONE spelling of the rule.
  *
  * Both halves matter: the name says what kind of file it is, and the directory says whether this repository publishes
@@ -137,9 +133,8 @@ export function directoryDomain(path) {
  * gate today - a fact stated here once instead of being re-derived by each consumer from a different glob.
  */
 export function isGateFile(path) {
-  const name = basename(path);
   const directory = directoryOf(normalize(path));
-  return GATE_DIRECTORIES.includes(directory) && GATE_NAME.test(name) && !SIBLING_FALSIFIER.test(name);
+  return GATE_DIRECTORIES.includes(directory) && isGateName(path);
 }
 
 /**
@@ -310,7 +305,7 @@ function invalidDetail({ file, field, fields, filedUnder }) {
   if (field === "domain" && filedUnder !== null && GATE_DOMAINS.includes(fields.domain))
     return (
       `\`${fields.domain}\` is declared, but the file is filed under \`${filedUnder}\` - ` +
-      `a gate in ${DOMAIN_ROOT}/<domain>/ declares that domain, so move the file or change the declaration`
+      `a gate in gates/<domain>/ declares that domain, so move the file or change the declaration`
     );
   return `\`${String(fields[field])}\` is not one of ${(DECLARATION_FIELDS[field] ?? []).join(" | ")}`;
 }

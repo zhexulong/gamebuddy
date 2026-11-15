@@ -81,13 +81,14 @@ import { existsSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, join, posix, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { GATE_TREE_ROOTS } from "../gates/directories.mjs";
 
 const REPOSITORY_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
 const typescript = createRequire(join(REPOSITORY_ROOT, "host", "package.json"))("typescript");
 
 /** The source roots that carry static imports. A root contributing no file is drift, not a narrower gate. */
-const SOURCE_ROOTS = ["host/src", "dialogue-web/src", "dialogue-web/tests", "tools", "integrations"];
+const SOURCE_ROOTS = ["host/src", "dialogue-web/src", "dialogue-web/tests", ...GATE_TREE_ROOTS, "integrations"];
 const SOURCE_FILE = /\.(?:ts|tsx|mjs|js|cjs)$/u;
 /** A file's dialect, so `tsx` parses as JSX and everything else as the JavaScript it is. */
 const SCRIPT_KIND = {

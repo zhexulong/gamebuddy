@@ -396,6 +396,7 @@ import process from "node:process";
 import { fileURLToPath } from "node:url";
 
 import { RUNNER_FILE } from "./check-native-local-runner-scaffold.mjs";
+import { GATE_TREE_ROOTS } from "../gates/directories.mjs";
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const BASELINE = "tools/duplicate-code-baseline.json";
@@ -414,7 +415,7 @@ export const SOURCE_TREES = Object.freeze([
   "host/scripts",
   "dialogue-web/src",
   "packages",
-  "tools",
+  ...GATE_TREE_ROOTS,
   "integrations/stardew",
   "desktop",
 ]);

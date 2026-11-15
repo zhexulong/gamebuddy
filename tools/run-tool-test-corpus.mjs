@@ -45,6 +45,7 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { containedChildEnvironment } from "./lib/crash-report-containment.mjs";
 import { cleanOutputLines } from "./lib/subprocess-output.mjs";
+import { GATE_TREE_ROOTS } from "../gates/directories.mjs";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const PER_TEST_TIMEOUT = "--test-timeout=120000";
@@ -76,27 +77,40 @@ function readIn(root, relative) {
 }
 
 /**
- * The `tools/` suites one script command runs - or null when the command is not `node --test …` over `tools/`
- * files. Flags are kept in order and re-issued with the run; only the files are read as paths.
+ * The `gate suite` directories one script command runs - or null when the command is not `node --test …` over a
+ * directory a gate suite lives in. Flags are kept in order and re-issued with the run; only the files are read as paths.
+ *
+ * THE ROOTS ARE DERIVED FROM `gates/directories.mjs`, not written here. Written out, this rule said `tools/` alone, and the
+ * day twelve suites moved to `gates/meta/` the corpus lost them without a word: `corpusFiles` 400 -> 388 and no gate
+ * could see the gap, because a command the rule rejects leaves both the run and the report. A file whose NAME says it is
+ * a gate's falsifier but whose directory no root covers is therefore refused loudly rather than dropped.
  *
  * Two spellings are outside this rule and are named rather than guessed at, because a rule that silently drops
  * a script is a corpus that shrinks without saying so: `node --flag --test …` (a flag before `--test`, so the
  * command is not the runner's own form) and a chained line (`node --test a.mjs && node --test b.mjs`, one
  * script for two runs). Neither appears in package.json today.
  */
+const GATE_FALSIFIER = /^(?:check|audit)-.*\.test\.mjs$/u;
+const basenameOf = (file) => file.replace(/^.*\//u, "");
+const inGateDirectory = (file) => GATE_TREE_ROOTS.some((root) => file.startsWith(`${root}/`));
+
 function memberCommand(command) {
   const tokens = command.trim().split(/\s+/);
   if (tokens[0] !== "node" || tokens[1] !== "--test") return null;
   const rest = tokens.slice(2);
   const files = rest.filter((token) => !token.startsWith("-"));
-  if (files.length === 0 || !files.every((file) => file.startsWith("tools/"))) return null;
+  if (files.length === 0) return null;
+  if (!files.every(inGateDirectory)) {
+    const unrooted = files.filter((file) => GATE_FALSIFIER.test(basenameOf(file)) && !inGateDirectory(file));
+    return unrooted.length === 0 ? null : { unrooted };
+  }
   return { flags: rest.filter((token) => token.startsWith("-")), files };
 }
 
 /**
- * The corpus, member by member: one package.json script per member, the `tools/` suite files it runs, and the
- * scripts that run a `tools/` suite the derivation does not take - the reading that says whether the corpus is
- * behind the tree rather than red.
+ * The corpus, member by member: one package.json script per member, the gate-suite files it runs, the scripts that run
+ * such a suite the derivation does not take, and the scripts naming a gate falsifier that no gate directory covers -
+ * the reading that says whether the corpus is behind the tree rather than red.
  */
 export function corpusMembers({ root = ROOT } = {}) {
   const pkg = JSON.parse(readFileSync(resolve(root, "package.json"), "utf8"));
@@ -110,9 +124,14 @@ export function corpusMembers({ root = ROOT } = {}) {
   ].join("\n");
   const members = [];
   const notTaken = [];
+  const unrooted = [];
   for (const [name, command] of Object.entries(pkg.scripts)) {
     const run = memberCommand(command);
     if (run === null) continue;
+    if (run.unrooted !== undefined) {
+      unrooted.push({ name, command, files: run.unrooted });
+      continue;
+    }
     if (invokedByAnEntryPoint(name, entryPoints)) continue;
     // `suite:` names a library's own tests, `test:` names a gate's. Both run here; only `test:` carries the
     // meta-gate's obligation to state a falsifier, which is why the two prefixes exist separately.
@@ -122,13 +141,13 @@ export function corpusMembers({ root = ROOT } = {}) {
     }
     members.push({ name, flags: run.flags, files: run.files });
   }
-  return { members, notTaken };
+  return { members, notTaken, unrooted };
 }
 
 /**
  * The `test:*`/`suite:*` suite files the corpus takes.
  *
- * Exported because `tools/check-spec-reachability.mjs` asks the same question - which `tools/` suites a
+ * Exported because `gates/meta/check-spec-reachability.mjs` asks the same question - which gate suites a
  * checkout runs - and a second derivation of the same population would be a second authority for it.
  */
 export function corpusFiles({ root = ROOT } = {}) {
@@ -201,7 +220,7 @@ const detail = (run) =>
 async function main(argv) {
   const rootIndex = argv.indexOf("--root");
   const root = rootIndex >= 0 && typeof argv[rootIndex + 1] === "string" ? resolve(argv[rootIndex + 1]) : ROOT;
-  const { members, notTaken } = corpusMembers({ root });
+  const { members, notTaken, unrooted } = corpusMembers({ root });
   const quarantine = JSON.parse(readFileSync(resolve(root, QUARANTINE_PATH), "utf8")).exclusions;
   const corpus = [...new Set(members.flatMap((member) => member.files))].sort();
   const quarantined = new Set(quarantine.map((entry) => entry.file));
@@ -210,14 +229,21 @@ async function main(argv) {
     .map((member) => ({ ...member, files: member.files.filter((file) => !quarantined.has(file)) }))
     .filter((member) => member.files.length > 0);
 
-  // The derivation's own verdict. An empty corpus and a `tools/` suite no member takes are defects of the
-  // rule, not debts of the members: a tree whose scripts stopped matching would otherwise report a clean run.
+  // The derivation's own verdict. An empty corpus, a `tools/` suite no member takes, and a gate falsifier outside
+  // every gate directory are defects of the rule, not debts of the members: a tree whose scripts stopped matching would
+  // otherwise report a clean run.
   const derivation = [];
   if (members.length === 0)
-    derivation.push("no members: no `test:`/`suite:` script in package.json runs `node --test` over tools/ files");
+    derivation.push(
+      "no members: no `test:`/`suite:` script in package.json runs `node --test` over a gate directory's files",
+    );
   for (const script of notTaken)
     derivation.push(
-      `untaken ${script.name}: runs a tools/ suite but is neither a \`test:\`/\`suite:\` script nor run by an entry point (${script.command})`,
+      `untaken ${script.name}: runs a gate suite but is neither a \`test:\`/\`suite:\` script nor run by an entry point (${script.command})`,
+    );
+  for (const script of unrooted)
+    derivation.push(
+      `unrooted ${script.name}: names a gate falsifier that no \`GATE_DIRECTORIES\` entry covers, so no command takes it (${script.files.join(", ")})`,
     );
 
   process.stdout.write(
