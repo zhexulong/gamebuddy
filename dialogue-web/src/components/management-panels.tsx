@@ -847,7 +847,17 @@ export function ConnectionSettingsPanel({
               </p>
               {!modelOptions.probed && (
                 <p className="field-hint" data-connection-not-probed>
-                  {labels.connectionModelNotProbed}
+                  {/*
+                   * Which sentence is the truth here depends on whether there is a list to start
+                   * from. With one, saving is possible and testing is the next step. With none - the
+                   * ordinary state for an entry whose ids this product does not state - the field
+                   * above is the only thing that can be answered first, so the sentence names the
+                   * typed id and what the probe does with it. The previous wording told the player to
+                   * save a form the field's own `required` attribute would not let them submit.
+                   */}
+                  {modelOptions.served.length + modelOptions.catalog.length + modelOptions.suggested.length === 0
+                    ? labels.connectionModelNothingToOffer
+                    : labels.connectionModelNotProbed}
                 </p>
               )}
               {modelOptions.suggested.length > 0 && (

@@ -424,7 +424,6 @@ const UNREAD_RECORDED_DEBT = [
       "back",
       "chatModelProfile",
       "chinese",
-      "connectionPending",
       "connectionRecommended",
       "english",
       "gameModelProfile",

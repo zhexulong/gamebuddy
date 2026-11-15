@@ -467,6 +467,13 @@ const en = {
   // the player can act on and one that looks broken.
   connectionModelNotProbed:
     "This endpoint has not been asked which models it serves yet. Save the connection, then test it: the list comes from the endpoint's own answer.",
+  // The state where the two lists above are BOTH empty, which is every entry whose ids this product
+  // does not state: the sentence above promises a save-then-test path, and this field's own
+  // `required` attribute is what forbids the save. The move that exists is the typed id, so the
+  // sentence names it and names what the probe does with it - the endpoint's listing replaces the
+  // guess, which is the round trip this panel already implements.
+  connectionModelNothingToOffer:
+    "This entry publishes no model ids, so this field is yours: type any id your provider's model list shows. Testing the connection is what proves it, and the endpoint's own list of what it serves appears here afterwards so you can pick from it.",
   // Ids documented for this endpoint by its own provider, offered so a first run has a starting
   // point. Not availability: nothing here was read from the endpoint, and its own answer wins.
   connectionModelsSuggested: "suggested ids for this endpoint; not yet confirmed by it",
@@ -1636,6 +1643,8 @@ const zh: Messages = {
   connectionModelSuggestionsHint: "请输入该端点提供的模型 ID。测试连接即可确认它确实提供。",
   connectionModelsServed: "个模型由该端点提供",
   connectionModelNotProbed: "尚未向该端点询问它提供哪些模型。请保存连接并测试：列表来自端点自己的回答。",
+  connectionModelNothingToOffer:
+    "该渠道不发布模型 ID，请填写你的服务商模型列表中显示的任意一个。测试连接即可确认它是否可用；测试完成后这里会显示该端点实际提供的模型，可直接从中选择。",
   connectionModelsSuggested: "个建议的模型 ID，该端点尚未确认",
   connectionModelCatalog: "GameBuddy 的建议，最终以端点为准",
   connectionModelsCatalog: "GameBuddy 目录里的建议",

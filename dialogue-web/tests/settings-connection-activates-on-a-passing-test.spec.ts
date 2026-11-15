@@ -268,6 +268,46 @@ test("a saved connection is one press from being enabled, and the Chat reaches a
   expect(after.noModelShown, "and the conversation stops saying it has no model").toBe(false);
 });
 
+/**
+ * The model field's own two states, in the one case where the product can offer the player no list
+ * at all. `openai` is that case in the shipped catalog: its ids are not this tree's to state, so
+ * `allowedPlayerModels` and `suggestedModelIds` are both empty and the endpoint has never been
+ * asked. The field is required (the Host refuses a connection with no model id: `invalid_model_id`
+ * in `connection-store.ts:resolveModelId`), so the sentence under it is the only thing that can
+ * tell the player how to leave a blank required field.
+ */
+test("a field with no list to start from says what to type instead of promising a save it forbids", async ({ page }) => {
+  await stubHost(page, { probe: "ready", activeBefore: false });
+  await page.goto(`/#profile=composed-reference-game&boot=${token}`);
+  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  const panel = page.getByTestId("settings-surface").locator("[data-connection-settings]");
+  await panel.locator("#connection-provider").selectOption("openai");
+
+  const reading = await panel.locator("[data-connection-form]").evaluate((node) => ({
+    required: node.querySelector<HTMLInputElement>("#connection-model-id")?.required ?? null,
+    offered: [...node.querySelectorAll("#connection-model-options option")].length,
+    servedCount: node.querySelector("[data-connection-served-count]")?.textContent?.trim() ?? null,
+    guidance: [...node.querySelectorAll("p")].map((line) => (line.textContent ?? "").replace(/\s+/gu, " ").trim()),
+  }));
+  console.log(`[journey/model-field] ${JSON.stringify(reading)}`);
+
+  // The premise, measured rather than assumed: nothing is offered and the field cannot be left blank.
+  expect(reading.offered, "no id is offered for an entry whose ids this product does not state").toBe(0);
+  expect(reading.required, "and the field is the Host's own requirement").toBe(true);
+
+  // The sentence the player reads must be the move that actually exists. "Save the connection, then
+  // test it" is not: the required field above it is empty, so the save never leaves the browser.
+  expect(reading.guidance, "the guidance names the field as the first move").toContain(
+    "This entry publishes no model ids, so this field is yours: type any id your provider's model list shows. " +
+      "Testing the connection is what proves it, and the endpoint's own list of what it serves appears here " +
+      "afterwards so you can pick from it.",
+  );
+  expect(
+    reading.guidance.filter((line) => line.includes("Save the connection")),
+    "and never promises the save-then-test path its own required field forbids",
+  ).toEqual([]);
+});
+
 test("a probe never switches a channel that is already active", async ({ page }) => {
   const host = await stubHost(page, { probe: "ready", activeBefore: true });
   await page.goto(`/#profile=composed-reference-game&boot=${token}`);

@@ -332,7 +332,7 @@ test.describe("2: choosing a provider fills what it can, and names nothing it ca
 });
 
 test.describe("3: the model suggestions are the Host's projection, reached end to end", () => {
-  test("a provider whose endpoint this product does not run names no model at all", async ({ page }) => {
+  test("an entry whose endpoints the product does not run offers nothing but its documented ids", async ({ page }) => {
     const state = await connection.read();
     const published = new Map(state.providers.map((p) => [p.providerId, p.allowedPlayerModels.map((m) => m.modelId)]));
     // The premise, asserted rather than assumed: this product runs neither endpoint, so it publishes
@@ -344,6 +344,7 @@ test.describe("3: the model suggestions are the Host's projection, reached end t
     await mountProduct(page, state);
     await openSettings(page);
     for (const providerId of ["deepseek", "openai"]) {
+      const provider = state.providers.find((entry) => entry.providerId === providerId)!;
       await form(page).locator("#connection-provider").selectOption(providerId);
       const reading = await readForm(page);
       console.log(`[first-run-names-no-model/${providerId}] ${JSON.stringify(reading)}`);
@@ -352,7 +353,10 @@ test.describe("3: the model suggestions are the Host's projection, reached end t
       // The model is the player's: an endpoint we do not run must not be described by a guess.
       // Asserted as an equality against the projection, so an id added to the catalog shows up as a
       // suggestion here and an id the panel invents shows up as a suggestion the Host never sent.
-      expect(reading.suggestions.map((s) => s.value), `${providerId}: nothing is offered`).toEqual([]);
+      // What the Host documents for the entry (`suggestedModelIds`) is the only list it may hold.
+      expect(reading.suggestions.map((s) => s.value), `${providerId}: exactly what the Host documents`).toEqual([
+        ...(provider.suggestedModelIds ?? []),
+      ]);
       expect(reading.modelField, `${providerId}: nothing is typed in for the player`).toBe("");
       expect(reading.catalogCount, `${providerId}: no count sentence either`).toBeNull();
     }
@@ -373,7 +377,12 @@ test.describe("3: the model suggestions are the Host's projection, reached end t
     const state: TavernConnectionStateV1 = {
       ...real,
       providers: real.providers.map((provider) =>
-        provider.providerId === "deepseek" ? { ...provider, allowedPlayerModels: curated } : provider,
+        // The documented ids are stripped so the catalog's pair is the only list this form can
+        // offer: the property under test is that a `allowedPlayerModels` id reaches the browser as a
+        // labelled suggestion, and a second list beside it would measure the union instead.
+        provider.providerId === "deepseek"
+          ? { ...provider, allowedPlayerModels: curated, suggestedModelIds: [] }
+          : provider,
       ),
     };
     await mountProduct(page, state);
@@ -387,7 +396,11 @@ test.describe("3: the model suggestions are the Host's projection, reached end t
     expect(reading.suggestions.map((s) => s.value)).toEqual(curated.map((model) => model.modelId));
     // Labelled for what it is: a suggestion the endpoint may refuse, never "served by this endpoint".
     for (const suggestion of reading.suggestions) expect(suggestion.label).toBe("suggested by GameBuddy; the endpoint decides");
-    expect(reading.servedCount, "nothing has been probed, so nothing claims to be served").toBeNull();
+    // Nothing has been probed, so the served count states zero rather than staying absent: 0 is a
+    // fact about this endpoint, and the sentence under it names the only ordinary reason for it.
+    expect(reading.servedCount, "nothing has been probed, so nothing claims to be served").toBe(
+      "0 models served by this endpoint",
+    );
     // A suggestion is not a prefill: naming one silently would claim the endpoint serves it.
     expect(reading.modelField, "the player still types the model").toBe("");
     expect(reading.catalogCount).toBe(`${curated.length} suggestions from GameBuddy's catalog`);
