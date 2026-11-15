@@ -21,6 +21,7 @@ import {
 } from "../management-pipeline-api";
 import type { ChatModelRoute } from "../chat-model-route";
 import { connectionModelOptions } from "./connection-model-options";
+import { CONNECTION_API_SHAPE_LABELS } from "./connection-api-shape-labels";
 import { isImeProcessingKey, preventImeFormSubmit } from "./ime-composition";
 import { useChoiceDraft, useDraft, useDraftOverAuthority, useOpenDraft, type DraftField } from "./surface-drafts";
 
@@ -739,7 +740,13 @@ export function ConnectionSettingsPanel({
               >
                 {CONNECTION_API_SHAPES.map((shape) => (
                   <option key={shape} value={shape}>
-                    {shape}
+                    {/*
+                     * The wire value is the option's value and never its name: the protocol is a
+                     * detail of the endpoint, and `bedrock-converse-stream` is not something a
+                     * player should have to recognise. The map is typed over the closed list, so a
+                     * protocol cannot reach the player as a slug.
+                     */}
+                    {labels[CONNECTION_API_SHAPE_LABELS[shape]]}
                   </option>
                 ))}
               </select>

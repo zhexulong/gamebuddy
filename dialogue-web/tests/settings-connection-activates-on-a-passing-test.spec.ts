@@ -25,6 +25,9 @@
 import { expect, test } from "./frontend-coverage";
 import { token, csrfToken, draft, root } from "./composed-reference-game-fixtures";
 import type { Page } from "@playwright/test";
+import { CONNECTION_API_SHAPES } from "../src/management-pipeline-api";
+import { CONNECTION_API_SHAPE_LABELS } from "../src/components/connection-api-shape-labels";
+import { messages } from "../src/i18n";
 
 const connectionId = "J".repeat(42) + "A";
 const apiKey = "sk-journey-secret-0001";
@@ -39,6 +42,16 @@ const openai = {
   setupFields: ["apiKey", "modelId"],
   allowedPlayerModels: [],
   escapeHatch: false,
+  environmentManaged: false,
+};
+
+/** The escape hatch: the one entry that asks the player for a protocol, because the server is theirs. */
+const escapeHatch = {
+  providerId: "openai-compatible",
+  label: "OpenAI-compatible endpoint",
+  setupFields: ["baseUrl", "apiShape", "apiKey", "modelId", "apiKeyRequired"],
+  allowedPlayerModels: [],
+  escapeHatch: true,
   environmentManaged: false,
 };
 
@@ -116,7 +129,7 @@ async function stubHost(page: Page, host: Host): Promise<{ writes: string[]; act
     revision: 4,
     active: activeId === null ? null : activeRow(),
     connections: [...others, ...(created ? [row()] : [])],
-    providers: [openai],
+    providers: [openai, escapeHatch],
   });
 
   const fulfill = (route: import("@playwright/test").Route, body: unknown) =>
@@ -343,4 +356,49 @@ test("a probe never switches a channel that is already active", async ({ page })
   await expect(
     panel.locator("[data-connection-row]").last().getByRole("button", { name: "Save and activate" }),
   ).toBeEnabled();
+});
+
+/**
+ * The protocol select, read as the player meets it.
+ *
+ * Two facts, and the second is the one that was wrong: every option's VALUE is a protocol id the
+ * Host accepts (the population comes from `CONNECTION_API_SHAPES`, the same list the client
+ * validates a command against), and every option's TEXT is a name rather than that id. Before this,
+ * the select rendered the slug as its own label - `bedrock-converse-stream` as the thing a player
+ * had to recognise.
+ */
+test("the protocol select names each protocol, and still sends the id the Host validates", async ({ page }) => {
+  await stubHost(page, { probe: "ready", activeBefore: false });
+  await page.goto(`/#profile=composed-reference-game&boot=${token}`);
+  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  const panel = page.getByTestId("settings-surface").locator("[data-connection-settings]");
+  // The field only exists for an entry whose protocol nobody but the player can know.
+  await expect(panel.locator("#connection-api-shape")).toHaveCount(0);
+  await panel.locator("#connection-provider").selectOption("openai-compatible");
+  await expect(panel.locator("#connection-api-shape")).toBeVisible();
+
+  const options = await panel
+    .locator("#connection-api-shape option")
+    .evaluateAll((nodes) => nodes.map((node) => ({ value: (node as HTMLOptionElement).value, text: node.textContent ?? "" })));
+  console.log(`[journey/protocols] ${JSON.stringify(options)}`);
+
+  expect(options.map((option) => option.value), "the wire values are the contract's own list, unchanged").toEqual([
+    ...CONNECTION_API_SHAPES,
+  ]);
+  // The text is a name, not the slug: no option reads back as its own value, and none reads as a
+  // hyphenated id the player would have to decode.
+  for (const option of options) {
+    expect(option.text, `${option.value} is named, not spelled as its wire id`).not.toBe(option.value);
+    expect(option.text, `${option.value} is a name a player can read`).not.toMatch(/^[a-z0-9]+(-[a-z0-9]+)+$/u);
+  }
+  // And each one is the catalogue's own sentence for that shape, so the label cannot drift from the
+  // vocabulary the rest of the surface speaks.
+  expect(options.map((option) => option.text)).toEqual(
+    CONNECTION_API_SHAPES.map(
+      (shape) => messages("en")[CONNECTION_API_SHAPE_LABELS[shape]],
+    ),
+  );
+  // The select still sends the id: choosing one and saving puts the slug in the command.
+  await panel.locator("#connection-api-shape").selectOption("azure-openai-responses");
+  await expect(panel.locator("#connection-api-shape")).toHaveValue("azure-openai-responses");
 });

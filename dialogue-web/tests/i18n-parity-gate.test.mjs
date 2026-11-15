@@ -405,6 +405,22 @@ const UNREAD_INDIRECT_READS = [
       "read through a computed key: the voice panel's `labels[`voiceConsent${...}`]` in components/management-panels.tsx",
     keys: ["voiceConsentUndecided", "voiceConsentAccepted", "voiceConsentRevoked"],
   },
+  {
+    reason:
+      "read through a computed key: the protocol select's `labels[CONNECTION_API_SHAPE_LABELS[shape]]` in components/management-panels.tsx, whose map (components/connection-api-shape-labels.ts) is typed over `TavernConnectionApiShapeV1` so the ten are the closed list",
+    keys: [
+      "connectionShapeAnthropicMessages",
+      "connectionShapeAzureOpenAiResponses",
+      "connectionShapeBedrockConverse",
+      "connectionShapeGoogleGemini",
+      "connectionShapeGoogleVertex",
+      "connectionShapeMistral",
+      "connectionShapeOpenAiChatCompletions",
+      "connectionShapeOpenAiCodexResponses",
+      "connectionShapeOpenAiResponses",
+      "connectionShapePiMessages",
+    ],
+  },
 ];
 
 /**
