@@ -10,6 +10,20 @@
 // leaving the rest of the conversation in place. So the driver first makes sure the open conversation
 // is long enough to carry both (two exchanges), gated on the provider credential exactly as driver F
 // gates its own turn (`GB_SHOTS_CREDENTIAL_PRESENT`).
+//
+// BOTH ACTIONS LIVE IN THE ROW'S OVERFLOW NOW. `45889e97` moved the rewind, the fork and the delete off
+// the strip and into the panel `[data-testid="message-more"]` opens - `MessageBubble.tsx` renders
+// `message-more-menu` only under `moreOpen`, so `message-rewind` and `message-delete` are not in the DOM
+// of a collapsed row at all. Read the run of 2026-11-15 (pin 3625acb4): this driver printed
+//
+//     rows carrying a rewind control: []
+//     rows carrying a delete control: []
+//     delete: no_delete_control_in_any_row
+//     rewind: no_rewind_control_in_any_row
+//
+// and exited 0 - a green that measured nothing, which is the shape this driver exists to prevent. So the
+// census below OPENS each row's overflow, asserts it opened, reads the three entries out of the panel and
+// closes it again, and each press opens the overflow of the row it is about to press.
 const { connect, reporter, PAGE_HELPERS, activateSurface, shot, readDurableTranscript, canStartTurn , observe, observationStart } = require("./common.cjs");
 const { continuityLine } = require("./capability.cjs");
 
@@ -33,6 +47,11 @@ const rowFacts = () =>
       role: row.className.includes("player") ? "player" : "companion",
       handle: row.getAttribute("data-handle"),
       text: (row.querySelector(".message-bubble")?.innerText ?? "").trim(),
+      // The overflow's own trigger, and whether its panel is open: the three destructive entries are
+      // inside that panel, so this is what says whether the row has them to read.
+      more: button('[data-testid="message-more"]'),
+      overflowOpen: row.querySelector('[data-testid="message-more"]')?.getAttribute("aria-expanded") ?? null,
+      overflowEntries: row.querySelector('[data-testid="message-more-menu"]') === null ? 0 : row.querySelectorAll('[data-testid="message-more-menu"] > button').length,
       rewind: button('[data-testid="message-rewind"]'),
       delete: button('[data-testid="message-delete"]'),
       edit: button('[data-testid="message-edit"]'),
@@ -65,6 +84,85 @@ const confirmFacts = (testid) => {
     otherControlsInTheRowWhileArmed: row === null ? null : row.querySelectorAll(".message-actions > button").length,
   };
 };
+
+/**
+ * A row's overflow, OPENED — and read back, so the opening is a fact and not a press.
+ *
+ * The rewind, the fork and the delete are children of `message-more-menu`, which the product renders
+ * only while the trigger's own `moreOpen` is true. A click on `message-rewind` in a collapsed row
+ * therefore waits on an element that does not exist, and a READING of it silently reports "this row
+ * offers no rewind" — which is what the run of 2026-11-15 recorded for every row. So the trigger is
+ * pressed here and the panel's presence is asserted; the entries are then read off that panel.
+ */
+async function openOverflow(page, index) {
+  const row = page.locator(".message-list > li.message").nth(index);
+  const trigger = row.locator('[data-testid="message-more"]');
+  if ((await trigger.count()) === 0)
+    throw new Error(
+      `row ${index} offers no overflow trigger ([data-testid="message-more"]), so the rewind, the fork and the ` +
+        `delete this driver presses are unreachable there`,
+    );
+  if ((await trigger.getAttribute("aria-expanded")) !== "true") await trigger.click();
+  const expanded = await trigger.getAttribute("aria-expanded");
+  const panel = await row.locator('[data-testid="message-more-menu"]').count();
+  if (expanded !== "true" || panel === 0)
+    throw new Error(
+      `the overflow on row ${index} did not open (aria-expanded=${JSON.stringify(expanded)}, panel present=${panel}), ` +
+        `so its entries are behind a press that missed`,
+    );
+  return row;
+}
+
+/** The overflow, closed again: the census and the reading leave the rows as it found them. */
+async function closeOverflow(page, index) {
+  const trigger = page.locator(".message-list > li.message").nth(index).locator('[data-testid="message-more"]');
+  if ((await trigger.count()) > 0 && (await trigger.getAttribute("aria-expanded")) === "true") await trigger.click();
+}
+
+/**
+ * The transcript's own actions, read out of the overflow each one lives in.
+ *
+ * One row at a time, because the panel is a single out-of-flow child of the row that opened it: opening
+ * row i, reading its three entries and closing it again is the only way to say WHICH row carries a
+ * rewind without guessing at a control that is not in the DOM.
+ */
+async function overflowCensus(page, rows) {
+  const census = [];
+  for (const row of rows) {
+    const facts = {
+      index: row.index,
+      role: row.role,
+      handle: row.handle,
+      more: row.more !== null,
+      rewind: null,
+      fork: null,
+      delete: null,
+    };
+    if (facts.more) {
+      await openOverflow(page, row.index);
+      const panel = await page.evaluate(() => {
+        const open = document.querySelector('.message-list > li.message [data-testid="message-more-menu"]');
+        if (open === null) return null;
+        const control = (selector) => {
+          const node = open.querySelector(selector);
+          return node === null ? null : { name: (node.getAttribute("aria-label") ?? node.innerText ?? "").trim() };
+        };
+        return {
+          rewind: control('[data-testid="message-rewind"]'),
+          fork: control('[data-testid="message-fork"]'),
+          delete: control('[data-testid="message-delete"]'),
+          entries: open.querySelectorAll("button").length,
+        };
+      });
+      if (panel === null)
+        throw new Error(`row ${row.index} opened its overflow and the panel [data-testid="message-more-menu"] was not there`);
+      Object.assign(facts, panel);
+      await closeOverflow(page, row.index);
+    }
+    census.push(facts);
+  }
+  return census;
+}
 
 const composerState = () => ({
   running: document.querySelector(".composer-button.stop-button, .composer-button.composer-busy") !== null,
@@ -170,14 +268,20 @@ const durableRows = async (page) => {
   const durableSteps = [{ label: "before either control", rows: durableBefore.rows }];
   await shot(page, "87-controls-in-the-strip-1440x900.png");
 
-  const deletable = rows.find((row) => row.delete !== null) ?? null;
-  say(`rows carrying a rewind control: ${JSON.stringify(rows.filter((row) => row.rewind !== null).map((row) => ({ index: row.index, ariaLabel: row.rewind.name })))}`);
-  say(`rows carrying a delete control: ${JSON.stringify(rows.filter((row) => row.delete !== null).map((row) => row.index))}`);
+  // What each row carries, read through the overflow each entry lives in (see `overflowCensus`).
+  const census = await overflowCensus(page, rows);
+  const deletable = census.find((row) => row.delete !== null) ?? null;
+  say(`rows carrying an overflow trigger: ${JSON.stringify(census.filter((row) => row.more).map((row) => row.index))}`);
+  say(`rows carrying a rewind control: ${JSON.stringify(census.filter((row) => row.rewind !== null).map((row) => ({ index: row.index, ariaLabel: row.rewind.name })))}`);
+  say(`rows carrying a fork control: ${JSON.stringify(census.filter((row) => row.fork !== null).map((row) => row.index))}`);
+  say(`rows carrying a delete control: ${JSON.stringify(census.filter((row) => row.delete !== null).map((row) => row.index))}`);
+  say(`entries inside each row's overflow: ${JSON.stringify(census.map((row) => ({ index: row.index, entries: row.entries ?? 0 })))}`);
   // Owner's ruling 2, second half: on the LAST message the rewind and the delete are the same act, so
-  // that row offers the delete alone. The fact is read off the last row's own strip, not assumed.
-  const lastRow = rows.length === 0 ? null : rows[rows.length - 1];
+  // that row offers the delete alone. The fact is read out of that row's own overflow, not assumed.
+  const lastRow = census.length === 0 ? null : census[census.length - 1];
+  const lastRowStrip = rows[rows.length - 1] ?? null;
   say(
-    `the transcript's own last row (index ${lastRow?.index}): role=${lastRow?.role} rewind=${JSON.stringify(lastRow?.rewind?.name ?? null)} delete=${JSON.stringify(lastRow?.delete?.name ?? null)} edit=${JSON.stringify(lastRow?.edit?.name ?? null)}`,
+    `the transcript's own last row (index ${lastRow?.index}): role=${lastRow?.role} rewind=${JSON.stringify(lastRow?.rewind?.name ?? null)} delete=${JSON.stringify(lastRow?.delete?.name ?? null)} fork=${JSON.stringify(lastRow?.fork?.name ?? null)} edit=${JSON.stringify(lastRowStrip?.edit?.name ?? null)}`,
   );
   say(
     `the last row offers the delete alone (no rewind there): ${lastRow !== null && lastRow.delete !== null && lastRow.rewind === null}`,
@@ -186,13 +290,16 @@ const durableRows = async (page) => {
   // ---- DELETE: one row out of the middle ----
   say("=== ITEM: the delete — armed, then confirmed ===");
   let deleteOutcome = "could_not_drive";
+  // The rows' own actions AFTER the delete, out of the overflows: what the next item may press is a fact
+  // about the transcript that is there now, not about the one this item acted on.
+  let censusAfterDelete = null;
   if (deletable === null) {
     deleteOutcome = "no_delete_control_in_any_row";
   } else {
-    const targetRow = rows.find((row) => row.delete !== null && row.role === "player") ?? deletable;
+    const targetRow = census.find((row) => row.delete !== null && row.role === "player") ?? deletable;
     const targetIndex = rows.findIndex((row) => row.handle === targetRow.handle);
-    say(`deleting row index=${targetIndex} (${JSON.stringify(targetRow.text.slice(0, 24))}), handle=${JSON.stringify(targetRow.handle)}`);
-    const row = page.locator(".message-list > li.message").nth(targetIndex);
+    say(`deleting row index=${targetIndex} (${JSON.stringify((rows[targetIndex]?.text ?? "").slice(0, 24))}), handle=${JSON.stringify(targetRow.handle)}`);
+    const row = await openOverflow(page, targetIndex);
     await row.locator('[data-testid="message-delete"]').click();
     await page.waitForTimeout(700);
     const armed = await page.evaluate(confirmFacts, "message-delete-confirm");
@@ -208,6 +315,7 @@ const durableRows = async (page) => {
     const afterCancel = await page.evaluate(rowFacts);
     say(`cancelling the arm leaves the row as it was: ${afterCancel.length === rows.length && (await page.evaluate(() => document.querySelector('[data-testid="message-delete-confirm"]') === null))}`);
 
+    await openOverflow(page, targetIndex);
     await row.locator('[data-testid="message-delete"]').click();
     await page.waitForTimeout(700);
     await page.locator('[data-testid="message-delete-confirm-yes"]').first().click();
@@ -222,6 +330,12 @@ const durableRows = async (page) => {
     say(`refused API calls while the delete was out: ${JSON.stringify(refusals.splice(0))}`);
     say(JSON.stringify(afterDelete, null, 1));
     say(`rows before=${rows.length} after=${afterDelete.length}`);
+    censusAfterDelete = await overflowCensus(page, afterDelete);
+    say(
+      `rows still carrying a rewind control after the delete: ${JSON.stringify(
+        censusAfterDelete.filter((entry) => entry.rewind !== null).map((entry) => entry.index),
+      )}`,
+    );
     say(`the deleted handle is gone from the Host's own rows: ${durableBefore.rows.some((row) => row.handle === targetRow.handle) && !durableAfterDelete.rows.some((row) => row.handle === targetRow.handle)}`);
     say(`every other row is still there, in the same order: ${JSON.stringify(durableAfterDelete.rows.map((row) => ({ order: row.order, role: row.role, text: row.text.slice(0, 14) })))}`);
     say(`durable rows after: [${durableAfterDelete.rows.map((row) => `${row.order}:${row.role}`).join(", ")}]`);
@@ -243,13 +357,15 @@ const durableRows = async (page) => {
 
   // ---- REWIND: the conversation cut back to an earlier point ----
   say("=== ITEM: the rewind — armed, then confirmed ===");
-  const rewindableNow = rows.find((row) => row.rewind !== null) ?? null;
+  // The delete above took one row out, so the indices this item acts on are re-read from the transcript
+  // that is there now - and read through the overflows again, because a row's entries are behind them.
+  const rewindableNow = (censusAfterDelete ?? (await overflowCensus(page, rows))).find((row) => row.rewind !== null) ?? null;
   let rewindOutcome = "could_not_drive";
   if (rewindableNow === null) {
     rewindOutcome = "no_rewind_control_in_any_row";
   } else {
     const targetIndex = rows.findIndex((row) => row.handle === rewindableNow.handle);
-    const row = page.locator(".message-list > li.message").nth(targetIndex);
+    const row = await openOverflow(page, targetIndex);
     say(`rewinding to row index=${targetIndex} handle=${JSON.stringify(rewindableNow.handle)}; its own label says: ${JSON.stringify(rewindableNow.rewind.name)}`);
     await row.locator('[data-testid="message-rewind"]').click();
     await page.waitForTimeout(700);
@@ -270,6 +386,7 @@ const durableRows = async (page) => {
     }));
     say(`cancelling the arm: ${JSON.stringify(cancelled)}`);
 
+    await openOverflow(page, targetIndex);
     await row.locator('[data-testid="message-rewind"]').click();
     await page.waitForTimeout(700);
     await page.locator('[data-testid="message-rewind-confirm-yes"]').first().click();
