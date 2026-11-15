@@ -902,6 +902,35 @@ type BrowserSession = Readonly<{
 type AdmissionSession = Readonly<{ csrf: string; expiresAtMs: number }>;
 type ProblemCode = TavernProblemV1["code"] | "payload_too_large" | "settings_revision_conflict";
 
+/** The one member a compiled command schema and a frozen contract schema both answer. */
+type ManagementSchemaCheck = Readonly<{ Check(value: unknown): boolean }>;
+
+/**
+ * One write route, told as the facts that differ between them: the wire it answers, the profile
+ * ids it must be declared and operated as, what has to be composed for it to be served at all,
+ * the ceiling and the schema its command must satisfy, the call it makes with the accepted
+ * command, and the contract its answer must satisfy.
+ *
+ * Everything these routes share is the dispatcher's, in the order every one of them had it as its
+ * own arm: a same-origin request with no query, the browser session, the CSRF token bound to it,
+ * the profile gate, the command read and its schema, the answer check, and the 200.
+ *
+ * `operationId` is `null` for the routes whose profile gate names no operation, and `contract` is
+ * `null` for the one whose answer IS its service's own wire type. A route that needs a step these
+ * ten facts do not name stays an arm in the dispatcher rather than being forced into a row.
+ */
+type ManagementWriteRoute = Readonly<{
+  method: string;
+  path: string;
+  routeId: string;
+  operationId: string | null;
+  available: boolean;
+  maxBytes: number;
+  validator: ManagementSchemaCheck;
+  answer: (body: unknown) => Promise<unknown>;
+  contract: readonly [ManagementSchemaCheck, string] | null;
+}>;
+
 /**
  * The decoder's named losses, copied into the exact mutable shape the wire schema declares.
  *
@@ -1203,6 +1232,29 @@ export function createTavernManagementDialogueWebRequestHandler(
     });
   };
   /**
+   * The write gate every mutation on this mount shares, in the order all of them had it as their
+   * own first four lines: a same-origin request with no query, the one browser session, and the
+   * CSRF token bound to that session. `false` is a request this helper has ALREADY answered - 401
+   * for a query, a foreign origin or no session, 403 for a missing or stale token - so the caller
+   * returns. What each route does after the gate stays in the route.
+   */
+  const admitWrite = (request: IncomingMessage, url: URL, response: ServerResponse, origin: string): boolean => {
+    if (url.search !== "" || !isSameOrigin(request, origin)) {
+      sendProblem(response, 401, "unauthorized");
+      return false;
+    }
+    const session = admitRequest(request, origin);
+    if (session === null) {
+      sendProblem(response, 401, "unauthorized");
+      return false;
+    }
+    if (!tokensEqual(singleHeader(request.headers["x-csrf-token"]) ?? "", session.csrf)) {
+      sendProblem(response, 403, "csrf_failed");
+      return false;
+    }
+    return true;
+  };
+  /**
    * The read half of a companion sub-resource mount - the world book, the directive, the example dialogues, the
    * read-only inspector: a same-origin GET with no body, admitted to the session this mount serves, advertised by
    * the profile as the exact route the service answers, and read through that service by the opaque handle the
@@ -1235,6 +1287,377 @@ export function createTavernManagementDialogueWebRequestHandler(
     if (record === null) sendProblem(response, 404, "companion_not_found");
     return record;
   };
+  /**
+   * Every write this mount serves whose whole shape is the facts `ManagementWriteRoute` names, in
+   * the order the dispatcher answers them. Each row is that route's own difference; the dispatcher
+   * below walks this table instead of spelling the gate out again per route.
+   */
+  const managementWriteRoutes: readonly ManagementWriteRoute[] = [
+    // The settings field groups: one Host-owned player preference record, one revision CAS, and an
+    // answer that is the record's own projection of the field this route wrote.
+    {
+      method: "PUT",
+      path: "/api/tavern/v1/settings/voice-preference",
+      routeId: "settings.voice.consent",
+      operationId: "settings.voice.consent",
+      available: playerPreferenceStore !== undefined,
+      maxBytes: MAX_BODY_BYTES,
+      validator: voicePreferenceConsentValidator,
+      answer: async (body) => {
+        const { expectedRevision, ...update } = body as TavernVoicePreferenceConsentCommandV1;
+        return voicePreference(await playerPreferenceStore!.update(expectedRevision, update));
+      },
+      contract: [TavernBrowserValidatorsV1.TavernVoicePreferenceV1Schema, "player_preference_store_unavailable"],
+    },
+    {
+      method: "PUT",
+      path: "/api/tavern/v1/settings/language",
+      routeId: "settings.language.update",
+      operationId: "settings.language.update",
+      available: playerPreferenceStore !== undefined,
+      maxBytes: MAX_BODY_BYTES,
+      validator: languagePreferenceUpdateValidator,
+      answer: async (body) => {
+        const command = body as TavernLanguagePreferenceCommandV1;
+        return languagePreference(
+          await playerPreferenceStore!.update(command.expectedRevision, {
+            action: "setLocale",
+            locale: command.locale,
+          }),
+        );
+      },
+      contract: [TavernBrowserValidatorsV1.TavernLanguagePreferenceV1Schema, "player_preference_store_unavailable"],
+    },
+    // The write half of that addition: the same record, revision and CAS as language and delivery,
+    // with the WHEN it lands left where it belongs - the runtime reads it once, at Game-session start.
+    {
+      method: "PUT",
+      path: "/api/tavern/v1/settings/game-prompt",
+      routeId: "settings.game-prompt.update",
+      operationId: "settings.game-prompt.update",
+      available: playerPreferenceStore !== undefined,
+      maxBytes: MAX_BODY_BYTES,
+      validator: gamePromptAdditionUpdateValidator,
+      answer: async (body) => {
+        const command = body as TavernGamePromptAdditionCommandV1;
+        return gamePromptAddition(
+          await playerPreferenceStore!.update(command.expectedRevision, {
+            action: "setGamePromptAddition",
+            addition: command.addition,
+          }),
+        );
+      },
+      contract: [TavernBrowserValidatorsV1.TavernGamePromptAdditionV1Schema, "player_preference_store_unavailable"],
+    },
+    {
+      method: "PUT",
+      path: "/api/tavern/v1/settings/appearance",
+      routeId: "settings.appearance.update",
+      operationId: "settings.appearance.update",
+      available: playerPreferenceStore !== undefined,
+      maxBytes: MAX_BODY_BYTES,
+      validator: appearancePreferenceUpdateValidator,
+      answer: async (body) => {
+        const command = body as TavernAppearancePreferenceCommandV1;
+        return appearancePreference(
+          await playerPreferenceStore!.update(command.expectedRevision, {
+            action: "setAppearance",
+            appearance: command.appearance,
+          }),
+        );
+      },
+      contract: [TavernBrowserValidatorsV1.TavernAppearancePreferenceV1Schema, "player_preference_store_unavailable"],
+    },
+    // The write half of the display language above: a separate field from the companion language,
+    // accepting only a catalogue the browser ships.
+    {
+      method: "PUT",
+      path: "/api/tavern/v1/settings/ui-language",
+      routeId: "settings.ui-language.update",
+      operationId: "settings.ui-language.update",
+      available: playerPreferenceStore !== undefined,
+      maxBytes: MAX_BODY_BYTES,
+      validator: uiLanguagePreferenceUpdateValidator,
+      answer: async (body) => {
+        const command = body as TavernUiLanguagePreferenceCommandV1;
+        return uiLanguagePreference(
+          await playerPreferenceStore!.update(command.expectedRevision, {
+            action: "setUiLocale",
+            uiLocale: command.locale,
+          }),
+        );
+      },
+      contract: [TavernBrowserValidatorsV1.TavernUiLanguagePreferenceV1Schema, "player_preference_store_unavailable"],
+    },
+    {
+      method: "PUT",
+      path: "/api/tavern/v1/settings/delivery",
+      routeId: "settings.delivery.update",
+      operationId: "settings.delivery.update",
+      available: playerPreferenceStore !== undefined,
+      maxBytes: MAX_BODY_BYTES,
+      validator: deliveryPreferenceUpdateValidator,
+      answer: async (body) => {
+        const command = body as TavernDeliveryPreferenceCommandV1;
+        return deliveryPreference(
+          await playerPreferenceStore!.update(command.expectedRevision, { action: "setPaced", paced: command.paced }),
+        );
+      },
+      contract: [TavernBrowserValidatorsV1.TavernDeliveryPreferenceV1Schema, "player_preference_store_unavailable"],
+    },
+    // The write half of the one sampler value above: the same record and revision CAS, landing in
+    // that surface's NEXT mount.
+    {
+      method: "PUT",
+      path: "/api/tavern/v1/settings/sampler",
+      routeId: "settings.sampler.update",
+      operationId: "settings.sampler.update",
+      available: playerPreferenceStore !== undefined,
+      maxBytes: MAX_BODY_BYTES,
+      validator: samplerPreferenceUpdateValidator,
+      answer: async (body) => {
+        const command = body as TavernSamplerPreferenceCommandV1;
+        return samplerPreference(
+          await playerPreferenceStore!.update(command.expectedRevision, {
+            action: "setSamplingTemperature",
+            temperature: command.temperature,
+          }),
+        );
+      },
+      contract: [TavernBrowserValidatorsV1.TavernSamplerPreferenceV1Schema, "player_preference_store_unavailable"],
+    },
+    // The three World Info item mutations: each answers with the re-projected library state, so the
+    // caller re-renders from the Host's own answer rather than from a local guess.
+    {
+      method: "PUT",
+      path: "/api/tavern/v1/world-info",
+      routeId: "world-info.bind",
+      operationId: "world-info.bind",
+      available: worldInfoService !== undefined,
+      maxBytes: MAX_BODY_BYTES,
+      validator: worldInfoBindValidator,
+      answer: (body) => worldInfoService!.setBinding(body as SetWorldInfoBindingCommandV1),
+      contract: [TavernBrowserValidatorsV1.WorldInfoStateV1Schema, "world_info_binding_service_unavailable"],
+    },
+    {
+      method: "POST",
+      path: "/api/tavern/v1/world-info/item",
+      routeId: "world-info.create",
+      operationId: "world-info.create",
+      available: worldInfoService !== undefined,
+      maxBytes: MAX_BODY_BYTES,
+      validator: worldInfoCreateValidator,
+      answer: (body) => worldInfoService!.create(body as WorldInfoCreateCommandV1),
+      contract: [TavernBrowserValidatorsV1.WorldInfoStateV1Schema, "world_info_binding_service_unavailable"],
+    },
+    {
+      method: "PUT",
+      path: "/api/tavern/v1/world-info/item",
+      routeId: "world-info.update",
+      operationId: "world-info.update",
+      available: worldInfoService !== undefined,
+      maxBytes: MAX_BODY_BYTES,
+      validator: worldInfoUpdateValidator,
+      answer: (body) => worldInfoService!.update(body as WorldInfoUpdateCommandV1),
+      contract: [TavernBrowserValidatorsV1.WorldInfoStateV1Schema, "world_info_binding_service_unavailable"],
+    },
+    // The import declares no operation id of its own, and the exact lorebook seam is what it needs
+    // composed rather than the binding service as a whole.
+    {
+      method: "POST",
+      path: "/api/tavern/v1/world-info/import",
+      routeId: "world-info.import",
+      operationId: null,
+      available: worldInfoService?.importLorebook !== undefined,
+      maxBytes: MAX_WORLD_INFO_IMPORT_BODY_BYTES,
+      validator: worldInfoImportValidator,
+      answer: (body) => worldInfoService!.importLorebook!(body as WorldInfoImportCommandV1),
+      contract: [TavernBrowserValidatorsV1.WorldInfoStateV1Schema, "world_info_binding_service_unavailable"],
+    },
+    {
+      method: "DELETE",
+      path: "/api/tavern/v1/world-info/item",
+      routeId: "world-info.delete",
+      operationId: "world-info.delete",
+      available: worldInfoService !== undefined,
+      maxBytes: MAX_BODY_BYTES,
+      validator: worldInfoItemValidator,
+      answer: (body) => worldInfoService!.delete(body as WorldInfoItemCommandV1),
+      contract: [TavernBrowserValidatorsV1.WorldInfoStateV1Schema, "world_info_binding_service_unavailable"],
+    },
+    // chat.create (design/26 §4.4): creates a second conversation in the mounted
+    // companion/continuity. The browser names nothing durable; the creator mints the thread
+    // identity and resolves the opening.
+    {
+      method: "POST",
+      path: "/api/tavern/v1/chats",
+      routeId: "chat.create",
+      operationId: "chat.create",
+      available: newChatProvisioner !== undefined,
+      maxBytes: MAX_BODY_BYTES,
+      validator: createChatValidator,
+      answer: (body) => newChatProvisioner!.create(body as CreateChatCommandV1),
+      contract: [TavernBrowserValidatorsV1.ChatCreateResultV1Schema, "chat_management_service_unavailable"],
+    },
+    // chat.select (ADR 0009 / ADR-0010): the browser names the exact Chat it read and the
+    // generation it read. Switching is turn-level: the runtime hot-swaps the mounted conversation
+    // in process and answers `switched`, aborting a still-generating turn through the same cancel
+    // path an explicit Stop uses. Refusals are bounded: a stale generation or an unknown/non-active
+    // Chat is `selection_conflict`, and `turn_in_flight` is only the residual answer for a durable
+    // turn with no started attempt yet.
+    {
+      method: "PUT",
+      path: "/api/tavern/v1/chat/select",
+      routeId: "chat.select",
+      operationId: "chat.select",
+      available: chatSelectProvisioner !== undefined,
+      maxBytes: MAX_BODY_BYTES,
+      validator: selectChatValidator,
+      answer: (body) => chatSelectProvisioner!.select(body as SelectChatCommandV1),
+      contract: [TavernBrowserValidatorsV1.ChatSelectResultV1Schema, "chat_management_service_unavailable"],
+    },
+    {
+      method: "PUT",
+      path: "/api/tavern/v1/chat/opening",
+      routeId: "chat.opening",
+      operationId: "chat.opening",
+      available: true,
+      maxBytes: MAX_BODY_BYTES,
+      validator: chatOpeningValidator,
+      answer: (body) => managementService.commitOpeningVariant(body as ChatOpeningCommandV1),
+      contract: [TavernBrowserValidatorsV1.ChatOpeningResultV1Schema, "chat_management_service_unavailable"],
+    },
+    {
+      method: "PUT",
+      path: "/api/tavern/v1/memory",
+      routeId: "memory.mutate",
+      operationId: "memory.mutate",
+      available: memoryService?.mutate !== undefined,
+      maxBytes: MAX_BODY_BYTES,
+      validator: memoryMutationValidator,
+      answer: (body) => memoryService!.mutate!(body as MemoryMutationCommandV1),
+      contract: [TavernBrowserValidatorsV1.MemoryReadV1Schema, "memory_read_service_unavailable"],
+    },
+    // The connection this route creates is answered by the connection service's own wire type, so
+    // this is the one write whose row names no answer contract.
+    {
+      method: "POST",
+      path: "/api/tavern/v1/settings/connections",
+      routeId: "settings.connection.create",
+      operationId: "settings.connection.create",
+      available: connectionService !== undefined,
+      maxBytes: MAX_BODY_BYTES,
+      validator: connectionCreateValidator,
+      answer: (body) => connectionService!.create(body as TavernConnectionCreateCommandV1),
+      contract: null,
+    },
+    // One thinking level per surface, written under the revision CAS the browser read, answered with
+    // both surfaces so the panel redraws from one snapshot rather than a guess about the other.
+    {
+      method: "PUT",
+      path: "/api/tavern/v1/settings/profiles",
+      routeId: "settings.profiles.update",
+      operationId: "settings.profiles.update",
+      available: modelProfileStore !== undefined,
+      maxBytes: MAX_BODY_BYTES,
+      validator: modelProfileUpdateValidator,
+      answer: async (body) => {
+        const command = body as TavernModelProfileUpdateCommandV1;
+        const updated = await modelProfileStore!.update(command.surface, command.expectedRevision, {
+          thinkingLevel: command.thinkingLevel,
+        });
+        const other = await modelProfileStore!.read(command.surface === "chat" ? "game" : "chat");
+        return projectModelProfiles(
+          command.surface === "chat" ? updated : other,
+          command.surface === "chat" ? other : updated,
+        );
+      },
+      contract: [TavernBrowserValidatorsV1.TavernModelProfilesV1Schema, "model_profile_store_unavailable"],
+    },
+    {
+      method: "PUT",
+      path: "/api/tavern/v1/persona",
+      routeId: "persona.update",
+      operationId: "persona.update",
+      available: personaService !== undefined,
+      maxBytes: MAX_BODY_BYTES,
+      validator: personaUpdateValidator,
+      answer: async (body) => {
+        const command = body as PersonaUpdateCommandV1;
+        const persona = await personaService!.update({
+          expectedRevision: command.expectedRevision,
+          name: command.name,
+          ...(command.description === undefined ? {} : { description: command.description }),
+        });
+        const result: PersonaV1 = Object.freeze({
+          apiVersion: TAVERN_BROWSER_API_VERSION,
+          present: true,
+          revision: persona.revision,
+          name: persona.name,
+          description: persona.description ?? null,
+        });
+        return result;
+      },
+      contract: [TavernBrowserValidatorsV1.PersonaV1Schema, "persona_service_unavailable"],
+    },
+    {
+      method: "PUT",
+      path: "/api/tavern/v1/scenario",
+      routeId: "scenario.update",
+      operationId: "scenario.update",
+      available: scenarioService !== undefined,
+      maxBytes: MAX_BODY_BYTES,
+      validator: scenarioUpdateValidator,
+      answer: async (body) => {
+        const command = body as ScenarioUpdateCommandV1;
+        const scenario = await scenarioService!.update({
+          expectedRevision: command.expectedRevision,
+          name: command.name,
+          description: command.description,
+        });
+        const result: ScenarioV1 = Object.freeze({
+          apiVersion: TAVERN_BROWSER_API_VERSION,
+          present: true,
+          revision: scenario.revision,
+          name: scenario.name,
+          description: scenario.description,
+          preview: scenario.preview,
+        });
+        return result;
+      },
+      contract: [TavernBrowserValidatorsV1.ScenarioV1Schema, "scenario_service_unavailable"],
+    },
+    {
+      method: "PUT",
+      path: "/api/tavern/v1/greeting",
+      routeId: "greeting.update",
+      operationId: "greeting.update",
+      available: greetingService !== undefined,
+      maxBytes: MAX_BODY_BYTES,
+      validator: greetingUpdateValidator,
+      answer: async (body) => {
+        const command = body as GreetingUpdateCommandV1;
+        const greeting = await greetingService!.update({
+          expectedRevision: command.expectedRevision,
+          ...(command.label === undefined ? {} : { label: command.label }),
+          variants: command.variants.map((variant) =>
+            Object.freeze({ ...(variant.label === undefined ? {} : { label: variant.label }), text: variant.text }),
+          ),
+        });
+        const result: GreetingV1 = Object.freeze({
+          apiVersion: TAVERN_BROWSER_API_VERSION,
+          present: true,
+          revision: greeting.revision,
+          label: greeting.label ?? null,
+          variants: greeting.variants.map((variant) =>
+            Object.freeze({ label: variant.label ?? null, text: variant.text }),
+          ),
+        });
+        return result;
+      },
+      contract: [TavernBrowserValidatorsV1.GreetingV1Schema, "greeting_service_unavailable"],
+    },
+  ];
   let closed = false;
   let closePromise: Promise<void> | undefined;
   const activeDispatches = new Set<Promise<void>>();
@@ -1310,26 +1733,26 @@ export function createTavernManagementDialogueWebRequestHandler(
           throw new Error("player_preference_store_unavailable");
         return sendJson(response, 200, preference);
       }
-      if (request.method === "PUT" && url.pathname === "/api/tavern/v1/settings/voice-preference") {
-        if (url.search !== "" || !isSameOrigin(request, origin)) return sendProblem(response, 401, "unauthorized");
-        const session = admitRequest(request, origin);
-        if (session === null) return sendProblem(response, 401, "unauthorized");
-        if (!tokensEqual(singleHeader(request.headers["x-csrf-token"]) ?? "", session.csrf))
-          return sendProblem(response, 403, "csrf_failed");
+      // Every write the rows above describe, answered by one loop: the shared admission, the
+      // profile gate, the command read and its schema, the route's own call, and the answer's
+      // contract - the order all of these routes had as their own arms. The rows are disjoint
+      // wires, so their order cannot decide which one answers a request.
+      const routeIds: readonly string[] = profile.routeIds;
+      const operationIds: readonly string[] = profile.operationIds;
+      for (const route of managementWriteRoutes) {
+        if (request.method !== route.method || url.pathname !== route.path) continue;
+        if (!admitWrite(request, url, response, origin)) return;
         if (
-          !profile.routeIds.includes("settings.voice.consent") ||
-          !profile.operationIds.includes("settings.voice.consent") ||
-          playerPreferenceStore === undefined
+          !route.available ||
+          !routeIds.includes(route.routeId) ||
+          (route.operationId !== null && !operationIds.includes(route.operationId))
         )
           return sendProblem(response, 404, "profile_operation_unavailable");
-        const body = await readJsonBody(request, MAX_BODY_BYTES);
-        if (!voicePreferenceConsentValidator.Check(body)) return sendProblem(response, 400, "invalid_request");
-        const command = body as TavernVoicePreferenceConsentCommandV1;
-        const { expectedRevision, ...update } = command;
-        const preference = voicePreference(await playerPreferenceStore.update(expectedRevision, update));
-        if (!TavernBrowserValidatorsV1.TavernVoicePreferenceV1Schema.Check(preference))
-          throw new Error("player_preference_store_unavailable");
-        return sendJson(response, 200, preference);
+        const body = await readJsonBody(request, route.maxBytes);
+        if (!route.validator.Check(body)) return sendProblem(response, 400, "invalid_request");
+        const answer = await route.answer(body);
+        if (route.contract !== null && !route.contract[0].Check(answer)) throw new Error(route.contract[1]);
+        return sendJson(response, 200, answer);
       }
       if (request.method === "GET" && url.pathname === "/api/tavern/v1/settings/voice-devices") {
         if (url.search !== "" || (await hasRequestBody(request))) return sendProblem(response, 400, "invalid_request");
@@ -1375,31 +1798,6 @@ export function createTavernManagementDialogueWebRequestHandler(
           throw new Error("player_preference_store_unavailable");
         return sendJson(response, 200, preference);
       }
-      if (request.method === "PUT" && url.pathname === "/api/tavern/v1/settings/language") {
-        if (url.search !== "" || !isSameOrigin(request, origin)) return sendProblem(response, 401, "unauthorized");
-        const session = admitRequest(request, origin);
-        if (session === null) return sendProblem(response, 401, "unauthorized");
-        if (!tokensEqual(singleHeader(request.headers["x-csrf-token"]) ?? "", session.csrf))
-          return sendProblem(response, 403, "csrf_failed");
-        if (
-          !profile.routeIds.includes("settings.language.update") ||
-          !profile.operationIds.includes("settings.language.update") ||
-          playerPreferenceStore === undefined
-        )
-          return sendProblem(response, 404, "profile_operation_unavailable");
-        const body = await readJsonBody(request, MAX_BODY_BYTES);
-        if (!languagePreferenceUpdateValidator.Check(body)) return sendProblem(response, 400, "invalid_request");
-        const command = body as TavernLanguagePreferenceCommandV1;
-        const preference = languagePreference(
-          await playerPreferenceStore.update(command.expectedRevision, {
-            action: "setLocale",
-            locale: command.locale,
-          }),
-        );
-        if (!TavernBrowserValidatorsV1.TavernLanguagePreferenceV1Schema.Check(preference))
-          throw new Error("player_preference_store_unavailable");
-        return sendJson(response, 200, preference);
-      }
       if (request.method === "GET" && url.pathname === "/api/tavern/v1/settings/delivery") {
         if (url.search !== "" || (await hasRequestBody(request))) return sendProblem(response, 400, "invalid_request");
         if (admitRequest(request, origin) === null) return sendProblem(response, 401, "unauthorized");
@@ -1432,31 +1830,6 @@ export function createTavernManagementDialogueWebRequestHandler(
           throw new Error("player_preference_store_unavailable");
         return sendJson(response, 200, preference);
       }
-      if (request.method === "PUT" && url.pathname === "/api/tavern/v1/settings/game-prompt") {
-        if (url.search !== "" || !isSameOrigin(request, origin)) return sendProblem(response, 401, "unauthorized");
-        const session = admitRequest(request, origin);
-        if (session === null) return sendProblem(response, 401, "unauthorized");
-        if (!tokensEqual(singleHeader(request.headers["x-csrf-token"]) ?? "", session.csrf))
-          return sendProblem(response, 403, "csrf_failed");
-        if (
-          !profile.routeIds.includes("settings.game-prompt.update") ||
-          !profile.operationIds.includes("settings.game-prompt.update") ||
-          playerPreferenceStore === undefined
-        )
-          return sendProblem(response, 404, "profile_operation_unavailable");
-        const body = await readJsonBody(request, MAX_BODY_BYTES);
-        if (!gamePromptAdditionUpdateValidator.Check(body)) return sendProblem(response, 400, "invalid_request");
-        const command = body as TavernGamePromptAdditionCommandV1;
-        const preference = gamePromptAddition(
-          await playerPreferenceStore.update(command.expectedRevision, {
-            action: "setGamePromptAddition",
-            addition: command.addition,
-          }),
-        );
-        if (!TavernBrowserValidatorsV1.TavernGamePromptAdditionV1Schema.Check(preference))
-          throw new Error("player_preference_store_unavailable");
-        return sendJson(response, 200, preference);
-      }
       if (request.method === "GET" && url.pathname === "/api/tavern/v1/settings/appearance") {
         if (url.search !== "" || (await hasRequestBody(request))) return sendProblem(response, 400, "invalid_request");
         if (admitRequest(request, origin) === null) return sendProblem(response, 401, "unauthorized");
@@ -1467,31 +1840,6 @@ export function createTavernManagementDialogueWebRequestHandler(
         )
           return sendProblem(response, 404, "profile_operation_unavailable");
         const preference: TavernAppearancePreferenceV1 = appearancePreference(await playerPreferenceStore.read());
-        if (!TavernBrowserValidatorsV1.TavernAppearancePreferenceV1Schema.Check(preference))
-          throw new Error("player_preference_store_unavailable");
-        return sendJson(response, 200, preference);
-      }
-      if (request.method === "PUT" && url.pathname === "/api/tavern/v1/settings/appearance") {
-        if (url.search !== "" || !isSameOrigin(request, origin)) return sendProblem(response, 401, "unauthorized");
-        const session = admitRequest(request, origin);
-        if (session === null) return sendProblem(response, 401, "unauthorized");
-        if (!tokensEqual(singleHeader(request.headers["x-csrf-token"]) ?? "", session.csrf))
-          return sendProblem(response, 403, "csrf_failed");
-        if (
-          !profile.routeIds.includes("settings.appearance.update") ||
-          !profile.operationIds.includes("settings.appearance.update") ||
-          playerPreferenceStore === undefined
-        )
-          return sendProblem(response, 404, "profile_operation_unavailable");
-        const body = await readJsonBody(request, MAX_BODY_BYTES);
-        if (!appearancePreferenceUpdateValidator.Check(body)) return sendProblem(response, 400, "invalid_request");
-        const command = body as TavernAppearancePreferenceCommandV1;
-        const preference = appearancePreference(
-          await playerPreferenceStore.update(command.expectedRevision, {
-            action: "setAppearance",
-            appearance: command.appearance,
-          }),
-        );
         if (!TavernBrowserValidatorsV1.TavernAppearancePreferenceV1Schema.Check(preference))
           throw new Error("player_preference_store_unavailable");
         return sendJson(response, 200, preference);
@@ -1513,53 +1861,6 @@ export function createTavernManagementDialogueWebRequestHandler(
           throw new Error("player_preference_store_unavailable");
         return sendJson(response, 200, preference);
       }
-      if (request.method === "PUT" && url.pathname === "/api/tavern/v1/settings/ui-language") {
-        if (url.search !== "" || !isSameOrigin(request, origin)) return sendProblem(response, 401, "unauthorized");
-        const session = admitRequest(request, origin);
-        if (session === null) return sendProblem(response, 401, "unauthorized");
-        if (!tokensEqual(singleHeader(request.headers["x-csrf-token"]) ?? "", session.csrf))
-          return sendProblem(response, 403, "csrf_failed");
-        if (
-          !profile.routeIds.includes("settings.ui-language.update") ||
-          !profile.operationIds.includes("settings.ui-language.update") ||
-          playerPreferenceStore === undefined
-        )
-          return sendProblem(response, 404, "profile_operation_unavailable");
-        const body = await readJsonBody(request, MAX_BODY_BYTES);
-        if (!uiLanguagePreferenceUpdateValidator.Check(body)) return sendProblem(response, 400, "invalid_request");
-        const command = body as TavernUiLanguagePreferenceCommandV1;
-        const preference = uiLanguagePreference(
-          await playerPreferenceStore.update(command.expectedRevision, {
-            action: "setUiLocale",
-            uiLocale: command.locale,
-          }),
-        );
-        if (!TavernBrowserValidatorsV1.TavernUiLanguagePreferenceV1Schema.Check(preference))
-          throw new Error("player_preference_store_unavailable");
-        return sendJson(response, 200, preference);
-      }
-      if (request.method === "PUT" && url.pathname === "/api/tavern/v1/settings/delivery") {
-        if (url.search !== "" || !isSameOrigin(request, origin)) return sendProblem(response, 401, "unauthorized");
-        const session = admitRequest(request, origin);
-        if (session === null) return sendProblem(response, 401, "unauthorized");
-        if (!tokensEqual(singleHeader(request.headers["x-csrf-token"]) ?? "", session.csrf))
-          return sendProblem(response, 403, "csrf_failed");
-        if (
-          !profile.routeIds.includes("settings.delivery.update") ||
-          !profile.operationIds.includes("settings.delivery.update") ||
-          playerPreferenceStore === undefined
-        )
-          return sendProblem(response, 404, "profile_operation_unavailable");
-        const body = await readJsonBody(request, MAX_BODY_BYTES);
-        if (!deliveryPreferenceUpdateValidator.Check(body)) return sendProblem(response, 400, "invalid_request");
-        const command = body as TavernDeliveryPreferenceCommandV1;
-        const preference = deliveryPreference(
-          await playerPreferenceStore.update(command.expectedRevision, { action: "setPaced", paced: command.paced }),
-        );
-        if (!TavernBrowserValidatorsV1.TavernDeliveryPreferenceV1Schema.Check(preference))
-          throw new Error("player_preference_store_unavailable");
-        return sendJson(response, 200, preference);
-      }
       // One sampler value the player owns rather than a preset. Same record, same revision CAS: the field is a
       // settings write like every other group here, and what it changes reaches that surface's NEXT mount (the value
       // is spliced into `models.json` at construction, design tavern-preset-compatibility §5).
@@ -1577,31 +1878,6 @@ export function createTavernManagementDialogueWebRequestHandler(
           throw new Error("player_preference_store_unavailable");
         return sendJson(response, 200, preference);
       }
-      if (request.method === "PUT" && url.pathname === "/api/tavern/v1/settings/sampler") {
-        if (url.search !== "" || !isSameOrigin(request, origin)) return sendProblem(response, 401, "unauthorized");
-        const session = admitRequest(request, origin);
-        if (session === null) return sendProblem(response, 401, "unauthorized");
-        if (!tokensEqual(singleHeader(request.headers["x-csrf-token"]) ?? "", session.csrf))
-          return sendProblem(response, 403, "csrf_failed");
-        if (
-          !profile.routeIds.includes("settings.sampler.update") ||
-          !profile.operationIds.includes("settings.sampler.update") ||
-          playerPreferenceStore === undefined
-        )
-          return sendProblem(response, 404, "profile_operation_unavailable");
-        const body = await readJsonBody(request, MAX_BODY_BYTES);
-        if (!samplerPreferenceUpdateValidator.Check(body)) return sendProblem(response, 400, "invalid_request");
-        const command = body as TavernSamplerPreferenceCommandV1;
-        const preference = samplerPreference(
-          await playerPreferenceStore.update(command.expectedRevision, {
-            action: "setSamplingTemperature",
-            temperature: command.temperature,
-          }),
-        );
-        if (!TavernBrowserValidatorsV1.TavernSamplerPreferenceV1Schema.Check(preference))
-          throw new Error("player_preference_store_unavailable");
-        return sendJson(response, 200, preference);
-      }
       if (request.method === "GET" && url.pathname === "/api/tavern/v1/world-info") {
         if (url.search !== "" || (await hasRequestBody(request))) return sendProblem(response, 400, "invalid_request");
         const session = admitRequest(request, origin);
@@ -1609,25 +1885,6 @@ export function createTavernManagementDialogueWebRequestHandler(
         if (!profile.routeIds.includes("world-info.read") || worldInfoService === undefined)
           return sendProblem(response, 404, "profile_operation_unavailable");
         const worldInfo = await worldInfoService.read();
-        if (!TavernBrowserValidatorsV1.WorldInfoStateV1Schema.Check(worldInfo))
-          throw new Error("world_info_binding_service_unavailable");
-        return sendJson(response, 200, worldInfo);
-      }
-      if (request.method === "PUT" && url.pathname === "/api/tavern/v1/world-info") {
-        if (url.search !== "" || !isSameOrigin(request, origin)) return sendProblem(response, 401, "unauthorized");
-        const session = admitRequest(request, origin);
-        if (session === null) return sendProblem(response, 401, "unauthorized");
-        if (!tokensEqual(singleHeader(request.headers["x-csrf-token"]) ?? "", session.csrf))
-          return sendProblem(response, 403, "csrf_failed");
-        if (
-          !profile.routeIds.includes("world-info.bind") ||
-          !profile.operationIds.includes("world-info.bind") ||
-          worldInfoService === undefined
-        )
-          return sendProblem(response, 404, "profile_operation_unavailable");
-        const body = await readJsonBody(request, MAX_BODY_BYTES);
-        if (!worldInfoBindValidator.Check(body)) return sendProblem(response, 400, "invalid_request");
-        const worldInfo = await worldInfoService.setBinding(body as SetWorldInfoBindingCommandV1);
         if (!TavernBrowserValidatorsV1.WorldInfoStateV1Schema.Check(worldInfo))
           throw new Error("world_info_binding_service_unavailable");
         return sendJson(response, 200, worldInfo);
@@ -1656,59 +1913,6 @@ export function createTavernManagementDialogueWebRequestHandler(
           throw new Error("world_info_binding_service_unavailable");
         return sendJson(response, 200, item);
       }
-      if (request.method === "POST" && url.pathname === "/api/tavern/v1/world-info/item") {
-        if (url.search !== "" || !isSameOrigin(request, origin)) return sendProblem(response, 401, "unauthorized");
-        const session = admitRequest(request, origin);
-        if (session === null) return sendProblem(response, 401, "unauthorized");
-        if (!tokensEqual(singleHeader(request.headers["x-csrf-token"]) ?? "", session.csrf))
-          return sendProblem(response, 403, "csrf_failed");
-        if (
-          !profile.routeIds.includes("world-info.create") ||
-          !profile.operationIds.includes("world-info.create") ||
-          worldInfoService === undefined
-        )
-          return sendProblem(response, 404, "profile_operation_unavailable");
-        const body = await readJsonBody(request, MAX_BODY_BYTES);
-        if (!worldInfoCreateValidator.Check(body)) return sendProblem(response, 400, "invalid_request");
-        const worldInfo = await worldInfoService.create(body as WorldInfoCreateCommandV1);
-        if (!TavernBrowserValidatorsV1.WorldInfoStateV1Schema.Check(worldInfo))
-          throw new Error("world_info_binding_service_unavailable");
-        return sendJson(response, 200, worldInfo);
-      }
-      if (request.method === "PUT" && url.pathname === "/api/tavern/v1/world-info/item") {
-        if (url.search !== "" || !isSameOrigin(request, origin)) return sendProblem(response, 401, "unauthorized");
-        const session = admitRequest(request, origin);
-        if (session === null) return sendProblem(response, 401, "unauthorized");
-        if (!tokensEqual(singleHeader(request.headers["x-csrf-token"]) ?? "", session.csrf))
-          return sendProblem(response, 403, "csrf_failed");
-        if (
-          !profile.routeIds.includes("world-info.update") ||
-          !profile.operationIds.includes("world-info.update") ||
-          worldInfoService === undefined
-        )
-          return sendProblem(response, 404, "profile_operation_unavailable");
-        const body = await readJsonBody(request, MAX_BODY_BYTES);
-        if (!worldInfoUpdateValidator.Check(body)) return sendProblem(response, 400, "invalid_request");
-        const worldInfo = await worldInfoService.update(body as WorldInfoUpdateCommandV1);
-        if (!TavernBrowserValidatorsV1.WorldInfoStateV1Schema.Check(worldInfo))
-          throw new Error("world_info_binding_service_unavailable");
-        return sendJson(response, 200, worldInfo);
-      }
-      if (request.method === "POST" && url.pathname === "/api/tavern/v1/world-info/import") {
-        if (url.search !== "" || !isSameOrigin(request, origin)) return sendProblem(response, 401, "unauthorized");
-        const session = admitRequest(request, origin);
-        if (session === null) return sendProblem(response, 401, "unauthorized");
-        if (!tokensEqual(singleHeader(request.headers["x-csrf-token"]) ?? "", session.csrf))
-          return sendProblem(response, 403, "csrf_failed");
-        if (!profile.routeIds.includes("world-info.import") || worldInfoService?.importLorebook === undefined)
-          return sendProblem(response, 404, "profile_operation_unavailable");
-        const body = await readJsonBody(request, MAX_WORLD_INFO_IMPORT_BODY_BYTES);
-        if (!worldInfoImportValidator.Check(body)) return sendProblem(response, 400, "invalid_request");
-        const worldInfo = await worldInfoService.importLorebook(body as WorldInfoImportCommandV1);
-        if (!TavernBrowserValidatorsV1.WorldInfoStateV1Schema.Check(worldInfo))
-          throw new Error("world_info_binding_service_unavailable");
-        return sendJson(response, 200, worldInfo);
-      }
       if (request.method === "GET" && url.pathname === "/api/tavern/v1/world-info/export") {
         if (await hasRequestBody(request)) return sendProblem(response, 400, "invalid_request");
         if (admitRequest(request, origin) === null) return sendProblem(response, 401, "unauthorized");
@@ -1721,25 +1925,6 @@ export function createTavernManagementDialogueWebRequestHandler(
           throw new Error("world_info_binding_service_unavailable");
         return sendJson(response, 200, exported);
       }
-      if (request.method === "DELETE" && url.pathname === "/api/tavern/v1/world-info/item") {
-        if (url.search !== "" || !isSameOrigin(request, origin)) return sendProblem(response, 401, "unauthorized");
-        const session = admitRequest(request, origin);
-        if (session === null) return sendProblem(response, 401, "unauthorized");
-        if (!tokensEqual(singleHeader(request.headers["x-csrf-token"]) ?? "", session.csrf))
-          return sendProblem(response, 403, "csrf_failed");
-        if (
-          !profile.routeIds.includes("world-info.delete") ||
-          !profile.operationIds.includes("world-info.delete") ||
-          worldInfoService === undefined
-        )
-          return sendProblem(response, 404, "profile_operation_unavailable");
-        const body = await readJsonBody(request, MAX_BODY_BYTES);
-        if (!worldInfoItemValidator.Check(body)) return sendProblem(response, 400, "invalid_request");
-        const worldInfo = await worldInfoService.delete(body as WorldInfoItemCommandV1);
-        if (!TavernBrowserValidatorsV1.WorldInfoStateV1Schema.Check(worldInfo))
-          throw new Error("world_info_binding_service_unavailable");
-        return sendJson(response, 200, worldInfo);
-      }
       if (request.method === "GET" && url.pathname === "/api/tavern/v1/draft") {
         if (url.search !== "" || (await hasRequestBody(request))) return sendProblem(response, 400, "invalid_request");
         const session = admitRequest(request, origin);
@@ -1750,11 +1935,7 @@ export function createTavernManagementDialogueWebRequestHandler(
         return sendJson(response, 200, draft);
       }
       if (request.method === "PUT" && url.pathname === "/api/tavern/v1/draft") {
-        if (url.search !== "" || !isSameOrigin(request, origin)) return sendProblem(response, 401, "unauthorized");
-        const session = admitRequest(request, origin);
-        if (session === null) return sendProblem(response, 401, "unauthorized");
-        if (!tokensEqual(singleHeader(request.headers["x-csrf-token"]) ?? "", session.csrf))
-          return sendProblem(response, 403, "csrf_failed");
+        if (!admitWrite(request, url, response, origin)) return;
         const body = await readJsonBody(request, MAX_BODY_BYTES);
         if (!draftSaveValidator.Check(body)) return sendProblem(response, 400, "invalid_request");
         const draft = await managementService.saveDraft(body as SaveDraftCommandV1);
@@ -1763,11 +1944,7 @@ export function createTavernManagementDialogueWebRequestHandler(
         return sendJson(response, 200, draft);
       }
       if (request.method === "DELETE" && url.pathname === "/api/tavern/v1/draft") {
-        if (url.search !== "" || !isSameOrigin(request, origin)) return sendProblem(response, 401, "unauthorized");
-        const session = admitRequest(request, origin);
-        if (session === null) return sendProblem(response, 401, "unauthorized");
-        if (!tokensEqual(singleHeader(request.headers["x-csrf-token"]) ?? "", session.csrf))
-          return sendProblem(response, 403, "csrf_failed");
+        if (!admitWrite(request, url, response, origin)) return;
         const body = await readJsonBody(request, MAX_BODY_BYTES);
         if (!draftDiscardValidator.Check(body)) return sendProblem(response, 400, "invalid_request");
         const draft = await managementService.discardDraft(body as DiscardDraftCommandV1);
@@ -1838,100 +2015,14 @@ export function createTavernManagementDialogueWebRequestHandler(
           throw new Error("chat_management_service_unavailable");
         return sendJson(response, 200, list);
       }
-      if (request.method === "POST" && url.pathname === "/api/tavern/v1/chats") {
-        // chat.create (design/26 §4.4): creates a second conversation in the
-        // mounted companion/continuity. The browser names nothing durable; the
-        // creator mints the thread identity and resolves the opening.
-        if (url.search !== "" || !isSameOrigin(request, origin)) return sendProblem(response, 401, "unauthorized");
-        const session = admitRequest(request, origin);
-        if (session === null) return sendProblem(response, 401, "unauthorized");
-        if (!tokensEqual(singleHeader(request.headers["x-csrf-token"]) ?? "", session.csrf))
-          return sendProblem(response, 403, "csrf_failed");
-        if (
-          !profile.routeIds.includes("chat.create") ||
-          !profile.operationIds.includes("chat.create") ||
-          newChatProvisioner === undefined
-        )
-          return sendProblem(response, 404, "profile_operation_unavailable");
-        const body = await readJsonBody(request, MAX_BODY_BYTES);
-        if (!createChatValidator.Check(body)) return sendProblem(response, 400, "invalid_request");
-        const result = await newChatProvisioner.create(body as CreateChatCommandV1);
-        if (!TavernBrowserValidatorsV1.ChatCreateResultV1Schema.Check(result))
-          throw new Error("chat_management_service_unavailable");
-        return sendJson(response, 200, result);
-      }
-      if (request.method === "PUT" && url.pathname === "/api/tavern/v1/chat/select") {
-        // chat.select (ADR 0009 / ADR-0010): the browser names the exact Chat it read and the
-        // generation it read. Switching is turn-level: the runtime hot-swaps the mounted
-        // conversation in process and answers `switched`, aborting a still-generating turn through
-        // the same cancel path an explicit Stop uses. Refusals are bounded: a stale generation or
-        // an unknown/non-active Chat is `selection_conflict`, and `turn_in_flight` is only the
-        // residual answer for a durable turn with no started attempt yet.
-        if (url.search !== "" || !isSameOrigin(request, origin)) return sendProblem(response, 401, "unauthorized");
-        const session = admitRequest(request, origin);
-        if (session === null) return sendProblem(response, 401, "unauthorized");
-        if (!tokensEqual(singleHeader(request.headers["x-csrf-token"]) ?? "", session.csrf))
-          return sendProblem(response, 403, "csrf_failed");
-        if (
-          !profile.routeIds.includes("chat.select") ||
-          !profile.operationIds.includes("chat.select") ||
-          chatSelectProvisioner === undefined
-        )
-          return sendProblem(response, 404, "profile_operation_unavailable");
-        const body = await readJsonBody(request, MAX_BODY_BYTES);
-        if (!selectChatValidator.Check(body)) return sendProblem(response, 400, "invalid_request");
-        const result = await chatSelectProvisioner.select(body as SelectChatCommandV1);
-        if (!TavernBrowserValidatorsV1.ChatSelectResultV1Schema.Check(result))
-          throw new Error("chat_management_service_unavailable");
-        return sendJson(response, 200, result);
-      }
       if (request.method === "PUT" && url.pathname === "/api/tavern/v1/chat/title") {
-        if (url.search !== "" || !isSameOrigin(request, origin)) return sendProblem(response, 401, "unauthorized");
-        const session = admitRequest(request, origin);
-        if (session === null) return sendProblem(response, 401, "unauthorized");
-        if (!tokensEqual(singleHeader(request.headers["x-csrf-token"]) ?? "", session.csrf))
-          return sendProblem(response, 403, "csrf_failed");
+        if (!admitWrite(request, url, response, origin)) return;
         const body = await readJsonBody(request, MAX_BODY_BYTES);
         if (!renameRequestValidator.Check(body)) return sendProblem(response, 400, "invalid_request");
         const result = await managementService.renameChatTitle(body as RenameChatTitleCommandV1);
         if (!TavernBrowserValidatorsV1.ChatTitleV1Schema.Check(result))
           throw new Error("chat_management_service_unavailable");
         return sendJson(response, 200, result);
-      }
-      if (request.method === "PUT" && url.pathname === "/api/tavern/v1/chat/opening") {
-        if (url.search !== "" || !isSameOrigin(request, origin)) return sendProblem(response, 401, "unauthorized");
-        const session = admitRequest(request, origin);
-        if (session === null) return sendProblem(response, 401, "unauthorized");
-        if (!tokensEqual(singleHeader(request.headers["x-csrf-token"]) ?? "", session.csrf))
-          return sendProblem(response, 403, "csrf_failed");
-        if (!profile.routeIds.includes("chat.opening") || !profile.operationIds.includes("chat.opening"))
-          return sendProblem(response, 404, "profile_operation_unavailable");
-        const body = await readJsonBody(request, MAX_BODY_BYTES);
-        if (!chatOpeningValidator.Check(body)) return sendProblem(response, 400, "invalid_request");
-        const result = await managementService.commitOpeningVariant(body as ChatOpeningCommandV1);
-        if (!TavernBrowserValidatorsV1.ChatOpeningResultV1Schema.Check(result))
-          throw new Error("chat_management_service_unavailable");
-        return sendJson(response, 200, result);
-      }
-      if (request.method === "PUT" && url.pathname === "/api/tavern/v1/memory") {
-        if (url.search !== "" || !isSameOrigin(request, origin)) return sendProblem(response, 401, "unauthorized");
-        const session = admitRequest(request, origin);
-        if (session === null) return sendProblem(response, 401, "unauthorized");
-        if (!tokensEqual(singleHeader(request.headers["x-csrf-token"]) ?? "", session.csrf))
-          return sendProblem(response, 403, "csrf_failed");
-        if (
-          !profile.routeIds.includes("memory.mutate") ||
-          !profile.operationIds.includes("memory.mutate") ||
-          memoryService === undefined ||
-          memoryService.mutate === undefined
-        )
-          return sendProblem(response, 404, "profile_operation_unavailable");
-        const body = await readJsonBody(request, MAX_BODY_BYTES);
-        if (!memoryMutationValidator.Check(body)) return sendProblem(response, 400, "invalid_request");
-        const memory = await memoryService.mutate(body as MemoryMutationCommandV1);
-        if (!TavernBrowserValidatorsV1.MemoryReadV1Schema.Check(memory))
-          throw new Error("memory_read_service_unavailable");
-        return sendJson(response, 200, memory);
       }
       if (request.method === "GET" && url.pathname === "/api/tavern/v1/memory") {
         if (url.search !== "" || (await hasRequestBody(request))) return sendProblem(response, 400, "invalid_request");
@@ -1950,25 +2041,9 @@ export function createTavernManagementDialogueWebRequestHandler(
           return sendProblem(response, 404, "profile_operation_unavailable");
         return sendJson(response, 200, await connectionService!.read());
       }
-      if (request.method === "POST" && url.pathname === "/api/tavern/v1/settings/connections") {
-        if (url.search !== "" || !isSameOrigin(request, origin)) return sendProblem(response, 401, "unauthorized");
-        const session = admitRequest(request, origin);
-        if (session === null) return sendProblem(response, 401, "unauthorized");
-        if (!tokensEqual(singleHeader(request.headers["x-csrf-token"]) ?? "", session.csrf))
-          return sendProblem(response, 403, "csrf_failed");
-        if (!connectionRouteAvailable(profile, "settings.connection.create", connectionService))
-          return sendProblem(response, 404, "profile_operation_unavailable");
-        const body = await readJsonBody(request, MAX_BODY_BYTES);
-        if (!connectionCreateValidator.Check(body)) return sendProblem(response, 400, "invalid_request");
-        return sendJson(response, 200, await connectionService!.create(body as TavernConnectionCreateCommandV1));
-      }
       const connectionRoute = matchConnectionRoute(request.method, url.pathname);
       if (connectionRoute !== null) {
-        if (url.search !== "" || !isSameOrigin(request, origin)) return sendProblem(response, 401, "unauthorized");
-        const session = admitRequest(request, origin);
-        if (session === null) return sendProblem(response, 401, "unauthorized");
-        if (!tokensEqual(singleHeader(request.headers["x-csrf-token"]) ?? "", session.csrf))
-          return sendProblem(response, 403, "csrf_failed");
+        if (!admitWrite(request, url, response, origin)) return;
         if (!connectionRouteAvailable(profile, connectionRoute.operationId, connectionService))
           return sendProblem(response, 404, "profile_operation_unavailable");
         const body = await readJsonBody(request, MAX_BODY_BYTES);
@@ -2010,33 +2085,6 @@ export function createTavernManagementDialogueWebRequestHandler(
           return sendProblem(response, 404, "profile_operation_unavailable");
         const [chat, game] = await Promise.all([modelProfileStore.read("chat"), modelProfileStore.read("game")]);
         const profiles = projectModelProfiles(chat, game);
-        if (!TavernBrowserValidatorsV1.TavernModelProfilesV1Schema.Check(profiles))
-          throw new Error("model_profile_store_unavailable");
-        return sendJson(response, 200, profiles);
-      }
-      if (request.method === "PUT" && url.pathname === "/api/tavern/v1/settings/profiles") {
-        if (url.search !== "" || !isSameOrigin(request, origin)) return sendProblem(response, 401, "unauthorized");
-        const session = admitRequest(request, origin);
-        if (session === null) return sendProblem(response, 401, "unauthorized");
-        if (!tokensEqual(singleHeader(request.headers["x-csrf-token"]) ?? "", session.csrf))
-          return sendProblem(response, 403, "csrf_failed");
-        if (
-          !profile.routeIds.includes("settings.profiles.update") ||
-          !profile.operationIds.includes("settings.profiles.update") ||
-          modelProfileStore === undefined
-        )
-          return sendProblem(response, 404, "profile_operation_unavailable");
-        const body = await readJsonBody(request, MAX_BODY_BYTES);
-        if (!modelProfileUpdateValidator.Check(body)) return sendProblem(response, 400, "invalid_request");
-        const command = body as TavernModelProfileUpdateCommandV1;
-        const updated = await modelProfileStore.update(command.surface, command.expectedRevision, {
-          thinkingLevel: command.thinkingLevel,
-        });
-        const other = await modelProfileStore.read(command.surface === "chat" ? "game" : "chat");
-        const profiles = projectModelProfiles(
-          command.surface === "chat" ? updated : other,
-          command.surface === "chat" ? other : updated,
-        );
         if (!TavernBrowserValidatorsV1.TavernModelProfilesV1Schema.Check(profiles))
           throw new Error("model_profile_store_unavailable");
         return sendJson(response, 200, profiles);
@@ -2426,11 +2474,7 @@ export function createTavernManagementDialogueWebRequestHandler(
         }
       }
       if (request.method === "POST" && url.pathname === "/api/tavern/v1/companions") {
-        if (url.search !== "" || !isSameOrigin(request, origin)) return sendProblem(response, 401, "unauthorized");
-        const session = admitRequest(request, origin);
-        if (session === null) return sendProblem(response, 401, "unauthorized");
-        if (!tokensEqual(singleHeader(request.headers["x-csrf-token"]) ?? "", session.csrf))
-          return sendProblem(response, 403, "csrf_failed");
+        if (!admitWrite(request, url, response, origin)) return;
         if (!profile.routeIds.includes("companion.create") || libraryService === undefined)
           return sendProblem(response, 404, "profile_operation_unavailable");
         const body = await readJsonBody(request, MAX_BODY_BYTES);
@@ -2512,11 +2556,7 @@ export function createTavernManagementDialogueWebRequestHandler(
       if (request.method === "POST" && url.pathname === "/api/tavern/v1/imports") {
         // character.import.stage: the card body is the ONLY input the browser
         // sends. Host mints the opaque importId; the player never names it.
-        if (url.search !== "" || !isSameOrigin(request, origin)) return sendProblem(response, 401, "unauthorized");
-        const session = admitRequest(request, origin);
-        if (session === null) return sendProblem(response, 401, "unauthorized");
-        if (!tokensEqual(singleHeader(request.headers["x-csrf-token"]) ?? "", session.csrf))
-          return sendProblem(response, 403, "csrf_failed");
+        if (!admitWrite(request, url, response, origin)) return;
         if (
           !profile.routeIds.includes("character.import.stage") ||
           stCardImportService === undefined ||
@@ -2586,11 +2626,7 @@ export function createTavernManagementDialogueWebRequestHandler(
         const importReviewRoute = matchImportReviewRoute(request.method, url.pathname);
         if (importReviewRoute !== null) {
           // character.import.review: an explicit eligible-field review record.
-          if (url.search !== "" || !isSameOrigin(request, origin)) return sendProblem(response, 401, "unauthorized");
-          const session = admitRequest(request, origin);
-          if (session === null) return sendProblem(response, 401, "unauthorized");
-          if (!tokensEqual(singleHeader(request.headers["x-csrf-token"]) ?? "", session.csrf))
-            return sendProblem(response, 403, "csrf_failed");
+          if (!admitWrite(request, url, response, origin)) return;
           if (
             !profile.routeIds.includes("character.import.review") ||
             stCardImportService === undefined ||
@@ -2621,11 +2657,7 @@ export function createTavernManagementDialogueWebRequestHandler(
           // character.import.confirm: provision the reviewed candidate. The
           // composition owns the runtime root/threads; the browser receives
           // only the safe confirmed name.
-          if (url.search !== "" || !isSameOrigin(request, origin)) return sendProblem(response, 401, "unauthorized");
-          const session = admitRequest(request, origin);
-          if (session === null) return sendProblem(response, 401, "unauthorized");
-          if (!tokensEqual(singleHeader(request.headers["x-csrf-token"]) ?? "", session.csrf))
-            return sendProblem(response, 403, "csrf_failed");
+          if (!admitWrite(request, url, response, origin)) return;
           if (
             !profile.routeIds.includes("character.import.confirm") ||
             stCardImportService === undefined ||
@@ -2689,36 +2721,6 @@ export function createTavernManagementDialogueWebRequestHandler(
         if (!TavernBrowserValidatorsV1.PersonaV1Schema.Check(result)) throw new Error("persona_service_unavailable");
         return sendJson(response, 200, result);
       }
-      if (request.method === "PUT" && url.pathname === "/api/tavern/v1/persona") {
-        if (url.search !== "" || !isSameOrigin(request, origin)) return sendProblem(response, 401, "unauthorized");
-        const session = admitRequest(request, origin);
-        if (session === null) return sendProblem(response, 401, "unauthorized");
-        if (!tokensEqual(singleHeader(request.headers["x-csrf-token"]) ?? "", session.csrf))
-          return sendProblem(response, 403, "csrf_failed");
-        if (
-          !profile.routeIds.includes("persona.update") ||
-          !profile.operationIds.includes("persona.update") ||
-          personaService === undefined
-        )
-          return sendProblem(response, 404, "profile_operation_unavailable");
-        const body = await readJsonBody(request, MAX_BODY_BYTES);
-        if (!personaUpdateValidator.Check(body)) return sendProblem(response, 400, "invalid_request");
-        const command = body as PersonaUpdateCommandV1;
-        const persona = await personaService.update({
-          expectedRevision: command.expectedRevision,
-          name: command.name,
-          ...(command.description === undefined ? {} : { description: command.description }),
-        });
-        const result: PersonaV1 = Object.freeze({
-          apiVersion: TAVERN_BROWSER_API_VERSION,
-          present: true,
-          revision: persona.revision,
-          name: persona.name,
-          description: persona.description ?? null,
-        });
-        if (!TavernBrowserValidatorsV1.PersonaV1Schema.Check(result)) throw new Error("persona_service_unavailable");
-        return sendJson(response, 200, result);
-      }
       if (request.method === "GET" && url.pathname === "/api/tavern/v1/scenario") {
         if (url.search !== "" || (await hasRequestBody(request))) return sendProblem(response, 400, "invalid_request");
         if (admitRequest(request, origin) === null) return sendProblem(response, 401, "unauthorized");
@@ -2732,37 +2734,6 @@ export function createTavernManagementDialogueWebRequestHandler(
           name: scenario?.name ?? null,
           description: scenario?.description ?? null,
           preview: scenario?.preview ?? null,
-        });
-        if (!TavernBrowserValidatorsV1.ScenarioV1Schema.Check(result)) throw new Error("scenario_service_unavailable");
-        return sendJson(response, 200, result);
-      }
-      if (request.method === "PUT" && url.pathname === "/api/tavern/v1/scenario") {
-        if (url.search !== "" || !isSameOrigin(request, origin)) return sendProblem(response, 401, "unauthorized");
-        const session = admitRequest(request, origin);
-        if (session === null) return sendProblem(response, 401, "unauthorized");
-        if (!tokensEqual(singleHeader(request.headers["x-csrf-token"]) ?? "", session.csrf))
-          return sendProblem(response, 403, "csrf_failed");
-        if (
-          !profile.routeIds.includes("scenario.update") ||
-          !profile.operationIds.includes("scenario.update") ||
-          scenarioService === undefined
-        )
-          return sendProblem(response, 404, "profile_operation_unavailable");
-        const body = await readJsonBody(request, MAX_BODY_BYTES);
-        if (!scenarioUpdateValidator.Check(body)) return sendProblem(response, 400, "invalid_request");
-        const command = body as ScenarioUpdateCommandV1;
-        const scenario = await scenarioService.update({
-          expectedRevision: command.expectedRevision,
-          name: command.name,
-          description: command.description,
-        });
-        const result: ScenarioV1 = Object.freeze({
-          apiVersion: TAVERN_BROWSER_API_VERSION,
-          present: true,
-          revision: scenario.revision,
-          name: scenario.name,
-          description: scenario.description,
-          preview: scenario.preview,
         });
         if (!TavernBrowserValidatorsV1.ScenarioV1Schema.Check(result)) throw new Error("scenario_service_unavailable");
         return sendJson(response, 200, result);
@@ -2785,50 +2756,12 @@ export function createTavernManagementDialogueWebRequestHandler(
         if (!TavernBrowserValidatorsV1.GreetingV1Schema.Check(result)) throw new Error("greeting_service_unavailable");
         return sendJson(response, 200, result);
       }
-      if (request.method === "PUT" && url.pathname === "/api/tavern/v1/greeting") {
-        if (url.search !== "" || !isSameOrigin(request, origin)) return sendProblem(response, 401, "unauthorized");
-        const session = admitRequest(request, origin);
-        if (session === null) return sendProblem(response, 401, "unauthorized");
-        if (!tokensEqual(singleHeader(request.headers["x-csrf-token"]) ?? "", session.csrf))
-          return sendProblem(response, 403, "csrf_failed");
-        if (
-          !profile.routeIds.includes("greeting.update") ||
-          !profile.operationIds.includes("greeting.update") ||
-          greetingService === undefined
-        )
-          return sendProblem(response, 404, "profile_operation_unavailable");
-        const body = await readJsonBody(request, MAX_BODY_BYTES);
-        if (!greetingUpdateValidator.Check(body)) return sendProblem(response, 400, "invalid_request");
-        const command = body as GreetingUpdateCommandV1;
-        const greeting = await greetingService.update({
-          expectedRevision: command.expectedRevision,
-          ...(command.label === undefined ? {} : { label: command.label }),
-          variants: command.variants.map((variant) =>
-            Object.freeze({ ...(variant.label === undefined ? {} : { label: variant.label }), text: variant.text }),
-          ),
-        });
-        const result: GreetingV1 = Object.freeze({
-          apiVersion: TAVERN_BROWSER_API_VERSION,
-          present: true,
-          revision: greeting.revision,
-          label: greeting.label ?? null,
-          variants: greeting.variants.map((variant) =>
-            Object.freeze({ label: variant.label ?? null, text: variant.text }),
-          ),
-        });
-        if (!TavernBrowserValidatorsV1.GreetingV1Schema.Check(result)) throw new Error("greeting_service_unavailable");
-        return sendJson(response, 200, result);
-      }
       // Branching the conversation from one message. The ONE route here that mints a durable Chat, which
       // is why the key is required rather than optional (`chat.create` tolerates a duplicate; a duplicated
       // half-conversation cannot be told apart from the one the player meant). The seam derives the new
       // Chat's identity from the key, so a replay lands on the Chat the first attempt created.
       if (request.method === "POST" && url.pathname === "/api/tavern/v1/chats/fork") {
-        if (url.search !== "" || !isSameOrigin(request, origin)) return sendProblem(response, 401, "unauthorized");
-        const session = admitRequest(request, origin);
-        if (session === null) return sendProblem(response, 401, "unauthorized");
-        if (!tokensEqual(singleHeader(request.headers["x-csrf-token"]) ?? "", session.csrf))
-          return sendProblem(response, 403, "csrf_failed");
+        if (!admitWrite(request, url, response, origin)) return;
         if (!profile.routeIds.includes("chat.fork") || chatForkService === undefined)
           return sendProblem(response, 404, "profile_operation_unavailable");
         const idempotencyKey = singleHeader(request.headers["idempotency-key"]);
@@ -2843,11 +2776,7 @@ export function createTavernManagementDialogueWebRequestHandler(
       {
         const retentionRoute = matchRetentionRoute(request.method, url.pathname);
         if (retentionRoute !== null) {
-          if (url.search !== "" || !isSameOrigin(request, origin)) return sendProblem(response, 401, "unauthorized");
-          const session = admitRequest(request, origin);
-          if (session === null) return sendProblem(response, 401, "unauthorized");
-          if (!tokensEqual(singleHeader(request.headers["x-csrf-token"]) ?? "", session.csrf))
-            return sendProblem(response, 403, "csrf_failed");
+          if (!admitWrite(request, url, response, origin)) return;
           if (
             !profile.routeIds.includes(retentionRoute.operationId) ||
             !profile.operationIds.includes(retentionRoute.operationId) ||

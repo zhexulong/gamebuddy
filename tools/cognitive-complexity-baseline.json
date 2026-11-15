@@ -930,7 +930,8 @@
       "file": "host/src/tavern-management-dialogue-web.ts",
       "line": 1127,
       "value": 255,
-      "saturated": true
+      "saturated": true,
+      "reason": "Lane ROUTETABLE folded the 21 write-route arms into `managementWriteRoutes` plus one loop and moved the shared write admission into `admitWrite`, which removed 161 `if (` conditions, 67 `||` conditions and 19 `&&` conditions from this function (444/153/64 -> 283/86/45) and 494 of its 1659 lines, and the compiled route suite stayed at 87/87. Biome still reads 255 because it carries the score in a byte, so 255 is that producer's floor and not a count: the remaining ~280 conditions and the 36 read arms keep the score at or above the ceiling, and no behaviour-preserving edit can bring it under the bound of 30. The entry therefore stays at 255 as the floor it always was rather than being re-recorded lower, which would claim a measurement this producer cannot make. 132 on the handler and 89 on `problemFor` are untouched by this lane."
     },
     {
       "id": "ts:host/src/tavern-management-dialogue-web.ts#problemFor",
