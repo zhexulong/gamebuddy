@@ -4423,7 +4423,7 @@
     font-style: normal;
   }
 
-  .message-bubble :is(p, blockquote, pre, ul, ol, hr) {
+  .message-bubble :is(p, blockquote, pre, ul, ol, hr, table) {
     margin: 0;
   }
 
@@ -4449,6 +4449,35 @@
 
   .message-bubble li + li {
     margin-top: var(--space-1);
+  }
+
+  /* A table is the one reply block that can be wider than the column: three columns of
+   words fit the 400 px dock, six do not. It scrolls on the inline axis inside its own
+   box, the way a fenced block does above, instead of widening the transcript -
+   `style-scroll-containers.ts` keeps inline-axis scrollers out of the block-axis
+   population, so the bubble stays the one vertical stack.
+
+   `display: block` is what makes the scrollport the table itself: a `table` box sizes to
+   its content and would paint past the bubble, while the block box holds the anonymous
+   table at its own width and scrolls it. No cell takes `nowrap`, so a table that fits
+   wraps instead of scrolling - the scroll is for the columns that cannot. */
+  .message-bubble table {
+    display: block;
+    max-width: 100%;
+    overflow-x: auto;
+    border-collapse: collapse;
+    font-size: 0.95em;
+  }
+
+  .message-bubble :is(th, td) {
+    padding: var(--space-1) var(--space-2);
+    border: 1px solid var(--border-glass);
+    text-align: left;
+    vertical-align: top;
+  }
+
+  .message-bubble th {
+    font-weight: 600;
   }
 
   .message-bubble code {

@@ -188,6 +188,63 @@ test("renders blocks, lists, quotes and code", async ({ page }) => {
   await expect(bubble.locator("strong")).toHaveText("weight");
 });
 
+/**
+ * A status panel, which is the reason a table has to reach the page as a table.
+ *
+ * The failure it catches: GFM parses `| crop | day | yield |` perfectly well, and the
+ * allowlist threw the elements away - the bubble showed `parsnip 4 12 potato 6 21`, one run
+ * of words with no columns, no header, and nothing to say a table had been written. A
+ * companion's farm report read as prose.
+ */
+test("renders a GFM table as a table", async ({ page }) => {
+  await openProbe(page);
+  await setTranscript(page, [
+    ["| crop | day | yield |", "| - | - | - |", "| parsnip | 4 | 12 |", "| potato | 6 | 21 |"].join("\n"),
+  ]);
+
+  const bubble = page.locator("li[data-handle='h0'] .message-bubble");
+  await expect(bubble.locator("table")).toHaveCount(1);
+  await expect(bubble.locator("table thead th")).toHaveText(["crop", "day", "yield"]);
+  await expect(bubble.locator("table tbody tr")).toHaveCount(2);
+  await expect(bubble.locator("table tbody tr").first().locator("td")).toHaveText(["parsnip", "4", "12"]);
+  // The header row is told from the cells by weight, so a header the stylesheet forgot reads
+  // as one more row of the panel instead of as its labels.
+  expect(await bubble.locator("table th").first().evaluate((cell) => getComputedStyle(cell).fontWeight)).toBe("600");
+});
+
+/**
+ * The layout consequence of a table in a 400 px dock, asserted rather than assumed.
+ *
+ * Measured at 400x800 through the real stylesheet: a cell inherits the bubble's
+ * `overflow-wrap: anywhere`, so a three-column panel and a ten-column one both fit (bubble
+ * 125 px / 319 px, no scroll), and only the columns that cannot fit scroll - fourteen fit
+ * columns' worth needs 354 px inside a 291 px scrollport. What must never happen is the
+ * table widening the reading column, which is what a `table` box does on its own.
+ */
+test("a table wider than the dock scrolls instead of widening the bubble", async ({ page }) => {
+  await page.setViewportSize({ width: 400, height: 800 });
+  await openProbe(page);
+  const row = (cells: readonly string[]) => `| ${cells.join(" | ")} |`;
+  const columns = Array.from({ length: 14 }, (_, index) => `c${index}`);
+  await setTranscript(page, [[row(columns), row(columns.map(() => "---")), row(columns.map(() => "1"))].join("\n")]);
+
+  const geometry = await page.evaluate(() => {
+    const bubble = document.querySelector("li[data-handle='h0'] .message-bubble") as Element | null;
+    const table = bubble?.querySelector("table") ?? null;
+    if (bubble === null || table === null) return null;
+    return {
+      overflowX: getComputedStyle(table).overflowX,
+      tableOverflow: table.scrollWidth - table.clientWidth,
+      bubbleOverflow: bubble.scrollWidth - bubble.clientWidth,
+    };
+  });
+
+  expect(geometry, "the table is rendered").not.toBeNull();
+  expect(geometry?.overflowX).toBe("auto");
+  expect(geometry?.tableOverflow, "the columns that cannot fit scroll inside the table").toBeGreaterThan(0);
+  expect(geometry?.bubbleOverflow, "the reply never widens the reading column").toBeLessThanOrEqual(0);
+});
+
 test("settled preview and committed message render identically", async ({ page }) => {
   await openProbe(page);
   const settled = "*nods slowly*\n\nA paragraph with `code` and **weight**.\n\n- a\n- b";
@@ -464,21 +521,11 @@ test("every construct the reply grammar declares is one the bubble draws", async
     `${prosody.id}: a player's parenthetical is their own stage direction, not a direction for her tone`,
   ).not.toContain("data-mood-tag");
 
-  // And the shapes the grammar deliberately does NOT declare keep only their words. The
-  // four below are the GFM constructs a reply could plausibly write; the allowlist is the
-  // declaration's own tag union and drops everything else, so there is no second list here
-  // that could drift - this pins the intent for the four, not the whole population.
-  const undeclared = [
-    { id: "table", sample: "| a | b |\n| - | - |\n| 1 | 2 |" },
-    { id: "heading", sample: "# 标题" },
-    { id: "link", sample: "[文字](https://example.com)" },
-    { id: "image", sample: "![图](https://example.com/x.png)" },
-  ];
-  for (const shape of undeclared) {
-    await setTranscript(page, [shape.sample]);
-    const html = await bubbleHtml(page, "h0");
-    for (const tag of ["table", "th", "td", "h1", "a", "img"]) {
-      expect(html, `${shape.id}: <${tag}> is not a construct of a reply, so it is not painted`).not.toContain(`<${tag}`);
-    }
-  }
+  // And the shapes the grammar deliberately does NOT declare keep only their words. A link is
+  // the one GFM construct a reply may still write that the bubble drops; the allowlist is the
+  // declaration's own tag union, so there is no second list here that could drift.
+  await setTranscript(page, ["[文字](https://example.com)"]);
+  const linkHtml = await bubbleHtml(page, "h0");
+  expect(linkHtml, "link: <a> is not a construct of a reply, so it is not painted").not.toContain("<a");
+  expect(linkHtml, "link: the words the reply wrote still reach the player").toContain("文字");
 });

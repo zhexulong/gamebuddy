@@ -63,10 +63,14 @@ export type ReplyConstruct = Readonly<{
 /**
  * The constructs, in the order their tags reach the sanitizer.
  *
- * Deliberately absent: a table, a heading, a link and an image. GFM parses all four, and a
- * reply that wrote one used to degrade into its concatenated cell text with no mark that
- * anything had been dropped. They are not constructs of a spoken reply, so they are not
- * declared, so they are not painted.
+ * A table is a construct of a reply that keeps a status panel - a farm's crops, a shop's
+ * stock - and a companion writing to a player in that shape is formatting, not narrating.
+ * Until it was declared, GFM parsed the table anyway and the bubble threw the element away,
+ * leaving its cells as one run of words with no mark that anything had been dropped.
+ *
+ * Deliberately absent: a heading, a link and an image. GFM parses all three, and a reply that
+ * wrote one used to degrade the same way. They are not constructs of a spoken reply, so they
+ * are not declared, so they are not painted.
  */
 export const COMPANION_REPLY_GRAMMAR: readonly ReplyConstruct[] = Object.freeze([
   Object.freeze({
@@ -154,6 +158,14 @@ export const COMPANION_REPLY_GRAMMAR: readonly ReplyConstruct[] = Object.freeze(
     syntax: "---",
     sample: "---",
     tags: Object.freeze(["hr"]),
+    paint: "shape",
+    speaker: "both",
+  }),
+  Object.freeze({
+    id: "table",
+    syntax: "| a | b |",
+    sample: "| a | b |\n| - | - |\n| 1 | 2 |",
+    tags: Object.freeze(["table", "thead", "tbody", "tr", "th", "td"]),
     paint: "shape",
     speaker: "both",
   }),

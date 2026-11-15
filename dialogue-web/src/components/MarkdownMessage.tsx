@@ -202,7 +202,9 @@ function withTrailingHtml(html: string, trailingHtml: string): string {
   host.innerHTML = html;
   const blocks = [...host.children];
   const last = blocks[blocks.length - 1];
-  if (last === undefined || last.tagName === "HR") return `${html}${trailingHtml}`;
+  // A rule and a table have no text-bearing block to end: `beforeend` inside a `<table>` is
+  // foster-parented out of it, so the caret would land before the table instead of after it.
+  if (last === undefined || last.tagName === "HR" || last.tagName === "TABLE") return `${html}${trailingHtml}`;
   let target = last;
   for (;;) {
     const next = target.lastElementChild;
