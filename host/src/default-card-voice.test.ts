@@ -6,6 +6,7 @@ import { dehydrateCompanionSpeech, isEmptyAfterDehydration } from "./companion-s
 import { buildGameCompanionSystemPrompt } from "./game-surface-prompt-floor.js";
 import { DEFAULT_IDENTITY_PROFILE, validateIdentityProfile } from "./identity-profile.js";
 import { buildChatCompanionSystemPrompt, renderIdentityProfile } from "./companion-prompt-assembly.js";
+import { CHAT_SURFACE_SKIP_SIGNATURE, COMPANION_ACTION_SYNTAX } from "./chat-surface-block.js";
 import { DEFAULT_COMPANION_PRESET } from "./tavern/default-companion-preset.js";
 
 /**
@@ -269,13 +270,28 @@ test("the game's body channel stays on the Game surface, out of the Chat prompt 
   assert.match(game, /Write no bracketed stage direction at all/u);
 });
 
-test("the Host's asterisk permission outranks an authored voice that forbids the asterisk form", () => {
-  // Shape A fixes the card this product ships, and nothing else: the ST card format has no
-  // surface-scoped field, so a third-party card's "no asterisks" still lands in the Chat prompt
-  // verbatim (asserted below) and still renders LAST, because the card's directive comes after
-  // the Host floor. A sentence that merely restated the syntax would therefore lose the
-  // argument; this one names the conflict and which side wins, so the later text has an answer
-  // to resolve against instead of being the last word by default.
+/**
+ * The three clauses the Chat block used to answer an authored "no asterisks" with, quoted verbatim from the version
+ * `858f0c87` replaced (`git show 858f0c87^:host/src/identity-profile.ts`), not paraphrased.
+ *
+ * A CLOSED list, because the register has to be refused by name: "just one more reminder" is how a form rule comes
+ * back wearing a channel's clothes.
+ */
+const RETIRED_ASTERISK_OVERRIDE: readonly string[] = Object.freeze([
+  "even if an authored voice forbids it",
+  "the surface decides what it draws, not the voice",
+  "does not stop that asterisk from drawing as the beat",
+]);
+
+test("an authored voice that forbids asterisks keeps the style question, and the surface keeps only the channel fact", () => {
+  // The ST card format has no surface-scoped field, so a third-party card's "no asterisks" lands in the Chat prompt
+  // verbatim, after this block. The question is who decides.
+  //
+  // It used to be the surface, by overruling the card. Two reasons that was wrong, and both are checked here rather
+  // than asserted in a comment: it is a FORM rule wearing a CHANNEL's clothes - how often she reaches for a beat belongs
+  // to the card, by the same ruling that put the turn's shape there - and NOTHING in the pipeline needs the marker to
+  // appear, so there is no product need to state beside the card's style. The channel keeps only what it can honestly
+  // claim.
   const forbiddingText = "绝不写星号动作，也不要在文字里做任何动作描写。";
   const forbidding = validateIdentityProfile({
     ...DEFAULT_COMPANION_PRESET.profile,
@@ -283,17 +299,36 @@ test("the Host's asterisk permission outranks an authored voice that forbids the
   });
   const chat = buildChatCompanionSystemPrompt(forbidding, "zh-CN");
   assert.ok(chat.includes(forbiddingText), "the authored directive still reaches Chat verbatim");
-  assert.match(
-    chat,
-    /even if an authored voice forbids it/u,
-    "the Chat block must say the asterisk form draws as the beat even against an authored prohibition",
+
+  // The channel fact survives, so a beat she DOES write still draws: the syntax is named - derived from the constant the
+  // Chat block exports rather than transcribed here - and the renderer's treatment with it. This is the part a "remove
+  // the override" change must not take with it.
+  assert.ok(chat.includes(COMPANION_ACTION_SYNTAX), "the surface still names the syntax it draws");
+  assert.match(chat, /draws that asterisk form as the action beat/u);
+
+  // The override is gone, in all three of its clauses.
+  for (const clause of RETIRED_ASTERISK_OVERRIDE)
+    assert.equal(
+      chat.includes(clause),
+      false,
+      `the Chat block still overrules the authored voice: ${JSON.stringify(clause)}`,
+    );
+
+  // And the frequency is handed to the voice, which is the card's own material. Read off the constant Magic Context
+  // skips on, so the sentence cannot be reworded without moving the signature with it, and stated exactly once: two
+  // spellings is how the formula grew back the first time.
+  assert.equal(
+    chat.split(CHAT_SURFACE_SKIP_SIGNATURE).length - 1,
+    1,
+    "the block states the style handover exactly once",
   );
-  assert.match(
-    chat,
-    /the surface decides what it draws, not the voice/u,
-    "naming WHY it wins is what makes it decisive",
-  );
-  assert.match(chat, /does not stop that asterisk from drawing as the beat/u);
+  assert.match(CHAT_SURFACE_SKIP_SIGNATURE, /is your voice's call/u, "the handover names the voice as the decider");
+
+  // WHY the card wins, executed rather than described: no consumer needs the marker. The bubble strips a beat when one
+  // is written and passes asterisk-free text through unchanged, so an authored ban on beats costs the pipeline nothing -
+  // and a prompt sentence overruling the card buys nothing either.
+  assert.equal(dehydrateCompanionSpeech("我把锄头扛上肩。"), "我把锄头扛上肩。");
+  assert.equal(dehydrateCompanionSpeech("*扛起锄头* 走了。").includes("*"), false);
 });
 
 test("the preset's examples reach the system prompt under a labelled dialogue block", () => {
