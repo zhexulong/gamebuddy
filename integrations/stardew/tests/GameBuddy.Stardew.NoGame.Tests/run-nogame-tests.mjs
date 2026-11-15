@@ -23,13 +23,17 @@
  * matters: a test could silently leave the lane by gaining a game dependency, and a green count
  * would never show it.
  *
+ * The accounting prints its population (`files examined N · compiled C · excluded E · in neither J`)
+ * before it prints any verdict, and it is a pure function of the three name lists: `run-nogame-tests.test.mjs`
+ * beside this file drives every one of its rules red on a population nobody has to create.
+ *
  * Usage:
  *   node integrations/stardew/tests/GameBuddy.Stardew.NoGame.Tests/run-nogame-tests.mjs
  *   ... --no-build   # reuse the last build
  */
 import { execFileSync } from "node:child_process";
 import { readdirSync, readFileSync, statSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const PROJECT_DIR = dirname(fileURLToPath(import.meta.url));
@@ -40,7 +44,7 @@ const EXCLUSIONS = join(PROJECT_DIR, "excluded-files.tsv");
 const SUITE_LINK = "../GameBuddy.Stardew.Integration.Tests/";
 
 /** The `.cs` files the suite holds at its top level - the population the subset is drawn from. */
-function suiteFiles() {
+export function suiteFiles() {
   return readdirSync(SUITE_DIR)
     .filter((name) => name.endsWith(".cs") && statSync(join(SUITE_DIR, name)).isFile())
     .sort();
@@ -52,7 +56,7 @@ function suiteFiles() {
  * rather than trusted, because a forked snapshot stays green while the originals drift and no count
  * this script prints would ever show it.
  */
-function includedFiles() {
+export function includedFiles() {
   const project = readFileSync(PROJECT, "utf8");
   const included = [];
   for (const match of project.matchAll(/<Compile\s+Include="([^"]+)"/gu)) {
@@ -75,7 +79,7 @@ function includedFiles() {
 /** The excluded set: `<file>\t<mod-assembly|game|reference-tree>\t<evidence>`, comments and blank
  *  lines skipped. The reason must be one this runner prints a count for, so a typo cannot drop a
  *  file from the totals it reports. */
-function excludedFiles() {
+export function excludedFiles() {
   const rows = [];
   for (const line of readFileSync(EXCLUSIONS, "utf8").split(/\r?\n/u)) {
     if (line.trim() === "" || line.startsWith("#")) continue;
@@ -85,51 +89,72 @@ function excludedFiles() {
   return rows.sort((left, right) => left.name.localeCompare(right.name));
 }
 
-const suite = suiteFiles();
-const included = includedFiles();
-const excluded = excludedFiles();
+/**
+ * The partition of the suite into the two sets this project claims exhaust it: the files it compiles and
+ * the files `excluded-files.tsv` excuses.
+ *
+ * It is a pure function of three name lists, so the falsifier beside this file can drive it with a
+ * population nobody has to create: a runner whose accounting can only be exercised by a real drift is a
+ * rule that gets its first test the day it is needed.
+ */
+export function partitionSuite({ suite, compiled, excluded }) {
+  return {
+    // The population, printed on every run: "0 violations" over zero files agrees with itself.
+    examined: suite.length,
+    compiled: compiled.length,
+    excluded: excluded.length,
+    inNeither: suite.filter((name) => !compiled.includes(name) && !excluded.includes(name)),
+    // The other three directions the same partition can drift in, each named by its own member below.
+    staleCompiled: compiled.filter((name) => !suite.includes(name)),
+    staleExcluded: excluded.filter((name) => !suite.includes(name)),
+    bothSets: compiled.filter((name) => excluded.includes(name)),
+  };
+}
 
-const stale = included.filter((name) => !suite.includes(name));
-if (stale.length > 0) {
-  throw new Error(`stardew_nogame_tests_include_missing: ${stale.join(", ")} is not in the suite any more`);
-}
-// The excluded half drifts the same way: a row for a file that was renamed or deleted keeps claiming a
-// reason for something no longer in the suite, and the printed counts then add up to more than the
-// population. The row is stale either way, so it fails by name exactly like a stale include does.
-const staleExcluded = excluded.filter((row) => !suite.includes(row.name));
-if (staleExcluded.length > 0) {
-  throw new Error(
-    `stardew_nogame_tests_excluded_missing: ${staleExcluded.map((row) => row.name).join(", ")} is recorded here ` +
-      "but is not in the suite any more - delete the row, or rename it to the file that replaced it",
+/** The population line, printed BEFORE the verdict, so a red run says what it examined. */
+export function populationLine(reading) {
+  return (
+    `files examined ${reading.examined} · compiled ${reading.compiled} · ` +
+    `excluded ${reading.excluded} · in neither ${reading.inNeither.length}`
   );
 }
-const accounted = new Set([...included, ...excluded.map((row) => row.name)]);
-const unaccounted = suite.filter((name) => !accounted.has(name));
-if (unaccounted.length > 0) {
-  throw new Error(
-    `stardew_nogame_tests_file_unaccounted: ${unaccounted.join(", ")} is in the suite but neither ` +
-      "compiled here nor listed in excluded-files.tsv with a reason — it either belongs in the project " +
-      "or it needs a line saying why it cannot be",
-  );
-}
-const overlap = included.filter((name) => excluded.some((row) => row.name === name));
-if (overlap.length > 0) {
-  throw new Error(
-    `stardew_nogame_tests_file_both_sets: ${overlap.join(", ")} is compiled AND recorded as excluded — ` +
-      "the two sets are a partition of the suite, and a file in both says one of them is not true",
-  );
+
+/**
+ * The verdict: one finding per drifting member, each starting with its stable code. An empty population is
+ * a finding too - zero `.cs` files is a suite directory someone moved, not a suite that is fully accounted
+ * for.
+ */
+export function partitionFindings(reading) {
+  const findings = [];
+  if (reading.examined === 0)
+    findings.push(
+      "nogame_test_files_no_population: the suite directory holds no .cs file, so compiling 0 of 0 is a" +
+        " measurement that did not happen rather than a partition that holds",
+    );
+  for (const name of reading.inNeither)
+    findings.push(
+      `nogame_test_file_in_neither_place:${name} is in the suite but neither compiled here nor listed in ` +
+        "excluded-files.tsv with a reason — it either belongs in the project or it needs a line saying why it cannot be",
+    );
+  for (const name of reading.staleCompiled)
+    findings.push(`stardew_nogame_tests_include_missing: ${name} is not in the suite any more`);
+  // The excluded half drifts the same way: a row for a file that was renamed or deleted keeps claiming a
+  // reason for something no longer in the suite, and the printed counts then add up to more than the
+  // population. The row is stale either way, so it fails by name exactly like a stale include does.
+  for (const name of reading.staleExcluded)
+    findings.push(
+      `stardew_nogame_tests_excluded_missing: ${name} is recorded here but is not in the suite any more - ` +
+        "delete the row, or rename it to the file that replaced it",
+    );
+  for (const name of reading.bothSets)
+    findings.push(
+      `stardew_nogame_tests_file_both_sets: ${name} is compiled AND recorded as excluded — the two sets ` +
+        "are a partition of the suite, and a file in both says one of them is not true",
+    );
+  return findings;
 }
 
 const REASONS = ["mod-assembly", "game", "reference-tree"];
-const unknownReasons = [...new Set(excluded.map((row) => row.why))].filter((why) => !REASONS.includes(why));
-if (unknownReasons.length > 0) {
-  throw new Error(
-    `stardew_nogame_tests_reason_unknown: ${unknownReasons.join(", ")} is not one of ${REASONS.join(", ")} - ` +
-      "the counts below are derived from these names, so an unlisted one would vanish from them",
-  );
-}
-const byReason = Object.fromEntries(REASONS.map((why) => [why, 0]));
-for (const row of excluded) byReason[row.why] += 1;
 
 /** `Passed: 165, Total: 165` from the run's summary line. */
 function testCount(output) {
@@ -139,38 +164,67 @@ function testCount(output) {
   return chinese === null ? null : Number(chinese[2]);
 }
 
-const args = ["test", PROJECT, "--nologo", "-v", "q"];
-if (process.argv.includes("--no-build")) args.push("--no-build");
+function main(argv) {
+  const suite = suiteFiles();
+  const included = includedFiles();
+  const excluded = excludedFiles();
 
-let output = "";
-let failed = false;
-try {
-  output = execFileSync("dotnet", args, {
-    cwd: ROOT,
-    encoding: "utf8",
-    maxBuffer: 64 * 1024 * 1024,
-    // The summary is parsed, so the language it is parsed in is fixed rather than inherited.
-    env: { ...process.env, DOTNET_CLI_UI_LANGUAGE: "en" },
-  });
-} catch (error) {
-  output = `${String(error?.stdout ?? "")}\n${String(error?.stderr ?? "")}`;
-  failed = true;
+  // The counts first, the verdict second: a red run has to say what it examined, or "in neither 1" reads
+  // as an opinion about one file rather than a statement about the whole suite.
+  const reading = partitionSuite({ suite, compiled: included, excluded: excluded.map((row) => row.name) });
+  process.stdout.write(`stardew_nogame_tests: ${populationLine(reading)}\n`);
+  const findings = partitionFindings(reading);
+  if (findings.length > 0) throw new Error(findings.join("\n"));
+
+  const unknownReasons = [...new Set(excluded.map((row) => row.why))].filter((why) => !REASONS.includes(why));
+  if (unknownReasons.length > 0) {
+    throw new Error(
+      `stardew_nogame_tests_reason_unknown: ${unknownReasons.join(", ")} is not one of ${REASONS.join(", ")} - ` +
+        "the counts below are derived from these names, so an unlisted one would vanish from them",
+    );
+  }
+  const byReason = Object.fromEntries(REASONS.map((why) => [why, 0]));
+  for (const row of excluded) byReason[row.why] += 1;
+
+  const args = ["test", PROJECT, "--nologo", "-v", "q"];
+  if (argv.includes("--no-build")) args.push("--no-build");
+
+  let output = "";
+  let failed = false;
+  try {
+    output = execFileSync("dotnet", args, {
+      cwd: ROOT,
+      encoding: "utf8",
+      maxBuffer: 64 * 1024 * 1024,
+      // The summary is parsed, so the language it is parsed in is fixed rather than inherited.
+      env: { ...process.env, DOTNET_CLI_UI_LANGUAGE: "en" },
+    });
+  } catch (error) {
+    output = `${String(error?.stdout ?? "")}\n${String(error?.stderr ?? "")}`;
+    failed = true;
+  }
+  process.stdout.write(output.endsWith("\n") ? output : `${output}\n`);
+
+  const total = testCount(output);
+  process.stdout.write(
+    `${[
+      `stardew_nogame_tests: ${total === null ? "?" : total} tests across ${included.length} files`,
+      `stardew_nogame_tests: ${excluded.length} of the suite's ${suite.length} files NOT run here ` +
+        `(${byReason["mod-assembly"]} need the Mod assembly, ${byReason.game} need the game, ` +
+        `${byReason["reference-tree"]} read the gitignored decompiled reference tree under /ref/)`,
+      "stardew_nogame_tests: this is the Core-only subset, not the integration suite; the files above run",
+      "stardew_nogame_tests: only where GAMEBUDDY_STARDEW_GAME_PATH is configured for the gated steps",
+    ].join("\n")}\n`,
+  );
+
+  if (failed || total === null) {
+    process.stdout.write("stardew_nogame_tests: FAILED\n");
+    process.exitCode = 1;
+  }
 }
-process.stdout.write(output.endsWith("\n") ? output : `${output}\n`);
 
-const total = testCount(output);
-process.stdout.write(
-  `${[
-    `stardew_nogame_tests: ${total === null ? "?" : total} tests across ${included.length} files`,
-    `stardew_nogame_tests: ${excluded.length} of the suite's ${suite.length} files NOT run here ` +
-      `(${byReason["mod-assembly"]} need the Mod assembly, ${byReason.game} need the game, ` +
-      `${byReason["reference-tree"]} read the gitignored decompiled reference tree under /ref/)`,
-    "stardew_nogame_tests: this is the Core-only subset, not the integration suite; the files above run",
-    "stardew_nogame_tests: only where GAMEBUDDY_STARDEW_GAME_PATH is configured for the gated steps",
-  ].join("\n")}\n`,
-);
-
-if (failed || total === null) {
-  process.stdout.write("stardew_nogame_tests: FAILED\n");
-  process.exitCode = 1;
+// Guarded, so the falsifier beside this file can import the partition without starting a `dotnet test`:
+// the accounting is the part under test, and it is a pure function of three name lists.
+if (process.argv[1] !== undefined && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  main(process.argv.slice(2));
 }

@@ -104,6 +104,7 @@ HeldParkDeadlineTests.cs	mod-assembly	BridgeHello, BridgeSession, ExecutionManag
 HeldRequestAbsorptionTests.cs	mod-assembly	BridgeHello, BridgeSession, ExecutionManager, Farmer, FarmhandExecutionJournalState
 HeldStatePerturbationTests.cs	game	StardewValley
 HeldToolProjectionTests.cs	game	Axe, Farmer, Hoe, Item, Lantern
+HoldWaitGateTests.cs	mod-assembly	Netcode, StardewValley, StardewValley.Menus, ExecutionManager, BridgeHello, Farmer, DialogueBox, ProbeFarmerSprite@ProbeFarmerSprite.cs
 HollowRingStepOutTests.cs	mod-assembly	ExecutionManager, FarmhandExecutionJournal
 hostfarmhandprovisionerpublicationtests.cs	game	IDataHelper, StardewModdingAPI
 ItemDisplayNameTests.cs	mod-assembly	ItemDisplayName
