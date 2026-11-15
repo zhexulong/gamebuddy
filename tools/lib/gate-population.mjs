@@ -1,7 +1,7 @@
 /**
  * The ONE gate population this repository has, derived once and read by both gate-meta tools:
  *
- *   - `tools/gates/meta/audit-gate-red-proofs.mjs` asks "has this gate been seen red?"
+ *   - `gates/meta/audit-gate-red-proofs.mjs` asks "has this gate been seen red?"
  *   - `tools/lib/harness-conformance.mjs` asks "does this gate's default run print a self-verification report, and
  *     if not, has someone said why?"
  *
@@ -14,12 +14,12 @@
  * THE DERIVATION is a union of two halves, neither of them a hand-written list:
  *
  *   A. every `package.json` script in the gate namespace (`audit:` / `check:` / `test:`), with the files its command
- *      runs as that gate's entry points. This is the population CI actually runs: `tools/gates/meta/check-ci-coverage.mjs`
+ *      runs as that gate's entry points. This is the population CI actually runs: `gates/meta/check-ci-coverage.mjs`
  *      derives the `gates` job from the same namespace, so a script is a gate by being named like one.
  *   B. every gate FILE no script names - a gate that exists on disk and that nobody types. This is the half a script
  *      list cannot see, and it is mandatory: a gate nothing runs is the one that stops working without a symptom.
  *
- * Half B is not derived here. `tools/gates/registry.mjs` owns the gate-file population - which directories a gate may
+ * Half B is not derived here. `gates/registry.mjs` owns the gate-file population - which directories a gate may
  * live in and which names make one - because a file-name rule restated beside the file it reads stops matching the day
  * the directory moves. Measured 2026-11-14: `tools/lib/gate-population.mjs` and `tools/check-prelive-gate-registry.mjs`
  * each spelled `^(?:check|audit)-.*\.mjs$`, so `tools/` could not be reorganised without one of them silently narrowing.
@@ -30,8 +30,8 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { GATE_NAME as CI_COVERAGE_NAMESPACE } from "../gates/meta/check-ci-coverage.mjs";
-import { gateFiles, isGateFile } from "../gates/registry.mjs";
+import { GATE_NAME as CI_COVERAGE_NAMESPACE } from "../../gates/meta/check-ci-coverage.mjs";
+import { gateFiles, isGateFile } from "../../gates/registry.mjs";
 
 /**
  * A `package.json` script named like a gate: the union of the two namespaces that name gates.
@@ -96,7 +96,7 @@ function unwiredGateFiles(root) {
  * The one rule for "this path is a gate, not a falsifier", re-exported from the registry that owns it.
  *
  * Callers keep importing it from here because this is the module that has always answered; there is one definition,
- * in `tools/gates/registry.mjs`, so the conformance suite and the census cannot learn different suffixes.
+ * in `gates/registry.mjs`, so the conformance suite and the census cannot learn different suffixes.
  */
 export { isGateFile };
 
@@ -114,9 +114,9 @@ export function deriveGatePopulation({ root }) {
   return { gates, scripts, gateFiles, unclaimedByScript: unclaimed.length };
 }
 
-/** The `tools/check-*.mjs` file names in the population: the unit the conformance registry declares by. */
+/** The gate files in the population, as paths from the repository root: the unit the conformance registry declares by. */
 export function gateFileNames(population) {
-  return population.gateFiles.map((file) => file.entryFiles[0].replace(/^tools\//u, ""));
+  return population.gateFiles.map((file) => file.entryFiles[0]);
 }
 
 /**
@@ -124,5 +124,5 @@ export function gateFileNames(population) {
  * `tools/check-a.mjs`) and the base name of each file it owns (`check-a.mjs`).
  */
 export function gateMemberNames(gate) {
-  return [gate.id, ...gate.entryFiles.map((file) => file.replace(/^tools\//u, "").replace(/^.*\//u, ""))];
+  return [gate.id, ...gate.entryFiles.map((file) => file.replace(/^.*\//u, ""))];
 }

@@ -24,14 +24,14 @@
  *                    `✖ bounds: the wire's cap and the writer's cap must agree in both directions`, `✖ bounds: one
  *                    property capped two ways is the drift the element type cannot name`, `✖ bounds: two properties
  *                    over one element type are two collections, not one cap`, exit 1; the unmodified audit passes,
- *                    exit 0 (tools/gates/meta/audit-totality.test.mjs)
+ *                    exit 0 (gates/meta/audit-totality.test.mjs)
  * red-proof: inject  a capacity clamp that drops its tail and states nothing, and a read path that copies its
  *                    producer, beside an announced clamp and a clamped projection -> the announced pair is reported
  *                    `decided` and the silent pair stays open as `needs-declaration` / `cannot-prove`, in one run
- *                    (tools/gates/meta/audit-totality.test.mjs)
+ *                    (gates/meta/audit-totality.test.mjs)
  * red-proof: inject  a contract cap published as a constant that no Host code compares -> `needs-declaration`; add
  *                    the comparison -> the same site is `decided`, with no literal in either place
- *                    (tools/gates/meta/audit-totality.test.mjs)
+ *                    (gates/meta/audit-totality.test.mjs)
  */
 import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";

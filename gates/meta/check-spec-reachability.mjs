@@ -41,15 +41,15 @@
  *     never a silent pass. It is also printed as `unassessed: <thing> - <reason>`.
  *
  * Usage:
- *   node tools/gates/meta/check-spec-reachability.mjs            # the ratchet; exit 1 on a new or stale entry
- *   node tools/gates/meta/check-spec-reachability.mjs --gaps     # every file no command reaches
- *   node tools/gates/meta/check-spec-reachability.mjs --json     # the whole reading, baseline included
- *   node tools/gates/meta/check-spec-reachability.mjs --update   # re-record the baseline, in its own commit
- *   node tools/gates/meta/check-spec-reachability.mjs --root <dir>   # the gate's own fixture
+ *   node gates/meta/check-spec-reachability.mjs            # the ratchet; exit 1 on a new or stale entry
+ *   node gates/meta/check-spec-reachability.mjs --gaps     # every file no command reaches
+ *   node gates/meta/check-spec-reachability.mjs --json     # the whole reading, baseline included
+ *   node gates/meta/check-spec-reachability.mjs --update   # re-record the baseline, in its own commit
+ *   node gates/meta/check-spec-reachability.mjs --root <dir>   # the gate's own fixture
  *
  * red-proof: inject  a `tools/` suite added to a synthetic tree that no reachable `node --test` command
  *            names -> `unreached_suite` names that file, while the aggregate-run suite beside it stays
- *            green (tools/gates/meta/check-spec-reachability.test.mjs). The mounted half is falsified too: a spec
+ *            green (gates/meta/check-spec-reachability.test.mjs). The mounted half is falsified too: a spec
  *            the config's `testIgnore` excludes is named `unreached_spec`, and deleting the
  *            `playwright test` script's caller leaves `mounted_zone_unreached` with every spec behind it.
  */
@@ -64,11 +64,11 @@ export const gateDeclaration = {
 import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
-import { untrackedFiles } from "../../lib/journey-source.mjs";
-import { corpusFiles } from "../../run-tool-test-corpus.mjs";
-import { rootFromArgv } from "../../lib/gate-preamble.mjs";
+import { untrackedFiles } from "../../tools/lib/journey-source.mjs";
+import { corpusFiles } from "../../tools/run-tool-test-corpus.mjs";
+import { rootFromArgv } from "../../tools/lib/gate-preamble.mjs";
 
-const REPOSITORY_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
+const REPOSITORY_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const BASELINE_PATH = "tools/spec-reachability-baseline.json";
 const PLAYWRIGHT_CONFIG = "dialogue-web/playwright.config.ts";
 

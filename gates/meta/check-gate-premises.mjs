@@ -37,13 +37,13 @@
  * ZERO POPULATION IS BLOCKED, never green: the verdict line prints `gates examined N · inputs checked M · missing K`,
  * and `examined 0` exits 2 with a named reason. `missing 0` means nothing without the first two numbers.
  *
- *   node tools/gates/meta/check-gate-premises.mjs            # the verdict; exit 1 on a missing input, 2 on no population
- *   node tools/gates/meta/check-gate-premises.mjs --root DIR # the same reading of a copied tree
- *   node tools/gates/meta/check-gate-premises.mjs --json     # every gate's derived input list, machine-readable
+ *   node gates/meta/check-gate-premises.mjs            # the verdict; exit 1 on a missing input, 2 on no population
+ *   node gates/meta/check-gate-premises.mjs --root DIR # the same reading of a copied tree
+ *   node gates/meta/check-gate-premises.mjs --json     # every gate's derived input list, machine-readable
  *
  * red-proof: history  the deletion commit's own copy of a consumer gate still declares the HUD module it deleted, and
  *            this gate reddens on that text with `gate_premise_missing` - replayed from git, not from a fixture
- *            (tools/gates/meta/check-gate-premises.test.mjs, "the deletion commit's own gate text").
+ *            (gates/meta/check-gate-premises.test.mjs, "the deletion commit's own gate text").
  * red-proof: inject  a registry row whose gate declares a path that is not on disk reddens
  *            `gate_premise_missing:<gate>:<path>` (the same suite, the mechanism on its own).
  */
@@ -58,9 +58,9 @@ export const gateDeclaration = {
 import { existsSync, globSync, readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { withoutComments } from "../../lib/gate-preamble.mjs";
+import { withoutComments } from "../../tools/lib/gate-preamble.mjs";
 
-const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
+const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
 
 /** The analyzer the observation-gap gate spawns: it inherits that module's inputs, so they are its premise too. */
 const OBSERVATION_GAP_ANALYZER =

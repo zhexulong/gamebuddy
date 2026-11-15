@@ -46,12 +46,12 @@
  * 1 on any violation or stale entry, exit 2 when the population is empty or git cannot answer - zero files examined is
  * a blocked reading, never a clean tree.
  *
- * red-proof: history  `node tools/gates/meta/check-red-proof-markers.mjs --revision a1389e75` -> `✖
+ * red-proof: history  `node gates/meta/check-red-proof-markers.mjs --revision a1389e75` -> `✖
  *                     red_proof_marker_corrupted:tools/check-gameplay-capability-catalog.test.mjs:2` and `:5`, exit 1;
  *                     the same file after the marker fix is clean
  * red-proof: inject  a U+00D7 marker in a `-> `-quoted transcript line -> `red_proof_marker_corrupted:<path>:<line>`;
  *                     with that entry in the baseline the run is clean, and fixing the line without deleting the entry
- *                     -> `red_proof_marker_baseline_stale` (tools/gates/meta/check-red-proof-markers.test.mjs). On the real tree the
+ *                     -> `red_proof_marker_baseline_stale` (gates/meta/check-red-proof-markers.test.mjs). On the real tree the
  *                     same reading arrived one line at a time: the 110 repaired lines were corrected first and the run
  *                     said `corrupted 0 · baselined 0 · stale 110`, exit 1, naming every expired entry, before the
  *                     ledger was emptied
@@ -69,7 +69,7 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
+const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
 
 /** The glyph every gate in this tree prints, and the one a `red-proof:` marker quotes. */
 export const MARKER = "\u2716";

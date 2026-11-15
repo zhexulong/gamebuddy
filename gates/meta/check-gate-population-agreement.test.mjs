@@ -19,7 +19,7 @@ import {
   workflowInvocations,
   invokedGateScripts,
 } from "./check-gate-population-agreement.mjs";
-import { corpusMembers } from "../../run-tool-test-corpus.mjs";
+import { corpusMembers } from "../../tools/run-tool-test-corpus.mjs";
 
 const SCRIPTS = { "check:a": "node tools/check-a.mjs", "test:b": "node --test tools/b.test.mjs", build: "tsc" };
 /**

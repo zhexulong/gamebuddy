@@ -26,8 +26,8 @@ import { fileURLToPath } from "node:url";
 
 import { corruptedLines, holdsEitherGlyph, loadBaseline, scanMarkerCorruption } from "./check-red-proof-markers.mjs";
 
-const REPOSITORY_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
-const GATE = "tools/gates/meta/check-red-proof-markers.mjs";
+const REPOSITORY_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
+const GATE = "gates/meta/check-red-proof-markers.mjs";
 const BASELINE = "tools/baselines/red-proof-markers.json";
 
 const MARKER = "\u2716";

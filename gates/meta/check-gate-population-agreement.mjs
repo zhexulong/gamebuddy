@@ -25,7 +25,7 @@
  *      spellings of that list disagree the first time one learns a member).
  *   B. FILES - every gate file on disk by the ONE rule `tools/lib/gate-population.mjs` exports (`isGateFile`), which is
  *      also what the census and the conformance suite filter by.
- *   C. REGISTERS - every member the four register files name: `tools/gates/meta/check-prelive-gate-registry.mjs`'s `EXEMPTIONS`,
+ *   C. REGISTERS - every member the four register files name: `gates/meta/check-prelive-gate-registry.mjs`'s `EXEMPTIONS`,
  *      `tools/gate-red-proof-baseline.json`, `tools/gate-population-baseline.json`,
  *      `tools/tool-test-corpus-quarantine.json`.
  *
@@ -50,14 +50,14 @@
  * ZERO IS BLOCKED, never green: an empty half means the derivation read nothing, which agrees with itself.
  *
  * USAGE:
- *   node tools/gates/meta/check-gate-population-agreement.mjs           # the reading; exit 1 on a disagreement
- *   node tools/gates/meta/check-gate-population-agreement.mjs --json    # machine output
+ *   node gates/meta/check-gate-population-agreement.mjs           # the reading; exit 1 on a disagreement
+ *   node gates/meta/check-gate-population-agreement.mjs --json    # machine output
  *
  * red-proof: history  before this file's own fix landed, the real tree was red by exactly one member of exactly this
  *   shape: `gate_population_reads_a_falsifier: check-prelive-gate-registry.mjs:
  *   tools/check-stardew-loop-closure.mutation.mjs`, exit 1 - the register counted a mutation driver as a gate while its
  *   own exemption entry for that path called it "a mutation driver, not a gate"
- *   (tools/gates/meta/check-gate-population-agreement.test.mjs)
+ *   (gates/meta/check-gate-population-agreement.test.mjs)
  *
  * No game, no network, no model. It reads files and four export functions.
  */
@@ -77,10 +77,10 @@ import { auditGateRedProofs } from "./audit-gate-red-proofs.mjs";
 import { deriveCiCoverage, GATE_NAME } from "./check-ci-coverage.mjs";
 import { derivePopulation, EXEMPTIONS } from "./check-prelive-gate-registry.mjs";
 import { gateFiles, readDeclarations } from "../registry.mjs";
-import { deriveGatePopulation, isGateFile } from "../../lib/gate-population.mjs";
-import { corpusMembers } from "../../run-tool-test-corpus.mjs";
+import { deriveGatePopulation, isGateFile } from "../../tools/lib/gate-population.mjs";
+import { corpusMembers } from "../../tools/run-tool-test-corpus.mjs";
 
-const REPOSITORY_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
+const REPOSITORY_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const WORKFLOW_DIR = ".github/workflows";
 const REGISTERS = Object.freeze({
   "gate-red-proof-baseline.json": "tools/gate-red-proof-baseline.json",
@@ -140,7 +140,7 @@ export function registerMembers({ root, exemptions }) {
  * The reading, from readings rather than from the file system: the consumers' own answers plus the three surfaces.
  *
  * `census` is `auditGateRedProofs`'s result, `prelive` is `derivePopulation()`'s list, `corpus` is `corpusMembers`'s
- * result (`{members, notTaken}` - its whole shape), `disk` is the gate-file population `tools/gates/registry.mjs`
+ * result (`{members, notTaken}` - its whole shape), `disk` is the gate-file population `gates/registry.mjs`
  * derives, and `declared` is the gates in that population that carry a `gateDeclaration`. Everything here is a set
  * comparison, so the test can drive it with synthetic trees without touching the repository.
  */

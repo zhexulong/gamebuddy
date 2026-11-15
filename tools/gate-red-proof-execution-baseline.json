@@ -75,7 +75,7 @@
     "tools/audit-stardew-handler-actor-guard.mjs",
     "tools/audit-stardew-nogame-subset.mjs",
     "tools/check-action-coverage.mjs",
-    "tools/gates/meta/check-commit-staging.mjs",
+    "gates/meta/check-commit-staging.mjs",
     "tools/check-dist-runtime-exports.mjs",
     "tools/check-game-context-pressure.mjs",
     "tools/check-stardew-actor-admissibility.mjs"

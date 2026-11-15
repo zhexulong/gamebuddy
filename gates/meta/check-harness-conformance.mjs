@@ -14,8 +14,8 @@ import { dirname, resolve } from "node:path";
 /**
  * Harness conformance CLI: the static wiring facts that ended live runs, checked in seconds.
  *
- *   node tools/gates/meta/check-harness-conformance.mjs           # one line per check; exit 1 on the first failure
- *   node tools/gates/meta/check-harness-conformance.mjs --json    # machine output
+ *   node gates/meta/check-harness-conformance.mjs           # one line per check; exit 1 on the first failure
+ *   node gates/meta/check-harness-conformance.mjs --json    # machine output
  *
  * Three verdicts, not two. `blocked` is a check whose population is not fully declared: the gates it could not judge, or
  * the gates whose reports cannot show what they measured. It exits 1 like a failure, because a run that hides an
@@ -25,14 +25,14 @@ import { dirname, resolve } from "node:path";
  */
 import process from "node:process";
 import { fileURLToPath } from "node:url";
-import { runHarnessConformance } from "../../lib/harness-conformance.mjs";
+import { runHarnessConformance } from "../../tools/lib/harness-conformance.mjs";
 
-// `toolsDir` is the directory gates live in - `tools/`, not this file's own directory, which is only ONE of the
-// places a gate may live now that a domain files its gates in `tools/gates/<domain>/`.
-const toolsDir = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
-const repoRoot = resolve(toolsDir, "..");
+// `root` is the repository root: a gate may live in `tools/` or in a domain directory under `gates/`, so the anchor of
+// the population is the tree, not one of the directories a gate happens to live in.
+const root = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
+const toolsDir = resolve(root, "tools");
 
-const results = runHarnessConformance({ toolsDir, repoRoot });
+const results = runHarnessConformance({ toolsDir, repoRoot: root });
 const statusOf = (entry) => (entry.blocked === true ? "blocked" : entry.findings.length > 0 ? "failed" : "passed");
 const worst = results.some((entry) => statusOf(entry) === "failed")
   ? "failed"

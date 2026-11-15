@@ -42,7 +42,7 @@
  * names), and the ladder's own `PRELUDE_RUNGS` is imported rather than parsed. A member whose command names no source
  * file in this repository (`pnpm knip`, a dotnet test project, a PowerShell transcript) cannot be read at all; those are
  * named on their own line with the reason, and the two numbers reconcile with the same population
- * `tools/gates/meta/check-harness-conformance.mjs` prints: `examined N + outside N_out = that tool's examined`.
+ * `gates/meta/check-harness-conformance.mjs` prints: `examined N + outside N_out = that tool's examined`.
  *
  * VERDICT AND DEBT. The measurement is the debt, and the debt is recorded, not accepted:
  *
@@ -53,7 +53,7 @@
  * hand, which is why it is a record of debt rather than a list of exemptions. The ratchet turns both ways: a finding
  * the baseline does not record is red (a new silent gate cannot land), and a baseline entry that is no longer a finding
  * is red too (a paid debt must be deleted, so an entry cannot outlive the thing it described). This is the same
- * mechanism `tools/gates/meta/audit-gate-red-proofs.mjs` uses for gates that were never seen red, and for the same reason: the
+ * mechanism `gates/meta/audit-gate-red-proofs.mjs` uses for gates that were never seen red, and for the same reason: the
  * alternative is a gate that can never be green, which nobody keeps running.
  *
  * BLOCKED, NOT SKIPPED. A reading that could not be taken is exit 2 with the reason and the gate named, and it is
@@ -66,23 +66,23 @@
  * file that dropped either would be reported against itself by name in the same run.
  *
  * USAGE:
- *   node tools/gates/meta/check-gate-populations.mjs              # the reading; exit 1 on an unrecorded or stale finding
- *   node tools/gates/meta/check-gate-populations.mjs --json       # machine output
- *   node tools/gates/meta/check-gate-populations.mjs --root DIR   # read another tree (the red proofs use this)
- *   node tools/gates/meta/check-gate-populations.mjs --update     # rewrite the baseline from this reading
+ *   node gates/meta/check-gate-populations.mjs              # the reading; exit 1 on an unrecorded or stale finding
+ *   node gates/meta/check-gate-populations.mjs --json       # machine output
+ *   node gates/meta/check-gate-populations.mjs --root DIR   # read another tree (the red proofs use this)
+ *   node gates/meta/check-gate-populations.mjs --update     # rewrite the baseline from this reading
  *
  * RED PROOFS. Each is a copy of the tree outside the repository (package.json + tools/), with one member restored to the
  * shape that shipped. The copies are the proof the rule is not vacuous, and each names the finding it produced.
  *
  * red-proof: history restoring `git show b00e40a4^:tools/check-publint.mjs` in a copy of the tree ->
  *   `gate_without_population: check:publint` and exit 1, because the pre-fix gate printed a pass over zero publint
- *   messages (tools/gates/meta/check-gate-populations.mjs)
+ *   messages (gates/meta/check-gate-populations.mjs)
  * red-proof: history restoring `9918a084^`'s script and suite in a copy -> `gate_skip_can_pass:
  *   test:stardew-soil-itm-canary`, the run that reported `tests 5 · pass 0 · skipped 5` with exit 0
- *   (tools/gates/meta/check-gate-populations.mjs)
+ *   (gates/meta/check-gate-populations.mjs)
  * red-proof: history the wire parity gate's pre-fix verdict restored in a copy ->
  *   `gate_pairs_a_subset_and_passes: check:cross-language-wire-parity`, `passed` over 31 of 37 paired frames
- *   (tools/gates/meta/check-gate-populations.mjs)
+ *   (gates/meta/check-gate-populations.mjs)
  *
  * No game, no network, no model, no child process.
  */
@@ -99,16 +99,16 @@ import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 
-import { populationFieldPattern } from "../../lib/assert-non-vacuous.mjs";
-import { deriveGatePopulation } from "../../lib/gate-population.mjs";
-import { indexedGatePopulation } from "../../lib/indexed-sources.mjs";
-import { blankComments, PRELUDE_RUNGS } from "../../prelive.mjs";
+import { populationFieldPattern } from "../../tools/lib/assert-non-vacuous.mjs";
+import { deriveGatePopulation } from "../../tools/lib/gate-population.mjs";
+import { indexedGatePopulation } from "../../tools/lib/indexed-sources.mjs";
+import { blankComments, PRELUDE_RUNGS } from "../../tools/prelive.mjs";
 
-const REPOSITORY_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
+const REPOSITORY_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 const BASELINE_PATH = "tools/gate-population-baseline.json";
 const BASELINE_SCHEMA = "gamebuddy-gate-population-baseline/v1";
 /** This file, which is in the population and is classified by the same call. */
-const SELF = "tools/gates/meta/check-gate-populations.mjs";
+const SELF = "gates/meta/check-gate-populations.mjs";
 
 /**
  * The words a gate counts when it says what it READ. The list is the whole rule for `gate_without_population`, so a new

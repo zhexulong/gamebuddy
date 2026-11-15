@@ -22,7 +22,7 @@
  *                             stale, and the reason is visible in the same run: `check-harness-conformance` alone is
  *                             27.9 s (it spawns every gate whose default run prints a report) and `audit-totality`
  *                             8.9 s, so the rung's cost is two members rather than its thirty-eight. It ends with
- *                             `tools/gates/meta/check-prelive-gate-registry.mjs`, which
+ *                             `gates/meta/check-prelive-gate-registry.mjs`, which
  *                             derives the population of every gate in the tree and fails when one of them neither runs
  *                             here nor names where else it runs - so a gate added to this list, or left out of it, is a
  *                             fact this rung states rather than a habit someone remembers.
@@ -87,7 +87,7 @@ export const DEFAULT_GAME_INSTALL = "D:/Steam/steamapps/common/Stardew Valley";
  * name. Reimplementing any of them here would give the same fact two spellings, and the copy would be the one that goes
  * stale.
  *
- * The last member is the registry (`tools/gates/meta/check-prelive-gate-registry.mjs`): it derives the population of every gate in
+ * The last member is the registry (`gates/meta/check-prelive-gate-registry.mjs`): it derives the population of every gate in
  * the tree, reads the two lists below through `PRELUDE_RUNGS`, and fails naming any gate that neither runs here nor
  * declares where else it runs. It is in L0 because it costs milliseconds - and it must be, because a register nobody
  * runs is the defect it exists to catch.
@@ -112,7 +112,7 @@ export const L0_GATES = Object.freeze([
   // so as a rung it exited 0 having examined nothing, which is how four blocking findings stayed invisible. The
   // module and its test still exist and are still exercised; the rung below runs the full audit, which has a CLI.
   "tools/check-stardew-fixture-action-coverage.mjs",
-  "tools/gates/meta/check-harness-conformance.mjs",
+  "gates/meta/check-harness-conformance.mjs",
   "tools/check-stardew-task-action-coverage.mjs",
   // The other half of the same question: the coverage gate asks whether a rotation task NAMES an action, this one asks
   // whether the world that receives the day actually publishes the family the action addresses. Measured 2026-11-09:
@@ -197,7 +197,7 @@ export const L0_GATES = Object.freeze([
   // written here rather than left as a surprise: the run that put it in the ladder found four blocking findings - one
   // bounds pair and three ceilings a player could meet as a generic failure - and no other gate in any rung reports
   // that class.
-  "tools/gates/meta/audit-totality.mjs",
+  "gates/meta/audit-totality.mjs",
   // Cognitive complexity per FUNCTION and per CLASS-with-its-partials-merged, plus class size across partials, as a
   // ratchet over `tools/cognitive-complexity-baseline.json`. It belongs on the ladder because the ladder is what
   // a lane reads before trusting the tree, and a per-file measure cannot see `ExecutionManager`: 46
@@ -244,7 +244,7 @@ export const L0_GATES = Object.freeze([
   // in the derivation (342 today, 55 of them recorded silent in `tools/gate-population-baseline.json`) by reading each
   // gate's own report contract - milliseconds, no child process - so a new gate that says nothing about its population
   // is red here instead of green in a rung.
-  "tools/gates/meta/check-gate-populations.mjs",
+  "gates/meta/check-gate-populations.mjs",
   // The artefact census: every file in the tree that SAYS it is generated, paired with the tool or Mod export that emits
   // it, re-derived into a temp path and compared byte for byte. Measured 2026-11-13 before it was wired: the projection
   // producer reproduces its 180 614 bytes in 88 ms, the Mod export DLL reproduces all three of its artefacts in 600 ms,
@@ -261,7 +261,7 @@ export const L0_GATES = Object.freeze([
   // filters without a reason 5 (filed 5)`, 0.3 s, worktree only - and it already answers `examined 0` with
   // `stardew_discovery_exclusions_skipped:`, which is the dialect this rung reads as UNAVAILABLE.
   "tools/check-stardew-discovery-exclusions.mjs",
-  "tools/gates/meta/check-prelive-gate-registry.mjs",
+  "gates/meta/check-prelive-gate-registry.mjs",
   // The five instance family of one two days: a thing the companion can SAY that one layer accepts and the next refuses or
   // silently reinterprets - `charge` on the wire but not in the tool schema, `sweep_scythe` in three surfaces and no mount,
   // `for_each` sources, an emote the prompt named and nothing mounted, a `refusalDetail` the Mod sent and the Host refused.
@@ -300,7 +300,7 @@ export const L0B_GATES = Object.freeze([
 ]);
 
 /**
- * The gate rungs as data. `tools/gates/meta/check-prelive-gate-registry.mjs` imports THIS, not a regex over this file: the ladder's
+ * The gate rungs as data. `gates/meta/check-prelive-gate-registry.mjs` imports THIS, not a regex over this file: the ladder's
  * own declaration is the authority for what prelive runs, so wiring a gate is one edit in one place.
  */
 export const PRELUDE_RUNGS = Object.freeze([
@@ -309,7 +309,7 @@ export const PRELUDE_RUNGS = Object.freeze([
 ]);
 
 /**
- * How a gate says it measured nothing, in the convention `tools/gates/meta/check-ci-coverage.mjs` already counts: a whole line whose
+ * How a gate says it measured nothing, in the convention `gates/meta/check-ci-coverage.mjs` already counts: a whole line whose
  * marker ends in `_skipped`. A gate that prints one has exited cleanly without comparing anything, so this ladder reports
  * it UNAVAILABLE and counts it apart from the gates that passed. The rule is the marker, not a list of gate names.
  */

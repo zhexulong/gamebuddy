@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * The falsifiers for `tools/gates/meta/audit-gate-red-proofs.mjs` - the gate that asks whether every other gate has
+ * The falsifiers for `gates/meta/audit-gate-red-proofs.mjs` - the gate that asks whether every other gate has
  * been seen red. Each test here injects the defect the audit exists to name and requires the audit to
  * name it, because a coverage gate that cannot go red is the illusion it was written to remove.
  *
@@ -12,15 +12,15 @@
  *
  * red-proof: inject  the anchor test removed from `readRedProofMarkers`, so a marker inside a string literal counts ->
  *                    `✖ a marker on a code line is not a marker, so a gate cannot satisfy itself` (with five more),
- *                    exit 1; the unmodified audit passes all ten cases, exit 0 (tools/gates/meta/audit-gate-red-proofs.test.mjs)
+ *                    exit 1; the unmodified audit passes all ten cases, exit 0 (gates/meta/audit-gate-red-proofs.test.mjs)
  *
  * red-proof: inject  this suite's gate-file scan re-spelled as `/^check-.*\.mjs$/` in a copy whose population is widened
  *                    to `audit-*` and whose index drop is silenced -> the re-spelled scan passed while asking `isGateFile`
- *                    named the planted untracked gate file it never looked at (tools/gates/meta/audit-gate-red-proofs.test.mjs)
+ *                    named the planted untracked gate file it never looked at (gates/meta/audit-gate-red-proofs.test.mjs)
  *
  * red-proof: inject  the untracked term made a suffix that disappears at zero, as this audit had it before -> "a zero
  *                    complement is a reading that has to be printed, not an absence a reader fills in", actual
- *                    `... unreadable=0 ` with no term at all (tools/gates/meta/audit-gate-red-proofs.test.mjs)
+ *                    `... unreadable=0 ` with no term at all (gates/meta/audit-gate-red-proofs.test.mjs)
  */
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
@@ -38,10 +38,10 @@ import {
   evaluate,
   readRedProofMarkers,
 } from "./audit-gate-red-proofs.mjs";
-import { POPULATION_FIELDS } from "../../lib/assert-non-vacuous.mjs";
-import { isGateFile } from "../../lib/gate-population.mjs";
+import { POPULATION_FIELDS } from "../../tools/lib/assert-non-vacuous.mjs";
+import { isGateFile } from "../../tools/lib/gate-population.mjs";
 
-const REPOSITORY_ROOT = resolve(fileURLToPath(new URL("../../..", import.meta.url)));
+const REPOSITORY_ROOT = resolve(fileURLToPath(new URL("../..", import.meta.url)));
 const KEYWORD = ["red", "proof"].join("-");
 const marker = (kind, claim, pointer) => `\n * ${KEYWORD}: ${kind}  ${claim} (${pointer})\n`;
 

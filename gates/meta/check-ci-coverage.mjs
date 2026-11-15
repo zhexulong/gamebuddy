@@ -43,9 +43,9 @@
  * The order these are read in is the rule: exit status first, then the skip marker, then the population. A
  * marker excuses a comparison and never an exit status, and a population never renames a failure.
  *
- *   node tools/gates/meta/check-ci-coverage.mjs          # the verdict; exit 1 on a stale or unreasoned entry
- *   node tools/gates/meta/check-ci-coverage.mjs --list   # the derived set, one script name per line
- *   node tools/gates/meta/check-ci-coverage.mjs --run    # run that set, one named line per gate
+ *   node gates/meta/check-ci-coverage.mjs          # the verdict; exit 1 on a stale or unreasoned entry
+ *   node gates/meta/check-ci-coverage.mjs --list   # the derived set, one script name per line
+ *   node gates/meta/check-ci-coverage.mjs --run    # run that set, one named line per gate
  */
 
 export const gateDeclaration = {
@@ -60,9 +60,9 @@ import { readFileSync, readdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { assertNonVacuous } from "../../lib/assert-non-vacuous.mjs";
+import { assertNonVacuous } from "../../tools/lib/assert-non-vacuous.mjs";
 
-const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
+const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const WORKFLOW_DIR = ".github/workflows";
 const GATE_TIMEOUT_MS = 10 * 60_000;
 
@@ -302,8 +302,8 @@ export function deriveCiCoverage({ scripts, workflowText: text, register = REGIS
   }
   // The derived half only exists if a workflow runs it; without that step every script in it runs
   // nowhere, which is exactly the state this gate is meant to make impossible.
-  const runnerWired = tokens.has("--run") && tokens.has("tools/gates/meta/check-ci-coverage.mjs");
-  if (!runnerWired) problems.push({ code: "runner_unwired", script: "tools/gates/meta/check-ci-coverage.mjs --run" });
+  const runnerWired = tokens.has("--run") && tokens.has("gates/meta/check-ci-coverage.mjs");
+  if (!runnerWired) problems.push({ code: "runner_unwired", script: "gates/meta/check-ci-coverage.mjs --run" });
   return { gateScripts, workflow, derived, register, problems, runnerWired };
 }
 
@@ -343,7 +343,7 @@ function report(coverage) {
         break;
       default:
         process.stderr.write(
-          `ci_coverage_runner_unwired:no workflow step runs \`node tools/gates/meta/check-ci-coverage.mjs --run\`, so ${coverage.derived.length} gates run nowhere\n`,
+          `ci_coverage_runner_unwired:no workflow step runs \`node gates/meta/check-ci-coverage.mjs --run\`, so ${coverage.derived.length} gates run nowhere\n`,
         );
     }
   }

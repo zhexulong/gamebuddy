@@ -13,9 +13,9 @@
  *
  * red-proof: inject the pre-fix `check-publint.mjs` source returns `gate_without_population` while the fixed source is
  *   clean, and the wire parity gate's pre-fix verdict returns `gate_pairs_a_subset_and_passes`
- *   (tools/gates/meta/check-gate-populations.test.mjs)
+ *   (gates/meta/check-gate-populations.test.mjs)
  * red-proof: inject the pre-fix soil-itm script over its skipping suite returns `gate_skip_can_pass`, and the CLI over a
- *   throwaway root reds a new silent gate and a baseline row whose finding is gone (tools/gates/meta/check-gate-populations.test.mjs)
+ *   throwaway root reds a new silent gate and a baseline row whose finding is gone (gates/meta/check-gate-populations.test.mjs)
  */
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
@@ -37,10 +37,10 @@ import {
   reconcile,
   subsetCounts,
 } from "./check-gate-populations.mjs";
-import { blankComments } from "../../prelive.mjs";
+import { blankComments } from "../../tools/prelive.mjs";
 
 const GATE = fileURLToPath(new URL("./check-gate-populations.mjs", import.meta.url));
-const REPOSITORY_ROOT = path.resolve(path.dirname(GATE), "..", "..", "..");
+const REPOSITORY_ROOT = path.resolve(path.dirname(GATE), "..", "..");
 
 /** A gate record from source lines, the way `readGates` hands one to the classifier. */
 function gate({
@@ -248,8 +248,8 @@ test("the gate classifies itself, and the committed baseline is the tree's own r
   assert.equal(
     classifyGate({
       id: "check:gate-populations",
-      command: "node tools/gates/meta/check-gate-populations.mjs",
-      entryFiles: ["tools/gates/meta/check-gate-populations.mjs"],
+      command: "node gates/meta/check-gate-populations.mjs",
+      entryFiles: ["gates/meta/check-gate-populations.mjs"],
       sources: [own],
     }),
     null,
@@ -258,11 +258,11 @@ test("the gate classifies itself, and the committed baseline is the tree's own r
 
   const { examined, outside, untrackedNotCounted } = readGates({ root: REPOSITORY_ROOT });
   const { buckets, findings } = judgeGates({ gates: examined });
-  const self = buckets.find((entry) => entry.entryFiles.includes("tools/gates/meta/check-gate-populations.mjs"));
+  const self = buckets.find((entry) => entry.entryFiles.includes("gates/meta/check-gate-populations.mjs"));
 
   // Either the index carries this file and it is classified, or it says by name that it does not - never a silent miss.
   assert.ok(
-    self !== undefined || untrackedNotCounted.includes("tools/gates/meta/check-gate-populations.mjs"),
+    self !== undefined || untrackedNotCounted.includes("gates/meta/check-gate-populations.mjs"),
     "a file the index does not carry yet is named as untracked, not swallowed",
   );
   if (self !== undefined)

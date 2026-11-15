@@ -91,7 +91,7 @@
  *
  * red-proof: inject  one violation per class into a scratch copy of the tree -> that class reports it at
  *                    `path:line`, and the same class is green again once the edit is reverted
- *                    (tools/gates/meta/audit-totality.test.mjs)
+ *                    (gates/meta/audit-totality.test.mjs)
  */
 
 export const gateDeclaration = {
@@ -106,15 +106,15 @@ import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
-import { cleanOutputLines } from "../../lib/subprocess-output.mjs";
+import { cleanOutputLines } from "../../tools/lib/subprocess-output.mjs";
 
 // TypeScript is a per-package dependency here (`host/node_modules`), so it is resolved through the Host's own
 // manifest rather than from the repository root, where no `typescript` is installed.
-const requireFromHost = createRequire(new URL("../../../host/package.json", import.meta.url));
+const requireFromHost = createRequire(new URL("../../host/package.json", import.meta.url));
 const ts = requireFromHost("typescript");
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-export const DEFAULT_ROOT = resolve(HERE, "..", "..", "..");
+export const DEFAULT_ROOT = resolve(HERE, "..", "..");
 
 const HOST = ["host", "src"];
 const WEB = ["dialogue-web", "src"];

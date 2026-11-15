@@ -30,7 +30,7 @@
  *            `ci:<workflow>` (that workflow must name the path), or `on-demand` (no scheduled home at all - printed
  *            under `no_scheduled_home`, so the gates nothing runs are a line of output rather than an assumption).
  *            An `elsewhere` exemption additionally asserts that the script runs on every push, and that assertion is
- *            checked against `tools/gates/meta/check-ci-coverage.mjs`, which owns the fact.
+ *            checked against `gates/meta/check-ci-coverage.mjs`, which owns the fact.
  *
  * The table is validated in both directions, so it cannot rot into a list nobody looked at:
  *   - a population member neither wired nor exempt is `gate_forgotten`, and the message names the FILE;
@@ -38,7 +38,7 @@
  *   - an exemption for a path that is no longer a gate is `exempt_not_a_gate`;
  *   - a class outside `REASON_CLASSES`, or a reason too short to name anything, is `exempt_unreasoned`;
  *   - a `runsIn` that does not resolve to a script/workflow naming the gate is `exempt_runs_in_dangling`;
- *   - an `elsewhere` exemption whose script `tools/gates/meta/check-ci-coverage.mjs` registers as running in no workflow is
+ *   - an `elsewhere` exemption whose script `gates/meta/check-ci-coverage.mjs` registers as running in no workflow is
  *     `exempt_elsewhere_not_in_ci`;
  *   - an entry carrying no `runsIn` at all is `exempt_runs_in_missing`. It used to reach the `elsewhere` assertion and
  *     crash there (`Cannot read properties of undefined (reading 'startsWith')`), and a gate that dies on a stack
@@ -52,7 +52,7 @@
  * read, a script either of them has is a script that runs, and the disagreement between them is printed
  * (`scripts_read=` / `package_json_trees_disagree=`) rather than left to decide a verdict silently.
  *
- * `wired N of M; exempt K` is the verdict line; `node tools/gates/meta/check-prelive-gate-registry.mjs` exits 1 on any finding.
+ * `wired N of M; exempt K` is the verdict line; `node gates/meta/check-prelive-gate-registry.mjs` exits 1 on any finding.
  *
  * red-proof: inject  with the `elsewhere`-claims-must-run-in-CI check disabled, the falsifier failed on
  *   "an elsewhere claim that the CI coverage gate says runs nowhere is red, quoting that gate's reason"
@@ -79,9 +79,9 @@ import { fileURLToPath } from "node:url";
 
 import { deriveCiCoverage } from "./check-ci-coverage.mjs";
 import { isGateFile, GATE_DIRECTORIES } from "../registry.mjs";
-import { PRELUDE_RUNGS } from "../../prelive.mjs";
+import { PRELUDE_RUNGS } from "../../tools/prelive.mjs";
 
-const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
+const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
 export const STARDEW_TESTS = "integrations/stardew/action-development/tests";
 const WORKFLOW_DIR = ".github/workflows";
 
@@ -89,9 +89,9 @@ const WORKFLOW_DIR = ".github/workflows";
  * The derivation, as data: one entry per scan, each with what it includes and what it deliberately leaves out.
  *
  * The gate scans are `GATE_DIRECTORIES` - the registry's own list, IMPORTED rather than restated - so a domain that
- * files its gates in `tools/gates/<domain>/` is scanned without this file learning a new directory, and a domain
+ * files its gates in `gates/<domain>/` is scanned without this file learning a new directory, and a domain
  * directory that does not exist yet is skipped by `derivePopulation` rather than throwing. Before this, the list was
- * the single entry `{ dir: "tools" }`: measured on the `meta` pilot, filing 14 gates under `tools/gates/meta/` took
+ * the single entry `{ dir: "tools" }`: measured on the `meta` pilot, filing 14 gates under `gates/meta/` took
  * this register from 152 members to 138 while the gate still passed.
  *
  * Each `include` is the registry's own name rule, not a regex restated here. A `.test.mjs` and a `.mutation.mjs` are the
@@ -140,11 +140,11 @@ export const EXEMPTIONS = Object.freeze([
     path: "tools/audit-chat-live-run.mjs",
     reason:
       "arguments: requires `--audit <chat-run-dir>` pointing at an existing Chat live-run directory (same entry as " +
-      "tools/gates/meta/check-ci-coverage.mjs's register), so there is nothing to verify before a run exists",
+      "gates/meta/check-ci-coverage.mjs's register), so there is nothing to verify before a run exists",
     runsIn: "pnpm audit:chat-live-run",
   },
   {
-    path: "tools/gates/meta/audit-gate-red-proofs.mjs",
+    path: "gates/meta/audit-gate-red-proofs.mjs",
     reason: "elsewhere: static gate-red-proof audit, runs on every push in the CI gates job",
     runsIn: "pnpm audit:gate-red-proofs",
   },
@@ -187,7 +187,7 @@ export const EXEMPTIONS = Object.freeze([
     runsIn: "pnpm check:vendor-build-artifacts",
   },
   {
-    path: "tools/gates/meta/check-workflow-expressions.mjs",
+    path: "gates/meta/check-workflow-expressions.mjs",
     reason:
       "elsewhere: reads `.github/workflows/*.yml`; runs in the CI `gates` job, and a prelive rung that examined them " +
       "would be checking the same files twice on a machine that has no workflows of its own",
@@ -328,14 +328,14 @@ export const EXEMPTIONS = Object.freeze([
     runsIn: "pnpm smoke:chat-conversational-quality-gate",
   },
   {
-    path: "tools/gates/meta/check-ci-dead-conditions.mjs",
+    path: "gates/meta/check-ci-dead-conditions.mjs",
     reason:
       "elsewhere: reads every workflow's `if:` expressions against every writer of the variables they name, runs " +
       "on every push in the CI gates job",
     runsIn: "pnpm check:ci-dead-conditions",
   },
   {
-    path: "tools/gates/meta/check-ci-coverage.mjs",
+    path: "gates/meta/check-ci-coverage.mjs",
     reason:
       "elsewhere: it IS the CI gate that runs in ci.yml's gates job (`--run`), and it registers the gates a checkout " +
       "does not run - this register consumes it for exactly that fact",
@@ -347,7 +347,7 @@ export const EXEMPTIONS = Object.freeze([
     runsIn: "pnpm check:class-name-declarations",
   },
   {
-    path: "tools/gates/meta/check-commit-staging.mjs",
+    path: "gates/meta/check-commit-staging.mjs",
     reason:
       "fixup: a committer's preflight over the staged set against the paths the commit names, so it describes a " +
       "commit in flight; bare mode says it cannot see the commit's intent and exits 0",
@@ -388,7 +388,7 @@ export const EXEMPTIONS = Object.freeze([
     runsIn: "on-demand",
   },
   {
-    path: "tools/gates/meta/check-gate-population-agreement.mjs",
+    path: "gates/meta/check-gate-population-agreement.mjs",
     reason:
       "elsewhere: reads the four gate populations (check-ci-coverage, check-prelive-gate-registry, the red-proof census " +
       "and the tool-test corpus) plus the workflows and the registers, and needs no game or network, so it runs on every " +
@@ -423,7 +423,7 @@ export const EXEMPTIONS = Object.freeze([
     runsIn: "pnpm check:dependency-risk",
   },
   {
-    path: "tools/gates/meta/check-diff.mjs",
+    path: "gates/meta/check-diff.mjs",
     reason:
       "fixup: `git diff --check` over the worktree, so it reads uncommitted whitespace rather than the tree's contents",
     runsIn: "pnpm check:diff",
@@ -474,7 +474,7 @@ export const EXEMPTIONS = Object.freeze([
     runsIn: "pnpm check:gameplay-capability-catalog",
   },
   {
-    path: "tools/gates/meta/check-gate-premises.mjs",
+    path: "gates/meta/check-gate-premises.mjs",
     reason:
       "elsewhere: static gate over the inputs each source gate DECLARES - it reads the gate files, the modules they " +
       "spawn or import, and a stat of every derived path, so it runs in the derived CI gates job on every push; its " +
@@ -566,7 +566,7 @@ export const EXEMPTIONS = Object.freeze([
     runsIn: "pnpm check:publint",
   },
   {
-    path: "tools/gates/meta/check-red-proof-markers.mjs",
+    path: "gates/meta/check-red-proof-markers.mjs",
     reason:
       "elsewhere: a static scan of the tracked files that hold the red-proof marker for a U+00D7 where the marker's " +
       "glyph belongs, so it needs no install, no build and no run; it runs on every push in the derived CI gates job " +
@@ -619,7 +619,7 @@ export const EXEMPTIONS = Object.freeze([
     runsIn: "pnpm check:silent-failure",
   },
   {
-    path: "tools/gates/meta/check-spec-reachability.mjs",
+    path: "gates/meta/check-spec-reachability.mjs",
     reason: "elsewhere: derives which tools/ suites a checkout runs, and runs on every push in the CI gates job",
     runsIn: "pnpm check:spec-reachability",
   },
@@ -627,7 +627,7 @@ export const EXEMPTIONS = Object.freeze([
     path: "tools/check-stardew-companion-production-admission.mjs",
     reason:
       "arguments: reports admission_cli_required_flag_missing without a caller's evidence paths (same entry as " +
-      "tools/gates/meta/check-ci-coverage.mjs's register)",
+      "gates/meta/check-ci-coverage.mjs's register)",
     runsIn: "pnpm check:stardew-companion-production-admission",
   },
   {
@@ -793,7 +793,7 @@ export const EXEMPTIONS = Object.freeze([
 ]);
 
 /** `<dir>/<file>` for every population member, derived from `POPULATION_SCAN`. A declared directory the tree has not
- * got yet is an empty scan, not a crash: only `tools/gates/meta/` exists while the other domains are still unfiled. */
+ * got yet is an empty scan, not a crash: only `gates/meta/` exists while the other domains are still unfiled. */
 export function derivePopulation({
   list = (dir) => (existsSync(resolve(ROOT, dir)) ? readdirSync(resolve(ROOT, dir)) : []),
 } = {}) {
@@ -995,7 +995,7 @@ export function checkRegistry({
           detail:
             registered === undefined
               ? `${script} is in no workflow and in no gates job`
-              : `tools/gates/meta/check-ci-coverage.mjs registers ${script} as ${registered.reason}: ${registered.detail}`,
+              : `gates/meta/check-ci-coverage.mjs registers ${script} as ${registered.reason}: ${registered.detail}`,
         });
       }
     }
@@ -1066,7 +1066,7 @@ export function scriptTreeDisagreements(worktreeScripts, headScripts) {
   return [...names].filter((name) => worktree[name] !== head[name]).sort();
 }
 
-/** `tools/gates/meta/check-ci-coverage.mjs` owns the fact "does a script run on every push"; this reads it, never restates it. */
+/** `gates/meta/check-ci-coverage.mjs` owns the fact "does a script run on every push"; this reads it, never restates it. */
 
 /**
  * The register, read off the real tree: the derived population, the ladder's own wired set, both `package.json`

@@ -3,7 +3,7 @@
 //
 // red-proof: inject  a tracked file edited to end `beta` with three trailing spaces ->
 //                    `proof.txt:1: trailing whitespace.` then `+beta`, exit 1; the committed tree prints
-//                    `git_diff_check_passed`, exit 0 (tools/gates/meta/check-diff.mjs)
+//                    `git_diff_check_passed`, exit 0 (gates/meta/check-diff.mjs)
 
 export const gateDeclaration = {
   id: "check-diff",

@@ -10,14 +10,14 @@
  * paths is the only form that can, so this script checks the name against the
  * index.
  *
- *   node tools/gates/meta/check-commit-staging.mjs --explain             # inventory, never fails on content
- *   node tools/gates/meta/check-commit-staging.mjs -- <path> [<path>...] # the staged set must be exactly these
- *   node tools/gates/meta/check-commit-staging.mjs                       # inventory + staged-with-no-content
+ *   node gates/meta/check-commit-staging.mjs --explain             # inventory, never fails on content
+ *   node gates/meta/check-commit-staging.mjs -- <path> [<path>...] # the staged set must be exactly these
+ *   node gates/meta/check-commit-staging.mjs                       # inventory + staged-with-no-content
  *
  * red-proof: inject  two staged paths, one of them not named by the commit (`-- mine.txt` while `theirs.txt` is
  *                    staged too) -> `staged but not named by this commit (another lane's work?): theirs.txt`, exit 1;
  *                    naming both prints `the staged set is exactly the 2 named path(s)`, exit 0
- *                    (tools/gates/meta/check-commit-staging.mjs)
+ *                    (gates/meta/check-commit-staging.mjs)
  *
  * Named-path mode is the exact check: it fails when the staged set and the named
  * set differ in either direction, and it names every difference. Use it before
@@ -41,7 +41,7 @@ export const gateDeclaration = {
 };
 
 import { execFileSync } from "node:child_process";
-import { cleanOutputLines } from "../../lib/subprocess-output.mjs";
+import { cleanOutputLines } from "../../tools/lib/subprocess-output.mjs";
 
 const args = process.argv.slice(2);
 
@@ -114,7 +114,7 @@ function report(headline) {
 }
 
 if (args.length > 0 && args[0] !== "--explain" && args[0] !== "--") {
-  console.error("usage: node tools/gates/meta/check-commit-staging.mjs [--explain | -- <path> [<path>...]]");
+  console.error("usage: node gates/meta/check-commit-staging.mjs [--explain | -- <path> [<path>...]]");
   process.exit(2);
 }
 

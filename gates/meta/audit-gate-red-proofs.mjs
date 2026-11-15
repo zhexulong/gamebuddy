@@ -110,23 +110,23 @@
  * go. The same discipline as the marker baseline above, for the same reason.
  *
  * Usage:
- *   node tools/gates/meta/audit-gate-red-proofs.mjs              # the ratchet; exit 1 on a new or stale entry
- *   node tools/gates/meta/audit-gate-red-proofs.mjs --gaps       # every gate that still owes a red proof
- *   node tools/gates/meta/audit-gate-red-proofs.mjs --json       # every gate's record, with its proofs
- *   node tools/gates/meta/audit-gate-red-proofs.mjs --run        # also execute the declared falsifier suites
- *   node tools/gates/meta/audit-gate-red-proofs.mjs --update     # re-record the baseline, in its own commit
- *   node tools/gates/meta/audit-gate-red-proofs.mjs --update-execution # re-record the prose ledger only
- *   node tools/gates/meta/audit-gate-red-proofs.mjs --update-execution --record-unexecuted # ...and the unrun proof files
- *   node tools/gates/meta/audit-gate-red-proofs.mjs --root <dir> # the gate's own fixture
+ *   node gates/meta/audit-gate-red-proofs.mjs              # the ratchet; exit 1 on a new or stale entry
+ *   node gates/meta/audit-gate-red-proofs.mjs --gaps       # every gate that still owes a red proof
+ *   node gates/meta/audit-gate-red-proofs.mjs --json       # every gate's record, with its proofs
+ *   node gates/meta/audit-gate-red-proofs.mjs --run        # also execute the declared falsifier suites
+ *   node gates/meta/audit-gate-red-proofs.mjs --update     # re-record the baseline, in its own commit
+ *   node gates/meta/audit-gate-red-proofs.mjs --update-execution # re-record the prose ledger only
+ *   node gates/meta/audit-gate-red-proofs.mjs --update-execution --record-unexecuted # ...and the unrun proof files
+ *   node gates/meta/audit-gate-red-proofs.mjs --root <dir> # the gate's own fixture
  *
  * red-proof: inject  deleting a gate's marker in a synthetic tree -> `no_red_proof` names that gate, its
  *                    aggregate, and `baseline_entry_stale` for the entry the proof had closed
- *                    (tools/gates/meta/audit-gate-red-proofs.test.mjs)
+ *                    (gates/meta/audit-gate-red-proofs.test.mjs)
  *
  * red-proof: inject  a suite reduced to asserting its own joined string instead of the gate's code ->
  *                    `red_proof_is_prose:check:b` names the claim, while the suite that imports the gate and
  *                    asserts `fixture_lane_missing_required_action` stays executable
- *                    (tools/gates/meta/audit-gate-red-proofs.test.mjs)
+ *                    (gates/meta/audit-gate-red-proofs.test.mjs)
  */
 
 export const gateDeclaration = {
@@ -140,10 +140,10 @@ import { spawnSync } from "node:child_process";
 import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { POPULATION_FIELDS, populationFieldPattern } from "../../lib/assert-non-vacuous.mjs";
-import { describeUntracked, indexedGatePopulation } from "../../lib/indexed-sources.mjs";
+import { POPULATION_FIELDS, populationFieldPattern } from "../../tools/lib/assert-non-vacuous.mjs";
+import { describeUntracked, indexedGatePopulation } from "../../tools/lib/indexed-sources.mjs";
 
-const REPOSITORY_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
+const REPOSITORY_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const BASELINE_PATH = "tools/gate-red-proof-baseline.json";
 
 /** `red-proof: <kind> <claim>`; the claim may continue on the following comment lines. */

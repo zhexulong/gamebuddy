@@ -8,10 +8,10 @@
  *
  * red-proof: inject  a workflow whose `if: env.NEVER_SET != ''` no step ever sets ->
  *            `dead_ci_condition:ci.yml:quality:NEVER_SET` with both `+ newly added:` and `- missing:` on
- *            stderr (tools/gates/meta/check-ci-dead-conditions.test.mjs), while `env:` and `$GITHUB_ENV` writes are green.
+ *            stderr (gates/meta/check-ci-dead-conditions.test.mjs), while `env:` and `$GITHUB_ENV` writes are green.
  * red-proof: history ci.yml under `.github/workflows` read `env.GAMEBUDDY_STARDEW_GAME_PATH` in two `if:`s
  *            and set it in none - the silence measured 2026-09-29 to 2026-11-02 - so that condition is
- *            named (tools/gates/meta/check-ci-dead-conditions.test.mjs reads this repository's own tree).
+ *            named (gates/meta/check-ci-dead-conditions.test.mjs reads this repository's own tree).
  */
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
@@ -23,7 +23,7 @@ import { fileURLToPath } from "node:url";
 
 import { auditDeadConditions } from "./check-ci-dead-conditions.mjs";
 
-const REPOSITORY_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
+const REPOSITORY_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const GATE = join(REPOSITORY_ROOT, "tools", "gates", "meta", "check-ci-dead-conditions.mjs");
 const WORKFLOW_FILE = /\.ya?ml$/u;
 const roots = [];

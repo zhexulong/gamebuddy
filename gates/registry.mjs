@@ -3,22 +3,27 @@
  *
  * WHY (measured 2026-11-14). Eight readings called themselves "the gates" and each built its number from its own glob
  * or regex over file names: `invoked 26 · ci-coverage scripts 133 · corpus names 184 · census scripts 354 · gate files
- * 148 · prelive members 152 · census gates 395 · register members 159` (`tools/gates/meta/check-gate-population-agreement.mjs`).
+ * 148 · prelive members 152 · census gates 395 · register members 159` (`gates/meta/check-gate-population-agreement.mjs`).
  * Two of them spelled the same rule twice - `tools/lib/gate-population.mjs` as `GATE_FILE` and
- * `tools/gates/meta/check-prelive-gate-registry.mjs` as its own `include` - so the day one of them learns a suffix the other keeps
- * its old answer. That is why `tools/` cannot be reorganised while this stands: move a gate out of the directory a
- * scanner globs and that scanner silently stops seeing it, which is a gate that stops running with no symptom.
+ * `gates/meta/check-prelive-gate-registry.mjs` as its own `include` - so the day one of them learns a suffix the other keeps
+ * its old answer. That is why a gate directory cannot be reorganised while such a scanner stands: move a gate out of the
+ * directory it globs and it silently stops seeing it, which is a gate that stops running with no symptom. This module is
+ * what replaced those globs, and the move of `tools/gates/` to `gates/` is the first experiment it passes.
  *
  * WHAT THIS MODULE OWNS, and therefore what a directory move touches:
  *
  *   `GATE_DIRECTORIES`  the directories a gate file may live in, DERIVED from the domain list: `tools/` plus
- *                       `tools/gates/<domain>/` for every domain. Filing a domain in its own directory is therefore a
+ *                       `gates/<domain>/` for every domain. Filing a domain in its own directory is therefore a
  *                       `git mv` and no edit here - and every consumer below reads this scan, not a glob of its own.
  *   `isGateFile`        the name rule: `check-*.mjs` / `audit-*.mjs`, minus the falsifier suffixes that live beside
  *                       their gate. A path is a gate when its own directory is one of `GATE_DIRECTORIES`.
  *   `gateFiles`         the population: that rule applied to those directories, sorted, relative to the repository root.
  *   `directoryDomain`   which domain a gate's own directory files it under, so that the layout and the declaration
  *                       cannot say two different things about the same gate.
+ *
+ * WHY `tools/` IS STILL LISTED. The gates are moving to `gates/<domain>/` domain by domain, and `meta` went first. A gate
+ * still at `tools/<name>.mjs` is filed under no domain directory, so `tools/` stays in the list until the last one
+ * leaves - a registry that stopped seeing the un-moved half would answer a smaller question and print green.
  *
  * WHY THE DECLARATION IS READ FROM THE SYNTAX TREE AND NOT BY IMPORTING THE MODULE. A loader that imports each gate
  * runs each gate: measured on this tree, importing all 148 took 90.6 s, exited non-zero on 16 of them (argument
@@ -59,8 +64,8 @@
  *                                                  because an empty population agrees with itself.
  *
  * USAGE:
- *   node tools/gates/registry.mjs           # the reading; exit 1 on a finding, 2 when it measured nothing
- *   node tools/gates/registry.mjs --json    # the report the conformance suite reads
+ *   node gates/registry.mjs           # the reading; exit 1 on a finding, 2 when it measured nothing
+ *   node gates/registry.mjs --json    # the report the conformance suite reads
  *
  * No game, no network, no model, no child process. It reads files and parses them.
  */
@@ -68,9 +73,9 @@ import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { parseJavaScript } from "../lib/javascript-ast.mjs";
+import { parseJavaScript } from "../tools/lib/javascript-ast.mjs";
 
-const REPOSITORY_ROOT = resolve(fileURLToPath(import.meta.url), "../../..");
+const REPOSITORY_ROOT = resolve(fileURLToPath(import.meta.url), "../..");
 
 /** The three closed sets a declaration is checked against, in the order a reader wants them. */
 export const GATE_DOMAINS = Object.freeze(["product", "data", "arch", "stardew", "meta"]);
@@ -78,16 +83,17 @@ export const GATE_TIERS = Object.freeze(["l0", "l1", "l2"]);
 export const GATE_KINDS = Object.freeze(["contract", "totality", "ratchet"]);
 
 /** The directory a domain's gates live in. One string per domain, derived from the domain list. */
-const DOMAIN_ROOT = "tools/gates";
+const DOMAIN_ROOT = "gates";
 
 /**
  * The directories a gate file may live in: `tools/` for the gates no domain has claimed yet, and one directory per
- * domain beneath `tools/gates/`.
+ * domain beneath `gates/`.
  *
  * DERIVED FROM `GATE_DOMAINS`, not written out, so filing a domain in its directory is a `git mv` and no edit at all.
  * Written out, the list was `["tools"]` and this scan is not recursive: measured on the `meta` pilot, moving 14 gates
- * into `tools/gates/meta/` took this registry from 148 declared to 134 with no finding, because a gate that leaves
- * every declared directory leaves the population and an empty answer agrees with itself.
+ * into a domain directory took this registry from 148 declared to 134 with no finding, because a gate that leaves
+ * every declared directory leaves the population and an empty answer agrees with itself. The same measurement is why
+ * `tools/` remains listed while the other four domains are still there.
  */
 export const GATE_DIRECTORIES = Object.freeze(["tools", ...GATE_DOMAINS.map((domain) => `${DOMAIN_ROOT}/${domain}`)]);
 
@@ -115,11 +121,11 @@ const directoryOf = (path) => normalize(path).replace(/\/[^/]*$/u, "");
 /**
  * The domain a gate's own directory files it under, or `null` when the gate sits directly in `tools/`.
  *
- * `tools/gates/meta/check-diff.mjs` is filed under `meta`. A gate still at `tools/<name>.mjs` is filed under nothing, because the
+ * `gates/meta/check-diff.mjs` is filed under `meta`. A gate still at `tools/<name>.mjs` is filed under nothing, because the
  * unsorted half of the population has no domain directory and its declaration is the only word on the subject.
  */
 export function directoryDomain(path) {
-  const match = /^tools\/gates\/([^/]+)\//u.exec(normalize(path));
+  const match = /^gates\/([^/]+)\//u.exec(normalize(path));
   return match === null ? null : match[1];
 }
 

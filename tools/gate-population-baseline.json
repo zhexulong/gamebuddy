@@ -45,7 +45,7 @@
     "gate_without_population test:stardew-method-resolution-mutation",
     "gate_without_population test:stardew-rejected-layer-verdicts-mutation",
     "gate_without_population tools/check-chat-conversational-quality-gate.mjs",
-    "gate_without_population tools/gates/meta/check-commit-staging.mjs",
+    "gate_without_population gates/meta/check-commit-staging.mjs",
     "gate_without_population tools/check-crab-pot-output-fixture-contract.mjs",
     "gate_without_population tools/check-dist-runtime-exports.mjs",
     "gate_without_population tools/check-stardew-dialogue-autonomy.mjs",

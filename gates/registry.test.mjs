@@ -106,17 +106,17 @@ test("FALSIFIER two gate files declaring one id are a collision naming both path
   await withTree(
     [
       gate("check-same", declaration({ id: "check-same" })),
-      ["tools/gates/arch/check-same.mjs", declaration({ id: "check-same", domain: "arch" })],
+      ["gates/arch/check-same.mjs", declaration({ id: "check-same", domain: "arch" })],
     ],
     async (root) => {
       const reading = await readDeclarations({
         root,
-        files: ["tools/check-same.mjs", "tools/gates/arch/check-same.mjs"],
+        files: ["tools/check-same.mjs", "gates/arch/check-same.mjs"],
       });
       const collisions = findingFor(reading, "gate_id_collision");
       assert.equal(reading.declared.length, 1, "the second claim is not published as a declaration");
       assert.equal(collisions.length, 1);
-      assert.equal(collisions[0].id, "check-same:tools/check-same.mjs:tools/gates/arch/check-same.mjs");
+      assert.equal(collisions[0].id, "check-same:tools/check-same.mjs:gates/arch/check-same.mjs");
     },
   );
 });
@@ -125,28 +125,28 @@ test("FALSIFIER two gate files declaring one id are a collision naming both path
 // Falsifier 4: a gate filed in a domain directory its declaration contradicts.
 // -------------------------------------------------------------------------------------------------------------
 test("FALSIFIER a gate filed under one domain and declaring another is invalid, naming both", async () => {
-  // The layout is only an authority if the two words about a gate agree. Without this rule `tools/gates/meta/` is a
+  // The layout is only an authority if the two words about a gate agree. Without this rule `gates/meta/` is a
   // folder, and a stardew gate filed in it declares a domain no reader can trust.
   await withTree(
     [
-      ["tools/gates/meta/check-filed.mjs", declaration({ id: "check-filed", domain: "product" })],
-      ["tools/gates/meta/check-agreed.mjs", declaration({ id: "check-agreed", domain: "meta" })],
+      ["gates/meta/check-filed.mjs", declaration({ id: "check-filed", domain: "product" })],
+      ["gates/meta/check-agreed.mjs", declaration({ id: "check-agreed", domain: "meta" })],
     ],
     async (root) => {
       const reading = await readDeclarations({ root });
       assert.equal(reading.examined, 2, "both files are in the population, so the finding is not a scan gap");
       assert.deepEqual(
         findingFor(reading, "gate_declaration_invalid").map((finding) => finding.id),
-        ["tools/gates/meta/check-filed.mjs:domain"],
+        ["gates/meta/check-filed.mjs:domain"],
       );
       assert.match(
         findingFor(reading, "gate_declaration_invalid")[0].detail,
         /`product` is declared, but the file is filed under `meta`/u,
       );
-      assert.deepEqual(reading.undeclared, ["tools/gates/meta/check-filed.mjs"]);
+      assert.deepEqual(reading.undeclared, ["gates/meta/check-filed.mjs"]);
       assert.deepEqual(
         reading.declared.map((entry) => entry.path),
-        ["tools/gates/meta/check-agreed.mjs"],
+        ["gates/meta/check-agreed.mjs"],
       );
     },
   );
@@ -157,7 +157,7 @@ test("a gate directly in tools/ declares its domain freely, because no directory
     const reading = await readDeclarations({ root });
     assert.deepEqual(reading.findings, []);
     assert.equal(directoryDomain("tools/check-unsorted.mjs"), null);
-    assert.equal(directoryDomain("tools/gates/meta/check-unsorted.mjs"), "meta");
+    assert.equal(directoryDomain("gates/meta/check-unsorted.mjs"), "meta");
   });
 });
 
@@ -258,12 +258,12 @@ test("the population is the declared directories and the name rule: a falsifier 
       gate("check-a.test", "// a falsifier\n"),
       gate("check-a.mutation", "// a mutation driver\n"),
       gate("not-a-gate", "// an ordinary module\n"),
-      ["tools/gates/meta/check-sorted.mjs", declaration({ id: "check-sorted", domain: "meta" })],
-      ["tools/gates/meta/check-sorted.test.mjs", "// a falsifier beside a sorted gate\n"],
+      ["gates/meta/check-sorted.mjs", declaration({ id: "check-sorted", domain: "meta" })],
+      ["gates/meta/check-sorted.test.mjs", "// a falsifier beside a sorted gate\n"],
       ["tools/scripts/check-nested.mjs", declaration({ id: "check-nested" })],
     ],
     (root) => {
-      assert.deepEqual(gateFiles({ root }), ["tools/check-a.mjs", "tools/gates/meta/check-sorted.mjs"]);
+      assert.deepEqual(gateFiles({ root }), ["gates/meta/check-sorted.mjs", "tools/check-a.mjs"]);
     },
   );
 });
@@ -271,7 +271,7 @@ test("the population is the declared directories and the name rule: a falsifier 
 test("the directories are derived from the domain list, so filing a domain is a move and no edit", () => {
   for (const domain of GATE_DOMAINS)
     assert.ok(
-      GATE_DIRECTORIES.includes(`tools/gates/${domain}`),
+      GATE_DIRECTORIES.includes(`gates/${domain}`),
       `\`${domain}\` has no directory: a gate declaring it cannot be filed anywhere but \`tools/\``,
     );
   assert.ok(GATE_DIRECTORIES.includes("tools"), "the unsorted half of the population still lives in tools/");
@@ -297,7 +297,7 @@ test("FALSIFIER an empty population is blocked with exit 2, not passed", () => {
 // This repository: the population it really has, and that no file falls between declared and undeclared.
 // -------------------------------------------------------------------------------------------------------------
 test("the real tree: every gate file is either declared or named, and the reading adds up", async () => {
-  const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
+  const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
   const files = gateFiles({ root });
   assert.ok(files.length > 0, "the scan must find this repository's gates");
   const reading = await readDeclarations({ root, files });

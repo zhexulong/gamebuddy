@@ -21,10 +21,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 
-import { assertNonVacuous } from "../../lib/assert-non-vacuous.mjs";
+import { assertNonVacuous } from "../../tools/lib/assert-non-vacuous.mjs";
 import { deriveCiCoverage, runGates } from "./check-ci-coverage.mjs";
 
-const RUNNER_COMMAND = "node tools/gates/meta/check-ci-coverage.mjs --run";
+const RUNNER_COMMAND = "node gates/meta/check-ci-coverage.mjs --run";
 
 /** The report `check:draft-declaration-coverage` printed on 2026-11-05 (`e22e2d3f`), verbatim. */
 const DRAFT_ZERO_REPORT =
@@ -125,9 +125,7 @@ test("the derived half fails the verdict when no workflow runs it", () => {
     register: [],
   });
   assert.equal(result.runnerWired, false);
-  assert.deepEqual(result.problems, [
-    { code: "runner_unwired", script: "tools/gates/meta/check-ci-coverage.mjs --run" },
-  ]);
+  assert.deepEqual(result.problems, [{ code: "runner_unwired", script: "gates/meta/check-ci-coverage.mjs --run" }]);
 });
 
 test("a registered gate carries its reason and leaves the derived set", () => {

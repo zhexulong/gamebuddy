@@ -21,7 +21,7 @@ import {
   verifyRunsIn,
 } from "./check-prelive-gate-registry.mjs";
 import { GATE_DIRECTORIES } from "../registry.mjs";
-import { PRELUDE_RUNGS } from "../../prelive.mjs";
+import { PRELUDE_RUNGS } from "../../tools/prelive.mjs";
 
 /**
  * Falsifiers for the register. Each case is one way the claim "every gate either runs in prelive or says where else
@@ -327,20 +327,20 @@ test("the derivation excludes both kinds of falsifier and includes the tree-guar
   // The domain directories contribute too, because they are scans - and a falsifier beside a sorted gate is still a
   // falsifier, so only `check-filed.mjs` comes through from each of them.
   assert.deepEqual(
-    population.filter((member) => member.startsWith("tools/gates/")),
+    population.filter((member) => member.startsWith("gates/")),
     [
-      "tools/gates/product/check-filed.mjs",
-      "tools/gates/data/check-filed.mjs",
-      "tools/gates/arch/check-filed.mjs",
-      "tools/gates/stardew/check-filed.mjs",
-      "tools/gates/meta/check-filed.mjs",
+      "gates/product/check-filed.mjs",
+      "gates/data/check-filed.mjs",
+      "gates/arch/check-filed.mjs",
+      "gates/stardew/check-filed.mjs",
+      "gates/meta/check-filed.mjs",
     ],
   );
 });
 
 test("the gate scans are the registry's directories, so a domain move needs no edit here", () => {
   // Not a hand-written list: every directory a gate may live in is scanned by the registry's name rule. Written out,
-  // this was `{ dir: "tools" }` and filing 14 gates under `tools/gates/meta/` took the register from 152 members to 138
+  // this was `{ dir: "tools" }` and filing 14 gates under `gates/meta/` took the register from 152 members to 138
   // while the gate still passed.
   const gateScans = POPULATION_SCAN.filter((scan) => scan.dir !== STARDEW_TESTS).map((scan) => scan.dir);
   assert.deepEqual(gateScans, [...GATE_DIRECTORIES]);

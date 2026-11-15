@@ -36,7 +36,7 @@ import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const scriptPath = fileURLToPath(import.meta.url);
-const repositoryRoot = resolve(dirname(scriptPath), "..", "..", "..");
+const repositoryRoot = resolve(dirname(scriptPath), "..", "..");
 const workflowsRoot = join(repositoryRoot, ".github", "workflows");
 
 /** Contexts GitHub documents as unavailable in `if:`. `secrets` is the one that bites in practice. */

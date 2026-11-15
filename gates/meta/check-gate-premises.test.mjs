@@ -21,7 +21,7 @@ import { fileURLToPath } from "node:url";
 import { checkPremises, deriveInputs, GATE_PREMISES, inputExists, report } from "./check-gate-premises.mjs";
 import { EXEMPTIONS } from "./check-prelive-gate-registry.mjs";
 
-const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
+const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
 
 /** The commit that deleted the HUD: its own tree is where both gates named a file that was already gone. */
 const DELETION_COMMIT = "213cde50";
@@ -185,10 +185,10 @@ test("the real tree passes, and the registry is the population rather than a sam
 test("the gate is reachable: a script runs it, and the prelive register says where", () => {
   const scripts = JSON.parse(readFileSync(resolve(ROOT, "package.json"), "utf8")).scripts ?? {};
   const declared = Object.entries(scripts).filter(([, command]) =>
-    command.includes("tools/gates/meta/check-gate-premises.mjs"),
+    command.includes("gates/meta/check-gate-premises.mjs"),
   );
   assert.ok(declared.length > 0, "a gate no script runs is indistinguishable from a passing one");
-  const entry = EXEMPTIONS.find((exemption) => exemption.path === "tools/gates/meta/check-gate-premises.mjs");
+  const entry = EXEMPTIONS.find((exemption) => exemption.path === "gates/meta/check-gate-premises.mjs");
   assert.ok(entry, "the prelive register must carry a row for it, or `gate_forgotten` is the verdict");
   assert.ok(
     typeof entry.runsIn === "string" && entry.runsIn.length > 0,

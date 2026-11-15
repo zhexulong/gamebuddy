@@ -46,12 +46,12 @@
  * measured no file has not passed.
  *
  * Usage:
- *   node tools/gates/meta/check-ci-dead-conditions.mjs                 # the repository's own workflows
- *   node tools/gates/meta/check-ci-dead-conditions.mjs --root <dir>    # a fixture tree's `.github/workflows`
+ *   node gates/meta/check-ci-dead-conditions.mjs                 # the repository's own workflows
+ *   node gates/meta/check-ci-dead-conditions.mjs --root <dir>    # a fixture tree's `.github/workflows`
  *
  * red-proof: inject  a workflow whose `if: env.NEVER_SET != ''` no step ever sets ->
  *            `dead_ci_condition:ci.yml:quality:NEVER_SET` with the `+ newly added:` / `- missing:` diff
- *            (tools/gates/meta/check-ci-dead-conditions.test.mjs; declared in `env:` or `$GITHUB_ENV`, it reports nothing).
+ *            (gates/meta/check-ci-dead-conditions.test.mjs; declared in `env:` or `$GITHUB_ENV`, it reports nothing).
  */
 
 export const gateDeclaration = {
@@ -65,7 +65,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const REPOSITORY_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
+const REPOSITORY_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const WORKFLOW_DIR = ".github/workflows";
 const WORKFLOW_FILE = /\.ya?ml$/u;
 
