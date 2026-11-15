@@ -1058,6 +1058,20 @@ public sealed record BridgeActiveExecution(
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] bool? CancelSafe = null
 );
 
+/// <summary>
+/// What this Mod's own journal says about the programme an execution belongs to: the exact node that started it
+/// (`programme`), the fact that no node did (`standalone`), or the fact that the journal could not answer
+/// (`unattributed`).
+///
+/// <para>
+/// IT TRAVELS WITH EVERY RECEIPT AND EVERY BODY TRACE, because those are the two statements of one step and a consumer
+/// that has to file either of them must not be left inferring which programme it belongs to. The tokens are the union the
+/// Host's protocol validates, so a token added here without a Host member is refused at the bridge rather than read as an
+/// unknown.
+/// </para>
+/// </summary>
+public sealed record BridgeExecutionOrigin(string Kind, string? ProgramId = null, string? NodeId = null);
+
 public sealed record BridgeReceipt(
     string ExecutionId,
     string RequestId,
@@ -1066,6 +1080,7 @@ public sealed record BridgeReceipt(
     string ReasonCode,
     long Revision,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] IReadOnlyDictionary<string, string>? Evidence,
+    BridgeExecutionOrigin Origin,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] BridgeLocalObservation? Observation = null,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] ObserveSceneResultPayload? PiggybackedScene = null,
     // Raw native HUD notice text observed inside the action's synchronous
@@ -1109,7 +1124,8 @@ public sealed record BridgeBodyTrace(
     int Tick,
     long Revision,
     string? Location,
-    BridgeTile? Tile
+    BridgeTile? Tile,
+    BridgeExecutionOrigin Origin
 );
 
 public sealed class BridgeExecutionArgs

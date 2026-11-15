@@ -197,6 +197,38 @@ public enum BodyProgramClaimOwnershipState { NotAcquired = 1, Acquired = 2, Rele
 
 /// <summary>Immutable action dispatch lineage, bound to one exact accepted node attempt.</summary>
 public sealed record NodeExecutionBinding(string ProgramId, string NodeId, int NodeAttempt, string RequestId, string IdempotencyKey, string ExecutionId);
+
+/// <summary>
+/// Which programme node an execution belongs to, as this journal states it.
+///
+/// <para>
+/// THE JOURNAL IS THE ONLY LAYER THAT CAN SAY IT. <see cref="NodeExecutionBinding"/> is minted at the admission boundary
+/// and kept on the node for the node's whole life, so "which plan asked for this execution" is a durable fact here and
+/// nowhere else. Everything downstream carried only an `executionId`, so a consumer that needed to know whether a
+/// `succeeded` receipt was a STEP of a programme or a LONE outcome had to infer it from what happened to be running - and
+/// that inference is what opened 57, 79 and 82 turns in `round57`, `round59` and `round62` against 224 dispatches.
+/// </para>
+/// <para>
+/// THE THIRD MEMBER IS THE POINT. <see cref="Standalone"/> and <see cref="OfNode"/> are COMPLETE statements - this journal
+/// read the whole document and knows. <see cref="Unattributed"/> says it could not answer, and it exists so that condition
+/// is NAMED by the reader (`unattributed_execution:&lt;id&gt;`) instead of being spelled as an absent field that the
+/// reader resolves for itself.
+/// </para>
+/// </summary>
+public sealed record BodyProgramExecutionOrigin(BodyProgramExecutionOriginKind Kind, string? ProgramId, string? NodeId)
+{
+    /// <summary>One exact node attempt owns this execution.</summary>
+    public static BodyProgramExecutionOrigin OfNode(string programId, string nodeId) =>
+        new(BodyProgramExecutionOriginKind.Node, programId, nodeId);
+
+    /// <summary>No node owns this execution: a flat action, and a statement the journal is able to make.</summary>
+    public static BodyProgramExecutionOrigin Standalone { get; } = new(BodyProgramExecutionOriginKind.Standalone, null, null);
+
+    /// <summary>This journal cannot answer. A named defect, never an absence a reader resolves by itself.</summary>
+    public static BodyProgramExecutionOrigin Unattributed { get; } = new(BodyProgramExecutionOriginKind.Unattributed, null, null);
+}
+
+public enum BodyProgramExecutionOriginKind { Node = 1, Standalone = 2, Unattributed = 3 }
 /// <summary>
 /// Action-owned terminal input. Successful results require receipt, evidence, and postcondition verification projections.
 ///

@@ -196,6 +196,30 @@ export type ExecutionState = (typeof EXECUTION_STATES)[number];
 
 export type FactKind = "snapshot" | "execution_receipt" | "semantic_event" | "lifecycle" | "world_fact";
 
+/**
+ * Which programme an execution belongs to, as the MOD's OWN JOURNAL states it.
+ *
+ * <p>
+ * WHY THIS IS ON THE WIRE. A receipt used to carry an `executionId` and nothing about the plan that asked for it, so a
+ * consumer that had to know whether a `succeeded` receipt was a STEP of a programme or a LONE outcome had to infer it
+ * from what happened to be running - and inference of that shape is what produced `turns opened 66 {adapter_ingress: 57}`
+ * (`round57`), `88 {adapter_ingress: 79}` (`round59`) and `82 {adapter_ingress: 82}` (`round62`) against 224 programme
+ * dispatches. The Mod's journal already binds every execution to the exact node that started it
+ * (`NodeExecutionBinding`, minted at the admission boundary), so the fact can say it instead of being guessed at.
+ * </p>
+ * <p>
+ * THREE MEMBERS, AND THE THIRD IS THE POINT. `standalone` says "no programme owns this execution" and `programme` says
+ * which one does; both are COMPLETE statements the journal can make. `unattributed` says the journal could not answer -
+ * a journal this build could not read, or one that set an older document aside - and it exists so that condition is
+ * NAMED (`unattributed_execution:<id>`) rather than spelled as an absent field the reader resolves for itself, by time or
+ * by whatever is in flight. Every guess this repository made about a receipt came from exactly that absence.
+ * </p>
+ */
+export type ExecutionOrigin =
+  | Readonly<{ kind: "programme"; programId: string; nodeId: string }>
+  | Readonly<{ kind: "standalone" }>
+  | Readonly<{ kind: "unattributed" }>;
+
 type ActiveExecution = Readonly<{
   executionId: string;
   requestId: string;
@@ -1633,6 +1657,16 @@ export type ExecutionReceipt = Readonly<{
   requestId: string;
   /** Exact Mod-authored action lineage; Host must never infer it from tool context. */
   actionId: string;
+  /**
+   * The programme this execution belongs to, as the Mod's journal states it - never inferred by the Host.
+   *
+   * REQUIRED ON THE WIRE AND OPTIONAL IN THIS TYPE, on purpose: `validateReceipt` refuses a frame that does not carry it,
+   * so every receipt that reaches this type through the bridge has one - while a test or a tool that READS a receipt for
+   * another purpose (`execution-correlation-ledger.test.ts`'s cancel sender) does not have to invent a statement it is not
+   * making. The pump treats an absent one as NO STATEMENT (`factExecutionOrigin`), which owes a turn rather than being
+   * filed as somebody's step.
+   */
+  origin?: ExecutionOrigin;
   state: ExecutionState;
   reasonCode: string;
   revision: number;
@@ -1705,6 +1739,14 @@ type BodyTrace = Readonly<{
   requestId: string;
   tick: number;
   revision: number;
+  /**
+   * The same provenance a receipt for this execution carries, from the same journal lookup.
+   *
+   * A body trace is the SAME STEP stated a second way (`event-pump.ts#IN_FLIGHT_SEMANTIC_PROGRESS_KINDS`), so a producer
+   * that stated the programme on the receipt and not here would leave half the turn-opening facts guessing. Required on the
+   * wire (`validateBodyTrace`), optional in this reading type for the same reason as `ExecutionReceipt.origin`.
+   */
+  origin?: ExecutionOrigin;
   location?: string;
   tile?: Readonly<{ x: number; y: number }>;
 }>;
@@ -4868,7 +4910,7 @@ function validateExecutionRequestEnvelope(value: Record<string, unknown>): strin
 }
 
 function validateReceipt(value: Record<string, unknown>): string | null {
-  const allowedKeys = ["executionId", "requestId", "actionId", "state", "reasonCode", "revision", "evidence"];
+  const allowedKeys = ["executionId", "requestId", "actionId", "state", "reasonCode", "revision", "evidence", "origin"];
   if ("observation" in value) allowedKeys.push("observation");
   if ("piggybackedScene" in value) allowedKeys.push("piggybackedScene");
   if ("nativeNotices" in value) allowedKeys.push("nativeNotices");
@@ -4880,6 +4922,7 @@ function validateReceipt(value: Record<string, unknown>): string | null {
     typeof value.state === "string" &&
     EXECUTION_STATES.includes(value.state as ExecutionState) &&
     isReasonCode(value.reasonCode) &&
+    validateExecutionOrigin(value.origin) === null &&
     Number.isSafeInteger(value.revision) &&
     (value.evidence === null || isRecord(value.evidence)) &&
     (value.ownerKind === undefined || (typeof value.ownerKind === "string" && value.ownerKind.length <= 128)) &&
@@ -4910,6 +4953,26 @@ function isNativeNotices(value: unknown): value is readonly string[] {
         item.trim().length > 0,
     )
   );
+}
+
+/**
+ * One execution's provenance, as the tagged union it is: the id pair is present exactly when a programme owns the
+ * execution, and nothing else is.
+ *
+ * A `programme` with no `nodeId`, a `standalone` that names one, an unknown member and a bare string are all refused -
+ * so "which programme" cannot be half-stated, and the Host never has to choose which half to believe.
+ */
+export function validateExecutionOrigin(value: unknown): string | null {
+  if (!isRecord(value)) return "invalid_execution_origin";
+  if (value.kind === "programme")
+    return hasExactKeys(value, ["kind", "programId", "nodeId"]) &&
+      isOpaqueId(value.programId) &&
+      isOpaqueId(value.nodeId)
+      ? null
+      : "invalid_execution_origin";
+  if (value.kind === "standalone" || value.kind === "unattributed")
+    return hasExactKeys(value, ["kind"]) ? null : "invalid_execution_origin";
+  return "invalid_execution_origin";
 }
 
 export function validateLocalObservation(value: unknown): string | null {
@@ -5424,10 +5487,20 @@ function isBodyTraceCategory(value: unknown): value is BodyTrace["category"] {
 }
 
 function validateBodyTrace(value: Record<string, unknown>): string | null {
-  return hasOnlyKeys(value, ["category", "executionId", "requestId", "tick", "revision", "location", "tile"]) &&
+  return hasOnlyKeys(value, [
+    "category",
+    "executionId",
+    "requestId",
+    "tick",
+    "revision",
+    "origin",
+    "location",
+    "tile",
+  ]) &&
     isBodyTraceCategory(value.category) &&
     isOpaqueId(value.executionId) &&
     isOpaqueId(value.requestId) &&
+    validateExecutionOrigin(value.origin) === null &&
     typeof value.tick === "number" &&
     Number.isSafeInteger(value.tick) &&
     value.tick >= 0 &&

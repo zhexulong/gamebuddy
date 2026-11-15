@@ -42,6 +42,7 @@ public sealed class BridgeReceiptWireParityTests
             "world_not_ready",
             1,
             new Dictionary<string, string> { ["detail"] = "machine=target;slot=none" },
+            new BridgeExecutionOrigin("programme", "plan_0001", "n02"),
             new BridgeLocalObservation("Farm", 1, 2, 0, "0600", false, 7),
             new ObserveSceneResultPayload(
                 ObservationId,
@@ -78,6 +79,12 @@ public sealed class BridgeReceiptWireParityTests
         payload.GetProperty("reasonCode").GetString().Should().Be("world_not_ready");
         payload.GetProperty("revision").GetInt64().Should().Be(1);
         payload.GetProperty("evidence").GetProperty("detail").GetString().Should().Be("machine=target;slot=none");
+        // THE PROVENANCE CROSSES THE LANGUAGE BOUNDARY, which is the whole reason it is on this fixture: the Host's own
+        // validator refuses a receipt that does not carry it (`host/src/protocol.ts#validateReceipt`), so a Mod that
+        // stopped stating it would fail the Host parity test rather than quietly go back to being guessed at.
+        payload.GetProperty("origin").GetProperty("kind").GetString().Should().Be("programme");
+        payload.GetProperty("origin").GetProperty("programId").GetString().Should().Be("plan_0001");
+        payload.GetProperty("origin").GetProperty("nodeId").GetString().Should().Be("n02");
         payload.GetProperty("observation").GetProperty("location").GetString().Should().Be("Farm");
         payload.GetProperty("observation").GetProperty("revision").GetInt64().Should().Be(7);
         payload.GetProperty("piggybackedScene").GetProperty("observationId").GetString().Should().Be(ObservationId);

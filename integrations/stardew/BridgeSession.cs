@@ -1123,7 +1123,8 @@ string? bodyProgramUnavailableReason = null,
             return false;
         }
         BridgeBodyTrace bodyTrace = new(trace.Category, trace.ExecutionId, trace.RequestId, trace.Tick, trace.Revision,
-            trace.Location, trace.ActorTile is Vector2 tile ? new BridgeTile(tile.X, tile.Y) : null);
+            trace.Location, trace.ActorTile is Vector2 tile ? new BridgeTile(tile.X, tile.Y) : null,
+            this.OriginOf(trace.ExecutionId));
         return this.TryCreateSemanticEvent(generation, trace.Category, correlationId, "body_trace", bodyTrace, out json);
     }
 
@@ -1582,7 +1583,28 @@ string? bodyProgramUnavailableReason = null,
         string? resolvedActionId = actionId ?? receipt.ActionId ?? binding?.ActionId;
         if (!BridgeProtocol.IsOpaqueId(resolvedActionId))
             return false;
-        return TryProjectReceipt(receipt, resolvedActionId!, out bridgeReceipt);
+        return TryProjectReceipt(receipt, resolvedActionId!, this.OriginOf(receipt.ExecutionId), out bridgeReceipt);
+    }
+
+    /// <summary>
+    /// What this Mod's journal says about the programme an execution belongs to.
+    ///
+    /// <para>
+    /// ONE LOOKUP, TWO PROJECTIONS. A receipt and its body trace are the same step stated twice, so both read this and
+    /// neither can state a different programme for one execution. A composition with no body-program journal has no
+    /// programmes at all, so every execution in it is genuinely <c>standalone</c> - a complete statement, not a guess.
+    /// </para>
+    /// </summary>
+    private BridgeExecutionOrigin OriginOf(string? executionId)
+    {
+        if (this.bodyProgramAuthority is null) return new BridgeExecutionOrigin("standalone");
+        BodyProgramExecutionOrigin origin = this.bodyProgramAuthority.AttributeExecution(executionId);
+        return origin.Kind switch
+        {
+            BodyProgramExecutionOriginKind.Node => new BridgeExecutionOrigin("programme", origin.ProgramId, origin.NodeId),
+            BodyProgramExecutionOriginKind.Standalone => new BridgeExecutionOrigin("standalone"),
+            _ => new BridgeExecutionOrigin("unattributed"),
+        };
     }
 
     /// <summary>
@@ -1593,13 +1615,18 @@ string? bodyProgramUnavailableReason = null,
     /// ledger model is not published until it is added below -- the scene ground
     /// summary and the native notices were both silently dropped this way. Kept
     /// pure and internal so that omission is testable directly.
+    ///
+    /// <paramref name="origin"/> is required rather than defaulted for the same reason: an origin that a caller could
+    /// leave out is an origin the wire would silently stop carrying, which is the defect this field exists to end. The
+    /// journal supplies it (<see cref="OriginOf"/>), so "which programme" is never this projection's opinion.
     /// </summary>
-    internal static bool TryProjectReceipt(LocalExecutionReceipt receipt, string resolvedActionId, out BridgeReceipt bridgeReceipt)
+    internal static bool TryProjectReceipt(LocalExecutionReceipt receipt, string resolvedActionId, BridgeExecutionOrigin origin, out BridgeReceipt bridgeReceipt)
     {
         bridgeReceipt = default!;
         if (!BridgeProtocol.IsOpaqueId(resolvedActionId)
             || !BridgeProtocol.IsOpaqueId(receipt.ExecutionId)
-            || !BridgeProtocol.IsOpaqueId(receipt.RequestId))
+            || !BridgeProtocol.IsOpaqueId(receipt.RequestId)
+            || origin is null)
             return false;
 
         bridgeReceipt = new BridgeReceipt(
@@ -1610,6 +1637,7 @@ string? bodyProgramUnavailableReason = null,
             receipt.ReasonCode,
             receipt.Revision,
             receipt.Evidence is null ? null : new Dictionary<string, string> { ["detail"] = receipt.Evidence },
+            origin,
             receipt.Observation,
             receipt.PiggybackedScene,
             receipt.NativeNotices);

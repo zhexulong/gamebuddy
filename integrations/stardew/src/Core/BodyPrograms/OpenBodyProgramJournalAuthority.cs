@@ -328,6 +328,35 @@ public sealed class OpenBodyProgramJournalAuthority
         return new(programId, BodyProgramQueryCode.Found, Array.AsReadOnly(events), events.LastOrDefault()?.Cursor ?? cursor, this.state.EventHighWater);
     }
 
+    /// <summary>
+    /// Which programme node owns this execution, as the durable journal binds it.
+    ///
+    /// <para>
+    /// The binding is written at the admission boundary and kept on the node through its whole life
+    /// (<see cref="TryConsumeHostGrant"/> mints it, <see cref="TryComplete"/> carries it over), so a receipt that arrives
+    /// after the node settled - the LAST node's receipt, which is the one `round62` measured - still finds its own plan
+    /// here. That is the fact the Host's turn decision was missing.
+    /// </para>
+    /// <para>
+    /// ABSENCE OF EVIDENCE IS NOT EVIDENCE OF NONE. A journal this build could not read, or one that set an older
+    /// document aside, cannot say that NO node owns an execution - its miss means "nothing is known", which is a
+    /// different statement from <see cref="BodyProgramExecutionOrigin.Standalone"/> and the only one a reader may act on.
+    /// So those two conditions answer <see cref="BodyProgramExecutionOrigin.Unattributed"/> and the caller names the
+    /// defect instead of guessing.
+    /// </para>
+    /// </summary>
+    public BodyProgramExecutionOrigin AttributeExecution(string? executionId)
+    {
+        bool canSayNothingIsKnown = this.Superseded is null
+            && this.OpenStatus is not (BodyProgramJournalOpenStatus.Corrupt or BodyProgramJournalOpenStatus.PersistenceReadFailed);
+        if (!canSayNothingIsKnown || string.IsNullOrEmpty(executionId)) return BodyProgramExecutionOrigin.Unattributed;
+        foreach (BodyProgramJournalProgram program in this.state.Programs)
+            foreach (BodyProgramJournalNode node in program.Nodes)
+                if (node.ExecutionBinding is { } binding && string.Equals(binding.ExecutionId, executionId, StringComparison.Ordinal))
+                    return BodyProgramExecutionOrigin.OfNode(program.Program.ProgramId, node.NodeId);
+        return BodyProgramExecutionOrigin.Standalone;
+    }
+
     public BodyProgramControllerResult<BodyProgramStatusSnapshot> TryStop(string programId, long stopEpoch)
     {
         if (!MayOperateOnPrograms) return BodyProgramControllerResult.Failure<BodyProgramStatusSnapshot>(BodyProgramControllerResultCode.RecoveryRequired);
