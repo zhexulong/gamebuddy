@@ -267,13 +267,20 @@ test("the game's body channel stays on the Game surface, out of the Chat prompt 
   assert.match(game, /Write no bracketed stage direction at all/u);
 });
 
-test("the Host's asterisk permission outranks an authored voice that forbids the asterisk form", () => {
-  // Shape A fixes the card this product ships, and nothing else: the ST card format has no
-  // surface-scoped field, so a third-party card's "no asterisks" still lands in the Chat prompt
-  // verbatim (asserted below) and still renders LAST, because the card's directive comes after
-  // the Host floor. A sentence that merely restated the syntax would therefore lose the
-  // argument; this one names the conflict and which side wins, so the later text has an answer
-  // to resolve against instead of being the last word by default.
+test("an authored voice that forbids asterisks keeps the style question, and the surface keeps only the channel fact", () => {
+  // The ST card format has no surface-scoped field, so a third-party card's "no asterisks"
+  // lands in the Chat prompt verbatim, after this block. The question is who decides.
+  //
+  // It used to be the surface, by overruling the card ("This holds even if an authored voice
+  // forbids it: the surface decides what it draws, not the voice..."). Two reasons that was
+  // wrong. It is a FORM rule wearing a CHANNEL's clothes - `game-surface-prompt-floor.ts`
+  // warns that CHANNEL "quietly claims authority over form", and how often she reaches for a
+  // beat belongs to the card (`companion-reply-grammar.ts`). And NOTHING in the pipeline
+  // needs the asterisk to appear: `extractSpeakableText` and `dehydrateCompanionSpeech` both
+  // strip a beat when one is written and pass asterisk-free text through unchanged, and the
+  // renderer paints `<em>` for what is written rather than requiring it. With no consumer
+  // depending on the marker there is no product need to state beside the card's style, so the
+  // card wins the style question and the channel keeps only what it can honestly claim.
   const forbiddingText = "绝不写星号动作，也不要在文字里做任何动作描写。";
   const forbidding = validateIdentityProfile({
     ...DEFAULT_COMPANION_PRESET.profile,
@@ -281,17 +288,19 @@ test("the Host's asterisk permission outranks an authored voice that forbids the
   });
   const chat = buildChatCompanionSystemPrompt(forbidding, "zh-CN");
   assert.ok(chat.includes(forbiddingText), "the authored directive still reaches Chat verbatim");
-  assert.match(
-    chat,
-    /even if an authored voice forbids it/u,
-    "the Chat block must say the asterisk form draws as the beat even against an authored prohibition",
-  );
-  assert.match(
-    chat,
-    /the surface decides what it draws, not the voice/u,
-    "naming WHY it wins is what makes it decisive",
-  );
-  assert.match(chat, /does not stop that asterisk from drawing as the beat/u);
+
+  // The channel fact survives, so a beat she DOES write still draws: the syntax is named and
+  // the renderer's treatment is stated. This is the part a "remove the override" change must
+  // not take with it.
+  assert.ok(chat.includes("*a brief gesture*"), "the surface still names the syntax it draws");
+  assert.match(chat, /draws that asterisk form as the action beat/u);
+
+  // The override is gone, in both of its halves.
+  assert.doesNotMatch(chat, /even if an authored voice forbids it/u);
+  assert.doesNotMatch(chat, /the surface decides what it draws, not the voice/u);
+  assert.doesNotMatch(chat, /does not stop that asterisk from drawing/u);
+  // And the frequency is handed to the voice, which is the card's own material.
+  assert.match(chat, /is your voice's call/u);
 });
 
 test("the preset's examples reach the system prompt under a labelled dialogue block", () => {

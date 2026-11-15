@@ -524,24 +524,36 @@ export const COMPANION_ACTION_SYNTAX = "*a brief gesture*";
  * speech), and the native chat box has its own presentation dehydration
  * (`companion-speech-dehydration.ts`).
  *
- * THE LAST SENTENCE IS THE ONE THAT WINS, and it exists because the card speaks
- * after this block. Measured on the shipped card before this existed: the Chat
- * prompt carried this permission at index 747 and the card's own "打字里不用星号"
- * at 4219, so the surface instruction reached the model first and the authored
- * prohibition reached it last - and a prohibition that speaks last is the rule.
- * The shipped card no longer says it, but the ST card format has no
- * surface-scoped field, so a third-party card's "no asterisks" still lands in
- * this prompt verbatim. There is exactly one place able to answer that, and it
- * is here: state who decides. A restatement of the syntax would lose the
- * argument; naming the conflict and the winner does not.
+ * THE STYLE QUESTION IS THE CARD'S, AND THE LAST SENTENCE SAYS SO. The shipped card used
+ * to carry "打字里不用星号": measured on that card, this permission reached the model at
+ * index 747 and the authored prohibition at 4219 - so the surface spoke first and the
+ * authored prohibition spoke last, and a prohibition that speaks last is the rule. The
+ * shipped card no longer says it, but the ST card format has no surface-scoped field, so a
+ * third-party card's "no asterisks" still lands in this prompt verbatim and still speaks
+ * after this block.
+ *
+ * That conflict used to be answered by overruling the card - "This holds even if an
+ * authored voice forbids it: the surface decides what it draws, not the voice, and an
+ * instruction not to write asterisks does not stop that asterisk from drawing as the
+ * beat" - and that was wrong on two counts. It is a FORM rule wearing a CHANNEL's clothes,
+ * the exact drift `game-surface-prompt-floor.ts` names as the danger of the CHANNEL class
+ * ("state what the surface DOES, never what her prose must look like"), and how often she
+ * reaches for a beat is the card's (`companion-reply-grammar.ts`: the card owns her form).
+ * And nothing in the pipeline needs the marker to APPEAR: the voice layer
+ * (`vendor/pi-koe/src/speakable-text.ts`) and the in-game bubble
+ * (`companion-speech-dehydration.ts`) both STRIP a beat when one is written and pass
+ * asterisk-free text through unchanged, and the renderer paints `<em>` for what is written
+ * rather than requiring it. With no consumer depending on the marker, there is no product
+ * need to state beside the card's style, so the card wins the style question outright and
+ * the last sentence hands it the frequency.
  */
 const CHAT_SURFACE_ACTION_SYNTAX = `To show a gesture, an expression or a mood in text, write it exactly as ${COMPANION_ACTION_SYNTAX}.`;
-const CHAT_SURFACE_ACTION_OWNERSHIP =
-  "This holds even if an authored voice forbids it: the surface decides what it draws, not the voice, and an instruction not to write asterisks does not stop that asterisk from drawing as the beat.";
+const CHAT_SURFACE_ACTION_FORM =
+  "How often you reach for one, and whether you reach for a beat at all, is your voice's call: this is the shape the surface draws when you do.";
 const CHAT_SURFACE_DIVERGENCE = [
   CHAT_SURFACE_ACTION_SYNTAX,
   "The surface draws that asterisk form as the action beat, and a full-width parenthesis that opens your reply as the prosody badge set ahead of your words; a parenthesis inside a sentence stays prose, where you put it.",
-  CHAT_SURFACE_ACTION_OWNERSHIP,
+  CHAT_SURFACE_ACTION_FORM,
 ].join(" ");
 
 /**
@@ -563,7 +575,7 @@ const CHAT_SURFACE_DIVERGENCE = [
  * that somehow does.
  * </p>
  */
-export const CHAT_SURFACE_SKIP_SIGNATURE: string = CHAT_SURFACE_ACTION_OWNERSHIP;
+export const CHAT_SURFACE_SKIP_SIGNATURE: string = CHAT_SURFACE_ACTION_FORM;
 
 /**
  * Human-readable name of the language the companion must answer in.
