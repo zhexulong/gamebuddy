@@ -13,22 +13,39 @@
  *                   gate peer bound" and "the generic launch refusal is the guardian prerequisite only when no
  *                   endpoint can arm" - and the suite returned `pass 5 fail 3`, which is the shape a driver
  *                   that excused every launch refusal as "no guardian here" would leave behind.
+ *
+ * red-proof: inject  measured 2026-11-15 again, for the third verdict: making the attachment branch
+ *                   unreachable (`if (false)` instead of the attached-and-not-running test) and dropping the
+ *                   confirmation-freshness guard turned exactly two assertions red - "an attachment that
+ *                   landed proves the instance-word gap" and "the save gap needs the Mod's own fresh word for
+ *                   THIS run's confirmation" - and the suite returned `pass 15 fail 2`. That is the shape a
+ *                   classifier would leave behind if it reported `blocked_by_product` for a state it had not
+ *                   proved, which is the one thing this vocabulary must never do.
  */
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import {
+  CHAIN_RUNGS,
+  CHAIN_STEP_NAMES,
+  CHAIN_STEPS,
   LAUNCH_PLATEAU_MS,
   LAUNCH_STEPS,
+  PRODUCT_GAPS,
   VERDICTS,
+  blockedByProductLine,
+  chainStepsLine,
+  classifyChainStop,
   classifyLaunchRefusal,
   classifySilentLaunch,
+  describeChain,
   describeGameState,
   describeLaunchPlateau,
   describeLaunchProgress,
   guardianCanArm,
   notMeasuredLine,
   readinessOf,
+  readBlockedByProduct,
   readNotMeasured,
 } from "./game-launch-verdict.mjs";
 
@@ -220,4 +237,117 @@ test("a plateau names the unchanged tuple, its age, and the game's last word", (
   assert.match(line, /^PLATEAU: instance=launching\/attachment=none unchanged for 120s \(elapsed=130s\)/u);
   assert.match(line, /bridge session unavailable/u);
   assert.equal(LAUNCH_PLATEAU_MS >= 60_000, true);
+});
+
+test("the chain prints every rung, the elapsed each took, and every rung it never reached", () => {
+  const chain = [
+    { name: CHAIN_STEPS.launchAdmitted, atMs: 4_000, proof: "the launch route answered HTTP 200" },
+    { name: CHAIN_STEPS.guardianArmed, atMs: 5_500, proof: "this run's own broker started the Guardian" },
+    { name: CHAIN_STEPS.processStarted, atMs: 9_000, proof: "StardewModdingAPI pid 1856" },
+    { name: CHAIN_STEPS.saveLoaded, atMs: 9_400, proof: "loaded save 'GameBuddyFarm_451234657'" },
+    { name: CHAIN_STEPS.cabinBuilt, atMs: 13_000, proof: "cabins_now=1" },
+    { name: CHAIN_STEPS.cabinReadAuto, atMs: 14_000, proof: "7 request(s), none pressed by this driver" },
+    { name: CHAIN_STEPS.cabinConfirm, atMs: 74_000, proof: "the confirm route answered HTTP 409" },
+  ];
+  const lines = describeChain(chain);
+  assert.equal(lines.length, CHAIN_RUNGS.length);
+  assert.match(lines[0], /^CHAIN 1\/8 launch admitted @4s - the launch route answered HTTP 200$/u);
+  assert.match(lines[5], /^CHAIN 6\/8 cabin read\(auto\) @14s - /u);
+  // The rung the run never reached is printed BY NAME: a reader must not have to infer the stop.
+  assert.equal(lines[7], "CHAIN 8/8 attach - not reached");
+  assert.deepEqual(
+    chain.filter((entry) => entry.name === CHAIN_STEPS.cabinReadAuto).map((entry) => entry.name),
+    ["cabin read(auto)"],
+  );
+  // The two spellings of the read rung are one rung, so a pressed read is not an extra step.
+  const pressed = describeChain([
+    { name: CHAIN_STEPS.launchAdmitted, atMs: 1_000, proof: "admitted" },
+    { name: CHAIN_STEPS.cabinReadPressed, atMs: 2_000, proof: "after this driver pressed the refresh control" },
+  ]);
+  assert.match(pressed[5], /^CHAIN 6\/8 cabin read\(pressed\) @2s - /u);
+  assert.equal(pressed[6], "CHAIN 7/8 cabin confirm - not reached");
+  assert.equal(describeChain([])[0], "CHAIN: no rung of the launch chain was reached");
+});
+
+test("the chain is one field on the report's line, and an empty one says so", () => {
+  assert.equal(
+    chainStepsLine([
+      { name: CHAIN_STEPS.launchAdmitted },
+      { name: CHAIN_STEPS.guardianArmed },
+      { name: CHAIN_STEPS.cabinReadAuto },
+    ]),
+    "launch admitted>guardian armed>cabin read(auto)",
+  );
+  assert.equal(chainStepsLine([]), "none");
+  assert.equal(CHAIN_STEP_NAMES.length, CHAIN_RUNGS.length + 1);
+  assert.equal(CHAIN_STEP_NAMES.includes(CHAIN_STEPS.cabinReadPressed), true);
+});
+
+test("a product gap is a third verdict with its own line, and it round-trips", () => {
+  const line = blockedByProductLine(PRODUCT_GAPS.attachNeedsNativeSave, "the Mod answered awaiting_save");
+  assert.equal(line, "BLOCKED-BY-PRODUCT: attach_needs_native_save: the Mod answered awaiting_save");
+  assert.deepEqual(readBlockedByProduct(`noise\n${line}\nmore`), {
+    gap: "attach_needs_native_save",
+    detail: "the Mod answered awaiting_save",
+  });
+  // A driver that measured, and one that measured nothing, carry neither word.
+  assert.equal(readBlockedByProduct("GAME-LAUNCH w: measured launch=ready"), null);
+  assert.equal(readBlockedByProduct(notMeasuredLine("game_install_absent", "nowhere")), null);
+  assert.equal(readBlockedByProduct(null), null);
+});
+
+test("an attachment that landed proves the instance-word gap, and says nothing about a save", () => {
+  const reading = classifyChainStop({
+    state: { ok: true, instanceStatus: "launching", attachmentStatus: "attached" },
+    attachmentResponse: { state: "awaiting_save", reasonCode: "binding_persist_pending", updatedAtUnixMs: 5_000 },
+    confirmPressedAtMs: 4_000,
+  });
+  assert.equal(reading.verdict, VERDICTS.blockedByProduct);
+  assert.equal(reading.gap, PRODUCT_GAPS.instanceStatusNeverRunning);
+  assert.match(reading.detail, /ownership=player_external/u);
+});
+
+test("the save gap needs the Mod's own fresh word for THIS run's confirmation", () => {
+  const state = { ok: true, instanceStatus: "launching", attachmentStatus: "none" };
+  const fresh = classifyChainStop({
+    state,
+    attachmentResponse: { state: "awaiting_save", reasonCode: "binding_persist_pending", updatedAtUnixMs: 1_000_000 },
+    confirmPressedAtMs: 999_000,
+  });
+  assert.equal(fresh.verdict, VERDICTS.blockedByProduct);
+  assert.equal(fresh.gap, PRODUCT_GAPS.attachNeedsNativeSave);
+  assert.match(fresh.detail, /awaiting_save\/reason=binding_persist_pending/u);
+  // A response written by an EARLIER run is not a reading about this one.
+  assert.equal(
+    classifyChainStop({
+      state,
+      attachmentResponse: { state: "awaiting_save", reasonCode: "binding_persist_pending", updatedAtUnixMs: 1_000 },
+      confirmPressedAtMs: 999_000,
+    }),
+    null,
+  );
+  // Nor is a confirmation this run never sent, or an answer that is not the save wait.
+  assert.equal(
+    classifyChainStop({
+      state,
+      attachmentResponse: { state: "awaiting_save", reasonCode: "binding_persist_pending", updatedAtUnixMs: 1_000_000 },
+      confirmPressedAtMs: null,
+    }),
+    null,
+  );
+  for (const attachmentResponse of [
+    null,
+    { state: "ready", reasonCode: "none", updatedAtUnixMs: 1_000_000 },
+    { state: "rejected", reasonCode: "farmhand_not_initialized", updatedAtUnixMs: 1_000_000 },
+  ])
+    assert.equal(classifyChainStop({ state, attachmentResponse, confirmPressedAtMs: 999_000 }), null);
+});
+
+test("a ready pair proves no gap, and neither does a launch that never produced an attachment", () => {
+  assert.equal(
+    classifyChainStop({ state: { ok: true, instanceStatus: "running", attachmentStatus: "attached" } }),
+    null,
+  );
+  assert.equal(classifyChainStop({ state: { ok: false, status: "unreachable:ECONNREFUSED" } }), null);
+  assert.equal(classifyChainStop({ state: { ok: true, instanceStatus: "launching", attachmentStatus: "none" } }), null);
 });

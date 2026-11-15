@@ -9,7 +9,7 @@ import { mkdir, access, writeFile, readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { runPaths, loadRunConfig, REPO_ROOT, KIT_ROOT } from "../lib/config.mjs";
 import { registerRunProcess } from "../lib/run-owner.mjs";
-import { readNotMeasured } from "../capture/game-launch-verdict.mjs";
+import { readBlockedByProduct, readNotMeasured } from "../capture/game-launch-verdict.mjs";
 import { DRIVERS } from "./drivers.mjs";
 
 /* The roster lives in one module because the report reconciles the same list (drivers.mjs). */
@@ -88,6 +88,14 @@ async function main() {
    */
   let notMeasuredCount = 0;
   const notMeasuredKeys = [];
+  /*
+   * A driver whose chain stopped at a gap the PRODUCT owns is a fourth outcome: it is not a pass (the
+   * product's own target was not reached) and not a failure (nothing was refused - the instrument met a
+   * step no run on any machine can cross, `game-launch-verdict.mjs` `PRODUCT_GAPS`). Counted by name so the
+   * totals line says which gap, from the driver's own facts file, never from a second classification here.
+   */
+  let blockedByProductCount = 0;
+  const blockedByProductKeys = [];
   /* The failed drivers by NAME. A count beside a mostly-green reconciliation is the shape the operator could
    * not act on: `failed=2 of 22` names nothing, and a reader has to go hunting through the log for which two.
    * The roster keys are printed in the DONE line so the failure and its owner are read together. */
@@ -129,6 +137,12 @@ async function main() {
         `  NOT-MEASURED ${driver.key}: ${verdict.reason}${verdict.detail.length === 0 ? "" : ` - ${verdict.detail}`}`,
       );
     }
+    const gap = readBlockedByProduct(await factsText(join(paths.outRoot, driver.out)));
+    if (gap !== null) {
+      blockedByProductCount += 1;
+      blockedByProductKeys.push(`${driver.key}:${gap.gap}`);
+      log(`  BLOCKED-BY-PRODUCT ${driver.key}: ${gap.gap}${gap.detail.length === 0 ? "" : ` - ${gap.detail}`}`);
+    }
   }
 
   // `skipped` used to mean "filtered out by --driver=", so a driver skipped by a done marker was counted as
@@ -136,9 +150,11 @@ async function main() {
   // `failed=0 of 20 (skipped=0)` and exited 0 above eight-day-old screenshots. A run that executed nothing
   // verified nothing, so it is a failure with its own exit code rather than a pass.
   log(
-    `DONE-CAPTURE failed=${failed} of ${selected.length} ran=${executed.length} skipped=${skippedByMarker} not-selected=${DRIVERS.length - selected.length} not-measured=${notMeasuredCount}${
+    `DONE-CAPTURE failed=${failed} of ${selected.length} ran=${executed.length} skipped=${skippedByMarker} not-selected=${DRIVERS.length - selected.length} not-measured=${notMeasuredCount} blocked-by-product=${blockedByProductCount}${
       failedKeys.length === 0 ? "" : ` failed-drivers=[${failedKeys.join(",")}]`
-    }${notMeasuredKeys.length === 0 ? "" : ` not-measured-drivers=[${notMeasuredKeys.join(",")}]`}`,
+    }${notMeasuredKeys.length === 0 ? "" : ` not-measured-drivers=[${notMeasuredKeys.join(",")}]`}${
+      blockedByProductKeys.length === 0 ? "" : ` blocked-by-product-drivers=[${blockedByProductKeys.join(",")}]`
+    }`,
   );
   if (selected.length === 0) {
     log(`capture_selected_nothing: --driver= matched none of ${DRIVERS.length} drivers, so this run verified nothing`);

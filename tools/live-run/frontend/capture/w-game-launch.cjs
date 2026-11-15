@@ -51,12 +51,25 @@
 // bound (`game-launch-verdict.mjs`). It never reports a pass it did not measure, and never a failure for
 // a prerequisite this machine does not hold.
 //
+// THREE VERDICTS, NOT TWO. The chain's own target - `instance=running` with `attachment=attached` - is
+// unreachable by construction for a GameBuddy-launched Player Host (`PRODUCT_GAPS` in
+// `game-launch-verdict.mjs` names both missing states, with the code that makes them missing). A driver
+// that failed on that target would fail on every machine, every run, for a reason no operator can act
+// on, and its readers would learn to ignore it. So the run prints the chain rung by rung - how far the
+// launch got, when, and the fact that proved it - and reports `blocked_by_product:<gap>` ONLY when this
+// run's own readings prove the gap it names. Everything else keeps its old word: `failed` is still the
+// product refusing something it was asked to do.
+//
 // Named outcomes, never a bare timeout:
 //   NOT-MEASURED: guardian_pipe_unreachable | game_prerequisites_missing | game_install_absent |
+//                 smapi_install_absent | guardian_image_absent |
 //                 installation_registration_refused | lifecycle_activation_refused |
 //                 no_installation_panel | no_installation_discovered | game_state_unreadable |
-//                 game_surface_cannot_start_turn
+//                 game_surface_cannot_start_turn | cabin_handoff_not_offered
+//   BLOCKED-BY-PRODUCT: instance_status_never_running | attach_needs_native_save
 //   game_never_reached_ready:<instance>/<attachment>
+//   cabin_read_never_fired | cabin_handoff_no_cabin:<state> | cabin_handoff_not_admitted |
+//   cabin_handoff_did_not_attach:<state>
 //   companion_silent_after:<ms>
 //   game_launch_unavailable:<code>[:<cause>]
 const path = require("node:path");
@@ -75,12 +88,18 @@ const {
   REPO_ROOT,
 } = require("./common.cjs");
 const {
+  CHAIN_STEP_NAMES,
+  CHAIN_STEPS,
   GAME_LAUNCH_PREFIX,
   LAUNCH_PLATEAU_MS,
   LAUNCH_STEPS,
   VERDICTS,
+  blockedByProductLine,
+  chainStepsLine,
+  classifyChainStop,
   classifyLaunchRefusal,
   classifySilentLaunch,
+  describeChain,
   describeGameState,
   describeLaunchPlateau,
   describeLaunchProgress,
@@ -226,7 +245,7 @@ const readLifecycleControls = () => {
 const readCabinHandoff = () => {
   const surface = document.querySelector('[data-testid="game-surface"]');
   const handoff = surface === null ? null : surface.querySelector("section.stardew-cabin-handoff");
-  if (handoff === null) return { present: false, choices: [], secondary: [], sentences: [] };
+  if (handoff === null) return { present: false, choices: [], secondary: [], sentences: [], launchLine: null };
   const list = handoff.querySelector('[data-testid="cabin-choice-list"]');
   const describeButton = (button) => {
     const rect = button.getBoundingClientRect();
@@ -246,6 +265,21 @@ const readCabinHandoff = () => {
             confirm: button === null ? null : describeButton(button),
           };
         });
+  /*
+   * The panel's own account of the launch wait, which is a different fact from the choice list:
+   * `reading` is the panel still asking the Host by itself (the admitted launch's bounded read), and
+   * `wait_expired` is its budget spent with nothing back. Read from the panel's own test ids rather
+   * than from the copy, so the driver is not deciding what a sentence meant
+   * (`dialogue-web/src/components/GameStatePanel.tsx:980-1000`).
+   */
+  const launchLineFor = (testId, kind) => {
+    const node = handoff.querySelector(`[data-testid="${testId}"]`);
+    return node === null ? null : { kind, text: (node.textContent ?? "").replace(/\s+/gu, " ").trim() };
+  };
+  const launchLine =
+    launchLineFor("cabin-launch-reading", "reading") ??
+    launchLineFor("cabin-launch-found", "cabin_ready") ??
+    launchLineFor("cabin-launch-wait-expired", "wait_expired");
   return {
     present: true,
     choices,
@@ -253,6 +287,7 @@ const readCabinHandoff = () => {
     sentences: [...handoff.querySelectorAll(".game-status, .game-subpanel-note")]
       .map((node) => (node.textContent ?? "").replace(/\s+/gu, " ").trim())
       .filter((text) => text.length > 0),
+    launchLine,
   };
 };
 
@@ -276,29 +311,43 @@ const readGameTranscript = () => {
 };
 
 /**
- * Read-only: the pids of the two processes a running game lives in. Never a kill, and never a filter by
- * image name — the driver reports what it found and the Host's own stop control is what ends a game.
+ * Read-only: the pids and image names of the processes a running game lives in.
+ *
+ * Never a kill, and never a filter by image name for anything but READING the table: the driver reports
+ * what it found, and the Host's own stop control is what ends a game.
  */
-const runningGameProcesses = () => {
+const gameProcesses = () => {
   try {
     const out = execFileSync(
       "powershell",
       [
         "-NoProfile",
         "-Command",
-        "(Get-Process -Name StardewModdingAPI,Stardew* -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Id) -join ','",
+        "(Get-Process -Name StardewModdingAPI,Stardew* -ErrorAction SilentlyContinue | ForEach-Object { \"$($_.Id):$($_.ProcessName)\" }) -join ','",
       ],
       { encoding: "utf8", timeout: 20_000, windowsHide: true },
     ).trim();
     if (out.length === 0) return [];
     return out
       .split(",")
-      .map((value) => Number.parseInt(value, 10))
-      .filter((pid) => Number.isFinite(pid));
+      .map((entry) => entry.trim())
+      .filter((entry) => entry.length > 0)
+      .map((entry) => {
+        const [pid, name] = entry.split(":");
+        return { pid: Number.parseInt(pid, 10), name: name ?? "unknown" };
+      })
+      .filter((row) => Number.isFinite(row.pid));
   } catch {
     return null;
   }
 };
+
+/** Just the pids: the shape `machinePrerequisites` records and the verdict line prints. */
+const runningGameProcesses = () => {
+  const rows = gameProcesses();
+  return rows === null ? null : rows.map((row) => row.pid);
+};
+
 
 /**
  * The machine's own Game prerequisites, read from the file system and the process table.
@@ -306,8 +355,15 @@ const runningGameProcesses = () => {
  * The Mod folder is a directory scan, not a name spelled here: the Host deploys the companion Mod into
  * the installation's `Mods` root and chooses the folder, so a driver that knew one spelling would
  * report a deployed Mod as absent.
+ *
+ * `launchChain` states what the chain below actually needs from this machine, one line per prerequisite,
+ * with the fact that was read for it. Four of them, and they are different kinds of thing: the game and
+ * SMAPI are files this driver can see; the generation and its resident Guardian image are published by
+ * the run's own launch phase and recorded in `state/launch.json` (`roleBroker.mode` is `armable` only
+ * when the generation ships the image, `hello_only` when it does not). Naming all four is what lets a
+ * later reader tell "this machine has no game" from "this generation cannot arm a role".
  */
-function machinePrerequisites(gameDir) {
+function machinePrerequisites(gameDir, launchState) {
   const inGame = (...parts) => path.join(gameDir, ...parts);
   const modsRoot = inGame("Mods");
   let modFolders = [];
@@ -319,6 +375,7 @@ function machinePrerequisites(gameDir) {
   } catch {
     modFolders = [];
   }
+  const roleBroker = launchState?.roleBroker ?? null;
   return {
     gameDir,
     gameInstalled: existsSync(inGame("Stardew Valley.dll")) || existsSync(inGame("Stardew Valley.exe")),
@@ -326,6 +383,14 @@ function machinePrerequisites(gameDir) {
     modsRootPresent: existsSync(modsRoot),
     modFoldersCarryingTheMod: modFolders,
     modConfigBesideTheMod: modFolders.map((name) => ({ folder: name, config: existsSync(path.join(modsRoot, name, "config.json")) })),
+    launchChain: {
+      game: existsSync(inGame("Stardew Valley.dll")) || existsSync(inGame("Stardew Valley.exe")),
+      smapi: existsSync(inGame("StardewModdingAPI.exe")),
+      mod: modFolders.length > 0,
+      generationServesTheGuardian: roleBroker?.mode ?? null,
+      guardianImage: roleBroker?.image?.path ?? null,
+      guardianImageSha256: roleBroker?.image?.sha256 ?? null,
+    },
     runningGameProcesses: runningGameProcesses(),
   };
 }
@@ -381,13 +446,13 @@ function runLaunchDriverPid(launchStatePath) {
 }
 
 /**
- * The launched game's own last word, read from SMAPI's own log.
+ * The tail of SMAPI's own log: `{ lines, writtenAtMs }`, or `null` when this machine has no such file.
  *
  * The Mod writes it (`%APPDATA%\StardewValley\ErrorLogs\SMAPI-latest.txt`), so a wait that stops moving can
  * be attributed to a game that is idle rather than to a Host still working. Read-only, bounded to the tail,
- * and the file's mtime travels with the line because the log outlives the process that wrote it.
+ * and the file's mtime travels with the lines because the log outlives the process that wrote it.
  */
-function lastSmapiLine(budgetBytes = 16_384) {
+function smapiLogTail(budgetBytes = 262_144) {
   const appData = process.env.APPDATA;
   if (typeof appData !== "string" || appData.length === 0) return null;
   const file = path.join(appData, "StardewValley", "ErrorLogs", "SMAPI-latest.txt");
@@ -399,14 +464,92 @@ function lastSmapiLine(budgetBytes = 16_384) {
       const buffer = Buffer.alloc(length);
       const read = readSync(fd, buffer, 0, length, size - length);
       const lines = buffer.toString("utf8", 0, read).split(/\r?\n/gu).filter((line) => line.trim().length > 0);
-      const salient = [...lines].reverse().find((line) => line.includes("GameBuddy")) ?? lines[lines.length - 1] ?? null;
-      return { line: salient, writtenAtMs: statSync(file).mtimeMs };
+      return { lines, writtenAtMs: statSync(file).mtimeMs };
     } finally {
       closeSync(fd);
     }
   } catch {
     return null;
   }
+}
+
+/** The launched game's own last word, read from the log's tail. `null` when there was no log to read. */
+function lastSmapiLine(budgetBytes = 16_384) {
+  const tail = smapiLogTail(budgetBytes);
+  if (tail === null) return null;
+  const salient =
+    [...tail.lines].reverse().find((line) => line.includes("GameBuddy")) ?? tail.lines[tail.lines.length - 1] ?? null;
+  return { line: salient, writtenAtMs: tail.writtenAtMs };
+}
+
+/**
+ * The rungs of the chain the launched GAME is the only witness of, each as the line that proves it.
+ *
+ * The Host's own state route answers `launching/none` for a whole launch and cannot say whether a save
+ * was loaded or a cabin was built; the game can, in its own words. Each pattern is the engine's or the
+ * Mod's own sentence (`Context: loaded save` is SMAPI echoing the engine; the cabin line is
+ * `ModEntry`'s own log of the native construction path), and the LAST match is the one that counts
+ * because the log is append-only within one run.
+ */
+const CHAIN_LOG_PATTERNS = Object.freeze([
+  { rung: CHAIN_STEPS.saveLoaded, pattern: /Context: loaded save '([^']+)'/u },
+  { rung: CHAIN_STEPS.cabinBuilt, pattern: /gave the companion world a native Cabin.*cabins_now=(\d+)/u },
+]);
+
+/**
+ * What the game's own log proves about this launch, or why it proves nothing.
+ *
+ * Freshness is part of the proof: `SMAPI-latest.txt` is rewritten by each game start but it outlives
+ * the process, so a tail written before this run's launch cannot be cited for it.
+ */
+function gameLogChainFacts(launchBeganMs) {
+  const tail = smapiLogTail();
+  if (tail === null) return { read: false, reason: "no SMAPI log to read on this machine", facts: {} };
+  if (Number.isFinite(launchBeganMs) && tail.writtenAtMs < launchBeganMs)
+    return {
+      read: true,
+      writtenAtMs: tail.writtenAtMs,
+      reason: `SMAPI-latest.txt was last written ${new Date(tail.writtenAtMs).toISOString()}, before this launch`,
+      facts: {},
+    };
+  const facts = {};
+  for (const { rung, pattern } of CHAIN_LOG_PATTERNS) {
+    const match = [...tail.lines].reverse().map((line) => pattern.exec(line)).find((candidate) => candidate !== null);
+    if (match !== undefined) facts[rung] = { line: match[0], captured: match[1] ?? null };
+  }
+  return { read: true, writtenAtMs: tail.writtenAtMs, reason: null, facts };
+}
+
+/**
+ * The Mod's own published word for an attachment request, read from the run root it was written into.
+ *
+ * The response file lives at `<declaredDataRoot>/stardew-private-bootstrap/<bootstrap>/session/`
+ * (`integrations/stardew/FarmhandProvisioningModels.cs:17`), one directory per bootstrap, so the read is
+ * a bounded scan of that level rather than a path this driver spells. Its `state`/`reasonCode` are the
+ * Mod's classification of the confirmation, which the Host's `409` does not carry.
+ */
+function readAttachmentResponse(declaredDataRoot) {
+  if (typeof declaredDataRoot !== "string" || declaredDataRoot.length === 0) return null;
+  const bootstrapRoot = path.join(declaredDataRoot, "stardew-private-bootstrap");
+  let bootstraps = [];
+  try {
+    bootstraps = readdirSync(bootstrapRoot, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => entry.name);
+  } catch {
+    return null;
+  }
+  const readings = [];
+  for (const name of bootstraps) {
+    const file = path.join(bootstrapRoot, name, "session", "stardew-attachment-response.json");
+    try {
+      readings.push({ file: path.basename(name), ...JSON.parse(readFileSync(file, "utf8")) });
+    } catch {
+      /* no response published for this bootstrap yet */
+    }
+  }
+  // The newest write is the one this run's confirmation caused; an older one belongs to a prior run.
+  return readings.sort((left, right) => Number(right.updatedAtUnixMs ?? 0) - Number(left.updatedAtUnixMs ?? 0))[0] ?? null;
 }
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -432,26 +575,58 @@ async function hostAnswers(port) {
   const launch = readLaunchState();
   const { say, flush } = reporter("w-game-launch.txt");
   const started = Date.now();
-  const facts = { steps: [], detail: null, reply: null };
+  const facts = { steps: [], chain: [], detail: null, reply: null };
   const record = (step, value) => {
     facts.steps.push(step);
     say(`--- step ${step} ---`);
     say(JSON.stringify(value, null, 1));
   };
 
-  /** The refusal body a lifecycle POST answered, captured where the product itself reads it. */
-  const problems = new Map();
+  /*
+   * The chain, rung by rung: what the launch actually got through, when, and the fact that proved it.
+   *
+   * The driver's own cells (`record` above) say what it looked at; this says how far the PRODUCT got,
+   * which is the question a reader has after a run that did not reach the end. A rung is recorded once,
+   * at the moment the fact it names was first true, so the elapsed time is the chain's own cost and not
+   * the driver's polling cadence.
+   */
+  const chainReached = (rung, proof) => {
+    if (!CHAIN_STEP_NAMES.includes(rung)) throw new Error(`chain_step_unknown:${rung}`);
+    if (facts.chain.some((entry) => entry.name === rung)) return;
+    facts.chain.push({ name: rung, atMs: Date.now() - started, proof });
+    say(`CHAIN RUNG: ${rung} @${Math.round((Date.now() - started) / 1000)}s - ${proof}`);
+  };
+
+  /** The chain as the next reader wants it, printed on every way out. */
+  const sayChain = () => {
+    say("=== ITEM: the chain, rung by rung ===");
+    for (const line of describeChain(facts.chain)) say(line);
+    say(`steps=${chainStepsLine(facts.chain)}`);
+  };
 
   const conclude = async (browser, { verdict, code, exit }) => {
     say("=== ITEM: the verdict ===");
     if (verdict === VERDICTS.notMeasured) {
       say(notMeasuredLine(code, facts.detail ?? ""));
-      say(`${GAME_LAUNCH_PREFIX} w: not_measured ${code} after ${Math.round((Date.now() - started) / 1000)}s; steps=${facts.steps.join(">")}`);
+      sayChain();
+      say(
+        `${GAME_LAUNCH_PREFIX} w: not_measured ${code} after ${Math.round((Date.now() - started) / 1000)}s; steps=${chainStepsLine(facts.chain)} records=${facts.steps.join(">")}`,
+      );
+    } else if (verdict === VERDICTS.blockedByProduct) {
+      say(blockedByProductLine(code, facts.detail ?? ""));
+      sayChain();
+      say(
+        `${GAME_LAUNCH_PREFIX} w: blocked_by_product ${code}; steps=${chainStepsLine(facts.chain)} records=${facts.steps.join(">")}`,
+      );
     } else if (verdict === VERDICTS.failed) {
       say(`FAILED: ${code} (${facts.detail ?? ""})`);
-      say(`${GAME_LAUNCH_PREFIX} w: failed ${code}; steps=${facts.steps.join(">")}`);
+      sayChain();
+      say(`${GAME_LAUNCH_PREFIX} w: failed ${code}; steps=${chainStepsLine(facts.chain)} records=${facts.steps.join(">")}`);
     } else {
-      say(`${GAME_LAUNCH_PREFIX} w: measured launch=ready line=sent reply_chars=${[...(facts.reply ?? "")].length}; steps=${facts.steps.join(">")}`);
+      sayChain();
+      say(
+        `${GAME_LAUNCH_PREFIX} w: measured launch=ready line=sent reply_chars=${[...(facts.reply ?? "")].length}; steps=${chainStepsLine(facts.chain)} records=${facts.steps.join(">")}`,
+      );
     }
     say(`the game's own processes at the end: ${JSON.stringify(runningGameProcesses())}`);
     say("DONE-W");
@@ -478,13 +653,68 @@ async function hostAnswers(port) {
     return await conclude(browser, { verdict: VERDICTS.notMeasured, code: reason, exit: 0 });
   };
 
+  /** A failure the product owes an answer for; named here so the cabin step can stop with one. */
+  const failed = async (browser, code, detail) => {
+    facts.detail = detail;
+    say(`FAILED: ${code} (${detail})`);
+    return await conclude(browser, { verdict: VERDICTS.failed, code, exit: 1 });
+  };
+
+  /** The refusal body a lifecycle POST answered, captured where the product itself reads it. */
+  const problems = new Map();
+
+  /**
+   * Every answer the chain's own routes gave, refusals included, in the order they arrived.
+   *
+   * `problems` above carries the four refusals the classification reads; this carries the ANSWERS too,
+   * because "the launch request was admitted" is a fact about a 2xx that nothing else in the run
+   * records - the state route only says the instance is `launching`, which an activation also says.
+   */
+  const answers = [];
+
+  /**
+   * How many times the PANEL asked the Host for cabins, and who was asking when it did.
+   *
+   * The admitted launch's own bounded read is a request the panel makes by itself, so counting the
+   * requests is the measurement the fix can be held to - a driver that only looked at the choice list
+   * could not tell the panel's read from its own press. `pressedByDriver` is the second half: a request
+   * that arrived after this driver pressed the refresh control is not the same fact.
+   */
+  const cabinReads = { requested: 0, afterDriverPress: 0 };
+  let driverPressedAtMs = null;
+
   // ---- the machine, before a browser is touched ----
   const gameDir = readRunGameDir(launch.path) ?? "D:\\Steam\\steamapps\\common\\Stardew Valley";
-  const machine = machinePrerequisites(gameDir);
+  const machine = machinePrerequisites(gameDir, launch.state);
   record("machine", machine);
   if (!machine.gameInstalled) {
     say(notMeasuredLine("game_install_absent", `no Stardew Valley installation at ${gameDir}`));
-    say(`${GAME_LAUNCH_PREFIX} w: not_measured game_install_absent; steps=${facts.steps.join(">")}`);
+    say(`${GAME_LAUNCH_PREFIX} w: not_measured game_install_absent; steps=none records=${facts.steps.join(">")}`);
+    say("DONE-W");
+    flush();
+    process.exit(0);
+  }
+  /*
+   * The other two machine prerequisites, named before a browser is touched and before a launch is asked
+   * for: the launch chain runs SMAPI out of the installation's own copy, and its third step arms a role
+   * through the generation's resident Guardian image. A machine missing either would spend minutes
+   * waiting for a game that cannot start; the run says which one is absent in a second instead.
+   */
+  if (!machine.smapiInstalled) {
+    say(notMeasuredLine("smapi_install_absent", `no StardewModdingAPI.exe beside the game at ${gameDir}`));
+    say(`${GAME_LAUNCH_PREFIX} w: not_measured smapi_install_absent; steps=none records=${facts.steps.join(">")}`);
+    say("DONE-W");
+    flush();
+    process.exit(0);
+  }
+  if (machine.launchChain.generationServesTheGuardian === "hello_only") {
+    say(
+      notMeasuredLine(
+        "guardian_image_absent",
+        `the generation this run published serves the guardian session hello-only: it ships no native/windows-bootstrap-guardian/win-x64 image, so no arm/launch/contain frame can be served (launch state roleBroker.mode=hello_only, image=${String(machine.launchChain.guardianImage)})`,
+      ),
+    );
+    say(`${GAME_LAUNCH_PREFIX} w: not_measured guardian_image_absent; steps=none records=${facts.steps.join(">")}`);
     say("DONE-W");
     flush();
     process.exit(0);
@@ -493,6 +723,11 @@ async function hostAnswers(port) {
   // The pipe namespace, read with the Host's own probe: the driver's word for
   // `guardian_pipe_unreachable` is the preflight's word, not a second spelling.
   const preflight = await import(pathToFileURL(path.join(REPO_ROOT, "tools", "lib", "live-run-preflight.mjs")).href);
+  // The OS's process table, for the one rung no log on this machine carries: whether the generation's
+  // Guardian was started for THIS run and what it started inside its Job (`lib/process-table.mjs`).
+  const { processTable } = await import(
+    pathToFileURL(path.join(REPO_ROOT, "tools", "live-run", "frontend", "lib", "process-table.mjs")).href
+  );
   const probe = preflight.probeGuardianPipe();
   const driverPid = runLaunchDriverPid(launch.path);
   const guardian = {
@@ -524,8 +759,15 @@ async function hostAnswers(port) {
   });
   page.on("response", (response) => {
     const match = /\/(lifecycle\/activate|game\/launch|game\/stop|game\/stardew\/cabins|game\/stardew\/cabins\/confirm|game\/installation\/discovery\/confirm)$/u.exec(response.url());
-    if (match === null || response.status() < 400) return;
+    if (match === null) return;
     const route = match[1];
+    const status = response.status();
+    if (status < 400) {
+      // A success is an answer too: the chain's first rung is the launch route admitting the request,
+      // and nothing else in this run records that fact.
+      answers.push({ route, status, atMs: Date.now() });
+      return;
+    }
     response
       .text()
       .then((text) => {
@@ -535,9 +777,20 @@ async function hostAnswers(port) {
         } catch {
           body = { code: "unparseable_problem_body" };
         }
-        problems.set(route, { status: response.status(), code: body?.code ?? null, cause: body?.cause ?? null });
+        const reading = { status, code: body?.code ?? null, cause: body?.cause ?? null, atMs: Date.now() };
+        problems.set(route, reading);
+        answers.push({ route, ...reading });
       })
-      .catch(() => problems.set(route, { status: response.status(), code: "unreadable_problem_body", cause: null }));
+      .catch(() => {
+        const reading = { status, code: "unreadable_problem_body", cause: null, atMs: Date.now() };
+        problems.set(route, reading);
+        answers.push({ route, ...reading });
+      });
+  });
+  page.on("request", (request) => {
+    if (!/\/game\/stardew\/cabins$/u.test(request.url())) return;
+    cabinReads.requested += 1;
+    if (driverPressedAtMs !== null) cabinReads.afterDriverPress += 1;
   });
 
   /** Poll the product's own state until `predicate` holds, or the budget runs out. Never a bare sleep. */
@@ -585,11 +838,13 @@ async function hostAnswers(port) {
    * (`host/src/stardew-production-lifecycle-coordinator.internal.ts:2082-2152`; the staging it performs is
    * `host/src/games/stardew/lifecycle/stardew-private-bootstrap-composer.core.internal.ts:2397-2457`).
    *
-   * The panel reads the handoff ONCE, when the surface mounts, and never again after a launch
-   * (`dialogue-web/src/components/GameSurface.tsx:228-231`, next to the launch handler at `:467-509`), so the
-   * player's own refresh press is what asks the Host again - and in the `launching` phase that press is the
-   * only control on the panel that can change anything. This drives that press, then the choice the Host
-   * offers, and records every reading: what the step cost is the measurement.
+   * The panel read the handoff once, when the surface mounted, and re-read only the composed root after
+   * an admitted launch until 2026-11-15 (`dialogue-web/src/components/GameSurface.tsx`, `keepAskingForCabin`);
+   * the player's own refresh press used to be the only thing that asked the Host again, and in the
+   * `launching` phase it was the only control on the panel that could change anything. Both are now
+   * measured rather than assumed: this step waits for the panel's own read, presses the refresh control
+   * only when the panel's budget is spent (or when it is asking nothing at all), and records how many
+   * requests the Host received for that handoff.
    */
   const driveCabinHandoff = async () => {
     const began = Date.now();
@@ -601,13 +856,38 @@ async function hostAnswers(port) {
         sentences: handoff.sentences,
       });
     let handoff = await page.evaluate(readCabinHandoff);
-    /* Ask the panel's own refresh control until the Host offers a cabin, or the step's budget ends. */
+    /*
+     * The panel's read first, and this driver's press only as the second chance.
+     *
+     * An admitted launch now starts the surface's own bounded read of this same handoff
+     * (`CABIN_REREAD_MAX_ATTEMPTS` reads `CABIN_REREAD_INTERVAL_MS` apart, `dialogue-web/src/components/
+     * GameSurface.tsx:283-350`) and says which shape it is in through `data-testid="cabin-launch-reading"`
+     * / `cabin-launch-found` / `cabin-launch-wait-expired`. Pressing the refresh control while that line is
+     * on screen would measure the driver's own click: the panel is already asking. So this wait watches the
+     * panel's own line and presses only when the panel says its budget is spent, or when nothing is being
+     * asked at all - the shape a build without the fix leaves, which is a finding about the fix and is
+     * reported as one below rather than papered over with a press.
+     */
     while (handoff.present === true && handoff.choices.length === 0 && Date.now() - began < BUDGET.cabinReadMs) {
+      if (handoff.launchLine?.kind === "reading") {
+        // The panel is asking by itself. This driver waits, and records that it waited.
+        await sleep(500);
+        handoff = await page.evaluate(readCabinHandoff);
+        continue;
+      }
       const refresh = handoff.secondary.find((control) => control.visible === true && control.disabled !== true) ?? null;
-      if (refresh === null) return { outcome: "no_control", reads, handoff, elapsedMs: Date.now() - began };
+      if (refresh === null)
+        return {
+          outcome: "no_control",
+          reads,
+          handoff,
+          cabinReads: { ...cabinReads },
+          elapsedMs: Date.now() - began,
+        };
       const before = fingerprint(handoff);
+      driverPressedAtMs = Date.now();
       await page.locator('[data-testid="game-surface"] section.stardew-cabin-handoff button.game-secondary-action').first().click();
-      reads.push({ pressed: refresh.name, at: Date.now() - began });
+      reads.push({ pressed: refresh.name, at: Date.now() - began, launchLine: handoff.launchLine });
       /*
        * The press only asks; the answer is a later render. A state without a choice and without a control is
        * the panel's `loading`, so the read has not answered yet; a state with a control is an answer, and it
@@ -637,9 +917,19 @@ async function hostAnswers(port) {
         outcome: "no_choices",
         reads,
         handoff,
+        cabinReads: { ...cabinReads },
         elapsedMs: Date.now() - began,
         problems: [...problems.entries()],
       };
+    /*
+     * The cabin is in hand. WHO asked for it is the measurement this run exists for: a request that
+     * arrived while no press of this driver's was outstanding is the panel's own read.
+     */
+    const autoReads = cabinReads.requested - cabinReads.afterDriverPress;
+    chainReached(
+      autoReads > 0 && cabinReads.afterDriverPress === 0 ? CHAIN_STEPS.cabinReadAuto : CHAIN_STEPS.cabinReadPressed,
+      `the Host answered the cabin read with ${JSON.stringify(handoff.choices.map((choice) => choice.label).join(", "))} after ${String(cabinReads.requested)} request(s) for this handoff (${String(autoReads)} of them not caused by this driver's press); the panel's own launch line read ${JSON.stringify(handoff.launchLine?.text ?? null)}`,
+    );
 
     /*
      * One press per attempt, and a second attempt only for the one failure a press can have silently: a
@@ -650,8 +940,11 @@ async function hostAnswers(port) {
      */
     const presses = [];
     let inFlight = false;
+    let confirmPressedAtMs = null;
+    const readsBeforePresses = cabinReads.requested;
     for (let attempt = 1; attempt <= 3 && !inFlight; attempt += 1) {
       presses.push({ attempt, choices: handoff.choices.map((choice) => choice.label), confirm: handoff.choices[0]?.confirm?.name ?? null });
+      confirmPressedAtMs = Date.now();
       await page.locator('[data-testid="cabin-choice-list"] li.game-choice button').first().click();
       const pressedAt = Date.now();
       let goneForMs = 0;
@@ -684,6 +977,17 @@ async function hostAnswers(port) {
         reads,
         presses,
         handoff,
+        cabinReads: { ...cabinReads },
+        confirmPressedAtMs,
+        /*
+         * What the press actually caused. A confirmation that reached the Host is a request on
+         * `game/stardew/cabins/confirm`; a press that produced a cabin READ instead never got that far -
+         * the panel's own client-side branch (`choice.expiresAtMs <= Date.now()` -> `readCabins("stale_choice")`,
+         * `dialogue-web/src/components/GameSurface.tsx:378-382`) re-reads the handoff and draws the same
+         * control again, so the player's click appears to do nothing. Counting the two requests is the only
+         * way to tell those apart from outside the page.
+         */
+        mechanism: `${String(presses.length)} confirm press(es) caused ${String(cabinReads.requested - readsBeforePresses)} further cabin read(s) and ${String(answers.filter((entry) => entry.route === "game/stardew/cabins/confirm").length)} confirm request(s): a press that produces a re-read instead of a confirmation was answered by the page, not by the Host`,
         elapsedMs: Date.now() - began,
         problems: [...problems.entries()],
       };
@@ -709,17 +1013,108 @@ async function hostAnswers(port) {
       await sleep(1000);
       attached = await page.evaluate(readGameState);
     }
+    const confirmAnswer = answers.filter((entry) => entry.route === "game/stardew/cabins/confirm").at(-1) ?? null;
+    chainReached(
+      CHAIN_STEPS.cabinConfirm,
+      `the choice ${JSON.stringify(presses[0]?.choices?.join(", ") ?? null)} was confirmed after ${String(Date.now() - confirmPressedAtMs)}ms of waiting; the confirm route answered ${confirmAnswer === null ? "nothing" : `HTTP ${String(confirmAnswer.status)}${confirmAnswer.code === null ? "" : ` ${String(confirmAnswer.code)}`}`}`,
+    );
+    const attachLanded = attached.ok === true && attached.attachmentStatus === "attached";
+    if (attachLanded) chainReached(CHAIN_STEPS.attach, `the Host published attachment=attached (${describeGameState(attached)}) ${String(Date.now() - attachBegan)}ms after the confirmation`);
     return {
-      outcome: attached.ok === true && attached.attachmentStatus === "attached" ? "attached" : "not_attached",
+      outcome: attachLanded ? "attached" : "not_attached",
       reads,
       presses,
       handoff: await page.evaluate(readCabinHandoff),
       state: attached,
+      cabinReads: { ...cabinReads },
+      confirmPressedAtMs,
+      confirmAnswer,
+      attachmentResponse: readAttachmentResponse(launch.state?.declaredDataRoot ?? null),
       elapsedMs: Date.now() - began,
       confirmMs: Date.now() - attachBegan,
       problems: [...problems.entries()],
       gameLog: lastSmapiLine(),
     };
+  };
+
+  /**
+   * Whether this run's Guardian is up and what it started inside its Job, read from the OS.
+   *
+   * The broker's own `role-broker:` lines go to its stderr, which the launch phase does NOT put in
+   * `launch.log` (measured 2026-11-15: 0 such lines in a run whose Guardian and game were both up), so the
+   * proof is taken from the process table instead: the generation's Guardian image, live, whose parent is
+   * THIS run's own launch driver, and the game as the Guardian's own child. That is the Job relationship
+   * itself, which no log line could carry more directly, and every pid in it is the OS's answer.
+   */
+  const guardianArmedReading = () => {
+    const driver = runLaunchDriverPid(launch.path);
+    if (driver.pid === null || driver.alive !== true) return null;
+    const table = processTable();
+    if (table === null) return null;
+    const guardian =
+      table.rows.find(
+        (row) => row.name === "GameBuddy.WindowsBootstrapGuardian.exe" && row.parentPid === driver.pid,
+      ) ?? null;
+    if (guardian === null) return null;
+    const role = table.rows.find((row) => row.parentPid === guardian.pid && /^Stardew/u.test(row.name)) ?? null;
+    return { driver, guardian, role, examined: table.examined };
+  };
+
+  /**
+   * One bounded sample of the rungs only the launched game and this run's own launcher can witness.
+   *
+   * The Host's state route answers `launching/none` for a whole launch, so the four steps between the
+   * launch request and the cabin handoff have no representation there at all. Two witnesses do: the
+   * launcher's own log, where the broker records the Guardian it started for this session, and the game's
+   * own log, where SMAPI echoes the save it loaded and the Mod records the cabin it built. Both are read
+   * every progress tick (cheap: two bounded file tails), and the process table is asked the one question
+   * only the OS can answer - whether a game is running at all.
+   */
+  const sampleLaunchFacts = (reading) => {
+    /* 1. the launch request was admitted - the product's own route said so, or the instance moved. */
+    if (!facts.chain.some((entry) => entry.name === CHAIN_STEPS.launchAdmitted)) {
+      const admitted = answers.find((entry) => entry.route === "game/launch" && entry.status < 400) ?? null;
+      if (admitted !== null)
+        chainReached(
+          CHAIN_STEPS.launchAdmitted,
+          `the launch route answered HTTP ${String(admitted.status)}; the surface then read ${describeGameState(reading)}`,
+        );
+      else if (reading?.ok === true && reading.instanceStatus === "launching")
+        chainReached(
+          CHAIN_STEPS.launchAdmitted,
+          `the surface moved to ${describeGameState(reading)} after the launch control was pressed (the route's own answer had not arrived when this was read)`,
+        );
+    }
+    /* 2. the Guardian was armed and started for this session: the OS's own account of the Job. */
+    if (!facts.chain.some((entry) => entry.name === CHAIN_STEPS.guardianArmed)) {
+      const armed = guardianArmedReading();
+      if (armed !== null)
+        chainReached(
+          CHAIN_STEPS.guardianArmed,
+          `the OS lists the generation's Guardian (pid ${String(armed.guardian.pid)}) as a child of this run's own launch driver (pid ${String(armed.driver.pid)})${
+            armed.role === null
+              ? ""
+              : `, and the game it launched as the Guardian's own child (${armed.role.name} pid ${String(armed.role.pid)})`
+          }: the role was armed and launched inside its Job (${String(armed.examined)} processes examined; the image was admitted from the launch state as ${JSON.stringify(launch.state?.roleBroker?.mode ?? null)})`,
+        );
+    }
+    /* 3. a game process exists: the OS's answer, not the Host's. */
+    if (!facts.chain.some((entry) => entry.name === CHAIN_STEPS.processStarted)) {
+      const running = gameProcesses();
+      if (running !== null && running.length > 0)
+        chainReached(
+          CHAIN_STEPS.processStarted,
+          `the OS lists a running game: ${running.map((row) => `${row.name} pid ${String(row.pid)}`).join(", ")} (read with Get-Process -Name StardewModdingAPI,Stardew*)`,
+        );
+    }
+    /* 4. and 5. the game's own log: the save it loaded, and the cabin the Mod built. */
+    const gameLog = gameLogChainFacts(launchBegan);
+    for (const rung of [CHAIN_STEPS.saveLoaded, CHAIN_STEPS.cabinBuilt]) {
+      const fact = gameLog.facts?.[rung] ?? null;
+      if (fact === null || facts.chain.some((entry) => entry.name === rung)) continue;
+      chainReached(rung, `the launched game's own log says so: ${JSON.stringify(fact.line)}`);
+    }
+    return gameLog;
   };
 
   // ---- the Game surface ----
@@ -841,8 +1236,16 @@ async function hostAnswers(port) {
   let unchangedSince = Date.now();
   let unchangedKey = stateKey(launched);
   let lastProgressAt = launchBegan;
+  let launchGameLog = sampleLaunchFacts(launched);
   while (Date.now() - launchBegan < BUDGET.launchMs) {
     if (readinessOf(launched) !== "pending" || unreachable >= 5) break;
+    /*
+     * The launch request's own chain ends there: once the game has built her cabin, the only step left is
+     * the cabin handoff, which the panel is already asking for and this driver drives next. Waiting for
+     * the instance word instead would wait out the whole budget on a state that cannot move for a
+     * GameBuddy-launched host (`PRODUCT_GAPS` in `game-launch-verdict.mjs`).
+     */
+    if (facts.chain.some((entry) => entry.name === CHAIN_STEPS.cabinBuilt)) break;
     const key = stateKey(launched);
     if (key !== unchangedKey) {
       unchangedKey = key;
@@ -855,6 +1258,7 @@ async function hostAnswers(port) {
     }
     if (Date.now() - lastProgressAt >= BUDGET.progressMs) {
       lastProgressAt = Date.now();
+      launchGameLog = sampleLaunchFacts(launched);
       say(
         describeLaunchProgress({
           elapsedMs: Date.now() - launchBegan,
@@ -868,6 +1272,7 @@ async function hostAnswers(port) {
     launched = await page.evaluate(readGameState);
     unreachable = launched.ok === true ? 0 : unreachable + 1;
   }
+  launchGameLog = sampleLaunchFacts(launched);
   const launchElapsedMs = Date.now() - launchBegan;
   if (plateaued)
     say(
@@ -887,7 +1292,10 @@ async function hostAnswers(port) {
     state: launched,
     preconditions: { controls, guardian },
     problems: [...problems.entries()],
+    answers: [...answers],
+    cabinReads: { ...cabinReads },
     gameLog: lastSmapiLine(),
+    gameLogChainFacts: launchGameLog,
     hostAnswers: await hostAnswers(launch.state?.port),
     pageEvents: pageEvents.slice(-12),
   });
@@ -912,23 +1320,23 @@ async function hostAnswers(port) {
         `the launch produced ${describeGameState(launched)} and the Game surface drew no cabin handoff section at all, so the guide's third step had no control to press (${JSON.stringify(cabin.handoff)})`,
       );
     if (cabin.outcome === "no_control")
-      return await notMeasured(
+      return await failed(
         browser,
-        "cabin_handoff_not_offered",
-        `the cabin handoff was drawn with no pressable control in ${String(cabin.elapsedMs)}ms: ${JSON.stringify(cabin.handoff)}`,
+        "cabin_read_never_fired",
+        `the cabin handoff was drawn with no pressable control and no launch-wait line in ${String(cabin.elapsedMs)}ms, so nothing asked the Host for the cabin: ${String(cabin.cabinReads.requested)} request(s) for the handoff, ${String(cabin.reads.length)} press(es) by this driver; the handoff read ${JSON.stringify(cabin.handoff)}`,
       );
   }
 
   /*
    * The pair the driver calls ready is `running` + `attached`, and the instance word is published by the
    * coordinator's own projection of its launch state (`host/src/stardew-role-lifecycle-projection.internal.ts:44-45`
-   * -> `host/src/game-browser/game-browser-state-provider.ts:167-172`). An attachment that lands while that
-   * word reads `launching` is therefore a fact about the projection rather than about the launch, and the
-   * rest of the chain - a player line, the companion's reply - can still be measured. It is measured here
-   * and the verdict is still a failure, because a run that reported a pass would be calling a state the
-   * product does not publish "ready".
+   * -> `host/src/game-browser/game-browser-state-provider.ts:167-172`). For a GameBuddy-launched host that
+   * word can never be `running` (see `PRODUCT_GAPS` in `game-launch-verdict.mjs`), so a run that waited for
+   * it would wait out its budget on every machine for ever. What is measured instead is the chain: how far
+   * it got, and whether the step that is left is one of the two gaps the product owns (`classifyChainStop`,
+   * which says nothing at all unless this run's own readings prove the gap it names).
    */
-  let instanceWordLagsAttachment = false;
+  let instanceGap = null;
   if (readinessOf(launched) !== "ready") {
     const host = await hostAnswers(launch.state?.port);
     const stateText = launched.ok === true ? describeGameState(launched) : `state_unreadable:${String(launched.status)}`;
@@ -940,21 +1348,6 @@ async function hostAnswers(port) {
      * through the transport when nothing bound can arm - and the Host's own failure when something can.
      */
     const reading = launched.ok === true ? null : classifySilentLaunch({ guardian, detail: observed });
-    instanceWordLagsAttachment = launched.ok === true && launched.attachmentStatus === "attached" && launched.instanceStatus !== "running";
-    if (reading === null && !instanceWordLagsAttachment) {
-      facts.detail = `${observed}; the surface never reached instance=running/attachment=attached within ${String(BUDGET.launchMs)}ms`;
-      const cabinProblem = problems.get("game/stardew/cabins") ?? problems.get("game/stardew/cabins/confirm") ?? null;
-      const code =
-        cabin === null
-          ? `game_never_reached_ready:${stateText}`
-          : cabin.outcome === "no_choices"
-            ? `cabin_handoff_no_cabin:${stateText}${cabinProblem === null ? "" : `:${String(cabinProblem.code ?? cabinProblem.status)}`}`
-            : cabin.outcome === "not_admitted"
-              ? `cabin_handoff_not_admitted:${stateText}`
-              : `cabin_handoff_did_not_attach:${stateText}`;
-      say(`FAILED: ${code}`);
-      return await conclude(browser, { verdict: VERDICTS.failed, code, exit: 1 });
-    }
     if (reading !== null) {
       facts.detail = reading.detail;
       say(`refusal classification: ${JSON.stringify(reading)}`);
@@ -964,10 +1357,47 @@ async function hostAnswers(port) {
         exit: reading.verdict === VERDICTS.failed ? 1 : 0,
       });
     }
-    say(
-      `the attachment landed (${stateText}) while the instance word reads ${String(launched.instanceStatus)}: the launch produced the companion, and the state read has not published running. Measuring the rest of the chain; the verdict stays a failure.`,
-    );
-    facts.detail = `${observed}; the attachment landed and the instance word never left ${String(launched.instanceStatus)}`;
+    /*
+     * The chain's furthest reachable state, and the step that is left. `classifyChainStop` returns a gap
+     * only when this run's own readings prove it: an attachment that landed, or the Mod's own word for
+     * the confirmation it is still waiting on. Anything else is `null` and stays a failure below.
+     */
+    const gap = classifyChainStop({
+      state: launched,
+      attachmentResponse: cabin?.attachmentResponse ?? readAttachmentResponse(launch.state?.declaredDataRoot ?? null),
+      confirmPressedAtMs: cabin?.confirmPressedAtMs ?? null,
+    });
+    if (gap !== null) {
+      facts.detail = `${observed}; ${gap.detail}`;
+      if (gap.gap === PRODUCT_GAPS.instanceStatusNeverRunning) {
+        /*
+         * The companion IS in the farm: the rest of the chain - a player line, her answer - is still
+         * measurable, and measuring it is worth more than stopping here. The verdict at the end says
+         * which step is unreachable and why; it never claims `measured`, because `measured` is the
+         * product's own `running`+`attached` and the product does not publish it.
+         */
+        instanceGap = gap;
+        say(
+          `the chain reached attachment=attached while the instance word reads ${String(launched.instanceStatus)}: measuring the rest of the chain; the verdict will name ${gap.gap}.`,
+        );
+      } else {
+        say(`BLOCKED BY PRODUCT: ${gap.gap} - ${gap.detail}`);
+        return await conclude(browser, { verdict: VERDICTS.blockedByProduct, code: gap.gap, exit: 0 });
+      }
+    } else {
+      facts.detail = `${observed}; the surface never reached instance=running/attachment=attached within ${String(BUDGET.launchMs)}ms`;
+      const cabinProblem = problems.get("game/stardew/cabins") ?? problems.get("game/stardew/cabins/confirm") ?? null;
+      const refused =
+        cabin === null
+          ? `game_never_reached_ready:${stateText}`
+          : cabin.outcome === "no_choices"
+            ? `cabin_handoff_no_cabin:${stateText}${cabinProblem === null ? "" : `:${String(cabinProblem.code ?? cabinProblem.status)}`}`
+            : cabin.outcome === "not_admitted"
+              ? `cabin_handoff_not_admitted:${stateText}`
+              : `cabin_handoff_did_not_attach:${stateText}`;
+      say(`FAILED: ${refused}`);
+      return await conclude(browser, { verdict: VERDICTS.failed, code: refused, exit: 1 });
+    }
   } else {
     say(`the game reached ready: ${describeGameState(launched)} after ${String(Date.now() - launchBegan)}ms`);
   }
@@ -1022,10 +1452,18 @@ async function hostAnswers(port) {
     `reply role=${replyRow.role} handle=${JSON.stringify(replyRow.handle)} chars=${[...replyRow.text].length} instance=${String(stateAfterReply.instanceStatus)} attachment=${String(stateAfterReply.attachmentStatus)}`,
   );
   if (stateAfterReply.instanceStatus !== "running" || stateAfterReply.attachmentStatus !== "attached") {
+    /*
+     * The reply settles the question the whole chain was asking: the companion is in the farm and
+     * answered in the Game surface. What is missing is the projection's word, which this host can never
+     * publish - so the verdict names that gap instead of failing a launch that did everything.
+     */
+    if (instanceGap !== null) {
+      facts.detail = `the companion's reply settled on the game surface while the Host reported ${describeGameState(stateAfterReply)}; ${instanceGap.detail}`;
+      say(`BLOCKED BY PRODUCT: ${instanceGap.gap} - ${instanceGap.detail}`);
+      return await conclude(browser, { verdict: VERDICTS.blockedByProduct, code: instanceGap.gap, exit: 0 });
+    }
     const code = `game_never_reached_ready:${describeGameState(stateAfterReply)}`;
-    facts.detail = instanceWordLagsAttachment
-      ? `the companion's reply settled while the Host reported ${describeGameState(stateAfterReply)}: the attachment landed, and the instance word the coordinator projects from its launch state (\`stardew-role-lifecycle-projection.internal.ts:44-45\`) never left it, so the game surface cannot say running`
-      : `the reply settled while the Host reported ${describeGameState(stateAfterReply)}, so it is not a reply from an attached game`;
+    facts.detail = `the reply settled while the Host reported ${describeGameState(stateAfterReply)}, so it is not a reply from an attached game`;
     say(`FAILED: ${code}`);
     return await conclude(browser, { verdict: VERDICTS.failed, code, exit: 1 });
   }

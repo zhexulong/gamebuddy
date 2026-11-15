@@ -33,6 +33,42 @@
 export const NOT_MEASURED_PREFIX = "NOT-MEASURED:";
 
 /**
+ * A driver whose chain stopped at a gap the PRODUCT cannot cross says so, in its own word.
+ *
+ * The launch chain's own target - `instance=running` with `attachment=attached` - cannot be reached by
+ * any launch this product performs today, for two reasons that are each a missing state rather than a
+ * slow one (`PRODUCT_GAPS`). A driver that reported `failed` on that target would fail on every run of
+ * every machine, and an instrument that fails on an impossible target teaches its readers to ignore it.
+ * `failed` therefore keeps its meaning - the product refused something it was asked to do - and the
+ * unreachable step gets this third verdict instead, printed only when the run PROVED the gap it names.
+ */
+export const BLOCKED_BY_PRODUCT_PREFIX = "BLOCKED-BY-PRODUCT:";
+
+/**
+ * The two gaps, by the name the verdict carries. Each is one named missing state, not a symptom:
+ *
+ *   `instance_status_never_running` - a GameBuddy-launched Player Host is projected as
+ *     `launching` for its whole life: the coordinator overrides the slot in
+ *     `launching_player_host` and `awaiting_player_host_attestation`
+ *     (`stardew-role-lifecycle-projection.internal.ts:41-45`) and has no later state to move to,
+ *     while the only `authenticated` slot the facade can mint is `ownership: "player_external"`
+ *     (`stardew-role-lifecycle-facade.ts:29-41,89-111`). `running` is the projection of
+ *     `authenticated` (`game-browser/game-browser-state-provider.ts:164-180`), so no launch this
+ *     product performs can publish it.
+ *
+ *   `attach_needs_native_save` - the first attachment binds a farmhand that must be written into
+ *     the save: the Mod answers `awaiting_save`/`binding_persist_pending`
+ *     (`integrations/stardew/HostFarmhandProvisioner.cs:612-637`), stages the binding on the
+ *     engine's own `Saving` event (:180-186) and issues the manifest on `Saved` (:217-222). The only
+ *     thing that drives that cycle is `HostAutomation.Enable` (:1394-1420 in `ModEntry.cs`, the
+ *     `SaveGameMenu` trigger), which is a fixture switch the Host never writes into the Mod's config.
+ */
+export const PRODUCT_GAPS = Object.freeze({
+  instanceStatusNeverRunning: "instance_status_never_running",
+  attachNeedsNativeSave: "attach_needs_native_save",
+});
+
+/**
  * The prefix of the one line the game-launch driver contributes to the report's observation
  * sections (`phases/report.mjs`), so the run's report names the headline path beside the others.
  */
@@ -41,6 +77,24 @@ export const GAME_LAUNCH_PREFIX = "GAME-LAUNCH";
 /** `NOT-MEASURED: <reason>: <detail>` - the reason is a stable code, the detail is what was read. */
 export function notMeasuredLine(reason, detail) {
   return `${NOT_MEASURED_PREFIX} ${reason}: ${detail}`;
+}
+
+/** `BLOCKED-BY-PRODUCT: <gap>: <the readings that proved it>` - same shape, third verdict. */
+export function blockedByProductLine(gap, detail) {
+  return `${BLOCKED_BY_PRODUCT_PREFIX} ${gap}: ${detail}`;
+}
+
+/** `{ gap, detail }` when the driver reported a product gap; `null` when it reported none. */
+export function readBlockedByProduct(text) {
+  if (typeof text !== "string") return null;
+  for (const line of text.split("\n")) {
+    if (!line.startsWith(BLOCKED_BY_PRODUCT_PREFIX)) continue;
+    const rest = line.slice(BLOCKED_BY_PRODUCT_PREFIX.length).trim();
+    const colon = rest.indexOf(":");
+    if (colon < 0) return { gap: rest, detail: "" };
+    return { gap: rest.slice(0, colon).trim(), detail: rest.slice(colon + 1).trim() };
+  }
+  return null;
 }
 
 /** `{ reason, detail }` when the driver declared itself unmeasured; `null` when it measured. */
@@ -71,10 +125,14 @@ export const LAUNCH_STEPS = Object.freeze({
   launch: "launch",
 });
 
-/** The verdict vocabulary. `not_measured` is never a pass and never a failure. */
+/**
+ * The verdict vocabulary. `not_measured` is never a pass and never a failure, and
+ * `blocked_by_product` is neither: it is the product's own missing step, proved by this run.
+ */
 export const VERDICTS = Object.freeze({
   measured: "measured",
   notMeasured: "not_measured",
+  blockedByProduct: "blocked_by_product",
   failed: "failed",
 });
 
@@ -245,4 +303,121 @@ function describeGameLog(game) {
       ? new Date(game.writtenAtMs).toISOString()
       : "with no mtime";
   return `${JSON.stringify(line)} (SMAPI-latest.txt written ${writtenAt})`;
+}
+
+/* ------------------------------------------------------------------ the chain, rung by rung */
+
+/**
+ * The chain a launch walks, as the player and the next reader meet it.
+ *
+ * These are RUNGS, not the driver's own cells: an instrument that prints seventeen of its own phases
+ * leaves "where did it stop" as an exercise for the reader. Two of the rungs are alternative
+ * spellings of one step, because naming the wrong one would be a lie: `cabin read(auto)` is the
+ * panel asking the Host by itself (the admitted launch's own bounded wait), and `cabin read(pressed)`
+ * is the same read after this driver pressed the panel's refresh control - the second chance the
+ * budget's end leaves a player, and a different fact about the fix under measurement.
+ */
+export const CHAIN_STEPS = Object.freeze({
+  launchAdmitted: "launch admitted",
+  guardianArmed: "guardian armed",
+  processStarted: "process started",
+  saveLoaded: "save loaded",
+  cabinBuilt: "cabin built",
+  cabinReadAuto: "cabin read(auto)",
+  cabinReadPressed: "cabin read(pressed)",
+  cabinConfirm: "cabin confirm",
+  attach: "attach",
+});
+
+export const CHAIN_RUNGS = Object.freeze([
+  Object.freeze([CHAIN_STEPS.launchAdmitted]),
+  Object.freeze([CHAIN_STEPS.guardianArmed]),
+  Object.freeze([CHAIN_STEPS.processStarted]),
+  Object.freeze([CHAIN_STEPS.saveLoaded]),
+  Object.freeze([CHAIN_STEPS.cabinBuilt]),
+  Object.freeze([CHAIN_STEPS.cabinReadAuto, CHAIN_STEPS.cabinReadPressed]),
+  Object.freeze([CHAIN_STEPS.cabinConfirm]),
+  Object.freeze([CHAIN_STEPS.attach]),
+]);
+
+/** The rung names a driver may record, in one flat list, so a typo is a missing rung rather than a new one. */
+export const CHAIN_STEP_NAMES = Object.freeze(CHAIN_RUNGS.flat());
+
+/**
+ * The chain as lines: one per rung, with the elapsed time and the fact that proved it, and every rung
+ * the run never reached printed by name. That last part is the whole point - a reader must not have
+ * to infer "and then it stopped" from the absence of a line.
+ */
+export function describeChain(chain) {
+  const reached = Array.isArray(chain) ? chain : [];
+  if (reached.length === 0) return ["CHAIN: no rung of the launch chain was reached"];
+  const lines = [];
+  CHAIN_RUNGS.forEach((names, index) => {
+    const entry = reached.find((candidate) => names.includes(candidate.name)) ?? null;
+    const position = `${String(index + 1)}/${String(CHAIN_RUNGS.length)}`;
+    if (entry === null) {
+      lines.push(`CHAIN ${position} ${names[0]} - not reached`);
+      return;
+    }
+    const seconds = Math.round(Number(entry.atMs) / 1000);
+    lines.push(`CHAIN ${position} ${entry.name} @${String(Number.isFinite(seconds) ? seconds : 0)}s - ${entry.proof}`);
+  });
+  return lines;
+}
+
+/** `steps=launch admitted>guardian armed>...` - the same chain as one field, for the report's one line. */
+export function chainStepsLine(chain) {
+  const names = Array.isArray(chain) ? chain.map((entry) => String(entry?.name ?? "")) : [];
+  const present = names.filter((name) => name.length > 0);
+  return present.length === 0 ? "none" : present.join(">");
+}
+
+/**
+ * Which gap a chain that could not reach `running`+`attached` actually proved, if any.
+ *
+ * The ordering is the chain's own: the FURTHEST step reached decides, because the nearer gap is a
+ * consequence of the same launch rather than its cause. An attachment that landed while the instance
+ * word still read `launching` proves the projection gap and nothing else - the chain did everything it
+ * was asked. A confirmation the Mod answered with `awaiting_save` proves the save gap: the Mod's own
+ * published word for "this binding is waiting for the engine to save", written at the confirmation and
+ * never replaced because no save cycle ever came to persist it.
+ *
+ * Anything else is `null`: no proof, no verdict, and the caller keeps reporting `failed`.
+ */
+export function classifyChainStop({ state, attachmentResponse = null, confirmPressedAtMs = null }) {
+  const readable = state?.ok === true;
+  if (readable && state.attachmentStatus === "attached" && state.instanceStatus !== "running")
+    return Object.freeze({
+      verdict: VERDICTS.blockedByProduct,
+      gap: PRODUCT_GAPS.instanceStatusNeverRunning,
+      detail: `the attachment landed (${describeGameState(state)}) and the instance word never left ${String(state.instanceStatus)}: the coordinator projects a GameBuddy-launched Player Host as launching for its whole life (stardew-role-lifecycle-projection.internal.ts:41-45), and the only authenticated slot the facade mints is ownership=player_external (stardew-role-lifecycle-facade.ts:29-41), which this host is not`,
+    });
+  if (readable && state.attachmentStatus === "attached") return null;
+  const awaiting = awaitingSaveReading(attachmentResponse, confirmPressedAtMs);
+  if (awaiting !== null)
+    return Object.freeze({
+      verdict: VERDICTS.blockedByProduct,
+      gap: PRODUCT_GAPS.attachNeedsNativeSave,
+      detail: awaiting,
+    });
+  return null;
+}
+
+/**
+ * The Mod's own word for the confirmation, or `null` when it is absent or not from this run.
+ *
+ * Freshness is part of the proof: the response file lives in the run root and outlives the game, so a
+ * reading taken from yesterday's run would prove nothing about today's. The Mod stamps
+ * `updatedAtUnixMs` when it writes the file, and the confirmation press is this run's own clock.
+ */
+function awaitingSaveReading(response, confirmPressedAtMs) {
+  if (response === null || typeof response !== "object") return null;
+  if (response.state !== "awaiting_save") return null;
+  const stamp = Number(response.updatedAtUnixMs);
+  const pressed = Number(confirmPressedAtMs);
+  // A response this run did not cause proves nothing about this run: no press, no freshness to check.
+  if (!Number.isFinite(stamp) || !Number.isFinite(pressed) || pressed <= 0 || stamp + 5_000 < pressed) return null;
+  const reason =
+    typeof response.reasonCode === "string" && response.reasonCode.length > 0 ? response.reasonCode : "no_reason_code";
+  return `the confirmation reached the Mod and the Mod answered state=awaiting_save/reason=${reason} (stardew-attachment-response.json, updated ${new Date(stamp).toISOString()}): the first binding is written by the engine's own Saving/Saved cycle (HostFarmhandProvisioner.cs:180-222), and the only trigger for one is HostAutomation.Enable (ModEntry.cs, TryTriggerNativeAutomationSave), which production never writes into the Mod's config`;
 }
