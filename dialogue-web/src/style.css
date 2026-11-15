@@ -2583,6 +2583,19 @@
   .chat-item-title {
     min-width: 0;
     overflow-wrap: anywhere;
+    /* Two lines, then the box's own ellipsis. A saved conversation's name is the one fact the row
+       exists to state, and it was drawn as a single line: at 1440x900 the name of a conversation
+       ended 222 px before its 640 px card did while the rest of the card stayed empty, and at
+       400x800 the name box is 136 px of a 358 px card, so a name that is a sentence arrived as its
+       first words (`chat-list-title-reads-two-lines.spec.ts` measures the clamp and the line boxes
+       at both cells). Two, because the row also states when the conversation last moved and what
+       it last said: a name with no ceiling made one row three lines tall on a phone, which pushed
+       the list the player is scanning off the fold. The clamp draws its own ellipsis, which is why
+       no `text-overflow` is stated here. */
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    overflow: hidden;
   }
 
   /* --- Characters (design/28 §2) ---
