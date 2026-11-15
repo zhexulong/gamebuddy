@@ -791,17 +791,18 @@ export async function createChatRuntimeConstructionInternal(
         );
       }
     }
-    // The store is the authority for which rows exist; the session is the authority for what the model carries. A mount is
-    // the one moment both are known and neither is in flight, so the disagreement is settled here: whatever the session
-    // still carries past the store's last row was removed while nothing was mounted - an offline delete or rewind - and
-    // the same append-only cut a mounted rewind uses pins it durably.
+    // The store is the authority for which rows exist; the session is the authority for what the model carries. A mount
+    // is the one moment both are known and neither is in flight, so the disagreement is settled here in both
+    // directions: whatever the session still carries past the store's last row was removed while nothing was mounted -
+    // an offline delete or rewind - and the same append-only cut a mounted rewind uses pins it durably; and whatever
+    // the session is MISSING is handed to the model, which is the one shape a fork's own fresh surface session has.
     const alignment = alignSessionToTranscriptRows(runtime.session, construction.transcriptRows);
     if (alignment.status === "refused")
-      process.stderr.write(
-        `[mount] the session carries rows the transcript no longer has, and the cut was refused: ${alignment.reason}\n`,
-      );
+      process.stderr.write(`[mount] the session was left as it is: ${alignment.reason}\n`);
     else if (alignment.dropped > 0)
       process.stderr.write(`[mount] aligned the session to the transcript: dropped ${alignment.dropped} row(s)\n`);
+    else if (alignment.appended > 0)
+      process.stderr.write(`[mount] the session was given the rows it was missing: ${alignment.appended} row(s)\n`);
     return Object.freeze({
       runtime,
       appliedModelConfig: () => appliedModelConfig,

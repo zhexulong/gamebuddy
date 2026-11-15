@@ -327,52 +327,142 @@ export function rewindPiTranscriptTail(
 export type PiTranscriptMessage = Readonly<{ role: "player" | "companion"; text: string }>;
 
 /**
- * The one mount-time alignment: after the Pi session is reopened, take back whatever it still carries past the transcript's
- * own last row.
+ * What one mount-time alignment did, or the fact it refused to touch the session at all.
  *
- * The store and the session are two authorities over one conversation. A delete or a rewind performed while nothing was
- * mounted changes only the store - there is no live session to reshape - and re-opening the session file lands the leaf where
- * the file last ended, which resurrects exactly the rows the player removed. This is that disagreement, settled the same way a
- * mounted rewind settles it: the kept prefix is proved text by text against what the session still carries, and the tail past
- * it is cut with the same append-only edit, so the cut survives the next re-open too.
+ * `dropped` and `appended` are the two directions of ONE disagreement between the two authorities, and a mount
+ * reports whichever it settled. A refusal names the row it stopped at, because "the session and the transcript
+ * disagree" is not something a reader can act on and the row is.
+ */
+export type PiTranscriptAlignment =
+  | Readonly<{ status: "aligned"; dropped: number; appended: number }>
+  | Readonly<{ status: "refused"; reason: string }>;
+
+/**
+ * The one mount-time alignment: after the Pi session is reopened, make its rows the transcript's rows.
  *
- * Refusals are reported rather than thrown. A mount whose session shape this function cannot prove is still a mount - the
- * player's conversation must open - and a silent cut would damage a conversation on a guess.
+ * The store and the session are two authorities over one conversation, and they disagree in exactly two ways.
+ *
+ * The session is LONGER. A delete or a rewind performed while nothing was mounted changes only the store - there
+ * is no live session to reshape - and re-opening the session file lands the leaf where the file last ended, which
+ * resurrects exactly the rows the player removed. That is settled the way a mounted rewind settles it: the kept
+ * prefix is proved text by text against what the session still carries, and the tail past it is cut with the same
+ * append-only edit, so the cut survives the next re-open too.
+ *
+ * The session is SHORTER. This is the shape of every thread whose rows were written while no session of its own
+ * existed: a fork's fresh surface session, a session file that was never created or was truncated. Nothing used to
+ * happen here, and that silence was the defect - the player read a transcript the model had never been given, and
+ * the companion answered the next line as if the conversation had just begun. The missing rows are handed to the
+ * model instead, in order, as the conversation's own messages.
+ *
+ * WHAT DECIDES IT. The rows the two sides SHARE must be the same conversation, in the same order, before either
+ * side is touched - a session that disagrees is left exactly as it is, because rewriting one authority from the
+ * other on a disagreement is a repair no mount has the authority to make. Only a session whose rows are a strict
+ * PREFIX of the transcript's is given the rest; and each row is proved to read back as the transcript's own text
+ * before anything is appended, because the projection that reads a row back is not the identity and a row that
+ * would come back as different words is a row this session cannot carry.
+ *
+ * Refusals are reported rather than thrown. A mount whose session shape this function cannot prove is still a
+ * mount - the player's conversation must open - and a silent rewrite would damage a conversation on a guess.
  */
 export function alignSessionToTranscriptRows(
   session: PiVariantBranchSession,
   rows: readonly Readonly<{ role: string; text: string }>[],
-): Readonly<{ status: "aligned"; dropped: number }> | Readonly<{ status: "refused"; reason: string }> {
-  const messages = branchMessageEntries(session);
-  // What each side thinks the conversation is, in the same shape: a player line or a companion line, with its text.
-  const sessionRows = messages.map((entry, index) =>
-    Object.freeze({
-      role: entry.player !== null ? ("player" as const) : ("companion" as const),
-      text: (entry.player ?? entry.reply ?? "").trim(),
-      index,
-    }),
-  );
+): PiTranscriptAlignment {
+  // What each side thinks the conversation is, in the same shape: a player line or a companion line, with its
+  // text. An entry that carries no line of the conversation - the Host's own system prompt, a tool result, a
+  // greeting the row projection drops - holds no position, exactly as it holds none in the mounted mutations'
+  // positional proofs, so it is passed over rather than counted as an empty row.
+  const sessionRows = branchMessageEntries(session).flatMap((entry) => {
+    const text = entry.player ?? entry.reply;
+    if (text === null) return [];
+    return [
+      Object.freeze({
+        role: entry.player !== null ? ("player" as const) : ("companion" as const),
+        text: text.trim(),
+      }),
+    ];
+  });
   const expected = rows.map((row) =>
     Object.freeze({
       role: row.role === "player" ? ("player" as const) : ("companion" as const),
       text: row.text.trim(),
     }),
   );
-  if (sessionRows.length <= expected.length) return Object.freeze({ status: "aligned", dropped: 0 });
-  // The prefix has to be the same conversation before anything is cut: this is a re-alignment, not a repair.
-  for (const [offset, row] of expected.entries()) {
-    const actual = sessionRows[offset];
-    if (actual === undefined || actual.role !== row.role || actual.text !== row.text)
-      return Object.freeze({ status: "refused", reason: "transcript_prefix_mismatch" });
+  const shared = Math.min(sessionRows.length, expected.length);
+  for (let offset = 0; offset < shared; offset += 1) {
+    const actual = sessionRows[offset]!;
+    const row = expected[offset]!;
+    if (actual.role !== row.role || actual.text !== row.text)
+      return Object.freeze({ status: "refused", reason: `session_diverges_from_transcript:${offset}` });
   }
-  const trailing = sessionRows.slice(expected.length);
-  const dropped = trailing.map((row): PiTranscriptMessage => Object.freeze({ role: row.role, text: row.text }));
-  // An empty companion reply cannot be proved byte for byte, so it is left alone rather than cut on a guess.
-  if (dropped.some((row) => row.text.length === 0))
-    return Object.freeze({ status: "refused", reason: "trailing_row_unprovable" });
-  const rewound = rewindPiTranscriptTail(session, dropped);
-  if (rewound.status !== "rewound") return Object.freeze({ status: "refused", reason: rewound.reason });
-  return Object.freeze({ status: "aligned", dropped: dropped.length });
+  if (sessionRows.length === expected.length) return Object.freeze({ status: "aligned", dropped: 0, appended: 0 });
+  if (sessionRows.length > expected.length) {
+    const trailing = sessionRows.slice(expected.length);
+    const dropped = trailing.map((row): PiTranscriptMessage => Object.freeze({ role: row.role, text: row.text }));
+    // An empty companion reply cannot be proved byte for byte, so it is left alone rather than cut on a guess.
+    if (dropped.some((row) => row.text.length === 0))
+      return Object.freeze({ status: "refused", reason: "trailing_row_unprovable" });
+    const rewound = rewindPiTranscriptTail(session, dropped);
+    if (rewound.status !== "rewound") return Object.freeze({ status: "refused", reason: rewound.reason });
+    return Object.freeze({ status: "aligned", dropped: dropped.length, appended: 0 });
+  }
+  const missing = expected.slice(sessionRows.length);
+  const carrying = missing.map((row) => messageCarryingTranscriptRow(row));
+  for (const [offset, row] of missing.entries()) {
+    if (transcriptRowTextOf(carrying[offset]!) !== row.text)
+      return Object.freeze({
+        status: "refused",
+        reason: `transcript_row_unwritable:${sessionRows.length + offset}`,
+      });
+  }
+  for (const message of carrying) session.sessionManager.appendMessage(message);
+  // The live context is derived from the session only by this call (`agent-session.js`
+  // `_refreshFinalizedContext`); without it the next prompt would read the pre-mount state.
+  session.refreshContext();
+  return Object.freeze({ status: "aligned", dropped: 0, appended: carrying.length });
+}
+
+/**
+ * The provenance of a row this mount gave back to the session rather than saw a provider write.
+ *
+ * The same choice the greeting anchor makes, for the same reason: no provider in THIS session produced these
+ * words, and naming them as a foreign line keeps them out of the same-model replay paths (`pi-ai`
+ * `transformMessages` treats a foreign api/provider/model as cross-model, which is exactly what this is). The
+ * model name states which authored fact this is, so the two authored shapes cannot be confused for each other.
+ */
+const RESTORED_ROW_API = "gamebuddy-authored";
+const RESTORED_ROW_PROVIDER = "gamebuddy";
+const RESTORED_ROW_MODEL = "companion-transcript-row";
+
+/** One transcript row as the Pi message that carries it, in the shape the row projections read back. */
+function messageCarryingTranscriptRow(
+  row: Readonly<{ role: "player" | "companion"; text: string }>,
+): Parameters<SessionManager["appendMessage"]>[0] {
+  if (row.role === "player")
+    return { role: "user", content: [{ type: "text", text: row.text }], timestamp: Date.now() };
+  return {
+    role: "assistant",
+    content: [{ type: "text", text: row.text }],
+    api: RESTORED_ROW_API,
+    provider: RESTORED_ROW_PROVIDER,
+    model: RESTORED_ROW_MODEL,
+    usage: {
+      input: 0,
+      output: 0,
+      cacheRead: 0,
+      cacheWrite: 0,
+      totalTokens: 0,
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+    },
+    stopReason: "stop",
+    timestamp: Date.now(),
+  };
+}
+
+/** The transcript text one appended message reads back as, through the projection that wrote the rows. */
+function transcriptRowTextOf(message: ReturnType<typeof messageCarryingTranscriptRow>): string | null {
+  const text = message.role === "user" ? chatTranscriptPlayerText(message) : chatTranscriptAssistantText(message);
+  return text === null ? null : text.trim();
 }
 
 /** Why a refused rewind left the model's context exactly as it was. */
