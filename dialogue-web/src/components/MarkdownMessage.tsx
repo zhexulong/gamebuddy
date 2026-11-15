@@ -1,7 +1,7 @@
 import DOMPurify from "dompurify";
 import { Marked } from "marked";
 import { useMemo } from "react";
-import { REPLY_ALLOWED_TAGS, replyConstruct, type ReplySpeaker } from "./companion-reply-grammar";
+import { REPLY_ALLOWED_ATTR, REPLY_ALLOWED_TAGS, replyConstruct, type ReplySpeaker } from "./companion-reply-grammar";
 
 /**
  * Markdown presentation for companion prose.
@@ -13,9 +13,11 @@ import { REPLY_ALLOWED_TAGS, replyConstruct, type ReplySpeaker } from "./compani
  *
  * Security: the model's text is untrusted. `marked` passes raw HTML through by
  * default, so every parse is sanitised by DOMPurify against a deny-by-default
- * allowlist (`ALLOWED_TAGS` only, `ALLOWED_ATTR` empty): no scripts, no event
- * handlers, no `style`, no embedded elements, and no attribute the model wrote
- * can survive. The one attribute this module adds - the action-beat class on
+ * allowlist (`ALLOWED_TAGS` and `ALLOWED_ATTR` are the declaration's own unions): no
+ * scripts, no event handlers, no `style`, no embedded elements, and no attribute the
+ * model wrote can survive - the one attribute pair the reply may carry is an image's
+ * `src`/`alt`, and `src` is further held to the sources `SAFE_IMAGE_SOURCE` names, on an
+ * `<img>` and nowhere else. The one attribute this module adds - the action-beat class on
  * `<em>` - is set by a DOMPurify hook, i.e. after the allowlist has already
  * dropped everything the model authored, so a fabricated `class=` can never
  * become the narration treatment.
@@ -161,6 +163,19 @@ markdown.use({
 });
 
 /**
+ * The sources an image in a reply may be painted from, and the whole policy.
+ *
+ * `https:` and an inlined raster `data:` URL, and nothing else. `http:` is mixed content on the
+ * product's origin plus a request to a third party the player never chose; a relative URL
+ * resolves against the shell and would let a reply address the product's own routes; and
+ * `data:image/svg+xml` is a document that can carry script, so an SVG is not a raster here.
+ * The regexp is the single spelling of the policy: it decides the `src` DOMPurify keeps, and a
+ * refused source leaves the `<img>` with its `alt` text and no picture.
+ */
+const SAFE_IMAGE_SOURCE =
+  /^(?:https:\/\/[\w\-._~:/?#\[\]@!$&'()*+,;=%]+|data:image\/(?:png|jpeg|gif|webp);base64,[A-Za-z0-9+/]+={0,2})$/u;
+
+/**
  * The sanitizer's options, exported so the gate can hold the allowlist against the
  * declaration: a tag hand-added here would be painted without being declared.
  */
@@ -168,12 +183,20 @@ export const COMPANION_MARKDOWN_SANITIZE_CONFIG = {
   // The reply grammar's tag union, and nothing else: a construct the grammar does not
   // declare has no tag here, so it is dropped instead of painted.
   ALLOWED_TAGS: [...REPLY_ALLOWED_TAGS],
-  ALLOWED_ATTR: [] as string[],
+  // The same, for attributes: an image's `src`/`alt`, and no attribute on any other element.
+  ALLOWED_ATTR: [...REPLY_ALLOWED_ATTR],
   // DOMPurify keeps `data-*`/`aria-*` even with an empty allowlist; a deny-by-default
   // surface must turn both off so model output carries no attributes at all.
   ALLOW_DATA_ATTR: false,
   ALLOW_ARIA_ATTR: false,
 };
+
+DOMPurify.addHook("uponSanitizeAttribute", (node, attribute) => {
+  if (attribute.attrName !== "src") return;
+  // `src` is an image's source and nothing else, and it must be one the policy names: the
+  // allowlist admits the attribute, this decides which values may hold it.
+  if (node.nodeName !== "IMG" || !SAFE_IMAGE_SOURCE.test(attribute.attrValue)) attribute.keepAttr = false;
+});
 
 DOMPurify.addHook("afterSanitizeAttributes", (node) => {
   if (node.nodeName === "EM") node.setAttribute("class", ACTION_BEAT_CLASS);

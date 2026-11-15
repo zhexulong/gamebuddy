@@ -56,6 +56,8 @@ export type ReplyConstruct = Readonly<{
   sample: string;
   /** The sanitised tags that carry it. */
   tags: readonly string[];
+  /** The sanitised attributes it may carry, and nothing else. */
+  attrs?: readonly string[];
   paint: ReplyPaint;
   speaker: ReplySpeaker;
 }>;
@@ -72,9 +74,16 @@ export type ReplyConstruct = Readonly<{
  * because the conversation's own name is the transcript's `h1` and the surface's title is its
  * `h2` - the levels a reply may use are the ones BELOW those (see `MarkdownMessage`).
  *
- * Deliberately absent: a link and an image. GFM parses both, and a reply that wrote one used
- * to degrade the same way. They are not constructs of a spoken reply, so they are not
- * declared, so they are not painted.
+ * An image is the one construct that carries an attribute, and the attribute is declared here
+ * like every tag: `<img>` with `src` and `alt`, nothing else. WHICH sources may be painted is
+ * not syntax but a security policy, and it lives beside the sanitizer that enforces it
+ * (`MarkdownMessage`'s `SAFE_IMAGE_SOURCE`) - a refused source keeps its `alt` text, so a
+ * picture the surface will not load still says what it was.
+ *
+ * Deliberately absent: a link. GFM parses it, and a reply that wrote one used to degrade into
+ * its own text with no mark that anything had been dropped. A reply is speech, and a link is a
+ * route out of the conversation that the model chose, so it is not declared and it is not
+ * painted.
  */
 export const COMPANION_REPLY_GRAMMAR: readonly ReplyConstruct[] = Object.freeze([
   Object.freeze({
@@ -181,6 +190,15 @@ export const COMPANION_REPLY_GRAMMAR: readonly ReplyConstruct[] = Object.freeze(
     paint: "shape",
     speaker: "both",
   }),
+  Object.freeze({
+    id: "image",
+    syntax: "![art](…) — https: or an inlined raster data: URL",
+    sample: "![the far field](https://example.com/field.png)",
+    tags: Object.freeze(["img"]),
+    attrs: Object.freeze(["src", "alt"]),
+    paint: "shape",
+    speaker: "both",
+  }),
 ]);
 
 /** One construct by id, or a loud failure: a missing member is not a silent skip. */
@@ -193,4 +211,9 @@ export function replyConstruct(id: string): ReplyConstruct {
 /** Every tag the reply may be made of: the sanitizer's whole allowlist, derived. */
 export const REPLY_ALLOWED_TAGS: readonly string[] = Object.freeze([
   ...new Set(COMPANION_REPLY_GRAMMAR.flatMap((construct) => [...construct.tags])),
+]);
+
+/** Every attribute the reply may carry: the sanitizer's whole attribute allowlist, derived. */
+export const REPLY_ALLOWED_ATTR: readonly string[] = Object.freeze([
+  ...new Set(COMPANION_REPLY_GRAMMAR.flatMap((construct) => [...(construct.attrs ?? [])])),
 ]);

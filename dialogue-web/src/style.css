@@ -4480,6 +4480,15 @@
     font-weight: 600;
   }
 
+  /* A picture is painted at the column's width and never wider: a reply's image can be a
+   2000 px screenshot or an inlined data URL, and the reading column is 400 px at the dock.
+   `height: auto` keeps a stated height from squashing it once the width is capped. */
+  .message-bubble img {
+    max-width: 100%;
+    height: auto;
+    border-radius: var(--radius-sm);
+  }
+
   /* A reply's headings are section labels inside one bubble, so weight is the treatment:
    the bubble already sets the ink and the 8 px rhythm between its blocks, and a browser's
    default `h3` (1.17em, bold, with margins) would fight the 400 px column it is read in.

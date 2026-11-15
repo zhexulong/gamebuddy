@@ -100,6 +100,7 @@ test("renders the model's text inert", async ({ page }) => {
     [
       "before",
       '<script>window.__pwned = "script";</script>',
+      '<iframe src="javascript:window.__pwned = \'frame\';"></iframe>',
       '<img src="x" onerror="window.__pwned = \'img\';" />',
       '<a href="javascript:window.__pwned = \'href\';">link</a>',
       "after",
@@ -108,15 +109,22 @@ test("renders the model's text inert", async ({ page }) => {
 
   const html = await bubbleHtml(page, "h0");
   expect(html).not.toContain("<script");
+  expect(html).not.toContain("<iframe");
   expect(html).not.toContain("onerror");
-  expect(html).not.toContain("<img");
   expect(html).not.toContain("javascript:");
   // The words themselves are not dropped - they are just inert.
   expect(html).toContain("before");
   expect(html).toContain("after");
   expect(html).toContain("link");
+  // An image whose source the policy refuses is not a picture: the element may stand for its
+  // alt text, but no `src` the reply wrote survives to load anything.
+  expect(html, "no source the policy refuses is painted").not.toMatch(/<img [^>]*src=/u);
   // Nothing dangerous became an element, and nothing ran.
-  expect(await page.locator("li[data-handle='h0'] script, li[data-handle='h0'] img, li[data-handle='h0'] a").count()).toBe(0);
+  expect(
+    await page
+      .locator("li[data-handle='h0'] script, li[data-handle='h0'] iframe, li[data-handle='h0'] img[src], li[data-handle='h0'] a")
+      .count(),
+  ).toBe(0);
   expect(await page.evaluate(() => (window as unknown as { __pwned?: string }).__pwned)).toBeUndefined();
 });
 
@@ -234,6 +242,42 @@ test("sits a reply's headings under the conversation's own outline", async ({ pa
   await expect(bubble.locator("h1, h2"), "a reply never mints the page's own levels").toHaveCount(0);
   // Weight is the heading's whole treatment, so a heading is told from the paragraph below it.
   expect(await bubble.locator("h3").evaluate((heading) => getComputedStyle(heading).fontWeight)).toBe("600");
+});
+
+/**
+ * Item 1b: what an image is allowed to load, and what a refused image keeps.
+ *
+ * The failure it catches: a reply's `![art](…)` is a request the PLAYER's browser makes, so the
+ * source is a policy and not a syntax. `http:` is mixed content on the product's origin plus a
+ * request to a third party the player never chose, a relative URL resolves against the shell and
+ * lets a reply address the product's own routes, and `data:image/svg+xml` is a document that can
+ * carry script. Each one keeps its caption and loses its picture; the two the policy names are
+ * painted with the reply's own words as the alt text.
+ */
+test("paints an image only from a source the policy names", async ({ page }) => {
+  await openProbe(page);
+  const png =
+    "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFAAH/q842iQAAAABJRU5ErkJggg==";
+  await setTranscript(page, [
+    `![the seed packet](${png})`,
+    "![the far field](https://example.com/field.png)",
+    "![plain](http://example.com/field.png)",
+    "![script](javascript:alert(1))",
+    "![vector](data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciPjwvc3ZnPg==)",
+    "![elsewhere](/api/state)",
+  ]);
+  const bubble = (handle: string) => page.locator(`li[data-handle='${handle}'] .message-bubble`);
+
+  await expect(bubble("h0").locator("img")).toHaveAttribute("src", png);
+  await expect(bubble("h0").locator("img")).toHaveAttribute("alt", "the seed packet");
+  await expect(bubble("h1").locator("img")).toHaveAttribute("src", "https://example.com/field.png");
+
+  for (const handle of ["h2", "h3", "h4", "h5"]) {
+    await expect(bubble(handle).locator("img[src]"), `${handle}: no picture is painted`).toHaveCount(0);
+    // The caption is the reply's own words, so a refused picture still says what it was.
+    await expect(bubble(handle).locator("img"), `${handle}: the caption stands where the picture would`).toHaveCount(1);
+  }
+  expect(await page.evaluate(() => (window as unknown as { __pwned?: unknown }).__pwned)).toBeUndefined();
 });
 
 /**
