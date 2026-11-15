@@ -1005,6 +1005,18 @@ const en = {
   presetNotAppliedReasonNoValueToSend:
     'is not sent: SillyTavern writes -1 for "pick randomly", so there is no seed there to send.',
   presetNotAppliedReasonOneCompletionPerCall: "is not sent: one completion per call is how this product asks.",
+  samplingTemperatureTitle: "Sampler temperature",
+  samplingTemperatureHint:
+    "The temperature every request is sent at. A reply that starts repeating itself is usually too hot; leaving this empty sends whatever the preset in force says.",
+  samplingTemperatureField: "Temperature",
+  samplingTemperatureFromPreset: "Empty: follow the preset",
+  samplingTemperatureRange: "Between {{min}} and {{max}}.",
+  samplingTemperatureOutOfRange: "Enter a number between {{min}} and {{max}}, or leave it empty to follow the preset.",
+  samplingTemperatureEffective:
+    "Takes effect on the next Chat or Game start: a running session keeps the temperature it began with.",
+  samplingTemperatureSave: "Save temperature",
+  samplingTemperatureUnavailable:
+    "This Host does not serve the sampler setting, so this build cannot show or change it.",
 
   // Shell (design/104 §2): brand mark, single contextual drawer, panel groups.
   appMark: "GB",
@@ -2078,6 +2090,15 @@ const zh: Messages = {
   presetNotAppliedReasonHostOwnedTransport: "不下发：本运行时始终流式传输，传输方式由 Host 决定。",
   presetNotAppliedReasonNoValueToSend: "不下发：SillyTavern 用 -1 表示“随机”，因此没有种子可下发。",
   presetNotAppliedReasonOneCompletionPerCall: "不下发：本产品每次只请求一个补全。",
+  samplingTemperatureTitle: "采样温度",
+  samplingTemperatureHint: "每次请求下发的温度。回复开始重复时通常是温度太高；留空则沿用当前生效预设里的值。",
+  samplingTemperatureField: "温度",
+  samplingTemperatureFromPreset: "留空：沿用预设",
+  samplingTemperatureRange: "范围 {{min}} 到 {{max}}。",
+  samplingTemperatureOutOfRange: "请输入 {{min}} 到 {{max}} 之间的数字，留空表示沿用预设。",
+  samplingTemperatureEffective: "在下次 Chat 或 Game 启动时生效：正在运行的会话继续用启动时的温度。",
+  samplingTemperatureSave: "保存温度",
+  samplingTemperatureUnavailable: "这个 Host 没有提供采样设置，因此这里无法显示或修改。",
 
   // 外壳（design/104 §2）：品牌标记、唯一上下文抽屉、面板分组。
   appMark: "GB",

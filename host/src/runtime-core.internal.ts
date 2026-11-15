@@ -80,6 +80,7 @@ import {
   DEFAULT_COMPANION_LOCALE,
   resolveCompanionLocale,
   resolveGamePromptAddition,
+  resolveSamplingTemperature,
 } from "./settings/player-preference-store.js";
 import {
   type ExactReceiptRecoveryPort,
@@ -96,7 +97,11 @@ import {
   readGameSessionPreset,
   renderPresetMainSegment,
 } from "./tavern/preset-game-session.js";
-import { type PresetSamplingValues, withPresetSampling } from "./tavern/preset-sampling.js";
+import {
+  type PresetSamplingValues,
+  withPlayerSamplingTemperature,
+  withPresetSampling,
+} from "./tavern/preset-sampling.js";
 import {
   boundPresetSampling,
   presetRequestMacros,
@@ -1394,6 +1399,10 @@ export async function createRuntimeWithFixedToolsCore(
           return Object.freeze({ presets, binding, projectDir: paths.runtimeCwd });
         })();
   const chatPresetSampling = chatPreset === null ? null : await boundPresetSampling(chatPreset);
+  // The ONE sampler value a player owns rather than a preset. Read at mount, like the Game prompt addition, because it
+  // is spliced into `models.json` when the runtime is constructed - a settings surface that took effect per turn would
+  // have to reach a layer the adapter does not offer (design tavern-preset-compatibility §5).
+  const playerSamplingTemperature = await resolveSamplingTemperature(paths.root);
   const refreshPresetRequestSegments =
     chatPreset === null
       ? undefined
@@ -1487,10 +1496,16 @@ export async function createRuntimeWithFixedToolsCore(
   }
 
   const sessionManager = SessionManager.continueRecent(paths.runtimeCwd, paths.sessionDir);
+  // ONE application point for both surfaces: whichever preset bag this surface assembled (the Chat's durable binding,
+  // the Game's provisioned session preset, or none) goes through the player's own temperature here and nowhere else. A
+  // second splice site would be a second authority for one value.
   const modelRuntime = await createCompanionModelRuntime(
     paths.agentDir,
     modelConfig,
-    runtimeSurface === "chat" ? (chatPresetSampling ?? undefined) : gameSessionPreset?.sampling,
+    withPlayerSamplingTemperature(
+      runtimeSurface === "chat" ? (chatPresetSampling ?? undefined) : gameSessionPreset?.sampling,
+      playerSamplingTemperature,
+    ),
   );
   const model =
     modelConfig === undefined ? undefined : modelRuntime.getModel(modelConfig.provider, modelConfig.modelId);

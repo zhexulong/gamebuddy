@@ -49,12 +49,20 @@ const LANGUAGE_ROUTES = ["settings.language.read", "settings.language.update"] a
 const APPEARANCE_ROUTES = ["settings.appearance.read", "settings.appearance.update"] as const;
 /** The interface-language group sits directly after the appearance group in that same order. */
 const UI_LANGUAGE_ROUTES = ["settings.ui-language.read", "settings.ui-language.update"] as const;
+/** The one sampler value a player owns rather than a preset. */
+const SAMPLER_ROUTES = ["settings.sampler.read", "settings.sampler.update"] as const;
 
 const settingsProfile = composeTavernProfile({
   profileId: "gamebuddy.tavern-management.chat-list-title",
   releaseTier: "tavern_management",
-  routeIds: [...CORE_ROUTES, ...LANGUAGE_ROUTES, ...APPEARANCE_ROUTES, ...UI_LANGUAGE_ROUTES],
-  operationIds: [...CORE_OPERATIONS, ...LANGUAGE_ROUTES, ...APPEARANCE_ROUTES, ...UI_LANGUAGE_ROUTES],
+  routeIds: [...CORE_ROUTES, ...LANGUAGE_ROUTES, ...APPEARANCE_ROUTES, ...UI_LANGUAGE_ROUTES, ...SAMPLER_ROUTES],
+  operationIds: [
+    ...CORE_OPERATIONS,
+    ...LANGUAGE_ROUTES,
+    ...APPEARANCE_ROUTES,
+    ...UI_LANGUAGE_ROUTES,
+    ...SAMPLER_ROUTES,
+  ],
   navigationItemIds: ["chat", "characters"],
 });
 
@@ -532,5 +540,86 @@ test("the interface language is read and written over its own CSRF-bound route, 
     });
     assert.equal(stale.status, 409);
     assert.equal((await (await read(origin, "/api/tavern/v1/settings/ui-language", session)).json()).locale, "en");
+  });
+});
+
+/**
+ * The sampler-temperature route pair, over the real handler and the real durable record.
+ *
+ * The three things this pins that nothing else can: the value a player pins is the value the durable record holds and
+ * the read hands back (so the settings field and the request that reads this record cannot disagree); `null` is a real
+ * choice - "follow the preset" - and not an absence the route invents; and a value outside the stated range is refused
+ * by the contract before the store sees it, never clamped into a number the player did not type.
+ */
+test("the sampler temperature is read and written over its own CSRF-bound route, through the one record", async () => {
+  await withServer(async (origin) => {
+    const session = await bootstrap(origin);
+
+    const before = await (await read(origin, "/api/tavern/v1/settings/sampler", session)).json();
+    assert.deepEqual(before, { revision: 0, temperature: null });
+    assert.deepEqual(Object.keys(before).sort(), ["revision", "temperature"]);
+
+    // A write from another origin, and one without the session's CSRF header, both stop before the store.
+    const noOrigin = await fetch(`${origin}/api/tavern/v1/settings/sampler`, {
+      method: "PUT",
+      headers: { Cookie: session.cookie, "Content-Type": "application/json", "x-csrf-token": session.csrfToken },
+      body: JSON.stringify({ expectedRevision: 0, temperature: 0.35 }),
+    });
+    assert.equal(noOrigin.status, 401);
+    const noCsrf = await fetch(`${origin}/api/tavern/v1/settings/sampler`, {
+      method: "PUT",
+      headers: { Origin: origin, Cookie: session.cookie, "Content-Type": "application/json" },
+      body: JSON.stringify({ expectedRevision: 0, temperature: 0.35 }),
+    });
+    assert.equal(noCsrf.status, 403);
+    assert.equal((await (await read(origin, "/api/tavern/v1/settings/sampler", session)).json()).temperature, null);
+
+    // Outside the stated range, and not a number at all: refused as an invalid request rather than clamped.
+    for (const refused of [-0.1, 2.1, "0.5"]) {
+      const invalid = await write(origin, "/api/tavern/v1/settings/sampler", session, {
+        expectedRevision: 0,
+        temperature: refused,
+      });
+      assert.equal(invalid.status, 400, `${String(refused)} is not a temperature this product sends`);
+    }
+
+    const written = await write(origin, "/api/tavern/v1/settings/sampler", session, {
+      expectedRevision: 0,
+      temperature: 0.35,
+    });
+    assert.equal(written.status, 200);
+    assert.deepEqual(await written.json(), { revision: 1, temperature: 0.35 });
+    assert.deepEqual(await (await read(origin, "/api/tavern/v1/settings/sampler", session)).json(), {
+      revision: 1,
+      temperature: 0.35,
+    });
+
+    // The same record: the companion language group reads the revision this write produced, and its own value is
+    // untouched - pinning a temperature rewrites nothing else.
+    assert.deepEqual(await (await read(origin, "/api/tavern/v1/settings/language", session)).json(), {
+      revision: 1,
+      locale: null,
+    });
+    // The two ends of the range are values, and clearing back to the preset is the null form of the same write.
+    const zero = await write(origin, "/api/tavern/v1/settings/sampler", session, {
+      expectedRevision: 1,
+      temperature: 0,
+    });
+    assert.equal(zero.status, 200);
+    const cleared = await write(origin, "/api/tavern/v1/settings/sampler", session, {
+      expectedRevision: 2,
+      temperature: null,
+    });
+    assert.equal(cleared.status, 200);
+    assert.deepEqual(await cleared.json(), { revision: 3, temperature: null });
+
+    // A stale write from a tab that never saw those revisions is a conflict, not a clobber.
+    const stale = await write(origin, "/api/tavern/v1/settings/sampler", session, {
+      expectedRevision: 1,
+      temperature: 1.4,
+    });
+    assert.equal(stale.status, 409);
+    assert.equal(((await stale.json()) as { code: string }).code, "settings_revision_conflict");
+    assert.equal((await (await read(origin, "/api/tavern/v1/settings/sampler", session)).json()).temperature, null);
   });
 });

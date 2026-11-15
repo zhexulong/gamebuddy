@@ -190,8 +190,8 @@ export function withPresetSampling(
   });
 }
 
-/** Where an effective sampling value came from: the preset, the model's own defaults, the level, or nothing. */
-export type SamplingSource = "preset" | "model" | "thinking-level" | "unset";
+/** Where an effective sampling value came from: the preset, the player, the model's own defaults, the level, or nothing. */
+export type SamplingSource = "preset" | "player" | "model" | "thinking-level" | "unset";
 
 /** One key's actual value and the layer that decided it. `unset` means no layer sets it, so nothing is sent. */
 export type SamplingReading = Readonly<{
@@ -210,6 +210,26 @@ export type SamplingRuntimeModel = Readonly<{
 }>;
 
 /**
+ * The sampler bag one request carries: the preset's values with the player's own temperature written over them.
+ *
+ * ONE field is the player's - `temperature` - because that is the one she can act on when a reply starts repeating
+ * itself, and a settings surface that offered more would be promising control the product does not have (design
+ * tavern-preset-compatibility §5: no control that does not reach the wire). The other seven keys stay the preset's.
+ *
+ * `null` is "no opinion" and leaves the bag untouched, byte for byte: an installation that never touched the field
+ * must send exactly what it sent before this existed. An override with no preset bound still applies - the player
+ * asked for it, and "the preset said nothing" is not a reason to ignore her.
+ */
+export function withPlayerSamplingTemperature(
+  values: PresetSamplingValues | undefined,
+  temperature: number | null,
+): PresetSamplingValues | undefined {
+  if (temperature === null) return values;
+  if (!Number.isFinite(temperature)) throw new Error(`sampling_temperature_not_a_number:${String(temperature)}`);
+  return Object.freeze(values === undefined ? { temperature } : { ...values, temperature });
+}
+
+/**
  * What is actually in force, per sampling key, and which layer decided it.
  *
  * The inputs are the runtime's own facts, not this module's intentions: `model` is the composed model the adapter
@@ -218,9 +238,13 @@ export type SamplingRuntimeModel = Readonly<{
  * looked up under. Asking a caller for the requested level instead would let the reading name a layer the adapter
  * never consults.
  *
- * The precedence is the adapter's own: thinking-level, then the model's own defaults, then unset. A key this module
+ * The precedence is the adapter's own, with the player's single key above the preset: thinking-level, then the
+ * player's `temperature`, then the preset's values, then the model's own defaults, then unset. A key this module
  * wrote (present in `preset`) is reported as `preset` on the model layer, and the composed model must actually carry
- * that value - otherwise the reading would claim something the wire will not show, so it fails closed instead.
+ * that value - otherwise the reading would claim something the wire will not show, so it fails closed instead. The
+ * player's key is checked the same way and for the same reason: her override is legal exactly when the composed model
+ * carries it, and every OTHER key it does not name still has to match the preset, so an override of `temperature`
+ * cannot excuse an unexpected `top_k` drift.
  *
  * Per-request values are not a source here because nothing in this product can set one: `PromptOptions` carries no
  * sampling field and the Host never calls `streamSimple`/`stream` with `samplingParams`. The adapter still merges a
@@ -232,6 +256,8 @@ export function effectivePresetSampling(
     model: SamplingRuntimeModel;
     thinkingLevel: string;
     preset: PresetSamplingValues;
+    /** The player's own sampler values (`withPlayerSamplingTemperature`), when a settings surface set any. */
+    player?: PresetSamplingValues;
   }>,
 ): readonly SamplingReading[] {
   const modelParamsCandidate = input.model.samplingParams;
@@ -240,8 +266,18 @@ export function effectivePresetSampling(
   const byLevel = isRecord(byLevelCandidate) ? byLevelCandidate : {};
   const levelCandidate = byLevel[input.thinkingLevel];
   const levelParams = isRecord(levelCandidate) ? levelCandidate : {};
+  const player = input.player ?? {};
   const readings = PRESET_SAMPLING_KEYS.map((key): SamplingReading => {
     if (key in levelParams) return Object.freeze({ key, value: levelParams[key], source: "thinking-level" });
+    const playerValue = player[key];
+    if (playerValue !== undefined) {
+      const composed = modelParams[key];
+      if (!Object.is(composed, playerValue))
+        throw new Error(
+          `player_sampling_not_applied:${key}:player=${String(playerValue)}:composed=${String(composed)}`,
+        );
+      return Object.freeze({ key, value: composed, source: "player" });
+    }
     const presetValue = input.preset[key];
     if (presetValue !== undefined) {
       const composed = modelParams[key];

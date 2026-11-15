@@ -50,6 +50,8 @@ import {
   createManagementPipelineApi,
   type ManagementPipelineApi,
   MAX_GAME_PROMPT_ADDITION_CHARS,
+  SAMPLING_TEMPERATURE_MAX,
+  SAMPLING_TEMPERATURE_MIN,
   type MemoryReadV1,
   TavernProblemError,
   TavernProtocolError,
@@ -60,6 +62,7 @@ import {
   type TavernConnectionProviderV1,
   type TavernGamePromptAdditionV1,
   type TavernModelProfilesV1,
+  type TavernSamplerPreferenceV1,
   type TavernUiLanguagePreferenceV1,
   type TavernVoiceDevicesV1,
 } from "../management-pipeline-api";
@@ -1306,6 +1309,18 @@ type GamePromptAdditionView =
   | Readonly<{ kind: "ready"; record: TavernGamePromptAdditionV1; pending: boolean }>;
 
 /**
+ * The sampler temperature's own four states.
+ *
+ * `unavailable` is a Host that does not advertise the route: the group then says the read is not served rather than
+ * showing a field whose save would always fail.
+ */
+type SamplerTemperatureView =
+  | Readonly<{ kind: "loading" }>
+  | Readonly<{ kind: "unavailable" }>
+  | Readonly<{ kind: "error" }>
+  | Readonly<{ kind: "ready"; record: TavernSamplerPreferenceV1; pending: boolean }>;
+
+/**
  * The player's own addition to the Game companion's instructions: one field, one bound, and
  * the sentence saying when it lands.
  *
@@ -1376,6 +1391,102 @@ function GamePromptAdditionPanel({
       )}
     </section>
   );
+}
+
+/**
+ * The one sampler value a player owns rather than a preset: the temperature every request is sent at.
+ *
+ * The field is a TEXT field saying `""` means "follow the preset", because that is a real third state and a
+ * number input can only hold two. An out-of-range value is refused here, by the same rule the Host applies, rather
+ * than clamped: a clamp would save a number the player never typed and then show it back to her as though she had.
+ *
+ * The sentence about WHEN it lands is not decoration: the value is spliced into `models.json` when a runtime is
+ * constructed (design tavern-preset-compatibility §5), so a running Chat or Game keeps the temperature it started
+ * with. A control that saved silently would leave a player watching a looping reply for a change it cannot make.
+ */
+function SamplerTemperaturePanel({
+  view,
+  draft,
+  labels,
+  onChange,
+  onSave,
+}: Readonly<{
+  view: SamplerTemperatureView;
+  draft: string;
+  labels: Messages;
+  onChange: (next: string) => void;
+  onSave: () => void;
+}>): ReactElement {
+  const parsed = parseSamplingTemperature(draft);
+  return (
+    <section
+      className="management-settings-section"
+      aria-label={labels.samplingTemperatureTitle}
+      data-sampler-temperature
+    >
+      <h2>{labels.samplingTemperatureTitle}</h2>
+      <p>{labels.samplingTemperatureHint}</p>
+      {view.kind === "loading" && <p>{labels.loading}</p>}
+      {view.kind === "unavailable" && <p>{labels.samplingTemperatureUnavailable}</p>}
+      {view.kind === "error" && <p>{labels.failure}</p>}
+      {view.kind === "ready" && (
+        <>
+          <label className="management-settings-label" htmlFor="sampler-temperature">
+            {labels.samplingTemperatureField}
+          </label>
+          <input
+            id="sampler-temperature"
+            className="form-input"
+            inputMode="decimal"
+            placeholder={labels.samplingTemperatureFromPreset}
+            disabled={view.pending}
+            value={draft}
+            onChange={(event) => onChange(event.target.value)}
+          />
+          <p className="management-settings-hint" data-sampler-temperature-range>
+            {labels.samplingTemperatureRange
+              .replace("{{min}}", String(SAMPLING_TEMPERATURE_MIN))
+              .replace("{{max}}", String(SAMPLING_TEMPERATURE_MAX))}
+          </p>
+          {!parsed.ok && (
+            <p className="warning-banner" data-sampler-temperature-invalid>
+              {labels.samplingTemperatureOutOfRange
+                .replace("{{min}}", String(SAMPLING_TEMPERATURE_MIN))
+                .replace("{{max}}", String(SAMPLING_TEMPERATURE_MAX))}
+            </p>
+          )}
+          {/* WHEN it takes effect, always rendered beside the field: this is the one fact a save here
+              cannot demonstrate for itself. */}
+          <p className="management-settings-hint" data-sampler-temperature-effective>
+            {labels.samplingTemperatureEffective}
+          </p>
+          <div className="composer-actions">
+            <button type="button" className="small-button" disabled={view.pending || !parsed.ok} onClick={onSave}>
+              {labels.samplingTemperatureSave}
+            </button>
+          </div>
+        </>
+      )}
+    </section>
+  );
+}
+
+/**
+ * The temperature field's text as the value a save would send.
+ *
+ * `""` is `null` - follow the preset - and everything else must be a finite number inside the stated range. A
+ * refusal carries no message of its own: the panel already names the range beside the field, and the Host refuses the
+ * same input with `sampling_temperature_out_of_range`.
+ */
+function parseSamplingTemperature(
+  text: string,
+): Readonly<{ ok: true; temperature: number | null }> | Readonly<{ ok: false }> {
+  const trimmed = text.trim();
+  if (trimmed === "") return { ok: true, temperature: null };
+  const value = Number(trimmed);
+  if (!Number.isFinite(value) || value < SAMPLING_TEMPERATURE_MIN || value > SAMPLING_TEMPERATURE_MAX)
+    return { ok: false };
+  return { ok: true, temperature: value };
 }
 
 /**
@@ -1510,6 +1621,15 @@ export function SettingsSurfacePanel({
   const [modelRoute, setModelRoute] = useState<ChatModelRoute>({ kind: "unknown" });
   const [modelProfilesView, setModelProfilesView] = useState<ModelProfilesView>({ kind: "loading" });
   const [promptAdditionView, setPromptAdditionView] = useState<GamePromptAdditionView>({ kind: "loading" });
+  const [samplerView, setSamplerView] = useState<SamplerTemperatureView>({ kind: "loading" });
+  /**
+   * The temperature field's own text, with `""` standing for "follow the preset".
+   *
+   * A string and not a number: the player types through states no number can hold (`""`, `"0."`), and a
+   * field that parsed on every keystroke would fight her for the decimal point. It is parsed exactly once, on
+   * save.
+   */
+  const [samplerDraft, setSamplerDraft] = useState("");
   /*
    * The two fields the player types into, held by the shell rather than by this panel.
    *
@@ -1681,6 +1801,16 @@ export function SettingsSurfacePanel({
         setUiLanguageView({ kind: "ready", locale: record.locale, pending: false });
       } catch {
         if (active) setUiLanguageView({ kind: "unavailable" });
+      }
+      // The sampler temperature, from the same record as everything above. A route this Host does not
+      // serve leaves the group saying so rather than showing a field whose save would always fail.
+      try {
+        const record: TavernSamplerPreferenceV1 = await api.readSamplerPreference();
+        if (!active) return;
+        setSamplerView({ kind: "ready", record, pending: false });
+        setSamplerDraft(record.temperature === null ? "" : String(record.temperature));
+      } catch {
+        if (active) setSamplerView({ kind: "unavailable" });
       }
     })();
     return () => {
@@ -1879,6 +2009,41 @@ export function SettingsSurfacePanel({
           // The refusal stands on its own: the field keeps her text and the next save CASes on
           // the revision this panel still holds.
           setPromptAdditionView({ ...view, pending: false });
+        }
+        report({ kind: "failure", text: problemTextWithCode(labels.failure, error, labels) });
+      }
+    })();
+  };
+
+  /**
+   * Writes the sampler temperature.
+   *
+   * Same shape as the prompt addition's save and for the same reasons: an accepted write is the Host's read-back (so
+   * the field and the record become what the store holds), a refusal re-reads only the record so the retry CASes on the
+   * revision the Host actually holds, and a value the field itself rejects is never sent at all.
+   */
+  const saveSamplerTemperature = (): void => {
+    if (samplerView.kind !== "ready" || samplerView.pending) return;
+    const parsed = parseSamplingTemperature(samplerDraft);
+    if (!parsed.ok) return;
+    const view = samplerView;
+    const sent = parsed.temperature;
+    setSamplerView({ ...view, pending: true });
+    void (async () => {
+      try {
+        const written = await api.updateSamplerPreference(
+          { expectedRevision: view.record.revision, temperature: sent },
+          csrfToken,
+        );
+        setSamplerView({ kind: "ready", record: written, pending: false });
+        setSamplerDraft(written.temperature === null ? "" : String(written.temperature));
+        report({ kind: "success", text: labels.success });
+      } catch (error) {
+        try {
+          const restated = await api.readSamplerPreference();
+          setSamplerView({ kind: "ready", record: restated, pending: false });
+        } catch {
+          setSamplerView({ ...view, pending: false });
         }
         report({ kind: "failure", text: problemTextWithCode(labels.failure, error, labels) });
       }
@@ -2101,6 +2266,13 @@ export function SettingsSurfacePanel({
           onSave={savePromptAddition}
         />
       }
+      <SamplerTemperaturePanel
+        view={samplerView}
+        draft={samplerDraft}
+        labels={labels}
+        onChange={setSamplerDraft}
+        onSave={saveSamplerTemperature}
+      />
       <VoiceSettingsPanel
         voiceView={voiceView}
         labels={labels}

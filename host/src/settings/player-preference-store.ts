@@ -4,12 +4,13 @@ import { MAX_GAME_PROMPT_ADDITION_CHARS } from "../tavern/browser-contract/index
 import { join } from "node:path";
 
 /**
- * Host-owned player preference record. One path, one revision, six field
+ * Host-owned player preference record. One path, one revision, seven field
  * groups: the companion language the runtimes read at mount, the cloud TTS
  * consent/output the Voice surface reads, whether Chat replies arrive as short
  * paced pieces, the player's own addition to the Game companion's instructions
  * (read once, at Game-session start), the appearance this browser paints itself
- * in, and the interface's own display language. Every player-visible settings
+ * in, the interface's own display language, and the sampler temperature this
+ * installation sends instead of the preset's. Every player-visible settings
  * write goes through this one record's
  * compare-and-swap, so a write from any settings surface advances the same
  * revision and a stale expectedRevision is rejected for all of them.
@@ -126,6 +127,25 @@ export const APPEARANCE_CHOICES: readonly AppearanceChoice[] = Object.freeze(["s
 export type UiLocale = "en" | "zh-CN";
 
 /**
+ * The sampler temperature the player pinned, or `null` to follow the bound preset.
+ *
+ * ONE field, and the bounds are stated ONCE here because three places have to agree on them: the Host's validator
+ * below, the wire's schema (`browser-contract/index.ts`) and the browser's own number field. `0` is a real value
+ * (greedy) and not the same fact as `null` (no opinion), which is why this is a nullable number rather than a number
+ * with a sentinel.
+ *
+ * The range is the OpenAI-compatible family's own: `0..2`. A value outside it is REFUSED by name rather than clamped,
+ * because a silent clamp would leave the player looking at a field that no longer holds what they typed.
+ */
+export const SAMPLING_TEMPERATURE_MIN = 0;
+export const SAMPLING_TEMPERATURE_MAX = 2;
+
+/** The refusal a value outside the stated range gets, named so the caller can say which rule it broke. */
+export const SAMPLING_TEMPERATURE_OUT_OF_RANGE = "sampling_temperature_out_of_range";
+
+export type SamplingTemperature = number | null;
+
+/**
  * The single root-level path of the record. One path, one authority: the
  * management surface writes it and every runtime reads it, so neither side
  * carries a preference of its own.
@@ -161,6 +181,18 @@ export type PlayerPreference = Readonly<{
    * can see the difference.
    */
   uiLocale?: UiLocale | null;
+  /**
+   * The sampler temperature this installation sends, or `null` to send whatever the bound preset says.
+   *
+   * The one sampling value a player owns rather than a preset: a reply that loops gives her nothing to turn down
+   * otherwise, and a preset is read-only (`preset-store.ts`). It outranks the preset for `temperature` alone - the
+   * other seven sampler keys stay the preset's, and `effectivePresetSampling` names `player` as the layer that won.
+   *
+   * Optional on this projection, and always set by the store, for the reason `gamePromptAddition`'s projection gives:
+   * a fixture that does not care about this setting must not have to learn it. The read that serves it collapses both
+   * spellings of "never chosen" to null, so nothing downstream can see the difference.
+   */
+  samplingTemperature?: SamplingTemperature;
 }>;
 
 /**
@@ -177,7 +209,8 @@ export type PlayerPreferenceUpdate =
   | Readonly<{ action: "setPaced"; paced: PacedDelivery }>
   | Readonly<{ action: "setGamePromptAddition"; addition: GamePromptAddition }>
   | Readonly<{ action: "setAppearance"; appearance: AppearanceChoice }>
-  | Readonly<{ action: "setUiLocale"; uiLocale: UiLocale }>;
+  | Readonly<{ action: "setUiLocale"; uiLocale: UiLocale }>
+  | Readonly<{ action: "setSamplingTemperature"; temperature: SamplingTemperature }>;
 
 type StoredPlayerPreference = Readonly<{
   schemaVersion: typeof PLAYER_PREFERENCE_SCHEMA_VERSION;
@@ -192,6 +225,7 @@ type StoredPlayerPreference = Readonly<{
   gamePromptAddition: GamePromptAddition;
   appearance: AppearanceChoice;
   uiLocale: UiLocale | null;
+  samplingTemperature: SamplingTemperature;
 }>;
 
 export class PlayerPreferenceRevisionConflict extends Error {
@@ -209,7 +243,13 @@ export class PlayerPreferenceStore {
   }
 
   async update(expectedRevision: number, update: PlayerPreferenceUpdate): Promise<PlayerPreference> {
-    if (!isRevision(expectedRevision) || !isUpdate(update)) throw new Error("invalid_player_preference_update");
+    if (!isRevision(expectedRevision)) throw new Error("invalid_player_preference_update");
+    // A temperature outside the stated range is refused BY NAME, before the generic gate turns it into
+    // `invalid_player_preference_update`: the browser prints the range beside the field, so a refusal that does not
+    // say which rule broke leaves the player unable to tell a bad value from a stale revision.
+    if (record(update) && update.action === "setSamplingTemperature" && !isSamplingTemperature(update.temperature))
+      throw new Error(SAMPLING_TEMPERATURE_OUT_OF_RANGE);
+    if (!isUpdate(update)) throw new Error("invalid_player_preference_update");
     return await withPathLock(this.path, async () => {
       const current = await this.load();
       if (current.revision !== expectedRevision) throw new PlayerPreferenceRevisionConflict();
@@ -227,6 +267,8 @@ export class PlayerPreferenceStore {
         gamePromptAddition: update.action === "setGamePromptAddition" ? update.addition : current.gamePromptAddition,
         appearance: update.action === "setAppearance" ? update.appearance : current.appearance,
         uiLocale: update.action === "setUiLocale" ? update.uiLocale : current.uiLocale,
+        samplingTemperature:
+          update.action === "setSamplingTemperature" ? update.temperature : current.samplingTemperature,
       });
       await writeAtomically(this.path, next);
       const readBack = await this.load();
@@ -296,6 +338,17 @@ export async function resolveGamePromptAddition(runtimeRoot: string): Promise<Ga
   return (await new PlayerPreferenceStore(playerPreferencePath(runtimeRoot)).read()).gamePromptAddition;
 }
 
+/**
+ * The sampler temperature this installation sends, or `null` when the bound preset decides it.
+ *
+ * Resolved at mount, like the Game prompt addition and for the same kind of reason: the value is spliced into
+ * `models.json` when the runtime is constructed, so a mid-session edit lands on that surface's NEXT mount. The
+ * settings surface says so beside the field rather than implying a live change.
+ */
+export async function resolveSamplingTemperature(runtimeRoot: string): Promise<SamplingTemperature> {
+  return (await new PlayerPreferenceStore(playerPreferencePath(runtimeRoot)).read()).samplingTemperature ?? null;
+}
+
 const DEFAULT_PLAYER_PREFERENCE: StoredPlayerPreference = Object.freeze({
   schemaVersion: PLAYER_PREFERENCE_SCHEMA_VERSION,
   revision: 0,
@@ -309,6 +362,7 @@ const DEFAULT_PLAYER_PREFERENCE: StoredPlayerPreference = Object.freeze({
   gamePromptAddition: "",
   appearance: "system",
   uiLocale: null,
+  samplingTemperature: null,
 });
 
 function project(value: StoredPlayerPreference): PlayerPreference {
@@ -324,6 +378,7 @@ function project(value: StoredPlayerPreference): PlayerPreference {
     gamePromptAddition: value.gamePromptAddition,
     appearance: value.appearance,
     uiLocale: value.uiLocale,
+    samplingTemperature: value.samplingTemperature,
   });
 }
 
@@ -342,6 +397,7 @@ function validateStored(value: unknown): StoredPlayerPreference {
     !isGamePromptAddition(value.gamePromptAddition) ||
     !isAppearanceChoice(value.appearance) ||
     !isUiLocaleOrNull(value.uiLocale) ||
+    !isSamplingTemperature(value.samplingTemperature) ||
     !hasExactKeys(value, [
       "schemaVersion",
       "revision",
@@ -355,6 +411,7 @@ function validateStored(value: unknown): StoredPlayerPreference {
       "gamePromptAddition",
       "appearance",
       "uiLocale",
+      "samplingTemperature",
     ])
   )
     throw new Error("invalid_player_preference_store");
@@ -383,6 +440,7 @@ function validateStored(value: unknown): StoredPlayerPreference {
     gamePromptAddition: value.gamePromptAddition as GamePromptAddition,
     appearance: value.appearance as AppearanceChoice,
     uiLocale: value.uiLocale as UiLocale | null,
+    samplingTemperature: value.samplingTemperature as SamplingTemperature,
   });
 }
 
@@ -414,6 +472,9 @@ function isUpdate(value: unknown): value is PlayerPreferenceUpdate {
   }
   if (value.action === "setUiLocale") {
     return hasExactKeys(value, ["action", "uiLocale"]) && isUiLocale(value.uiLocale);
+  }
+  if (value.action === "setSamplingTemperature") {
+    return hasExactKeys(value, ["action", "temperature"]) && isSamplingTemperature(value.temperature);
   }
   return value.action === "revoke" && hasExactKeys(value, ["action"]);
 }
@@ -465,6 +526,20 @@ function isUiLocale(value: unknown): value is UiLocale {
 
 function isUiLocaleOrNull(value: unknown): value is UiLocale | null {
   return value === null || isUiLocale(value);
+}
+
+/**
+ * The stated range and nothing else: `null` means "follow the preset", a finite number inside the bounds means the
+ * player pinned it, and anything else is refused by name rather than clamped into the range.
+ */
+function isSamplingTemperature(value: unknown): value is SamplingTemperature {
+  if (value === null) return true;
+  return (
+    typeof value === "number" &&
+    Number.isFinite(value) &&
+    value >= SAMPLING_TEMPERATURE_MIN &&
+    value <= SAMPLING_TEMPERATURE_MAX
+  );
 }
 
 /**

@@ -28,7 +28,7 @@ import { type PresetAssemblySurfaceV1, presetAssemblySurface } from "../preset-a
 import type { PresetActiveBindingV1, PresetAssemblyReadV1 } from "./browser-contract/index.js";
 import type { PresetBindingStore } from "./preset-binding.js";
 import type { MacroContext } from "./preset-macros.js";
-import type { SamplingRuntimeModel } from "./preset-sampling.js";
+import type { PresetSamplingValues, SamplingRuntimeModel } from "./preset-sampling.js";
 import type { PresetStore } from "./preset-store.js";
 
 /** The read the browser's route answers. It is the contract's own type, not a second spelling of it. */
@@ -54,7 +54,13 @@ export function createPresetAssemblyRead(
     binding: PresetBindingStore;
     macros: MacroContext;
     markers: Readonly<Record<string, string>>;
-    sampling: (() => Promise<Readonly<{ model: SamplingRuntimeModel; thinkingLevel: string }> | null>) | null;
+    sampling:
+      | (() => Promise<Readonly<{
+          model: SamplingRuntimeModel;
+          thinkingLevel: string;
+          player?: PresetSamplingValues;
+        }> | null>)
+      | null;
   }>,
 ): PresetAssemblyRead {
   return Object.freeze({

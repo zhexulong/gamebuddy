@@ -365,6 +365,7 @@ function appliedPreference(
   if (update.action === "setGamePromptAddition") return { ...next, gamePromptAddition: update.addition };
   if (update.action === "setPersona") return { ...next, persona: update.persona };
   if (update.action === "setUiLocale") return { ...next, uiLocale: update.uiLocale };
+  if (update.action === "setSamplingTemperature") return { ...next, samplingTemperature: update.temperature };
   return { ...next, appearance: update.appearance };
 }
 

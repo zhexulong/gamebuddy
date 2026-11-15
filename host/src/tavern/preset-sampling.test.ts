@@ -7,6 +7,11 @@ import test from "node:test";
 import { ModelRuntime } from "@earendil-works/pi-coding-agent";
 
 import { bindWindowsStaleLockReclaimer } from "../path-lock.js";
+import {
+  PlayerPreferenceStore,
+  playerPreferencePath,
+  resolveSamplingTemperature,
+} from "../settings/player-preference-store.js";
 import { createBuildWindowsStaleLockReclaimer } from "../windows-stale-lock-reclaimer/index.js";
 import { connectionAuthPath, TavernConnectionStore } from "./connection-store.js";
 import { mergeModelProviderEntry, modelProviderEntry, type PiProviderEntry } from "./pi-provider-store.js";
@@ -18,6 +23,7 @@ import {
   presetFieldsNotApplied,
   presetSamplingParams,
   type PresetSamplingValues,
+  withPlayerSamplingTemperature,
   withPresetSampling,
 } from "./preset-sampling.js";
 import { TAVERN_ESCAPE_HATCH_PROVIDER_ID } from "./provider-catalog.js";
@@ -312,4 +318,136 @@ test("a reading whose preset value the composed model does not carry fails close
       }),
     { message: "preset_sampling_not_applied:temperature:preset=0.9:composed=0.7" },
   );
+});
+
+/**
+ * The player's own temperature: the three readings this feature exists to keep apart.
+ *
+ * Each one is composed through the REAL runtime (`composePresetModel`) rather than asserted on the bag this module
+ * wrote, so "the next request carries the new value" is a fact about the model Pi will send.
+ */
+test("with no override, the request carries the preset's temperature and the reading names the preset", async () => {
+  await withAgentDir(async (agentDir) => {
+    const carried = withPlayerSamplingTemperature(FIXTURE_VALUES, null);
+    assert.equal(carried, FIXTURE_VALUES, "an untouched field leaves the bag byte-identical, not a copy of itself");
+    const { model } = await composePresetModel(agentDir, carried ?? FIXTURE_VALUES);
+    assert.ok(model !== undefined);
+    assert.equal(model.samplingParams?.temperature, FIXTURE_VALUES.temperature);
+    const temperature = effectivePresetSampling({
+      model,
+      thinkingLevel: "off",
+      preset: FIXTURE_VALUES,
+    }).find((reading) => reading.key === "temperature");
+    assert.deepEqual(temperature, { key: "temperature", value: FIXTURE_VALUES.temperature, source: "preset" });
+  });
+});
+
+test("an override reaches the composed request and the reading names the player as the layer that won", async () => {
+  await withAgentDir(async (agentDir) => {
+    const override = 0.35;
+    const carried = withPlayerSamplingTemperature(FIXTURE_VALUES, override);
+    assert.ok(carried !== undefined);
+    // One key overridden, every other key untouched: the preset still decides the other seven.
+    assert.deepEqual({ ...carried }, { ...FIXTURE_VALUES, temperature: override });
+    const { model } = await composePresetModel(agentDir, carried);
+    assert.ok(model !== undefined);
+    assert.equal(model.samplingParams?.temperature, override, "the wire carries the player's value, not the preset's");
+    assert.notEqual(override, FIXTURE_VALUES.temperature, "the fixture really changes the value");
+    const readings = effectivePresetSampling({
+      model,
+      thinkingLevel: "off",
+      preset: FIXTURE_VALUES,
+      player: { temperature: override },
+    });
+    const byKey = new Map(readings.map((reading) => [reading.key, reading]));
+    assert.deepEqual(byKey.get("temperature"), { key: "temperature", value: override, source: "player" });
+    // One key winning must not relabel the rest, and must not silence the preset check on them.
+    assert.deepEqual(byKey.get("top_k"), { key: "top_k", value: FIXTURE_VALUES.top_k, source: "preset" });
+  });
+});
+
+test("an override of one key does not excuse a drift in another: the preset check still fails closed", async () => {
+  await withAgentDir(async (agentDir) => {
+    const override = 0.35;
+    const carried = withPlayerSamplingTemperature(FIXTURE_VALUES, override);
+    assert.ok(carried !== undefined);
+    // A model layer that disagrees with the preset on a key the player did NOT override, and still carries the one
+    // she did: the drift has to be the only difference, or the override's own check fires first.
+    const { model } = await composePresetModel(agentDir, carried, { samplingParams: { ...carried, top_k: 7 } });
+    assert.ok(model !== undefined);
+    assert.equal(model.samplingParams?.top_k, 7, "the fixture really drifts a key the override does not name");
+    assert.throws(
+      () =>
+        effectivePresetSampling({
+          model,
+          thinkingLevel: "off",
+          preset: FIXTURE_VALUES,
+          player: { temperature: override },
+        }),
+      { message: `preset_sampling_not_applied:top_k:preset=${FIXTURE_VALUES.top_k}:composed=7` },
+    );
+  });
+});
+
+test("an override the composed model does not carry is refused by name, never reported as in force", () => {
+  assert.throws(
+    () =>
+      effectivePresetSampling({
+        model: { samplingParams: { temperature: FIXTURE_VALUES.temperature } },
+        thinkingLevel: "off",
+        preset: FIXTURE_VALUES,
+        player: { temperature: 0.35 },
+      }),
+    { message: `player_sampling_not_applied:temperature:player=0.35:composed=${FIXTURE_VALUES.temperature}` },
+  );
+});
+
+test("an override with no preset bound still reaches the request", async () => {
+  await withAgentDir(async (agentDir) => {
+    const carried = withPlayerSamplingTemperature(undefined, 0.5);
+    assert.deepEqual({ ...(carried ?? {}) }, { temperature: 0.5 });
+    assert.ok(carried !== undefined);
+    const { model } = await composePresetModel(agentDir, carried);
+    assert.ok(model !== undefined);
+    assert.deepEqual(model.samplingParams, { temperature: 0.5 });
+    const temperature = effectivePresetSampling({
+      model,
+      thinkingLevel: "off",
+      preset: Object.freeze({}),
+      player: carried,
+    }).find((reading) => reading.key === "temperature");
+    assert.deepEqual(temperature, { key: "temperature", value: 0.5, source: "player" });
+  });
+});
+
+/**
+ * The whole path a player's save takes: the durable preference record, the resolver a runtime mount calls, the
+ * composition, and the request the adapter sends.
+ *
+ * Read here rather than mocked at any hop: this is the one test that would catch a field written under one name and
+ * read under another, which is exactly how a settings control ends up doing nothing.
+ */
+test("a temperature saved in the preference record reaches the composed request, and a cleared one does not", async () => {
+  await withAgentDir(async (agentDir) => {
+    const root = join(agentDir, "root");
+    const store = new PlayerPreferenceStore(playerPreferencePath(root));
+    assert.equal(await resolveSamplingTemperature(root), null, "a fresh root follows the preset");
+
+    await store.update(0, { action: "setSamplingTemperature", temperature: 0.25 });
+    const resolved = await resolveSamplingTemperature(root);
+    assert.equal(resolved, 0.25);
+
+    const carried = withPlayerSamplingTemperature(FIXTURE_VALUES, resolved);
+    assert.ok(carried !== undefined);
+    const { model } = await composePresetModel(agentDir, carried);
+    assert.ok(model !== undefined);
+    assert.equal(model.samplingParams?.temperature, 0.25, "the request carries what the player saved");
+    assert.equal(model.samplingParams?.top_p, FIXTURE_VALUES.top_p, "and the preset still decides every other key");
+
+    // Clearing it puts the preset's own value back on the wire, rather than leaving the last override in place.
+    const current = await store.read();
+    await store.update(current.revision, { action: "setSamplingTemperature", temperature: null });
+    const cleared = withPlayerSamplingTemperature(FIXTURE_VALUES, await resolveSamplingTemperature(root));
+    assert.equal(cleared, FIXTURE_VALUES);
+  });
 });

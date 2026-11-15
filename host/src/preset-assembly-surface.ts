@@ -32,6 +32,7 @@ import { type MacroContext, presetMacroEntryFor, presetMacroTokens } from "./tav
 import { type PresetDocument, validatePresetDocument } from "./tavern/preset-document.js";
 import {
   type PresetNotAppliedCode,
+  type PresetSamplingValues,
   type SamplingRuntimeModel,
   type SamplingSource,
   effectivePresetSampling,
@@ -144,7 +145,7 @@ export function presetAssemblySurface(
     document: unknown;
     macros: MacroContext;
     markers: Readonly<Record<string, string>>;
-    sampling: Readonly<{ model: SamplingRuntimeModel; thinkingLevel: string }> | null;
+    sampling: Readonly<{ model: SamplingRuntimeModel; thinkingLevel: string; player?: PresetSamplingValues }> | null;
   }>,
 ): PresetAssemblySurfaceV1 {
   const document = validatePresetDocument(input.document);
@@ -184,12 +185,13 @@ export function presetAssemblySurface(
  */
 function presetSurfaceSampling(
   document: PresetDocument,
-  runtime: Readonly<{ model: SamplingRuntimeModel; thinkingLevel: string }>,
+  runtime: Readonly<{ model: SamplingRuntimeModel; thinkingLevel: string; player?: PresetSamplingValues }>,
 ): readonly PresetSamplingRowV1[] {
   const readings = effectivePresetSampling({
     model: runtime.model,
     thinkingLevel: runtime.thinkingLevel,
     preset: presetSamplingParams(document),
+    ...(runtime.player === undefined ? {} : { player: runtime.player }),
   });
   return Object.freeze(
     readings.map((reading) => {

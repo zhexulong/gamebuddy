@@ -15,6 +15,8 @@ import {
   resolveCompanionLocale,
   resolveGamePromptAddition,
   resolvePacedDelivery,
+  SAMPLING_TEMPERATURE_MAX,
+  SAMPLING_TEMPERATURE_OUT_OF_RANGE,
   VOICE_CLOUD_TTS_DISCLOSURE_VERSION,
 } from "./player-preference-store.js";
 import { MAX_GAME_PROMPT_ADDITION_CHARS } from "../tavern/browser-contract/index.js";
@@ -53,6 +55,8 @@ test("player preference defaults to unconfigured and projects one record with ex
       gamePromptAddition: "",
       appearance: "system" as const,
       uiLocale: null,
+      // Never touched is the preset's call, not a temperature this store invented.
+      samplingTemperature: null,
     } satisfies PlayerPreference);
 
     const updated = await store.update(0, { action: "setLocale", locale: "zh-CN" });
@@ -69,6 +73,7 @@ test("player preference defaults to unconfigured and projects one record with ex
       "paced",
       "persona",
       "revision",
+      "samplingTemperature",
       "uiLocale",
     ]);
     assert.deepEqual(await store.read(), updated);
@@ -672,5 +677,48 @@ test("the interface language round-trips as one of the two catalogues and refuse
       );
     }
     assert.equal((await store.read()).uiLocale, "zh-CN", "a refused write leaves the record untouched");
+  });
+});
+
+/**
+ * The sampler temperature: `null` is "follow the preset", a value inside the stated range is the player's own, and
+ * anything else is refused BY NAME rather than clamped.
+ *
+ * The clamp is what this test exists to rule out: a store that quietly pulled `3` back to `2` would leave the field
+ * showing a number the player never typed, and the request carrying it as though she had.
+ */
+test("the sampler temperature round-trips, defaults to the preset, and refuses an out-of-range value by name", async () => {
+  await withStore(async (path, store) => {
+    const untouched = await store.read();
+    assert.equal(untouched.samplingTemperature, null, "never chosen means the bound preset decides");
+
+    const pinned = await store.update(0, { action: "setSamplingTemperature", temperature: 0.35 });
+    assert.equal(pinned.samplingTemperature, 0.35);
+    // One field group: pinning a temperature touches no other preference.
+    assert.equal(pinned.locale, null);
+    assert.equal(pinned.paced, false);
+    assert.equal((await new PlayerPreferenceStore(path).read()).samplingTemperature, 0.35);
+
+    // The two ends of the stated range are values, not sentinels: 0 is greedy, and both bounds are accepted.
+    const zero = await store.update(pinned.revision, { action: "setSamplingTemperature", temperature: 0 });
+    assert.equal(zero.samplingTemperature, 0);
+    const hottest = await store.update(zero.revision, {
+      action: "setSamplingTemperature",
+      temperature: SAMPLING_TEMPERATURE_MAX,
+    });
+    assert.equal(hottest.samplingTemperature, SAMPLING_TEMPERATURE_MAX);
+
+    // Back to the preset: null is a real choice, not the absence of one.
+    const cleared = await store.update(hottest.revision, { action: "setSamplingTemperature", temperature: null });
+    assert.equal(cleared.samplingTemperature, null);
+
+    for (const temperature of [-0.1, 2.1, Number.NaN, Number.POSITIVE_INFINITY, "0.5", true]) {
+      await assert.rejects(
+        store.update(cleared.revision, { action: "setSamplingTemperature", temperature } as never),
+        { message: SAMPLING_TEMPERATURE_OUT_OF_RANGE },
+        `expected ${String(temperature)} to be refused by name rather than clamped`,
+      );
+    }
+    assert.equal((await store.read()).samplingTemperature, null, "a refused write leaves the record untouched");
   });
 });

@@ -12,6 +12,7 @@ import {
   validateMemoryMutationCommand,
   validateMemoryRead,
   validateAppearancePreference,
+  validateSamplerPreference,
   validateModelProfileUpdateCommand,
   validateModelProfiles,
   validateSetWorldInfoBindingCommand,
@@ -1050,4 +1051,73 @@ test("the appearance client refuses a fourth appearance before it sends a write"
   assert.deepEqual(sent, [
     { path: "/api/tavern/v1/settings/appearance", method: "PUT" },
   ]);
+});
+/**
+ * The sampler temperature's two halves, on the browser side of the wire.
+ *
+ * The first half is the mirror agreeing with the contract: `management-pipeline-api.ts` re-spells the
+ * record's shape locally (it is dependency-free), so a range one side accepts and the other refuses would
+ * be a field that saves and then fails, or refuses and then saves. The second half is the one a player
+ * actually cares about: the value she types leaves the browser as the command's `temperature`, and a value
+ * outside the range never leaves it at all.
+ */
+test("the sampler mirror accepts exactly the temperatures the Host contract accepts", async () => {
+  const { TavernBrowserValidatorsV1 } = await import("../../host/src/tavern/browser-contract/index.ts");
+  const hostRead = TavernBrowserValidatorsV1.TavernSamplerPreferenceV1Schema;
+
+  const candidates = [null, 0, 0.35, 1, 2, -0.1, 2.1, 3, Number.NaN, "0.5", true, undefined];
+  const agreed = [];
+  for (const temperature of candidates) {
+    const value = { revision: 7, temperature };
+    let mirrorAccepts = true;
+    try {
+      validateSamplerPreference(value);
+    } catch {
+      mirrorAccepts = false;
+    }
+    assert.equal(
+      mirrorAccepts,
+      hostRead.Check(value),
+      `the two sides disagree about ${String(temperature)}: a value one accepts and the other refuses is a control ` +
+        "that offers something the Host will not store",
+    );
+    if (mirrorAccepts) agreed.push(temperature);
+  }
+  assert.deepEqual(agreed, [null, 0, 0.35, 1, 2], `examined ${candidates.length} value(s)`);
+
+  // Strictness is part of the agreement: an extra member and a negative revision are refused on both sides.
+  for (const value of [
+    { revision: 7, temperature: 0.5, extra: true },
+    { revision: -1, temperature: 0.5 },
+    { temperature: 0.5 },
+  ]) {
+    assert.equal(hostRead.Check(value), false, `${JSON.stringify(value)} is refused by the contract`);
+    assert.throws(() => validateSamplerPreference(value), TavernProtocolError);
+  }
+});
+
+test("the sampler client sends the temperature it was given, and never sends one the Host would refuse", async () => {
+  const sent = [];
+  const api = createManagementPipelineApi(async (path, init) => {
+    sent.push({ path, method: init?.method ?? "GET", body: init?.body });
+    return { ok: true, status: 200, async json() { return { revision: 1, temperature: 0.35 }; } };
+  });
+
+  // Out of range: refused here, so nothing reaches the network.
+  await assert.rejects(api.updateSamplerPreference({ expectedRevision: 0, temperature: 2.5 }, HANDLE), TavernProtocolError);
+  assert.deepEqual(sent, [], "nothing reached the network");
+
+  // A legal command is one PUT whose body carries the value, and its reply is the Host's read-back.
+  const written = await api.updateSamplerPreference({ expectedRevision: 0, temperature: 0.35 }, HANDLE);
+  assert.deepEqual(written, { revision: 1, temperature: 0.35 });
+  assert.deepEqual(sent, [{ path: "/api/tavern/v1/settings/sampler", method: "PUT", body: JSON.stringify({ expectedRevision: 0, temperature: 0.35 }) }]);
+
+  // Clearing back to the preset travels as the same command with null, never as an omitted member.
+  await api.updateSamplerPreference({ expectedRevision: 1, temperature: null }, HANDLE);
+  assert.deepEqual(sent[1], { path: "/api/tavern/v1/settings/sampler", method: "PUT", body: JSON.stringify({ expectedRevision: 1, temperature: null }) });
+
+  // The read is a plain GET on the same path.
+  sent.length = 0;
+  await api.readSamplerPreference();
+  assert.deepEqual(sent, [{ path: "/api/tavern/v1/settings/sampler", method: "GET", body: undefined }]);
 });
