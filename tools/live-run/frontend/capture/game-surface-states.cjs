@@ -14,7 +14,18 @@ const { randomBytes } = require("node:crypto");
 const { readFileSync } = require("node:fs");
 const path = require("node:path");
 const { REPO_ROOT, reporter, connect, PAGE_HELPERS, activateSurface } = require("./common.cjs");
-const { classifyLaunchRefusal, classifySilentLaunch, notMeasuredLine, describeGameState, readinessOf } = require("./game-launch-verdict.mjs");
+const {
+  LAUNCH_PLATEAU_MS,
+  LIFECYCLE_SHAPES,
+  blockedByProductLine,
+  classifyChainStop,
+  classifyLaunchRefusal,
+  classifySilentLaunch,
+  notMeasuredLine,
+  describeGameState,
+  lifecycleShapeOf,
+  readinessOf,
+} = require("./game-launch-verdict.mjs");
 const { GAME_STATES_PREFIX, verdictLine, NOT_MEASURED_REASONS } = require("./game-states-verdict.mjs");
 
 /** One line, in the language the product is set to: the same line the launch driver says. */
@@ -24,6 +35,8 @@ const BUDGET = Object.freeze({
   controlMs: 30_000,
   activationMs: 120_000,
   launchMs: 300_000,
+  /** How long an instance that already exists gets to leave the state this driver found it in. */
+  plateauMs: LAUNCH_PLATEAU_MS,
   /** One real provider turn. */
   turnMs: 240_000,
   /** How long a turn already in flight gets to settle after the game died. */
@@ -230,11 +243,19 @@ async function waitForControl(page, name, budgetMs) {
  * Bring the game up through the product's own controls, and classify every way that can fail.
  *
  * The installation is registered once per run root (driver W does it, and it stays registered), so this step
- * starts at the lifecycle: activate when there is no instance, press launch, wait for `running`+`attached`.
+ * starts at the lifecycle: press activation only for the shape the product draws it in, press launch only when
+ * nothing is running, wait for `running`+`attached`.
+ *
+ * AN INSTANCE THAT ALREADY EXISTS IS NOT AN UNACTIVATED LIFECYCLE. `launching`, `running`, `stopped` and
+ * `crashed` all mean an instance is there, and the product offers neither the activate nor the launch control
+ * for them (`dialogue-web/src/game-lifecycle-controls.ts:89-99,388-408`); a launch this driver did not ask for
+ * is also not this driver's to ask for a second time. The words are read through the run's one state model
+ * (`lifecycleShapeOf`), so this driver and driver W cannot answer the same state differently.
+ *
  * A launch refusal goes through the run's ONE classification (`game-launch-verdict.mjs`) so a missing guardian
  * is `not_measured: guardian_pipe_unreachable` here exactly as it is for driver W, and never a second spelling.
  */
-async function activateAndLaunch({ page, say, record, guardian, problems }) {
+async function activateAndLaunch({ page, say, record, guardian, problems, budget = BUDGET }) {
   let state = await page.evaluate(readGameState);
   /*
    * A state route that does not answer is the same missing prerequisite reached through the transport, and it is
@@ -255,39 +276,54 @@ async function activateAndLaunch({ page, say, record, guardian, problems }) {
       detail: `the run root holds no registered installation (prerequisites=${String(state.prerequisites)}); driver w-game-launch registers it, and this scenario starts after it`,
     };
 
-  const activated = state.instanceStatus === "none" && Number.isInteger(state.instanceGeneration) && state.instanceGeneration >= 1;
-  if (!activated) {
-    const ready = await waitForControl(page, "activate", BUDGET.controlMs);
+  const shape = lifecycleShapeOf(state);
+  if (shape === LIFECYCLE_SHAPES.unread)
+    return {
+      kind: "not_measured",
+      reason: NOT_MEASURED_REASONS.gameNotRead,
+      detail: `the Host holds no reading of the game (${describeGameState(state)}): the surface's own step for this shape is the reread, so no activation and no launch control exists to press`,
+    };
+
+  if (shape === LIFECYCLE_SHAPES.unactivated) {
+    const ready = await waitForControl(page, "activate", budget.controlMs);
     record("activation control", { settled: ready.settled, control: ready.facts.controls.activate });
     if (!ready.settled)
-      return { kind: "not_measured", reason: "game_lifecycle_not_activated", detail: `no usable activation control within ${String(BUDGET.controlMs)}ms at ${describeGameState(state)}` };
+      return { kind: "not_measured", reason: "game_lifecycle_not_activated", detail: `no usable activation control within ${String(budget.controlMs)}ms at ${describeGameState(state)}` };
     await page.locator('[data-testid="game-activate"]').first().click();
     const activation = await waitForState(
       page,
-      (reading) =>
-        reading.ok === true && reading.instanceStatus === "none" && Number.isInteger(reading.instanceGeneration) && reading.instanceGeneration >= 1,
-      BUDGET.activationMs,
+      (reading) => reading.ok === true && lifecycleShapeOf(reading) === LIFECYCLE_SHAPES.activated,
+      budget.activationMs,
     );
     record("activation", { settled: activation.settled, elapsedMs: activation.elapsedMs, state: activation.state });
     if (!activation.settled)
       return {
         kind: "not_measured",
         reason: "game_lifecycle_not_activated",
-        detail: `the activation never published a generation within ${String(BUDGET.activationMs)}ms (last ${describeGameState(activation.state)})${problemOf(problems, "lifecycle/activate")}`,
+        detail: `the activation never published a generation within ${String(budget.activationMs)}ms (last ${describeGameState(activation.state)})${problemOf(problems, "lifecycle/activate")}`,
       };
+  } else {
+    record("activation", { needed: false, shape, state });
+    say(
+      `the lifecycle already holds the game: shape=${shape} at ${describeGameState(state)}, so the product draws no activation control for it and this driver presses none`,
+    );
   }
 
-  const launchReady = await waitForControl(page, "launch", BUDGET.controlMs);
+  // The launch is for a lifecycle with nothing running. An instance that exists is a launch already
+  // requested - by driver W, whose chain this driver starts behind - and its outcome is a reading.
+  if (shape === LIFECYCLE_SHAPES.instantiated) return await settleInFlightInstance({ page, say, record, budget, state });
+
+  const launchReady = await waitForControl(page, "launch", budget.controlMs);
   record("launch control", { settled: launchReady.settled, control: launchReady.facts.controls.launch });
   if (!launchReady.settled)
-    return { kind: "not_measured", reason: "game_prerequisites_missing", detail: `no usable launch control within ${String(BUDGET.controlMs)}ms at ${describeGameState(await page.evaluate(readGameState))}` };
+    return { kind: "not_measured", reason: "game_prerequisites_missing", detail: `no usable launch control within ${String(budget.controlMs)}ms at ${describeGameState(await page.evaluate(readGameState))}` };
 
   const began = Date.now();
   await page.locator('[data-testid="game-launch"]').first().click();
   say(`launch requested through the product's own control (${JSON.stringify(launchReady.facts.controls.launch.name)})`);
   let launched = await page.evaluate(readGameState);
   let unreachable = launched.ok === true ? 0 : 1;
-  while (Date.now() - began < BUDGET.launchMs) {
+  while (Date.now() - began < budget.launchMs) {
     if (readinessOf(launched) !== "pending" || unreachable >= 5) break;
     await sleep(1000);
     launched = await page.evaluate(readGameState);
@@ -307,6 +343,64 @@ async function activateAndLaunch({ page, say, record, guardian, problems }) {
     };
   say(`the game reached ready: ${describeGameState(launched)} after ${String(Date.now() - began)}ms`);
   return { kind: "ready", state: launched };
+}
+
+/** The tuple a wait watches: a change in any of these is a step the product took. */
+const instanceKey = (state) =>
+  state?.ok !== true
+    ? `unreadable:${String(state?.status)}`
+    : `${String(state.instanceStatus)}/${String(state.attachmentStatus)}/${String(state.instanceGeneration)}`;
+
+/**
+ * Wait for the instance this run found to reach ready, and classify what it settled at.
+ *
+ * Nothing may be pressed here: an existing instance has no activation control, and asking for a second launch
+ * would be a request the product forbids for the same reason. So the three ways this ends are readings -
+ * the launch finished (`ready`), the instance died on the way up, or it stopped moving.
+ *
+ * The third one is not a timeout, it is the run's own proof of a product gap: `classifyChainStop` names
+ * `instance_status_never_running` when the tuple stays put for `LAUNCH_PLATEAU_MS` while a launch is in
+ * flight and nothing is attached. That is the gap the harness already has a word for - a GameBuddy-launched
+ * Player Host is projected as `launching` for its whole life - and it is reported through the harness's
+ * `blocked_by_product` path rather than as a failure or a pass.
+ */
+async function settleInFlightInstance({ page, say, record, budget, state }) {
+  const began = Date.now();
+  let current = state;
+  let key = instanceKey(current);
+  let unchangedSince = began;
+  while (readinessOf(current) === "pending") {
+    if (Date.now() - unchangedSince >= budget.plateauMs) break;
+    if (Date.now() - began >= budget.launchMs) break;
+    await sleep(1000);
+    const next = await page.evaluate(readGameState);
+    if (instanceKey(next) !== key) {
+      key = instanceKey(next);
+      unchangedSince = Date.now();
+    }
+    current = next;
+  }
+  const unchangedForMs = Date.now() - unchangedSince;
+  record("in-flight instance", { settled: readinessOf(current), unchangedForMs, state: current });
+  if (readinessOf(current) === "ready") {
+    say(`the instance this driver found had already finished its launch: ${describeGameState(current)}`);
+    return { kind: "ready", state: current };
+  }
+  const gap = classifyChainStop({ state: current, unchangedForMs, plateauMs: budget.plateauMs });
+  if (gap !== null) {
+    say(`the instance stopped at a gap the product owns: ${blockedByProductLine(gap.gap, gap.detail)}`);
+    return {
+      kind: "not_measured",
+      reason: gap.gap,
+      gap: gap.gap,
+      detail: `this driver found an instance already in flight at ${describeGameState(state)}, and it stayed at ${describeGameState(current)} for ${String(unchangedForMs)}ms without reaching running+attached. ${gap.detail}`,
+    };
+  }
+  return {
+    kind: "not_measured",
+    reason: NOT_MEASURED_REASONS.gameNeverReady,
+    detail: `the instance this driver found never reached instance=running/attachment=attached (${describeGameState(current)} after ${String(Date.now() - began)}ms, unchanged for ${String(unchangedForMs)}ms)`,
+  };
 }
 
 const problemOf = (problems, route) => {
@@ -371,7 +465,16 @@ async function conclude({ browser, say, flush, driver, scenario, reading, facts,
   say(`=== ITEM: ${scenario} ===`);
   say(verdictLine(scenario, reading));
   facts.verdict = { scenario, ...reading };
-  if (reading.verdict === "not_measured") say(notMeasuredLine(reading.reason, reading.detail));
+  /*
+   * A reading the product's own gap caused leaves through the harness's `blocked_by_product` path - the one
+   * driver W's gaps already use (`capture/game-launch-verdict.mjs`) - and through it alone: the capture phase
+   * counts each executed driver in one bucket, and the gap is the more specific word for why the chain stopped.
+   * The verdict is still `not_measured` (nothing failed, nothing was measured) and its line still names the gap.
+   */
+  if (reading.verdict === "not_measured") {
+    if (typeof reading.gap === "string") say(blockedByProductLine(reading.gap, reading.detail));
+    else say(notMeasuredLine(reading.reason, reading.detail));
+  }
   say(`${GAME_STATES_PREFIX} ${driver}: ${reading.verdict} ${reading.reason}; ${scenario}`);
   say(`DONE-${driver.toUpperCase()}`);
   flush();
@@ -408,8 +511,21 @@ async function startStateDriver({ driver, scenario, reportFile }) {
   const started = Date.now();
   const facts = { steps: [], scenario };
   const record = stepRecorder(facts, say);
-  const notMeasured = async (browser, reason, detail) =>
-    await conclude({ browser, say, flush, driver, scenario, facts, reading: { verdict: "not_measured", reason, detail } });
+  /**
+   * `gap` is the product gap the reading proved, when it proved one: the same reading leaves through the
+   * harness's `blocked_by_product` line instead of `NOT-MEASURED`, so a driver that stopped at a step no
+   * launch of this product can cross is counted by name and never as a pass.
+   */
+  const notMeasured = async (browser, reason, detail, gap = null) =>
+    await conclude({
+      browser,
+      say,
+      flush,
+      driver,
+      scenario,
+      facts,
+      reading: { verdict: "not_measured", reason, detail, ...(gap === null ? {} : { gap }) },
+    });
 
   if (typeof gameDir !== "string" || gameDir.length === 0) {
     say("not_measured: the run config names no game directory");
@@ -432,7 +548,7 @@ async function startStateDriver({ driver, scenario, reportFile }) {
 
   const launched = await activateAndLaunch({ page, say, record, guardian, problems });
   if (launched.kind !== "ready")
-    return await notMeasured(browser, launched.reason, launched.detail ?? "the launch did not reach ready");
+    return await notMeasured(browser, launched.reason, launched.detail ?? "the launch did not reach ready", launched.gap ?? null);
 
   // The game's own process, created after this driver started. Both filters are needed: the installation
   // folder is shared with the player's own game, and the start time separates this run's launch from their

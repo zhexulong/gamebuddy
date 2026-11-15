@@ -192,6 +192,13 @@ export const NOT_MEASURED_REASONS = Object.freeze({
   lifecycleNotActivated: "game_lifecycle_not_activated",
   launchRefused: "game_launch_refused",
   gameNeverReady: "game_never_reached_ready",
+  /*
+   * `instance.status: "unread"` - the Host holds no reading of the game, which is a prerequisite absence of
+   * its own and not an activated/unactivated question: the product's step for that shape is the reread, and
+   * neither the activate nor the launch control is offered for it
+   * (`dialogue-web/src/game-lifecycle-controls.ts:388-408`).
+   */
+  gameNotRead: "game_state_not_read",
   noGamePid: "game_process_not_found",
   noTurnInFlight: "no_turn_in_flight",
   gameSurfaceAbsent: "no_game_surface",

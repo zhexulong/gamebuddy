@@ -456,6 +456,11 @@ function observationsFor(L, driverTexts) {
     "=== GAME-STATES — the states a player meets after a launch: a death, the endgame, a disconnect ===",
     [
       "Three scenarios, one line each, each in the three-valued vocabulary the rest of this report uses.",
+      "Each line's driver first brings the game up through the surface's own controls, and a state it cannot",
+      "cross is named rather than waited out: a lifecycle that is not activated is activated, an instance that",
+      "already exists is never pressed for a second launch, and an instance stuck at `launching` with nothing",
+      "attached is the product gap `instance_status_never_running` - `blocked_by_product`, in the same words",
+      "driver w uses, never a pass and never a failure.",
       "`x-game-death` is the game dying under a turn: the exit code the Guardian reported reaches the state",
       "read (`game.instance.playerHostExitCode`), the cabin read refuses with `stardew_player_host_exited`,",
       "the panel names the code, and the turn in flight settles without claiming success. `y-game-endgame` is",
