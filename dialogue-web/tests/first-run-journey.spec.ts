@@ -422,7 +422,7 @@ test.describe("4: an unserved id saves, and the probe is what tells the truth", 
       await expect(connectionRow(page)).toHaveAttribute("data-readiness", "configured");
       await expect(connectionRow(page)).toContainText(UNSERVED);
       await expect(connectionRow(page).locator("[data-connection-untested]")).toHaveText(
-        "Test the connection before activating it.",
+        "Test the connection. If it passes, it becomes the active connection and the next message you send uses it.",
       );
       await expect(connectionRow(page).getByRole("button", { name: "Save and activate" })).toBeDisabled();
 
@@ -470,9 +470,8 @@ test.describe("5: the id the player typed is the id the runtime is handed", () =
       await expect(connectionRow(page)).toContainText(SERVED);
       await connectionRow(page).getByRole("button", { name: "Test connection", exact: true }).click();
       await expect(connectionRow(page)).toHaveAttribute("data-readiness", "ready");
-      await connectionRow(page).getByRole("button", { name: "Save and activate", exact: true }).click();
-      // The row says so in its own words, and the store says so durably: the assertion is on both,
-      // because a button that reads as shut is also shut while a request is in flight.
+      // The passing probe IS the enabling when nothing is active: the player's one press is the whole
+      // act, and the row says so in its own words while the store holds the same fact.
       await expect(page.getByTestId("settings-surface").locator("[data-connection-activated]")).toBeVisible();
       await expect
         .poll(async () => (await connection.read()).active?.modelId, { message: "the store's active record" })

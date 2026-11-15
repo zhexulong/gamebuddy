@@ -1890,20 +1890,28 @@ export function SettingsSurfacePanel({
    * then shows. The successful activation notice makes exactly one claim: the
    * selection is durable and takes effect on the next runtime start. It never
    * claims a running conversation was switched.
+   *
+   * A step is a SEQUENCE of Host calls under one press, and each call receives the state the
+   * previous call's answer produced - a chained write cannot carry a revision an earlier write
+   * already moved. `activated` is what the sequence achieved, so the notice is worded from the
+   * Host's own answer rather than from what the press was expected to do.
    */
   const mutateConnection = async (
-    action: (api: ManagementPipelineApi, csrfToken: string) => Promise<TavernConnectionStateV1>,
-    activation: boolean,
+    step: (
+      api: ManagementPipelineApi,
+      csrfToken: string,
+      state: TavernConnectionStateV1,
+    ) => Promise<Readonly<{ state: TavernConnectionStateV1; activated: boolean }>>,
   ): Promise<boolean> => {
     if (connectionView.kind !== "ready" || connectionView.pending) return false;
     const connection = connectionView;
     setConnectionView({ ...connection, pending: true, notice: null });
     try {
-      const state = await action(api, csrfToken);
-      setConnectionView({ kind: "ready", state, pending: false, notice: activation ? "activation" : null });
+      const { state, activated } = await step(api, csrfToken, connection.state);
+      setConnectionView({ kind: "ready", state, pending: false, notice: activated ? "activation" : null });
       report({
         kind: "success",
-        text: activation ? labels.connectionActivationNotice : labels.success,
+        text: activated ? labels.connectionActivationNotice : labels.success,
       });
       return true;
     } catch (error) {
@@ -1931,29 +1939,56 @@ export function SettingsSurfacePanel({
    * activation needs a ready record, which requires the player's own test step.
    */
   const createConnection = async (form: ConnectionForm): Promise<boolean> => {
-    return await mutateConnection(async (client, token) => {
-      const connection = connectionView.kind === "ready" ? connectionView.state : null;
-      const provider: TavernConnectionProviderV1 | undefined = connection?.providers.find(
+    return await mutateConnection(async (client, token, state) => {
+      const provider: TavernConnectionProviderV1 | undefined = state.providers.find(
         (entry) => entry.providerId === form.providerId,
       );
       if (provider === undefined) throw new TavernProtocolError();
-      return await client.createConnection(
-        {
-          apiVersion: 1,
-          providerId: provider.providerId,
-          // A keyless self-hosted endpoint sends no credential at all, and the fact that none is
-          // needed travels with the command (never inferred from an absent field).
-          ...(provider.setupFields.includes("apiKey") && form.apiKeyRequired ? { apiKey: form.apiKey } : {}),
-          ...(provider.setupFields.includes("apiKeyRequired") ? { apiKeyRequired: form.apiKeyRequired } : {}),
-          ...(provider.setupFields.includes("baseUrl") ? { baseUrl: form.baseUrl } : {}),
-          ...(provider.setupFields.includes("apiShape") ? { apiShape: form.apiShape } : {}),
-          // One model field for every provider the player configures: the id they chose or typed,
-          // and nothing when they named none (the Host then keeps the entry's first suggestion).
-          ...(provider.setupFields.includes("modelId") && form.modelId !== "" ? { modelId: form.modelId } : {}),
-        },
-        token,
-      );
-    }, false);
+      return {
+        state: await client.createConnection(
+          {
+            apiVersion: 1,
+            providerId: provider.providerId,
+            // A keyless self-hosted endpoint sends no credential at all, and the fact that none is
+            // needed travels with the command (never inferred from an absent field).
+            ...(provider.setupFields.includes("apiKey") && form.apiKeyRequired ? { apiKey: form.apiKey } : {}),
+            ...(provider.setupFields.includes("apiKeyRequired") ? { apiKeyRequired: form.apiKeyRequired } : {}),
+            ...(provider.setupFields.includes("baseUrl") ? { baseUrl: form.baseUrl } : {}),
+            ...(provider.setupFields.includes("apiShape") ? { apiShape: form.apiShape } : {}),
+            // One model field for every provider the player configures: the id they chose or typed,
+            // and nothing when they named none (the Host then keeps the entry's first suggestion).
+            ...(provider.setupFields.includes("modelId") && form.modelId !== "" ? { modelId: form.modelId } : {}),
+          },
+          token,
+        ),
+        activated: false,
+      };
+    });
+  };
+
+  /**
+   * Tests one saved record, and enables it when the probe passes and nothing is active.
+   *
+   * This is the one place the two facts are joined, and the join is deliberately narrow: the
+   * activation is asked for ONLY on the Host's own `ready`, never on a local guess, so the gate the
+   * Host enforces (`connection_not_ready`) is the same fact that opened it. And it is asked for only
+   * when `active` is null: a probe reads an endpoint, it does not choose the product's channel, so
+   * testing a second record while one is active stays a test - the row says `Test connection` there
+   * and `Test and enable` here, from that same fact.
+   *
+   * Both calls travel under one press through `mutateConnection`, so the player sees one busy state
+   * and one durable read-back, and the panel's revision for the second call is the one the probe
+   * returned rather than the one the press started with.
+   */
+  const testConnection = (connectionId: string): void => {
+    void mutateConnection(async (client, token, state) => {
+      const probe = await client.testConnection(connectionId, state.revision, token);
+      if (probe.outcome !== "ready" || state.active !== null) return { state: probe.state, activated: false };
+      return {
+        state: await client.activateConnection(connectionId, probe.state.revision, token),
+        activated: true,
+      };
+    });
   };
 
   /**
@@ -2010,34 +2045,28 @@ export function SettingsSurfacePanel({
           modelRoute={modelRoute}
           labels={labels}
           onCreate={createConnection}
-          onTest={(connectionId) =>
-            void mutateConnection(async (client, token) => {
-              if (connectionView.kind !== "ready") throw new TavernProtocolError();
-              const probe = await client.testConnection(connectionId, connectionView.state.revision, token);
-              return probe.state;
-            }, false)
-          }
+          onTest={testConnection}
           onActivate={(connectionId) =>
-            void mutateConnection(async (client, token) => {
-              if (connectionView.kind !== "ready") throw new TavernProtocolError();
-              return await client.activateConnection(connectionId, connectionView.state.revision, token);
-            }, true)
+            void mutateConnection(async (client, token, state) => ({
+              state: await client.activateConnection(connectionId, state.revision, token),
+              activated: true,
+            }))
           }
           onSelectModel={(connectionId, modelId, thinkingLevel: TavernConnectionThinkingLevelV1) =>
-            void mutateConnection(async (client, token) => {
-              if (connectionView.kind !== "ready") throw new TavernProtocolError();
-              return await client.selectConnectionModel(
+            void mutateConnection(async (client, token, state) => ({
+              state: await client.selectConnectionModel(
                 connectionId,
-                { expectedRevision: connectionView.state.revision, modelId, thinkingLevel },
+                { expectedRevision: state.revision, modelId, thinkingLevel },
                 token,
-              );
-            }, false)
+              ),
+              activated: false,
+            }))
           }
           onRemove={(connectionId) =>
-            void mutateConnection(async (client, token) => {
-              if (connectionView.kind !== "ready") throw new TavernProtocolError();
-              return await client.removeConnection(connectionId, connectionView.state.revision, token);
-            }, false)
+            void mutateConnection(async (client, token, state) => ({
+              state: await client.removeConnection(connectionId, state.revision, token),
+              activated: false,
+            }))
           }
         />
       )}

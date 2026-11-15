@@ -486,6 +486,11 @@ const en = {
   connectionReadinessFailed: "Test failed",
   connectionSave: "Save connection",
   connectionTest: "Test connection",
+  // What that press achieves in the one state where it finishes the journey: nothing is active, so a
+  // probe that passes is enabled by the panel itself. The control keeps one word - it IS a test - and
+  // the sentence states its consequence, so the second effect is announced before it happens.
+  connectionTestEnablesNotice:
+    "Test the connection. If it passes, it becomes the active connection and the next message you send uses it.",
   connectionActivate: "Save and activate",
   connectionActivateRequiresReady: "Test the connection before activating it.",
   connectionRemove: "Remove",
@@ -1645,6 +1650,7 @@ const zh: Messages = {
   connectionReadinessFailed: "测试失败",
   connectionSave: "保存连接",
   connectionTest: "测试连接",
+  connectionTestEnablesNotice: "测试连接。通过后会自动启用，你下一条消息就会用它发送。",
   connectionActivate: "保存并启用",
   connectionActivateRequiresReady: "请先测试连接，再启用它。",
   connectionRemove: "删除",

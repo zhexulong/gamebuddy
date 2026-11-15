@@ -617,6 +617,16 @@ export function ConnectionSettingsPanel({
             {labels.connectionRevisionConflict}
           </p>
         )}
+        {/*
+         * A mutation can be more than one Host call - a test that passes is enabled by the panel
+         * itself - so the busy state is stated rather than implied by three disabled controls. The
+         * player pressed once and is owed a sentence for the wait that press started.
+         */}
+        {connectionView.pending && (
+          <p className="field-hint" role="status" data-connection-pending>
+            {labels.connectionPending}
+          </p>
+        )}
 
         <form
           className="connection-form"
@@ -886,6 +896,7 @@ export function ConnectionSettingsPanel({
                 <ConnectionRow
                   key={connection.connectionId}
                   connection={connection}
+                  nothingActive={connectionView.state.active === null}
                   pending={connectionView.pending}
                   labels={labels}
                   onTest={onTest}
@@ -909,6 +920,7 @@ export function ConnectionSettingsPanel({
  */
 export function ConnectionRow({
   connection,
+  nothingActive,
   pending,
   labels,
   onTest,
@@ -917,6 +929,12 @@ export function ConnectionRow({
   onRemove,
 }: Readonly<{
   connection: TavernConnectionV1;
+  /**
+   * Whether this settings document has no active connection at all. It decides what the row's
+   * sentence promises: with nothing active, a probe that passes is enabled by the panel, because
+   * that is the one state where the player's next press has no channel to disturb.
+   */
+  nothingActive: boolean;
   pending: boolean;
   labels: ReturnType<typeof messages>;
   onTest: (connectionId: string) => void;
@@ -992,13 +1010,15 @@ export function ConnectionRow({
           </div>
         )}
       </dl>
-      {/* Why the activate control below is shut. It is the same fact the Host's
-          `connection_not_ready` refusal words, and the same sentence the control's removed `title`
-          carried - rendered as text, because a tooltip is invisible to a touch player and
-          unreachable for a keyboard player. */}
+      {/* Why the control below is not the whole journey, and what it is. The sentence is the state's
+          own fact: with nothing active a passing probe IS the enabling, so the row states that
+          outcome before the press instead of leaving it as a reward for pressing; with another
+          connection active the probe leaves that channel alone and activation stays the second
+          act the player chooses. Rendered as text, because a tooltip is invisible to a touch player
+          and unreachable for a keyboard player. */}
       {connection.readiness !== "ready" && (
         <p className="field-hint" data-connection-untested>
-          {labels.connectionActivateRequiresReady}
+          {nothingActive ? labels.connectionTestEnablesNotice : labels.connectionActivateRequiresReady}
         </p>
       )}
       <div className="composer-actions">

@@ -14,11 +14,16 @@
  * the step and paints the control that performs it. The `title` is gone with it - one fact does
  * not need two spellings, and the visible sentence is the one every player can read.
  *
+ * Testing and enabling became one act in `settings-connection-activates-on-a-passing-test.spec.ts`:
+ * a probe that passes enables the record when nothing is active, so the third reading below is
+ * about the two-connection state, where a probe on the second record leaves the first one active
+ * and the row's sentence says so.
+ *
  * The three readings below:
- *   (i)   untested (`configured`): the sentence is visible and names testing, the disabled
- *         activate button is still disabled, and `Test connection` carries the primary treatment;
- *   (ii)  tested (`ready`): the sentence is gone, activation is enabled, and the primary is on
- *         the control that is now the next action;
+ *   (i)   untested (`configured`): the sentence is visible and names the outcome of testing, the
+ *         disabled activate button is still disabled, and `Test connection` carries the primary
+ *         treatment;
+ *   (ii)  tested (`ready`): the sentence is gone and activation is enabled;
  *   (iii) a failed probe: the probe's own category and the same "test first" sentence stand
  *         together, because retesting is exactly what a failure calls for.
  *
@@ -109,21 +114,38 @@ type Readiness = "configured" | "ready" | "failed";
 /**
  * One saved connection whose readiness the probe moves, plus the routes the composed shell and
  * the Settings panels read. `probe` is the answer the Host's `/test` route gives, so a test
- * chooses whether the player's next press succeeds.
+ * chooses whether the player's next press succeeds - and, because a passing probe enables the
+ * record when nothing is active, the `/activate` route answers too and moves the document's own
+ * active selection. `activated` counts the times the panel asked for it.
  */
 async function stubRoutes(
   page: Page,
-  options: Readonly<{ readiness: Readiness; probe: Readiness; locale?: "en" | "zh-CN" }>,
-): Promise<{ tests: () => number }> {
+  options: Readonly<{ readiness: Readiness; probe: Readiness; locale?: "en" | "zh-CN"; anotherActive?: boolean }>,
+): Promise<{ tests: () => number; activations: () => number }> {
   if (options.locale !== undefined)
     await page.addInitScript((value) => localStorage.setItem("gamebuddy.tavern.ui-locale", value), options.locale);
   let readiness: Readiness = options.readiness;
   let tests = 0;
+  let activations = 0;
+  let active = options.anotherActive === true;
 
   const connectionState = () => ({
     apiVersion: 1,
     revision: 3,
-    active: null,
+    active: active
+      ? {
+          connectionId,
+          label: `DeepSeek · ${modelId}`,
+          providerLabel: "DeepSeek",
+          modelId,
+          modelLabel: "DeepSeek V4.1 Flash",
+          thinkingLevel: "high",
+          readiness,
+          baseUrl: null,
+          failure: null,
+          lastCheckedAtMs: null,
+        }
+      : null,
     connections: [
       {
         connectionId,
@@ -132,7 +154,7 @@ async function stubRoutes(
         providerLabel: "DeepSeek",
         configured: true,
         readiness,
-        active: false,
+        active,
         modelId,
         modelLabel: "DeepSeek V4.1 Flash",
         thinkingLevel: "high",
@@ -167,6 +189,11 @@ async function stubRoutes(
       }),
     );
   });
+  await page.route(/\/api\/tavern\/v1\/settings\/connections\/[^/]+\/activate$/, async (route) => {
+    activations += 1;
+    active = true;
+    await route.fulfill(json200(connectionState()));
+  });
   await page.route("**/api/tavern/v1/settings/language", (route) =>
     route.fulfill(json200({ revision: 1, locale: "en-US" })),
   );
@@ -195,7 +222,7 @@ async function stubRoutes(
       }),
     ),
   );
-  return { tests: () => tests };
+  return { tests: () => tests, activations: () => activations };
 }
 
 const SETTINGS_ENTRY = { en: "Settings", "zh-CN": "设置" } as const;
@@ -261,8 +288,11 @@ test.describe("an untested connection states the step it still needs", () => {
     const reading = await readRow(page);
     console.log(`[connection-untested/configured] ${JSON.stringify(reading)}`);
 
-    // The sentence the player never had: visible text, not a tooltip.
-    expect(reading.step, "the row states what is still missing").toBe("Test the connection before activating it.");
+    // The sentence the player never had: visible text, not a tooltip, and it names what the press
+    // will achieve rather than only what it is.
+    expect(reading.step, "the row states what testing achieves").toBe(
+      "Test the connection. If it passes, it becomes the active connection and the next message you send uses it.",
+    );
     expect(reading.stepVisible, "and it is rendered text, not a title attribute").toBe(true);
     expect(reading.readiness, "beside the readiness fact it explains").toContain("Configured, not tested");
 
@@ -279,7 +309,7 @@ test.describe("an untested connection states the step it still needs", () => {
     );
   });
 
-  test("(ii) ready: the sentence goes, activation opens, and the primary moves with the next action", async ({ page }) => {
+  test("(ii) ready: one press is the whole journey, so the sentence goes and the record is active", async ({ page }) => {
     const stubs = await stubRoutes(page, { readiness: "configured", probe: "ready" });
     const before = await readRow(page);
     expect(before.step, "the untested state speaks first").not.toBeNull();
@@ -304,10 +334,6 @@ test.describe("an untested connection states the step it still needs", () => {
         testPrimary:
           buttons.find((button) => (button.textContent ?? "").trim() === "Test connection")?.classList.contains("primary") ??
           null,
-        activatePrimary:
-          buttons
-            .find((button) => (button.textContent ?? "").trim() === "Save and activate")
-            ?.classList.contains("primary") ?? null,
         activateDisabled:
           buttons.find((button) => (button.textContent ?? "").trim() === "Save and activate")?.disabled ?? null,
       };
@@ -315,9 +341,14 @@ test.describe("an untested connection states the step it still needs", () => {
     console.log(`[connection-untested/after-test] ${JSON.stringify(after)}`);
 
     expect(after.step, "a tested connection no longer needs the sentence").toBe(true);
-    expect(after.activateDisabled, "and the probe's answer is what opens the gate").toBe(false);
-    expect(after.activatePrimary, "the next action is now activation").toBe(true);
+    // The second half of the press: the Host's own `ready` is what the panel asked activation on,
+    // so the player never meets a "ready but not enabled" row they must enable themselves.
+    expect(stubs.activations(), "one press asked for the enabling too").toBe(1);
+    await expect(page.getByTestId("settings-surface").locator("[data-connection-active-value]")).toHaveText(
+      `DeepSeek · ${modelId}`,
+    );
     expect(after.testPrimary, "the step just done is no longer painted as the next one").toBe(false);
+    expect(after.activateDisabled, "and the enable control is shut because the record is the active one").toBe(true);
   });
 
   test("(iii) a failed probe keeps both sentences: what happened, and what to do about it", async ({ page }) => {
@@ -329,7 +360,9 @@ test.describe("an untested connection states the step it still needs", () => {
     const row = page.getByTestId("settings-surface").locator("[data-connection-row]");
     // The probe's own closed category, and the same step sentence: retesting is the action.
     await expect(row.locator("[data-connection-failure]")).toHaveText("The endpoint rejected the credential.");
-    await expect(row.locator("[data-connection-untested]")).toHaveText("Test the connection before activating it.");
+    await expect(row.locator("[data-connection-untested]")).toHaveText(
+      "Test the connection. If it passes, it becomes the active connection and the next message you send uses it.",
+    );
     await expect(row.getByRole("button", { name: "Save and activate" })).toBeDisabled();
   });
 
@@ -340,7 +373,9 @@ test.describe("an untested connection states the step it still needs", () => {
     const reading = await readRow(page, "zh-CN");
     console.log(`[connection-untested/zh] ${JSON.stringify(reading)}`);
 
-    expect(reading.step, "中文句子说明还需要测试").toBe("请先测试连接，再启用它。");
+    expect(reading.step, "中文句子说明测试通过后会自动启用").toBe(
+      "测试连接。通过后会自动启用，你下一条消息就会用它发送。",
+    );
     expect(reading.stepVisible, "而且这句话是正文，不是悬停提示").toBe(true);
     expect(reading.testControl?.primary, "测试是这一行的下一步").toBe(true);
     expect(reading.activateControl?.disabled, "未测试的连接依然不能启用").toBe(true);

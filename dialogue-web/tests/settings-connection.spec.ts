@@ -230,7 +230,9 @@ test("the product Settings surface creates, tests and activates a connection who
   await expect(panel.locator("#connection-model-options option")).toHaveCount(3);
   await expect.poll(documentCarriesKey).toBe(false);
 
-  await panel.getByRole("button", { name: "Save and activate" }).click();
+  // The passing probe is the enabling: nothing was active, so the same press that read the
+  // endpoint asked the Host to activate what it answered `ready`. One press, two Host calls, and
+  // the second one carries the revision the first one returned.
   await expect.poll(() => writes.length).toBe(3);
   expect(writes[2]).toEqual({
     path: `/api/tavern/v1/settings/connections/${connectionId}/activate`,
@@ -238,7 +240,7 @@ test("the product Settings surface creates, tests and activates a connection who
     body: { apiVersion: 1, expectedRevision: 1 },
     csrf: csrfToken,
   });
-  await expect(panel.locator("[data-connection-active-value]")).toHaveText("OpenAI-compatible");
+  await expect(panel.locator("[data-connection-active-value]")).toContainText("OpenAI-compatible");
 
   // The record's own model control is the `/model` route, not a second create.
   await panel.locator(`#connection-level-${connectionId}`).selectOption("low");
@@ -275,11 +277,25 @@ test("a local endpoint that needs no credential saves keyless and probes ready",
   };
   const writes: Array<{ path: string; body: unknown }> = [];
   let readiness: "configured" | "ready" = "configured";
+  let active = false;
 
   const connectionState = () => ({
     apiVersion: 1,
     revision: 1,
-    active: null,
+    active: active
+      ? {
+          connectionId,
+          label: `OpenAI-compatible \u00b7 ${modelId}`,
+          providerLabel: escapeHatch.label,
+          modelId,
+          modelLabel: modelId,
+          thinkingLevel: "high",
+          readiness,
+          baseUrl,
+          failure: null,
+          lastCheckedAtMs: null,
+        }
+      : null,
     connections: [
       {
         connectionId,
@@ -288,7 +304,7 @@ test("a local endpoint that needs no credential saves keyless and probes ready",
         providerLabel: escapeHatch.label,
         configured: true,
         readiness,
-        active: false,
+        active,
         modelId,
         modelLabel: modelId,
         thinkingLevel: "high",
@@ -338,6 +354,12 @@ test("a local endpoint that needs no credential saves keyless and probes ready",
     });
   });
 
+  await page.route(/\/api\/tavern\/v1\/settings\/connections\/[^/]+\/activate$/, async (route) => {
+    writes.push({ path: new URL(route.request().url()).pathname, body: route.request().postDataJSON() });
+    active = true;
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(connectionState()) });
+  });
+
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto(`/#profile=composed-reference-game&boot=${token}`);
   await page.getByRole("button", { name: "Settings", exact: true }).click();
@@ -368,9 +390,11 @@ test("a local endpoint that needs no credential saves keyless and probes ready",
   });
 
   await panel.getByRole("button", { name: "Test connection" }).click();
-  await expect.poll(() => writes.length).toBe(2);
+  await expect.poll(() => writes.length).toBe(3);
   await expect(panel.locator("[data-connection-row]")).toContainText("Ready");
-  await expect(panel.getByRole("button", { name: "Save and activate" })).toBeEnabled();
+  // Nothing was active, so the probe's own answer enabled it: the player does not come back for a
+  // second control to finish the connection they just proved works.
+  await expect(panel.locator("[data-connection-active-value]")).toContainText("OpenAI-compatible");
 });
 
 
@@ -410,6 +434,7 @@ test("the endpoint's own listing is what the form offers, and a typed id it does
   let recordModelId = "";
   let readiness: "configured" | "ready" | "failed" = "configured";
   let failure: string | null = null;
+  let active = false;
 
   const rowModelIds = (): readonly string[] | null => (readiness === "configured" ? null : listed);
   const connectionRow = () => ({
@@ -419,7 +444,7 @@ test("the endpoint's own listing is what the form offers, and a typed id it does
     providerLabel: catalogProvider.label,
     configured: true,
     readiness,
-    active: false,
+    active,
     modelId: recordModelId,
     modelLabel: recordModelId,
     thinkingLevel: "high",
@@ -432,7 +457,20 @@ test("the endpoint's own listing is what the form offers, and a typed id it does
   const connectionState = () => ({
     apiVersion: 1,
     revision: 1,
-    active: null,
+    active: active
+      ? {
+          connectionId,
+          label: `${catalogProvider.label} \u00b7 ${recordModelId}`,
+          providerLabel: catalogProvider.label,
+          modelId: recordModelId,
+          modelLabel: recordModelId,
+          thinkingLevel: "high",
+          readiness,
+          baseUrl: null,
+          failure,
+          lastCheckedAtMs: null,
+        }
+      : null,
     connections: created ? [connectionRow()] : [],
     providers: [catalogProvider],
   });
@@ -489,6 +527,11 @@ test("the endpoint's own listing is what the form offers, and a typed id it does
       }),
     });
   });
+  await page.route(/\/api\/tavern\/v1\/settings\/connections\/[^/]+\/activate$/, async (route) => {
+    writes.push({ path: new URL(route.request().url()).pathname, body: route.request().postDataJSON() });
+    active = true;
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(connectionState()) });
+  });
   await page.route(/\/api\/tavern\/v1\/settings\/connections\/[^/]+\/model$/, async (route) => {
     const body = route.request().postDataJSON() as { modelId: string };
     writes.push({ path: new URL(route.request().url()).pathname, body });
@@ -537,7 +580,6 @@ test("the endpoint's own listing is what the form offers, and a typed id it does
   );
   // The record is not ready, so it cannot be activated - the invariant the probe protects.
   await expect(panel.getByRole("button", { name: "Save and activate" })).toBeDisabled();
-
   // The endpoint's own listing is now what the form offers, and the record offers it too.
   await expect(panel.locator("#connection-model-options option")).toHaveCount(listed.length);
   await expect(panel.locator("#connection-model-options option").first()).toHaveAttribute(
@@ -558,12 +600,18 @@ test("the endpoint's own listing is what the form offers, and a typed id it does
 
   // Tested again, the model the endpoint lists is ready, and the result says so where it stands.
   await panel.getByRole("button", { name: "Test connection" }).click();
-  await expect.poll(() => writes.length).toBe(4);
+  // The passing probe is also the enabling: nothing was active, so the panel asked the Host to
+  // activate the record it had just read as ready, under the same press.
+  await expect.poll(() => writes.length).toBe(5);
+  expect(writes[4]).toEqual({
+    path: `/api/tavern/v1/settings/connections/${connectionId}/activate`,
+    body: { apiVersion: 1, expectedRevision: 1 },
+  });
   await expect(panel.locator("[data-connection-failure]")).toHaveCount(0);
   await expect(panel.locator("[data-connection-model-count]")).toHaveText(
     `${listed.length} models offered; the one you picked is among them.`,
   );
-  await expect(panel.getByRole("button", { name: "Save and activate" })).toBeEnabled();
+  await expect(panel.locator("[data-connection-active-value]")).toContainText("OpenAI");
 
   /** The two boxes the owner asked to be measured, plus both overflow checks. */
   const measure = async (viewport: string) =>
