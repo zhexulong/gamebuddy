@@ -4207,6 +4207,52 @@
     margin-inline: auto;
   }
 
+  /* THE SETTINGS SURFACE'S TRACKS: the width a wide window hands this surface is spent on HEIGHT.
+
+   Measured before this rule, at every declared width: one 640 px column in the region, 50.00 % of it empty at 1440x900,
+   and the surface 2822 px tall at 1280x720, at 1440x900, at 1728x1117 and at 2560x1440 alike - a wider window bought
+   nothing but canvas. The surface beside it already proves the other arrangement: the character sheet packs its cards
+   into columns that follow its own box and reads 2786 -> 2009 px as the grid goes 3 -> 5 columns.
+
+   THE TRACK COUNT IS A FUNCTION OF THE REGION, not of the window: `repeat(auto-fit, minmax(0, var(--management-form-
+   measure)))` repeats the form measure as many times as the region holds it, so a region narrower than two measures has
+   one track and the two collapse onto one another. There is no breakpoint here on purpose - a `@media` width query asks
+   the WINDOW, and this surface's budget is the box it is laid out in (the app bar and the character grid were each
+   moved from a media query to a container fact for that reason).
+
+   `auto-fit` rather than `auto-fill`: at a region that fits three measures `auto-fill` keeps the third track open and
+   empty, with the two used tracks sitting left of centre. `auto-fit` collapses the repetition nothing occupies, so the
+   template is the two tracks this surface has, at every width.
+
+   `justify-content: center` keeps what every block already said: each took the measure and centred itself in the region,
+   and a pair of tracks centred in the region is the same statement about two columns. `align-items: start` is what makes
+   the tracks independent of each other's height - the shorter one does not stretch to the taller one's box, so a
+   disclosure opened inside a track grows that track alone and does not move the blocks in the other one.
+
+   THE FRAME IS THE ONE BLOCK HERE THAT IS WIDER THAN THE MEASURE, and it says so in the property the class gate reads:
+   two tracks of the measure cannot be one measure wide. Nothing below it exceeds the measure - each track is exactly the
+   measure, and every block inside a track keeps the measure it has always kept
+   (`tests/management-measure-holds-one-column.spec.ts` reads both facts off the rendered layout). */
+  [data-settings-tracks] {
+    --exceeds-form-measure: "the Settings surface's two tracks each take the form measure, so their frame is two of it";
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(0, var(--management-form-measure)));
+    justify-content: center;
+    align-items: start;
+    gap: var(--space-3);
+    width: 100%;
+  }
+
+  /* One track is a column of the blocks that belong together, and it keeps the 12 px rhythm the scroll container gives
+     its own children: the blocks inside a track are spaced exactly as they were when they were that container's
+     children. `min-width: 0` is what lets a track be the region on a narrow window rather than its content's width. */
+  [data-settings-track] {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-3);
+    min-width: 0;
+  }
+
   /* A surface's own notice is a block like the list and the cards under it: the
    Chats surface's refused rename painted a 1408 px strip at 1440x900 while the
    card the sentence was about measured 640 px, so the notice and the thing it

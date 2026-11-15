@@ -1,4 +1,4 @@
-import { ScrollText, Settings } from "lucide-react";
+import { Settings } from "lucide-react";
 import type { RefObject } from "react";
 import type { AppearanceChoice } from "../appearance";
 import type { Locale, Messages } from "../i18n";
@@ -15,11 +15,10 @@ import { SurfaceView } from "./SurfaceView";
  * shell persists it and applies the document locale), so `uiLocale` and
  * `onSelectUiLocale` are the only language facts it takes.
  *
- * The preset assembly readout is not a peer surface's entry in the bar: it is the
- * disclosure below the settings groups, and `presets` is the control that opens the
- * read-only page. A player who wants to know how a preset assembles a request comes
- * through Settings, which is where the product's other read-only inspection surfaces
- * are reached from, and the bar keeps one control per place a player goes on purpose.
+ * Which block sits in which of the surface's two tracks is the panel's decision
+ * (`SettingsSurfacePanel`), and so is the preset readout's place at the end of the
+ * second one: `presets` is handed down as the control that opens the read-only
+ * page, so the mount keeps the focus ref it restores.
  */
 export function SettingsSurface({
   api,
@@ -56,19 +55,8 @@ export function SettingsSurface({
         uiLocale={uiLocale}
         onSelectUiLocale={onSelectUiLocale}
         onSelectAppearance={onSelectAppearance}
+        presets={presets}
       />
-      <details className="custom-disclosure" data-settings-presets-disclosure>
-        <summary>
-          <ScrollText size={16} aria-hidden="true" />
-          {labels.presetsPanel}
-        </summary>
-        <p className="management-settings-hint">{labels.presetReadOnlyHint}</p>
-        <div className="composer-actions">
-          <button type="button" className="small-button" ref={presets.ref} onClick={presets.open}>
-            {labels.presetsOpen}
-          </button>
-        </div>
-      </details>
     </SurfaceView>
   );
 }

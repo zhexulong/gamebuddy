@@ -3,12 +3,12 @@ import { WALKED_SURFACES, openSurface, stubShell, token } from "./draft-surfaces
 import { DESKTOP, VIEWPORT_SIZES } from "./viewport-policy";
 
 /**
- * The management measure is ONE column, and every block on a management surface is on it.
+ * The management measure is one COLUMN's width, and every block on a management surface is on a column of it.
  *
  * THE INVARIANT, in the sheet's own words (`style.css`, the `--management-form-measure` token): a block that
  * stretches to the whole region reads as two unrelated ends - a field's label and its control, a section title and
  * its own button. The sheet states that measure once; this file reads it from the token and asks every block on the
- * two surfaces that keep it whether it is on that column.
+ * two surfaces that keep it whether it is on a column of that width.
  *
  * WHY THE POPULATION IS DERIVED AND NOT LISTED. The defect this file exists for is a family, not five selectors:
  * `[data-appearance-settings]`, `[data-sampler-temperature]`, `[data-settings-presets-disclosure]`,
@@ -18,38 +18,50 @@ import { DESKTOP, VIEWPORT_SIZES } from "./viewport-policy";
  * `[data-game-prompt-addition]` were the same defect one pass earlier. A gate over a written-out list of those
  * attributes would have passed for every one of them, which is why nothing here names a block:
  *
- *  - the COLUMN is the set of blocks whose computed `max-width` resolves to the token's own value (no second copy
- *    of 640 lives in this file);
+ *  - the population is every block whose computed `max-width` resolves to the token's own value (no second copy of
+ *    640 lives in this file);
+ *  - a COLUMN is the interval the outermost blocks of that population were painted on. A block nested inside another
+ *    block on the measure only follows its parent, so it inherits that column rather than claiming one;
  *  - an OFFENDER is any laid-out descendant of the surface's scroll container that is wider than that measure and
  *    does not sit inside another offender - the top of each chain, because the parent is the block that lost the
  *    measure and its paragraphs are only following it.
  *
- * That second set is what a newly appended block joins, so it is what the assertion is on: the failure names the
- * element and says which side it belongs on.
+ * A SURFACE MAY HAVE MORE THAN ONE COLUMN, and this file used to assume it could not. The Settings surface lays its
+ * blocks out in two tracks of the measure on a wide window (the width is spent on height there instead of on canvas),
+ * so the assertion is no longer "one column" but "real columns": each one exactly the measure wide (or the region,
+ * when the region is narrower than the measure), none of them overlapping another, and the frame they make centred in
+ * the region - which is what every block on this measure said when there was only one of them. HOW MANY columns a
+ * surface has is its own layout's decision, held where that decision is made: `tests/settings-two-tracks.spec.ts`
+ * derives the Settings surface's count from the region and the measure, and the Characters surface's single column is
+ * held here and by `tests/character-columns-follow-their-container.spec.ts`.
  *
- * THE EXEMPTION IS A DECLARATION, NOT A SELECTOR. One block on the Characters surface genuinely needs the width: the
+ * THE EXEMPTION IS A DECLARATION, NOT A SELECTOR. Two blocks genuinely need the width: the Characters surface's
  * companion grid, whose column count follows the PANEL's own width (`--characters-column-width`, pinned by
- * `tests/character-columns-follow-their-container.spec.ts`), so a form measure on it would be a second, contradictory
- * ceiling. It says so in `style.css`, in `--exceeds-form-measure` beside its rule, and this file reads that property
- * off the element: the exemption is the block's own written reason, and a declaration whose block is never wider than
- * the measure fails as spent instead of standing forever. There is no selector list here that could drift from the
- * sheet.
+ * `tests/character-columns-follow-their-container.spec.ts`), and the Settings surface's own frame, which holds two
+ * tracks of the measure and therefore cannot be one measure wide. Each says so in `style.css`, in
+ * `--exceeds-form-measure` beside its rule, and this file reads that property off the element: the exemption is the
+ * block's own written reason, and a declaration whose block is never wider than the measure fails as spent instead of
+ * standing forever. There is no selector list here that could drift from the sheet.
  *
- * THE CELLS ARE `VIEWPORT_SIZES`. The column is a fact about the width the surface is handed, so it is asked at every
- * declared width. Above the measure the column has two edges to disagree about; below it the region is narrower than
- * the measure, both readings are the region's own, and the row says so rather than pretending the comparison proved
+ * THE CELLS ARE `VIEWPORT_SIZES`. A column is a fact about the width the surface is handed, so it is asked at every
+ * declared width. Above the measure a block has two edges to disagree about; below it the region is narrower than the
+ * measure, both readings are the region's own, and the row says so rather than pretending the comparison proved
  * something - which is why the last assertion requires at least one cell per surface where the region really is wide
  * enough to have two edges.
  *
- * The reading also logs the surface's own `scrollHeight`: bringing a block into the column narrows it, and the height
+ * The reading also logs the surface's own `scrollHeight`: bringing a block into a column narrows it, and the height
  * the surface pays for that is the other half of the trade.
  *
  * red-proof, for the class rather than the five: add
  * `[data-profile-backup-section] > p:first-of-type { width: 1200px; max-width: none }` to `style.css` ->
- *   `settings@desktop: p.management-settings-hint is 1200px wide (395..1595) in a 1408px region whose measure is 640px -
- *   its right edge at 1595 is past the column's 1035`, at every cell wide enough to have two edges. That block is in no
+ *   `settings@desktop: p.management-settings-hint is 1200px wide (721..1921) in a 1408px region whose measure is 640px -
+ *   its right edge at 1921 is past the column's 1361`, at every cell wide enough to have two edges. That block is in no
  *   list; before the fix, the five blocks themselves were the listing, 1398 px at 16..1414 beside the column at
  *   395..1035.
+ * red-proof, for the columns rather than the column: move one block off its track with
+ * `[data-settings-track="tuning"] { margin-left: 240px }` -> `settings@desktop: the columns sit at 309..1601 in a
+ *   1398px region, leaving 293px on the left and 123px on the right - every block on this measure centres itself in the
+ *   region, so the column or columns they make do too`.
  */
 
 /** The two surfaces the measure is declared for and the two this gate walks: both are management form surfaces. */
@@ -66,9 +78,22 @@ type BlockReading = Readonly<{
   declared: string | null;
 }>;
 
+/** One of the surface's columns: the interval the blocks on it were painted on. */
+type ColumnReading = Readonly<{
+  left: number;
+  right: number;
+  width: number;
+  /** The outermost blocks that were laid out on it, so a failure names what it holds. */
+  blocks: readonly string[];
+}>;
+
 type SurfaceReading = Readonly<{
   measure: number;
+  /** The scroll container's content width: the region the columns are laid out in. */
+  contentWidth: number;
   scroller: Readonly<{ width: number; left: number; right: number; scrollHeight: number }>;
+  /** The columns the surface's blocks were laid out in, left to right. */
+  columns: readonly ColumnReading[];
   /** Every laid-out block whose computed `max-width` is the token's value. */
   keepsMeasure: readonly BlockReading[];
   /** Every laid-out block wider than the token's value, at the top of its chain, with no written exemption. */
@@ -138,16 +163,42 @@ async function readSurface(page: Page, testId: string): Promise<SurfaceReading> 
         .map((element) => laidOut.indexOf(element)),
     );
 
+    // THE COLUMNS are the intervals the OUTERMOST blocks on the measure were painted on: a block nested inside another
+    // block that keeps the measure only follows its parent's column, so it inherits that column instead of becoming one.
+    const onMeasure = new Set(
+      laidOut.filter((element) => Number.parseFloat(getComputedStyle(element).maxWidth) === round(measure)),
+    );
+    const byColumn = new Map<string, { left: number; right: number; blocks: string[] }>();
+    for (const element of onMeasure) {
+      let nested = false;
+      for (let ancestor = element.parentElement; ancestor !== null; ancestor = ancestor.parentElement) {
+        if (ancestor === scroller) break;
+        if (onMeasure.has(ancestor)) {
+          nested = true;
+          break;
+        }
+      }
+      if (nested) continue;
+      const rect = element.getBoundingClientRect();
+      const key = `${round(rect.left)}:${round(rect.right)}`;
+      const column = byColumn.get(key) ?? { left: round(rect.left), right: round(rect.right), blocks: [] };
+      column.blocks.push(nameOf(element));
+      byColumn.set(key, column);
+    }
+    const columns = [...byColumn.values()].sort((left, right) => left.left - right.left);
+
     const scrollerRect = scroller.getBoundingClientRect();
     const read = laidOut.map(describe);
     return {
       measure,
+      contentWidth: round(scroller.clientWidth),
       scroller: {
         width: round(scrollerRect.width),
         left: round(scrollerRect.left),
         right: round(scrollerRect.right),
         scrollHeight: Math.round(scroller.scrollHeight),
       },
+      columns: columns.map((column) => ({ ...column, width: round(column.right - column.left) })),
       keepsMeasure: read.filter((block) => block.maxWidth === round(measure)),
       offenders: read.filter((block, index) => topOfChain.has(index) && block.declared === null),
       declared: read.filter((block) => block.declared !== null),
@@ -198,8 +249,8 @@ test("every management form block is on the token's one column, at every declare
       await page.setViewportSize(cell);
       const reading = await settledSurface(page, surface.testId);
       console.log(
-        `[measure-column] ${name}@${cell.name} measure=${reading.measure} region=${JSON.stringify(reading.scroller)} ` +
-          `onColumn=${JSON.stringify(reading.keepsMeasure)} offenders=${JSON.stringify(reading.offenders)} ` +
+        `[measure-column] ${name}@${cell.name} measure=${reading.measure} region=${JSON.stringify(reading.scroller)} content=${reading.contentWidth} ` +
+          `columns=${JSON.stringify(reading.columns)} onColumn=${JSON.stringify(reading.keepsMeasure)} offenders=${JSON.stringify(reading.offenders)} ` +
           `declared=${JSON.stringify(reading.declared)}`,
       );
       rows.push({ surface: name, cell: cell.name, reading });
@@ -214,46 +265,55 @@ test("every management form block is on the token's one column, at every declare
     const { surface, cell, reading } = row;
     const { measure } = reading;
 
-    // FAIL LOUDLY ON ZERO. A cell where nothing takes the measure is not a cell the invariant holds in; it is a cell
-    // where this gate read the wrong region.
+    // THE COLUMNS. The blocks that take the measure are the surface's column population: grouped by the interval they
+    // were painted on, each group is one column. A column is the measure wide - or the region, when the region is
+    // narrower than the measure - the columns do not overlap, and the frame they make together is centred in the region,
+    // which is the statement every block on this measure made when there was only one of them. Whether a surface has
+    // ONE column or several is its own layout's decision (`[data-settings-tracks]` in the sheet, whose count
+    // `tests/settings-two-tracks.spec.ts` holds as a function of the region); what this gate holds is that there are no
+    // half-columns, no overlaps and no off-centre frames.
     if (reading.keepsMeasure.length === 0)
       failures.push(
         `${surface}@${cell}: no block on the surface takes the ${measure}px measure - the gate read the wrong region`,
       );
-
-    // THE COLUMN. The blocks that take the measure ARE the column: they must agree with each other about both edges,
-    // and every other block on the measure must sit inside them. Derived from the population, so a block that lands
-    // on a second column is the failure, not a missing entry in a list.
-    const taken = reading.keepsMeasure.filter((block) => Math.abs(block.width - measure) <= 1);
-    const column = taken.length > 0 ? taken[0] : null;
-    if (column !== null) {
-      const lefts = new Set(taken.map((block) => block.left));
-      const rights = new Set(taken.map((block) => block.right));
-      if (lefts.size > 1 || rights.size > 1)
+    const expectedColumnWidth = Math.min(measure, reading.contentWidth);
+    for (const column of reading.columns) {
+      if (Math.abs(column.width - expectedColumnWidth) > 1)
         failures.push(
-          `${surface}@${cell}: the blocks on the ${measure}px measure do not share one column - ` +
-            taken.map((block) => `${block.name} is ${block.width}px at ${block.left}..${block.right}`).join(", ") +
-            ` (a ${reading.scroller.width}px region from ${reading.scroller.left})`,
+          `${surface}@${cell}: the column holding ${column.blocks.join(", ")} is ${column.width}px wide ` +
+            `(${column.left}..${column.right}) and a column here is ${expectedColumnWidth}px - the measure, or the ` +
+            `region when the ${reading.contentWidth}px region is narrower than it`,
         );
-      for (const block of reading.keepsMeasure) {
-        if (block.left < column.left - 1 || block.right > column.right + 1)
-          failures.push(
-            `${surface}@${cell}: ${block.name} takes the measure but sits at ${block.left}..${block.right}, outside ` +
-              `the column at ${column.left}..${column.right} the blocks beside it establish`,
-          );
-      }
-    } else if (reading.scroller.width >= measure) {
-      // A region this wide has room for the column, so a population with no block actually taking it is a block that
-      // lost the measure - reported by name rather than skipped.
-      failures.push(
-        `${surface}@${cell}: no block is actually ${measure}px wide inside a ${reading.scroller.width}px region`,
-      );
+    }
+    for (let index = 1; index < reading.columns.length; index += 1) {
+      const previous = reading.columns[index - 1]!;
+      const column = reading.columns[index]!;
+      if (column.left < previous.right - 1)
+        failures.push(
+          `${surface}@${cell}: two columns overlap - ${previous.blocks.join(", ")} at ${previous.left}..` +
+            `${previous.right} and ${column.blocks.join(", ")} at ${column.left}..${column.right}. A block that is on ` +
+            "the measure but not on one of the surface's columns belongs on a column, not beside it",
+        );
+    }
+    if (reading.columns.length === 0) {
+      failures.push(`${surface}@${cell}: no block on the measure was laid out at all, so the surface has no column`);
+    } else {
+      const frameLeft = reading.columns[0]!.left;
+      const frameRight = reading.columns[reading.columns.length - 1]!.right;
+      const leftMargin = frameLeft - reading.scroller.left;
+      const rightMargin = reading.scroller.left + reading.contentWidth - frameRight;
+      if (Math.abs(leftMargin - rightMargin) > 1)
+        failures.push(
+          `${surface}@${cell}: the columns sit at ${frameLeft}..${frameRight} in a ${reading.contentWidth}px region, ` +
+            `leaving ${leftMargin}px on the left and ${rightMargin}px on the right - every block on this measure ` +
+            "centres itself in the region, so the column or columns they make do too",
+        );
     }
 
     // THE OFFENDERS. Wider than the declared measure, at the top of the chain, with no written reason. The column is
     // where the block belongs, so the failure says which of the block's own edges is off it.
-    const columnLeft = column?.left ?? reading.scroller.left;
-    const columnRight = column?.right ?? reading.scroller.right;
+    const columnLeft = reading.columns[0]?.left ?? reading.scroller.left;
+    const columnRight = reading.columns[reading.columns.length - 1]?.right ?? reading.scroller.right;
     for (const block of reading.offenders) {
       const side =
         block.left < columnLeft - 1
@@ -283,7 +343,7 @@ test("every management form block is on the token's one column, at every declare
     );
   }
 
-  // THE READING VISITED THE COLUMN. Below the measure every block is inside the region by construction, so a run
+  // THE READING VISITED A WIDE CELL. Below the measure every block is inside the region by construction, so a run
   // that only ever measured narrow cells would agree with itself for a reason that has nothing to do with this.
   for (const name of MEASURED_SURFACES) {
     const wide = rows.filter((row) => row.surface === name && row.reading.scroller.width >= row.reading.measure * 2);

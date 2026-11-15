@@ -33,8 +33,15 @@
  * `role="status"` banner); when it is absent the panel renders the outcome
  * itself, so the composed shell's surface reports it in place.
  */
-import { Archive, Download, Pencil, Sparkles, Trash2 } from "lucide-react";
-import { type KeyboardEvent as ReactKeyboardEvent, type ReactElement, useEffect, useRef, useState } from "react";
+import { Archive, Download, Pencil, ScrollText, Sparkles, Trash2 } from "lucide-react";
+import {
+  type KeyboardEvent as ReactKeyboardEvent,
+  type ReactElement,
+  type RefObject,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
 import type { Locale, Messages } from "../i18n";
 import { problemTextWithCode } from "../composed-problem-view";
 import { useArmedConfirmation } from "./armed-confirmation";
@@ -1561,24 +1568,27 @@ function ProfileBackupPanel({ api, labels }: Readonly<{ api: ManagementPipelineA
 }
 
 /**
- * The Settings panel: the connection records, the companion language, the voice
- * consent/devices and the two model profiles - the four field groups the
- * management surface shows, over the same routes.
+ * The Settings panel: the blocks the settings surface is made of, laid out in TWO TRACKS.
  *
- * The connection group is first because it is the one fact that decides whether
- * a reply can happen at all: without it every other setting describes a product
- * that cannot answer. A player who arrived here from the conversation's own
- * "no model connection" sentence lands on the controls that fix it, above the
- * language and voice preferences that only shape a conversation once one exists.
+ * THE TRACKS are the reason this panel owns the blocks' arrangement rather than only rendering them: a wide window is
+ * spent on height here, not on canvas. The left track is the surface's identity column - how the companion looks, what
+ * language she speaks, and the model connection with its two profiles - and the right track is everything a player tunes
+ * around that: the game's supplementary instruction, the sampler temperature, the voice consent and devices, the
+ * whole-profile backup and the preset readout. Which block sits in which track is a decision of this file's, so it is
+ * written here beside the blocks; the width at which one track becomes two is not (`style.css`, `[data-settings-tracks]`:
+ * the tracks repeat the form measure as often as the region holds it, with no breakpoint).
  *
- * The voice group is last, consent included. The first settings screen keeps the
- * one consent a conversation needs - the model connection - and the cloud-TTS
- * consent is a disclosure the player reads once, when they reach for voice. Its
- * controls stay exactly where they were, with the disclosure sentence they
- * consent to and the device and persona selections they apply to; nothing was
- * deleted and no rule changed, so voice is gated by the same durable consent the
- * moment it is used. It simply is not the third thing a player reads on a screen
- * about models.
+ * The connection group is first because it is the one fact that decides whether a reply can happen at all: without it
+ * every other setting describes a product that cannot answer. A player who arrived here from the conversation's own "no
+ * model connection" sentence lands on the controls that fix it, above the language and appearance preferences that only
+ * shape a conversation once one exists.
+ *
+ * Voice sits at the END OF THE RIGHT TRACK, which is where it was before the second track existed in spirit: the first
+ * settings screen keeps the one consent a conversation needs - the model connection - and the cloud-TTS consent is a
+ * disclosure the player reads once, when they reach for voice. Its controls stay exactly where they were, with the
+ * disclosure sentence they consent to and the device and persona selections they apply to; nothing was deleted and no
+ * rule changed, so voice is gated by the same durable consent the moment it is used. It simply is not the third thing a
+ * player reads on a screen about models, and it is the last block of the surface in reading order as it was before.
  *
  * The companion language and the voice preference live in ONE Host-owned record,
  * so they share one revision here (`settingsRevisionRef`): a panel-local counter
@@ -1589,6 +1599,11 @@ function ProfileBackupPanel({ api, labels }: Readonly<{ api: ManagementPipelineA
  * The interface's own language is the mount's, not this panel's: the mount owns
  * `uiLocale` and persists it, because that is the shell's display language
  * rather than a Host setting (see `onSelectUiLocale`).
+ *
+ * The preset assembly readout is not a peer surface's entry in the bar: it is the disclosure at the end of the right
+ * track, and `presets.open` is the control that opens the read-only page. A player who wants to know how a preset
+ * assembles a request comes through Settings, which is where the product's other read-only inspection surfaces are
+ * reached from, and the bar keeps one control per place a player goes on purpose.
  */
 export function SettingsSurfacePanel({
   api,
@@ -1597,6 +1612,7 @@ export function SettingsSurfacePanel({
   uiLocale,
   onSelectUiLocale,
   onSelectAppearance,
+  presets,
   onNotice,
 }: Readonly<{
   api: ManagementPipelineApi;
@@ -1605,6 +1621,8 @@ export function SettingsSurfacePanel({
   uiLocale: Locale;
   onSelectUiLocale: (locale: Locale) => void;
   onSelectAppearance: (appearance: AppearanceChoice) => void;
+  /** Opens the preset readout, and the button focus returns to when it is left. */
+  presets: Readonly<{ open: () => void; ref: RefObject<HTMLButtonElement | null> }>;
   onNotice?: (notice: ManagementSurfaceNotice) => void;
 }>): ReactElement {
   const [languageView, setLanguageView] = useState<LanguageView>({ kind: "loading" });
@@ -2201,87 +2219,116 @@ export function SettingsSurfacePanel({
   return (
     <>
       <SurfaceNotice notice={inline} />
-      {connectionView.kind === "ready" && (
-        // Rendered only when the mounted profile actually published the
-        // connection routes; a profile without them never shows a control that
-        // could not work.
-        <ConnectionSettingsPanel
-          connectionView={connectionView}
-          modelRoute={modelRoute}
-          labels={labels}
-          onCreate={createConnection}
-          onTest={testConnection}
-          onActivate={(connectionId) =>
-            void mutateConnection(async (client, token, state) => ({
-              state: await client.activateConnection(connectionId, state.revision, token),
-              activated: true,
-            }))
+      <div className="settings-tracks" data-settings-tracks>
+        {/* The surface's identity column: how the companion looks, what language she speaks, and the model connection
+            with the two profiles that configure it. */}
+        <div className="settings-track" data-settings-track="companion">
+          {connectionView.kind === "ready" && (
+            // Rendered only when the mounted profile actually published the
+            // connection routes; a profile without them never shows a control that
+            // could not work.
+            <ConnectionSettingsPanel
+              connectionView={connectionView}
+              modelRoute={modelRoute}
+              labels={labels}
+              onCreate={createConnection}
+              onTest={testConnection}
+              onActivate={(connectionId) =>
+                void mutateConnection(async (client, token, state) => ({
+                  state: await client.activateConnection(connectionId, state.revision, token),
+                  activated: true,
+                }))
+              }
+              onSelectModel={(connectionId, modelId, thinkingLevel: TavernConnectionThinkingLevelV1) =>
+                void mutateConnection(async (client, token, state) => ({
+                  state: await client.selectConnectionModel(
+                    connectionId,
+                    { expectedRevision: state.revision, modelId, thinkingLevel },
+                    token,
+                  ),
+                  activated: false,
+                }))
+              }
+              onRemove={(connectionId) =>
+                void mutateConnection(async (client, token, state) => ({
+                  state: await client.removeConnection(connectionId, state.revision, token),
+                  activated: false,
+                }))
+              }
+            />
+          )}
+          <LanguageSettingsPanel
+            languageView={languageView}
+            uiLanguageView={uiLanguageView}
+            uiLocale={uiLocale}
+            labels={labels}
+            onSelectLanguage={mutateCompanionLanguage}
+            onSelectUiLanguage={mutateUiLocale}
+          />
+          <AppearanceSettingsPanel
+            appearanceView={appearanceView}
+            labels={labels}
+            onSelectAppearance={mutateAppearance}
+          />
+          {modelProfilesView.kind === "ready" && (
+            // Rendered only when the mounted profile published the model-profile
+            // routes; a profile without them never shows an editor it cannot serve.
+            <ModelProfilesPanel
+              view={modelProfilesView}
+              labels={labels}
+              drafts={{ chat: chatThinkingLevel, game: gameThinkingLevel }}
+              onSave={(surface, thinkingLevel) => mutateModelProfile(surface, thinkingLevel)}
+            />
+          )}
+        </div>
+        {/* The tuning column: what a player changes about how the model is asked - the game's supplementary
+            instruction, the sampler temperature - and then the surface's own blocks about this machine: the voice
+            consent and devices, the whole-profile backup, and the preset readout. */}
+        <div className="settings-track" data-settings-track="tuning">
+          {
+            // Rendered from the first frame, like every other settings group: the read is what
+            // decides whether there is a field to show, and a group that appeared only after its
+            // read landed would pop into a list the player was already reading.
+            <GamePromptAdditionPanel
+              view={promptAdditionView}
+              draft={promptAddition.value}
+              labels={labels}
+              onChange={(next) => promptAddition.type(next)}
+              onSave={savePromptAddition}
+            />
           }
-          onSelectModel={(connectionId, modelId, thinkingLevel: TavernConnectionThinkingLevelV1) =>
-            void mutateConnection(async (client, token, state) => ({
-              state: await client.selectConnectionModel(
-                connectionId,
-                { expectedRevision: state.revision, modelId, thinkingLevel },
-                token,
-              ),
-              activated: false,
-            }))
-          }
-          onRemove={(connectionId) =>
-            void mutateConnection(async (client, token, state) => ({
-              state: await client.removeConnection(connectionId, state.revision, token),
-              activated: false,
-            }))
-          }
-        />
-      )}
-      <LanguageSettingsPanel
-        languageView={languageView}
-        uiLanguageView={uiLanguageView}
-        uiLocale={uiLocale}
-        labels={labels}
-        onSelectLanguage={mutateCompanionLanguage}
-        onSelectUiLanguage={mutateUiLocale}
-      />
-      <AppearanceSettingsPanel appearanceView={appearanceView} labels={labels} onSelectAppearance={mutateAppearance} />
-      {modelProfilesView.kind === "ready" && (
-        // Rendered only when the mounted profile published the model-profile
-        // routes; a profile without them never shows an editor it cannot serve.
-        <ModelProfilesPanel
-          view={modelProfilesView}
-          labels={labels}
-          drafts={{ chat: chatThinkingLevel, game: gameThinkingLevel }}
-          onSave={(surface, thinkingLevel) => mutateModelProfile(surface, thinkingLevel)}
-        />
-      )}
-      {
-        // Rendered from the first frame, like every other settings group: the read is what
-        // decides whether there is a field to show, and a group that appeared only after its
-        // read landed would pop into a list the player was already reading.
-        <GamePromptAdditionPanel
-          view={promptAdditionView}
-          draft={promptAddition.value}
-          labels={labels}
-          onChange={(next) => promptAddition.type(next)}
-          onSave={savePromptAddition}
-        />
-      }
-      <SamplerTemperaturePanel
-        view={samplerView}
-        draft={samplerDraft}
-        labels={labels}
-        onChange={setSamplerDraft}
-        onSave={saveSamplerTemperature}
-      />
-      <VoiceSettingsPanel
-        voiceView={voiceView}
-        labels={labels}
-        onAccept={() => mutateVoice("accept")}
-        onRevoke={() => mutateVoice("revoke")}
-        onSelectDevice={(deviceId) => mutateVoice("setOutputDevice", deviceId)}
-        onSelectPersona={(persona) => mutateVoice("setPersona", persona)}
-      />
-      <ProfileBackupPanel api={api} labels={labels} />
+          <SamplerTemperaturePanel
+            view={samplerView}
+            draft={samplerDraft}
+            labels={labels}
+            onChange={setSamplerDraft}
+            onSave={saveSamplerTemperature}
+          />
+          <VoiceSettingsPanel
+            voiceView={voiceView}
+            labels={labels}
+            onAccept={() => mutateVoice("accept")}
+            onRevoke={() => mutateVoice("revoke")}
+            onSelectDevice={(deviceId) => mutateVoice("setOutputDevice", deviceId)}
+            onSelectPersona={(persona) => mutateVoice("setPersona", persona)}
+          />
+          <ProfileBackupPanel api={api} labels={labels} />
+          {/* The one disclosure on this surface, and the last block of its track: a `<details>` grows its own track
+              and cannot move the other one (`[data-settings-tracks]` aligns its tracks at their start). */}
+          <details className="custom-disclosure" data-settings-presets-disclosure>
+            <summary>
+              <ScrollText size={16} aria-hidden="true" />
+              {labels.presetsPanel}
+            </summary>
+            <p className="management-settings-hint">{labels.presetReadOnlyHint}</p>
+            <div className="composer-actions">
+              <button type="button" className="small-button" ref={presets.ref} onClick={presets.open}>
+                {labels.presetsOpen}
+              </button>
+            </div>
+          </details>
+        </div>
+      </div>
     </>
   );
 }
