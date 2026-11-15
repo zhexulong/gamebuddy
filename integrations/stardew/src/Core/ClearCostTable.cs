@@ -17,7 +17,7 @@ namespace GameBuddy.Stardew.Core;
 /// <item>any tool with the efficient enchantment: no charge</item>
 /// </list>
 ///
-/// The allowance exists because stamina alone cannot order the cases: three of the five kinds cost
+/// The allowance exists because stamina alone cannot order the cases: three of the six kinds cost
 /// zero, so every free clear would tie with every other and "walk around it or deal with it" would have
 /// no answer. It is deliberately small - a clear is worth taking when walking around it is longer than
 /// this - and it keeps the unit single: one point is one step.
@@ -27,7 +27,7 @@ public static class ClearCostTable
     /// <summary>The allowance added to every clear, so a free clear still outranks a long detour only when short.</summary>
     public const int Allowance = 5;
 
-    public static readonly IReadOnlyList<string> Kinds = new[] { "rock", "stump", "weed", "grass", "crop" };
+    public static readonly IReadOnlyList<string> Kinds = new[] { "rock", "stump", "weed", "twig", "grass", "crop" };
 
     /// <summary>
     /// The ENGINE's stamina charge for one swing of <paramref name="kind"/>, on this tool power and skill, or
@@ -45,6 +45,8 @@ public static class ClearCostTable
             "rock" => Charge(2 * (toolPower + 1), skillLevel),
             // 2 * power - level * 0.1
             "stump" => Charge(2 * toolPower, skillLevel),
+            // Twig litter is the AXE branch (`Object.cs:1182`), the same charge a stump takes.
+            "twig" => Charge(2 * toolPower, skillLevel),
             // Scythe work: no stamina at all.
             "weed" or "grass" or "crop" => 0,
             _ => null,

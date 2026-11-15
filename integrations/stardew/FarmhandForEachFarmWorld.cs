@@ -357,8 +357,8 @@ internal sealed class FarmhandForEachFarmWorld : IFarmhandForEachWorld
         {
             occupied = true;
             container = "object";
-            string detail = item.QualifiedItemId == "(O)2" ? "stone" : item.IsWeeds() ? "weed" : string.Empty;
-            kind = ClearableKind.Map("object", detail) ?? FarmhandForEachKindActions.ObjectKind;
+            // The same word the rectangle publishes for this tile, because it is the same predicate per action.
+            kind = ClearableKind.Map("object", TileOccupancy.ObjectKind(item)) ?? FarmhandForEachKindActions.ObjectKind;
         }
 
         HoeDirt? dirt = null;

@@ -868,6 +868,17 @@ public sealed class TargetFamilyCompletenessTests
         }
 
         /// <summary>
+        /// One object built exactly as the caller names it, so a case can hold the ID constant and vary the predicate that
+        /// decides its word (`round58`'s strip carried `(O)450` and `(O)343`, ids no vocabulary named).
+        /// </summary>
+        internal StardewValley.Object PlaceObjectAt(int x, int y, string qualifiedItemId, string name, int category)
+        {
+            StardewValley.Object placed = PlacedObject(qualifiedItemId, name, category);
+            this.Farm.objects[new Vector2(x, y)] = placed;
+            return placed;
+        }
+
+        /// <summary>
         /// One <c>ResourceClump</c> in the location's own clump layer - the entity <c>DiscoverDebrisTargets</c> scans
         /// (<c>location.resourceClumps</c>, GameLocation.cs:452). A large stump, hollow log, boulder, meteorite or
         /// mine rock lives there and nowhere else, so a fixture that never writes that collection can only ever

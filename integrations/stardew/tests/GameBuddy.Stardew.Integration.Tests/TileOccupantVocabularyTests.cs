@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using FluentAssertions;
+using GameBuddy.Stardew.Core;
 using GameBuddy.Stardew.Core.Models;
 using GameBuddy.Stardew.Core.Policy;
 using StardewValley;
@@ -129,6 +130,75 @@ public sealed class TileOccupantVocabularyTests
             parentSheetIndex: StardewValley.TerrainFeatures.ResourceClump.boulderIndex,
             width: 2,
             height: 2);
+    }
+
+    /// <summary>
+    /// ROUND58'S STRIP, IN THREE TILES. The measure that produced this vocabulary was a row of clutter the companion could
+    /// not work: the settlement read <c>no_row_matched_where:occupant_in_stone:none_tree_crop_object</c> and then
+    /// <c>no_published_action_clears:object</c>, because every object that was not `(O)2` or a weed was called `object` -
+    /// a word no declaration answers.
+    ///
+    /// <para>
+    /// The three tiles below hold the SAME ID with two different predicates' answers, which is the point: `(O)450` named
+    /// `Stone` is the engine's breakable stone and `(O)450` named `Twig` is the engine's twig litter, and the word follows
+    /// the predicate - not the id this file happens to pass. `(O)2` is here as the id the old classifier hard-coded, so the
+    /// case cannot pass by being narrowed back to it.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void TheStripIsNamedByThePredicateThatClearsItRatherThanByItsItemId()
+    {
+        using TargetFamilyCompletenessTests.TargetFamilyWorld world = TargetFamilyCompletenessTests.TargetFamilyWorld.Create();
+        world.PlaceObjectAt(3, 4, "(O)450", name: "Stone", category: -999).MinutesUntilReady = 2;
+        StardewValley.Object twig = world.PlaceObjectAt(4, 4, "(O)450", name: "Twig", category: -999);
+        world.PlaceObjectAt(5, 4, "(O)2", name: "Stone", category: -999);
+
+        TileOccupancy.Of(world.Farm, 3, 4).Should().Be(TileOccupantKind.Stone,
+            "the engine's breakable stone is a category and a name (`Object.IsBreakableStone`), not the id `(O)2`");
+        twig.IsTwig().Should().BeTrue("the fixture has to be the engine's twig, or this case measures nothing");
+        TileOccupancy.Of(world.Farm, 4, 4).Should().Be(TileOccupantKind.Twig,
+            "twig litter is its own word because it is its own tool: an axe, through the one action that declares it");
+        TileOccupancy.Of(world.Farm, 5, 4).Should().Be(TileOccupantKind.Stone);
+
+        ClearingActionSurface.ClearersOf(TileOccupantKind.Stone, FarmhandActionCatalog.Registrations)
+            .Select(offer => offer.ActionId).Should().Contain("break_rock");
+        ClearingActionSurface.ClearersOf(TileOccupantKind.Twig, FarmhandActionCatalog.Registrations)
+            .Select(offer => offer.ActionId).Should().Contain("remove_placed_item",
+                "a twig's own clearance is the axe swing remove_placed_item declares - the answer round58 never got");
+    }
+
+    /// <summary>
+    /// A kind no action opens a route through is DECLARED, not silently absent: `object` and `bush` both answer with a
+    /// reason, so a planner is told what the tile needs instead of being handed a word with no action behind it.
+    /// </summary>
+    [Fact]
+    public void TheKindsNothingClearsCarryAReason()
+    {
+        foreach (string kind in new[] { TileOccupantKind.OtherObject, TileOccupantKind.Bush, TileOccupantKind.Terrain, TileOccupantKind.FruitTree, TileOccupantKind.ResourceClump })
+        {
+            ClearingActionSurface.ClearersOf(kind, FarmhandActionCatalog.Registrations).Should().BeEmpty(
+                $"{kind} is declared unclearable, so no declaration may name it");
+            TileOccupantKind.UnclearableReason(kind).Should().NotBeNullOrWhiteSpace($"{kind} has to say why");
+        }
+    }
+
+    /// <summary>
+    /// The BUSH, through both readers: it is a large terrain feature, so the rectangle walk has to see the collection the
+    /// route refusal already reads - otherwise one tile is `bush` to the refusal and `none` to the row a filter is written
+    /// against.
+    /// </summary>
+    [Fact]
+    public void ABushIsTheSameWordToBothReaders()
+    {
+        using TargetFamilyCompletenessTests.TargetFamilyWorld world = TargetFamilyCompletenessTests.TargetFamilyWorld.Create();
+        world.PlaceHarvestableBush(7, 4);
+
+        IReadOnlyList<string> findings = Findings(BothPaths(world, row => row.OccupantKind));
+
+        findings.Should().BeEmpty("one tile, one word: {0}", string.Join(" ", findings));
+        TileAreaQuery.Answer(world.Actor, OriginX, OriginY, Width, Height, Revision).Rows!
+            .Should().Contain(row => row.X == 7 && row.Y == 4 && row.OccupantKind == TileOccupantKind.Bush,
+                "the bush tile is named in the vocabulary the refusal uses (`no_published_action_clears:bush`)");
     }
 
     /// <summary>One tile as each path answered it.</summary>

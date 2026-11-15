@@ -597,6 +597,7 @@ public sealed class ForEachNodeExecutionTests
             ["tree"] = (x, y) => harness.PlaceTree(x, y, stump: false),
             ["tree_stump"] = (x, y) => harness.PlaceTree(x, y, stump: true),
             ["stone"] = harness.PlaceStone,
+            ["twig"] = harness.PlaceTwig,
             ["weed"] = harness.PlaceWeed,
             ["grass"] = harness.PlaceGrass,
             ["crop"] = (x, y) => harness.PlaceCrop(x, y, seedIndex: "472"),
@@ -898,9 +899,21 @@ public sealed class ForEachNodeExecutionTests
         internal void PlaceClump(int x, int y, int parentSheetIndex) =>
             this.Farm.resourceClumps.Add(new ResourceClump(parentSheetIndex, 1, 1, new Vector2(x, y)));
 
-        /// <summary>A stone in the object layer: the engine's own `(O)2`, which is what `break_rock` declares it clears.</summary>
+        /// <summary>A stone in the object layer, built from the two facts `Object.IsBreakableStone` reads (`Category == -999` and the name `Stone`) rather than from the id `(O)2`, which the engine itself never keys on.</summary>
         internal void PlaceStone(int x, int y) =>
-            this.Farm.objects[new Vector2(x, y)] = TargetFamilyCompletenessTests.TargetFamilyWorld.PlacedObject("(O)2", name: "Stone", category: -2);
+            this.Farm.objects[new Vector2(x, y)] = TargetFamilyCompletenessTests.TargetFamilyWorld.PlacedObject("(O)2", name: "Stone", category: -999);
+
+        /// <summary>
+        /// Twig litter: the engine's own `(O)294`, which `Object.IsTwig()` selects by ID and which the AXE branch removes
+        /// (`Object.cs:1182`). `remove_placed_item` is the published action that declares it.
+        /// </summary>
+        internal void PlaceTwig(int x, int y)
+        {
+            StardewValley.Object twig = TargetFamilyCompletenessTests.TargetFamilyWorld.PlacedObject("(O)294", name: "Twig", category: -999);
+            if (!twig.IsTwig())
+                throw new InvalidOperationException($"fixture_twig_is_not_the_engines_twig:item={twig.QualifiedItemId};name={twig.name ?? "none"}");
+            this.Farm.objects[new Vector2(x, y)] = twig;
+        }
 
         /// <summary>A grass tuft, built the way the crop fixture is: the reader names it by its type, not by its state.</summary>
         internal void PlaceGrass(int x, int y) =>
