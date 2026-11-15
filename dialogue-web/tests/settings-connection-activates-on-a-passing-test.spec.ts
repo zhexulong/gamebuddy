@@ -55,6 +55,30 @@ const escapeHatch = {
   environmentManaged: false,
 };
 
+/**
+ * The composed root this journey mounts, with one difference from the shared fixture: `chat.submit`
+ * is published as available.
+ *
+ * The fixture publishes no operations, which leaves the composer's gate `locked` for a reason that
+ * has nothing to do with a model - and the journey would then measure that lock instead of the one
+ * the player meets. With the operation published, the gate answers the question this journey is
+ * about: a reply with no model is refused with its own sentence, and a reply with one is not.
+ */
+const SENDABLE_ROOT = {
+  ...root,
+  chat: {
+    ...root.chat,
+    operations: [
+      {
+        operationId: "chat.submit",
+        labelKey: "tavern.operation.submit",
+        availability: "available",
+        routeId: "chat.submit",
+      },
+    ],
+  },
+};
+
 type Probe = "ready" | "failed";
 
 type Host = Readonly<{
@@ -137,8 +161,8 @@ async function stubHost(page: Page, host: Host): Promise<{ writes: string[]; act
   const record = (route: import("@playwright/test").Route) =>
     writes.push(new URL(route.request().url()).pathname);
 
-  await page.route("**/api/composed-reference-game/v1/bootstrap", (route) => fulfill(route, root));
-  await page.route("**/api/composed-reference-game/v1/state", (route) => fulfill(route, root));
+  await page.route("**/api/composed-reference-game/v1/bootstrap", (route) => fulfill(route, SENDABLE_ROOT));
+  await page.route("**/api/composed-reference-game/v1/state", (route) => fulfill(route, SENDABLE_ROOT));
   await page.route("**/api/tavern/v1/draft", (route) => fulfill(route, draft));
   await page.route("**/api/tavern/v1/settings/language", (route) => fulfill(route, { revision: 1, locale: "en-US" }));
   await page.route("**/api/tavern/v1/settings/voice-preference", (route) =>
@@ -217,7 +241,13 @@ async function readRow(page: Page) {
   });
 }
 
-/** What the surface says about a message's route to a model, and whether one is available at all. */
+/**
+ * What the surface says about a message's route to a model, and whether one is available at all.
+ *
+ * `canSend` is the composer's own answer and not a second opinion about it: the send control is the
+ * one that refuses a reply with no model (`sendRefused(uiState.send)` in Composer.tsx), so typing a
+ * line and reading it enabled is the player's proof that the message has somewhere to go.
+ */
 async function readChat(page: Page, settlesTo: "no-model" | "model") {
   await page.getByRole("button", { name: "Chat", exact: true }).click();
   const chat = page.getByTestId("chat-surface");
@@ -226,9 +256,18 @@ async function readChat(page: Page, settlesTo: "no-model" | "model") {
   // The route is re-read on arrival (`readChatModelRoute`), so the surface settles a beat after the
   // conversation is visible: waiting for the count is waiting for the Host's answer, not for a timer.
   await expect(noModel).toHaveCount(settlesTo === "no-model" ? 1 : 0);
+  // The field's own lock is the Host's answer to "would a submission be accepted now"
+  // (`fieldLocked(uiState.send)` in Composer.tsx), so it is read before anything is typed into it.
+  const field = chat.getByRole("textbox", { name: /Type a message/u });
+  const canType = await field.isEnabled();
+  if (!canType)
+    return { noModelShown: true, text: (await noModel.innerText()).replace(/\s+/gu, " ").trim(), canType, canSend: false };
+  await field.fill("Hello there");
   return {
     noModelShown: (await noModel.count()) > 0,
     text: (await noModel.count()) === 0 ? null : (await noModel.innerText()).replace(/\s+/gu, " ").trim(),
+    canType,
+    canSend: await chat.getByTestId("composer-send").isEnabled(),
   };
 }
 
@@ -243,6 +282,8 @@ test("a saved connection is one press from being enabled, and the Chat reaches a
   const beforeAnything = await readChat(page, "no-model");
   console.log(`[journey/before] ${JSON.stringify(beforeAnything)}`);
   expect(beforeAnything.noModelShown, "with no connection the conversation says a reply has no model").toBe(true);
+  expect(beforeAnything.canType, "the player can still write: reading and writing are not the model's").toBe(true);
+  expect(beforeAnything.canSend, "but the send is refused, because it has nowhere to go").toBe(false);
 
   await page.getByRole("button", { name: "Settings", exact: true }).click();
   await panel.locator("#connection-provider").selectOption("openai");
@@ -279,6 +320,8 @@ test("a saved connection is one press from being enabled, and the Chat reaches a
   const after = await readChat(page, "model");
   console.log(`[journey/after] ${JSON.stringify(after)}`);
   expect(after.noModelShown, "and the conversation stops saying it has no model").toBe(false);
+  expect(after.canType, "the field the player writes in is usable").toBe(true);
+  expect(after.canSend, "and the line the player typed has somewhere to go").toBe(true);
 });
 
 /**
