@@ -79,6 +79,25 @@ export type AppBarProps = Readonly<{
    *   omitting the dot omits no information.
    */
   statusTone?: "idle" | "progress" | "cannot-send" | "unknown";
+  /**
+   * The bar's second fact, and its own name: the game behind the companion.
+   *
+   * The badge above is the conversation's - whether a reply can reach a model - and it used to be
+   * the bar's only claim, so a game that had disconnected or crashed left the bar saying `Online`
+   * (audit item 4). These are two facts, so they are two badges with two words; a reader that hears
+   * one is never guessing which half of the product it is about.
+   *
+   *  - `connected` - the game is attached: the success dot, the bar's only "the game is here".
+   *  - `connecting` - it is on its way (launching, attaching, syncing, reconnecting): the warning
+   *    dot, never the success one.
+   *  - `failed` - it was here and is gone (stopped, failed, disconnected): the danger dot.
+   *  - `none` - there is no game session at all. It gets NO dot: nothing is lit for a game that was
+   *    never started, and the word says so instead.
+   *
+   * Absent in a profile that mounts no game projection, where a badge would claim a game the product
+   * does not have.
+   */
+  gameStatus?: Readonly<{ label: string; tone: "connected" | "connecting" | "failed" | "none" }>;
   entries: readonly AppBarEntry[];
   /**
    * Where the bar folds its trailing entries behind one `More` disclosure. The
@@ -98,6 +117,7 @@ export function AppBar({
   companionDigest,
   statusLabel,
   statusTone = "idle",
+  gameStatus,
   entries,
   fold,
 }: AppBarProps) {
@@ -111,6 +131,11 @@ export function AppBar({
   // The shared dot's paint for this bar's claim (style.css). `undefined` leaves the base
   // `.status-dot` rule - which is `--success` - and is right in exactly one case, `idle`.
   const statusDotTone = statusTone === "progress" ? "progress" : statusTone === "cannot-send" ? "neutral" : undefined;
+  // The same rule for the game's dot, in its own vocabulary: `connected` leaves the base rule (the
+  // shared success paint), and `none` draws no dot at all - an unlit dot and a green one are not the
+  // only two answers when the fact is "there is no game".
+  const gameDotTone =
+    gameStatus?.tone === "connecting" ? "warning" : gameStatus?.tone === "failed" ? "danger" : undefined;
 
   const foldAt = fold?.from ?? entries.length;
   const visibleEntries = entries.slice(0, foldAt);
@@ -225,10 +250,30 @@ export function AppBar({
             dot (style.css) - and `aria-label` and `title` on the region itself
             name it at every width, so retiring the word never retires the fact
             and "a coloured dot" is never the whole of it. */}
-        <span className="app-bar-status" role="status" aria-label={statusLabel} title={statusLabel}>
+        <span
+          className="app-bar-status"
+          role="status"
+          aria-label={statusLabel}
+          title={statusLabel}
+          data-testid="app-bar-model-status"
+        >
           {statusTone !== "unknown" && <span className="status-dot" data-tone={statusDotTone} aria-hidden="true" />}
           <span className="app-bar-status-label">{statusLabel}</span>
         </span>
+        {/* The companion's other half: whether the game she lives in is there. Its own class, so a
+            reader that means "the model's badge" keeps naming exactly one element. */}
+        {gameStatus !== undefined && (
+          <span
+            className="app-bar-game-status"
+            role="status"
+            aria-label={gameStatus.label}
+            title={gameStatus.label}
+            data-testid="app-bar-game-status"
+          >
+            {gameStatus.tone !== "none" && <span className="status-dot" data-tone={gameDotTone} aria-hidden="true" />}
+            <span className="app-bar-game-status-label">{gameStatus.label}</span>
+          </span>
+        )}
       </div>
 
       <div className="app-bar-actions">

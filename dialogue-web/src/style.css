@@ -544,7 +544,8 @@
   /* The connection/turn status sits next to the companion it describes, divided
    from the name by a hairline rather than a literal separator glyph
    (design/26 §4.1: `Mira · Online`, unobtrusive). */
-  .app-bar-status {
+  .app-bar-status,
+  .app-bar-game-status {
     display: inline-flex;
     align-items: center;
     gap: 6px;
@@ -4859,7 +4860,8 @@
       gap: var(--space-1);
     }
 
-    .app-bar-status-label {
+    .app-bar-status-label,
+    .app-bar-game-status-label {
       display: none;
     }
   }
@@ -6033,6 +6035,23 @@
       top: auto;
       right: auto;
       bottom: 1px;
+      left: 17px;
+      margin: 0;
+      padding: 0;
+      border-left: 0;
+      gap: 0;
+    }
+
+    /* The game's badge takes the monogram's OTHER corner. It cannot stay in the flow with
+       its word retired: a dot on its own in the bar is the floating dot this block exists
+       to retire (U-02, above), and the corner it would keep - the lower right - already
+       carries the model's dot. Upper right is the one place left on a 28 px monogram, and
+       the dot keeps its own `aria-label`/`title`, so the fact survives the word. */
+    .app-bar-game-status {
+      position: absolute;
+      top: 1px;
+      right: auto;
+      bottom: auto;
       left: 17px;
       margin: 0;
       padding: 0;

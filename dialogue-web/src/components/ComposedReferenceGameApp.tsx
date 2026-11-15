@@ -39,6 +39,7 @@ import { type ChatArmedAction, deriveChatUIState, isTurnInFlight } from "./chat-
 import { ChatSurface } from "./ChatSurface";
 import { ChatsSurface } from "./ChatsSurface";
 import {
+  appBarGameStatus,
   appBarStatus,
   liveTurn,
   type OptimisticSend,
@@ -1615,6 +1616,12 @@ export function ComposedReferenceGameApp() {
   // The bar's word and its dot are one derivation of the same fact (`appBarStatus`), so a narrow
   // bar that hides the label cannot glow a tone the word contradicts.
   const status = appBarStatus(turnInFlight, arrivalReads.chatModelRoute, labels());
+  // The bar's second fact, from the game projection the Game surface is handed: the model's word
+  // above says whether a reply can reach a model, and this one says whether the game is there.
+  const gameStatus =
+    view.kind === "ready" && view.root.game !== null
+      ? appBarGameStatus(view.root.game.game.connectionStatus, labels())
+      : undefined;
 
   const openGamePanel = openPanelOf(GAME_PANEL, gameEntryRef);
   const openChat = openPanelOf(CHAT_PANEL, chatEntryRef);
@@ -1677,6 +1684,7 @@ export function ComposedReferenceGameApp() {
               companionDigest={avatarDigests[view.session.snapshot.chat.companion.handle]}
               statusLabel={status.label}
               statusTone={status.tone}
+              {...(gameStatus === undefined ? {} : { gameStatus })}
               entries={surfaceBarEntries(labels(), shownSurface, managementPanelsAvailable, entryOpeners)}
               fold={{ from: LEADING_SURFACE_COUNT, label: labels().appBarMore }}
             />

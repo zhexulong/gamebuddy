@@ -35,6 +35,19 @@ const en = {
   // it), and an unanswered route read is not evidence that a reply can reach a model.
   statusNotReady: "Not ready to send",
   statusUnknown: "Status unknown",
+  /**
+   * The app bar's SECOND fact: the game behind the companion, beside the model behind the conversation.
+   *
+   * The bar carried one badge for both, and the only thing it knew was the conversation's model route,
+   * so a game that had disconnected or crashed left the bar reading "Online" - the one claim a player
+   * checks when the companion stops answering in game. Three words, because the game has three states
+   * a player acts differently on: it is there, it is on its way, and it is gone. `gameStatusNoSession`
+   * is the fourth, and it is not a failure: it is the fresh install.
+   */
+  gameStatusConnected: "Game connected",
+  gameStatusConnecting: "Game connecting",
+  gameStatusDisconnected: "Game disconnected",
+  gameStatusNoSession: "No game session",
   voiceUnavailable: "Voice unavailable",
   voiceReady: "Companion's voice is ready",
   voiceSpeaking: "Companion speaking…",
@@ -514,13 +527,6 @@ const en = {
   connectionActivate: "Save and activate",
   connectionActivateRequiresReady: "Test the connection before activating it.",
   connectionRemove: "Remove",
-  // The removal is the product's armed pair (`armed-confirmation.ts`), so this sentence is the moment of
-  // the act: it names what goes and that this screen cannot put it back. The credential is the reason -
-  // the key the player typed is write-only from here on, and the Host deletes it with the record.
-  connectionRemoveConfirm:
-    "Remove the {{provider}} connection? Its endpoint, model and the API key you entered are deleted from this machine, and this screen cannot bring them back - you would have to type them again.",
-  connectionRemoveConfirmYes: "Remove the connection",
-  connectionRemoveConfirmNo: "Keep the connection",
   connectionRemoveActiveRefused: "An active connection cannot be removed. Activate another connection first.",
   connectionPending: "Working…",
   connectionFailureInvalidEndpoint: "This endpoint cannot be used.",
@@ -1440,6 +1446,13 @@ const zh: Messages = {
   generating: "思考中…",
   statusNotReady: "还不能发送",
   statusUnknown: "状态未知",
+  // 应用栏的**第二个**事实：伙伴背后的游戏，与对话背后的模型并列。栏上只有一个徽章同时承担两件事，而它唯一知道的
+  // 是对话的模型路由，所以游戏断开或崩溃时栏上仍然写着“在线”——这恰恰是玩家发现伙伴在游戏里不再回应时会去看的那句话。
+  // 三个词，因为游戏有三种玩家会分别对待的状态：在、正在连、不在了。第四个 `gameStatusNoSession` 不是失败，是全新安装。
+  gameStatusConnected: "游戏已连接",
+  gameStatusConnecting: "游戏连接中",
+  gameStatusDisconnected: "游戏未连接",
+  gameStatusNoSession: "尚无游戏会话",
   voiceUnavailable: "语音不可用",
   voiceReady: "角色的声音已就绪",
   voiceSpeaking: "角色正在说话…",
@@ -1761,10 +1774,6 @@ const zh: Messages = {
   connectionActivate: "保存并启用",
   connectionActivateRequiresReady: "请先测试连接，再启用它。",
   connectionRemove: "删除",
-  connectionRemoveConfirm:
-    "要删除「{{provider}}」这个连接吗？它的端点、模型以及你输入的 API 密钥都会从这台机器上删掉，而这个界面无法把它们找回来——你需要重新输入。",
-  connectionRemoveConfirmYes: "删除这个连接",
-  connectionRemoveConfirmNo: "保留这个连接",
   connectionRemoveActiveRefused: "当前启用的连接不能删除。请先启用另一个连接。",
   connectionPending: "处理中…",
   connectionFailureInvalidEndpoint: "该端点不可用。",

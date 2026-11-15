@@ -1,4 +1,6 @@
+import { assertNever } from "../assert-never";
 import type { ChatModelRoute } from "../chat-model-route";
+import type { GameBrowserStateV1 } from "../composed-reference-game-browser-api";
 import type { Messages } from "../i18n";
 import type { BrowserTurnV1 } from "../reference-pipeline-api";
 import type { AppBarProps } from "./AppBar";
@@ -108,6 +110,48 @@ export function appBarStatus(
   if (route.kind === "connection") return { label: labels.online, tone: "idle" };
   if (route.kind === "none") return { label: labels.statusNotReady, tone: "cannot-send" };
   return { label: labels.statusUnknown, tone: "unknown" };
+}
+
+/**
+ * The app bar's SECOND fact: the game behind the companion.
+ *
+ * `appBarStatus` above answers "can anything behind this conversation receive a reply", and that was
+ * the bar's whole report - so a game that had disconnected or crashed left the bar reading `Online`,
+ * which is the one word a player checks when the companion has stopped answering in game (audit item
+ * 4). The two facts are independent, so they are derived independently and drawn as two badges: this
+ * one says only where the game is, and it is exhaustive over the Host's closed union so a new state
+ * is a compile error rather than a silent "connected".
+ *
+ * `none` is a state of its own: no game session is not a failure and it is not a connection either,
+ * and its badge carries no dot (`AppBar.gameStatus`).
+ */
+export function appBarGameStatus(
+  status: GameBrowserStateV1["game"]["connectionStatus"],
+  labels: Messages,
+): Readonly<{ label: string; tone: "connected" | "connecting" | "failed" | "none" }> {
+  switch (status) {
+    case "connected_idle":
+    case "active":
+      return { label: labels.gameStatusConnected, tone: "connected" };
+    case "stopping":
+    case "stopped":
+    case "failed":
+    case "disconnected":
+      return { label: labels.gameStatusDisconnected, tone: "failed" };
+    case "none":
+      return { label: labels.gameStatusNoSession, tone: "none" };
+    case "discovering":
+    case "launch_pending":
+    case "attach_pending":
+    case "compatibility_warning":
+    case "awaiting_confirmation":
+    case "connecting":
+    case "reconnecting":
+    case "syncing":
+      return { label: labels.gameStatusConnecting, tone: "connecting" };
+    default:
+      return assertNever(status);
+  }
 }
 
 /**
