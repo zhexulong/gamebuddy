@@ -14,28 +14,47 @@ import { fileURLToPath } from "node:url";
  * spent a game launch, a fixture prepare and a session measuring a prompt that had already been fixed. The
  * measurement was not wrong; it belonged to a different prompt than the one the reading was attributed to.
  *
- * POPULATION (derived from the launched revision's own tree with `git ls-tree -r`, never a hand list; the count is
- * printed and zero is a refusal). A path belongs when one of `PROMPT_SURFACE_RULES` accepts it:
+ * POPULATION (derived from the launched revision's own tree, never a hand list; the count is printed and zero is a
+ * refusal). A path belongs when one of `PROMPT_SURFACE_RULES` accepts it:
  *   1. `assets/tavern/presets/**` - the shipped cards, presets and world books: the text itself.
  *   2. `host/src/games/<game>/prompt/**` - the per-game conduct and plan description the floor splices in.
- *   3. a production module whose name segment is `prompt-floor`, `identity-profile`, `post-history-instructions` or
- *      `persona`, under `host/src/` or `tools/live-run/` - the modules that compose, carry or provision that text.
+ *   3. a production module that DECLARES prompt text - a named export the product mounts as model input, matched in the
+ *      module's own source: a `build*CompanionSystemPrompt` builder, `provisionLiveRunPersona`, a surface block
+ *      (`CHAT_SURFACE_DIVERGENCE`, `GAME_SURFACE_CONDUCT_RULES`) or a `*PostHistoryInstructions` writer.
  * A new card, a new game's conduct file or a renamed prompt module therefore joins by existing. Tests and
  * test-support files are excluded: they assert about the prompt, they are not read by the model.
  *
- * STATED LIMIT. Preset *plumbing* (`host/src/tavern/preset-store.ts`, `preset-placement.ts`, `preset-sampling.ts`)
- * is deliberately outside the population. A change there is a change in behaviour, which a live run legitimately
- * measures; a change in the text is a change in what the run was about.
+ * WHY RULE 3 READS DECLARATIONS AND NOT NAMES. It used to admit a module by its filename (`identity-profile`,
+ * `prompt-floor`, `post-history-instructions`, `persona`). `03ec3fbe` then split the prose out of `identity-profile.ts`
+ * into `companion-prompt-assembly.ts` and `chat-surface-block.ts`, and the population kept watching the file that no
+ * longer wrote a line while the two that did were invisible - the gate failing OPEN on a restructure, which this file's
+ * own suite reported as "companion-prompt-assembly.ts exports buildChatCompanionSystemPrompt ... but is not in the
+ * population" for a day before anyone read it. A module now joins by what it declares, so a rename or a split cannot
+ * carry prose outside the population; a module that stops declaring prompt text leaves it, because it is no longer one
+ * (`identity-profile.ts` is the data module now: it declares a profile, never a prompt).
+ *
+ * STATED LIMIT. Preset *plumbing* (`host/src/tavern/preset-store.ts`, `preset-placement.ts`, `preset-sampling.ts`) and
+ * the services that store a PLAYER's own text (`persona-management.ts`'s CRUD) are outside the population. A change
+ * there is a change in behaviour or in data, which a live run legitimately measures; a change in the product's own
+ * text is a change in what the run was about.
  *
  * THE CONDITION is content, not commit identity. For every population path the launched revision is compared with
  * each existing product ref (`origin/main`, `main`) and a commit is counted against it only when the ref holds a
- * commit touching that path whose PATCH the revision does not already carry. Identity was the first thing tried and
+ * commit touching that path whose change the revision does not already carry. Identity was the first thing tried and
  * it is wrong twice over: a worktree that cherry-picked the prompt commits holds their content under new hashes and
  * would stay red forever, and a local `origin/main` that has not been fetched holds older content and would report a
- * revision that is AHEAD as behind. Patch equivalence says "this work is in the revision" whether it arrived by
- * merge, rebase or cherry-pick; the content comparison that decides whether a path is even worth asking about says
- * "the revision is not ahead on this file". Both existing refs are examined and their findings are unioned, because a
- * stale remote is not a licence to launch on a tree that is missing prompt work the local branch holds.
+ * revision that is AHEAD as behind. Both existing refs are examined and their findings are unioned, because a stale
+ * remote is not a licence to launch on a tree that is missing prompt work the local branch holds.
+ *
+ * "CARRIED" IS ASKED TWICE, and the second question is the one patch ids cannot answer. Patch equivalence says "this
+ * work is in the revision" whether it arrived by merge, rebase or cherry-pick - as long as the patch came out
+ * byte-identical. It does not when the pick was resolved against a different base, which is the ordinary shape of a
+ * lane that had already edited the same sentence: `d9a4e872`'s preset rewrite was picked as `e7a9082a`, the lane then
+ * stated two more rules in the same `main` entry, and the pick's patch no longer matches the commit's. The bytes ARE
+ * there - the lane's content is the commit's sentence plus more - so the second reading asks whether every line the
+ * commit ADDED is still in the revision's version of that path, and every line it REMOVED is gone from it. A
+ * revision that reverts the work fails that reading too, so it is a stricter question than "the blobs differ" rather
+ * than a looser one: a superset carries the commit, a rewrite does not.
  *
  * THE COST, and why it is now measured here. `git log --cherry-pick --right-only <revision>...<ref> -- <path>` asks
  * the right question and pays for the whole history to answer it: it computes a patch id for every commit in the
@@ -57,16 +76,37 @@ import { fileURLToPath } from "node:url";
 export const PRODUCT_REFS = Object.freeze(["origin/main", "main"]);
 
 const TEST_PATH = /(?:\.test|\.private\.test|\.test-support|\.spec)\.[cm]?[jt]s$/u;
-const PROMPT_NAME_SEGMENT =
-  /(?:^|[.\-/])(?:prompt-floor|identity-profile|post-history-instructions|persona)(?:[.\-/]|$)/u;
 const PROMPT_MODULE_ROOTS = Object.freeze(["host/src/", "tools/live-run/core/"]);
 const PROMPT_MODULE_SUFFIX = /\.(?:ts|mts|mjs)$/u;
 const GAME_PROMPT_TEXT = /^host\/src\/games\/[^/]+\/prompt\/.+\.(?:ts|mjs)$/u;
 const PRESET_TEXT = "assets/tavern/presets/";
 
 /**
+ * The declarations that make a module a writer of model-facing prompt text, as `git grep -E` patterns.
+ *
+ * A KIND, not a path: each names an export the product mounts as model input - a system-prompt builder, the live-run
+ * persona provisioner, a surface block, a post-history-instructions writer. Whatever module declares one is in the
+ * population wherever it lives and whatever it is called; a module that declares none is not, which is how a data module
+ * leaves after its prose moves out. POSIX extended regex, because `git grep` is what reads the blobs.
+ */
+export const PROMPT_TEXT_DECLARATIONS = Object.freeze([
+  Object.freeze({
+    id: "system_prompt_builder",
+    pattern: /^export (async )?function build[A-Za-z]*CompanionSystemPrompt\(/u,
+  }),
+  Object.freeze({ id: "live_run_persona", pattern: /^export (async )?function provisionLiveRunPersona\(/u }),
+  Object.freeze({ id: "chat_surface_block", pattern: /^export const CHAT_SURFACE_DIVERGENCE/u }),
+  Object.freeze({ id: "game_surface_block", pattern: /^export const GAME_SURFACE_CONDUCT_RULES/u }),
+  Object.freeze({
+    id: "post_history_writer",
+    pattern: /^export (async )?function [A-Za-z0-9_]*PostHistoryInstructions\(/u,
+  }),
+]);
+
+/**
  * The derivation, as data: each rule names itself so a refusal can say which rule admitted a path.
- * `matches` receives a repo-relative, forward-slashed path.
+ * `matches` receives a repo-relative, forward-slashed path; `promptWriters` is the set rule 3 reads, so a path rule and
+ * a content rule answer through one function and a refusal can name either.
  */
 export const PROMPT_SURFACE_RULES = Object.freeze([
   Object.freeze({
@@ -78,18 +118,15 @@ export const PROMPT_SURFACE_RULES = Object.freeze([
     matches: (path) => GAME_PROMPT_TEXT.test(path),
   }),
   Object.freeze({
-    id: "prompt_module",
-    matches: (path) =>
-      PROMPT_MODULE_SUFFIX.test(path) &&
-      !TEST_PATH.test(path) &&
-      PROMPT_MODULE_ROOTS.some((root) => path.startsWith(root)) &&
-      PROMPT_NAME_SEGMENT.test(path.slice(path.lastIndexOf("/") + 1)),
+    id: "prompt_writer",
+    matches: (path, promptWriters) =>
+      PROMPT_MODULE_SUFFIX.test(path) && !TEST_PATH.test(path) && promptWriters.has(path),
   }),
 ]);
 
 /** Which rule admits a path, or null. Exported so the falsifier suite can prove the rules apart. */
-export function promptSurfaceRuleFor(path) {
-  return PROMPT_SURFACE_RULES.find((rule) => rule.matches(path))?.id ?? null;
+export function promptSurfaceRuleFor(path, promptWriters = new Set()) {
+  return PROMPT_SURFACE_RULES.find((rule) => rule.matches(path, promptWriters))?.id ?? null;
 }
 
 // One counter for the process this check runs in: every git invocation goes through `git`, and the count is part of
@@ -133,13 +170,35 @@ const readTree = (repositoryRoot, revision) => {
 };
 
 /**
- * Every tracked path in `revision` that decides what the model reads, in tree order.
+ * Every path in `revision` whose SOURCE declares model-facing prompt text, from the revision's own blobs.
+ *
+ * One `git grep` over the two roots rather than a read of every candidate: the declarations are line-anchored, so the
+ * tool that already reads blobs is the one that answers. A revision in which git grep finds nothing yields an empty set,
+ * and the population refuses on zero rather than agreeing with itself.
+ */
+export const promptWriterPaths = (repositoryRoot, revision) => {
+  const patterns = PROMPT_TEXT_DECLARATIONS.flatMap((declaration) => ["-e", declaration.pattern.source]);
+  let lines;
+  try {
+    lines = gitLines(repositoryRoot, ["grep", "-l", "-I", "-E", ...patterns, revision, "--", ...PROMPT_MODULE_ROOTS]);
+  } catch (error) {
+    // `git grep` exits 1 when nothing matched: an empty set, not an unreadable one. Anything else is a question this
+    // check could not ask, and it must not be reported as "this revision declares no prompt text".
+    if (error !== null && typeof error === "object" && error.status === 1) return new Set();
+    throw error;
+  }
+  return new Set(lines.map((line) => line.slice(line.indexOf(":") + 1)));
+};
+
+/**
+ * Every tracked path in `revision` that decides what the model reads.
  * Reads the REVISION's tree, not the index: a staged deletion or a neighbour's rebase must not reshape the
  * population the run is judged against.
  */
 export function promptSurfacePopulation({ repositoryRoot, revision = "HEAD" }) {
   const tree = gitLines(repositoryRoot, ["ls-tree", "-r", "--name-only", revision]);
-  return Object.freeze(tree.filter((path) => promptSurfaceRuleFor(path) !== null));
+  const promptWriters = promptWriterPaths(repositoryRoot, revision);
+  return Object.freeze(tree.filter((path) => promptSurfaceRuleFor(path, promptWriters) !== null));
 }
 
 const resolveCommit = (repositoryRoot, revision) => {
@@ -183,17 +242,22 @@ const commitsTouching = ({ repositoryRoot, revision, notRevision, paths }) => {
 };
 
 /**
- * The patch ids of exactly these commits, in one `git patch-id` run, limited to `path`.
+ * The patch of exactly these commits, limited to `path`: the patch ids in one `git patch-id` run, and the lines each
+ * commit added and removed, split per commit.
  *
- * This is the same identity `--cherry-pick` uses - a commit's patch of the paths in question, hashed - but computed
+ * The ids are the same identity `--cherry-pick` uses - a commit's patch of the paths in question, hashed - but computed
  * for the commits the caller already knows touch the path rather than for every commit in the range. The pathspec is
  * not optional: `--cherry-pick` hashes each commit's patch AS THE PATHSPEC LIMITS IT, so a commit that also changed
  * other files is the same work only when the change to this path is the same. `--stable` because the answer must not
  * depend on the order hunks happen to be emitted in.
+ *
+ * The lines are read out of the SAME call, because the second reading asks a question the ids cannot: whether the
+ * revision's text still holds what this commit wrote on this path (see `carriesItsChange`).
  */
-const patchIdsOf = ({ repositoryRoot, shas, path }) => {
+const patchReadings = ({ repositoryRoot, shas, path }) => {
   const ids = new Map();
-  if (shas.length === 0) return ids;
+  const buckets = new Map();
+  if (shas.length === 0) return { ids, buckets };
   const patches = git(repositoryRoot, [
     "log",
     "--no-walk=unsorted",
@@ -204,12 +268,67 @@ const patchIdsOf = ({ repositoryRoot, shas, path }) => {
     "--",
     path,
   ]);
-  if (patches.trim().length === 0) return ids;
+  if (patches.trim().length === 0) return { ids, buckets };
+  let current;
+  for (const line of patches.split("\n")) {
+    const header = /^commit ([0-9a-f]{40})$/u.exec(line);
+    if (header !== null) {
+      current = header[1];
+      buckets.set(current, []);
+      continue;
+    }
+    if (current !== undefined) buckets.get(current).push(line);
+  }
   for (const line of git(repositoryRoot, ["patch-id", "--stable"], patches).split("\n")) {
     const [patchId, sha] = line.trim().split(" ");
     if (patchId !== undefined && sha !== undefined) ids.set(sha, patchId);
   }
-  return ids;
+  return { ids, buckets };
+};
+
+/**
+ * Does `revisionText` still say what these patch lines said on this path?
+ *
+ * The unit is the SENTENCE, because that is the unit this gate is about. Prompt text is prose inside JSON, and a lane
+ * that keeps a commit's sentence and then states two more after it has changed the same LINE without losing a word:
+ * `d9a4e872`'s preset rewrite was picked as `e7a9082a`, the lane appended two rules to the same `content` string, so no
+ * line of the pick survives verbatim and the patch id no longer matches - while the commit's own sentences are still
+ * there, unchanged, immediately before the addition.
+ *
+ * So: every substantive sentence the commit ADDED is still in the revision's version of the path - unless the product
+ * branch stopped stating it too - and every substantive sentence it REMOVED is gone from the revision, unless the
+ * branch states it again. Substantive means long enough to be a statement rather than JSON punctuation. A revision
+ * that REVERTS the work fails the first half (or, for a deletion, the second), which is what keeps this from being a
+ * licence to launch on an older prompt; a commit whose patch here contributes no sentence at all (a binary asset, a
+ * whitespace move) is not credited.
+ */
+const SENTENCE_BREAK = /[。！？!?…；;\n]+/u;
+const MIN_SENTENCE_CHARACTERS = 12;
+
+const sentencesOf = (lines, sign) => {
+  const sentences = [];
+  for (const line of lines) {
+    if (line.startsWith(`${sign}${sign}${sign}`) || line.startsWith(sign === "+" ? "+++" : "---")) continue;
+    if (!line.startsWith(sign)) continue;
+    for (const sentence of line.slice(1).split(SENTENCE_BREAK)) {
+      const trimmed = sentence.trim();
+      if (trimmed.length >= MIN_SENTENCE_CHARACTERS) sentences.push(trimmed);
+    }
+  }
+  return sentences;
+};
+
+const carriesItsChange = (lines, revision) => {
+  const adds = sentencesOf(lines, "+");
+  const removes = sentencesOf(lines, "-");
+  if (adds.length === 0 && removes.length === 0) return false;
+  // A sentence the product branch itself no longer states cannot be expected of the revision: main supersedes its own
+  // commits, and `d9a4e872`'s post-history wording was withdrawn again before this lane ever saw it. So an added
+  // sentence is owed only when the REF still states it.
+  if (!adds.every((sentence) => revision.text.includes(sentence) || !revision.ref.includes(sentence))) return false;
+  // And a removed one is owed the other way round: the revision must AGREE with the ref about it, which catches the
+  // revert - a sentence main deleted and the revision still says - as well as the sentence main re-added later.
+  return removes.every((sentence) => revision.text.includes(sentence) === revision.ref.includes(sentence));
 };
 
 /** The commits that touch each path, keyed by the population path they were gathered for. */
@@ -224,9 +343,18 @@ const commitsByPath = (commits, wanted) => {
   return byPath;
 };
 
+/** The revision's own text for one path, or null when it cannot be read as text. */
+const blobText = (repositoryRoot, revision, path) => {
+  try {
+    return git(repositoryRoot, ["show", `${revision}:${path}`]);
+  } catch {
+    return null;
+  }
+};
+
 /** A per-term clock, so the check reports its own cost instead of being timed from outside by a stopwatch. */
 const createClock = () => {
-  const terms = { resolveMs: 0, lsTreeMs: 0, historyMs: 0, patchIdMs: 0, diffMs: 0 };
+  const terms = { resolveMs: 0, lsTreeMs: 0, historyMs: 0, patchIdMs: 0, contentMs: 0, diffMs: 0 };
   return {
     phase(term, work) {
       const startedAt = performance.now();
@@ -236,11 +364,11 @@ const createClock = () => {
         terms[term] += performance.now() - startedAt;
       }
     },
-    report(paths, refs) {
+    report(paths, refs, differing) {
       const rounded = {};
       for (const [term, ms] of Object.entries(terms)) rounded[term] = Math.round(ms);
       const totalMs = Math.round(Object.values(terms).reduce((sum, ms) => sum + ms, 0));
-      return Object.freeze({ ...rounded, gitCalls, paths, refs, totalMs });
+      return Object.freeze({ ...rounded, gitCalls, paths, refs, differing, totalMs });
     },
   };
 };
@@ -256,8 +384,8 @@ const createClock = () => {
  *   refs: readonly string[],
  *   reason: string | null,
  *   findings: readonly {kind: "behind" | "dirty", path: string, count: number, subjects: readonly string[]}[],
- *   timings: {lsTreeMs: number, historyMs: number, patchIdMs: number, diffMs: number, resolveMs: number,
- *             gitCalls: number, paths: number, refs: number, totalMs: number},
+ *   timings: {lsTreeMs: number, historyMs: number, patchIdMs: number, contentMs: number, diffMs: number,
+ *             resolveMs: number, gitCalls: number, paths: number, refs: number, differing: number, totalMs: number},
  * }}
  */
 export function assessPromptSurfaceFreshness({ repositoryRoot, revision = "HEAD", productRefs = PRODUCT_REFS }) {
@@ -270,6 +398,7 @@ export function assessPromptSurfaceFreshness({ repositoryRoot, revision = "HEAD"
     examined: 0,
     population: Object.freeze([]),
     refs: Object.freeze([]),
+    differing: 0,
     findings: Object.freeze([]),
   };
   const notMeasured = (reason) =>
@@ -277,7 +406,7 @@ export function assessPromptSurfaceFreshness({ repositoryRoot, revision = "HEAD"
       ...state,
       status: "not_measured",
       reason,
-      timings: clock.report(state.examined, state.refs.length),
+      timings: clock.report(state.examined, state.refs.length, state.differing),
     });
 
   let root;
@@ -299,7 +428,10 @@ export function assessPromptSurfaceFreshness({ repositoryRoot, revision = "HEAD"
   if (refs.length === 0) return notMeasured(`no_product_ref:${productRefs.join(",")}`);
 
   const launchedTree = clock.phase("lsTreeMs", () => readTree(root, commit));
-  const population = Object.freeze([...launchedTree.keys()].filter((path) => promptSurfaceRuleFor(path) !== null));
+  const promptWriters = clock.phase("lsTreeMs", () => promptWriterPaths(root, commit));
+  const population = Object.freeze(
+    [...launchedTree.keys()].filter((path) => promptSurfaceRuleFor(path, promptWriters) !== null),
+  );
   state.population = population;
   state.examined = population.length;
   if (population.length === 0) return notMeasured("empty_population");
@@ -311,6 +443,7 @@ export function assessPromptSurfaceFreshness({ repositoryRoot, revision = "HEAD"
   for (const ref of refs) {
     const refTree = clock.phase("lsTreeMs", () => readTree(root, ref));
     const differing = population.filter((path) => refTree.get(path) !== launchedTree.get(path));
+    state.differing += differing.length;
     if (differing.length === 0) continue;
     const refSide = clock.phase("historyMs", () =>
       commitsTouching({ repositoryRoot: root, revision: ref, notRevision: commit, paths: differing }),
@@ -327,14 +460,28 @@ export function assessPromptSurfaceFreshness({ repositoryRoot, revision = "HEAD"
       // one of these: every one of them is work the revision does not have.
       let missing = candidates;
       if (counterparts.length > 0) {
-        const candidateIds = clock.phase("patchIdMs", () =>
-          patchIdsOf({ repositoryRoot: root, shas: candidates.map((entry) => entry.sha), path }),
+        const candidateReadings = clock.phase("patchIdMs", () =>
+          patchReadings({ repositoryRoot: root, shas: candidates.map((entry) => entry.sha), path }),
         );
-        const counterpartIds = clock.phase("patchIdMs", () =>
-          patchIdsOf({ repositoryRoot: root, shas: counterparts.map((entry) => entry.sha), path }),
+        const counterpartReadings = clock.phase("patchIdMs", () =>
+          patchReadings({ repositoryRoot: root, shas: counterparts.map((entry) => entry.sha), path }),
         );
-        const carried = new Set(counterpartIds.values());
-        missing = candidates.filter((entry) => !carried.has(candidateIds.get(entry.sha)));
+        const carried = new Set(counterpartReadings.ids.values());
+        const notCarried = candidates.filter((entry) => !carried.has(candidateReadings.ids.get(entry.sha)));
+        // THE SECOND QUESTION, for the commits the ids left behind: a pick resolved against a different base has a
+        // different patch id and the same words. Asked with the ref's own current text, so a sentence the branch has
+        // since withdrawn is not owed, and only where the revision's text can be read at all.
+        if (notCarried.length > 0) {
+          const revisionText = clock.phase("contentMs", () => blobText(root, commit, path));
+          const refText = clock.phase("contentMs", () => blobText(root, ref, path));
+          if (revisionText !== null && refText !== null) {
+            const revision = { text: revisionText, ref: refText };
+            missing = notCarried.filter((entry) => {
+              const lines = candidateReadings.buckets.get(entry.sha);
+              return lines === undefined || !carriesItsChange(lines, revision);
+            });
+          } else missing = notCarried;
+        } else missing = [];
       }
       if (missing.length === 0) continue;
       const held = missingByPath.get(path) ?? { refs: [], subjects: [] };
@@ -397,7 +544,7 @@ export function assessPromptSurfaceFreshness({ repositoryRoot, revision = "HEAD"
     status,
     reason: null,
     findings: Object.freeze(findings),
-    timings: clock.report(population.length, refs.length),
+    timings: clock.report(population.length, refs.length, state.differing),
   });
 }
 

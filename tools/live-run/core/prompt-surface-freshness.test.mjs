@@ -9,9 +9,11 @@ import {
   assertPromptSurfaceFresh,
   assessPromptSurfaceFreshness,
   PRODUCT_REFS,
+  PROMPT_TEXT_DECLARATIONS,
   promptSurfacePopulation,
   promptSurfaceRefusal,
   promptSurfaceRuleFor,
+  promptWriterPaths,
 } from "./prompt-surface-freshness.mjs";
 
 /**
@@ -22,10 +24,13 @@ import {
  * readings were attributed to the current prompt anyway. `tools/live-run/core/prompt-surface-freshness.mjs` refuses
  * that launch. This file makes each of its answers falsifiable:
  *
- *   - the POPULATION comes from the revision's tree and from declared rules, so a renamed prompt module joins by
- *     existing and a prompt test never joins at all;
- *   - "behind" is decided by PATCH equivalence, so a worktree that cherry-picked the prompt work is current (the
- *     failure that made a commit-identity comparison unusable) while one that did not is red;
+ *   - the POPULATION comes from the revision's tree and from declarations the product makes in its own source, so a module
+ *     that declares prompt text joins wherever it lives and one that stops declaring it leaves; a prompt test never
+ *     joins at all, because a test asserts about the prompt and is not read by the model;
+ *   - "carried" is asked twice: PATCH equivalence, which answers a cherry-pick under a new hash, and CONTENT, which
+ *     answers a pick resolved against a different base - the lane kept the commit's sentence and stated two more, so the
+ *     patch ids no longer match while every word of the work is present. The content reading also refuses a revert,
+ *     which the patch reading alone cannot see;
  *   - a revision that is AHEAD is silent, which is the falsifier for comparing blobs alone;
  *   - an uncommitted edit is refused, because the run reads the worktree;
  *   - every way of being unable to answer is `not_measured` with a name, never a pass - including a population of
@@ -58,6 +63,13 @@ import {
  * red-proof: inject  calling the gate from the inner runner instead of the ladder -> the same test fails with
  *   `the launch no longer reaches: fixture_wait,save_copy,orchestrator,game_start`, and "there is one call site" fails
  *   naming the runner's second call
+ * red-proof: inject  emptying `PROMPT_TEXT_DECLARATIONS` -> "the modules that BUILD the model-facing prompt are members"
+ *   fails naming `host/src/companion-prompt-assembly.ts`, and "a module that stops declaring prompt text leaves the
+ *   population" fails with it, because the prose moved there from `identity-profile.ts` and a list of filenames did not
+ *   follow it
+ * red-proof: inject  making the content reading always answer "carried" -> "the same tree reds when the revision
+ *   REPLACED the sentence" and "a sentence the branch DELETED is still owed" both fail, the gate accepting a prompt that
+ *   no longer says what the branch says
  */
 
 /** The tree the two rounds were launched from: `amber-game.json` byte-identical to the commit before the fix. */
@@ -123,11 +135,15 @@ describe("the population is derived from the launched tree, never a hand list", 
       "an empty population agrees with itself; it must never be what a run is judged by",
     );
     for (const path of population)
-      assert.notEqual(promptSurfaceRuleFor(path), null, `${path} is in the population but no rule admits it`);
+      assert.notEqual(
+        promptSurfaceRuleFor(path, promptWriterPaths(repositoryRoot, "HEAD")),
+        null,
+        `${path} is in the population but no rule admits it`,
+      );
     assert.equal(new Set(population).size, population.length, "the population names a path twice");
     // Printed, not assumed: the gate guidance is that a verdict without its population cannot be argued with.
     assert.ok(
-      population.every((path) => promptSurfaceRuleFor(path) !== null),
+      population.every((path) => promptSurfaceRuleFor(path, promptWriterPaths(repositoryRoot, "HEAD")) !== null),
       `population of ${population.length} path(s)`,
     );
   });
@@ -186,11 +202,38 @@ describe("the population is derived from the launched tree, never a hand list", 
   test("a prompt module added to the tree joins by existing, and an unrelated module does not", () => {
     const dir = makeRepo();
     write(dir, PRESET, preset("first"));
+    // A module joins by DECLARING prompt text, not by being named like one: this file is named `-prompt-floor` and does
+    // not join, because it declares nothing the model reads.
     write(dir, "host/src/zz-scenario-prompt-floor.ts", "export const floor = 1;\n");
+    write(dir, "host/src/zz-somewhere-else.ts", "export const GAME_SURFACE_CONDUCT_RULES = Object.freeze([]);\n");
     write(dir, "host/src/zz-unrelated-plumbing.ts", "export const plumbing = 1;\n");
     commit(dir, "base");
     const population = promptSurfacePopulation({ repositoryRoot: dir });
-    assert.deepEqual([...population].sort(), [PRESET, "host/src/zz-scenario-prompt-floor.ts"]);
+    assert.deepEqual([...population].sort(), [PRESET, "host/src/zz-somewhere-else.ts"]);
+  });
+
+  test("a module that stops declaring prompt text leaves the population, and the reason is its own source", () => {
+    // The failure that produced this test: `03ec3fbe` moved the prose out of `identity-profile.ts` into
+    // `companion-prompt-assembly.ts` and `chat-surface-block.ts`, and the population - a list of FILE NAMES - kept
+    // watching the module that no longer writes a line while the two that do were invisible. The gate failed OPEN on a
+    // restructure. So the reason a module is not a member is read from the module, not asserted here by hand.
+    const population = promptSurfacePopulation({ repositoryRoot });
+    for (const member of ["host/src/companion-prompt-assembly.ts", "host/src/chat-surface-block.ts"])
+      assert.ok(population.includes(member), `${member} declares prompt text and must be watched`);
+    const dataModule = "host/src/identity-profile.ts";
+    const source = readFileSync(join(repositoryRoot, dataModule), "utf8");
+    const declared = PROMPT_TEXT_DECLARATIONS.filter((declaration) =>
+      source.split("\n").some((line) => declaration.pattern.test(line)),
+    );
+    assert.deepEqual(
+      declared.map((declaration) => declaration.id),
+      [],
+      `${dataModule} declares ${declared.map((declaration) => declaration.id).join(",")}, so it is still a prompt writer`,
+    );
+    assert.ok(
+      !population.includes(dataModule),
+      `${dataModule} declares no prompt text, so watching it is a list kept by hand rather than a population`,
+    );
   });
 });
 
@@ -308,6 +351,78 @@ describe("behind is decided by patch equivalence, not by commit identity", () =>
         return true;
       },
     );
+  });
+});
+
+/** A preset whose single `main` entry states `text` - one JSON string, the shape every shipped preset really has. */
+const jsonPreset = (text) => JSON.stringify({ prompts: [{ identifier: "main", content: text }] }, null, 2);
+
+/** How git's own patch equivalence reads `revision` against `main` for one path, as one word. */
+const oracleSaysMissing = (dir, revision, path) =>
+  git(dir, ["log", "--cherry-pick", "--right-only", "--format=%h", `${revision}...main`, "--", path]).trim().length > 0;
+
+describe("a change the revision still states is carried, whatever the patch ids say", () => {
+  // The failure this answers: `d9a4e872`'s preset rewrite was picked as `e7a9082a`, the lane then stated two more rules
+  // inside the same `content` string, and the pick's patch therefore no longer matches the commit's - so the gate
+  // reported "1 commit missing" for a path whose text still contains every sentence the commit wrote. Patch identity is
+  // a PROXY for "this work arrived"; where it misses, the words themselves answer.
+  const OLD = "旧的版本写得又长又啰嗦，说的是同一件事，只是多绕了三圈。";
+  const NEW = "新的版本只说一件事，干净利落，说完就停，一个字都不多。";
+  const ADDED = "这条线又加了一句自己的规矩，说的是同一件事的另一面。";
+
+  test("a pick resolved against a different base is current when its sentence is still stated", () => {
+    const dir = makeRepo();
+    write(dir, PRESET, jsonPreset(OLD));
+    const base = commit(dir, "base");
+    write(dir, PRESET, jsonPreset(NEW));
+    commit(dir, "the product branch's rewrite");
+    git(dir, ["checkout", "-q", "-b", "feature", base]);
+    write(dir, PRESET, jsonPreset(`${NEW}${ADDED}`));
+    commit(dir, "the lane keeps the sentence and states one more");
+
+    // Preconditions, without which this case proves nothing: the content differs from the branch, and git's own patch
+    // equivalence calls the branch's commit missing.
+    assert.notEqual(blobAt(dir, "feature", PRESET), blobAt(dir, "main", PRESET), "the content must differ");
+    assert.equal(oracleSaysMissing(dir, "feature", PRESET), true, "the patch reading must say missing here");
+
+    const assessment = assessPromptSurfaceFreshness({ repositoryRoot: dir, revision: "feature" });
+    assert.equal(assessment.status, "current", promptSurfaceRefusal(assessment));
+  });
+
+  test("the same tree reds when the revision REPLACED the sentence instead of keeping it", () => {
+    // THE FALSIFIER, and the reason this reading is not a licence to launch on an older prompt: a revision that says
+    // something else about the same line has not carried the branch's work, however much it added.
+    const dir = makeRepo();
+    write(dir, PRESET, jsonPreset(OLD));
+    const base = commit(dir, "base");
+    write(dir, PRESET, jsonPreset(NEW));
+    const product = commit(dir, "the product branch's rewrite");
+    git(dir, ["checkout", "-q", "-b", "feature", base]);
+    write(dir, PRESET, jsonPreset("这条线自己另写了一句完全不同的话，把旧的那句直接替掉了。"));
+    commit(dir, "the lane writes its own version instead");
+    const assessment = assessPromptSurfaceFreshness({ repositoryRoot: dir, revision: "feature" });
+    assert.equal(assessment.status, "behind", promptSurfaceRefusal(assessment));
+    assert.ok(
+      assessment.findings[0].subjects.some((subject) => subject.endsWith("the product branch's rewrite")),
+      `the refusal must name the commit whose work is absent, got ${assessment.findings.map((f) => f.subjects.join("|")).join(";")}`,
+    );
+    assert.notEqual(product, null);
+  });
+
+  test("a sentence the branch DELETED is still owed: a revision that keeps saying it is behind", () => {
+    const dir = makeRepo();
+    write(dir, PRESET, jsonPreset(`${NEW}${ADDED}`));
+    const base = commit(dir, "base");
+    write(dir, PRESET, jsonPreset(NEW));
+    commit(dir, "the product branch deletes the second rule");
+    git(dir, ["checkout", "-q", "-b", "feature", base]);
+    // The lane commits its own addition while keeping the rule the branch deleted: a real commit, and content that
+    // differs from the branch, or the case proves nothing.
+    write(dir, PRESET, jsonPreset(`${NEW}${ADDED}这条线另外还多说了一句自己的话，说的还是同一件事。`));
+    commit(dir, "the lane keeps the deleted rule and adds its own line");
+    assert.equal(oracleSaysMissing(dir, "feature", PRESET), true, "the patch reading must say missing here");
+    const assessment = assessPromptSurfaceFreshness({ repositoryRoot: dir, revision: "feature" });
+    assert.equal(assessment.status, "behind", promptSurfaceRefusal(assessment));
   });
 });
 
@@ -529,13 +644,14 @@ describe("the check reports its own cost, and that cost is bounded", () => {
       population.length,
       `the report claims ${timings.paths} path(s) for ${population.length}`,
     );
-    for (const term of ["resolveMs", "lsTreeMs", "historyMs", "patchIdMs", "diffMs"])
+    for (const term of ["resolveMs", "lsTreeMs", "historyMs", "patchIdMs", "contentMs", "diffMs"])
       assert.equal(typeof timings[term], "number", `the report has no ${term}`);
+    assert.equal(typeof timings.differing, "number", "the report does not say how many path-visits differed");
     assert.ok(timings.gitCalls > 0, "a check that ran no git process cannot have read this tree");
     assert.ok(timings.totalMs > 0, "the report claims the check took no time at all");
     // The terms ARE the total, and the total is inside the wall clock: a report that outlives the process that printed
     // it, or that leaves an unnamed remainder, is not a measurement.
-    const named = ["resolveMs", "lsTreeMs", "historyMs", "patchIdMs", "diffMs"].reduce(
+    const named = ["resolveMs", "lsTreeMs", "historyMs", "patchIdMs", "contentMs", "diffMs"].reduce(
       (sum, term) => sum + timings[term],
       0,
     );
@@ -609,15 +725,17 @@ describe("the check reports its own cost, and that cost is bounded", () => {
   });
 
   test("the check runs a fixed number of git processes, not one per population path per ref", () => {
-    // The ceiling is the worst case of the shape this guard protects, term by term: resolving the root, the revision
-    // and the refs; one tree read per revision; one history walk per ref, and a second only for a path it found work
-    // on; two patch-id reads for a path both sides changed; the worktree comparison. Three processes per path per ref
-    // is the shape this guard exists for - 48 of them on a sixteen-path population, before the history walk on top.
+    // The ceiling is the worst case of the SHAPE, term by term: the fixed resolutions, one tree read and one history
+    // walk per ref, and - per (ref, path) whose blob actually differs - the two patch batches and the two text reads the
+    // content reading needs. A population path whose content matches costs nothing after the tree read, which is why
+    // `paths` no longer appears: the old formula priced a sixteen-path population as if every path were a question, and
+    // it was already red (53 calls against a ceiling of 42) when this was rewritten.
     const timings = reportedTimings(runCheckModule(repositoryRoot));
-    const ceiling = 6 + 2 * timings.refs + 2 * timings.paths;
+    const ceiling = 8 + 6 * timings.refs + 6 * timings.differing;
     assert.ok(
       timings.gitCalls <= ceiling,
-      `the check ran ${timings.gitCalls} git process(es) for ${timings.paths} path(s) and ${timings.refs} ref(s), ceiling ${ceiling}`,
+      `the check ran ${timings.gitCalls} git process(es) for ${timings.paths} path(s), ${timings.refs} ref(s) and ` +
+        `${timings.differing} differing path-visit(s), ceiling ${ceiling}`,
     );
   });
 });
