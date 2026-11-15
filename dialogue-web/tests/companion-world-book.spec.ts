@@ -142,6 +142,18 @@ async function openCharacters(
   return surface;
 }
 
+/**
+ * Open one authored row the way a player opens it.
+ *
+ * The editor's entries are folds, and a field inside a shut fold is not on screen - so a journey that
+ * types into a field opens its row first, which is also the press a player makes. `open` is the
+ * browser's own attribute, so reading it is how this helper avoids closing a row it meant to open.
+ */
+async function openEntry(editor: import("@playwright/test").Locator, index = 0): Promise<void> {
+  const row = editor.locator("[data-companion-world-book-entry-draft]").nth(index);
+  if ((await row.getAttribute("open")) === null) await row.locator("summary").first().click();
+}
+
 test("a companion who has a world book shows its count and its trigger words", async ({ page }) => {
   // The audit's own shape: a card imported with two keyed entries persisted
   // `keys = [温室,玻璃房] [洒水器,灌溉]` in the companion's worldbook.json.
@@ -482,6 +494,7 @@ test("editing an entry's text and trigger words sends the revision it read, and 
   const editor = block.locator("[data-companion-world-book-draft]");
   await expect(editor).toBeVisible();
   await expect(editor.locator("h3")).toHaveText("正在编辑她自己的世界书");
+  await openEntry(editor);
 
   const firstBody = editor.locator("textarea").first();
   await firstBody.fill("{{user}}说这扇玻璃是她挑的。");
@@ -548,6 +561,7 @@ test("an entry marked always with her keeps that fact through the Host round tri
   await block.locator("[data-companion-world-book-edit]").click();
   const editor = block.locator("[data-companion-world-book-draft]");
   await expect(editor).toBeVisible();
+  await openEntry(editor);
 
   // The switch sits beside the trigger words it overrides, and its own row is the target
   // the product gives every control - the checkbox's own 18 px of ink is not a target.
@@ -676,6 +690,7 @@ test("a save refused because the book changed says the book changed, not that it
 
   const block = surface.locator("[data-companion-world-book]");
   await block.locator("[data-companion-world-book-edit]").click();
+  await openEntry(block.locator("[data-companion-world-book-draft]"));
   await block.locator("[data-companion-world-book-draft] textarea").first().fill("改过了。");
   await block.locator("[data-companion-world-book-save]").click();
 
@@ -749,6 +764,8 @@ test("the editor fits its column at 1440x900 and at 400x800, and removing a row 
   await block.locator("[data-companion-world-book-edit]").click();
   const editor = block.locator("[data-companion-world-book-draft]");
   await expect(editor).toBeVisible();
+  // The geometry below is every row's, so every row is opened: a shut row has no layout to measure.
+  for (let index = 0; index < entries.length; index += 1) await openEntry(editor, index);
 
   // The same open editor at both widths: the geometry is what is being measured, so one
   // mount is measured twice rather than two mounts compared - a second navigation would
@@ -857,6 +874,7 @@ test("the trigger-words sentence sits under the field it describes, not under th
   await block.locator("[data-companion-world-book-edit]").click();
   const editor = block.locator("[data-companion-world-book-draft]");
   await expect(editor).toBeVisible();
+  await openEntry(editor);
 
   const measured = await editor.evaluate((node) => {
     const row = node.querySelector<HTMLElement>("[data-companion-world-book-entry-draft]");
@@ -1098,6 +1116,7 @@ test("a save carries every declared entry field and changes nothing the player d
   await block.locator("[data-companion-world-book-edit]").click();
   const editor = block.locator("[data-companion-world-book-draft]");
   await expect(editor).toBeVisible();
+  await openEntry(editor);
 
   // One field, one entry: the row she typed in, and nothing else.
   const edited = "{{user}}说这扇玻璃是她挑的。";
@@ -1194,6 +1213,7 @@ test("the second condition a card imported is read, opened, edited, saved and dr
   await block.locator("[data-companion-world-book-edit]").click();
   const editor = block.locator("[data-companion-world-book-draft]");
   await expect(editor).toBeVisible();
+  await openEntry(editor);
   // The editor opens on the card's own rule, not on two empty controls: a save from empty controls
   // would be the act that erased it.
   const secondKeys = editor.locator("[data-companion-world-book-entry-secondary-keys]").first();

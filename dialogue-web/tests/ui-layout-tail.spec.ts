@@ -1193,6 +1193,10 @@ test("item 6: every multi-line authoring field shows whole lines, and a scrollin
   // fields the review saw sliced.
   await page.locator("[data-companion-world-book-edit]").click();
   await expect(page.locator("[data-companion-world-book-draft]")).toBeVisible();
+  // Every authored row is a fold, and a shut row's body has no line box to measure: open them all,
+  // which is one press per row and the same press a player makes.
+  for (const row of await page.locator("[data-companion-world-book-entry-draft]").all())
+    if ((await row.getAttribute("open")) === null) await row.locator("summary").first().click();
 
   const shipped = await measureAuthoringFields(page);
   console.log(`[item-6 authoring fields @1440] ${JSON.stringify(shipped)}`);

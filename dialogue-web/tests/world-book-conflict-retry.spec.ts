@@ -127,6 +127,18 @@ async function stubSurface(page: Page): Promise<void> {
   );
 }
 
+/**
+ * Open one authored row the way a player opens it.
+ *
+ * The editor's entries are folds, and a field inside a shut fold is not on screen - so a journey that
+ * types into a field opens its row first. `open` is the browser's own attribute, so reading it is how
+ * this helper avoids closing a row it meant to open.
+ */
+async function openRow(editor: Locator, index: number): Promise<void> {
+  const row = editor.locator("[data-companion-world-book-entry-draft]").nth(index);
+  if ((await row.getAttribute("open")) === null) await row.locator("summary").first().click();
+}
+
 /** The block's editor, opened the way a player opens it. */
 async function openEditor(page: Page): Promise<{
   block: Locator;
@@ -143,6 +155,9 @@ async function openEditor(page: Page): Promise<{
   await block.locator("[data-companion-world-book-edit]").click();
   const editor = block.locator("[data-companion-world-book-draft]");
   await expect(editor).toBeVisible();
+  // The rows are folds, and this helper's `body` is the first row's own field: open it, which is
+  // also the press a player makes before typing.
+  await openRow(editor, 0);
   return {
     block,
     editor,
@@ -332,6 +347,7 @@ test("a row the book no longer has stays in the editor, and the notice names it"
 
   const { block, editor, save, notice } = await openEditor(page);
   await expect(editor.locator("[data-companion-world-book-entry-draft]")).toHaveCount(2);
+  await openRow(editor, 1);
   await editor.locator("textarea").nth(1).fill("The sprinkler is the one she fixed herself.");
   await save.click();
 

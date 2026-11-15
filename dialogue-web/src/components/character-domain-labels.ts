@@ -387,6 +387,16 @@ export type CharacterLabels = Readonly<{
   companionWorldBookRemoveConfirm: string;
   companionWorldBookSave: string;
   /**
+   * What a field says when the player presses save and it is still empty. The rule is the durable
+   * validator's own two required fields; the sentences exist so the press can NAME the field instead
+   * of greying the control out, which stated the refusal and named nothing.
+   */
+  companionWorldBookEntryTitleRequired: string;
+  companionWorldBookEntryBodyRequired: string;
+  /** The summary line of a row she has not named yet, and of one that carries no trigger words. */
+  companionWorldBookUntitledEntry: string;
+  companionWorldBookNoTriggerWords: string;
+  /**
    * One sentence per refused save. The Host refuses each in its own way - the book
    * moved on, she has none, an entry is not one it will keep, the durable thread
    * store could not follow - and "could not save" would point at the wrong fault.
@@ -744,6 +754,10 @@ const en: CharacterLabels = Object.freeze({
   companionWorldBookRemove: "Remove entry",
   companionWorldBookRemoveConfirm: 'Remove the entry "{{title}}"?',
   companionWorldBookSave: "Save her own book",
+  companionWorldBookEntryTitleRequired: "This entry needs a title before her book can keep it.",
+  companionWorldBookEntryBodyRequired: "This entry needs its text before her book can keep it.",
+  companionWorldBookUntitledEntry: "Untitled entry",
+  companionWorldBookNoTriggerWords: "No trigger words yet",
   companionWorldBookConflict:
     "Her own book changed after you read it, so nothing was saved. Your entries are still here and saving again will apply them to the book that is there now.",
   companionWorldBookConflictEntryGone:
@@ -1063,6 +1077,10 @@ const zh: CharacterLabels = Object.freeze({
   companionWorldBookRemove: "移除词条",
   companionWorldBookRemoveConfirm: "要移除「{{title}}」这条词条吗？",
   companionWorldBookSave: "保存她自己的世界书",
+  companionWorldBookEntryTitleRequired: "这条词条还没有标题，她的世界书收不下。",
+  companionWorldBookEntryBodyRequired: "这条词条还没有正文，她的世界书收不下。",
+  companionWorldBookUntitledEntry: "未命名词条",
+  companionWorldBookNoTriggerWords: "还没有触发词",
   companionWorldBookConflict:
     "她的世界书在你读取之后已被改动，所以这次没有保存。你写的词条都还在，再保存一次就会写进她现在的世界书。",
   companionWorldBookConflictEntryGone:

@@ -12,6 +12,7 @@ import {
 } from "../management-pipeline-api";
 import { useArmedConfirmation } from "./armed-confirmation";
 import { type CharacterLabels, characterLabels } from "./character-domain-labels";
+import { fieldError } from "./field-error";
 import { useRecordDraft } from "./surface-drafts";
 import { parseTriggerWords } from "./world-book-trigger-words";
 
@@ -197,15 +198,46 @@ function selectiveLogicLabel(labels: CharacterLabels, logic: 0 | 1 | 2 | 3 | und
 }
 
 /**
- * Whether the draft is what the Host accepts: every entry carries a title and a body.
+ * What one entry is still missing, in the player's words: the durable validator's own two required
+ * fields, each with its own sentence so the message can sit under the field it is about.
  *
- * The two are the durable validator's own required fields, so an incomplete draft is
- * not a refusal - the save control is simply not offered yet. Offering it and letting
- * the Host refuse would tell the player only that her save failed, when the fact is
- * that an entry is still missing the one thing it must have.
+ * This is the rule the save control used to fold into one `disabled` bit. A disabled control states
+ * a refusal and names nothing: the player who had just added a row and left it blank saw a grey
+ * button, no sentence, no focus and no way to learn which of fifteen rows was the problem. The rule
+ * is unchanged - a title and a body - and what changed is where it is enforced: on the press, out
+ * loud, rather than by taking the control away.
  */
-function companionWorldBookDraftIsComplete(draft: CompanionWorldBookDraft): boolean {
-  return draft.entries.every((entry) => entry.title.trim().length > 0 && entry.content.trim().length > 0);
+function companionWorldBookEntryProblems(
+  entry: CompanionWorldBookEntryDraft,
+  labels: CharacterLabels,
+): Readonly<{ title: string | null; content: string | null }> {
+  return {
+    title: entry.title.trim().length === 0 ? labels.companionWorldBookEntryTitleRequired : null,
+    content: entry.content.trim().length === 0 ? labels.companionWorldBookEntryBodyRequired : null,
+  };
+}
+
+/**
+ * The id one field of one row carries.
+ *
+ * The label's `htmlFor`, the field's own id and the press's "put the keyboard on the field that is
+ * missing something" are one string, so it is written once: two spellings of an id is a focus that
+ * lands on nothing.
+ */
+function companionWorldBookFieldId(index: number, field: string): string {
+  return `companion-world-book-entry-${index}-${field}`;
+}
+
+/**
+ * What a shut row says about the entry's firing rule: always with her, the trigger words she typed, or
+ * - for a row she has just added - that it carries none yet. The same sentences the read-only list
+ * uses, so the row she is editing and the row she reads back cannot describe one entry differently.
+ */
+function companionWorldBookEntrySummaryKeys(entry: CompanionWorldBookEntryDraft, labels: CharacterLabels): string {
+  if (entry.constant) return labels.companionWorldBookAlwaysOn;
+  const keys = parseTriggerWords(entry.keys);
+  if (keys.length === 0) return labels.companionWorldBookNoTriggerWords;
+  return labels.companionWorldBookTriggerWords.replace("{{keys}}", keys.join(labels.companionWorldBookKeySeparator));
 }
 
 /**
@@ -353,7 +385,7 @@ export function CompanionWorldBookSection({
    */
   const submit = (): void => {
     const target = bookDraft.value;
-    if (target === null || !companionWorldBookDraftIsComplete(target)) return;
+    if (target === null) return;
     const entries = target.entries.map(toCompanionWorldBookEntry);
     setSaving(true);
     setArmed(null);
@@ -556,8 +588,14 @@ export function CompanionWorldBookSection({
  * Removal follows the product's destructive-row shape - arm, then confirm - because a
  * bare delete on a row beside a save control is a control a player fires by accident,
  * and an entry she wrote is not recoverable after the save. The body is the row's last
- * field and its own textarea rather than a fold: this is the one screen where the text
- * is being written, so hiding it would hide the field being edited.
+ * field and its own textarea rather than a fold of its own: this is the one screen where
+ * the text is being written, so hiding it inside the row would hide the field being edited.
+ *
+ * Each entry is a fold, and every fold starts shut. Fifteen entries laid out flat is a page
+ * several thousand pixels tall - measured at 1440x900, fifteen rows of seven fields each - so
+ * the row's one line while it is shut is its title and the words that reach it, which is what a
+ * player scanning a book is reading for. The row she opens is the row she is editing, and the
+ * two presses that name a row for her open it: adding one, and saving while something is missing.
  */
 function CompanionWorldBookEditor({
   labels,
@@ -580,131 +618,252 @@ function CompanionWorldBookEditor({
   onSubmit: () => void;
   onCancel: () => void;
 }>): ReactElement {
+  // The rows the player has opened. A set rather than one row, because nothing about a book says
+  // two entries cannot be edited in one sitting, and a set makes the browser's own toggle event
+  // idempotent: opening one row never closes another, so no late `toggle` can undo a press.
+  const [openRows, setOpenRows] = useState<ReadonlySet<string>>(() => new Set());
+  // Whether the last press found something missing. It gates the sentences only: the problems
+  // themselves are recomputed from the draft on every render, so a field the player fixes loses its
+  // sentence as she types it rather than on the next press.
+  const [showProblems, setShowProblems] = useState(false);
+  // The field the last press put the keyboard on. Focus is requested through state because the row
+  // it belongs to is opened in the same press: the field is not in the layout until that render.
+  const [focusRequest, setFocusRequest] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (focusRequest === null) return;
+    document.getElementById(focusRequest)?.focus();
+    setFocusRequest(null);
+  }, [focusRequest]);
+
   const updateEntry = (index: number, entry: CompanionWorldBookEntryDraft): void =>
     onChange({ ...draft, entries: draft.entries.map((item, itemIndex) => (itemIndex === index ? entry : item)) });
+
+  const setEntryOpen = (rowId: string, open: boolean): void =>
+    setOpenRows((current) => {
+      if (current.has(rowId) === open) return current;
+      const next = new Set(current);
+      if (open) next.add(rowId);
+      else next.delete(rowId);
+      return next;
+    });
+
+  /**
+   * The save control's own press, and the whole of what used to be a disabled button.
+   *
+   * A draft the Host will not keep is not a reason to take the control away: a greyed button states
+   * a refusal and names nothing, so the player cannot tell which row is the problem or what it is
+   * missing. The press is always offered. When something is missing it marks every field that is -
+   * the field's own red edge, and a sentence under it saying what it needs - opens the first row
+   * that has one, since its fields are behind a fold, and puts the keyboard on the first such field.
+   * When nothing is missing the save goes out, and a Host that refuses it answers in its own words.
+   */
+  const attemptSave = (): void => {
+    const problems = draft.entries.map((entry) => companionWorldBookEntryProblems(entry, labels));
+    const first = problems.findIndex((problem) => problem.title !== null || problem.content !== null);
+    if (first === -1) {
+      setShowProblems(false);
+      onSubmit();
+      return;
+    }
+    setShowProblems(true);
+    setEntryOpen(draft.entries[first]!.rowId, true);
+    setFocusRequest(companionWorldBookFieldId(first, problems[first]!.title === null ? "body" : "title"));
+  };
+
   return (
     <section data-companion-world-book-draft>
       <h3>{labels.companionWorldBookEditTitle}</h3>
       <p className="management-settings-hint">{labels.companionWorldBookEditHint}</p>
-      {draft.entries.map((entry, index) => (
-        <div key={entry.rowId} data-companion-world-book-entry-draft>
-          <label className="management-settings-label" htmlFor={`companion-world-book-entry-${index}-title`}>
-            {labels.worldBookEntryTitle}
-          </label>
-          <input
-            id={`companion-world-book-entry-${index}-title`}
-            className="form-input"
-            type="text"
-            maxLength={256}
-            value={entry.title}
-            onChange={(event) => updateEntry(index, { ...entry, title: event.target.value })}
-          />
-          <label className="management-settings-label" htmlFor={`companion-world-book-entry-${index}-keys`}>
-            {labels.worldBookEntryKeys}
-          </label>
-          <input
-            id={`companion-world-book-entry-${index}-keys`}
-            className="form-input"
-            type="text"
-            value={entry.keys}
-            onChange={(event) => updateEntry(index, { ...entry, keys: event.target.value })}
-          />
-          {/* The sentence belongs to the field above it. It used to be emitted after the switch
-              below, where it read as that switch's caption while the field it describes sat two
-              controls above. */}
-          <p className="management-settings-hint">{labels.companionWorldBookEntryKeysHint}</p>
-          {/* The other half of the same rule, and the half this surface could not state at all
-              until now: words that only narrow the entry once one of the words above matched. The
-              Host's own selector applies them through the mode chosen below them, so both controls
-              write straight into what decides whether the entry fires. */}
-          <label className="management-settings-label" htmlFor={`companion-world-book-entry-${index}-secondary-keys`}>
-            {labels.worldBookEntrySecondaryKeys}
-          </label>
-          <input
-            id={`companion-world-book-entry-${index}-secondary-keys`}
-            className="form-input"
-            type="text"
-            data-companion-world-book-entry-secondary-keys
-            value={entry.secondaryKeys}
-            onChange={(event) => updateEntry(index, { ...entry, secondaryKeys: event.target.value })}
-          />
-          <p className="management-settings-hint">{labels.worldBookEntrySecondaryKeysHint}</p>
-          <label className="management-settings-label" htmlFor={`companion-world-book-entry-${index}-selective-logic`}>
-            {labels.worldBookEntrySelectiveLogic}
-          </label>
-          <select
-            id={`companion-world-book-entry-${index}-selective-logic`}
-            className="form-select"
-            data-companion-world-book-entry-selective-logic
-            value={entry.selectiveLogic === undefined ? "" : String(entry.selectiveLogic)}
-            onChange={(event) => updateEntry(index, { ...entry, selectiveLogic: selectiveLogicOf(event.target.value) })}
+      {draft.entries.map((entry, index) => {
+        // Recomputed from the draft on every render, so a field the player fixes loses its sentence
+        // as she types it. `showProblems` only decides whether they are said at all.
+        const problems = showProblems ? companionWorldBookEntryProblems(entry, labels) : null;
+        const titleError = fieldError(problems?.title ?? null, `${companionWorldBookFieldId(index, "title")}-problem`);
+        const bodyError = fieldError(problems?.content ?? null, `${companionWorldBookFieldId(index, "body")}-problem`);
+        return (
+          <details
+            key={entry.rowId}
+            className="custom-disclosure"
+            data-companion-world-book-entry-draft
+            open={openRows.has(entry.rowId)}
+            onToggle={(event) => setEntryOpen(entry.rowId, event.currentTarget.open)}
           >
-            <option value="">{labels.worldBookEntrySelectiveLogicNone}</option>
-            <option value="0">{labels.worldBookEntrySelectiveLogicAndAny}</option>
-            <option value="1">{labels.worldBookEntrySelectiveLogicNotAll}</option>
-            <option value="2">{labels.worldBookEntrySelectiveLogicNotAny}</option>
-            <option value="3">{labels.worldBookEntrySelectiveLogicAndAll}</option>
-          </select>
-          <p className="management-settings-hint">{labels.worldBookEntrySelectiveLogicHint}</p>
-          {/* The one fact about an entry that is a switch rather than a string, beside
-              the trigger words it overrides: an entry marked always with her is carried
-              whether or not the player's words match, so a player who writes her own
-              entry can say so here instead of leaving the words to decide. The draft
-              carries the value to the save, which is the only thing the Host reads. */}
-          <label className="companion-world-book-constant">
-            <input
-              id={`companion-world-book-entry-${index}-constant`}
-              className="companion-world-book-constant-box"
-              type="checkbox"
-              data-companion-world-book-entry-constant
-              checked={entry.constant}
-              onChange={(event) => updateEntry(index, { ...entry, constant: event.target.checked })}
-            />
-            <span>{labels.companionWorldBookAlwaysOn}</span>
-          </label>
-          {/* The other switch about the same entry, and the one that decides whether it is read
-              at all: switched off, the entry stays here (and in her book) and reaches nothing. */}
-          <label className="companion-world-book-constant">
-            <input
-              id={`companion-world-book-entry-${index}-enabled`}
-              className="companion-world-book-constant-box"
-              type="checkbox"
-              data-companion-world-book-entry-enabled
-              checked={entry.enabled}
-              onChange={(event) => updateEntry(index, { ...entry, enabled: event.target.checked })}
-            />
-            <span>{labels.worldBookEntryEnabled}</span>
-          </label>
-          <label className="management-settings-label" htmlFor={`companion-world-book-entry-${index}-body`}>
-            {labels.companionWorldBookEntryBody}
-          </label>
-          <textarea
-            id={`companion-world-book-entry-${index}-body`}
-            className="form-textarea"
-            rows={4}
-            maxLength={4096}
-            value={entry.content}
-            onChange={(event) => updateEntry(index, { ...entry, content: event.target.value })}
-          />
-          {/* The row's own removal, and only while it is armed: the confirmation is the
-              row's only action until it is answered, and it never shares a line with the
-              control it replaces. */}
-          <CompanionWorldBookEntryRemove
-            labels={labels}
-            title={entry.title}
-            armed={armed === entry.rowId}
-            onArm={() => onArm(entry.rowId)}
-            onCancel={() => onArm(null)}
-            onRemove={() => onRemove(entry.rowId)}
-          />
-        </div>
-      ))}
+            {/* The row's one line while it is shut: what the entry is called, and the words that
+                reach it. Both are the player's own text, so a row she has not named yet says so
+                rather than drawing an empty line beside the row it is. */}
+            <summary>
+              <ChevronDown size={14} aria-hidden="true" />
+              <span className="companion-world-book-entry-summary-title">
+                {entry.title.trim().length === 0 ? labels.companionWorldBookUntitledEntry : entry.title.trim()}
+              </span>
+              <span className="companion-world-book-entry-summary-keys">
+                {companionWorldBookEntrySummaryKeys(entry, labels)}
+              </span>
+            </summary>
+            <div className="companion-world-book-entry-fields">
+              {/* One field, its own label, and the sentence it needs when it is the field that is
+                  missing something. The pair is a block of its own so the sentence belongs to this
+                  field alone - a message under seven controls is the form's, and cannot name one. */}
+              <div className="companion-world-book-field">
+                <label className="management-settings-label" htmlFor={companionWorldBookFieldId(index, "title")}>
+                  {labels.worldBookEntryTitle}
+                </label>
+                <input
+                  id={companionWorldBookFieldId(index, "title")}
+                  className="form-input"
+                  type="text"
+                  maxLength={256}
+                  aria-invalid={titleError.invalid}
+                  aria-describedby={titleError.describedBy}
+                  value={entry.title}
+                  onChange={(event) => updateEntry(index, { ...entry, title: event.target.value })}
+                />
+                {problems?.title == null ? null : (
+                  <p role="status" className="error-banner" id={titleError.id} data-companion-world-book-entry-problem>
+                    {problems.title}
+                  </p>
+                )}
+              </div>
+              <div className="companion-world-book-field">
+                <label className="management-settings-label" htmlFor={companionWorldBookFieldId(index, "keys")}>
+                  {labels.worldBookEntryKeys}
+                </label>
+                <input
+                  id={companionWorldBookFieldId(index, "keys")}
+                  className="form-input"
+                  type="text"
+                  value={entry.keys}
+                  onChange={(event) => updateEntry(index, { ...entry, keys: event.target.value })}
+                />
+                {/* The sentence belongs to the field above it. It used to be emitted after the switch
+                    below, where it read as that switch's caption while the field it describes sat two
+                    controls above. */}
+                <p className="management-settings-hint">{labels.companionWorldBookEntryKeysHint}</p>
+              </div>
+              {/* The other half of the same rule, and the half this surface could not state at all
+                  until now: words that only narrow the entry once one of the words above matched. The
+                  Host's own selector applies them through the mode chosen below them, so both controls
+                  write straight into what decides whether the entry fires. */}
+              <div className="companion-world-book-field">
+                <label
+                  className="management-settings-label"
+                  htmlFor={companionWorldBookFieldId(index, "secondary-keys")}
+                >
+                  {labels.worldBookEntrySecondaryKeys}
+                </label>
+                <input
+                  id={companionWorldBookFieldId(index, "secondary-keys")}
+                  className="form-input"
+                  type="text"
+                  data-companion-world-book-entry-secondary-keys
+                  value={entry.secondaryKeys}
+                  onChange={(event) => updateEntry(index, { ...entry, secondaryKeys: event.target.value })}
+                />
+                <p className="management-settings-hint">{labels.worldBookEntrySecondaryKeysHint}</p>
+              </div>
+              <div className="companion-world-book-field">
+                <label
+                  className="management-settings-label"
+                  htmlFor={companionWorldBookFieldId(index, "selective-logic")}
+                >
+                  {labels.worldBookEntrySelectiveLogic}
+                </label>
+                <select
+                  id={companionWorldBookFieldId(index, "selective-logic")}
+                  className="form-select"
+                  data-companion-world-book-entry-selective-logic
+                  value={entry.selectiveLogic === undefined ? "" : String(entry.selectiveLogic)}
+                  onChange={(event) =>
+                    updateEntry(index, { ...entry, selectiveLogic: selectiveLogicOf(event.target.value) })
+                  }
+                >
+                  <option value="">{labels.worldBookEntrySelectiveLogicNone}</option>
+                  <option value="0">{labels.worldBookEntrySelectiveLogicAndAny}</option>
+                  <option value="1">{labels.worldBookEntrySelectiveLogicNotAll}</option>
+                  <option value="2">{labels.worldBookEntrySelectiveLogicNotAny}</option>
+                  <option value="3">{labels.worldBookEntrySelectiveLogicAndAll}</option>
+                </select>
+                <p className="management-settings-hint">{labels.worldBookEntrySelectiveLogicHint}</p>
+              </div>
+              {/* The one fact about an entry that is a switch rather than a string, beside
+                  the trigger words it overrides: an entry marked always with her is carried
+                  whether or not the player's words match, so a player who writes her own
+                  entry can say so here instead of leaving the words to decide. The draft
+                  carries the value to the save, which is the only thing the Host reads. */}
+              <label className="companion-world-book-constant">
+                <input
+                  id={companionWorldBookFieldId(index, "constant")}
+                  className="companion-world-book-constant-box"
+                  type="checkbox"
+                  data-companion-world-book-entry-constant
+                  checked={entry.constant}
+                  onChange={(event) => updateEntry(index, { ...entry, constant: event.target.checked })}
+                />
+                <span>{labels.companionWorldBookAlwaysOn}</span>
+              </label>
+              {/* The other switch about the same entry, and the one that decides whether it is read
+                  at all: switched off, the entry stays here (and in her book) and reaches nothing. */}
+              <label className="companion-world-book-constant">
+                <input
+                  id={companionWorldBookFieldId(index, "enabled")}
+                  className="companion-world-book-constant-box"
+                  type="checkbox"
+                  data-companion-world-book-entry-enabled
+                  checked={entry.enabled}
+                  onChange={(event) => updateEntry(index, { ...entry, enabled: event.target.checked })}
+                />
+                <span>{labels.worldBookEntryEnabled}</span>
+              </label>
+              <div className="companion-world-book-field">
+                <label className="management-settings-label" htmlFor={companionWorldBookFieldId(index, "body")}>
+                  {labels.companionWorldBookEntryBody}
+                </label>
+                <textarea
+                  id={companionWorldBookFieldId(index, "body")}
+                  className="form-textarea"
+                  rows={4}
+                  maxLength={4096}
+                  aria-invalid={bodyError.invalid}
+                  aria-describedby={bodyError.describedBy}
+                  value={entry.content}
+                  onChange={(event) => updateEntry(index, { ...entry, content: event.target.value })}
+                />
+                {problems?.content == null ? null : (
+                  <p role="status" className="error-banner" id={bodyError.id} data-companion-world-book-entry-problem>
+                    {problems.content}
+                  </p>
+                )}
+              </div>
+              {/* The row's own removal, and only while it is armed: the confirmation is the
+                  row's only action until it is answered, and it never shares a line with the
+                  control it replaces. */}
+              <CompanionWorldBookEntryRemove
+                labels={labels}
+                title={entry.title}
+                armed={armed === entry.rowId}
+                onArm={() => onArm(entry.rowId)}
+                onCancel={() => onArm(null)}
+                onRemove={() => onRemove(entry.rowId)}
+              />
+            </div>
+          </details>
+        );
+      })}
       <div className="composer-actions">
         <button
           type="button"
           className="small-button"
           data-companion-world-book-add
-          onClick={() => onChange({ ...draft, entries: [...draft.entries, newCompanionWorldBookEntryDraft()] })}
+          onClick={() => {
+            const added = newCompanionWorldBookEntryDraft();
+            onChange({ ...draft, entries: [...draft.entries, added] });
+            // A row the player just asked for is the row she is about to write in, so it opens and
+            // takes the keyboard: a new row that arrived shut, below fifteen others, is a press that
+            // looks like it did nothing.
+            setEntryOpen(added.rowId, true);
+            setFocusRequest(companionWorldBookFieldId(draft.entries.length, "title"));
+          }}
         >
           {labels.companionWorldBookAddEntry}
         </button>
@@ -714,8 +873,8 @@ function CompanionWorldBookEditor({
           type="button"
           className="small-button"
           data-companion-world-book-save
-          disabled={saving || !companionWorldBookDraftIsComplete(draft)}
-          onClick={onSubmit}
+          disabled={saving}
+          onClick={attemptSave}
         >
           {saving ? labels.saving : labels.companionWorldBookSave}
         </button>
