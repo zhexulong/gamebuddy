@@ -761,9 +761,12 @@ function readSelectiveLogic(value: unknown): 0 | 1 | 2 | 3 | undefined {
  * every entry joins the book's one background block, so there is no choice there to lose. `depth` and
  * `role` alone are reported because neither means anything outside an at-depth entry.
  */
-function declaresDepthPlacement(raw: Record<string, unknown>): boolean {
+function declaresDepthPlacement(raw: Readonly<Record<string, unknown>>): boolean {
   return raw.position === "at_depth" || raw.position === 4 || raw.depth !== undefined || raw.role !== undefined;
 }
+
+/** One book's at-depth placements, counted as each is decided: how many were placed, and where each went. */
+type DepthPlacementTally = { placed: number; prefix: number; perTurn: number };
 
 /**
  * Which cache-safe region an at-depth entry is remapped into, decided from the CARD's own fields.
@@ -777,6 +780,24 @@ function declaresDepthPlacement(raw: Record<string, unknown>): boolean {
  */
 function depthRemapRegion(raw: Readonly<Record<string, unknown>>, keys: readonly string[]): "prefix" | "per_turn" {
   return raw.constant === true || keys.length === 0 ? "prefix" : "per_turn";
+}
+
+/**
+ * Counts one entry's at-depth placement and returns the region it is remapped into, or nothing when the card
+ * placed it nowhere in particular. The counting lives here rather than in the entry loop so `extractCharacterBook`
+ * keeps its own complexity to the card's shapes instead of to the ledger's three rows.
+ */
+function tallyDepthPlacement(
+  tally: DepthPlacementTally,
+  raw: Readonly<Record<string, unknown>>,
+  keys: readonly string[],
+): "prefix" | "per_turn" | undefined {
+  if (!declaresDepthPlacement(raw)) return undefined;
+  tally.placed += 1;
+  const region = depthRemapRegion(raw, keys);
+  if (region === "prefix") tally.prefix += 1;
+  else tally.perTurn += 1;
+  return region;
 }
 
 function extractCharacterBook(
@@ -809,9 +830,7 @@ function extractCharacterBook(
   let unreadableContent = 0;
   let truncatedKeys = 0;
   let truncatedSecondaryKeys = 0;
-  let depthPlacedEntries = 0;
-  let depthRemappedToPrefix = 0;
-  let depthRemappedToPerTurn = 0;
+  const depthPlacement: DepthPlacementTally = { placed: 0, prefix: 0, perTurn: 0 };
   let regexKeyEntries = 0;
   let recursionOnlyEntries = 0;
   entries.forEach((raw, index) => {
@@ -879,13 +898,10 @@ function extractCharacterBook(
     // entry that asks for either already has exactly what it asked for. `delay_until_recursion` is the
     // opposite request - "activate me only on a chained pass" - and with no chained pass it can never be
     // activated at all, which IS a loss.
-    if (declaresDepthPlacement(raw)) depthPlacedEntries += 1;
     // An at-depth entry is remapped into the region its own fields choose: standing background rides the
     // stable prefix, a triggered one stays a per-turn candidate. `depth` and `role` are still named as a
     // loss of their own below - the entry is delivered, just not where the card put it.
-    const depthRemap = declaresDepthPlacement(raw) ? depthRemapRegion(raw, keys) : undefined;
-    if (depthRemap === "prefix") depthRemappedToPrefix += 1;
-    if (depthRemap === "per_turn") depthRemappedToPerTurn += 1;
+    const depthRemap = tallyDepthPlacement(depthPlacement, raw, keys);
     if (raw.use_regex === true) regexKeyEntries += 1;
     if (raw.delay_until_recursion === true) recursionOnlyEntries += 1;
     candidates.push(
@@ -916,9 +932,9 @@ function extractCharacterBook(
   losses.record("character_book.entries", "worldbook_entry_content_unreadable", unreadableContent);
   losses.record("character_book.keys", "worldbook_keys_truncated", truncatedKeys);
   losses.record("character_book.secondary_keys", "worldbook_keys_truncated", truncatedSecondaryKeys);
-  losses.record("character_book.position", "worldbook_entry_position_unsupported", depthPlacedEntries);
-  losses.record("character_book.position", "worldbook_entry_depth_remapped_to_prefix", depthRemappedToPrefix);
-  losses.record("character_book.position", "worldbook_entry_depth_remapped_to_per_turn", depthRemappedToPerTurn);
+  losses.record("character_book.position", "worldbook_entry_position_unsupported", depthPlacement.placed);
+  losses.record("character_book.position", "worldbook_entry_depth_remapped_to_prefix", depthPlacement.prefix);
+  losses.record("character_book.position", "worldbook_entry_depth_remapped_to_per_turn", depthPlacement.perTurn);
   losses.record("character_book.keys", "worldbook_regex_keys_unsupported", regexKeyEntries);
   losses.record(
     "character_book.delay_until_recursion",
