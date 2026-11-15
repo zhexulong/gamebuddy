@@ -64,6 +64,35 @@ test("Persona, greeting, import, and thread optional fields are narrowed and for
   assert.deepEqual(validateTavernArtifact(thread), thread);
 });
 
+/**
+ * An import record an OLDER build wrote still reads, macros and all.
+ *
+ * That build dropped a world-book entry whose macro its probe could not render and named it in
+ * `losses[].omitted[]`. This build carries every entry and sends no `omitted` at all - but the record the player
+ * already has on disk is not rewritten by a schema change, and the reader rejects any key it does not declare, so the
+ * member has to stay legal or an existing import becomes an unreadable artifact.
+ */
+test("an import record that names a dropped world-book entry still reads, though nothing produces one now", () => {
+  const record = {
+    schemaVersion: 1,
+    revision: 1,
+    importId: "import",
+    source: "json" as const,
+    sourceFormat: "st-v3" as const,
+    sourceHash: "a".repeat(64),
+    dispositions: [{ field: "name", classification: "accepted_typed" as const, reason: "safe" }],
+    losses: [
+      {
+        field: "character_book.entries",
+        reason: "unrenderable_worldbook_entry",
+        count: 1,
+        omitted: [{ title: "Clock", macros: [{ token: "{{time}}", standard: true }] }],
+      },
+    ],
+  };
+  assert.deepEqual(validateTavernArtifact(record), record);
+});
+
 test("Every canonical Tavern artifact root and nested record rejects unknown keys", () => {
   const artifacts = [
     {
