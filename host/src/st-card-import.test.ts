@@ -412,8 +412,73 @@ test("a book's at-depth placement, regex keys and recursion flags are named, nev
   });
   assertNoSilentImportLoss(report, [
     { field: "character_book.position", reason: "worldbook_entry_position_unsupported", count: 1 },
+    { field: "character_book.position", reason: "worldbook_entry_depth_remapped_to_per_turn", count: 1 },
     { field: "character_book.keys", reason: "worldbook_regex_keys_unsupported", count: 1 },
   ]);
+});
+
+/**
+ * The remap itself, as the durable entries the assembly reads.
+ *
+ * `at_depth` says WHERE a card wants an entry; `keys`/`constant` say WHEN it is present. With no depth seam
+ * the placement moves into the region those two fields already choose. A standing entry (no triggers, or
+ * `constant`) becomes reviewed always-on background - before this it was a volatile candidate whose only
+ * trigger was its own author-facing title, so it reached nothing; a triggered entry keeps its words and stays
+ * a per-turn candidate. Neither carries the card's `depth` or `role`, and the ledger says so.
+ */
+test("an at-depth entry is remapped by the card's own fields: standing background to the prefix, triggered to per-turn", () => {
+  const report = decodeStCard(
+    JSON.stringify({
+      spec: "chara_card_v3",
+      data: {
+        name: "Mill Rae",
+        description: "calm",
+        character_book: {
+          entries: [
+            {
+              comment: "Standing",
+              content: "The mill is older than the village.",
+              position: "at_depth",
+              depth: 4,
+              role: "system",
+            },
+            {
+              comment: "Marked",
+              content: "Her family built the mill.",
+              keys: ["family"],
+              constant: true,
+              position: "at_depth",
+              depth: 0,
+              role: "system",
+            },
+            {
+              comment: "Triggered",
+              content: "The wheel is greased before dawn.",
+              keys: ["wheel", "dawn"],
+              position: "at_depth",
+              depth: 2,
+              role: "user",
+            },
+          ],
+        },
+      },
+    }),
+  );
+  const entries = report.candidate?.worldBookCandidates ?? [];
+  assert.equal(entries.length, 3, "every entry is kept; the remap moves a placement, it does not drop prose");
+  assert.equal(entries[0]?.constant, true, "an at-depth entry with no trigger words becomes standing background");
+  assert.equal(entries[1]?.constant, true, "the card's own `constant: true` is the same fact and is kept");
+  assert.equal(entries[2]?.constant, undefined, "a triggered entry is not promoted into the prefix");
+  assert.deepEqual(entries[2]?.keys, ["wheel", "dawn"], "its own trigger words still decide when it appears");
+  assert.deepEqual(
+    report.losses.filter((loss) => loss.field === "character_book.position"),
+    [
+      { field: "character_book.position", reason: "worldbook_entry_position_unsupported", count: 3 },
+      { field: "character_book.position", reason: "worldbook_entry_depth_remapped_to_prefix", count: 2 },
+      { field: "character_book.position", reason: "worldbook_entry_depth_remapped_to_per_turn", count: 1 },
+    ],
+    "three placements remapped, and the requested depth named as not honoured",
+  );
 });
 
 /**
@@ -968,6 +1033,15 @@ type ImportLossFixture = Readonly<{
   field: string;
   count: number;
   data: Readonly<Record<string, unknown>>;
+  /**
+   * The rows the same card also takes, for the one shape that loses two things by construction.
+   *
+   * An at-depth entry owes two statements and they are not the same statement: that the exact depth is
+   * not honoured (`worldbook_entry_position_unsupported`) and where it went instead
+   * (`worldbook_entry_depth_remapped_to_*`). Folding either into the other would be the "two spellings of
+   * one fact" failure in reverse - one row telling the player two different things.
+   */
+  alsoLoses?: readonly StCardImportLoss[];
 }>;
 
 /**
@@ -1023,7 +1097,8 @@ const IMPORT_LOSS_FIXTURES: Readonly<Record<StCardImportLossReason, ImportLossFi
       description: "calm",
       character_book: {
         // SillyTavern's "inject as a message of `role` at `depth` messages from the end". Nothing in the
-        // world-book layer or the assembly places an entry at a depth, so the placement is what is lost.
+        // world-book layer or the assembly places an entry at a depth, so the depth itself is what is lost -
+        // and the entry's own trigger words say where it went instead (the per-turn selection).
         entries: [
           {
             comment: "Mill",
@@ -1036,6 +1111,37 @@ const IMPORT_LOSS_FIXTURES: Readonly<Record<StCardImportLossReason, ImportLossFi
         ],
       },
     },
+    alsoLoses: [{ field: "character_book.position", reason: "worldbook_entry_depth_remapped_to_per_turn", count: 1 }],
+  },
+  worldbook_entry_depth_remapped_to_prefix: {
+    field: "character_book.position",
+    count: 1,
+    data: {
+      name: "Rin",
+      description: "calm",
+      character_book: {
+        // No trigger words: the author meant a standing fact, so the entry becomes always-on background
+        // (the stable prefix) instead of waiting for a keyword nobody would ever say.
+        entries: [{ comment: "Standing", content: "The mill is older than the village.", depth: 0, role: "system" }],
+      },
+    },
+    alsoLoses: [{ field: "character_book.position", reason: "worldbook_entry_position_unsupported", count: 1 }],
+  },
+  worldbook_entry_depth_remapped_to_per_turn: {
+    field: "character_book.position",
+    count: 1,
+    data: {
+      name: "Rin",
+      description: "calm",
+      character_book: {
+        // Triggered: the card gated it on its own words, so it stays a per-turn candidate and appears on
+        // the turns whose words it answers - outside the cached prefix.
+        entries: [
+          { comment: "Wheel", content: "The wheel is greased before dawn.", keys: ["wheel"], depth: 2, role: "user" },
+        ],
+      },
+    },
+    alsoLoses: [{ field: "character_book.position", reason: "worldbook_entry_position_unsupported", count: 1 }],
   },
   worldbook_regex_keys_unsupported: {
     field: "character_book.keys",
@@ -1159,8 +1265,17 @@ test("rule: every declared import loss is produced by its own card and reported 
   for (const reason of Object.keys(IMPORT_LOSS_FIXTURES) as StCardImportLossReason[]) {
     const fixture = IMPORT_LOSS_FIXTURES[reason];
     const report = decodeStCard(JSON.stringify({ spec: "chara_card_v3", data: fixture.data }));
-    // The real path, not the internal helpers: JSON text in, import result out.
-    assertNoSilentImportLoss(report, [{ field: fixture.field, reason, count: fixture.count }]);
+    // The real path, not the internal helpers: JSON text in, import result out. The row this fixture is
+    // named for is stated exactly once, so a fix that swapped the reason cannot pass by naming both.
+    assert.equal(
+      fixture.alsoLoses?.filter((row) => row.reason === reason).length ?? 0,
+      0,
+      `the fixture for ${reason} must not list its own row twice`,
+    );
+    assertNoSilentImportLoss(report, [
+      { field: fixture.field, reason, count: fixture.count },
+      ...(fixture.alsoLoses ?? []),
+    ]);
     // The preview carries the same ledger, so a review surface sees it too.
     assert.deepEqual(
       previewStCard(JSON.parse(JSON.stringify({ spec: "chara_card_v3", data: fixture.data }))).losses,

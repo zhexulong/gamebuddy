@@ -41,12 +41,21 @@ const MAX_REPORTED_MACRO_TOKEN_CHARS = 64;
  * reported counts do not account for every droppable item in the card. A new drop
  * that reports nothing, or reports a reason with no fixture, turns the gate red.
  *
- * The three reasons below that name a SETTING are not caps like the others: each says the durable
+ * The reasons below that name a SETTING are not caps like the others: each says the durable
  * `WorldBookEntry` has no member for something the card stated, so the entry itself is kept and only the
  * setting is lost. They are here rather than under a store change because carrying any of them is a
  * prompt-layout decision (an entry interleaved into the message list at a depth with a role, a regex
  * evaluator, a chained scan pass), not a field to copy - and a setting nobody can honour is worse than
  * one the import has said it cannot.
+ *
+ * An at-depth entry is the one setting the import REMAPS instead of only refusing: the exact `depth` and
+ * `role` are never reproduced (that stays its own row, `worldbook_entry_position_unsupported`, so nothing
+ * here can read as depth fidelity), and the entry is placed in the cache-safe region its own fields choose
+ * - `worldbook_entry_depth_remapped_to_prefix` for background she always carries,
+ * `worldbook_entry_depth_remapped_to_per_turn` for one that appears when its words do. The TAIL
+ * (`postHistoryInstructions`) is deliberately not one of those regions: it is sent on every request and
+ * shares one 4 KiB bound with the player's closing direction, so an entry that should appear only when it
+ * is triggered would spend every turn's bytes and could displace the closing direction itself.
  */
 const ST_CARD_IMPORT_LOSS_REASONS = [
   "unparsed_example_blocks",
@@ -55,9 +64,21 @@ const ST_CARD_IMPORT_LOSS_REASONS = [
   /**
    * The card placed the entry AT A DEPTH in the message history (`position: "at_depth"` with its
    * `depth` and `role`) and this product has no such seam: an entry reaches the prompt either as
-   * part of the always-on background block or as a per-turn volatile source.
+   * part of the always-on background block or as a per-turn volatile source. This row says the requested
+   * DEPTH is not honoured; where the entry went instead is the `_remapped_` row below it, never this one.
    */
   "worldbook_entry_position_unsupported",
+  /**
+   * An at-depth entry the card declared always-on (`constant: true`) or gave no trigger words for: it can
+   * never be selected per turn, so it is carried as reviewed always-on background and rides the stable
+   * prefix (`constant: true` on the durable entry).
+   */
+  "worldbook_entry_depth_remapped_to_prefix",
+  /**
+   * An at-depth entry the card gated behind trigger words: it stays a per-turn volatile candidate and
+   * appears on the turns whose words it answers, outside the cached prefix.
+   */
+  "worldbook_entry_depth_remapped_to_per_turn",
   /**
    * The card's trigger list is a list of REGEX SOURCES (`use_regex: true`) and this product matches
    * trigger words literally. Executing a card-authored regex is prohibited outright
@@ -732,8 +753,8 @@ function readSelectiveLogic(value: unknown): 0 | 1 | 2 | 3 | undefined {
  * numeric form, which real exported cards carry: both mean "inject this entry as a message of `role`,
  * `depth` messages from the end of the chat". That is a seam this product does not have - an entry
  * reaches the prompt either inside the always-on background block or as a per-turn volatile source
- * (`catalog-service.ts`), never interleaved into the message list - so the placement is reported rather
- * than silently dropped.
+ * (`catalog-service.ts`), never interleaved into the message list - so the placement is REMAPPED
+ * (`depthRemapRegion`) and the depth itself recorded as not honoured.
  *
  * The remaining positions (`before_char`, `after_char`, and SillyTavern's 0-3) all choose a place
  * relative to the character card, and this product has no character-card block to be before or after:
@@ -742,6 +763,20 @@ function readSelectiveLogic(value: unknown): 0 | 1 | 2 | 3 | undefined {
  */
 function declaresDepthPlacement(raw: Record<string, unknown>): boolean {
   return raw.position === "at_depth" || raw.position === 4 || raw.depth !== undefined || raw.role !== undefined;
+}
+
+/**
+ * Which cache-safe region an at-depth entry is remapped into, decided from the CARD's own fields.
+ *
+ * An entry the card marked `constant: true`, or one whose trigger list came out empty (`playableKeys`),
+ * was meant to stand in every conversation: SillyTavern's `keys` are what gates an entry and `at_depth`
+ * only says where a standing entry goes, so such an entry can never be selected per turn and becomes
+ * always-on background - the stable prefix. An entry WITH trigger words is situational, so it stays a
+ * per-turn volatile candidate and appears on the turns whose words it answers. Neither region
+ * reproduces `depth` or `role`; that shortfall is its own ledger row (`worldbook_entry_position_unsupported`).
+ */
+function depthRemapRegion(raw: Readonly<Record<string, unknown>>, keys: readonly string[]): "prefix" | "per_turn" {
+  return raw.constant === true || keys.length === 0 ? "prefix" : "per_turn";
 }
 
 function extractCharacterBook(
@@ -775,6 +810,8 @@ function extractCharacterBook(
   let truncatedKeys = 0;
   let truncatedSecondaryKeys = 0;
   let depthPlacedEntries = 0;
+  let depthRemappedToPrefix = 0;
+  let depthRemappedToPerTurn = 0;
   let regexKeyEntries = 0;
   let recursionOnlyEntries = 0;
   entries.forEach((raw, index) => {
@@ -843,6 +880,12 @@ function extractCharacterBook(
     // opposite request - "activate me only on a chained pass" - and with no chained pass it can never be
     // activated at all, which IS a loss.
     if (declaresDepthPlacement(raw)) depthPlacedEntries += 1;
+    // An at-depth entry is remapped into the region its own fields choose: standing background rides the
+    // stable prefix, a triggered one stays a per-turn candidate. `depth` and `role` are still named as a
+    // loss of their own below - the entry is delivered, just not where the card put it.
+    const depthRemap = declaresDepthPlacement(raw) ? depthRemapRegion(raw, keys) : undefined;
+    if (depthRemap === "prefix") depthRemappedToPrefix += 1;
+    if (depthRemap === "per_turn") depthRemappedToPerTurn += 1;
     if (raw.use_regex === true) regexKeyEntries += 1;
     if (raw.delay_until_recursion === true) recursionOnlyEntries += 1;
     candidates.push(
@@ -858,7 +901,9 @@ function extractCharacterBook(
         // and that review-visible membership is what the Game surface later
         // materializes into the m[0] lorebook_constant source. Keyword-gated
         // entries (constant false) stay behind the lookup tools.
-        ...(raw.constant === true ? { constant: true } : {}),
+        // An at-depth entry with no trigger words is the same fact stated as a placement instead of a flag,
+        // so the remap sets it here: it becomes the always-on background it asked to be, in the prefix.
+        ...(raw.constant === true || depthRemap === "prefix" ? { constant: true } : {}),
         // Absent means enabled, so only the switched-off state is stored: an entry the card
         // shipped live carries no field to disagree with it.
         ...(disabled ? { enabled: false } : {}),
@@ -872,6 +917,8 @@ function extractCharacterBook(
   losses.record("character_book.keys", "worldbook_keys_truncated", truncatedKeys);
   losses.record("character_book.secondary_keys", "worldbook_keys_truncated", truncatedSecondaryKeys);
   losses.record("character_book.position", "worldbook_entry_position_unsupported", depthPlacedEntries);
+  losses.record("character_book.position", "worldbook_entry_depth_remapped_to_prefix", depthRemappedToPrefix);
+  losses.record("character_book.position", "worldbook_entry_depth_remapped_to_per_turn", depthRemappedToPerTurn);
   losses.record("character_book.keys", "worldbook_regex_keys_unsupported", regexKeyEntries);
   losses.record(
     "character_book.delay_until_recursion",
