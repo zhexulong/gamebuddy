@@ -81,10 +81,6 @@
       "reason": "the headless sample world does not construct this family"
     },
     {
-      "field": "debrisTargets",
-      "reason": "the headless sample world does not construct this family"
-    },
-    {
       "field": "clearHoeDirtTargets",
       "reason": "the headless sample world does not construct this family"
     },
@@ -347,6 +343,20 @@
         "y": 4
       }
     ],
+    "debrisTargets": [
+      {
+        "h": 2,
+        "health": 10,
+        "parentSheetIndex": 672,
+        "requiredUpgradeLevel": 2,
+        "slot": 2,
+        "targetId": "debris_5070bbdfc28cbd5c",
+        "toolKind": "pickaxe",
+        "w": 2,
+        "x": 4,
+        "y": 2
+      }
+    ],
     "grassTargets": [
       {
         "grassType": 1,
@@ -392,6 +402,12 @@
         "category": "milk_pail",
         "label": "(T)MilkPail",
         "slot": 1
+      },
+      {
+        "category": "pickaxe",
+        "label": "(T)Pickaxe",
+        "slot": 2,
+        "upgradeLevel": 2
       }
     ],
     "treeChopSourceTargets": [

@@ -827,7 +827,7 @@ internal sealed partial class ExecutionManager
                     exclusions.Record("debrisTargets", DiscoveryExclusionReasons.ToolInsufficient);
                 continue;
             }
-            result.Add(new BridgeDebrisTarget(BuildDebrisTargetId(location, index, clump), usableSlot, x, y, clump.parentSheetIndex.Value, toolKind, requiredUpgrade, (int)clump.health.Value));
+            result.Add(new BridgeDebrisTarget(BuildDebrisTargetId(location, index, clump), usableSlot, x, y, clump.parentSheetIndex.Value, toolKind, requiredUpgrade, (int)clump.health.Value, Math.Max(1, clump.width.Value), Math.Max(1, clump.height.Value)));
         }
         return result;
     }

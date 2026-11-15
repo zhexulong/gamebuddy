@@ -211,6 +211,7 @@ ShopToolUpgradePurchaseTests.cs	mod-assembly	ExecutionManager
 SleepAndAdvanceDayLifecycleTests.cs	mod-assembly	SleepAndAdvanceDayLifecycleConfig
 SlimeHutchTroughActionTests.cs	mod-assembly	Handlers
 SnapshotLoopbackExportTests.cs	mod-assembly	TargetFamilyCompletenessTests, TargetFamilyWorld
+SpatialExtentContractTests.cs	mod-assembly	Xna, Netcode, StardewValley, TargetFamilyCompletenessTests, ExecutionManager, EngineParityCandidateScan
 StageLogSamplerTests.cs	mod-assembly	ModEntry
 StardewBodyControllerPathGoalTests.cs	mod-assembly	StardewBodyController
 StumpActionTests.cs	mod-assembly	Handlers

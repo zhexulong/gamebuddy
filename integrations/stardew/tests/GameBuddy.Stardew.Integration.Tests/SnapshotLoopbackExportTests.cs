@@ -439,6 +439,11 @@ public sealed class SnapshotLoopbackExportTests
             // An Axe at level 0 beside it keeps both forms in the sample, so the Host accepts the pair rather than one.
             sample.world.PutToolInPackSlot(0, typeof(StardewValley.Tools.Axe), "(T)Axe", upgradeLevel: 0);
             sample.world.PutToolInPackSlot(1, typeof(StardewValley.Tools.MilkPail), "(T)MilkPail", upgradeLevel: -1);
+            // A 2x2 boulder and the pickaxe that breaks it, so `debrisTargets` reaches the sample WITH its extent. A
+            // family published only as a coordinate would leave the artifact silent about the one thing the extent
+            // fields exist to say, and the Host gate that reads this artifact would compare nothing.
+            sample.world.PutToolInPackSlot(2, typeof(StardewValley.Tools.Pickaxe), "(T)Pickaxe", upgradeLevel: 2);
+            sample.world.PlaceResourceClump(x: 4, y: 2, parentSheetIndex: 672, width: 2, height: 2);
             sample.world.StandAt(2, 2);
             return sample;
         }
@@ -454,6 +459,7 @@ public sealed class SnapshotLoopbackExportTests
             ("weedTargets", "DiscoverWeedTargets"),
             ("rockSourceTargets", "DiscoverRockSourceTargets"),
             ("grassTargets", "DiscoverGrassTargets"),
+            ("debrisTargets", "DiscoverDebrisTargets"),
             ("chests", "DiscoverChestStates"),
             ("npcRelationshipTargets", "DiscoverNpcRelationshipTargets"),
             ("toolSlots", "DiscoverToolSlots"),

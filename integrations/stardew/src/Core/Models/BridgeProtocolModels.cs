@@ -490,7 +490,17 @@ public sealed record BridgeBaitCrabPotTarget(string TargetId, string Location, i
 
 public sealed record BridgeBaitCrabPotResultTarget(string TargetId, string Location, int Slot, int X, int Y, string QualifiedItemId, string DisplayName, string BaitQualifiedItemId, string OwnerId, int BaitStack);
 
-public sealed record BridgeDebrisTarget(string TargetId, int Slot, int X, int Y, int ParentSheetIndex, string ToolKind, int RequiredUpgradeLevel, int Health);
+/// <summary>
+/// One native ResourceClump a tool swing could break, with the footprint it occupies.
+///
+/// <para>
+/// <c>W</c>/<c>H</c> are the engine's own <c>ResourceClump.width</c>/<c>height</c> - the tiles the clump spans, which
+/// is not the same thing as the one tile its <c>X</c>/<c>Y</c> names. A 2x2 boulder read as a single tile is a boulder
+/// whose remaining three tiles the companion never learns about, so the row states the footprint instead of leaving a
+/// reader to assume one. <c>X</c>/<c>Y</c> stay the LEFT-TOP origin.
+/// </para>
+/// </summary>
+public sealed record BridgeDebrisTarget(string TargetId, int Slot, int X, int Y, int ParentSheetIndex, string ToolKind, int RequiredUpgradeLevel, int Health, int W, int H);
 
 public sealed record BridgeRockSourceTarget(string TargetId, string Location, int X, int Y, string QualifiedItemId, string DisplayName, int Health);
 
@@ -1273,7 +1283,13 @@ public sealed record BridgeFarmBuildingTarget(
     int BuildCost,
     int BuildDays,
     string BuildingId,
-    int DaysOfConstructionLeft);
+    int DaysOfConstructionLeft,
+    // The footprint the structure occupies, in tiles, with `X`/`Y` as its LEFT-TOP origin. A `built` row carries the
+    // standing building's own `tilesWide`/`tilesHigh`; a `build_site` row carries the type's declared `Size`, because the
+    // structure does not exist yet and the numbers still decide which tiles the commission will take. Without them a
+    // coop and a cabin read as the same one-tile square.
+    int W,
+    int H);
 
 /// <summary>One owned warp totem the actor can activate right now. `Slot` and
 /// `QualifiedItemId` are exactly the action's arguments, and `Destination` is derived by the

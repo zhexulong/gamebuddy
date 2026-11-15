@@ -55,4 +55,12 @@ public sealed record BridgeWorldObjectTarget(
     string QualifiedItemId,
     string DisplayName,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] int? Rotation,
-    [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] int? Rotations);
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] int? Rotations,
+    // THE FOOTPRINT, in tiles, with X/Y as the LEFT-TOP origin. `Furniture.getTilesWide()`/`getTilesHigh()` are
+    // sprite-derived (`boundingBox` / 64, Furniture.cs:1413-1421) and a bed is 2x3, so a row that published only its
+    // origin made a bed indistinguishable from a chair - measured 2026-11-14 (`round57`), the room's furniture reached her
+    // as five bare coordinates. Every kind that is not a piece of furniture occupies the one tile it names, so it
+    // publishes 1/1 rather than omitting the pair: an absent extent would be a second way to say "one tile" and the
+    // renderer could not tell "this is one tile" from "the Mod did not measure it".
+    int W,
+    int H);

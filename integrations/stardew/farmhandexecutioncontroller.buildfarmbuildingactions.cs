@@ -572,7 +572,12 @@ internal sealed partial class ExecutionManager
                 data.BuildCost,
                 data.BuildDays,
                 "none",
-                -1));
+                -1,
+                // The type's own declared size - the tiles the commission will take. The structure does not exist yet,
+                // so `Building.tilesWide` has nothing to answer for; `Data/Buildings`' `Size` is the same declaration the
+                // engine copies into those fields when the building goes up (Building.cs:499-501).
+                data.Size.X,
+                data.Size.Y));
             siteCount++;
         }
 
@@ -603,7 +608,10 @@ internal sealed partial class ExecutionManager
                 data?.BuildCost ?? 0,
                 data?.BuildDays ?? 0,
                 building.id.Value.ToString("D"),
-                building.daysOfConstructionLeft.Value));
+                building.daysOfConstructionLeft.Value,
+                // The standing building's own footprint (Building.cs:64-68), which is what `occupiesTile` reads.
+                Math.Max(1, building.tilesWide.Value),
+                Math.Max(1, building.tilesHigh.Value)));
             builtCount++;
         }
 

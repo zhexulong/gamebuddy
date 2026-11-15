@@ -910,7 +910,10 @@ internal sealed partial class ExecutionManager
                         owned.QualifiedItemId,
                         RequireDisplayName(owned.QualifiedItemId),
                         null,
-                        null));
+                        null,
+                        // The object does not exist yet: the row names a TILE it may be put on, so the extent is the tile.
+                        1,
+                        1));
                     placementCount++;
                 }
             }
@@ -950,7 +953,12 @@ internal sealed partial class ExecutionManager
                     placed.QualifiedItemId,
                     string.IsNullOrEmpty(placed.DisplayName) ? placed.QualifiedItemId : placed.DisplayName,
                     null,
-                    null));
+                    null,
+                    // An object in `location.objects` occupies exactly the tile it is keyed by - the engine's own
+                    // container and placement predicates read one tile - so this branch states 1x1 rather than omitting
+                    // the pair.
+                    1,
+                    1));
                 objectCount++;
             }
         }
@@ -993,7 +1001,13 @@ internal sealed partial class ExecutionManager
                 piece.QualifiedItemId,
                 string.IsNullOrEmpty(piece.DisplayName) ? piece.QualifiedItemId : piece.DisplayName,
                 piece.currentRotation.Value,
-                piece.rotations.Value));
+                piece.rotations.Value,
+                // THE FOOTPRINT THE ENGINE COMPUTES, not a table here: `getTilesWide()`/`getTilesHigh()` divide the
+                // piece's own sprite-derived `boundingBox` by 64 (Furniture.cs:1413-1421), which is why a 2x3 bed and a
+                // 1x1 chair arrive as different rows. `Math.Max(1, ...)` only because a piece whose bounding box this
+                // process never calculated would divide to 0, and 0 tiles is not a footprint any caller can use.
+                Math.Max(1, piece.getTilesWide()),
+                Math.Max(1, piece.getTilesHigh())));
             furnitureCount++;
         }
         int pedestalCount = 0;
@@ -1018,7 +1032,9 @@ internal sealed partial class ExecutionManager
                 pedestal.QualifiedItemId,
                 string.IsNullOrEmpty(pedestal.DisplayName) ? pedestal.QualifiedItemId : pedestal.DisplayName,
                 null,
-                null));
+                null,
+                1,
+                1));
             pedestalCount++;
         }
         return result;

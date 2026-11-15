@@ -902,17 +902,30 @@ export function nearbyTargetFamilies(snapshot: Snapshot): readonly NearbyTargetF
   for (const [family, label] of Object.entries(TARGET_FAMILY_LABELS)) {
     const value = (snapshot as unknown as Record<string, unknown>)[family];
     if (!Array.isArray(value)) continue;
-    const tiles: { x: number; y: number; name: string | undefined }[] = [];
+    const tiles: { x: number; y: number; name: string | undefined; w: number; h: number }[] = [];
     for (const row of value) {
       if (row === null || typeof row !== "object") continue;
-      const candidate = row as { x?: unknown; y?: unknown; kind?: unknown; displayName?: unknown };
+      const candidate = row as {
+        x?: unknown;
+        y?: unknown;
+        kind?: unknown;
+        displayName?: unknown;
+        w?: unknown;
+        h?: unknown;
+      };
       if (typeof candidate.x !== "number" || typeof candidate.y !== "number") continue;
       if (!Number.isFinite(candidate.x) || !Number.isFinite(candidate.y)) continue;
       const named =
         typeof candidate.kind === "string" &&
         typeof candidate.displayName === "string" &&
         candidate.displayName.trim().length > 0;
-      tiles.push({ x: candidate.x, y: candidate.y, name: named ? (candidate.displayName as string) : undefined });
+      tiles.push({
+        x: candidate.x,
+        y: candidate.y,
+        name: named ? (candidate.displayName as string) : undefined,
+        w: extentSide(candidate.w),
+        h: extentSide(candidate.h),
+      });
     }
     const distance = (tile: { x: number; y: number }): number =>
       readable ? Math.max(Math.abs(tile.x - actor.x), Math.abs(tile.y - actor.y)) : 0;
@@ -926,9 +939,45 @@ export function nearbyTargetFamilies(snapshot: Snapshot): readonly NearbyTargetF
         : shown.length === 0
           ? undefined
           : `${label} ${shown
-              .map((tile) => `${tile.name === undefined ? "" : `${tile.name} `}(${tile.x},${tile.y})`)
+              .map(
+                (tile) =>
+                  `${tile.name === undefined ? "" : `${tile.name} `}(${tile.x},${tile.y}${footprintSuffix(tile)})`,
+              )
               .join(" ")}${omitted > 0 ? ` 其余 ${omitted} 格未列出` : ""}`;
     families.push(Object.freeze({ family, label, nearest, total: value.length, omitted, rendered }));
   }
   return Object.freeze(families);
+}
+
+/**
+ * One published extent side, as the number of tiles a reader may rely on.
+ *
+ * `1` is the answer for EVERY absent or unusable value, and that is not a default dressed as a measurement: `1` is the
+ * one footprint the wire's own coordinate always meant, so a Mod that omits the pair and a Mod that publishes it agree.
+ * A published `0` - a `NetInt` whose initializer never ran - is refused here rather than printed, because a 0-wide bed
+ * would read as a measurement that the world is not.
+ */
+function extentSide(value: unknown): number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 1 && value <= 64 ? value : 1;
+}
+
+/**
+ * The footprint one row occupies, appended INSIDE its own parentheses: `(9,8 [2×3])`.
+ *
+ * <p>
+ * WHERE IT SITS IS THE WHOLE DESIGN. The tile stays first and the extent follows it, because every reader of this line
+ * that predates the field extracts a coordinate with `\d+,\s*\d+` - the plan compiler, the approach helpers and the
+ * refusal messages all do - and a format that put the extent in front of the tile would silently break all of them while
+ * looking more readable. A one-tile row prints the bare coordinate it always printed, so nothing that reads this line
+ * has to learn a new shape for the common case.
+ * </p>
+ * <p>
+ * It is not decoration either: measured 2026-11-14 (`round57`), the FarmHouse's furniture arrived as five bare
+ * coordinates and she spent four turns moving and replacing a piece she could not identify. A 2x3 bed printed as one
+ * tile is the same defect one layer down - the extent is what makes "there is something at (9,8)" into "the bed covers
+ * (9,8) to (10,10)".
+ * </p>
+ */
+function footprintSuffix(tile: { readonly w: number; readonly h: number }): string {
+  return tile.w > 1 || tile.h > 1 ? ` [${String(tile.w)}×${String(tile.h)}]` : "";
 }

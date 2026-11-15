@@ -623,7 +623,10 @@ export type Snapshot = Readonly<{
     ownerId: string;
     baitStack: number;
   }>[];
-  /** Nearby native ResourceClump targets paired with a usable tool slot. */
+  /** Nearby native ResourceClump targets paired with a usable tool slot. `w`/`h` are the clump's own
+   * `ResourceClump.width`/`height` - the tiles it spans - with `x`/`y` as the LEFT-TOP origin. They are
+   * omitted by a Mod older than the projection and then mean one tile, which is what an entity published
+   * as a bare coordinate always meant. */
   debrisTargets?: readonly Readonly<{
     targetId: string;
     slot: number;
@@ -633,6 +636,8 @@ export type Snapshot = Readonly<{
     toolKind: string;
     requiredUpgradeLevel: number;
     health: number;
+    w?: number;
+    h?: number;
   }>[];
   /**
    * Nearby ordinary breakable stone sources for the bounded native Pickaxe path. `health` is the rock's remaining
@@ -1127,6 +1132,11 @@ export type Snapshot = Readonly<{
      * is a legal rotation and a sentinel that reads as a value gets compared as one. */
     rotation: number | null;
     rotations: number | null;
+    /** The footprint in tiles, `x`/`y` being its LEFT-TOP origin. A piece of furniture answers with its
+     * own sprite-derived `Furniture.getTilesWide()`/`getTilesHigh()` - a bed is 2x3 - and every other kind
+     * with the 1x1 tile it occupies. Absent means one tile, which is the only other thing a row can mean. */
+    w?: number;
+    h?: number;
   }>[];
   /** One farm-building fact the build_farm_building caller can name. `kind` is what the fact IS
    * for this lane: 'build_site' is a free footprint the named building type could go on now (the
@@ -1146,6 +1156,11 @@ export type Snapshot = Readonly<{
     buildDays: number;
     buildingId: string;
     daysOfConstructionLeft: number;
+    /** The footprint the structure occupies in tiles, `x`/`y` being its LEFT-TOP origin: a `built` row's own
+     * `Building.tilesWide`/`tilesHigh`, a `build_site` row's declared `Data/Buildings` size. Absent means one
+     * tile, which is the reading every row carried before the field existed. */
+    w?: number;
+    h?: number;
   }>[];
   /** The day's posted help-wanted quests the actor can name, and whether today's has already been
    * accepted. `acceptedDailyQuest` is the world flag the accept turns true, so a quest is never
