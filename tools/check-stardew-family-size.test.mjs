@@ -49,6 +49,18 @@ function run(root, ...args) {
 
 const read = (root, name) => readFileSync(join(root, "integrations/stardew", name), "utf8");
 
+/** The self-verification report the run printed last, parsed. */
+function lastReport(stdout) {
+  const line = stdout
+    .split("\n")
+    .map((entry) => entry.trim())
+    .filter((entry) => entry.startsWith("{"))
+    .pop();
+  return JSON.parse(line);
+}
+
+const outcomeOf = (report, id) => report.checks.find((entry) => entry.id === id)?.status;
+
 test("the population is the directory, not a list: a new partial joins it and a foreign file does not", () => {
   const { root, measured } = family();
   try {
@@ -96,6 +108,15 @@ test("one filler line raises the family and the finding names the member that gr
     assert.match(stdout, /^  family_lines_exceeded:51$/mu);
     assert.match(stdout, /^  farmhandexecutioncontroller\.b\.cs \+1 \(10 -> 11\)$/mu);
     assert.doesNotMatch(stdout, /farmhandexecutioncontroller\.cs \+/u, "the unchanged member is not named");
+    const report = lastReport(stdout);
+    assert.equal(report.status, "failed");
+    assert.equal(report.population, 2);
+    assert.equal(outcomeOf(report, "family_lines_exceeded"), "failed");
+    assert.equal(
+      outcomeOf(report, "family_ceiling_stale"),
+      "passed",
+      "the rule that held is not reported as failed beside the one that did not",
+    );
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -134,6 +155,19 @@ test("an empty directory is blocked, never green", () => {
     assert.equal(code, 2, stdout);
     assert.match(stdout, /^family_population_empty:/mu);
     assert.doesNotMatch(stdout, /green/u);
+    assert.equal(lastReport(stdout).status, "not_measured");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("a directory that is not there is blocked by name, not by a stack trace", () => {
+  const root = mkdtempSync(join(tmpdir(), "gamebuddy-family-size-absent-"));
+  try {
+    const { code, stdout } = run(root);
+    assert.equal(code, 2, stdout);
+    assert.match(stdout, /^family_directory_missing:.*integrations[\\/]stardew$/mu);
+    assert.doesNotMatch(stdout, /at .*node:fs/u);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

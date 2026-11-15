@@ -4,7 +4,7 @@
   "ceiling": 27388,
   "raisedFrom": null,
   "because": null,
-  "measuredAt": "working tree",
+  "measuredAt": "f63c3ba6",
   "files": {
     "farmhandexecutioncontroller.actorstateactions.cs": 564,
     "farmhandexecutioncontroller.animaldooractions.cs": 305,

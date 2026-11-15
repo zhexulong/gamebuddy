@@ -42,6 +42,12 @@
  *   node tools/check-stardew-family-size.mjs --root DIR            # the same reading of a copy of the tree
  *   node tools/check-stardew-family-size.mjs --baseline FILE       # a different ceiling (the falsifier suites do)
  *   node tools/check-stardew-family-size.mjs --update --because "..."  # record this reading; a raise needs the reason
+ *   node tools/check-stardew-family-size.mjs --update --at <revision>     # name the tree the reading was taken from
+ *
+ * The last line of a default run is the self-verification report `tools/lib/harness-conformance.mjs` reads:
+ * `{"gate":...,"status":...,"population":<files>,"checks":[...]}`, one outcome per rule. A reading over zero files
+ * reports `not_measured` with `population: 0`, which that suite counts apart from a pass - the empty-population path
+ * cannot reach a green report by any route.
  *
  * red-proof: inject  one filler line appended to a family file in a copy of the tree -> `family_lines_exceeded:31282`
  *   plus the member named (`farmhandexecutioncontroller.verdicts.cs +1`), exit 1; the unmodified copy prints
@@ -84,9 +90,13 @@ export function splitLines(text) {
 /** Every family file under `directory`, with its physical line count. Directories are not walked: the family is flat. */
 export function readFamily({ root = TOOL_ROOT, directory = FAMILY_DIRECTORY } = {}) {
   const absolute = resolve(root, directory);
-  const files = readdirSync(absolute)
-    .filter((name) => FAMILY_FILE.test(name))
-    .sort();
+  let names;
+  try {
+    names = readdirSync(absolute);
+  } catch {
+    return null;
+  }
+  const files = names.filter((name) => FAMILY_FILE.test(name)).sort();
   const measured = new Map();
   for (const name of files) measured.set(name, splitLines(readFileSync(resolve(absolute, name), "utf8")).length);
   return measured;
@@ -157,11 +167,16 @@ export function nextBaseline({ previous, measured, because, revision }) {
   };
 }
 
+/** A reading that could not be taken: a named reason, an empty-population report, exit 2 - never 0. */
+export function blockedReport(reason, write = (text) => process.stdout.write(`${text}\n`)) {
+  write(reason);
+  write(JSON.stringify({ gate: "stardew-family-size/v1", status: "not_measured", mode: "repository", population: 0 }));
+  return 2;
+}
+
 export function report(result, { write = (text) => process.stdout.write(`${text}\n`) } = {}) {
-  if (result.blocked) {
-    write(`family_population_empty: ${FAMILY_DIRECTORY} holds no file matching ${FAMILY_FILE}`);
-    return 2;
-  }
+  if (result.blocked)
+    return blockedReport(`family_population_empty: ${FAMILY_DIRECTORY} holds no file matching ${FAMILY_FILE}`, write);
   const sign = result.delta > 0 ? "+" : "";
   write(`files ${result.files} · lines ${result.lines} · ceiling ${result.ceiling} · delta ${sign}${result.delta}`);
   for (const member of result.members.slice(0, 8)) {
@@ -170,6 +185,27 @@ export function report(result, { write = (text) => process.stdout.write(`${text}
   }
   if (result.members.length > 8) write(`  … ${result.members.length - 8} more moved member(s)`);
   for (const finding of result.findings) write(`  ${finding.code}`);
+
+  // The self-verification report `tools/lib/harness-conformance.mjs` reads: the gate names itself, says how many files
+  // it examined, and states every rule's own outcome, so a zero population cannot pass as a measurement and a rule
+  // that held is not reported as failed beside one that did not.
+  const failed = new Set(result.findings.map((finding) => finding.code.split(":")[0]));
+  const rule = (id) => ({ id, status: failed.has(id) ? "failed" : "passed" });
+  write(
+    JSON.stringify({
+      gate: "stardew-family-size/v1",
+      status: result.ok ? "passed" : "failed",
+      mode: "repository",
+      population: result.files,
+      checks: [
+        { id: "family_population", status: result.files > 0 ? "passed" : "failed" },
+        rule("family_lines_exceeded"),
+        rule("family_ceiling_stale"),
+        rule("family_baseline_member_missing"),
+      ],
+    }),
+  );
+
   if (result.ok) {
     write("family_size: green");
     return 0;
@@ -201,6 +237,10 @@ function main() {
     baseline = null;
   }
   const measured = readFamily({ root });
+  if (measured === null) {
+    process.exitCode = blockedReport(`family_directory_missing:${resolve(root, FAMILY_DIRECTORY)}`);
+    return;
+  }
   const result = judgeSize({ measured, baseline });
 
   if (!argv.includes("--update")) process.exitCode = report(result);
@@ -214,7 +254,12 @@ function main() {
       );
       process.exitCode = 2;
     } else {
-      const next = nextBaseline({ previous: baseline, measured, because: because ?? null, revision: "working tree" });
+      const next = nextBaseline({
+        previous: baseline,
+        measured,
+        because: because ?? null,
+        revision: value("--at") ?? "working tree",
+      });
       mkdirSync(dirname(baselinePath), { recursive: true });
       writeFileSync(baselinePath, `${JSON.stringify(next, null, 2)}\n`);
       process.stdout.write(
