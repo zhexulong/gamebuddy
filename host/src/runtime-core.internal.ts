@@ -69,7 +69,7 @@ import {
   providerTurnHeaderExtension,
 } from "./provider-turn-header.internal.js";
 import { actionRegistryRevision, writeOrVerifyRunManifest } from "./run-manifest.js";
-import type { RunTrace } from "./run-trace.js";
+import { RUN_SPAN_NAMES, type RunTrace, tracedStep } from "./run-trace.js";
 import {
   type CompanionIdentity,
   type CompanionModelConfig,
@@ -1003,6 +1003,10 @@ export async function createRuntimeWithFixedToolsCore(
   // A surface session ID identifies a persistent session; it must never be
   // used to infer the product surface because both Chat and Game have them.
   const runtimeSurface = surface ?? presentation?.surface ?? "game";
+  // Hoisted because the mount's own assembly - the system prompt, the tool descriptions, the Magic Context bootstrap -
+  // is time that used to land in no span at all: a run's first 34 s had a trace whose earliest event was the first
+  // model call (2026-11-15, round62).
+  const runTrace = actionExecutionOptions.trace;
   if (tavernNarrativeGateNonceSha256 !== undefined && !/^[a-f0-9]{64}$/.test(tavernNarrativeGateNonceSha256)) {
     throw new Error("invalid_tavern_marker_config");
   }
@@ -1388,13 +1392,19 @@ export async function createRuntimeWithFixedToolsCore(
   // One string, built here rather than inline below, because it is also what the two guards read: the shared
   // Magic Context config skips its guidance block by a SUBSTRING of the Chat prompt, so the substring has to be
   // shown to cross no surface boundary in either direction. See `assertMagicContextSurfaceSignature`.
-  const companionSystemPrompt =
+  const buildCompanionSystemPrompt = (): string =>
     runtimeSurface === "chat"
       ? buildChatCompanionSystemPrompt(profile, presentation?.profile.locale)
       : withPresetMain(
           buildGameCompanionSystemPrompt(profile, presentation?.profile.locale, gamePromptAddition),
           gameSessionPreset,
         );
+  const companionSystemPrompt = tracedStep(
+    runTrace,
+    RUN_SPAN_NAMES.promptSystem,
+    { surface: runtimeSurface, preset: gameSessionPreset !== null, addition: gamePromptAddition !== undefined },
+    buildCompanionSystemPrompt,
+  );
   assertMagicContextSurfaceSignature(runtimeSurface, companionSystemPrompt);
   // The turn a provider request belongs to is stated on the request itself, because nothing else on the
   // wire carries it and a captured body could otherwise only be attributed by its arrival position. The
@@ -1425,31 +1435,42 @@ export async function createRuntimeWithFixedToolsCore(
   // The fork must never spawn the external `pi` CLI from a GameBuddy runtime.
   // Preview has no approved Magic Context capability, so it does not mount or
   // bootstrap the extension at all.
+  //
+  // One span around the whole bootstrap: this is where the memory/recall capability becomes available, and it used to
+  // be time that landed in no span (it runs before the first model call). `extension` says whether memory was actually
+  // mounted, so a Preview run's near-zero span is not read as a fast mount of something that is not there.
   const previousEmbeddedRuntimeMarker = loadMagicContextExtension ? process.env.GAMEBUDDY_EMBEDDED_RUNTIME : undefined;
-  if (loadMagicContextExtension) {
-    process.env.GAMEBUDDY_EMBEDDED_RUNTIME = "1";
-    try {
-      // The extension discovers config/data through Node process globals. The
-      // helper scopes and serializes that bootstrap so opaque partitions cannot
-      // race each other during loader.reload().
-      await reloadMagicContextInRuntimeRoot(loader, paths.runtimeCwd);
+  await tracedStep(
+    runTrace,
+    RUN_SPAN_NAMES.memoryMount,
+    { surface: runtimeSurface, extension: loadMagicContextExtension },
+    async () => {
+      if (loadMagicContextExtension) {
+        process.env.GAMEBUDDY_EMBEDDED_RUNTIME = "1";
+        try {
+          // The extension discovers config/data through Node process globals. The
+          // helper scopes and serializes that bootstrap so opaque partitions cannot
+          // race each other during loader.reload().
+          await reloadMagicContextInRuntimeRoot(loader, paths.runtimeCwd);
 
-      if (loader.getExtensions().errors.length > 0) {
-        throw new Error(
-          `Magic Context extension failed to load: ${loader
-            .getExtensions()
-            .errors.map((error) => error.error)
-            .join("; ")}`,
-        );
+          if (loader.getExtensions().errors.length > 0) {
+            throw new Error(
+              `Magic Context extension failed to load: ${loader
+                .getExtensions()
+                .errors.map((error) => error.error)
+                .join("; ")}`,
+            );
+          }
+        } catch (error) {
+          if (previousEmbeddedRuntimeMarker === undefined) delete process.env.GAMEBUDDY_EMBEDDED_RUNTIME;
+          else process.env.GAMEBUDDY_EMBEDDED_RUNTIME = previousEmbeddedRuntimeMarker;
+          throw error;
+        }
+      } else {
+        await loader.reload();
       }
-    } catch (error) {
-      if (previousEmbeddedRuntimeMarker === undefined) delete process.env.GAMEBUDDY_EMBEDDED_RUNTIME;
-      else process.env.GAMEBUDDY_EMBEDDED_RUNTIME = previousEmbeddedRuntimeMarker;
-      throw error;
-    }
-  } else {
-    await loader.reload();
-  }
+    },
+  );
 
   const sessionManager = SessionManager.continueRecent(paths.runtimeCwd, paths.sessionDir);
   const modelRuntime = await createCompanionModelRuntime(
@@ -1465,7 +1486,6 @@ export async function createRuntimeWithFixedToolsCore(
   const fixedToolNames = fixedTools.map((tool) => tool.name);
   if (fixedTools.length > 0 && runtimeSurface !== "game") throw new Error("fixed_runtime_tools_require_game_surface");
   const companionStatus = createCompanionStatusTool(integration);
-  const runTrace = actionExecutionOptions.trace;
   const dispatchController =
     integration === undefined ? undefined : createRuntimeDispatchController(integration, actionExecutionOptions);
   // One private supervisor per game runtime. It is retained by closure so an
@@ -1575,18 +1595,26 @@ export async function createRuntimeWithFixedToolsCore(
           ...integrationToolGroups,
           { toolClass: "world_context", tools: worldBookTools },
         ];
-  const toolSurface = planToolSurface({
-    surface: runtimeSurface,
-    groups: hostToolGroups,
-    // The Magic Context extension contributes a session's own archive and memory readers. Its entry is the one
-    // extension path this runtime hands the loader, so the class and the load site cannot drift apart.
-    extensions: loadMagicContextExtension ? [{ entry: magicContextEntry, toolClass: "session_inspection" }] : [],
-    registered: loader.getExtensions().extensions.map((extension) => ({
-      entry: extension.path,
-      tools: [...extension.tools.keys()],
-    })),
-  });
-  applyToolDescriptionOverrides(loader.getExtensions().extensions, toolSurface);
+  const toolSurface = tracedStep(
+    runTrace,
+    RUN_SPAN_NAMES.promptTools,
+    { surface: runtimeSurface, extensions: loadMagicContextExtension ? 1 : 0 },
+    () => {
+      const planned = planToolSurface({
+        surface: runtimeSurface,
+        groups: hostToolGroups,
+        // The Magic Context extension contributes a session's own archive and memory readers. Its entry is the one
+        // extension path this runtime hands the loader, so the class and the load site cannot drift apart.
+        extensions: loadMagicContextExtension ? [{ entry: magicContextEntry, toolClass: "session_inspection" }] : [],
+        registered: loader.getExtensions().extensions.map((extension) => ({
+          entry: extension.path,
+          tools: [...extension.tools.keys()],
+        })),
+      });
+      applyToolDescriptionOverrides(loader.getExtensions().extensions, planned);
+      return planned;
+    },
+  );
   const inactiveFixedToolNames = fixedTools.filter((tool) => tool.defaultActive === false).map((tool) => tool.name);
   const expectedToolNames = toolSurface.mounted.filter((name) => !inactiveFixedToolNames.includes(name));
   const customTools = hostToolGroups

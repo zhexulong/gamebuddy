@@ -1,0 +1,4389 @@
+{
+ "provenance": {
+  "run": "round62 · 2026-11-15T14:40:17.258Z · multiday_routine",
+  "wall": "r62-result.json startedAtMs..endedAtMs = 2065578 ms",
+  "clock": "trace ts/dur are µs since the Host's monotonic origin; tied to the wall clock by the 70 `present` spans and presentation.pieceAtMs (median offset -1794753635985 ms, residual min -134 / max 8 ms)",
+  "spans": {
+   "trace": "r62-run-trace.json traceEvents[] (ph X), converted to run-relative wall ms",
+   "wait.model": "r62-session.jsonl assistant records [timestamp - message.durationMs, timestamp]. The Host emitted no `wait.model` span in this run, so this family is the run's own provider records - its seam is Pi's and is not re-derived here",
+   "wait.idle": "r62-result.json presentation.activity.points: each `idle` point to the next non-idle point. That is the condition CompanionLoop publishes as COMPANION_ACTIVITY idle and CompanionHostService opens wait.idle on, so this is the span the Host would have emitted"
+  },
+  "expected": "computed here by interval union over the wall clock (AUDIT.md §1 / partition.mjs's method), independently of attributeWaitBudget"
+ },
+ "wallMs": 2065578,
+ "spans": [
+  {
+   "name": "present",
+   "startMs": 34122,
+   "endMs": 34152
+  },
+  {
+   "name": "stardew_observe",
+   "startMs": 42920,
+   "endMs": 42935
+  },
+  {
+   "name": "stardew_look_up",
+   "startMs": 47943,
+   "endMs": 47945
+  },
+  {
+   "name": "stardew_read_scene",
+   "startMs": 53086,
+   "endMs": 53133
+  },
+  {
+   "name": "stardew_plan_shape",
+   "startMs": 57991,
+   "endMs": 57993
+  },
+  {
+   "name": "stardew_plan_shape",
+   "startMs": 57992,
+   "endMs": 57993
+  },
+  {
+   "name": "stardew_inspect_tiles",
+   "startMs": 71784,
+   "endMs": 71803
+  },
+  {
+   "name": "stardew_plan_work",
+   "startMs": 92291,
+   "endMs": 92405
+  },
+  {
+   "name": "plan.script",
+   "startMs": 92294,
+   "endMs": 92405
+  },
+  {
+   "name": "admission",
+   "startMs": 92466,
+   "endMs": 92470
+  },
+  {
+   "name": "mod.execute",
+   "startMs": 92554,
+   "endMs": 93679
+  },
+  {
+   "name": "admission",
+   "startMs": 93710,
+   "endMs": 93713
+  },
+  {
+   "name": "present",
+   "startMs": 106003,
+   "endMs": 106012
+  },
+  {
+   "name": "stardew_inspect_tiles",
+   "startMs": 112265,
+   "endMs": 112279
+  },
+  {
+   "name": "stardew_inspect_tiles",
+   "startMs": 117198,
+   "endMs": 117216
+  },
+  {
+   "name": "stardew_observe",
+   "startMs": 135727,
+   "endMs": 135751
+  },
+  {
+   "name": "stardew_plan_work",
+   "startMs": 151610,
+   "endMs": 151658
+  },
+  {
+   "name": "plan.script",
+   "startMs": 151613,
+   "endMs": 151657
+  },
+  {
+   "name": "admission",
+   "startMs": 151733,
+   "endMs": 151750
+  },
+  {
+   "name": "present",
+   "startMs": 161828,
+   "endMs": 161849
+  },
+  {
+   "name": "stardew_plan_work",
+   "startMs": 171093,
+   "endMs": 171131
+  },
+  {
+   "name": "plan.script",
+   "startMs": 171096,
+   "endMs": 171131
+  },
+  {
+   "name": "admission",
+   "startMs": 171183,
+   "endMs": 171196
+  },
+  {
+   "name": "mod.execute",
+   "startMs": 171247,
+   "endMs": 171866
+  },
+  {
+   "name": "admission",
+   "startMs": 171902,
+   "endMs": 171915
+  },
+  {
+   "name": "present",
+   "startMs": 176595,
+   "endMs": 176615
+  },
+  {
+   "name": "stardew_observe",
+   "startMs": 184382,
+   "endMs": 184402
+  },
+  {
+   "name": "stardew_look_up",
+   "startMs": 193524,
+   "endMs": 193525
+  },
+  {
+   "name": "stardew_plan_shape",
+   "startMs": 201095,
+   "endMs": 201095
+  },
+  {
+   "name": "stardew_plan_work",
+   "startMs": 212794,
+   "endMs": 212842
+  },
+  {
+   "name": "plan.script",
+   "startMs": 212797,
+   "endMs": 212842
+  },
+  {
+   "name": "admission",
+   "startMs": 212906,
+   "endMs": 212909
+  },
+  {
+   "name": "mod.execute",
+   "startMs": 212932,
+   "endMs": 213646
+  },
+  {
+   "name": "admission",
+   "startMs": 213676,
+   "endMs": 213678
+  },
+  {
+   "name": "present",
+   "startMs": 219189,
+   "endMs": 219195
+  },
+  {
+   "name": "stardew_plan_work",
+   "startMs": 240109,
+   "endMs": 240174
+  },
+  {
+   "name": "plan.script",
+   "startMs": 240111,
+   "endMs": 240174
+  },
+  {
+   "name": "admission",
+   "startMs": 240250,
+   "endMs": 240252
+  },
+  {
+   "name": "mod.execute",
+   "startMs": 240285,
+   "endMs": 241090
+  },
+  {
+   "name": "present",
+   "startMs": 246949,
+   "endMs": 246962
+  },
+  {
+   "name": "stardew_look_up",
+   "startMs": 254811,
+   "endMs": 254812
+  },
+  {
+   "name": "stardew_plan_work",
+   "startMs": 270803,
+   "endMs": 270844
+  },
+  {
+   "name": "plan.script",
+   "startMs": 270805,
+   "endMs": 270844
+  },
+  {
+   "name": "admission",
+   "startMs": 270937,
+   "endMs": 270942
+  },
+  {
+   "name": "mod.execute",
+   "startMs": 270982,
+   "endMs": 272162
+  },
+  {
+   "name": "admission",
+   "startMs": 272194,
+   "endMs": 272198
+  },
+  {
+   "name": "present",
+   "startMs": 275584,
+   "endMs": 275596
+  },
+  {
+   "name": "stardew_plan_work",
+   "startMs": 279947,
+   "endMs": 280009
+  },
+  {
+   "name": "plan.script",
+   "startMs": 279949,
+   "endMs": 280008
+  },
+  {
+   "name": "admission",
+   "startMs": 280075,
+   "endMs": 280077
+  },
+  {
+   "name": "mod.execute",
+   "startMs": 280101,
+   "endMs": 280729
+  },
+  {
+   "name": "admission",
+   "startMs": 280795,
+   "endMs": 280796
+  },
+  {
+   "name": "admission",
+   "startMs": 280849,
+   "endMs": 280851
+  },
+  {
+   "name": "mod.execute",
+   "startMs": 280884,
+   "endMs": 281618
+  },
+  {
+   "name": "present",
+   "startMs": 292481,
+   "endMs": 292497
+  },
+  {
+   "name": "stardew_plan_work",
+   "startMs": 305069,
+   "endMs": 305072
+  },
+  {
+   "name": "plan.script",
+   "startMs": 305072,
+   "endMs": 305072
+  },
+  {
+   "name": "stardew_inspect_tiles",
+   "startMs": 315246,
+   "endMs": 315264
+  },
+  {
+   "name": "stardew_plan_work",
+   "startMs": 326856,
+   "endMs": 326893
+  },
+  {
+   "name": "plan.script",
+   "startMs": 326859,
+   "endMs": 326893
+  },
+  {
+   "name": "admission",
+   "startMs": 326958,
+   "endMs": 326961
+  },
+  {
+   "name": "mod.execute",
+   "startMs": 327038,
+   "endMs": 331589
+  },
+  {
+   "name": "mod.execute",
+   "startMs": 332410,
+   "endMs": 334848
+  },
+  {
+   "name": "present",
+   "startMs": 333563,
+   "endMs": 333579
+  },
+  {
+   "name": "stardew_plan_work",
+   "startMs": 348968,
+   "endMs": 348998
+  },
+  {
+   "name": "plan.script",
+   "startMs": 348970,
+   "endMs": 348998
+  },
+  {
+   "name": "admission",
+   "startMs": 349066,
+   "endMs": 349069
+  },
+  {
+   "name": "mod.execute",
+   "startMs": 349111,
+   "endMs": 352764
+  },
+  {
+   "name": "admission",
+   "startMs": 352838,
+   "endMs": 352840
+  },
+  {
+   "name": "present",
+   "startMs": 360954,
+   "endMs": 360963
+  },
+  {
+   "name": "stardew_plan_shape",
+   "startMs": 378055,
+   "endMs": 378055
+  },
+  {
+   "name": "stardew_plan_work",
+   "startMs": 386241,
+   "endMs": 386244
+  },
+  {
+   "name": "plan.script",
+   "startMs": 386244,
+   "endMs": 386244
+  },
+  {
+   "name": "stardew_plan_work",
+   "startMs": 394793,
+   "endMs": 394824
+  },
+  {
+   "name": "plan.script",
+   "startMs": 394796,
+   "endMs": 394824
+  },
+  {
+   "name": "admission",
+   "startMs": 394911,
+   "endMs": 394914
+  },
+  {
+   "name": "admission",
+   "startMs": 395004,
+   "endMs": 395006
+  },
+  {
+   "name": "mod.execute",
+   "startMs": 395056,
+   "endMs": 395596
+  },
+  {
+   "name": "mod.execute",
+   "startMs": 395611,
+   "endMs": 396216
+  },
+  {
+   "name": "mod.execute",
+   "startMs": 396230,
+   "endMs": 396814
+  },
+  {
+   "name": "mod.execute",
+   "startMs": 396829,
+   "endMs": 397301
+  },
+  {
+   "name": "mod.execute",
+   "startMs": 397318,
+   "endMs": 397680
+  },
+  {
+   "name": "mod.execute",
+   "startMs": 397694,
+   "endMs": 397913
+  },
+  {
+   "name": "mod.execute",
+   "startMs": 397928,
+   "endMs": 398131
+  },
+  {
+   "name": "admission",
+   "startMs": 398197,
+   "endMs": 398198
+  },
+  {
+   "name": "mod.execute",
+   "startMs": 398251,
+   "endMs": 399063
+  },
+  {
+   "name": "mod.execute",
+   "startMs": 399078,
+   "endMs": 399246
+  },
+  {
+   "name": "mod.execute",
+   "startMs": 399263,
+   "endMs": 399481
+  },
+  {
+   "name": "mod.execute",
+   "startMs": 399496,
+   "endMs": 399863
+  },
+  {
+   "name": "admission",
+   "startMs": 399898,
+   "endMs": 399900
+  },
+  {
+   "name": "mod.execute",
+   "startMs": 399953,
+   "endMs": 400869
+  },
+  {
+   "name": "present",
+   "startMs": 400621,
+   "endMs": 400630
+  },
+  {
+   "name": "stardew_plan_work",
+   "startMs": 409574,
+   "endMs": 409610
+  },
+  {
+   "name": "plan.script",
+   "startMs": 409577,
+   "endMs": 409610
+  },
+  {
+   "name": "admission",
+   "startMs": 409710,
+   "endMs": 409714
+  },
+  {
+   "name": "admission",
+   "startMs": 409799,
+   "endMs": 409801
+  },
+  {
+   "name": "mod.execute",
+   "startMs": 409861,
+   "endMs": 410821
+  },
+  {
+   "name": "mod.execute",
+   "startMs": 410838,
+   "endMs": 411631
+  },
+  {
+   "name": "admission",
+   "startMs": 411670,
+   "endMs": 411671
+  },
+  {
+   "name": "mod.execute",
+   "startMs": 411720,
+   "endMs": 413366
+  },
+  {
+   "name": "mod.execute",
+   "startMs": 413386,
+   "endMs": 413744
+  },
+  {
+   "name": "present",
+   "startMs": 413898,
+   "endMs": 413917
+  },
+  {
+   "name": "stardew_plan_work",
+   "startMs": 425260,
+   "endMs": 425319
+  },
+  {
+   "name": "plan.script",
+   "startMs": 425264,
+   "endMs": 425319
+  },
+  {
+   "name": "admission",
+   "startMs": 425398,
+   "endMs": 425400
+  },
+  {
+   "name": "mod.execute",
+   "startMs": 425505,
+   "endMs": 425653
+  },
+  {
+   "name": "present",
+   "startMs": 431226,
+   "endMs": 431270
+  },
+  {
+   "name": "stardew_plan_work",
+   "startMs": 444190,
+   "endMs": 444229
+  },
+  {
+   "name": "plan.script",
+   "startMs": 444193,
+   "endMs": 444229
+  },
+  {
+   "name": "admission",
+   "startMs": 444329,
+   "endMs": 444331
+  },
+  {
+   "name": "mod.execute",
+   "startMs": 444406,
+   "endMs": 444559
+  },
+  {
+   "name": "admission",
+   "startMs": 444611,
+   "endMs": 444612
+  },
+  {
+   "name": "mod.execute",
+   "startMs": 444661,
+   "endMs": 444714
+  },
+  {
+   "name": "admission",
+   "startMs": 444757,
+   "endMs": 444758
+  },
+  {
+   "name": "admission",
+   "startMs": 444832,
+   "endMs": 444834
+  },
+  {
+   "name": "admission",
+   "startMs": 444910,
+   "endMs": 444912
+  },
+  {
+   "name": "mod.execute",
+   "startMs": 444976,
+   "endMs": 445093
+  },
+  {
+   "name": "present",
+   "startMs": 453062,
+   "endMs": 453079
+  },
+  {
+   "name": "stardew_plan_work",
+   "startMs": 461081,
+   "endMs": 461111
+  },
+  {
+   "name": "plan.script",
+   "startMs": 461083,
+   "endMs": 461111
+  },
+  {
+   "name": "admission",
+   "startMs": 461189,
+   "endMs": 461197
+  },
+  {
+   "name": "present",
+   "startMs": 467342,
+   "endMs": 467346
+  },
+  {
+   "name": "stardew_plan_work",
+   "startMs": 484042,
+   "endMs": 484123
+  },
+  {
+   "name": "plan.script",
+   "startMs": 484046,
+   "endMs": 484123
+  },
+  {
+   "name": "admission",
+   "startMs": 484214,
+   "endMs": 484216
+  },
+  {
+   "name": "admission",
+   "startMs": 484369,
+   "endMs": 484371
+  },
+  {
+   "name": "mod.execute",
+   "startMs": 484459,
+   "endMs": 485413
+  },
+  {
+   "name": "admission",
+   "startMs": 485494,
+   "endMs": 485495
+  },
+  {
+   "name": "mod.execute",
+   "startMs": 485552,
+   "endMs": 485780
+  },
+  {
+   "name": "present",
+   "startMs": 488999,
+   "endMs": 489012
+  },
+  {
+   "name": "stardew_plan_work",
+   "startMs": 496927,
+   "endMs": 496967
+  },
+  {
+   "name": "plan.script",
+   "startMs": 496929,
+   "endMs": 496967
+  },
+  {
+   "name": "admission",
+   "startMs": 497046,
+   "endMs": 497048
+  },
+  {
+   "name": "mod.execute",
+   "startMs": 497118,
+   "endMs": 497563
+  },
+  {
+   "name": "admission",
+   "startMs": 497615,
+   "endMs": 497617
+  },
+  {
+   "name": "admission",
+   "startMs": 497713,
+   "endMs": 497714
+  },
+  {
+   "name": "admission",
+   "startMs": 497803,
+   "endMs": 497804
+  },
+  {
+   "name": "admission",
+   "startMs": 497888,
+   "endMs": 497889
+  },
+  {
+   "name": "admission",
+   "startMs": 497975,
+   "endMs": 497977
+  },
+  {
+   "name": "admission",
+   "startMs": 498060,
+   "endMs": 498062
+  },
+  {
+   "name": "admission",
+   "startMs": 498148,
+   "endMs": 498149
+  },
+  {
+   "name": "admission",
+   "startMs": 498227,
+   "endMs": 498229
+  },
+  {
+   "name": "admission",
+   "startMs": 498315,
+   "endMs": 498317
+  },
+  {
+   "name": "admission",
+   "startMs": 498405,
+   "endMs": 498406
+  },
+  {
+   "name": "admission",
+   "startMs": 498488,
+   "endMs": 498489
+  },
+  {
+   "name": "admission",
+   "startMs": 498568,
+   "endMs": 498570
+  },
+  {
+   "name": "admission",
+   "startMs": 498659,
+   "endMs": 498661
+  },
+  {
+   "name": "admission",
+   "startMs": 498761,
+   "endMs": 498766
+  },
+  {
+   "name": "admission",
+   "startMs": 498860,
+   "endMs": 498864
+  },
+  {
+   "name": "admission",
+   "startMs": 498966,
+   "endMs": 498968
+  },
+  {
+   "name": "present",
+   "startMs": 504106,
+   "endMs": 504115
+  },
+  {
+   "name": "stardew_plan_work",
+   "startMs": 515171,
+   "endMs": 515239
+  },
+  {
+   "name": "plan.script",
+   "startMs": 515174,
+   "endMs": 515239
+  },
+  {
+   "name": "admission",
+   "startMs": 515323,
+   "endMs": 515327
+  },
+  {
+   "name": "admission",
+   "startMs": 515445,
+   "endMs": 515447
+  },
+  {
+   "name": "mod.execute",
+   "startMs": 515516,
+   "endMs": 516132
+  },
+  {
+   "name": "mod.execute",
+   "startMs": 516144,
+   "endMs": 516918
+  },
+  {
+   "name": "mod.execute",
+   "startMs": 516932,
+   "endMs": 518231
+  },
+  {
+   "name": "mod.execute",
+   "startMs": 518245,
+   "endMs": 518638
+  },
+  {
+   "name": "mod.execute",
+   "startMs": 518655,
+   "endMs": 519239
+  },
+  {
+   "name": "present",
+   "startMs": 519744,
+   "endMs": 519750
+  },
+  {
+   "name": "stardew_plan_work",
+   "startMs": 529414,
+   "endMs": 529461
+  },
+  {
+   "name": "plan.script",
+   "startMs": 529417,
+   "endMs": 529461
+  },
+  {
+   "name": "admission",
+   "startMs": 529536,
+   "endMs": 529541
+  },
+  {
+   "name": "mod.execute",
+   "startMs": 529607,
+   "endMs": 532247
+  },
+  {
+   "name": "admission",
+   "startMs": 532300,
+   "endMs": 532302
+  },
+  {
+   "name": "mod.execute",
+   "startMs": 532352,
+   "endMs": 532930
+  },
+  {
+   "name": "present",
+   "startMs": 536180,
+   "endMs": 536199
+  },
+  {
+   "name": "stardew_observe",
+   "startMs": 547682,
+   "endMs": 547702
+  },
+  {
+   "name": "present",
+   "startMs": 556347,
+   "endMs": 556363
+  },
+  {
+   "name": "stardew_plan_work",
+   "startMs": 731738,
+   "endMs": 731769
+  },
+  {
+   "name": "plan.script",
+   "startMs": 731740,
+   "endMs": 731769
+  },
+  {
+   "name": "admission",
+   "startMs": 731862,
+   "endMs": 731865
+  },
+  {
+   "name": "mod.execute",
+   "startMs": 731924,
+   "endMs": 733265
+  },
+  {
+   "name": "admission",
+   "startMs": 733346,
+   "endMs": 733347
+  },
+  {
+   "name": "mod.execute",
+   "startMs": 733394,
+   "endMs": 739230
+  },
+  {
+   "name": "present",
+   "startMs": 746984,
+   "endMs": 746994
+  },
+  {
+   "name": "stardew_plan_work",
+   "startMs": 758444,
+   "endMs": 758508
+  },
+  {
+   "name": "plan.script",
+   "startMs": 758447,
+   "endMs": 758508
+  },
+  {
+   "name": "admission",
+   "startMs": 758583,
+   "endMs": 758584
+  },
+  {
+   "name": "mod.execute",
+   "startMs": 758643,
+   "endMs": 760228
+  },
+  {
+   "name": "admission",
+   "startMs": 760315,
+   "endMs": 760317
+  },
+  {
+   "name": "mod.execute",
+   "startMs": 760363,
+   "endMs": 760933
+  },
+  {
+   "name": "present",
+   "startMs": 765270,
+   "endMs": 765278
+  },
+  {
+   "name": "stardew_inspect_tiles",
+   "startMs": 773084,
+   "endMs": 773096
+  },
+  {
+   "name": "stardew_plan_work",
+   "startMs": 794674,
+   "endMs": 794710
+  },
+  {
+   "name": "plan.script",
+   "startMs": 794678,
+   "endMs": 794710
+  },
+  {
+   "name": "admission",
+   "startMs": 794796,
+   "endMs": 794799
+  },
+  {
+   "name": "admission",
+   "startMs": 794903,
+   "endMs": 794904
+  },
+  {
+   "name": "mod.execute",
+   "startMs": 794972,
+   "endMs": 796295
+  },
+  {
+   "name": "mod.execute",
+   "startMs": 796311,
+   "endMs": 796495
+  },
+  {
+   "name": "mod.execute",
+   "startMs": 796509,
+   "endMs": 796746
+  },
+  {
+   "name": "mod.execute",
+   "startMs": 796759,
+   "endMs": 797396
+  },
+  {
+   "name": "admission",
+   "startMs": 797451,
+   "endMs": 797452
+  },
+  {
+   "name": "admission",
+   "startMs": 797541,
+   "endMs": 797542
+  },
+  {
+   "name": "mod.execute",
+   "startMs": 797608,
+   "endMs": 798082
+  },
+  {
+   "name": "mod.execute",
+   "startMs": 798101,
+   "endMs": 798262
+  },
+  {
+   "name": "mod.execute",
+   "startMs": 798276,
+   "endMs": 798479
+  },
+  {
+   "name": "mod.execute",
+   "startMs": 798493,
+   "endMs": 798686
+  },
+  {
+   "name": "mod.execute",
+   "startMs": 798700,
+   "endMs": 799117
+  },
+  {
+   "name": "mod.execute",
+   "startMs": 799134,
+   "endMs": 799963
+  },
+  {
+   "name": "mod.execute",
+   "startMs": 799977,
+   "endMs": 800179
+  },
+  {
+   "name": "admission",
+   "startMs": 800232,
+   "endMs": 800233
+  },
+  {
+   "name": "mod.execute",
+   "startMs": 800301,
+   "endMs": 801446
+  },
+  {
+   "name": "present",
+   "startMs": 800772,
+   "endMs": 800778
+  },
+  {
+   "name": "mod.execute",
+   "startMs": 801463,
+   "endMs": 801879
+  },
+  {
+   "name": "mod.execute",
+   "startMs": 801894,
+   "endMs": 802546
+  },
+  {
+   "name": "mod.execute",
+   "startMs": 802561,
+   "endMs": 802946
+  },
+  {
+   "name": "mod.execute",
+   "startMs": 802961,
+   "endMs": 803602
+  },
+  {
+   "name": "mod.execute",
+   "startMs": 803619,
+   "endMs": 803983
+  },
+  {
+   "name": "mod.execute",
+   "startMs": 803999,
+   "endMs": 804943
+  },
+  {
+   "name": "present",
+   "startMs": 813903,
+   "endMs": 813922
+  },
+  {
+   "name": "stardew_plan_work",
+   "startMs": 825265,
+   "endMs": 825304
+  },
+  {
+   "name": "plan.script",
+   "startMs": 825269,
+   "endMs": 825304
+  },
+  {
+   "name": "admission",
+   "startMs": 825386,
+   "endMs": 825389
+  },
+  {
+   "name": "admission",
+   "startMs": 825530,
+   "endMs": 825531
+  },
+  {
+   "name": "present",
+   "startMs": 833337,
+   "endMs": 833345
+  },
+  {
+   "name": "stardew_plan_work",
+   "startMs": 845751,
+   "endMs": 845786
+  },
+  {
+   "name": "plan.script",
+   "startMs": 845754,
+   "endMs": 845786
+  },
+  {
+   "name": "admission",
+   "startMs": 845864,
+   "endMs": 845866
+  },
+  {
+   "name": "admission",
+   "startMs": 845986,
+   "endMs": 845987
+  },
+  {
+   "name": "admission",
+   "startMs": 846098,
+   "endMs": 846100
+  },
+  {
+   "name": "present",
+   "startMs": 855047,
+   "endMs": 855064
+  },
+  {
+   "name": "stardew_find_destination",
+   "startMs": 861524,
+   "endMs": 861600
+  },
+  {
+   "name": "stardew_plan_shape",
+   "startMs": 866157,
+   "endMs": 866157
+  },
+  {
+   "name": "stardew_plan_work",
+   "startMs": 877848,
+   "endMs": 877851
+  },
+  {
+   "name": "plan.script",
+   "startMs": 877851,
+   "endMs": 877851
+  },
+  {
+   "name": "stardew_plan_work",
+   "startMs": 883596,
+   "endMs": 883599
+  },
+  {
+   "name": "plan.script",
+   "startMs": 883599,
+   "endMs": 883599
+  },
+  {
+   "name": "stardew_plan_work",
+   "startMs": 894475,
+   "endMs": 894476
+  },
+  {
+   "name": "plan.script",
+   "startMs": 894476,
+   "endMs": 894476
+  },
+  {
+   "name": "stardew_plan_work",
+   "startMs": 905257,
+   "endMs": 905323
+  },
+  {
+   "name": "plan.script",
+   "startMs": 905259,
+   "endMs": 905322
+  },
+  {
+   "name": "admission",
+   "startMs": 905462,
+   "endMs": 905467
+  },
+  {
+   "name": "mod.execute",
+   "startMs": 905550,
+   "endMs": 908112
+  },
+  {
+   "name": "admission",
+   "startMs": 908194,
+   "endMs": 908196
+  },
+  {
+   "name": "mod.execute",
+   "startMs": 908250,
+   "endMs": 908843
+  },
+  {
+   "name": "present",
+   "startMs": 909992,
+   "endMs": 909994
+  },
+  {
+   "name": "stardew_plan_work",
+   "startMs": 917948,
+   "endMs": 917951
+  },
+  {
+   "name": "plan.script",
+   "startMs": 917951,
+   "endMs": 917951
+  },
+  {
+   "name": "stardew_plan_work",
+   "startMs": 932950,
+   "endMs": 932982
+  },
+  {
+   "name": "plan.script",
+   "startMs": 932953,
+   "endMs": 932982
+  },
+  {
+   "name": "admission",
+   "startMs": 933086,
+   "endMs": 933089
+  },
+  {
+   "name": "mod.execute",
+   "startMs": 933163,
+   "endMs": 939995
+  },
+  {
+   "name": "present",
+   "startMs": 938969,
+   "endMs": 938984
+  },
+  {
+   "name": "admission",
+   "startMs": 940087,
+   "endMs": 940088
+  },
+  {
+   "name": "mod.execute",
+   "startMs": 940140,
+   "endMs": 940742
+  },
+  {
+   "name": "stardew_observe",
+   "startMs": 945258,
+   "endMs": 945280
+  },
+  {
+   "name": "present",
+   "startMs": 954249,
+   "endMs": 954251
+  },
+  {
+   "name": "stardew_plan_work",
+   "startMs": 1043069,
+   "endMs": 1043140
+  },
+  {
+   "name": "plan.script",
+   "startMs": 1043072,
+   "endMs": 1043140
+  },
+  {
+   "name": "admission",
+   "startMs": 1043204,
+   "endMs": 1043208
+  },
+  {
+   "name": "mod.execute",
+   "startMs": 1043353,
+   "endMs": 1061846
+  },
+  {
+   "name": "admission",
+   "startMs": 1061927,
+   "endMs": 1061929
+  },
+  {
+   "name": "mod.execute",
+   "startMs": 1062014,
+   "endMs": 1062570
+  },
+  {
+   "name": "stardew_plan_work",
+   "startMs": 1070342,
+   "endMs": 1070387
+  },
+  {
+   "name": "plan.script",
+   "startMs": 1070345,
+   "endMs": 1070387
+  },
+  {
+   "name": "admission",
+   "startMs": 1070457,
+   "endMs": 1070458
+  },
+  {
+   "name": "admission",
+   "startMs": 1070602,
+   "endMs": 1070604
+  },
+  {
+   "name": "present",
+   "startMs": 1077290,
+   "endMs": 1077303
+  },
+  {
+   "name": "stardew_plan_work",
+   "startMs": 1088372,
+   "endMs": 1088421
+  },
+  {
+   "name": "plan.script",
+   "startMs": 1088374,
+   "endMs": 1088421
+  },
+  {
+   "name": "admission",
+   "startMs": 1088489,
+   "endMs": 1088491
+  },
+  {
+   "name": "admission",
+   "startMs": 1088608,
+   "endMs": 1088609
+  },
+  {
+   "name": "mod.execute",
+   "startMs": 1088671,
+   "endMs": 1089182
+  },
+  {
+   "name": "present",
+   "startMs": 1092795,
+   "endMs": 1092812
+  },
+  {
+   "name": "stardew_plan_work",
+   "startMs": 1099755,
+   "endMs": 1099805
+  },
+  {
+   "name": "plan.script",
+   "startMs": 1099758,
+   "endMs": 1099805
+  },
+  {
+   "name": "admission",
+   "startMs": 1099870,
+   "endMs": 1099872
+  },
+  {
+   "name": "mod.execute",
+   "startMs": 1100013,
+   "endMs": 1112183
+  },
+  {
+   "name": "present",
+   "startMs": 1104518,
+   "endMs": 1104523
+  },
+  {
+   "name": "admission",
+   "startMs": 1112272,
+   "endMs": 1112274
+  },
+  {
+   "name": "mod.execute",
+   "startMs": 1112346,
+   "endMs": 1112923
+  },
+  {
+   "name": "stardew_observe",
+   "startMs": 1120756,
+   "endMs": 1120769
+  },
+  {
+   "name": "stardew_plan_work",
+   "startMs": 1126583,
+   "endMs": 1126621
+  },
+  {
+   "name": "plan.script",
+   "startMs": 1126585,
+   "endMs": 1126621
+  },
+  {
+   "name": "admission",
+   "startMs": 1126689,
+   "endMs": 1126691
+  },
+  {
+   "name": "mod.execute",
+   "startMs": 1126756,
+   "endMs": 1132247
+  },
+  {
+   "name": "present",
+   "startMs": 1131282,
+   "endMs": 1131286
+  },
+  {
+   "name": "admission",
+   "startMs": 1132342,
+   "endMs": 1132343
+  },
+  {
+   "name": "stardew_plan_work",
+   "startMs": 1140207,
+   "endMs": 1140247
+  },
+  {
+   "name": "plan.script",
+   "startMs": 1140210,
+   "endMs": 1140247
+  },
+  {
+   "name": "admission",
+   "startMs": 1140327,
+   "endMs": 1140331
+  },
+  {
+   "name": "stardew_plan_work",
+   "startMs": 1157463,
+   "endMs": 1157524
+  },
+  {
+   "name": "plan.script",
+   "startMs": 1157466,
+   "endMs": 1157524
+  },
+  {
+   "name": "admission",
+   "startMs": 1157610,
+   "endMs": 1157611
+  },
+  {
+   "name": "admission",
+   "startMs": 1157770,
+   "endMs": 1157771
+  },
+  {
+   "name": "admission",
+   "startMs": 1157901,
+   "endMs": 1157903
+  },
+  {
+   "name": "present",
+   "startMs": 1162723,
+   "endMs": 1162732
+  },
+  {
+   "name": "stardew_look_up",
+   "startMs": 1178193,
+   "endMs": 1178194
+  },
+  {
+   "name": "stardew_plan_work",
+   "startMs": 1194002,
+   "endMs": 1194037
+  },
+  {
+   "name": "plan.script",
+   "startMs": 1194004,
+   "endMs": 1194037
+  },
+  {
+   "name": "admission",
+   "startMs": 1194098,
+   "endMs": 1194103
+  },
+  {
+   "name": "admission",
+   "startMs": 1194235,
+   "endMs": 1194236
+  },
+  {
+   "name": "admission",
+   "startMs": 1194367,
+   "endMs": 1194368
+  },
+  {
+   "name": "admission",
+   "startMs": 1194495,
+   "endMs": 1194496
+  },
+  {
+   "name": "present",
+   "startMs": 1203279,
+   "endMs": 1203285
+  },
+  {
+   "name": "stardew_look_up",
+   "startMs": 1208909,
+   "endMs": 1208910
+  },
+  {
+   "name": "stardew_plan_work",
+   "startMs": 1220654,
+   "endMs": 1220706
+  },
+  {
+   "name": "plan.script",
+   "startMs": 1220656,
+   "endMs": 1220706
+  },
+  {
+   "name": "admission",
+   "startMs": 1220781,
+   "endMs": 1220785
+  },
+  {
+   "name": "admission",
+   "startMs": 1220922,
+   "endMs": 1220924
+  },
+  {
+   "name": "admission",
+   "startMs": 1221058,
+   "endMs": 1221059
+  },
+  {
+   "name": "admission",
+   "startMs": 1221182,
+   "endMs": 1221184
+  },
+  {
+   "name": "present",
+   "startMs": 1227245,
+   "endMs": 1227249
+  },
+  {
+   "name": "stardew_plan_work",
+   "startMs": 1240069,
+   "endMs": 1240145
+  },
+  {
+   "name": "plan.script",
+   "startMs": 1240072,
+   "endMs": 1240145
+  },
+  {
+   "name": "admission",
+   "startMs": 1240244,
+   "endMs": 1240248
+  },
+  {
+   "name": "mod.execute",
+   "startMs": 1240327,
+   "endMs": 1251726
+  },
+  {
+   "name": "present",
+   "startMs": 1246944,
+   "endMs": 1246950
+  },
+  {
+   "name": "admission",
+   "startMs": 1251831,
+   "endMs": 1251833
+  },
+  {
+   "name": "stardew_plan_work",
+   "startMs": 1259592,
+   "endMs": 1259648
+  },
+  {
+   "name": "plan.script",
+   "startMs": 1259595,
+   "endMs": 1259647
+  },
+  {
+   "name": "admission",
+   "startMs": 1259743,
+   "endMs": 1259746
+  },
+  {
+   "name": "mod.execute",
+   "startMs": 1259836,
+   "endMs": 1272318
+  },
+  {
+   "name": "admission",
+   "startMs": 1272414,
+   "endMs": 1272416
+  },
+  {
+   "name": "mod.execute",
+   "startMs": 1272477,
+   "endMs": 1273051
+  },
+  {
+   "name": "present",
+   "startMs": 1274944,
+   "endMs": 1274950
+  },
+  {
+   "name": "stardew_plan_work",
+   "startMs": 1282047,
+   "endMs": 1282089
+  },
+  {
+   "name": "plan.script",
+   "startMs": 1282050,
+   "endMs": 1282088
+  },
+  {
+   "name": "admission",
+   "startMs": 1282162,
+   "endMs": 1282165
+  },
+  {
+   "name": "admission",
+   "startMs": 1282319,
+   "endMs": 1282320
+  },
+  {
+   "name": "mod.execute",
+   "startMs": 1282418,
+   "endMs": 1292446
+  },
+  {
+   "name": "present",
+   "startMs": 1288469,
+   "endMs": 1288479
+  },
+  {
+   "name": "admission",
+   "startMs": 1292512,
+   "endMs": 1292514
+  },
+  {
+   "name": "mod.execute",
+   "startMs": 1292575,
+   "endMs": 1293156
+  },
+  {
+   "name": "stardew_plan_work",
+   "startMs": 1309567,
+   "endMs": 1309646
+  },
+  {
+   "name": "plan.script",
+   "startMs": 1309568,
+   "endMs": 1309646
+  },
+  {
+   "name": "admission",
+   "startMs": 1309778,
+   "endMs": 1309782
+  },
+  {
+   "name": "mod.execute",
+   "startMs": 1309860,
+   "endMs": 1316679
+  },
+  {
+   "name": "present",
+   "startMs": 1313722,
+   "endMs": 1313741
+  },
+  {
+   "name": "admission",
+   "startMs": 1316778,
+   "endMs": 1316780
+  },
+  {
+   "name": "mod.execute",
+   "startMs": 1316852,
+   "endMs": 1317418
+  },
+  {
+   "name": "stardew_observe",
+   "startMs": 1323913,
+   "endMs": 1323960
+  },
+  {
+   "name": "stardew_plan_work",
+   "startMs": 1332386,
+   "endMs": 1332427
+  },
+  {
+   "name": "plan.script",
+   "startMs": 1332389,
+   "endMs": 1332427
+  },
+  {
+   "name": "admission",
+   "startMs": 1332518,
+   "endMs": 1332523
+  },
+  {
+   "name": "admission",
+   "startMs": 1332714,
+   "endMs": 1332715
+  },
+  {
+   "name": "admission",
+   "startMs": 1332896,
+   "endMs": 1332899
+  },
+  {
+   "name": "mod.execute",
+   "startMs": 1333027,
+   "endMs": 1333031
+  },
+  {
+   "name": "admission",
+   "startMs": 1333102,
+   "endMs": 1333104
+  },
+  {
+   "name": "mod.execute",
+   "startMs": 1333185,
+   "endMs": 1333197
+  },
+  {
+   "name": "admission",
+   "startMs": 1333254,
+   "endMs": 1333256
+  },
+  {
+   "name": "mod.execute",
+   "startMs": 1333334,
+   "endMs": 1333415
+  },
+  {
+   "name": "admission",
+   "startMs": 1333479,
+   "endMs": 1333481
+  },
+  {
+   "name": "mod.execute",
+   "startMs": 1333563,
+   "endMs": 1333682
+  },
+  {
+   "name": "admission",
+   "startMs": 1333752,
+   "endMs": 1333753
+  },
+  {
+   "name": "mod.execute",
+   "startMs": 1333833,
+   "endMs": 1333933
+  },
+  {
+   "name": "admission",
+   "startMs": 1333992,
+   "endMs": 1333993
+  },
+  {
+   "name": "admission",
+   "startMs": 1334121,
+   "endMs": 1334123
+  },
+  {
+   "name": "admission",
+   "startMs": 1334234,
+   "endMs": 1334236
+  },
+  {
+   "name": "mod.execute",
+   "startMs": 1334310,
+   "endMs": 1334364
+  },
+  {
+   "name": "admission",
+   "startMs": 1334425,
+   "endMs": 1334427
+  },
+  {
+   "name": "admission",
+   "startMs": 1334536,
+   "endMs": 1334537
+  },
+  {
+   "name": "admission",
+   "startMs": 1334645,
+   "endMs": 1334647
+  },
+  {
+   "name": "mod.execute",
+   "startMs": 1334724,
+   "endMs": 1335030
+  },
+  {
+   "name": "admission",
+   "startMs": 1335132,
+   "endMs": 1335133
+  },
+  {
+   "name": "stardew_plan_work",
+   "startMs": 1346163,
+   "endMs": 1346214
+  },
+  {
+   "name": "plan.script",
+   "startMs": 1346165,
+   "endMs": 1346213
+  },
+  {
+   "name": "admission",
+   "startMs": 1346297,
+   "endMs": 1346301
+  },
+  {
+   "name": "admission",
+   "startMs": 1346443,
+   "endMs": 1346444
+  },
+  {
+   "name": "admission",
+   "startMs": 1346563,
+   "endMs": 1346564
+  },
+  {
+   "name": "admission",
+   "startMs": 1346688,
+   "endMs": 1346690
+  },
+  {
+   "name": "admission",
+   "startMs": 1346814,
+   "endMs": 1346816
+  },
+  {
+   "name": "mod.execute",
+   "startMs": 1346893,
+   "endMs": 1346906
+  },
+  {
+   "name": "admission",
+   "startMs": 1346958,
+   "endMs": 1346959
+  },
+  {
+   "name": "admission",
+   "startMs": 1347081,
+   "endMs": 1347082
+  },
+  {
+   "name": "admission",
+   "startMs": 1347206,
+   "endMs": 1347208
+  },
+  {
+   "name": "mod.execute",
+   "startMs": 1347291,
+   "endMs": 1347324
+  },
+  {
+   "name": "admission",
+   "startMs": 1347393,
+   "endMs": 1347394
+  },
+  {
+   "name": "admission",
+   "startMs": 1347517,
+   "endMs": 1347518
+  },
+  {
+   "name": "admission",
+   "startMs": 1347644,
+   "endMs": 1347645
+  },
+  {
+   "name": "mod.execute",
+   "startMs": 1347738,
+   "endMs": 1347759
+  },
+  {
+   "name": "admission",
+   "startMs": 1347821,
+   "endMs": 1347822
+  },
+  {
+   "name": "mod.execute",
+   "startMs": 1347911,
+   "endMs": 1347982
+  },
+  {
+   "name": "admission",
+   "startMs": 1348054,
+   "endMs": 1348056
+  },
+  {
+   "name": "mod.execute",
+   "startMs": 1348179,
+   "endMs": 1348697
+  },
+  {
+   "name": "present",
+   "startMs": 1353575,
+   "endMs": 1353584
+  },
+  {
+   "name": "stardew_plan_work",
+   "startMs": 1368622,
+   "endMs": 1368657
+  },
+  {
+   "name": "plan.script",
+   "startMs": 1368625,
+   "endMs": 1368657
+  },
+  {
+   "name": "admission",
+   "startMs": 1368747,
+   "endMs": 1368750
+  },
+  {
+   "name": "admission",
+   "startMs": 1368875,
+   "endMs": 1368877
+  },
+  {
+   "name": "admission",
+   "startMs": 1368995,
+   "endMs": 1368997
+  },
+  {
+   "name": "present",
+   "startMs": 1375468,
+   "endMs": 1375481
+  },
+  {
+   "name": "stardew_plan_work",
+   "startMs": 1393224,
+   "endMs": 1393227
+  },
+  {
+   "name": "plan.script",
+   "startMs": 1393227,
+   "endMs": 1393227
+  },
+  {
+   "name": "stardew_plan_work",
+   "startMs": 1402774,
+   "endMs": 1402863
+  },
+  {
+   "name": "plan.script",
+   "startMs": 1402778,
+   "endMs": 1402862
+  },
+  {
+   "name": "admission",
+   "startMs": 1402960,
+   "endMs": 1402963
+  },
+  {
+   "name": "mod.execute",
+   "startMs": 1403070,
+   "endMs": 1404930
+  },
+  {
+   "name": "admission",
+   "startMs": 1405003,
+   "endMs": 1405004
+  },
+  {
+   "name": "present",
+   "startMs": 1410571,
+   "endMs": 1410582
+  },
+  {
+   "name": "stardew_plan_work",
+   "startMs": 1418970,
+   "endMs": 1419023
+  },
+  {
+   "name": "plan.script",
+   "startMs": 1418972,
+   "endMs": 1419023
+  },
+  {
+   "name": "admission",
+   "startMs": 1419121,
+   "endMs": 1419124
+  },
+  {
+   "name": "mod.execute",
+   "startMs": 1419236,
+   "endMs": 1421379
+  },
+  {
+   "name": "admission",
+   "startMs": 1421496,
+   "endMs": 1421497
+  },
+  {
+   "name": "mod.execute",
+   "startMs": 1421577,
+   "endMs": 1422128
+  },
+  {
+   "name": "admission",
+   "startMs": 1422215,
+   "endMs": 1422217
+  },
+  {
+   "name": "mod.execute",
+   "startMs": 1422904,
+   "endMs": 1430724
+  },
+  {
+   "name": "present",
+   "startMs": 1425560,
+   "endMs": 1425568
+  },
+  {
+   "name": "stardew_plan_work",
+   "startMs": 1461830,
+   "endMs": 1461885
+  },
+  {
+   "name": "plan.script",
+   "startMs": 1461833,
+   "endMs": 1461885
+  },
+  {
+   "name": "admission",
+   "startMs": 1461963,
+   "endMs": 1461964
+  },
+  {
+   "name": "mod.execute",
+   "startMs": 1462042,
+   "endMs": 1463596
+  },
+  {
+   "name": "admission",
+   "startMs": 1463669,
+   "endMs": 1463671
+  },
+  {
+   "name": "mod.execute",
+   "startMs": 1463742,
+   "endMs": 1464296
+  },
+  {
+   "name": "present",
+   "startMs": 1470509,
+   "endMs": 1470512
+  },
+  {
+   "name": "stardew_plan_work",
+   "startMs": 1478503,
+   "endMs": 1478578
+  },
+  {
+   "name": "plan.script",
+   "startMs": 1478505,
+   "endMs": 1478578
+  },
+  {
+   "name": "admission",
+   "startMs": 1478645,
+   "endMs": 1478647
+  },
+  {
+   "name": "admission",
+   "startMs": 1478798,
+   "endMs": 1478799
+  },
+  {
+   "name": "mod.execute",
+   "startMs": 1478893,
+   "endMs": 1479864
+  },
+  {
+   "name": "admission",
+   "startMs": 1479940,
+   "endMs": 1479942
+  },
+  {
+   "name": "mod.execute",
+   "startMs": 1480033,
+   "endMs": 1480381
+  },
+  {
+   "name": "present",
+   "startMs": 1488426,
+   "endMs": 1488429
+  },
+  {
+   "name": "stardew_plan_work",
+   "startMs": 1494031,
+   "endMs": 1494080
+  },
+  {
+   "name": "plan.script",
+   "startMs": 1494033,
+   "endMs": 1494079
+  },
+  {
+   "name": "admission",
+   "startMs": 1494168,
+   "endMs": 1494170
+  },
+  {
+   "name": "mod.execute",
+   "startMs": 1494248,
+   "endMs": 1494847
+  },
+  {
+   "name": "admission",
+   "startMs": 1494923,
+   "endMs": 1494924
+  },
+  {
+   "name": "admission",
+   "startMs": 1495078,
+   "endMs": 1495079
+  },
+  {
+   "name": "mod.execute",
+   "startMs": 1495169,
+   "endMs": 1495197
+  },
+  {
+   "name": "admission",
+   "startMs": 1495270,
+   "endMs": 1495271
+  },
+  {
+   "name": "mod.execute",
+   "startMs": 1495354,
+   "endMs": 1496014
+  },
+  {
+   "name": "admission",
+   "startMs": 1496090,
+   "endMs": 1496092
+  },
+  {
+   "name": "mod.execute",
+   "startMs": 1496181,
+   "endMs": 1496731
+  },
+  {
+   "name": "admission",
+   "startMs": 1496809,
+   "endMs": 1496811
+  },
+  {
+   "name": "admission",
+   "startMs": 1496950,
+   "endMs": 1496952
+  },
+  {
+   "name": "admission",
+   "startMs": 1497112,
+   "endMs": 1497114
+  },
+  {
+   "name": "mod.execute",
+   "startMs": 1497217,
+   "endMs": 1497236
+  },
+  {
+   "name": "admission",
+   "startMs": 1497306,
+   "endMs": 1497308
+  },
+  {
+   "name": "admission",
+   "startMs": 1497467,
+   "endMs": 1497468
+  },
+  {
+   "name": "present",
+   "startMs": 1501965,
+   "endMs": 1501980
+  },
+  {
+   "name": "stardew_plan_work",
+   "startMs": 1517103,
+   "endMs": 1517164
+  },
+  {
+   "name": "plan.script",
+   "startMs": 1517105,
+   "endMs": 1517163
+  },
+  {
+   "name": "admission",
+   "startMs": 1517246,
+   "endMs": 1517248
+  },
+  {
+   "name": "admission",
+   "startMs": 1517397,
+   "endMs": 1517398
+  },
+  {
+   "name": "admission",
+   "startMs": 1517526,
+   "endMs": 1517527
+  },
+  {
+   "name": "admission",
+   "startMs": 1517659,
+   "endMs": 1517660
+  },
+  {
+   "name": "mod.execute",
+   "startMs": 1517741,
+   "endMs": 1518012
+  },
+  {
+   "name": "admission",
+   "startMs": 1518107,
+   "endMs": 1518108
+  },
+  {
+   "name": "mod.execute",
+   "startMs": 1518196,
+   "endMs": 1518514
+  },
+  {
+   "name": "admission",
+   "startMs": 1518596,
+   "endMs": 1518597
+  },
+  {
+   "name": "admission",
+   "startMs": 1518726,
+   "endMs": 1518727
+  },
+  {
+   "name": "admission",
+   "startMs": 1518857,
+   "endMs": 1518859
+  },
+  {
+   "name": "admission",
+   "startMs": 1519008,
+   "endMs": 1519010
+  },
+  {
+   "name": "admission",
+   "startMs": 1519147,
+   "endMs": 1519149
+  },
+  {
+   "name": "present",
+   "startMs": 1526141,
+   "endMs": 1526160
+  },
+  {
+   "name": "stardew_plan_work",
+   "startMs": 1534891,
+   "endMs": 1534967
+  },
+  {
+   "name": "plan.script",
+   "startMs": 1534894,
+   "endMs": 1534967
+  },
+  {
+   "name": "admission",
+   "startMs": 1535062,
+   "endMs": 1535064
+  },
+  {
+   "name": "mod.execute",
+   "startMs": 1535163,
+   "endMs": 1535304
+  },
+  {
+   "name": "admission",
+   "startMs": 1535394,
+   "endMs": 1535396
+  },
+  {
+   "name": "mod.execute",
+   "startMs": 1535520,
+   "endMs": 1535631
+  },
+  {
+   "name": "admission",
+   "startMs": 1535710,
+   "endMs": 1535712
+  },
+  {
+   "name": "mod.execute",
+   "startMs": 1535802,
+   "endMs": 1536465
+  },
+  {
+   "name": "admission",
+   "startMs": 1536573,
+   "endMs": 1536575
+  },
+  {
+   "name": "mod.execute",
+   "startMs": 1536701,
+   "endMs": 1541378
+  },
+  {
+   "name": "present",
+   "startMs": 1545553,
+   "endMs": 1545563
+  },
+  {
+   "name": "stardew_plan_shape",
+   "startMs": 1557442,
+   "endMs": 1557443
+  },
+  {
+   "name": "stardew_plan_work",
+   "startMs": 1566483,
+   "endMs": 1566569
+  },
+  {
+   "name": "plan.script",
+   "startMs": 1566487,
+   "endMs": 1566569
+  },
+  {
+   "name": "admission",
+   "startMs": 1566657,
+   "endMs": 1566660
+  },
+  {
+   "name": "admission",
+   "startMs": 1566844,
+   "endMs": 1566845
+  },
+  {
+   "name": "present",
+   "startMs": 1576693,
+   "endMs": 1576696
+  },
+  {
+   "name": "stardew_plan_work",
+   "startMs": 1583280,
+   "endMs": 1583333
+  },
+  {
+   "name": "plan.script",
+   "startMs": 1583283,
+   "endMs": 1583332
+  },
+  {
+   "name": "admission",
+   "startMs": 1583407,
+   "endMs": 1583410
+  },
+  {
+   "name": "admission",
+   "startMs": 1583630,
+   "endMs": 1583631
+  },
+  {
+   "name": "admission",
+   "startMs": 1583755,
+   "endMs": 1583757
+  },
+  {
+   "name": "admission",
+   "startMs": 1583887,
+   "endMs": 1583888
+  },
+  {
+   "name": "present",
+   "startMs": 1591246,
+   "endMs": 1591263
+  },
+  {
+   "name": "stardew_plan_work",
+   "startMs": 1599301,
+   "endMs": 1599386
+  },
+  {
+   "name": "plan.script",
+   "startMs": 1599304,
+   "endMs": 1599385
+  },
+  {
+   "name": "admission",
+   "startMs": 1599470,
+   "endMs": 1599472
+  },
+  {
+   "name": "admission",
+   "startMs": 1599653,
+   "endMs": 1599654
+  },
+  {
+   "name": "mod.execute",
+   "startMs": 1599769,
+   "endMs": 1599786
+  },
+  {
+   "name": "mod.execute",
+   "startMs": 1599798,
+   "endMs": 1599978
+  },
+  {
+   "name": "admission",
+   "startMs": 1600101,
+   "endMs": 1600103
+  },
+  {
+   "name": "admission",
+   "startMs": 1600251,
+   "endMs": 1600252
+  },
+  {
+   "name": "present",
+   "startMs": 1604665,
+   "endMs": 1604681
+  },
+  {
+   "name": "stardew_plan_work",
+   "startMs": 1622054,
+   "endMs": 1622102
+  },
+  {
+   "name": "plan.script",
+   "startMs": 1622056,
+   "endMs": 1622102
+  },
+  {
+   "name": "admission",
+   "startMs": 1622191,
+   "endMs": 1622195
+  },
+  {
+   "name": "admission",
+   "startMs": 1622393,
+   "endMs": 1622394
+  },
+  {
+   "name": "present",
+   "startMs": 1628224,
+   "endMs": 1628233
+  },
+  {
+   "name": "stardew_plan_work",
+   "startMs": 1640552,
+   "endMs": 1640618
+  },
+  {
+   "name": "plan.script",
+   "startMs": 1640555,
+   "endMs": 1640618
+  },
+  {
+   "name": "admission",
+   "startMs": 1640686,
+   "endMs": 1640689
+  },
+  {
+   "name": "admission",
+   "startMs": 1640869,
+   "endMs": 1640870
+  },
+  {
+   "name": "mod.execute",
+   "startMs": 1640951,
+   "endMs": 1644088
+  },
+  {
+   "name": "mod.execute",
+   "startMs": 1644102,
+   "endMs": 1644297
+  },
+  {
+   "name": "admission",
+   "startMs": 1644416,
+   "endMs": 1644418
+  },
+  {
+   "name": "mod.execute",
+   "startMs": 1644518,
+   "endMs": 1645214
+  },
+  {
+   "name": "admission",
+   "startMs": 1645327,
+   "endMs": 1645328
+  },
+  {
+   "name": "admission",
+   "startMs": 1645479,
+   "endMs": 1645482
+  },
+  {
+   "name": "present",
+   "startMs": 1645521,
+   "endMs": 1645665
+  },
+  {
+   "name": "admission",
+   "startMs": 1645740,
+   "endMs": 1645743
+  },
+  {
+   "name": "stardew_plan_work",
+   "startMs": 1661365,
+   "endMs": 1661429
+  },
+  {
+   "name": "plan.script",
+   "startMs": 1661367,
+   "endMs": 1661429
+  },
+  {
+   "name": "admission",
+   "startMs": 1661505,
+   "endMs": 1661507
+  },
+  {
+   "name": "mod.execute",
+   "startMs": 1661622,
+   "endMs": 1666698
+  },
+  {
+   "name": "present",
+   "startMs": 1665945,
+   "endMs": 1665954
+  },
+  {
+   "name": "admission",
+   "startMs": 1666787,
+   "endMs": 1666788
+  },
+  {
+   "name": "mod.execute",
+   "startMs": 1666880,
+   "endMs": 1667414
+  },
+  {
+   "name": "stardew_plan_work",
+   "startMs": 1674874,
+   "endMs": 1674932
+  },
+  {
+   "name": "plan.script",
+   "startMs": 1674876,
+   "endMs": 1674932
+  },
+  {
+   "name": "admission",
+   "startMs": 1675026,
+   "endMs": 1675029
+  },
+  {
+   "name": "mod.execute",
+   "startMs": 1675165,
+   "endMs": 1681934
+  },
+  {
+   "name": "present",
+   "startMs": 1678850,
+   "endMs": 1678858
+  },
+  {
+   "name": "admission",
+   "startMs": 1682027,
+   "endMs": 1682028
+  },
+  {
+   "name": "mod.execute",
+   "startMs": 1682122,
+   "endMs": 1682658
+  },
+  {
+   "name": "stardew_plan_work",
+   "startMs": 1689394,
+   "endMs": 1689395
+  },
+  {
+   "name": "plan.script",
+   "startMs": 1689395,
+   "endMs": 1689395
+  },
+  {
+   "name": "stardew_observe",
+   "startMs": 1694827,
+   "endMs": 1694870
+  },
+  {
+   "name": "stardew_find_destination",
+   "startMs": 1704517,
+   "endMs": 1704540
+  },
+  {
+   "name": "stardew_plan_work",
+   "startMs": 1710081,
+   "endMs": 1710084
+  },
+  {
+   "name": "plan.script",
+   "startMs": 1710084,
+   "endMs": 1710084
+  },
+  {
+   "name": "stardew_plan_work",
+   "startMs": 1713932,
+   "endMs": 1713935
+  },
+  {
+   "name": "plan.script",
+   "startMs": 1713935,
+   "endMs": 1713935
+  },
+  {
+   "name": "stardew_plan_work",
+   "startMs": 1721384,
+   "endMs": 1721387
+  },
+  {
+   "name": "plan.script",
+   "startMs": 1721387,
+   "endMs": 1721387
+  },
+  {
+   "name": "stardew_plan_work",
+   "startMs": 1730511,
+   "endMs": 1730562
+  },
+  {
+   "name": "plan.script",
+   "startMs": 1730513,
+   "endMs": 1730562
+  },
+  {
+   "name": "admission",
+   "startMs": 1730644,
+   "endMs": 1730647
+  },
+  {
+   "name": "present",
+   "startMs": 1733603,
+   "endMs": 1733614
+  },
+  {
+   "name": "stardew_plan_work",
+   "startMs": 1744912,
+   "endMs": 1744967
+  },
+  {
+   "name": "plan.script",
+   "startMs": 1744914,
+   "endMs": 1744967
+  },
+  {
+   "name": "admission",
+   "startMs": 1745074,
+   "endMs": 1745077
+  },
+  {
+   "name": "admission",
+   "startMs": 1745277,
+   "endMs": 1745279
+  },
+  {
+   "name": "mod.execute",
+   "startMs": 1745442,
+   "endMs": 1756890
+  },
+  {
+   "name": "present",
+   "startMs": 1751035,
+   "endMs": 1751047
+  },
+  {
+   "name": "admission",
+   "startMs": 1756994,
+   "endMs": 1756996
+  },
+  {
+   "name": "mod.execute",
+   "startMs": 1757181,
+   "endMs": 1757426
+  },
+  {
+   "name": "stardew_plan_work",
+   "startMs": 1779605,
+   "endMs": 1779650
+  },
+  {
+   "name": "plan.script",
+   "startMs": 1779608,
+   "endMs": 1779650
+  },
+  {
+   "name": "admission",
+   "startMs": 1779744,
+   "endMs": 1779747
+  },
+  {
+   "name": "mod.execute",
+   "startMs": 1779888,
+   "endMs": 1791498
+  },
+  {
+   "name": "present",
+   "startMs": 1784498,
+   "endMs": 1784514
+  },
+  {
+   "name": "stardew_plan_work",
+   "startMs": 1798472,
+   "endMs": 1798527
+  },
+  {
+   "name": "plan.script",
+   "startMs": 1798474,
+   "endMs": 1798527
+  },
+  {
+   "name": "admission",
+   "startMs": 1798602,
+   "endMs": 1798604
+  },
+  {
+   "name": "admission",
+   "startMs": 1798787,
+   "endMs": 1798788
+  },
+  {
+   "name": "mod.execute",
+   "startMs": 1798915,
+   "endMs": 1799181
+  },
+  {
+   "name": "admission",
+   "startMs": 1799272,
+   "endMs": 1799274
+  },
+  {
+   "name": "mod.execute",
+   "startMs": 1799368,
+   "endMs": 1799881
+  },
+  {
+   "name": "present",
+   "startMs": 1802716,
+   "endMs": 1802730
+  },
+  {
+   "name": "stardew_plan_work",
+   "startMs": 1810459,
+   "endMs": 1810463
+  },
+  {
+   "name": "plan.script",
+   "startMs": 1810463,
+   "endMs": 1810463
+  },
+  {
+   "name": "stardew_observe",
+   "startMs": 1814514,
+   "endMs": 1814540
+  },
+  {
+   "name": "stardew_plan_work",
+   "startMs": 1822887,
+   "endMs": 1822946
+  },
+  {
+   "name": "plan.script",
+   "startMs": 1822889,
+   "endMs": 1822946
+  },
+  {
+   "name": "admission",
+   "startMs": 1823049,
+   "endMs": 1823053
+  },
+  {
+   "name": "mod.execute",
+   "startMs": 1823151,
+   "endMs": 1829949
+  },
+  {
+   "name": "present",
+   "startMs": 1829672,
+   "endMs": 1829681
+  },
+  {
+   "name": "admission",
+   "startMs": 1830030,
+   "endMs": 1830031
+  },
+  {
+   "name": "mod.execute",
+   "startMs": 1830127,
+   "endMs": 1830658
+  },
+  {
+   "name": "stardew_plan_work",
+   "startMs": 1843175,
+   "endMs": 1843248
+  },
+  {
+   "name": "plan.script",
+   "startMs": 1843178,
+   "endMs": 1843248
+  },
+  {
+   "name": "admission",
+   "startMs": 1843339,
+   "endMs": 1843341
+  },
+  {
+   "name": "admission",
+   "startMs": 1843730,
+   "endMs": 1843732
+  },
+  {
+   "name": "admission",
+   "startMs": 1844028,
+   "endMs": 1844030
+  },
+  {
+   "name": "admission",
+   "startMs": 1844316,
+   "endMs": 1844318
+  },
+  {
+   "name": "admission",
+   "startMs": 1844615,
+   "endMs": 1844617
+  },
+  {
+   "name": "mod.execute",
+   "startMs": 1844824,
+   "endMs": 1848630
+  },
+  {
+   "name": "admission",
+   "startMs": 1848715,
+   "endMs": 1848716
+  },
+  {
+   "name": "present",
+   "startMs": 1852228,
+   "endMs": 1852247
+  },
+  {
+   "name": "stardew_plan_work",
+   "startMs": 1865427,
+   "endMs": 1865486
+  },
+  {
+   "name": "plan.script",
+   "startMs": 1865431,
+   "endMs": 1865486
+  },
+  {
+   "name": "admission",
+   "startMs": 1865577,
+   "endMs": 1865581
+  },
+  {
+   "name": "admission",
+   "startMs": 1865746,
+   "endMs": 1865748
+  },
+  {
+   "name": "mod.execute",
+   "startMs": 1865886,
+   "endMs": 1867977
+  },
+  {
+   "name": "mod.execute",
+   "startMs": 1867990,
+   "endMs": 1868647
+  },
+  {
+   "name": "mod.execute",
+   "startMs": 1868659,
+   "endMs": 1869031
+  },
+  {
+   "name": "mod.execute",
+   "startMs": 1869045,
+   "endMs": 1869230
+  },
+  {
+   "name": "mod.execute",
+   "startMs": 1869242,
+   "endMs": 1869898
+  },
+  {
+   "name": "mod.execute",
+   "startMs": 1869913,
+   "endMs": 1870303
+  },
+  {
+   "name": "present",
+   "startMs": 1870135,
+   "endMs": 1870146
+  },
+  {
+   "name": "admission",
+   "startMs": 1870386,
+   "endMs": 1870388
+  },
+  {
+   "name": "mod.execute",
+   "startMs": 1870487,
+   "endMs": 1870598
+  },
+  {
+   "name": "mod.execute",
+   "startMs": 1870610,
+   "endMs": 1872118
+  },
+  {
+   "name": "mod.execute",
+   "startMs": 1872130,
+   "endMs": 1874748
+  },
+  {
+   "name": "mod.execute",
+   "startMs": 1874759,
+   "endMs": 1875149
+  },
+  {
+   "name": "mod.execute",
+   "startMs": 1875160,
+   "endMs": 1875314
+  },
+  {
+   "name": "mod.execute",
+   "startMs": 1875325,
+   "endMs": 1876598
+  },
+  {
+   "name": "mod.execute",
+   "startMs": 1876610,
+   "endMs": 1876910
+  },
+  {
+   "name": "mod.execute",
+   "startMs": 1876960,
+   "endMs": 1877658
+  },
+  {
+   "name": "mod.execute",
+   "startMs": 1877671,
+   "endMs": 1878160
+  },
+  {
+   "name": "admission",
+   "startMs": 1878280,
+   "endMs": 1878282
+  },
+  {
+   "name": "admission",
+   "startMs": 1878469,
+   "endMs": 1878470
+  },
+  {
+   "name": "mod.execute",
+   "startMs": 1878580,
+   "endMs": 1880416
+  },
+  {
+   "name": "mod.execute",
+   "startMs": 1880426,
+   "endMs": 1880765
+  },
+  {
+   "name": "admission",
+   "startMs": 1880888,
+   "endMs": 1880889
+  },
+  {
+   "name": "mod.execute",
+   "startMs": 1881001,
+   "endMs": 1882148
+  },
+  {
+   "name": "mod.execute",
+   "startMs": 1882163,
+   "endMs": 1882782
+  },
+  {
+   "name": "mod.execute",
+   "startMs": 1882795,
+   "endMs": 1884882
+  },
+  {
+   "name": "mod.execute",
+   "startMs": 1884894,
+   "endMs": 1886537
+  },
+  {
+   "name": "mod.execute",
+   "startMs": 1886548,
+   "endMs": 1888116
+  },
+  {
+   "name": "stardew_plan_work",
+   "startMs": 1896492,
+   "endMs": 1896538
+  },
+  {
+   "name": "plan.script",
+   "startMs": 1896495,
+   "endMs": 1896538
+  },
+  {
+   "name": "admission",
+   "startMs": 1896713,
+   "endMs": 1896723
+  },
+  {
+   "name": "mod.execute",
+   "startMs": 1896820,
+   "endMs": 1899711
+  },
+  {
+   "name": "admission",
+   "startMs": 1899810,
+   "endMs": 1899812
+  },
+  {
+   "name": "admission",
+   "startMs": 1901943,
+   "endMs": 1901945
+  },
+  {
+   "name": "admission",
+   "startMs": 1902136,
+   "endMs": 1902137
+  },
+  {
+   "name": "present",
+   "startMs": 1909544,
+   "endMs": 1909546
+  },
+  {
+   "name": "present",
+   "startMs": 1914207,
+   "endMs": 1914212
+  },
+  {
+   "name": "stardew_plan_work",
+   "startMs": 1976987,
+   "endMs": 1977102
+  },
+  {
+   "name": "plan.script",
+   "startMs": 1976990,
+   "endMs": 1977102
+  },
+  {
+   "name": "admission",
+   "startMs": 1977209,
+   "endMs": 1977211
+  },
+  {
+   "name": "mod.execute",
+   "startMs": 1977330,
+   "endMs": 1981583
+  },
+  {
+   "name": "present",
+   "startMs": 1981569,
+   "endMs": 1981580
+  },
+  {
+   "name": "stardew_plan_work",
+   "startMs": 1996737,
+   "endMs": 1996787
+  },
+  {
+   "name": "plan.script",
+   "startMs": 1996740,
+   "endMs": 1996787
+  },
+  {
+   "name": "admission",
+   "startMs": 1996871,
+   "endMs": 1996876
+  },
+  {
+   "name": "admission",
+   "startMs": 1997054,
+   "endMs": 1997056
+  },
+  {
+   "name": "mod.execute",
+   "startMs": 1997167,
+   "endMs": 2002332
+  },
+  {
+   "name": "present",
+   "startMs": 2001482,
+   "endMs": 2001492
+  },
+  {
+   "name": "mod.execute",
+   "startMs": 2002351,
+   "endMs": 2004420
+  },
+  {
+   "name": "mod.execute",
+   "startMs": 2004432,
+   "endMs": 2004851
+  },
+  {
+   "name": "mod.execute",
+   "startMs": 2004864,
+   "endMs": 2005071
+  },
+  {
+   "name": "mod.execute",
+   "startMs": 2005084,
+   "endMs": 2005527
+  },
+  {
+   "name": "mod.execute",
+   "startMs": 2005540,
+   "endMs": 2005748
+  },
+  {
+   "name": "mod.execute",
+   "startMs": 2005760,
+   "endMs": 2006355
+  },
+  {
+   "name": "mod.execute",
+   "startMs": 2006367,
+   "endMs": 2006797
+  },
+  {
+   "name": "mod.execute",
+   "startMs": 2006810,
+   "endMs": 2007234
+  },
+  {
+   "name": "mod.execute",
+   "startMs": 2007246,
+   "endMs": 2007882
+  },
+  {
+   "name": "mod.execute",
+   "startMs": 2007895,
+   "endMs": 2009409
+  },
+  {
+   "name": "mod.execute",
+   "startMs": 2009422,
+   "endMs": 2009797
+  },
+  {
+   "name": "admission",
+   "startMs": 2009887,
+   "endMs": 2009889
+  },
+  {
+   "name": "admission",
+   "startMs": 2010075,
+   "endMs": 2010076
+  },
+  {
+   "name": "mod.execute",
+   "startMs": 2010191,
+   "endMs": 2011402
+  },
+  {
+   "name": "mod.execute",
+   "startMs": 2011420,
+   "endMs": 2011579
+  },
+  {
+   "name": "mod.execute",
+   "startMs": 2011590,
+   "endMs": 2012437
+  },
+  {
+   "name": "mod.execute",
+   "startMs": 2012448,
+   "endMs": 2012605
+  },
+  {
+   "name": "mod.execute",
+   "startMs": 2012615,
+   "endMs": 2013668
+  },
+  {
+   "name": "stardew_plan_work",
+   "startMs": 2020848,
+   "endMs": 2020897
+  },
+  {
+   "name": "plan.script",
+   "startMs": 2020850,
+   "endMs": 2020897
+  },
+  {
+   "name": "admission",
+   "startMs": 2020972,
+   "endMs": 2020974
+  },
+  {
+   "name": "mod.execute",
+   "startMs": 2021088,
+   "endMs": 2024910
+  },
+  {
+   "name": "present",
+   "startMs": 2031646,
+   "endMs": 2031676
+  },
+  {
+   "name": "stardew_plan_work",
+   "startMs": 2038926,
+   "endMs": 2038976
+  },
+  {
+   "name": "plan.script",
+   "startMs": 2038929,
+   "endMs": 2038976
+  },
+  {
+   "name": "admission",
+   "startMs": 2039053,
+   "endMs": 2039056
+  },
+  {
+   "name": "mod.execute",
+   "startMs": 2039167,
+   "endMs": 2043330
+  },
+  {
+   "name": "admission",
+   "startMs": 2043428,
+   "endMs": 2043430
+  },
+  {
+   "name": "mod.execute",
+   "startMs": 2043528,
+   "endMs": 2044047
+  },
+  {
+   "name": "present",
+   "startMs": 2044689,
+   "endMs": 2044696
+  },
+  {
+   "name": "stardew_plan_work",
+   "startMs": 2049262,
+   "endMs": 2049323
+  },
+  {
+   "name": "plan.script",
+   "startMs": 2049264,
+   "endMs": 2049323
+  },
+  {
+   "name": "admission",
+   "startMs": 2049411,
+   "endMs": 2049414
+  },
+  {
+   "name": "mod.execute",
+   "startMs": 2049531,
+   "endMs": 2057284
+  },
+  {
+   "name": "present",
+   "startMs": 2060353,
+   "endMs": 2060363
+  },
+  {
+   "name": "wait.model",
+   "startMs": 24288,
+   "endMs": 34109
+  },
+  {
+   "name": "wait.model",
+   "startMs": 34261,
+   "endMs": 42907
+  },
+  {
+   "name": "wait.model",
+   "startMs": 42996,
+   "endMs": 47930
+  },
+  {
+   "name": "wait.model",
+   "startMs": 47999,
+   "endMs": 53074
+  },
+  {
+   "name": "wait.model",
+   "startMs": 53183,
+   "endMs": 57979
+  },
+  {
+   "name": "wait.model",
+   "startMs": 58082,
+   "endMs": 71770
+  },
+  {
+   "name": "wait.model",
+   "startMs": 71862,
+   "endMs": 92279
+  },
+  {
+   "name": "wait.model",
+   "startMs": 92454,
+   "endMs": 105991
+  },
+  {
+   "name": "wait.model",
+   "startMs": 106076,
+   "endMs": 112254
+  },
+  {
+   "name": "wait.model",
+   "startMs": 112337,
+   "endMs": 117186
+  },
+  {
+   "name": "wait.model",
+   "startMs": 117300,
+   "endMs": 135716
+  },
+  {
+   "name": "wait.model",
+   "startMs": 135820,
+   "endMs": 151598
+  },
+  {
+   "name": "wait.model",
+   "startMs": 151706,
+   "endMs": 161817
+  },
+  {
+   "name": "wait.model",
+   "startMs": 161935,
+   "endMs": 171082
+  },
+  {
+   "name": "wait.model",
+   "startMs": 171166,
+   "endMs": 176583
+  },
+  {
+   "name": "wait.model",
+   "startMs": 176702,
+   "endMs": 184370
+  },
+  {
+   "name": "wait.model",
+   "startMs": 184440,
+   "endMs": 193512
+  },
+  {
+   "name": "wait.model",
+   "startMs": 193566,
+   "endMs": 201084
+  },
+  {
+   "name": "wait.model",
+   "startMs": 201137,
+   "endMs": 212783
+  },
+  {
+   "name": "wait.model",
+   "startMs": 212888,
+   "endMs": 219177
+  },
+  {
+   "name": "wait.model",
+   "startMs": 219263,
+   "endMs": 240098
+  },
+  {
+   "name": "wait.model",
+   "startMs": 240231,
+   "endMs": 246937
+  },
+  {
+   "name": "wait.model",
+   "startMs": 247008,
+   "endMs": 254800
+  },
+  {
+   "name": "wait.model",
+   "startMs": 254856,
+   "endMs": 270792
+  },
+  {
+   "name": "wait.model",
+   "startMs": 270916,
+   "endMs": 275572
+  },
+  {
+   "name": "wait.model",
+   "startMs": 275654,
+   "endMs": 279936
+  },
+  {
+   "name": "wait.model",
+   "startMs": 280053,
+   "endMs": 286397
+  },
+  {
+   "name": "wait.model",
+   "startMs": 286450,
+   "endMs": 292469
+  },
+  {
+   "name": "wait.model",
+   "startMs": 292548,
+   "endMs": 305058
+  },
+  {
+   "name": "wait.model",
+   "startMs": 305121,
+   "endMs": 315235
+  },
+  {
+   "name": "wait.model",
+   "startMs": 315314,
+   "endMs": 326845
+  },
+  {
+   "name": "wait.model",
+   "startMs": 326938,
+   "endMs": 333550
+  },
+  {
+   "name": "wait.model",
+   "startMs": 335163,
+   "endMs": 348957
+  },
+  {
+   "name": "wait.model",
+   "startMs": 349046,
+   "endMs": 360940
+  },
+  {
+   "name": "wait.model",
+   "startMs": 361081,
+   "endMs": 378043
+  },
+  {
+   "name": "wait.model",
+   "startMs": 378102,
+   "endMs": 386231
+  },
+  {
+   "name": "wait.model",
+   "startMs": 386316,
+   "endMs": 394781
+  },
+  {
+   "name": "wait.model",
+   "startMs": 394888,
+   "endMs": 400609
+  },
+  {
+   "name": "wait.model",
+   "startMs": 401079,
+   "endMs": 409563
+  },
+  {
+   "name": "wait.model",
+   "startMs": 409676,
+   "endMs": 413885
+  },
+  {
+   "name": "wait.model",
+   "startMs": 414022,
+   "endMs": 425249
+  },
+  {
+   "name": "wait.model",
+   "startMs": 425380,
+   "endMs": 431214
+  },
+  {
+   "name": "wait.model",
+   "startMs": 431428,
+   "endMs": 444178
+  },
+  {
+   "name": "wait.model",
+   "startMs": 444302,
+   "endMs": 453050
+  },
+  {
+   "name": "wait.model",
+   "startMs": 453152,
+   "endMs": 461070
+  },
+  {
+   "name": "wait.model",
+   "startMs": 461168,
+   "endMs": 467329
+  },
+  {
+   "name": "wait.model",
+   "startMs": 467434,
+   "endMs": 484031
+  },
+  {
+   "name": "wait.model",
+   "startMs": 484187,
+   "endMs": 488987
+  },
+  {
+   "name": "wait.model",
+   "startMs": 489096,
+   "endMs": 496915
+  },
+  {
+   "name": "wait.model",
+   "startMs": 497025,
+   "endMs": 504094
+  },
+  {
+   "name": "wait.model",
+   "startMs": 504187,
+   "endMs": 515160
+  },
+  {
+   "name": "wait.model",
+   "startMs": 515297,
+   "endMs": 519731
+  },
+  {
+   "name": "wait.model",
+   "startMs": 519847,
+   "endMs": 529403
+  },
+  {
+   "name": "wait.model",
+   "startMs": 529520,
+   "endMs": 536167
+  },
+  {
+   "name": "wait.model",
+   "startMs": 536306,
+   "endMs": 547671
+  },
+  {
+   "name": "wait.model",
+   "startMs": 547772,
+   "endMs": 556335
+  },
+  {
+   "name": "wait.model",
+   "startMs": 722241,
+   "endMs": 731726
+  },
+  {
+   "name": "wait.model",
+   "startMs": 731835,
+   "endMs": 737826
+  },
+  {
+   "name": "wait.model",
+   "startMs": 737891,
+   "endMs": 746972
+  },
+  {
+   "name": "wait.model",
+   "startMs": 747067,
+   "endMs": 758433
+  },
+  {
+   "name": "wait.model",
+   "startMs": 758564,
+   "endMs": 765258
+  },
+  {
+   "name": "wait.model",
+   "startMs": 765400,
+   "endMs": 773073
+  },
+  {
+   "name": "wait.model",
+   "startMs": 773171,
+   "endMs": 794663
+  },
+  {
+   "name": "wait.model",
+   "startMs": 794774,
+   "endMs": 800760
+  },
+  {
+   "name": "wait.model",
+   "startMs": 800885,
+   "endMs": 813890
+  },
+  {
+   "name": "wait.model",
+   "startMs": 814025,
+   "endMs": 825252
+  },
+  {
+   "name": "wait.model",
+   "startMs": 825360,
+   "endMs": 833325
+  },
+  {
+   "name": "wait.model",
+   "startMs": 833419,
+   "endMs": 845740
+  },
+  {
+   "name": "wait.model",
+   "startMs": 845839,
+   "endMs": 855036
+  },
+  {
+   "name": "wait.model",
+   "startMs": 855165,
+   "endMs": 861511
+  },
+  {
+   "name": "wait.model",
+   "startMs": 861671,
+   "endMs": 866130
+  },
+  {
+   "name": "wait.model",
+   "startMs": 866213,
+   "endMs": 871268
+  },
+  {
+   "name": "wait.model",
+   "startMs": 871351,
+   "endMs": 877837
+  },
+  {
+   "name": "wait.model",
+   "startMs": 877898,
+   "endMs": 883585
+  },
+  {
+   "name": "wait.model",
+   "startMs": 883652,
+   "endMs": 894464
+  },
+  {
+   "name": "wait.model",
+   "startMs": 894565,
+   "endMs": 905246
+  },
+  {
+   "name": "wait.model",
+   "startMs": 905388,
+   "endMs": 909980
+  },
+  {
+   "name": "wait.model",
+   "startMs": 910054,
+   "endMs": 917938
+  },
+  {
+   "name": "wait.model",
+   "startMs": 918003,
+   "endMs": 932939
+  },
+  {
+   "name": "wait.model",
+   "startMs": 933043,
+   "endMs": 938957
+  },
+  {
+   "name": "wait.model",
+   "startMs": 941310,
+   "endMs": 945247
+  },
+  {
+   "name": "wait.model",
+   "startMs": 945337,
+   "endMs": 954236
+  },
+  {
+   "name": "wait.model",
+   "startMs": 954439,
+   "endMs": 972540
+  },
+  {
+   "name": "wait.model",
+   "startMs": 972652,
+   "endMs": 979788
+  },
+  {
+   "name": "wait.model",
+   "startMs": 979893,
+   "endMs": 984834
+  },
+  {
+   "name": "wait.model",
+   "startMs": 984909,
+   "endMs": 991722
+  },
+  {
+   "name": "wait.model",
+   "startMs": 991968,
+   "endMs": 998929
+  },
+  {
+   "name": "wait.model",
+   "startMs": 999035,
+   "endMs": 1006720
+  },
+  {
+   "name": "wait.model",
+   "startMs": 1006837,
+   "endMs": 1012181
+  },
+  {
+   "name": "wait.model",
+   "startMs": 1012285,
+   "endMs": 1016949
+  },
+  {
+   "name": "wait.model",
+   "startMs": 1017042,
+   "endMs": 1022517
+  },
+  {
+   "name": "wait.model",
+   "startMs": 1022689,
+   "endMs": 1029198
+  },
+  {
+   "name": "wait.model",
+   "startMs": 1029324,
+   "endMs": 1036562
+  },
+  {
+   "name": "wait.model",
+   "startMs": 1036632,
+   "endMs": 1043059
+  },
+  {
+   "name": "wait.model",
+   "startMs": 1043185,
+   "endMs": 1048162
+  },
+  {
+   "name": "wait.model",
+   "startMs": 1062685,
+   "endMs": 1070331
+  },
+  {
+   "name": "wait.model",
+   "startMs": 1070436,
+   "endMs": 1077278
+  },
+  {
+   "name": "wait.model",
+   "startMs": 1077360,
+   "endMs": 1088346
+  },
+  {
+   "name": "wait.model",
+   "startMs": 1088466,
+   "endMs": 1092782
+  },
+  {
+   "name": "wait.model",
+   "startMs": 1092900,
+   "endMs": 1099744
+  },
+  {
+   "name": "wait.model",
+   "startMs": 1099851,
+   "endMs": 1104506
+  },
+  {
+   "name": "wait.model",
+   "startMs": 1113185,
+   "endMs": 1120725
+  },
+  {
+   "name": "wait.model",
+   "startMs": 1120814,
+   "endMs": 1126572
+  },
+  {
+   "name": "wait.model",
+   "startMs": 1126671,
+   "endMs": 1131270
+  },
+  {
+   "name": "wait.model",
+   "startMs": 1132470,
+   "endMs": 1140196
+  },
+  {
+   "name": "wait.model",
+   "startMs": 1140302,
+   "endMs": 1147203
+  },
+  {
+   "name": "wait.model",
+   "startMs": 1147288,
+   "endMs": 1157452
+  },
+  {
+   "name": "wait.model",
+   "startMs": 1157590,
+   "endMs": 1162711
+  },
+  {
+   "name": "wait.model",
+   "startMs": 1162789,
+   "endMs": 1178180
+  },
+  {
+   "name": "wait.model",
+   "startMs": 1178245,
+   "endMs": 1193991
+  },
+  {
+   "name": "wait.model",
+   "startMs": 1194079,
+   "endMs": 1203267
+  },
+  {
+   "name": "wait.model",
+   "startMs": 1203355,
+   "endMs": 1208898
+  },
+  {
+   "name": "wait.model",
+   "startMs": 1208966,
+   "endMs": 1220643
+  },
+  {
+   "name": "wait.model",
+   "startMs": 1220751,
+   "endMs": 1227234
+  },
+  {
+   "name": "wait.model",
+   "startMs": 1227309,
+   "endMs": 1240058
+  },
+  {
+   "name": "wait.model",
+   "startMs": 1240218,
+   "endMs": 1246933
+  },
+  {
+   "name": "wait.model",
+   "startMs": 1251949,
+   "endMs": 1259582
+  },
+  {
+   "name": "wait.model",
+   "startMs": 1259712,
+   "endMs": 1264227
+  },
+  {
+   "name": "wait.model",
+   "startMs": 1264300,
+   "endMs": 1274932
+  },
+  {
+   "name": "wait.model",
+   "startMs": 1275041,
+   "endMs": 1282036
+  },
+  {
+   "name": "wait.model",
+   "startMs": 1282141,
+   "endMs": 1288457
+  },
+  {
+   "name": "wait.model",
+   "startMs": 1288537,
+   "endMs": 1294739
+  },
+  {
+   "name": "wait.model",
+   "startMs": 1294929,
+   "endMs": 1309556
+  },
+  {
+   "name": "wait.model",
+   "startMs": 1309723,
+   "endMs": 1313710
+  },
+  {
+   "name": "wait.model",
+   "startMs": 1317481,
+   "endMs": 1323902
+  },
+  {
+   "name": "wait.model",
+   "startMs": 1324020,
+   "endMs": 1332376
+  },
+  {
+   "name": "wait.model",
+   "startMs": 1332491,
+   "endMs": 1340425
+  },
+  {
+   "name": "wait.model",
+   "startMs": 1340506,
+   "endMs": 1346152
+  },
+  {
+   "name": "wait.model",
+   "startMs": 1346271,
+   "endMs": 1353563
+  },
+  {
+   "name": "wait.model",
+   "startMs": 1353670,
+   "endMs": 1368611
+  },
+  {
+   "name": "wait.model",
+   "startMs": 1368717,
+   "endMs": 1375455
+  },
+  {
+   "name": "wait.model",
+   "startMs": 1375574,
+   "endMs": 1393213
+  },
+  {
+   "name": "wait.model",
+   "startMs": 1393299,
+   "endMs": 1402763
+  },
+  {
+   "name": "wait.model",
+   "startMs": 1402940,
+   "endMs": 1410558
+  },
+  {
+   "name": "wait.model",
+   "startMs": 1410726,
+   "endMs": 1418958
+  },
+  {
+   "name": "wait.model",
+   "startMs": 1419095,
+   "endMs": 1425547
+  },
+  {
+   "name": "wait.model",
+   "startMs": 1425643,
+   "endMs": 1431480
+  },
+  {
+   "name": "wait.model",
+   "startMs": 1431554,
+   "endMs": 1450323
+  },
+  {
+   "name": "wait.model",
+   "startMs": 1450393,
+   "endMs": 1461819
+  },
+  {
+   "name": "wait.model",
+   "startMs": 1461942,
+   "endMs": 1470497
+  },
+  {
+   "name": "wait.model",
+   "startMs": 1470666,
+   "endMs": 1478492
+  },
+  {
+   "name": "wait.model",
+   "startMs": 1478623,
+   "endMs": 1488413
+  },
+  {
+   "name": "wait.model",
+   "startMs": 1488525,
+   "endMs": 1494020
+  },
+  {
+   "name": "wait.model",
+   "startMs": 1494145,
+   "endMs": 1501953
+  },
+  {
+   "name": "wait.model",
+   "startMs": 1502066,
+   "endMs": 1517092
+  },
+  {
+   "name": "wait.model",
+   "startMs": 1517226,
+   "endMs": 1526129
+  },
+  {
+   "name": "wait.model",
+   "startMs": 1526232,
+   "endMs": 1534880
+  },
+  {
+   "name": "wait.model",
+   "startMs": 1535040,
+   "endMs": 1545541
+  },
+  {
+   "name": "wait.model",
+   "startMs": 1545677,
+   "endMs": 1557432
+  },
+  {
+   "name": "wait.model",
+   "startMs": 1557510,
+   "endMs": 1566472
+  },
+  {
+   "name": "wait.model",
+   "startMs": 1566636,
+   "endMs": 1576681
+  },
+  {
+   "name": "wait.model",
+   "startMs": 1576786,
+   "endMs": 1583269
+  },
+  {
+   "name": "wait.model",
+   "startMs": 1583386,
+   "endMs": 1591234
+  },
+  {
+   "name": "wait.model",
+   "startMs": 1591325,
+   "endMs": 1599290
+  },
+  {
+   "name": "wait.model",
+   "startMs": 1599447,
+   "endMs": 1604653
+  },
+  {
+   "name": "wait.model",
+   "startMs": 1604900,
+   "endMs": 1622043
+  },
+  {
+   "name": "wait.model",
+   "startMs": 1622166,
+   "endMs": 1628213
+  },
+  {
+   "name": "wait.model",
+   "startMs": 1628320,
+   "endMs": 1640541
+  },
+  {
+   "name": "wait.model",
+   "startMs": 1640666,
+   "endMs": 1645509
+  },
+  {
+   "name": "wait.model",
+   "startMs": 1645717,
+   "endMs": 1655141
+  },
+  {
+   "name": "wait.model",
+   "startMs": 1655252,
+   "endMs": 1661354
+  },
+  {
+   "name": "wait.model",
+   "startMs": 1661483,
+   "endMs": 1665934
+  },
+  {
+   "name": "wait.model",
+   "startMs": 1667704,
+   "endMs": 1674863
+  },
+  {
+   "name": "wait.model",
+   "startMs": 1674979,
+   "endMs": 1678839
+  },
+  {
+   "name": "wait.model",
+   "startMs": 1683242,
+   "endMs": 1689383
+  },
+  {
+   "name": "wait.model",
+   "startMs": 1689454,
+   "endMs": 1694816
+  },
+  {
+   "name": "wait.model",
+   "startMs": 1694951,
+   "endMs": 1704506
+  },
+  {
+   "name": "wait.model",
+   "startMs": 1704606,
+   "endMs": 1710070
+  },
+  {
+   "name": "wait.model",
+   "startMs": 1710145,
+   "endMs": 1713921
+  },
+  {
+   "name": "wait.model",
+   "startMs": 1713988,
+   "endMs": 1721373
+  },
+  {
+   "name": "wait.model",
+   "startMs": 1721454,
+   "endMs": 1730500
+  },
+  {
+   "name": "wait.model",
+   "startMs": 1730621,
+   "endMs": 1733590
+  },
+  {
+   "name": "wait.model",
+   "startMs": 1733727,
+   "endMs": 1744901
+  },
+  {
+   "name": "wait.model",
+   "startMs": 1745043,
+   "endMs": 1751023
+  },
+  {
+   "name": "wait.model",
+   "startMs": 1756966,
+   "endMs": 1761300
+  },
+  {
+   "name": "wait.model",
+   "startMs": 1761412,
+   "endMs": 1779594
+  },
+  {
+   "name": "wait.model",
+   "startMs": 1779713,
+   "endMs": 1784487
+  },
+  {
+   "name": "wait.model",
+   "startMs": 1792040,
+   "endMs": 1798461
+  },
+  {
+   "name": "wait.model",
+   "startMs": 1798579,
+   "endMs": 1802703
+  },
+  {
+   "name": "wait.model",
+   "startMs": 1802808,
+   "endMs": 1810448
+  },
+  {
+   "name": "wait.model",
+   "startMs": 1810553,
+   "endMs": 1814503
+  },
+  {
+   "name": "wait.model",
+   "startMs": 1814632,
+   "endMs": 1822876
+  },
+  {
+   "name": "wait.model",
+   "startMs": 1823021,
+   "endMs": 1829659
+  },
+  {
+   "name": "wait.model",
+   "startMs": 1830797,
+   "endMs": 1843164
+  },
+  {
+   "name": "wait.model",
+   "startMs": 1843310,
+   "endMs": 1847820
+  },
+  {
+   "name": "wait.model",
+   "startMs": 1847939,
+   "endMs": 1852216
+  },
+  {
+   "name": "wait.model",
+   "startMs": 1852362,
+   "endMs": 1865416
+  },
+  {
+   "name": "wait.model",
+   "startMs": 1865549,
+   "endMs": 1870123
+  },
+  {
+   "name": "wait.model",
+   "startMs": 1889094,
+   "endMs": 1896482
+  },
+  {
+   "name": "wait.model",
+   "startMs": 1896691,
+   "endMs": 1909533
+  },
+  {
+   "name": "wait.model",
+   "startMs": 1909724,
+   "endMs": 1914195
+  },
+  {
+   "name": "wait.model",
+   "startMs": 1970207,
+   "endMs": 1976975
+  },
+  {
+   "name": "wait.model",
+   "startMs": 1977185,
+   "endMs": 1981556
+  },
+  {
+   "name": "wait.model",
+   "startMs": 1982438,
+   "endMs": 1996725
+  },
+  {
+   "name": "wait.model",
+   "startMs": 1996876,
+   "endMs": 2001470
+  },
+  {
+   "name": "wait.model",
+   "startMs": 2014337,
+   "endMs": 2020837
+  },
+  {
+   "name": "wait.model",
+   "startMs": 2020953,
+   "endMs": 2031634
+  },
+  {
+   "name": "wait.model",
+   "startMs": 2031779,
+   "endMs": 2038915
+  },
+  {
+   "name": "wait.model",
+   "startMs": 2039030,
+   "endMs": 2044677
+  },
+  {
+   "name": "wait.model",
+   "startMs": 2044804,
+   "endMs": 2049252
+  },
+  {
+   "name": "wait.model",
+   "startMs": 2049387,
+   "endMs": 2055304
+  },
+  {
+   "name": "wait.model",
+   "startMs": 2055384,
+   "endMs": 2060340
+  },
+  {
+   "name": "wait.model",
+   "startMs": 2060488,
+   "endMs": 2065578
+  },
+  {
+   "name": "wait.idle",
+   "startMs": 556353,
+   "endMs": 722170
+  },
+  {
+   "name": "wait.idle",
+   "startMs": 984837,
+   "endMs": 984840
+  },
+  {
+   "name": "wait.idle",
+   "startMs": 991725,
+   "endMs": 991872
+  },
+  {
+   "name": "wait.idle",
+   "startMs": 1022518,
+   "endMs": 1022620
+  }
+ ],
+ "expected": {
+  "accountedMs": 1961208,
+  "unexplainedMs": 104370,
+  "providerMs": 1707266,
+  "environmentMs": 282661,
+  "idleMs": 166069,
+  "idleIntervals": 4,
+  "providerTurns": 203,
+  "traceSpans": 654,
+  "remainderWindows": [
+   {
+    "startMs": 0,
+    "endMs": 24288,
+    "ms": 24288,
+    "wallFrom": "2026-11-15T14:40:17.258Z",
+    "wallTo": "2026-11-15T14:40:41.546Z"
+   },
+   {
+    "startMs": 940742,
+    "endMs": 941310,
+    "ms": 568,
+    "wallFrom": "2026-11-15T14:55:58.000Z",
+    "wallTo": "2026-11-15T14:55:58.568Z"
+   },
+   {
+    "startMs": 1682658,
+    "endMs": 1683242,
+    "ms": 584,
+    "wallFrom": "2026-11-15T15:08:19.916Z",
+    "wallTo": "2026-11-15T15:08:20.500Z"
+   },
+   {
+    "startMs": 1791498,
+    "endMs": 1792040,
+    "ms": 542,
+    "wallFrom": "2026-11-15T15:10:08.756Z",
+    "wallTo": "2026-11-15T15:10:09.298Z"
+   },
+   {
+    "startMs": 1888116,
+    "endMs": 1889094,
+    "ms": 978,
+    "wallFrom": "2026-11-15T15:11:45.374Z",
+    "wallTo": "2026-11-15T15:11:46.352Z"
+   },
+   {
+    "startMs": 1914212,
+    "endMs": 1970207,
+    "ms": 55995,
+    "wallFrom": "2026-11-15T15:12:11.470Z",
+    "wallTo": "2026-11-15T15:13:07.465Z"
+   },
+   {
+    "startMs": 1981583,
+    "endMs": 1982438,
+    "ms": 855,
+    "wallFrom": "2026-11-15T15:13:18.841Z",
+    "wallTo": "2026-11-15T15:13:19.696Z"
+   },
+   {
+    "startMs": 2013668,
+    "endMs": 2014337,
+    "ms": 669,
+    "wallFrom": "2026-11-15T15:13:50.926Z",
+    "wallTo": "2026-11-15T15:13:51.595Z"
+   }
+  ]
+ }
+}

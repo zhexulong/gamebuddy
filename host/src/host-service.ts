@@ -23,6 +23,8 @@ import {
   classifyProviderFailure,
   type ProviderFailureClass,
 } from "./provider-failure-classification.js";
+import { RUN_WAIT_NAMES } from "./run-trace-budget.js";
+import type { RunTrace, RunTraceSpanHandle } from "./run-trace.js";
 import {
   resolveProviderFailureSystemNotice,
   resolveProviderWaitSystemNotice,
@@ -485,6 +487,18 @@ export class CompanionHostService {
     Readonly<{ sourceEventId: string; epoch: number; revision: number }>
   >();
   readonly #stopSettledListeners = new Set<(payload: StopSettledPayload) => void>();
+  /**
+   * The two silences the Host can name itself: nothing was owed, and a stale reading with no fresh snapshot.
+   *
+   * <p>
+   * Both are opened and closed only at transitions the service already decides - a flush that leaves nothing to do,
+   * the pump minting a stale fact, a snapshot arriving, `close()` - so they add no state to the turn machinery. They
+   * exist because a run's largest unattributed block was one of them: 165.8 s of round62 in which the pump was empty
+   * and the world published nothing, which no artifact could name (AUDIT.md §4A).
+   * </p>
+   */
+  #idleSpan: RunTraceSpanHandle | undefined;
+  #staleSnapshotSpan: RunTraceSpanHandle | undefined;
 
   public constructor(
     private readonly loop: CompanionLoop,
@@ -506,6 +520,8 @@ export class CompanionHostService {
      * refuses NEW intents and nothing cancelled the old one.
      */
     private readonly stopBodyProgram?: (stopEpoch: number, reasonCode: string) => Promise<unknown>,
+    /** This run's span recorder: the Host's own idle and stale-snapshot waits land in it. */
+    private readonly runTrace?: RunTrace,
   ) {
     this.#unsubscribe = events.onFact((fact) => this.acceptIntegrationFact(fact));
     this.#unsubscribeConnection = events.onLifecycle((event) => this.acceptLifecycleEvent(event));
@@ -529,6 +545,10 @@ export class CompanionHostService {
     if (detachPlayback !== undefined) void detachPlayback();
     if (this.#retryTimer !== undefined) clearTimeout(this.#retryTimer);
     this.#disarmStallWatch();
+    // A closed session owes nothing and its reading is no longer waited on: ending both here is what keeps the export
+    // free of spans that look like a stage the run never left.
+    this.#endIdle();
+    this.#endStaleSnapshotWait();
     this.#stopSettledListeners.clear();
   }
 
@@ -1010,6 +1030,8 @@ export class CompanionHostService {
       if (fact.kind === "snapshot") {
         this.#nativeNotices.observeSnapshot(fact.payload);
         this.#latestSnapshotFact = fact;
+        // The reading this session waited on has been replaced: whatever the stale notice was waiting for is here.
+        this.#endStaleSnapshotWait();
       }
       // The attach's own snapshot is the world clock's first live reading for this session, so the
       // arrival fact is minted here - before the snapshot itself, which the pump holds as latest state
@@ -1219,6 +1241,8 @@ export class CompanionHostService {
 
   private async flushSoon(): Promise<void> {
     if (this.#closed || !this.#integrationAdmissionOpen || this.#runTermination !== undefined) return;
+    // A flush is about to run, so whatever the Host was waiting for has arrived; the wait is measured up to here.
+    this.#endIdle();
     // A steer runs exactly when a flush cannot: it injects into the turn that is ALREADY running, so
     // `#flushScheduled` being true is the condition it wants, not the condition it must wait out.
     //
@@ -1299,6 +1323,10 @@ export class CompanionHostService {
           this.#publishNarrationWithoutWorkFact();
         }
       }
+      // NOTHING IS OWED. The pump is empty and no decision above woke a turn, so from here the Host is waiting for the
+      // world to publish something - the silence round62 spent 165.8 s in. It is opened here rather than in the loop's
+      // own idle transition because this is the layer that knows a retry is not already scheduled.
+      if (this.#retryTimer === undefined && this.wakeReason === undefined) this.#beginIdle();
     }
   }
 
@@ -1473,7 +1501,39 @@ export class CompanionHostService {
     const fact = this.loop.pump.takeWorldStateStaleFact?.();
     if (fact === undefined) return;
     process.stderr.write(`WORLD_STATE_STALE ${JSON.stringify({ atMs: Date.now(), ...fact.payload })}\n`);
+    this.#beginStaleSnapshotWait();
     this.acceptHostMintedFact(fact, FACT_PRODUCER.worldStateStale);
+  }
+
+  /**
+   * The wait a stale reading opens: a fact was owed, the Host asked the world for a fresh picture, and none has arrived.
+   *
+   * <p>
+   * Distinct from `wait.idle`, which means nothing was owed at all. Round62's own bundle says the Host never declared a
+   * reading stale (`presentation.worldStateStale.notMeasured: host_published_no_world_state_stale_fact`) while the
+   * harness saw 64 stalled clock polls - so this span would have been empty in that run, and an empty family is a
+   * reading this budget names rather than a zero it prints.
+   * </p>
+   */
+  #beginStaleSnapshotWait(): void {
+    if (this.runTrace === undefined || this.#staleSnapshotSpan !== undefined || this.#closed) return;
+    this.#staleSnapshotSpan = this.runTrace.begin(RUN_WAIT_NAMES.snapshot, { trigger: "world_state_stale" });
+  }
+
+  #endStaleSnapshotWait(): void {
+    this.#staleSnapshotSpan?.end();
+    this.#staleSnapshotSpan = undefined;
+  }
+
+  /** The idle wait: the pump was empty and the next turn needs a fact the world has not published yet. */
+  #beginIdle(): void {
+    if (this.runTrace === undefined || this.#idleSpan !== undefined || this.#closed) return;
+    this.#idleSpan = this.runTrace.begin(RUN_WAIT_NAMES.idle, { reason: "nothing_owed" });
+  }
+
+  #endIdle(): void {
+    this.#idleSpan?.end();
+    this.#idleSpan = undefined;
   }
 
   /**

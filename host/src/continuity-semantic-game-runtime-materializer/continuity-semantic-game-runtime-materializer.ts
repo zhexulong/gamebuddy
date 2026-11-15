@@ -72,6 +72,7 @@ import {
   RUN_SPAN_NAMES,
   RUN_TRACE_FILE_NAME,
   startRunTraceFile,
+  tracedStep,
   type RunTrace,
 } from "../run-trace.js";
 import {
@@ -1463,6 +1464,8 @@ export type GameCompanionLoopInput = Readonly<{
   connection: GameConnection;
   /** Where a fact this pump minted goes: the Host's Host-minted-fact route. */
   publish: (fact: WorldFact) => void;
+  /** This run's span recorder: the loop's delivery and turn-tail spans land in it. */
+  runTrace?: RunTrace;
 }>;
 
 /**
@@ -1490,14 +1493,20 @@ export function createGameCompanionLoop(input: GameCompanionLoopInput): Companio
     input.liveSourceAttester,
     input.voiceSink,
     input.volatileContext,
+    undefined,
+    input.runTrace,
   );
   loop.pump.attachWorldStateRefresh(
     Object.freeze({
       observe: () => {
         const observe = (input.connection as StardewBridgeConnection).observe;
-        return observe === undefined
-          ? Promise.reject(new Error("world_state_observation_route_unavailable"))
-          : observe.call(input.connection);
+        // The round trip of the refresh the pump asks for when the reading it holds has gone stale: this is exactly the
+        // wait the product had no name for (a 34-minute run saw five snapshots and 64 stalled polls).
+        return tracedStep(input.runTrace, RUN_SPAN_NAMES.snapshotObserve, { surface: "game" }, () =>
+          observe === undefined
+            ? Promise.reject(new Error("world_state_observation_route_unavailable"))
+            : observe.call(input.connection),
+        );
       },
       publish: (fact) => input.publish(fact),
     }),
@@ -1516,17 +1525,23 @@ export function createHostGameRuntimeMaterializer(
         const mountedPolicy = execution.connection.module.parsePolicy(execution.connection.module.defaultPolicy);
         const retainedPolicyIdentity = readBodyProgramPolicyIdentity(execution.connection);
         const recoveryIdentity = createStableGameRuntimeBindingIdentity(execution);
-        const recoveryJournal = await StardewLogicalActionRecoveryJournal.open(
-          Object.freeze({
-            directory: join(
-              execution.runtimeRoot,
-              "stardew-recovery",
-              recoveryIdentity.continuityId,
-              recoveryIdentity.saveId,
-              recoveryIdentity.worldId,
+        const recoveryJournal = await tracedStep(
+          runTrace,
+          RUN_SPAN_NAMES.journalRead,
+          { journal: "recovery", at: "mount" },
+          () =>
+            StardewLogicalActionRecoveryJournal.open(
+              Object.freeze({
+                directory: join(
+                  execution.runtimeRoot,
+                  "stardew-recovery",
+                  recoveryIdentity.continuityId,
+                  recoveryIdentity.saveId,
+                  recoveryIdentity.worldId,
+                ),
+                scope: recoveryIdentity,
+              }),
             ),
-            scope: recoveryIdentity,
-          }),
         );
         const bodyProgramAdmission = new HostNodeAdmissionService(
           recoveryJournal,
@@ -1586,7 +1601,9 @@ export function createHostGameRuntimeMaterializer(
               (fact) => announceHostFact(fact, FACT_PRODUCER.programSettlement),
             )
           : Object.freeze([]);
-        const recovery = readStardewRecoveryBindingContext(recoveryContext);
+        const recovery = tracedStep(runTrace, RUN_SPAN_NAMES.journalRead, { journal: "recovery", at: "binding" }, () =>
+          readStardewRecoveryBindingContext(recoveryContext),
+        );
         // Resolved once, because two things need the SAME answer: the runtime's presentation profile and the locale of
         // the Host's own status lines. Two reads could disagree after a Settings change between them.
         const companionLocale = options.companionLocale ?? (await resolveCompanionLocale(execution.runtimeRoot));
@@ -1655,6 +1672,7 @@ export function createHostGameRuntimeMaterializer(
           voiceSink: gameVoicePayload?.streamingSink,
           volatileContext: constructed.volatileAuthoredContext,
           connection: execution.connection,
+          runTrace,
           // The Host's Host-minted-fact route, which is the same one the settled digest rides: assigned the moment the
           // service exists, and unreachable before then because the Host is what drives a stale reading's measurement.
           publish: (fact) => announceHostFact(fact, FACT_PRODUCER.worldStateRefreshRefused),
@@ -1715,6 +1733,7 @@ export function createHostGameRuntimeMaterializer(
                     `body_program_stop_refused:${String(error instanceof Error ? error.message : error)}`,
                   );
                 }),
+          runTrace,
         );
         // The settled digest rides the pump from here on. `host` is the only layer that owns it, which is why the
         // tools' sink was left unbound until this line.
@@ -1965,13 +1984,15 @@ async function createMaterializedGameRuntime(
   // live-run script) supplying it. Missing files keep the default profile and
   // an empty Book; system assembly never fabricates content and never writes
   // (only the runtime core creates the default profile when absent).
-  const context = await assembleGameRuntimeContext({
-    identity,
-    runtimeRoot,
-    ...(identityProfile === undefined ? {} : { identityProfile }),
-    ...(worldBook === undefined ? {} : { worldBook }),
-    ...(companionLocale === undefined ? {} : { locale: companionLocale }),
-  });
+  const context = await tracedStep(runTrace, RUN_SPAN_NAMES.promptContext, { surface: "game" }, () =>
+    assembleGameRuntimeContext({
+      identity,
+      runtimeRoot,
+      ...(identityProfile === undefined ? {} : { identityProfile }),
+      ...(worldBook === undefined ? {} : { worldBook }),
+      ...(companionLocale === undefined ? {} : { locale: companionLocale }),
+    }),
+  );
   const assembledProfile = context.profile;
   const assembledWorldBook = context.worldBook;
   const assembledScenario = context.scenario;
@@ -2103,7 +2124,9 @@ async function createMaterializedGameRuntime(
           },
           volatileAuthoredContext: Object.freeze({
             bind: (turnId: string, deliveredBatch: string): void => {
-              authoredContext.materializeVolatileForTurn(turnId, deliveredBatch, gameTurnWorldStateText(connection));
+              tracedStep(runTrace, RUN_SPAN_NAMES.promptBlocks, { turn: turnId }, () =>
+                authoredContext.materializeVolatileForTurn(turnId, deliveredBatch, gameTurnWorldStateText(connection)),
+              );
             },
             clear: (turnId: string): void => {
               authoredContext.clearVolatileForTurn(turnId);

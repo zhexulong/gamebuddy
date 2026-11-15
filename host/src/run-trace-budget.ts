@@ -9,9 +9,10 @@ import { RUN_SPAN_NAMES } from "./run-trace.js";
  * pass-out, a sleep lifecycle). Reading one median over that mixture told me the run was "waiting 3.4s
  * for the model" while 87 long gaps were sitting in the same bucket unexamined.
  *
- * These names are the fix: a wait is either the model's, the body's, or the harness's, and a run's
- * budget is the sum of the four plus whatever cannot be accounted for - which must be small, and is
- * reported rather than absorbed.
+ * These names are the fix: a wait is either the model's, the body's, the harness's, or one of the two
+ * silences the Host can name itself - nothing was owed (`idle`), and the world's picture had gone stale
+ * (`snapshot`). A run's budget is the union of what those spans cover plus whatever nothing measured,
+ * which must be small and is reported rather than absorbed.
  */
 export const RUN_WAIT_NAMES = Object.freeze({
   /** The agent thinking: from a tool result settling to the next dispatch being issued. */
@@ -20,7 +21,113 @@ export const RUN_WAIT_NAMES = Object.freeze({
   body: "wait.body",
   /** Our own bookkeeping between a response and the next dispatch, when neither of the above explains it. */
   harness: "wait.harness",
+  /**
+   * NOTHING WAS OWED: the pump was empty and the Host was waiting for the world to say something.
+   *
+   * <p>
+   * This is the silence a live run's largest unattributed block turned out to be - 165.8 s of one 34-minute run,
+   * transcribed from the product's own activity stream: "idle", no snapshot arriving, the clock still answering. It
+   * has a name now so that it is a measurement ("the Host had nothing to deliver") and not a remainder.
+   * </p>
+   */
+  idle: "wait.idle",
+  /**
+   * A reading went stale and no fresh snapshot has arrived since.
+   *
+   * <p>
+   * Distinct from `idle`: something WAS owed (a `world_state_stale` fact is a pending delivery), and what the Host
+   * waited on was the Mod's picture of the world. Nested inside a provider turn without double-counting, because
+   * the budget unions its families rather than summing them.
+   * </p>
+   */
+  snapshot: "wait.snapshot",
 });
+
+/**
+ * The one declaration of which span name belongs to which bucket of a run's wall clock.
+ *
+ * <p>
+ * A budget can only be trusted if its buckets come from a declaration the emitters already own, so the population
+ * here is checked against `RUN_SPAN_NAMES` and `RUN_WAIT_NAMES` by `run-trace-budget.private.test.ts`: a span name
+ * added to the taxonomy without a family fails that test by name. `action` is also the default for any span the
+ * trace carries that this declaration does not know (a mounted tool is a tool the Host waited on), and those names
+ * are listed in `defaultedToAction` so a new emitter cannot hide inside the default.
+ * </p>
+ */
+export const RUN_BUDGET_FAMILIES = Object.freeze([
+  Object.freeze({ family: "model", names: Object.freeze([RUN_WAIT_NAMES.model]) }),
+  Object.freeze({ family: "body", names: Object.freeze([RUN_WAIT_NAMES.body]) }),
+  Object.freeze({ family: "harness", names: Object.freeze([RUN_WAIT_NAMES.harness]) }),
+  Object.freeze({ family: "idle", names: Object.freeze([RUN_WAIT_NAMES.idle]) }),
+  Object.freeze({ family: "snapshot", names: Object.freeze([RUN_WAIT_NAMES.snapshot]) }),
+  Object.freeze({
+    family: "prompt",
+    names: Object.freeze([
+      RUN_SPAN_NAMES.promptContext,
+      RUN_SPAN_NAMES.promptSystem,
+      RUN_SPAN_NAMES.promptTools,
+      RUN_SPAN_NAMES.promptBlocks,
+      RUN_SPAN_NAMES.memoryMount,
+    ]),
+  }),
+  Object.freeze({
+    family: "delivery",
+    names: Object.freeze([RUN_SPAN_NAMES.delivery, RUN_SPAN_NAMES.turnTail]),
+  }),
+  Object.freeze({
+    family: "journal",
+    names: Object.freeze([RUN_SPAN_NAMES.journalWrite, RUN_SPAN_NAMES.journalRead]),
+  }),
+  Object.freeze({ family: "observation", names: Object.freeze([RUN_SPAN_NAMES.snapshotObserve]) }),
+  Object.freeze({
+    family: "action",
+    names: Object.freeze([
+      RUN_SPAN_NAMES.action,
+      RUN_SPAN_NAMES.modExecute,
+      RUN_SPAN_NAMES.admission,
+      RUN_SPAN_NAMES.present,
+      RUN_SPAN_NAMES.bridgeCall,
+    ]),
+  }),
+] as const);
+
+/** Every budget family's name, in declaration order. */
+export const RUN_BUDGET_FAMILY_NAMES: readonly string[] = Object.freeze(
+  RUN_BUDGET_FAMILIES.map((entry) => entry.family),
+);
+
+/**
+ * The between-call emitter set: the steps that used to leave a run's wall clock unattributed.
+ *
+ * <p>
+ * This is a declaration, not a list of files: every name here must be emitted by at least one non-test source, and
+ * `run-trace-between-call.private.test.ts` fails by name when one is declared and nothing emits it. That is the
+ * shape the 2026-11 audit found inverted - a wait family pinned at `0` as the correct reading of a run that spent
+ * 83 % of its wall clock in it.
+ * </p>
+ */
+export const RUN_BETWEEN_CALL_SPANS: readonly string[] = Object.freeze([
+  RUN_SPAN_NAMES.promptContext,
+  RUN_SPAN_NAMES.promptSystem,
+  RUN_SPAN_NAMES.promptTools,
+  RUN_SPAN_NAMES.promptBlocks,
+  RUN_SPAN_NAMES.memoryMount,
+  RUN_SPAN_NAMES.journalRead,
+  RUN_SPAN_NAMES.delivery,
+  RUN_SPAN_NAMES.turnTail,
+  RUN_SPAN_NAMES.snapshotObserve,
+  RUN_WAIT_NAMES.idle,
+  RUN_WAIT_NAMES.snapshot,
+]);
+
+const FAMILY_OF_SPAN: ReadonlyMap<string, string> = new Map(
+  RUN_BUDGET_FAMILIES.flatMap((entry) => entry.names.map((name) => [name, entry.family] as const)),
+);
+
+/** The bucket one span name belongs to, or `undefined` when the declaration does not know it (defaults to `action`). */
+export function budgetFamilyOf(spanName: string): string | undefined {
+  return FAMILY_OF_SPAN.get(spanName);
+}
 
 /**
  * A run's wall clock, attributed.
@@ -29,16 +136,32 @@ export const RUN_WAIT_NAMES = Object.freeze({
  * unexplained share is large cannot be reasoned about by choosing a suspect. It exists so that
  * "the model is 83% of the run" and "the model is 83% of the part we happened to measure" are
  * different claims.
+ *
+ * `unmeasured` is the other half of that honesty: a family with NO span in the trace is not a measured
+ * zero, and is named here rather than printed as `0` - the report `waitBudgetRows` then renders it as
+ * `not_measured:<family>`.
  */
 export type WaitBudget = Readonly<{
   wallMs: number;
   modelMs: number;
   bodyMs: number;
   harnessMs: number;
+  idleMs: number;
+  snapshotMs: number;
+  promptMs: number;
+  deliveryMs: number;
+  journalMs: number;
+  observationMs: number;
   actionMs: number;
+  /** Union of every span the trace covers, clipped to the window: the one number that must close with the remainder. */
+  accountedMs: number;
   unexplainedMs: number;
   /** Share of the wall clock the spans account for, in [0, 1]. */
   covered: number;
+  /** Families with no closed span inside the window: absent, not measured as zero. */
+  unmeasured: readonly string[];
+  /** Span names the trace carried that no family declares; they were charged to `action`. */
+  defaultedToAction: readonly string[];
 }>;
 
 type Interval = Readonly<{ start: number; end: number }>;
@@ -65,62 +188,120 @@ function totalMs(intervals: readonly Interval[]): number {
   return mergeIntervals(intervals).reduce((sum, i) => sum + (i.end - i.start), 0);
 }
 
+/** Clip one interval to the run's own window; a span outside it is not time this run had. */
+function clip(interval: Interval, windowStartMs: number, windowEndMs: number): Interval | null {
+  const start = Math.max(interval.start, windowStartMs);
+  const end = Math.min(interval.end, windowEndMs);
+  return end > start ? { start, end } : null;
+}
+
 /**
  * Attribute a run's wall clock from what the trace recorded.
  *
- * Every span that appears under `action` counts as action time (the game working, and our bookkeeping
- * inside it); the two `wait.*` families count as model and body. The result is a partition, not a
- * sample: `wallMs - (action + model + body + harness)` is the honest remainder.
+ * Every span the trace carries is counted exactly once, as a union: `mod.execute` legitimately nests
+ * inside `bridge.call` inside `action`, and a turn's block selection legitimately sits inside its
+ * delivery - summing the families would invent time. `wallMs - accounted` is therefore the honest
+ * remainder, and the family sums are what each family's own spans say, reported beside it.
  *
- * Spans are merged before summing, because `mod.execute` legitimately nests inside `bridge.call`
- * inside `action` and counting each would invent time.
+ * A span name the declaration does not know is charged to `action` AND named in `defaultedToAction`:
+ * a tool span is a tool the Host waited on, but a new emitter that forgot its family must be visible.
  */
 export function attributeWaitBudget(
   spans: readonly Readonly<{ name: string; startMs: number; endMs: number | null }>[],
-  options: Readonly<{ wallMs: number }>,
+  options: Readonly<{ wallMs: number; wallStartMs?: number }>,
 ): WaitBudget {
   if (!Number.isFinite(options.wallMs) || options.wallMs <= 0) throw new Error("invalid_wait_budget_wall_ms");
+  const windowStartMs = options.wallStartMs ?? 0;
+  if (!Number.isFinite(windowStartMs)) throw new Error("invalid_wait_budget_wall_start_ms");
+  const windowEndMs = windowStartMs + options.wallMs;
 
-  const closed = spans.filter((s) => s.endMs !== null) as readonly Readonly<{
-    name: string;
-    startMs: number;
-    endMs: number;
-  }>[];
+  const closed = spans.filter((s): s is Readonly<{ name: string; startMs: number; endMs: number }> => s.endMs !== null);
+  const clipped = closed
+    .map((s) => ({ name: s.name, interval: clip({ start: s.startMs, end: s.endMs }, windowStartMs, windowEndMs) }))
+    .filter((entry): entry is { name: string; interval: Interval } => entry.interval !== null);
 
-  const of = (names: readonly string[]): readonly Interval[] =>
-    closed.filter((s) => names.includes(s.name)).map((s) => ({ start: s.startMs, end: s.endMs }));
+  const familyToUse = (name: string): string => budgetFamilyOf(name) ?? "action";
+  const defaultedToAction = Object.freeze(
+    [...new Set(closed.map((s) => s.name).filter((name) => budgetFamilyOf(name) === undefined))].sort(),
+  );
 
-  const actionMs = totalMs(of([RUN_SPAN_NAMES.action, RUN_SPAN_NAMES.modExecute]));
-  const modelMs = totalMs(of([RUN_WAIT_NAMES.model]));
-  const bodyMs = totalMs(of([RUN_WAIT_NAMES.body]));
-  const harnessMs = totalMs(of([RUN_WAIT_NAMES.harness]));
+  const perFamily = new Map<string, Interval[]>();
+  for (const entry of clipped) {
+    const family = familyToUse(entry.name);
+    const list = perFamily.get(family);
+    if (list === undefined) perFamily.set(family, [entry.interval]);
+    else list.push(entry.interval);
+  }
+  const familyMs = (family: string): number => totalMs(perFamily.get(family) ?? []);
 
-  const accounted = actionMs + modelMs + bodyMs + harnessMs;
-  const unexplainedMs = Math.max(0, options.wallMs - accounted);
+  const accountedMs = totalMs(clipped.map((entry) => entry.interval));
+  const unexplainedMs = Math.max(0, options.wallMs - accountedMs);
+  const unmeasured = Object.freeze(
+    RUN_BUDGET_FAMILIES.filter((entry) => !perFamily.has(entry.family)).map((entry) => entry.family),
+  );
 
   return Object.freeze({
     wallMs: options.wallMs,
-    modelMs,
-    bodyMs,
-    harnessMs,
-    actionMs,
+    modelMs: familyMs("model"),
+    bodyMs: familyMs("body"),
+    harnessMs: familyMs("harness"),
+    idleMs: familyMs("idle"),
+    snapshotMs: familyMs("snapshot"),
+    promptMs: familyMs("prompt"),
+    deliveryMs: familyMs("delivery"),
+    journalMs: familyMs("journal"),
+    observationMs: familyMs("observation"),
+    actionMs: familyMs("action"),
+    accountedMs,
     unexplainedMs,
-    covered: Math.min(1, accounted / options.wallMs),
+    covered: Math.min(1, accountedMs / options.wallMs),
+    unmeasured,
+    defaultedToAction,
   });
 }
 
-/** The budget as a sorted table, largest first, so a reader sees where a run went without arithmetic. */
-export function waitBudgetRows(budget: WaitBudget): readonly Readonly<{ name: string; ms: number; share: number }>[] {
+/** One row per declared family plus the remainder, so a reader sees the whole partition without arithmetic. */
+export function waitBudgetRows(
+  budget: WaitBudget,
+): readonly Readonly<{ name: string; ms: number; share: number; notMeasured: boolean }>[] {
+  const msOf = (family: string): number => {
+    switch (family) {
+      case "model":
+        return budget.modelMs;
+      case "body":
+        return budget.bodyMs;
+      case "harness":
+        return budget.harnessMs;
+      case "idle":
+        return budget.idleMs;
+      case "snapshot":
+        return budget.snapshotMs;
+      case "prompt":
+        return budget.promptMs;
+      case "delivery":
+        return budget.deliveryMs;
+      case "journal":
+        return budget.journalMs;
+      case "observation":
+        return budget.observationMs;
+      case "action":
+        return budget.actionMs;
+      default:
+        throw new Error(`invalid_wait_budget_family: ${family}`);
+    }
+  };
   const rows = [
-    { name: "wait.model", ms: budget.modelMs },
-    { name: "wait.body", ms: budget.bodyMs },
-    { name: "action", ms: budget.actionMs },
-    { name: "wait.harness", ms: budget.harnessMs },
-    { name: "unexplained", ms: budget.unexplainedMs },
+    ...RUN_BUDGET_FAMILY_NAMES.map((family) => ({
+      name: family,
+      ms: msOf(family),
+      notMeasured: budget.unmeasured.includes(family),
+    })),
+    { name: "unexplained", ms: budget.unexplainedMs, notMeasured: false },
   ];
   return Object.freeze(
     rows
-      .map((row) => Object.freeze({ ...row, share: budget.wallMs > 0 ? row.ms / budget.wallMs : 0 }))
-      .sort((a, b) => b.ms - a.ms),
+      .map((row, index) => Object.freeze({ ...row, share: budget.wallMs > 0 ? row.ms / budget.wallMs : 0, index }))
+      .sort((a, b) => b.ms - a.ms || a.index - b.index)
+      .map(({ name, ms, share, notMeasured }) => Object.freeze({ name, ms, share, notMeasured })),
   );
 }
