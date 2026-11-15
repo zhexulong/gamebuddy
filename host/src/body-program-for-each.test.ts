@@ -762,7 +762,7 @@ function modWhereSpellings(): readonly string[] {
  * does not have names all of them. What that replaces, measured on a live run: a document the compiler and the wire had
  * already accepted was refused on the game thread with `failureCode: for_each_where_unrecognised:in` - a word that named
  * nothing the caller could write instead, after which she stopped trying. The Mod's journal in document form is frozen at
- * `tools/body-program-journal/sample-2026-11-15.json` (the live journal beside it is git-ignored output); that sample is
+ * `tools/body-program-journal-samples/sample-2026-11-15.json` (the live journal beside it is git-ignored output); that sample is
  * another run's, so it is not the file that recorded this refusal.
  *
  * THE MOD'S OTHER HALF is `FarmhandForEachArgumentsTests.EveryDeclaredWhereSpellingIsReadAndTheRefusalNamesThem`, driven
