@@ -30,6 +30,7 @@ import {
   MAX_DELIVERED_FACT_IDENTITIES,
   type PendingBatch,
   PER_DELIVERED_BATCH,
+  RECEIPTS_WITH_PROVENANCE,
   SILENT_SETTLED_OPENINGS,
   TURN_OPENING,
   TURN_OPENINGS,
@@ -47,6 +48,7 @@ import {
   turnAccountLine,
   turnWithoutActionShape,
   turnWithoutActionToken,
+  UNATTRIBUTED_EXECUTION_TOKEN,
   type WorldFact,
 } from "./event-pump.js";
 import { createProgramProgressObserver } from "./program-status-wait.js";
@@ -736,6 +738,11 @@ function readTurnAccountLine(line: string): Readonly<{
     AUTO_OBSERVE_ON_STALE,
     AUTO_OBSERVE_UNAVAILABLE_TOKEN,
     AUTO_OBSERVE_REARMED,
+    // The provenance reading and the defect it names: `round62` could not say how many of its receipts even claimed a
+    // programme, which is why the field that states it had to be added. Both segments are asserted present here so a run's
+    // account keeps answering `receipts with provenance N {…}` and `unattributed_execution U {ids}`.
+    RECEIPTS_WITH_PROVENANCE,
+    UNATTRIBUTED_EXECUTION_TOKEN,
   ];
   assert.deepEqual(
     segments.map((segment) => segment.label),

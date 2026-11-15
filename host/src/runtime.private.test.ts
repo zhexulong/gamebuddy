@@ -203,6 +203,7 @@ async function withAuthenticatedStardew(
     reasonCode: "accepted",
     revision: request.expectedRevision,
     evidence: null,
+    origin: { kind: "programme", programId: "plan_runtime_01", nodeId: "n01" },
   });
   const write = (value: unknown): void => {
     socket?.write(bridgeFrame(value));
@@ -267,6 +268,7 @@ async function withAuthenticatedStardew(
           reasonCode: request.payload.reasonCode,
           revision: state.snapshot.revision,
           evidence: null,
+          origin: { kind: "programme", programId: "plan_fixture_01", nodeId: "n01" } as const,
         },
       });
       return;
@@ -427,6 +429,7 @@ test("mounted Companion status reports live integration facts without inferring 
         reasonCode: "accepted",
         revision: 9,
         evidence: null,
+        origin: { kind: "programme", programId: "plan_runtime_01", nodeId: "n01" },
       },
     },
     async (mod) => {
@@ -1328,6 +1331,7 @@ test("runtime composes a ledger admission before mounting and executing a live S
           reasonCode: "tool_selected",
           revision: 1,
           evidence: { detail: "slot=1;before=none;expected=Axe;after=Axe" },
+          origin: { kind: "programme", programId: "plan_runtime_01", nodeId: "n01" } as const,
         };
       });
       const runtime = await createCompanionRuntime(identity, root, mod.connection);

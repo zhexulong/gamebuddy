@@ -7425,6 +7425,33 @@
         "uncertain"
       ]
     },
+    "executionOrigin": {
+      "description": "Which programme the execution belongs to, as the MOD's own journal states it: 'programme' names the exact node that started it, 'standalone' says no node owns it (a COMPLETE statement - the journal was read), and 'unattributed' says the journal could not answer, which the reader names as unattributed_execution:<id> instead of resolving it by time or by what happens to be in flight.",
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "programId", "nodeId"],
+          "properties": {
+            "kind": { "enum": ["programme"] },
+            "programId": { "$ref": "#/$defs/opaqueId" },
+            "nodeId": { "$ref": "#/$defs/opaqueId" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind"],
+          "properties": { "kind": { "enum": ["standalone"] } }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind"],
+          "properties": { "kind": { "enum": ["unattributed"] } }
+        }
+      ]
+    },
     "receipt": {
       "type": "object",
       "additionalProperties": false,
@@ -7435,9 +7462,13 @@
         "state",
         "reasonCode",
         "revision",
-        "evidence"
+        "evidence",
+        "origin"
       ],
       "properties": {
+        "origin": {
+          "$ref": "#/$defs/executionOrigin"
+        },
         "executionId": {
           "$ref": "#/$defs/opaqueId"
         },
@@ -7618,9 +7649,13 @@
         "executionId",
         "requestId",
         "tick",
-        "revision"
+        "revision",
+        "origin"
       ],
       "properties": {
+        "origin": {
+          "$ref": "#/$defs/executionOrigin"
+        },
         "category": {
           "enum": [
             "execution_started",

@@ -363,6 +363,7 @@ test("local Stardew bridge advances the admitted snapshot revision on an unsolic
               reasonCode: "navigation_completed",
               revision: 9,
               evidence: { detail: "location=Farm;destination=Bus Stop" },
+              origin: { kind: "programme", programId: "plan_fixture_01", nodeId: "n01" } as const,
               observation: null,
             },
           }),
@@ -1207,6 +1208,7 @@ test("local Stardew bridge delivers one exact-correlated terminal receipt across
           reasonCode: "completed",
           revision: 7,
           evidence: { fixture: "protocol_shaped_named_pipe_peer" },
+          origin: { kind: "programme", programId: "plan_pipe_01", nodeId: "n01" } as const,
         };
         terminalReceiptsWritten += 2;
         socket.write(
@@ -1348,6 +1350,7 @@ test("local Stardew bridge delivers an unsolicited terminal receipt as a fact", 
               reasonCode: "waiting_for_body:body_owned_by_activity",
               revision: 9,
               evidence: { detail: "held_ms=1840" },
+              origin: { kind: "programme", programId: "plan_fixture_01", nodeId: "n01" } as const,
             },
           }),
         );
@@ -1603,6 +1606,7 @@ test("local Stardew bridge sends the typed cancel identity tuple for every cance
               reasonCode: "stop_requested",
               revision: 5,
               evidence: null,
+              origin: { kind: "programme", programId: "plan_fixture_01", nodeId: "n01" } as const,
             },
           }),
         );
@@ -1809,6 +1813,7 @@ test("navigationRead rejects a wrong correlated receipt without mutating receipt
             reasonCode: "completed",
             revision: 1,
             evidence: {},
+            origin: { kind: "programme", programId: "plan_fixture_01", nodeId: "n01" } as const,
           },
         }),
       );

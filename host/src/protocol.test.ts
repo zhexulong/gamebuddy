@@ -845,6 +845,8 @@ test("bridge message payloads fail closed", () => {
         revision: 8,
         location: "Farm",
         tile: { x: 10, y: 12 },
+        // A body trace states the same provenance its receipt does (`validateBodyTrace` refuses a frame without it).
+        origin: { kind: "programme", programId: "plan_trace_01", nodeId: "n01" },
       },
     },
     "semantic_trace_01",
