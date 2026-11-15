@@ -152,12 +152,6 @@ public sealed partial class ModEntry : Mod
     private static ModEntry? nativeChatIngressOwner;
     // Presentation only: a client shows the companion's lines it has heard about, and forgets them on their own clock.
     private readonly CompanionBubbleBoard companionBubbles = new();
-    private static ModEntry? companionBubbleOwner;
-    // The parameter types of the bubble layer, hoisted because the per-frame resolution runs inside the engine's draw.
-    private static readonly Type[] BubbleLayerSignature = { typeof(SpriteBatch) };
-    // Which declaration of that layer the runtime call resolves to, per location type: filled on the game thread as
-    // locations are drawn, so a type is resolved once rather than once per frame.
-    private static readonly Dictionary<Type, Type?> ResolvedBubbleLayer = new();
     private StardewSalientEventHooks? salientEventHooks;
     private NpcDialoguePager? npcDialoguePager;
     private ModalTransitionObserver? modalTransitionObserver;
@@ -195,8 +189,7 @@ public sealed partial class ModEntry : Mod
         helper.Events.GameLoop.Saved += this.OnSaved;
         helper.Events.GameLoop.ReturnedToTitle += this.OnReturnedToTitle;
         helper.Events.Multiplayer.ModMessageReceived += this.OnModMessageReceived;
-
-        this.InstallCompanionBubbles();
+        helper.Events.Display.RenderedWorld += this.OnRenderedWorld;
 
         helper.ConsoleCommands.Add("gamebuddy_farmhands", "List authoritative local-co-op player and Farmhand identities without changing game state.", this.FarmhandsCommand);
         helper.ConsoleCommands.Add("gamebuddy_status", "Print the configured AI Farmhand's authoritative snapshot on its local screen.", this.StatusCommand);
@@ -2622,115 +2615,30 @@ public sealed partial class ModEntry : Mod
     }
 
     /// <summary>
-    /// Arms the bubble's draw hook. The postfix goes on EVERY declaration of
-    /// <c>GameLocation.drawAboveAlwaysFrontLayer</c> in the loaded game assembly, derived from the assembly itself:
-    /// the engine overrides that method per location type (<c>Town</c>, <c>Woods</c>, <c>MineShaft</c>...), so a
-    /// base-only patch would silently skip most of the maps the companion actually walks on. No hand-written list, and
-    /// a future location type is covered by existing.
-    /// </summary>
-    private void InstallCompanionBubbles()
-    {
-        MethodInfo? postfix = AccessTools.Method(typeof(ModEntry), nameof(DrawCompanionBubblesPostfix));
-        MethodInfo? signature = AccessTools.Method(
-            typeof(GameLocation),
-            nameof(GameLocation.drawAboveAlwaysFrontLayer),
-            new[] { typeof(SpriteBatch) });
-        if (postfix is null || signature is null)
-        {
-            this.Monitor.Log(
-                "GameBuddy companion bubbles are unavailable: GameLocation.drawAboveAlwaysFrontLayer(SpriteBatch) was not found; companion lines reach the chat log only.",
-                LogLevel.Warn);
-            return;
-        }
-        Harmony harmony = new(this.ModManifest.UniqueID + ".companion-bubble");
-        int patched = 0;
-        foreach (Type locationType in typeof(GameLocation).Assembly.GetTypes())
-        {
-            if (!typeof(GameLocation).IsAssignableFrom(locationType)
-                || locationType.GetMethod(
-                    signature.Name,
-                    BindingFlags.Instance | BindingFlags.Public,
-                    null,
-                    BubbleLayerSignature,
-                    null) is not { } declaration
-                || declaration.DeclaringType != locationType)
-            {
-                continue;
-            }
-            try
-            {
-                harmony.Patch(declaration, postfix: new HarmonyMethod(postfix));
-                patched++;
-            }
-            catch (Exception exception)
-            {
-                this.Monitor.Log(
-                    $"GameBuddy companion bubbles skipped {locationType.Name}.{signature.Name}: {exception.GetType().Name}.",
-                    LogLevel.Warn);
-            }
-        }
-        if (patched == 0)
-        {
-            this.Monitor.Log(
-                "GameBuddy companion bubbles are unavailable: no GameLocation declaration of drawAboveAlwaysFrontLayer could be patched; companion lines reach the chat log only.",
-                LogLevel.Warn);
-            return;
-        }
-        companionBubbleOwner = this;
-        this.Monitor.Log(
-            $"GameBuddy companion bubbles armed: {patched} GameLocation declarations of {signature.Name} draw them above the world.",
-            LogLevel.Info);
-    }
-
-    /// <summary>
-    /// Draws the live lines of the location the engine is drawing, inside the batch it has already begun for the
-    /// above-always-front layer - after the world, after the lighting overlay, and where vanilla draws its own overhead
-    /// text.
+    /// Draws the live companion lines once per frame, from SMAPI's own world-draw event.
     ///
     /// <para>
-    /// Its parameters are Harmony's injections, not choices: <c>__instance</c> is the location instance, and
-    /// <c>__originalMethod</c> is which declaration of the layer was entered. Nothing else may appear there, because
-    /// Harmony binds a postfix's ordinary parameters BY NAME to the target's and refuses the whole patch when the name is
-    /// not one of them (measured on the shipped 0Harmony 2.2.2: <c>Parameter "batch" not found in method ...</c> - the
-    /// hook would then arm nothing and draw nothing). The batch is therefore read from <c>Game1.spriteBatch</c>, which is
-    /// the object every caller passes and the one the engine has already begun for this layer.
+    /// <c>Display.RenderedWorld</c> is raised once per frame at the end of the world's draw - <c>Game1.cs:14200</c>,
+    /// <c>hooks.OnRendered(RenderSteps.World, spriteBatch, ...)</c> - before the UI is drawn: the place SMAPI documents
+    /// for drawing in world space, and where content lands over the world and under menus, HUD and cursor. Its
+    /// <c>e.SpriteBatch</c> is <c>Game1.spriteBatch</c> (<c>RenderedWorldEventArgs.SpriteBatch</c>), the batch the engine
+    /// draws the world into, and SMAPI opens it for the event when the engine has already closed it
+    /// (<c>SCore.cs:1315-1326</c>: <c>if (!spriteBatch.IsOpen(...)) Game1.spriteBatch.Begin(Deferred, AlphaBlend,
+    /// PointClamp)</c>). So the draw needs no batch of its own and no <c>Begin</c>.
     /// </para>
     /// <para>
-    /// A location whose override calls <c>base</c> enters this postfix once per declaration, and only the declaration the
-    /// runtime call resolved to may draw: drawing the line twice blends its antialiased glyph edges twice, so it would be
-    /// bolder on those maps than on the ones where no override exists.
+    /// This replaces a postfix installed on EVERY declaration of <c>GameLocation.drawAboveAlwaysFrontLayer</c> in the
+    /// loaded assembly. That mechanism entered the postfix once per declaration - an override calling <c>base</c> reached
+    /// the base declaration in the same frame - which is why a per-location-type cache had to decide which entry was the
+    /// real one, and why two "unavailable" messages existed for the case where no declaration could be patched. An event
+    /// fires once per frame and has no install to fail.
     /// </para>
     /// </summary>
-    private static void DrawCompanionBubblesPostfix(GameLocation __instance, MethodBase __originalMethod)
+    private void OnRenderedWorld(object? sender, RenderedWorldEventArgs e)
     {
-        if (companionBubbleOwner is not { } owner
-            || Game1.spriteBatch is not { } batch
-            || __originalMethod?.DeclaringType is not { } declarationType
-            || !IsResolvedBubbleLayer(__instance.GetType(), __originalMethod.Name, declarationType))
-        {
+        if (Game1.currentLocation is not { } location)
             return;
-        }
-        owner.DrawCompanionBubbles(__instance, batch);
-    }
-
-    /// <summary>
-    /// Whether <paramref name="declarationType"/> is the type whose declaration of the bubble layer the runtime call on
-    /// this location resolves to. Resolved once per location type, because this runs inside the engine's draw and must
-    /// not walk metadata every frame.
-    /// </summary>
-    private static bool IsResolvedBubbleLayer(Type locationType, string name, Type declarationType)
-    {
-        if (!ResolvedBubbleLayer.TryGetValue(locationType, out Type? resolved))
-        {
-            resolved = locationType.GetMethod(
-                name,
-                BindingFlags.Instance | BindingFlags.Public,
-                null,
-                BubbleLayerSignature,
-                null)?.DeclaringType;
-            ResolvedBubbleLayer[locationType] = resolved;
-        }
-        return resolved == declarationType;
+        this.DrawCompanionBubbles(location, e.SpriteBatch);
     }
 
     /// <summary>
@@ -2742,6 +2650,10 @@ public sealed partial class ModEntry : Mod
     /// <c>StandingPixel</c> read (cached by the engine against her position), one camera conversion and the draw.
     /// Nothing is allocated per frame, and no sprite exists to be tracked: a line that is over is dropped by
     /// <see cref="CompanionBubbleBoard.Expire"/> before anything is drawn.
+    /// </para>
+    /// <para>
+    /// The camera conversion is unchanged by the move off the patched layer: <c>Game1.GlobalToLocal</c> is the transform
+    /// the batch is drawn in at both points, so the bubble lands on the same pixel it did before.
     /// </para>
     /// </summary>
     private void DrawCompanionBubbles(GameLocation location, SpriteBatch batch)

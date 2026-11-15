@@ -16,11 +16,13 @@ namespace GameBuddy.Stardew.Integration.Tests;
 /// small speech bubbles (<c>PetBowl.cs:137</c>, <c>Object.cs:5494</c>, <c>DayTimeMoneyBox.cs:539</c>) - with the glyphs
 /// drawn in the dialogue face, because that routine is <c>Game1.smallFont</c> end to end and a spoken line in the
 /// pet-name font was too small to read. The line crosses the wire as a ModMessage - the speaker's player id and the
-/// text - and every client draws it in the engine's above-always-front layer from the speaker's own standing pixel.
+/// text - and every client draws it once per frame from SMAPI's <c>Display.RenderedWorld</c> event, from the speaker's
+/// own standing pixel.
 ///
-/// WHY THE DRAW CANNOT BE A BEHAVIOUR TEST. The seam needs <c>Game1.currentLocation</c> (null outside a loaded world), a
-/// live <c>SpriteBatch</c> and a drawn frame, none of which exists in a runner. What CAN be run without a game is the
-/// board that owns a line's lifetime and the layout that sizes the box, and that is where the behaviour tests point.
+/// WHY THE DRAW CANNOT BE A BEHAVIOUR TEST, AND WHAT CAN. The pixels need a live <c>SpriteBatch</c> and a drawn frame,
+/// which no runner has. The MECHANISM needs neither: that the Mod subscribes to <c>Display.RenderedWorld</c>, and that
+/// nothing in its sources patches <c>GameLocation.drawAboveAlwaysFrontLayer</c> any more, is a fact about the source and
+/// is asserted below - including a falsifier that hands the same assertion the patch it exists to prevent.
 /// </summary>
 // MIXED SHAPE AND BEHAVIOUR: the board's lifetime and one-line-per-speaker rules run as real objects, while the draw
 // path and the wire can only be pinned by reading the Mod's own source - the game's draw cannot run in a test process.
@@ -170,7 +172,7 @@ public sealed class CompanionBubbleTests
         // point it is handed, so nothing in it can follow her.
         string draw = MethodBody(StripLineComments(ReadModEntry()), "private void DrawCompanionBubbles(");
         AssertPresent(draw, "CompanionBubble.BottomCenter(speaker.StandingPixel, spriteHeight)", "the anchor is her head, now");
-        AssertPresent(draw, "Game1.GlobalToLocal(", "the above-always-front batch is in screen pixels; a world pixel would land off-screen");
+        AssertPresent(draw, "Game1.GlobalToLocal(", "the world's draw batch is in screen pixels; a world pixel would land off-screen");
         AssertPresent(
             draw,
             "spriteHeight);",
@@ -322,37 +324,77 @@ public sealed class CompanionBubbleTests
             "e.Type == CompanionBubble.MessageType",
             "an arriving line is dispatched by type on the same handler that already carries player control");
         AssertPresent(MethodBody(mod, "private void ShowReceivedCompanionBubble("), "CompanionBubble.IsValid(message", "a received line is re-validated before it is shown");
-
-        // The draw is armed on EVERY declaration of the layer it belongs in, derived from the loaded assembly: the game
-        // overrides drawAboveAlwaysFrontLayer per location type (Town, Woods, MineShaft...), so a base-only patch would
-        // silently skip most of the maps she walks on.
-        string install = MethodBody(mod, "private void InstallCompanionBubbles(");
-        AssertPresent(install, "nameof(GameLocation.drawAboveAlwaysFrontLayer)", "the hook is the layer vanilla draws overhead text into");
-        AssertPresent(install, "typeof(GameLocation).Assembly.GetTypes()", "the declarations are read from the assembly, not from a hand-written list");
-        AssertPresent(install, "declaration.DeclaringType != locationType", "only the type that declares the override gets patched");
     }
 
     [Fact]
-    public void TheDrawHookBindsOnlyHarmonyInjections()
+    public void TheBubbleIsDrawnFromTheDisplayEventOncePerFrame()
     {
         string mod = StripLineComments(ReadModEntry());
 
-        // Harmony binds a postfix's ordinary parameters by NAME to the target's, and refuses the whole patch when the name
-        // is not one of them (measured on the shipped 0Harmony 2.2.2: Parameter "batch" not found in method
-        // GameLocation::drawAboveAlwaysFrontLayer(SpriteBatch b)). A parameter other than an injection therefore arms
-        // nothing at all - silently, since the installer would only log its warnings. The batch is read instead.
+        // SMAPI's own world-draw event is the seam: raised once per frame at the end of the world's draw
+        // (Game1.cs:14200, hooks.OnRendered(RenderSteps.World, ...)), with the batch the world was drawn into. It is
+        // registered in Entry beside every other subscription, so loading the Mod arms the bubble - there is no patch
+        // that can fail to install, and no second entry into the draw for one frame.
         AssertPresent(
             mod,
-            "private static void DrawCompanionBubblesPostfix(GameLocation __instance, MethodBase __originalMethod)",
-            "the draw hook may take only Harmony's injections, never a name-bound engine parameter");
+            "helper.Events.Display.RenderedWorld += this.OnRenderedWorld;",
+            "the draw is an event subscription now; without it nothing draws a line at all");
+        string handler = MethodBody(mod, "private void OnRenderedWorld(object? sender, RenderedWorldEventArgs e)");
+        AssertPresent(handler, "Game1.currentLocation", "the event carries no location; the world being drawn is the engine's current one");
+        AssertPresent(handler, "e.SpriteBatch", "the event hands over the batch the world was drawn into - the same Game1.spriteBatch the removed postfix read");
         AssertPresent(
-            MethodBody(mod, "private static void DrawCompanionBubblesPostfix("),
-            "Game1.spriteBatch",
-            "the batch is the object every caller passes into the layer the engine has already begun");
-        AssertPresent(
-            MethodBody(mod, "private void InstallCompanionBubbles("),
-            "if (patched == 0)",
-            "a hook that patched nothing has to say so, or it looks armed and draws nothing");
+            handler,
+            "this.DrawCompanionBubbles(location, e.SpriteBatch)",
+            "the handler's whole job is to hand this frame's location and batch to the draw that was already there");
+    }
+
+    [Fact]
+    public void NoModSourcePatchesTheBubbleLayerAnyMore()
+    {
+        // The population comes from the Mod's own tree, so a file that reintroduces the patch is covered without being
+        // listed here. The layer name and the assembly scan are the two halves of the mechanism this unit removed: the
+        // scan found every declaration of the layer, the patch was installed on each, and a subclass calling `base`
+        // entered it several times for one frame - which is why a de-duplication cache sat on top.
+        int examined = 0;
+        foreach ((string path, string source) in ModSources())
+        {
+            examined++;
+            AssertNoBubbleLayerPatch(path, source);
+        }
+        examined.Should().BeGreaterThan(0, "an empty population agrees with itself: no source read means nothing was checked");
+
+        // The scan itself lived in the entry point, so that is where its absence is asserted - with the injection the
+        // removed postfix needed: Harmony told it WHICH declaration of the layer had been entered, so a cache could keep
+        // one of the several entries a `base` call makes in a single frame. An event carries no method identity.
+        string entryPoint = StripLineComments(ReadModEntry());
+        AssertAbsent(
+            entryPoint,
+            "Assembly.GetTypes()",
+            "ModEntry.cs scans the game assembly for GameLocation subclasses; the draw hook is an event subscription, and a scan here means the patch is back");
+        AssertAbsent(entryPoint, "__originalMethod", "the frame arrives as an event, so nothing needs to ask Harmony which declaration was entered");
+    }
+
+    [Fact]
+    public void TheNoPatchGateFiresOnTheScanItExistsToPrevent()
+    {
+        // FALSIFIER, on the deleted block: the same assertion, handed the mechanism that used to be here. If this ever
+        // stops throwing, the gate above has stopped being able to see the defect it exists for.
+        const string reintroduced = @"
+            Harmony harmony = new(this.ModManifest.UniqueID + "".companion-bubble"");
+            foreach (Type locationType in typeof(GameLocation).Assembly.GetTypes())
+            {
+                MethodInfo? declaration = locationType.GetMethod(
+                    nameof(GameLocation.drawAboveAlwaysFrontLayer),
+                    BindingFlags.Instance | BindingFlags.Public,
+                    null,
+                    new[] { typeof(SpriteBatch) },
+                    null);
+                if (declaration is not null) harmony.Patch(declaration, postfix: new HarmonyMethod(postfix));
+            }";
+
+        Exception thrown = Assert.ThrowsAny<Exception>(() => AssertNoBubbleLayerPatch("ModEntry.cs", reintroduced));
+        thrown.Message.Should().Contain("drawAboveAlwaysFrontLayer", "the failure has to name the layer that is still patched")
+            .And.Contain("ModEntry.cs", "and the file that still patches it");
     }
 
     [Fact]
@@ -475,6 +517,17 @@ public sealed class CompanionBubbleTests
         }
         Assert.Fail($"'{token}' is still in the source at line {line}: {why}");
     }
+
+    /// <summary>
+    /// Fails when one Mod source still carries the mechanism this unit removed: a Harmony patch whose target is the
+    /// engine's bubble layer. The file is named in the failure, because the next reader has to know which file to open.
+    /// </summary>
+    private static void AssertNoBubbleLayerPatch(string path, string source) =>
+        AssertAbsent(
+            source,
+            "drawAboveAlwaysFrontLayer",
+            $"{path} names the engine layer the bubble was patched into. It is drawn from Display.RenderedWorld now, "
+            + "and a patch on that layer draws the same line a second time per frame");
 
     /// <summary>Extract one member body by brace balance from its declaration.</summary>
     private static string MethodBody(string source, string declaration)
