@@ -40,6 +40,15 @@ type StagedReport = Readonly<{
    * instead of wondering why she never closes a reply the way the card asked.
    */
   closingDirectionMacros: readonly StCardImportOmittedMacroV1[];
+  /**
+   * The card's at-depth entries this import re-placed, by the region they now ride.
+   *
+   * The card's `depth`/`role` are never reproduced, so the review says where the entries actually went:
+   * standing background (`prefix`) or the per-turn selection (`perTurn`). Both are counted separately
+   * because they reach the player at different moments, and neither may read as depth fidelity.
+   */
+  depthRemappedToPrefix: number;
+  depthRemappedToPerTurn: number;
 }>;
 
 type ImportOutcome =
@@ -75,7 +84,14 @@ function reportOf(staged: StCardImportStageResultV1): StagedReport {
     closingDirectionMacros: (staged.losses ?? [])
       .filter((loss) => loss.reason === "unrenderable_post_history_instructions")
       .flatMap((loss) => loss.macros ?? []),
+    depthRemappedToPrefix: depthRemapped(staged, "worldbook_entry_depth_remapped_to_prefix"),
+    depthRemappedToPerTurn: depthRemapped(staged, "worldbook_entry_depth_remapped_to_per_turn"),
   };
+}
+
+/** How many of the card's at-depth entries the Host re-placed into one of the two regions. */
+function depthRemapped(staged: StCardImportStageResultV1, reason: string): number {
+  return (staged.losses ?? []).filter((loss) => loss.reason === reason).reduce((total, loss) => total + loss.count, 0);
 }
 
 /**
@@ -131,6 +147,26 @@ function reportRows(report: StagedReport, labels: CharacterLabels): ReactElement
                 .map((macro) => omittedMacroLabel(macro, labels))
                 .join(labels.fieldSeparator),
             )}
+          </li>,
+        ]),
+    /*
+     * The entries the card placed at an exact depth. The Host never reproduces that depth (it would move
+     * the insertion point every turn and re-fold the whole prompt prefix), so the review says where each
+     * entry went instead - standing background, or the turns whose words it answers - and both sentences
+     * say the delivery is real while the depth is not.
+     */
+    ...(report.depthRemappedToPrefix === 0
+      ? []
+      : [
+          <li key="depthRemappedToPrefix" data-card-import-depth="prefix">
+            {labels.importDepthRemappedToPrefix.replace("{{count}}", String(report.depthRemappedToPrefix))}
+          </li>,
+        ]),
+    ...(report.depthRemappedToPerTurn === 0
+      ? []
+      : [
+          <li key="depthRemappedToPerTurn" data-card-import-depth="per-turn">
+            {labels.importDepthRemappedToPerTurn.replace("{{count}}", String(report.depthRemappedToPerTurn))}
           </li>,
         ]),
   ];

@@ -45,6 +45,10 @@ export type CharacterLabels = Readonly<{
   importWorldBookOmittedUnknownMacro: string;
   /** Her closing direction will be omitted as a whole, naming the macros that cost it. */
   importClosingDirectionOmitted: string;
+  /** At-depth entries now carried as her standing background: delivered, not at the card's depth. */
+  importDepthRemappedToPrefix: string;
+  /** At-depth entries now surfacing on the turns whose words they answer: delivered, not at the card's depth. */
+  importDepthRemappedToPerTurn: string;
   importFailed: string;
   importFailedText: string;
   importFailedTooLarge: string;
@@ -493,6 +497,10 @@ const en: CharacterLabels = Object.freeze({
     "{{macro}} (a standard SillyTavern macro this companion cannot fill in at import)",
   importWorldBookOmittedUnknownMacro: "{{macro}} (not recognised - possibly a typo)",
   importClosingDirectionOmitted: "Her closing direction could not be used: it contains {{macros}}.",
+  importDepthRemappedToPrefix:
+    "{{count}} of her background entries asked to sit at an exact depth. To keep replies fast they now ride her standing context - they are still delivered, just not at the depth the card asked for.",
+  importDepthRemappedToPerTurn:
+    "{{count}} of her background entries asked to sit at an exact depth. To keep replies fast they now appear when their words come up - they are still delivered, just not at the depth the card asked for.",
   importFailed: "The card could not be imported.",
   importFailedText: "That file is not readable character card text.",
   importFailedTooLarge: "That file is too large to import (limit 2 MB).",
@@ -811,6 +819,10 @@ const zh: CharacterLabels = Object.freeze({
   importWorldBookOmittedStandardMacro: "{{macro}}（SillyTavern 标准宏，本伙伴在导入时无法取值）",
   importWorldBookOmittedUnknownMacro: "{{macro}}（无法识别，可能是拼写错误）",
   importClosingDirectionOmitted: "她的收尾指令未能使用：其中包含 {{macros}}。",
+  importDepthRemappedToPrefix:
+    "有 {{count}} 条背景设定要求放在对话的某个固定深度。为了保持回复速度，它们改为随她的常驻背景一起送达——内容仍在，只是不在卡片要求的深度。",
+  importDepthRemappedToPerTurn:
+    "有 {{count}} 条背景设定要求放在对话的某个固定深度。为了保持回复速度，它们改为在这些词被提到时出现——内容仍在，只是不在卡片要求的深度。",
   importFailed: "无法导入该角色卡。",
   importFailedText: "该文件不是可读取的角色卡文本。",
   importFailedTooLarge: "该文件过大，无法导入（上限 2 MB）。",
