@@ -297,6 +297,7 @@ function projectMessage(
     revision: 1,
     ...(swipeInfo !== undefined ? { swipeInfo } : {}),
     ...(openingVariant !== undefined ? { openingVariant } : {}),
+    ...(message.answeredEarlierWording === true ? { answeredEarlierWording: true as const } : {}),
   });
 }
 

@@ -477,6 +477,39 @@ test("validateSnapshot carries the turn's length-ceiling fact additively and ref
   }
 });
 
+test("validateSnapshot carries a row's answered-earlier-wording mark additively and refuses a false one", () => {
+  // An edit rewrites one row and leaves the rows under it where they are, so those rows are HONEST but
+  // answered: the Host publishes the mark on them, and the surface is what says so in words.
+  assert.doesNotThrow(() => validateSnapshot(snapshot()));
+  assert.doesNotThrow(() =>
+    validateSnapshot(snapshot({ chat: { transcript: [{ ...message, answeredEarlierWording: true }] } })),
+  );
+  // It is one more additive member beside the two a message may already carry, not an exclusive arm.
+  assert.doesNotThrow(() =>
+    validateSnapshot(
+      snapshot({
+        chat: {
+          transcript: [
+            { ...message, answeredEarlierWording: true },
+            {
+              ...message,
+              handle: HANDLE,
+              swipeInfo: { currentIndex: 1, totalSwipes: 2, label: "1/2", hasPrevious: true, hasNext: true },
+            },
+          ],
+        },
+      }),
+    ),
+  );
+  // `true` is the only member the Host publishes; `false` would be a claim about a row nothing rewrote.
+  for (const answeredEarlierWording of [false, "true", 1, null]) {
+    assert.throws(
+      () => validateSnapshot(snapshot({ chat: { transcript: [{ ...message, answeredEarlierWording }] } })),
+      TavernProtocolError,
+    );
+  }
+});
+
 test("validateDraft is strict and closed", () => {
   assert.doesNotThrow(() => validateDraft({ apiVersion: 1, revision: 7, text: null }));
   assert.doesNotThrow(() => validateDraft({ apiVersion: 1, revision: 0, text: "Saved locally by Host." }));

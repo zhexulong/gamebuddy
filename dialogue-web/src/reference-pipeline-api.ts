@@ -77,6 +77,12 @@ export type BrowserMessageV1 = Readonly<{
   revision: number;
   swipeInfo?: BrowserSwipeInfoV1;
   openingVariant?: BrowserOpeningVariantV1;
+  /**
+   * A message ABOVE this one was rewritten in place after this row was written, so this row still
+   * answers the wording the chat no longer shows. The Host derives it from the durable rewrite stamp
+   * and the transcript's own order; absence is the ordinary row, and there is never a `false`.
+   */
+  answeredEarlierWording?: true;
 }>;
 
 /**
@@ -675,12 +681,13 @@ function isBrowserMessage(value: unknown): value is BrowserMessageV1 {
   if (!isRecord(value)) return false;
   const keys = Object.keys(value);
   if (!MESSAGE_KEYS.every((k) => keys.includes(k))) return false;
-  // The two additive optional facts a message may carry; any subset is legal.
-  const optionalKeys = ["swipeInfo", "openingVariant"] as const;
+  // The additive optional facts a message may carry; any subset is legal.
+  const optionalKeys = ["swipeInfo", "openingVariant", "answeredEarlierWording"] as const;
   const expectedKeys = MESSAGE_KEYS.length + optionalKeys.filter((k) => k in value).length;
   if (keys.length !== expectedKeys) return false;
   if ("swipeInfo" in value && !isBrowserSwipeInfo(value.swipeInfo)) return false;
   if ("openingVariant" in value && !isBrowserOpeningVariant(value.openingVariant)) return false;
+  if ("answeredEarlierWording" in value && value.answeredEarlierWording !== true) return false;
   return (
     isOpaqueHandle(value.handle) &&
     isOneOf(value.role, MESSAGE_ROLES) &&

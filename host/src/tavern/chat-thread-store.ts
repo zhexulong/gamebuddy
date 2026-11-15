@@ -15,7 +15,7 @@ import {
  * append-only messages, swipe variants, turn lifecycle, and where a branch was cut
  * from; it neither reads Pi/Magic Context state nor implements any Game operation.
  */
-export const CHAT_THREAD_SCHEMA_VERSION = 11 as const;
+export const CHAT_THREAD_SCHEMA_VERSION = 12 as const;
 export const CHAT_THREAD_SELECTION_SCHEMA_VERSION = 1 as const;
 
 /** Individual message text remains bounded; normalized transcripts have no entry ceiling. */
@@ -122,6 +122,16 @@ export type ChatThreadMessage = Readonly<{
   parentId?: string | null;
   swipes?: readonly string[];
   activeSwipeIndex?: number;
+  /**
+   * True when this row was written while a row ABOVE it in the transcript still said what it said
+   * before being rewritten in place.
+   *
+   * It is derived on every read from the durable `edit_tail_ordinal` stamps, never stored on the row:
+   * the transcript's own order plus the one column that records where a rewrite swept is the whole
+   * fact, and a stored flag would be a second copy of it. Absent is the ordinary row - either nothing
+   * above it was rewritten, or it was written after the last rewrite above it.
+   */
+  answeredEarlierWording?: true;
 }>;
 
 /**
@@ -1708,6 +1718,30 @@ const THREAD_FORKS_TABLE_V11 = `
     );
 `;
 
+/**
+ * v12 records WHEN a row's words were rewritten in place, as the transcript's own sweep of it.
+ *
+ * `editTranscriptMessage` rewrites one row - `text` and the active swipe - and touches nothing else, so
+ * after the player corrects a line the replies beneath it still answer words that are no longer there,
+ * and until v12 nothing durable said so: a reopen could not tell an edited transcript from one that
+ * had always read this way, and no surface could name the rows that had gone stale.
+ *
+ * The fact is one column on the row that was rewritten, and the stale tail is DERIVED from it rather
+ * than stamped on each tail row: `edit_tail_ordinal` is the transcript's highest `append_ordinal` at
+ * the moment of the rewrite, so a row was downstream of the old words exactly while its own ordinal
+ * was at or below it - and the row's own ordinal is the position the store already means by "the
+ * transcript" (`idx_tavern_messages_ordinal`, the rewind's and the delete's expected order).
+ * Duplicating that on every tail row would be a second copy of one fact; deriving it cannot drift.
+ *
+ * NULL is every row that has never been rewritten in place, and no column default is needed: an
+ * upgraded root's existing rows answer the words they were written from, because nothing had
+ * rewritten them before this version existed.
+ */
+const MESSAGE_EDIT_TAIL_ORDINAL_V12 = `
+    ALTER TABLE tavern_messages
+      ADD COLUMN edit_tail_ordinal INTEGER CHECK(edit_tail_ordinal IS NULL OR edit_tail_ordinal >= 0);
+`;
+
 function initSchema(db: DatabaseSync): void {
   const versionRow = db.prepare("PRAGMA user_version").get() as { user_version?: number } | undefined;
   const version = Number(versionRow?.user_version ?? 0);
@@ -1721,7 +1755,8 @@ function initSchema(db: DatabaseSync): void {
   // generation's own stop fact to the presentation record; v8 adds the classified
   // provider cause to the terminalization record; v9 adds the row a reply-target
   // turn answers; v10 drops the opening's seal, which the transcript derives; v11 adds the record of
-  // where a branch was cut from.
+  // where a branch was cut from; v12 adds when a row's own words were rewritten in place, which is what
+  // names the rows beneath it that still answer the earlier wording.
   if (version === 5) {
     db.exec(MESSAGE_ENTRIES_TABLE_V6);
     db.exec(TURN_PRESENTATION_TRUNCATION_V7);
@@ -1729,6 +1764,7 @@ function initSchema(db: DatabaseSync): void {
     db.exec(TURN_REPLY_TARGETS_TABLE_V9);
     db.exec(DROP_OPENING_SEAL_COLUMN_V10);
     db.exec(THREAD_FORKS_TABLE_V11);
+    db.exec(MESSAGE_EDIT_TAIL_ORDINAL_V12);
     db.exec(`PRAGMA user_version = ${CHAT_THREAD_SCHEMA_VERSION}`);
     assertNormalizedSchema(db);
     return;
@@ -1739,6 +1775,7 @@ function initSchema(db: DatabaseSync): void {
     db.exec(TURN_REPLY_TARGETS_TABLE_V9);
     db.exec(DROP_OPENING_SEAL_COLUMN_V10);
     db.exec(THREAD_FORKS_TABLE_V11);
+    db.exec(MESSAGE_EDIT_TAIL_ORDINAL_V12);
     db.exec(`PRAGMA user_version = ${CHAT_THREAD_SCHEMA_VERSION}`);
     assertNormalizedSchema(db);
     return;
@@ -1748,6 +1785,7 @@ function initSchema(db: DatabaseSync): void {
     db.exec(TURN_REPLY_TARGETS_TABLE_V9);
     db.exec(DROP_OPENING_SEAL_COLUMN_V10);
     db.exec(THREAD_FORKS_TABLE_V11);
+    db.exec(MESSAGE_EDIT_TAIL_ORDINAL_V12);
     db.exec(`PRAGMA user_version = ${CHAT_THREAD_SCHEMA_VERSION}`);
     assertNormalizedSchema(db);
     return;
@@ -1756,6 +1794,7 @@ function initSchema(db: DatabaseSync): void {
     db.exec(TURN_REPLY_TARGETS_TABLE_V9);
     db.exec(DROP_OPENING_SEAL_COLUMN_V10);
     db.exec(THREAD_FORKS_TABLE_V11);
+    db.exec(MESSAGE_EDIT_TAIL_ORDINAL_V12);
     db.exec(`PRAGMA user_version = ${CHAT_THREAD_SCHEMA_VERSION}`);
     assertNormalizedSchema(db);
     return;
@@ -1763,12 +1802,20 @@ function initSchema(db: DatabaseSync): void {
   if (version === 9) {
     db.exec(DROP_OPENING_SEAL_COLUMN_V10);
     db.exec(THREAD_FORKS_TABLE_V11);
+    db.exec(MESSAGE_EDIT_TAIL_ORDINAL_V12);
     db.exec(`PRAGMA user_version = ${CHAT_THREAD_SCHEMA_VERSION}`);
     assertNormalizedSchema(db);
     return;
   }
   if (version === 10) {
     db.exec(THREAD_FORKS_TABLE_V11);
+    db.exec(MESSAGE_EDIT_TAIL_ORDINAL_V12);
+    db.exec(`PRAGMA user_version = ${CHAT_THREAD_SCHEMA_VERSION}`);
+    assertNormalizedSchema(db);
+    return;
+  }
+  if (version === 11) {
+    db.exec(MESSAGE_EDIT_TAIL_ORDINAL_V12);
     db.exec(`PRAGMA user_version = ${CHAT_THREAD_SCHEMA_VERSION}`);
     assertNormalizedSchema(db);
     return;
@@ -1784,6 +1831,7 @@ function initSchema(db: DatabaseSync): void {
     db.exec(TURN_REPLY_TARGETS_TABLE_V9);
     db.exec(DROP_OPENING_SEAL_COLUMN_V10);
     db.exec(THREAD_FORKS_TABLE_V11);
+    db.exec(MESSAGE_EDIT_TAIL_ORDINAL_V12);
     db.exec(`PRAGMA user_version = ${CHAT_THREAD_SCHEMA_VERSION}`);
     assertNormalizedSchema(db);
     return;
@@ -1855,6 +1903,7 @@ function initSchema(db: DatabaseSync): void {
       greeting_variant_id TEXT,
       greeting_profile_revision INTEGER,
       greeting_scenario_revision INTEGER,
+      edit_tail_ordinal INTEGER CHECK(edit_tail_ordinal IS NULL OR edit_tail_ordinal >= 0),
       PRIMARY KEY(thread_id, message_id),
       UNIQUE(thread_id, append_ordinal),
       FOREIGN KEY(thread_id, parent_id)
@@ -2132,6 +2181,10 @@ function assertNormalizedSchema(db: DatabaseSync): void {
   );
   if (["turn_id", "player_message_id"].some((column) => !replyTargetColumns.has(column)))
     throw new Error("chat_thread_schema_mismatch");
+  const messageColumns = new Set(
+    (db.prepare("PRAGMA table_info(tavern_messages)").all() as any[]).map((column) => column.name),
+  );
+  if (!messageColumns.has("edit_tail_ordinal")) throw new Error("chat_thread_schema_mismatch");
   const presentationColumns = new Set(
     (db.prepare("PRAGMA table_info(tavern_turn_presentations)").all() as any[]).map((column) => column.name),
   );
@@ -2785,6 +2838,9 @@ export function createChatThreadStore(
             chatThreadId,
             message.messageId,
           );
+        // The cut shortened the transcript, and the next line will take an ordinal the old rewrite sweeps
+        // already covered: the sweeps are clamped to the row the rewind kept.
+        clampRewriteSweeps(db, chatThreadId);
         // The thread's current turn is its newest one, and the drop may have removed exactly that
         // row. The newest survivor takes the pointer back - clearing first, because the partial
         // unique index allows one current turn per thread - so no idempotency record outlives the
@@ -2877,6 +2933,22 @@ export function createChatThreadStore(
           "INSERT INTO tavern_thread_forks (thread_id, origin_thread_id, origin_message_id) VALUES (?, ?, ?)",
         ).run(request.chatThreadId, request.originChatThreadId, request.originMessageId);
         for (const message of copied) insertMessage(db, request.chatThreadId, message);
+        // A rewrite is a fact about the row's own words, and the branch copied those words: the stamp moves
+        // with the row it was recorded on, so the rows this branch holds still know they answered an
+        // earlier wording. A stamp that reached past the cut names rows the branch does not have, and a
+        // row's own ordinal can only be at or below it - so a stamp wider than the prefix marks exactly the
+        // copied rows that were already downstream when the rewrite happened, and nothing else.
+        db.prepare(
+          `UPDATE tavern_messages
+              SET edit_tail_ordinal = (
+                    SELECT origin.edit_tail_ordinal
+                      FROM tavern_messages origin
+                     WHERE origin.thread_id = ? AND origin.message_id = tavern_messages.message_id)
+            WHERE thread_id = ?`,
+        ).run(request.originChatThreadId, request.chatThreadId);
+        // The branch holds a PREFIX, so a sweep that reached past the cut covers rows this thread does not
+        // have - and would mark the next line appended here, on an ordinal the origin had already swept.
+        clampRewriteSweeps(db, request.chatThreadId);
         db.prepare(
           `INSERT INTO tavern_drafts (thread_id, draft_content, revision, updated_at_ms) VALUES (?, NULL, 0, ?)`,
         ).run(request.chatThreadId, timestamp);
@@ -2915,8 +2987,22 @@ export function createChatThreadStore(
         if (!editable) throw new Error("chat_message_not_editable");
         const ledger = current.turnLedger;
         if (ledger !== null && !isTerminalLedger(ledger)) throw new Error("chat_edit_turn_active");
+        const tailOrdinal = (
+          db
+            .prepare("SELECT COALESCE(MAX(append_ordinal), -1) AS ordinal FROM tavern_messages WHERE thread_id = ?")
+            .get(chatThreadId) as any
+        ).ordinal as number;
         db.prepare("UPDATE tavern_messages SET text = ? WHERE thread_id = ? AND message_id = ?").run(
           input.text,
+          chatThreadId,
+          input.messageId,
+        );
+        // The rewrite is a fact about the TRANSCRIPT, not about this row: every row already below it was
+        // written while this one said something else, and the stamp is the transcript's own sweep of that
+        // moment (`MESSAGE_EDIT_TAIL_ORDINAL_V12`). A row appended after this edit is not stamped over,
+        // because its ordinal is higher than the sweep and it answered the words the player saved.
+        db.prepare("UPDATE tavern_messages SET edit_tail_ordinal = ? WHERE thread_id = ? AND message_id = ?").run(
+          tailOrdinal,
           chatThreadId,
           input.messageId,
         );
@@ -3018,6 +3104,9 @@ export function createChatThreadStore(
           chatThreadId,
           input.messageId,
         );
+        // Removing the newest row shortens the transcript, and the next line takes an ordinal an old
+        // rewrite sweep already covered: the sweeps are clamped to the row the delete left.
+        clampRewriteSweeps(db, chatThreadId);
         // The current-turn pointer may have named exactly the turn this row was the evidence for. The
         // newest survivor takes it back - clearing first, because the partial unique index allows one
         // current turn per thread - so no idempotency record outlives the ledger that reads it.
@@ -3902,10 +3991,19 @@ function readMessages(db: DatabaseSync, threadId: string): ChatThreadMessage[] {
     values.push(swipe.text);
     swipes.set(swipe.message_id, values);
   }
+  // The highest ordinal any row already read had been rewritten through. A row is stale exactly while
+  // it was one of the rows that existed when a row ABOVE it was rewritten in place (`edit_tail_ordinal`,
+  // see `MESSAGE_EDIT_TAIL_ORDINAL_V12`), and the rows arrive in `append_ordinal` order, so one sweep
+  // decides every row: the sweep is the transcript's own order, which is the position this store
+  // already means everywhere else.
+  let rewrittenThrough = -1;
   return (
     db.prepare("SELECT * FROM tavern_messages WHERE thread_id = ? ORDER BY append_ordinal").all(threadId) as any[]
   ).map((row) => {
     const swipeValues = swipes.get(row.message_id);
+    const answeredEarlierWording =
+      row.append_ordinal <= rewrittenThrough ? ({ answeredEarlierWording: true } as const) : {};
+    if (row.edit_tail_ordinal !== null) rewrittenThrough = Math.max(rewrittenThrough, row.edit_tail_ordinal as number);
     if (row.role === "companion") {
       if (swipeValues === undefined) throw new Error("invalid_chat_thread_swipe_order");
       return validateMessage({
@@ -3918,6 +4016,7 @@ function readMessages(db: DatabaseSync, threadId: string): ChatThreadMessage[] {
         ...(row.parent_id === null ? {} : { parentId: row.parent_id }),
         swipes: swipeValues,
         activeSwipeIndex: row.active_swipe_index,
+        ...answeredEarlierWording,
       });
     }
     if (swipeValues !== undefined || row.active_swipe_index !== 0) throw new Error("invalid_chat_thread_swipe_order");
@@ -3929,6 +4028,7 @@ function readMessages(db: DatabaseSync, threadId: string): ChatThreadMessage[] {
       occurredAtMs: row.occurred_at_ms,
       greetingSource: greetingSourceFromRow(row),
       ...(row.parent_id === null ? {} : { parentId: row.parent_id }),
+      ...answeredEarlierWording,
     });
   });
 }
@@ -3963,6 +4063,29 @@ function insertMessage(db: DatabaseSync, threadId: string, message: ChatThreadMe
         "INSERT INTO tavern_message_swipes (thread_id, message_id, swipe_index, text) VALUES (?, ?, ?, ?)",
       ).run(threadId, message.messageId, index, text);
   }
+}
+
+/**
+ * A rewrite sweep may never reach past the last row its transcript now holds.
+ *
+ * `edit_tail_ordinal` is an ordinal BOUND, and an ordinal is a position the next append takes: a rewind,
+ * a delete of the newest row and a branch all shorten a transcript, after which the next line lands on an
+ * ordinal the old sweep already covered - and that line would be born marked stale although it answered
+ * the words the player saved. The sweep is therefore clamped to the transcript's new last row on every
+ * shortening. The rows the sweep really covers keep their mark (their own ordinals did not move), and no
+ * ordinal can be reached twice.
+ */
+function clampRewriteSweeps(db: DatabaseSync, threadId: string): void {
+  const last = (
+    db
+      .prepare("SELECT COALESCE(MAX(append_ordinal), -1) AS ordinal FROM tavern_messages WHERE thread_id = ?")
+      .get(threadId) as any
+  ).ordinal as number;
+  db.prepare("UPDATE tavern_messages SET edit_tail_ordinal = ? WHERE thread_id = ? AND edit_tail_ordinal > ?").run(
+    last,
+    threadId,
+    last,
+  );
 }
 
 function replaceOpeningMessage(db: DatabaseSync, threadId: string, message: ChatThreadMessage | null): void {
@@ -4610,6 +4733,7 @@ function validateMessage(value: unknown): ChatThreadMessage {
       "parentId",
       "swipes",
       "activeSwipeIndex",
+      "answeredEarlierWording",
     ])
   )
     throw new Error("invalid_chat_thread_message");
@@ -4628,6 +4752,12 @@ function validateMessage(value: unknown): ChatThreadMessage {
     value.activeSwipeIndex >= 0
       ? value.activeSwipeIndex
       : undefined;
+  const answeredEarlierWording =
+    value.answeredEarlierWording === true
+      ? ({ answeredEarlierWording: true } as const)
+      : value.answeredEarlierWording === undefined
+        ? {}
+        : undefined;
 
   if (
     !isId(messageId) ||
@@ -4635,6 +4765,7 @@ function validateMessage(value: unknown): ChatThreadMessage {
     (kind !== "opening" && kind !== "player" && kind !== "response") ||
     !isText(text) ||
     !isTimestamp(occurredAtMs) ||
+    answeredEarlierWording === undefined ||
     (greetingSourceValue !== null && !isRecord(greetingSourceValue))
   )
     throw new Error("invalid_chat_thread_message");
@@ -4667,6 +4798,7 @@ function validateMessage(value: unknown): ChatThreadMessage {
     ...(parentId !== undefined ? { parentId } : {}),
     ...(swipes !== undefined ? { swipes } : {}),
     ...(activeSwipeIndex !== undefined ? { activeSwipeIndex } : {}),
+    ...answeredEarlierWording,
   });
 }
 

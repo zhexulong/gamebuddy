@@ -1036,6 +1036,7 @@ function projectMessage(
     // ChatThreadStore transcript order is append-only; project its index.
     order,
     revision: 1,
+    ...(message.answeredEarlierWording === true ? { answeredEarlierWording: true as const } : {}),
   });
 }
 

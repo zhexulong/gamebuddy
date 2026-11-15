@@ -1132,6 +1132,53 @@ const chatProbe = {
   announcementSentences(locale: "en" | "zh-CN"): string {
     return messages(locale).chatReplyReady;
   },
+  /**
+   * One row carrying the Host's own rewrite fact, exactly as a state read publishes it
+   * (`BrowserMessageV1.answeredEarlierWording`): a message above it was rewritten in place after this
+   * one was written. The probe never derives it - a journey hands it the fact and reads the row.
+   */
+  withAnsweredEarlierWording(handle: string): void {
+    const existing = model.transcript.find((m) => m.handle === handle);
+    if (existing === undefined) return;
+    const marked: BrowserMessageV1 = Object.freeze({ ...existing, answeredEarlierWording: true as const });
+    model = {
+      ...model,
+      transcript: model.transcript.map((m) => (m.handle === handle ? marked : m)),
+    };
+    rerender?.();
+  },
+  /**
+   * The mark as the player meets it on one row: the sentence, the box it paints, and the row's own
+   * bubble and strip - so "the line is there" and "the line moved nothing" are two readings of the same
+   * row rather than a claim about a class name.
+   */
+  answeredEarlierNote(handle: string): {
+    text: string | null;
+    box: ReturnType<typeof boxOf>;
+    tone: string;
+    role: string | null;
+    bubble: ReturnType<typeof boxOf> | null;
+    strip: ReturnType<typeof boxOf> | null;
+  } | null {
+    const li = document.querySelector(`li[data-handle="${handle}"]`);
+    if (li === null) return null;
+    const note = li.querySelector('[data-testid="message-answered-earlier"]');
+    const bubble = li.querySelector(".message-bubble");
+    const strip = li.querySelector(".message-actions");
+    return {
+      text: note === null ? null : (note.textContent ?? "").trim(),
+      box: note === null ? boxOf(li) : boxOf(note),
+      tone: note === null ? "" : getComputedStyle(note).color,
+      role: note === null ? null : note.getAttribute("role"),
+      bubble: bubble === null ? null : boxOf(bubble),
+      strip: strip === null ? null : boxOf(strip),
+    };
+  },
+  /** The mark's sentence in each catalogue, so a journey can pin both languages. */
+  answeredEarlierSentences(locale: "en" | "zh-CN"): { mark: string; editorConsequence: string } {
+    const catalogue = messages(locale);
+    return { mark: catalogue.answeredEarlierWording, editorConsequence: catalogue.editLaterKept };
+  },
 };
 
 (window as unknown as { chatProbe: typeof chatProbe }).chatProbe = chatProbe;

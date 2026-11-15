@@ -247,6 +247,7 @@ function projectMessage(
     order,
     // The management profile has no message mutation, so durable records are immutable.
     revision: 1,
+    ...(message.answeredEarlierWording === true ? { answeredEarlierWording: true as const } : {}),
   });
 }
 

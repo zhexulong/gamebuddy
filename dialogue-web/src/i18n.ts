@@ -628,7 +628,13 @@ const en = {
   // that answered the old words stays on screen answering words that are no longer there.
   editHint: "Press this message, or Enter or F2, to edit its words.",
   editLaterKept:
-    "Only this message changes: later messages keep their words, so a reply that answered the old ones stays as it is, and the model reads the new words from the next turn on.",
+    "Only this message changes: later messages keep their words, so a reply that answered the old ones stays as it is and says so. The model reads the new words from the next turn on.",
+  // The mark itself, on every row that was written against a wording the chat no longer shows. It is the
+  // sentence the editor above promised, on the rows it promised it about: an edit rewrites one row and
+  // leaves the rest where they are, so those rows are honest rather than wrong - and the one thing they
+  // owe the player is to say which side of the correction they are on.
+  answeredEarlierWording:
+    "A message above this one was corrected after it was written, so it still answers the earlier wording.",
   editMessageField: "Your message",
   editMessageSave: "Save",
   editMessageCancel: "Cancel",
@@ -1831,7 +1837,11 @@ const zh: Messages = {
   // 其后的行原地不动，所以回应旧文字的回复会留在屏幕上，回答着已经不存在的文字。
   editHint: "按下这条消息，或按 Enter / F2，即可改写它的文字。",
   editLaterKept:
-    "只改这一条：其后的消息保留原来的文字，所以之前回应旧文字的回复仍留在原处；模型从下一轮开始读到新文字。",
+    "只改这一条：其后的消息保留原来的文字，所以回应旧文字的回复仍留在原处，并会标明这一点；模型从下一轮开始读到新文字。",
+  // 标记本身，落在每一条“写在一版已经不在的字上”的行上。它是上面编辑器答应过的那句话，落在它答应的那些行上：
+  // 编辑只改一行，其余各行原地不动，所以那些行并没有错，只是所回应的字已经换了——它们欠玩家的一件事，就是说清
+  // 自己站在这次更正的那一边。
+  answeredEarlierWording: "这条写下之后，上面的消息被改过，所以它回应的仍是先前那版文字。",
   editMessageField: "你的消息",
   editMessageSave: "保存",
   editMessageCancel: "取消",

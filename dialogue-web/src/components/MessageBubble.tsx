@@ -559,6 +559,11 @@ export const MessageBubble = memo(function MessageBubble({
        * player is owed that before they save.
        */
       editLaterKept: string;
+      /**
+       * The sentence a row carries when a message above it was rewritten in place after it was written,
+       * so it still answers the wording the chat no longer shows.
+       */
+      answeredEarlierWording: string;
       deleteMessage: string;
       deleteMessageName: string;
       deleteConfirmPrompt: string;
@@ -608,6 +613,21 @@ export const MessageBubble = memo(function MessageBubble({
     !isPlayer && openingVariant !== undefined && openingVariant.locked && openingVariant.count > 1
       ? labels.openingSealed
       : null;
+  /**
+   * The line a row carries when it was written against a version of the conversation that no longer
+   * exists: a message ABOVE it was rewritten in place afterwards, so the words it answers are gone.
+   *
+   * The fact is the Host's, published on the row itself (`answeredEarlierWording`): saving an edit
+   * rewrites ONE row on both authorities and leaves every later row where it was, which is what makes
+   * an edit an edit rather than a rewind - so the rows beneath it must be MARKED rather than silently
+   * left answering nothing. It is the same shape as the length-ceiling note: one sentence of information
+   * about the row the player is reading, under the strip, with no control of its own - the two answers it
+   * leaves the player are the ones the row already carries (edit it again, Regenerate where it is offered)
+   * and the strip's own Rewind.
+   *
+   * `undefined` (no fact) and the ordinary row are the same reading: nothing above it was rewritten.
+   */
+  const answeredEarlierWordingNote = message.answeredEarlierWording === true ? labels.answeredEarlierWording : null;
   // The message's own swipe set, when the Host published more than one variant of
   // it. It is the same shape as the opening choice, and it reads the same way.
   const swipeSet = swipeInfo !== undefined && swipeInfo.totalSwipes > 1 ? swipeInfo : undefined;
@@ -1491,6 +1511,15 @@ export const MessageBubble = memo(function MessageBubble({
         {openingSealedNote !== null && (
           <p className="message-opening-sealed" data-testid="message-opening-sealed">
             {openingSealedNote}
+          </p>
+        )}
+        {/* The row that answered a wording the chat no longer shows, in the same place and shape as the
+            two notes above it and for the same reason: it is information about the words being read,
+            not a fault and not a control. Saving an edit rewrites one row and leaves the rows under it
+            exactly where they are, so this is the row saying which side of that line it is on. */}
+        {answeredEarlierWordingNote !== null && (
+          <p className="message-answered-earlier" data-testid="message-answered-earlier">
+            {answeredEarlierWordingNote}
           </p>
         )}
       </div>

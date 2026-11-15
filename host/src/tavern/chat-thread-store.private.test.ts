@@ -848,6 +848,9 @@ test("a v4 root keeps the companion's own book and the attached managed item acr
       -- goes back to being absent as well. The fixture is a v4 file, not a current one with a lower
       -- version stamp.
       ALTER TABLE tavern_turn_terminalizations DROP COLUMN provider_failure;
+      -- ...and it predates the rewrite stamp on a message (schema v12), so that column goes too: a v4
+      -- root never had a way to say a row's words had been rewritten in place.
+      ALTER TABLE tavern_messages DROP COLUMN edit_tail_ordinal;
       -- Unlike those, the opening's seal is a column a v4 root HAS: schema v10 drops it because the
       -- transcript derives the same fact, so putting it back is what makes this a real old shape.
       ALTER TABLE tavern_threads ADD COLUMN opening_locked_at_event_id TEXT;
@@ -1975,6 +1978,13 @@ test("an edit rewrites the player's own row in place and leaves the transcript e
     assert.equal(after.turnLedger?.turnId, second.turnId);
     assert.equal(after.turnLedger?.status, "completed");
     assert.equal(after.idempotency.length, 2);
+    // The one thing an edit DOES change about the rows below it, and the reason the stamp exists: those
+    // rows were written while this one said something else, so the durable read-back marks every row that
+    // was already under it - and nothing above it, and not the row itself.
+    assert.deepEqual(
+      after.messages.map((message) => message.answeredEarlierWording),
+      [undefined, undefined, true, true, true],
+    );
     // The greeting the Chat opened on is the same operation on row zero, and it is local to this session:
     // its text and the active variant its row carries move together, no other row moves, and the thread's
     // recorded opening - the card's own greeting record - is not one of the two places this writes.
@@ -1997,6 +2007,12 @@ test("an edit rewrites the player's own row in place and leaves the transcript e
     );
     assert.equal(editedOpening.turnLedger?.turnId, second.turnId);
     assert.equal(editedOpening.idempotency.length, 2);
+    // The greeting is row zero, so correcting it puts the WHOLE exchange behind a wording that is gone:
+    // every row below now says it answered the earlier one, and the greeting itself says nothing.
+    assert.deepEqual(
+      editedOpening.messages.map((message) => message.answeredEarlierWording),
+      [undefined, true, true, true, true],
+    );
     const durable = await reopened.resumeThread("thread_01", "surface_01");
     assert.deepEqual(
       durable.messages.map((message) => message.text),
@@ -2011,6 +2027,12 @@ test("an edit rewrites the player's own row in place and leaves the transcript e
     // The turn's own evidence is still readable: the edit changed words, not the ledger the words
     // belong to.
     assert.equal(durable.turnLedger?.idempotencyKey, second.key);
+    // And the mark is durable rather than a fact of the session that made it: a second store opened on
+    // the same root derives the same answer from the transcript and the stamp alone.
+    assert.deepEqual(
+      durable.messages.map((message) => message.answeredEarlierWording),
+      [undefined, true, true, true, true],
+    );
 
     const unchanged = durable.messages.map((message) => message.text);
     // Her reply stands in two places - the row's text and its active variant - and the refusals below
@@ -2462,6 +2484,315 @@ test("deleting the line her reply answered leaves the reply and its pager standi
     );
   } finally {
     reopened.close?.();
+    s.close?.();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+/**
+ * One complete accepted turn on the one thread the two journeys below use: accept, claim, arm, run,
+ * commit the reply, complete. Written once here because both of them need a real exchange before a
+ * correction can have a tail, and a tail is only a tail when the rows in it are real rows.
+ */
+async function completeOneTurn(root: string, now: number, ordinal: number, text: string, replyId: string) {
+  const chatStore = await import("./chat-thread-store.js");
+  const binding = {
+    runtimeRoot: root,
+    playerId: "player_01",
+    companionId: "companion_01",
+    continuityId: "continuity_01",
+    chatThreadId: "thread_01",
+    chatSurfaceSessionId: "surface_01",
+    selectionGeneration: 1,
+  };
+  const claimBinding = {
+    ...binding,
+    runtimeBindingDigest: "b".repeat(64),
+    runtimeOwner: {
+      ownerToken: "owner_01",
+      runtimeInstanceId: "inst_01",
+      ownerPid: 1234,
+      ownerProcessStartIdentity: "pid_1234",
+    },
+  };
+  const accepted = await chatStore.acceptMountedPlayerMessage(binding, {
+    text,
+    locale: "en-US",
+    idempotencyKey: `key${ordinal}`.padEnd(22, "x"),
+    expectedDraftRevision: ordinal - 1,
+    authoredContextPreparation: { sourceRefs: [], stableTokenCount: 0 },
+  });
+  const claimed = await claimMountedAttempt(claimBinding);
+  const attempt = { ...claimBinding, attemptId: claimed.attempt.attemptId };
+  await transitionMountedProviderStart(attempt, { operation: "arm", observedAtMs: now + 1 });
+  await transitionMountedProviderStart(attempt, {
+    operation: "running",
+    statusClass: "success",
+    observedAtMs: now + 2,
+  });
+  await transitionMountedPresentation(attempt, {
+    operation: "commit_presentation",
+    cancelEpoch: 1,
+    message: { messageId: replyId, text: `${text} back`, occurredAtMs: now + 3 },
+    committedAtMs: now + 3,
+  });
+  await transitionMountedPresentation(attempt, { operation: "claim_completion", claimedAtMs: now + 4 });
+  await transitionMountedPresentation(attempt, { operation: "complete", completedAtMs: now + 5 });
+  return { key: `key${ordinal}`.padEnd(22, "x"), playerId: accepted.messageId, turnId: accepted.turnId };
+}
+
+/**
+ * The mark an edit leaves is a fact about the WORDS, so it travels with them: a branch copies the rows
+ * that answered the earlier wording and the branch's own read says so. The other edge is the one that
+ * would make the mark a lie - a line the player writes AFTER the correction answered the words on
+ * screen, so nothing marks it, however close behind the edit it lands.
+ */
+test("a correction's mark reaches a branch, and never a row written after the correction", async () => {
+  const root = await canonicalTestRoot("gamebuddy-chat-thread-edit-tail-");
+  const continuityKey = createHash("sha256")
+    .update(["player_01", "companion_01", "continuity_01"].join("\u001f"))
+    .digest("hex");
+  const t0 = Date.now();
+  const s = createChatThreadStore(root, continuityKey, () => t0);
+  const reopened = createChatThreadStore(root, continuityKey, () => t0);
+  try {
+    const creation = createProfileAwareChatThreadCreationCapability(s, profileReader);
+    await creation.createExplicit(request(opening));
+    const first = await completeOneTurn(root, t0, 1, "First line", "reply_01");
+
+    // Nothing has been corrected yet, so no row answers an earlier wording.
+    assert.deepEqual(
+      (await s.resumeThread("thread_01", "surface_01")).messages.map((message) => message.answeredEarlierWording),
+      [undefined, undefined, undefined],
+    );
+
+    const edited = await s.editTranscriptMessage!(testTransitionAuthority.authority, "thread_01", {
+      messageId: first.playerId,
+      expectedOrder: 1,
+      text: "First line, corrected",
+    });
+    assert.deepEqual(
+      edited.messages.map((message) => message.answeredEarlierWording),
+      [undefined, undefined, true],
+    );
+
+    // The branch is cut at her reply, so it holds the one row that answered the old wording. The mark is
+    // copied with it: the branch's transcript really is downstream of words that were later replaced in
+    // the conversation it came from, and nothing in the branch has to be recomputed to say so.
+    const branch = await s.forkThread!({
+      originChatThreadId: "thread_01",
+      originMessageId: "reply_01",
+      chatThreadId: "thread_02",
+      chatSurfaceSessionId: "surface_02",
+    });
+    assert.deepEqual(
+      branch.messages.map((message) => message.messageId),
+      ["opening_01", first.playerId, "reply_01"],
+    );
+    assert.deepEqual(
+      branch.messages.map((message) => message.answeredEarlierWording),
+      [undefined, undefined, true],
+    );
+    // The origin is untouched by the branch: the same rows, the same marks.
+    assert.deepEqual(
+      (await s.resumeThread("thread_01", "surface_01")).messages.map((message) => message.answeredEarlierWording),
+      [undefined, undefined, true],
+    );
+
+    // A line written after the correction answered the words the chat shows NOW, so it is not marked -
+    // and the read is the second store, on the same root, so the answer is durable rather than a fact of
+    // the session that admitted it.
+    const chatStore = await import("./chat-thread-store.js");
+    const second = await chatStore.acceptMountedPlayerMessage(
+      {
+        runtimeRoot: root,
+        playerId: "player_01",
+        companionId: "companion_01",
+        continuityId: "continuity_01",
+        chatThreadId: "thread_01",
+        chatSurfaceSessionId: "surface_01",
+        selectionGeneration: 1,
+      },
+      {
+        text: "Second line",
+        locale: "en-US",
+        idempotencyKey: "key2".padEnd(22, "x"),
+        expectedDraftRevision: 1,
+        authoredContextPreparation: { sourceRefs: [], stableTokenCount: 0 },
+      },
+    );
+    const later = await reopened.resumeThread("thread_01", "surface_01");
+    assert.deepEqual(
+      later.messages.map((message) => message.messageId),
+      ["opening_01", first.playerId, "reply_01", second.messageId],
+    );
+    assert.deepEqual(
+      later.messages.map((message) => message.answeredEarlierWording),
+      [undefined, undefined, true, undefined],
+    );
+  } finally {
+    reopened.close?.();
+    s.close?.();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+/**
+ * The stamp is added to a root that is already carrying conversations, so the upgrade is the thing under
+ * test: a genuine v11 file loses the column and gains it back with the version, and every row it held is
+ * still there, still unmarked (nothing had rewritten it before this version existed), and still editable.
+ */
+test("a v11 root gains the rewrite stamp and keeps every row it already holds", async () => {
+  const root = await canonicalTestRoot("gamebuddy-chat-thread-v11-");
+  const continuityKey = createHash("sha256")
+    .update(["player_01", "companion_01", "continuity_01"].join("\u001f"))
+    .digest("hex");
+  const t0 = Date.now();
+  const s = createChatThreadStore(root, continuityKey, () => t0);
+  let firstPlayerId = "";
+  try {
+    const creation = createProfileAwareChatThreadCreationCapability(s, profileReader);
+    await creation.createExplicit(request(opening));
+    firstPlayerId = (await completeOneTurn(root, t0, 1, "First line", "reply_01")).playerId;
+  } finally {
+    s.close?.();
+  }
+  const dbPath = join(root, "tavern", "v3", "continuities", continuityKey, "tavern.sqlite");
+  const currentRows = (() => {
+    const db = new DatabaseSync(dbPath);
+    try {
+      return (db.prepare("SELECT message_id, text FROM tavern_messages ORDER BY append_ordinal").all() as any[]).map(
+        (row) => [row.message_id, row.text],
+      );
+    } finally {
+      db.close();
+    }
+  })();
+  const oldShape = new DatabaseSync(dbPath);
+  try {
+    oldShape.exec(`
+      -- A genuine v11 root predates the rewrite stamp: the column goes, and the version stamp with it, so
+      -- the upgrade under test has to add both.
+      ALTER TABLE tavern_messages DROP COLUMN edit_tail_ordinal;
+      PRAGMA user_version = 11;
+    `);
+  } finally {
+    oldShape.close();
+  }
+
+  const migrated = createChatThreadStore(root, continuityKey, () => t0);
+  try {
+    const state = await migrated.resumeThread("thread_01", "surface_01");
+    assert.deepEqual(
+      state.messages.map((message) => [message.messageId, message.text]),
+      currentRows,
+    );
+    // A v11 transcript had no way to record a rewrite, so nothing it holds claims to be downstream of one.
+    assert.deepEqual(
+      state.messages.map((message) => message.answeredEarlierWording),
+      [undefined, undefined, undefined],
+    );
+    // The column is not merely present: it is the one the edit writes, on the upgraded root.
+    const edited = await migrated.editTranscriptMessage!(testTransitionAuthority.authority, "thread_01", {
+      messageId: firstPlayerId,
+      expectedOrder: 1,
+      text: "First line, corrected",
+    });
+    assert.deepEqual(
+      edited.messages.map((message) => message.answeredEarlierWording),
+      [undefined, undefined, true],
+    );
+    const stamped = new DatabaseSync(dbPath);
+    try {
+      assert.equal(
+        (stamped.prepare("PRAGMA user_version").get() as { user_version: number }).user_version,
+        CHAT_THREAD_SCHEMA_VERSION,
+      );
+    } finally {
+      stamped.close();
+    }
+  } finally {
+    migrated.close?.();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+/**
+ * An ordinal is a POSITION, and a shortened transcript hands the same position out again: after a rewind
+ * the next line the player writes takes a number an earlier correction's sweep already covered. The mark
+ * is a fact about the words a row answered, so the store must not hand that new row a mark it never
+ * earned - while the rows the sweep really covered keep theirs.
+ */
+test("a rewind lets the next line take an ordinal an old correction swept, and it is not born stale", async () => {
+  const root = await canonicalTestRoot("gamebuddy-chat-thread-edit-tail-rewind-");
+  const continuityKey = createHash("sha256")
+    .update(["player_01", "companion_01", "continuity_01"].join("\u001f"))
+    .digest("hex");
+  const t0 = Date.now();
+  const s = createChatThreadStore(root, continuityKey, () => t0);
+  try {
+    const creation = createProfileAwareChatThreadCreationCapability(s, profileReader);
+    await creation.createExplicit(request(opening));
+    const first = await completeOneTurn(root, t0, 1, "First line", "reply_01");
+    const second = await completeOneTurn(root, t0, 2, "Second line", "reply_02");
+
+    // The correction sweeps the whole tail: rows 2, 3 and 4 answered the words it replaced.
+    const edited = await s.editTranscriptMessage!(testTransitionAuthority.authority, "thread_01", {
+      messageId: first.playerId,
+      expectedOrder: 1,
+      text: "First line, corrected",
+    });
+    assert.deepEqual(
+      edited.messages.map((message) => message.answeredEarlierWording),
+      [undefined, undefined, true, true, true],
+    );
+
+    // Cut back to the second line: her second reply goes, and the two rows that answered the old wording
+    // and survive keep the mark they earned.
+    const rewound = await s.rewindTranscript!(testTransitionAuthority.authority, "thread_01", {
+      messageId: second.playerId,
+      expectedOrder: 3,
+    });
+    assert.deepEqual(
+      rewound.messages.map((message) => message.messageId),
+      ["opening_01", first.playerId, "reply_01", second.playerId],
+    );
+    assert.deepEqual(
+      rewound.messages.map((message) => message.answeredEarlierWording),
+      [undefined, undefined, true, true],
+    );
+
+    // The next line lands on ordinal 4, which the old sweep (4) covered. It answered the corrected words,
+    // so nothing marks it.
+    const chatStore = await import("./chat-thread-store.js");
+    const accepted = await chatStore.acceptMountedPlayerMessage(
+      {
+        runtimeRoot: root,
+        playerId: "player_01",
+        companionId: "companion_01",
+        continuityId: "continuity_01",
+        chatThreadId: "thread_01",
+        chatSurfaceSessionId: "surface_01",
+        selectionGeneration: 1,
+      },
+      {
+        text: "Third line",
+        locale: "en-US",
+        idempotencyKey: "key3".padEnd(22, "x"),
+        expectedDraftRevision: rewound.draft.revision,
+        authoredContextPreparation: { sourceRefs: [], stableTokenCount: 0 },
+      },
+    );
+    const after = await s.resumeThread("thread_01", "surface_01");
+    assert.deepEqual(
+      after.messages.map((message) => message.messageId),
+      ["opening_01", first.playerId, "reply_01", second.playerId, accepted.messageId],
+    );
+    assert.deepEqual(
+      after.messages.map((message) => message.answeredEarlierWording),
+      [undefined, undefined, true, true, undefined],
+    );
+  } finally {
     s.close?.();
     await rm(root, { recursive: true, force: true });
   }

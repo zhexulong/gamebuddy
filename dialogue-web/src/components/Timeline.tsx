@@ -160,6 +160,11 @@ export function Timeline({
     /** Her reply's field label: the same operation on the other side of the exchange. */
     editReplyField: string;
     editLaterKept: string;
+    /**
+     * The mark a row carries when a message above it was rewritten in place after it was written: the
+     * sentence the editor's own consequence promised, on the rows it promised it about.
+     */
+    answeredEarlierWording: string;
     /** The delete control and the confirmation it opens. */
     deleteMessage: string;
     deleteMessageName: string;

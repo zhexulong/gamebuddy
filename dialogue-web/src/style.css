@@ -991,7 +991,8 @@
    line takes the width the reply already had and wraps inside it - the bubble, the strip and every
    control in it keep the exact boxes they had before the line existed. */
   .message-truncated,
-  .message-opening-sealed {
+  .message-opening-sealed,
+  .message-answered-earlier {
     contain: inline-size;
     margin: var(--space-1) 0 0;
     font-size: 12px;

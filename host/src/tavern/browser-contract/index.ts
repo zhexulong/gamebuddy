@@ -320,6 +320,18 @@ export const BrowserMessageV1Schema = strictObject({
   revision: Revision,
   swipeInfo: Type.Optional(BrowserSwipeInfoV1Schema),
   openingVariant: Type.Optional(BrowserOpeningVariantV1Schema),
+  /**
+   * Additive v1 fact about the words this row answers: a message ABOVE it was rewritten in place after
+   * this one was written, so it still answers the wording the chat no longer shows.
+   *
+   * An edit rewrites one row and leaves every later row exactly where it is, which is what makes it an
+   * edit rather than a rewind - so after the player corrects a line, the rows beneath it are honest but
+   * answered, and the surface owes them the fact rather than a silence. The Host derives it on every
+   * read from the durable rewrite stamp (`tavern_messages.edit_tail_ordinal`) and the transcript's own
+   * order, so it survives a reopen and a fork. Absent means the ordinary row: nothing above it was
+   * rewritten, or it was written after the last rewrite above it. There is never a `false`.
+   */
+  answeredEarlierWording: Type.Optional(Type.Literal(true)),
 });
 export const BrowserTurnV1Schema = strictObject({
   handle: OpaqueHandle,

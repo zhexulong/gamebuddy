@@ -2063,6 +2063,7 @@ test(
     refusedUnknown, refusedOrder, refusedGeneration, refusedTurnActive, refusedUnproven,
     beforeTexts: beforeState.messages.map((message) => message.text),
     afterTexts: afterState.messages.map((message) => message.text),
+    afterMarks: afterState.messages.map((message) => message.answeredEarlierWording ?? null),
     replyTexts: replyState.messages.map((message) => message.text),
     replySwipes: replyState.messages.map((message) => message.swipes),
     openingTexts: openingState.messages.map((message) => message.text),
@@ -2112,6 +2113,10 @@ test(
       "Second synthetic reply.",
     ]);
     assert.equal((output.afterTexts as string[])[0], (output.beforeTexts as string[])[0]);
+    // The edit's OTHER durable consequence, and the one the surface owes the player: the two replies that
+    // follow the corrected line were written while it said something else, so every row under it now says
+    // it answered the earlier wording - and the greeting and the corrected row itself say nothing.
+    assert.deepEqual(output.afterMarks, [null, null, true, true, true]);
     // Her reply is the other message the player may correct, and the answer is the row the read-back
     // holds, projected as the companion's own.
     const editedReply = output.editedReply as {
