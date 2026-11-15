@@ -710,3 +710,49 @@ test("cabin-forward-path.5 (mutation): a kind whose state offers nothing is repo
   );
   t.diagnostic(`cabin-forward-path.5: planted -> ${findings.join(" | ")}`);
 });
+
+/**
+ * The quarantined-launch sentence is a promise, and it was a false one.
+ *
+ * Until this unit the panel told the player to close GameBuddy completely and open it again.
+ * That cannot work, for a reason the sentence cannot talk its way out of: the failed attempt
+ * leaves an owner record in the terminal `quarantined` state, and that record holds the
+ * installation registration the next launch must reserve, so a fresh process is refused at the
+ * same point (`stardew_bootstrap_registration_unavailable`). `STARDEW_GAME_LIFECYCLE_TRAPPED_TERMINALS`
+ * in `host/src/stardew-game-lifecycle-state.internal.ts` declares that residue and names the
+ * missing operation rather than excusing it.
+ *
+ * The rule is a property of the sentence, not of today's copy: it may not tell the player that a
+ * restart is the cure, in either language. The falsifier is the sentence that actually shipped.
+ */
+export function restartPromiseFindings(sentences) {
+  const findings = [];
+  for (const [locale, sentence] of Object.entries(sentences)) {
+    if (/open it again|until it is restarted|close GameBuddy completely|重新打开|重启之前/u.test(sentence))
+      findings.push(
+        `${locale}: tells the player a restart is the cure, and the block is a durable record, not memory`,
+      );
+    if (!/does not clear it|无法解除/u.test(sentence))
+      findings.push(`${locale}: does not say that a restart fails to clear the attempt`);
+  }
+  return findings;
+}
+
+test("launch-quarantined-copy.1: the quarantined sentence never promises that a restart is the cure", (t) => {
+  const findings = restartPromiseFindings({
+    en: MESSAGES.gameLaunchQuarantined,
+    zh: messages("zh").gameLaunchQuarantined,
+  });
+  t.diagnostic(`launch-quarantined-copy.1: ${MESSAGES.gameLaunchQuarantined}`);
+  assert.deepEqual(findings, []);
+});
+
+test("launch-quarantined-copy.2 (falsifier): the sentence that shipped is reported by name", (t) => {
+  const findings = restartPromiseFindings({
+    en: "This attempt failed in a way that stops GameBuddy from starting the game again until it is restarted. Close GameBuddy completely, open it again, then play with your companion.",
+    zh: "这次启动失败的方式会让 GameBuddy 在重启之前无法再次启动游戏。请完全关闭 GameBuddy，重新打开，然后再启动伴玩。",
+  });
+  assert.ok(findings.length >= 2, `the shipped sentence must fail the rule, saw ${JSON.stringify(findings)}`);
+  assert.match(findings[0], /^en: tells the player a restart is the cure/u);
+  t.diagnostic(`launch-quarantined-copy.2: planted -> ${findings.join(" | ")}`);
+});

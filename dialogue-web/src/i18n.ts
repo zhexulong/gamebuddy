@@ -99,11 +99,20 @@ const en = {
   gameSyncing: "Syncing the game connection...",
   gameLaunch: "Play with companion",
   gameLaunchFailed: "The game launch result is uncertain. The latest authoritative game state is shown.",
-  // The two states whose step is not a control on this page. Both names the step a player
+  // The two states whose step is not a control on this page. Both name the step a player
   // actually takes, because a panel with nothing to press and no sentence saying why is the
   // dead end `AGENTS.md`'s zero-forward-path rule exists for.
+  //
+  // This sentence used to tell the player to close GameBuddy and open it again. That is FALSE,
+  // and the reason is durable, not procedural: the failed attempt leaves an owner record in the
+  // terminal `quarantined` state, and that record holds the installation registration this
+  // lifecycle's next launch must reserve (`prepareAndBindOwnedRegistrationAttempt` refuses any
+  // non-null active attempt). Settlement is the only thing that releases it, settlement needs a
+  // non-terminal predecessor, and no later process can do it either - so a restart arrives at
+  // the same refusal. The sentence says what is true: the attempt is spent, and the operation
+  // that would clear it is not in the product yet.
   gameLaunchQuarantined:
-    "This attempt failed in a way that stops GameBuddy from starting the game again until it is restarted. Close GameBuddy completely, open it again, then play with your companion.",
+    "This attempt is spent: the game process it started could not be confirmed, so GameBuddy will not start the game again for this installation. Restarting GameBuddy does not clear it - the block is recorded in GameBuddy's own state, not in its memory. Reporting this is what helps: nothing on this page can make companion play work again until GameBuddy can close the failed attempt out.",
   gameWaitingForGame:
     "Waiting for the game to hand this window your farm. Load the farm you want to play, and this panel updates when it does.",
   // The state whose step is the read itself. The subject is the Host's read of the player's
@@ -1323,7 +1332,7 @@ const zh: Messages = {
   gameLaunch: "与伙伴一起玩",
   gameLaunchFailed: "游戏启动结果不确定；当前显示的是最新权威游戏状态。",
   gameLaunchQuarantined:
-    "这次启动失败的方式会让 GameBuddy 在重启之前无法再次启动游戏。请完全关闭 GameBuddy，重新打开，然后再启动伴玩。",
+    "这次启动已经作废：GameBuddy 无法确认它启动的游戏进程，因此不会再为这个安装启动游戏。重启 GameBuddy 无法解除——拦截记录在 GameBuddy 自身的状态里，不在内存里。请把这件事报给我们：在 GameBuddy 能把这个作废的尝试收尾之前，这个页面上没有任何操作能让伴玩恢复。",
   gameWaitingForGame: "正在等待游戏把这个窗口接到你的农场上。载入你想玩的农场，载入后这个面板会更新。",
   gameNotRead: "GameBuddy 还没读到你的游戏，所以现在还不能说你的同伴能做什么。请再读一次。",
   gameReadAgain: "再读一次我的游戏",

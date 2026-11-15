@@ -141,12 +141,19 @@ export type GameSessionPhase =
   /** No attachment while a Player Host runs: the game owes this browser a session. */
   | "running_without_attachment"
   /**
-   * No attachment and the launch failed for good: the coordinator quarantined the
-   * owner (`launchTerminal` in `stardew-production-lifecycle-coordinator.internal.ts`)
-   * and answers every further launch with
-   * `stardew_player_host_launch_quarantined` for the life of this Host process,
-   * so no control on this page can carry the player out. The step is a fresh
-   * GameBuddy, and the surface's job is to name it.
+   * No attachment and the launch failed for good: the coordinator is in `launch_quarantined`
+   * (`stardew-game-lifecycle-state.internal.ts`) and answers every further launch with
+   * `stardew_player_host_launch_quarantined`, so no control on this page can carry the player out.
+   *
+   * A restart does NOT help, and the surface must not say it does: the failed attempt leaves an
+   * owner record in the terminal `quarantined` state, and that record holds the installation
+   * registration the next launch has to reserve, so a fresh process arrives at the same refusal.
+   * Releasing it takes settlement, settlement needs a non-terminal predecessor, and the
+   * authenticated operation that would abandon such an attempt is not in the product yet - that
+   * gap is declared, with its reason, in `STARDEW_GAME_LIFECYCLE_TRAPPED_TERMINALS`.
+   *
+   * So the phase names the honest step (`restart_gamebuddy`, kept because it is the only thing
+   * this page can even name) and the sentence says it is not the cure.
    */
   | "launch_failed"
   /**
@@ -194,8 +201,8 @@ export type GameSessionPhase =
  * - `wait_for_game` is the game's own progress (the launch is in flight, or the
  *   farm has not handed over a session yet). The surface states it, because a
  *   player reading a panel with no control has no way to tell a wait from a trap.
- * - `restart_gamebuddy` is the only way out of a quarantined launch, and it is
- *   off this page entirely.
+ * - `restart_gamebuddy` names the only thing this page can even offer a quarantined launch, and
+ *   the sentence beside it says plainly that it is not the cure (see `launch_failed`).
  */
 type GameSessionForwardAction =
   /**
