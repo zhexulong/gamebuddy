@@ -38,14 +38,10 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import {
+  blockedByProductLine,
   CHAIN_RUNGS,
   CHAIN_STEP_NAMES,
   CHAIN_STEPS,
-  LAUNCH_PLATEAU_MS,
-  LAUNCH_STEPS,
-  PRODUCT_GAPS,
-  VERDICTS,
-  blockedByProductLine,
   chainStepsLine,
   classifyChainStop,
   classifyLaunchRefusal,
@@ -55,11 +51,17 @@ import {
   describeLaunchPlateau,
   describeLaunchProgress,
   guardianCanArm,
+  LAUNCH_PLATEAU_MS,
+  LAUNCH_STEPS,
+  LIFECYCLE_SHAPES,
+  lifecycleShapeOf,
   notMeasuredLine,
-  readinessOf,
+  PRODUCT_GAPS,
   readBlockedByProduct,
+  readinessOf,
   readNotMeasured,
   responseStampForPress,
+  VERDICTS,
 } from "./game-launch-verdict.mjs";
 
 const GATE_PEER = Object.freeze({
@@ -185,6 +187,71 @@ test("a launch that got no answer at all is the same prerequisite, reached throu
   assert.equal(ownPeerSilenced.verdict, VERDICTS.failed);
   assert.equal(ownPeerSilenced.reason, "game_never_reached_ready:host_silent_on_launch");
   assert.match(ownPeerSilenced.detail, /armable: it runs the generation's resident Guardian/u);
+});
+
+/**
+ * The lifecycle shapes, in the words the product's own derivation uses
+ * (`dialogue-web/src/game-lifecycle-controls.ts:89-99,388-408`): activation exists for `none` with no
+ * generation, the launch control for `none` with one, and neither for an instance that exists.
+ *
+ * Measured 2026-11-15: the state drivers answered this question by hand as `instanceStatus === "none"`, which
+ * reads an instance that EXISTS as a lifecycle nobody activated - so a probe that was handed a real
+ * `launching` instance hunted an activation control the product forbids in that shape for 30 s and then named
+ * the whole lifecycle `game_lifecycle_not_activated`.
+ */
+test("an existing instance is a lifecycle that was activated, whatever word it carries", () => {
+  assert.equal(lifecycleShapeOf({ instanceStatus: "launching", instanceGeneration: 2 }), LIFECYCLE_SHAPES.instantiated);
+  assert.equal(lifecycleShapeOf({ instanceStatus: "running", instanceGeneration: 2 }), LIFECYCLE_SHAPES.instantiated);
+  assert.equal(lifecycleShapeOf({ instanceStatus: "stopped", instanceGeneration: 2 }), LIFECYCLE_SHAPES.instantiated);
+  assert.equal(lifecycleShapeOf({ instanceStatus: "crashed", instanceGeneration: 2 }), LIFECYCLE_SHAPES.instantiated);
+  // Nothing running: the generation is what separates the shape activation belongs to from the launch's.
+  assert.equal(lifecycleShapeOf({ instanceStatus: "none", instanceGeneration: 0 }), LIFECYCLE_SHAPES.unactivated);
+  assert.equal(lifecycleShapeOf({ instanceStatus: "none", instanceGeneration: 1 }), LIFECYCLE_SHAPES.activated);
+  // `unread` is the product's own word for "no reading of the game", and a route that carried no word is the
+  // same absence: neither is evidence that an instance exists or that activation is due.
+  assert.equal(lifecycleShapeOf({ instanceStatus: "unread", instanceGeneration: 3 }), LIFECYCLE_SHAPES.unread);
+  assert.equal(lifecycleShapeOf({ instanceStatus: null, instanceGeneration: null }), LIFECYCLE_SHAPES.unread);
+  assert.equal(lifecycleShapeOf({}), LIFECYCLE_SHAPES.unread);
+});
+
+test("an instance stuck at launching is the instance-word gap, and only a plateau proves it", () => {
+  const stuck = { ok: true, instanceStatus: "launching", attachmentStatus: "none" };
+  const proved = classifyChainStop({ state: stuck, unchangedForMs: LAUNCH_PLATEAU_MS });
+  assert.equal(proved.verdict, VERDICTS.blockedByProduct);
+  assert.equal(proved.gap, PRODUCT_GAPS.instanceStatusNeverRunning);
+  assert.match(proved.detail, /stayed instance=launching\/attachment=none for 120s/u, "the plateau it read");
+  assert.match(proved.detail, /ownership=player_external/u, "and why the word cannot move");
+  // One millisecond short of the plateau is a launch that may still be moving: no proof, no verdict.
+  assert.equal(classifyChainStop({ state: stuck, unchangedForMs: LAUNCH_PLATEAU_MS - 1 }), null);
+  // A window the caller declares shorter is the caller's own plateau: the state drivers pass their budget.
+  assert.equal(
+    classifyChainStop({ state: stuck, unchangedForMs: 50, plateauMs: 50 }).gap,
+    PRODUCT_GAPS.instanceStatusNeverRunning,
+  );
+  // And an attachment that landed is the OTHER side of the same gap, proved without a plateau at all.
+  assert.equal(
+    classifyChainStop({ state: { ...stuck, attachmentStatus: "attached" } }).gap,
+    PRODUCT_GAPS.instanceStatusNeverRunning,
+  );
+  // An instance that is moving, or whose attachment failed, is not this gap.
+  assert.equal(
+    classifyChainStop({
+      state: { ok: true, instanceStatus: "launching", attachmentStatus: "failed" },
+      unchangedForMs: LAUNCH_PLATEAU_MS,
+    }),
+    null,
+  );
+  assert.equal(
+    classifyChainStop({
+      state: { ok: true, instanceStatus: "running", attachmentStatus: "none" },
+      unchangedForMs: LAUNCH_PLATEAU_MS,
+    }),
+    null,
+  );
+  assert.equal(
+    classifyChainStop({ state: { ...stuck, ok: false, status: 409 }, unchangedForMs: LAUNCH_PLATEAU_MS }),
+    null,
+  );
 });
 
 test("readiness is one exact pair; a dead instance is a failure rather than a wait", () => {

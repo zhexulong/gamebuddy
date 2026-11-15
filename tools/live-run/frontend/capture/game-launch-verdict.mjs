@@ -281,6 +281,44 @@ function describeGatePeerMode(mode) {
 }
 
 /**
+ * The lifecycle shapes the product's own instance facts distinguish, in the words of its derivation
+ * (`dialogue-web/src/game-lifecycle-controls.ts:89-99,388-408`):
+ *
+ *   `unactivated`   `instance.status: "none"` with no generation: activation is the product's next step,
+ *                   and the activate control exists for exactly this shape.
+ *   `activated`     nothing running and the expected generation >= 1: activation is behind this state,
+ *                   and the launch control exists for exactly this shape.
+ *   `instantiated`  any other instance word (`launching`, `running`, `stopped`, `crashed`, `detected`):
+ *                   a game instance exists, so neither the activate nor the launch control is offered.
+ *   `unread`        `instance.status: "unread"`, or a state read that carried no instance word: the Host
+ *                   holds no reading of the game, so the product's own step is the reread, not a staging
+ *                   control.
+ *
+ * TWO DRIVERS ASK THIS QUESTION and both used to answer it by hand as `instanceStatus === "none"` -
+ * "activated" - which reads an instance that EXISTS as one that was never activated. The product forbids
+ * an activation control in `launching`/`running`/`stopped`/`crashed`, so that reading sends the driver
+ * hunting a control the state rules out and then names the whole lifecycle as unactivated
+ * (`game_lifecycle_not_activated` at `instance=launching/attachment=none`, measured 2026-11-15). One
+ * derivation, so the two drivers cannot answer the same state differently.
+ */
+export const LIFECYCLE_SHAPES = Object.freeze({
+  unactivated: "unactivated",
+  activated: "activated",
+  instantiated: "instantiated",
+  unread: "unread",
+});
+
+/** Which of `LIFECYCLE_SHAPES` these published facts put the lifecycle in. */
+export function lifecycleShapeOf({ instanceStatus, instanceGeneration } = {}) {
+  if (instanceStatus === null || instanceStatus === undefined || instanceStatus === "unread")
+    return LIFECYCLE_SHAPES.unread;
+  if (instanceStatus !== "none") return LIFECYCLE_SHAPES.instantiated;
+  return Number.isInteger(instanceGeneration) && instanceGeneration >= 1
+    ? LIFECYCLE_SHAPES.activated
+    : LIFECYCLE_SHAPES.unactivated;
+}
+
+/**
  * What a game browser state says about readiness: `ready` is one exact pair, `failed` is a pair that
  * cannot become ready without another attempt, `pending` is everything else.
  *
@@ -433,6 +471,13 @@ export function chainStepsLine(chain) {
  * `rejected`/`farmhand_not_initialized` proves the farmhand gap, which is further along than either: the
  * Mod took the choice, could not use what the engine's creation path produced, and rolled it back.
  *
+ * A state that stopped moving proves the same instance-word gap from the other side, and that side is the
+ * one a driver meets when it arrives after another driver's launch: `unchangedForMs` is how long the
+ * tuple stayed put while a launch was in flight (`readinessOf` still `pending`), held to the drivers' own
+ * plateau threshold (`plateauMs`, `LAUNCH_PLATEAU_MS` unless the caller declares another). No attachment
+ * ever landed, so the attachment branches above say nothing, and the run's proof is the plateau itself -
+ * a launch the Host admitted, an instance that exists, and nothing moving.
+ *
  * Anything else is `null`: no proof, no verdict, and the caller keeps reporting `failed`.
  */
 export function classifyChainStop({
@@ -440,6 +485,8 @@ export function classifyChainStop({
   attachmentResponse = null,
   confirmPressedAtMs = null,
   cabinConfirm = null,
+  unchangedForMs = null,
+  plateauMs = LAUNCH_PLATEAU_MS,
 }) {
   const readable = state?.ok === true;
   if (readable && state.attachmentStatus === "attached" && state.instanceStatus !== "running")
@@ -449,6 +496,18 @@ export function classifyChainStop({
       detail: `the attachment landed (${describeGameState(state)}) and the instance word never left ${String(state.instanceStatus)}: the coordinator projects a GameBuddy-launched Player Host as launching for its whole life (stardew-role-lifecycle-projection.internal.ts:41-45), and the only authenticated slot the facade mints is ownership=player_external (stardew-role-lifecycle-facade.ts:29-41), which this host is not`,
     });
   if (readable && state.attachmentStatus === "attached") return null;
+  if (
+    readable &&
+    state.instanceStatus === "launching" &&
+    readinessOf(state) === "pending" &&
+    Number.isFinite(unchangedForMs) &&
+    unchangedForMs >= plateauMs
+  )
+    return Object.freeze({
+      verdict: VERDICTS.blockedByProduct,
+      gap: PRODUCT_GAPS.instanceStatusNeverRunning,
+      detail: `an instance exists and stayed ${describeGameState(state)} for ${String(Math.round(unchangedForMs / 1000))}s: the launch was admitted and the instance word never left launching, so the game cannot be reached by any driver that waits for running (the coordinator projects a GameBuddy-launched Player Host as launching for its whole life, stardew-role-lifecycle-projection.internal.ts:41-45, and the only authenticated slot the facade mints is ownership=player_external, stardew-role-lifecycle-facade.ts:29-41, which this host is not)`,
+    });
   const awaiting = awaitingSaveReading(attachmentResponse, confirmPressedAtMs);
   if (awaiting !== null)
     return Object.freeze({
