@@ -29,3 +29,4 @@ One line per deliberate change:
 | 2026-11-15 | pending | amber-game.json, amber-deepseek-v4.1.json, card.json | reposition as gaming co-op buddy (开黑搭子), purge sensory prose and introspective monologue | user |
 | 2026-11-15 | pending | amber-game.json, amber-deepseek-v4.1.json | eliminate micro-step narration, align voice with real co-op gaming communication | user |
 | 2026-11-15 | pending | amber-game.json, amber-deepseek-v4.1.json, worldbook.json, card.json | de-bloat presets to positive co-op gaming identity (silent on work, speak on coordination); restore worldbook to objective Stardew Valley rules | user |
+| 2026-11-15 | pending | amber-game.json, amber-deepseek-v4.1.json | simplify preset prompts to pure gaming co-op framing without mode positioning or verbose rules | user |
