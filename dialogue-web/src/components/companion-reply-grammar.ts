@@ -68,9 +68,13 @@ export type ReplyConstruct = Readonly<{
  * Until it was declared, GFM parsed the table anyway and the bubble threw the element away,
  * leaving its cells as one run of words with no mark that anything had been dropped.
  *
- * Deliberately absent: a heading, a link and an image. GFM parses all three, and a reply that
- * wrote one used to degrade the same way. They are not constructs of a spoken reply, so they
- * are not declared, so they are not painted.
+ * A heading is a section label in the same panel: `#` through `######` become `h3` to `h6`,
+ * because the conversation's own name is the transcript's `h1` and the surface's title is its
+ * `h2` - the levels a reply may use are the ones BELOW those (see `MarkdownMessage`).
+ *
+ * Deliberately absent: a link and an image. GFM parses both, and a reply that wrote one used
+ * to degrade the same way. They are not constructs of a spoken reply, so they are not
+ * declared, so they are not painted.
  */
 export const COMPANION_REPLY_GRAMMAR: readonly ReplyConstruct[] = Object.freeze([
   Object.freeze({
@@ -166,6 +170,14 @@ export const COMPANION_REPLY_GRAMMAR: readonly ReplyConstruct[] = Object.freeze(
     syntax: "| a | b |",
     sample: "| a | b |\n| - | - |\n| 1 | 2 |",
     tags: Object.freeze(["table", "thead", "tbody", "tr", "th", "td"]),
+    paint: "shape",
+    speaker: "both",
+  }),
+  Object.freeze({
+    id: "heading",
+    syntax: "# …",
+    sample: "# status\n\n## crops\n\n### irrigation\n\n###### the far row",
+    tags: Object.freeze(["h3", "h4", "h5", "h6"]),
     paint: "shape",
     speaker: "both",
   }),

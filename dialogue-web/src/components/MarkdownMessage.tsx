@@ -140,6 +140,27 @@ function withMoodTags(html: string, tags: readonly string[]): string {
 const markdown = new Marked({ gfm: true, breaks: true });
 
 /**
+ * Where a reply's own headings start in the page's outline.
+ *
+ * The transcript already carries the conversation's name as its `<h1>` (`Timeline.tsx`) and the
+ * surface's title as its `<h2>` (`SurfaceView.tsx`), so a reply that wrote `#` must not mint a
+ * second top-level heading in the middle of a conversation: `#` is `h3`, and `######` stays
+ * `h6`. The declaration names the levels this produces (`companion-reply-grammar.ts`, `heading`),
+ * and the mounted gate reads its sample through this renderer - a reply heading that lands on a
+ * level the declaration does not name fails by name rather than by eye.
+ */
+const REPLY_HEADING_OFFSET = 2;
+
+markdown.use({
+  renderer: {
+    heading({ tokens, depth }) {
+      const level = Math.min(depth + REPLY_HEADING_OFFSET, 6);
+      return `<h${level}>${this.parser.parseInline(tokens)}</h${level}>\n`;
+    },
+  },
+});
+
+/**
  * The sanitizer's options, exported so the gate can hold the allowlist against the
  * declaration: a tag hand-added here would be painted without being declared.
  */

@@ -213,6 +213,30 @@ test("renders a GFM table as a table", async ({ page }) => {
 });
 
 /**
+ * A reply's headings, and the levels they must NOT take.
+ *
+ * The failure it catches: GFM parsed `## 状态面板` and the allowlist dropped the element, so a
+ * section of a status panel arrived as a flat sentence with nothing to say it was a heading. The
+ * second half is the outline: the transcript already carries the conversation's name as the
+ * document's `h1` and the surface's title as its `h2`, so a reply that minted either would put a
+ * second top-level heading in the middle of a conversation and reorder the page for a screen
+ * reader. `#` is `h3` here, and `######` stays `h6`.
+ */
+test("sits a reply's headings under the conversation's own outline", async ({ page }) => {
+  await openProbe(page);
+  await setTranscript(page, ["# 农场状态\n\n## 作物\n\n### 灌溉\n\n###### 田垄长"]);
+
+  const bubble = page.locator("li[data-handle='h0'] .message-bubble");
+  await expect(bubble.locator("h3")).toHaveText("农场状态");
+  await expect(bubble.locator("h4")).toHaveText("作物");
+  await expect(bubble.locator("h5")).toHaveText("灌溉");
+  await expect(bubble.locator("h6")).toHaveText("田垄长");
+  await expect(bubble.locator("h1, h2"), "a reply never mints the page's own levels").toHaveCount(0);
+  // Weight is the heading's whole treatment, so a heading is told from the paragraph below it.
+  expect(await bubble.locator("h3").evaluate((heading) => getComputedStyle(heading).fontWeight)).toBe("600");
+});
+
+/**
  * The layout consequence of a table in a 400 px dock, asserted rather than assumed.
  *
  * Measured at 400x800 through the real stylesheet: a cell inherits the bubble's
