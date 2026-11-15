@@ -18,6 +18,15 @@
  *   the reason named, never a pass ("a Host side that cannot be parsed is not measured, never passed").
  * red-proof: fixture  a closed-union read whose third member has no producer -> a violation naming
  *   `unserved member: /api/tavern/v1/chats/:chatHandle/trash` ("a union member with no producer is named on its own").
+ * red-proof: fixture  a route the Host registers through its own constant, and the same constant built from another
+ *   one (`` const GAME_LAUNCH_PATH = `${GAME_PATH}/launch` ``) -> served; the constant written wrong -> the read's own
+ *   route is a violation ("a route the Host registers through its own constant is served", "a constant built from
+ *   another constant is resolved to its value, not left as a name").
+ * red-proof: fixture  a registration the resolver cannot fold (`` path: `${BASE}/${suffix}` ``) -> named as
+ *   `registration_unreadable` with its expression and file:line, never matched by guess and never dropped ("a
+ *   registration this gate cannot resolve is named as unreadable, never guessed or dropped").
+ * red-proof: fixture  an interface's `path: string;` beside a local helper `const string = (): string => …` -> not a
+ *   registration, so it adds no unreadable line ("a `path:` field that names no route is not a registration").
  *
  * Two readings here are not falsifiers and do not wear the keyword: a declared route nothing reads is advisory only,
  * status passed ("a host route nothing reads is advisory"), and a foreign working directory prints the same population
@@ -121,6 +130,83 @@ test("a Playwright stub is evidence of absence, not of presence", () => {
   assert.deepEqual(result.violations[0].elsewhere, [
     "dialogue-web/tests/preset-assembly-surface.spec.ts:2 (test double)",
   ]);
+});
+
+test("a route the Host registers through its own constant is served", () => {
+  // The composed game broker's shape: the route value is declared once and registered by name. A gate that read only
+  // a literal `path: "/api/..."` reported nineteen reads of that surface unserved (measured 2026-11-12).
+  const withTable = [
+    `const STATE_PATH = "${PRESET_ROUTE}";`,
+    'export const routes = Object.freeze([{ id: "state_read", method: "GET", path: STATE_PATH }]);',
+    "",
+  ].join("\n");
+  const served = reading({
+    [PRESET_READ]: webRead(PRESET_ROUTE),
+    "host/src/broker.ts": withTable,
+  });
+  assert.deepEqual(served.violations, []);
+  assert.equal(served.status, "passed");
+  assert.deepEqual(served.unreadableRegistrations, []);
+
+  // red-proof: the same registration with its constant written wrong is the defect, named by the read's own route.
+  const changed = reading({
+    [PRESET_READ]: webRead(PRESET_ROUTE),
+    "host/src/broker.ts": withTable.replace(`"${PRESET_ROUTE}"`, `"${PRESET_ROUTE}-typo"`),
+  });
+  assert.deepEqual(routes(changed), [PRESET_ROUTE]);
+  assert.equal(changed.status, "failed");
+});
+
+test("a constant built from another constant is resolved to its value, not left as a name", () => {
+  const result = reading({
+    "dialogue-web/src/api.ts": webRead("/api/composed-reference-game/v1/game/launch"),
+    "host/src/broker.ts": [
+      'const GAME_PATH = "/api/composed-reference-game/v1/game";',
+      "const GAME_LAUNCH_PATH = `${GAME_PATH}/launch`;",
+      'export const routes = Object.freeze([{ method: "POST", path: GAME_LAUNCH_PATH }]);',
+      "",
+    ].join("\n"),
+  });
+  assert.deepEqual(result.violations, []);
+  assert.equal(result.hostRoutes, 1);
+});
+
+test("a registration this gate cannot resolve is named as unreadable, never guessed or dropped", () => {
+  const result = reading({
+    "dialogue-web/src/api.ts": webRead(PRESET_ROUTE),
+    "host/src/contract.ts": hostTable("/api/tavern/v1/state"),
+    "host/src/broker.ts": [
+      'const BASE = "/api/tavern/v1/presets";',
+      'export const routes = Object.freeze([{ method: "GET", path: `${BASE}/${suffix}` }]);',
+      "",
+    ].join("\n"),
+  });
+  // Nothing matched, so the read is a violation - and the registration that might have served it is named beside it.
+  assert.deepEqual(routes(result), [PRESET_ROUTE]);
+  assert.deepEqual(
+    result.unreadableRegistrations.map((entry) => `${entry.expression} at ${entry.file}:${entry.line}`),
+    ["`${BASE}/${suffix}` at host/src/broker.ts:2"],
+  );
+});
+
+test("a `path:` field that names no route is not a registration", () => {
+  // The tree carries 35 `path:` fields in type positions and file-path values (measured 2026-11-12). One of them is
+  // `path: string;` beside a local helper `const string = (): string => …`, so the name alone cannot decide it.
+  const result = reading({
+    "dialogue-web/src/api.ts": webRead(PRESET_ROUTE),
+    "host/src/contract.ts": hostTable(PRESET_ROUTE),
+    "host/src/types.ts": [
+      "interface OwnedFile {",
+      "  path: string;",
+      "  owner: string;",
+      "}",
+      'const string = (): string => "";',
+      "export const located = (owner: OwnedFile) => read(owner.path, string());",
+      "",
+    ].join("\n"),
+  });
+  assert.deepEqual(result.violations, []);
+  assert.deepEqual(result.unreadableRegistrations, []);
 });
 
 test("a route a Host TEST serves is not a route the Host serves", () => {

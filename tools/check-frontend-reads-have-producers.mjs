@@ -20,11 +20,23 @@
  *
  *   HOST - the routes the Host's own registration names, read out of `host/src/**\/*.ts` with test files and
  *   `test-fixtures/` left out:
- *     1. every `path: "/api/..."` field, which is the router table `RouteDescriptors` in
- *        `host/src/tavern/browser-contract/index.ts` (published as `TavernBrowserContractV1.routes`);
+ *     1. every `path:` field, whose VALUE is resolved through the Host's own constants before it is compared: a
+ *        literal (`path: "/api/..."`, the router table `RouteDescriptors` in
+ *        `host/src/tavern/browser-contract/index.ts`, published as `TavernBrowserContractV1.routes`) and a name
+ *        (`path: STATE_PATH`, the composed game broker's twenty-one routes, declared once and registered by name);
  *     2. every exact `url.pathname === "/api/..."` comparison, and the same comparison through a route constant
  *        (`const BOOTSTRAP_PATH = "/api/..."` then `pathname === BOOTSTRAP_PATH`), which is how the two dispatchers
  *        and the composed broker decide what they own.
+ *   THE VALUE IS RESOLVED, NOT MATCHED. Reading only a literal `path: "/api/..."` reported all nineteen reads of
+ *   `/api/composed-reference-game/v1/*` unserved while the Host answered every one of them (measured 2026-11-12): the
+ *   broker declares its routes once (`const STATE_PATH = "/api/composed-reference-game/v1/state"`, then
+ *   `` const GAME_LAUNCH_PATH = `${GAME_PATH}/launch` ``) and registers them as `path: GAME_LAUNCH_PATH`. So each
+ *   field is evaluated through the Host's constant map, and a field the resolver CANNOT evaluate while it could name
+ *   a route - it writes `/api/` in an expression it cannot fold, or refers to a declared string constant - is printed
+ *   as `registration_unreadable` with its file and line. An unreadable member is named, never matched by guess and
+ *   never silently dropped. A field that names no route (an interface's `path: string;`, `path: value.evidence.path`,
+ *   `path: join(root, ...)`) is not in this population, and the shape of the declaration - not a list of type names -
+ *   is what tells them apart.
  *   A `pathname.startsWith("/api/tavern/")` comparison is NOT a producer: it chooses which dispatcher attempts a
  *   path, and that dispatcher still answers 404 for anything it does not match exactly
  *   (`host/src/tavern/composed-reference-game-static-shell-composition.ts:316-321` routes on prefixes and
@@ -43,10 +55,13 @@
  *
  *   frontend_reads_route_no_host_serves: <route>  read at <file:line>     violation, exit 1
  *   host_route_never_read: <route>                                        advisory only - other clients exist
+ *   registration_unreadable: `path: <expression>` at <file:line>          a `path:` field this gate could not resolve
  *
- * A zero population on the frontend side is `frontend_route_population_empty` and exits 1: a gate that scanned
- * nothing agrees with itself. A Host side that cannot be parsed is `not_measured` with the reason named and exits 1 -
- * the producer half is the comparison, and without it there is no verdict to print.
+ * The population comes first: `examined N frontend route literal(s) and M host route(s)`, then N distinct reads and
+ * M declarations and how many registrations could not be read. A zero population on the frontend side is
+ * `frontend_route_population_empty` and exits 1: a gate that scanned nothing agrees with itself. A Host side that
+ * cannot be parsed is `not_measured` with the reason named and exits 1 - the producer half is the comparison, and
+ * without it there is no verdict to print.
  *
  *   node tools/check-frontend-reads-have-producers.mjs              the verdict; exit 1 on any violation
  *   node tools/check-frontend-reads-have-producers.mjs --advisory   violations only, no host_route_never_read lines
@@ -76,6 +91,18 @@
  *   `host_route_population_not_measured`, exit 1, naming what could not be read.
  * red-proof: inject a union member with no producer (`trash` removed from the Host's retention routes) -> the read is
  *   a violation naming `unserved member: /api/tavern/v1/chats/:chatHandle/trash`, which the shape alone would pass.
+ * red-proof: history  the composed game surface, measured before `path:` values were resolved - `examined 106 frontend
+ *   route literal(s) and 62 host route(s)`, exit 1, nineteen violations, every one an
+ *   `/api/composed-reference-game/v1/*` read the Host serves through `path: STATE_PATH`-style constants. After the
+ *   resolver: `examined 106 frontend route literal(s) and 82 host route(s)`, `"violations":[]`, exit 0 - the twenty
+ *   routes the broker declares once are exactly the twenty the reader was missing.
+ * red-proof: inject one of those constants written wrong (`STATE_PATH` -> `.../state-typo`) -> the read of
+ *   `/api/composed-reference-game/v1/state` is a violation naming that route, exit 1; the same for the template shape
+ *   (`GAME_LAUNCH_PATH` -> `` `${GAME_PATH}/launch-typo` `` -> `/api/composed-reference-game/v1/game/launch`).
+ * red-proof: inject a registration the resolver cannot fold (`` path: `${BASE}/${suffix}` ``) -> printed as
+ *   `registration_unreadable` with its expression and file:line, never matched by guess and never dropped.
+ * red-proof: inject an interface's `path: string;` beside a local helper `const string = (): string => ...` -> not a
+ *   registration, so the population is unchanged and no unreadable line is printed for it.
  */
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
@@ -396,6 +423,11 @@ function evaluateRoute(expression, resolve) {
  * The map is built across the whole Host rather than per file, because a dispatcher and its constants need not share a
  * module. A name declared twice with two different values resolves to nothing: an ambiguous name is not a route, and
  * guessing which declaration the dispatcher meant would be the exact drift this gate exists to find.
+ *
+ * The names a `path:` field can name are returned beside the values, and only those whose every declaration is
+ * STRING-SHAPED (it starts with a quote). `host/src/continuity-semantic-provisioning/…internal.ts:818` declares
+ * `const string = (): string => {`, a helper whose name is a type keyword, and an interface field `path: string;` is
+ * not a registration - the declaration's own shape is what tells the two apart, not a list of type names here.
  */
 function hostRouteConstants(files) {
   const expressions = new Map();
@@ -420,7 +452,39 @@ function hostRouteConstants(files) {
       progressed = true;
     }
   }
-  return resolved;
+  const stringNames = new Set(
+    [...expressions].filter(([, values]) => [...values].every((value) => /^["'`]/u.test(value))).map(([name]) => name),
+  );
+  return { values: resolved, stringNames };
+}
+
+/**
+ * One `path:` field's value: the text up to the first `,`, `}` or newline that is not inside a string or template.
+ *
+ * A registration table writes its fields on one line - `state_read: { method: "GET", path: STATE_PATH, handle: … }` -
+ * and reading to the end of that line made the whole object the expression, which resolves to nothing: the same
+ * silence the literal-only reader produced, one route along. A template's own `${…}` is inside its quotes, so the
+ * scan skips it rather than ending the value at the placeholder's brace.
+ */
+function pathFieldValue(source, from) {
+  let index = from;
+  while (index < source.length) {
+    const character = source[index];
+    if (character === '"' || character === "'" || character === "`") {
+      for (index += 1; index < source.length; index += 1) {
+        if (source[index] === "\\") index += 1;
+        else if (source[index] === character) break;
+      }
+      index += 1;
+      continue;
+    }
+    if (character === "," || character === "}" || character === "\n") break;
+    index += 1;
+  }
+  return source
+    .slice(from, index)
+    .trim()
+    .replace(/[;\s]+$/u, "");
 }
 
 /**
@@ -428,17 +492,44 @@ function hostRouteConstants(files) {
  *
  * A `path:` descriptor field and an exact `pathname ===` comparison are registrations. A `pathname.startsWith(...)` is
  * not: it picks a dispatcher, and that dispatcher still answers 404 for a path it does not match exactly.
+ *
+ * A REGISTRATION'S VALUE IS RESOLVED, NOT MATCHED. `host/src/composed-reference-game-browser.ts` declares its routes
+ * once (`const STATE_PATH = "/api/composed-reference-game/v1/state"`, then `` const GAME_LAUNCH_PATH =
+ * `${GAME_PATH}/launch` ``, twenty of the twenty-one in that second shape) and registers them by name
+ * (`path: STATE_PATH`). A reader that accepted only a literal `path: "/api/..."` reported all nineteen reads of that
+ * surface as `frontend_reads_route_no_host_serves` while the Host answered every one of them (measured 2026-11-12).
+ * Every field is therefore evaluated through the Host's own constant map - the resolver `pathname === CONST` already
+ * used - before it is compared with a read.
+ *
+ * A field the resolver cannot evaluate is returned as UNREADABLE when it could name a route: it writes `/api/` inside
+ * an expression this gate cannot fold, or it refers to a declared STRING constant it could not follow. An unreadable
+ * member is NAMED, never matched by guess and never silently dropped. A field that names something else - an interface's
+ * `path: string;`, a parameter's `path: string,`, `path: value.evidence.path`, `path: join(root, …)` - names no route
+ * and is not in this population.
  */
 function hostRegistrations(source, constants) {
   const declared = [];
-  for (const match of source.matchAll(/path:\s*(["'`])(\/api\/[^"'`\n]*)\1/gu)) declared.push(normalizeRoute(match[2]));
-  for (const match of source.matchAll(/pathname\s*===\s*(["'`])(\/api\/[^"'`\n]*)\1/gu))
-    declared.push(normalizeRoute(match[2]));
-  for (const match of source.matchAll(/pathname\s*===\s*([A-Za-z_$][\w$]*)/gu)) {
-    const resolved = constants.get(match[1]);
-    if (resolved !== undefined && resolved.startsWith(ROUTE_PREFIX)) declared.push(normalizeRoute(resolved));
+  const unreadable = [];
+  const register = (route) => declared.push(normalizeRoute(route));
+  for (const match of source.matchAll(/\bpath:\s*/gu)) {
+    const expression = pathFieldValue(source, match.index + match[0].length);
+    if (expression === "") continue;
+    const value = evaluateRoute(expression, (name) => constants.values.get(name));
+    if (value !== null) {
+      if (value.startsWith(ROUTE_PREFIX)) register(value);
+      continue;
+    }
+    const namesRoute =
+      expression.includes(ROUTE_PREFIX) ||
+      [...expression.matchAll(/[A-Za-z_$][\w$]*/gu)].some((token) => constants.stringNames.has(token[0]));
+    if (namesRoute) unreadable.push({ expression, index: match.index });
   }
-  return declared;
+  for (const match of source.matchAll(/pathname\s*===\s*(["'`])(\/api\/[^"'`\n]*)\1/gu)) register(match[2]);
+  for (const match of source.matchAll(/pathname\s*===\s*([A-Za-z_$][\w$]*)/gu)) {
+    const resolved = constants.values.get(match[1]);
+    if (resolved !== undefined && resolved.startsWith(ROUTE_PREFIX)) register(resolved);
+  }
+  return { declared, unreadable };
 }
 
 /**
@@ -477,30 +568,38 @@ export function frontendRouteReads({ root = ROOT, web = WEB } = {}) {
   return reads;
 }
 
-/** The Host's served routes, and the reason it could not be read when it could not be. */
+/** The Host's served routes, the registrations it could not read, and the reason it could not be read at all. */
 export function hostServedRoutes({ root = ROOT, host = HOST } = {}) {
   const files = sources(root, host, {
     skip: (file) => TEST_FILE.test(file) || /\/test-fixtures\//u.test(file),
   });
   if (files.length === 0)
-    return { routes: [], sites: new Map(), notMeasured: `host_source_population_empty: no source under ${host}` };
+    return {
+      routes: [],
+      sites: new Map(),
+      unreadable: [],
+      notMeasured: `host_source_population_empty: no source under ${host}`,
+    };
 
   const sites = new Map();
+  const unreadable = [];
   const constants = hostRouteConstants(files);
   for (const { file, text } of files) {
-    for (const route of hostRegistrations(text, constants)) {
-      if (!sites.has(route)) sites.set(route, file);
-    }
+    const registration = hostRegistrations(text, constants);
+    for (const route of registration.declared) if (!sites.has(route)) sites.set(route, file);
+    for (const entry of registration.unreadable)
+      unreadable.push({ file, line: lineAt(text, entry.index), expression: entry.expression });
   }
   if (sites.size === 0)
     return {
       routes: [],
       sites,
+      unreadable,
       notMeasured:
         `host_registration_positions_not_found: ${files.length} source file(s) under ${host} name no ` +
         "`path:` descriptor and no exact `pathname ===` route, so the producer half of this comparison is unavailable",
     };
-  return { routes: [...sites.keys()].sort(), sites, notMeasured: null };
+  return { routes: [...sites.keys()].sort(), sites, unreadable, notMeasured: null };
 }
 
 /**
@@ -539,6 +638,9 @@ export function checkFrontendReadsHaveProducers({ root = ROOT, web = WEB, host =
     frontendLiterals: reads.length,
     frontendRoutes: new Set(reads.map((read) => read.route)).size,
     hostRoutes: served.routes.length,
+    // Registrations the resolver could not evaluate. They are named in the report because a producer this gate cannot
+    // read is not a producer it may claim: the comparison is only as wide as the population it printed.
+    unreadableRegistrations: served.unreadable,
     population: reads.length,
     violations: [],
     advisory: [],
@@ -619,8 +721,14 @@ export function checkFrontendReadsHaveProducers({ root = ROOT, web = WEB, host =
 export function renderFrontendReadsReport(result, out = process.stdout, { advisory = true } = {}) {
   out.write(`examined ${result.frontendLiterals} frontend route literal(s) and ${result.hostRoutes} host route(s)\n`);
   out.write(
-    `  ${result.frontendRoutes} distinct route(s) read from ${WEB}, ${result.hostRoutes} declared by ${HOST}\n`,
+    `  ${result.frontendRoutes} distinct route(s) read from ${WEB}, ${result.hostRoutes} declared by ${HOST}, ` +
+      `${result.unreadableRegistrations.length} registration(s) unreadable\n`,
   );
+  for (const entry of result.unreadableRegistrations)
+    out.write(
+      `  registration_unreadable: \`path: ${entry.expression}\` at ${entry.file}:${entry.line} - this gate cannot ` +
+        "resolve it, so it counts as neither served nor unserved\n",
+    );
   for (const violation of result.violations) {
     if (violation.code === "frontend_reads_route_no_host_serves") {
       out.write(`${violation.code}: ${violation.route}  read at ${violation.readAt}\n`);
@@ -644,6 +752,7 @@ export function renderFrontendReadsReport(result, out = process.stdout, { adviso
       population: result.population,
       frontendRoutes: result.frontendRoutes,
       hostRoutes: result.hostRoutes,
+      unreadableRegistrations: result.unreadableRegistrations,
       violations: result.violations,
       advisory: result.advisory.length,
       // The rule this run verified. The harness reads `checks` to tell a gate that asserted something from one that
