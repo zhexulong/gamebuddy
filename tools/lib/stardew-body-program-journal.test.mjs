@@ -6,12 +6,14 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
+import { existsSync } from "node:fs";
 import {
   bodyProgramJournalPath,
   createBodyProgramJournalFallback,
   executionsFromJournalEvents,
   stardewDataPath,
 } from "./stardew-body-program-journal.mjs";
+import { BODY_PROGRAM_JOURNAL_ARCHIVE_NAME } from "./stardew-native-local-player-fixture.mjs";
 
 /**
  * One journal document in the shape the Mod actually writes (`WindowsBodyProgramJournalStore.cs`, schemaVersion 1),
@@ -307,20 +309,25 @@ test("the journal is opened once, and only when an outcome is actually asked for
 });
 
 /**
- * THE REPOSITORY'S JOURNAL DIRECTORY HOLDS A FROZEN SAMPLE, NEVER A LIVE RUN'S OUTPUT.
+ * A FROZEN SAMPLE LIVES WHERE NOTHING WIPES IT, AND EVERY TRACKED FILE IN IT EXISTS ON DISK.
  *
- * The defect this closes: `tools/body-program-journal/` was a copy of one Mod journal SCOPE - `journal.json` plus the
- * `.journal.lock` lease `WindowsBodyProgramJournalStore` creates beside it - committed as if it were source. A run
- * re-harvested it, so `git status` showed it modified whenever anyone looked, and the change it hid was a real one.
+ * The defect this closes, measured 2026-11-15 three times in one day: the frozen sample sat in
+ * `tools/body-program-journal/`, which is also the directory a run DELETES. `archiveBodyProgramJournal` does
+ * `rm(join(evidenceDir, BODY_PROGRAM_JOURNAL_ARCHIVE_NAME), { recursive: true, force: true })`, and a run's evidence
+ * root is `<repo>/tools` - `launch-ladder-live.mjs` writes its result file there and hands `dirname(resultPath)` to
+ * `restore` - so every run removed `README.md` and `sample-2026-11-15.json` and re-created the directory holding the
+ * live pair instead. The sample is a measurement; a measurement inside a runner's output directory is output.
  *
- * POPULATION is what git tracks under that directory (not a scan of the worktree, which holds the live copy by
- * design). PROPERTY is that no tracked path is one of the two names the Mod's store writes, both of those names are
- * git-ignored so a re-harvest cannot dirty the tree, every tracked file is a frozen `sample-<date>.json` or the
- * README that explains the pair, and the sample's bytes are pinned - "frozen" has to mean "will not be regenerated",
- * and a pin is the only reading of that which can turn red.
+ * The guard did not catch it for a second reason worth keeping: it took its population from `git ls-files`, which
+ * lists a tracked-but-deleted path as present. Only reading the bytes can tell "tracked" from "still here".
+ *
+ * POPULATION is what git tracks under the samples directory (not a scan of the worktree, which is not where the
+ * sample lives). PROPERTY is that the directory a run wipes tracks nothing at all, that every tracked file here EXISTS
+ * ON DISK, that each one is a frozen `sample-<date>.json` or the README that explains it, and that the sample's bytes
+ * are pinned - "frozen" has to mean "will not be regenerated", and a pin is the only reading of that which turns red.
  */
-test("the repo's body-program-journal directory holds frozen samples, never a live run's journal", () => {
-  const directory = "tools/body-program-journal";
+test("the repo's frozen journal sample lives outside the directory a run deletes, and is present on disk", () => {
+  const directory = "tools/body-program-journal-samples";
   const root = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
   const git = (...args) => execFileSync("git", args, { cwd: root, encoding: "utf8" });
   const ignored = (path) => {
@@ -332,22 +339,45 @@ test("the repo's body-program-journal directory holds frozen samples, never a li
     }
   };
 
+  // A run REMOVES this path recursively before copying the live scope in, so a tracked file there is a file a run
+  // deletes. The name comes from the fixture - the code that does the removal - rather than from this file, because a
+  // second hand-written spelling is a gate that agrees with itself while the fixture moves somewhere else.
+  const wipeTarget = join("tools", BODY_PROGRAM_JOURNAL_ARCHIVE_NAME);
+  const trackedInWipeTarget = git("ls-files", "-z", "--", wipeTarget)
+    .split("\0")
+    .filter((path) => path.length > 0);
+  assert.deepEqual(
+    trackedInWipeTarget,
+    [],
+    `wipe_target_tracked:${wipeTarget} - a run deletes ${wipeTarget} and copies the live journal in its place, so no tracked file may live there; move it to ${directory} (and delete the stale copy here)`,
+  );
+
   const tracked = git("ls-files", "-z", "--", directory)
     .split("\0")
     .filter((path) => path.length > 0)
     .map((path) => path.slice(directory.length + 1));
   assert.ok(tracked.length > 0, `blocked: git tracks nothing under ${directory}, so this gate examined nothing`);
 
-  // The two names a scope directory holds. `journal.json` is the journal and `.journal.lock` is the store's lease -
-  // both are written by a run, so a tracked one means a harvested copy is source again.
-  for (const live of ["journal.json", ".journal.lock"]) {
+  // `git ls-files` lists a tracked-but-deleted path, so "tracked" is not "here": a run that deleted the sample leaves
+  // the index agreeing and the bytes gone. Read the disk; a missing byte is the defect, not a reason to skip the file.
+  for (const path of tracked) {
     assert.ok(
-      !tracked.includes(live),
-      `live_journal_tracked:${live} - a run rewrites ${directory}/${live}; freeze the bytes as sample-<date>.json instead`,
+      existsSync(join(root, directory, path)),
+      `frozen_sample_missing:${directory}/${path} - tracked and gone from disk: something deleted a frozen sample, and a sample whose bytes are gone measures nothing`,
     );
+  }
+
+  // The two names a scope directory holds. `journal.json` is the journal and `.journal.lock` is the store's lease -
+  // both are written by a run, so the only directory that may hold them is the one a run owns. `wipe_target_tracked`
+  // above already refuses a tracked one (and prints the path), so what is left to assert here is the ignore itself: a
+  // narrowed .gitignore turns the next re-harvest into an untracked file instead of a dirty one. Compared as git
+  // spells it (`/`) rather than as `join` spells it - on Windows `join` yields a backslash, and the comparison would
+  // never match, which is a check that cannot go red.
+  for (const live of ["journal.json", ".journal.lock"]) {
+    const trackedLiveName = `${wipeTarget}/${live}`;
     assert.ok(
-      ignored(`${directory}/${live}`),
-      `live_journal_not_ignored:${live} - a re-harvest of ${directory}/${live} would make the tree dirty and hide real changes`,
+      ignored(trackedLiveName),
+      `live_journal_not_ignored:${live} - a re-harvest of ${trackedLiveName} would make the tree dirty and hide real changes`,
     );
   }
 

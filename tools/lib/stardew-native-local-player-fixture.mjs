@@ -1404,6 +1404,17 @@ function bodyProgramJournalScopeDirectory(options) {
 const JOURNAL_NAME = "body-program-journal";
 const JOURNAL_MARKER_FILE = `${JOURNAL_NAME}.json`;
 
+/**
+ * The name of the directory this fixture CREATES INSIDE A RUN'S EVIDENCE BUNDLE, and clears before writing it.
+ *
+ * Exported because it is a destructive target, not an implementation detail: `archiveBodyProgramJournal` removes this
+ * directory recursively, and a real run's evidence root is `<repo>/tools` (`launch-ladder-live.mjs` puts its result
+ * file there and hands `dirname(resultPath)` to `restore`), so the path it removes is `<repo>/tools/<this name>`.
+ * Whether that path is under version control is the question that decides whether a run may delete it, and the only
+ * way a gate can ask it without a second hand-written spelling of the name is to read it from here.
+ */
+export const BODY_PROGRAM_JOURNAL_ARCHIVE_NAME = JOURNAL_NAME;
+
 async function backupBodyProgramJournal(options, backup) {
   // The bootstrap-phase prepare has no binding yet (the game has not created the
   // save whose ids scope the journal), and offline callers declare no save root.
@@ -1576,7 +1587,7 @@ async function archiveBodyProgramJournal(scopePath, evidenceDir) {
   if (typeof evidenceDir !== "string" || evidenceDir.length === 0)
     return journalArchiveRecord({ reason: "no_bundle_path" });
   if (!isAbsolute(evidenceDir)) return journalArchiveRecord({ reason: "bundle_path_not_absolute" });
-  const directory = join(evidenceDir, JOURNAL_NAME);
+  const directory = join(evidenceDir, BODY_PROGRAM_JOURNAL_ARCHIVE_NAME);
   // A bundle inside the scope would be copied and then deleted by the removal one line below, leaving a marker that
   // claims an archive nobody can read. Refused as a refusal rather than trusted.
   const containment = relative(resolve(scopePath), resolve(directory));

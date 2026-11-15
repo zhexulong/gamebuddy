@@ -255,10 +255,11 @@ integrations/stardew/action-development/tests/.tmp-*
 # producing them is what `tools/check-crash-report-containment.mjs` refuses.
 report.*.json
 
-# The Mod's Body Program journal scope, copied in for reading. The copy is LIVE OUTPUT - a run refreshes it - so it
-# is ignored here and the measurement a comment cites is `tools/body-program-journal/sample-2026-11-15.json`, which
-# is frozen. The two names are the exact pair `WindowsBodyProgramJournalStore` writes into a scope directory:
-# `journal.json` plus the `.journal.lock` lease beside it. A third name appearing here is untracked and visible on
-# purpose, so a writer that picks a new file is noticed instead of silently ignored too.
+# The Mod's Body Program journal scope, copied in for reading. The copy is LIVE OUTPUT - a run refreshes it, and the
+# fixture removes the whole directory before copying (`archiveBodyProgramJournal`), so nothing tracked may live there.
+# The frozen measurement a comment cites is `tools/body-program-journal-samples/sample-2026-11-15.json`, in a sibling
+# directory no run touches. The two ignored names are the exact pair `WindowsBodyProgramJournalStore` writes into a scope
+# directory: `journal.json` plus the `.journal.lock` lease beside it. A third name appearing here is untracked and
+# visible on purpose, so a writer that picks a new file is noticed instead of silently ignored too.
 /tools/body-program-journal/journal.json
 /tools/body-program-journal/.journal.lock
