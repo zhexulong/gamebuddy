@@ -99,7 +99,7 @@ test("the falsifier: without the idle span the remainder is the hole this unit w
 
   assert.ok(
     withoutIdle.unexplainedMs > FIXTURE.wallMs * UNEXPLAINED_CEILING,
-    "a trace without wait.idle must fail the ceiling, and " + String(withoutIdle.unexplainedMs) + " ms does",
+    `a trace without wait.idle must fail the ceiling, and ${String(withoutIdle.unexplainedMs)} ms does`,
   );
   // 10 ms of the idle family was already covered by another span, so the difference is the family MINUS that overlap.
   // Asserted as a tolerance rather than an equality because the equality was the assumption, not the measurement.
