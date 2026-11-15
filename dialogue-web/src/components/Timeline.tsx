@@ -13,6 +13,45 @@ function isAtBottom(element: HTMLElement): boolean {
   return element.scrollHeight - element.scrollTop - element.clientHeight <= TAIL_FOLLOW_THRESHOLD_PX;
 }
 
+/**
+ * Regeneration re-asks a line of the player's and re-writes ONE reply at that reply's own position, so
+ * a row offers it when that line still stands before it and no turn is running:
+ *
+ *  - her reply, with any player line before it - not only the transcript's last row. The turn is a
+ *    same-position variant: the reply the player is reading changes in place, every later reply stays
+ *    exactly where it is, and the text it replaced stays reachable through this row's own pager
+ *    (`commit_variant` appends a swipe to that row and rewrites that row only). It is the pager's own
+ *    mutation one attempt further on, which is why it is offered on the same rows the pager is offered
+ *    on - and the product already records the two as one presentation
+ *    (`design/tasks/active/frontend-functional-alignment-inventory.md`: "重新生成 | 同 swipe(表现层)").
+ *  - the player's own line, when nothing answered it. A turn that fails or is stopped commits no reply
+ *    and acceptance wrote their row before the provider ran, so their line is the tail - by
+ *    construction, not by accident - and a live turn may still answer it, so it waits for the ledger to
+ *    be terminal.
+ *
+ * The opening is message zero - the only companion message a transcript can begin with - and no player
+ * line stands before it, so it never carries the control; nor does a reply whose own line was deleted out
+ * of the transcript above it, which the Host refuses by name (`chat_regenerate_anchor_unavailable`). While
+ * a turn is in flight a historical row waits too: the Host refuses a second turn, so a control there could
+ * only ever be refused.
+ */
+function regenerateOfferedAt(
+  transcript: readonly BrowserMessageV1[],
+  turnInFlight: boolean,
+): (message: BrowserMessageV1, index: number) => boolean {
+  // One pass, not one slice per row: the transcript re-renders on every streaming token.
+  const playerBefore: boolean[] = [];
+  let seen = false;
+  for (const message of transcript) {
+    playerBefore.push(seen);
+    if (message.role === "player") seen = true;
+  }
+  return (message, index) =>
+    message.role === "player"
+      ? index === transcript.length - 1 && !turnInFlight
+      : (playerBefore[index] ?? false) && (index === transcript.length - 1 || !turnInFlight);
+}
+
 export function Timeline({
   transcript,
   companionName,
@@ -339,6 +378,8 @@ export function Timeline({
   const swipeRemoveHandler = onSwipeRemove === undefined ? undefined : handleSwipeRemove;
   const swipeRemoveConfirmHandler = onSwipeRemoveConfirm === undefined ? undefined : handleSwipeRemoveConfirm;
   const regenerateHandler = onRegenerate === undefined ? undefined : handleRegenerate;
+  const regenerateOffers =
+    regenerateHandler === undefined ? undefined : regenerateOfferedAt(transcript, turnInFlight === true);
   const openingVariantHandler = onOpeningVariant === undefined ? undefined : handleOpeningVariant;
   const actFromHereHandler = onActFromHere === undefined ? undefined : handleActFromHere;
   const actRewindHandler = onActRewind === undefined ? undefined : handleActRewind;
@@ -347,36 +388,8 @@ export function Timeline({
   const deleteHandler = onDelete === undefined ? undefined : handleDelete;
   const deleteConfirmHandler = onDeleteConfirm === undefined ? undefined : handleDeleteConfirm;
   /**
-   * Regeneration re-asks the last thing the player said, so exactly one row can offer it: the
-   * transcript's own last message. Two shapes of that row are legal, and the Host refuses every
-   * other one (`regenerate` in `chat-pipeline-service.ts`):
-   *
-   *  - her reply, with a player row before it. The turn re-asks that player turn at her reply's own
-   *    position, so the reply the player reads changes in place.
-   *  - the player's own line, when nothing answered it. A turn that fails or is stopped commits no
-   *    reply, and acceptance wrote their row before the provider ran, so their line is the tail - by
-   *    construction, not by accident. Regenerating it re-asks that line and the reply appends behind
-   *    it. It is offered only while no turn is in flight: a live turn may still answer the line, and
-   *    the Host refuses the target until the ledger is terminal.
-   *
-   * The opening is message zero - the only companion message a transcript can begin with - and it
-   * has no player turn to repeat, so it never carries the control. "A player row exists" is the
-   * Host's precondition for the first shape and counting rows is not: a transcript whose player line
-   * was deleted still ends on her reply with more than one row, and the Host refuses it for want of a
-   * player turn.
-   */
-  const tailMessage = transcript[transcript.length - 1];
-  const tailOffersRegenerate =
-    tailMessage === undefined
-      ? false
-      : tailMessage.role === "companion"
-        ? transcript.some((message) => message.role === "player")
-        : !turnInFlight;
-  const regenerateHandle =
-    regenerateHandler !== undefined && tailMessage !== undefined && tailOffersRegenerate ? tailMessage.handle : null;
-  /**
    * The row the mounted turn's generation wrote. A turn commits exactly one reply, and that reply
-   * is the transcript's last message when it is a companion's - the tail row `regenerateHandle`
+   * is the transcript's last message when it is a companion's - the tail row `regenerateOffers`
    * reads one line above - which is why the sentence and the Regenerate button it names stand on
    * the same row rather than on two.
    */
@@ -515,7 +528,7 @@ export function Timeline({
         </div>
       ) : (
         <ol className="message-list">
-          {transcript.map((message) => (
+          {transcript.map((message, index) => (
             <MessageBubble
               key={message.handle}
               message={message}
@@ -530,7 +543,7 @@ export function Timeline({
               onSwipeRemoveConfirm={swipeRemoveConfirmHandler}
               onSwipeRemoveCancel={onSwipeRemoveCancel === undefined ? undefined : handleSwipeRemoveCancel}
               swipeRemoveArmed={swipeRemoveArmedHandle === message.handle}
-              onRegenerate={message.handle === regenerateHandle ? regenerateHandler : undefined}
+              onRegenerate={regenerateOffers?.(message, index) === true ? regenerateHandler : undefined}
               onOpeningVariant={openingVariantHandler}
               onActFromHere={actFromHereHandler}
               onActRewind={actRewindHandler}

@@ -191,3 +191,71 @@ test.describe("a message mutation the Host refuses is said out loud", () => {
     });
   }
 });
+
+/**
+ * The regenerate's own refusal, which needs a transcript the shared fixture above cannot be: the press
+ * has to land on a reply that is NOT the tail. Regenerate is the pager's twin at every companion row a
+ * player line stands before, so a historical reply offers it - and the one way that press is refused is
+ * that the line it answered was deleted out of the transcript above it. The sentence has to say what is
+ * left to do, because "could not regenerate" leaves the player with a dead control and no reason.
+ */
+test("a historical reply whose own line is gone says what is left to do", async ({ page }) => {
+  const firstPlayer = messageHandle("Q");
+  const firstReply = messageHandle("S");
+  const secondPlayer = messageHandle("T");
+  const secondReply = messageHandle("U");
+  const longer = {
+    ...root,
+    chat: {
+      ...chat,
+      chat: {
+        ...chat.chat,
+        transcript: [
+          { handle: greetings, role: "companion", text: "An opening greet.", locale: "und", order: 0, revision: 1 },
+          { handle: firstPlayer, role: "player", text: "Where are we?", locale: "und", order: 1, revision: 1 },
+          { handle: firstReply, role: "companion", text: "On the pier.", locale: "und", order: 2, revision: 1 },
+          { handle: secondPlayer, role: "player", text: "And then?", locale: "und", order: 3, revision: 1 },
+          { handle: secondReply, role: "companion", text: "Out to the point.", locale: "und", order: 4, revision: 1 },
+        ],
+      },
+    },
+  };
+  await page.route("**/api/composed-reference-game/v1/bootstrap", (route) => route.fulfill(jsonOk(longer)));
+  await page.route("**/api/composed-reference-game/v1/state", (route) => route.fulfill(jsonOk(longer)));
+  await page.route("**/api/tavern/v1/draft", (route) => route.fulfill(jsonOk({ apiVersion: 1, revision: 0, text: null })));
+  await page.route("**/api/tavern/v1/messages/regenerate", (route) =>
+    route.fulfill({
+      status: 409,
+      contentType: "application/json",
+      body: JSON.stringify({
+        type: "about:blank",
+        title: "The command was refused",
+        status: 409,
+        code: "chat_regenerate_anchor_unavailable",
+        requestId: handle,
+        retryable: false,
+      }),
+    }),
+  );
+  await page.goto(`/#profile=composed-reference-game&boot=${token}`);
+  const surface = page.getByTestId("chat-surface");
+  await expect(surface).toBeVisible();
+
+  // The historical reply really carries the control: this press is a control a player is offered, not a
+  // shape the test reached around the surface for.
+  await row(page, firstReply).getByRole("button", { name: "Regenerate" }).click();
+
+  const notice = surface.locator(".reference-turn-notice");
+  await expect(notice).toHaveCount(1);
+  const said = (await notice.innerText()).replace(/\s+/gu, " ").trim();
+  console.log(`[message-mutation-refusal/regenerateAnchor] ${JSON.stringify(said)}`);
+  await expect(notice).toContainText(
+    "The message it answered is no longer in the conversation, so there is nothing to ask again. Write a new line to carry on, or delete this reply.",
+  );
+  await expect(notice).not.toContainText("chat_regenerate_anchor_unavailable");
+  // And the refusal did not become the page: five rows, still readable, in the order the Host holds them.
+  await expect(page.locator(".problem-view")).toHaveCount(0);
+  await expect(surface.locator(".message-list > li")).toHaveCount(5);
+  await expect(row(page, firstReply)).toContainText("On the pier.");
+  await expect(row(page, secondReply)).toContainText("Out to the point.");
+});

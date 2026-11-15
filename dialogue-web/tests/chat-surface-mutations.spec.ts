@@ -207,13 +207,20 @@ test("renders the busy state, not just the busy attribute", async ({ page }) => 
 /**
  * The regenerate affordance's own placement.
  *
- * The failure each direction catches: an opening (or any earlier row) carrying a
- * control whose click appends a *new* tail turn - on the opening the literal
- * "\u8bf7\u7ee7\u7eed", on a middle reply a pair answering an old prompt, attached to
- * the bottom of a conversation that never asked for it - and, at the other end, a
- * player left with no way forward at all after a turn that produced no reply.
+ * Regenerate is the swipe's presentation twin applied to the line she answered: it re-asks one player
+ * line and re-writes ONE reply at that reply's own position (`commit_variant` appends a variant to that
+ * row and rewrites that row only), which the product records as one presentation
+ * (`design/tasks/active/frontend-functional-alignment-inventory.md`: "重新生成 | 同 swipe(表现层)"). So it
+ * is offered wherever the pager is: on every companion row a player line stands before.
+ *
+ * The failure each direction catches: an opening (or a reply with no player line above it) carrying a
+ * control whose click would append a NEW tail turn - on the opening the literal "\u8bf7\u7ee7\u7eed", on a
+ * middle reply an unrelated pair attached to the bottom of a conversation that never asked for it, which
+ * is what this control really did while it was a plain new turn - and, at the other end, a player left
+ * with no way forward at all after a turn that produced no reply, or with a historical reply that could
+ * only be re-rolled by rewinding it away.
  */
-test("offers regeneration on the transcript's last companion row, and nowhere else", async ({ page }) => {
+test("offers regeneration on every companion row a player line stands before", async ({ page }) => {
   await openProbe(page);
   const offered = async (): Promise<string[]> =>
     await page.evaluate(() =>
@@ -222,20 +229,28 @@ test("offers regeneration on the transcript's last companion row, and nowhere el
         .map((row) => row.getAttribute("data-handle") ?? ""),
     );
 
+  // The probe's model updates are React renders, so every reading here polls: a query that ran one
+  // commit early would read the PREVIOUS shape's answer and call it the new shape's.
+  const offeredIs = async (expected: readonly string[], why: string): Promise<void> => {
+    await expect.poll(offered, { message: why }).toEqual([...expected]);
+  };
+
   // A chat that opened on its greeting: the opening is the whole transcript, and
   // there is no player turn for the control to repeat. It stays that way once the
   // turn has settled - the greeting is not a line anybody can be answered for.
   await page.evaluate(() => window.chatProbe.setConversation([
     { role: "companion", text: "The morning light comes over the ridge." },
   ]));
-  expect(await offered()).toEqual([]);
+  await offeredIs([], "a settled greeting carries no control either");
   await page.evaluate(() => window.chatProbe.setTurnInFlight(false));
-  expect(await offered(), "a settled greeting carries no control either").toEqual([]);
+  // The shape is awaited, so "nothing is offered" cannot be the previous shape's answer.
+  await expect(page.locator("li[data-handle]")).toHaveCount(1);
+  await offeredIs([], "a settled greeting carries no control either");
 
-  // A settled turn: exactly the companion row at the tail carries it.
+  // A settled turn: the companion row at the tail carries it.
   await page.evaluate(() => window.chatProbe.setTurnInFlight(true));
   await page.evaluate((entries) => window.chatProbe.setConversation(entries), CONVERSATION);
-  expect(await offered()).toEqual(["h1"]);
+  await offeredIs(["h1"], "the settled tail reply is a target");
 
   // A turn in flight: the transcript ends on the player's own line, and nothing
   // is offered - the previous reply's control would be a second, refused command,
@@ -245,26 +260,40 @@ test("offers regeneration on the transcript's last companion row, and nowhere el
     { role: "companion", text: "A varianted reply." },
     { role: "player", text: "And then?" },
   ]));
-  expect(await offered()).toEqual([]);
+  await expect(page.locator("li[data-handle]")).toHaveCount(3);
+  await offeredIs([], "a live turn is not a target");
 
-  // A middle reply never carries it, however many turns follow.
+  // A MIDDLE reply carries it too, once nothing is in flight: re-asking it re-writes that one reply in
+  // place and leaves the exchange after it exactly where it is. Both rows offer it, and the press names
+  // the row it belongs to rather than the transcript's tail.
+  await page.evaluate(() => window.chatProbe.setTurnInFlight(false));
+  await page.evaluate(() => window.chatProbe.resetRegenerateCalls());
   await page.evaluate(() => window.chatProbe.setConversation([
     { role: "player", text: "Where are we?" },
     { role: "companion", text: "A first reply." },
     { role: "player", text: "And then?" },
     { role: "companion", text: "A second reply." },
   ]));
-  expect(await offered()).toEqual(["h3"]);
+  await offeredIs(["h1", "h3"], "every reply with a player line before it is a target");
+  await page.locator('li[data-handle="h1"] .regenerate-btn').click();
+  expect(await page.evaluate(() => window.chatProbe.regenerateCalls())).toEqual(["h1"]);
+
+  // While a turn runs, a historical row waits: the Host refuses a second turn, so a control there could
+  // only ever be refused. The settled tail is unaffected by the fact (a transcript that ends on her reply
+  // has no turn in flight in the first place).
+  await page.evaluate(() => window.chatProbe.setTurnInFlight(true));
+  await offeredIs(["h3"], "a historical row waits for the turn to settle");
+  await page.evaluate(() => window.chatProbe.setTurnInFlight(false));
 
   // A transcript that ends on her reply with no player row anywhere - the shape a
-  // deleted player line leaves - is refused by the Host for want of a turn to
-  // re-ask (`parentPlayerMessage === undefined`), so the surface offers nothing.
-  // The old rule counted rows (`transcript.length > 1`), which this shape satisfies.
+  // deleted player line leaves - is refused by the Host for want of a line to
+  // re-ask (`chat_regenerate_anchor_unavailable`), so the surface offers nothing.
   await page.evaluate(() => window.chatProbe.setConversation([
     { role: "companion", text: "An opening greet." },
     { role: "companion", text: "A reply with no player line before it." },
   ]));
-  expect(await offered()).toEqual([]);
+  await expect(page.locator("li[data-handle]")).toHaveCount(2);
+  await offeredIs([], "a reply with no player line above it carries nothing");
 });
 
 /**
@@ -319,6 +348,9 @@ test("a turn that settled without a reply offers regeneration on the player's ow
       { role: "companion", text: "On the pier." },
     ]),
   );
+  // The rerender the probe schedules is a React update, so the third row is awaited rather than assumed:
+  // a query that ran against the two-row DOM would read the previous shape's answer.
+  await expect(page.locator("li[data-handle]")).toHaveCount(3);
   expect(await offered()).toEqual(["h2"]);
 });
 
