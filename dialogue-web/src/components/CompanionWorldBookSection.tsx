@@ -39,15 +39,16 @@ type CompanionWorldBookView =
 type CompanionWorldBookRead = CompanionWorldBookView;
 
 /**
- * One entry's own fields, as the editor holds them: every field the published entry carries, with the
- * trigger words as the ONE string the player types them into.
+ * One entry's own fields, as the editor holds them: every field the published entry carries, with each
+ * trigger-word list as the ONE string the player types it into.
  *
  * Derived from the wire type rather than listed. A hand-written row is a row that silently drops
  * whatever the contract grows - spelled out by hand, the entry lost `enabled` once already - and the
  * derivation is what makes the next declared field this editor's problem instead of a silent absence
  * from every save it makes.
  */
-type CompanionWorldBookEntryFields = Omit<CompanionWorldBookEntryV1, "keys"> & Readonly<{ keys: string }>;
+type CompanionWorldBookEntryFields = Omit<CompanionWorldBookEntryV1, "keys" | "secondaryKeys"> &
+  Readonly<{ keys: string; secondaryKeys: string }>;
 
 /**
  * One entry being edited: its contract fields, plus the row's own identity.
@@ -92,6 +93,7 @@ function toCompanionWorldBookEntryDraft(entry: CompanionWorldBookEntryV1): Compa
     ...entry,
     rowId: `companion-world-book-row-${nextCompanionWorldBookRowId}`,
     keys: entry.keys.join(", "),
+    secondaryKeys: (entry.secondaryKeys ?? []).join(", "),
   };
 }
 
@@ -104,6 +106,10 @@ function toCompanionWorldBookEntryDraft(entry: CompanionWorldBookEntryV1): Compa
 const NEW_COMPANION_WORLD_BOOK_ENTRY = {
   title: "",
   keys: "",
+  // A new row has no second condition and declares no mode: `undefined` is how the choice says
+  // "not set", and the wire carries it as an absent field rather than as a default nobody chose.
+  secondaryKeys: "",
+  selectiveLogic: undefined,
   constant: false,
   enabled: true,
   content: "",
@@ -115,15 +121,25 @@ function newCompanionWorldBookEntryDraft(): CompanionWorldBookEntryDraft {
 }
 
 /**
- * One row as the Host takes it: the entry's own fields, with her trigger words parsed back out of the
- * one field she typed them into.
+ * One row as the Host takes it: the entry's own fields, with her trigger words and her second condition
+ * parsed back out of the one field she typed each into.
  *
  * `rowId` is dropped here and nowhere else, because this is the boundary it must not cross: the
  * published command is a strict object, and a key it does not declare is refused rather than stored.
+ * The two optional facts are omitted rather than sent as `undefined` for the same reason - `"key" in
+ * value` is what the Host and this app's own command validator ask, and an absent key is how the
+ * durable book spells "this entry has no second condition".
  */
 function toCompanionWorldBookEntry(entry: CompanionWorldBookEntryDraft): CompanionWorldBookEntryV1 {
-  const { rowId, keys, ...fields } = entry;
-  return { ...fields, title: fields.title.trim(), keys: parseTriggerWords(keys) };
+  const { rowId, keys, secondaryKeys, selectiveLogic, ...fields } = entry;
+  const secondCondition = parseTriggerWords(secondaryKeys);
+  return {
+    ...fields,
+    title: fields.title.trim(),
+    keys: parseTriggerWords(keys),
+    ...(secondCondition.length === 0 ? {} : { secondaryKeys: secondCondition }),
+    ...(selectiveLogic === undefined ? {} : { selectiveLogic }),
+  };
 }
 
 /**
@@ -138,6 +154,36 @@ function toCompanionWorldBookEntry(entry: CompanionWorldBookEntryDraft): Compani
  */
 function companionWorldBookReadFailure(error: unknown): "failed" | "unreadable" {
   return error instanceof TavernProtocolError ? "unreadable" : "failed";
+}
+
+/**
+ * The choice's own value back into the contract's: `""` is "not set", and the wire states that by
+ * carrying no field at all rather than by naming the default the selector would apply anyway.
+ */
+function selectiveLogicOf(value: string): 0 | 1 | 2 | 3 | undefined {
+  return value === "0" ? 0 : value === "1" ? 1 : value === "2" ? 2 : value === "3" ? 3 : undefined;
+}
+
+/**
+ * The player's words for one mode, for the read-only row.
+ *
+ * The same four sentences the editor's choice offers, so a row and the control that wrote it cannot
+ * describe the same mode differently. An entry that declares no mode reads as "not set" - which is
+ * what it is - while the editor's hint says what the selector then applies.
+ */
+function selectiveLogicLabel(labels: CharacterLabels, logic: 0 | 1 | 2 | 3 | undefined): string {
+  switch (logic) {
+    case 0:
+      return labels.worldBookEntrySelectiveLogicAndAny;
+    case 1:
+      return labels.worldBookEntrySelectiveLogicNotAll;
+    case 2:
+      return labels.worldBookEntrySelectiveLogicNotAny;
+    case 3:
+      return labels.worldBookEntrySelectiveLogicAndAll;
+    default:
+      return labels.worldBookEntrySelectiveLogicNone;
+  }
 }
 
 /**
@@ -414,6 +460,18 @@ export function CompanionWorldBookSection({
                         entry.keys.join(labels.companionWorldBookKeySeparator),
                       )}
                 </p>
+                {/* The entry's other half of its firing rule: the words that only narrow it once a
+                    trigger word matched, and the mode that combines them. Rendered whenever the
+                    entry declares them, because a player who can edit a rule has to be able to
+                    read it - and an entry with no second condition says nothing here rather than
+                    drawing an empty line. */}
+                {entry.secondaryKeys === undefined || entry.secondaryKeys.length === 0 ? null : (
+                  <p data-companion-world-book-entry-second-condition>
+                    {labels.companionWorldBookSecondCondition
+                      .replace("{{keys}}", entry.secondaryKeys.join(labels.companionWorldBookKeySeparator))
+                      .replace("{{logic}}", selectiveLogicLabel(labels, entry.selectiveLogic))}
+                  </p>
+                )}
                 {/* A switched-off entry is still hers and still listed; saying so is the whole
                     difference between an entry she parked and one the book lost. */}
                 {!entry.enabled && <p data-companion-world-book-entry-disabled>{labels.companionWorldBookDisabled}</p>}
@@ -545,6 +603,39 @@ function CompanionWorldBookEditor({
               below, where it read as that switch's caption while the field it describes sat two
               controls above. */}
           <p className="management-settings-hint">{labels.companionWorldBookEntryKeysHint}</p>
+          {/* The other half of the same rule, and the half this surface could not state at all
+              until now: words that only narrow the entry once one of the words above matched. The
+              Host's own selector applies them through the mode chosen below them, so both controls
+              write straight into what decides whether the entry fires. */}
+          <label className="management-settings-label" htmlFor={`companion-world-book-entry-${index}-secondary-keys`}>
+            {labels.worldBookEntrySecondaryKeys}
+          </label>
+          <input
+            id={`companion-world-book-entry-${index}-secondary-keys`}
+            className="form-input"
+            type="text"
+            data-companion-world-book-entry-secondary-keys
+            value={entry.secondaryKeys}
+            onChange={(event) => updateEntry(index, { ...entry, secondaryKeys: event.target.value })}
+          />
+          <p className="management-settings-hint">{labels.worldBookEntrySecondaryKeysHint}</p>
+          <label className="management-settings-label" htmlFor={`companion-world-book-entry-${index}-selective-logic`}>
+            {labels.worldBookEntrySelectiveLogic}
+          </label>
+          <select
+            id={`companion-world-book-entry-${index}-selective-logic`}
+            className="form-select"
+            data-companion-world-book-entry-selective-logic
+            value={entry.selectiveLogic === undefined ? "" : String(entry.selectiveLogic)}
+            onChange={(event) => updateEntry(index, { ...entry, selectiveLogic: selectiveLogicOf(event.target.value) })}
+          >
+            <option value="">{labels.worldBookEntrySelectiveLogicNone}</option>
+            <option value="0">{labels.worldBookEntrySelectiveLogicAndAny}</option>
+            <option value="1">{labels.worldBookEntrySelectiveLogicNotAll}</option>
+            <option value="2">{labels.worldBookEntrySelectiveLogicNotAny}</option>
+            <option value="3">{labels.worldBookEntrySelectiveLogicAndAll}</option>
+          </select>
+          <p className="management-settings-hint">{labels.worldBookEntrySelectiveLogicHint}</p>
           {/* The one fact about an entry that is a switch rather than a string, beside
               the trigger words it overrides: an entry marked always with her is carried
               whether or not the player's words match, so a player who writes her own

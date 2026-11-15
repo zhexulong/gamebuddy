@@ -341,6 +341,14 @@ export type CharacterLabels = Readonly<{
   companionWorldBookReplyUnreadable: string;
   companionWorldBookCount: string;
   companionWorldBookTriggerWords: string;
+  /**
+   * The entry's second condition, in the read-only row: the words that only narrow it once a trigger
+   * word matched ({{keys}}), and the mode that combines them ({{logic}}, in the editor's own four
+   * sentences - `worldBookEntrySelectiveLogicNone` when the entry declares no mode). One sentence with
+   * both slots, because the brackets around the mode are punctuation the locale owns, not the
+   * component.
+   */
+  companionWorldBookSecondCondition: string;
   companionWorldBookKeySeparator: string;
   companionWorldBookAlwaysOn: string;
   /** Said of an entry the player switched off: it is still in her book and reaches nothing. */
@@ -692,6 +700,7 @@ const en: CharacterLabels = Object.freeze({
     "GameBuddy could not make sense of the Host's answer about her own world book. Reading it again is unlikely to help, because this build does not understand that reply.",
   companionWorldBookCount: "Entries in her own book: {{count}}",
   companionWorldBookTriggerWords: "Trigger words: {{keys}}",
+  companionWorldBookSecondCondition: "Also needs: {{keys}} ({{logic}})",
   companionWorldBookKeySeparator: ", ",
   companionWorldBookAlwaysOn: "Always with her",
   companionWorldBookDisabled: "Switched off",
@@ -1000,6 +1009,7 @@ const zh: CharacterLabels = Object.freeze({
     "GameBuddy 读不懂 Host 关于她自己的世界书给出的回复。再读一次大概也没用，因为这一版 GameBuddy 认不出这种回复。",
   companionWorldBookCount: "她自己的世界书里有 {{count}} 条词条",
   companionWorldBookTriggerWords: "触发词：{{keys}}",
+  companionWorldBookSecondCondition: "附加条件：{{keys}}（{{logic}}）",
   companionWorldBookKeySeparator: "、",
   companionWorldBookAlwaysOn: "始终随行",
   companionWorldBookDisabled: "已停用",

@@ -1,6 +1,6 @@
 import { expect, test } from "./frontend-coverage";
 import { characterLabels } from "../src/components/character-domain-labels";
-import { COMPANION_WORLD_BOOK_ENTRY_KEYS } from "../src/management-pipeline-api";
+import { COMPANION_WORLD_BOOK_ENTRY_KEYS, COMPANION_WORLD_BOOK_ENTRY_OPTIONAL_KEYS } from "../src/management-pipeline-api";
 import { hostWorldBookReply } from "./host-world-book-reply";
 
 /**
@@ -758,7 +758,7 @@ test("the editor fits its column at 1440x900 and at 400x800, and removing a row 
     await expect(editor).toBeVisible();
     return await editor.evaluate((node) => {
       const rect = node.getBoundingClientRect();
-      const inputs = [...node.querySelectorAll<HTMLElement>("input, textarea")].map((field) =>
+      const inputs = [...node.querySelectorAll<HTMLElement>("input, textarea, select")].map((field) =>
         Math.round(field.getBoundingClientRect().width),
       );
       return { width: Math.round(rect.width), right: Math.round(rect.right), fields: inputs.length, widest: Math.max(...inputs) };
@@ -774,12 +774,14 @@ test("the editor fits its column at 1440x900 and at 400x800, and removing a row 
   ] as const) {
     expect(measured.width, `${label}: the editor has a width`).toBeGreaterThan(0);
     expect(measured.right, `${label}: the editor stays inside its viewport`).toBeLessThanOrEqual(viewport);
-    // The editor gives each entry five fields - a title, the trigger words, the always-with-her switch,
-    // the switch that decides whether the entry takes part at all, and the text - so its field count is
-    // the fixture's entry count times five. `12` pinned that product at the four fields an entry had
-    // before `efbff381` added its own on/off switch, so a fixture of a different size would have
-    // measured a different editor and read as a layout defect.
-    expect(measured.fields, `${label}: five fields per entry`).toBe(entries.length * 5);
+    // The editor gives each entry seven fields - a title, the trigger words, the second condition words,
+    // the mode those are combined by, the always-with-her switch, the switch that decides whether the
+    // entry takes part at all, and the text - so its field count is the fixture's entry count times
+    // seven. `12` pinned that product at the four fields an entry had before `efbff381` added its own
+    // on/off switch, and `15` at the five it had before the card's second condition became editable,
+    // so a fixture of a different size would have measured a different editor and read as a layout
+    // defect.
+    expect(measured.fields, `${label}: seven fields per entry`).toBe(entries.length * 7);
     expect(measured.widest, `${label}: no field is collapsed to nothing`).toBeGreaterThan(40);
   }
 
@@ -1059,6 +1061,10 @@ test("a save carries every declared entry field and changes nothing the player d
       {
         title: "温室",
         keys: ["温室", "玻璃房"],
+        // The card's second condition, which the player is NOT editing here: it has to ride back
+        // with the row untouched, and this is the fixture that makes the key set below non-vacuous.
+        secondaryKeys: ["mood:quiet"],
+        selectiveLogic: 1,
         constant: false,
         enabled: true,
         content: "温室的玻璃是她去年冬天换的。",
@@ -1105,10 +1111,15 @@ test("a save carries every declared entry field and changes nothing the player d
   expect(body.expectedRevision, "the save CASes on the revision the read carried").toBe(11);
   expect(body.entries).toHaveLength(served.entries.length);
 
-  // Every entry the save sends carries exactly the contract's declared keys …
-  for (const entry of body.entries)
+  // Every entry the save sends carries exactly the contract's declared keys - the required ones,
+  // plus the second condition the entry it came from carried, which is what makes this population
+  // derive rather than name a hand-written list.
+  for (const [index, entry] of body.entries.entries())
     expect(Object.keys(entry).sort(), "the save packs every declared field and invents none").toEqual(
-      [...COMPANION_WORLD_BOOK_ENTRY_KEYS].sort(),
+      [
+        ...COMPANION_WORLD_BOOK_ENTRY_KEYS,
+        ...COMPANION_WORLD_BOOK_ENTRY_OPTIONAL_KEYS.filter((key) => key in served.entries[index]!),
+      ].sort(),
     );
 
   // … the entry she did not touch comes back byte-identical …
@@ -1119,4 +1130,107 @@ test("a save carries every declared entry field and changes nothing the player d
 
   // The list re-renders from the Host's reply, which is the same list: the round trip closes.
   await expect(editor).toHaveCount(0);
+});
+
+/**
+ * The card's second condition, on the surface and through the wire: read, edited, saved, drawn back.
+ *
+ * `secondaryKeys`/`selectiveLogic` are the half of an entry's firing rule this surface could not
+ * state at all, and the Host's own write path re-attached the card's copy over every save because of
+ * it. Once the panel can state them, that carry is a second authority over one fact - so the whole
+ * path is asserted here as one journey: what the row READS, what the editor OPENS ON, what the save
+ * SENDS, and what the row reads after the Host's reply.
+ *
+ * What a browser journey cannot assert is which entry a turn selects afterwards - the selector runs
+ * in the Host, over the durable book. `companion-world-book-service.player-gate.test.ts` proves that
+ * half on the real selector, from the entry the save wrote.
+ */
+test("the second condition a card imported is read, opened, edited, saved and drawn back", async ({ page }) => {
+  const book = {
+    apiVersion: 1,
+    present: true,
+    revision: 6,
+    entries: [
+      {
+        title: "温室",
+        keys: ["温室"],
+        secondaryKeys: ["mood:quiet"],
+        selectiveLogic: 1,
+        constant: false,
+        enabled: true,
+        content: "温室的玻璃是她去年冬天换的。",
+      },
+      { title: "洒水器", keys: ["洒水器"], constant: false, enabled: true, content: "洒水器是她修好的。" },
+    ],
+  };
+  await stubCharacters(page, book);
+  const sent: unknown[] = [];
+  await page.route(`**/api/tavern/v1/companions/${handle}/worldbook`, async (route) => {
+    if (route.request().method() !== "PUT") {
+      await route.fulfill(jsonOk(hostWorldBookReply(book)));
+      return;
+    }
+    const body = JSON.parse(route.request().postData() ?? "null") as {
+      entries: readonly Record<string, unknown>[];
+    };
+    sent.push(body.entries);
+    // The Host's own reply: the list it kept, at the next revision.
+    await route.fulfill(jsonOk(hostWorldBookReply({ ...book, revision: 7, entries: body.entries })));
+  });
+  await page.addInitScript(() => localStorage.setItem("gamebuddy.tavern.ui-locale", "zh-CN"));
+  const surface = await openCharacters(page, "角色");
+
+  const block = surface.locator("[data-companion-world-book]");
+  await block.locator("[data-companion-world-book-disclosure] > summary").click();
+  const rows = block.locator("[data-companion-world-book-entry]");
+  // The rule the card authored is READABLE before it is editable: the words and the mode that
+  // combines them, in the same sentences the editor's choice offers.
+  await expect(rows.first().locator("[data-companion-world-book-entry-second-condition]")).toHaveText(
+    "附加条件：mood:quiet（并非每个词都出现）",
+  );
+  // …and an entry with no second condition says nothing rather than drawing an empty line.
+  await expect(rows.nth(1).locator("[data-companion-world-book-entry-second-condition]")).toHaveCount(0);
+
+  await block.locator("[data-companion-world-book-edit]").click();
+  const editor = block.locator("[data-companion-world-book-draft]");
+  await expect(editor).toBeVisible();
+  // The editor opens on the card's own rule, not on two empty controls: a save from empty controls
+  // would be the act that erased it.
+  const secondKeys = editor.locator("[data-companion-world-book-entry-secondary-keys]").first();
+  const logic = editor.locator("[data-companion-world-book-entry-selective-logic]").first();
+  await expect(secondKeys).toHaveValue("mood:quiet");
+  await expect(logic).toHaveValue("1");
+  // Both are the product's own pointer targets: the field paints a line box, and the floor the
+  // stylesheet declares (`--touch-target-min`) is what makes it pressable.
+  for (const [name, control] of [
+    ["the second-condition field", secondKeys],
+    ["the mode choice", logic],
+  ] as const) {
+    const box = await control.boundingBox();
+    expect(box, `${name} has a box`).not.toBeNull();
+    expect(Math.round(box!.height), `${name} is ${box!.height}px tall`).toBeGreaterThanOrEqual(44);
+  }
+
+  // The player's edit: other words, and the opposite mode over them.
+  await secondKeys.fill("mood:loud");
+  await logic.selectOption("3");
+  await editor.locator("[data-companion-world-book-save]").click();
+  await expect(block.locator("[data-companion-world-book-notice]")).toHaveText("已保存。");
+
+  // The save SENT the player's rule, on the revision the editor opened on, and the row she did not
+  // touch sent no second condition at all rather than an empty one.
+  expect(sent).toHaveLength(1);
+  const [edited, untouched] = sent[0] as readonly Record<string, unknown>[];
+  expect(edited!.secondaryKeys).toEqual(["mood:loud"]);
+  expect(edited!.selectiveLogic).toBe(3);
+  expect(Object.hasOwn(untouched!, "secondaryKeys")).toBe(false);
+  expect(Object.hasOwn(untouched!, "selectiveLogic")).toBe(false);
+
+  // …and the row is drawn from the Host's own reply, so the list the player reads back is the rule
+  // she just wrote.
+  await block.locator("[data-companion-world-book-disclosure] > summary").click();
+  const reread = block.locator("[data-companion-world-book-entry]");
+  await expect(reread.first().locator("[data-companion-world-book-entry-second-condition]")).toHaveText(
+    "附加条件：mood:loud（每个词都出现）",
+  );
 });

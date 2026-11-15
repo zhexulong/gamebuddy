@@ -372,6 +372,22 @@ export type CompanionWorldBookEntryV1 = Readonly<{
    * the player cannot deliberately reach.
    */
   keys: readonly string[];
+  /**
+   * The card's SECOND trigger words (`character_book.entries[].secondary_keys`): a condition that
+   * applies only once one of `keys` matched, combined by `selectiveLogic` below.
+   *
+   * Absent means the entry has no second condition, which is exactly what it means in the durable
+   * book (`worldbook.ts`) and in the import: `worldbook.ts` refuses an empty list for the same
+   * reason it refuses an empty `keys`, so "none" is a field that is not there - and an edit that
+   * removes the last word states that by sending no field, never `[]`.
+   */
+  secondaryKeys?: readonly string[];
+  /**
+   * SillyTavern's own mode for those words: 0 AND ANY, 1 NOT ALL, 2 NOT ANY, 3 AND ALL. Absent
+   * means the entry declares none, and the selector then applies its documented default (0) - a
+   * distinct fact from a card that declared 0 on purpose, so a save neither mints nor drops one.
+   */
+  selectiveLogic?: 0 | 1 | 2 | 3;
   /** Always-on background, carried whatever is said, so it has no trigger words. */
   constant: boolean;
   /**
@@ -2253,8 +2269,20 @@ const COMPANION_WORLD_BOOK_KEYS = ["apiVersion", "present", "revision", "entries
  * draft from the entry TYPE, and the journey beside it asserts that the body it sends carries exactly
  * these keys - a hand-written copy of this list in either place could disagree with the contract in
  * silence, which is how `enabled` was once dropped from a save.
+ *
+ * It stays an array literal because `contract-mirror-keys-gate.test.mjs` reads it at the source level
+ * and derives the contract's own population from the TypeBox schemas: a field the entry schema grows
+ * without this list growing with it is a failing gate, not a silent `unreadable` on every read.
  */
 export const COMPANION_WORLD_BOOK_ENTRY_KEYS = ["title", "keys", "constant", "enabled", "content"] as const;
+/**
+ * The two ADDITIVE OPTIONAL facts an entry may carry: the card's second condition words and the mode
+ * they are combined by. Any subset is legal, and an entry with neither has no second condition.
+ *
+ * Exported beside the required list so a journey can derive what a save must contain instead of
+ * spelling the entry a second time: a hand-written copy is how `enabled` was once dropped.
+ */
+export const COMPANION_WORLD_BOOK_ENTRY_OPTIONAL_KEYS = ["secondaryKeys", "selectiveLogic"] as const;
 /**
  * The companion's own world book, read once per mount. The browser may not widen
  * what the Host bounded: an entry's title is `worldbook.ts`'s own title bound, its
@@ -2275,9 +2303,17 @@ function isCompanionWorldBook(value: unknown): value is CompanionWorldBookV1 {
 }
 
 function isCompanionWorldBookEntry(value: unknown): value is CompanionWorldBookEntryV1 {
+  if (!isRecord(value)) return false;
+  const keys = Object.keys(value);
+  if (!COMPANION_WORLD_BOOK_ENTRY_KEYS.every((key) => keys.includes(key))) return false;
+  // The two optional facts, any subset: absence means the entry has no second condition.
+  if (
+    keys.length !==
+    COMPANION_WORLD_BOOK_ENTRY_KEYS.length +
+      COMPANION_WORLD_BOOK_ENTRY_OPTIONAL_KEYS.filter((key) => key in value).length
+  )
+    return false;
   return (
-    isRecord(value) &&
-    hasExactKeys(value, COMPANION_WORLD_BOOK_ENTRY_KEYS) &&
     isLengthBoundedString(value.title, 1, 256) &&
     typeof value.constant === "boolean" &&
     typeof value.enabled === "boolean" &&
@@ -2285,7 +2321,15 @@ function isCompanionWorldBookEntry(value: unknown): value is CompanionWorldBookE
     isLengthBoundedString(value.content, 0, 4_096) &&
     Array.isArray(value.keys) &&
     value.keys.length <= 16 &&
-    value.keys.every((key) => isLengthBoundedString(key, 1, 64))
+    value.keys.every((key) => isLengthBoundedString(key, 1, 64)) &&
+    // Both halves of the card's second condition, bounded the way the Host bounds them: the
+    // selector reads them against the same trigger-key bound as `keys`, so the mirror may not
+    // widen it. An empty list is legal here (the Host stores it as absence, as it does for `keys`).
+    (!("secondaryKeys" in value) ||
+      (Array.isArray(value.secondaryKeys) &&
+        value.secondaryKeys.length <= 16 &&
+        value.secondaryKeys.every((key) => isLengthBoundedString(key, 1, 64)))) &&
+    (!("selectiveLogic" in value) || isWorldInfoSelectiveLogic(value.selectiveLogic))
   );
 }
 
