@@ -1202,6 +1202,39 @@ export function createTavernManagementDialogueWebRequestHandler(
       expiresAtMs: projection.browserSessionExpiresAtMs,
     });
   };
+  /**
+   * The read half of a companion sub-resource mount - the world book, the directive, the example dialogues, the
+   * read-only inspector: a same-origin GET with no body, admitted to the session this mount serves, advertised by
+   * the profile as the exact route the service answers, and read through that service by the opaque handle the
+   * roster projected. `null` is a request this helper has ALREADY answered - 400 for a query or a body, 401 for no
+   * session, 404 for a route the profile does not declare and for a handle that resolves to no record - so the
+   * route returns. What each route does with the record - its own schema, its own projection - stays in the route.
+   */
+  const readCompanionSubResource = async <T>(
+    request: IncomingMessage,
+    url: URL,
+    response: ServerResponse,
+    origin: string,
+    routeId: string,
+    service: Readonly<{ read(handle: string): Promise<T | null> }> | undefined,
+    handle: string,
+  ): Promise<T | null> => {
+    if (url.search !== "" || (await hasRequestBody(request))) {
+      sendProblem(response, 400, "invalid_request");
+      return null;
+    }
+    if (admitRequest(request, origin) === null) {
+      sendProblem(response, 401, "unauthorized");
+      return null;
+    }
+    if (!profile.routeIds.includes(routeId) || service === undefined) {
+      sendProblem(response, 404, "profile_operation_unavailable");
+      return null;
+    }
+    const record = await service.read(handle);
+    if (record === null) sendProblem(response, 404, "companion_not_found");
+    return record;
+  };
   let closed = false;
   let closePromise: Promise<void> | undefined;
   const activeDispatches = new Set<Promise<void>>();
@@ -2038,13 +2071,16 @@ export function createTavernManagementDialogueWebRequestHandler(
           // never name another durable companion identity. A read is a same-origin
           // browser fetch; a rewrite is a CSRF-bound, revision-CASed write.
           if (request.method === "GET") {
-            if (url.search !== "" || (await hasRequestBody(request)))
-              return sendProblem(response, 400, "invalid_request");
-            if (admitRequest(request, origin) === null) return sendProblem(response, 401, "unauthorized");
-            if (!profile.routeIds.includes("companion.worldbook.read") || companionWorldBookService === undefined)
-              return sendProblem(response, 404, "profile_operation_unavailable");
-            const worldBook = await companionWorldBookService.read(worldBookHandle);
-            if (worldBook === null) return sendProblem(response, 404, "companion_not_found");
+            const worldBook = await readCompanionSubResource(
+              request,
+              url,
+              response,
+              origin,
+              "companion.worldbook.read",
+              companionWorldBookService,
+              worldBookHandle,
+            );
+            if (worldBook === null) return;
             if (!TavernBrowserValidatorsV1.CompanionWorldBookV1Schema.Check(worldBook))
               throw new Error("companion_world_book_service_unavailable");
             return sendJson(response, 200, worldBook);
@@ -2082,13 +2118,16 @@ export function createTavernManagementDialogueWebRequestHandler(
           // service as null (404), so browser input can never name a durable companion
           // identity. Nothing is written and no thread binding is consulted - this reads a
           // companion, not a Chat.
-          if (url.search !== "" || (await hasRequestBody(request)))
-            return sendProblem(response, 400, "invalid_request");
-          if (admitRequest(request, origin) === null) return sendProblem(response, 401, "unauthorized");
-          if (!profile.routeIds.includes("companion.profile.read") || companionProfileService === undefined)
-            return sendProblem(response, 404, "profile_operation_unavailable");
-          const companionProfile = await companionProfileService.read(profileHandle);
-          if (companionProfile === null) return sendProblem(response, 404, "companion_not_found");
+          const companionProfile = await readCompanionSubResource(
+            request,
+            url,
+            response,
+            origin,
+            "companion.profile.read",
+            companionProfileService,
+            profileHandle,
+          );
+          if (companionProfile === null) return;
           if (!TavernBrowserValidatorsV1.CompanionProfileV1Schema.Check(companionProfile))
             throw new Error("companion_profile_service_unavailable");
           return sendJson(response, 200, companionProfile);
@@ -2281,13 +2320,16 @@ export function createTavernManagementDialogueWebRequestHandler(
           // another durable companion identity. A read is a same-origin browser
           // fetch; an edit or clear is a CSRF-bound, revision-CASed write.
           if (request.method === "GET") {
-            if (url.search !== "" || (await hasRequestBody(request)))
-              return sendProblem(response, 400, "invalid_request");
-            if (admitRequest(request, origin) === null) return sendProblem(response, 401, "unauthorized");
-            if (!profile.routeIds.includes("character.voice.read") || companionVoiceService === undefined)
-              return sendProblem(response, 404, "profile_operation_unavailable");
-            const voice = await companionVoiceService.read(voiceHandle);
-            if (voice === null) return sendProblem(response, 404, "companion_not_found");
+            const voice = await readCompanionSubResource(
+              request,
+              url,
+              response,
+              origin,
+              "character.voice.read",
+              companionVoiceService,
+              voiceHandle,
+            );
+            if (voice === null) return;
             const result: CompanionVoiceV1 = Object.freeze({
               apiVersion: TAVERN_BROWSER_API_VERSION,
               profileRevision: voice.profileRevision,
@@ -2338,13 +2380,16 @@ export function createTavernManagementDialogueWebRequestHandler(
           // (404), a read is a same-origin browser fetch, and a save is a CSRF-bound write against
           // the profile revision the browser read.
           if (request.method === "GET") {
-            if (url.search !== "" || (await hasRequestBody(request)))
-              return sendProblem(response, 400, "invalid_request");
-            if (admitRequest(request, origin) === null) return sendProblem(response, 401, "unauthorized");
-            if (!profile.routeIds.includes("character.examples.read") || companionExamplesService === undefined)
-              return sendProblem(response, 404, "profile_operation_unavailable");
-            const examples = await companionExamplesService.read(examplesHandle);
-            if (examples === null) return sendProblem(response, 404, "companion_not_found");
+            const examples = await readCompanionSubResource(
+              request,
+              url,
+              response,
+              origin,
+              "character.examples.read",
+              companionExamplesService,
+              examplesHandle,
+            );
+            if (examples === null) return;
             const result: CompanionExamplesV1 = Object.freeze({
               apiVersion: TAVERN_BROWSER_API_VERSION,
               profileRevision: examples.profileRevision,
