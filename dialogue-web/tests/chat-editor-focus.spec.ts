@@ -1,29 +1,28 @@
 import { expect, test, type Page } from "./frontend-coverage";
 
 /**
- * The message body is the pointer's edit affordance, and the pencil plate is the keyboard's.
+ * The row's edit icon is a real control, the focus never lands on prose, and it comes back to the icon.
  *
- * The owner's ruling of 2026-11-16 is that a message needs no Edit button: pressing the words is what asks
- * to rewrite them. The same ruling first made the BODY the keyboard's way in as well - a tab stop with
- * `aria-keyshortcuts` and a hidden description - and the accessibility gate refused that half the same
- * day, for the reason the ruling had itself given: a body-wide widget role would announce a whole reply
- * as the name of a button, in the one place a reader came to read prose. So the two ways in were
- * separated, and this file is the keyboard's hand:
+ * The owner's decision of 2026-11-16 made an edit explicit: one `<button>` per editable row, at the row's
+ * top-right, above the bubble. It replaced the same day's "pressing the words IS the edit", which cost the
+ * place a reader came to - a plain press on a formatted reply swapped it for a field, so selecting a
+ * sentence, copying a paragraph or reading one all passed through an editor.
  *
  *  1. THE PLATE IS A REAL CONTROL. One `<button>` per editable message, named by `editHint` - so the
  *     reader hears what the press will do instead of meeting a paragraph that has to describe itself -
- *     in the tab order, declaring F2, and PERCEIVABLE while it holds the focus. The plate is revealed on
- *     hover and on `:focus-visible`; a control that is in the tab order and paints nothing while focused
- *     would be the trap this shape trades against, so both halves are read here.
- *  2. THE BODY IS PROSE. It presses (that is the ruling) but it carries no role, no tab stop and no
- *     keyboard claim, and it must stay that way: the day a role lands on it, every reply in the
- *     transcript is announced as a button named after six lines of dialogue.
+ *     in the tab order, declaring F2, a 44 px target, and PERCEIVABLE while it holds the focus. It is
+ *     revealed on hover and on `:focus-visible`; a control that is in the tab order and paints nothing
+ *     while focused would be the trap this shape trades against, so both halves are read here.
+ *  2. THE BODY IS PROSE. It carries no role, no tab stop and no keyboard claim - and no press either: what
+ *     the pointer does over a message is select, so the edit is the icon. It must stay that way: the day a
+ *     role lands on it, every reply in the transcript is announced as a button named after six lines of
+ *     dialogue, and the day a press lands on it, the words stop being freely selectable.
  *  3. ONE STOP PER MESSAGE. Six messages, six edit stops, each named, no duplicates, and no prose stop
  *     anywhere - walked with real Tab presses, because "there is exactly one" is a claim about the tab
  *     ORDER and not about a count in the markup.
  *  4. THE FOCUS COMES BACK TO THE PLATE. Cancel and Escape are pressed FROM the field, which the same
  *     state change unmounts, so this is the half that is easy to forget - and returning it to the body
- *     instead now drops it on `<body>`, because the body is no longer a tab stop.
+ *     instead would drop it on `<body>`, because the body is not a tab stop.
  *
  * Read from `document.activeElement`, never from a flag: what matters is where the browser put the caret.
  * Both sides of the exchange are read, because a keyboard path that works on one side only is the defect
@@ -47,16 +46,17 @@ const SIX = [
 ];
 
 /** The sentence the plate is named by, in the interface's own words. */
-const EDIT_HINT = "Press this message, or Enter or F2, to edit its words.";
+const EDIT_HINT = "Edit this message's words.";
 
 type EditorFocusProbe = {
   setConversation(entries: readonly Readonly<{ role: "player" | "companion"; text: string }>[]): void;
   focusedControl(): {
     tag: string;
     testId: string | null;
+    control: string;
     handle: string | null;
     revealer: boolean;
-    editTarget: boolean;
+    prose: boolean;
   };
   editAffordance(handle: string): {
     tag: string;
@@ -108,8 +108,8 @@ test("the plate is the keyboard's way in, and the body it sits on stays prose", 
     expect(affordance!.tabStop, `${where}: it is in the tab order`).toBe(true);
     expect(affordance!.name, `${where}: named by the sentence that says what pressing it does`).toBe(EDIT_HINT);
     expect(affordance!.keyShortcuts, `${where}: declaring the shortcut a screen reader can announce`).toBe("F2");
-    expect(affordance!.width, `${where}: the plate paints a box`).toBeGreaterThan(0);
-    expect(affordance!.height, `${where}: in both directions`).toBeGreaterThan(0);
+    expect(affordance!.width, `${where}: a 44 px hit area`).toBeGreaterThanOrEqual(44);
+    expect(affordance!.height, `${where}: in both directions`).toBeGreaterThanOrEqual(44);
     // It is revealed by focus and not only by hover: unfocused it is transparent, and the box above is
     // what Playwright and the pointer can still find, so its absence from the screen is a paint fact
     // rather than a hover-only trap.
@@ -134,9 +134,10 @@ test("the plate is the keyboard's way in, and the body it sits on stays prose", 
   expect(await page.evaluate(() => window.chatProbe.focusedControl())).toEqual({
     tag: "textarea",
     testId: "message-edit-field",
+    control: "message-edit-field",
     handle: "h1",
     revealer: false,
-    editTarget: false,
+    prose: false,
   });
 
   // FOUR. Escape closes the field from INSIDE it, and the focus goes back to the plate - the one stop in
@@ -146,10 +147,11 @@ test("the plate is the keyboard's way in, and the body it sits on stays prose", 
   await expect(plate).toBeFocused();
   expect(await page.evaluate(() => window.chatProbe.focusedControl())).toEqual({
     tag: "button",
-    testId: null,
+    testId: "message-edit",
+    control: "message-edit",
     handle: "h1",
     revealer: true,
-    editTarget: false,
+    prose: false,
   });
   // Escape wrote nothing: the row's own words are back.
   await expect(page.locator('li[data-handle="h1"] .message-bubble')).toContainText("Where are we?");
@@ -182,10 +184,11 @@ test("F2 opens it too, Cancel is pressed with the keyboard, and both land the fo
   await expect(plate).toBeFocused();
   expect(await page.evaluate(() => window.chatProbe.focusedControl())).toEqual({
     tag: "button",
-    testId: null,
+    testId: "message-edit",
+    control: "message-edit",
     handle: "h2",
     revealer: true,
-    editTarget: false,
+    prose: false,
   });
   // Cancelling discards the rewrite: the row's words are its own again.
   await expect(page.locator('li[data-handle="h2"] .message-bubble')).toContainText("On the pier.");
@@ -220,11 +223,11 @@ test("a six-message transcript has one edit stop per message, and no stop in the
   // lands on recorded. Six messages can carry a lot of strip controls, hence the generous ceiling - the
   // walk stops as soon as all six plates have been reached.
   await page.evaluate(() => document.body.focus());
-  const walked: { handle: string | null; revealer: boolean; editTarget: boolean }[] = [];
+  const walked: { handle: string | null; revealer: boolean; prose: boolean }[] = [];
   for (let step = 0; step < 160; step += 1) {
     await page.keyboard.press("Tab");
     const focused = await page.evaluate(() => window.chatProbe.focusedControl());
-    walked.push({ handle: focused.handle, revealer: focused.revealer, editTarget: focused.editTarget });
+    walked.push({ handle: focused.handle, revealer: focused.revealer, prose: focused.prose });
     if (walked.filter((stop) => stop.revealer).length === 6) break;
   }
   const editStopsWalked = walked.filter((stop) => stop.revealer).map((stop) => stop.handle);
@@ -236,5 +239,5 @@ test("a six-message transcript has one edit stop per message, and no stop in the
     "h4",
     "h5",
   ]);
-  expect(walked.some((stop) => stop.editTarget), "and it never lands on a message body").toBe(false);
+  expect(walked.some((stop) => stop.prose), "and it never lands on a message body").toBe(false);
 });

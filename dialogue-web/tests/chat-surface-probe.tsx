@@ -4,6 +4,31 @@ function boxOf(element: Element): { width: number; height: number; left: number;
   return { width, height, left, right, top, bottom };
 }
 
+/** Where an element's words actually start and end: its border box shrunk by its own padding. */
+function paddingInset(element: Element): { top: number; right: number; bottom: number; left: number } {
+  const style = getComputedStyle(element);
+  return {
+    top: Number.parseFloat(style.paddingTop),
+    right: Number.parseFloat(style.paddingRight),
+    bottom: Number.parseFloat(style.paddingBottom),
+    left: Number.parseFloat(style.paddingLeft),
+  };
+}
+
+/**
+ * One child of a control strip, named by the handle it carries or by the class that identifies it.
+ *
+ * `action-btn` / `act-btn` are the strip's own shared shapes and name nothing, so the first class that
+ * is not one of them is what the child IS - `regenerate-btn`, `swipe-controls`. A child with a test
+ * handle is named by that, which is how the entries a journey counts stay findable after they move.
+ */
+function stripChildName(child: Element): string {
+  const testId = child.getAttribute("data-testid");
+  if (testId !== null) return testId;
+  const classes = [...child.classList].filter((token) => token !== "action-btn" && token !== "act-btn");
+  return classes[0] ?? child.tagName.toLowerCase();
+}
+
 /**
  * A mounted probe for the chat surface presentation primitives.
  *
@@ -413,14 +438,15 @@ const chatProbe = {
    * the strip it sits in. The size is read from the layout rather than from a class name, because a
    * control under the touch minimum is the defect the journey exists for.
    */
-  deleteControl(handle: string): {
+  async deleteControl(handle: string): Promise<{
     ariaLabel: string | null;
     title: string | null;
     label: string | null;
     width: number;
     height: number;
     stripHeight: number;
-  } | null {
+  } | null> {
+    await this.openOverflow(handle);
     const li = document.querySelector(`li[data-handle="${handle}"]`);
     const button = li?.querySelector('[data-testid="message-delete"]') as HTMLButtonElement | null;
     if (button === null || button === undefined) return null;
@@ -470,16 +496,16 @@ const chatProbe = {
    * The edit affordance as the player meets it - two halves, and neither of them lies (owner ruling,
    * 2026-11-16; the shape was reversed the same day by the accessibility gate).
    *
-   * The PLATE is the keyboard's and the screen reader's way in: a real button, in the tab order, named by
-   * the sentence that says what it does, declaring its shortcut, and perceivable while it holds the
-   * focus. It is hover-and-focus revealed, so `opacity` is read before and after a focus: a control in the
-   * tab order that paints nothing while focused is the trap this shape exists to avoid. The PROSE is what
-   * the pointer presses, and it is read for the opposite reason - it must carry no role, no tab stop and
-   * no keyboard claim, because a body-wide widget role announces a whole reply as a button's name.
+   * The PLATE is the row's one edit control: a real button, in the tab order, named by the sentence that
+   * says what it does, declaring its shortcut, and perceivable while it holds the focus. It is
+   * hover-and-focus revealed, so `opacity` is read before and after a focus: a control in the tab order
+   * that paints nothing while focused is the trap this shape exists to avoid. The PROSE is read for the
+   * opposite reason - it must carry no role, no tab stop and no keyboard claim, and it no longer carries
+   * a press, because the plate is what asks for the editor now.
    *
    * `null` means this row is not one the player may rewrite (a streaming preview, the optimistic echo, a
-   * row with a mutation or a confirmation in flight): the plate is only rendered while the row really is a
-   * press away from the editor, so its absence IS that fact.
+   * row with a mutation or a confirmation in flight): the plate is only rendered while the row really can
+   * be rewritten, so its absence IS that fact.
    */
   editAffordance(handle: string): {
     tag: string;
@@ -497,9 +523,8 @@ const chatProbe = {
     const li = document.querySelector(`li[data-handle="${handle}"]`);
     const plate = li?.querySelector(".message-edit-hint") as HTMLElement | null;
     if (plate === null || plate === undefined) return null;
-    const target = plate.closest(".message-edit-target") as HTMLElement | null;
     const box = plate.getBoundingClientRect();
-    const bubble = li?.querySelector(".message-bubble");
+    const bubble = li?.querySelector<HTMLElement>(".message-bubble") ?? null;
     return {
       tag: plate.tagName.toLowerCase(),
       isButton: plate.tagName === "BUTTON",
@@ -512,9 +537,9 @@ const chatProbe = {
       inStrip: li?.querySelector(".message-actions")?.contains(plate) ?? false,
       bubbleWidth: bubble === null ? 0 : Math.round(bubble.getBoundingClientRect().width),
       prose: {
-        role: target?.getAttribute("role") ?? null,
-        tabStop: target !== null && target.tabIndex >= 0,
-        keyShortcuts: target?.getAttribute("aria-keyshortcuts") ?? null,
+        role: bubble?.getAttribute("role") ?? null,
+        tabStop: bubble !== null && bubble.tabIndex >= 0,
+        keyShortcuts: bubble?.getAttribute("aria-keyshortcuts") ?? null,
       },
     };
   },
@@ -527,14 +552,121 @@ const chatProbe = {
    */
   editStops(): readonly { handle: string | null; name: string | null; tag: string; proseStop: boolean }[] {
     return [...document.querySelectorAll(".message-edit-hint")].map((plate) => {
-      const target = plate.closest(".message-edit-target") as HTMLElement | null;
+      const bubble = plate.closest("[data-handle]")?.querySelector<HTMLElement>(".message-bubble") ?? null;
       return {
         handle: plate.closest("[data-handle]")?.getAttribute("data-handle") ?? null,
         name: plate.getAttribute("aria-label"),
         tag: plate.tagName.toLowerCase(),
-        proseStop: target !== null && target.tabIndex >= 0,
+        proseStop: bubble !== null && bubble.tabIndex >= 0,
       };
     });
+  },
+  /**
+   * One row's actions as the row splits them: a band above the bubble and a strip beneath it.
+   *
+   * The two halves are separate facts. The edit control stands ABOVE the words, in the row's own
+   * top-right corner; the high-frequency actions stand UNDER them; and the three that change the
+   * conversation are behind one overflow trigger in that strip. `blockHeight` is the box the bubble and
+   * the strip make together - what a reply pays for its controls - and `overlapsProse` is the assertion
+   * that keeps the 44 px edit target from eating the words above which it sits: it compares the plate's
+   * box against the bubble's CONTENT box, because a target that only reaches into the bubble's padding
+   * still selects every word.
+   */
+  rowActions(handle: string): {
+    row: ReturnType<typeof boxOf>;
+    bubble: ReturnType<typeof boxOf> | null;
+    strip: ReturnType<typeof boxOf> | null;
+    blockHeight: number;
+    stripChildren: readonly string[];
+    prose: { cursor: string; role: string | null; tabStop: boolean };
+    edit: {
+      name: string | null;
+      width: number;
+      height: number;
+      opacity: number;
+      box: ReturnType<typeof boxOf>;
+      overlapsProse: boolean;
+    } | null;
+    more: { name: string | null; expanded: string | null; width: number; height: number } | null;
+  } | null {
+    const li = document.querySelector<HTMLElement>(`li[data-handle="${handle}"]`);
+    if (li === null) return null;
+    const bubble = li.querySelector<HTMLElement>(".message-bubble");
+    const strip = li.querySelector<HTMLElement>(".message-actions");
+    const plate = li.querySelector<HTMLElement>(".message-edit-hint");
+    const trigger = li.querySelector<HTMLElement>('[data-testid="message-more"]');
+    const plateBox = plate === null ? null : boxOf(plate);
+    // The bubble's content box: where its words actually begin and end.
+    const content =
+      bubble === null
+        ? null
+        : (() => {
+            const box = boxOf(bubble);
+            const padding = paddingInset(bubble);
+            return { top: box.top + padding.top, right: box.right - padding.right };
+          })();
+    return {
+      row: boxOf(li),
+      bubble: bubble === null ? null : boxOf(bubble),
+      strip: strip === null ? null : boxOf(strip),
+      blockHeight:
+        bubble === null || strip === null
+          ? 0
+          : Math.round(strip.getBoundingClientRect().bottom - bubble.getBoundingClientRect().top),
+      stripChildren: [...(strip?.children ?? [])].map((child) => stripChildName(child)),
+      prose: {
+        cursor: bubble === null ? "" : getComputedStyle(bubble).cursor,
+        role: bubble?.getAttribute("role") ?? null,
+        tabStop: bubble !== null && bubble.tabIndex >= 0,
+      },
+      edit:
+        plate === null || plateBox === null
+          ? null
+          : {
+              name: plate.getAttribute("aria-label"),
+              width: Math.round(plateBox.width),
+              height: Math.round(plateBox.height),
+              opacity: Number.parseFloat(getComputedStyle(plate).opacity),
+              box: plateBox,
+              overlapsProse: content !== null && plateBox.bottom > content.top && plateBox.left < content.right,
+            },
+      more:
+        trigger === null
+          ? null
+          : {
+              name: trigger.getAttribute("aria-label"),
+              expanded: trigger.getAttribute("aria-expanded"),
+              width: Math.round(trigger.getBoundingClientRect().width),
+              height: Math.round(trigger.getBoundingClientRect().height),
+            },
+    };
+  },
+  /**
+   * The overflow as the player meets it: whether it is open, and the controls it holds - by their test
+   * handles (the names the three destructive entries carry on the row), their accessible names, and the
+   * targets they paint. `null` is a row whose strip has no overflow at all, which is a row with nothing
+   * to put in it.
+   */
+  moreMenu(handle: string): {
+    open: boolean;
+    items: readonly { testId: string | null; name: string | null; width: number; height: number }[];
+  } | null {
+    const li = document.querySelector<HTMLElement>(`li[data-handle="${handle}"]`);
+    const trigger = li?.querySelector<HTMLElement>('[data-testid="message-more"]');
+    if (li === null || trigger === null || trigger === undefined) return null;
+    const items = [...li.querySelectorAll<HTMLElement>('[data-testid="message-more-menu"] [data-testid]')];
+    return {
+      open: trigger.getAttribute("aria-expanded") === "true",
+      items: items.map((item) => {
+        const box = item.getBoundingClientRect();
+        return {
+          testId: item.getAttribute("data-testid"),
+          name: item.getAttribute("aria-label"),
+          width: Math.round(box.width),
+          height: Math.round(box.height),
+        };
+      }),
+    };
   },
   /**
    * The copy control as the player meets it: what it is called, the target it actually paints, where
@@ -656,17 +788,39 @@ const chatProbe = {
     rewindCalls.length = 0;
   },
   /**
+   * Opens one row's overflow: the disclosure the rewind, the fork and the delete live behind.
+   *
+   * `role`-less on purpose - it is a disclosure, not a menu - so what a journey does to reach those three
+   * is what a player does: one press. The press is dispatched here rather than clicked through Playwright
+   * because some readers below need it inline; a DOM `click` on a React handler is flushed synchronously, so
+   * the panel is in the document when this returns.
+   */
+  async openOverflow(handle: string): Promise<void> {
+    const li = document.querySelector<HTMLElement>(`li[data-handle="${handle}"]`);
+    if (li === null || li.querySelector('[data-testid="message-more-menu"]') !== null) return;
+    li.querySelector<HTMLElement>('[data-testid="message-more"]')?.click();
+    // React commits the disclosure on its own schedule - a dispatched (untrusted) click is not one of the
+    // discrete events it flushes synchronously - so the panel is not in the document when `click()` returns.
+    // One animation frame is the whole wait, and it is awaited by `page.evaluate`.
+    await new Promise((resolve) => requestAnimationFrame(resolve));
+  },
+  /**
    * The rewind control as the player meets it: what it is called, and the target it actually
    * paints. A control whose measured box is under the touch minimum is the defect the journey
    * exists for, so the size is read from the layout rather than from a class name.
+   *
+   * It OPENS the row's overflow first, because that is where the entry lives now: reading it with the
+   * panel shut would answer `null` for every row and turn "this row offers no rewind" into a claim about
+   * the panel instead of about the transcript.
    */
-  rewindControl(handle: string): {
+  async rewindControl(handle: string): Promise<{
     ariaLabel: string | null;
     title: string | null;
     label: string | null;
     width: number;
     height: number;
-  } | null {
+  } | null> {
+    await this.openOverflow(handle);
     const li = document.querySelector(`li[data-handle="${handle}"]`);
     const button = li?.querySelector('[data-testid="message-rewind"]') as HTMLButtonElement | null;
     if (button === null || button === undefined) return null;
@@ -1104,17 +1258,21 @@ const chatProbe = {
   focusedControl(): {
     tag: string;
     testId: string | null;
+    /** The control the focus is on, by test handle or identifying class - the order a walk reads. */
+    control: string;
     handle: string | null;
     revealer: boolean;
-    editTarget: boolean;
+    /** True when the focus landed on a message's own prose, which is not a control at all. */
+    prose: boolean;
   } {
     const active = document.activeElement ?? document.body;
     return {
       tag: active.tagName.toLowerCase(),
       testId: active.getAttribute("data-testid"),
+      control: stripChildName(active),
       handle: active.closest("[data-handle]")?.getAttribute("data-handle") ?? null,
       revealer: active.hasAttribute("data-draft-revealer"),
-      editTarget: active.classList.contains("message-edit-target"),
+      prose: active.classList.contains("message-bubble"),
     };
   },
   /**

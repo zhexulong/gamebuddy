@@ -102,7 +102,7 @@ const ONE_ROW = TOUCH_MINIMUM + 1;
 /** The editor's ceiling, the number `MessageEditor` clamps the field's height to. */
 const EDIT_FIELD_MAX_HEIGHT = 300;
 
-test("the edit affordance IS the message: not a button, not in the strip, and reachable from the keyboard", async ({
+test("the edit control is the row's own icon: a real button, outside the strip, reachable from the keyboard", async ({
   page,
 }) => {
   await openConversation(page);
@@ -115,19 +115,21 @@ test("the edit affordance IS the message: not a button, not in the strip, and re
     const affordance = await page.evaluate(() => window.chatProbe.editAffordance("h1"));
     const where = `${viewport.width}x${viewport.height}`;
     expect(affordance, where).not.toBeNull();
-    // The ruling: pressing the words is the request to rewrite them, so there is no Edit button in the
-    // strip anywhere. The keyboard's way in is the pencil plate ON the body - a real button, named by the
-    // edit sentence, in the tab order - while the body itself stays prose (see `chat-editor-focus.spec.ts`
-    // for the reversal that separated the two halves and why).
+    // The decision (owner, 2026-11-16): the edit is ONE explicit control per editable row, at the row's
+    // top-right above the words, and it is not one of the strip's targets. It is a real button, named by the
+    // edit sentence, in the tab order, a 44 px target - while the body itself stays prose
+    // (see `chat-editor-focus.spec.ts` for why the two halves are separate at all).
     expect(affordance?.tag, where).toBe("button");
     expect(affordance?.isButton, where).toBe(true);
     expect(affordance?.inStrip, where).toBe(false);
     expect(affordance?.tabStop, where).toBe(true);
     expect(affordance?.keyShortcuts, where).toBe("F2");
-    expect(affordance?.name, where).toContain("to edit its words");
+    expect(affordance?.name, where).toBe("Edit this message's words.");
+    expect(affordance?.width, where).toBeGreaterThanOrEqual(TOUCH_MINIMUM);
+    expect(affordance?.height, where).toBeGreaterThanOrEqual(TOUCH_MINIMUM);
     expect(affordance?.prose.role, where).toBeNull();
     expect(affordance?.prose.tabStop, where).toBe(false);
-    // The body is still the message's own box: the wrapper adds no geometry of its own.
+    // The body is still the message's own box, and it is prose rather than a press target.
     expect(affordance?.bubbleWidth, where).toBeGreaterThan(0);
   }
   // And the strip under it is still ONE row of 44 px targets: the entries over what comes after this message

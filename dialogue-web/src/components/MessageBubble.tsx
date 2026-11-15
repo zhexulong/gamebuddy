@@ -5,20 +5,13 @@ import {
   Copy,
   GitBranch,
   LoaderCircle,
+  MoreHorizontal,
   Pencil,
   RefreshCw,
   Scissors,
   Trash2,
 } from "lucide-react";
-import {
-  memo,
-  type KeyboardEvent as ReactKeyboardEvent,
-  type PointerEvent as ReactPointerEvent,
-  useEffect,
-  useLayoutEffect,
-  useRef,
-  useState,
-} from "react";
+import { memo, type KeyboardEvent as ReactKeyboardEvent, useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { BrowserMessageV1 } from "../reference-pipeline-api";
 import { browserMessageLanguageTag } from "../reference-pipeline-api";
 import { useArmedConfirmation } from "./armed-confirmation";
@@ -52,38 +45,6 @@ const EDIT_FIELD_MAX_HEIGHT = 300;
  * row: every press restarts the window and the line then removes itself.
  */
 const COPY_NOTICE_MS = 1600;
-
-/**
- * How far a pointer may travel between press and release and still be a PRESS rather than a drag.
- *
- * A player who drags across a message is selecting its words - to copy them, to quote them - and a
- * drag that ended on the same paragraph is still a drag. Four CSS pixels is the platform's own
- * slop, and it is measured from the pointerdown rather than from the selection alone because a
- * browser collapses the selection when the release lands inside it.
- */
-const EDIT_DRAG_SLOP_PX = 4;
-
-/**
- * The settle window a body press waits out before it opens the editor, in milliseconds.
- *
- * A double click is how a reader selects one WORD, and its first click arrives as an ordinary
- * press: without this window that press would already have replaced the words with a field (and
- * moved focus into it) before the second click could select anything. Waiting one click's worth of
- * time lets `dblclick` cancel the open, so selecting a word stays selecting a word. The cost is
- * this delay on the honest single press, and it is the smaller of the two - a field that opens a
- * fifth of a second late is still an edit, while a field that eats a word selection is a defect.
- */
-const EDIT_PRESS_SETTLE_MS = 220;
-
-/**
- * The descendants of a message that are their own control.
- *
- * A reply may carry a link, and a link's press belongs to the link: it navigates, and turning that
- * press into an edit would be the message swallowing a control it contains. The list is the
- * platform's own interactive set, so a construct the reply grammar grows later is covered by its
- * element rather than by a per-construct exception here.
- */
-const MESSAGE_EDIT_INTERACTIVE = "a, button, input, textarea, select, summary, [role='button'], [role='link']";
 
 /**
  * Puts one message's words on the player's clipboard, and says whether it worked.
@@ -584,6 +545,12 @@ export const MessageBubble = memo(function MessageBubble({
       copyMessageName: string;
       copyNotice: string;
       copyNoticeFailed: string;
+      /**
+       * The overflow trigger's name, and the name of the panel it opens: one sentence for both, because the
+       * panel IS what the trigger opens. It is a disclosure rather than a menu role - the entries inside are
+       * ordinary buttons in the tab order - so the name says what the control is for, not what it contains.
+       */
+      moreActions: string;
     }>;
 }) {
   const isPlayer = message.role === "player";
@@ -685,15 +652,6 @@ export const MessageBubble = memo(function MessageBubble({
    */
   const editPoint = onEdit !== undefined ? message.order : undefined;
   /**
-   * Whether this body is a press away from the editor.
-   *
-   * The three rows that are NOT messages of the transcript are excluded by name, because each one would make
-   * the press a lie: a streaming preview is still being written (and the Host refuses an edit under a live
-   * turn by name, `chat_edit_turn_active`), the optimistic echo is not the Host's message yet, and a row with
-   * a mutation or a confirmation in flight is exactly as busy as its strip says it is.
-   */
-  const editOpens = editPoint !== undefined && !streaming && waitingNote === null && !busy && !stripReplaced;
-  /**
    * The editor's words are the SHELL's, not this row's, and the slot is the message's own handle.
    *
    * The row's text is the player's, and the shell renders its surfaces conditionally
@@ -708,6 +666,20 @@ export const MessageBubble = memo(function MessageBubble({
    */
   const editorDraft = useRecordDraft<MessageEdit>(`chat.message-edit.${message.handle}`, null);
   const editor = editorDraft.value;
+  /**
+   * Whether this row offers the edit icon.
+   *
+   * The three rows that are NOT messages of the transcript are excluded by name, because each one would make
+   * the control a lie: a streaming preview is still being written (and the Host refuses an edit under a live
+   * turn by name, `chat_edit_turn_active`), the optimistic echo is not the Host's message yet, and a row with
+   * a mutation or a confirmation in flight is exactly as busy as its own controls say it is.
+   *
+   * And it is absent while its OWN editor is open: the field replaced the words, and an icon beside it would
+   * be a second way in to the same field - one that reopened it at the message's original text, which is the
+   * player's half-typed correction thrown away by a press that looks like it does nothing.
+   */
+  const editOffered =
+    editPoint !== undefined && !streaming && waitingNote === null && !busy && !stripReplaced && editor === null;
   const openEditor = (): void => {
     editorDraft.type(Object.freeze({ text: message.text, sent: null }));
   };
@@ -738,80 +710,28 @@ export const MessageBubble = memo(function MessageBubble({
     editRevealerRef.current?.focus();
   }, [editing]);
   /**
-   * The press that opens the editor, and the four presses that must NOT.
+   * The row's one edit control, and the two things it is.
    *
-   * The body is the pointer's affordance (owner ruling, 2026-11-16), so every press in a message's prose
-   * arrives here - including the ones a reader makes to do something else with those words:
+   * It is a REAL `<button>` on the row rather than the message body (owner decision 2026-11-16, which
+   * supersedes the same day's "pressing the words is the edit"): a body that swaps its formatted reply for
+   * a field on a plain click makes selecting a sentence, copying a paragraph and simply reading one all
+   * pass through an editor, so the edit became explicit and the prose went back to being prose.
    *
-   *  - a DRAG selects text; a press that travelled more than `EDIT_DRAG_SLOP_PX`, or one made while the
-   *    document's selection is not collapsed, is a selection and never an edit;
-   *  - a DOUBLE CLICK is how a reader selects one word, and its first press arrives as an ordinary one,
-   *    so the open waits out `EDIT_PRESS_SETTLE_MS` and `dblclick` cancels it;
-   *  - a press on a LINK or on any other control the reply contains - the pencil plate included, since it
-   *    is a button now - belongs to that control;
-   *  - a press while the row is busy or a confirmation is armed never reaches here at all (`editOpens`).
-   *
-   * What is left is the honest press: one press on the words, nothing selected, nothing dragged.
-   *
-   * It is read as a POINTER gesture - `pointerdown` for where it began, `pointerup` for where it ended -
-   * rather than as a `click`. A click is what the browser also hands to a focused element that was
-   * activated from the keyboard, which is exactly the second path this body no longer carries: the
-   * keyboard has its own button on the plate (see `onEditRevealerKeyDown`), so a release with no press of
-   * these words is not a press of these words and opens nothing.
-   */
-  const pressStartRef = useRef<Readonly<{ x: number; y: number }> | null>(null);
-  const pendingPressRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const cancelPendingPress = (): void => {
-    if (pendingPressRef.current === null) return;
-    clearTimeout(pendingPressRef.current);
-    pendingPressRef.current = null;
-  };
-  useEffect(() => cancelPendingPress, []);
-  const onEditPointerDown = (event: ReactPointerEvent<HTMLDivElement>): void => {
-    pressStartRef.current = Object.freeze({ x: event.clientX, y: event.clientY });
-  };
-  const onEditDoubleClick = (): void => cancelPendingPress();
-  const onEditPointerUp = (event: ReactPointerEvent<HTMLDivElement>): void => {
-    const start = pressStartRef.current;
-    pressStartRef.current = null;
-    if (start === null) return;
-    if (Math.hypot(event.clientX - start.x, event.clientY - start.y) > EDIT_DRAG_SLOP_PX) return;
-    const pressed = event.target;
-    if (pressed instanceof Element && pressed.closest(MESSAGE_EDIT_INTERACTIVE) !== null) return;
-    const selection = document.getSelection();
-    if (selection !== null && !selection.isCollapsed) return;
-    cancelPendingPress();
-    pendingPressRef.current = setTimeout(() => {
-      pendingPressRef.current = null;
-      openEditor();
-    }, EDIT_PRESS_SETTLE_MS);
-  };
-  /**
-   * The keyboard's way in: one labelled button per editable message, on the plate.
-   *
-   * This is a deliberate reversal of half of the 2026-11-16 affordance ruling, taken the same day when
-   * the accessibility gate landed. The half it keeps is the ruling's subject: there is still no Edit
-   * button in any strip, and pressing the words is still what asks to rewrite them. The half it gives up
-   * is the body's tab stop, and the body's own role is why - a control that IS the whole message has no
-   * honest role. `role="button"` on the body makes a screen reader announce a whole reply as the NAME of
-   * a button, on every editable row of a transcript, which is the one place a reader came to read prose;
-   * and every role that would not do that is a non-interactive one, which the same accessibility rules
-   * refuse to carry a press. So the prose keeps what only prose can do (the pointer press on the words),
-   * and what the keyboard and a screen reader meet is the pencil plate as a real `<button>`:
-   *
-   *  - named by `labels.editHint`, so the reader hears what the press will do rather than meeting a
+   *  - named by `labels.editHint`, so a reader hears what the press will do rather than meeting a
    *    paragraph that has to describe itself; the pencil inside it stays decoration;
    *  - `aria-keyshortcuts="F2"`, with Enter and Space as the button's own, and F2 handled here because no
    *    element activates on it by default;
    *  - revealed on `:focus-visible` as well as on hover, because a control nobody can see while focused is
    *    the trap this shape would otherwise trade for the one it removes;
-   *  - the element the focus comes back to when the editor closes (`editRevealerRef`), since the body it
-   *    used to come back to is no longer a tab stop.
+   *  - the element the focus comes back to when the editor closes (`editRevealerRef`).
+   *
+   * It stands at the row's TOP-RIGHT corner, in the header band the author line already occupies, which is
+   * the half of the row a reply's controls do not use - the pattern Google AI Studio's own chat rows take,
+   * and the place a 44 px target can sit without covering a word.
    */
   const onEditRevealerKeyDown = (event: ReactKeyboardEvent<HTMLButtonElement>): void => {
     if (event.key !== "F2") return;
     event.preventDefault();
-    cancelPendingPress();
     openEditor();
   };
   /**
@@ -867,6 +787,62 @@ export const MessageBubble = memo(function MessageBubble({
   const actPair = useArmedConfirmation(actArmed, () => onActCancel?.());
   const deletePair = useArmedConfirmation(deleteArmed, () => onDeleteCancel?.());
   const swipeRemovePair = useArmedConfirmation(swipeRemoveArmed, () => onSwipeRemoveCancel?.());
+  /**
+   * The overflow: the row's low-frequency and destructive entries behind one trigger.
+   *
+   * The strip under a reply is the band the eye returns to while reading, and five actions plus a pager is
+   * more than a short reply's column can hold - measured at 520x900 the five worded-or-glyphed actions and
+   * the pager did not fit, so the pager took a second line under an otherwise one-line message. Three
+   * actions fit, so the three that change the conversation (rewind, fork, delete) moved behind one `…`:
+   * still always on the row, still one press from it, but no longer setting the strip's width.
+   *
+   * It is a DISCLOSURE, not an ARIA menu: the entries inside are ordinary buttons in the tab order, and
+   * `role="menu"` would promise arrow-key navigation this control does not implement. So the trigger says
+   * `aria-expanded` and names the panel it opens, Tab walks into it, and Escape closes it and puts the focus
+   * back on the trigger (`onMoreKeyDown`) - the one control the player was standing on.
+   */
+  const [moreOpen, setMoreOpen] = useState(false);
+  const moreRef = useRef<HTMLDivElement | null>(null);
+  const moreTriggerRef = useRef<HTMLButtonElement | null>(null);
+  const moreMenuId = `message-more-${message.handle}`;
+  /**
+   * True while this row is asking the player to answer a confirmation - any of the three, wherever it
+   * renders: the rewind's and the variant discard's replace the strip, and the delete's is a block of its
+   * own.
+   *
+   * The overflow's outside-press close stands down for exactly this window, and the reason is the focus: the
+   * answers are OUTSIDE the panel, so their presses would close it, and a panel closed by the CANCEL press is
+   * not there to hand the focus back to the entry that armed it (`useArmedConfirmation`). A player answering
+   * a confirmation has not moved on from the panel - they are standing in it.
+   */
+  const answeringConfirmation = stripReplaced || deleteArmed;
+  /**
+   * An open disclosure closes on a press anywhere else.
+   *
+   * Without this the panel outlived the player's attention: it is out of flow, so nothing on screen moves
+   * to say it is still open, and the next press on the bubble would land behind it. The press that CLOSES
+   * it is the press on anything that is not the panel or its trigger; the trigger toggles by itself.
+   */
+  useEffect(() => {
+    if (!moreOpen || answeringConfirmation) return;
+    const onPointerDown = (event: PointerEvent): void => {
+      if (event.target instanceof Node && moreRef.current?.contains(event.target) === true) return;
+      setMoreOpen(false);
+    };
+    document.addEventListener("pointerdown", onPointerDown);
+    return () => document.removeEventListener("pointerdown", onPointerDown);
+  }, [moreOpen, answeringConfirmation]);
+  /**
+   * Escape inside the overflow. It is stopped at the panel rather than left to bubble: the shell's own
+   * Escape steps out of a surface, and a player closing a list of this row's actions must not leave the
+   * Chat doing it.
+   */
+  const onMoreKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>): void => {
+    if (event.key !== "Escape" || !moreOpen) return;
+    event.stopPropagation();
+    setMoreOpen(false);
+    moreTriggerRef.current?.focus();
+  };
   /**
    * The copy's receipt, and the row's only transient state.
    *
@@ -1083,14 +1059,20 @@ export const MessageBubble = memo(function MessageBubble({
     </div>
   ) : null;
   /**
-   * The rewind entry. Its glyph is a CUT rather than a circular arrow: `Undo2` was one stroke away from the
-   * `RefreshCw` Regenerate wears beside it, and a player reading `[ ↶ ]` as "answer me again" pressed the one
-   * control in this strip that shortens the conversation. Its visible word is the POINT it names and its
-   * accessible name carries the count it would remove.
+   * The rewind entry, one of the three inside the overflow. Its glyph is a CUT rather than a circular
+   * arrow: `Undo2` was one stroke away from the `RefreshCw` Regenerate the trigger beside it wears, and a
+   * player reading `[ ↶ ]` as "answer me again" pressed the one control on the row that shortens the
+   * conversation. Its visible word is the POINT it names and its accessible name carries the count it
+   * would remove.
    *
-   * Its class is `act-btn` - the strip's existing shape for "the act over what comes after this message" -
-   * because the box is the same box: two entries, one vocabulary, each named by its own test handle, glyph
-   * and accessible name rather than by a third copy of the same fourteen declarations in the sheet.
+   * Its class is `act-btn` - the shape the sheet already declares for "the act over what comes after this
+   * message" - because the box is the same box whether it stands in the strip or in the panel: the entries
+   * are named by their own test handles, glyphs and accessible names instead of by a second copy of the
+   * same declarations.
+   *
+   * The press does NOT close the overflow, on purpose: arming takes the whole strip away (the confirmation
+   * replaces it), and a menu left open is what lets the trigger remount into it when the player cancels -
+   * which is where `useArmedConfirmation` puts the focus back.
    */
   const rewindEntry =
     !actArmed && rewindOffered ? (
@@ -1116,6 +1098,9 @@ export const MessageBubble = memo(function MessageBubble({
    * the player is owed is the pair of facts the name states (this chat keeps every later message, and both
    * chats are one conversation to her Memory), and that is exactly `forkFromHereName`; the visible word says
    * what it makes, and the branch glyph is not the scissors the destructive neighbour wears.
+   *
+   * It is the one entry that CLOSES the overflow when pressed: it arms nothing, so there is no confirmation
+   * to come back from, and leaving the panel open over a second Chat would just be a list nobody asked for.
    */
   const forkEntry =
     forkOffered && !stripReplaced ? (
@@ -1125,7 +1110,10 @@ export const MessageBubble = memo(function MessageBubble({
         data-testid="message-fork"
         disabled={busy}
         {...(pending === "fork" ? { "data-busy": "true" as const } : {})}
-        onClick={() => onActFork?.(message.handle)}
+        onClick={() => {
+          setMoreOpen(false);
+          onActFork?.(message.handle);
+        }}
         title={labels.forkFromHereName}
         aria-label={labels.forkFromHereName}
       >
@@ -1136,6 +1124,79 @@ export const MessageBubble = memo(function MessageBubble({
         )}
         <span className="action-word">{labels.forkFromHere}</span>
       </button>
+    ) : null;
+  /**
+   * The delete entry: the last of the three, and the only one that removes words rather than moving where
+   * the conversation continues.
+   *
+   * It arms like the rewind does and for the same reason - a delete has no undo - so its press leaves the
+   * overflow open and the confirmation replaces the strip; Cancel brings both back.
+   */
+  const deleteEntry =
+    deletePoint !== undefined && !stripReplaced ? (
+      <button
+        ref={deletePair.triggerRef}
+        type="button"
+        className="action-btn delete-btn"
+        data-testid="message-delete"
+        disabled={busy}
+        {...(pending === "delete" ? { "data-busy": "true" as const } : {})}
+        onClick={() => onDelete?.(message.handle, message.order)}
+        title={labels.deleteMessageName}
+        aria-label={labels.deleteMessageName}
+      >
+        {pending === "delete" ? (
+          <LoaderCircle className="message-spinner" size={14} aria-hidden="true" />
+        ) : (
+          <Trash2 size={14} aria-hidden="true" />
+        )}
+        <span className="action-word">{labels.deleteMessage}</span>
+      </button>
+    ) : null;
+  /**
+   * Whether this row has anything to put behind the trigger. A row with nothing over what comes after it
+   * and nothing to delete keeps NO overflow rather than an empty one - the dead-control defect.
+   */
+  const moreOffered = rewindOffered || forkOffered || deletePoint !== undefined;
+  /**
+   * The trigger and the panel it opens.
+   *
+   * The panel is out of flow (`.message-more-menu` in style.css) so opening it cannot move the bubble, the
+   * strip or a single row below it - the same rule the copy receipt follows. It is suppressed while the
+   * editor is open, because the strip IS the editor then: a destructive entry beside Save and Cancel is the
+   * mis-click every confirmation on this row already steps around.
+   */
+  const moreEntry =
+    moreOffered && !stripReplaced && editor === null ? (
+      <div className="message-more" ref={moreRef} onKeyDown={onMoreKeyDown}>
+        <button
+          ref={moreTriggerRef}
+          type="button"
+          className="action-btn more-btn"
+          data-testid="message-more"
+          disabled={busy}
+          aria-expanded={moreOpen}
+          aria-controls={moreMenuId}
+          aria-label={labels.moreActions}
+          title={labels.moreActions}
+          onClick={() => setMoreOpen((open) => !open)}
+        >
+          <MoreHorizontal size={14} aria-hidden="true" />
+        </button>
+        {moreOpen && (
+          <div
+            className="message-more-menu"
+            id={moreMenuId}
+            data-testid="message-more-menu"
+            role="group"
+            aria-label={labels.moreActions}
+          >
+            {rewindEntry}
+            {forkEntry}
+            {deleteEntry}
+          </div>
+        )}
+      </div>
     ) : null;
   // The Host's per-message language, painted on the text only: the author line
   // and the swipe/regenerate controls are player-facing UI words and must keep
@@ -1165,15 +1226,37 @@ export const MessageBubble = memo(function MessageBubble({
         digest={companionDigest}
       />
       <div className="message-body">
-        {/* The author line belongs to the companion only. The player's own
-            monogram already sits at the row's edge, so printing the same name
-            again above the bubble reads as "[你] 你: 你好" - the line is a
-            duplicate of the avatar, not an attribution - and the player's side
-            has no header at all, because an empty box would still add the body
-            column's gap above the bubble. */}
-        {!isPlayer && (
+        {/* The header band belongs to the author line, and to the row's edit control.
+
+            The author line itself is the companion's only: the player's own monogram already sits at the
+            row's edge, so printing the same name again reads as "[你] 你: 你好" - a duplicate of the
+            avatar rather than an attribution. The edit control, though, is at the row's TOP-RIGHT on
+            BOTH sides, which is where a 44 px target can sit above the words without covering one: the
+            band is the half of the row a reply's controls do not use, and it is the pattern the owner
+            pointed at (Google AI Studio's prompt rows carry their edit affordance at the top right).
+
+            The player's row therefore renders the band whenever it is a row the player may rewrite - not only
+            while the plate is painted - because the band is 18 px of the row's own geometry: a band that came
+            and went with the editor would move the field 22 px up (18 px of band and the body's own gap) the
+            moment the field replaced the bubble. */}
+        {(!isPlayer || editPoint !== undefined) && (
           <div className="message-header">
-            <span className="message-author">{authorName}</span>
+            {!isPlayer && <span className="message-author">{authorName}</span>}
+            {editOffered && (
+              <button
+                ref={editRevealerRef}
+                type="button"
+                className="message-edit-hint"
+                data-testid="message-edit"
+                data-draft-revealer
+                aria-keyshortcuts="F2"
+                aria-label={labels.editHint}
+                onClick={openEditor}
+                onKeyDown={onEditRevealerKeyDown}
+              >
+                <Pencil size={14} aria-hidden="true" />
+              </button>
+            )}
           </div>
         )}
         {/* Both sides author text, and a `*beat*` is the same format on both:
@@ -1184,13 +1267,11 @@ export const MessageBubble = memo(function MessageBubble({
             one side: the leading prosody tag is the voice channel, and the voice layer
             performs her speech only, so a player's parenthetical stays text.
 
-            THE BODY IS THE EDIT AFFORDANCE (owner ruling, 2026-11-16). Pressing the words asks to
-            rewrite them, on both sides of the exchange and on the opening, so the strip does not
-            spend one of its five targets on an Edit button. The press is only the honest one: a
-            drag-selection, a double-click word selection, a press made while text is selected and a
-            press on a link inside the message all leave the editor closed (`onEditPointerUp`). The
-            keyboard's way in is the plate's button (`onEditRevealerKeyDown`): the body is prose, it
-            carries no role and it is not a tab stop.
+            THE WORDS ARE PROSE. They carry no role, no tab stop and no press: a body that swaps its
+            formatted reply for a field on a plain click makes selecting a sentence, copying a paragraph
+            and simply reading one all pass through an editor, and that is the harm the edit icon above
+            removed. What the pointer does here is what it does in any other prose - select, and nothing
+            else - so the edit is an explicit control on the row.
 
             While this row is being rewritten the bubble GIVES WAY to the editor: the words then
             stand on screen once, in the field, because the editor takes the bubble's own place in
@@ -1199,42 +1280,13 @@ export const MessageBubble = memo(function MessageBubble({
             bubble PLUS a two-row editor - half of a 400x800 screen. Cancel or Escape brings the
             bubble back at the box it had. */}
         {!editing && (
-          <div
-            className="message-edit-target"
-            {...(editPoint === undefined || streaming || waitingNote !== null ? {} : { "data-testid": "message-edit" })}
-            onPointerDown={editOpens ? onEditPointerDown : undefined}
-            onPointerUp={editOpens ? onEditPointerUp : undefined}
-            onDoubleClick={editOpens ? onEditDoubleClick : undefined}
-          >
-            <MarkdownMessage
-              className="message-bubble"
-              text={message.text}
-              trailingHtml={CARET_MARKUP}
-              lang={languageTag}
-              speaker={isPlayer ? "player" : "companion"}
-            />
-            {/* The keyboard's way in, and the press the player sees: the plate IS a button now (see
-                `onEditRevealerKeyDown` for why the tab stop left the body). It is named by the sentence
-                the body used to be described by, so a reader meets "edit this message's words, button"
-                instead of a paragraph that has to say it about itself. The pencil inside it stays
-                decoration (`aria-hidden`), and `style.css` shows the plate on `:focus-visible` as well as
-                on hover: a control nobody can see while focused would be the trap this shape trades
-                against, and the body under it keeps the pointer press. */}
-            {editOpens && (
-              <button
-                ref={editRevealerRef}
-                type="button"
-                className="message-edit-hint"
-                data-draft-revealer
-                aria-keyshortcuts="F2"
-                aria-label={labels.editHint}
-                onClick={openEditor}
-                onKeyDown={onEditRevealerKeyDown}
-              >
-                <Pencil size={12} aria-hidden="true" />
-              </button>
-            )}
-          </div>
+          <MarkdownMessage
+            className="message-bubble"
+            text={message.text}
+            trailingHtml={CARET_MARKUP}
+            lang={languageTag}
+            speaker={isPlayer ? "player" : "companion"}
+          />
         )}
         {/* One strip under the bubble for everything a companion message can do
             to itself: choose another opening, swipe the set, ask again. The pager
@@ -1348,28 +1400,7 @@ export const MessageBubble = memo(function MessageBubble({
                       <span className="action-word">{labels.regenerateVariant}</span>
                     </button>
                   )}
-                  {rewindEntry}
-                  {forkEntry}
-                  {!stripReplaced && deletePoint !== undefined && (
-                    <button
-                      ref={deletePair.triggerRef}
-                      type="button"
-                      className="action-btn delete-btn"
-                      data-testid="message-delete"
-                      disabled={busy}
-                      {...(pending === "delete" ? { "data-busy": "true" as const } : {})}
-                      onClick={() => onDelete?.(message.handle, message.order)}
-                      title={labels.deleteMessageName}
-                      aria-label={labels.deleteMessageName}
-                    >
-                      {pending === "delete" ? (
-                        <LoaderCircle className="message-spinner" size={14} aria-hidden="true" />
-                      ) : (
-                        <Trash2 size={14} aria-hidden="true" />
-                      )}
-                      <span className="action-word">{labels.deleteMessage}</span>
-                    </button>
-                  )}
+                  {moreEntry}
                   {!actArmed && waitingNote !== null && (
                     <span className="message-waiting" role="status">
                       {waitingNote}
@@ -1379,12 +1410,12 @@ export const MessageBubble = memo(function MessageBubble({
               )}
             </div>
           )}
-        {/* The player's own row carries its own controls in the same strip the companion's reply
-            uses rather than a second row of buttons: the words are already on the page, so the
-            affordances that change them belong under them. The REWIND is one of them: rewinding to
-            this line keeps it and drops the reply that answered it, which is the player's own way to
-            be answered again (the owner's ruling, 2026-10-20). Its place is where her row puts it -
-            first in the strip - and an armed rewind leaves this strip with nothing but itself. */}
+        {/* The player's own row carries its controls in the same strip the companion's reply uses rather
+            than a second row of buttons: the words are already on the page, so the affordances that change
+            them belong under them. The REWIND is one of them: rewinding to this line keeps it and drops
+            the reply that answered it, which is the player's own way to be answered again (the owner's
+            ruling, 2026-10-20). It travels with the fork and the delete inside the overflow, on the same
+            split her row takes, and an armed rewind leaves this strip with nothing but itself. */}
         {isPlayer &&
           !deleteArmed &&
           (actPoint !== undefined ||
@@ -1396,15 +1427,11 @@ export const MessageBubble = memo(function MessageBubble({
               {rewindConfirmation}
               {editor === null && copyControl}
               {copyReceipt}
-              {/* While the field is open the strip is the editor: the destructive rewind sits out, exactly as
-                the destructive Delete does, because a control that cuts the conversation away beside Save
-                and Cancel is a mis-click waiting to happen. */}
-              {editor === null && rewindEntry}
-              {editor === null && forkEntry}
               {/* Asking her again for THIS line, offered when nothing answered it (a turn that failed
-                or was stopped). It sits beside the rewind for the same reason the rewind is here at
-                all: both answer the player's own words. The words are the same operation the reply
-                row offers, so they are the same word rather than a second name for it. */}
+                or was stopped). It is a high-frequency answer to the player's own words, so it stays
+                in the strip beside the copy rather than going behind the overflow. The words are the
+                same operation the reply row offers, so they are the same word rather than a second
+                name for it. */}
               {!actArmed && editor === null && onRegenerate && (
                 <button
                   type="button"
@@ -1423,6 +1450,7 @@ export const MessageBubble = memo(function MessageBubble({
                   <span className="action-word">{labels.regenerateVariant}</span>
                 </button>
               )}
+              {moreEntry}
               {!actArmed && editPoint !== undefined && editor !== null && (
                 <MessageEditor
                   text={editor.text}
@@ -1439,29 +1467,6 @@ export const MessageBubble = memo(function MessageBubble({
                     onEdit?.(message.handle, message.order, editor.text);
                   }}
                 />
-              )}
-              {/* While the editor is open the strip is the editor: a destructive Delete sitting beside
-                Save and Cancel is a mis-click waiting to happen, and this row's own armed confirm
-                already follows that rule (it replaces the other controls rather than joining them). */}
-              {!actArmed && deletePoint !== undefined && editor === null && (
-                <button
-                  ref={deletePair.triggerRef}
-                  type="button"
-                  className="action-btn delete-btn"
-                  data-testid="message-delete"
-                  disabled={busy}
-                  {...(pending === "delete" ? { "data-busy": "true" as const } : {})}
-                  onClick={() => onDelete?.(message.handle, message.order)}
-                  title={labels.deleteMessageName}
-                  aria-label={labels.deleteMessageName}
-                >
-                  {pending === "delete" ? (
-                    <LoaderCircle className="message-spinner" size={14} aria-hidden="true" />
-                  ) : (
-                    <Trash2 size={14} aria-hidden="true" />
-                  )}
-                  <span className="action-word">{labels.deleteMessage}</span>
-                </button>
               )}
             </div>
           )}

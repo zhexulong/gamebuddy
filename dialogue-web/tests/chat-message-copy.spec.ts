@@ -207,7 +207,7 @@ test("the copy control is offered on every settled message", async ({ page }) =>
   }
 });
 
-test("the fifth control keeps every target at the touch minimum, at both widths, without pushing one out", async ({
+test("the strip keeps every target at the touch minimum, at both widths, without pushing one out", async ({
   page,
 }) => {
   await openConversation(page);
@@ -219,8 +219,8 @@ test("the fifth control keeps every target at the touch minimum, at both widths,
     await page.setViewportSize(viewport);
     const where = `${viewport.width}x${viewport.height}`;
 
-    // Her reply's row: the pager, the rewind, the edit, the delete and the copy - every control the
-    // strip can hold at once, which is why it is the one that measures worst.
+    // Her reply's row: the copy, the pager, Regenerate and the overflow - every control the strip holds at
+    // once, which is why it is the one that measures worst.
     const measured = await page.evaluate(
       (selector) => {
         const row = document.querySelector(selector)!;
@@ -229,12 +229,17 @@ test("the fifth control keeps every target at the touch minimum, at both widths,
           const rect = node.getBoundingClientRect();
           return { width: Math.round(rect.width), height: Math.round(rect.height), centre: Math.round(rect.top + rect.height / 2) };
         };
-        const controls = [...strip.children].map((child) => ({
-          name: (child.getAttribute("class") ?? "").replace("action-btn ", ""),
-          ...box(child),
-          ariaLabel: child.getAttribute("aria-label"),
-          title: child.getAttribute("title"),
-        }));
+        const controls = [...strip.children].map((child) => {
+          // The overflow is one child of the strip holding one trigger, so the target a player presses is
+          // what is named and measured - otherwise the strip would "hold" a box nothing is painted in.
+          const target = child.querySelector<HTMLElement>('[data-testid="message-more"]') ?? child;
+          return {
+            name: (child.getAttribute("class") ?? "").replace("action-btn ", ""),
+            ...box(target),
+            ariaLabel: target.getAttribute("aria-label"),
+            title: target.getAttribute("title"),
+          };
+        });
         const pager = strip.querySelector<HTMLElement>(".swipe-controls");
         const list = document.querySelector("ol.message-list")!;
         return {
@@ -254,11 +259,16 @@ test("the fifth control keeps every target at the touch minimum, at both widths,
     // freed, so the count is the one the width arithmetic is built on. (This read 5 while Regenerate was still
     // offered on the transcript's tail alone; it has been offered on every reply a player line stands before
     // since 2026-11-15, which is a sixth child on this row and a fifth action.)
+    // FOUR CHILDREN: three ACTIONS and the pager. The three are what the strip keeps - Copy, Regenerate and
+    // the overflow that holds Rewind, Fork and Delete - and the pin says which, because "nothing was pushed
+    // out" is a claim about named controls and not about a number. (This read six until 2026-11-16, when the
+    // three that change the conversation moved behind the overflow: five actions plus the pager did not fit
+    // any column this transcript gets, so the strip paid a second row for a one-line reply.)
     expect(
       measured.controls.map((control) => control.name),
       `${where} every control the strip can hold, named`,
-    ).toEqual(["copy-btn", "swipe-controls", "regenerate-btn", "act-btn rewind-btn", "act-btn fork-btn", "delete-btn"]);
-    expect(measured.controls.length, where).toBe(6);
+    ).toEqual(["copy-btn", "swipe-controls", "regenerate-btn", "message-more"]);
+    expect(measured.controls.length, where).toBe(4);
     // Every one of them is a real target, in both directions, and named.
     for (const control of measured.controls) {
       expect(control.height, `${where} ${control.name} clears the 44 px floor`).toBeGreaterThanOrEqual(TOUCH_MINIMUM);
@@ -280,31 +290,32 @@ test("the fifth control keeps every target at the touch minimum, at both widths,
     expect(measured.overflow.scrollWidth, where).toBeLessThanOrEqual(measured.overflow.clientWidth);
 
     if (viewport.width === 1440) {
-      // The five ACTIONS share one line and the pager takes the one beneath it - the same ruled shape defect 6
-      // records, and for the same arithmetic: five worded actions are 493 px plus four gaps, the pager is 184,
-      // and this row's column is 634 px, so the pager cannot join them at any target smaller than 44.
+      // At the reading measure the whole strip is ONE row: three worded-or-glyphed actions and the pager are
+      // 412 px against this row's 634 px column. It was two rows while the strip held five worded actions -
+      // 493 px of words plus gaps - which is the arithmetic the split answers.
       const wideActions = measured.controls.filter((control) => !control.name.includes("swipe-controls"));
-      expect(wideActions.length, `${where} the five actions`).toBe(5);
-      expect(new Set(wideActions.map((control) => control.centre)).size, `${where} the five actions share one line`).toBe(
+      expect(wideActions.length, `${where} the three actions`).toBe(3);
+      expect(new Set(wideActions.map((control) => control.centre)).size, `${where} the three actions share one line`).toBe(
         1,
       );
       expect(measured.pager, where).not.toBeNull();
-      expect(wideActions[0]!.centre, `${where} and the pager is on the line beneath them`).toBeLessThan(
-        measured.pager!.centre,
-      );
-      // `46` was pinned here (min-height plus the pager's border) while the strip was one row. The relation is
-      // stated instead: the actions' row, the pager's row, and the strip's own gap between them - nothing more.
-      // A strip with padding, a margin box or an invisible third line of its own still fails, and a control that
-      // grows takes the strip with it instead of going quietly red.
+      expect(
+        Math.abs(wideActions[0]!.centre - measured.pager!.centre),
+        `${where} and the pager sits on that same line`,
+      ).toBeLessThanOrEqual(2);
+      // One row, and nothing more: the strip is as tall as its tallest control (the pager, 44 px plus its
+      // own hairline). A strip with padding, a margin box or an invisible second line of its own still fails,
+      // and a control that grows takes the strip with it instead of going quietly red.
       expect(
         measured.strip.height,
-        `${where} the strip is those two rows and the gap between them, nothing more`,
-      ).toBe(Math.max(...wideActions.map((control) => control.height)) + measured.pager!.height + 12);
+        `${where} the strip is one row, nothing more`,
+      ).toBe(Math.max(...measured.controls.map((control) => control.height)));
     } else {
-      // The narrow window puts the pager on its own line, beneath the five actions.
+      // The narrow window puts the pager on its own line, beneath the three actions: 140 px of actions plus
+      // 184 px of pager is more than the 291 px this row's body gives them.
       const actions = measured.controls.filter((control) => !control.name.includes("swipe-controls"));
-      expect(actions.length, where).toBe(5);
-      expect(new Set(actions.map((control) => control.centre)).size, "the five actions share one line").toBe(1);
+      expect(actions.length, where).toBe(3);
+      expect(new Set(actions.map((control) => control.centre)).size, "the three actions share one line").toBe(1);
       expect(measured.pager, where).not.toBeNull();
       expect(actions[0]!.centre, where).toBeLessThan(measured.pager!.centre);
       // The pager keeps its own box rather than being stretched across the line it now owns, and its

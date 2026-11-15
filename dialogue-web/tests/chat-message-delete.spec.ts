@@ -64,6 +64,21 @@ async function openConversation(page: Page, conversation = CONVERSATION): Promis
   await page.evaluate((entries) => window.chatProbe.setConversation(entries), conversation);
 }
 
+/**
+ * Opens the row's overflow, which is where the delete entry lives (owner decision 2026-11-16).
+ *
+ * The strip under a bubble keeps copy, the pager and Regenerate; the three entries that change the
+ * conversation moved behind one `…` so a short reply does not grow a two-row button block. Idempotent,
+ * because an armed pair whose cancel brings the panel back leaves it open.
+ */
+async function openOverflow(page: Page, handle: string): Promise<void> {
+  const menu = page.locator(`[data-handle="${handle}"] [data-testid="message-more-menu"]`);
+  if ((await menu.count()) === 0) {
+    await page.locator(`[data-handle="${handle}"] [data-testid="message-more"]`).click();
+  }
+  await expect(menu).toHaveCount(1);
+}
+
 test("the delete control says what it removes, and its target is the touch minimum", async ({ page }) => {
   await openConversation(page);
 
@@ -96,6 +111,7 @@ test("the delete arms, states what goes, replaces the row's controls, and sends 
   await page.evaluate(() => window.chatProbe.resetDeleteCalls());
 
   // The first press only arms: nothing has been sent to the Host yet.
+  await openOverflow(page, "h2");
   await page.click('[data-handle="h2"] [data-testid="message-delete"]');
   expect(await page.evaluate(() => window.chatProbe.deleteCalls())).toEqual([
     { kind: "arm", handle: "h2", order: 2 },
@@ -123,6 +139,7 @@ test("the delete arms, states what goes, replaces the row's controls, and sends 
 
   // Delete sends the handle AND the order the page rendered it at, and the authoritative reread - not
   // a local rewrite - owns what the conversation then shows.
+  await openOverflow(page, "h2");
   await page.click('[data-handle="h2"] [data-testid="message-delete"]');
   await page.click('[data-testid="message-delete-confirm-yes"]');
   expect(await page.evaluate(() => window.chatProbe.deleteCalls())).toEqual([

@@ -182,6 +182,8 @@ export function Timeline({
     copyMessageName: string;
     copyNotice: string;
     copyNoticeFailed: string;
+    /** The overflow trigger and the panel it opens: one sentence, because the panel IS what it opens. */
+    moreActions: string;
   };
   onSwipe?: (messageHandle: string, direction: "prev" | "next") => void;
   /**

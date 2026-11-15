@@ -105,7 +105,7 @@ async function openConversation(page: Page): Promise<void> {
   await page.evaluate((entries) => window.chatProbe.setConversation(entries), CONVERSATION);
 }
 
-test("her reply is editable by pressing it, and the editor has room to write", async ({ page }) => {
+test("her reply is editable through the row's edit icon, and the editor has room to write", async ({ page }) => {
   await openConversation(page);
 
   for (const viewport of [
@@ -122,9 +122,8 @@ test("her reply is editable by pressing it, and the editor has room to write", a
     const playerStrip = await page.locator('[data-handle="h1"] .message-actions').boundingBox();
 
     await page.click('[data-handle="h2"] [data-testid="message-edit"]');
-    // The press settles for one window before the field takes the bubble's place (`MessageBubble`'s
-    // `EDIT_PRESS_SETTLE_MS`, which is what lets a double-click stay a word selection), so the reading
-    // waits for the editor rather than racing it.
+    // The icon is the row's edit control (owner decision 2026-11-16: the words are prose, so a press on them
+    // selects rather than opening an editor), and the field replaces the bubble rather than joining it.
     await expect(page.locator('[data-handle="h2"] [data-testid="message-edit-field"]'), where).toHaveCount(1);
     const box = await page.evaluate(() => window.chatProbe.editFieldBox("h2"));
     const form = await page.evaluate(() => window.chatProbe.editForm("h2"));
@@ -148,7 +147,7 @@ test("her reply is editable by pressing it, and the editor has room to write", a
     expect(control?.inStrip, where).toBe(false);
     expect(control?.tabStop, where).toBe(true);
     expect(control?.keyShortcuts, where).toBe("F2");
-    expect(control?.name, where).toContain("to edit its words");
+    expect(control?.name, where).toBe("Edit this message's words.");
     expect(control?.prose.role, where).toBeNull();
     expect(control?.prose.tabStop, where).toBe(false);
     expect(control?.bubbleWidth, where).toBeGreaterThan(0);

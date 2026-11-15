@@ -90,6 +90,24 @@ const VIEWPORTS = LAYOUT_PAIR;
 /** The touch minimum the rest of the strip uses, plus the sub-pixel the measured box may round to. */
 const TOUCH_MINIMUM = 44;
 
+/**
+ * Opens the row's overflow, which is where the three entries that change the conversation live.
+ *
+ * `message-rewind`, `message-fork` and `message-delete` moved behind one `…` in the strip (owner decision
+ * 2026-11-16): the strip under the bubble keeps copy, the pager and Regenerate, and five actions plus a pager
+ * did not fit any column this transcript gets. The entries are still the row's own controls, one press away -
+ * the press that gets to them is this one.
+ */
+async function openOverflow(page: Page, handle: string): Promise<void> {
+  // Idempotent: the panel is left OPEN by an armed pair whose cancel brings it back (so the focus has
+  // somewhere to land), and a second press on the trigger would close it again.
+  const menu = page.locator(`[data-handle="${handle}"] [data-testid="message-more-menu"]`);
+  if ((await menu.count()) === 0) {
+    await page.locator(`[data-handle="${handle}"] [data-testid="message-more"]`).click();
+  }
+  await expect(menu).toHaveCount(1);
+}
+
 /** The page's own horizontal overflow, which a wide confirmation block would create. */
 async function horizontalOverflow(page: Page): Promise<number> {
   return await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
@@ -184,7 +202,8 @@ test("arming replaces the row's own controls with the confirmation, which measur
     expect(rowBefore, where).not.toBeNull();
     expect(columnBox, where).not.toBeNull();
 
-    await page.click('[data-handle="h2"] [data-testid="message-rewind"]');
+    await openOverflow(page, "h2");
+  await page.click('[data-handle="h2"] [data-testid="message-rewind"]');
 
     const armed = await page.evaluate(() => window.chatProbe.rewindConfirm("h2"));
     expect(armed, where).not.toBeNull();
@@ -243,6 +262,7 @@ test("arming replaces the row's own controls with the confirmation, which measur
   await page.evaluate(() => window.chatProbe.resetRewindCalls());
 
   // The confirm sends the handle and the order the page rendered it at.
+  await openOverflow(page, "h2");
   await page.click('[data-handle="h2"] [data-testid="message-rewind"]');
   await page.click('[data-testid="message-rewind-confirm-yes"]');
   expect(await page.evaluate(() => window.chatProbe.rewindCalls())).toEqual([
@@ -262,6 +282,7 @@ test("rewinding at a companion reply keeps that reply and drops exactly what fol
   const removes = Number(named?.ariaLabel?.match(/\((\d+) in all\)/u)?.[1]);
   expect(removes).toBe(2);
 
+  await openOverflow(page, "h2");
   await page.click('[data-handle="h2"] [data-testid="message-rewind"]');
   await page.click('[data-testid="message-rewind-confirm-yes"]');
 
@@ -309,6 +330,7 @@ test("rewinding at a player row keeps their words and drops the reply and everyt
   expect(named?.ariaLabel).toContain("3");
   expect(named?.ariaLabel).toContain("keeps this message");
 
+  await openOverflow(page, "h1");
   await page.click('[data-handle="h1"] [data-testid="message-rewind"]');
   // The player's row arms the same confirmation as her reply: it is one presentation, not one per role.
   const armed = await page.evaluate(() => window.chatProbe.rewindConfirm("h1"));
@@ -365,6 +387,8 @@ test("the destructive answer is painted as one, and the keyboard keeps its place
   const trigger = '[data-handle="h2"] [data-testid="message-rewind"]';
   const confirmYes = '[data-testid="message-rewind-confirm-yes"]';
   const confirmNo = '[data-testid="message-rewind-confirm-no"]';
+  // The entry lives inside the row's overflow now, so the press that reaches it is the trigger's.
+  await openOverflow(page, "h2");
 
   /** Where focus is, named by the key whose selector matches the focused element. */
   const focused = async (selectors: Record<string, string>): Promise<string> =>
@@ -449,6 +473,7 @@ test("the destructive answer is painted as one, and the keyboard keeps its place
   const deleteYes = '[data-testid="message-delete-confirm-yes"]';
   const deleteNo = '[data-testid="message-delete-confirm-no"]';
   const deletePair = { trigger: deleteTrigger, yes: deleteYes, no: deleteNo };
+  await openOverflow(page, "h4");
   const quietDelete = await paint(deleteTrigger);
   await page.click(deleteTrigger);
   await expect(page.locator('[data-testid="message-delete-confirm"]')).toHaveCount(1);

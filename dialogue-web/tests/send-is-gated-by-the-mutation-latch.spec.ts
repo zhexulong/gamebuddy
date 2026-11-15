@@ -110,7 +110,14 @@ test("a send is not offered into a transcript a rewind is truncating", async ({ 
   const send = surface.getByTestId("composer-send");
   await expect(composer).toBeEnabled();
 
-  // The player rewinds to their own line: everything after it is about to be destroyed.
+  // The player rewinds to their own line: everything after it is about to be destroyed. The entry lives
+  // in the row's overflow now (owner decision 2026-11-16: the strip keeps copy, the pager and Regenerate,
+  // and the three that change the conversation sit behind one `…`), so the press that reaches it is the
+  // trigger's - a real button with `aria-expanded`, not a hover-only affordance.
+  const more = page.locator(`li[data-handle='${playerHandle}']`).getByTestId("message-more");
+  await expect(more, "the row's overflow is a real control").toHaveAttribute("aria-expanded", "false");
+  await more.click();
+  await expect(more, "and it says out loud that pressing it opened one").toHaveAttribute("aria-expanded", "true");
   await page.locator(`li[data-handle='${playerHandle}']`).locator('[data-testid="message-rewind"]').click();
   await page.locator('[data-testid="message-rewind-confirm-yes"]').click();
   await expect.poll(() => rewind.inFlight).toBe(true);

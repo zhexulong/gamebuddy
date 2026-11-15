@@ -527,6 +527,13 @@ const en = {
   connectionActivate: "Save and activate",
   connectionActivateRequiresReady: "Test the connection before activating it.",
   connectionRemove: "Remove",
+  // The removal is the product's armed pair (`armed-confirmation.ts`), so this sentence is the moment of
+  // the act: it names what goes and that this screen cannot put it back. The credential is the reason -
+  // the key the player typed is write-only from here on, and the Host deletes it with the record.
+  connectionRemoveConfirm:
+    "Remove the {{provider}} connection? Its endpoint, model and the API key you entered are deleted from this machine, and this screen cannot bring them back - you would have to type them again.",
+  connectionRemoveConfirmYes: "Remove the connection",
+  connectionRemoveConfirmNo: "Keep the connection",
   connectionRemoveActiveRefused: "An active connection cannot be removed. Activate another connection first.",
   connectionPending: "Working…",
   connectionFailureInvalidEndpoint: "This endpoint cannot be used.",
@@ -631,13 +638,12 @@ const en = {
   // Said when the branch was created and this window could not move to it: two outcomes, one sentence. The
   // branch is durable and in the Chats list, so the player is not told the fork failed.
   chatForkSwitchFailed: "The branch was created, but this window could not switch to it. Open it from Chats.",
-  // The edit affordance is the MESSAGE ITSELF (owner ruling 2026-11-16): pressing its words opens the field
-  // they came from, so there is no button and no visible word of its own to name. What is left to write down
-  // is the sentence a screen reader reads with the body - with no control to announce, that sentence is the
-  // only thing that says the words can be rewritten - and the consequence an in-place edit has on the rows
-  // after it: saving rewrites ONE row on both authorities and leaves every later row where it is, so a reply
-  // that answered the old words stays on screen answering words that are no longer there.
-  editHint: "Press this message, or Enter or F2, to edit its words.",
+  // The edit control is ONE icon on the row, and it is a control rather than the words themselves (owner
+  // decision 2026-11-16, superseding "pressing the message is the edit"): a body that swaps its formatted
+  // reply for a field on a plain click makes selecting a sentence, copying a paragraph and simply reading
+  // one all pass through an editor. The name says what the press DOES - it is a button's name, not a
+  // description of the words beside it - and the shortcut it declares is the second half of it.
+  editHint: "Edit this message's words.",
   editLaterKept:
     "Only this message changes: later messages keep their words, so a reply that answered the old ones stays as it is and says so. The model reads the new words from the next turn on.",
   // The mark itself, on every row that was written against a wording the chat no longer shows. It is the
@@ -678,6 +684,12 @@ const en = {
   // over plain http has no `navigator.clipboard`) AND the selection fallback was refused, so the words
   // are still on screen and the player is told how to take them.
   copyNoticeFailed: "Could not copy. Select the message text and copy it by hand.",
+  // The overflow: the row's low-frequency and destructive entries (rewind, fork, delete) behind one trigger,
+  // so a short reply's strip is copy, the pager and Regenerate rather than a second block of buttons. It is
+  // a disclosure and not a menu role: the three entries inside it are ordinary buttons in the tab order, and
+  // a `role="menu"` would promise arrow-key navigation this control does not implement. Escape closes it and
+  // puts the focus back on this trigger.
+  moreActions: "More actions for this message",
   // The Host's own name for the greeting variant a new chat opened on: it labels
   // the greeting set's entries `Default` / `Alternate N` (the card's own 1-based
   // order). The catalogue carries that vocabulary so a zh-CN UI never prints the
@@ -1774,6 +1786,10 @@ const zh: Messages = {
   connectionActivate: "保存并启用",
   connectionActivateRequiresReady: "请先测试连接，再启用它。",
   connectionRemove: "删除",
+  connectionRemoveConfirm:
+    "要删除「{{provider}}」这个连接吗？它的端点、模型以及你输入的 API 密钥都会从这台机器上删掉，而这个界面无法把它们找回来——你需要重新输入。",
+  connectionRemoveConfirmYes: "删除这个连接",
+  connectionRemoveConfirmNo: "保留这个连接",
   connectionRemoveActiveRefused: "当前启用的连接不能删除。请先启用另一个连接。",
   connectionPending: "处理中…",
   connectionFailureInvalidEndpoint: "该端点不可用。",
@@ -1854,11 +1870,10 @@ const zh: Messages = {
   // 分支已经建好、但这个窗口没能切过去时说的话：两个结果，一句话。分支是持久的，也在会话列表里，所以不能
   // 告诉玩家分叉失败了。
   chatForkSwitchFailed: "分支已经建好，但这个窗口没能切过去。请到会话列表里打开它。",
-  // 编辑的入口就是**消息本身**（主人裁定 2026-11-16）：按下它的文字就打开写这段话的那个输入框，所以它没有自己的
-  // 按钮，也没有可见的字要给。剩下要写下来的只有两件事：读屏软件跟着正文读到的那句话（没有控件可播报时，
-  // 这句话是唯一说明这些字可以被改写的东西），以及就地编辑对其后行的影响——保存只在两种权威上改写**一行**，
-  // 其后的行原地不动，所以回应旧文字的回复会留在屏幕上，回答着已经不存在的文字。
-  editHint: "按下这条消息，或按 Enter / F2，即可改写它的文字。",
+  // 编辑的入口是这一行上的**一个图标**，是真控件，而不是消息本身（主人决定 2026-11-16，取代了“按下消息即编辑”
+  // 那一条）：正文如果被普通一点就换成输入框，选一句话、复制一段、甚至只是读一遍，就都得先穿过一个编辑器。
+  // 名称说的是按下去**做什么**——它是按钮的名字，不是旁边那段文字的说明——它声明的快捷键是这句话的另一半。
+  editHint: "改写这条消息的文字。",
   editLaterKept:
     "只改这一条：其后的消息保留原来的文字，所以回应旧文字的回复仍留在原处，并会标明这一点；模型从下一轮开始读到新文字。",
   // 标记本身，落在每一条“写在一版已经不在的字上”的行上。它是上面编辑器答应过的那句话，落在它答应的那些行上：
@@ -1888,6 +1903,10 @@ const zh: Messages = {
   // 另一种结果也要说出来：剪贴板 API 不可用（普通 http 打开的页面没有 `navigator.clipboard`），而选区降级
   // 也被拒绝。文字还在屏幕上，所以告诉玩家怎么自己拿走。
   copyNoticeFailed: "未能复制。请选中消息文字手动复制。",
+  // 更多操作：这一行里低频的和破坏性的入口（回退、分叉、删除）收在一个触发键后面，这样短回复的操作条就是复制、
+  // 翻页器和重新生成，而不是第二块按钮。它是展开式控件，不是菜单语义：里面的三个是普通按钮、在 tab 顺序里，
+  // 而 `role="menu"` 会承诺这个控件并未实现的方向键导航。Escape 关闭它，并把焦点放回这个触发键。
+  moreActions: "这条消息的更多操作",
   openingVariantDefault: "默认",
   openingVariantAlternate: "备用 {{index}}",
   // 同一个事实的另一半，落在选择已经没有了的时刻：第一条不属于开场白的消息就把它封住了

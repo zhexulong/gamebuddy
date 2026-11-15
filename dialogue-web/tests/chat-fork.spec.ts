@@ -190,23 +190,42 @@ const createdBranch = {
   },
 };
 
+/**
+ * Opens the row's overflow, which is where the fork and the rewind live (owner decision 2026-11-16).
+ *
+ * The strip under the bubble keeps copy, the pager and Regenerate; the two entries over what comes after a
+ * message moved behind one `…`, so a short reply does not grow a two-row button block. Idempotent, because
+ * an armed pair whose cancel brings the panel back leaves it open.
+ */
+async function openOverflow(page: Page, handle: string): Promise<void> {
+  const menu = page.locator(`[data-handle="${handle}"] [data-testid="message-more-menu"]`);
+  if ((await menu.count()) === 0) {
+    await page.locator(`[data-handle="${handle}"] [data-testid="message-more"]`).click();
+  }
+  await expect(menu).toHaveCount(1);
+}
+
 /** The fork entry: one control, one press (it takes nothing away, so it takes no arm). */
 async function pressFork(page: Page): Promise<void> {
+  await openOverflow(page, playerHandle);
   await page.locator(`[data-handle="${playerHandle}"]`).getByTestId("message-fork").click();
 }
 
-test("the two entries are two controls, absent where the Host would refuse, and the strip still ends at five", async ({
+test("the two entries are two controls, absent where the Host would refuse, and the strip keeps its three", async ({
   page,
 }) => {
   await mountShell(page, (route) => route.fulfill(jsonOk(createdBranch)));
 
-  // The greeting carries neither entry: the Host refuses both acts there, so there is no press to offer.
+  // The greeting carries neither entry: the Host refuses both acts there, so the row has no overflow at all
+  // - not an empty one.
+  await expect(page.locator(`[data-handle="${openingHandle}"] [data-testid="message-more"]`)).toHaveCount(0);
   await expect(page.locator(`[data-handle="${openingHandle}"] [data-testid="message-rewind"]`)).toHaveCount(0);
   await expect(page.locator(`[data-handle="${openingHandle}"] [data-testid="message-fork"]`)).toHaveCount(0);
-  // The cut back to this row is its own control again (owner ruling 2026-11-16): its name states the point and
-  // the count it would remove. The fork is a separate button beside it, and its name states the two facts it
-  // does NOT take away - this chat keeps every later message, and both chats are one conversation to her
-  // memory - because a one-press control has no prompt above it to carry them.
+  // The cut back to this row is its own control (owner ruling 2026-11-16): its name states the point and
+  // the count it would remove. The fork is a separate entry, and its name states the two facts it does NOT
+  // take away - this chat keeps every later message, and both chats are one conversation to her memory -
+  // because a one-press control has no prompt above it to carry them. Both are one press away, in the overflow.
+  await openOverflow(page, playerHandle);
   const rewind = page.locator(`[data-handle="${playerHandle}"] [data-testid="message-rewind"]`);
   await expect(rewind).toHaveCount(1);
   await expect(rewind).toHaveAttribute("aria-label", messages("en").rewindHereName.replace("{{count}}", "1"));
@@ -214,16 +233,18 @@ test("the two entries are two controls, absent where the Host would refuse, and 
   await expect(fork).toHaveCount(1);
   await expect(fork).toHaveAttribute("aria-label", messages("en").forkFromHereName);
   // Her reply is the newest row: a rewind there would remove nothing and a fork of nothing is not a branch, so
-  // neither entry is offered - the newest message is branched from by choosing the row BEFORE it.
+  // neither entry is offered - the newest message is branched from by choosing the row BEFORE it. Its overflow
+  // is open here, so the absence is a fact about the entries and not about the panel.
+  await openOverflow(page, replyHandle);
   await expect(page.locator(`[data-handle="${replyHandle}"] [data-testid="message-rewind"]`)).toHaveCount(0);
   await expect(page.locator(`[data-handle="${replyHandle}"] [data-testid="message-fork"]`)).toHaveCount(0);
-  // And the strip is still four targets here (five on the paged reply, where the pager joins them): Edit left the
-  // strip in the same ruling that gave Fork a slot, so the count the width arithmetic depends on did not move.
+  // And the strip is three targets here - copy, Regenerate and the overflow - with the pager joining them on
+  // the paged reply. It read four until the two entries moved behind the overflow.
   const strip = await page.evaluate(
     (selector) => [...document.querySelector(selector)!.children].map((child) => child.getAttribute("data-testid") ?? child.className),
     `[data-handle="${playerHandle}"] .message-actions`,
   );
-  expect(strip).toEqual(["message-copy", "message-rewind", "message-fork", "message-delete"]);
+  expect(strip).toEqual(["message-copy", "message-more"]);
 });
 
 test("forking from a message lands on the branch, and the player can write into it", async ({ page }) => {
@@ -231,6 +252,7 @@ test("forking from a message lands on the branch, and the player can write into 
 
   // The fork is ONE press now: it mints the branch and changes nothing in this conversation. The two facts the
   // player is owed before either branch exists are in the control's own name, and reading it sends nothing.
+  await openOverflow(page, playerHandle);
   const fork = page.getByTestId("message-fork");
   await expect(fork).toHaveAttribute("title", messages("en").forkFromHereName);
   expect(forkCalls, "reading the control sends nothing").toEqual([]);
@@ -292,7 +314,8 @@ test("a fork refused because a reply is being written is named, and creates no b
   expect(selections, "a refused fork must not switch the mount").toEqual([]);
   await expect(surface).toContainText(REPLY_LINE);
 
-  // The refusal spent the press, not the entry: the fork is still on the row it named.
+  // The refusal spent the press, not the entry: the fork is still on the row it named, one press away.
+  await openOverflow(page, playerHandle);
   await expect(page.locator(`[data-handle="${playerHandle}"] [data-testid="message-fork"]`)).toBeVisible();
 });
 

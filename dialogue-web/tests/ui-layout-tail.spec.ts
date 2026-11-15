@@ -1105,15 +1105,21 @@ test("item 5: the variant pager and regenerate are one strip at the bubble's foo
     `the pager sits on the line beneath the actions, one row away (pager ${pager.top}..${pager.bottom}, ` +
       `regenerate ${regenerate.top}..${regenerate.bottom})`,
   ).toBeLessThanOrEqual(60);
-  // …and it keeps its own box rather than being stretched across the line it now owns: the same 184 px the
-  // 400 px column measures (three 44 px controls and two 4 px gaps), declared as a relation so a fourth inner
-  // control moves it with the pager instead of going quietly red.
+  // …and it keeps its own box rather than being stretched across the line it now shares with the actions:
+  // the same 184 px the 400 px column measures (three 44 px controls and two 4 px gaps), declared as a relation
+  // so a fourth inner control moves it with the pager instead of going quietly red.
   expect(pager.width, `the pager is its own box, not the line's width (${pager.width} px)`).toBeLessThan(
     bubble.width,
   );
   expect(pager.width, `and it is wider than one 44 px target (${pager.width} px)`).toBeGreaterThan(120);
   // The author line no longer carries a control.
-  expect(measured.headerChildren, "the author line holds the name and nothing else").toEqual(["message-author"]);
+  // The author line carries the name and the row's edit control, and nothing else: the two bands of a row
+  // are the author line above the words and the strip beneath them, so a control in the header is the edit
+  // icon and never a second action.
+  expect(measured.headerChildren, "the author line holds the name and the row's edit icon").toEqual([
+    "message-author",
+    "message-edit-hint",
+  ]);
   expect(
     measured.actionChildren.some((child) => child.includes("swipe-controls")),
     `the strip holds the pager: ${JSON.stringify(measured.actionChildren)}`,
