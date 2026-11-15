@@ -44,7 +44,7 @@ function parseArgs(argv) {
     if (!value || value.startsWith("--")) fail("invalid_argument", `Missing value for --${key}.`);
     options[key] = value;
   }
-  if (!options["game-path"] || !options.out)
+  if (!(options["game-path"] && options.out))
     fail("arguments_required", "Usage: --game-path <installed-game-path> --out <report-path>");
   return options;
 }

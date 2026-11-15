@@ -143,9 +143,8 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { Language, Parser } from "web-tree-sitter";
-
-import { assertStardewDecompileRoot, STARDEW_DECOMPILE_ROOT_RELATIVE_PATH } from "./lib/stardew-decompile-root.mjs";
 import { fail } from "./lib/gate-preamble.mjs";
+import { assertStardewDecompileRoot, STARDEW_DECOMPILE_ROOT_RELATIVE_PATH } from "./lib/stardew-decompile-root.mjs";
 
 const REPOSITORY_ROOT = fileURLToPath(new URL("..", import.meta.url));
 const require = createRequire(import.meta.url);

@@ -12,10 +12,10 @@ export const gateDeclaration = {
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
+import { fail } from "./lib/gate-preamble.mjs";
 import { validateNativeMechanismReviewRegister } from "./lib/stardew-native-mechanism-review-register.mjs";
 import { validateNativeTransitionLedger } from "./lib/stardew-native-transition-ledger.mjs";
 import { validateNativeTransitionScopeManifest } from "./lib/stardew-native-transition-scope-manifest.mjs";
-import { fail } from "./lib/gate-preamble.mjs";
 
 function parseArgs(argv) {
   const result = {};
@@ -27,11 +27,13 @@ function parseArgs(argv) {
     result[option.slice(2)] = value;
   }
   if (
-    !result.ledger ||
-    !result["mechanism-report"] ||
-    !result["review-register"] ||
-    !result["scope-manifest"] ||
-    !result["source-root"]
+    !(
+      result.ledger &&
+      result["mechanism-report"] &&
+      result["review-register"] &&
+      result["scope-manifest"] &&
+      result["source-root"]
+    )
   ) {
     fail(
       "transition_ledger_arguments_required",
@@ -83,14 +85,12 @@ function attestationFrom(report) {
   const sourceFiles = report?.source?.files;
   if (!Array.isArray(sourceFiles))
     fail("transition_ledger_mechanism_report_invalid", "Mechanism report lacks the exact source file manifest.");
-  if (!isSha256(targetAssemblySha256) || !isSha256(sourceManifestSha256))
+  if (!(isSha256(targetAssemblySha256) && isSha256(sourceManifestSha256)))
     fail("transition_ledger_mechanism_report_invalid", "Mechanism report exact-target attestation is malformed.");
   const sourceFileHashes = {};
   for (const entry of sourceFiles) {
     if (
-      !safeRelativePath(entry?.relativePath) ||
-      !isSha256(entry?.sha256) ||
-      !Number.isInteger(entry?.byteLength) ||
+      !(safeRelativePath(entry?.relativePath) && isSha256(entry?.sha256) && Number.isInteger(entry?.byteLength)) ||
       entry.byteLength < 0 ||
       sourceFileHashes[entry.relativePath]
     ) {

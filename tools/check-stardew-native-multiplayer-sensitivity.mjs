@@ -31,8 +31,8 @@ export const gateDeclaration = {
 
 import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
-import { assertStardewDecompileRoot } from "./lib/stardew-decompile-root.mjs";
 import { fail } from "./lib/gate-preamble.mjs";
+import { assertStardewDecompileRoot } from "./lib/stardew-decompile-root.mjs";
 import {
   collectDispatchUnit,
   indexMethodBodies,
