@@ -426,6 +426,27 @@ const RECORDED: readonly Readonly<{
       "the arrival fact hands the turn to her first words on the morning she arrives; the preset states whose voice may " +
       "speak and whose reactions stay the player's. They share the second person and say different things with it.",
   }),
+  Object.freeze({
+    slug: "speak-voice-lines-above",
+    first: "companion-prompt-assembly.ts:CARD_VOICE_BOUND",
+    second: "game-surface-prompt-floor.ts:body_language_is_native",
+    kind: "distinct",
+    why:
+      "they share the words speak, voice and happen and state two different facts: the bound says what the lines above a " +
+      "voice DESCRIBE, so a card's text never holds the last position, while the Game floor's body-channel sentence says " +
+      "which mounted tool a gesture goes through and that the bubble drops a bracketed beat. One is about position, the " +
+      "other about where a body is expressed.",
+  }),
+  Object.freeze({
+    slug: "speak-voice-lines-above",
+    first: "companion-prompt-assembly.ts:CARD_VOICE_BOUND",
+    second: "companion-prompt-assembly.ts:PLAYER_ADDITION_BOUND",
+    kind: "distinct",
+    why:
+      "two authored blocks, two closing lines: the card's says a voice changes how she sounds rather than the situation, " +
+      "the player's says the player's words shape her part in it. One line at the end of the prompt would bound only the " +
+      "LAST block, and the card's is the block that must never speak last.",
+  }),
 ]);
 
 /**

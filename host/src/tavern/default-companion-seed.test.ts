@@ -10,7 +10,7 @@ import {
   readIdentityProfile,
   writeIdentityProfile,
 } from "../identity-profile.js";
-import { buildChatCompanionSystemPrompt } from "../companion-prompt-assembly.js";
+import { buildChatCompanionSystemPrompt, CARD_VOICE_BOUND } from "../companion-prompt-assembly.js";
 import { COMPANION_ACTION_SYNTAX } from "../chat-surface-block.js";
 import { bindWindowsStaleLockReclaimer } from "../path-lock.js";
 import { type CompanionIdentity, identityKey, resolveRuntimePaths } from "../runtime-identity.js";
@@ -266,8 +266,12 @@ test("the seed persists the card's characterVoice and the rendered prompt carrie
       "the card's directive must render AFTER the surface block on the default path",
     );
     assert.ok(
-      prompt.trimEnd().endsWith(directive),
-      "and it is loaded bare - the prompt's own last block, with no Host header or bound around it",
+      prompt.trimEnd().endsWith(CARD_VOICE_BOUND),
+      "and the card's block is closed by its bound, so the author's text never holds the last position",
+    );
+    assert.ok(
+      prompt.includes(`<<<CARD DIRECTIVES\n${directive}\nCARD DIRECTIVES>>>`),
+      "the author's text arrives whole, inside the section markers the block declares",
     );
   } finally {
     await release(root);
