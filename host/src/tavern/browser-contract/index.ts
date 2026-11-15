@@ -192,6 +192,14 @@ const ProblemCode = Type.Union([
   Type.Literal("chat_delete_opening_retained"),
   Type.Literal("chat_delete_turn_active"),
   Type.Literal("chat_delete_binding_unavailable"),
+  // Branching the conversation from one message (`chat.fork`) creates a SECOND Chat and leaves the first
+  // exactly as it is, so every way it can be refused is a fact about the point the player named: a row this
+  // Chat does not carry, a reply that is still being written (a branch would copy rows the player has not
+  // read yet), and the opening itself - a branch of nothing but the greeting is not a second view of the
+  // exchange, which is the same target a rewind refuses for the same reason.
+  Type.Literal("chat_fork_target_not_found"),
+  Type.Literal("chat_fork_turn_active"),
+  Type.Literal("chat_fork_opening_retained"),
   // Chat management (`chat.rename` / `chat.archive` / `chat.restore` / `chat.trash`) names any
   // Chat of the mounted companion/continuity by its opaque handle, not only the mounted one. A
   // handle that names no Chat of this partition is a bounded, player-actionable "not found" - the
@@ -2468,6 +2476,41 @@ export const DeleteMessageResultV1Schema = strictObject({
   apiVersion: ApiVersion,
 });
 /**
+ * Branching the conversation from one message (`chat.fork`): the conversation from its start up to the
+ * named row becomes a SECOND Chat, and the Chat it was cut from is left exactly as it is - not one row
+ * added, moved or removed. That is what makes this a branch rather than a rewind, and it is the whole
+ * reason the player wants it: the beat that could have gone two ways can be read both ways.
+ *
+ * The request names the row and nothing durable: no thread id, no surface session, no companion. The Host
+ * mints the new Chat's identity, copies the origin's own companion, continuity, persona, scenario, stable
+ * artifact bindings, both World Info slots and profile pin (a branch reads the same sources), and answers
+ * with the created Chat's metadata-only list entry. No turn rows are copied: a turn is the ledger of a
+ * provider run that happened in the ORIGIN, so the branch's first submission starts a fresh one with its
+ * own idempotency space.
+ *
+ * There is deliberately no `expectedOrder`. A fork takes a PREFIX of an append-only transcript, so the row
+ * the player clicked still means the same thing after a turn lands behind it - unlike a rewind, an edit or
+ * a delete, which rewrite or drop rows the player may not be looking at and therefore need the position
+ * they were read at. Asking for a position here would refuse a fork that is still exactly what the player
+ * asked for.
+ *
+ * `idempotency-key` is required, and it is not decoration: this operation MINTS a durable Chat. A lost
+ * response would otherwise leave the player with two identical branches and no way to tell which one they
+ * are on - the duplicate a blank `chat.create` does not suffer, because an empty Chat is trivially
+ * identifiable and deletable. The Host derives the new Chat's identity from the key, so a replay lands on
+ * the Chat the first attempt created rather than a second one.
+ */
+export const ForkChatCommandV1Schema = strictObject({
+  apiVersion: ApiVersion,
+  selectionGeneration: PositiveGeneration,
+  messageHandle: OpaqueHandle,
+});
+export const ForkChatResultV1Schema = strictObject({
+  apiVersion: ApiVersion,
+  /** The created Chat, projected exactly as a `chat.list` row is. It is not selected: that is `chat.select`. */
+  chat: ChatListEntryV1Schema,
+});
+/**
  * New-chat opening variant choice. The browser names no durable greeting id and no chat id: the
  * mounted companion's own greeting set is resolved by the Host, and the mounted Chat is the one
  * the admission already bound. `targetIndex` is 0-based; `direction` steps from the committed
@@ -2641,9 +2684,13 @@ export const TAVERN_BROWSER_PROBLEM_CODES_V1 = Object.freeze([
   "chat_delete_opening_retained",
   "chat_delete_turn_active",
   "chat_delete_binding_unavailable",
+  "chat_fork_target_not_found",
+  "chat_fork_turn_active",
+  "chat_fork_opening_retained",
   "chat_not_found",
   "companion_record_unreadable",
   "character_voice_conflict",
+  "character_examples_conflict",
   "character_voice_turn_active",
   "companion_world_book_conflict",
   "companion_world_book_absent",
@@ -2982,6 +3029,20 @@ const RouteDescriptors = Object.freeze([
     query: noQuery,
     request: DeleteMessageCommandV1Schema,
     success: { status: 200, contentType: "application/json", schema: DeleteMessageResultV1Schema },
+  }),
+  route({
+    routeId: "chat.fork",
+    method: "POST",
+    path: "/api/tavern/v1/chats/fork",
+    auth: "browser_session",
+    origin: "same-origin",
+    csrf: "required",
+    idempotency: "required",
+    headers: IdempotentCsrfHeaders,
+    pathParams: noPath,
+    query: noQuery,
+    request: ForkChatCommandV1Schema,
+    success: { status: 200, contentType: "application/json", schema: ForkChatResultV1Schema },
   }),
   route({
     routeId: "memory.read",
@@ -4002,6 +4063,8 @@ export const TavernBrowserContractV1 = Object.freeze({
     EditMessageResultV1Schema,
     DeleteMessageCommandV1Schema,
     DeleteMessageResultV1Schema,
+    ForkChatCommandV1Schema,
+    ForkChatResultV1Schema,
     BrowserOpeningVariantV1Schema,
     ChatOpeningCommandV1Schema,
     ChatOpeningResultV1Schema,
@@ -4064,6 +4127,8 @@ export type EditMessageCommandV1 = Static<typeof EditMessageCommandV1Schema>;
 export type EditMessageResultV1 = Static<typeof EditMessageResultV1Schema>;
 export type DeleteMessageCommandV1 = Static<typeof DeleteMessageCommandV1Schema>;
 export type DeleteMessageResultV1 = Static<typeof DeleteMessageResultV1Schema>;
+export type ForkChatCommandV1 = Static<typeof ForkChatCommandV1Schema>;
+export type ForkChatResultV1 = Static<typeof ForkChatResultV1Schema>;
 export type BrowserOpeningVariantV1 = Static<typeof BrowserOpeningVariantV1Schema>;
 export type ChatOpeningCommandV1 = Static<typeof ChatOpeningCommandV1Schema>;
 export type ChatOpeningResultV1 = Static<typeof ChatOpeningResultV1Schema>;
@@ -4390,12 +4455,12 @@ const REFERENCE_TAVERN_ROUTE_IDS = [
 ] as const;
 /**
  * The optional message-mutation extension of the reference Chat profile: Swipe, Swipe variant
- * removal, Regenerate, Rewind, Edit and Delete.
+ * removal, Regenerate, Rewind, Edit, Delete and Fork.
  *
- * The browser client posts all five from its own message controls, so the dispatcher mounted on the
+ * The browser client posts all of them from its own message controls, so the dispatcher mounted on the
  * composed Chat surface must reach them or the player's controls answer 404. They are routes, not
- * operations: the browser gates Regenerate on the `chat.submit` affordance and Swipe/Rewind/Edit/Delete
- * on the message's own projection, so the Host projects no `state.operations` row for any of them.
+ * operations: the browser gates Regenerate on the `chat.submit` affordance and Swipe/Rewind/Edit/Delete/
+ * Fork on the message's own projection, so the Host projects no `state.operations` row for any of them.
  *
  * Declared as an optional group rather than folded into the core list so every existing reference
  * profile - the standalone handler's own declaration and the API-level test slices - stays a valid
@@ -4410,6 +4475,7 @@ const REFERENCE_TAVERN_MESSAGE_MUTATION_ROUTE_IDS = [
   "chat.rewind",
   "chat.edit",
   "chat.delete",
+  "chat.fork",
 ] as const;
 const REFERENCE_TAVERN_ROUTE_GROUPS = [
   REFERENCE_TAVERN_ROUTE_IDS,

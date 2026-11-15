@@ -728,6 +728,15 @@ const en = {
   problemChatDeleteBindingUnavailableTitle: "This one cannot be deleted",
   problemChatDeleteBindingUnavailableDetail:
     "GameBuddy never recorded which part of the model's memory this message is, so it cannot remove only this one. Messages sent from now on can be deleted.",
+  // The branch's own three refusals. The last one is not a failure at all: the greeting is not an
+  // exchange, so there is nothing on its other side to explore.
+  problemChatForkTargetNotFoundTitle: "That message is not here any more",
+  problemChatForkTargetNotFoundDetail: "Reload the conversation and branch from a message you can see.",
+  problemChatForkTurnActiveTitle: "A reply is still being written",
+  problemChatForkTurnActiveDetail: "Wait for the reply to finish, then branch from here.",
+  problemChatForkOpeningRetainedTitle: "This is the opening",
+  problemChatForkOpeningRetainedDetail:
+    "The greeting this conversation started on is not an exchange, so there is nothing to branch from here. Branch from one of the messages.",
   // The families the contract's remaining problem codes fall into - see `composed-problem-view.ts`,
   // which maps every member of the union to one of them. A family is one fact and one next step: the
   // ten compare-and-set refusals say what the change was based on moved, the four in-progress ones say
@@ -1844,6 +1853,13 @@ const zh: Messages = {
   problemChatDeleteBindingUnavailableTitle: "这一条无法删除",
   problemChatDeleteBindingUnavailableDetail:
     "GameBuddy 没有记录这条消息在模型记忆中对应的是哪一段，因此无法只删掉这一条。从现在起发送的新消息都可以删除。",
+  problemChatForkTargetNotFoundTitle: "这条消息已经不在这里了",
+  problemChatForkTargetNotFoundDetail: "请重新加载对话，再从你能看到的消息分出一条新对话。",
+  problemChatForkTurnActiveTitle: "还有一条回复正在生成",
+  problemChatForkTurnActiveDetail: "请等这条回复生成完成后，再从这里分出新对话。",
+  problemChatForkOpeningRetainedTitle: "这是开场问候",
+  problemChatForkOpeningRetainedDetail:
+    "对话开始时的那句问候不算一次交谈，从这里没有另一条路可以走。请从对话中的某条消息分出新对话。",
   problemRevisionConflictTitle: "你动手的时候它变了",
   problemRevisionConflictDetail:
     "页面读取之后对话已经变化，所以这次改动没有生效。请重新加载聊天，看清当前状态后再试一次。",

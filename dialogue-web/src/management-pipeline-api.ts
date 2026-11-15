@@ -1410,6 +1410,11 @@ const PROBLEM_CODES = [
   "chat_delete_opening_retained",
   "chat_delete_turn_active",
   "chat_delete_binding_unavailable",
+  // The branch's own three: a row this Chat does not carry, a reply still being written, and the
+  // opening itself - a branch of nothing but the greeting is not a second view of the exchange.
+  "chat_fork_target_not_found",
+  "chat_fork_turn_active",
+  "chat_fork_opening_retained",
   // Chat management names any Chat of the partition by its own handle (not only the mounted one);
   // a handle that names none is bounded and player-actionable, not a selection conflict.
   "chat_not_found",

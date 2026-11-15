@@ -227,6 +227,23 @@ const chatDeleteBindingUnavailable: ProblemSentence = (labels) =>
   });
 
 /**
+ * The branch's own three. A row the conversation no longer carries is the ordinary stale read; a reply still
+ * being written is a wait; and the greeting is not an exchange, so there is nothing on the other side of it to
+ * explore - which is the one refusal the sentence has to say rather than answer with "could not branch".
+ */
+const chatForkTargetNotFound: ProblemSentence = (labels) =>
+  sentence(labels.problemChatForkTargetNotFoundTitle, labels.problemChatForkTargetNotFoundDetail, RETRY_READ);
+
+const chatForkTurnActive: ProblemSentence = (labels) =>
+  sentence(labels.problemChatForkTurnActiveTitle, labels.problemChatForkTurnActiveDetail, HOST_RETRIES);
+
+const chatForkOpeningRetained: ProblemSentence = (labels) =>
+  sentence(labels.problemChatForkOpeningRetainedTitle, labels.problemChatForkOpeningRetainedDetail, {
+    kind: "no_step",
+    because: "not_this_artifact",
+  });
+
+/**
  * Discarding one variant, when it is the last one: the reply would be left with nothing to read, and
  * removing the reply itself is the delete - so the sentence names that other control rather than
  * "could not change the conversation".
@@ -542,6 +559,9 @@ const PROBLEM_SENTENCES: Readonly<Record<TavernProblemCode, ProblemSentence>> = 
   chat_delete_opening_retained: chatDeleteOpeningRetained,
   chat_delete_turn_active: chatDeleteTurnActive,
   chat_delete_binding_unavailable: chatDeleteBindingUnavailable,
+  chat_fork_target_not_found: chatForkTargetNotFound,
+  chat_fork_turn_active: chatForkTurnActive,
+  chat_fork_opening_retained: chatForkOpeningRetained,
   chat_export_too_large: exportTooLarge,
 
   companion_world_book_absent: worldBookAbsent,
