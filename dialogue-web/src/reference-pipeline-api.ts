@@ -422,6 +422,9 @@ export const PROBLEM_CODES = [
   "chat_delete_opening_retained",
   "chat_delete_turn_active",
   "chat_delete_binding_unavailable",
+  // The regenerate's own one: the reply is her answer to a line the player has since deleted, so the
+  // question it re-asked no longer exists. The nearest player row above it is a different question.
+  "chat_regenerate_anchor_unavailable",
   // The branch's own three: a row this Chat does not carry, a reply still being written, and the
   // opening itself - a branch of nothing but the greeting is not a second view of the exchange.
   "chat_fork_target_not_found",

@@ -227,6 +227,19 @@ const chatDeleteBindingUnavailable: ProblemSentence = (labels) =>
   });
 
 /**
+ * Her reply outlived the line it answered: a delete removes one row and clears every reply's parent with
+ * it, so there is no question left to re-ask - and the nearest line above is a different question. Neither
+ * an outage nor a stale read. The two steps the player really has are on this row and in the composer, and
+ * the row's own Delete is the one a control can name.
+ */
+const chatRegenerateAnchorUnavailable: ProblemSentence = (labels) =>
+  sentence(labels.problemChatRegenerateAnchorUnavailableTitle, labels.problemChatRegenerateAnchorUnavailableDetail, {
+    kind: "control",
+    id: "message-delete",
+    elsewhere: { said_as: "delete this reply" },
+  });
+
+/**
  * The branch's own three. A row the conversation no longer carries is the ordinary stale read; a reply still
  * being written is a wait; and the greeting is not an exchange, so there is nothing on the other side of it to
  * explore - which is the one refusal the sentence has to say rather than answer with "could not branch".
@@ -560,6 +573,7 @@ const PROBLEM_SENTENCES: Readonly<Record<TavernProblemCode, ProblemSentence>> = 
   chat_delete_opening_retained: chatDeleteOpeningRetained,
   chat_delete_turn_active: chatDeleteTurnActive,
   chat_delete_binding_unavailable: chatDeleteBindingUnavailable,
+  chat_regenerate_anchor_unavailable: chatRegenerateAnchorUnavailable,
   chat_fork_target_not_found: chatForkTargetNotFound,
   chat_fork_turn_active: chatForkTurnActive,
   chat_fork_opening_retained: chatForkOpeningRetained,

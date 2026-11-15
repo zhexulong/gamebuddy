@@ -192,6 +192,11 @@ const ProblemCode = Type.Union([
   Type.Literal("chat_delete_opening_retained"),
   Type.Literal("chat_delete_turn_active"),
   Type.Literal("chat_delete_binding_unavailable"),
+  // Regenerating one of her replies (`chat.regenerate`) re-asks the player line that reply answered, at that
+  // reply's own position. The one refusal of its own: that line is gone. A delete removes exactly one row and
+  // sets every reply's parent to null with it, so a reply can outlive the question it answered - and the nearest
+  // player row above it is then a different question, not a substitute.
+  Type.Literal("chat_regenerate_anchor_unavailable"),
   // Branching the conversation from one message (`chat.fork`) creates a SECOND Chat and leaves the first
   // exactly as it is, so every way it can be refused is a fact about the point the player named: a row this
   // Chat does not carry, a reply that is still being written (a branch would copy rows the player has not
@@ -2767,6 +2772,7 @@ export const TAVERN_BROWSER_PROBLEM_CODES_V1 = Object.freeze([
   "chat_delete_opening_retained",
   "chat_delete_turn_active",
   "chat_delete_binding_unavailable",
+  "chat_regenerate_anchor_unavailable",
   "chat_fork_target_not_found",
   "chat_fork_turn_active",
   "chat_fork_opening_retained",

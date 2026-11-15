@@ -849,6 +849,117 @@ test(
 );
 
 test(
+  "regenerate re-asks a reply that is not the transcript's tail, at that reply's own position",
+  { skip: process.platform !== "win32" ? "requires real Windows production coordinator mount" : false },
+  async () => {
+    const output = await mounted(`
+  const fx = await fixture();
+  let startCalls = 0;
+  const service = serviceFor(fx, async () => { startCalls += 1; });
+  const handleOf = (id) => fx.lease.browserProjection.projectMessageHandle(id);
+  // Two settled exchanges: [opening, player_01, response_01, player_02, response_02]. The two
+  // player lines differ, because the anchor is looked up by the words the reply answers.
+  await service.submitAfterResponseCommit(commandFor(fx, {}), "klmnopqrstuvwxyzaabcde", async () => undefined);
+  await waitFor(() => startCalls === 1);
+  await driveToTerminal(fx, "completed", "response_01");
+  await service.submitAfterResponseCommit(commandFor(fx, { text: "Synthetic second request", expectedDraftRevision: 1 }), "bcdefghijklmnopqrstuvw", async () => undefined);
+  await waitFor(() => startCalls === 2);
+  await driveToTerminal(fx, "completed", "response_02");
+  const before = await fx.store().resumeThread(fx.lease.chatThreadId, fx.lease.chatSurfaceSessionId);
+  const ids = before.messages.map((m) => m.messageId);
+  const firstReplyIndex = ids.indexOf("response_01");
+  const firstReplyId = ids[firstReplyIndex];
+  const firstPlayerId = ids[firstReplyIndex - 1];
+  // The MIDDLE reply is the target: response_01, with a settled exchange after it.
+  const accepted = await run(async () =>
+    service.regenerate({ apiVersion: 1, selectionGeneration: fx.generation, messageHandle: handleOf(firstReplyId) }, "mnopqrstuvwxyzabcdefgh"));
+  await ticks();
+  const acceptedState = await fx.store().resumeThread(fx.lease.chatThreadId, fx.lease.chatSurfaceSessionId);
+  const driven = await driveVariantToCompleted(fx, {
+    targetMessageId: firstReplyId,
+    anchorText: "Synthetic player request",
+    committedReplyText: "Synthetic companion reply.",
+    text: "Regenerated first reply.",
+  });
+  const committed = await fx.store().resumeThread(fx.lease.chatThreadId, fx.lease.chatSurfaceSessionId);
+  const selected = await run(async () =>
+    service.selectSwipe({ apiVersion: 1, selectionGeneration: fx.generation, messageHandle: handleOf(firstReplyId), direction: "prev" }));
+  const restored = await fx.store().resumeThread(fx.lease.chatThreadId, fx.lease.chatSurfaceSessionId);
+  await service.close();
+  await fx.lease.close();
+  await fx.authority.close();
+  process.stdout.write(JSON.stringify({
+    accepted,
+    firstReplyId,
+    firstPlayerId,
+    secondReplyId: ids[firstReplyIndex + 2],
+    identityBefore: ids,
+    identityAfterAcceptance: acceptedState.messages.map((m) => m.messageId),
+    identityAfterCommit: committed.messages.map((m) => m.messageId),
+    turnVariant: acceptedState.turnLedger === null ? null : acceptedState.turnLedger.variant ?? null,
+    turnMessageId: acceptedState.turnLedger === null ? null : acceptedState.turnLedger.messageId,
+    playerRows: committed.messages.filter((m) => m.role === "player").length,
+    first: {
+      text: committed.messages[firstReplyIndex].text,
+      swipes: committed.messages[firstReplyIndex].swipes,
+      index: committed.messages[firstReplyIndex].activeSwipeIndex,
+    },
+    later: {
+      text: committed.messages[firstReplyIndex + 2].text,
+      swipes: committed.messages[firstReplyIndex + 2].swipes ?? null,
+      index: committed.messages[firstReplyIndex + 2].activeSwipeIndex ?? null,
+    },
+    activation: driven.activation.status,
+    commitStatus: driven.committed.status,
+    restored: {
+      text: restored.messages[firstReplyIndex].text,
+      swipes: restored.messages[firstReplyIndex].swipes,
+      messages: restored.messages.length,
+    },
+    selected: selected.ok ? selected.value.message : selected,
+    startCalls,
+  }));
+`);
+    const accepted = output.accepted as { ok: boolean; value?: SubmitResultV1; error?: string };
+    assert.equal(accepted.ok, true, accepted.error);
+    assert.equal(accepted.value?.disposition, "accepted");
+    // The variant turn names the MIDDLE reply and the line that reply answered - not the transcript's
+    // tail, and not the nearest player row above the tail.
+    assert.deepEqual(output.turnVariant, {
+      targetMessageId: output.firstReplyId,
+      anchorMessageId: output.firstPlayerId,
+    });
+    // A variant turn mints no player row and no visible row: the transcript is the same five rows, in the
+    // same order, before and after both the acceptance and the commit.
+    assert.deepEqual(output.identityAfterAcceptance, output.identityBefore);
+    assert.deepEqual(output.identityAfterCommit, output.identityBefore);
+    assert.equal((output.identityBefore as string[]).length, 5);
+    assert.equal(output.playerRows, 2);
+    assert.equal(output.startCalls, 3);
+    // The reply the player re-asked is re-written IN PLACE and its superseded text survives on the same
+    // row's own variant set - which is what makes this the pager's mutation rather than the rewind's.
+    assert.equal(output.activation, "branched");
+    assert.equal(output.commitStatus, "presentation_committed");
+    assert.deepEqual(output.first, {
+      text: "Regenerated first reply.",
+      swipes: ["Synthetic companion reply.", "Regenerated first reply."],
+      index: 1,
+    });
+    // Everything after it is untouched: the exchange that followed still reads exactly as it did, still holding
+    // the one variant it was committed with and none of the regenerated text.
+    assert.equal((output.later as { text: string }).text, "Synthetic companion reply.");
+    assert.deepEqual((output.later as { swipes: string[] }).swipes, ["Synthetic companion reply."]);
+    const selected = output.selected as { text?: string; swipeInfo?: Record<string, unknown> };
+    assert.equal(selected.text, "Synthetic companion reply.");
+    assert.equal((selected.swipeInfo ?? {}).totalSwipes, 2);
+    const restored = output.restored as { text: string; swipes: string[]; messages: number };
+    assert.equal(restored.text, "Synthetic companion reply.");
+    assert.deepEqual(restored.swipes, ["Synthetic companion reply.", "Regenerated first reply."]);
+    assert.equal(restored.messages, 5);
+  },
+);
+
+test(
   "regenerate re-generates the transcript's tail companion reply at its own position",
   { skip: process.platform !== "win32" ? "requires real Windows production coordinator mount" : false },
   async () => {

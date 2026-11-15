@@ -1488,6 +1488,7 @@ const PROBLEM_CODES = [
   "chat_delete_opening_retained",
   "chat_delete_turn_active",
   "chat_delete_binding_unavailable",
+  "chat_regenerate_anchor_unavailable",
   // The branch's own three: a row this Chat does not carry, a reply still being written, and the
   // opening itself - a branch of nothing but the greeting is not a second view of the exchange.
   "chat_fork_target_not_found",

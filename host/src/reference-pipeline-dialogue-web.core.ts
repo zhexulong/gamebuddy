@@ -127,7 +127,8 @@ export function problemFor(error: unknown): Readonly<{ status: number; code: Pro
   // name all the way to the surface: which row is gone, which view has moved, which rewind point is the
   // greeting the Chat opened on, whether a reply is still being written, that the row is neither the
   // player's own words, her reply, nor that opening, and - for a delete - that the row has no recorded
-  // session entry to omit.
+  // session entry to omit, and - for a regenerate - that the reply has no line of the player's left to
+  // re-ask.
   if (message === "chat_message_not_found") return { status: 409, code: "chat_message_not_found" };
   if (message === "chat_message_revision_conflict") return { status: 409, code: "chat_message_revision_conflict" };
   if (message === "chat_swipe_last_variant") return { status: 409, code: "chat_swipe_last_variant" };
@@ -137,6 +138,8 @@ export function problemFor(error: unknown): Readonly<{ status: number; code: Pro
   if (message === "chat_delete_opening_retained") return { status: 409, code: "chat_delete_opening_retained" };
   if (message === "chat_delete_turn_active") return { status: 409, code: "chat_delete_turn_active" };
   if (message === "chat_delete_binding_unavailable") return { status: 409, code: "chat_delete_binding_unavailable" };
+  if (message === "chat_regenerate_anchor_unavailable")
+    return { status: 409, code: "chat_regenerate_anchor_unavailable" };
   if (
     message === "chat_pipeline_service_commit_rejected" ||
     message === "chat_pipeline_service_closed" ||

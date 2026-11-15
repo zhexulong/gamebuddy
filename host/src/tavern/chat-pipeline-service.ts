@@ -582,24 +582,25 @@ export function createChatPipelineService(options: ChatPipelineServiceOptions): 
       if (!validIdempotencyKey(idempotencyKey)) throw unavailable();
       if (command.selectionGeneration !== lease.browserProjection.selectionGeneration) throw selectionConflict();
       const state = await resumeState();
-      // Regeneration re-asks the last thing the player said, so exactly one target can honour it:
-      // the transcript's own last message. Two shapes of that row are legal, and neither mints a
-      // player row:
+      // Regeneration re-asks a line of the player's and re-writes ONE reply at that reply's own
+      // position. Two shapes can honour it, and neither mints a player row:
       //
-      //  - her reply, when a player turn stands before it. The turn is a same-position variant: it
-      //    names that reply and re-runs the prompt from the player message the reply answered. A
-      //    middle reply has no turn of its own to re-run, and the opening - the only companion
-      //    message a transcript can begin with - has no player turn before it at all. Both were
-      //    previously accepted: the middle one appended an unrelated pair at the tail, and the
-      //    opening appended the literal "请继续". They are refused here as well as hidden by the
-      //    surface, because the browser is not the authority on what this Chat can do.
+      //  - her reply, anywhere in the transcript, when the player line it answered is still there.
+      //    The turn is a same-position variant: it names that reply and re-runs the prompt from the
+      //    row the reply itself recorded as its parent. There is no position requirement, because
+      //    the variant commit (a swipe appended to that exact row, `commit_variant`) touches that
+      //    row alone - every later reply stays where it is, and the superseded text stays reachable
+      //    through the row's own pager. That is the same mutation the pager itself performs, which is
+      //    why Regenerate is offered on the same rows it is. The opening is the one companion row
+      //    this can never be: no player line stands before it at all.
       //
       //  - the player's own line, when nothing answered it. Acceptance writes that row durably
       //    BEFORE the provider runs and the `failed` and `cancelled` transitions keep it, so a turn
       //    that never produced a reply leaves exactly this shape - by construction, not by accident.
       //    The alternatives are both worse: a fresh player row repeats the player's own words in the
       //    transcript, and reopening the terminal turn would falsify the record that says the product
-      //    will not act on that turn again. The reply appends at the tail behind the line it answers.
+      //    will not act on that turn again. The reply appends at the tail behind the line it answers,
+      //    which is why THIS shape is the transcript's tail and only the tail.
       //
       //    This target is refused while anything can still answer the line: a non-terminal ledger
       //    means a live turn, and answering it here would mint a second reply to a prompt the model
@@ -608,19 +609,30 @@ export function createChatPipelineService(options: ChatPipelineServiceOptions): 
       // The reply a variant turn writes changes only when the provider's commit appends the new
       // variant at that exact position; the reply-target turn's commit inserts an ordinary reply row
       // after the line it answered. A turn that can do neither leaves the transcript as it was.
-      const targetMessage = state.messages[state.messages.length - 1];
+      const targetMessage = state.messages.find(
+        (message: ChatThreadState["messages"][number]) =>
+          lease.browserProjection.projectMessageHandle(message.messageId) === command.messageHandle,
+      );
+      const targetIndex = targetMessage === undefined ? -1 : state.messages.indexOf(targetMessage);
+      const answersPlayerLine = targetMessage !== undefined && targetMessage.role === "player";
       if (
         targetMessage === undefined ||
-        lease.browserProjection.projectMessageHandle(targetMessage.messageId) !== command.messageHandle
+        // An unanswered player line is the transcript's own tail, or it has already been answered.
+        (answersPlayerLine && targetIndex !== state.messages.length - 1) ||
+        targetMessage.kind === "opening"
       )
         throw unavailable();
-      const answersPlayerLine = targetMessage.role === "player";
-      const parentPlayerMessage = answersPlayerLine
-        ? targetMessage
-        : [...state.messages.slice(0, state.messages.length - 1)]
-            .reverse()
-            .find((m: ChatThreadState["messages"][number]) => m.role === "player");
-      if (parentPlayerMessage === undefined) throw unavailable();
+      // The anchor is the player row the reply NAMES AS ITS PARENT - recorded on the reply when it was
+      // committed, and set to null by the delete that removes that line (`deleteMessage`). The nearest
+      // player row above is a DIFFERENT question whenever a hole was left, and re-asking it under her
+      // reply would put words in her mouth about something the player never said there. The one target
+      // that is its own anchor is the player's unanswered line.
+      const anchorMessageId = answersPlayerLine ? targetMessage.messageId : (targetMessage.parentId ?? null);
+      const anchorIndex =
+        anchorMessageId === null ? -1 : state.messages.findIndex((m) => m.messageId === anchorMessageId);
+      if (anchorIndex < 0 || anchorIndex > targetIndex || state.messages[anchorIndex]!.role !== "player")
+        throw mutationRefusal("chat_regenerate_anchor_unavailable");
+      const parentPlayerMessage = state.messages[anchorIndex]!;
       if (answersPlayerLine && state.turnLedger !== null && !isTerminalLedger(state.turnLedger)) throw unavailable();
       const promptText = parentPlayerMessage.text;
       // The per-turn volatile selection scans the accepted line plus a bounded visible
@@ -1101,6 +1113,7 @@ const CHAT_MESSAGE_MUTATION_REFUSALS: readonly string[] = [
   "chat_delete_opening_retained",
   "chat_delete_turn_active",
   "chat_delete_binding_unavailable",
+  "chat_regenerate_anchor_unavailable",
 ];
 
 function mutationRefusal(code: string): Error {
