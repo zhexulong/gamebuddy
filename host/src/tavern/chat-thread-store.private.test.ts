@@ -1878,6 +1878,164 @@ test("a rewind keeps the named message and drops every row after it, together wi
 });
 
 /**
+ * A rewind can land on HER row, not only on the player's: the cut keeps the reply she wrote and drops
+ * the player line underneath it. Every row under that line names its own parent through `parent_id`,
+ * which is `ON DELETE RESTRICT`, so the ORDER the dropped rows go out is part of the contract - and a
+ * parents-first sweep dies on its own foreign key. This cut keeps the first reply and drops two whole
+ * exchanges, so the drop is a chain of parent/child pairs rather than a single reply.
+ *
+ * Every failure names the row the cut kept, because an FK refusal on its own does not say where the
+ * rewind landed (`chat_rewind_failed_at:<messageId>`).
+ */
+test("a rewind at the first reply drops the exchanges under it, each child before the line it names", async () => {
+  const root = await canonicalTestRoot("gamebuddy-chat-thread-rewind-first-reply-");
+  const continuityKey = createHash("sha256")
+    .update(["player_01", "companion_01", "continuity_01"].join("\u001f"))
+    .digest("hex");
+  const t0 = Date.now();
+  const s = createChatThreadStore(root, continuityKey, () => t0);
+  const reopened = createChatThreadStore(root, continuityKey, () => t0);
+  try {
+    const creation = createProfileAwareChatThreadCreationCapability(s, profileReader);
+    await creation.createExplicit(request(opening));
+    const first = await completeOneTurn(root, t0, 1, "First line", "reply_01");
+    const second = await completeOneTurn(root, t0, 2, "Second line", "reply_02");
+    const third = await completeOneTurn(root, t0, 3, "Third line", "reply_03");
+    const before = await s.resumeThread("thread_01", "surface_01");
+    assert.deepEqual(
+      before.messages.map((message) => message.messageId),
+      ["opening_01", first.playerId, "reply_01", second.playerId, "reply_02", third.playerId, "reply_03"],
+    );
+    // Her first reply is the third row, and it is the row the cut KEEPS. Everything below it goes: the
+    // second player line with her reply to it (that reply names that line as its parent), and the third
+    // line with `reply_03` (which names the third line).
+    const after = await rewindAt(s, "reply_01", 2);
+    assert.deepEqual(
+      after.messages.map((message) => message.messageId),
+      ["opening_01", first.playerId, "reply_01"],
+    );
+    assert.equal(after.messages[2]!.parentId, first.playerId);
+    // The turns only those rows evidenced are gone with them, and the one whose rows survived is the
+    // ledger the thread still reads back under.
+    assert.equal(after.turnLedger?.turnId, first.turnId);
+    assert.deepEqual(
+      after.idempotency.map((record) => record.key),
+      [first.key],
+    );
+    const durable = await reopened.resumeThread("thread_01", "surface_01");
+    assert.deepEqual(
+      durable.messages.map((message) => message.messageId),
+      ["opening_01", first.playerId, "reply_01"],
+    );
+  } finally {
+    reopened.close?.();
+    s.close?.();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+/**
+ * The minimal instance of the same cut: two exchanges, and the rewind lands on her reply to the first
+ * one. Exactly one parent/child pair is inside the dropped set (`reply_02` names the second player
+ * line), which is the smallest shape the parents-first sweep still dies on.
+ */
+test("a rewind at a reply row drops the one exchange under it, not the line it answered", async () => {
+  const root = await canonicalTestRoot("gamebuddy-chat-thread-rewind-reply-row-");
+  const continuityKey = createHash("sha256")
+    .update(["player_01", "companion_01", "continuity_01"].join("\u001f"))
+    .digest("hex");
+  const t0 = Date.now();
+  const s = createChatThreadStore(root, continuityKey, () => t0);
+  const reopened = createChatThreadStore(root, continuityKey, () => t0);
+  try {
+    const creation = createProfileAwareChatThreadCreationCapability(s, profileReader);
+    await creation.createExplicit(request(opening));
+    const first = await completeOneTurn(root, t0, 1, "First line", "reply_01");
+    const second = await completeOneTurn(root, t0, 2, "Second line", "reply_02");
+    // The kept reply's OWN parent is the first player line, which survives - so the pair the drop has to
+    // respect is entirely inside the suffix, one row below the cut.
+    const after = await rewindAt(s, "reply_01", 2);
+    assert.deepEqual(
+      after.messages.map((message) => message.messageId),
+      ["opening_01", first.playerId, "reply_01"],
+    );
+    assert.equal(after.messages[2]!.parentId, first.playerId);
+    assert.equal(
+      after.messages.some((message) => message.messageId === second.playerId),
+      false,
+    );
+    assert.equal(after.turnLedger?.turnId, first.turnId);
+    assert.deepEqual(
+      after.idempotency.map((record) => record.key),
+      [first.key],
+    );
+    // The rows really are gone, and the kept reply still names a row that exists: a cleared root here
+    // would be a loss, because the line it answered is still in the transcript.
+    const durable = await reopened.resumeThread("thread_01", "surface_01");
+    assert.deepEqual(
+      durable.messages.map((message) => message.messageId),
+      ["opening_01", first.playerId, "reply_01"],
+    );
+    assert.equal(durable.messages[2]!.parentId, first.playerId);
+  } finally {
+    reopened.close?.();
+    s.close?.();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+/**
+ * The same fault with a PLAYER row as the cut: the kept line is the second one, and the rows below it
+ * include her reply to that line (whose parent survives, so it drops freely) and a THIRD exchange whose
+ * reply names the third player line - and that line is inside the dropped set. So the failure shape is
+ * not about which kind of row the cut landed on; it is about a dropped row whose `parent_id` names
+ * another dropped row.
+ */
+test("a rewind at a player row drops a reply whose parent_id names a row inside the dropped set", async () => {
+  const root = await canonicalTestRoot("gamebuddy-chat-thread-rewind-player-with-pair-");
+  const continuityKey = createHash("sha256")
+    .update(["player_01", "companion_01", "continuity_01"].join("\u001f"))
+    .digest("hex");
+  const t0 = Date.now();
+  const s = createChatThreadStore(root, continuityKey, () => t0);
+  const reopened = createChatThreadStore(root, continuityKey, () => t0);
+  try {
+    const creation = createProfileAwareChatThreadCreationCapability(s, profileReader);
+    await creation.createExplicit(request(opening));
+    const first = await completeOneTurn(root, t0, 1, "First line", "reply_01");
+    const second = await completeOneTurn(root, t0, 2, "Second line", "reply_02");
+    const third = await completeOneTurn(root, t0, 3, "Third line", "reply_03");
+    const after = await rewindAt(s, second.playerId, 3);
+    assert.deepEqual(
+      after.messages.map((message) => message.messageId),
+      ["opening_01", first.playerId, "reply_01", second.playerId],
+    );
+    // The kept player line is left with no reply of its own - the reply that answered it went with the
+    // tail - and it still exists, so nothing above it lost a root.
+    assert.equal(after.messages[1]!.parentId, undefined);
+    assert.equal(after.messages[3]!.kind, "player");
+    assert.equal(
+      after.messages.some((message) => message.messageId === third.playerId),
+      false,
+    );
+    assert.equal(after.turnLedger?.turnId, first.turnId);
+    assert.deepEqual(
+      after.idempotency.map((record) => record.key),
+      [first.key],
+    );
+    const durable = await reopened.resumeThread("thread_01", "surface_01");
+    assert.deepEqual(
+      durable.messages.map((message) => message.messageId),
+      ["opening_01", first.playerId, "reply_01", second.playerId],
+    );
+  } finally {
+    reopened.close?.();
+    s.close?.();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+/**
  * An edit is the one Chat mutation that rewrites a row in place, so it must rewrite exactly the row the
  * player named and nothing else: the transcript order, the turn bookkeeping and every other row stay as
  * they were. The rows below come from real accepted turns - the same shape the mounted Chat meets -
@@ -2539,6 +2697,25 @@ async function completeOneTurn(root: string, now: number, ordinal: number, text:
   await transitionMountedPresentation(attempt, { operation: "claim_completion", claimedAtMs: now + 4 });
   await transitionMountedPresentation(attempt, { operation: "complete", completedAtMs: now + 5 });
   return { key: `key${ordinal}`.padEnd(22, "x"), playerId: accepted.messageId, turnId: accepted.turnId };
+}
+
+/**
+ * A rewind that names the row it kept in every failure.
+ *
+ * The shape the three tests above gate is an ORDERING fault inside the drop, and the store's refusal
+ * arrives as a bare `FOREIGN KEY constraint failed` - which says a parent went before its child but not
+ * which row the cut landed on. The wrapper adds that fact, so a red test reads as the cut it is.
+ */
+async function rewindAt(
+  s: ReturnType<typeof createChatThreadStore>,
+  messageId: string,
+  expectedOrder: number,
+): Promise<Awaited<ReturnType<NonNullable<ReturnType<typeof createChatThreadStore>["rewindTranscript"]>>>> {
+  try {
+    return await s.rewindTranscript!(testTransitionAuthority.authority, "thread_01", { messageId, expectedOrder });
+  } catch (error) {
+    throw new Error(`chat_rewind_failed_at:${messageId}:${(error as Error).message}`);
+  }
 }
 
 /**

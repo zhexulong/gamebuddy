@@ -2833,7 +2833,16 @@ export function createChatThreadStore(
             turnId,
           );
         for (const turnId of doomedTurnIds) db.prepare("DELETE FROM tavern_turns WHERE turn_id = ?").run(turnId);
-        for (const message of dropped)
+        // The dropped rows go out children-first. `parent_id` is a foreign key with `ON DELETE RESTRICT`,
+        // so the player line a reply names is REFUSED while that reply still exists - and the cut can land
+        // on her reply, which puts the line she answered inside the dropped set together with her reply.
+        // Nothing between those two rows can be cleared instead: the single-row `deleteTranscriptMessage`
+        // clears `parent_id` because the reply there SURVIVES with no root, while here the reply goes too,
+        // so there is no root to preserve and no row to leave holding one. A reply is always written after
+        // the line it answers (`parent_id` is read off the transcript or off the turn's position, both of
+        // which name an earlier row), so reversing the suffix is exactly children-before-parents, and every
+        // row keeps its parent until the row itself is gone.
+        for (const message of [...dropped].reverse())
           db.prepare("DELETE FROM tavern_messages WHERE thread_id = ? AND message_id = ?").run(
             chatThreadId,
             message.messageId,
