@@ -33,19 +33,12 @@
  *                    `of which runners 1 groups / 1 sites`; a blocked reading -> `debt: not measured · <reason>`.
  * red-proof: inject  three tools files sharing only an import preamble and a const -> `syntax-floor 1 (3 sites) ·
  *                    duplication 0 (0 sites)` and status `passed`; the same three files with one function body copied
- *                    instead -> `duplication 1 (3 sites)` and `clone_group:...tokens:3sites: tools/alpha.mjs:...`,
+ *                    instead -> `duplication 1 (3 sites)` and `clone_group:<n>tokens:3sites:` naming all three,
  *                    status `failed` - the only variable between the two trees is whether the block below the preamble is
  *                    a body, so the split is what decides the verdict.
  * red-proof: inject  a tree whose three copies are committed -> the finding carries `attribution.commit`,
  *                    `attribution.date` and the commit subject beside its `detail`; the same tree with no commit ->
- *                    `unrecorded (no commit holds host/src/a.cs)` and the verdict is unchanged.
- * red-proof: inject  a baseline that records nothing beside three committed copies -> `--record-ceiling` prints
- *                    `ceiling recorded: 1 group(s) · 3 sites · nothing lowered` and one `ceiling:<hash>: last touched
- *                    <commit> <date> <subject> (<file>:<line>)` line, the next run is `passed`, and a fourth copy is
- *                    `clone_group_grew`; the same tree with no baseline -> `ceiling_record_refused: there is no
- *                    tools/duplicate-code-baseline.json`; a fifth copy written into a tracked file and not committed ->
- *                    `ceiling_record_refused:<hash>: host/src/Alpha.cs:<n> sits in a file an uncommitted change has
- *                    moved` and the baseline stays byte-identical.
+ *                    `unrecorded (no commit holds <file>)` and the verdict is unchanged.
  * red-proof: inject  a group recorded in the baseline whose text is an import preamble ->
  *                    `syntax_floor_clone_baselined:<hash>`, status `failed`, and `--record-shrinks` deletes that entry
  *                    (`removed 1`) without adding anything.
@@ -82,7 +75,6 @@ import {
   MIN_TOKENS,
   normaliseSitePath,
   readBaseline,
-  recordCeiling,
   recordShrinks,
   runJscpd,
   SOURCE_TREES,
@@ -833,9 +825,8 @@ const cli = (root, ...args) =>
   spawnSync(process.execPath, [GATE, "--root", root, ...args], { encoding: "utf8", timeout: 300_000 });
 
 /**
- * Everything staged, then committed. Attribution reads `git log`, and `--record-ceiling` banks only debt a commit holds,
- * so a fixture that wants either has to have a commit - with an identity given on the command line, because a throwaway
- * tree has no configuration of its own.
+ * Everything staged, then committed. Attribution reads `git log`, so a fixture that wants one has to have a commit -
+ * with an identity given on the command line, because a throwaway tree has no configuration of its own.
  */
 const commitAll = (root, message = "fixture: the tree the gate reads") =>
   execFileSync(
@@ -1154,138 +1145,6 @@ test("a finding names the commit behind its site, and says unrecorded when no co
   );
 });
 
-const CEILING_ATTRIBUTION = (hash, file = "host/src/a.ts", line = 1) => [
-  hash,
-  { hash, commit: "abc1234def", date: "2026-11-15", subject: "the copies land", site: { file, line } },
-];
-
-test("--record-ceiling refuses what no commit holds: no baseline, an unrecorded group, a dirty site", () => {
-  const reading = evaluateGroups({ groups: threeCopies(), baseline: { groups: [] } });
-  const hash = groupHash(FRAGMENT);
-  const noBaseline = recordCeiling({ reading, baseline: null });
-  assert.match(noBaseline.refused[0], /^ceiling_record_refused: there is no tools\/duplicate-code-baseline\.json/);
-
-  const unrecorded = recordCeiling({
-    reading,
-    baseline: { groups: [] },
-    attribution: new Map(),
-    uncommitted: new Set(),
-  });
-  assert.deepEqual(unrecorded.refused, [`ceiling_record_refused:${hash}: no commit holds its sites - unrecorded`]);
-
-  const dirty = recordCeiling({
-    reading,
-    baseline: { groups: [] },
-    attribution: new Map([CEILING_ATTRIBUTION(hash, "host/src/b.ts", 7)]),
-    uncommitted: new Set(["host/src/b.ts"]),
-  });
-  assert.deepEqual(dirty.refused, [
-    `ceiling_record_refused:${hash}: host/src/b.ts:1 sits in a file an uncommitted change has moved, so no commit ` +
-      "holds this group yet - commit it, or pay it here",
-  ]);
-});
-
-test("--record-ceiling adds at the tree's size, keeps every existing entry byte-identical, and never lowers", () => {
-  const hash = groupHash(FRAGMENT);
-  const kept = baselinePayload([...runnerCopies()]).groups[0];
-  const reading = evaluateGroups({ groups: [...threeCopies(), ...runnerCopies()], baseline: { groups: [kept] } });
-  const outcome = recordCeiling({
-    reading,
-    baseline: { groups: [kept] },
-    attribution: new Map([CEILING_ATTRIBUTION(hash)]),
-    uncommitted: new Set(),
-  });
-  assert.deepEqual(
-    outcome.payload.groups,
-    [kept, { hash, tokens: 50, sites: ["host/src/a.ts:1", "host/src/b.ts:1", "host/src/c.ts:1"] }].sort((left, right) =>
-      left.hash.localeCompare(right.hash),
-    ),
-  );
-  assert.equal(
-    JSON.stringify(outcome.payload.groups.find((entry) => entry.hash === kept.hash)),
-    JSON.stringify(kept),
-    "an existing entry is kept byte-identical, line numbers and token count included",
-  );
-  assert.deepEqual(
-    outcome.after.findings,
-    [],
-    `the recorded ceiling is green: ${JSON.stringify(outcome.after.findings)}`,
-  );
-  assert.equal(outcome.after.stale, 0, "nothing was lowered or deleted");
-
-  // The other direction: a tree that only shrank has nothing to add, and the payload is the record it already had.
-  const shrank = evaluateGroups({ groups: threeCopies(), baseline: baselinePayload(threeCopies()) });
-  const nothing = recordCeiling({
-    reading: shrank,
-    baseline: baselinePayload(threeCopies()),
-    attribution: new Map(),
-    uncommitted: new Set(),
-  });
-  assert.deepEqual(nothing.added, []);
-  assert.deepEqual(nothing.payload.groups, baselinePayload(threeCopies()).groups);
-});
-
-test("--record-ceiling banks a committed group with the commit it names, and the ceiling only shrinks from there", () => {
-  const tree = repoShaped(copies(["Alpha", "Bravo", "Charlie"]));
-  commitAll(tree.root, "the pipeline lands");
-  const red = cli(tree.root);
-  assert.equal(red.status, 1, red.stdout);
-
-  const noBaseline = cli(tree.root, "--record-ceiling");
-  assert.equal(noBaseline.status, 1, noBaseline.stdout);
-  assert.match(noBaseline.stdout, /ceiling_record_refused: there is no tools\/duplicate-code-baseline\.json/);
-
-  // What a rule change leaves behind: a record that predates the population it now governs.
-  writeFileSync(baselineFileOf(tree.root), '{\n  "groups": []\n}\n');
-  const recorded = cli(tree.root, "--record-ceiling");
-  assert.equal(recorded.status, 0, recorded.stdout);
-  assert.match(recorded.stdout, /ceiling recorded: 1 group\(s\) · 3 sites · nothing lowered/);
-  assert.match(
-    recorded.stdout,
-    / {2}ceiling:[0-9a-f]{12}: last touched [0-9a-f]{7,} \d{4}-\d{2}-\d{2} the pipeline lands \(host\/src\/[A-Za-z]+\.cs:\d+\)/,
-  );
-
-  const green = cli(tree.root);
-  assert.equal(green.status, 0, green.stdout);
-  assert.match(green.stdout, /^debt: 1 groups · 3 sites/m);
-
-  // The ratchet after a ceiling is the ratchet before it: a fourth copy fails.
-  writeFileSync(join(tree.root, "host/src/Delta.cs"), pipeline("Delta", "Execute"), "utf8");
-  git(tree.root, ["add", "host/src/Delta.cs"]);
-  const grew = cli(tree.root);
-  assert.equal(grew.status, 1, grew.stdout);
-  assert.match(grew.stdout, /clone_group_grew:[0-9a-f]{12}: now 4 sites at \d+ tokens, the baseline recorded 3 sites/);
-
-  // The residual reading, which is how the four sites above are attributed rather than counted.
-  const residuals = cli(tree.root, "--residuals");
-  assert.match(residuals.stdout, /^residuals: 1 groups · 4 sites · 1 commit\(s\)$/m);
-  assert.match(
-    residuals.stdout,
-    / {2}residual:[0-9a-f]{12}: 4 sites at \d+ tokens · last touched [0-9a-f]{7,} \d{4}-\d{2}-\d{2}/,
-  );
-});
-
-test("--record-ceiling refuses a group a dirty worktree has moved, and leaves the baseline byte-identical", () => {
-  const tree = repoShaped(copies(["Alpha", "Bravo", "Charlie"]));
-  commitAll(tree.root, "the pipeline lands");
-  writeFileSync(baselineFileOf(tree.root), '{\n  "groups": []\n}\n');
-  const recorded = readFileSync(baselineFileOf(tree.root), "utf8");
-
-  // A fifth copy written into a tracked file and never committed: the group now names a site no commit holds as it is.
-  writeFileSync(
-    join(tree.root, "host/src/Alpha.cs"),
-    `${pipeline("Alpha", "Execute")}\n${pipeline("Echo", "Execute")}`,
-    "utf8",
-  );
-  const refused = cli(tree.root, "--record-ceiling");
-  assert.equal(refused.status, 1, refused.stdout);
-  assert.match(
-    refused.stdout,
-    /ceiling_record_refused:[0-9a-f]{12}: host\/src\/Alpha\.cs:\d+ sits in a file an uncommitted change has moved/,
-  );
-  assert.equal(readFileSync(baselineFileOf(tree.root), "utf8"), recorded, "a refused ceiling writes nothing");
-});
-
 test("a baseline that records the floor is named by its own code, and --record-shrinks deletes it", () => {
   // The record was written under the old unit, which counted the import preamble as debt. Under the split it is not a
   // finding and not a pass either: it is a record of something the gate no longer claims is duplication, and the only
@@ -1312,43 +1171,4 @@ test("a baseline that records the floor is named by its own code, and --record-s
   assert.deepEqual(outcome.removed, [groupHash(fragment)]);
   assert.deepEqual(outcome.payload.groups, []);
   assert.deepEqual(outcome.after.findings, []);
-});
-
-test("--record-ceiling raises the entry of a group that grew instead of appending a duplicate of it", () => {
-  // A group that GREW while the rule changed is exactly what the ceiling exists for, and it already has an entry. Adding
-  // a second one leaves two lines with one hash: the reading keys by hash, so one of them is dead weight the record can
-  // never show - a duplicate that no `stale` or `grown` finding will ever name again.
-  const four = groupClones(
-    [
-      pair({ fragment: FRAGMENT, first: "host/src/a.ts", second: "host/src/b.ts" }),
-      pair({ fragment: FRAGMENT, first: "host/src/a.ts", second: "host/src/c.ts" }),
-      pair({ fragment: FRAGMENT, first: "host/src/a.ts", second: "host/src/d.ts" }),
-    ],
-    REPO,
-  );
-  const hash = groupHash(FRAGMENT);
-  const recorded = baselinePayload(threeCopies());
-  const reading = evaluateGroups({ groups: four, baseline: recorded });
-  assert.deepEqual(
-    reading.findings.map((entry) => entry.code),
-    ["clone_group_grew"],
-  );
-  const outcome = recordCeiling({
-    reading,
-    baseline: recorded,
-    attribution: new Map([CEILING_ATTRIBUTION(hash)]),
-    uncommitted: new Set(),
-  });
-  assert.equal(outcome.payload.groups.length, 1, "one hash, one entry");
-  assert.deepEqual(outcome.payload.groups[0], {
-    hash,
-    tokens: 50,
-    sites: ["host/src/a.ts:1", "host/src/b.ts:1", "host/src/c.ts:1", "host/src/d.ts:1"],
-  });
-  assert.deepEqual(outcome.raised, [hash]);
-  assert.deepEqual(
-    outcome.after.findings,
-    [],
-    `the raised ceiling is green: ${JSON.stringify(outcome.after.findings)}`,
-  );
 });

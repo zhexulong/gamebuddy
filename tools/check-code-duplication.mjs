@@ -109,18 +109,17 @@
  * paragraph above already owes.
  *
  * ATTRIBUTION, so "predates this lane" is a hash a reader can check. Every finding names the last commit that touched
- * the file holding its most recent site (`git log -1 --format=... -- <file>`, cached per file), and `--record-ceiling`
- * prints the commit behind every group it records. It is a FILE-LEVEL reading and says so: `git blame` on this tree
+ * the file holding its most recent site (`git log -1 --format=... -- <file>`, cached per file), and `--residuals` names
+ * it for every structural group the ratchet carries. It is a FILE-LEVEL reading and says so: `git blame` on this tree
  * costs 0.2-0.7s a call, which a gate that runs on every commit cannot pay per site. A file no commit holds reads
- * `unrecorded`, which is the fact that stops an in-flight lane's work from being banked.
+ * `unrecorded`, which is the fact a lane's in-flight work shows and a committed one does not.
  *
- * THE CEILING IS THE OTHER HALF OF PAYING. The split makes most of the red disappear by classifying it, but the
- * structural residue that predates the split is real debt that no lane in flight owns, and a ratchet that refuses to
- * record it leaves every lane red for somebody else's copies - the failure this whole change answers. `--record-ceiling`
- * is the one write that may ADD: it records the structural groups that are new or grew, one printed line each with the
- * commit it is attributed to, and it refuses every group with a site the index does not hold or a file with uncommitted
- * changes - so a lane's in-flight work can never be banked, only debt that is already committed. After that the ratchet
- * is what it always was: growth fails, and only `--record-shrinks` may lower an entry.
+ * THE CEILING THAT ONLY FALLS IS NOT IN THIS UNIT, AND THE RED IT WOULD HIDE IS NAMED HERE INSTEAD. The split makes most
+ * of the red disappear by classifying it; the structural residue that predates the split is real debt no lane in flight
+ * owns, and this change does NOT record it. So the tree reads `new 33 · grown 3` after `--record-shrinks` and the gate
+ * stays red on exactly those 36 groups, each with the commit behind it - which is the honest reading, and the next unit
+ * is the one that records a ceiling per group and only ever lowers it. Recording them here would have meant a write that
+ * may ADD to a ratchet, which is the power this file spends a section refusing.
  *
  * WHAT IT ASSERTS, per clone group - the sites jscpd reports for one repeated text, grouped by that text:
  *
@@ -204,21 +203,15 @@
  * and written to, never what the rule is; `jscpd` itself still resolves from THIS file, so a fixture is measured by the
  * repository's own scanner.
  *
- * THE BASELINE IS A RATCHET, NOT AN ACCEPT LIST, AND ITS THREE WRITES HAVE DIFFERENT POWERS. `--write-baseline` may ADD
- * a group - that is how the tree is first written down - but only while the file does not exist or nothing is new or
- * grew, so a green run never becomes the way to accept new duplication. `--record-shrinks` may only move an existing
- * record DOWN: the entry of a group that left the duplication population is deleted, the entry of a group that survived
- * with FEWER sites is lowered onto the tree's sites, and every other entry is left byte-identical - it can never add a
- * group or raise one, which is what makes it safe to run on a tree that also carries somebody else's bad news.
- * `--record-ceiling` is the one write that may ADD to a file that already exists, and it exists for exactly one
- * situation: a rule change that re-partitions the population leaves committed debt that no lane owns, and refusing to
- * record it turns every lane red for somebody else's copies. Its power is bounded by what it refuses - a group with any
- * site the index does not hold, or any file with uncommitted changes, cannot be banked, so it can only write down debt
- * that a commit already carries - and it prints the commit it attributes each recorded group to, so a record banked by
- * mistake names its author. After a ceiling is recorded the ratchet is unchanged: growth fails, and only
- * `--record-shrinks` may lower an entry. The second power exists because a lane that removes a duplicate produces good
- * news on a tree that almost always holds bad news too, and a ratchet that can only be written when there is no bad
- * news drifts from the tree until the next reader's only satisfying move is deleting and re-creating the file. Measured
+ * THE BASELINE IS A RATCHET, NOT AN ACCEPT LIST, AND ITS TWO WRITES HAVE DIFFERENT POWERS. `--write-baseline` may ADD a
+ * group - that is how the tree is first written down - but only while the file does not exist or nothing is new or grew,
+ * so a green run never becomes the way to accept new duplication. `--record-shrinks` may only move an existing record
+ * DOWN: the entry of a group that left the duplication population is deleted, the entry of a group that survived with
+ * FEWER sites is lowered onto the tree's sites, and every other entry is left byte-identical - it can never add a group
+ * or raise one, which is what makes it safe to run on a tree that also carries somebody else's bad news. The second
+ * power exists because a lane that removes a duplicate produces good news on a tree that almost always holds bad news
+ * too, and a ratchet that can only be written when there is no bad news drifts from the tree until the next reader's
+ * only satisfying move is deleting and re-creating the file. Measured
  * 2026-11-12 on this tree, which read `new 14 · grown 1 · stale 46`: `--record-shrinks` removed 39 entries and lowered
  * 7, and the same reading afterwards was `stale 0 · new 14 · grown 1 · duplication 314` - nothing banked in either
  * direction. DELETING a shrunken-but-extant entry instead of lowering it would turn that group into a `clone_group`
@@ -254,7 +247,6 @@
  *   node tools/check-code-duplication.mjs                   # the verdict; exit 1 on a new/grown/stale structural group
  *   node tools/check-code-duplication.mjs --record-shrinks   # delete and lower entries only; adds nothing
  *   node tools/check-code-duplication.mjs --write-baseline   # write the tree down; refuses while a group is new or grew
- *   node tools/check-code-duplication.mjs --record-ceiling   # add committed debt a rule change re-partitioned in; attributed
  *   node tools/check-code-duplication.mjs --residuals        # every structural group with the commit behind its newest site
  *   node tools/check-code-duplication.mjs --root <dir>       # read and write the baseline of another tree (fixtures)
  *
@@ -265,11 +257,9 @@
  *                    status `failed` - so the ratchet is red on a body and green on the floor (the falsifier).
  * red-proof: inject  a baseline that records a floor group -> `syntax_floor_clone_baselined:<hash>`, status `failed`,
  *                    and `--record-shrinks` deletes that entry (`removed 1`) while adding nothing.
- * red-proof: inject  a structural group at three committed sites while its newest site's file carries an uncommitted
- *                    change -> `--record-ceiling` prints `ceiling_record_refused: <hash> has a site the commit does not
- *                    hold` and leaves the baseline byte-identical; the same file committed -> `ceiling recorded: 1
- *                    group(s)` and one `ceiling:<hash>: <n> sites · last touched <commit> <date> <subject>` line, and a
- *                    fourth copy afterwards is `clone_group_grew`, so the ceiling only shrinks.
+ * red-proof: inject  a tree whose three copies are committed -> the finding carries `attribution.commit`,
+ *                    `attribution.date` and the commit subject beside its `detail`; the same tree with no commit ->
+ *                    `unrecorded (no commit holds <file>)` and the verdict is unchanged.
  *
  * red-proof: inject  a fourth copy of the admission pipeline body into a `farmhandexecutioncontroller.*.cs` partial
  *                    while that group's baseline entry stays at its recorded site count ->
@@ -881,26 +871,6 @@ export function attributeGroups(groups, { root = REPO, spawn = spawnSync } = {})
   });
 }
 
-/** The files among `files` whose worktree copy differs from the index, or that the index does not hold. */
-export function uncommittedFiles({ files, root = REPO, spawn = spawnSync } = {}) {
-  if (files.length === 0) return { files: new Set() };
-  const outcome = spawn("git", ["status", "--porcelain", "-z", "--", ...files], {
-    cwd: root,
-    encoding: "utf8",
-    windowsHide: true,
-    maxBuffer: 1 << 26,
-  });
-  if (outcome.status !== 0) return { error: "git_status_unreadable" };
-  return {
-    files: new Set(
-      String(outcome.stdout ?? "")
-        .split("\0")
-        .filter((entry) => entry !== "")
-        .map((entry) => entry.slice(3).replace(/\\/gu, "/")),
-    ),
-  };
-}
-
 /** The whole reading, for the CLI and for the test: population, rule, findings, verdict. */
 export function checkCodeDuplication({
   root = REPO,
@@ -1132,77 +1102,6 @@ export function recordShrinks({ reading, baseline }) {
   return { payload, removed, lowered, after: evaluateGroups({ groups: reading.counted, baseline: payload }) };
 }
 
-/**
- * The one write that may ADD to an existing baseline, and the only situation it exists for: a rule change that
- * re-partitions the population leaves committed debt no lane in flight owns, and a ratchet that refuses to record it
- * turns every lane red for somebody else's copies (THE CEILING, above).
- *
- * Its power is bounded by what it refuses, not by what it accepts. A group is refused when any of its sites sits in a
- * file an uncommitted change has moved (`uncommitted`), or when no commit holds the group at all (`attribution`): only
- * debt a commit already carries can be banked, so a lane's own in-flight work can never ride in behind somebody else's
- * residue. Nothing is lowered or deleted here - every entry it does not target is kept byte-identical - and a refused
- * group keeps its finding, so the gate stays red until the group is paid or committed.
- *
- * A group that is new has no entry and one is added; a group that GREW already has one, and it is RAISED onto the sites
- * the tree has, in place. Appending a second entry for the same hash would leave a line the reading can never name
- * again - the record is keyed by hash, so one of the two would be dead weight no `stale` or `grown` finding could ever
- * report.
- *
- * `payload` is what the file becomes; `added` is what was recorded, `raised` the subset that replaced an existing entry;
- * `after` is the reading that file would produce, so the caller prints the truth it has just recorded rather than a
- * hopeful verdict.
- */
-export function recordCeiling({ reading, baseline, attribution = new Map(), uncommitted = new Set() }) {
-  if (reading.counted === undefined)
-    return { refused: ["ceiling_record_refused: the reading is blocked, so there is no population to record"] };
-  if (baseline === null)
-    return {
-      refused: [
-        `ceiling_record_refused: there is no ${BASELINE} to add to - --write-baseline creates the first record`,
-      ],
-    };
-  const targets = (reading.findings ?? [])
-    .filter((entry) => entry.code === "clone_group" || entry.code === "clone_group_grew")
-    .map((entry) => reading.duplication.find((group) => group.hash === entry.hash))
-    .filter((group) => group !== undefined);
-  const refused = [];
-  const added = [];
-  for (const group of targets) {
-    const dirty = group.sites.find((site) => uncommitted.has(site.file));
-    if (dirty !== undefined) {
-      refused.push(
-        `ceiling_record_refused:${group.hash}: ${dirty.file}:${dirty.line} sits in a file an uncommitted change has ` +
-          "moved, so no commit holds this group yet - commit it, or pay it here",
-      );
-      continue;
-    }
-    const reading_ = attribution.get(group.hash);
-    if (reading_?.commit === undefined) {
-      refused.push(
-        `ceiling_record_refused:${group.hash}: no commit holds its sites - ${reading_?.unrecorded ?? "unrecorded"}`,
-      );
-      continue;
-    }
-    added.push({ group, attribution: reading_ });
-  }
-  if (refused.length > 0) return { refused };
-  const entryFor = (group) => ({
-    hash: group.hash,
-    tokens: group.tokens,
-    sites: group.sites.map((site) => `${site.file}:${site.line}`),
-  });
-  const recorded = new Map(added.map(({ group }) => [group.hash, entryFor(group)]));
-  const existing = new Set(baseline.groups.map((entry) => entry.hash));
-  const raised = added.filter(({ group }) => existing.has(group.hash)).map(({ group }) => group.hash);
-  const payload = {
-    groups: [
-      ...baseline.groups.map((entry) => recorded.get(entry.hash) ?? entry),
-      ...added.filter(({ group }) => !existing.has(group.hash)).map(({ group }) => recorded.get(group.hash)),
-    ].sort((left, right) => left.hash.localeCompare(right.hash)),
-  };
-  return { payload, added, raised, after: evaluateGroups({ groups: reading.counted, baseline: payload }) };
-}
-
 /** One recorded group's attribution, as the line a reader checks: the commit, its date and its subject. */
 export function attributionLine(attribution) {
   if (attribution?.commit === undefined)
@@ -1213,7 +1112,6 @@ export function attributionLine(attribution) {
 function main(argv) {
   const writeBaseline = argv.includes("--write-baseline");
   const recordingShrinks = argv.includes("--record-shrinks");
-  const recordingCeiling = argv.includes("--record-ceiling");
   const showingResiduals = argv.includes("--residuals");
   // `--root <dir>`: which tree's baseline (and `jscpd.json`) is read and written. Fixtures use it; the rule is the same.
   const root = argv.includes("--root") ? argv[argv.indexOf("--root") + 1] : REPO;
@@ -1254,48 +1152,6 @@ function main(argv) {
         left.hash.localeCompare(right.hash),
     ))
       lines.push(residualLine(group, byHash.get(group.hash)));
-  }
-  if (recordingCeiling) {
-    const targets = (reading.findings ?? [])
-      .filter((entry) => entry.code === "clone_group" || entry.code === "clone_group_grew")
-      .map((entry) => (reading.duplication ?? []).find((group) => group.hash === entry.hash))
-      .filter((group) => group !== undefined);
-    const attribution = new Map(attributeGroups(targets, { root }).map((entry) => [entry.hash, entry]));
-    const status = uncommittedFiles({
-      files: [...new Set(targets.flatMap((group) => group.sites.map((site) => site.file)))],
-      root,
-    });
-    if (status.error !== undefined) {
-      lines.push(`ceiling_record_refused: ${status.error}`);
-      process.stdout.write(`${lines.join("\n")}\n`);
-      process.stdout.write(`${reportLine(reading)}\n`);
-      process.exitCode = 1;
-      return;
-    }
-    const outcome = recordCeiling({ reading, baseline, attribution, uncommitted: status.files });
-    if (outcome.refused !== undefined) {
-      lines.push(...outcome.refused);
-      process.stdout.write(`${lines.join("\n")}\n`);
-      process.stdout.write(`${reportLine(reading)}\n`);
-      process.exitCode = 1;
-      return;
-    }
-    if (outcome.added.length === 0) {
-      lines.push("ceiling: nothing to record · no structural group is new or grew");
-      process.stdout.write(`${lines.join("\n")}\n`);
-      process.stdout.write(`${writtenReport(outcome.after)}\n`);
-      return;
-    }
-    fs.writeFileSync(path.join(root, BASELINE), serialiseBaseline(outcome.payload), "utf8");
-    lines.push(
-      `ceiling recorded: ${outcome.added.length} group(s) · ${outcome.added.reduce((total, entry) => total + entry.group.sites.length, 0)} sites · ` +
-        `nothing lowered${outcome.raised.length === 0 ? "" : ` · of which raised ${outcome.raised.length}`}`,
-    );
-    for (const entry of outcome.added)
-      lines.push(`  ceiling:${entry.group.hash}: last touched ${attributionLine(entry.attribution)}`);
-    process.stdout.write(`${lines.join("\n")}\n`);
-    process.stdout.write(`${writtenReport(outcome.after)}\n`);
-    return;
   }
   if (recordingShrinks) {
     const outcome = recordShrinks({ reading, baseline });
