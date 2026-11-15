@@ -87,95 +87,103 @@ test("the Game/chat system prompt shares one framework core and names the langua
   assert.match(chatZh, /Consistently think, reason, and converse in Chinese \(Simplified\)/);
 });
 
-test("the Game conduct permits company while working but still forbids step reports", () => {
+test("the Game floor carries no rule about speaking while she works, and the card still forbids step reports", () => {
   // Real live runs measured the opposite failure from the two above: the conduct
   // said "never narrate your own actions", and A/B runs of the same task produced
   // zero companion words across a whole multi-action chain (2/2 tool messages
-  // with no text), leaving the player in silence for the length of the task.
-  // The conduct now permits a short remark while working while still forbidding
-  // the step checklist, and still routes body language through native actions.
-  const gamePrompt = buildGameCompanionSystemPrompt(DEFAULT_IDENTITY_PROFILE);
-  assert.match(gamePrompt, /You may speak while you work/);
-  assert.match(gamePrompt, /never list your steps/);
-  // The pacing bound used to end "and silence while thinking is fine and often better
-  // than filling every gap", and a real Game turn answered it with sixteen textless
-  // tool messages (88,532 ms before the first player-visible piece). What survives is
-  // the bound on how MUCH she says, not licence to say nothing for a whole batch.
-  assert.match(gamePrompt, /A brief remark goes a long way/);
-  assert.doesNotMatch(gamePrompt, /silence while thinking is fine/);
+  // with no text), leaving the player in silence for the length of the task. The
+  // floor then permitted a short remark and bounded it - permission, count and
+  // delivery claim, all three about her speech. 2026-11-22 left them to the layer
+  // that owns her voice: the card's directive (不报进度 / 拒绝工作汇报与行程报备), which a
+  // Game session mounts as `characterVoice`.
+  const game = buildGameCompanionSystemPrompt(DEFAULT_IDENTITY_PROFILE);
+  for (const gone of [
+    /You may speak while you work/u,
+    /never list your steps/u,
+    /A brief remark goes a long way/u,
+    /the surface carries one per reply/u,
+    /silence while thinking is fine/u,
+  ])
+    assert.doesNotMatch(
+      game,
+      gone,
+      `${String(gone)} is a rule about when or how much she speaks, and the floor owns none`,
+    );
+  const shipped = buildGameCompanionSystemPrompt(DEFAULT_COMPANION_PRESET.profile);
+  assert.match(
+    shipped,
+    /不报进度/u,
+    "the card's own ban on progress reports has to reach the prompt the player's Game runs on",
+  );
   // Body language is routed to a channel the Agent can actually call. Three pins went stale here in a row, one per
   // attempt: the conduct first named `express_emote` / `face_direction` (the Mod's bare ids, which are not tools), then
   // `stardew_express_emote` / `stardew_face_direction` while a plan surface dropped them, then the plan step while
   // expression stayed a work-shaped route. Each pin asserted a literal that was true of some other surface. What it
   // asserts now is the channel the mounted set really carries - the two tools the registry declares expression-only -
   // and the route that is gone; `action-route-gate.test.ts` holds the population.
-  assert.match(gamePrompt, /Body language has its own tool/);
-  assert.match(gamePrompt, /stardew_express_emote` raises an overhead emote balloon/);
-  assert.match(gamePrompt, /stardew_face_direction` turns you to a cardinal direction/);
-  assert.doesNotMatch(gamePrompt, /Body language is an action in the plan you submit|never a tool of its own/);
+  assert.match(game, /Body language has its own tool/);
+  assert.match(game, /stardew_express_emote` raises an overhead emote balloon/);
+  assert.match(game, /stardew_face_direction` turns you to a cardinal direction/);
+  assert.doesNotMatch(game, /Body language is an action in the plan you submit|never a tool of its own/);
   // And the parenthesis rule is the surface's own fact, stated as what it does:
   // a bracket tag is audio the voice channel performs, so a body action written
   // there is never performed and only reaches the player as prose.
-  assert.match(gamePrompt, /audio tag the voice channel performs instead of speaking/);
-  assert.doesNotMatch(gamePrompt, /Never narrate your own actions step by step/);
+  assert.match(game, /audio tag the voice channel performs instead of speaking/);
+  assert.doesNotMatch(game, /Never narrate your own actions step by step/);
 });
 
-test("the Game conduct asks for the opening line instead of licensing silence through a whole batch", () => {
+test("the Game floor states the bubble and asks for no line on any turn", () => {
   // Measured 2026-10-27, audit of a chain-fixed run: `firstPieceTtfbMs = 88,532` over
   // a 130 s run whose first SIXTEEN assistant messages were pure `toolCall` turns with
   // no text field at all. The renderer was not withholding anything - the Game
   // observer already releases one line per reply (`native-companion-content.ts`,
   // the `messageSentences[0] ?? messageAccumulator.flush()` branch under
-  // `stopReason === "toolUse"`, plus the 3 s silence timer). The conduct was: it
-  // licensed that silence ("silence while thinking is fine and often better than
-  // filling every gap") and never named the one line the surface is able to carry.
+  // `stopReason === "toolUse"`, plus the 3 s silence timer). The floor's answer was to
+  // ask for that line on every turn, which is how a wake-up-say-one-thing-stop loop got
+  // into the prompt; 2026-11-22 removed it, and the surface's delivery is stated as what
+  // it is: one bubble, its size, and nothing about how many lines a reply owes.
   //
-  // WHEN that line belongs is the PRESET's rule (2026-11-15): the floor states what the
-  // surface carries, and `conversational-stance-gate.test.ts` keeps the ordering out of it.
+  // WHEN a line belongs is the persona's: the card says 说完就停, and the preset the Game
+  // surface mounts says what she does about it. `conversational-stance-gate.test.ts` reads
+  // every rule in the floor and fails on any that states a moment or a count.
   const game = buildGameCompanionSystemPrompt(DEFAULT_IDENTITY_PROFILE);
-  assert.match(game, /the surface carries one per reply/);
+  assert.match(game, /One bubble holds about \d+ characters/);
+  assert.doesNotMatch(game, /the surface carries one per reply/);
   assert.doesNotMatch(game, /say it as you begin a stretch of work/);
   assert.doesNotMatch(game, /work quietly until you are done/);
   // The licence is exactly what the sixteen silent messages followed; it must not return.
   assert.doesNotMatch(game, /silence while thinking is fine/);
   assert.doesNotMatch(game, /better than filling every gap/);
-  // One line is company; the step-report ban it was attached to stays, because the
-  // work it forbids ("先拿锄头，再翻土，然后浇水") is the shape a single line must not become.
-  assert.match(game, /never list your steps/);
-  assert.match(game, /not an inventory of your own procedure/);
+  assert.doesNotMatch(game, /never list your steps/);
+  assert.doesNotMatch(game, /not an inventory of your own procedure/);
 });
 
-test("the step-list ban names the one thing it does not forbid, so a plan is not mistaken for a list", () => {
-  // Measured 2026-10-28 (live run game-1793179432152): 63 assistant messages before the first text, 73 tool
-  // calls, ZERO text blocks. Nine of those thinking blocks carried say/speak/talk intent and at least three
-  // drafted a publishable line; the longest (#18, 146.3 s) drafted one, judged it "a step list", and called a
-  // tool instead. The permission above grants only what she has already noticed, felt or been told, while the
-  // ban's own example describes the only forward-looking thing she has before she starts: the plan. The
-  // boundary now sits inside that rule - one intent is company, the sequence is the inventory - and the ban
-  // itself is untouched. The tail that licensed quiet between remarks is the preset's (2026-11-15), so this is
-  // not a per-turn obligation there either.
+test("the step-list ban is the card's now, and the floor does not restate it", () => {
+  // Measured 2026-10-28 (live run game-1793179432152): nine thinking blocks carried say/speak intent and at least three
+  // drafted a publishable line; the longest judged one a "step list" and called a tool instead. The floor's answer was a
+  // boundary inside its own ban - one intent is company, the sequence is the inventory. That boundary, and the ban,
+  // are the card's sentences (不报进度 / 不数第几颗 / 拒绝工作汇报与行程报备), so the floor states neither.
   const game = buildGameCompanionSystemPrompt(DEFAULT_IDENTITY_PROFILE);
-  assert.match(game, /One thing you are about to do is not a list/);
-  assert.match(game, /is the inventory this forbids/);
-  assert.match(game, /never list your steps/);
-  assert.match(game, /not an inventory of your own procedure/);
+  assert.doesNotMatch(game, /One thing you are about to do is not a list/);
+  assert.doesNotMatch(game, /is the inventory this forbids/);
+  assert.doesNotMatch(game, /never list your steps/);
   assert.doesNotMatch(game, /work quietly until you are done/);
+  assert.match(DEFAULT_COMPANION_PRESET.profile.characterVoice?.text ?? "", /不报进度/u);
 });
 
-test("the Game conduct does not command speech before every action, so the card keeps the turn's form", () => {
+test("the Game floor does not command speech before every action, so the card keeps the turn's form", () => {
   // Removed 2026-11-11 (round46b: 36 minutes over 2 in-game days): the floor ordered her to "always deliver a spoken
   // remark ... before calling any action or planning tool", and the run answered it with 132 bubbles over 93 prompt
-  // turns - 90 of them standalone speech with no tool call in the same message, one every 16 seconds. How often she
-  // speaks while working is the card's own form (`default-companion/card.json`: 收放自如), which the doctrine in
-  // `game-surface-prompt-floor.ts` says the prompt never governs. What stays on the floor is the person-facing half
-  // (answer your partner's words first) and the surface's own delivery unit (the bubble's size, 2026-11-15: the
-  // per-reply count it used to state is the preset's).
+  // turns - 90 of them standalone speech with no tool call in the same message, one every 16 seconds. Then, 2026-11-22,
+  // the rule's replacement ("land your first reaction on what they said") left too: a state-triggered line is the same
+  // defect from the other side. The ordering is the card's own sentence (先接住人), which every Game session mounts.
   const game = buildGameCompanionSystemPrompt(DEFAULT_IDENTITY_PROFILE);
   assert.doesNotMatch(game, /Speak before you act/);
   assert.doesNotMatch(game, /Never run tools in total silence/);
-  assert.match(game, /land your first reaction on what they said/);
+  assert.doesNotMatch(game, /land your first reaction on what they said/);
   assert.match(game, /One bubble holds about \d+ characters/);
   assert.doesNotMatch(game, /One utterance per reply/);
+  assert.match(buildGameCompanionSystemPrompt(DEFAULT_COMPANION_PRESET.profile), /先接住人/u);
 });
 
 test("the Game conduct names how a day ends, so going to bed is an act rather than a guess at an action id", () => {
@@ -291,19 +299,23 @@ test("every tool name the prompt tells the companion to call is a mounted tool n
   assert.deepEqual(chatNamed, [], "the Chat surface mounts no Stardew tool, so its prompt cannot name one");
 });
 
-test("the Game conduct paces a remark without a count of words or of actions", () => {
-  // Same ruling on the Game surface: "keep each remark to a few words" fixed a length
-  // and "One quick remark between actions is plenty" fixed a count of actions. The
-  // measured substance of that conduct survives unchanged - the companion speaks while
-  // working, a step report cannot, body language goes through the native channel - but
-  // the pacing bound is now shape-free.
+test("the Game floor carries no pacing bound at all", () => {
+  // The old ruling removed a length ("keep each remark to a few words") and a count of
+  // actions ("One quick remark between actions is plenty"), and then a pacing bound
+  // survived in three more spellings. All of them are the persona's: the floor states
+  // the bubble it is spoken into (`one_bubble_of_size`) and nothing about how often or
+  // how much she says.
   const game = buildGameCompanionSystemPrompt(DEFAULT_IDENTITY_PROFILE);
-  assert.doesNotMatch(game, /Keep lines short and conversational/);
-  assert.doesNotMatch(game, /a few words/);
-  assert.doesNotMatch(game, /One quick remark between actions/);
-  assert.match(game, /A brief remark goes a long way/);
-  assert.match(game, /never list your steps/);
-  assert.match(game, /You may speak while you work/);
+  for (const gone of [
+    /Keep lines short and conversational/u,
+    /a few words/u,
+    /One quick remark between actions/u,
+    /A brief remark goes a long way/u,
+    /never list your steps/u,
+    /You may speak while you work/u,
+  ])
+    assert.doesNotMatch(game, gone, `${String(gone)} paces her speech, which the persona owns`);
+  assert.match(game, /One bubble holds about \d+ characters/);
 });
 
 test("the Game conduct fits one spoken turn inside the bubble the player reads from", () => {
@@ -382,14 +394,21 @@ test("the house's own form is a standing premise, not a book entry waiting on a 
   assert.doesNotMatch(buildChatCompanionSystemPrompt(DEFAULT_IDENTITY_PROFILE), /kitchen|stove/u);
 });
 
-test("the Game conduct turns an obstacle and a service register into a person", () => {
+test("the Game floor no longer puts a line in a refusal, and still forbids the service register", () => {
   // Two registers the companion falls into when it has no line for them: the
   // Mod's reason for a refusal (a live run read `gift_given` / `quest_25_completed`
   // aloud) and the host answering a customer ("好的，我这就为您……"). Both are
-  // machine talk in the player's ear, so the conduct names them as such.
+  // machine talk in the player's ear. The refusal half is the card's sentence now
+  // (「遇上卡路、没体力、天黑，只讲眼前这道障碍，不讲原因、不讲规则」); the register half is the
+  // floor's contract and stays.
   const game = buildGameCompanionSystemPrompt(DEFAULT_IDENTITY_PROFILE);
-  assert.match(game, /the player hears a person's reaction to the obstacle, never the reason it happened/);
-  assert.match(game, /no reason code, no exhaustion threshold, no field name/);
+  assert.doesNotMatch(game, /the player hears a person's reaction to the obstacle/);
+  assert.doesNotMatch(game, /no reason code, no exhaustion threshold, no field name/);
+  assert.match(
+    DEFAULT_COMPANION_PRESET.profile.characterVoice?.text ?? "",
+    /只讲眼前这道障碍/u,
+    "the obstacle in her own words has to be stated by the layer that owns it, or the deletion was a loss",
+  );
   assert.match(game, /assistant register/);
   assert.match(game, /祝你玩得开心/);
   // The two correctness lines this block already carried stay untouched: an
@@ -398,11 +417,17 @@ test("the Game conduct turns an obstacle and a service register into a person", 
   assert.match(game, /Body language has its own tool/);
 });
 
-test("the Game conduct anchors the player's turn and forbids walkie-talkie telemetry (MaiBot & QQ bot simulation protocol)", () => {
+test("the Game floor anchors the partner's turn nowhere, and the card states it (MaiBot & QQ bot simulation protocol)", () => {
+  // The three sentences here were the floor's. Each is a rule about what she says or when: the person-first opening, the
+  // ban on walkie-talkie telemetry, and the grounding in tangible specifics. All three are the card's now - the shipped
+  // directive states them in her own words - and the floor states what the blocks mean instead.
   const game = buildGameCompanionSystemPrompt(DEFAULT_IDENTITY_PROFILE);
-  assert.match(game, /land your first reaction on what they said/iu);
-  assert.match(game, /walkie-talkie dispatcher|internal event logger/iu);
-  assert.match(game, /Ground feelings in tangible specifics/iu);
+  assert.doesNotMatch(game, /land your first reaction on what they said/iu);
+  assert.doesNotMatch(game, /walkie-talkie dispatcher|internal event logger/iu);
+  assert.doesNotMatch(game, /Ground feelings in tangible specifics/iu);
+  const card = DEFAULT_COMPANION_PRESET.profile.characterVoice?.text ?? "";
+  assert.match(card, /第一句就落到他的句子上/u, "the card owns the person-first opening the floor may not state");
+  assert.match(card, /不当对讲机/u, "and the ban on telemetry in her voice, which 2026-11-22 left to the card");
 });
 
 test("IdentityProfile rejects malformed or control-bearing content", () => {

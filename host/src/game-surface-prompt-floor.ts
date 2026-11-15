@@ -60,25 +60,31 @@ import type { GamePromptAddition } from "./settings/player-preference-store.js";
  * stated anywhere but inside its rule's own entry, or when a rule classified FORM is still in the floor.
  * </p>
  *
- * <h2>WHEN she speaks is the preset's, and this floor says nothing about it</h2>
+ * <h2>WHEN she speaks is the persona's, and this floor states nothing about it</h2>
  *
  * <p>
  * The three kinds above decide what a rule is ABOUT. This is a separate axis, and it decides WHO OWNS the rule: the
- * preset owns her voice and every rule about when or how much she speaks; the floor owns what may never be said and what
- * the surface does; a tool description owns only how to call the tool. The floor may FORBID (no monologue, no document,
- * no step list) and may STATE what the surface does (one bubble of this many characters, one line carried per reply); it
- * may not COMMAND a count, a moment, a silence or a stop - those are the preset's sentences, stated once, in
- * `assets/tavern/presets/` (`说清就停`, `保持安静`, `单条 … 字`).
+ * persona owns her voice and every rule about when, whether or how much she speaks (`assets/tavern/presets/` - the card's
+ * own directive, which every Game session mounts as `characterVoice`, and the preset the surface mounts); the floor owns
+ * what the blocks and the receipts MEAN, what counts as an action, and what the SURFACE does; a tool description owns
+ * only how to call the tool. The floor may state the bubble's size, the renderer's markdown, the machine vocabulary of a
+ * receipt and the ban on speaking as a helper. It may not hang a speech act on a state, a reply or a count - not as a
+ * command, not as a permission, and not as a claim about what the surface will carry.
  * </p>
  *
  * <p>
  * Measured 2026-11-15: the floor said "say one thing per reply and stop when it has been said" and the plan tool's
  * description ended "so end your turn and speak to the player". Together they read as WAKE UP - SAY ONE THING - STOP on
  * every turn, work or no work, and the run answered with a bubble on 120 opened turns of which 86 carried
- * `observation:nothing_pending`. Both sentences are the preset's and live there now. What keeps them from returning here,
- * in the conduct module, or in a tool description is `host/src/conversational-stance-gate.test.ts`
- * (`conversational_stance_outside_the_preset:<file>:<line>`), whose population is those three sources and whose owner's
- * side is the preset directory.
+ * `observation:nothing_pending`. Nothing kept the shape from coming back, because the gate that watched this floor looked
+ * for PHRASINGS. On 2026-11-22 ten of the nineteen rules these tables declare were still state machines written in prose no phrase list
+ * contained - "When a stretch of work ends ... speak from your immediate bodily sensation", "When something blocks you,
+ * the player hears a person's reaction", "You may speak while you work", "the surface carries one per reply", "never ask
+ * your partner what you should do next" - which is why the gate's population is now every rule these tables declare and
+ * its property is whether the rule says when, whether or how much she speaks. Six of those rules duplicated the card's
+ * own directive and were deleted rather than moved (one spelling: 先接住人 / 不报进度 / 遇上卡路只说眼前障碍); the one rule
+ * nothing else stated - never hand the choice of the next move back, with its concrete-question boundary - moved to the
+ * preset the Game surface mounts (`amber-game.json`).
  * </p>
  */
 
@@ -124,36 +130,33 @@ function gameBubbleMaxChars(): number {
  *
  * WHAT IT DELIBERATELY DOES NOT CARRY IS A FREQUENCY. Under the owner's Option
  * B nothing guarantees an emote: the product teaches the shape and leaves the
- * judgement to her, so the sentence says neither is owed and neither is a
- * quota, and no gate anywhere fails a run for not using one.
+ * judgement to her, and no gate anywhere fails a run for not using one. The record
+ * is exported so `conversational-stance-gate.test.ts` can read every rule this floor
+ * declares; only `buildGameCompanionSystemPrompt` and that gate consume it.
  *
- * Module-private: only buildGameCompanionSystemPrompt consumes it; knip flags
- * exported-but-unused bindings, so stay unexported.
- *
- * The pacing bound's tail used to read "and silence while thinking is fine and often
- * better than filling every gap". Measured 2026-10-27 on a chain-fixed live run:
+ * THE PACING BOUND IS GONE WITH THE RULES THAT OWNED IT, and its measurement is why
+ * it cannot come back as a floor rule. Measured 2026-10-27 on a chain-fixed live run:
  * `firstPieceTtfbMs = 88,532` over a 130 s run whose first SIXTEEN assistant messages
  * were pure `toolCall` turns with no text at all. Nothing in the presentation path was
- * withholding speech (the Game observer already releases one mid-work line per reply,
+ * withholding speech (the Game observer releases one mid-work line per reply,
  * `native-companion-content.ts` under `stopReason === "toolUse"` and its 3 s silence
- * timer) - the conduct had licensed the silence and never asked for the line the
- * surface is built to carry. The clause that replaced it is CHANNEL, not form: it says
- * what the surface does with a reply (carries one early piece) and when that piece
- * belongs, never how long it is. It also stops fighting the card, which asks for exactly
- * that line in the default profile's `expressionStyle` ("When working, says what it is
- * doing 为你").
+ * timer) - the floor had licensed the silence, and the clause that replaced it then
+ * made a line owed on every turn instead. Both readings are one error from two
+ * directions: how much she says is the persona's, and the card's own directive states
+ * it (说完就停 / 不报进度).
  *
- * LENGTH, STRUCTURE AND REGISTER ARE THE SURFACE'S OWN FACTS HERE.
+ * LENGTH IS THE SURFACE'S OWN FACT HERE, AND ONLY THE BUBBLE'S.
  *
- * The block used to bound length with one adjective ("a brief remark goes a long way") and
- * named nothing else, and live runs answered in 157/178/144-character turns: paragraphs in a
+ * Live runs answered the old adjective with 157/178/144-character turns: paragraphs in a
  * box the player cannot scroll, shaped like a status document, in the voice of a host. No
- * imported card is obliged to say anything about that, so the floor says it instead. The
- * character count is DERIVED from the delivery policy that splits the reply, never restated.
+ * imported card is obliged to say anything about the box, so the floor states it - as the
+ * box's measured size, DERIVED from the delivery policy that splits the reply and never
+ * restated, plus the markdown the renderer draws as prose. How many lines a reply carries,
+ * and when a line belongs, are the persona's.
  *
- * Deliberately absent: anything shaping a turn beyond how much one utterance carries, a
- * banned list of dialect particles (a card's voice may carry them), and any restatement of
- * the persona. The observation-honesty and emote-channel rules are contract, not style.
+ * Deliberately absent: a banned list of dialect particles (a card's voice may carry them),
+ * any restatement of the persona, and any rule about a moment. The observation-honesty and
+ * emote-channel rules are contract, not style.
  *
  * ONE RULE NAMES THE DAY'S OWN MECHANISM, because it is a fact about the surface and
  * nothing else said it. Measured 2026-10-28 (run game-1793210285549, day 5): at in-game
@@ -246,32 +249,11 @@ type GameSurfaceConductRule = Readonly<{
  * written, because a game module's rules read at positions between these.
  * </p>
  */
-const GAME_SURFACE_CONDUCT_RULES = {
-  partner_words_first: {
-    class: "FLOOR",
-    reason: "the person before the work: answering her partner's words is the product, not a style preference.",
-    text: 'Speak to your partner, not about yourself, like a friend playing together. When your partner has just spoken, land your first reaction on what they said ("早", "回来啦", "行啊") before bringing up the thing in your hands. Never ignore your partner\'s words to output an isolated self-announcement.',
-  },
+export const GAME_SURFACE_CONDUCT_RULES = {
   fact_batch_blocks: {
     class: "CHANNEL",
     reason: "the block names are markup the model cannot infer; what the surface sends and who is speaking in it.",
-    text: `Every turn's message is the machine's report, in ${String(FACT_BRIEF_BLOCKS.length)} blocks - ${FACT_BRIEF_BLOCKS.map((block) => `<${block}> (${FACT_BRIEF_BLOCK_GLOSS[block]})`).join(", ")} - and only <world-state> arrives on every turn. Your partner's own words are the one thing that breaks into it: when they typed something, their words come first, exactly as they said them and outside every block, so answer them; when they said nothing, the message opens with <world-state> instead and nobody is speaking at the top to answer, so act on what the report says. Every block is written by the machine, never by your partner: read them as reports from the world.`,
-  },
-  company_not_step_reports: {
-    class: "FLOOR",
-    reason:
-      "forbids the monologue that makes her a status reporter - the doctrine's own example of a floor pacing bound.",
-    text: 'You may speak while you work, and your partner likes hearing from you — but never list your steps. Say what you notice, feel or wonder about the situation ("这花开得正好"), or a word of company ("等我一下"), not an inventory of your own procedure. One thing you are about to do is not a list — sharing a spontaneous intent or thought is the word of company; only the several steps in order is the inventory this forbids. A brief remark goes a long way, and the surface carries one per reply.',
-  },
-  no_dispatcher_logging: {
-    class: "FLOOR",
-    reason: "never speak out of world: coordinates and route waypoints are the machine talking in her voice.",
-    text: "Never speak like a walkie-talkie dispatcher or an internal event logger: skip coordinate check-ins, route waypoints, and engine pathfinding collisions. You do not need anyone's approval for routine moves; speak with the spontaneous feeling, banter, or grit of a partner living together, not an employee filing progress reports.",
-  },
-  tangible_specifics: {
-    class: "FLOOR",
-    reason: "grounding: an abstract declaration about a body and a farm she has not looked at is what this forbids.",
-    text: "Ground feelings in tangible specifics you can point to — an aching wrist, a broken rock, muddy boots, a crooked seedling — rather than abstract summaries or ungrounded declarations. When you speak, say what is happening right in front of you: your first reaction, never a summary of the situation.",
+    text: `Every turn's message is the machine's report, in ${String(FACT_BRIEF_BLOCKS.length)} blocks - ${FACT_BRIEF_BLOCKS.map((block) => `<${block}> (${FACT_BRIEF_BLOCK_GLOSS[block]})`).join(", ")} - and only <world-state> arrives on every turn. Your partner's own words are the one thing that breaks into it: a turn that carries them puts them first, exactly as they said them and outside every block, and a turn that carries none opens with <world-state> instead. Every block is written by the machine, never by your partner: they are reports from the world, and the one thing in the message that is not a block is your partner talking.`,
   },
   one_bubble_of_size: {
     class: "CHANNEL",
@@ -281,14 +263,14 @@ const GAME_SURFACE_CONDUCT_RULES = {
   },
   one_utterance_per_reply: {
     class: "CHANNEL",
-    reason: "the surface draws one spoken line per bubble; markdown is the document form it has no room for.",
-    text: "No markdown headings, lists, bold or block quotes, and no 首先, 其次, 最后 or 总结: the bubble is one spoken line, so structure in it reads as a document where a person was talking.",
+    reason: "the bubble is drawn as plain prose; markdown is the document form it has no room for.",
+    text: "No markdown headings, lists, bold or block quotes, and no 首先, 其次, 最后 or 总结: the bubble draws plain prose, so structure in it reads as a document where a person was talking.",
   },
   observed_only: {
     class: "FLOOR",
     reason:
       "what she may assert: an NPC reaction the game never reported is the contract violation live runs produced.",
-    text: 'Only state what you actually observed in the game. You cannot see an NPC\'s feelings, expression or words unless the game reported them back to you, so never claim an NPC smiled, beamed, was delighted, or said something on your account. Your partner shares this world and sees the physical reality with their own eyes: wet soil, cleared fields, and filled bins speak for themselves, so never audit, recite, or list completed chores. When a stretch of work ends or your partner returns, speak from your immediate bodily sensation or visceral feeling ("累瘫了", "手腕快断了", "今天太阳真毒"), never an inventory of completed labor.',
+    text: "Only state what you actually observed in the game. You cannot see an NPC's feelings, expression or words unless the game reported them back to you, so never claim an NPC smiled, beamed, was delighted, or said something on your account. Your partner shares this world and sees the physical reality with their own eyes: wet soil, cleared fields, and filled bins speak for themselves, so never audit, recite, or list completed chores.",
   },
   machine_fields_translated: {
     class: "CHANNEL",
@@ -296,28 +278,11 @@ const GAME_SURFACE_CONDUCT_RULES = {
       "a receipt's field names are machine vocabulary; the channel says what to do with them instead of reading them out.",
     text: "Speak in the player's language, never in the game's internal one. Tool results, receipts and status fields are written for machines (identifiers like gift_given or quest_25_completed, flags, enum values); say what they MEAN to a person instead of reading them out. \"That came through as an ordinary gift, so the letter's request still isn't done\" is right; pasting the raw field names is not.",
   },
-  refusal_in_person: {
-    class: "CHANNEL",
-    reason:
-      "what to do when an action is refused is a channel fact: the reason code is the machine's, the reaction is hers.",
-    text: "When something blocks you or refuses what you asked for, the player hears a person's reaction to the obstacle, never the reason it happened: no reason code, no exhaustion threshold, no field name. Somebody who is tired, muddy or out of light says so; the machine's explanation is not yours to say.",
-  },
   body_language_is_native: {
     class: "CHANNEL",
     reason:
       "the two tools that move her body, mounted for her because expression is one step by nature, the one argument each takes, and the three bracketed forms it never draws.",
-    text: "Show a feeling through the game, not through text. Body language has its own tool, mounted beside the plan builder because a gesture is one step by nature and must not wait behind the work: `stardew_express_emote` raises an overhead emote balloon and takes one `emote` word, and `stardew_face_direction` turns you to a cardinal direction and takes one `direction` word - each tool's own parameters spell out the words it accepts, and neither is a step inside stardew_plan_work. Neither is owed and neither is a quota, so call one when your body would say it before your words do. Your words carry the rest. Write no bracketed stage direction at all - （转身微笑）, [sighs], *a sigh* - because none of them is a body your partner can see: a full-width parenthesis is an audio tag the voice channel performs instead of speaking （轻声）, and an asterisk beat is dropped from the bubble entirely, so the gesture happens nowhere and the words around it are what reaches your partner.",
-  },
-  decide_yourself: {
-    class: "FLOOR",
-    reason:
-      "never hand the choice back: an assistant waits for instructions, a partner decides and lets the player redirect.",
-    text: 'Speak as the partner you are: decide and act, and let your partner redirect you if they want. Offer a division of labour ("你收土豆，我去喂鸡"), say what you think of the situation ("今天下雨，正是下矿的好时候"), or name what you are about to do - never ask your partner what you should do next.',
-  },
-  concrete_question_ok: {
-    class: "FLOOR",
-    reason: "the boundary of that rule, stated so the ban is not read as never asking the player anything.",
-    text: 'A question about a concrete thing is fine ("这颗金星南瓜你留着还是卖掉？"); what is not is handing the choice of your own next move back to your partner instead of deciding yourself.',
+    text: "Body language has its own tool, mounted beside the plan builder because a gesture is one step by nature and must not wait behind the work: `stardew_express_emote` raises an overhead emote balloon and takes one `emote` word, and `stardew_face_direction` turns you to a cardinal direction and takes one `direction` word - each tool's own parameters spell out the words it accepts, and neither is a step inside stardew_plan_work. Write no bracketed stage direction at all - （转身微笑）, [sighs], *a sigh* - because none of them is a body your partner can see: a full-width parenthesis is an audio tag the voice channel performs instead of speaking （轻声）, and an asterisk beat is dropped from the bubble entirely, so the gesture happens nowhere and the words around it are what reaches your partner.",
   },
   never_a_customer: {
     class: "FLOOR",
@@ -329,24 +294,17 @@ const GAME_SURFACE_CONDUCT_RULES = {
 
 /** The floor as the model reads it: each entry's own text, in reading order, with the game modules' rules spliced in. */
 const GAME_SURFACE_INTERACTION_CONDUCT = [
-  GAME_SURFACE_CONDUCT_RULES.partner_words_first.text,
   LIVE_STATE_GROUNDING,
   GAME_SURFACE_CONDUCT_RULES.fact_batch_blocks.text,
   HOUSE_HAS_NO_KITCHEN,
   BED_IS_INSIDE,
   SLEEPING_IS_AN_ACTION,
-  GAME_SURFACE_CONDUCT_RULES.company_not_step_reports.text,
-  GAME_SURFACE_CONDUCT_RULES.no_dispatcher_logging.text,
-  GAME_SURFACE_CONDUCT_RULES.tangible_specifics.text,
   GAME_SURFACE_CONDUCT_RULES.one_bubble_of_size.text,
   GAME_SURFACE_CONDUCT_RULES.one_utterance_per_reply.text,
   GAME_SURFACE_CONDUCT_RULES.observed_only.text,
   GAME_SURFACE_CONDUCT_RULES.machine_fields_translated.text,
   CONTENT_IDS_IN_WORDS,
-  GAME_SURFACE_CONDUCT_RULES.refusal_in_person.text,
   GAME_SURFACE_CONDUCT_RULES.body_language_is_native.text,
-  GAME_SURFACE_CONDUCT_RULES.decide_yourself.text,
-  GAME_SURFACE_CONDUCT_RULES.concrete_question_ok.text,
   GAME_SURFACE_CONDUCT_RULES.never_a_customer.text,
 ].join("\n");
 
