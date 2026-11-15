@@ -927,8 +927,9 @@
       "language": "ts",
       "name": "host/src/tavern-management-dialogue-web.ts#createTavernManagementDialogueWebRequestHandler",
       "file": "host/src/tavern-management-dialogue-web.ts",
-      "line": 868,
-      "value": 123
+      "line": 933,
+      "value": 132,
+      "reason": "recorded at 79d0323d: 123 -> 132, and `line` 868 -> 933. The record was taken at 72582adf and exactly three commits touch this file in that range - 39e9e4f8 (`character.examples.read|update`), e7fa1dae (a capability is its groups, not its array slot) and 94b1faaa (`chat.fork`) - which together add 50 branching lines to the file (32, 3, 15). This handler is the router those routes mount on, so each route arrives as one more arm of admission here: +9 is tonight's routing, not drift. 132 is the ceiling now."
     },
     {
       "id": "ts:host/src/tavern-management-dialogue-web.ts#dispatch",
@@ -945,8 +946,8 @@
       "name": "host/src/tavern-management-dialogue-web.ts#problemFor",
       "file": "host/src/tavern-management-dialogue-web.ts",
       "line": 3155,
-      "value": 82,
-      "reason": "recorded at 604844a6: 81 -> 82, and `line` 3147 -> 3155. The record was taken at b047bb19, 113 commits earlier, and three commits touch this file in that range (122c0be4, ba11fbc6, 0482b6e2), so the single branch is accumulated drift over that range rather than one attributed hunk - `git log -L` from 604844a6 names it. 82 is the ceiling now."
+      "value": 89,
+      "reason": "recorded at 604844a6: 81 -> 82, and `line` 3147 -> 3155. The record was taken at b047bb19, 113 commits earlier, and three commits touch this file in that range (122c0be4, ba11fbc6, 0482b6e2), so the single branch is accumulated drift over that range rather than one attributed hunk - `git log -L` from 604844a6 names it. 82 is the ceiling now. Re-recorded at 79d0323d: 82 -> 89, `line` 3155 -> 3381. Three commits touch this file after the record's own revision 72582adf (39e9e4f8, e7fa1dae, 94b1faaa, the routes this file gained tonight) and each adds a problem branch this map has to name - `profile_operation_unavailable`, the examples route's refusal and the branch seam's - so +7 is tonight's routes arriving as refusals. 89 is the ceiling now."
     },
     {
       "id": "ts:host/src/tavern/browser-contract/index.ts#composeTavernProfile",
@@ -963,14 +964,6 @@
       "file": "host/src/tavern/catalog-service.ts",
       "line": 561,
       "value": 32
-    },
-    {
-      "id": "ts:host/src/tavern/catalog-service.ts#materializeTavernAuthoredContextCatalog",
-      "language": "ts",
-      "name": "host/src/tavern/catalog-service.ts#materializeTavernAuthoredContextCatalog",
-      "file": "host/src/tavern/catalog-service.ts",
-      "line": 140,
-      "value": 44
     },
     {
       "id": "ts:host/src/tavern/chat-thread-store.ts#acceptMounted#lambda2",
