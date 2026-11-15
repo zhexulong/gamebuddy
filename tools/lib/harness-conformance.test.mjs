@@ -374,7 +374,7 @@ test("the census counts each gate in exactly one bucket and names the ones nobod
     "gates examined 6 · with a red proof 2 · external 1 · declared without 1 · unreadable 1 · undeclared 1 · " +
       "zero-population-pass 1 · unlisted 2 (tools/check-c.mjs, check:d)",
     "judged here 4 (with a self-report 1 · declared without a report 1) · excluded 2 (a package.json gate script " +
-      "whose entry is not a tools/check-*.mjs gate file, so this suite has no default run to read): 1 proven, external " +
+      "whose entry is not a gate file, so this suite has no default run to read): 1 proven, external " +
       "or recorded in the red-proof ledger, 1 undeclared and named below",
     "external 1 (rule lives in another program; run the command to watch it fail): test:a = `pnpm --dir pkg run test`",
   ]);

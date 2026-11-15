@@ -9,7 +9,7 @@ import {
   companionArrivalAlreadySaid,
   companionArrivalFact,
 } from "./companion-arrival-fact.js";
-import { FACT_PRODUCER, WorldFact } from "./event-pump.js";
+import { FACT_PRODUCER, type WorldFact } from "./event-pump.js";
 import { CompanionHostService } from "./host-service.js";
 
 /** The attach boundary and the pump, reduced to what the arrival decision reads. */

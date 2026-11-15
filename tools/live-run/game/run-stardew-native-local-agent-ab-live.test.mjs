@@ -10,6 +10,7 @@ import { createHash, randomUUID } from "node:crypto";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { turnSettled } from "../../lib/turn-settled.mjs";
+import { sessionEntries } from "../../lib/session-jsonl.mjs";
 import { resolveLiveRunRoot } from "../core/capture.mjs";
 import { validateEvidenceBundle } from "../../lib/evidence-bundle.mjs";
 import {
@@ -1570,7 +1571,7 @@ test("a turn that ended in a provider failure is a failure, not silence", () => 
   const [agentTurnFailureReason, readAgentTurnOutcome] = extractRunnerFunction(
     RUNNER_SOURCE,
     ["agentTurnFailureReason", "readAgentTurnOutcome"],
-    { readFileSync, redactLiveRunText: (value) => value },
+    { readFileSync, redactLiveRunText: (value) => value, sessionEntries },
   );
   const write = (entries) => {
     const file = join(tmpdir(), `gb-ladder-turn-${randomUUID()}.jsonl`);
@@ -1667,8 +1668,9 @@ function loadToolTiming(source) {
   return new Function(
     "STARDEW_ACTION_TOOL_NAMES",
     "readFileSync",
+    "sessionEntries",
     `${constants}\n${functions}\nreturn { TOOL_TIMING_CATEGORIES, toolTimingCategory, toolTimingInvariant, readToolTiming };`,
-  )(STARDEW_ACTION_TOOL_NAMES, readFileSync);
+  )(STARDEW_ACTION_TOOL_NAMES, readFileSync, sessionEntries);
 }
 
 function writeSessionRecord(names) {
@@ -5244,7 +5246,10 @@ test("the fragment the note assertion searches for is the note's own text, for e
 test("the session reader answers what she was told, and null when it could not read the record", () => {
   // The reader is the instrument the whole assertion rests on: an admission the Host accepted and never delivered must be
   // visible as absent, so the reading is taken from the session's own user messages.
-  const readSessionPlayerTexts = extractRunnerFunction(RUNNER_SOURCE, "readSessionPlayerTexts", { readFileSync });
+  const readSessionPlayerTexts = extractRunnerFunction(RUNNER_SOURCE, "readSessionPlayerTexts", {
+    readFileSync,
+    sessionEntries,
+  });
   const dir = mkdtempSync(join(tmpdir(), "session-player-texts-"));
   const path = join(dir, "session.jsonl");
   writeFileSync(
@@ -5273,7 +5278,10 @@ test("round49's shape is three findings and a zero, and the same run with its no
   const stance = SCHEDULED_DIALOGUE_GATES.find((entry) => entry.id === "turn-initiative-split");
   const note = scope.SCENARIO_PROMPTS.multiday_routine.zh(1, "clear_east_patch");
   const scheduled = [{ day: 1, task: "clear_east_patch", note: scope.dayNoteFragment("clear_east_patch", "zh") }];
-  const readSessionPlayerTexts = extractRunnerFunction(RUNNER_SOURCE, "readSessionPlayerTexts", { readFileSync });
+  const readSessionPlayerTexts = extractRunnerFunction(RUNNER_SOURCE, "readSessionPlayerTexts", {
+    readFileSync,
+    sessionEntries,
+  });
   const dir = mkdtempSync(join(tmpdir(), "day-note-"));
   const round49Session = join(dir, "round49.jsonl");
   const correctSession = join(dir, "correct.jsonl");

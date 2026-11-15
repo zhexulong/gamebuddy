@@ -41,10 +41,9 @@
 //
 // Measured at this commit: `kinds published 21 · cleared by >=1 action 16 · unclearable 5`.
 //
-// red-proof (run, not quoted): the SAME gate code reading the sources as they were at `0dce992a` -
-//   `kinds published 18 · cleared by >=1 action 15 · unclearable 0`, `published_kind_no_action_clears:object`,
-//   `:resource_clump`, `:terrain`, `failed (3 finding(s))`, exit 1. The classifier still answered `stone` for `(O)2`
-//   alone and `object` for everything else, and no `Clears` declaration answered that word.
+// red-proof: history  the SAME gate code reading the sources at `0dce992a` -> `kinds published 18 · cleared by >=1
+//   action 15 · unclearable 0`, `published_kind_no_action_clears:object`, `:resource_clump`, `:terrain`,
+//   `failed (3 finding(s))`, exit 1 - no `Clears` declaration answered `object`, `resource_clump` or `terrain`.
 
 export const gateDeclaration = {
   id: "audit-stardew-clearing-vocabulary",

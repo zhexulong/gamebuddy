@@ -58,7 +58,7 @@ export const gateDeclaration = {
 import { existsSync, globSync, readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { withoutComments } from "../../tools/lib/gate-preamble.mjs";
+import { rootFromArgv, withoutComments } from "../../tools/lib/gate-preamble.mjs";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
 
@@ -202,8 +202,7 @@ export function report(result, { write = (text) => process.stdout.write(`${text}
 }
 
 function main(argv) {
-  const rootIndex = argv.indexOf("--root");
-  const root = rootIndex >= 0 && typeof argv[rootIndex + 1] === "string" ? resolve(argv[rootIndex + 1]) : ROOT;
+  const root = rootFromArgv(argv, ROOT);
   const result = checkPremises({ root });
   if (argv.includes("--json")) {
     process.stdout.write(

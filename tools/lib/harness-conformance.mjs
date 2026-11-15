@@ -610,6 +610,34 @@ const GATES_WITH_FALSIFIER = Object.freeze([
   // presets claiming one surface, a directory declaring the run's surface nowhere, one preset that declares two, a bound
   // world book that is not a preset at all, and a directory with no presets (blocked, exit 2).
   "check-live-run-preset-surface.mjs",
+  // Prints `browser projection fields examined N · derived D · constant C · declared K · status …` plus a `checks[]`
+  // verdict enumerating its two rules (the contract's field population, and no field is a literal), so its default run is
+  // the report this suite reads. Its falsifier is tools/check-browser-state-projection-fields.test.mjs: `capabilitySummary`
+  // restored to a frozen literal in a copied tree is `published_field_is_a_constant:capabilitySummary` - the shape that
+  // answered "no capability published" whatever the live surface said - a derived field that answers 0 when its source is
+  // absent is still red, an exemption for a field that now follows a live fact is `stale_constant_field_reason`, a reason
+  // with nothing written in it is refused, a declared constant is excused only while it is a constant, both directions of
+  // the contract are policed (`projection_field_unproduced`, `projection_field_not_in_contract`), and a contract with no
+  // `game` projection is blocked rather than green.
+  "check-browser-state-projection-fields.mjs",
+  // Prints `row families examined N · row fields N · read by the renderer M · dropped K · placeable families P/N · status …`
+  // plus a `checks[]` verdict with one entry per rule, so its default run is the report this suite reads. Its falsifier is
+  // tools/check-inventory-row-field-rendering.test.mjs: the renderer as `round62` ran it drops the door and the finding
+  // names `sourceX`/`sourceY` (the family whose rows were silently `continue`d), one composer dropping the pack slot is red
+  // while its sibling still prints it and both dropping it names both, a tile spelling the wire grows is demanded with no
+  // edit here, a spelling the renderer starts reading makes its exemption expire, a declared colour is checked rather than
+  // believed, a module that starts reading the pack family must be declared and one that stopped expires, and a crossing, a
+  // composer or a row renderer the gate cannot find is blocked rather than a pass over nothing.
+  "check-inventory-row-field-rendering.mjs",
+  // Prints `files N · code C · comment M · blank B · total T · ceiling (code) X · delta …` plus a `checks[]` verdict whose
+  // entries are its four rules (population, code exceeded, ceiling stale, baseline member missing), so its default run is
+  // the report this suite reads. Its falsifier is tools/check-stardew-family-size.test.mjs: one code line appended to a
+  // family file is `family_code_exceeded`, one code line deleted is `family_ceiling_stale`, deleting a COMMENT line or a
+  // BLANK line moves neither ceiling - the unit that made the first version green while the family went 31,257 -> 27,388
+  // total and 18,457 code lines unchanged - a ceiling recorded in total lines is stale, a baseline naming a file the family
+  // no longer has is a finding, a raise is refused without a reason and records the three deltas with one, and an empty or
+  // absent directory is blocked rather than green.
+  "check-stardew-family-size.mjs",
 ]);
 
 /** How long a gate's default run may take before it is reported as having printed nothing. */
@@ -1171,6 +1199,34 @@ const GATES_WITHOUT_FALSIFIER = Object.freeze([
       "reported where a multiplication is not, the population as every file carrying either glyph, a baseline entry that " +
       "excuses its own line, a repaired entry that is stale, the same tree read from its commit still firing, and a tree " +
       "holding neither glyph blocked rather than passed",
+  },
+  // Added 2026-11-16. Both print their reading as lines - a census, a list and a verdict - rather than the
+  // `{gate, checks[]}` report this suite parses, so neither can be run here; each names its own falsifier instead of
+  // sharing one reason, because the reason is the only thing that says what the gate catches.
+  {
+    gate: "check-refusal-action-names.mjs",
+    reason:
+      "prints `refusal action names: N files · codes examined M · name an action A · exists E · missing K · unmeasured U` " +
+      "and one line per refusal, so its reading is lines and not a `{gate, checks[]}` report; its falsifier is " +
+      "tools/check-refusal-action-names.test.mjs: the pre-fix blobs of 9c539da8 are red and both missing names resolve to " +
+      "the one action the catalog renamed (`advance_day` where the catalog says `sleep`), a hold kind spelled like an " +
+      "action reds the gate by name, an advice field naming a non-action reds it, the hold-kind vocabulary is read from " +
+      "the Mod's own `BodyOwnedBy*` declarations rather than a list in the test, and a scope that cannot be measured " +
+      "exits 2 instead of passing over nothing",
+  },
+  {
+    gate: "audit-stardew-clearing-vocabulary.mjs",
+    reason:
+      "prints `stardew_clearing_vocabulary: kinds published N · cleared by >=1 action M · unclearable K`, the cleared " +
+      "and unclearable vocabularies, and one line per finding, so its reading is lines and not a `{gate, checks[]}` " +
+      "report; its falsifier is tools/audit-stardew-clearing-vocabulary.test.mjs: a published word no declaration answers " +
+      "is `published_kind_no_action_clears` (the `object` that `round58` refused 11 times), a `Clears` entry for a word " +
+      "the classifier never returns is `cleared_kind_not_published`, a declaration about a word nothing carries is " +
+      "`unclearable_kind_not_published`, one word declared both ways is `declared_kind_both_ways`, `not clearable` with " +
+      "no reason is `unclearable_kind_without_reason`, a vocabulary and a classifier disagreeing are reported in both " +
+      "directions, a word the classifier starts publishing tomorrow is red until a declaration answers it, and a scan " +
+      "that read no word is blocked rather than green. Its own red proof is the `red-proof: history` marker in the gate " +
+      "file: the same code reading `0dce992a` named `object`, `resource_clump` and `terrain` and exited 1",
   },
   ...AUDIT_WITHOUT_SELF_REPORT.map((gate) => ({ gate, reason: AUDIT_WITHOUT_SELF_REPORT_REASON })),
 ]);

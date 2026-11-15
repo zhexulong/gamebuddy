@@ -12,10 +12,8 @@
 //   * a declared vocabulary and the classifier's own returns disagreeing;
 //   * a future member: a word the classifier starts returning tomorrow, which no declaration answers yet.
 //
-// red-proof (run, not quoted): the SAME gate code over the sources at `0dce992a` - `kinds published 18 · cleared by >=1 action
-//            15 · unclearable 0`, then `published_kind_no_action_clears:object`, `:resource_clump`, `:terrain`,
-//            `failed (3 finding(s))`, exit 1. The classifier still answered `stone` for `(O)2` alone and `object` for
-//            everything else, and no `Clears` declaration answered that word.
+// The gate's red proof is declared in `tools/audit-stardew-clearing-vocabulary.mjs`, not restated here: a `history`
+// reading of `0dce992a`, where the same gate code named `object`, `resource_clump` and `terrain` and exited 1.
 import assert from "node:assert/strict";
 import test from "node:test";
 

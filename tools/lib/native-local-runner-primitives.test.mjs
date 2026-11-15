@@ -26,7 +26,6 @@ import {
   connectWithRetry,
   waitForNavigationTerminal,
 } from "./native-local-runner-primitives.mjs";
-import { NativeSmokeHarnessError } from "./stardew-native-smoke-harness-v1.mjs";
 
 /* ---------------------------------------------------------------------------------------------------------------
  * EVIDENCE
@@ -282,7 +281,8 @@ test("the tile predicates fail closed on a coordinate that is not an integer til
     assert.equal(sameTile(left, { x: 4, y: 7 }), false, `${JSON.stringify(left)} is not a tile`);
   }
   // The unguarded spelling the 12 copies used computed `NaN <= 1`, which is already false: this is the same answer.
-  assert.equal(Number.NaN <= 1, false);
+  const unguardedWithinOne = (value) => value <= 1;
+  assert.equal(unguardedWithinOne(Number.NaN), false);
 });
 
 /* ---------------------------------------------------------------------------------------------------------------
@@ -340,9 +340,6 @@ test("waitForNavigationTerminal maps the harness's timeout back to the navigatio
   // Both the terminal wait and the post-terminal observation are covered: a harness timeout in either place is the same
   // `navigation_timeout`, so a caller's fixture-approach fallback keeps one decision surface.
   const accepted = { executionId: "exec-1" };
-  const harnessTimeout = () => {
-    throw new NativeSmokeHarnessError("terminal_timeout");
-  };
   await assert.rejects(
     waitForNavigationTerminal(
       {

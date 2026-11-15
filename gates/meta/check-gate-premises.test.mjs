@@ -93,7 +93,22 @@ test("a declared input that is gone reddens by name, with the three counts print
 });
 
 test("the deletion commit's own gate text names the file it deleted, for both gates", () => {
-  const result = premisesAt(DELETION_COMMIT, GATE_PREMISES);
+  // The registry is TODAY's and the revision is THEN: a gate written after 213cde50 did not exist to name anything at
+  // it, so it is not part of that reading. Handing it over anyway reports `gate_premise_gate_missing` - a true fact
+  // about the revision and a category error in the question - so the population is the rows that existed then.
+  const present = GATE_PREMISES.filter((row) => {
+    try {
+      fromHistory(DELETION_COMMIT, row.gate);
+      return true;
+    } catch {
+      return false;
+    }
+  });
+  assert.ok(
+    present.some((row) => row.gate === GAP_GATE) && present.some((row) => row.gate === CONSUMERS_GATE),
+    "the two gates this reading is about both existed at that commit",
+  );
+  const result = premisesAt(DELETION_COMMIT, present);
   assert.equal(result.status, "failed");
   assert.deepEqual(
     result.findings.map((finding) => finding.code).sort(),
@@ -177,9 +192,20 @@ test("the real tree passes, and the registry is the population rather than a sam
   assert.equal(result.gates, GATE_PREMISES.length);
   assert.ok(result.inputs >= 10, `examined ${result.inputs} inputs: a population this small would not be a reading`);
   for (const row of result.derived) assert.ok(row.inputs.length > 0, `${row.gate} derived no input at all`);
-  // The two gates this unit repaired are in the population BY NAME - a registry that quietly dropped them would still
-  // print `gates examined 2` and mean nothing.
-  assert.deepEqual(result.derived.map((row) => row.gate).sort(), [GAP_GATE, CONSUMERS_GATE].sort());
+  // The population is the REGISTRY's, not a list written here: every row is derived and named, so a row added
+  // tomorrow is covered by this assertion instead of breaking it (measured 2026-11-16: two gates joined GATE_PREMISES
+  // and this line, pinned to the two below by name, went red on a correct tree). The two gates this unit repaired are
+  // still required BY NAME inside that population - a registry that quietly dropped them would otherwise pass.
+  assert.deepEqual(
+    result.derived.map((row) => row.gate).sort(),
+    GATE_PREMISES.map((row) => row.gate).sort(),
+    "every registered gate is derived, or the registry and the reading disagree",
+  );
+  for (const gate of [GAP_GATE, CONSUMERS_GATE])
+    assert.ok(
+      result.derived.some((row) => row.gate === gate),
+      `${gate} left the population; the register is the population rather than a sample of it`,
+    );
 });
 
 test("the gate is reachable: a script runs it, and the prelive register says where", () => {

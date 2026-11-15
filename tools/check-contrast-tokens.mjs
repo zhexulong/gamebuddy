@@ -78,6 +78,7 @@ export const gateDeclaration = {
   kind: "contract",
 };
 
+import { rootFromArgv } from "./lib/gate-preamble.mjs";
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -543,9 +544,7 @@ export function reportContrastTokens(result, { fail = false, out = process.stdou
 }
 
 function main(argv) {
-  const rootIndex = argv.indexOf("--root");
-  const root =
-    rootIndex >= 0 && typeof argv[rootIndex + 1] === "string" ? resolve(argv[rootIndex + 1]) : REPOSITORY_ROOT;
+  const root = rootFromArgv(argv, REPOSITORY_ROOT);
   return reportContrastTokens(checkContrastTokens({ root }), { fail: argv.includes("--fail") });
 }
 

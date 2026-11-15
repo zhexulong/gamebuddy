@@ -95,7 +95,7 @@ import { fileURLToPath } from "node:url";
 
 import { readWireSurface } from "./check-action-surface-parity.mjs";
 import { tableKeys } from "./check-snapshot-field-rendering.mjs";
-import { bracesFrom } from "./lib/gate-preamble.mjs";
+import { bracesFrom, rootFromArgv } from "./lib/gate-preamble.mjs";
 
 const REPOSITORY_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -739,9 +739,7 @@ export function auditInventoryRowFields({ root = REPOSITORY_ROOT } = {}) {
 }
 
 function main(argv) {
-  const rootIndex = argv.indexOf("--root");
-  const root =
-    rootIndex >= 0 && typeof argv[rootIndex + 1] === "string" ? resolve(argv[rootIndex + 1]) : REPOSITORY_ROOT;
+  const root = rootFromArgv(argv, REPOSITORY_ROOT);
   const reading = auditInventoryRowFields({ root });
   const report = {
     gate: "inventory-row-field-rendering",

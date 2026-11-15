@@ -343,31 +343,6 @@ const RUNNER_CONSTANTS = Object.freeze([
   "_EXPECTED_ACTIONS",
 ]);
 
-/** The text of a `[`/`{`/`(` starting at `start`, by matching brackets over the raw source. */
-function balanced(text, start) {
-  const open = text[start];
-  const close = { "[": "]", "{": "}", "(": ")" }[open];
-  if (close === undefined) return null;
-  let depth = 0;
-  let index = start;
-  while (index < text.length) {
-    const char = text[index];
-    if (char === '"' || char === "'" || char === "`") {
-      index++;
-      while (index < text.length && text[index] !== char) index += text[index] === "\\" ? 2 : 1;
-      index++;
-      continue;
-    }
-    if (char === open) depth++;
-    else if (char === close) {
-      depth--;
-      if (depth === 0) return text.slice(start, index + 1);
-    }
-    index++;
-  }
-  return null;
-}
-
 /** A `[...]` of string literals and already-resolved names, or null when any element is neither. */
 function readStringList(text, resolved) {
   if (text === null || !(text.trim().startsWith("[") && text.trim().endsWith("]"))) return null;

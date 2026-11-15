@@ -97,6 +97,7 @@ import {
   summarizeDeliveryAccount,
 } from "../../lib/presentation-delivery-account.mjs";
 import { readActivityPoints, summarizeActivity } from "../../lib/companion-activity.mjs";
+import { sessionEntries } from "../../lib/session-jsonl.mjs";
 import { describeRunCost, summarizeRunCost } from "../../lib/run-cost-account.mjs";
 import { assertLiveRunArtifactFresh } from "../../lib/live-run-artifact-freshness.mjs";
 import { summarizeSystemFindings } from "../../lib/system-findings.mjs";
@@ -1311,14 +1312,7 @@ function readAgentTurnOutcome(sessionJsonlPath) {
   }
   let assistantMessages = 0;
   let last = null;
-  for (const line of raw.split("\n")) {
-    if (line.trim().length === 0) continue;
-    let entry;
-    try {
-      entry = JSON.parse(line);
-    } catch {
-      continue;
-    }
+  for (const entry of sessionEntries(raw)) {
     const message = entry?.message;
     if (entry?.type !== "message" || message?.role !== "assistant") continue;
     assistantMessages += 1;
@@ -1517,15 +1511,7 @@ function readSessionPlayerTexts(sessionJsonlPath) {
     return null;
   }
   const texts = [];
-  for (const line of raw.split("\n")) {
-    if (line.trim().length === 0) continue;
-    let entry;
-    try {
-      entry = JSON.parse(line);
-    } catch {
-      // A half-written last line is what a killed run leaves; it is skipped, not repaired.
-      continue;
-    }
+  for (const entry of sessionEntries(raw)) {
     if (entry?.type !== "message" || entry?.message?.role !== "user") continue;
     const content = entry.message.content;
     const text =
@@ -1814,14 +1800,7 @@ function readToolTiming(
   // this loop already reads every message in the record, and a second reader of the same file is a second spelling.
   let modelTurns = 0;
   const planCalls = {};
-  for (const line of raw.split("\n")) {
-    if (line.trim().length === 0) continue;
-    let entry;
-    try {
-      entry = JSON.parse(line);
-    } catch {
-      continue;
-    }
+  for (const entry of sessionEntries(raw)) {
     if (entry?.type !== "message") continue;
     const atMs = Date.parse(entry.timestamp);
     if (!Number.isFinite(atMs)) continue;
