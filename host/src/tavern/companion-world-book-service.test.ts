@@ -189,7 +189,7 @@ test("a rewritten body is the player's text while the entry it belongs to keeps 
     // not renaming it, so its provenance, scope and budget still describe where it came from
     // and how much of it the companion may carry. This used to read "authored"/"small" -
     // the fresh-entry defaults - which meant a body edit silently discarded the card's
-    // origin and its budget along with the selection gate below.
+    // origin and its budget with it.
     assert.equal(durable.entries[0]!.provenance, "st-card-import");
     assert.equal(durable.entries[0]!.tokenBudget, "medium");
     assert.equal(durable.entries[0]!.scope, "setting");

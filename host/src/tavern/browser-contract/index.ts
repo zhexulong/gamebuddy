@@ -1350,7 +1350,11 @@ export const COMPANION_WORLD_BOOK_CONTENT_MAX_LENGTH = 4_096;
  * triggers is the defect that reasoning left in place. `keys` remain the card's
  * own trigger words, and per-turn selection matches them against what the player
  * actually said, so between them the player can now see both what an entry says
- * and which of their own words reaches it. `constant` marks the always-on
+ * and which of their own words reaches it. `secondaryKeys`/`selectiveLogic` are
+ * that same fact's second half - the card's "only when this other word is said
+ * too" condition - and they are projected and editable for the same reason: an
+ * entry whose full firing rule the player cannot see is one they cannot
+ * deliberately reach. `constant` marks the always-on
  * background, which is carried whatever is said and therefore carries no trigger
  * words.
  *
@@ -1368,6 +1372,28 @@ export const COMPANION_WORLD_BOOK_CONTENT_MAX_LENGTH = 4_096;
 export const CompanionWorldBookEntryV1Schema = strictObject({
   title: Type.String({ minLength: 1, maxLength: 256 }),
   keys: Type.Array(Type.String({ minLength: 1, maxLength: 64 }), { maxItems: 16 }),
+  /**
+   * The card's SECONDARY trigger words (`character_book.entries[].secondary_keys`): the second
+   * condition an entry may carry, applied only after one of `keys` matched.
+   *
+   * Projected because the player now edits it, and OPTIONAL because absence has exactly one
+   * truthful reading, the durable book's own (`worldbook.ts`): this entry has no second condition.
+   * The empty list says the same thing - the durable validator refuses `[]` for the same reason it
+   * refuses an empty `keys`, so "no second condition" is a field that is not there - and both
+   * spellings are written as absence, never as an empty array.
+   *
+   * `enabled` below is required for the opposite reason: a switch with no stored value would be a
+   * control the panel cannot draw, while a condition list that is absent is a state the player
+   * reads in words ("this entry fires on its trigger words alone").
+   */
+  secondaryKeys: Type.Optional(Type.Array(Type.String({ minLength: 1, maxLength: 64 }), { maxItems: 16 })),
+  /**
+   * SillyTavern's own mode for those words, carried through the import unchanged: 0 AND ANY, 1 NOT
+   * ALL, 2 NOT ANY, 3 AND ALL. Absent means the entry declares none, which is distinct from
+   * declaring 0 even though the selector's default for an absent mode is 0 - a save must not mint
+   * a mode the card never wrote (`companion-card-export.test.ts` holds the export to that).
+   */
+  selectiveLogic: Type.Optional(Type.Union([Type.Literal(0), Type.Literal(1), Type.Literal(2), Type.Literal(3)])),
   constant: Type.Boolean(),
   /**
    * Whether the entry is part of her background at all.
@@ -4393,6 +4419,10 @@ export type CompanionDetailV1 = Static<typeof CompanionDetailV1Schema>;
 export type CompanionWorldBookEntryV1 = Readonly<{
   title: string;
   keys: readonly string[];
+  /** The card's second condition words; absent when the entry carries none, as `worldbook.ts` writes it. */
+  secondaryKeys?: readonly string[];
+  /** The mode those words are combined by; absent when the entry declares none. */
+  selectiveLogic?: 0 | 1 | 2 | 3;
   constant: boolean;
   enabled: boolean;
   content: string;

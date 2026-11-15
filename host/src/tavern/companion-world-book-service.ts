@@ -151,7 +151,9 @@ function absentWorldBook(): CompanionWorldBookV1 {
  *
  * `keys` and `constant` are normalized from the durable entry's own optional fields:
  * the persisted entry may carry neither (a keyless, not-always-on entry is the ordinary
- * import shape), while the published schema requires both present.
+ * import shape), while the published schema requires both present. `secondaryKeys` and
+ * `selectiveLogic` are the opposite case and are NOT defaulted: the durable entry that
+ * carries neither has no second condition, and the wire's own absence is that fact.
  */
 function renderWorldBook(book: WorldBook, macros: MacroTable): CompanionWorldBookV1 {
   const entries: readonly CompanionWorldBookEntryV1[] = book.entries.map((entry) => {
@@ -161,6 +163,8 @@ function renderWorldBook(book: WorldBook, macros: MacroTable): CompanionWorldBoo
     return Object.freeze({
       title: entry.title,
       keys: Object.freeze([...(entry.keys ?? [])]),
+      ...(entry.secondaryKeys === undefined ? {} : { secondaryKeys: Object.freeze([...entry.secondaryKeys]) }),
+      ...(entry.selectiveLogic === undefined ? {} : { selectiveLogic: entry.selectiveLogic }),
       constant: entry.constant === true,
       enabled: entry.enabled !== false,
       content,
@@ -207,8 +211,8 @@ export type CompanionWorldBookBindingRefresh = (
  * The entry bodies that arrive are the RENDERED ones, because that is what the read
  * projected and what the player edited. A row keeps the entry it came from by that entry's
  * own identity (`authoredEntries`), and that entry brings back the metadata the projection
- * never showed - scope, provenance, token budget, the card's selection gate, any
- * integration/save/world binding. A row whose body still renders to exactly what that entry
+ * never showed - scope, provenance, token budget, any integration/save/world binding. A row
+ * whose body still renders to exactly what that entry
  * renders keeps the AUTHORED body too, macros and all: a save must not rewrite the author's
  * text with one run's rendering of it. A row the player rewrote says her words verbatim,
  * rendered on the next read, while it remains the same entry to select on. A row nobody
@@ -285,7 +289,7 @@ type EditorRow = UpdateCompanionWorldBookCommandV1["entries"][number];
  *
  * A row keeps the entry it came from by that entry's own identity, never by its position:
  * removing a row shifts every row after it, so a positional match would hand one entry's
- * authored text and its card's selection gate to its neighbour.
+ * authored text and its card's binding to its neighbour.
  *
  * Identity is claimed in three passes over ONE claimed set, strongest evidence first: a row
  * whose title AND rendered body both still name one entry; then, for the rows no smaller
@@ -295,16 +299,22 @@ type EditorRow = UpdateCompanionWorldBookCommandV1["entries"][number];
  * entry it renamed instead of reading as a new one. The passes are ordered rather than tried
  * per row, so a title never resolves an entry that a row still carrying BOTH its title and
  * its text would otherwise have owned: a player who renames one row to another's name does
- * not move that entry's gate onto her row. The set is shared by all three passes, so an
+ * not move that entry's binding onto her row. The set is shared by all three passes, so an
  * entry one row claimed is never available to another under a weaker match.
  *
  * Every pass is first-unclaimed, so two rows that look alike resolve to their own entries in
- * order, and a row no pass claimed is one the player added. Fields the command can state
- * (`title`, `keys`, `constant`, its own body) are always the row's - the carry never
- * overrides them - and everything the projection never showed rides with the entry: scope,
- * provenance, token budget and the card's selection gate. That gate describes WHEN an entry
- * fires, not what it says, so a body rewrite keeps it: the player has no field for it, and
- * dropping it would rewrite the author's "only in this mood" rule into "any of these words".
+ * order, and a row no pass claimed is one the player added. Fields the command can state are
+ * always the row's - the carry never overrides them - and only what the command CANNOT state
+ * rides with the entry: scope, provenance, token budget and its integration/save/world binding.
+ *
+ * The card's second condition (`secondaryKeys`/`selectiveLogic`) used to ride here, and that
+ * was right only while the panel had no control for it: it was the sole copy of the author's
+ * "only in this mood" rule, so a save had to put it back. The control exists now, so the same
+ * carry would be a SECOND authority over one fact - the player's words arrive on the wire and
+ * are replaced by the entry's, silently, on the very save she made to change them. The durable
+ * entry is therefore the authority, the card is the seed the import leaves in it, and a save
+ * stores exactly the condition it was handed (an empty word list is absence: the validator
+ * refuses `[]` for the same reason it refuses an empty `keys`).
  *
  * The entry id is positional and re-minted on every rewrite, exactly as the greeting set
  * mints its variant ids on every rewrite: the browser is never handed an id, no durable
@@ -359,11 +369,13 @@ function authoredEntries(
       // The worldbook validator refuses an empty key list, so "no trigger words" is an
       // absent field - the same shape the card import writes for a keyless entry.
       ...(keys.length === 0 ? {} : { keys }),
-      // The card's selection gate is metadata the projection never showed, so the entry it
-      // belongs to keeps it: an edit that dropped it would rewrite the author's rule into
-      // "any of these words".
-      ...(carried?.secondaryKeys === undefined ? {} : { secondaryKeys: carried.secondaryKeys }),
-      ...(carried?.selectiveLogic === undefined ? {} : { selectiveLogic: carried.selectiveLogic }),
+      // The card's second condition, as the PLAYER now states it. Both fields are independent here
+      // because they are independent in the book and in the import: a card may declare a mode over
+      // words it never wrote, and coupling them would drop a field the player never touched.
+      ...(entry.secondaryKeys === undefined || entry.secondaryKeys.length === 0
+        ? {}
+        : { secondaryKeys: Object.freeze([...entry.secondaryKeys]) }),
+      ...(entry.selectiveLogic === undefined ? {} : { selectiveLogic: entry.selectiveLogic }),
       ...(carried?.integrationId === undefined ? {} : { integrationId: carried.integrationId }),
       ...(carried?.saveId === undefined ? {} : { saveId: carried.saveId }),
       ...(carried?.worldId === undefined ? {} : { worldId: carried.worldId }),

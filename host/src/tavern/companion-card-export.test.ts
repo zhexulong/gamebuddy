@@ -17,6 +17,8 @@ import {
   exportCompanionCard,
 } from "./companion-card-export.js";
 import { createCompanionCardExportService } from "./companion-card-export-service.js";
+import { projectRenderedCompanionWorldBook, updateCompanionWorldBook } from "./companion-world-book-service.js";
+import { macroTable } from "./macro-engine.js";
 import { createChatThreadStore } from "./chat-thread-store.js";
 import { createGreetingManagementService } from "./greeting-management/greeting-management.js";
 import { provisionNewCompanion } from "./new-companion-service.js";
@@ -948,6 +950,107 @@ test("a companion with no picture refuses the PNG form by name, and the JSON for
     // The PNG form does not: there is no picture to carry, and none is invented.
     await assert.rejects(() => exportService.read(handle, "png"), /companion_card_image_absent/);
   } finally {
+    await cleanupTestRoot(root);
+  }
+});
+
+/**
+ * The second condition the PLAYER wrote is the one her card carries out.
+ *
+ * `bookOf` writes the durable entry's own `secondary_keys`/`selective`/`selectiveLogic`, so the
+ * export has always been faithful to the FILE. What it could not be faithful to was the player: the
+ * write path re-attached the card's condition over whatever a save said, because the panel had no
+ * control for it. Now that it has one, the export is the last link of the round trip that has to
+ * follow the edit - a card that restated the ORIGINAL word would hand her to another Tavern with a
+ * firing rule the player had explicitly changed.
+ */
+test("an edited second condition is what the exported card carries", async () => {
+  const root = await canonicalTestRoot("tavern-card-export-player-gate-");
+  let threads: ReturnType<typeof createChatThreadStore> | undefined;
+  try {
+    const store = new TavernArtifactStore(root);
+    const playerId = "player-player-gate";
+    const seedIdentity = { playerId, companionId: "seed-companion", continuityId: "seed-continuity" };
+    const seedPaths = resolveTavernPaths(resolveRuntimePaths(seedIdentity, root), seedIdentity);
+    const importService = new StCardImportService(store, seedPaths);
+    const staged = await importService.import("seed_card", SEED_CARD);
+    const eligible = staged.candidate.artifact.fields
+      .filter((field) => field.eligibility === "profile_eligible_after_explicit_review")
+      .map((field) => field.field);
+    await importService.recordReview("seed_card", { reviewedFields: eligible, approvedAtMs: 1 });
+    threads = createChatThreadStore(root, "a".repeat(64));
+    const created = await provisionNewCompanion(
+      root,
+      playerId,
+      staged.candidate.artifact,
+      await importService.confirmedReview("seed_card"),
+      threads,
+    );
+
+    // The player's own edit, through the route the panel calls: the projection she read, one row's
+    // condition changed, the whole list saved against the revision she read.
+    const runtimeCwd = resolveRuntimePaths(created.identity, root).runtimeCwd;
+    const macros = macroTable({ char: "琥珀", locale: "zh-CN" });
+    const read = await projectRenderedCompanionWorldBook(runtimeCwd, macros);
+    assert.equal(read.revision, 1);
+    const saved = await updateCompanionWorldBook({
+      path: join(runtimeCwd, "worldbook.json"),
+      containmentRoot: root,
+      macros,
+      expectedRevision: read.revision!,
+      entries: read.entries.map((entry) =>
+        entry.title === "温室" ? { ...entry, secondaryKeys: ["mood:loud"], selectiveLogic: 3 } : entry,
+      ),
+      refreshBindings: async (previous, next) => {
+        const bindingFor = (metadata: Readonly<{ worldBookId: string; revision: number; canonicalHash: string }>) =>
+          Object.freeze({
+            worldBookId: metadata.worldBookId,
+            revision: metadata.revision,
+            canonicalHash: metadata.canonicalHash,
+            provenance: "reviewed-import" as const,
+          });
+        return await threads!.refreshCompanionWorldBookBinding!({
+          companionId: created.identity.companionId,
+          continuityId: created.identity.continuityId!,
+          previous: bindingFor(previous),
+          binding: bindingFor(next),
+        });
+      },
+    });
+    assert.deepEqual(saved.entries[0]?.secondaryKeys, ["mood:loud"]);
+
+    // …and her card, exported through the real service, carries it in the spec's own spellings.
+    const handle = "H".repeat(43);
+    const exportService = createCompanionCardExportService({
+      store,
+      runtimeRoot: root,
+      playerId,
+      resolveCompanion: async (requested) =>
+        requested === handle
+          ? Object.freeze({
+              companionId: created.identity.companionId,
+              continuityId: created.identity.continuityId!,
+              name: "琥珀",
+            })
+          : null,
+    });
+    const exported = await exportService.read(handle, "json");
+    if (exported === null || exported.format !== "json") throw new Error("expected the JSON form of the card");
+    const entries = (
+      JSON.parse(exported.card) as {
+        data: { character_book: { entries: readonly Record<string, unknown>[] } };
+      }
+    ).data.character_book.entries;
+    assert.deepEqual(entries[0]?.secondary_keys, ["mood:loud"]);
+    assert.equal(entries[0]?.selectiveLogic, 3);
+    assert.equal(entries[0]?.selective, true);
+    // The entry the player never gated still writes no gate field at all: a save is not a licence
+    // for the export to mint one.
+    assert.equal(Object.hasOwn(entries[1]!, "secondary_keys"), false);
+    assert.equal(Object.hasOwn(entries[1]!, "selectiveLogic"), false);
+    assert.equal(Object.hasOwn(entries[1]!, "selective"), false);
+  } finally {
+    threads?.close?.();
     await cleanupTestRoot(root);
   }
 });
