@@ -819,14 +819,6 @@
       "value": 39
     },
     {
-      "id": "ts:host/src/stardew-integration-launcher-body-program.internal.ts#toWorldFact",
-      "language": "ts",
-      "name": "host/src/stardew-integration-launcher-body-program.internal.ts#toWorldFact",
-      "file": "host/src/stardew-integration-launcher-body-program.internal.ts",
-      "line": 443,
-      "value": 32
-    },
-    {
       "id": "ts:host/src/stardew-production-lifecycle-coordinator.internal.ts#activateHeadlessOperationalGame",
       "language": "ts",
       "name": "host/src/stardew-production-lifecycle-coordinator.internal.ts#activateHeadlessOperationalGame",
