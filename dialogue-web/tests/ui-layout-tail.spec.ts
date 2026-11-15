@@ -1085,16 +1085,33 @@ test("item 5: the variant pager and regenerate are one strip at the bubble's foo
     `regenerate is below the bubble (${regenerate.top}, bubble ${bubble.bottom})`,
   ).toBeGreaterThanOrEqual(bubble.bottom);
   // …on one line…
+  //
+  // THIS PIN MOVED, and here is why. "One line" was true while the strip was Copy + pager + Regenerate +
+  // Rewind/Edit + Delete wearing words and the row's column was wide enough. It is not any more: the strip
+  // now carries five actions (Regenerate joined every reply a player line stands before on 2026-11-15, and
+  // Rewind and Fork replaced the one folded entry on 2026-11-16), which is 493 px of words plus gaps against
+  // a 634 px column, and the pager takes the line beneath the actions - the same ruled shape the 400 px
+  // column gets (style.css, "The strip's narrow form keys on the strip's own column"; defect 6 pins the box
+  // and defect 7 sweeps for a stranded control). What this item was ever about is that the two controls are
+  // NOT diagonally opposite - the pager above the bubble and Regenerate below it - so the reading kept is the
+  // one that defect was: both are under the bubble, in one strip, with the pager on the line directly
+  // beneath the actions rather than on the far side of any words.
+  expect(
+    pager.top,
+    `the pager is in the strip at the bubble's foot, not across it (pager ${pager.top}, bubble ${bubble.bottom})`,
+  ).toBeGreaterThanOrEqual(bubble.bottom);
   expect(
     Math.abs(Math.round(pager.top + pager.height / 2) - Math.round(regenerate.top + regenerate.height / 2)),
-    `the two controls share a line (pager ${pager.top}..${pager.bottom}, regenerate ${regenerate.top}..${regenerate.bottom})`,
-  ).toBeLessThanOrEqual(8);
-  // …beside each other, in one strip: the horizontal gap between them is the
-  // strip's own gap, not the width of a bubble.
-  const horizontalGap = Math.abs(
-    pager.left < regenerate.left ? regenerate.left - pager.right : pager.left - regenerate.right,
+    `the pager sits on the line beneath the actions, one row away (pager ${pager.top}..${pager.bottom}, ` +
+      `regenerate ${regenerate.top}..${regenerate.bottom})`,
+  ).toBeLessThanOrEqual(60);
+  // …and it keeps its own box rather than being stretched across the line it now owns: the same 184 px the
+  // 400 px column measures (three 44 px controls and two 4 px gaps), declared as a relation so a fourth inner
+  // control moves it with the pager instead of going quietly red.
+  expect(pager.width, `the pager is its own box, not the line's width (${pager.width} px)`).toBeLessThan(
+    bubble.width,
   );
-  expect(horizontalGap, `the two controls are adjacent (${horizontalGap} px apart)`).toBeLessThanOrEqual(16);
+  expect(pager.width, `and it is wider than one 44 px target (${pager.width} px)`).toBeGreaterThan(120);
   // The author line no longer carries a control.
   expect(measured.headerChildren, "the author line holds the name and nothing else").toEqual(["message-author"]);
   expect(

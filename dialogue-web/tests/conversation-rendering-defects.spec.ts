@@ -1079,6 +1079,7 @@ test("defect 6: the narrow strip is one row and the player's own line is as wide
       const rect = child.getBoundingClientRect();
       return {
         className: child.className,
+        testId: child.getAttribute("data-testid"),
         name: (child.getAttribute("aria-label") ?? "").trim(),
         // The glyph actually drawn, from the icon family's own class: the rewind and
         // Regenerate sit next to each other and must not be one shape.
@@ -1124,7 +1125,13 @@ test("defect 6: the narrow strip is one row and the player's own line is as wide
   ).toBe(2);
   // One row of actions (44 px) plus one row of pager (46 px) plus the 6 px gap between them.
   expect(measured.strip.box.height, "so the strip is one 44 px row plus one 46 px row").toBeLessThanOrEqual(100);
-  expect(measured.strip.controls.length, "and it holds every control it has, none pushed out").toBe(5);
+  // FIVE ACTIONS AND THE PAGER. The five are the ones the owner's ruling keeps: copy, regenerate, rewind, fork,
+  // delete - Edit left the strip on 2026-11-16 and Fork took the slot it freed, so the count of ACTIONS is the
+  // number the width arithmetic is built on and it did not move. (This pin said 5 children / 4 actions until
+  // 2026-11-15, when regenerate started being offered on the reply a player line stands before: that added a
+  // fifth action to this very row and left the pin behind. It is corrected here, with the names, rather than
+  // quietly relaxed - the strip is still one row of actions and the pager, which is what the ruling protects.)
+  expect(measured.strip.controls.length, "and it holds every control it has, none pushed out").toBe(6);
   for (const control of measured.strip.controls) {
     // The name is the meaning, and it is a real sentence rather than the glyph the
     // narrow form leaves visible.
@@ -1133,15 +1140,22 @@ test("defect 6: the narrow strip is one row and the player's own line is as wide
     expect(control.height, `${control.className} clears the 44 px floor`).toBeGreaterThanOrEqual(44);
     expect(control.width, `${control.className} is a target, not a squeezed glyph`).toBeGreaterThanOrEqual(44);
   }
-  // The four ACTIONS share one line, and the pager alone is on the other: that is the rule, not an
+  // The five ACTIONS share one line, and the pager alone is on the other: that is the rule, not an
   // accident of how many controls happened to fit.
   const actions = measured.strip.controls.filter((control) => !String(control.className).includes("swipe-controls"));
   const pagers = measured.strip.controls.filter((control) => String(control.className).includes("swipe-controls"));
-  expect(actions.length, "the four actions on this row").toBe(4);
+  expect(actions.map((control) => control.testId ?? control.className), "the five actions on this row, by name").toEqual([
+    "message-copy",
+    "action-btn regenerate-btn",
+    "message-rewind",
+    "message-fork",
+    "message-delete",
+  ]);
+  expect(actions.length, "the five actions on this row").toBe(5);
   expect(pagers.length, "and the one pager").toBe(1);
   expect(
     new Set(actions.map((control) => control.centre)).size,
-    "the four actions share one line",
+    "the five actions share one line",
   ).toBe(1);
   expect(
     actions[0]!.centre,
@@ -1189,18 +1203,22 @@ test("defect 6: the narrow strip is one row and the player's own line is as wide
   });
   // The entry the row offers over what comes after it: its class names the control, and its glyph is the cut
   // rather than the friendly arrow beside it.
-  const rewindControl = measured.strip.controls.find((control) => String(control.className).includes("act-btn"));
+  const rewindControl = measured.strip.controls.find((control) => control.testId === "message-rewind");
+  const forkControl = measured.strip.controls.find((control) => control.testId === "message-fork");
   expect(rewindControl?.glyph, "the rewind draws a cut").toBe("lucide-scissors");
+  expect(forkControl?.glyph, "and the fork draws a branch, not a second cut").toBe("lucide-git-branch");
   expect(glyphs.regenerate?.glyph, "Regenerate keeps its circular arrow").toBe("lucide-refresh-cw");
   expect(rewindControl?.glyph, "so the destructive control is not the friendly one").not.toBe(
     glyphs.regenerate?.glyph,
   );
-  // The entry names the POINT rather than one of its two answers now: pressing it opens the choice between
-  // forking from here and rewinding back to here, so naming it "Rewind to here" would be the lie this fold
-  // exists to avoid. The count it would remove is still stated - inside the choice, on the rewind answer's
-  // own name, which `chat-rewind.spec.ts` pins.
-  expect(rewindControl?.name, "the entry names both answers it opens").toContain("从这里分出新对话");
-  expect(rewindControl?.name, "including the destructive one").toContain("回退到这条消息");
+  // Each entry names the act it is: the rewind states the point and the count it removes, the fork states the
+  // two facts it does not take away. They are two controls now (owner ruling 2026-11-16), so neither name has to
+  // carry the other answer - and the fork's is where the consequence the fold's prompt used to state lives.
+  expect(rewindControl?.name, "the cut names the point it cuts back to").toContain("回退到此处");
+  expect(rewindControl?.name, "and the count it would remove").toContain("共 2 条");
+  expect(rewindControl?.name, "and it does not offer the fork").not.toContain("分出新对话");
+  expect(forkControl?.name, "the fork keeps every later message in both chats").toContain("保留其后的全部消息");
+  expect(forkControl?.name, "and both chats are one conversation to her memory").toContain("共享她的记忆");
   expect(glyphs.regenerate?.name, "while Regenerate is still named by its own word").toBe("重新生成");
   expect(rewindControl?.width, "the rewind's box did not move with its glyph").toBe(44);
   expect(rewindControl?.height, "and neither did its target").toBe(44);
@@ -1236,21 +1254,45 @@ test("defect 6: the narrow strip is one row and the player's own line is as wide
     };
     const rows = [...document.querySelectorAll<HTMLElement>("ol.message-list > li")];
     const strip = rows[2]!.querySelector<HTMLElement>(".message-actions")!;
-    return { strip: box(strip), pager: box(strip.querySelector<HTMLElement>(".swipe-controls")!) };
+    return {
+      strip: box(strip),
+      pager: box(strip.querySelector<HTMLElement>(".swipe-controls")!),
+      // Each child's own width, so the claim "this row's contents no longer fit this column" is a number
+      // rather than a guess: the reading is the sum of these plus the strip's own gaps.
+      children: [...strip.children].map((child) => ({
+        testId: child.getAttribute("data-testid"),
+        className: child.className,
+        width: round(child.getBoundingClientRect().width),
+      })),
+    };
   });
   console.log(`[defect-6 wide] ${JSON.stringify(wide)}`);
   expect(wide.pager, "the pager is the same 184 px at 1440x900").toEqual({ width: 184, height: 46 });
-  expect(wide.strip.height, "and the strip is still one target tall").toBe(46);
-  // The wide window is where the narrow rule does NOT apply: one row, all five controls.
+  // THE WIDE PIN MOVED, AND THIS IS THE ARITHMETIC THAT MOVED IT. This used to read "one target tall, 46 px,
+  // five children in one row of 512": it was measured before 2026-11-15's regenerate lane gave this very row a
+  // FIFTH action (the reply a player line stands before, not only the tail), and the five actions plus the pager
+  // stopped fitting the 634 px column this chat gets at the reading measure. Both pins that standing claim rested
+  // on (five children, one row) were therefore already stale when this lane arrived; the numbers below are read
+  // from the strip on HEAD's own children, in zh-CN:
   //
-  // 403 was what this strip's contents gave it before copy joined (the pager plus the three controls
-  // wearing their words). 479 was what they gave it with Copy at 70 px on the end. 527 is the same
-  // contents with the variant discard inside the pager: its 44 px control plus two 4 px inner gaps,
-  // 48 px, is the whole of the difference (measured). 512 is the same five children after the rewind's
-  // entry became the one control a message offers over what comes after it, wearing "From here…" instead
-  // of "Rewind to here" - the words changed, the contents did not, and nothing was made smaller to reach
-  // it: this is the width its contents ask for, and at 1440 the reply has that much column to give.
-  expect(wide.strip.width, "and the strip keeps the width its contents give it").toBe(512);
+  //   copy 70 | pager 184 | regenerate 96 | rewind 109 | fork 148 | delete 70 = 677 px of contents,
+  //   plus five 6 px gaps = 707 px against the 634 px column. (The fold this lane replaced cost 148 + 86 for
+  //   two controls where the two entries now cost 109 + 148: the two-row shape is not this lane's doing, it is
+  //   one 44 px action too many for the column - and the column is the reading measure, not something a rule
+  //   can widen.)
+  //
+  // What the strip does about it is the shape the narrow rule RULES rather than an orphan: the five actions stay
+  // on one line and the pager takes the next one, which is the same 98 px box the 400 px column gets. Nothing is
+  // squeezed (every target is 44 px), nothing is retired early (the words are still on at this width - defect 7
+  // asserts that), and the pager keeps its own 184 px box rather than stretching across the line.
+  expect(wide.strip.height, "the actions on one line and the pager beneath them, at 1440 too").toBe(102);
+  expect(wide.strip.width, "and the strip is the column it was given, not a squeezed row").toBe(634);
+  const actionWidths = wide.children.filter((child) => child.className !== "swipe-controls");
+  expect(actionWidths.length, "the five actions are all still there").toBe(5);
+  expect(
+    actionWidths.reduce((total, child) => total + child.width, 0),
+    "and their words are the width the column cannot hold - the reason for the second line",
+  ).toBeGreaterThan(wide.strip.width - wide.pager.width);
 });
 
 // --- the strip's narrow form is keyed on its own column, not on the window (defect 7) ---
@@ -1272,7 +1314,10 @@ async function readStripLines(page: Page) {
         const grouped: { names: string[]; top: number }[] = [];
         for (const item of items) {
           const top = round(item.getBoundingClientRect().top);
-          const name = (item.getAttribute("class") ?? "").split(" ")[0]!.replace("-btn", "");
+          // Named by its own test handle where it has one, because a failure has to say WHICH control was
+          // stranded rather than "action" four times over.
+          const name =
+            item.getAttribute("data-testid") ?? (item.getAttribute("class") ?? "").split(" ")[0]!.replace("-btn", "");
           const line = grouped.find((candidate) => Math.abs(candidate.top - top) <= 2);
           if (line === undefined) grouped.push({ names: [name], top });
           else line.names.push(name);
@@ -1336,10 +1381,14 @@ test("defect 7: no width between 340 and 820 leaves a single control stranded on
       `at ${width}x900 the strip leaves one control alone on its last line`,
     ).toEqual([]);
     // The ruled shape, restated: the pager is its own line beneath the actions, or the whole strip
-    // is one line. Either way no line holds a lone action.
+    // is one line. Either way no line holds a lone action. A strip with ONE action cannot be a wrap - the
+    // opening's strip is Copy and the pager, and Copy standing above the pager is not Copy being stranded -
+    // so the rule applies to the rows whose actions really did have to share more than one line.
     for (const row of reading.rows) {
       if (row === null) continue;
-      for (const line of row.lines.slice(0, -1)) {
+      const actionLines = row.lines.filter((line) => line !== "swipe-controls");
+      if (actionLines.length < 2) continue;
+      for (const line of actionLines) {
         expect(line.split("+").length, `at ${width}x900 an interior line holds one control (${line})`).toBeGreaterThan(1);
       }
     }
@@ -1357,13 +1406,22 @@ test("defect 7: no width between 340 and 820 leaves a single control stranded on
     }
   }
 
-  // And the wide window is untouched: one row, every control wearing its word.
+  // And the wide window: every control wears its word, and a PAGED strip takes the same ruled two-row
+  // shape the narrow column gets. The reason is arithmetic, not taste: at the reading measure the column is
+  // 790 px, the row may use 85% of it (671), and her paged strip asks for 707 (five worded actions, 493 px,
+  // plus the pager's own 184 and a gap) - so its pager stands on the line beneath the actions rather than
+  // one action being pushed off alone. `style.css` ("The strip's narrow form keys on the strip's own
+  // column") carries the same numbers, and defect 6 pins the 96 px box this produces at 1440x900.
   await page.setViewportSize({ width: 1440, height: 900 });
   const wide = await readStripLines(page);
   console.log(`[defect-7 wide] list ${wide.listWidth}: ${JSON.stringify(wide.rows)}`);
   for (const [index, row] of wide.rows.entries()) {
     if (row === null) continue;
-    expect(row.lines.length, `1440x900 row ${index} is one line`).toBe(1);
+    const paged = row.lines[row.lines.length - 1] === "swipe-controls";
+    expect(
+      row.lines.length,
+      `1440x900 row ${index} is ${paged ? "the ruled two-row paged strip" : "one line"}`,
+    ).toBe(paged ? 2 : 1);
     expect(row.words, `1440x900 row ${index} still wears its words`).toBe(true);
   }
 

@@ -10,7 +10,16 @@ import {
   Scissors,
   Trash2,
 } from "lucide-react";
-import { memo, type KeyboardEvent as ReactKeyboardEvent, useEffect, useLayoutEffect, useRef, useState } from "react";
+import {
+  memo,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type MouseEvent as ReactMouseEvent,
+  type PointerEvent as ReactPointerEvent,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
 import type { BrowserMessageV1 } from "../reference-pipeline-api";
 import { browserMessageLanguageTag } from "../reference-pipeline-api";
 import { useArmedConfirmation } from "./armed-confirmation";
@@ -44,6 +53,38 @@ const EDIT_FIELD_MAX_HEIGHT = 300;
  * row: every press restarts the window and the line then removes itself.
  */
 const COPY_NOTICE_MS = 1600;
+
+/**
+ * How far a pointer may travel between press and release and still be a PRESS rather than a drag.
+ *
+ * A player who drags across a message is selecting its words - to copy them, to quote them - and a
+ * drag that ended on the same paragraph is still a drag. Four CSS pixels is the platform's own
+ * slop, and it is measured from the pointerdown rather than from the selection alone because a
+ * browser collapses the selection when the release lands inside it.
+ */
+const EDIT_DRAG_SLOP_PX = 4;
+
+/**
+ * The settle window a body press waits out before it opens the editor, in milliseconds.
+ *
+ * A double click is how a reader selects one WORD, and its first click arrives as an ordinary
+ * press: without this window that press would already have replaced the words with a field (and
+ * moved focus into it) before the second click could select anything. Waiting one click's worth of
+ * time lets `dblclick` cancel the open, so selecting a word stays selecting a word. The cost is
+ * this delay on the honest single press, and it is the smaller of the two - a field that opens a
+ * fifth of a second late is still an edit, while a field that eats a word selection is a defect.
+ */
+const EDIT_PRESS_SETTLE_MS = 220;
+
+/**
+ * The descendants of a message that are their own control.
+ *
+ * A reply may carry a link, and a link's press belongs to the link: it navigates, and turning that
+ * press into an edit would be the message swallowing a control it contains. The list is the
+ * platform's own interactive set, so a construct the reply grammar grows later is covered by its
+ * element rather than by a per-construct exception here.
+ */
+const MESSAGE_EDIT_INTERACTIVE = "a, button, input, textarea, select, summary, [role='button'], [role='link']";
 
 /**
  * Puts one message's words on the player's clipboard, and says whether it worked.
@@ -192,6 +233,7 @@ function MessageEditor({
   fieldLabel,
   saveLabel,
   cancelLabel,
+  consequence = null,
 }: Readonly<{
   text: string;
   onTextChange: (text: string) => void;
@@ -203,6 +245,17 @@ function MessageEditor({
   fieldLabel: string;
   saveLabel: string;
   cancelLabel: string;
+  /**
+   * What saving does to the rest of the conversation, when there is a rest.
+   *
+   * An edit rewrites ONE row on both authorities - the durable transcript and the model's own
+   * session - and leaves every later row exactly where it was, so a reply that answered the words
+   * being replaced stays on screen, answering words that are no longer there. That is a real
+   * consequence and the player is owed it before they save, not after; it is a sentence rather than
+   * a confirmation step because saving is the ordinary answer, and `null` (a row with nothing after
+   * it) has no tail to describe.
+   */
+  consequence?: string | null;
 }>) {
   const fieldRef = useRef<HTMLTextAreaElement | null>(null);
   /**
@@ -288,6 +341,11 @@ function MessageEditor({
           {cancelLabel}
         </button>
       </div>
+      {consequence === null ? null : (
+        <p className="message-edit-consequence" data-testid="message-edit-consequence">
+          {consequence}
+        </p>
+      )}
     </div>
   );
 }
@@ -364,30 +422,34 @@ export const MessageBubble = memo(function MessageBubble({
    */
   onOpeningVariant?: (messageHandle: string, direction: "prev" | "next") => void;
   /**
-   * The one entry a message has for changing what comes after it, and the two answers it opens.
+   * What comes after this message: two entries, one control each, both under the shell's single-flight latch.
    *
-   * A FORK and a REWIND are the same question asked two ways - read on from this message, or cut the
-   * conversation back to it - so they are two answers behind one control rather than two controls in a strip
-   * that already carries every target it can hold. `onActFromHere` opens the choice; the two below send
-   * their own operation, each under the shell's single-flight latch. The fork answer is absent where the
-   * caller serves no `chat.fork` (the probe, a profile without the route), and the block is then the plain
-   * rewind confirmation it was.
+   * A REWIND cuts the conversation back to this row (it is destructive and has no undo, so it arms - the
+   * `onActFromHere` press opens the confirmation and `onActRewind` is what the confirmation sends). A FORK
+   * keeps every later row and puts the prefix into a second Chat, so it is not destructive at all: the
+   * `onActFork` press sends it directly, and its own name is what states the two facts the player is owed
+   * (this chat keeps every later message, both chats share her memory). They were ONE control with two
+   * answers (2026-11-15). The owner's ruling of 2026-11-16 is that a fork is its own button: it does
+   * nothing to this conversation, so folding it behind a control the destructive answer also sits behind
+   * made the safe answer cost the dangerous one's ceremony.
    *
    * The accessor is handed the order the page rendered this message at, because the Host refuses a rewind
-   * naming a message that is no longer there - the transcript is what a position means.
+   * naming a message that is no longer there - the transcript is what a position means. A caller that serves
+   * no `chat.fork` (the probe, a profile without the route) simply gets no fork entry.
    */
   onActFromHere?: (messageHandle: string, expectedOrder: number) => void;
   onActRewind?: (messageHandle: string, expectedOrder: number) => void;
   onActFork?: (messageHandle: string) => void;
   onActCancel?: () => void;
-  /** True for the one message whose choice is open: its strip becomes that choice. */
+  /** True for the one message whose rewind confirmation is open: its strip becomes that confirmation. */
   actArmed?: boolean;
   /**
-   * The edit control's save. The player's own message carries the text they rewrote AND the order the
-   * page rendered it at, because the Host refuses a row that has moved. The editor itself is this
-   * row's own presentation state - it opens on the field the words came from - and the callback hands
-   * the new text up when they save; the authoritative reread, not a local guess, owns what the
-   * transcript then shows.
+   * The edit's save. The message's body IS the edit affordance (owner ruling 2026-11-16: pressing the words
+   * is what asks to rewrite them, so the strip does not spend a target on it), and this callback is what the
+   * editor's Save sends once a row of either role has been rewritten in place. It carries the text the player
+   * typed AND the order the page rendered the row at, because the Host refuses a row that has moved. The
+   * editor itself is this row's own presentation state, and the authoritative reread - not a local guess -
+   * owns what the transcript then shows.
    */
   onEdit?: (messageHandle: string, expectedOrder: number, text: string) => void;
   /**
@@ -474,29 +536,39 @@ export const MessageBubble = memo(function MessageBubble({
       rewindConfirmPrompt: string;
       rewindConfirmYes: string;
       rewindConfirmNo: string;
-      editMessage: string;
-      editMessageName: string;
+      /**
+       * The message body's own edit affordance. With no control to press, the sentence a screen reader reads
+       * when the body takes focus is the only thing that says the words can be rewritten - so it is named
+       * here rather than left to the pencil the sighted player sees on hover.
+       */
+      editHint: string;
       editMessageField: string;
       editMessageSave: string;
       editMessageCancel: string;
       /**
-       * Her reply's own edit control. Its words differ from the player's in exactly two places: the
-       * accessible name says the press changes words the model will read, and the field's label says
-       * whose words the field holds - an edit of her reply is the same operation on the other side of
-       * the exchange. The visible word is the same "Edit" either way.
+       * Her reply's own field label. Only two things differ from the player's: whose words the field holds,
+       * and - below - what saving does to the rows that follow. It is the same editor on the other side of
+       * the exchange.
        */
-      editReplyName: string;
       editReplyField: string;
+      /**
+       * The consequence of an in-place edit, said in the editor while there are rows after it.
+       *
+       * Saving rewrites ONE row on both authorities and leaves every later row exactly where it was, so the
+       * reply that answered the old words stays on screen answering words that are no longer there. The
+       * player is owed that before they save.
+       */
+      editLaterKept: string;
       deleteMessage: string;
       deleteMessageName: string;
       deleteConfirmPrompt: string;
       deleteConfirmYes: string;
       deleteConfirmNo: string;
-      /** The branch control and the confirmation it opens, on the row it would cut at. */
-      /** The one entry a message has for changing what comes after it, and the two answers it opens. */
-      actFromHere: string;
-      actFromHereName: string;
-      actChoicePrompt: string;
+      /**
+       * The branch entry: the prefix becomes a second Chat and this one keeps every later message. Its own
+       * name repeats both facts, because it is a one-press control and there is no prompt above it to carry
+       * them.
+       */
       forkFromHere: string;
       forkFromHereName: string;
       /**
@@ -553,25 +625,32 @@ export const MessageBubble = memo(function MessageBubble({
    */
   const stripReplaced = actArmed || swipeRemoveArmed;
   /**
-   * The point the entry names: the row the conversation can be cut back TO, and the row it can be branched
-   * FROM. The cut KEEPS that row and drops everything after it, which is what makes a PLAYER row a legal
-   * point - their own line survives, the reply that answered it does not, and they are ready to be answered
-   * again (the owner's ruling, 2026-10-20: rewind the way Pi and SillyTavern do).
+   * The point this row is over what follows it: the row the conversation can be cut back TO, and the row it
+   * can be branched FROM. The cut KEEPS that row and drops everything after it, which is what makes a PLAYER
+   * row a legal point - their own line survives, the reply that answered it does not, and they are ready to be
+   * answered again (the owner's ruling, 2026-10-20: rewind the way Pi and SillyTavern do).
    *
-   * The greeting is still never a point: the Host refuses both acts there (a cut would leave nothing but the
+   * The greeting is never a point: the Host refuses both acts there (a cut would leave nothing but the
    * conversation's opening, and a branch of nothing but the greeting is not a second view of the exchange).
-   * And a row with nothing after it offers neither: the rewind would remove nothing, and the entry is ONE
-   * control for both answers - so offering it there would mean either a fork beside a rewind that cannot run,
-   * or a sixth target in a strip that already carries every one it can hold (see the narrow-strip block in
-   * `style.css`). The consequence, stated honestly: the newest message is branched from by choosing the row
-   * BEFORE it.
+   * And a row with nothing after it offers neither: the rewind would remove nothing, and a fork of nothing is
+   * not a branch - so the consequence, stated honestly, is that the newest message is branched from by
+   * choosing the row BEFORE it.
    */
-  const actPoint = onActFromHere !== undefined && removedCount > 1 && message.order > 0 ? removedCount - 1 : undefined;
+  const actPoint = removedCount > 1 && message.order > 0 ? message.order : undefined;
   /**
    * The count the accessible name states is what the press REMOVES. `removedCount` also counts this
    * row, and this row survives the cut - so it is one less.
    */
   const rewindName = labels.rewindHereName.replace("{{count}}", String(removedCount - 1));
+  /**
+   * The two entries over what follows, each with its own reason to exist.
+   *
+   * The rewind needs both halves of its pair (the press that ARMS it, the press that sends it), so it is
+   * offered where the caller serves both. The fork needs only its own press, and it is offered wherever the
+   * caller serves `chat.fork` at all - the probe and a profile without the route simply have no fork entry.
+   */
+  const rewindOffered = actPoint !== undefined && onActFromHere !== undefined && onActRewind !== undefined;
+  const forkOffered = actPoint !== undefined && onActFork !== undefined;
   /**
    * The delete point is the message the player is looking at, and it is never the opening: the row at
    * order zero is the greeting the Chat started on (the Host refuses it, and so does this surface). A
@@ -580,13 +659,21 @@ export const MessageBubble = memo(function MessageBubble({
    */
   const deletePoint = onDelete !== undefined && message.order > 0 ? message.order : undefined;
   /**
-   * Her rows' edit point, the OPENING included: the greeting is edited in place, for this session
-   * alone (the owner's ruling, 2026-10-20, superseding the earlier "the greeting is a retained
-   * anchor"). It is the same control and the same editor her replies use, and it never leaves this
-   * surface - the reviewed greeting assets stay untouched. The Host still refuses a row it cannot
-   * prove (a session that predates the greeting's own entry), and the refusal has its own sentence.
+   * The rows the player may rewrite, the OPENING included: the greeting is edited in place, for this session
+   * alone (the owner's ruling, 2026-10-20, superseding the earlier "the greeting is a retained anchor"), and
+   * that is the ONLY way to fix its words - the reviewed greeting assets stay untouched. Both sides of the
+   * exchange carry it: the Host accepts the player's own line, her replies and that opening, and nothing else.
    */
-  const editReplyPoint = onEdit !== undefined && !isPlayer ? message.order : undefined;
+  const editPoint = onEdit !== undefined ? message.order : undefined;
+  /**
+   * Whether this body is a press away from the editor.
+   *
+   * The three rows that are NOT messages of the transcript are excluded by name, because each one would make
+   * the press a lie: a streaming preview is still being written (and the Host refuses an edit under a live
+   * turn by name, `chat_edit_turn_active`), the optimistic echo is not the Host's message yet, and a row with
+   * a mutation or a confirmation in flight is exactly as busy as its strip says it is.
+   */
+  const editOpens = editPoint !== undefined && !streaming && waitingNote === null && !busy && !stripReplaced;
   /**
    * The editor's words are the SHELL's, not this row's, and the slot is the message's own handle.
    *
@@ -606,14 +693,15 @@ export const MessageBubble = memo(function MessageBubble({
     editorDraft.type(Object.freeze({ text: message.text, sent: null }));
   };
   /**
-   * The Edit control the editor replaced, and the request to give the focus back to it.
+   * The body the editor replaced, and the request to give the focus back to it.
    *
-   * The control is not in the DOM while the field is open, so the press that closes the field cannot
+   * The body is not in the DOM while the field is open, so the press that closes the field cannot
    * focus it directly: it ASKS (`restoreEditFocusRef`), and the effect below runs after the render
-   * that brings the control back. Cancelling is the case that drops focus today - Escape and Cancel
-   * both come from a field that the same state change unmounts.
+   * that brings the body back. Cancelling is the case that drops focus today - Escape and Cancel
+   * both come from a field that the same state change unmounts - and the message itself is where the
+   * player was reading, so it is also where the next press starts.
    */
-  const editTriggerRef = useRef<HTMLButtonElement | null>(null);
+  const editTargetRef = useRef<HTMLDivElement | null>(null);
   const restoreEditFocusRef = useRef(false);
   const closeEditor = (): void => {
     restoreEditFocusRef.current = true;
@@ -627,8 +715,76 @@ export const MessageBubble = memo(function MessageBubble({
   useEffect(() => {
     if (editing || !restoreEditFocusRef.current) return;
     restoreEditFocusRef.current = false;
-    editTriggerRef.current?.focus();
+    editTargetRef.current?.focus();
   }, [editing]);
+  /**
+   * The press that opens the editor, and the four presses that must NOT.
+   *
+   * The body is the affordance now (owner ruling, 2026-11-16), so every press in a message's prose arrives
+   * here - including the ones a reader makes to do something else with those words:
+   *
+   *  - a DRAG selects text; a press that travelled more than `EDIT_DRAG_SLOP_PX`, or one made while the
+   *    document's selection is not collapsed, is a selection and never an edit;
+   *  - a DOUBLE CLICK is how a reader selects one word, and its first click arrives as an ordinary press,
+   *    so the open waits out `EDIT_PRESS_SETTLE_MS` and `dblclick` cancels it;
+   *  - a press on a LINK, or on any other control the reply contains, belongs to that control;
+   *  - a press while the row is busy or a confirmation is armed never reaches here at all (`editOpens`).
+   *
+   * What is left is the honest press: one click on the words, nothing selected, nothing dragged.
+   */
+  const pressStartRef = useRef<Readonly<{ x: number; y: number }> | null>(null);
+  const pendingPressRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const cancelPendingPress = (): void => {
+    if (pendingPressRef.current === null) return;
+    clearTimeout(pendingPressRef.current);
+    pendingPressRef.current = null;
+  };
+  useEffect(() => cancelPendingPress, []);
+  const onEditPointerDown = (event: ReactPointerEvent<HTMLDivElement>): void => {
+    pressStartRef.current = Object.freeze({ x: event.clientX, y: event.clientY });
+  };
+  const onEditDoubleClick = (): void => cancelPendingPress();
+  const onEditClick = (event: ReactMouseEvent<HTMLDivElement>): void => {
+    const start = pressStartRef.current;
+    pressStartRef.current = null;
+    if (start !== null && Math.hypot(event.clientX - start.x, event.clientY - start.y) > EDIT_DRAG_SLOP_PX) return;
+    const pressed = event.target;
+    if (pressed instanceof Element && pressed.closest(MESSAGE_EDIT_INTERACTIVE) !== null) return;
+    const selection = document.getSelection();
+    if (selection !== null && !selection.isCollapsed) return;
+    cancelPendingPress();
+    pendingPressRef.current = setTimeout(() => {
+      pendingPressRef.current = null;
+      openEditor();
+    }, EDIT_PRESS_SETTLE_MS);
+  };
+  /**
+   * The keyboard path - what keeps a pointer-only affordance from being an accessibility regression.
+   *
+   * The body carries no widget role: it is prose, and `role="button"` on a paragraph would make every
+   * screen reader announce a control that does not exist while swallowing the reading of the words. What
+   * it carries instead is the honest pair - a tab stop, and a DESCRIPTION (`editHint`) that says these
+   * words can be rewritten and how - so focus reads as "this message, which you can edit" rather than as
+   * a button. Enter is what activates a focused thing and F2 is the platform's own "edit the focused
+   * field" key; both are accepted, which is also what `aria-keyshortcuts` declares.
+   */
+  const onEditKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>): void => {
+    if (event.target !== event.currentTarget) return;
+    if (event.key !== "Enter" && event.key !== "F2") return;
+    event.preventDefault();
+    cancelPendingPress();
+    openEditor();
+  };
+  const editHintId = editOpens ? `message-edit-hint-${message.handle}` : null;
+  /**
+   * What saving an in-place edit does to the rows after it, or `null` where there are none.
+   *
+   * The Host rewrites one row on both authorities (`editMountedChatMessage`) and leaves every later row
+   * exactly where it was - it never detaches them, never turns them into variants and never cuts them - so
+   * a reply that answered the old words stays on screen. Stating it in the editor is the difference between
+   * an in-place rewrite and a rewind in disguise.
+   */
+  const editConsequence = removedCount > 1 ? labels.editLaterKept : null;
   /**
    * The editor closes on the one fact that says the edit landed: the row the transcript now carries
    * holds exactly the words that were sent, and no mutation is in flight. A refusal therefore leaves
@@ -765,12 +921,7 @@ export const MessageBubble = memo(function MessageBubble({
     );
   // Whether this message's strip has a pager at all: the strip exists for its own
   // controls, so a message with neither keeps no empty row under the bubble.
-  const hasControls =
-    openingChoice !== undefined ||
-    swipeSet !== undefined ||
-    deletePoint !== undefined ||
-    editReplyPoint !== undefined ||
-    copyPoint;
+  const hasControls = openingChoice !== undefined || swipeSet !== undefined || deletePoint !== undefined || copyPoint;
   const swipeRemoveConfirmation = swipeRemoveArmed ? (
     <div
       className="message-confirm"
@@ -839,54 +990,33 @@ export const MessageBubble = memo(function MessageBubble({
       </button>
     );
   /**
-   * The one entry a message has for changing what comes after it, and the two answers it opens.
+   * The rewind's own confirmation, and the one press that opens it.
    *
-   * A FORK and a REWIND are the same question asked two ways - read on from this message, or cut the
-   * conversation back to it - so they are two answers behind one control rather than two controls in a strip
-   * that already carries every target it can hold (`style.css`: a sixth action in this row is what stranded a
-   * control at 520x900). Both sides of the exchange carry it: a player branches from their own line to take a
-   * different answer, and rewinds to it to be answered again.
+   * The cut is the only destructive entry a message has over what follows it, so it keeps the shape every
+   * destructive control here keeps: the entry states the point and the count, and only the confirmation
+   * sends it. It is not a fold any more (owner ruling, 2026-11-16): the fork is its own entry that does
+   * nothing to this conversation, so sharing one control with it made the safe answer carry the dangerous
+   * one's ceremony. Both sides of the exchange carry the pair: a player rewinds to their own line to be
+   * answered again, and to hers to be written to again.
    *
-   * The prompt states BOTH branches' consequences, because the player is choosing between them: a fork keeps
-   * every later message in both chats and both chats are one conversation to her Memory (a fork copies the
-   * continuity), and a rewind removes the later messages from this one with no way back from this screen. A
-   * player who means to truncate their transcript therefore has to say so, rather than pressing a control that
-   * looks like its non-destructive neighbour.
-   *
-   * The block is the row's only control while it is open, on the rule every other confirmation here follows: a
-   * destructive answer rendered beside Save and Cancel is a mis-click waiting to happen.
+   * The block is the row's only control while it is open, on the rule every other confirmation here
+   * follows: a destructive answer rendered beside Save and Cancel is a mis-click waiting to happen.
    */
-  const actChoice = actArmed ? (
-    <div className="message-confirm" data-testid="message-act-choice" onKeyDown={actPair.onConfirmKeyDown} role="group">
+  const rewindConfirmation = actArmed ? (
+    <div
+      className="message-confirm"
+      data-testid="message-rewind-confirm"
+      onKeyDown={actPair.onConfirmKeyDown}
+      role="group"
+    >
       <p className="message-confirm-prompt" role="status">
-        {onActFork === undefined
-          ? labels.rewindConfirmPrompt
-          : labels.actChoicePrompt.replace("{{count}}", String(removedCount - 1))}
+        {labels.rewindConfirmPrompt}
       </p>
       <div className="message-confirm-actions">
-        {onActFork === undefined ? null : (
-          <button
-            type="button"
-            className="action-btn fork-confirm-yes"
-            data-testid="message-fork-from-here"
-            disabled={busy}
-            {...(pending === "fork" ? { "data-busy": "true" as const } : {})}
-            onClick={() => onActFork(message.handle)}
-            title={labels.forkFromHereName}
-            aria-label={labels.forkFromHereName}
-          >
-            {pending === "fork" ? (
-              <LoaderCircle className="message-spinner" size={14} aria-hidden="true" />
-            ) : (
-              <GitBranch size={14} aria-hidden="true" />
-            )}
-            {labels.forkFromHere}
-          </button>
-        )}
         <button
           type="button"
           className="action-btn rewind-confirm-yes"
-          data-testid="message-rewind-to-here"
+          data-testid="message-rewind-confirm-yes"
           disabled={busy}
           {...(pending === "rewind" ? { "data-busy": "true" as const } : {})}
           onClick={() => onActRewind?.(message.handle, message.order)}
@@ -903,8 +1033,8 @@ export const MessageBubble = memo(function MessageBubble({
         <button
           ref={actPair.cancelRef}
           type="button"
-          className="action-btn act-confirm-no"
-          data-testid="message-act-cancel"
+          className="action-btn rewind-confirm-no"
+          data-testid="message-rewind-confirm-no"
           onClick={actPair.cancel}
           title={labels.rewindConfirmNo}
           aria-label={labels.rewindConfirmNo}
@@ -915,26 +1045,58 @@ export const MessageBubble = memo(function MessageBubble({
     </div>
   ) : null;
   /**
-   * The entry itself. Its glyph is a CUT rather than a circular arrow: `Undo2` was one stroke away from the
-   * `RefreshCw` the Regenerate button beside it wears, and a player reading `[ ↶ ]` as "answer me again"
-   * pressed the one control in this strip that shortens the conversation. The word states the POINT rather
-   * than one of the two answers - a control named "Rewind" that offers a fork would be the lie this fold
-   * exists to avoid - and where the caller serves no `chat.fork` the entry keeps the rewind's own words.
+   * The rewind entry. Its glyph is a CUT rather than a circular arrow: `Undo2` was one stroke away from the
+   * `RefreshCw` Regenerate wears beside it, and a player reading `[ ↶ ]` as "answer me again" pressed the one
+   * control in this strip that shortens the conversation. Its visible word is the POINT it names and its
+   * accessible name carries the count it would remove.
+   *
+   * Its class is `act-btn` - the strip's existing shape for "the act over what comes after this message" -
+   * because the box is the same box: two entries, one vocabulary, each named by its own test handle, glyph
+   * and accessible name rather than by a third copy of the same fourteen declarations in the sheet.
    */
-  const actEntry =
-    !actArmed && actPoint !== undefined ? (
+  const rewindEntry =
+    !actArmed && rewindOffered ? (
       <button
         ref={actPair.triggerRef}
         type="button"
-        className="action-btn act-btn"
-        data-testid="message-act"
+        className="action-btn act-btn rewind-btn"
+        data-testid="message-rewind"
         disabled={busy}
         onClick={() => onActFromHere?.(message.handle, message.order)}
-        title={onActFork === undefined ? rewindName : labels.actFromHereName}
-        aria-label={onActFork === undefined ? rewindName : labels.actFromHereName}
+        title={rewindName}
+        aria-label={rewindName}
       >
         <Scissors size={14} aria-hidden="true" />
-        <span className="action-word">{onActFork === undefined ? labels.rewindHere : labels.actFromHere}</span>
+        <span className="action-word">{labels.rewindHere}</span>
+      </button>
+    ) : null;
+  /**
+   * The branch entry: its own button, and one press.
+   *
+   * A fork mints a second Chat out of this one's prefix and leaves this conversation holding every later
+   * message, so it takes nothing away and needs no arm - the ceremony belongs to the rewind beside it. What
+   * the player is owed is the pair of facts the name states (this chat keeps every later message, and both
+   * chats are one conversation to her Memory), and that is exactly `forkFromHereName`; the visible word says
+   * what it makes, and the branch glyph is not the scissors the destructive neighbour wears.
+   */
+  const forkEntry =
+    forkOffered && !stripReplaced ? (
+      <button
+        type="button"
+        className="action-btn act-btn fork-btn"
+        data-testid="message-fork"
+        disabled={busy}
+        {...(pending === "fork" ? { "data-busy": "true" as const } : {})}
+        onClick={() => onActFork?.(message.handle)}
+        title={labels.forkFromHereName}
+        aria-label={labels.forkFromHereName}
+      >
+        {pending === "fork" ? (
+          <LoaderCircle className="message-spinner" size={14} aria-hidden="true" />
+        ) : (
+          <GitBranch size={14} aria-hidden="true" />
+        )}
+        <span className="action-word">{labels.forkFromHere}</span>
       </button>
     ) : null;
   // The Host's per-message language, painted on the text only: the author line
@@ -984,6 +1146,13 @@ export const MessageBubble = memo(function MessageBubble({
             one side: the leading prosody tag is the voice channel, and the voice layer
             performs her speech only, so a player's parenthetical stays text.
 
+            THE BODY IS THE EDIT AFFORDANCE (owner ruling, 2026-11-16). Pressing the words asks to
+            rewrite them, on both sides of the exchange and on the opening, so the strip does not
+            spend one of its five targets on an Edit button. The press is only the honest one: a
+            drag-selection, a double-click word selection, a press made while text is selected and a
+            press on a link inside the message all leave the editor closed (`onEditClick`), and the
+            body is a real tab stop whose description says so (`onEditKeyDown`).
+
             While this row is being rewritten the bubble GIVES WAY to the editor: the words then
             stand on screen once, in the field, because the editor takes the bubble's own place in
             the flow. The owner ruled it (audit 2026-10-19): the row kept rendering the bubble and
@@ -991,13 +1160,48 @@ export const MessageBubble = memo(function MessageBubble({
             bubble PLUS a two-row editor - half of a 400x800 screen. Cancel or Escape brings the
             bubble back at the box it had. */}
         {!editing && (
-          <MarkdownMessage
-            className="message-bubble"
-            text={message.text}
-            trailingHtml={CARET_MARKUP}
-            lang={languageTag}
-            speaker={isPlayer ? "player" : "companion"}
-          />
+          <div
+            ref={editTargetRef}
+            className="message-edit-target"
+            {...(editPoint === undefined || streaming || waitingNote !== null ? {} : { "data-testid": "message-edit" })}
+            {...(editOpens
+              ? {
+                  tabIndex: 0,
+                  "aria-keyshortcuts": "F2",
+                  "data-draft-revealer": true,
+                  ...(editHintId === null ? {} : { "aria-describedby": editHintId }),
+                }
+              : {})}
+            onPointerDown={editOpens ? onEditPointerDown : undefined}
+            onClick={editOpens ? onEditClick : undefined}
+            onDoubleClick={editOpens ? onEditDoubleClick : undefined}
+            onKeyDown={editOpens ? onEditKeyDown : undefined}
+          >
+            <MarkdownMessage
+              className="message-bubble"
+              text={message.text}
+              trailingHtml={CARET_MARKUP}
+              lang={languageTag}
+              speaker={isPlayer ? "player" : "companion"}
+            />
+            {/* The visible half of the affordance, and the invisible half that makes it honest. The
+                pencil plate is decoration (`aria-hidden`): it appears on hover AND on `:focus-visible`,
+                so the two ways into the editor are told the same thing, and it takes no press of its
+                own - the body under it does. The sentence beside it is the description a screen reader
+                reads with the body, and it is what stops a focusable paragraph from being a mystery. */}
+            {editOpens && (
+              <>
+                <span className="message-edit-hint" aria-hidden="true">
+                  <Pencil size={12} />
+                </span>
+                {editHintId === null ? null : (
+                  <span className="visually-hidden" id={editHintId}>
+                    {labels.editHint}
+                  </span>
+                )}
+              </>
+            )}
+          </div>
         )}
         {/* One strip under the bubble for everything a companion message can do
             to itself: choose another opening, swipe the set, ask again. The pager
@@ -1013,13 +1217,18 @@ export const MessageBubble = memo(function MessageBubble({
             names these four, and style.css's narrow strip block is where that is
             argued and measured. */}
         {!(isPlayer || deleteArmed) &&
-          (hasControls || onRegenerate || actPoint !== undefined || actArmed || swipeRemoveArmed) && (
+          (hasControls ||
+            onRegenerate !== undefined ||
+            rewindOffered ||
+            forkOffered ||
+            actArmed ||
+            swipeRemoveArmed) && (
             <div className={editing ? "message-actions message-actions-editing" : "message-actions"}>
               {/* Her editor replaces the WHOLE strip rather than joining it, on the same rule the
                 player's row follows: the pager, the variant switcher, regenerate, the rewind and the
                 destructive Delete are exactly the controls an open Save/Cancel pair must not sit
                 beside. */}
-              {editReplyPoint !== undefined && editor !== null ? (
+              {editPoint !== undefined && editor !== null ? (
                 <MessageEditor
                   text={editor.text}
                   busy={busy}
@@ -1027,6 +1236,7 @@ export const MessageBubble = memo(function MessageBubble({
                   fieldLabel={labels.editReplyField}
                   saveLabel={labels.editMessageSave}
                   cancelLabel={labels.editMessageCancel}
+                  consequence={editConsequence}
                   onTextChange={(text) => editorDraft.type({ text, sent: editor.sent })}
                   onCancel={closeEditor}
                   onSave={() => {
@@ -1039,7 +1249,7 @@ export const MessageBubble = memo(function MessageBubble({
                   {/* An armed rewind, or an armed variant discard, is this message's only control: the
                 pager and regenerate step aside for the confirmation the same way a Chats row's own
                 strip does. */}
-                  {actChoice}
+                  {rewindConfirmation}
                   {swipeRemoveConfirmation}
                   {copyControl}
                   {copyReceipt}
@@ -1105,37 +1315,8 @@ export const MessageBubble = memo(function MessageBubble({
                       <span className="action-word">{labels.regenerateVariant}</span>
                     </button>
                   )}
-                  {actEntry}
-                  {/* Her rows' own edit control, in the strip she already has rather than a second row of
-                buttons, and in the same spot the player row's edit control takes (immediately before
-                the destructive Delete, which is where both rows end their strip). It is offered on every
-                one of her rows - the OPENING included, which is edited in place for this session alone
-                (the owner's ruling, 2026-10-20) - and it is the words one more thing a row can do to
-                itself, not a new group of them. Both rows' controls declare themselves to the draft
-                gate (`data-draft-revealer`): the field one press away from the row carries the
-                player's own words, and a walk that only enumerated what was already on screen would
-                leave it outside the population. */}
-                  {!stripReplaced && editReplyPoint !== undefined && (
-                    <button
-                      ref={editTriggerRef}
-                      type="button"
-                      className="action-btn edit-btn"
-                      data-testid="message-edit"
-                      data-draft-revealer
-                      disabled={busy}
-                      {...(pending === "edit" ? { "data-busy": "true" as const } : {})}
-                      onClick={openEditor}
-                      title={labels.editReplyName}
-                      aria-label={labels.editReplyName}
-                    >
-                      {pending === "edit" ? (
-                        <LoaderCircle className="message-spinner" size={14} aria-hidden="true" />
-                      ) : (
-                        <Pencil size={14} aria-hidden="true" />
-                      )}
-                      <span className="action-word">{labels.editMessage}</span>
-                    </button>
-                  )}
+                  {rewindEntry}
+                  {forkEntry}
                   {!stripReplaced && deletePoint !== undefined && (
                     <button
                       ref={deletePair.triggerRef}
@@ -1175,18 +1356,18 @@ export const MessageBubble = memo(function MessageBubble({
           !deleteArmed &&
           (actPoint !== undefined ||
             actArmed ||
-            onEdit !== undefined ||
             onRegenerate !== undefined ||
             deletePoint !== undefined ||
             copyPoint) && (
             <div className={editing ? "message-actions message-actions-editing" : "message-actions"}>
-              {actChoice}
+              {rewindConfirmation}
               {editor === null && copyControl}
               {copyReceipt}
               {/* While the field is open the strip is the editor: the destructive rewind sits out, exactly as
                 the destructive Delete does, because a control that cuts the conversation away beside Save
                 and Cancel is a mis-click waiting to happen. */}
-              {editor === null && actEntry}
+              {editor === null && rewindEntry}
+              {editor === null && forkEntry}
               {/* Asking her again for THIS line, offered when nothing answered it (a turn that failed
                 or was stopped). It sits beside the rewind for the same reason the rewind is here at
                 all: both answer the player's own words. The words are the same operation the reply
@@ -1209,44 +1390,23 @@ export const MessageBubble = memo(function MessageBubble({
                   <span className="action-word">{labels.regenerateVariant}</span>
                 </button>
               )}
-              {!actArmed &&
-                onEdit !== undefined &&
-                (editor !== null ? (
-                  <MessageEditor
-                    text={editor.text}
-                    busy={busy}
-                    canSave={editor.text.trim().length > 0 && editor.text !== message.text}
-                    fieldLabel={labels.editMessageField}
-                    saveLabel={labels.editMessageSave}
-                    cancelLabel={labels.editMessageCancel}
-                    onTextChange={(text) => editorDraft.type({ text, sent: editor.sent })}
-                    onCancel={closeEditor}
-                    onSave={() => {
-                      editorDraft.type({ text: editor.text, sent: editor.text });
-                      onEdit(message.handle, message.order, editor.text);
-                    }}
-                  />
-                ) : (
-                  <button
-                    ref={editTriggerRef}
-                    type="button"
-                    className="action-btn edit-btn"
-                    data-testid="message-edit"
-                    data-draft-revealer
-                    disabled={busy}
-                    {...(pending === "edit" ? { "data-busy": "true" as const } : {})}
-                    onClick={openEditor}
-                    title={labels.editMessageName}
-                    aria-label={labels.editMessageName}
-                  >
-                    {pending === "edit" ? (
-                      <LoaderCircle className="message-spinner" size={14} aria-hidden="true" />
-                    ) : (
-                      <Pencil size={14} aria-hidden="true" />
-                    )}
-                    <span className="action-word">{labels.editMessage}</span>
-                  </button>
-                ))}
+              {!actArmed && editPoint !== undefined && editor !== null && (
+                <MessageEditor
+                  text={editor.text}
+                  busy={busy}
+                  canSave={editor.text.trim().length > 0 && editor.text !== message.text}
+                  fieldLabel={labels.editMessageField}
+                  saveLabel={labels.editMessageSave}
+                  cancelLabel={labels.editMessageCancel}
+                  consequence={editConsequence}
+                  onTextChange={(text) => editorDraft.type({ text, sent: editor.sent })}
+                  onCancel={closeEditor}
+                  onSave={() => {
+                    editorDraft.type({ text: editor.text, sent: editor.text });
+                    onEdit?.(message.handle, message.order, editor.text);
+                  }}
+                />
+              )}
               {/* While the editor is open the strip is the editor: a destructive Delete sitting beside
                 Save and Cancel is a mis-click waiting to happen, and this row's own armed confirm
                 already follows that rule (it replaces the other controls rather than joining them). */}

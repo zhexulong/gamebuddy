@@ -248,8 +248,17 @@ test("the fifth control keeps every target at the touch minimum, at both widths,
     );
     console.log(`MEASURE copy strip ${where}: ${JSON.stringify(measured)}`);
 
-    // All five controls are present: nothing was pushed out to make room.
-    expect(measured.controls.length, where).toBe(5);
+    // SIX CHILDREN: five ACTIONS and the pager. The five are the strip's whole population - Copy,
+    // Regenerate, Rewind, Fork, Delete - and the pin says which, because "nothing was pushed out" is a claim
+    // about named controls and not about a number: Edit left the strip on 2026-11-16 and Fork took the slot it
+    // freed, so the count is the one the width arithmetic is built on. (This read 5 while Regenerate was still
+    // offered on the transcript's tail alone; it has been offered on every reply a player line stands before
+    // since 2026-11-15, which is a sixth child on this row and a fifth action.)
+    expect(
+      measured.controls.map((control) => control.name),
+      `${where} every control the strip can hold, named`,
+    ).toEqual(["copy-btn", "swipe-controls", "regenerate-btn", "act-btn rewind-btn", "act-btn fork-btn", "delete-btn"]);
+    expect(measured.controls.length, where).toBe(6);
     // Every one of them is a real target, in both directions, and named.
     for (const control of measured.controls) {
       expect(control.height, `${where} ${control.name} clears the 44 px floor`).toBeGreaterThanOrEqual(TOUCH_MINIMUM);
@@ -271,21 +280,31 @@ test("the fifth control keeps every target at the touch minimum, at both widths,
     expect(measured.overflow.scrollWidth, where).toBeLessThanOrEqual(measured.overflow.clientWidth);
 
     if (viewport.width === 1440) {
-      // The wide window is where the narrow rule does not apply: one row, all five controls.
-      expect(new Set(measured.controls.map((control) => control.centre)).size, where).toBe(1);
-      // `46` was pinned here (min-height plus the pager's border). One row of controls IS the strip's
-      // whole height, so the relation is stated against the row's own tallest control: a strip with
-      // padding, a margin box or an invisible extra line of its own still fails, and a control that
+      // The five ACTIONS share one line and the pager takes the one beneath it - the same ruled shape defect 6
+      // records, and for the same arithmetic: five worded actions are 493 px plus four gaps, the pager is 184,
+      // and this row's column is 634 px, so the pager cannot join them at any target smaller than 44.
+      const wideActions = measured.controls.filter((control) => !control.name.includes("swipe-controls"));
+      expect(wideActions.length, `${where} the five actions`).toBe(5);
+      expect(new Set(wideActions.map((control) => control.centre)).size, `${where} the five actions share one line`).toBe(
+        1,
+      );
+      expect(measured.pager, where).not.toBeNull();
+      expect(wideActions[0]!.centre, `${where} and the pager is on the line beneath them`).toBeLessThan(
+        measured.pager!.centre,
+      );
+      // `46` was pinned here (min-height plus the pager's border) while the strip was one row. The relation is
+      // stated instead: the actions' row, the pager's row, and the strip's own gap between them - nothing more.
+      // A strip with padding, a margin box or an invisible third line of its own still fails, and a control that
       // grows takes the strip with it instead of going quietly red.
       expect(
         measured.strip.height,
-        `${where} the strip is one row tall: its tallest control and nothing more`,
-      ).toBe(Math.max(...measured.controls.map((control) => control.height)));
+        `${where} the strip is those two rows and the gap between them, nothing more`,
+      ).toBe(Math.max(...wideActions.map((control) => control.height)) + measured.pager!.height + 12);
     } else {
-      // The narrow window puts the pager on its own line, beneath the four actions.
+      // The narrow window puts the pager on its own line, beneath the five actions.
       const actions = measured.controls.filter((control) => !control.name.includes("swipe-controls"));
-      expect(actions.length, where).toBe(4);
-      expect(new Set(actions.map((control) => control.centre)).size, "the four actions share one line").toBe(1);
+      expect(actions.length, where).toBe(5);
+      expect(new Set(actions.map((control) => control.centre)).size, "the five actions share one line").toBe(1);
       expect(measured.pager, where).not.toBeNull();
       expect(actions[0]!.centre, where).toBeLessThan(measured.pager!.centre);
       // The pager keeps its own box rather than being stretched across the line it now owns, and its

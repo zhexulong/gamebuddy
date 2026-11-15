@@ -147,26 +147,26 @@ export function Timeline({
     rewindConfirmPrompt: string;
     rewindConfirmYes: string;
     rewindConfirmNo: string;
-    /** The player's own row's edit control and the field it opens. */
-    editMessage: string;
-    editMessageName: string;
+    /**
+     * The message body's own edit affordance and the field it opens. There is no control to name: pressing
+     * the words is what asks to rewrite them, so the label set carries the field's two labels and the two
+     * sentences a click-to-edit message needs - what a screen reader is told when the body takes focus, and
+     * what saving does to the rows after it.
+     */
+    editHint: string;
     editMessageField: string;
     editMessageSave: string;
     editMessageCancel: string;
-    /** Her reply's own edit control: the same operation on the other side of the exchange. */
-    editReplyName: string;
+    /** Her reply's field label: the same operation on the other side of the exchange. */
     editReplyField: string;
+    editLaterKept: string;
     /** The delete control and the confirmation it opens. */
     deleteMessage: string;
     deleteMessageName: string;
     deleteConfirmPrompt: string;
     deleteConfirmYes: string;
     deleteConfirmNo: string;
-    /** The branch control and the confirmation it opens, on the row it would cut at. */
-    /** The one entry a message has for changing what comes after it, and the two answers it opens. */
-    actFromHere: string;
-    actFromHereName: string;
-    actChoicePrompt: string;
+    /** The branch entry: its own control, one press, and the two facts its name states. */
     forkFromHere: string;
     forkFromHereName: string;
     /**
@@ -193,20 +193,20 @@ export function Timeline({
   /** The new-chat opening choice for the first message; offered only when the Host publishes one. */
   onOpeningVariant?: (messageHandle: string, direction: "prev" | "next") => void;
   /**
-   * The one entry a message has for changing what comes after it, and the two answers it opens: a fork
-   * (the prefix becomes a second Chat, the origin keeps everything) and a rewind (the messages after this
-   * one are removed). The arm names the message and the order the timeline rendered it at; the two answers
-   * send their own operation; the cancel closes the arm.
+   * The two entries a message has over what comes after it, one control each: a FORK (the prefix becomes a
+   * second Chat and the origin keeps everything) and a REWIND (the messages after this one are removed, which
+   * is why it arms first). The arm names the message and the order the timeline rendered it at, the two
+   * presses send their own operation, and the cancel closes the arm.
    */
   onActFromHere?: (messageHandle: string, expectedOrder: number) => void;
   onActRewind?: (messageHandle: string, expectedOrder: number) => void;
   onActFork?: (messageHandle: string) => void;
   onActCancel?: () => void;
-  /** The one message whose choice is open, if any. */
+  /** The one message whose rewind confirmation is open, if any. */
   actArmedHandle?: string | null;
   /**
-   * The edit control: the player's own message sends the text they rewrote and the order the timeline
-   * rendered it at, so the Host can refuse a row that moved under the editor.
+   * The edit: the message body is the affordance, and saving sends the text the player rewrote and the order
+   * the timeline rendered the row at, so the Host can refuse a row that moved under the editor.
    */
   onEdit?: (messageHandle: string, expectedOrder: number, text: string) => void;
   /**

@@ -3504,7 +3504,7 @@
   /* The wordmark is the bar's own, so it retires on the bar's width (the shell is the container,
    above). The three rules beside it in the 640 block below are the window's: the drawer takes
    the whole window, and the transcript's measure is a fraction of the surface's. */
-  @container (max-width: 640px) {
+  @container (max-width: 660px) {
     .app-bar-brand-name {
       display: none;
     }
@@ -6888,24 +6888,32 @@
    one ancestor whose width comes from the transcript rather than from its
    contents.
 
-   The two thresholds are the strip's own arithmetic, not round numbers: 464 px is
-   the narrowest column at which a four-action row still fits wearing its words
-   (76 + 138 + 68 + 84 + three 6 px gaps = 384 for the player's row, and the widest
-   row that can overflow is her worded set), and 712 px is where her paged strip's
-   max-content plus the 85% row and its avatar actually fits one line. Above them
-   the words come back and the strip is one line; below them the words are retired
-   and the pager takes the line beneath the actions.
+   The two thresholds are the strip's own arithmetic, not round numbers, and both were MEASURED
+   on the sweep rather than derived. The widest strip this transcript can produce is the five
+   actions on her reply, in the reading catalogue: Copy 70, Regenerate 96, Rewind 109, Fork 148,
+   Delete 70 = 493 px of words and 517 with its four 6 px gaps. The sweep strands Delete on a line
+   of its own from a 641 px column to a 652 px one and is clean from 653, so 660 is where the words
+   come back; below it they are retired and five 44 px targets are 236 px, which every column the
+   transcript ever gets can hold.
 
-   The pager was 136 px until the variant discard joined it: a third 44 px control
-   plus the two 4 px inner gaps it adds is 48 px, and 184 is what the box now
-   measures at both widths. 712 is the old 664 moved by that same 48 - the threshold
-   is a function of this box, so it cannot stay behind the box it names - and the
-   defect-7 sweep (every integer width from 340 to 820) is what proves the new one
-   leaves no stranded control rather than the arithmetic alone.
+   The pager's line is the other threshold: her paged strip asks for those 517 plus the pager's own
+   184 and one gap = 707, and the row may use 85% of its column, so 833 px of column is where that
+   fits one line. Above 833 the pager joins the actions; below it, the pager takes the line beneath
+   them. (At the reading measure the column is 790 px, so in practice the paged strip is ALWAYS the
+   two-row shape - defect 6 pins its 102 px box at 1440x900 and defect 7 restates it there - and
+   that is stated rather than discovered.)
+
+   464 and 712 were the same two thresholds for a narrower strip: 464 was four worded actions
+   totalling 384 (76 + 138 + 68 + 84 + three gaps) and 712 was her paged strip's 664 plus the 48 the
+   variant discard added to the pager. Both moved when the strip's own contents did - Regenerate
+   joined this row (2026-11-15) and Rewind and Fork replaced the one folded entry (2026-11-16) -
+   because a threshold is a function of the box it names and cannot stay behind it. The defect-7
+   sweep (every integer width from 340 to 820) is what proves the new pair leaves no stranded
+   control: 0 stranded readings.
 
    The rules are IDENTICAL to the ones the media query held - this block changes
    only what the condition asks - so the 400 px result it was written for is
-   exactly what it was: her paged reply `action+action+action+action |
+   exactly what it was: her paged reply `action+action+action+action+action |
    swipe-controls`, 98 px, the pager 184 px wide, every target 44 px.
 
    Appended block; the rules above are untouched.
@@ -6915,7 +6923,7 @@
     container-type: inline-size;
   }
 
-  @container (max-width: 463px) {
+  @container (max-width: 660px) {
     .message-actions .action-word {
       display: none;
     }
@@ -6927,7 +6935,7 @@
     /* The strip's gap, 6 px -> 4 px, and the one reason it may move: the fourth action.
 
        Measured at 400x800 in the shipped composed shell, the player's own row that carries rewind,
-       edit, delete and copy has 188 px of body: at 6 px its four 44 px targets and three gaps come
+       fork, delete and copy has 188 px of body: at 6 px its four 44 px targets and three gaps come
        to 194 px and wrap, at 4 px they come to exactly 188 px and sit on one line. The 6 px was
        never what the 2026-10-19 ruling protected - "one row, every target at 44 px, nothing pushed
        out" was - so this is the cheapest thing to trade for it. */
@@ -6936,7 +6944,7 @@
     }
   }
 
-  @container (max-width: 711px) {
+  @container (max-width: 833px) {
     /* A zero-height break, so the stepper starts a new line without being STRETCHED across it:
        `flex-basis: 100%` on the stepper itself also forces the line but sizes its box to the whole
        column (measured 301 px instead of its own 136), and the stepper's box is a number the
@@ -7008,5 +7016,95 @@
 
   .nav-button.active {
     box-shadow: inset 0 -2px 0 0 currentColor;
+  }
+
+  /* ==========================================================================
+   The message is what an edit is: the body's own affordance, and its hint
+   (owner ruling, 2026-11-16)
+
+   The strip under a message carries every target it can hold: at 400 px her paged reply is four
+   44 px actions plus the pager on a line of its own, and the player's own row is four 44 px
+   actions in exactly the 188 px its body gives them. There is no sixth slot, and the owner's
+   ruling is that edit never needed one: pressing the words IS the request to rewrite them, for the
+   player's own line, her reply and the opening alike. So Edit left the strip, Fork took the freed
+   slot as its own button (it used to be the second answer behind the same control as Rewind), and
+   the strip still ends at five controls.
+
+   That moves the affordance into prose, so it needs a shape that is not a button:
+
+   - `.message-edit-target` is the box the bubble now sits in, and it is the press target. It adds
+     no geometry of its own (`display: block`, no padding, no margin): her bubble still stretches to
+     the body, and the player's row moves the two properties that placed the bubble as a flex item
+     (`align-self: flex-end`, `width: fit-content`) onto the wrapper, so the bubble is still as wide
+     as its line and still ends at the row's outer edge. The bubble keeps its own `fit-content` and
+     is a block child, which fills the wrapper - the long line still fills the body.
+
+   - `cursor: pointer` and a `--border-strong` hairline on hover, both keyed on `[tabindex]` - the
+     attribute only exists while this body really is a press away from the editor, so a streaming
+     preview or a row with a mutation in flight does not promise what it cannot do.
+
+   - `.message-edit-hint` is the visible half: a pencil plate that appears on hover AND on
+     `:focus-visible`, so the two ways in are told the same thing. It is `aria-hidden` decoration
+     with `pointer-events: none` - the press belongs to the words under it, and there is no second
+     control to tab to. No transition: the reduced-motion gate counts motion sites, and a plate that
+     appears is not a motion.
+
+   - The keyboard affordance is the body itself: it is a tab stop with no widget role (it is prose,
+     and `role="button"` on a paragraph would announce a control that does not exist while getting
+     in the way of reading it), `aria-keyshortcuts="F2"`, and a visually-hidden sentence named by
+     `aria-describedby` - which is the only thing that says "these words can be rewritten" when
+     there is no control to announce.
+
+   Appended block; the rules above are untouched.
+   ========================================================================== */
+
+  .message-edit-target {
+    position: relative;
+    display: block;
+  }
+
+  .message.player .message-edit-target {
+    align-self: flex-end;
+    width: fit-content;
+  }
+
+  .message-edit-target[tabindex] {
+    cursor: pointer;
+  }
+
+  .message-edit-target[tabindex]:hover > .message-bubble,
+  .message-edit-target[tabindex]:focus-visible > .message-bubble {
+    border-color: var(--border-strong);
+  }
+
+  .message-edit-hint {
+    position: absolute;
+    inset-block-start: -9px;
+    inset-inline-end: 6px;
+    z-index: 1;
+    display: none;
+    place-items: center;
+    width: 18px;
+    height: 18px;
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-xs);
+    background-color: var(--surface-raised);
+    color: var(--text-secondary);
+    line-height: 0;
+    pointer-events: none;
+  }
+
+  .message-edit-target:hover > .message-edit-hint,
+  .message-edit-target:focus-visible > .message-edit-hint {
+    display: grid;
+  }
+
+  /* The consequence line in the editor, above the two answers: an in-place edit rewrites one row and
+     leaves the ones after it where they are, so it is the row's own fact rather than an error. */
+  .message-edit-consequence {
+    margin: 0;
+    color: var(--text-secondary);
+    font-size: 12px;
+    line-height: 1.5;
   }
 } /* end @layer theme.polish */

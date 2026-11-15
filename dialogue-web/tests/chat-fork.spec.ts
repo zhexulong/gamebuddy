@@ -190,57 +190,67 @@ const createdBranch = {
   },
 };
 
-/** The entry, the choice it opens, and the fork answer inside it. */
+/** The fork entry: one control, one press (it takes nothing away, so it takes no arm). */
 async function pressFork(page: Page): Promise<void> {
-  await page.locator(`[data-handle="${playerHandle}"]`).getByTestId("message-act").click();
-  await page.getByTestId("message-fork-from-here").click();
+  await page.locator(`[data-handle="${playerHandle}"]`).getByTestId("message-fork").click();
 }
 
-test("the entry is one control, absent where the Host would refuse, and never a sixth target", async ({ page }) => {
+test("the two entries are two controls, absent where the Host would refuse, and the strip still ends at five", async ({
+  page,
+}) => {
   await mountShell(page, (route) => route.fulfill(jsonOk(createdBranch)));
 
-  // The greeting carries no entry: the Host refuses both acts there, so there is no press to offer.
-  await expect(page.locator(`[data-handle="${openingHandle}"] [data-testid="message-act"]`)).toHaveCount(0);
-  // The entry is where it always was - one control, not two - and its own words say what it is FOR rather
-  // than naming one of its two answers.
-  const entry = page.locator(`[data-handle="${playerHandle}"] [data-testid="message-act"]`);
-  await expect(entry).toHaveCount(1);
-  await expect(entry).toHaveAttribute("aria-label", messages("en").actFromHereName);
-  // Her reply is the newest row: a rewind there would remove nothing, and the entry is one control for both
-  // answers, so the strip carries none - the newest message is branched from by choosing the row before it.
-  await expect(page.locator(`[data-handle="${replyHandle}"] [data-testid="message-act"]`)).toHaveCount(0);
-  // The strip on the row with the entry holds exactly the five children it held before this lane: the copy,
-  // the entry, the edit, the delete - and her pager where she has one.
+  // The greeting carries neither entry: the Host refuses both acts there, so there is no press to offer.
+  await expect(page.locator(`[data-handle="${openingHandle}"] [data-testid="message-rewind"]`)).toHaveCount(0);
+  await expect(page.locator(`[data-handle="${openingHandle}"] [data-testid="message-fork"]`)).toHaveCount(0);
+  // The cut back to this row is its own control again (owner ruling 2026-11-16): its name states the point and
+  // the count it would remove. The fork is a separate button beside it, and its name states the two facts it
+  // does NOT take away - this chat keeps every later message, and both chats are one conversation to her
+  // memory - because a one-press control has no prompt above it to carry them.
+  const rewind = page.locator(`[data-handle="${playerHandle}"] [data-testid="message-rewind"]`);
+  await expect(rewind).toHaveCount(1);
+  await expect(rewind).toHaveAttribute("aria-label", messages("en").rewindHereName.replace("{{count}}", "1"));
+  const fork = page.locator(`[data-handle="${playerHandle}"] [data-testid="message-fork"]`);
+  await expect(fork).toHaveCount(1);
+  await expect(fork).toHaveAttribute("aria-label", messages("en").forkFromHereName);
+  // Her reply is the newest row: a rewind there would remove nothing and a fork of nothing is not a branch, so
+  // neither entry is offered - the newest message is branched from by choosing the row BEFORE it.
+  await expect(page.locator(`[data-handle="${replyHandle}"] [data-testid="message-rewind"]`)).toHaveCount(0);
+  await expect(page.locator(`[data-handle="${replyHandle}"] [data-testid="message-fork"]`)).toHaveCount(0);
+  // And the strip is still four targets here (five on the paged reply, where the pager joins them): Edit left the
+  // strip in the same ruling that gave Fork a slot, so the count the width arithmetic depends on did not move.
   const strip = await page.evaluate(
-    (selector) => [...document.querySelector(selector)!.children].map((child) => child.className),
+    (selector) => [...document.querySelector(selector)!.children].map((child) => child.getAttribute("data-testid") ?? child.className),
     `[data-handle="${playerHandle}"] .message-actions`,
   );
-  expect(strip).toEqual(["action-btn copy-btn", "action-btn act-btn", "action-btn edit-btn", "action-btn delete-btn"]);
+  expect(strip).toEqual(["message-copy", "message-rewind", "message-fork", "message-delete"]);
 });
 
 test("forking from a message lands on the branch, and the player can write into it", async ({ page }) => {
   const { forkCalls, selections, sent } = await mountShell(page, (route) => route.fulfill(jsonOk(createdBranch)));
 
-  // The first press only opens the choice: nothing is minted until an answer is chosen.
-  await page.locator(`[data-handle="${playerHandle}"]`).getByTestId("message-act").click();
-  const choice = page.getByTestId("message-act-choice");
-  await expect(choice).toBeVisible();
-  expect(forkCalls, "opening the choice sends nothing").toEqual([]);
-  // The two facts the player is owed BEFORE either branch exists, and the rewind's own consequence beside
-  // them: the choice is a choice, so both answers' outcomes are on screen.
-  await expect(choice).toContainText("fork keeps every later message in both chats");
-  await expect(choice).toContainText("both chats share her memory");
-  await expect(choice).toContainText("this screen cannot bring them back");
-  await expect(page.getByTestId("message-rewind-to-here")).toBeVisible();
-  await expect(page.getByTestId("message-fork-from-here")).toHaveAttribute("aria-label", messages("en").forkFromHereName);
+  // The fork is ONE press now: it mints the branch and changes nothing in this conversation. The two facts the
+  // player is owed before either branch exists are in the control's own name, and reading it sends nothing.
+  const fork = page.getByTestId("message-fork");
+  await expect(fork).toHaveAttribute("title", messages("en").forkFromHereName);
+  expect(forkCalls, "reading the control sends nothing").toEqual([]);
 
-  // Cancelling closes the choice and still sends nothing.
-  await page.getByTestId("message-act-cancel").click();
-  await expect(page.getByTestId("message-act-choice")).toHaveCount(0);
+  // Its neighbour is still the destructive one, and it still makes the player say so: arming the rewind
+  // touches nothing, and cancelling it is a way out with nothing sent.
+  await page.locator(`[data-handle="${playerHandle}"]`).getByTestId("message-rewind").click();
+  const confirm = page.getByTestId("message-rewind-confirm");
+  await expect(confirm).toContainText(messages("en").rewindConfirmPrompt);
+  await expect(page.getByTestId("message-rewind-confirm-yes")).toHaveAttribute(
+    "aria-label",
+    messages("en").rewindHereName.replace("{{count}}", "1"),
+  );
+  await expect(page.getByTestId("message-fork")).toHaveCount(0);
+  await page.getByTestId("message-rewind-confirm-no").click();
+  await expect(page.getByTestId("message-rewind-confirm")).toHaveCount(0);
   expect(forkCalls).toEqual([]);
   await expect(page.getByTestId("chat-surface")).toContainText(REPLY_LINE);
 
-  // The fork answer sends the row the choice was opened on, with this mount's generation and its token.
+  // The fork press sends the row it sits on, with this mount's generation and its token.
   await pressFork(page);
   await expect.poll(() => forkCalls.length).toBe(1);
   expect(forkCalls[0]?.body).toEqual({ apiVersion: 1, selectionGeneration: 1, messageHandle: playerHandle });
@@ -282,8 +292,8 @@ test("a fork refused because a reply is being written is named, and creates no b
   expect(selections, "a refused fork must not switch the mount").toEqual([]);
   await expect(surface).toContainText(REPLY_LINE);
 
-  // The refusal spent the press, not the entry: it is still on the row it named.
-  await expect(page.locator(`[data-handle="${playerHandle}"] [data-testid="message-act"]`)).toBeVisible();
+  // The refusal spent the press, not the entry: the fork is still on the row it named.
+  await expect(page.locator(`[data-handle="${playerHandle}"] [data-testid="message-fork"]`)).toBeVisible();
 });
 
 test("one key per attempted fork: held while the answer is unknown, new after a named refusal", async ({ page }) => {

@@ -50,13 +50,14 @@ const CONVERSATION = [
 ];
 
 type EditProbe = {
-  editControl(handle: string): {
-    ariaLabel: string | null;
-    title: string | null;
-    label: string | null;
-    width: number;
-    height: number;
-    stripHeight: number;
+  editAffordance(handle: string): {
+    tag: string;
+    isButton: boolean;
+    tabStop: boolean;
+    keyShortcuts: string | null;
+    describedByText: string | null;
+    inStrip: boolean;
+    bubbleWidth: number;
   } | null;
   editForm(handle: string): { value: string | null; save: string | null; cancel: string | null } | null;
   editInPlace(
@@ -97,7 +98,7 @@ const ONE_ROW = TOUCH_MINIMUM + 1;
 /** The editor's ceiling, the number `MessageEditor` clamps the field's height to. */
 const EDIT_FIELD_MAX_HEIGHT = 300;
 
-test("the edit control is one control in the player's strip, names what saving does, and is the touch minimum", async ({
+test("the edit affordance IS the message: not a button, not in the strip, and reachable from the keyboard", async ({
   page,
 }) => {
   await openConversation(page);
@@ -107,40 +108,48 @@ test("the edit control is one control in the player's strip, names what saving d
     { width: 400, height: 800 },
   ]) {
     await page.setViewportSize(viewport);
-    const control = await page.evaluate(() => window.chatProbe.editControl("h1"));
+    const affordance = await page.evaluate(() => window.chatProbe.editAffordance("h1"));
     const where = `${viewport.width}x${viewport.height}`;
-    expect(control, where).not.toBeNull();
-    expect(control?.label?.trim(), where).toBe("Edit");
-    expect(control?.ariaLabel, where).toContain("Edit this message");
-    // The name states the consequence: the model reads the new words from the next turn on.
-    expect(control?.ariaLabel, where).toContain("the model reads your new words from the next turn on");
-    expect(control?.title, where).toBe(control?.ariaLabel);
-    // Measured from the layout: the whole target, not a class name.
-    expect(control?.width, where).toBeGreaterThanOrEqual(TOUCH_MINIMUM);
-    expect(control?.height, where).toBeGreaterThanOrEqual(TOUCH_MINIMUM);
-    // The strip is the same row the reply uses, and one control of the touch minimum is one row: a
-    // strip that wrapped to two would be at least 44 + 6 + 44 tall.
-    expect(control?.stripHeight, where).toBeLessThanOrEqual(ONE_ROW);
+    expect(affordance, where).not.toBeNull();
+    // The ruling: pressing the words is the request to rewrite them, so there is no Edit button anywhere - and
+    // the thing that took its place is the message, which is a div and says so.
+    expect(affordance?.tag, where).toBe("div");
+    expect(affordance?.isButton, where).toBe(false);
+    expect(affordance?.inStrip, where).toBe(false);
+    // A pointer-only affordance would be an accessibility regression, so it is a tab stop and it describes
+    // the interaction: there is no control to announce, so the sentence is the only thing that says so.
+    expect(affordance?.tabStop, where).toBe(true);
+    expect(affordance?.keyShortcuts, where).toBe("F2");
+    expect(affordance?.describedByText, where).toContain("to edit its words");
+    // The body is still the message's own box: the wrapper adds no geometry of its own.
+    expect(affordance?.bubbleWidth, where).toBeGreaterThan(0);
   }
+  // And the strip under it is still ONE row of 44 px targets: the entries over what comes after this message
+  // are two of them now, and the four that fit the body before still fit it.
+  const stripHeight = await page.evaluate(
+    () => document.querySelector('li[data-handle="h1"] .message-actions')?.getBoundingClientRect().height ?? 0,
+  );
+  expect(stripHeight).toBeLessThanOrEqual(ONE_ROW);
 });
 
 test("the edit is offered on every row of the exchange, the opening included", async ({ page }) => {
   await openConversation(page);
 
   // The greeting is edited where it is read: the same in-place editor, for this session alone.
-  expect(await page.evaluate(() => window.chatProbe.editControl("h0"))).not.toBeNull();
-  expect(await page.evaluate(() => window.chatProbe.editControl("h2"))).not.toBeNull();
-  expect(await page.evaluate(() => window.chatProbe.editControl("h4"))).not.toBeNull();
+  expect(await page.evaluate(() => window.chatProbe.editAffordance("h0"))).not.toBeNull();
+  expect(await page.evaluate(() => window.chatProbe.editAffordance("h2"))).not.toBeNull();
+  expect(await page.evaluate(() => window.chatProbe.editAffordance("h4"))).not.toBeNull();
   // The player's own rows each carry exactly one.
-  expect(await page.evaluate(() => window.chatProbe.editControl("h1"))).not.toBeNull();
-  expect(await page.evaluate(() => window.chatProbe.editControl("h3"))).not.toBeNull();
+  expect(await page.evaluate(() => window.chatProbe.editAffordance("h1"))).not.toBeNull();
+  expect(await page.evaluate(() => window.chatProbe.editAffordance("h3"))).not.toBeNull();
   // And exactly one apiece: a second resident edit control is the defect.
   for (const handle of ["h0", "h1", "h2", "h3", "h4"])
     await expect(page.locator(`[data-handle="${handle}"] [data-testid="message-edit"]`)).toHaveCount(1);
 
   // Opened, the field replaces that one control rather than sitting beside it.
   await page.click('[data-handle="h1"] [data-testid="message-edit"]');
-  expect(await page.evaluate(() => window.chatProbe.editControl("h1"))).toBeNull();
+  await expect(page.locator('[data-handle="h1"] [data-testid="message-edit-field"]')).toHaveCount(1);
+  expect(await page.evaluate(() => window.chatProbe.editAffordance("h1"))).toBeNull();
   const buttons = await page.locator('[data-handle="h1"] .message-actions button').allTextContents();
   expect(buttons.map((label) => label.trim())).toEqual(["Save", "Cancel"]);
 });
@@ -150,6 +159,7 @@ test("opening the editor gives the words the player wrote, and nothing is sent u
   await page.evaluate(() => window.chatProbe.resetEditCalls());
 
   await page.click('[data-handle="h1"] [data-testid="message-edit"]');
+  await expect(page.locator('[data-handle="h1"] [data-testid="message-edit-field"]')).toHaveCount(1);
   const opened = await page.evaluate(() => window.chatProbe.editForm("h1"));
   expect(opened).not.toBeNull();
   expect(opened?.value).toBe("Where are we?");
@@ -161,7 +171,7 @@ test("opening the editor gives the words the player wrote, and nothing is sent u
   // Cancelling closes the field and sends nothing either.
   await page.click('[data-testid="message-edit-cancel"]');
   expect(await page.evaluate(() => window.chatProbe.editForm("h1"))).toBeNull();
-  expect(await page.evaluate(() => window.chatProbe.editControl("h1"))).not.toBeNull();
+  expect(await page.evaluate(() => window.chatProbe.editAffordance("h1"))).not.toBeNull();
   expect(await page.evaluate(() => window.chatProbe.editCalls())).toEqual([]);
 });
 
@@ -191,6 +201,10 @@ test("the bubble gives way to the editor in place, and Escape restores it at the
       expect(closed?.field, where).toBeNull();
 
       await page.click(`[data-handle="${target.handle}"] [data-testid="message-edit"]`);
+      await expect(
+        page.locator(`[data-handle="${target.handle}"] [data-testid="message-edit-field"]`),
+        `${where} ${target.handle}: the press opens the field`,
+      ).toHaveCount(1);
       const open = await copies();
       console.log(
         `MEASURE in-place ${where} ${target.handle}: row ${closed?.row.height} -> ${open?.row.height} | ` +

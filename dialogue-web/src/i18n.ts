@@ -610,35 +610,30 @@ const en = {
   rewindConfirmPrompt: "Confirm rewind to here (keeps this message, deletes everything after it)",
   rewindConfirmYes: "Rewind to here",
   rewindConfirmNo: "Cancel",
-  // The one entry a message has for changing what is after it: a fork and a rewind are the same question
-  // asked two ways (read on from here, or cut back to here), so they are two answers in one place rather
-  // than two controls in a strip that already holds every target it can carry. The prompt carries BOTH
-  // branches' consequences, because the player is choosing between them: a fork keeps every later message
-  // in both chats and both chats share her memory (a fork copies the continuity), and a rewind removes the
-  // later messages from this one with no way back from this screen.
-  actFromHere: "From here…",
-  actFromHereName: "From this message: fork the conversation from here, or rewind back to it",
-  actChoicePrompt:
-    "From here: fork keeps every later message in both chats, and both chats share her memory. Rewind removes the {{count}} later messages from this chat, and this screen cannot bring them back.",
-  // The branch's own answer inside that choice. Its name repeats the two facts the prompt states, because a
-  // screen reader reaches the answer without the sentence above it.
+  // The two entries a message has over what comes after it, one control each (owner ruling 2026-11-16: a
+  // fork is its own button, because it takes nothing away and the safe answer must not cost the dangerous
+  // one's ceremony). The fork's name states the two facts the player is owed before pressing it - this chat
+  // keeps every later message, and both chats are one conversation to her Memory, because a fork copies the
+  // continuity - and it is a one-press control, so there is no prompt above it to carry them.
   forkFromHere: "Fork from here",
   forkFromHereName: "Fork from here: this chat keeps every later message, and both chats share her memory",
   // Said when the branch was created and this window could not move to it: two outcomes, one sentence. The
   // branch is durable and in the Chats list, so the player is not told the fork failed.
   chatForkSwitchFailed: "The branch was created, but this window could not switch to it. Open it from Chats.",
-  // The edit control: the player's own row carries one button, and pressing it opens the field their
-  // words came from. Its accessible name says what saving does to the conversation - the model reads
-  // the new words from the next turn on - because an edit that only changed the bubble would be a lie.
-  editMessage: "Edit",
-  editMessageName: "Edit this message: the model reads your new words from the next turn on",
+  // The edit affordance is the MESSAGE ITSELF (owner ruling 2026-11-16): pressing its words opens the field
+  // they came from, so there is no button and no visible word of its own to name. What is left to write down
+  // is the sentence a screen reader reads with the body - with no control to announce, that sentence is the
+  // only thing that says the words can be rewritten - and the consequence an in-place edit has on the rows
+  // after it: saving rewrites ONE row on both authorities and leaves every later row where it is, so a reply
+  // that answered the old words stays on screen answering words that are no longer there.
+  editHint: "Press this message, or Enter or F2, to edit its words.",
+  editLaterKept:
+    "Only this message changes: later messages keep their words, so a reply that answered the old ones stays as it is, and the model reads the new words from the next turn on.",
   editMessageField: "Your message",
   editMessageSave: "Save",
   editMessageCancel: "Cancel",
-  // Her reply's own control. The same operation on the other side of the exchange, so the same words
-  // apart from the two that name whose side it is: whose words the field holds, and that the model
-  // reads the rewritten ones from the next turn on.
-  editReplyName: "Edit this reply: the model reads the new words from the next turn on",
+  // Her reply's field label: the same operation on the other side of the exchange, so the same words apart
+  // from the one that says whose words the field holds.
   editReplyField: "Her reply",
   // The delete control: a message's own strip, one button, and the one row it removes. A delete is
   // destructive and has no undo, so the arm states exactly what goes - this message, not the
@@ -1821,28 +1816,26 @@ const zh: Messages = {
   rewindConfirmPrompt: "确认回退到此处（保留本条，删除其后全部消息）",
   rewindConfirmYes: "回退到此处",
   rewindConfirmNo: "取消",
-  // 一条消息只有这一个入口来改变它之后的内容：分叉与回退是同一个问题的两种答法（从这里往下读，还是剪回这里），
-  // 所以它们是同一个地方的两个答案，而不是操作条上的第二个控件——那条操作条已经装满了它所能承载的靶点。提示语
-  // 同时说清两条分支的后果，因为玩家正在两者之间选：分叉在两个会话里都保留其后全部消息，而且两个会话共享她的记忆
-  // （分叉会复制 continuity）；回退则从这个会话里删掉其后消息，这个界面找不回来。
-  actFromHere: "从这里…",
-  actFromHereName: "从这条消息出发：从这里分出新对话，或者回退到这条消息",
-  actChoicePrompt:
-    "从这里出发：分叉会在两个会话里保留其后的全部消息，两个会话共享她的记忆。回退会从本会话删掉其后的 {{count}} 条消息，这个界面找不回来。",
-  // 那个选择里属于分支的答案。它的名称重述了提示语里的两个事实，因为读屏软件可能直接落到按钮上，听不到上面那句。
+  // 一条消息对它之后的内容只有这两个入口，各占一个控件（主人裁定 2026-11-16：分叉是它自己的按钮，
+  // 因为它什么也不拿走，安全的那一答不该付危险那一答的仪式代价）。分叉的名称里就说清了按下去之前的两个事实：
+  // 本会话保留其后的全部消息，两个会话在「她的记忆」里是同一段对话（分叉会复制 continuity）；
+  // 它是一按就发的控件，上面没有提示语可以承载这两件事。
   forkFromHere: "从这里分出新对话",
   forkFromHereName: "从这里分出新对话：本会话保留其后的全部消息，两个会话共享她的记忆",
   // 分支已经建好、但这个窗口没能切过去时说的话：两个结果，一句话。分支是持久的，也在会话列表里，所以不能
   // 告诉玩家分叉失败了。
   chatForkSwitchFailed: "分支已经建好，但这个窗口没能切过去。请到会话列表里打开它。",
-  // 编辑控件：玩家自己的那一行只带一个按钮，按下后打开写这句话的输入框。无障碍名称说清保存后对话会发生什么
-  // ——模型从下一轮开始读到你改写后的文字，因为只改气泡不改模型所见就是一种欺骗。
-  editMessage: "编辑",
-  editMessageName: "编辑这条消息：模型从下一轮开始读到你改写后的文字",
+  // 编辑的入口就是**消息本身**（主人裁定 2026-11-16）：按下它的文字就打开写这段话的那个输入框，所以它没有自己的
+  // 按钮，也没有可见的字要给。剩下要写下来的只有两件事：读屏软件跟着正文读到的那句话（没有控件可播报时，
+  // 这句话是唯一说明这些字可以被改写的东西），以及就地编辑对其后行的影响——保存只在两种权威上改写**一行**，
+  // 其后的行原地不动，所以回应旧文字的回复会留在屏幕上，回答着已经不存在的文字。
+  editHint: "按下这条消息，或按 Enter / F2，即可改写它的文字。",
+  editLaterKept:
+    "只改这一条：其后的消息保留原来的文字，所以之前回应旧文字的回复仍留在原处；模型从下一轮开始读到新文字。",
   editMessageField: "你的消息",
   editMessageSave: "保存",
   editMessageCancel: "取消",
-  editReplyName: "编辑这条回复：模型从下一轮开始读到你改写后的文字",
+  // 她的回复那一行的输入框标签：同一件事在对话的另一侧，除了说明框里是谁的字，其余用同一套词。
   editReplyField: "她的回复",
   // 删除控件：消息自己的操作条上一个按钮，只删这一条。删除不可撤销，所以先确认、并说清删掉的是什么
   // ——是这一条，而不是它之后的整个对话，与会话行上的删除同一形状。

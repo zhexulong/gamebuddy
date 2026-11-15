@@ -45,9 +45,6 @@ const CONVERSATION = [
   { role: "companion" as const, text: "Still on the pier." },
 ];
 
-/** The same two constants the mounted player-edit journey measures against. */
-const TOUCH_MINIMUM = 44;
-const ONE_ROW = TOUCH_MINIMUM + 1;
 /** The panel's own measure, which the field may not exceed. */
 const PANEL_MEASURE = 640;
 /** The field's floor: below it the words being rewritten are read through a slot. */
@@ -55,13 +52,14 @@ const FIELD_FLOOR = 280;
 
 type ReplyEditProbe = {
   setConversation(entries: readonly Readonly<{ role: "player" | "companion"; text: string }>[]): void;
-  editControl(handle: string): {
-    ariaLabel: string | null;
-    title: string | null;
-    label: string | null;
-    width: number;
-    height: number;
-    stripHeight: number;
+  editAffordance(handle: string): {
+    tag: string;
+    isButton: boolean;
+    tabStop: boolean;
+    keyShortcuts: string | null;
+    describedByText: string | null;
+    inStrip: boolean;
+    bubbleWidth: number;
   } | null;
   editForm(handle: string): { value: string | null; save: string | null; cancel: string | null } | null;
   editFieldBox(handle: string): {
@@ -103,7 +101,7 @@ async function openConversation(page: Page): Promise<void> {
   await page.evaluate((entries) => window.chatProbe.setConversation(entries), CONVERSATION);
 }
 
-test("her reply's edit control is one control in the strip she already has, with room to write", async ({ page }) => {
+test("her reply is editable by pressing it, and the editor has room to write", async ({ page }) => {
   await openConversation(page);
 
   for (const viewport of [
@@ -112,7 +110,7 @@ test("her reply's edit control is one control in the strip she already has, with
   ]) {
     await page.setViewportSize(viewport);
     const where = `${viewport.width}x${viewport.height}`;
-    const control = await page.evaluate(() => window.chatProbe.editControl("h2"));
+    const control = await page.evaluate(() => window.chatProbe.editAffordance("h2"));
     // ONE control on her row, and it is the edit: a second one is the wall of buttons the reviews named.
     await expect(page.locator('[data-handle="h2"] [data-testid="message-edit"]'), where).toHaveCount(1);
     // The player row's own bubble and strip, for the claim that her control changes nothing there.
@@ -120,6 +118,10 @@ test("her reply's edit control is one control in the strip she already has, with
     const playerStrip = await page.locator('[data-handle="h1"] .message-actions').boundingBox();
 
     await page.click('[data-handle="h2"] [data-testid="message-edit"]');
+    // The press settles for one window before the field takes the bubble's place (`MessageBubble`'s
+    // `EDIT_PRESS_SETTLE_MS`, which is what lets a double-click stay a word selection), so the reading
+    // waits for the editor rather than racing it.
+    await expect(page.locator('[data-handle="h2"] [data-testid="message-edit-field"]'), where).toHaveCount(1);
     const box = await page.evaluate(() => window.chatProbe.editFieldBox("h2"));
     const form = await page.evaluate(() => window.chatProbe.editForm("h2"));
     const buttons = await page.locator('[data-handle="h2"] .message-actions button').allTextContents();
@@ -127,7 +129,7 @@ test("her reply's edit control is one control in the strip she already has, with
 
     // Printed before the assertions, so a failing run still reports the numbers it measured.
     console.log(
-      `MEASURE journey4.1 ${where}: control ${control?.width}x${control?.height} strip ${control?.stripHeight} | ` +
+      `MEASURE journey4.1 ${where}: affordance ${control?.tag} tabStop ${String(control?.tabStop)} bubble ${control?.bubbleWidth} | ` +
         `field ${box?.field.width}x${box?.field.height} left ${box?.field.left} right ${box?.field.right} | ` +
         `bubble ${box?.bubble === null || box?.bubble === undefined ? "none (the editor took its place)" : box.bubble.width} | ` +
         `player bubble ${playerBubble?.width} strip ${playerStrip?.height} | ` +
@@ -135,16 +137,14 @@ test("her reply's edit control is one control in the strip she already has, with
     );
 
     expect(control, where).not.toBeNull();
-    expect(control?.label?.trim(), where).toBe("Edit");
-    // The name says whose words the press changes, and what it does to the conversation.
-    expect(control?.ariaLabel, where).toContain("Edit this reply");
-    expect(control?.ariaLabel, where).toContain("the model reads the new words from the next turn on");
-    expect(control?.title, where).toBe(control?.ariaLabel);
-    // Measured from the layout: the whole target, not a class name.
-    expect(control?.width, where).toBeGreaterThanOrEqual(TOUCH_MINIMUM);
-    expect(control?.height, where).toBeGreaterThanOrEqual(TOUCH_MINIMUM);
-    // Her strip does not wrap at 400 px: one control of the touch minimum is one row.
-    expect(control?.stripHeight, where).toBeLessThanOrEqual(ONE_ROW);
+    // Her reply is one of the rows the player may rewrite, and the affordance is the reply itself: not a
+    // button, not a target in the strip she already has.
+    expect(control?.isButton, where).toBe(false);
+    expect(control?.inStrip, where).toBe(false);
+    expect(control?.tabStop, where).toBe(true);
+    expect(control?.keyShortcuts, where).toBe("F2");
+    expect(control?.describedByText, where).toContain("to edit its words");
+    expect(control?.bubbleWidth, where).toBeGreaterThan(0);
 
     // Opened, the strip IS the editor: Save and Cancel, and nothing beside them.
     expect(buttons.map((label) => label.trim()), where).toEqual(["Save", "Cancel"]);
@@ -168,6 +168,7 @@ test("editing her reply rewrites that row in place, and the editor closes on the
   await page.evaluate(() => window.chatProbe.resetEditCalls());
 
   await page.click('[data-handle="h2"] [data-testid="message-edit"]');
+  await expect(page.locator('[data-handle="h2"] [data-testid="message-edit-field"]')).toHaveCount(1);
   const opened = await page.evaluate(() => window.chatProbe.editForm("h2"));
   expect(opened?.value).toBe("On the pier.");
   // Opening is not a command.
@@ -269,6 +270,7 @@ test("the greeting is edited in place, and its own switcher still names the open
 
     const closed = await page.evaluate(() => window.chatProbe.editInPlace("h0", "An opening greet."));
     await page.click('[data-handle="h0"] [data-testid="message-edit"]');
+    await expect(page.locator('[data-handle="h0"] [data-testid="message-edit-field"]'), where).toHaveCount(1);
     const open = await page.evaluate(() => window.chatProbe.editInPlace("h0", "An opening greet."));
     const form = await page.evaluate(() => window.chatProbe.editForm("h0"));
     const buttons = await page.locator('[data-handle="h0"] .message-actions button').allTextContents();

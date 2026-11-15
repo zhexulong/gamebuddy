@@ -110,6 +110,9 @@ let rerender: (() => void) | null = null;
 /** Every rewind control a journey pressed, so a test can see what the surface sent. */
 const rewindCalls: { kind: "arm" | "confirm" | "cancel"; handle: string; order: number }[] = [];
 
+/** Every fork a journey pressed: one press, so the handle it named is the whole reading. */
+const forkCalls: string[] = [];
+
 /** Every delete control a journey pressed, in the same shape as the rewind's. */
 const deleteCalls: { kind: "arm" | "confirm" | "cancel"; handle: string; order: number }[] = [];
 
@@ -166,6 +169,14 @@ function Probe() {
           rewindCalls.push({ kind: "cancel", handle: "", order: -1 });
           model = { ...model, actArmedHandle: null };
           rerender?.();
+        }}
+        /*
+         * The branch is one press (it takes nothing away), so the probe records it and holds no arm - the
+         * same shape the shell drives. Without it there is no fork entry at all, which is how a caller that
+         * serves no `chat.fork` reads: the control is simply absent.
+         */
+        onActFork={(handle) => {
+          forkCalls.push(handle);
         }}
         actArmedHandle={model.actArmedHandle}
         onEdit={(handle, order, text) => {
@@ -386,7 +397,7 @@ const chatProbe = {
       no: confirm.querySelector('[data-testid="message-swipe-remove-confirm-no"]')?.textContent ?? null,
       ordinaryControls:
         li?.querySelectorAll(
-          '.swipe-controls, .regenerate-btn, [data-testid="message-act"], [data-testid="message-edit"], [data-testid="message-delete"]',
+          '.swipe-controls, .regenerate-btn, [data-testid="message-rewind"], [data-testid="message-fork"], [data-testid="message-delete"]',
         ).length ?? 0,
     };
   },
@@ -444,7 +455,7 @@ const chatProbe = {
       no: confirm.querySelector('[data-testid="message-delete-confirm-no"]')?.textContent ?? null,
       ordinaryControls:
         li?.querySelectorAll(
-          '.swipe-controls, .regenerate-btn, [data-testid="message-act"], [data-testid="message-edit"], [data-testid="message-delete"]',
+          '.swipe-controls, .regenerate-btn, [data-testid="message-rewind"], [data-testid="message-fork"], [data-testid="message-delete"]',
         ).length ?? 0,
     };
   },
@@ -456,31 +467,38 @@ const chatProbe = {
     editCalls.length = 0;
   },
   /**
-   * The edit control as the player meets it: what it is called, the target it actually paints, and
-   * the strip it sits in. The strip is the same row the reply uses, so its height is what says the
-   * row did not wrap: one control of `--touch-target-min` measures one row, and a strip that wrapped
-   * would be at least two.
+   * The edit affordance as the player meets it - and it is the MESSAGE, not a control (owner ruling,
+   * 2026-11-16): pressing the words opens the field they came from.
+   *
+   * `null` means this row is not one the player may rewrite (a streaming preview, the optimistic echo,
+   * a row with a mutation or a confirmation in flight), which is the same fact the strip used to state
+   * by disabling its Edit button. What is read here is what makes the affordance honest rather than
+   * hidden: it is not a button, it is a real tab stop, it declares its shortcut, and it names the
+   * sentence a screen reader reads with it.
    */
-  editControl(handle: string): {
-    ariaLabel: string | null;
-    title: string | null;
-    label: string | null;
-    width: number;
-    height: number;
-    stripHeight: number;
+  editAffordance(handle: string): {
+    tag: string;
+    isButton: boolean;
+    tabStop: boolean;
+    keyShortcuts: string | null;
+    describedByText: string | null;
+    inStrip: boolean;
+    bubbleWidth: number;
   } | null {
     const li = document.querySelector(`li[data-handle="${handle}"]`);
-    const button = li?.querySelector('[data-testid="message-edit"]') as HTMLButtonElement | null;
-    if (button === null || button === undefined) return null;
-    const rect = button.getBoundingClientRect();
-    const strip = li?.querySelector(".message-actions");
+    const target = li?.querySelector('[data-testid="message-edit"]') as HTMLElement | null;
+    if (target === null || target === undefined) return null;
+    const describedBy = target.getAttribute("aria-describedby");
+    const hint = describedBy === null ? null : document.getElementById(describedBy);
+    const bubble = target.querySelector(".message-bubble");
     return {
-      ariaLabel: button.getAttribute("aria-label"),
-      title: button.getAttribute("title"),
-      label: button.textContent,
-      width: rect.width,
-      height: rect.height,
-      stripHeight: strip === null || strip === undefined ? 0 : strip.getBoundingClientRect().height,
+      tag: target.tagName.toLowerCase(),
+      isButton: target.tagName === "BUTTON",
+      tabStop: target.tabIndex >= 0,
+      keyShortcuts: target.getAttribute("aria-keyshortcuts"),
+      describedByText: hint === null ? null : (hint.textContent ?? "").trim(),
+      inStrip: li?.querySelector(".message-actions")?.contains(target) ?? false,
+      bubbleWidth: bubble === null ? 0 : Math.round(bubble.getBoundingClientRect().width),
     };
   },
   /**
@@ -588,6 +606,13 @@ const chatProbe = {
     };
     rerender?.();
   },
+  /** Every fork this probe's branch entry has sent: one press, so the handle is the whole reading. */
+  forkCalls(): readonly string[] {
+    return [...forkCalls];
+  },
+  resetForkCalls(): void {
+    forkCalls.length = 0;
+  },
   /** Every arm, confirm and cancel this probe's rewind control has sent. */
   rewindCalls(): readonly { kind: "arm" | "confirm" | "cancel"; handle: string; order: number }[] {
     return [...rewindCalls];
@@ -608,7 +633,7 @@ const chatProbe = {
     height: number;
   } | null {
     const li = document.querySelector(`li[data-handle="${handle}"]`);
-    const button = li?.querySelector('[data-testid="message-act"]') as HTMLButtonElement | null;
+    const button = li?.querySelector('[data-testid="message-rewind"]') as HTMLButtonElement | null;
     if (button === null || button === undefined) return null;
     const rect = button.getBoundingClientRect();
     return {
@@ -631,14 +656,15 @@ const chatProbe = {
     ordinaryControls: number;
   } | null {
     const li = document.querySelector(`li[data-handle="${handle}"]`);
-    const confirm = li?.querySelector('[data-testid="message-act-choice"]');
+    const confirm = li?.querySelector('[data-testid="message-rewind-confirm"]');
     if (confirm === null || confirm === undefined) return null;
     return {
       prompt: confirm.querySelector(".message-confirm-prompt")?.textContent ?? null,
-      yes: confirm.querySelector('[data-testid="message-rewind-to-here"]')?.textContent ?? null,
-      no: confirm.querySelector('[data-testid="message-act-cancel"]')?.textContent ?? null,
+      yes: confirm.querySelector('[data-testid="message-rewind-confirm-yes"]')?.textContent ?? null,
+      no: confirm.querySelector('[data-testid="message-rewind-confirm-no"]')?.textContent ?? null,
       ordinaryControls:
-        (li?.querySelectorAll('.swipe-controls, .regenerate-btn, [data-testid="message-act"]').length ?? 0),
+        (li?.querySelectorAll('.swipe-controls, .regenerate-btn, [data-testid="message-rewind"], [data-testid="message-fork"]')
+          .length ?? 0),
     };
   },
   /**
@@ -877,7 +903,7 @@ const chatProbe = {
       switcherDisabled,
       regenerateDisabled: (li.querySelector(".regenerate-btn") as HTMLButtonElement | null)?.disabled ?? false,
       rewindDisabled:
-        (li.querySelector('[data-testid="message-act"]') as HTMLButtonElement | null)?.disabled ?? false,
+        (li.querySelector('[data-testid="message-rewind"]') as HTMLButtonElement | null)?.disabled ?? false,
     };
   },
   voiceState(): string | null {
