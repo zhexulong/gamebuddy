@@ -1465,7 +1465,6 @@ export function ComposedReferenceGameApp() {
     const selection = current.session.snapshot.selection;
     if (selection === null) return;
     const csrfToken = current.session.snapshot.csrfToken;
-    const locale = current.locale;
     void (async () => {
       try {
         const list = await managementPipelineApiRef.current.listChats();

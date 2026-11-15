@@ -6,7 +6,7 @@ import {
   type ManagementPipelineApi,
   TavernProblemError,
 } from "../management-pipeline-api";
-import { type CharacterLabels, characterLabels } from "./character-domain-labels";
+import { characterLabels } from "./character-domain-labels";
 import { useRowsDraft } from "./surface-drafts";
 
 /** One row as the editor holds it: the two halves the prompt prints, plus its own identity. */

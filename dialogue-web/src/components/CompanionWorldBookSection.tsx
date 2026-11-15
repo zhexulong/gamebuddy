@@ -127,19 +127,26 @@ function newCompanionWorldBookEntryDraft(): CompanionWorldBookEntryDraft {
  *
  * `rowId` is dropped here and nowhere else, because this is the boundary it must not cross: the
  * published command is a strict object, and a key it does not declare is refused rather than stored.
+ * The fields are therefore NAMED rather than spread past it - and the `satisfies` is what keeps the
+ * other half of that derivation: a field the contract grows is a compile error here, where the editor
+ * holds it, instead of a silent absence from every save the editor makes.
  * The two optional facts are omitted rather than sent as `undefined` for the same reason - `"key" in
  * value` is what the Host and this app's own command validator ask, and an absent key is how the
  * durable book spells "this entry has no second condition".
  */
 function toCompanionWorldBookEntry(entry: CompanionWorldBookEntryDraft): CompanionWorldBookEntryV1 {
-  const { rowId, keys, secondaryKeys, selectiveLogic, ...fields } = entry;
-  const secondCondition = parseTriggerWords(secondaryKeys);
+  const secondCondition = parseTriggerWords(entry.secondaryKeys);
+  const carried = {
+    title: entry.title.trim(),
+    content: entry.content,
+    constant: entry.constant,
+    enabled: entry.enabled,
+  } satisfies Record<keyof Omit<CompanionWorldBookEntryV1, "keys" | "secondaryKeys" | "selectiveLogic">, unknown>;
   return {
-    ...fields,
-    title: fields.title.trim(),
-    keys: parseTriggerWords(keys),
+    ...carried,
+    keys: parseTriggerWords(entry.keys),
     ...(secondCondition.length === 0 ? {} : { secondaryKeys: secondCondition }),
-    ...(selectiveLogic === undefined ? {} : { selectiveLogic }),
+    ...(entry.selectiveLogic === undefined ? {} : { selectiveLogic: entry.selectiveLogic }),
   };
 }
 
