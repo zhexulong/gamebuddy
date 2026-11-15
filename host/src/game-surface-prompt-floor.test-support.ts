@@ -202,6 +202,8 @@ export const GAME_SURFACE_PROMPT_FLOOR: PromptFloorReading = Object.freeze({
       "The bubble's size stopped being a soft target and became a stated deletion, so every column that counts that rule moved. Measured 2026-11-16 on `round62`'s own session (the live runner's log: 90 turns carried text, 70 delivered a bubble): 18 turns were cut at the ceiling and 533 characters - 26 whole sentences - were deleted before the player saw them, while the rule said 'about 80 characters'. The rule now names the ceiling and says anything past it is deleted before the partner sees it, because the turn lane has no second commit to carry the tail (`native-companion-content.ts` `deliverTurn`, one `onFinalText` per turn). Measured by the test against the product's builder: `systemChars` 7,345 and the conduct slice 5,059 - both +218, and the two deltas AGREE because the edit is inside the one rule and nowhere else (the added and removed text is ASCII, so the JSON-escaped delta and the UTF-8 byte delta are both 218). The share is re-derived from that pair as 5,059 / 7,345 = 0.6888. THE +218 IS NOT THE WHOLE DELTA FROM THE LAST RECORDING, and the rest is RECORDED HERE RATHER THAN ABSORBED SILENTLY: at HEAD (eef33b64) this tree's builder already produced `systemChars` 7,127 against the recorded 8,392 -1,265, and a conduct slice of 4,841 against the recorded 4,882 -41, so 1,224 characters of the difference are outside the conduct block (card/persona side) and 41 are inside it, and no entry above names either. `not_derived` from the builder: `envelopeChars`/`envelopeBytes` follow the system string by its own delta (+218: 23,963 -> 24,181, 33,132 -> 33,350) under `remeasured_2026_11_05`'s convention, and they inherit the -1,265 rather than carrying it away. The TOKEN columns are carried unchanged and remain the under-count `remeasured_2026_11_05` describes.",
     remeasured_2026_11_22:
       "The Game prompt floor stopped governing speech, so nine rules left the composed block and three of the remaining ones lost the clause that governed it. Measured against the product's builder by the test: `systemChars` 8,392 and the conduct slice 4,882 - both -2,538, and the two deltas AGREE because the edit is inside the conduct block and nowhere else. THE DISAGREEMENT IS NAMED RATHER THAN ABSORBED: at HEAD this tree's builder produced 10,930, not the recorded 10,923, so 7 characters of the difference belong to a pre-existing gap outside the conduct block (the conduct slice at HEAD was exactly the recorded 7,420), and `systemChars` above now describes the prompt the tree produces while that 7 is recorded here. `envelopeChars`/`envelopeBytes` follow the system string by its own delta (-2,538 chars, -2,678 UTF-8 bytes, MEASURED on the two texts because the removed rules carried Chinese, so the byte delta is not the character delta); they were not re-measured against a materialized session, because that needs the whole session instrumentation this lane does not carry. NOT IN THIS READING'S COLUMNS, and the point of the change: the rules that said when, whether or how much she speaks are gone from the floor - six deleted because the card's own directive already states them (先接住人 / 不报进度 / 遇上卡路只说眼前障碍 / 不当对讲机, all readable in the assembled prompt as `characterVoice`), one moved to `amber-game.json` (decide-yourself with its concrete-question boundary), and three reworded to state only what the surface does (the delivery blocks' two shapes without 'so answer them', the markdown ban without 'one spoken line', the body-language rule's two tool names and bracket ban without 'call one when your body would say it'). `host/src/conversational-stance-gate.test.ts` now reads every rule these two tables declare (`rules examined 19 · govern speech 0`). The TOKEN columns are again carried unchanged and remain the under-count `remeasured_2026_11_05` describes.",
+    remeasured_2026_11_22_b:
+      "TWO RULES LEFT THE FLOOR BECAUSE THE DELIVERY STATES THEIR FACT, so every column that counts them moved. `LIVE_STATE_GROUNDING` and `HOUSE_HAS_NO_KITCHEN` were deleted: the clock, the weather, the map, the tile, the held tool, the unwatered crops, the stamina and `厨房: 有` / `厨房: 无` are the `<world-state>` paragraph every turn, rendered from the Mod's own snapshot (`game-world-vocabulary.ts` `formatGameEnvironmentFacts`), so both rules were a second spelling of a fact the turn already carried. Measured by the test against the product's builder: `systemChars` 6,449 and the conduct slice 4,163 - both -896, and the two deltas AGREE because the edit is inside the conduct block and nowhere else (both deleted rules are ASCII, so the JSON-escaped delta and the UTF-8 byte delta are both -896; MEASURED on the two texts). The share is re-derived from that pair as 4,163 / 6,449 = 0.6455. `not_derived` from the builder: `envelopeChars`/`envelopeBytes` follow the system string by its own delta (24,181 -> 23,285, 33,350 -> 32,454) under `remeasured_2026_11_05`'s convention, and they inherit the -1,265 that entry records rather than carrying it away. The TOKEN columns are carried unchanged and remain the under-count `remeasured_2026_11_05` describes. THE POINT OF THE CHANGE is in `game-surface-prompt-floor.test.ts`: it now renders a house with and without its kitchen through `composeFactBrief`, asserts every fact the line prints reaches her in `<world-state>` and both polarities of `厨房:`, and refuses any conduct sentence that states either fact again - `deleted rules: 2 · houses examined 2 · facts delivered 9 · findings 0`. NOT IN THIS READING'S COLUMNS: the second half of `LIVE_STATE_GROUNDING` was not this line's at all - the 01:30 mechanic is the shipped book's own entry, \"never hallucinate\" is `observed_only`, and \"speak from tangible objects\" is the card's, so nothing was handed over that another layer does not already carry.",
   }),
   floor: Object.freeze({
     // The plan-builder-only measurement: 14 tools. The surface a Game session is handed now carries 16, because the two
@@ -209,26 +211,26 @@ export const GAME_SURFACE_PROMPT_FLOOR: PromptFloorReading = Object.freeze({
     // `remeasured_2026_11_13`, which records that this column is an under-count of the surface rather than a second
     // reading of it.
     toolCount: 14,
-    // Re-derived from the product's builder by the test itself: 7,345 at `remeasured_2026_11_16` (7,127 at HEAD plus
-    // this change's own +218). The token column below is the 2026-11-05 MEASUREMENT, an under-count of a shorter prompt
-    // that is no longer this one.
-    systemChars: 7345,
+    // Re-derived from the product's builder by the test itself: 6,449 at `remeasured_2026_11_22_b` (7,345 at HEAD minus
+    // the two rules this change deleted). The token column below is the 2026-11-05 MEASUREMENT, an under-count of a
+    // shorter prompt that is no longer this one.
+    systemChars: 6449,
     systemTokens: 5119,
     toolsTokens: 3552,
-    // The recorded envelope plus this change's own JSON-escaped delta (+218): the tool array and the empty message list
-    // are unchanged, so the system string is the whole of it. Not re-measured - see `remeasured_2026_11_16`, which also
+    // The recorded envelope plus this change's own JSON-escaped delta (-896): the tool array and the empty message list
+    // are unchanged, so the system string is the whole of it. Not re-measured - see `remeasured_2026_11_22_b`, which also
     // records the pre-existing -1,265 this number does not carry.
-    envelopeChars: 24181,
-    // The same rule in UTF-8 bytes: 33,132 + 218, the added and removed text being ASCII.
-    envelopeBytes: 33350,
+    envelopeChars: 23285,
+    // The same rule in UTF-8 bytes: 33,350 - 896, the removed rules being ASCII.
+    envelopeBytes: 32454,
     envelopeTokens: 8787,
   }),
   conductBlock: Object.freeze({
-    chars: 5059,
+    chars: 4163,
     tokens: 1227,
-    // The measured slice over the measured prompt: 5,059 / 7,345. Recorded as the quotient, not as a share typed
+    // The measured slice over the measured prompt: 4,163 / 6,449. Recorded as the quotient, not as a share typed
     // separately from the two numbers it divides - an earlier recording carried 0.655 against 7,268/11,101.
-    charShareOfSystemPrompt: 0.6888,
+    charShareOfSystemPrompt: 0.6455,
     tokenShareOfSystemPrompt: 0.24,
   }),
   denominator: Object.freeze([

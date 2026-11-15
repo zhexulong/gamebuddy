@@ -409,13 +409,16 @@ test("the Game conduct names the ids she may not say out loud, and keeps them wh
   assert.doesNotMatch(buildChatCompanionSystemPrompt(DEFAULT_IDENTITY_PROFILE), /\(T\)Hoe/u);
 });
 
-test("the house's own form is a standing premise, not a book entry waiting on a keyword", () => {
+test("the house's own form is the live line's, not a book entry waiting on a keyword", () => {
   // Measured 2026-11-05, day 2 at 18:00 in the starter farmhouse: the companion said
   // "六点了，锅里没东西可下，我烧壶水泡点茶对付一口算了" in a house with neither a kitchen nor a stove. The shipped
   // book DOES say so (`wb-entry-07`), but only behind a keyword-gated entry, and that sentence carries none of
-  // its keys - so the entry could not fire, and nothing else in the prompt described the room. Both halves are
-  // asserted: the gate really cannot fire on the measured sentence, and the premise reaches the always-on
-  // system prompt with no book, no retrieval and no keyword at all.
+  // its keys - so the entry could not fire on it. The floor answered with a rule about the starter house, and that
+  // rule is gone: the Mod publishes the room instead, and `厨房: 有` / `厨房: 无` is read off its own
+  // `cookingStationTargets` scan of the map she is standing on (`game-world-vocabulary.ts` `formatKitchen`).
+  // `game-surface-prompt-floor.test.ts` holds that join - every fact the live line renders reaches her in
+  // `<world-state>`, both polarities of the kitchen - so what is asserted HERE is that the rule did not come back
+  // and that the book's entry is still the one an author can reach, not a keyword trap.
   const SENTENCE = "六点了，锅里没东西可下，我烧壶水泡点茶对付一口算了";
   const kitchenEntries = DEFAULT_COMPANION_PRESET.worldBook.entries.filter(
     (entry) => entry.constant !== true && /厨房|灶台/u.test(`${entry.title}${entry.content}`),
@@ -431,9 +434,11 @@ test("the house's own form is a standing premise, not a book entry waiting on a 
       `${entry.entryId} would have fired on the measured sentence, so a keyword gate is not what cost that run`,
     );
   const game = buildGameCompanionSystemPrompt(DEFAULT_IDENTITY_PROFILE);
-  assert.match(game, /the starting house is one room/, "the room's own form must be stated on every turn");
-  assert.match(game, /a kitchen with a stove appears only once the house has been upgraded/);
-  assert.match(game, /never cook, brew, or name a stove or a pot unless the live state reports a kitchen/);
+  assert.doesNotMatch(
+    game,
+    /the starting house is one room|a kitchen with a stove|never cook, brew/u,
+    "the room's form is the live line's every turn; a rule about the starter house is the second spelling that goes stale the day it is upgraded",
+  );
   // Chat has no world and no room, so the premise must not follow the shared card onto that surface.
   assert.doesNotMatch(buildChatCompanionSystemPrompt(DEFAULT_IDENTITY_PROFILE), /kitchen|stove/u);
 });

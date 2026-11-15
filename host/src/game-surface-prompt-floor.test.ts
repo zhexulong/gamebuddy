@@ -6,7 +6,8 @@ import { fileURLToPath } from "node:url";
 import { EXPRESSION_ONLY_ACTION_IDS, STARDEW_ACTION_TOOL_NAMES } from "./action-registry.js";
 import { PLAN_ACTION_LIFECYCLES, planActionsFromRegistrations, planWorkDescription } from "./body-program-script.js";
 import { composeFactBrief, FACT_BRIEF_BLOCKS } from "./fact-brief.js";
-import { buildGameCompanionSystemPrompt } from "./game-surface-prompt-floor.js";
+import { buildGameCompanionSystemPrompt, GAME_SURFACE_INTERACTION_CONDUCT } from "./game-surface-prompt-floor.js";
+import { composeGameEnvironmentFacts } from "./game-world-vocabulary.js";
 import {
   ADVERTISED,
   BUILDER_METHODS,
@@ -90,17 +91,17 @@ const LOCALE = "zh-CN";
  */
 const GAME_PROMPT = buildGameCompanionSystemPrompt(DEFAULT_COMPANION_PRESET.profile, LOCALE);
 
-/** The conduct block, anchored to its first and last rule rather than quoted in full. */
-const CONDUCT_FIRST = "Ground every utterance in the live game state";
-const CONDUCT_LAST = "Talk to your partner, never to a customer.";
-
+/**
+ * The conduct block, read out of the assembled prompt rather than from the module that composes it.
+ *
+ * The block's own text is the authority - `GAME_SURFACE_INTERACTION_CONDUCT` is what the builder installs - so slicing
+ * the prompt at that exact string proves the prompt carries it whole. It used to be anchored on the first and last
+ * rule's prose, which is a second spelling that went stale the moment the first rule was deleted.
+ */
 function conductBlock(prompt: string): string {
-  const start = prompt.indexOf(CONDUCT_FIRST);
-  const lastAt = prompt.indexOf(CONDUCT_LAST);
-  assert.notEqual(start, -1, "the conduct block's first rule is no longer in the Game prompt");
-  assert.notEqual(lastAt, -1, "the conduct block's last rule is no longer in the Game prompt");
-  const end = prompt.indexOf("\n", lastAt);
-  return prompt.slice(start, end === -1 ? prompt.length : end);
+  const at = prompt.indexOf(GAME_SURFACE_INTERACTION_CONDUCT);
+  assert.notEqual(at, -1, "the conduct block is no longer in the Game prompt as the builder composes it");
+  return prompt.slice(at, at + GAME_SURFACE_INTERACTION_CONDUCT.length);
 }
 
 test("the recorded Game system-prompt floor is what the product's builder still produces", () => {
@@ -846,4 +847,179 @@ test("a turn the bubble cuts is never silent: the ceiling that deletes its tail 
       "deleted: she budgets by a soft number while the surface removes the excess. State the deletion in the conduct " +
       "sentence that states the ceiling (`game-surface-prompt-floor.ts` `one_bubble_of_size`).",
   );
+});
+
+/**
+ * THE TWO RULES THE FLOOR DELETED, AND THE FACT EACH ONE LEFT WITH THE DELIVERY.
+ *
+ * <p>
+ * Both rules were measured on a live run and both were deleted because the surface had since grown the fact they stated,
+ * every turn, from the Mod's own reading: `HOUSE_HAS_NO_KITCHEN` (measured 2026-11-05, day 2 at 18:00 in the starter
+ * farmhouse: "六点了，锅里没东西可下，我烧壶水泡点茶对付一口算了" in a house with neither a kitchen nor a stove) and
+ * `LIVE_STATE_GROUNDING` (the clock, the weather, the map, her stamina, the tool in her hand and the crops still waiting
+ * for water).
+ * </p>
+ *
+ * <p>
+ * A RULE IS ONLY REDUNDANT IF THE FACT STILL REACHES HER, so this gate holds both halves and fails in both directions:
+ * </p>
+ *
+ * <ul>
+ *   <li>`delivered_fact_missing:<snapshot>:<fact>` - the delivery stopped printing a fact the deleted rule stated. The
+ *     population is the producer's own list: every fact `composeGameEnvironmentFacts` renders for the examined house must
+ *     appear in the `<world-state>` block `composeFactBrief` composes for that same house. Nothing here is typed from the
+ *     rule, so a formatter that loses the fact fails here without anyone editing this test.</li>
+ *   <li>`fact_restated_while_delivered:<rule>` - the prompt states the rule again. The detector is proved live on the
+ *     verbatim text that was deleted and on a rewording nobody wrote, because a negative that only ever reads the
+ *     prompt cannot tell "clean" from "blind".</li>
+ * </ul>
+ *
+ * <p>
+ * THE KITCHEN'S POLARITY IS CHECKED BECAUSE THE FACT IS A YES OR A NO, not a line that merely exists: a delivery that
+ * always answered 厨房: 有 would satisfy every containment check above and be wrong in the room this rule was written for.
+ * `formatKitchen` answers from the Mod's own `cookingStationTargets` scan of the current map, which is published only
+ * while `cook_recipe` is advertised - the one hole the audit of this deletion names, and the falsifier below measures it
+ * rather than assuming it away.
+ * </p>
+ */
+
+/**
+ * The number of facts the live line rendered the day the two rules were deleted - clock, date, weather, location, tile,
+ * kitchen, held tool, unwatered crops, stamina - as the floor of the population below.
+ */
+const GROUNDING_FACT_FLOOR = 9;
+
+/** One house as the Mod publishes it: the starter farmhouse, and the same house after its kitchen upgrade. */
+const HOUSES = Object.freeze([
+  Object.freeze({ id: "starter_house", cookingStationTargets: Object.freeze([]), kitchen: "厨房: 无" }),
+  Object.freeze({
+    id: "upgraded_house",
+    cookingStationTargets: Object.freeze([
+      Object.freeze({
+        targetId: "kitchen_tile_3_4",
+        location: "FarmHouse",
+        x: 3,
+        y: 4,
+        stationKind: "kitchen" as const,
+      }),
+    ]),
+    kitchen: "厨房: 有",
+  }),
+]);
+
+/** The starter house's own reading, indoors, with whatever the cooking-station family published this turn. */
+function houseWorld(cookingStationTargets: Snapshot["cookingStationTargets"]): Snapshot {
+  return { ...DELIVERY_WORLD, location: "FarmHouse", cookingStationTargets } as unknown as Snapshot;
+}
+
+/** One composed delivery for a world reading, through the producer that decides what a turn's message holds. */
+function deliveryFor(world: Snapshot): string {
+  return composeFactBrief({
+    inputs: [],
+    snapshot: { snapshot: world, revision: 1205, ageTurns: 0, ageMs: 0 },
+    events: [],
+    locale: "zh-CN",
+  });
+}
+
+/**
+ * The rules the floor no longer carries, with the fact that carries each one now and the rewrite that would bring the
+ * rule back. `text` is the deleted rule VERBATIM: it is what proves the detector fires, and it is history rather than a
+ * second spelling of anything the product still says.
+ */
+const DELETED_RULES = Object.freeze([
+  Object.freeze({
+    id: "live_state_grounding",
+    text:
+      "Ground every utterance in the live game state (<runtime-environment>): time, weather, location, stamina, held " +
+      "tool, and unwatered crops. Never hallucinate chores or conditions that contradict reality.",
+    carriedBy: "the `<world-state>` paragraph, which is `formatGameEnvironmentFacts` over the Mod's own reading",
+    restated: /\bstamina\b|\bunwatered crops\b|\bweather\b/iu,
+  }),
+  Object.freeze({
+    id: "house_has_no_kitchen",
+    text:
+      "The house you share is what this save says it is, not what a farmhouse usually has: the starting house is one " +
+      "room, and a kitchen with a stove appears only once the house has been upgraded.",
+    carriedBy: "`厨房: 有` / `厨房: 无` in that same paragraph",
+    restated: /\bkitchen\b|\bstove\b|\bcook, brew\b/iu,
+  }),
+]);
+
+test("the facts the deleted rules stated reach her every turn, and the floor states none of them again", () => {
+  const findings: string[] = [];
+  for (const house of HOUSES) {
+    const world = houseWorld(house.cookingStationTargets);
+    const delivery = deliveryFor(world);
+    // The population is the producer's own rendering of this house, one fact per fact it prints.
+    const facts = composeGameEnvironmentFacts(world, true);
+    assert.ok(
+      facts.length >= GROUNDING_FACT_FLOOR,
+      `blocked: the live line renders ${String(facts.length)} facts for ${house.id}, and the two deleted rules stood ` +
+        `for ${String(GROUNDING_FACT_FLOOR)}: a shrunken line would make "the fact still reaches her" pass on nothing`,
+    );
+    for (const fact of facts)
+      if (!delivery.includes(fact.text)) findings.push(`delivered_fact_missing:${house.id}:${fact.text}`);
+    if (!delivery.includes(house.kitchen)) findings.push(`delivered_fact_missing:${house.id}:${house.kitchen}`);
+  }
+  const conduct = GAME_PROMPT;
+  for (const rule of DELETED_RULES) {
+    const still = rule.restated.exec(conduct);
+    if (still !== null)
+      findings.push(
+        `fact_restated_while_delivered:${rule.id}: the prompt still says "${still[0]}", which ${rule.carriedBy} ` +
+          "states on every turn",
+      );
+  }
+  process.stdout.write(
+    `\ndeleted rules: ${String(DELETED_RULES.length)} · houses examined ${String(HOUSES.length)} · ` +
+      `facts delivered ${String(composeGameEnvironmentFacts(houseWorld(HOUSES[0]!.cookingStationTargets), true).length)} · ` +
+      `findings ${String(findings.length)}\n`,
+  );
+  assert.deepEqual(findings, []);
+});
+
+/**
+ * The falsifier: the same two checks, turned red on purpose - the fact the delivery loses, and the rule the floor says
+ * again. Without it the gate above is green both when the fact survives and when its detector never looked.
+ */
+test("the deletion guard turns red in both directions: a fact the delivery lost, and a rule the floor said again", () => {
+  const world = houseWorld(HOUSES[0]!.cookingStationTargets);
+  const delivery = deliveryFor(world);
+  const facts = composeGameEnvironmentFacts(world, true);
+
+  const missingFrom = (text: string): readonly string[] =>
+    facts.filter((fact) => !text.includes(fact.text)).map((fact) => fact.text);
+
+  // Direction one, on a REAL reading: with the cooking-station family unpublished the line goes silent about the room,
+  // which is the hole this deletion hands to the book rather than hiding.
+  const unpublished = houseWorld(undefined);
+  assert.deepEqual(
+    composeGameEnvironmentFacts(unpublished, true)
+      .filter((fact) => fact.text.startsWith("厨房"))
+      .map((f) => f.text),
+    [],
+    "the kitchen fact is supposed to be silent when the Mod publishes no cooking stations",
+  );
+  const silent = deliveryFor(unpublished);
+  assert.ok(
+    missingFrom(silent).length > 0,
+    "a delivery with no kitchen fact must be a finding, or the gate cannot see the fact disappear",
+  );
+  // And the real delivery is the control: it misses nothing, so the unpublished reading above is what a lost fact looks
+  // like rather than what this gate always sees.
+  assert.equal(
+    missingFrom(delivery).length,
+    0,
+    "blocked: the delivery this falsifier mutates already misses facts, so it cannot show what a missing fact looks like",
+  );
+
+  // Direction two, on the deleted text VERBATIM and on a rewording nobody has written.
+  for (const rule of DELETED_RULES)
+    assert.match(
+      rule.text,
+      rule.restated,
+      `${rule.id}'s detector does not fire on the rule that was deleted, so its silence on the prompt means nothing`,
+    );
+  assert.match("Never cook in a room without a stove.", DELETED_RULES[1]!.restated, "the class, not the instance");
 });

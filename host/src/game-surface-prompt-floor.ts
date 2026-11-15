@@ -3,8 +3,6 @@ import { FACT_BRIEF_BLOCKS, type FactBriefBlock } from "./fact-brief.js";
 import {
   BED_IS_INSIDE,
   CONTENT_IDS_IN_WORDS,
-  HOUSE_HAS_NO_KITCHEN,
-  LIVE_STATE_GROUNDING,
   SLEEPING_IS_AN_ACTION,
 } from "./games/stardew/prompt/stardew-game-conduct.js";
 import { type IdentityProfile } from "./identity-profile.js";
@@ -25,7 +23,7 @@ import type { GamePromptAddition } from "./settings/player-preference-store.js";
  * The rules are split by OWNER, and this module composes them into the one list the model reads. What holds for any game
  * surface is written below: machine-block semantics, the bubble's delivery unit, the receipt vocabulary, body language
  * through the mounted tools, the register of a person rather than a helper. What is true only of this save format - the
- * starter house, the bed inside it, the mines at 01:30, `(T)Hoe` - is Stardew's, in
+ * bed inside the house, the day's end, `(T)Hoe` - is Stardew's, in
  * `games/stardew/prompt/stardew-game-conduct.ts`, and is spliced in at the position it reads at. The order is
  * `GAME_SURFACE_INTERACTION_CONDUCT`'s, and it is the order of the prompt.
  * </p>
@@ -183,14 +181,19 @@ function gameBubbleMaxChars(): number {
  * id (the Game surface mounts the plan builder, not `stardew_advance_day`) and never an
  * hour at which sleeping is owed.
  *
- * A RULE ALSO STATES WHAT A ROOM CONTAINS, because the companion's own book cannot: measured 2026-11-05
- * (day 2, 18:00, the starter farmhouse) she said "六点了，锅里没东西可下，我烧壶水泡点茶对付一口算了" in a house
- * with neither a kitchen nor a stove. The shipped book does say so (`wb-entry-07`), but it says it behind its
- * own trigger words (料理/做饭/绿菜/土豆饼/...), and nothing in that sentence is one of them - so the entry could
- * not fire and no other part of the prompt mentioned the room. The rule below is not a second copy of that
- * entry: it states the HOUSE's own form (one room until its kitchen upgrade), which is true for every card,
- * every save and every imported book, and it is what the live state is checked against when the house does
- * gain a kitchen. The book stays the authored prose about cooking; the premise about the room is the floor.
+ * TWO RULES LEFT THIS BLOCK BECAUSE THE DELIVERY STATES THEIR FACT, AND THE DELIVERY IS THE ONLY SPELLING THAT DOES
+ * NOT DRIFT. Measured 2026-11-05 (day 2, 18:00, the starter farmhouse): she said "六点了，锅里没东西可下，我烧壶水泡点茶对付
+ * 一口算了" in a house with neither a kitchen nor a stove, and nothing in the prompt described the room - the book's entry
+ * is behind its own trigger words (料理/做饭/绿菜/土豆饼/...) and that sentence carries none of them. The rule written for it
+ * stated the starter house's form, and it was already the second copy of a fact the Mod publishes: the live line answers
+ * `厨房: 无` / `厨房: 有` from its own `cookingStationTargets` scan of the map she is standing on
+ * (`game-world-vocabulary.ts` `formatKitchen`), so a saved house that has been upgraded is followed rather than
+ * contradicted. `LIVE_STATE_GROUNDING` went the same way and for the same reason: the clock, the date, the weather, the
+ * map, the tile, the held tool, the unwatered crops and the stamina are the `<world-state>` paragraph every turn, and the
+ * rest of the rule was three other owners' prose - the 01:30 mechanic is the shipped book's own entry, "never hallucinate"
+ * is `observed_only` beside it, and "speak from tangible objects" is the card's. Both are held by
+ * `game-surface-prompt-floor.test.ts` rather than by this comment: every fact the line renders for a house must reach her
+ * in `<world-state>`, both polarities of the kitchen, and no sentence of this block may state either fact again.
  *
  * Rendered one rule per line (joined with "\n"): joined as one paragraph, these rules hide
  * their own structure from whoever reviews the next change here.
@@ -303,10 +306,8 @@ export const GAME_SURFACE_CONDUCT_RULES = {
 } as const satisfies Readonly<Record<string, GameSurfaceConductRule>>;
 
 /** The floor as the model reads it: each entry's own text, in reading order, with the game modules' rules spliced in. */
-const GAME_SURFACE_INTERACTION_CONDUCT = [
-  LIVE_STATE_GROUNDING,
+export const GAME_SURFACE_INTERACTION_CONDUCT = [
   GAME_SURFACE_CONDUCT_RULES.fact_batch_blocks.text,
-  HOUSE_HAS_NO_KITCHEN,
   BED_IS_INSIDE,
   SLEEPING_IS_AN_ACTION,
   GAME_SURFACE_CONDUCT_RULES.one_bubble_of_size.text,
