@@ -603,6 +603,77 @@ function wireTileFamilies(): readonly string[] {
 }
 
 /**
+ * The tile families whose rows carry a `kind` AND a `displayName`: the wire's own statement that the rows of one
+ * family are not one thing, and its own word for what each of them is.
+ *
+ * THE POPULATION IS THE ROW SHAPE, for the same reason `wireTileFamilies` is: a family added tomorrow is judged by the
+ * same property with no edit here, and a family whose rows lose their name leaves the population loudly rather than
+ * quietly passing it.
+ */
+function wireNamedRowFamilies(): readonly string[] {
+  const schema = JSON.parse(readFileSync(WIRE_SCHEMA_PATH, "utf8")) as Readonly<{
+    $defs?: Readonly<Record<string, WireRecord>>;
+  }>;
+  const families = schema.$defs?.snapshot?.properties as Readonly<Record<string, WireFamily>> | undefined;
+  if (families === undefined)
+    throw new Error("the wire schema declares no `$defs.snapshot.properties`: this gate reads it by shape");
+  const named: string[] = [];
+  for (const [family, spec] of Object.entries(families)) {
+    if (spec.type !== "array") continue;
+    const reference = spec.items?.$ref;
+    if (typeof reference !== "string") continue;
+    const row = schema.$defs?.[reference.slice(reference.lastIndexOf("/") + 1)]?.properties;
+    if (row === undefined) continue;
+    if ("x" in row && "y" in row && "kind" in row && "displayName" in row) named.push(family);
+  }
+  return named;
+}
+
+/**
+ * A row family whose rows carry a `kind` prints WHAT stands on the tile, not only where.
+ *
+ * WHY (measured 2026-11-14, `round57`). The Mod published the FarmHouse's furniture with its own names -
+ * `{"displayName":"床","kind":"placed_furniture","x":9,"y":8}`, beside `橡木桌`, `橡木椅子`, `红色木屋地毯`, `红砖壁炉` - and
+ * the block printed tiles only: 「可交互的物件 (9,8) (6,8) (4,4) (5,4) (8,4)」. The companion had to guess what stood
+ * there, and did: 「可交互物件 (6,6)(6,8)(1,10) 大概是床、壁炉之类」. It then spent two turns moving "this furniture" and two
+ * more putting it back, because it never knew which piece it had lifted.
+ *
+ * WHY `kind` IS THE KEY AND NOT `displayName` ALONE. A family's label already names what its rows are (`待浇水的作物`,
+ * `杂草`), so a name there is a second word for the same thing - and `cropTargets` carries `Cauliflower`, an untranslated
+ * data key that would replace 花椰菜 with English. `kind` is the wire saying the rows are NOT one thing (a bed, a table, a
+ * rug, a twig), which is exactly the case where the label cannot answer "what is on this tile".
+ *
+ * RED AT `beef49e8` (the commit this unit started from): every family below printed bare coordinates.
+ */
+test("named_rows: a tile row that carries a kind prints its own displayName beside the tile", () => {
+  const block = (snapshot: Snapshot): string => composeWorldState({ snapshot, revision: 1, ageTurns: 0, ageMs: 0 });
+  const families = wireNamedRowFamilies();
+  // Refuse to pass on nothing: an empty population agrees with every assertion below.
+  assert.ok(families.length >= 2, `examined ${String(families.length)} named row families, too few to be the wire`);
+  for (const family of families) {
+    // The bed from `round57`, as the row itself stood: a piece with its own name, on one tile.
+    const named = block({
+      ...world,
+      [family]: [{ targetId: "t", kind: "placed_furniture", displayName: "床", location: "FarmHouse", x: 6, y: 6 }],
+    } as unknown as Snapshot);
+    assert.match(named, /床 \(6,6\)/u, `${family} names the row it printed: ${named}`);
+
+    // A row the Mod could not name prints its tile alone - never the word `undefined`, which is what a composition
+    // that interpolates an absent field hands her. Both shapes a nameless row arrives in are covered: no
+    // `displayName` member at all, and a blank one.
+    for (const row of [
+      { targetId: "t", kind: "placed_furniture", location: "FarmHouse", x: 7, y: 6 },
+      { targetId: "t", kind: "placed_furniture", location: "FarmHouse", x: 7, y: 6, displayName: "  " },
+    ]) {
+      const anonymous = block({ ...world, [family]: [row] } as unknown as Snapshot);
+      assert.match(anonymous, /\(7,6\)/u, `${family} still names the tile of an anonymous row: ${anonymous}`);
+      assert.equal(/undefined/u.test(anonymous), false, `${family} prints no absent-field word: ${anonymous}`);
+    }
+  }
+  process.stdout.write(`named_rows examined ${String(families.length)} named row families: ${families.join(", ")}\n`);
+});
+
+/**
  * A tile family the batch prints has a word, or states why it is not a row here.
  *
  * RED AT `ee16cdac` (the commit this unit started from): `soilTiles` - the whole target list of `till_soil` - was the

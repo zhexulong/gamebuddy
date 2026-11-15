@@ -885,6 +885,15 @@ export type NearbyTargetFamily = Readonly<{
  * ABSENT vs EMPTY: a family the snapshot does not carry is `undefined` here and prints NOTHING - the Mod did not
  * measure it. A family carried as `[]` is published and empty, which is a fact about the world ("nothing ripe here")
  * and prints as such. This is the oldest lesson in this repository and the reason `rendered` is optional rather than `""`.
+ *
+ * A ROW THAT CARRIES A `kind` PRINTS ITS OWN NAME. A family's label answers "what kind of thing is this row" for a
+ * family that is one thing (weeds, dry crops, rocks). A family whose rows carry a `kind` is the wire saying they are
+ * NOT one thing - a bed, a table, a rug, a twig - so the label stops one word short of the question she is asking, and
+ * the row's own `displayName` is the only place the rest of the answer exists. Measured 2026-11-14 (`round57`): the
+ * FarmHouse's furniture arrived with `displayName` 床, 橡木桌, 橡木椅子, 红色木屋地毯, 红砖壁炉 and the block printed
+ * 「可交互的物件 (9,8) (6,8) (4,4) (5,4) (8,4)」; she guessed 「大概是床、壁炉之类」 and then spent four turns moving and
+ * replacing a piece she could not name. The name is not interpolated blind: a row with no readable `displayName` prints
+ * its tile alone, never the word `undefined`.
  */
 export function nearbyTargetFamilies(snapshot: Snapshot): readonly NearbyTargetFamily[] {
   const actor = snapshot.tile;
@@ -893,28 +902,32 @@ export function nearbyTargetFamilies(snapshot: Snapshot): readonly NearbyTargetF
   for (const [family, label] of Object.entries(TARGET_FAMILY_LABELS)) {
     const value = (snapshot as unknown as Record<string, unknown>)[family];
     if (!Array.isArray(value)) continue;
-    const tiles: { x: number; y: number }[] = [];
+    const tiles: { x: number; y: number; name: string | undefined }[] = [];
     for (const row of value) {
       if (row === null || typeof row !== "object") continue;
-      const candidate = row as { x?: unknown; y?: unknown };
+      const candidate = row as { x?: unknown; y?: unknown; kind?: unknown; displayName?: unknown };
       if (typeof candidate.x !== "number" || typeof candidate.y !== "number") continue;
       if (!Number.isFinite(candidate.x) || !Number.isFinite(candidate.y)) continue;
-      tiles.push({ x: candidate.x, y: candidate.y });
+      const named =
+        typeof candidate.kind === "string" &&
+        typeof candidate.displayName === "string" &&
+        candidate.displayName.trim().length > 0;
+      tiles.push({ x: candidate.x, y: candidate.y, name: named ? (candidate.displayName as string) : undefined });
     }
     const distance = (tile: { x: number; y: number }): number =>
       readable ? Math.max(Math.abs(tile.x - actor.x), Math.abs(tile.y - actor.y)) : 0;
     tiles.sort((left, right) => distance(left) - distance(right) || left.x - right.x || left.y - right.y);
     const shown = tiles.slice(0, MAX_TARGET_TILES_SHOWN);
     const omitted = value.length - shown.length;
-    const nearest = shown[0] === undefined ? undefined : { ...shown[0], distance: distance(shown[0]) };
+    const nearest = shown[0] === undefined ? undefined : { x: shown[0].x, y: shown[0].y, distance: distance(shown[0]) };
     const rendered =
       value.length === 0
         ? undefined
         : shown.length === 0
           ? undefined
-          : `${label} ${shown.map((tile) => `(${tile.x},${tile.y})`).join(" ")}${
-              omitted > 0 ? ` 其余 ${omitted} 格未列出` : ""
-            }`;
+          : `${label} ${shown
+              .map((tile) => `${tile.name === undefined ? "" : `${tile.name} `}(${tile.x},${tile.y})`)
+              .join(" ")}${omitted > 0 ? ` 其余 ${omitted} 格未列出` : ""}`;
     families.push(Object.freeze({ family, label, nearest, total: value.length, omitted, rendered }));
   }
   return Object.freeze(families);
