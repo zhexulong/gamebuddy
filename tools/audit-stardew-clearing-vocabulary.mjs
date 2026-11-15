@@ -187,52 +187,57 @@ export function topLevelArguments(source) {
  */
 export function clearedKinds(catalogSource, constants = new Map()) {
   const code = stripComments(catalogSource);
+  const arrays = stringArrayDeclarations(code);
+  const cleared = new Map();
+  for (let index = 0; ; ) {
+    const call = nextCallArguments(code, "Clears(", index);
+    if (call === null) break;
+    index = call.next;
+    for (const argument of call.arguments.slice(4))
+      for (const word of wordsOfArgument(argument, arrays, constants)) if (!cleared.has(word)) cleared.set(word, []);
+  }
+  return cleared;
+}
+
+/** `readonly string[] Name = { "a", "b" };` -> the literals each name holds. */
+function stringArrayDeclarations(code) {
   const arrays = new Map();
   for (const match of code.matchAll(/readonly\s+string\[\]\s+([A-Za-z_][A-Za-z0-9_]*)\s*=\s*\{([\s\S]*?)\}/gu))
     arrays.set(
       match[1],
       [...match[2].matchAll(/"([^"]*)"/gu)].map((literal) => literal[1]),
     );
+  return arrays;
+}
 
-  const cleared = new Map();
-  let index = 0;
-  for (;;) {
-    const call = code.indexOf("Clears(", index);
-    if (call < 0) break;
-    const open = call + "Clears".length;
-    let depth = 0;
-    let close = -1;
-    for (let cursor = open; cursor < code.length; cursor += 1) {
-      if (code[cursor] === "(") depth += 1;
-      else if (code[cursor] === ")") {
-        depth -= 1;
-        if (depth === 0) {
-          close = cursor;
-          break;
-        }
-      }
+/** The top-level arguments of the next `<marker>...` call at or after <paramref name="from"/>, and where it ended. */
+function nextCallArguments(code, marker, from) {
+  const start = code.indexOf(marker, from);
+  if (start < 0) return null;
+  const open = start + marker.length - 1;
+  let depth = 0;
+  for (let cursor = open; cursor < code.length; cursor += 1) {
+    if (code[cursor] === "(") depth += 1;
+    else if (code[cursor] === ")") {
+      depth -= 1;
+      if (depth === 0) return { arguments: topLevelArguments(code.slice(open + 1, cursor)), next: cursor + 1 };
     }
-    if (close < 0) break;
-    const args = topLevelArguments(code.slice(open + 1, close));
-    for (const argument of args.slice(4)) {
-      const literal = /^"([^"]*)"$/u.exec(argument);
-      if (literal !== null) {
-        if (!cleared.has(literal[1])) cleared.set(literal[1], []);
-        continue;
-      }
-      // The catalog's occupants are written in the vocabulary's own constants (`TileOccupantKind.Twig`), so an entry is
-      // resolved through the file that declares it rather than restated as a literal here.
-      const reference = /^([A-Za-z_][A-Za-z0-9_]*)\.([A-Za-z_][A-Za-z0-9_]*)$/u.exec(argument);
-      if (reference !== null && constants.has(reference[2])) {
-        const word = constants.get(reference[2]);
-        if (!cleared.has(word)) cleared.set(word, []);
-        continue;
-      }
-      if (arrays.has(argument)) for (const word of arrays.get(argument)) if (!cleared.has(word)) cleared.set(word, []);
-    }
-    index = close + 1;
   }
-  return cleared;
+  return null;
+}
+
+/**
+ * The occupant words one declaration argument names: a literal, a `<Vocabulary>.<Name>` constant, or the name of a
+ * string array declared in the same file. Anything else names nothing and is skipped rather than guessed at.
+ */
+function wordsOfArgument(argument, arrays, constants) {
+  const literal = /^"([^"]*)"$/u.exec(argument);
+  if (literal !== null) return [literal[1]];
+  // The catalog's occupants are written in the vocabulary's own constants (`TileOccupantKind.Twig`), so an entry is
+  // resolved through the file that declares it rather than restated as a literal here.
+  const reference = /^([A-Za-z_][A-Za-z0-9_]*)\.([A-Za-z_][A-Za-z0-9_]*)$/u.exec(argument);
+  if (reference !== null && constants.has(reference[2])) return [constants.get(reference[2])];
+  return arrays.get(argument) ?? [];
 }
 
 /**
@@ -274,30 +279,19 @@ export function declaredKinds(vocabularySource, constants = constantsIn(vocabula
  * demanded a clearer for it would demand an action that removes nothing.
  */
 export function judge({ published, cleared, unclearable, freeTile, declared }) {
-  const findings = [];
   // The free-tile word is excluded from the kind population by CONTRACT (`NoOccupant`), and its absence is its own
   // blocked reading: a census that silently counted `none` as a kind would demand an action that removes nothing.
   const publishedList = [...published.keys()].filter((kind) => kind !== freeTile && kind !== "none").sort();
   const clearedList = [...cleared.keys()].sort();
   const unclearableList = [...(unclearable?.keys() ?? [])].sort();
 
-  if (publishedList.length === 0) findings.push("stardew_clearing_vocabulary_unmeasured:no published kind was read");
-  if (freeTile === undefined) findings.push("free_tile_word_unresolved:FarmhandForEachHealing.NoOccupant");
-
-  for (const kind of publishedList)
-    if (!cleared.has(kind) && !(unclearable?.has(kind) ?? false))
-      findings.push(`published_kind_no_action_clears:${kind}`);
-  for (const kind of clearedList) if (!published.has(kind)) findings.push(`cleared_kind_not_published:${kind}`);
-  for (const kind of unclearableList) {
-    if (!published.has(kind)) findings.push(`unclearable_kind_not_published:${kind}`);
-    if ((unclearable.get(kind) ?? "").trim().length === 0) findings.push(`unclearable_kind_without_reason:${kind}`);
-    if (cleared.has(kind)) findings.push(`declared_kind_both_ways:${kind}`);
-  }
-  if (declared !== null) {
-    for (const kind of declared) if (!published.has(kind)) findings.push(`kind_declared_but_never_returned:${kind}`);
-    for (const kind of publishedList)
-      if (!declared.includes(kind)) findings.push(`kind_returned_but_undeclared:${kind}`);
-  }
+  const findings = [
+    ...unmeasuredFindings(publishedList, freeTile),
+    ...publishedFindings(publishedList, cleared, unclearable),
+    ...clearedFindings(clearedList, published),
+    ...unclearableFindings(unclearableList, published, cleared, unclearable),
+    ...declarationFindings(declared, publishedList, published),
+  ];
 
   return {
     verdict: findings.length === 0 ? "passed" : "failed",
@@ -310,30 +304,52 @@ export function judge({ published, cleared, unclearable, freeTile, declared }) {
   };
 }
 
+/** A census that read nothing, or a free-tile word nobody can resolve, is a blocked reading and not a clean tree. */
+function unmeasuredFindings(publishedList, freeTile) {
+  const findings = [];
+  if (publishedList.length === 0) findings.push("stardew_clearing_vocabulary_unmeasured:no published kind was read");
+  if (freeTile === undefined) findings.push("free_tile_word_unresolved:FarmhandForEachHealing.NoOccupant");
+  return findings;
+}
+
+/** The defect `round58` measured: a word the world publishes that neither a declaration nor an exemption answers. */
+function publishedFindings(publishedList, cleared, unclearable) {
+  return publishedList
+    .filter((kind) => !(cleared.has(kind) || (unclearable?.has(kind) ?? false)))
+    .map((kind) => `published_kind_no_action_clears:${kind}`);
+}
+
+/** A clearer nobody can aim: a declaration for a word the classifier never publishes. */
+function clearedFindings(clearedList, published) {
+  return clearedList.filter((kind) => !published.has(kind)).map((kind) => `cleared_kind_not_published:${kind}`);
+}
+
+/** "Not clearable" is an answer only with a reason, and never at the same time as a clearer. */
+function unclearableFindings(unclearableList, published, cleared, unclearable) {
+  const findings = [];
+  for (const kind of unclearableList) {
+    if (!published.has(kind)) findings.push(`unclearable_kind_not_published:${kind}`);
+    if ((unclearable.get(kind) ?? "").trim().length === 0) findings.push(`unclearable_kind_without_reason:${kind}`);
+    if (cleared.has(kind)) findings.push(`declared_kind_both_ways:${kind}`);
+  }
+  return findings;
+}
+
+/** The vocabulary file and the classifier's own returns disagreeing, in both directions. */
+function declarationFindings(declared, publishedList, published) {
+  if (declared === null) return [];
+  return [
+    ...declared.filter((kind) => !published.has(kind)).map((kind) => `kind_declared_but_never_returned:${kind}`),
+    ...publishedList.filter((kind) => !declared.includes(kind)).map((kind) => `kind_returned_but_undeclared:${kind}`),
+  ];
+}
+
 export function checkStardewClearingVocabulary({
   read = (relative) => readFileSync(path.join(repositoryRoot, relative), "utf8"),
 } = {}) {
-  const classifier = read(SOURCES.classifier);
-  let vocabulary = "";
-  try {
-    vocabulary = read(SOURCES.vocabulary);
-  } catch {
-    vocabulary = "";
-  }
-  const constants = vocabulary === "" ? new Map() : constantsIn(vocabulary);
-
-  const noOccupantConstants = constantsIn(read(SOURCES.noOccupant));
-  const freeTile = noOccupantConstants.get("NoOccupant");
-  // The free-tile word is one fact with two spellings by design (`NoOccupant` in the row contract,
-  // `TileOccupantKind.None` in the vocabulary that aliases it), so the alias is resolved from the declaration rather
-  // than restated here.
-  if (freeTile !== undefined && !constants.has("None")) constants.set("None", freeTile);
-
-  const published = publishedWords(classifier, { constants });
-
-  const clumpBody = memberBody(read(SOURCES.clumps), SOURCES.clumpMember, `string ClumpOccupant(int`);
-  const clumpWords =
-    clumpBody === null ? { words: new Map(), unresolved: [] } : publishedWords(clumpBody, { constants });
+  const { vocabulary, constants, freeTile } = vocabularyOf(read);
+  const published = publishedWords(read(SOURCES.classifier), { constants });
+  const clumpWords = clumpWordsOf(read(SOURCES.clumps), constants);
   for (const [kind, from] of clumpWords.words) if (!published.words.has(kind)) published.words.set(kind, from);
 
   const cleared = clearedKinds(read(SOURCES.catalog), constants);
@@ -348,6 +364,35 @@ export function checkStardewClearingVocabulary({
   }
   result.freeTile = freeTile ?? "unresolved";
   return result;
+}
+
+/**
+ * The vocabulary declaration, the constants it names, and the free-tile word - resolved ONCE, because every reader below
+ * resolves names through it and a second resolution could answer a different word.
+ *
+ * A tree with no declaration file is not blocked: the classifier's own literals are the population there, which is how the
+ * baseline revision is read.
+ */
+function vocabularyOf(read) {
+  let vocabulary = "";
+  try {
+    vocabulary = read(SOURCES.vocabulary);
+  } catch {
+    vocabulary = "";
+  }
+  const constants = vocabulary === "" ? new Map() : constantsIn(vocabulary);
+  const freeTile = constantsIn(read(SOURCES.noOccupant)).get("NoOccupant");
+  // The free-tile word is one fact with two spellings by design (`NoOccupant` in the row contract,
+  // `TileOccupantKind.None` in the vocabulary that aliases it), so the alias is resolved from the declaration rather
+  // than restated here.
+  if (freeTile !== undefined && !constants.has("None")) constants.set("None", freeTile);
+  return { vocabulary, constants, freeTile };
+}
+
+/** The resource-clump names, read from the one function that publishes them. */
+function clumpWordsOf(source, constants) {
+  const body = memberBody(source, SOURCES.clumpMember, `string ClumpOccupant(int`);
+  return body === null ? { words: new Map(), unresolved: [] } : publishedWords(body, { constants });
 }
 
 export function report(result, write = (line) => process.stdout.write(`${line}\n`)) {
