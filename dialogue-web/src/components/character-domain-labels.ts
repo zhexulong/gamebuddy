@@ -168,6 +168,7 @@ export type CharacterLabels = Readonly<{
    * control, because choosing is the roster's own control now. */
   companionInspectorInPlay: string;
   companionInspectorNotInPlay: string;
+  companionInspectorReadOnly: string;
   companionInspectorUnavailable: string;
   companionInspectorPersonaTitle: string;
   companionInspectorPersonaCore: string;
@@ -538,6 +539,8 @@ const en: CharacterLabels = Object.freeze({
   companionInspectorInPlay: "This is the companion in play.",
   companionInspectorNotInPlay:
     "{{name}} is saved in your companion library. She is not the companion in play — this installation started with someone else. Close this and choose her in the roster if you want her to play from the next start.",
+  companionInspectorReadOnly:
+    "The description, scenario, openings, examples and speaking style shown here are edited for the companion in play — so her records can only be changed once she is the one playing.",
   companionInspectorUnavailable: "Her character could not be read.",
   companionInspectorPersonaTitle: "Description and personality",
   companionInspectorPersonaCore: "Who she is",
@@ -837,6 +840,8 @@ const zh: CharacterLabels = Object.freeze({
   companionInspectorInPlay: "这就是在玩的伙伴。",
   companionInspectorNotInPlay:
     "{{name}} 已保存在你的伙伴库中。她不是在玩的伙伴——这次启动的是另一位。关掉这里，到伙伴列表里选她，她就会从下次启动开始陪你。",
+  companionInspectorReadOnly:
+    "这里显示的描述、场景、开场白、对话示例和说话方式，都是为「正在上场的同伴」编辑的——所以她的这些记录，要等她真正上场之后才能改。",
   companionInspectorUnavailable: "无法读取她的角色资料。",
   companionInspectorPersonaTitle: "描述与性格",
   companionInspectorPersonaCore: "她是谁",

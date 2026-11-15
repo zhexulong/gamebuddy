@@ -122,6 +122,16 @@ export function CompanionInspectorDrawer({
           ? labels.companionInspectorInPlay
           : labels.companionInspectorNotInPlay.replace("{{name}}", companion.name)}
       </p>
+      {/* The state line says she is not playing and how to choose her; this says what that
+          COSTS, which is the half a player standing in front of four read-only groups needs:
+          every authored record below is edited for the companion in play, so none of them can
+          be changed from here. It is a sentence and not a control - the roster that can change
+          it is behind this modal - and it renders only for the companion it is true of. */}
+      {companion.isCurrent ? null : (
+        <p className="management-settings-hint" data-companion-inspector-readonly>
+          {labels.companionInspectorReadOnly}
+        </p>
+      )}
       {/* The removal entry sits directly under that state line, BEFORE her picture and
           the authored groups. It used to be the drawer's last child, after a profile
           body that is several screens tall at 420x900, which meant a player opening an

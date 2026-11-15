@@ -273,6 +273,39 @@ test("a companion provisioned without them says so, and an empty book is not an 
   );
 });
 
+test("a companion who is not in play says why her records cannot be changed here", async ({ page }) => {
+  await stubCharacters(
+    page,
+    [
+      { handle: otherHandle, name: "Mira", isCurrent: false },
+      { handle: currentHandle, name: "Ada", isCurrent: true },
+    ],
+    { [otherHandle]: absentProfile("Mira"), [currentHandle]: absentProfile("Ada") },
+  );
+  await openCharacters(page);
+
+  // A companion who is NOT in play: her authored records are addressed by the mount, so
+  // the drawer is a read for her. The state line above already says she is not playing
+  // and how to choose her; what it never said is the CONSEQUENCE - that this is why no
+  // group below has an editor. A player who is not told that goes looking for a control
+  // that was never built.
+  const away = await openInspector(page, "Mira");
+  const awayLine = away.locator("[data-companion-inspector-readonly]");
+  await expect(awayLine).toBeVisible();
+  await expect(awayLine).toContainText("edited for the companion in play");
+  await expect(awayLine).toContainText("once she is the one playing");
+  // It is a sentence, not a control: the way to change her records is the roster behind
+  // this modal, and a button here could only fail.
+  await expect(awayLine.locator("button, a, input, textarea, select")).toHaveCount(0);
+  await page.keyboard.press("Escape");
+  await expect(away).toHaveCount(0);
+
+  // The companion in play needs no such line: her records are the ones this surface
+  // edits, so the sentence would be describing her own editors as out of reach.
+  const here = await openInspector(page, "Ada");
+  await expect(here.locator("[data-companion-inspector-readonly]")).toHaveCount(0);
+});
+
 test("the inspector shows four groups with no editor, and its writes are her picture and her removal", async ({ page }) => {
   await stubCharacters(
     page,
