@@ -63,16 +63,21 @@ export const DRIVERS = Object.freeze([
   // companion's answer back - or name the prerequisite this machine does not hold
   // (`not_measured: guardian_pipe_unreachable`, see the driver's header). It is in the default roster
   // because a frontend run that never opened the game did not cover the path the product exists for;
-  // its own budgets bound the cost, and its start checks what this machine has before a browser is
-  // touched, so a machine without the game pays a second, not minutes.
-  { key: "w-game-launch", file: "w-game-launch.cjs", out: "w-game-launch.txt" },
+  // its own budgets bound the cost of a machine that HAS the game, and its start checks what this
+  // machine has before a browser is touched, so a machine without it pays a second and gets a named
+  // `not_measured` line rather than a silent hole in the report. What this one needs, in the driver's
+  // own words (`machinePrerequisites` and `probes/prerequisite-check.mjs` `launch:chain`): the Stardew
+  // installation, SMAPI beside it, the Mod built and deployed, and a generation that ships the resident
+  // Guardian image (`roleBroker.mode: armable`). `requiresGame` is the machine fact that justifies its
+  // place in the default roster, not a gate: the driver still runs where the game is absent, and says so.
+  { key: "w-game-launch", file: "w-game-launch.cjs", out: "w-game-launch.txt", requiresGame: true },
   // The states a player actually meets AFTER a launch, which "did it start" does not cover: the game dying under
   // a turn (driver X), the explicit endgame that must still settle in the session that saw the exit - invariant
   // 506 (driver Y), and the surface disconnecting while the game keeps running (driver Z). Each launches its own
   // game through the product's own controls and ends only what it started, so they run after every driver that
   // reads a healthy mounted session; each one reports `not_measured: guardian_pipe_unreachable` on a machine with
   // no guardian server, which is the prerequisite W already names.
-  { key: "x-game-death", file: "x-game-death.cjs", out: "x-game-death.txt" },
-  { key: "y-game-endgame", file: "y-game-endgame.cjs", out: "y-game-endgame.txt" },
-  { key: "z-game-disconnect", file: "z-game-disconnect.cjs", out: "z-game-disconnect.txt" },
+  { key: "x-game-death", file: "x-game-death.cjs", out: "x-game-death.txt", requiresGame: true },
+  { key: "y-game-endgame", file: "y-game-endgame.cjs", out: "y-game-endgame.txt", requiresGame: true },
+  { key: "z-game-disconnect", file: "z-game-disconnect.cjs", out: "z-game-disconnect.txt", requiresGame: true },
 ]);

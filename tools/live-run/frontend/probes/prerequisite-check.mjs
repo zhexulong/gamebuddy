@@ -22,6 +22,17 @@ async function exists(path) {
 
 const VITE_SIBLINGS = ["rolldown", "postcss", "esbuild", "picomatch", "tinyglobby", "jiti", "lightningcss", "yaml"];
 
+/**
+ * Rows whose absence is NAMED and skipped rather than required.
+ *
+ * A full run can proceed without them and the lanes that need them say so themselves: the credential is
+ * a named skip (the conversation lane records it), and the `launch:` rows are the game-launch driver's
+ * own prerequisites, which that driver checks again in its first second and reports as `not_measured`
+ * with the same names. Making them required here would refuse a whole frontend run on a machine that
+ * has no Stardew installation, which is a legitimate machine to run every other driver on.
+ */
+const NON_REQUIRED_PREFIXES = ["credential:", "launch:"];
+
 async function main() {
   const argv = process.argv.slice(2);
   const commit =
@@ -87,6 +98,44 @@ async function main() {
   if (await exists(join(gameDir, "Stardew Valley.exe"))) pass("stardew-game-dir", gameDir);
   else fail("stardew-game-dir", `${gameDir}\\Stardew Valley.exe missing (set GB_SHOTS_GAME_DIR)`);
 
+  /*
+   * What the game-launch driver needs, in one row, so an operator knows BEFORE the twenty-minute build
+   * whether the headline path can be measured here at all. Four different kinds of thing, and each is
+   * named with the fact that was read for it:
+   *
+   *   the game        the installation above (`stardew-game-dir`)
+   *   SMAPI           `<gameDir>\StardewModdingAPI.exe` - the launch chain starts the game through it
+   *   the Mod         `integrations/stardew/GameBuddy.Stardew.csproj`, built by the build phase and
+   *                   deployed by the Host into its own private bootstrap, so its presence here is a
+   *                   SOURCE fact and the deployed copy is the driver's own reading (`machinePrerequisites`)
+   *   the generation  `host/scripts/build-desktop-launcher-test-generation.mjs`, whose output is what
+   *   and its image   publishes `native/windows-bootstrap-guardian/win-x64/GameBuddy.WindowsBootstrapGuardian.exe`;
+   *                   a generation without that image serves the guardian session `hello_only` and no
+   *                   launch can arm a role, which the driver reports as `not_measured: guardian_image_absent`
+   */
+  const launchChain = {
+    game: await exists(join(gameDir, "Stardew Valley.exe")),
+    smapi: await exists(join(gameDir, "StardewModdingAPI.exe")),
+    modSource: await exists(join(REPO_ROOT, "integrations", "stardew", "GameBuddy.Stardew.csproj")),
+    generationBuilder: await exists(join(REPO_ROOT, "host", "scripts", "build-desktop-launcher-test-generation.mjs")),
+    guardianSource: await exists(
+      join(REPO_ROOT, "host", "native", "windows-bootstrap-guardian", "GameBuddy.WindowsBootstrapGuardian.csproj"),
+    ),
+  };
+  const launchMissing = Object.entries(launchChain)
+    .filter(([, present]) => !present)
+    .map(([name]) => name);
+  if (launchMissing.length === 0)
+    pass(
+      "launch:chain",
+      `game=${gameDir} smapi=StardewModdingAPI.exe mod=GameBuddy.Stardew.csproj generation=build-desktop-launcher-test-generation.mjs guardian=windows-bootstrap-guardian`,
+    );
+  else
+    fail(
+      "launch:chain",
+      `absent: ${launchMissing.join(",")} - driver w reports not_measured, the rest of the run proceeds`,
+    );
+
   const edge = process.env.GB_SHOTS_EDGE ?? "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe";
   if (await exists(edge)) pass("edge", edge);
   else fail("edge", `${edge} missing (set GB_SHOTS_EDGE)`);
@@ -133,10 +182,12 @@ async function main() {
   console.log(
     JSON.stringify({
       rows,
-      requiredMissing: rows.filter((row) => !row.ok && !row.name.startsWith("credential")).length,
+      requiredMissing: rows.filter(
+        (row) => !row.ok && !NON_REQUIRED_PREFIXES.some((prefix) => row.name.startsWith(prefix)),
+      ).length,
     }),
   );
-  return rows.some((row) => !row.ok && !row.name.startsWith("credential")) ? 1 : 0;
+  return rows.some((row) => !row.ok && !NON_REQUIRED_PREFIXES.some((prefix) => row.name.startsWith(prefix))) ? 1 : 0;
 }
 
 const code = await main().catch((error) => {
