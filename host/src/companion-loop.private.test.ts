@@ -4,7 +4,7 @@ import { GAME_DELIVERY_PACING, selectReactionSound } from "./companion-delivery-
 import { CompanionLoop } from "./companion-loop.js";
 import { MAGIC_CONTEXT_REFUSED_TURN_ENTRY_TYPE } from "./companion-turn-refusal.js";
 import { programSettledDigest } from "./program-settlement-digest.js";
-import { FACT_PRODUCER } from "./event-pump.js";
+import { FACT_PRODUCER, TURN_OPENING, TURN_SETTLED_SILENT, turnAccountLine } from "./event-pump.js";
 
 /**
  * What the player receives for one Game turn: ONE bubble - the turn's reaction sound at its head, then the words.
@@ -2369,4 +2369,177 @@ test("a turn that ran with no projection is named, so its text is never an unexp
     bubbles: 0,
     messages: { count: 1, ids: ["assistant_settlement"] },
   });
+});
+
+/**
+ * A Pi turn that DOES something and says nothing: the tool call fires, the message asks for it, and no atom of text.
+ *
+ * <p>
+ * The shape is the one `round58` produced 21 of, one per opened turn: `NATIVE_COMPANION_TURN_DELIVERY {"textParts":1,
+ * "presented":1,"bubbles":1}` on every one of them, so the run had no way to tell a turn spent working from a turn spent
+ * talking. Nothing in the loop refuses this shape - `PROVIDER_EMPTY_COMPLETION` excludes a message that asked for a tool -
+ * so what this fixture pins is only what the turn is COUNTED as.
+ * </p>
+ */
+function sessionActingWithoutSpeech() {
+  const listeners = new Set<(event: unknown) => void>();
+  const emit = (event: unknown) => {
+    for (const listener of [...listeners]) listener(event);
+  };
+  return {
+    async sendUserMessage(batch: string) {
+      emit({ type: "message_start", message: { role: "user", content: [{ type: "text", text: batch }] } });
+      const snapshot = { id: "assistant_silent_work", role: "assistant", content: [], stopReason: "pending" };
+      emit({ type: "message_start", message: snapshot });
+      emit({ type: "tool_execution_start", toolCallId: "call_silent", toolName: "stardew_plan_work" });
+      emit({ type: "tool_execution_end", toolCallId: "call_silent", toolName: "stardew_plan_work" });
+      emit({
+        type: "message_end",
+        message: {
+          id: "assistant_silent_work",
+          role: "assistant",
+          content: [{ type: "toolCall", id: "call_silent", name: "stardew_plan_work", arguments: {} }],
+          stopReason: "toolUse",
+        },
+      });
+      emit({ type: "agent_settled" });
+    },
+    async abort() {},
+    clearQueue() {},
+    async waitForIdle() {},
+    subscribe(next: (event: unknown) => void) {
+      listeners.add(next);
+      return () => {
+        listeners.delete(next);
+      };
+    },
+  };
+}
+
+test("acting_turn_settled_silent_is_unreachable: a turn that acted and said nothing settles as silence, not as a bubble", async () => {
+  // MEASURED 2026-11-15 (`round58`): 21 turns opened, 21 bubbles, 145 flushes, `turn_closed_without_action` 0 and
+  // `turn_settled_silent` 0 - every turn both acted and spoke, and the account had one counter for the speak-without-act
+  // shape and none for the act-without-speaking shape. A turn that acts and chooses not to narrate it landed nowhere: it
+  // was not an empty turn (`worked` outranks `spoke` in the loop's own publication), not a silent one (that counter read
+  // `said_nothing`, a state no completed turn can reach), and not a suppression.
+  const presented: unknown[] = [];
+  const loop = new CompanionLoop(sessionActingWithoutSpeech() as never, {
+    beginPlayerBatch() {},
+    endBatch() {},
+    async presentNativeAssistantContent(content) {
+      presented.push(content);
+    },
+  });
+  const stderrWrite = process.stderr.write;
+  let printed = "";
+  process.stderr.write = ((chunk: string | Uint8Array) => {
+    printed += String(chunk);
+    return true;
+  }) as typeof process.stderr.write;
+  try {
+    loop.pump.enqueueFact(settledDigest("plan_58", "succeeded"), FACT_PRODUCER.adapterIngress);
+    await loop.flush();
+  } finally {
+    process.stderr.write = stderrWrite;
+  }
+
+  assert.deepEqual(presented, [], "she said nothing, so the player is shown nothing: silence is not a bubble");
+  assert.equal(
+    printed.includes("NATIVE_COMPANION_TURN_DELIVERY"),
+    false,
+    `a turn with no speech has no delivery to account for: ${printed}`,
+  );
+  const account = loop.pump.turnAccount;
+  assert.equal(account.opened, 1, "the settlement opened a turn, so the silence happened inside one");
+  assert.equal(account.emptyTurns.total, 0, "she acted: this is not the turn she spent on speech");
+  assert.equal(
+    account.silentSettled.total,
+    1,
+    `the acting-and-silent turn is counted as silence: ${turnAccountLine(account)}`,
+  );
+  assert.equal(account.silentSettled.byOpener[TURN_OPENING.worldFact], 1, "and under the opener that owed the turn");
+  assert.ok(
+    turnAccountLine(account).includes(`· ${TURN_SETTLED_SILENT} 1 {world_fact: 1,`),
+    `the run's own account line can say it: ${turnAccountLine(account)}`,
+  );
+});
+
+/**
+ * The same turn with one word in it: the act stays, the silence goes. It exists to make the gate above falsifiable - a
+ * counter that fired on every acting turn would pass there and fail here.
+ */
+function sessionActingAndSpeaking(text: string) {
+  const listeners = new Set<(event: unknown) => void>();
+  const emit = (event: unknown) => {
+    for (const listener of [...listeners]) listener(event);
+  };
+  return {
+    async sendUserMessage(batch: string) {
+      emit({ type: "message_start", message: { role: "user", content: [{ type: "text", text: batch }] } });
+      const snapshot = { id: "assistant_spoken_work", role: "assistant", content: [], stopReason: "pending" };
+      emit({ type: "message_start", message: snapshot });
+      emit({
+        type: "message_update",
+        message: snapshot,
+        assistantMessageEvent: { type: "text_start", contentIndex: 0, partial: snapshot },
+      });
+      emit({
+        type: "message_update",
+        message: snapshot,
+        assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: text, partial: snapshot },
+      });
+      emit({ type: "tool_execution_start", toolCallId: "call_spoken", toolName: "stardew_plan_work" });
+      emit({ type: "tool_execution_end", toolCallId: "call_spoken", toolName: "stardew_plan_work" });
+      emit({
+        type: "message_end",
+        message: {
+          id: "assistant_spoken_work",
+          role: "assistant",
+          content: [
+            { type: "text", text },
+            { type: "toolCall", id: "call_spoken", name: "stardew_plan_work", arguments: {} },
+          ],
+          stopReason: "toolUse",
+        },
+      });
+      emit({ type: "agent_settled" });
+    },
+    async abort() {},
+    clearQueue() {},
+    async waitForIdle() {},
+    subscribe(next: (event: unknown) => void) {
+      listeners.add(next);
+      return () => {
+        listeners.delete(next);
+      };
+    },
+  };
+}
+
+test("acting_turn_settled_silent_is_unreachable: the same act WITH a word is not silence, and it is not a different turn", async () => {
+  // THE FALSIFIER for the gate above, on the same fixture with exactly one thing changed: she says a line while she works.
+  // If the counter fired on acting turns rather than on silent ones, the assertion in the gate would be the one that broke;
+  // if the loop published `workedSilently` for a turn that carried text, this is the case that says so.
+  const presented: { text: string }[] = [];
+  const text = "先把这片浇了。";
+  const loop = new CompanionLoop(sessionActingAndSpeaking(text) as never, {
+    beginPlayerBatch() {},
+    endBatch() {},
+    async presentNativeAssistantContent(content) {
+      presented.push(content as { text: string });
+    },
+  });
+  const account = await turnAccount(async () => {
+    loop.pump.enqueueFact(settledDigest("plan_58_spoken", "succeeded"), FACT_PRODUCER.adapterIngress);
+    await loop.flush();
+  });
+
+  assert.equal(account.bubbles, 1, "one turn, one bubble - the shape round58 measured 21 of");
+  assert.equal(presented.length, 1, "and the player saw the line she said while working");
+  assert.equal(
+    loop.pump.turnAccount.silentSettled.total,
+    0,
+    `a turn that acted AND spoke is not silence: ${turnAccountLine(loop.pump.turnAccount)}`,
+  );
+  assert.equal(loop.pump.turnAccount.emptyTurns.total, 0, "and it is not a turn spent on speech instead of work");
 });

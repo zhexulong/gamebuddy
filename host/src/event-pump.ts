@@ -75,8 +75,18 @@ export type CompanionTurnOutcome = "completed" | "aborted" | "error" | "refused"
  * separately by the layer that sees Pi's event stream and the assistant message itself.
  */
 export const TURN_PRODUCTION = Object.freeze({
-  /** It ran at least one tool: the turn moved something. */
+  /** It ran at least one tool and delivered speech: it moved something and said what it moved. */
   worked: "worked",
+  /**
+   * It ran at least one tool and delivered NO speech: it worked and chose not to narrate the work.
+   *
+   * This is the member that makes `turn_settled_silent` a shape a turn can LAND on. Measured 2026-11-15
+   * (`round58`, 21 opened turns): every turn in the run both acted and spoke, so `bubbles 21 / turns 21` and the
+   * account had one counter for the turn spent on speech (`turn_closed_without_action`) and none for the turn spent
+   * on work with nothing said. Silence was not refused by any layer - `deliverTurn` draws no bubble for it and the
+   * loop's `PROVIDER_EMPTY_COMPLETION` excludes a message that asked for a tool - it simply collapsed into `worked`.
+   */
+  workedSilently: "worked_silently",
   /** It carried assistant text and ran no tool: narration. */
   spoke: "spoke",
   /**
@@ -87,6 +97,23 @@ export const TURN_PRODUCTION = Object.freeze({
 });
 
 export type TurnProduction = (typeof TURN_PRODUCTION)[keyof typeof TURN_PRODUCTION];
+
+/**
+ * Did the turn carry any assistant text? One spelling of that question, over the closed list.
+ *
+ * <p>
+ * The two working members differ in exactly this bit, which is why it is asked here and not re-derived at every call
+ * site: `worked` and `spoke` delivered speech, `workedSilently` and `saidNothing` did not.
+ * </p>
+ */
+export function turnProducedSpeech(production: TurnProduction): boolean {
+  return production === TURN_PRODUCTION.worked || production === TURN_PRODUCTION.spoke;
+}
+
+/** Did the turn run at least one tool? Both working members did; narration and an empty message did not. */
+export function turnProducedWork(production: TurnProduction): boolean {
+  return production === TURN_PRODUCTION.worked || production === TURN_PRODUCTION.workedSilently;
+}
 
 /**
  * The closed list of things that make a batch worth a turn, and the whole population of the opening decision.
@@ -467,10 +494,11 @@ function initializedByProducer<Reason extends string>(
  * </p>
  * <p>
  * A READING, NOT A PERMISSION. Nothing here forbids speech, suppresses it, or asks for silence: the counter reports how a
- * turn ended, and it cannot make a turn end that way. Today the delivery path barely reaches it - a completed turn whose
- * assistant message carried no text is classified as a provider failure (`PROVIDER_EMPTY_COMPLETION`,
- * `companion-loop.ts`) rather than as silence - so the shape this counts is the one a MISSING message record produces,
- * and a printed zero is a statement about the product rather than about her.
+ * turn ended, and it cannot make a turn end that way. What it counts is the turn whose delivery carried no speech, whether
+ * it acted or not - `workedSilently` is the acting one, `saidNothing` the one that did nothing at all. Measured
+ * 2026-11-15 (`round58`): 21 opened turns, 21 bubbles, this counter `0`, because the reading only recognised
+ * `said_nothing` - a member a completed turn cannot reach - so the act-without-a-word shape had no name and every count of
+ * "one bubble per turn" had to be inferred from the difference between two other numbers.
  * </p>
  */
 export const TURN_SETTLED_SILENT = "turn_settled_silent";
@@ -493,11 +521,14 @@ export const SILENT_SETTLED_OPENINGS = Object.freeze(
 );
 
 /**
- * Turns that delivered no speech, ran no action and closed with nothing of hers still settling, counted by opener.
+ * Turns that delivered no speech and closed with nothing of hers still settling, counted by opener.
  *
  * The opener is half of it for the reason the empty-turn counter gives: a fact arriving is a turn the HOST owed, the
  * world's own clock or notice is a turn the WORLD owed, and a due wake is a turn her own schedule owed - three different
  * statements about why a companion had a turn and used it for nothing.
+ *
+ * The turn may have ACTED: `workedSilently` is work done without a word about it, which is the shape a run needs to be
+ * able to see before it can tell "one bubble per acting turn" from a product property.
  */
 export type TurnSettledSilentResult = Readonly<{
   total: number;
@@ -1604,11 +1635,11 @@ export class CompanionEventPump {
    * What the most recently DELIVERED turn did, as the layer that saw Pi's event stream measured it.
    *
    * <p>
-   * Set by `CompanionLoop` after each delivery, because that is the only layer that sees Pi's stream. The three states
-   * are the whole population, and they are separate because the pump acts differently on each: `worked` clears the
-   * narration run, `spoke` extends it, `silent` ends it. A boolean could not say `silent`, and reading a turn that
-   * carried nothing as narration would blame her for a provider that answered with nothing - which
-   * `provider_empty_completion` already names on its own path.
+   * Set by `CompanionLoop` after each delivery, because that is the only layer that sees Pi's stream. The four states are
+   * the whole population, and they are separate because the pump acts differently on each: `worked` and `workedSilently`
+   * clear the narration run, `spoke` extends it, the two silent members end it and are the ones `turn_settled_silent`
+   * counts. A boolean could not say `silent`, and reading a turn that carried nothing as narration would blame her for a
+   * provider that answered with nothing - which `provider_empty_completion` already names on its own path.
    * </p>
    */
   public turnProduction: TurnProduction = TURN_PRODUCTION.saidNothing;
@@ -2814,11 +2845,19 @@ export class CompanionEventPump {
    * "41 of 64 turns were this shape" without anyone opening a session file.
    * </p>
    * <p>
-   * AND THE THIRD: `said_nothing` is the turn that delivered no speech, so it is counted as `turn_settled_silent` instead -
-   * the other half of the same distinction, taken at the same moment and from the same production the loop published. Two
-   * conditions keep it honest. Something of hers still settling means the silence was a WAIT rather than nothing to say, so
-   * that turn is neither counter's; and the person's own opener is never silence, because a turn someone opened is owed an
-   * answer and its emptiness is a different defect than this one.
+   * AND THE THIRD: a turn that delivered no speech is counted as `turn_settled_silent` instead - the other half of the
+   * same distinction, taken at the same moment and from the same production the loop published. Two conditions keep it
+   * honest. Something of hers still settling means the silence was a WAIT rather than nothing to say, so that turn is
+   * neither counter's; and the person's own opener is never silence, because a turn someone opened is owed an answer and
+   * its emptiness is a different defect than this one.
+   * </p>
+   * <p>
+   * WHICH TURNS THAT INCLUDES IS THE LOOP'S OWN ANSWER, NOT A GUESS FROM `worked`. `workedSilently` is "ran a tool and
+   * said nothing" and `saidNothing` is "said nothing at all", so the two silent members are counted and the two speaking
+   * ones are not - `turnProducedSpeech` is that question asked once. MEASURED 2026-11-15 (`round58`): 21 turns opened,
+   * 21 bubbles, and this counter printed `0` because the only member it read as silence was `said_nothing`, a state no
+   * completed turn can reach (the loop raises `PROVIDER_EMPTY_COMPLETION` for the message that carries neither text nor
+   * a tool call). A turn that acted and chose not to speak had nowhere to land.
    * </p>
    */
   #observeTurnProduction(
@@ -2830,20 +2869,18 @@ export class CompanionEventPump {
       this.#turnsWithoutWork = 0;
       return;
     }
+    const producedSpeech = turnProducedSpeech(this.turnProduction);
+    const producedWork = turnProducedWork(this.turnProduction);
     if (this.turnProduction === TURN_PRODUCTION.spoke && !this.hasExecutionInFlight) {
       const shape = turnWithoutActionShape(opening, this.#emptyTurnReason(broughtObservation));
       this.#emptyTurns += 1;
       this.#emptyTurnsByShape[shape] += 1;
     }
-    if (
-      this.turnProduction === TURN_PRODUCTION.saidNothing &&
-      !this.hasExecutionInFlight &&
-      opening !== TURN_OPENING.playerInput
-    ) {
+    if (!producedSpeech && !this.hasExecutionInFlight && opening !== TURN_OPENING.playerInput) {
       this.#silentSettledTurns += 1;
       this.#silentSettledByOpener[opening] += 1;
     }
-    if (this.turnProduction === TURN_PRODUCTION.worked) {
+    if (producedWork) {
       this.#turnsWithoutWork = 0;
       this.#lastWorkTurnAtMs = Date.now();
       return;

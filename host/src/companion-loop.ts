@@ -744,11 +744,16 @@ export class CompanionLoop {
       // the turn completed. `unobserved` is impossible here — reaching this point means the turn ran.
       return turnOutcome ?? "completed";
     } finally {
-      // What this turn DID, in the three states the pump acts on separately: `worked` clears the narration run, `spoke`
-      // extends it, `said_nothing` ends it. `producedText` and not `producedToolCall` is the second half, because a
-      // message that ASKED for a tool and ran none did not narrate.
+      // What this turn DID, in the four states the pump acts on separately: a turn that worked clears the narration run,
+      // a turn that only spoke extends it, and the two silent members end it - of which `workedSilently` is the one that
+      // makes an acting-and-quiet turn landable, because `worked` alone collapsed "did the work and said what it did"
+      // with "did the work and said nothing about it". `producedText` and not `presentedTextPieces` is the second half: a
+      // part the surface withheld is a delivery gap with its own accounting (`delivery_mismatch`, `suppressed{...}`), and
+      // reading it as her silence would name a defect in the pipeline as a choice she made.
       this.pump.turnProduction = producedWork
-        ? TURN_PRODUCTION.worked
+        ? producedText
+          ? TURN_PRODUCTION.worked
+          : TURN_PRODUCTION.workedSilently
         : producedText
           ? TURN_PRODUCTION.spoke
           : TURN_PRODUCTION.saidNothing;

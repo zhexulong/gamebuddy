@@ -1191,24 +1191,30 @@ test("turn_closed_without_action: a held body is its own reason, and a fresh obs
 /* ---------------------------------------------------------------------------------------------------------------- */
 
 /**
- * `turn_settled_silent` is a turn that delivered NO speech and ran no action, counted by the opener that owed it one.
+ * `turn_settled_silent` is a turn that delivered NO speech, counted by the opener that owed it one - acting or not.
  *
  * <p>
  * MEASURED 2026-11-13 (`round47`): 188 planned nodes across 55 turns, 41 of 64 assistant turns counted as
  * `turn_closed_without_action`, 376 s of model turns that acted against 239 s of pure talk. Those 41 are one statement -
- * she spoke and did nothing. But the plan tool's description ends with "…end your turn and speak to the player", and a
+ * she spoke and did nothing. But the plan tool's description ended "…end your turn and speak to the player", and a
  * terminal receipt is a non-held fact that opens a follow-up turn, so a turn whose outstanding work had ALL settled
  * arrives with nothing in it to do, and speech was the only sanctioned thing to spend it on. Nothing in the run's account
  * could separate that turn from one she chose to spend talking, which is what this reading exists to do.
  * </p>
  * <p>
- * It is a READING and not a ban: no prompt rule, no suppression, no refusal. The falsifiers below hold the two halves
- * apart - a turn that spoke is `turn_closed_without_action` and never this, a turn that acted is neither, a body still
- * working is silence-as-waiting rather than nothing to say, and the person's own opener is never silence.
+ * MEASURED 2026-11-15 (`round58`): the other shape had no name at all. 21 turns opened, 21 bubbles, this counter `0` -
+ * and every one of those turns both acted and spoke. The acting turn that says NOTHING is `workedSilently`, and it lands
+ * here; that is the half of the vocabulary this unit added (`turnProduction`).
+ * </p>
+ * <p>
+ * It is a READING and not a ban: no prompt rule, no suppression, no refusal. The falsifiers below hold the halves apart -
+ * a turn that spoke is `turn_closed_without_action` and never this, a turn that acted AND spoke is neither, a turn that
+ * acted and said nothing IS this, a body still working is silence-as-waiting rather than nothing to say, and the person's
+ * own opener is never silence.
  * </p>
  */
 
-/** A sink that reports how the turn it was handed ended; `saidNothing` is the silence this unit measures. */
+/** A sink that reports how the turn it was handed ended; the two silent members are the silence this unit measures. */
 function settledSink(
   pump: CompanionEventPump,
   production: TurnProduction,
@@ -1301,7 +1307,7 @@ test("turn_settled_silent: a due wake that found nothing to say is counted under
   );
 });
 
-test("turn_settled_silent: the turns that are NOT silent - spoke, acted, still working, or the person's own", async () => {
+test("turn_settled_silent: spoke, still working and the person's own are not silence - and acted-and-spoke is not either", async () => {
   // THE FALSIFIERS. Each case is the fixture above with exactly one thing changed, so a counter that fired on any
   // completed turn, or on any quiet one, would fail here while passing the test above.
   const spoke = new CompanionEventPump();
@@ -1319,8 +1325,58 @@ test("turn_settled_silent: the turns that are NOT silent - spoke, acted, still w
   acted.enqueueFact(readingAt(14, 0, BODY_FREE), FACT_PRODUCER.adapterIngress);
   acted.enqueueFact(settlementFact("program_settled_plan_r47_acted", WINDOW_AT_MS), FACT_PRODUCER.adapterIngress);
   await acted.flush(settledSink(acted, TURN_PRODUCTION.worked));
-  assert.equal(acted.turnAccount.silentSettled.total, 0, "she acted, so the turn was not spent on nothing");
+  assert.equal(
+    acted.turnAccount.silentSettled.total,
+    0,
+    "she acted and said what she did: `worked` is still the speaking member, so this turn is neither counter's",
+  );
   assert.equal(acted.turnAccount.emptyTurns.total, 0);
+
+  // The other half of the same falsifier, and the one `round58` could not distinguish: the SAME act with no word about it
+  // is silence. If this counter fired on any acting turn, the case above would be red instead of this one being green.
+  // The narration run is moved first (one speaking turn) so the reset below is a reading that changed rather than a zero
+  // that was already there.
+  const actedQuietly = new CompanionEventPump();
+  actedQuietly.enqueueFact(readingAt(14, 0, BODY_FREE), FACT_PRODUCER.adapterIngress);
+  actedQuietly.enqueueFact(
+    settlementFact("program_settled_plan_r47_narrated", WINDOW_AT_MS),
+    FACT_PRODUCER.adapterIngress,
+  );
+  await actedQuietly.flush(settledSink(actedQuietly, TURN_PRODUCTION.spoke));
+  assert.equal(
+    actedQuietly.narrationWithoutWork.turns,
+    1,
+    "one speaking turn is the run this reset is measured against",
+  );
+  const emptyBefore = actedQuietly.turnAccount.emptyTurns.total;
+  assert.equal(emptyBefore, 1, "and that speaking turn is the empty one, counted where it belongs");
+
+  actedQuietly.enqueueFact(
+    {
+      ...settlementFact("program_settled_plan_r47_acted_quietly", WINDOW_AT_MS + 1_000),
+      // A different plan, because the pump remembers what it has already handed her: the identical payload under a fresh
+      // event id is `world_fact_restated` and opens no turn at all.
+      payload: { ...RECORDED_SETTLEMENT, programId: "plan_r47_acted_quietly" },
+    },
+    FACT_PRODUCER.adapterIngress,
+  );
+  await actedQuietly.flush(settledSink(actedQuietly, TURN_PRODUCTION.workedSilently));
+  assert.equal(
+    actedQuietly.turnAccount.silentSettled.total,
+    1,
+    "work done without a word about it is the acting-and-silent turn, and it lands here rather than nowhere",
+  );
+  assert.equal(actedQuietly.turnAccount.silentSettled.byOpener[TURN_OPENING.worldFact], 1);
+  assert.equal(
+    actedQuietly.turnAccount.emptyTurns.total,
+    emptyBefore,
+    "and the silent working turn added nothing to `turn_closed_without_action`: she acted, she just did not say so",
+  );
+  assert.equal(
+    actedQuietly.narrationWithoutWork.turns,
+    0,
+    "silent work still resets the narration run: what the counter separates is speech, not work",
+  );
 
   // Her body still working: the delivery carried no speech because there was something to WAIT for. Counting it as
   // "nothing to say" would name a busy companion silent, which is the mistake the narration counter already refuses.
