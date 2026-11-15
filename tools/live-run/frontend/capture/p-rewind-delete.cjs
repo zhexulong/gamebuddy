@@ -296,9 +296,27 @@ const durableRows = async (page) => {
   if (deletable === null) {
     deleteOutcome = "no_delete_control_in_any_row";
   } else {
-    const targetRow = census.find((row) => row.delete !== null && row.role === "player") ?? deletable;
+    // `45889e97` put the rewind and the delete in the same overflow, and owner ruling 2 leaves the LAST
+    // row with the delete alone - so in a transcript as short as this one the first player row is both
+    // the only rewindable row and the first deletable one. Deleting it left the rewind item with nothing
+    // to press (`rewind: no_rewind_control_in_any_row`, rows 3->2, guarded session of 2026-11-15). The
+    // delete is the smaller act of the two, so it yields: it takes a row that leaves at least one
+    // rewindable row behind. When no such row exists the choice falls back to any deletable one, and the
+    // rewind item says by name that it could not be driven.
+    const rewindableHandles = new Set(census.filter((row) => row.rewind !== null).map((row) => row.handle));
+    const keepsARewind =
+      rewindableHandles.size === 0
+        ? () => true
+        : (row) => rewindableHandles.size > 1 || !rewindableHandles.has(row.handle);
+    const targetRow =
+      census.find((row) => row.delete !== null && row.role === "player" && keepsARewind(row)) ??
+      census.find((row) => row.delete !== null && keepsARewind(row)) ??
+      deletable;
     const targetIndex = rows.findIndex((row) => row.handle === targetRow.handle);
-    say(`deleting row index=${targetIndex} (${JSON.stringify((rows[targetIndex]?.text ?? "").slice(0, 24))}), handle=${JSON.stringify(targetRow.handle)}`);
+    say(
+      `deleting row index=${targetIndex} role=${targetRow.role} (${JSON.stringify((rows[targetIndex]?.text ?? "").slice(0, 24))}), handle=${JSON.stringify(targetRow.handle)}; ` +
+        `it is ${keepsARewind(targetRow) ? "not " : ""}the only row a rewind is offered on`,
+    );
     const row = await openOverflow(page, targetIndex);
     await row.locator('[data-testid="message-delete"]').click();
     await page.waitForTimeout(700);
