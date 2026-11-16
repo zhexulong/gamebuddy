@@ -244,16 +244,32 @@ async function shot(page, file, options = {}) {
 /**
  * Select a peer surface by its AppBar entry name. A narrow bar folds the trailing entries into one
  * `更多` disclosure, so the same entry is either a bar button or a row inside that panel.
+ *
+ * A panel a previous step opened is a MODAL `<dialog>` (`ContextDrawer` calls `showModal()`), anchored to
+ * the right edge with a `.drawer-header` exactly one `var(--appbar-height)` row tall at the top of the
+ * window - which is where `.app-bar-actions` is. So while one is open the bar's entries are behind the top
+ * layer and every click on them ends in `intercepts pointer events`, not in a measurement.
+ *
+ * THE GATE USED TO KEY ON `.backdrop-overlay`, a class the product no longer has: the scrim is the
+ * platform's `dialog::backdrop` now, and the class survives only inside a comment in `style.css`. The gate
+ * was therefore never true, Escape was never pressed, and twenty-one drivers failed in the same place
+ * (`frontend-final-r1.stage/logs/capture.log`: 21 of 21 failures name an interceptor, 0 name an unstable
+ * element). It keys on the open dialog itself now, and it verifies the closure instead of assuming it: a
+ * drawer that outlives the Escape is reported by name rather than left to look like a click timeout.
  */
 async function activateSurface(page, label) {
-  // A drawer another driver left open covers `main` with its own backdrop, and that backdrop
-  // intercepts the bar's own controls (a surface switch is then a 30 s click timeout rather than a
-  // measurement). Escape is the drawer's own close gesture, so the bar entry is only clicked once
-  // nothing is covering it.
-  const backdrop = page.locator(".backdrop-overlay").first();
-  if ((await page.locator(".backdrop-overlay").count()) > 0 && (await backdrop.isVisible().catch(() => false))) {
+  const openDrawer = page.locator("dialog.context-panel[open]");
+  if ((await openDrawer.count()) > 0) {
     await page.keyboard.press("Escape");
-    await page.waitForTimeout(500);
+    const closed = await openDrawer
+      .first()
+      .waitFor({ state: "detached", timeout: 5000 })
+      .then(() => true)
+      .catch(() => false);
+    if (!closed) {
+      const open = await openDrawer.first().getAttribute("data-testid").catch(() => null);
+      throw new Error(`surface_switch_blocked_by_open_drawer: ${open ?? "(no data-testid)"}`);
+    }
   }
   const trigger = page.locator(".app-bar-more-trigger");
   if ((await trigger.count()) > 0 && (await trigger.isVisible())) {
@@ -396,3 +412,9 @@ module.exports = {
   classifyComposer,
   createChat,
 };
+
+
+
+
+
+
