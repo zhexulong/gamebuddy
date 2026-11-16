@@ -12,8 +12,8 @@
  * the fact - so the readings here are per route kind, and the injected deletion drives the REAL resolver's own
  * `stardew_action_gate_route_absent` branch rather than a record written in this file.
  *
- * red-proof: history  the pre-fcc2c1b7 tree, where `sweep_scythe` had a table entry naming a runner the tree did not
- *   carry -> `runner_file_missing:sweep_scythe:run-stardew-native-local-player-sweep-scythe-smoke.mjs`
+ * red-proof: fixture  the frozen fcc2c1b7~1 runner index, where `sweep_scythe` had a table entry naming a runner the
+ *   tree did not carry -> `runner_file_missing:sweep_scythe:run-stardew-native-local-player-sweep-scythe-smoke.mjs`
  * red-proof: inject  a catalog registration with no route anywhere -> `action_without_a_live_gate:no_runner_probe`
  * red-proof: inject  one action deleted from the resolver's tables -> `action_without_a_live_gate:use_mine_ladder`
  * red-proof: inject  an index that does not carry a resolved runner file ->
@@ -47,6 +47,7 @@ import { CONTRACT_ROUTE, resolveStardewActionGateRoute } from "./lib/stardew-act
 import { STARDEW_PUBLISHED_ACTION_GATES } from "./stardew-action-gate-descriptors.mjs";
 
 const REPOSITORY_ROOT = resolve(import.meta.dirname, "..");
+const HISTORICAL_RUNNER_FILES = "tools/fixtures/stardew-runner-file-index-pre-fcc2c1b7.json";
 const realCatalog = () => readFileSync(resolve(REPOSITORY_ROOT, CATALOG_PATH), "utf8");
 const realCensus = () => gateArtifactsInIndex({ root: REPOSITORY_ROOT });
 
@@ -65,23 +66,14 @@ function firstContractRoutedAction() {
   return row.actionId;
 }
 
-/** The runner file names a revision carried, read out of this repository's own history. */
-function historicalRunnerFiles(revision) {
-  try {
-    const output = execFileSync("git", ["ls-tree", "-r", "--name-only", revision, "--", "tools"], {
-      cwd: REPOSITORY_ROOT,
-      encoding: "utf8",
-      windowsHide: true,
-      stdio: ["ignore", "pipe", "ignore"],
-    });
-    return output
-      .split("\n")
-      .map((line) => line.trim())
-      .filter((line) => /^tools\/run-stardew-native-local-player-[a-z0-9-]+-smoke\.mjs$/u.test(line))
-      .map((line) => line.slice("tools/".length));
-  } catch (error) {
-    return { unavailable: `revision ${revision} is not in this clone: ${String(error?.message ?? error)}` };
-  }
+/** The runner file names `fcc2c1b7~1` carried, frozen: a shallow checkout does not carry the revision. */
+function historicalRunnerFiles() {
+  const frozen = JSON.parse(readFileSync(resolve(REPOSITORY_ROOT, HISTORICAL_RUNNER_FILES), "utf8"));
+  assert.ok(
+    Array.isArray(frozen.files) && frozen.files.length > 0,
+    `${HISTORICAL_RUNNER_FILES} carries no runner name, so the historical reading would measure nothing`,
+  );
+  return frozen.files;
 }
 
 /** The catalog with one extra registration line, cloned from a real one so the array stays what the catalog declares. */
@@ -240,12 +232,12 @@ test("red (inject): a resolved runner the index does not carry is named with the
   assertFinding(report, new RegExp(`^runner_file_missing:move_to_tile:${runner}$`, "u"));
 });
 
-test("red (history, pre-fcc2c1b7): sweep_scythe's entry named a runner the tree did not carry", (t) => {
-  const tree = historicalRunnerFiles("fcc2c1b7~1");
-  if (!Array.isArray(tree)) {
-    t.skip(`not measured: ${tree.unavailable}`);
-    return;
-  }
+test("red (fixture, the frozen tree at fcc2c1b7~1): sweep_scythe's entry named a runner the tree did not carry", () => {
+  const tree = historicalRunnerFiles();
+  assert.ok(
+    !tree.includes("run-stardew-native-local-player-sweep-scythe-smoke.mjs"),
+    "the frozen index must not carry the runner the catalog named, or this reading would replay nothing",
+  );
   const report = checkLiveRunnerCoverage({ catalogSource: realCatalog(), artifacts: { runners: tree, contracts: [] } });
   assertFinding(report, /^runner_file_missing:sweep_scythe:run-stardew-native-local-player-sweep-scythe-smoke\.mjs$/u);
 });

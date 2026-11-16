@@ -2,7 +2,7 @@
 // red-proof: inject  renaming the schema's `cropTargets` property in protocol/bridge-v1.schema.json -> exit 1,
 //   `[missing_envelope_schema_field] 1: water_crop`, `1 gap(s)`
 //   (protocol/bridge-v1.schema.json)
-// red-proof: hop 8 executed over the Mod sources of 9bb16fda - the revision round57 measured - -> exit 1,
+// red-proof: history 8 executed over the Mod sources of 9bb16fda - the revision round57 measured - -> exit 1,
 //   `tillability producers examined 11 · agree 2 · different word 1 (buildable) · disagree 8`, naming
 //   FarmhandForEachFarmWorld.cs:393 (`assigns tillable from this.farm.doesTileHaveProperty(x, y, "Diggable", "Back")`),
 //   farmhandexecutioncontroller.cs:3212 (the projection's own clause list), and the five ModEntry.Fixtures sites.

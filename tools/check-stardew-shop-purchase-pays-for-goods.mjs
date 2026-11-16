@@ -35,7 +35,7 @@
  * A receipt without the purse pair is counted as `unjudged` and printed: silently skipping it is how a refusal that
  * never states its money hides inside a green run.
  *
- * red-proof: the corpus entry `bag_full_of_other_goods` produced at HEAD states `money_before=500;money_after=480;
+ * red-proof: history  the corpus entry `bag_full_of_other_goods` produced at HEAD states `money_before=500;money_after=480;
  *             gained=0` with no `tool_upgraded` -> `spent_without_goods:bag_full_of_other_goods:500->480`, exit 1
  *             (tools/check-stardew-shop-purchase-pays-for-goods.test.mjs)
  */

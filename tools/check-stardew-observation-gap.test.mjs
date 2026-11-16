@@ -168,10 +168,10 @@ test("a measured run carries the summary the analyzer printed, and every step's 
  * `protocol/bridge-v1.schema.json` and the real Mod sources - the wire and the builder are the authority, so a fixture
  * would only prove the fixture agrees with itself.
  *
- * red-proof: with `cropTargets.isRaised` published for `Crop.raisedSeeds` (the same-spelling coincidence the crop data
+ * red-proof: inject with `cropTargets.isRaised` published for `Crop.raisedSeeds` (the same-spelling coincidence the crop data
  *   carries), `verdict_field_without_witness` named it and pointed at `data?.IsRaised` - the expression the builder
  *   actually passes, which reads the crop DATA and not the instance flag.
- * red-proof: before the record was resolved by its own field set, `chests.items` was
+ * red-proof: history before the record was resolved by its own field set, `chests.items` was
  *   `verdict_field_not_on_the_mod_record` against `BridgeChest`, `BridgeChestItem` and `BridgeChestsSummary`; the
  *   reading is the record whose fields ARE the wire's fields.
  */

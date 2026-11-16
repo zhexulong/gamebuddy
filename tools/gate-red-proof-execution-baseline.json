@@ -29,6 +29,7 @@
     "check:stardew-native-source-closure",
     "check:stardew-native-transition-ledger",
     "check:workspace-debris",
+    "gates/meta/check-commit-staging.mjs",
     "report:stardew-remaining-actions",
     "test:chat-quality-transcript",
     "test:chat-run-audit",
@@ -57,7 +58,6 @@
     "test:stardew-mod-folder-name",
     "test:stardew-native-local-runner-fixture-contract",
     "test:stardew-observation-consumers",
-    "test:stardew-observation-gap",
     "test:stardew-open-ground-claims",
     "test:stardew-player-reachable-exits",
     "test:stardew-uncovered-exit-table",
@@ -75,10 +75,22 @@
     "tools/audit-stardew-handler-actor-guard.mjs",
     "tools/audit-stardew-nogame-subset.mjs",
     "tools/check-action-coverage.mjs",
-    "gates/meta/check-commit-staging.mjs",
     "tools/check-dist-runtime-exports.mjs",
     "tools/check-game-context-pressure.mjs",
     "tools/check-stardew-actor-admissibility.mjs"
   ],
-  "unexecuted": []
+  "unexecuted": [
+    {
+      "gate": "tools/audit-stardew-nogame-subset.mjs",
+      "pointer": "tools/audit-stardew-nogame-subset.test.mjs"
+    },
+    {
+      "gate": "tools/check-refusal-informativeness.mjs",
+      "pointer": "tools/check-refusal-informativeness.test.mjs"
+    },
+    {
+      "gate": "tools/check-stardew-snapshot-family-bounds.mjs",
+      "pointer": "tools/check-stardew-snapshot-family-bounds.test.mjs"
+    }
+  ]
 }

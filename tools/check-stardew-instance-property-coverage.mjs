@@ -49,10 +49,9 @@
  *   node tools/check-stardew-instance-property-coverage.mjs --snapshot <run-result.json>  # instance cases from run data
  *
  * red-proof: inject a property the table does not verdict (`Bush.inBloom` in a synthetic tree) -> `verdict_missing`
- *   names it; inject `published` naming a field no row carries -> `verdict_field_not_on_the_wire` names family, field
- *   and property; delete a `Net*` field the table still verdicts -> `verdict_for_absent_property`; make a row carry the
- *   field a `deliberately_absent` entry is excused by -> `absent_entry_expired`; drop the table -> `verdict_table_missing`
- *   (tools/check-stardew-observation-gap.test.mjs drives each of those against this file's own functions).
+ *   names it (tools/check-stardew-observation-gap.test.mjs drives it against this file's own functions); the sibling
+ *   injections are `verdict_field_not_on_the_wire`, `verdict_for_absent_property`, `absent_entry_expired` and
+ *   `verdict_table_missing`.
  */
 
 export const gateDeclaration = {

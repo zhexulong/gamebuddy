@@ -21,6 +21,7 @@
     "tools/run-tavern-narrative-gate.test.mjs",
     "tools/stardew-native-local-player-fixture.test.mjs",
     "tools/stardew-policy-isolation.test.mjs",
+    "tools/stardew-soil-itm-canary.test.mjs",
     "tools/verify-stardew-action-projection.test.mjs"
   ]
 }

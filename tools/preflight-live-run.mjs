@@ -15,7 +15,7 @@
  *                    GameBuddy+GameBuddy.Stardew` then `preflight_failed:mods_path_exactly_one_gamebuddy`, exit 1,
  *                    while the same tree with one folder prints `preflight_ok` (tools/preflight-live-run.mjs)
  *
- * red-proof: machine  2026-11-13, this checkout. Before the guardian check existed, the same command printed
+ * red-proof: history  2026-11-13, this checkout. Before the guardian check existed, the same command printed
  *                    `ok host_artifact_fresh`, `FAIL mod_bundle_fresh`, `ok mods_path_exactly_one_gamebuddy`,
  *                    `ok bridge_config_readable` and nothing else - the condition that had already killed four chat
  *                    runs (`dialogue_exited_before_ready:1:desktop_runtime_bootstrap_unavailable:

@@ -26,7 +26,7 @@
  *   Replayed from `git show` at that revision, so it fires whatever the working tree has since become - which the
  *   working-tree reading could not do once the fix landed.
  * red-proof: inject  a fabricated path added to a baseline in a fixture repository ->
- *   `baseline_names_a_file_that_does_not_exist:<baseline>:tools/fabricated-missing.mjs`, exactly one finding
+ *   `baseline_names_a_file_that_does_not_exist:<baseline>:<the fabricated path>`, exactly one finding
  * red-proof: inject  a file written to the fixture's working tree and not added -> still one finding; `git add` -> green
  * red-proof: inject  a root whose only tracked json is not a baseline -> `baseline_gate_no_population`, exit 2
  */

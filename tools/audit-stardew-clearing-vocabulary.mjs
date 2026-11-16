@@ -39,9 +39,9 @@
 //
 // A population of zero is BLOCKED, never green: a scan that read no word has not measured a clean tree.
 //
-// Measured at this commit: `kinds published 21 · cleared by >=1 action 16 · unclearable 5`.
+// Measured at this commit: `occupant types published 21 · cleared by >=1 action 16 · unclearable 5`.
 //
-// red-proof: history  the SAME gate code reading the sources at `0dce992a` -> `kinds published 18 · cleared by >=1
+// red-proof: history  the SAME gate code reading the sources at `0dce992a` -> `occupant types published 18 · cleared by >=1
 //   action 15 · unclearable 0`, `published_kind_no_action_clears:object`, `:resource_clump`, `:terrain`,
 //   `failed (3 finding(s))`, exit 1 - no `Clears` declaration answered `object`, `resource_clump` or `terrain`.
 
@@ -381,7 +381,7 @@ function clumpWordsOf(source, constants) {
 
 export function report(result, write = (line) => process.stdout.write(`${line}\n`)) {
   write(
-    `stardew_clearing_vocabulary: kinds published ${result.counts.published} · ` +
+    `stardew_clearing_vocabulary: occupant types published ${result.counts.published} · ` +
       `cleared by >=1 action ${result.published.filter((kind) => result.cleared.includes(kind)).length} · ` +
       `unclearable ${result.counts.unclearable}`,
   );
