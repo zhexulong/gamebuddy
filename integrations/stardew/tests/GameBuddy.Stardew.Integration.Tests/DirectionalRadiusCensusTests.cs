@@ -161,12 +161,18 @@ public sealed class DirectionalRadiusCensusTests
                 + "{\n"
                 + "    float distance = Math.Abs(crop.X - playerTile.X) + Math.Abs(crop.Y - playerTile.Y);\n"
                 + "    if (distance < nearestDistance) nearest = crop;\n"
+                + "    if (Math.Abs(crop.X - playerTile.X) + Math.Abs(crop.Y - playerTile.Y) < bestDistance)\n"
+                + "        nearestDistance = distance;\n"
                 + "}\n"),
         }).ToArray();
 
-        sites.Should().HaveCount(2);
+        sites.Should().HaveCount(3);
         sites.Should().OnlyContain(site => site.Decision != Decision.Admission);
         sites[0].Metric.Should().Be(Metric.Manhattan, "a cost function is still a sum; it is the DECISION that makes it a reach");
+        sites[2].Decision.Should().Be(
+            Decision.Ranking,
+            "a sum compared against another DISTANCE is a nearest-first choice, not a refusal, and the gate must not demand "
+            + "the engine's radius of a rank");
     }
 
     // ---------------------------------------------------------------------------------------------------------------
@@ -311,7 +317,8 @@ public sealed class DirectionalRadiusCensusTests
         Match comparison = Regex.Match(statement, @"[\w.)\]]\s*(?:<=|>=|==|!=|<|>)\s*([\w.()]+)");
         if (!comparison.Success) return Decision.Value;
 
-        string bound = comparison.Groups[1].Value;
+        // The capture runs to the closing bracket it may include (`bestDistance)`), so the bound is the name without it.
+        string bound = comparison.Groups[1].Value.TrimEnd(')');
         if (bound.StartsWith("Math.", StringComparison.Ordinal)) return Decision.AxisComparison;
         if (IsDistanceName(bound)) return Decision.Ranking;
         return Decision.Admission;
@@ -321,6 +328,7 @@ public sealed class DirectionalRadiusCensusTests
     private static bool IsDistanceName(string bound) =>
         Regex.IsMatch(bound, @"^(?:nearest|best|closest|furthest|lowest|highest|max|min)\w*$", RegexOptions.IgnoreCase)
         || bound.EndsWith("Distance", StringComparison.Ordinal);
+
     /// <summary>The statement an anchor sits in: back to the previous terminator, forward to the next one.</summary>
     private static int RegionStart(string code, int index)
     {
