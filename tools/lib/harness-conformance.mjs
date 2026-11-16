@@ -672,6 +672,16 @@ const GATES_WITH_FALSIFIER = Object.freeze([
   // with no shipped sample and no surviving sentence is `behaviour_claim_stale`; and a card with no example turn, an
   // empty vocabulary or an empty corpus is blocked (exit 2) rather than green.
   "check-persona-example-behaviours.mjs",
+  // Prints `{"gate":"cross_language_value_reads/v1","status","population":<cross-language source sites>,"values",
+  // "checks":[the value finding, the baseline staleness]}`, so its default run is the report read here and `population`
+  // is the sites it judged rather than the files it opened. Its falsifiers are the two `red-proof:` markers in the gate's
+  // own file, both pointing at tools/check-cross-language-value-reads.test.mjs: `history` - the commit before `e34023f2`
+  // reads `host/src/fact-brief.ts` in `SweepTargetRefusalNamingTests.cs` and the gate names
+  // `value_read_from_another_languages_source:SweepTargetRefusalNamingTests.cs:evidence`, while the same file at HEAD
+  // reads `host/src/model-field-budget.published.json` and leaves the population - and `inject` - a baselined site whose
+  // pattern changed is `value_read_baseline_stale` naming the entry, while the unrecorded site of the same value stays a
+  // `value_read_from_another_languages_source` finding.
+  "check-cross-language-value-reads.mjs",
 ]);
 
 /** How long a gate's default run may take before it is reported as having printed nothing. */
@@ -1262,6 +1272,19 @@ const GATES_WITHOUT_FALSIFIER = Object.freeze([
       "that read no word is blocked rather than green. Its own red proof is the `red-proof: history` marker in the gate " +
       "file: the same code reading `0dce992a` named `object`, `resource_clump` and `terrain` and exited 1",
   },
+  {
+    gate: "check-stardew-task-gap-reasons.mjs",
+    reason:
+      "prints `gaps examined N · mechanical M · prose P · expired E` and `claims checked N · prose P · blocked B · " +
+      "findings F` plus one line per expired claim, so its reading is lines and not a `{gate, checks[]}` report; its " +
+      "falsifier suite is tools/check-stardew-task-gap-reasons.test.mjs, run by `test:stardew-task-gap-reasons`, and its " +
+      "two `red-proof:` markers are the falsifiers: `history` - the real tree on 2026-11-16 printed `gaps examined 10 · " +
+      "expired 1` and `gap_reason_no_longer_holds:mine_ladder_to_depth:action_use_mine_ladder_lifecycle`, exit 1, " +
+      "because the entry cited `FarmhandActionLifecycle.Experimental` for an action the surface had promoted and the line " +
+      "it cited had moved on - and `inject` - an `absent_evidence_field` claim naming a field the action's receipt " +
+      "carries, and an `action_lifecycle` claim naming a lifecycle the catalog does not declare, both " +
+      "`gap_reason_no_longer_holds:<task>:<claim>` naming the task and the measured value",
+  },
   ...AUDIT_WITHOUT_SELF_REPORT.map((gate) => ({ gate, reason: AUDIT_WITHOUT_SELF_REPORT_REASON })),
 ]);
 
@@ -1394,7 +1417,17 @@ export function checkGateFalsifiers({
         notMeasured.push({ gate: name, detail: report.population.detail });
       continue;
     }
-    if (!declaredExcept) findings.push(finding("gate_without_falsifier", name));
+    // The finding names the row that is missing, not just the file: a gate lands in the population the moment it is
+    // committed, and "in neither table" is only actionable next to which table answers what.
+    if (!declaredExcept)
+      findings.push(
+        finding(
+          "gate_without_falsifier",
+          `${name}: a gate in the population that neither table classifies, so nothing here reads it - add it to ` +
+            "`GATES_WITH_FALSIFIER` if its own default run prints a `{gate, checks[]}` report, or, if it prints its " +
+            "reading as lines, to `GATES_WITHOUT_FALSIFIER` with the falsifier it names",
+        ),
+      );
   }
   for (const entry of undeclared) findings.push(finding("gate_undeclared", `${entry.gate}: ${entry.detail}`));
   for (const entry of staleDeclarations)

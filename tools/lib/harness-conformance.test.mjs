@@ -183,16 +183,21 @@ test("gate check judges a gate by its NAME, so filing a domain in a directory do
     [],
   );
   // The name is what is compared, so a genuinely unclassified gate is still named - and it is named by its PATH, which
-  // is where a reader has to go.
-  assert.deepEqual(
-    checkGateFalsifiers({
-      gateNames: ["gates/meta/check-a-gate-nobody-classified.mjs"],
-      withFalsifier: [],
-      withoutFalsifier: [],
-      toolsDir,
-      run: () => ({ status: 0, stdout: "" }),
-    }).map((entry) => [entry.code, entry.detail]),
-    [["gate_without_falsifier", "gates/meta/check-a-gate-nobody-classified.mjs"]],
+  // is where a reader has to go, beside the row that would classify it: "in neither table" is only actionable when the
+  // message says which table answers which shape.
+  const [unclassified] = checkGateFalsifiers({
+    gateNames: ["gates/meta/check-a-gate-nobody-classified.mjs"],
+    withFalsifier: [],
+    withoutFalsifier: [],
+    toolsDir,
+    run: () => ({ status: 0, stdout: "" }),
+  });
+  assert.equal(unclassified.code, "gate_without_falsifier");
+  assert.match(unclassified.detail, /^gates\/meta\/check-a-gate-nobody-classified\.mjs: /u, "the path leads");
+  assert.match(
+    unclassified.detail,
+    /`GATES_WITH_FALSIFIER`[\s\S]*`GATES_WITHOUT_FALSIFIER`/u,
+    "the message names both rows a gate could be added to, in the order of the question they answer",
   );
 });
 
