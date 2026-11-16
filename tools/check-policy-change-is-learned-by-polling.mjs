@@ -73,9 +73,6 @@ const FILE_CONFIG_READ =
 const CONFIG_DOCUMENT_ARGUMENT =
   /config\.json|\b(?:ModConfigFile|modConfigFile|ConfigFilePath|configFilePath|ConfigPath|configPath)\b/u;
 
-/** Everything the report needs about one read. */
-const READ = "read";
-
 /**
  * Every `.cs` file of the Mod, relative to `root`, sorted.
  *
@@ -269,5 +266,3 @@ function main() {
 }
 
 if (process.argv[1] !== undefined && resolve(process.argv[1]) === resolve(fileURLToPath(import.meta.url))) main();
-
-export { READ };
