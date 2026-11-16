@@ -328,11 +328,11 @@ test("the player's stored Game prompt addition reaches the compiled Game prompt,
   );
   // It arrives as an addition after the Host floor, never as a replacement for it.
   assert.match(game, /<<<PLAYER DIRECTIVES/u);
-  // The floor's observation-boundary clause, as the floor actually states it: `identity-profile.ts` says "Only state
-  // what you actually observed in the game.", and an anchor that stopped at "observed." matched nothing at all - a red
-  // assertion nobody read, which is worse than no assertion (measured 2026-11-10: this exact regex was already in the
-  // tree at HEAD against a floor that had already moved).
-  assert.match(game, /Only state what you actually observed in the game\./u);
+  // The floor's own reading-language clause, as the floor actually states it: the anchor used to be the observation
+  // contract, which left the floor for the Game preset on 2026-11-23 - an anchor that names a rule another layer owns
+  // matches nothing at all, and a red assertion nobody reads is worse than no assertion (measured 2026-11-10: this exact
+  // regex was already in the tree at HEAD against a floor that had already moved).
+  assert.match(game, /Speak in the player's language, never in the game's internal one\./u);
 
   const chat = await mountedSystemPrompt("chat", addition);
   assert.equal(
@@ -410,7 +410,7 @@ test("a preset whose `main` repeats a floor sentence prints `preset_overlap`, ke
   const root = await canonicalTestRoot("gamebuddy-prompt-delivery-overlap-");
   const { runtimeCwd } = resolveRuntimePaths(IDENTITY as never, root);
   await mkdir(runtimeCwd, { recursive: true });
-  const floorLine = "Only state what you actually observed in the game.";
+  const floorLine = "Speak in the player's language, never in the game's internal one.";
   const document = JSON.parse(readFileSync(SHIPPED_COMPANION_PRESET_PATH, "utf8")) as {
     prompts: { identifier: string; content?: string }[];
   };
@@ -465,7 +465,7 @@ test("a preset whose `main` repeats a floor sentence prints `preset_overlap`, ke
   );
   assert.match(
     overlapLines[0] ?? "",
-    /^preset_overlap:system:main:preset=\d+ch:floor=\d+ch:anchor=Only state what you actually observed in the game\.$/u,
+    /^preset_overlap:system:main:preset=\d+ch:floor=\d+ch:anchor=Speak in the player's language, never in the game's internal one\.$/u,
   );
 
   // Both kept: the floor's own line, and the preset's copy inside the frame.

@@ -101,15 +101,27 @@ test("buildChatCompanionSystemPrompt and buildGameCompanionSystemPrompt render p
   assert.match(gamePrompt, /\[Character: GameBuddy Companion\]/);
 });
 
-test("the Game conduct forbids claiming an NPC reaction the game never reported", () => {
+test("the Game conduct forbids claiming an NPC reaction the game never reported, and the persona layer states it", () => {
   // Prompt-side half of the presence loop: two real live runs narrated an NPC
   // reaction ("她那个开心劲儿" / "连眼睛都弯了") while the gift receipt recorded
   // showed_response=false — the game never staged any reaction to read. The
   // detector lives in tools/lib/companion-interaction-gate.mjs; this pins the
-  // guidance that stops the model from needing it.
+  // guidance that stops the model from needing it. 2026-11-23: the guidance left the
+  // floor for the layer that owns who she is - the Game preset's Main - because "state
+  // only what the game reported" is a claim about her, not about what a block means;
+  // the preset already said it one noun narrower ({{user}}'s reactions are his), so it
+  // was widened there rather than stated a second time beside it.
   const gamePrompt = buildGameCompanionSystemPrompt(DEFAULT_IDENTITY_PROFILE);
-  assert.match(gamePrompt, /Only state what you actually observed/);
-  assert.match(gamePrompt, /never claim an NPC smiled, beamed, was delighted, or said something on your account/);
+  assert.doesNotMatch(gamePrompt, /Only state what you actually observed/);
+  assert.doesNotMatch(
+    gamePrompt,
+    /never claim an NPC smiled, beamed, was delighted, or said something on your account/,
+  );
+  assert.match(
+    presetMainText("amber-game.json"),
+    /没真的看到|别替人家编/u,
+    "the observation contract has to be stated by the layer that owns it, or the deletion was a loss rather than a move",
+  );
   // A third live run answered that instruction by reading the receipt's wire
   // format to the player ("（gift_given）…quest_25_completed 还是 false"), so the
   // conduct must also say which language to use, not just what to assert.
@@ -198,8 +210,9 @@ test("the step-list and chore-recital bans are the card's now, and the floor doe
   assert.doesNotMatch(game, /is the inventory this forbids/);
   assert.doesNotMatch(game, /never list your steps/);
   assert.doesNotMatch(game, /work quietly until you are done/);
-  // The RECITAL half of `observed_only` is the same claim one layer down: the card's 浇了是湿的、敲了是碎的、箱子里有几颗
-  // 抬眼就看得见 says why a report of finished chores is noise, and the floor said it a second time. The detector is the
+  // The RECITAL half of what `observed_only` used to state is the same claim one layer down: the card's 浇了是湿的、敲了是碎的、箱子里有几颗
+  // 抬眼就看得见 says why a report of finished chores is noise, and the floor said it a second time. (The rule itself left
+  // the floor for the preset on 2026-11-23; the recital detector is still the guard that keeps the ban from coming back.) The detector is the
   // CLASS rather than the sentence, and the two samples below are what prove it fires on the rule that was there and on
   // a rewording nobody wrote.
   const RECITAL = /never (?:audit|recite|list|report)[^.]*completed|inventory of completed|never list the chores/iu;
@@ -426,13 +439,18 @@ test("the Game conduct fits one spoken turn inside the bubble the player reads f
     /past the bubble's ceiling is deleted/u,
     "the conduct states the bubble's size and not that the tail is deleted, so she budgets by a number nothing enforces gently",
   );
-  assert.match(game, /No markdown headings, lists, bold or block quotes/);
+  // Layout is the preset's as of 2026-11-23: markdown, lists and 首先/其次/最后 were a FORMAT rule wearing a channel's
+  // clothes, so they left the floor for the layer that owns how a reply reads, and the floor states none of them.
+  assert.doesNotMatch(game, /No markdown headings, lists, bold or block quotes/);
+  const gamePresetMain = presetMainText("amber-game.json");
+  assert.match(gamePresetMain, /排版/u, "amber-game.json no longer bans a reply's layout in her voice");
+  assert.match(gamePresetMain, /首先其次最后/u, "and it no longer names the sequencing words a person does not say");
   // How MANY utterances one reply carries is the preset's (2026-11-15): the floor states the box, and
   // `conversational-stance-gate.test.ts` refuses a count here.
   assert.doesNotMatch(game, /say one thing per reply/);
   assert.doesNotMatch(game, /stop when it has been said/);
-  assert.match(game, /首先/);
-  assert.match(game, /总结/);
+  assert.doesNotMatch(game, /首先/);
+  assert.doesNotMatch(game, /总结/);
   // A bracketed beat is never a body: the parenthesis becomes audio the voice
   // performs, and an asterisk beat is dropped by the bubble entirely.
   assert.match(game, /Write no bracketed stage direction at all/);
@@ -526,9 +544,11 @@ test("the Game floor no longer puts a line in a refusal, and the register is the
   const gamePreset = presetMainText("amber-game.json");
   assert.match(gamePreset, /不是客服/u, "amber-game.json no longer forbids the customer register in her voice");
   assert.match(gamePreset, /还有什么需要吗/u, "and it no longer names the closing offer of further help");
-  // The two correctness lines this block already carried stay untouched: an
-  // unobserved NPC reaction and the emote channel are contract, not style.
-  assert.match(game, /never claim an NPC smiled, beamed, was delighted, or said something on your account/);
+  // The two correctness lines this block already carried stay untouched as CLAIMS: an unobserved NPC reaction left for
+  // the persona layer on 2026-11-23 (it is a claim about her, not about a block), and the emote channel is still the
+  // floor's own - the first is asserted where it now lives (`presetMainText`), the second here.
+  assert.doesNotMatch(game, /never claim an NPC smiled, beamed, was delighted, or said something on your account/);
+  assert.match(presetMainText("amber-game.json"), /没真的看到|别替人家编/u);
   assert.match(game, /Body language has its own tool/);
 });
 

@@ -67,11 +67,9 @@ import type { GamePromptAddition } from "./settings/player-preference-store.js";
  * </p>
  *
  * <p>
- * MEASURED ON THE EIGHT RULES THIS FLOOR CARRIES: seven name a surface change and one is permanent (`observed_only`: a
- * claim about what a free-prose sentence asserts cannot be refuted by any shape of the delivery). No rule moved to the
- * preset to reach a smaller number, because a rule moved to a wrong owner is the same rule with a worse home. A new rule
- * cannot be added without saying how it dies, which is what keeps this list from growing back: the two rules that left in
- * 4db7e4a3 left as SURFACE EXITS TAKEN - `BED_IS_INSIDE` the day the day's end refused the fields itself, and
+ * MEASURED ON THE SIX RULES THIS FLOOR CARRIES: every one of them names a surface change, and none is permanent. A new
+ * rule cannot be added without saying how it dies, which is what keeps this list from growing back: the two rules that
+ * left in 4db7e4a3 left as SURFACE EXITS TAKEN - `BED_IS_INSIDE` the day the day's end refused the fields itself, and
  * `never_a_customer` the day the preset said the register - and not as deletions nobody could see.
  * </p>
  *
@@ -80,8 +78,7 @@ import type { GamePromptAddition } from "./settings/player-preference-store.js";
  * `GAME_SURFACE_INTERACTION_CONDUCT` is empty and the gate BLOCKS (exit 2, "declares no rule") instead of passing green
  * on a population of zero - its message says to delete the floor and its tables rather than leave an empty one. Zero is a
  * resting state only for a module that still classifies rules a surface change has not yet removed; a floor with nothing
- * to classify is dead code. (One CLAUSE left on the same reading without leaving a rule: `observed_only` no longer
- * states the chore recital, because the card's own directive already does - `identity-profile.test.ts` holds that pair.)
+ * to classify is dead code.
  * </p>
  *
  * <h2>WHEN she speaks is the persona's, and this floor states nothing about it</h2>
@@ -91,7 +88,7 @@ import type { GamePromptAddition } from "./settings/player-preference-store.js";
  * persona owns her voice and every rule about when, whether or how much she speaks (`assets/tavern/presets/` - the card's
  * own directive, which every Game session mounts as `characterVoice`, and the preset the surface mounts); the floor owns
  * what the blocks and the receipts MEAN, what counts as an action, and what the SURFACE does; a tool description owns
- * only how to call the tool. The floor may state the bubble's size, the renderer's markdown and the machine vocabulary of a
+ * only how to call the tool. The floor may state the bubble's size and the machine vocabulary of a
  * receipt. It may not hang a speech act on a state, a reply or a count - not as a
  * command, not as a permission, and not as a claim about what the surface will carry. Nor may it state a register: the
  * customer-service wording left on 2026-11-23 (below), because tone is the persona's on this axis as much as a count is.
@@ -131,8 +128,29 @@ import type { GamePromptAddition } from "./settings/player-preference-store.js";
  * `never_a_customer` stated the assistant register, and the register is tone: the card's own directive already bans it in her
  * own words (绝无半分低姿态保姆腔或客套, asserted in `identity-profile.test.ts`), and the Game preset now states the one
  * thing the card's class does not spell out - the concrete customer-service phrasing - in `amber-game.json`'s Main, which is
- * the layer every Game live run mounts. The phrasing that remains in the conduct is the markdown the BUBBLE cannot draw,
- * which is a surface fact and stays.
+ * the layer every Game live run mounts.
+ * </p>
+ *
+ * <p>
+ * THE LAST TWO LEFT ON 2026-11-23, AND BOTH WENT TO THE PERSONA BECAUSE BOTH ARE CLAIMS ABOUT HER RATHER THAN ABOUT WHAT A
+ * BLOCK MEANS. `one_utterance_per_reply` banned markdown, lists and 首先/其次/最后: that is a reply's LAYOUT, which is the
+ * preset's on this surface as on every other, and the preset states it now - one clause in `amber-game.json`'s Main, in her
+ * own voice. `observed_only` said she may state only what the game reported and never invent a villager's reaction: that is
+ * who she is, and the preset already carried the principle one noun narrower ({{user}}'s reactions and words are his), so
+ * it was WIDENED in that same clause rather than restated beside itself.
+ * </p>
+ *
+ * <p>
+ * NEITHER IS RECORDED AS A `moved` ENTRY HERE, BECAUSE A MOVED RULE LEAVES NOTHING BEHIND: an entry marked moved is a
+ * second spelling of a claim its new owner states, which is the duplication this floor has been shrinking for a year. What
+ * holds the move instead is `game-surface-prompt-floor.test.ts`: it reads the claim out of the preset's Main and fails by
+ * name if any rule the floor still composes states it, so a rule that drifts back is red on the day it lands.
+ * </p>
+ *
+ * <p>
+ * THE FLOOR NOW STATES NO FORMAT RULE AT ALL, AND ONE SURFACE FACT IS ALL THAT IS LEFT ABOUT A REPLY'S SHAPE: one bubble
+ * holds a measured number of characters and the tail past it is deleted - the BOX, not the prose. How a reply is laid out,
+ * how many lines it carries and what shape it takes is the persona's, and it is stated once, above, in the preset.
  * </p>
  */
 
@@ -200,8 +218,8 @@ function gameBubbleMaxChars(): number {
  * box the player cannot scroll, shaped like a status document, in the voice of a host. No
  * imported card is obliged to say anything about the box, so the floor states it - as the
  * box's measured size, DERIVED from the delivery policy that splits the reply and never
- * restated, plus the markdown the renderer draws as prose. How many lines a reply carries,
- * and when a line belongs, are the persona's.
+ * restated. How many lines a reply carries, how it is laid out, and when a line belongs, are
+ * the persona's.
  *
  * THE SIZE ALONE UNDER-STATED WHAT THE SURFACE DOES WITH THE EXCESS, and "about N characters" was the
  * under-statement. Measured 2026-11-16 on `round62`'s session (90 turns that carried text, 70 bubbles): 18 turns
@@ -240,7 +258,7 @@ function gameBubbleMaxChars(): number {
  * contradicted. `LIVE_STATE_GROUNDING` went the same way and for the same reason: the clock, the date, the weather, the
  * map, the tile, the held tool, the unwatered crops and the stamina are the `<world-state>` paragraph every turn, and the
  * rest of the rule was three other owners' prose - the 01:30 mechanic is the shipped book's own entry, "never hallucinate"
- * is `observed_only` beside it, and "speak from tangible objects" is the card's. Both are held by
+ * is the persona's now, and "speak from tangible objects" is the card's. Both are held by
  * `game-surface-prompt-floor.test.ts` rather than by this comment: every fact the line renders for a house must reach her
  * in `<world-state>`, both polarities of the kitchen, and no sentence of this block may state either fact again.
  *
@@ -339,19 +357,6 @@ export const GAME_SURFACE_CONDUCT_RULES = {
     exit: "surface: the turn lane delivers the tail it now deletes - native-companion-content.ts deliverTurn commits one bubble per turn, and budgetedSpeechHead keeps the head - so nothing past the ceiling is lost and there is no ceiling to warn about. That delivery change is this rule's exit, not its deletion: until it lands the rule is her only warning.",
     text: `One bubble holds ${gameBubbleMaxChars()} characters and cannot be retracted once it is shown, and the sound that opens it is spent from that same count. Anything you say past the bubble's ceiling is deleted before your partner sees it: the tail does not arrive as a second bubble, and it does not arrive later either.`,
   },
-  one_utterance_per_reply: {
-    class: "CHANNEL",
-    reason: "the bubble is drawn as plain prose; markdown is the document form it has no room for.",
-    exit: "surface: the bubble draws markdown - the renderer draws a heading, a list or a quote as structure, or dehydrateCompanionSpeech projects them away as it already does asterisks and --- - so plain prose stops being the only shape the box can hold.",
-    text: "No markdown headings, lists, bold or block quotes, and no 首先, 其次, 最后 or 总结: the bubble draws plain prose, so structure in it reads as a document where a person was talking.",
-  },
-  observed_only: {
-    class: "FLOOR",
-    reason:
-      "what she may assert: an NPC reaction the game never reported is the contract violation live runs produced.",
-    exit: "permanent: what a free-prose sentence asserts is not something the surface can refuse - no shape of the delivery makes her claim about an NPC's feelings refutable, and the Mod reports a reaction only when the game staged one. tools/lib/companion-interaction-gate.mjs measures it after the fact on a live run, which cannot remove the need for the rule.",
-    text: "Only state what you actually observed in the game. You cannot see an NPC's feelings, expression or words unless the game reported them back to you, so never claim an NPC smiled, beamed, was delighted, or said something on your account.",
-  },
   machine_fields_translated: {
     class: "CHANNEL",
     reason:
@@ -373,8 +378,6 @@ export const GAME_SURFACE_INTERACTION_CONDUCT = [
   GAME_SURFACE_CONDUCT_RULES.fact_batch_blocks.text,
   SLEEPING_IS_AN_ACTION,
   GAME_SURFACE_CONDUCT_RULES.one_bubble_of_size.text,
-  GAME_SURFACE_CONDUCT_RULES.one_utterance_per_reply.text,
-  GAME_SURFACE_CONDUCT_RULES.observed_only.text,
   GAME_SURFACE_CONDUCT_RULES.machine_fields_translated.text,
   CONTENT_IDS_IN_WORDS,
   GAME_SURFACE_CONDUCT_RULES.body_language_is_native.text,

@@ -16,10 +16,9 @@ import {
 } from "./check-game-surface-conduct-classes.mjs";
 
 // red-proof: inject  a second, hand-written class table beside the floor's entries with two rows whose classes are not
-//            the ones their entries declare -> `conduct_class_restated:observed_only` and
-//            `conduct_class_restated:one_utterance_per_reply`, each detail naming both classes; the rules themselves keep
-//            the class their own entry gives them (see "a class restated in a table beside the rules is named with both
-//            classes" below).
+//            the ones their entries declare -> `conduct_class_restated:<id>` for each, with the detail naming both
+//            classes; the rules themselves keep the class their own entry gives them (see "a class restated in a table
+//            beside the rules is named with both classes" below, which derives its two ids from the floor).
 //
 // Also injected, each seen red once (this file): the deleted "Speak before you act" rule restored as an entry and
 // classified FORM (`floor_governs_form:speak_before_acting:host/src/game-surface-prompt-floor.ts`), a rule's text spelled
@@ -184,20 +183,52 @@ function withoutField(source, id, field) {
   return source.slice(0, start) + block.replace(match[0], "") + source.slice(end);
 }
 
-/** The first rule the floor module itself declares with this class, read from the tree's own table. */
-function floorRuleOfClass(klass) {
-  const rule = REAL_READING.rules.find((row) => row.module === FLOOR_MODULE && row.class === klass);
-  assert.ok(rule, `the floor declares no ${klass} rule, so this case has nothing to break`);
+/**
+ * The first rule the floor module itself declares.
+ *
+ * It used to be "the first rule of THIS class", and the four fixtures that read an entry's own shape - its class value,
+ * its reason, its exit - do not care which class the rule carries. `observed_only` was the floor's only FLOOR rule and it
+ * left for the persona layer on 2026-11-23, which turned "the floor declares no FLOOR rule" into a red fixture that was
+ * measuring the shipped tree rather than the gate.
+ */
+function floorRule() {
+  const rule = REAL_READING.rules.find((row) => row.module === FLOOR_MODULE);
+  assert.ok(rule, `${FLOOR_MODULE} contributes no rule to the floor, so this case has nothing to edit`);
   return rule;
 }
 
-/** Two composed rules that sit next to each other and are not of one class - the swap a positional table cannot survive. */
+/**
+ * Two composed rules that sit next to each other and are not of one class - the swap a positional table cannot survive.
+ *
+ * The pair is BUILT rather than found: every rule the floor still declares is CHANNEL, so a search over the real list has
+ * no pair to return, and a case that skipped itself on that would be a guard agreeing with itself. A fixture rule classed
+ * FLOOR is appended after the last real one, which makes the last two elements adjacent and different.
+ */
 function differentClassNeighbours() {
-  for (let index = 0; index + 1 < REAL_READING.rules.length; index += 1) {
-    const [left, right] = [REAL_READING.rules[index], REAL_READING.rules[index + 1]];
-    if (right.index === left.index + 1 && left.class !== right.class) return [left, right];
+  const floor = withComposedElement(
+    withEntry(
+      REAL_FLOOR,
+      entry({
+        id: "swap_fixture_rule",
+        class: "FLOOR",
+        reason: "the second class a swap needs.",
+        text: "A fixture rule whose only job is to sit beside a CHANNEL rule, so a swap has two classes to move.",
+      }),
+    ),
+    "GAME_SURFACE_CONDUCT_RULES.swap_fixture_rule.text,",
+  );
+  assert.notEqual(floor, REAL_FLOOR, "the fixture must really compose a second class");
+  const rules = conductRules(
+    new Map([
+      [FLOOR_MODULE, floor],
+      [STARDEW_MODULE, REAL_STARDEW],
+    ]),
+  ).rules;
+  for (let index = 0; index + 1 < rules.length; index += 1) {
+    const [left, right] = [rules[index], rules[index + 1]];
+    if (right.index === left.index + 1 && left.class !== right.class) return { floor, left, right };
   }
-  assert.fail("the floor composes no adjacent pair of different classes, so a swap could not move a class");
+  assert.fail("the fixture composes no adjacent pair of different classes, so a swap could not move a class");
 }
 
 test("every composed rule carries a class from the entry it names, and none of them governs form", () => {
@@ -258,14 +289,14 @@ test("reordering the composed list moves the prompt, not a class", async () => {
   // to its entry, so the class travels with it - the swap changes the reading order and nothing else.
   // The pair is read from the tables rather than pinned at 10 and 11, which was where these two rules sat in the
   // 19-rule list: the pair only has to be adjacent and of different classes for the swap to be able to move a class.
-  const [left, right] = differentClassNeighbours();
-  const list = composedList(REAL_FLOOR);
+  const { floor: withTwoClasses, left, right } = differentClassNeighbours();
+  const list = composedList(withTwoClasses);
   const [leftAt, rightAt] = [elementIndex(list, left.id), elementIndex(list, right.id)];
   assert.equal(rightAt, leftAt + 1, `${left.id} and ${right.id} are no longer neighbours in the composed list`);
   const elements = [...list.elements];
   [elements[leftAt], elements[rightAt]] = [elements[rightAt], elements[leftAt]];
   const floor = rebuild({ ...list, elements });
-  assert.notEqual(floor, REAL_FLOOR, "the fixture must really reorder the composed list");
+  assert.notEqual(floor, withTwoClasses, "the fixture must really reorder the composed list");
   const reading = await withFixtureRoot({ floor }, (root) => auditConductClasses({ root }));
   assert.deepEqual(codes(reading), [], "a reordering is an order change: it cannot move a class off its rule");
   const at = (index) => reading.rules.find((rule) => rule.index === index);
@@ -282,24 +313,33 @@ test("reordering the composed list moves the prompt, not a class", async () => {
 test("a class restated in a table beside the rules is named with both classes", async () => {
   // The regression shape this unit removed: a second, hand-written class table. Its classes are not the entries' own,
   // and before the refactor that disagreement was a silent result of array position rather than a finding.
-  const floor = withRestatedTable(REAL_FLOOR, [
-    '  { id: "observed_only", class: "CHANNEL", reason: "the observation rule, moved." },',
-    '  { id: "one_utterance_per_reply", class: "FLOOR", reason: "the delivery rule, moved." },',
-  ]);
+  // The two rows are DERIVED from the floor's own entries, each stating a class that is not the one its entry declares.
+  // They used to name `observed_only` and `one_utterance_per_reply` outright, and both left the floor on 2026-11-23: a
+  // fixture naming a rule that no longer exists proves nothing about the gate.
+  const targets = REAL_READING.rules.filter((rule) => rule.module === FLOOR_MODULE).slice(0, 2);
+  assert.equal(targets.length, 2, "the floor declares fewer than two rules, so this case has nothing to restate");
+  const stated = targets.map((target) => (target.class === "CHANNEL" ? "FLOOR" : "CHANNEL"));
+  const floor = withRestatedTable(
+    REAL_FLOOR,
+    targets.map(
+      (target, index) =>
+        `  { id: "${target.id}", class: "${stated[index]}", reason: "a second spelling of a class." },`,
+    ),
+  );
   assert.notEqual(floor, REAL_FLOOR, "the fixture must really write the table back as literals");
   const reading = await withFixtureRoot({ floor }, (root) => auditConductClasses({ root }));
-  assert.deepEqual(codes(reading), [
-    "conduct_class_restated:observed_only",
-    "conduct_class_restated:one_utterance_per_reply",
-  ]);
+  assert.deepEqual(
+    codes(reading),
+    targets.map((target) => `conduct_class_restated:${target.id}`),
+  );
   assert.match(
     reading.violations[0].detail,
-    /states the class "CHANNEL", and that rule's own entry declares "FLOOR"/u,
+    new RegExp(`states the class "${stated[0]}", and that rule's own entry declares "${targets[0].class}"`, "u"),
     "the finding names the class the table states and the one the rule's own entry declares",
   );
   assert.equal(
-    reading.rules.find((rule) => rule.id === "observed_only")?.class,
-    "FLOOR",
+    reading.rules.find((rule) => rule.id === targets[0].id)?.class,
+    targets[0].class,
     "the rule is still read as its own entry classifies it: the table cannot move it",
   );
   // Re-derived from the entries (this read `CHANNEL === 9`, the 19-rule floor's count): the table below moves one FLOOR
@@ -427,7 +467,7 @@ test("a name the floor composes but no module declares is unowned, not silently 
 test("a class outside the three kinds is a finding, not a fourth kind", async () => {
   // The entry is chosen from the reading and edited inside its own braces: the anchor this case used to carry was the
   // reason sentence of `partner_words_first`, and that rule left the floor in af080cb6.
-  const target = floorRuleOfClass("FLOOR");
+  const target = floorRule();
   const floor = withEntryField(REAL_FLOOR, target.id, "class", "STYLE");
   assert.notEqual(floor, REAL_FLOOR, "the fixture must really change an entry's class");
   const reading = await withFixtureRoot({ floor }, (root) => auditConductClasses({ root }));
@@ -436,7 +476,7 @@ test("a class outside the three kinds is a finding, not a fourth kind", async ()
 });
 
 test("a class with no reason is a label nobody argued for", async () => {
-  const target = floorRuleOfClass("FLOOR");
+  const target = floorRule();
   const floor = withEntryField(REAL_FLOOR, target.id, "reason", "");
   assert.notEqual(floor, REAL_FLOOR, "the fixture must really blank an entry's reason");
   const reading = await withFixtureRoot({ floor }, (root) => auditConductClasses({ root }));
@@ -446,7 +486,7 @@ test("a class with no reason is a label nobody argued for", async () => {
 test("a rule that names no exit is named with the rule, and the census counts it as unowned", async () => {
   // The property this unit added: a floor rule is a debt with a named owner, so an entry without an exit is the finding -
   // the shape an entry with no exit has is a rule nobody has said when they will delete.
-  const target = floorRuleOfClass("CHANNEL");
+  const target = floorRule();
   const floor = withoutField(REAL_FLOOR, target.id, "exit");
   assert.notEqual(floor, REAL_FLOOR, "the fixture must really remove an entry's exit");
   const reading = await withFixtureRoot({ floor }, (root) => auditConductClasses({ root }));
@@ -479,7 +519,7 @@ test("a Stardew row with no exit is named too: the table that owns the rule carr
 });
 
 test("an exit outside the three kinds is named with what the entry spelled", async () => {
-  const target = floorRuleOfClass("FLOOR");
+  const target = floorRule();
   const floor = withEntryField(REAL_FLOOR, target.id, "exit", "later: someone will delete this");
   assert.notEqual(floor, REAL_FLOOR, "the fixture must really change an entry's exit");
   const reading = await withFixtureRoot({ floor }, (root) => auditConductClasses({ root }));
@@ -491,7 +531,7 @@ test("an exit outside the three kinds is named with what the entry spelled", asy
 });
 
 test("an exit that names a kind and says nothing after it is a label, not an exit", async () => {
-  const target = floorRuleOfClass("FLOOR");
+  const target = floorRule();
   const floor = withEntryField(REAL_FLOOR, target.id, "exit", "permanent: ");
   const reading = await withFixtureRoot({ floor }, (root) => auditConductClasses({ root }));
   assert.deepEqual(codes(reading), [`floor_rule_has_no_exit:${target.id}`]);

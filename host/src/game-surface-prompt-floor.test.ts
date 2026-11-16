@@ -1,12 +1,16 @@
 import assert from "node:assert/strict";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { EXPRESSION_ONLY_ACTION_IDS, STARDEW_ACTION_TOOL_NAMES } from "./action-registry.js";
 import { PLAN_ACTION_LIFECYCLES, planActionsFromRegistrations, planWorkDescription } from "./body-program-script.js";
 import { composeFactBrief, FACT_BRIEF_BLOCKS } from "./fact-brief.js";
-import { buildGameCompanionSystemPrompt, GAME_SURFACE_INTERACTION_CONDUCT } from "./game-surface-prompt-floor.js";
+import {
+  buildGameCompanionSystemPrompt,
+  GAME_SURFACE_CONDUCT_RULES,
+  GAME_SURFACE_INTERACTION_CONDUCT,
+} from "./game-surface-prompt-floor.js";
 import { composeGameEnvironmentFacts } from "./game-world-vocabulary.js";
 import {
   ADVERTISED,
@@ -1022,4 +1026,142 @@ test("the deletion guard turns red in both directions: a fact the delivery lost,
       `${rule.id}'s detector does not fire on the rule that was deleted, so its silence on the prompt means nothing`,
     );
   assert.match("Never cook in a room without a stove.", DELETED_RULES[1]!.restated, "the class, not the instance");
+});
+
+/**
+ * TWO CLAIMS LEFT THIS FLOOR ON 2026-11-23, AND THE PROPERTY IS WHERE THEY LIVE RATHER THAN THAT THEY EXIST.
+ *
+ * <p>
+ * `one_utterance_per_reply` banned markdown, lists and 首先/其次/最后; `observed_only` said she may state only what the game
+ * reported and never invent a villager's reaction. The ruling splits them the same way: the first is a reply's LAYOUT and
+ * the second is who she is, and neither is a fact about what a block means - so both are the persona's
+ * (`assets/tavern/presets/amber-game.json`, the `main` entry every Game session mounts), and the floor states neither. The
+ * second the preset already carried one noun narrower ({{user}}'s reactions are his), so it was widened in that same
+ * clause instead of being added beside its own narrower copy.
+ * </p>
+ *
+ * <p>
+ * WHY THIS IS A GATE AND NOT A DELETION: a rule removed from a table is invisible, and the next lane that measures a
+ * markdown-shaped failure will reach for the floor again. So each claim is READ - one reader per claim, run over two
+ * populations: every rule the floor composes (derived from `GAME_SURFACE_INTERACTION_CONDUCT`, one rule per line) and the
+ * persona layer's own `main` text (read from the shipped file, never re-typed here). The assertion is "exactly the
+ * persona layer states it", which goes red when the floor takes it back, when the preset loses it, and when both state it.
+ * </p>
+ */
+const PERSONA_PRESET = "amber-game.json";
+
+/** One entry of a shipped preset, read from the file a session mounts rather than re-typed here. */
+function presetEntry(file: string, identifier: string): string {
+  const document = JSON.parse(readFileSync(join(ROOT, "assets", "tavern", "presets", file), "utf8")) as {
+    prompts?: readonly { identifier?: string; content?: string }[];
+  };
+  for (const prompt of document.prompts ?? []) if (prompt.identifier === identifier) return prompt.content ?? "";
+  throw new Error(`${file} has no ${identifier} entry`);
+}
+
+/** One claim that changed owner: what it is about, how it is read, and the rule that used to state it. */
+type PersonaClaim = Readonly<{
+  id: string;
+  claim: string;
+  /** The claim's own vocabulary, in both languages it has been stated in. A shape, not a sentence. */
+  reads: RegExp;
+  /** The rule this floor carried until 2026-11-23, VERBATIM: proof that `reads` fires on what produced it. */
+  was: string;
+}>;
+
+const PERSONA_CLAIMS: readonly PersonaClaim[] = Object.freeze([
+  Object.freeze({
+    id: "one_utterance_per_reply",
+    claim: "how a reply is laid out",
+    reads: /markdown|headings?\b|bullet|block quote|\bbold\b|首先|其次|最后|排版/u,
+    was:
+      "No markdown headings, lists, bold or block quotes, and no 首先, 其次, 最后 or 总结: the bubble draws plain prose, so " +
+      "structure in it reads as a document where a person was talking.",
+  }),
+  Object.freeze({
+    id: "observed_only",
+    claim: "what she may assert about a villager's reaction",
+    reads:
+      /hallucinat|never claim|\binvent|\bmake up\b|\bNPC'?s\b|\bsmiled\b|\bbeamed\b|\bdelighted\b|谁笑了|别替人家编|没真的看到/u,
+    was:
+      "Only state what you actually observed in the game. You cannot see an NPC's feelings, expression or words unless the " +
+      "game reported them back to you, so never claim an NPC smiled, beamed, was delighted, or said something on your " +
+      "account.",
+  }),
+]);
+
+/** Every rule the floor composes, as the model reads it: one rule per line, derived and never listed. */
+const FLOOR_RULES: readonly string[] = Object.freeze(GAME_SURFACE_INTERACTION_CONDUCT.split("\n"));
+
+test("the claims the floor stopped making are stated by the persona layer, and by no rule the floor still composes", () => {
+  const persona = presetEntry(PERSONA_PRESET, "main");
+  const findings: string[] = [];
+  for (const claim of PERSONA_CLAIMS) {
+    for (const rule of FLOOR_RULES)
+      if (claim.reads.test(rule))
+        findings.push(
+          `floor_states_the_claim:${claim.id}: the rule "${rule.slice(0, 60)}" states ${claim.claim}, which is the ` +
+            `persona's now - delete it here rather than teaching this gate to tolerate it`,
+        );
+    if (!claim.reads.test(persona))
+      findings.push(
+        `persona_layer_has_lost_the_claim:${claim.id}: ${claim.claim} is stated by no layer, so the move was a loss`,
+      );
+  }
+  process.stdout.write(
+    `\npersona claims: ${String(PERSONA_CLAIMS.length)} · floor rules read ${String(FLOOR_RULES.length)} · ` +
+      `findings ${String(findings.length)}\n`,
+  );
+  assert.deepEqual(findings, []);
+
+  // A MOVED RULE LEAVES NOTHING BEHIND: no entry, no composed element, no `moved` marker whose text restates the claim.
+  for (const claim of PERSONA_CLAIMS)
+    assert.ok(
+      !Object.keys(GAME_SURFACE_CONDUCT_RULES).includes(claim.id),
+      `${claim.id} left the floor and must not survive as an entry: a claim its owner states is stated once, not kept ` +
+        "here marked `moved`",
+    );
+  // And the clause that absorbed the second one is stated ONCE: the preset's ownership sentence was widened to the
+  // village, never duplicated beside the player-only half it replaced.
+  assert.equal(
+    [...persona.matchAll(/只说你自己的/gu)].length,
+    1,
+    "the ownership clause is stated once - widened to the whole village - and not a second time beside itself",
+  );
+  // WHAT THE FLOOR STILL SAYS ABOUT A REPLY'S SHAPE, named rather than implied: the box it is spoken into and the
+  // deletion past that box, which are facts about the surface. No rule about how the prose is laid out is left.
+  assert.match(GAME_PROMPT, /One bubble holds \d+ characters/u);
+  assert.doesNotMatch(GAME_PROMPT, /No markdown headings/u);
+  assert.doesNotMatch(GAME_PROMPT, /Only state what you actually observed/u);
+});
+
+/**
+ * The falsifier: the same readers, turned red on purpose. Each fires on the rule that WAS in the floor and on a rewording
+ * nobody has written, and says nothing about the preset's own `jailbreak` entry - a negative control INSIDE the same
+ * document, so neither reader is answering "yes" to everything it is shown.
+ */
+test("the persona readers turn red on the rules the floor lost, and stay silent on a cell that states neither", () => {
+  for (const claim of PERSONA_CLAIMS)
+    assert.match(
+      claim.was,
+      claim.reads,
+      `${claim.id}'s reader does not fire on the rule this floor carried, so its silence on the floor proves nothing`,
+    );
+  assert.match(
+    "When you answer, use no bullet points and no headings.",
+    PERSONA_CLAIMS[0]!.reads,
+    "the class, not the instance: a rewording nobody wrote is still a layout claim",
+  );
+  assert.match(
+    "She says what the game showed her; she never invents how a villager felt.",
+    PERSONA_CLAIMS[1]!.reads,
+    "the class, not the instance: a rewording nobody wrote is still a claim about someone else's reaction",
+  );
+  const jailbreak = presetEntry(PERSONA_PRESET, "jailbreak");
+  for (const claim of PERSONA_CLAIMS)
+    assert.doesNotMatch(
+      jailbreak,
+      claim.reads,
+      `${claim.id}'s reader fires on a preset cell that does not state it, so it cannot tell the layers apart`,
+    );
 });
