@@ -35,6 +35,7 @@ import {
   jsonOk,
   openGameDrawer,
   root,
+  stubGameRead,
   token,
 } from "./composed-reference-game-fixtures";
 
@@ -51,7 +52,6 @@ async function controlInventory(within: Locator) {
 
 test("an unconfirmed cabin confirmation offers a step of its own that sends no second confirmation", async ({ page }) => {
   let cabinConfirmRequests = 0;
-  let stateReads = 0;
   await page.route("**/api/composed-reference-game/v1/bootstrap", (route) =>
     route.fulfill(jsonOk(root)),
   );
@@ -71,10 +71,10 @@ test("an unconfirmed cabin confirmation offers a step of its own that sends no s
       body: JSON.stringify({ code: "stardew_manifest_handoff_uncertain" }),
     });
   });
-  await page.route("**/api/composed-reference-game/v1/state", (route) => {
-    stateReads += 1;
-    return route.fulfill(jsonOk(root));
-  });
+  await page.route("**/api/composed-reference-game/v1/state", (route) => route.fulfill(jsonOk(root)));
+  // "Check the game again" is the panel's own read of the Game slice: the mount's arrival read is the
+  // `/state` above, and none of the reads counted here belong to it.
+  const gameRead = await stubGameRead(page, root.game);
   await page.route("**/api/tavern/v1/draft", (route) => route.fulfill(jsonOk(draft)));
 
   await page.goto(`/#profile=composed-reference-game&boot=${token}`);
@@ -100,9 +100,9 @@ test("an unconfirmed cabin confirmation offers a step of its own that sends no s
   await expect(handoff).toContainText(/never sent a second time/iu);
   await expect(handoff).toContainText(/keeps waiting for recovery/iu);
 
-  const readsBefore = stateReads;
+  const readsBefore = gameRead.reads();
   await check.click();
-  await expect.poll(() => stateReads).toBeGreaterThan(readsBefore);
+  await expect.poll(() => gameRead.reads()).toBeGreaterThan(readsBefore);
   expect(cabinConfirmRequests, "the step that leaves an unconfirmed confirmation must not confirm again").toBe(1);
   await expect(handoff.getByRole("button", { name: "Confirm cabin" })).toHaveCount(0);
   // The answer had not changed, and the panel still says so rather than showing a screen that

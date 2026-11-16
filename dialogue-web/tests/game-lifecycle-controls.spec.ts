@@ -18,12 +18,12 @@ import {
   openGameDrawer,
   jsonOk,
   stagedGame,
+  stubGameRead,
 } from "./composed-reference-game-fixtures";
 
 test("a first run activates the lifecycle with a fieldless POST before launch is ever offered", async ({ page }) => {
   let activationRequests = 0;
   let activationBody: string | null | undefined;
-  let stateReads = 0;
   await page.route("**/api/composed-reference-game/v1/bootstrap", (route) =>
     route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(installedRoot) }),
   );
@@ -38,15 +38,15 @@ test("a first run activates the lifecycle with a fieldless POST before launch is
     activationBody = route.request().postData();
     await route.fulfill({ status: 204, body: "" });
   });
-  await page.route("**/api/composed-reference-game/v1/state", (route) => {
-    stateReads += 1;
-    const projection = activationRequests === 0 ? installedRoot.game : stagedGame;
-    return route.fulfill({
+  // The mount's arrival read. The activation's own confirmation read is the Game slice's, below.
+  await page.route("**/api/composed-reference-game/v1/state", (route) =>
+    route.fulfill({
       status: 200,
       contentType: "application/json",
-      body: JSON.stringify({ ...installedRoot, game: projection }),
-    });
-  });
+      body: JSON.stringify(installedRoot),
+    }),
+  );
+  const gameRead = await stubGameRead(page, () => (activationRequests === 0 ? installedRoot.game : stagedGame));
   await page.route("**/api/tavern/v1/draft", (route) =>
     route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(draft) }),
   );
@@ -63,7 +63,9 @@ test("a first run activates the lifecycle with a fieldless POST before launch is
   await expect.poll(() => activationRequests).toBe(1);
   // The route refuses any body with 409; the admission alone names the session.
   expect(activationBody).toBeNull();
-  await expect.poll(() => stateReads).toBe(2);
+  // 204 is the activation; the panel's own read of the Game slice is what puts launch on offer, and one
+  // read is the whole of it - the staged generation is the only wire signal activation happened.
+  await expect.poll(() => gameRead.reads()).toBe(1);
   // 204 is the activation; the authoritative reread is what puts launch on offer.
   await expect(panel.getByRole("button", { name: "Start the game" })).toBeVisible();
   await expect(activate).toHaveCount(0);
@@ -89,6 +91,9 @@ test("a launch refused as not staged names activation as the reason instead of a
   await page.route("**/api/composed-reference-game/v1/state", (route) =>
     route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ ...root, game: stagedGame }) }),
   );
+  // The refusal's own reread of the Game slice still finds nothing staged, which is what makes the code
+  // the not-staged reason rather than a generic failure.
+  await stubGameRead(page, stagedGame);
   await page.route("**/api/tavern/v1/draft", (route) =>
     route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(draft) }),
   );
@@ -138,6 +143,9 @@ test("an activation refused for a missing installation reads as the prerequisite
   await page.route("**/api/composed-reference-game/v1/state", (route) =>
     route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(installedRoot) }),
   );
+  // The refusal's reread of the Game slice still describes a registered installation, which is why the
+  // sentence names the missing prerequisite instead of a fault.
+  await stubGameRead(page, installedRoot.game);
   await page.route("**/api/tavern/v1/draft", (route) =>
     route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(draft) }),
   );
@@ -208,6 +216,9 @@ test("an activation refusal stays a drawer fact with its own reason, and an unmo
   await page.route("**/api/composed-reference-game/v1/state", (route) =>
     route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(installedRoot) }),
   );
+  // The refusal's reread of the Game slice, which reads a projection that has not moved: the drawer's
+  // fact is the command's answer, not a second state.
+  await stubGameRead(page, installedRoot.game);
   await page.route("**/api/tavern/v1/draft", (route) =>
     route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(draft) }),
   );
@@ -258,7 +269,6 @@ test("Game endgame requires an explicit confirm before the POST and reaches the 
     },
   };
   let endgameRequests = 0;
-  let stateRequests = 0;
   await page.route("**/api/composed-reference-game/v1/bootstrap", (route) =>
     route.fulfill(jsonOk({ ...root, game: attachedGame })),
   );
@@ -280,11 +290,10 @@ test("Game endgame requires an explicit confirm before the POST and reaches the 
     await new Promise((resolve) => setTimeout(resolve, 50));
     await route.fulfill(jsonOk({ apiVersion: 1, status: "gameended" }));
   });
-  await page.route("**/api/composed-reference-game/v1/state", (route) => {
-    stateRequests += 1;
-    const projection = endgameRequests === 0 ? attachedGame : endedGame;
-    return route.fulfill(jsonOk({ ...root, game: projection }));
-  });
+  await page.route("**/api/composed-reference-game/v1/state", (route) =>
+    route.fulfill(jsonOk({ ...root, game: attachedGame })),
+  );
+  const gameRead = await stubGameRead(page, () => (endgameRequests === 0 ? attachedGame : endedGame));
   await page.route("**/api/tavern/v1/draft", (route) =>
     route.fulfill(jsonOk(draft)),
   );
@@ -304,7 +313,9 @@ test("Game endgame requires an explicit confirm before the POST and reaches the 
   // The confirm is the one and only sender, and it is single-flight.
   await confirm.getByTestId("game-endgame-confirm-yes").dblclick();
   await expect.poll(() => endgameRequests).toBe(1);
-  await expect.poll(() => stateRequests).toBe(2);
+  // The terminal command's own confirmation read of the Game slice, and the projection it states: the
+  // ended session, drawn from the authority rather than from the transport's word.
+  await expect.poll(() => gameRead.reads()).toBe(1);
   await expect(endgame).toHaveCount(0);
   await expect(panel).toContainText("ConnectionStopped");
   await expect(panel).not.toContainText("The game could not be ended");

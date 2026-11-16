@@ -7,7 +7,7 @@
  * is what the player is looking at.
  */
 import { expect, test } from "./frontend-coverage";
-import { token, csrfToken, draft, game, root, openGameDrawer } from "./composed-reference-game-fixtures";
+import { token, csrfToken, draft, game, root, openGameDrawer, stubGameRead } from "./composed-reference-game-fixtures";
 
 test("Start new game form submits the exact create command and converges on the authoritative ready-actions-paused projection", async ({ page }) => {
   const failedGame = {
@@ -31,7 +31,6 @@ test("Start new game form submits the exact create command and converges on the 
   };
   const sessionId = "S".repeat(32);
   const createKeys: string[] = [];
-  let stateRequests = 0;
   let tavernMutationRequests = 0;
   await page.route("**/api/composed-reference-game/v1/bootstrap", (route) =>
     route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ ...root, game: failedGame }) }),
@@ -56,13 +55,14 @@ test("Start new game form submits the exact create command and converges on the 
     await new Promise((resolve) => setTimeout(resolve, 50));
     await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ apiVersion: 1, status: "attached", gameSessionId: sessionId }) });
   });
-  await page.route("**/api/composed-reference-game/v1/state", (route) => {
-    stateRequests += 1;
-    // Before the create is admitted the authoritative rereads keep returning
-    // the failed surface; once the session is resumable the projection shows
-    // the new ready-actions-paused attachment generation.
-    return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ ...root, game: createKeys.length === 0 ? failedGame : createdGame }) });
-  });
+  // The mount's arrival read, and the only `/state` read this journey takes. Before the create is
+  // admitted the panel's own reads of the Game slice keep returning the failed surface.
+  await page.route("**/api/composed-reference-game/v1/state", (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ ...root, game: failedGame }) }),
+  );
+  // The bounded authoritative rereads of the Game slice converge on the new ready-actions-paused
+  // attachment generation once the create is admitted.
+  const gameRead = await stubGameRead(page, () => (createKeys.length === 0 ? failedGame : createdGame));
   await page.route("**/api/tavern/v1/bootstrap", async (route) => {
     tavernMutationRequests += 1;
     await route.fulfill({ status: 500, contentType: "application/json", body: JSON.stringify({ code: "must_not_be_called" }) });
@@ -96,7 +96,7 @@ test("Start new game form submits the exact create command and converges on the 
   // The bounded authoritative rereads converge on the new ready-actions-paused
   // attachment: the paused projection is the sole runtime success, no
   // accepted/attached transport text and no session handle is projected.
-  await expect.poll(() => stateRequests).toBeGreaterThanOrEqual(2);
+  await expect.poll(() => gameRead.reads()).toBeGreaterThanOrEqual(2);
   await expect(panel.getByText("Start a new game session")).toHaveCount(0);
   await expect(panel.getByText("Game actions are paused.")).toBeVisible();
   await expect(panel.getByRole("button", { name: "Resume actions", exact: true })).toBeVisible();
@@ -125,7 +125,6 @@ test("Start new game fails closed on Create, never projects a session, and keeps
   const sessionId = "S".repeat(32);
   const keys: string[] = [];
   let createRequests = 0;
-  let stateRequests = 0;
   await page.route("**/api/composed-reference-game/v1/bootstrap", (route) =>
     route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ ...root, game: failedGame }) }),
   );
@@ -147,10 +146,12 @@ test("Start new game fails closed on Create, never projects a session, and keeps
     }
     await route.fulfill({ status: 409, contentType: "application/json", body: JSON.stringify({ code: "game_unavailable" }) });
   });
-  await page.route("**/api/composed-reference-game/v1/state", (route) => {
-    stateRequests += 1;
-    return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ ...root, game: failedGame }) });
-  });
+  await page.route("**/api/composed-reference-game/v1/state", (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ ...root, game: failedGame }) }),
+  );
+  // Both attempts' own confirmation reads of the Game slice: the first finds nothing created, and the
+  // second is the one the refused retry takes.
+  await stubGameRead(page, failedGame);
   await page.route("**/api/tavern/v1/draft", (route) =>
     route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(draft) }),
   );
