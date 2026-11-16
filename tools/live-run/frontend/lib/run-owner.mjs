@@ -27,32 +27,67 @@ export function registerRunProcess(paths, { pid, role, startTime = null }) {
   );
 }
 
-/** Every pid this run recorded, deduplicated, `[]` when nothing was recorded or the file is unreadable. */
-export function registeredRunProcesses(paths) {
+/** The ledger's lines, torn ones dropped: a write that did not finish is not a process, and the pids above it are intact. */
+function readLedgerLines(paths) {
   let text;
   try {
     text = readFileSync(paths.runProcessesFile, "utf8");
   } catch {
     return [];
   }
-  const records = new Map();
+  const lines = [];
   for (const line of text.split("\n")) {
     if (line.trim().length === 0) continue;
     try {
-      const record = JSON.parse(line);
-      if (Number.isSafeInteger(record.pid) && !records.has(record.pid)) {
-        records.set(record.pid, {
-          role: String(record.role ?? "unrecorded"),
-          // The OS's own creation time, when the recorder could see the process: pid AND start time is the
-          // identity, since a pid the machine recycles is a different process wearing the same number.
-          startTime: typeof record.startTime === "string" ? record.startTime : null,
-        });
-      }
+      lines.push(JSON.parse(line));
     } catch {
       // A torn last line is a write that did not finish, not a process: the pids above it are intact.
     }
   }
-  return [...records].map(([pid, record]) => ({ pid, role: record.role, startTime: record.startTime }));
+  return lines;
+}
+
+/** Every pid this run recorded, deduplicated, `[]` when nothing was recorded or the file is unreadable. */
+export function registeredRunProcesses(paths) {
+  const lines = readLedgerLines(paths);
+  // A retirement is a later line about an earlier pid, so the file is read as a whole rather than in order: the
+  // record and the fact that it was settled are two statements about one process, and only the pair is the truth.
+  const retired = new Set(lines.filter((line) => line?.retired === true).map((line) => line.pid));
+  const records = new Map();
+  for (const record of lines) {
+    if (Number.isSafeInteger(record.pid) && !records.has(record.pid)) {
+      records.set(record.pid, {
+        role: String(record.role ?? "unrecorded"),
+        // The OS's own creation time, when the recorder could see the process: pid AND start time is the
+        // identity, since a pid the machine recycles is a different process wearing the same number.
+        startTime: typeof record.startTime === "string" ? record.startTime : null,
+      });
+    }
+  }
+  return [...records]
+    .filter(([pid]) => !retired.has(pid))
+    .map(([pid, record]) => ({ pid, role: record.role, startTime: record.startTime }));
+}
+
+/**
+ * Retire pids from the ledger, append-only: the record of what an invocation started stays, and the fact that those
+ * processes are settled is written beside it.
+ *
+ * The reaper is the one caller (`lib/run-reaper.mjs`): what a HARD-KILLED invocation left belongs to that invocation
+ * and is now gone, so a later phase must stop naming it. Without this, the next phase's `teardownRun` would kill
+ * dead pids, `collectProcessLedger` would count them as entries the table could not date, and the game reading would
+ * attribute the previous invocation's kill to this run (`game_terminated_by_run` for a game this run never launched).
+ */
+export function retireRunProcesses(paths, entries) {
+  const unique = new Map(entries.map((entry) => [entry.pid, entry]));
+  if (unique.size === 0) return;
+  mkdirSync(paths.stateDir, { recursive: true });
+  for (const entry of unique.values())
+    appendFileSync(
+      paths.runProcessesFile,
+      `${JSON.stringify({ pid: entry.pid, role: String(entry.role ?? "unrecorded"), retired: true, at: new Date().toISOString() })}\n`,
+      "utf8",
+    );
 }
 
 const isBrowser = (commandLine) => String(commandLine).includes("--user-data-dir=");

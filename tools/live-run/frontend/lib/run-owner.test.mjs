@@ -21,6 +21,7 @@ import {
   inspectRunLeftovers,
   registeredRunProcesses,
   registerRunProcess,
+  retireRunProcesses,
   teardownRun,
   writeLeftoversReading,
 } from "./run-owner.mjs";
@@ -243,5 +244,53 @@ test("a phase that fails takes the run's processes with it", { timeout: 180_000 
     // Its working directory is the root this test deletes, so the delete waits for the process itself.
     await waitForGone(child.pid);
     await removeTree(root);
+  }
+});
+
+// What the reaper takes back belongs to the invocation that was hard-killed, not to the one that took it back:
+// the ledger keeps the record and gains the fact that it is settled, so the next phase neither kills a dead pid
+// nor reports the previous invocation's game as a game IT terminated.
+test("a retired pid leaves the reading and stays in the record", () => {
+  const root = mkdtempSync(join(tmpdir(), "gb-run-owner-retire-"));
+  try {
+    const paths = runPaths({ outRoot: join(root, "run"), stageRoot: join(root, "run.stage") });
+    mkdirSync(paths.stateDir, { recursive: true });
+    registerRunProcess(paths, { pid: 41048, role: "game-smapi", startTime: "2026-11-16T16:15:23.6784170+08:00" });
+    registerRunProcess(paths, { pid: 35200, role: "capture:w-game-launch" });
+    assert.deepEqual(
+      registeredRunProcesses(paths).map((record) => record.pid),
+      [41048, 35200],
+      "both are the run's until something settles them",
+    );
+    retireRunProcesses(paths, [
+      { pid: 41048, role: "game-smapi" },
+      { pid: 41048, role: "game-smapi" },
+    ]);
+    assert.deepEqual(
+      registeredRunProcesses(paths).map((record) => record.pid),
+      [35200],
+      "a retired pid is no longer this run's - and one retirement per pid, however many times it is named",
+    );
+    const lines = readFileSync(paths.runProcessesFile, "utf8")
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line));
+    assert.deepEqual(
+      lines.map((line) => [line.pid, line.role, line.retired === true]),
+      [
+        [41048, "game-smapi", false],
+        [35200, "capture:w-game-launch", false],
+        [41048, "game-smapi", true],
+      ],
+      "append-only: what the invocation started is still on the record, and the retirement is written beside it",
+    );
+    retireRunProcesses(paths, []);
+    assert.equal(
+      readFileSync(paths.runProcessesFile, "utf8").trim().split("\n").length,
+      3,
+      "nothing to retire writes nothing",
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
   }
 });
