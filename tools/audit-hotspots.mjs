@@ -9,8 +9,8 @@
  *
  * THE TWO NUMBERS, each with its owner:
  *
- *   frequency  REVISIONS in the window that touched the path, from `git log --name-only --since=<window>`. One
- *              revision per commit that named the path, so a file edited inside one commit counts once.
+ *   frequency  REVISIONS in the window that touched the path, from `git log --name-only --since=<HEAD date minus the
+ *              window>`. One revision per commit that named the path, so a file edited inside one commit counts once.
  *   size       PHYSICAL LINES at HEAD, from `measure()` in `tools/scripts/check-file-complexity-gate.mjs` - the
  *              same population (`git ls-files --cached --others --exclude-standard`) and the same line count that
  *              the size ratchet already judges, kept here as an import rather than a second measurement.
@@ -61,10 +61,11 @@
  *             that says how weak it is, is better than a column that pretends.
  *
  * POPULATION, AND THE ZERO. Files are the size ratchet's population: every path `git ls-files` names whose extension
- * carries a line ceiling there (`.ts .mjs .cs .tsx .ps1 .cjs .py .mts`), which is 2,8xx files today; the extensions
- * that carry no ceiling are printed by that gate and are outside this report for the same reason. A run that
- * measured no file exits 2 (`hotspots_blocked:population_empty`), and a run whose window holds no revision at all
- * exits 2 (`hotspots_blocked:window_empty`) - "nothing was busy" and "nothing was measured" are different facts.
+ * carries a line ceiling there (`.ts .mjs .cs .tsx .ps1 .cjs .py .mts`), which is 3,243 files measured 2026-11-17; the
+ * extensions that carry no ceiling are printed by that gate and are outside this report for the same reason. A run that
+ * measured no file exits 2 (`hotspots_blocked:population_empty`), and a run that could not date its own HEAD, or whose
+ * window then held no revision at all, exits 2 (`window_unreadable` / `window_empty`) - "nothing was busy" and "nothing
+ * was measured" are different facts.
  *
  * USAGE:
  *   node tools/audit-hotspots.mjs                        # top 30 by revisions × lines, plus the population line
