@@ -45,6 +45,12 @@ const ENTERED_MINE = receipt("enter_mine", {
   reasonCode: "mine_entered",
   evidence: { detail: "level=11;tile=6,6;from_level=10" },
 });
+// The mine's OWN exit ladder: `use_mine_ladder`'s `mine_left` terminal, in the two-key and five-key shapes the Host's
+// rule admits (here the five: the question the level asked, the answer given, the ladder tile and where she came out).
+const LEFT_BY_LADDER = receipt("use_mine_ladder", {
+  reasonCode: "mine_left",
+  evidence: { detail: "from=mine_shaft_11;question=ExitMine;response=Leave;ladder=6,7;actual=Farm:64,15" },
+});
 // The tile-bearing terminals, in the producer's own shapes (`stardew-game-integration-adapter.test.ts`). A patch day's
 // evidence IS a coordinate: these three actions each name the tile they changed as part of their postcondition.
 const TILLED = (x, y, location = "Farm") =>
@@ -280,6 +286,36 @@ test("mine_delve: the surface rock that started this gate does not accomplish th
   const delved = judgeTaskPurpose("mine_delve", [ENTERED_MINE, BROKE_ROCK]);
   assert.equal(delved.state, "achieved", "entering a mine and then breaking something is the purpose");
   assert.match(delved.purpose ?? "", /mine level was entered/);
+});
+
+test("mine_ladder_to_depth: the level's own exit ladder is a proven fact, so the named gap is gone", () => {
+  // THE EXPIRED GAP, and the reason this suite has a date on it. The entry read: `use_mine_ladder` "is
+  // `FarmhandActionLifecycle.Experimental` (`FarmhandActionDefinitions.cs:270`): the action is not published, so no run
+  // can dispatch it and no receipt can prove a ladder was taken". The action was promoted to `LiveVerified` - live gate
+  // runner, gate row, fixture, promotion parity - and the cited line came to hold a different declaration, so the entry
+  // went on answering "this purpose cannot be decided" while both halves were published facts.
+  assert.equal(
+    TASK_PURPOSE_CRITERIA.mine_ladder_to_depth.missingFact,
+    undefined,
+    "the exit half is dispatchable and carries its own postcondition, so this purpose has a criterion, not a gap",
+  );
+
+  // Below that, the criterion behaves as the purpose is written: the ladder alone is NOT a level worked, and the order
+  // the world saw the two facts in is part of the statement.
+  const ladderOnly = judgeTaskPurpose("mine_ladder_to_depth", [LEFT_BY_LADDER]);
+  assert.equal(ladderOnly.state, "not_achieved", "a ladder taken with no mine entered is not a level worked");
+  assert.deepEqual(
+    ladderOnly.admittedActionIds,
+    ["use_mine_ladder"],
+    "its postcondition IS admitted - it is not the purpose",
+  );
+
+  const wrongOrder = judgeTaskPurpose("mine_ladder_to_depth", [LEFT_BY_LADDER, ENTERED_MINE]);
+  assert.equal(wrongOrder.state, "not_achieved", "leaving before entering is not the order the world saw");
+
+  const left = judgeTaskPurpose("mine_ladder_to_depth", [ENTERED_MINE, LEFT_BY_LADDER]);
+  assert.equal(left.state, "achieved", "entering a level and then leaving by its own ladder is the purpose");
+  assert.match(left.purpose ?? "", /worked deeper/);
 });
 
 test("a task with a named gap answers unproven for every receipt set, however complete", () => {

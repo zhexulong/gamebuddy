@@ -43,12 +43,44 @@ const criterion = (purpose, steps, { ordered = true } = {}) =>
   Object.freeze({ purpose, steps: Object.freeze(steps), ordered });
 
 /**
+ * What a task's reason rests on, one fact at a time.
+ *
+ * A `missingFact` sentence is a claim about TODAY's catalog, and until these declarations existed nothing re-read it:
+ * `mine_ladder_to_depth` named `use_mine_ladder` as `Experimental` long after the action was promoted to
+ * `LiveVerified` with a live gate, and the tree went on answering "this task cannot be decided" for a criterion that
+ * was writable. So the reason's load-bearing facts are declared in the closed vocabulary
+ * `tools/check-stardew-task-gap-reasons.mjs` checks - a lifecycle, a postcondition, an action's presence, an evidence
+ * field a receipt carries or cannot carry - and each is read back from the Mod's generated surface or the Host's
+ * completion contract. The claim and the sentence are one fact with two spellings, which is why the gate also refuses
+ * a claim whose action the sentence never names.
+ */
+const actionLifecycle = (actionId, lifecycle) => Object.freeze({ kind: "action_lifecycle", actionId, lifecycle });
+const actionPostcondition = (actionId, name) => Object.freeze({ kind: "action_postcondition", actionId, name });
+const absentEvidenceField = (actionId, field) => Object.freeze({ kind: "absent_evidence_field", actionId, field });
+const presentEvidenceField = (actionId, field) => Object.freeze({ kind: "present_evidence_field", actionId, field });
+
+/**
+ * The half of a reason no artifact can decide, with the artifact that would refute it.
+ *
+ * Declared rather than implied, because an absence nobody enumerates - "no map of the Farm says which part is the east
+ * patch" - is a debt: the reader has to be able to check it without a run, and the next lane has to know which file to
+ * change to retire it.
+ */
+const proseReason = (refutableBy) => Object.freeze({ kind: "prose", refutableBy });
+
+/**
  * A purpose that cannot be decided from published facts, with the fact that would be needed.
  *
  * This is not an exclusion from the gate: the gate requires every rotation task to have an entry, and this entry
  * still answers `unproven` rather than `achieved` for any receipt set, however complete.
+ *
+ * `reason` says whether the blocker itself is machine-checkable (`mechanical`) or rests on an absence no artifact
+ * enumerates (`prose`), and `tools/check-stardew-task-gap-reasons.mjs` holds the declaration and the claims to each
+ * other in both directions. A reason may not cite a source LINE - `file.cs:270` is a claim about a layout no gate can
+ * re-check, and it is how this table's stale entry looked true.
  */
-const gap = (purpose, missingFact) => Object.freeze({ purpose, missingFact });
+const gap = (purpose, missingFact, { reason, claims }) =>
+  Object.freeze({ purpose, missingFact, reason, claims: Object.freeze(claims) });
 
 /**
  * A purpose that is a SHAPE in the world, declared as the rectangle it asks for.
@@ -78,7 +110,19 @@ const tileProof = (actionId, tileField) => Object.freeze({ actionId, tileField }
 export const TASK_PURPOSE_CRITERIA = Object.freeze({
   clear_east_patch: gap(
     "the east patch has no weeds and rocks left in it",
-    "no fact says which part of the farm is the east patch: `cut_weeds`/`cut_grass`/`break_rock`/`chop_stump` publish the target they removed and the tool they used, never the map or the region, so 'a patch was cleared somewhere' is the strongest statement a run can make.",
+    "no fact says which part of the farm is the east patch. `cut_weeds`, `cut_grass`, `break_rock` and `chop_stump` each publish the target they removed and the tool they used, and not one of their evidence key sets admits a `location` at all (`host/src/stardew-completion-contracts.ts`), so the removal is proved and the map it happened on is not. Even a map name would not bound it: the farm is one `Farm` map with one tile grid and no subdivision fact, so 'a patch was cleared somewhere on the Farm' is the strongest statement a run can make.",
+    {
+      reason: "prose",
+      claims: [
+        absentEvidenceField("cut_weeds", "location"),
+        absentEvidenceField("cut_grass", "location"),
+        absentEvidenceField("break_rock", "location"),
+        absentEvidenceField("chop_stump", "location"),
+        proseReason(
+          "a published fact naming a sub-area of the Farm would refute this: the Farm arrives as one map with one tile grid and no family or receipt carries a region or plot id, so the declaration that would retire this entry is a reading of the farm's own partition",
+        ),
+      ],
+    },
   ),
   water_and_harvest: criterion("a crop was brought in and the ground it left was then planted", [
     step("harvest_crop"),
@@ -96,11 +140,30 @@ export const TASK_PURPOSE_CRITERIA = Object.freeze({
   ]),
   town_market: gap(
     "something was bought in town and the post was brought in",
-    "no published fact places the actor in Town: `shop_purchase` publishes the shop and `claim_mail_attachment` the farm mailbox, neither publishes a map, and `travel` publishes endpoints only when travel is the route that was used.",
+    "the RECEIPT carries no location on the buying half: `shop_purchase`'s `item_purchased` evidence is exactly shop;owner;entry;item;requested;purchased;unit_price;money_before;money_after;owned_before;owned_after;gained;stock_before;stock_after;owner_tile;menu_closed;clicks;drops (`host/src/stardew-completion-contracts.ts`), which names the shop and the counter tile and never the map the actor stood on - while the mail half's `claim_mail_attachment` does carry `location` in its `mail_claimed` evidence. The observation publishes the map she is standing on, so the purchase is the half with no map of its own, and a criterion decides a task from admitted receipts rather than from an observation.",
+    {
+      reason: "prose",
+      claims: [
+        absentEvidenceField("shop_purchase", "location"),
+        presentEvidenceField("claim_mail_attachment", "location"),
+        proseReason(
+          "a criterion that decides its purpose from the observation's own `location` rather than from an admitted receipt would refute the second half: `judgeTaskPurpose` in `tools/lib/task-purpose.mjs` reads receipts, and hands observations to the declared-shape criterion alone",
+        ),
+      ],
+    },
   ),
   town_visit: gap(
     "a conversation happened in town",
-    "`talk_to_npc` publishes the NAME of the map the conversation happened on (Farm, SeedShop, Saloon, ...), and nothing publishes which of those maps is Town, so a word at the farm and a word in the square are the same fact.",
+    "`talk_to_npc` DOES publish the map: `talk_to_npc_talked`'s evidence carries `location=<NameOrUniqueName>` beside the villager's tile (`host/src/stardew-completion-contracts.ts`), so where the conversation happened is a published fact and the actor's position is not what is missing. What is missing is the other half of the sentence - a DECLARATION of which maps count as Town (is the Saloon town? the SeedShop?) - which no module in this tree makes, so a word at the farm and a word in the square are still decided as the same fact.",
+    {
+      reason: "prose",
+      claims: [
+        presentEvidenceField("talk_to_npc", "location"),
+        proseReason(
+          "a declared Town map set would refute this: nothing in this tree says which maps are Town, and the population such a declaration would join is the task table in `tools/lib/multiday-daily-tasks.mjs`",
+        ),
+      ],
+    },
   ),
   mine_delve: criterion("a mine level was entered and something was broken after it", [
     step("enter_mine"),
@@ -161,19 +224,57 @@ export const TASK_PURPOSE_CRITERIA = Object.freeze({
   ]),
   home_and_hearth: gap(
     "the house was tidied and a few things put out so it feels lived in",
-    "`place_owned_object` publishes the one object it set down and the map it landed on, and nothing publishes what the room now holds - the note's own end state ('so it feels lived in') has no fact behind it, and 'tidy it up' names no action with a postcondition.",
+    "what is absent is an ACTION with a postcondition for tidying, not a published fact: `place_owned_object`'s receipt carries `location` and the object it set down, and the snapshot publishes the room's own furniture as `kind: \"placed_furniture\"` rows carrying `location`, `displayName`, the tile and the footprint (`integrations/stardew/farmhandexecutioncontroller.worldobjectactions.cs`, measured round57: the bed and the oak table reached her as rows), so what the room holds IS readable. 'Tidy it up' still names no action whose postcondition is the room tidied or the clutter gone.",
+    {
+      reason: "prose",
+      claims: [
+        presentEvidenceField("place_owned_object", "location"),
+        proseReason(
+          "an action whose declared postcondition names the room being tidied would refute this: the population is the catalog rows of `integrations/stardew/action-development/contracts/generated/action-surface.v1.json`, and no row's postcondition names a room or its contents",
+        ),
+      ],
+    },
   ),
   home_upgrade: gap(
     "the carpenter was asked about extending the house",
-    "the farmhouse upgrade is an answer inside the carpenter's own dialogue; no receipt reports it. `shop_purchase` reports a shop sale, and the game's upgrade branch (`GameLocation.answerDialogueAction`) mints no world fact.",
+    "the gap is an ACTION, not a receipt: the only carpenter-class action the catalog publishes is `build_farm_building`, which its own definition registers `Synthetic: true` and describes as the BUILD branch alone - 'demolish, move and paint are separate world changes and are deferred' (`integrations/stardew/src/Core/Policy/FarmhandActionDefinitions.cs`) - and its postcondition is `farm_building_built`, a new structure on the farm rather than a bigger house. The house upgrade is an answer inside the carpenter's own dialogue, and that branch (`GameLocation.answerDialogueAction`) mints no world fact an action could report.",
+    {
+      reason: "prose",
+      claims: [
+        actionPostcondition("build_farm_building", "farm_building_built"),
+        proseReason(
+          "an action whose declared postcondition names the farmhouse upgrade would refute this: the population is the catalog rows of `integrations/stardew/action-development/contracts/generated/action-surface.v1.json`, and no row's postcondition names a house or an upgrade",
+        ),
+      ],
+    },
   ),
-  mine_ladder_to_depth: gap(
-    "a mine level was worked deeper and then left by its own exit ladder",
-    "the exit half is `use_mine_ladder`, which the Mod catalog registers `FarmhandActionLifecycle.Experimental` (`FarmhandActionDefinitions.cs:270`): the action is not published, so no run can dispatch it and no receipt can prove a ladder was taken.",
-  ),
+  // WAS A GAP, AND THE GAP EXPIRED. It said the exit half `use_mine_ladder` was registered
+  // `FarmhandActionLifecycle.Experimental` at a named line of `FarmhandActionDefinitions.cs`, so "the action is not
+  // published, so no run can dispatch it and no receipt can prove a ladder was taken". The action is `LiveVerified` and
+  // has been since it gained `run-stardew-native-local-player-use-mine-ladder-smoke.mjs`, a gate row in
+  // `stardew-action-gate-descriptors.mjs`, a fixture scenario, and `check-stardew-promotion-parity` in
+  // `harness-conformance.mjs` - and the line the reason cited now holds a different declaration, which is why the entry
+  // went on reading as true. Both halves are published facts today: `enter_mine`'s `mine_entered` terminal names the
+  // level it entered, and `use_mine_ladder`'s `mine_left` terminal names the ladder and the level it left
+  // (`from`, `question=ExitMine`, `response=Leave`, `ladder`), so the purpose is decided by two receipts in the order the
+  // world saw them.
+  mine_ladder_to_depth: criterion("a mine level was worked deeper and then left by its own exit ladder", [
+    step("enter_mine"),
+    step("use_mine_ladder"),
+  ]),
   furnish_and_arrange: gap(
     "placed furniture was moved and something was recoloured",
-    "the move half is `move_placed_furniture`, which the Mod catalog registers `FarmhandActionLifecycle.Experimental`: it is not published, so no run can dispatch it, and `color_placed_object` alone is one action rather than the arrangement.",
+    "`move_placed_furniture` is live and its receipt proves the piece LEFT a tile (`location`, `tile`, `carried_tile`, `removed_from_furniture`, `carried`, `inventory_before`/`inventory_after`), but its own postcondition is `placed_furniture_picked_up` and nothing in it - nor in `place_owned_object`, whose receipt names only the tile a stack landed on - says which tile the SAME piece came to rest on (`integrations/stardew/farmhandexecutioncontroller.worldobjectactions.cs`). So 'the furniture was moved' (one piece, two places) is not a fact any receipt states, and `color_placed_object` alone is one action rather than the arrangement.",
+    {
+      reason: "prose",
+      claims: [
+        actionLifecycle("move_placed_furniture", "live_verified"),
+        actionPostcondition("move_placed_furniture", "placed_furniture_picked_up"),
+        proseReason(
+          "a receipt that names both the tile a piece left and the tile the same piece landed on would refute this: `move_placed_furniture` reports only where it took the piece from, and `place_owned_object` only where a stack went down",
+        ),
+      ],
+    },
   ),
   run_the_machines: criterion("a machine was loaded and its output collected", [
     step("machine_load"),
@@ -183,7 +284,19 @@ export const TASK_PURPOSE_CRITERIA = Object.freeze({
   // receipt names one action and one target - so every one of them is a gap, and a criterion built from two of the
   // group's actions would claim a purpose the group never had. The sentences live on the task definitions in
   // `multiday-daily-tasks.mjs`, beside the grouping that decides them, rather than being written a second time here.
-  ...Object.fromEntries(SWEEP_DAILY_TASKS.map((task) => [task.id, gap(task.purpose, task.missingFact)])),
+  ...Object.fromEntries(
+    SWEEP_DAILY_TASKS.map((task) => [
+      task.id,
+      gap(task.purpose, task.missingFact, {
+        reason: "prose",
+        claims: [
+          proseReason(
+            "a published fact that names a GROUP of actions rather than one action and one target would refute this: every receipt names one action and one target (`host/src/stardew-completion-contracts.ts`), and the grouping is this repository's own declaration (`SWEEP_GROUPS` in `tools/lib/multiday-daily-tasks.mjs`)",
+          ),
+        ],
+      }),
+    ]),
+  ),
 });
 
 /**

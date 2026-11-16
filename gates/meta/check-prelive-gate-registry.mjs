@@ -830,6 +830,12 @@ export const EXEMPTIONS = Object.freeze([
     runsIn: "suite:test:stardew-live-runner-coverage",
   },
   {
+    path: "tools/check-stardew-task-gap-reasons.mjs",
+    reason:
+      "suite: nothing runs this file as a gate; its rule is exercised by `tools/check-stardew-task-gap-reasons.test.mjs`, inside `test:stardew-task-gap-reasons`, a member of the tool-test corpus that ci.yml runs on every push. Its tier is l2 because the population it reads - `tools/lib/task-purpose.mjs` - imports the built `host/dist-test` adapter, and the ladder's L0 rung runs before that artifact is assembled",
+    runsIn: "suite:test:stardew-task-gap-reasons",
+  },
+  {
     path: "tools/check-stardew-instance-property-coverage.mjs",
     reason:
       "suite: nothing runs this file as a gate; its rule is exercised by `tools/check-stardew-observation-gap.test.mjs`, inside `test:stardew-observation-gap`, a member of the tool-test corpus that ci.yml runs on every push, which is `tools/check-stardew-observation-gap.mjs`'s own falsifier",

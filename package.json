@@ -340,6 +340,7 @@
     "test:stardew-static-companion-fixture": "node --test tools/stardew-companion-live-scenario.test.mjs tools/stardew-companion-live-scorer.test.mjs",
     "test:stardew-test-shape": "node --test tools/audit-stardew-test-shape.test.mjs",
     "test:stardew-task-action-coverage": "node --test tools/check-stardew-task-action-coverage.test.mjs",
+    "test:stardew-task-gap-reasons": "node --test tools/check-stardew-task-gap-reasons.test.mjs",
     "test:stardew-observation-gap": "node --test tools/check-stardew-observation-gap.test.mjs",
     "test:prelive-gate-registry": "node --test gates/meta/check-prelive-gate-registry.test.mjs",
     "test:stardew-tile-action-selectors": "node --test integrations/stardew/action-development/tests/stardew-tile-action-selectors.test.mjs",
