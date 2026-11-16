@@ -528,7 +528,10 @@ test("a launch that failed for good names the only step out of it instead of a g
   // page lifts the lock and that reloading does not either.
   const quarantined = panel.getByTestId("game-launch-quarantined");
   await expect(quarantined).toBeVisible();
-  await expect(quarantined).toContainText("quit GameBuddy itself and start it again");
+  // The sentence names where the control is carried out (the tray icon), because the panel's own guide
+  // used to say "quit GameBuddy itself" while offering no control that could do it.
+  await expect(quarantined).toContainText("quit GameBuddy itself from its tray icon");
+  await expect(quarantined).toContainText("no control on this page lifts it");
   await expect(quarantined).toContainText("no control on this page lifts it");
   await expect(quarantined).toContainText("reloading this page does not either");
   await expect(panel).toContainText("Last resultDid not complete");
