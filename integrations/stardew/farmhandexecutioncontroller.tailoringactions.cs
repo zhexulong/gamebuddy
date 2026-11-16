@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using System.Globalization;
 using System.Text;
 using GameBuddy.Stardew.Core.Models;
 using Microsoft.Xna.Framework;
@@ -141,6 +140,19 @@ internal sealed partial class ExecutionManager
     /// <summary>Bound on pair evaluations per snapshot, so discovery stays cheap on a full pack.</summary>
     internal const int TailoringPairScanBudget = 512;
 
+    /// <summary>
+    /// How `tailor_clothing` names the sewing machine's two slots and their items on the wire: the game's own
+    /// "left/right ingredient spot" vocabulary, used by its identity and by every detail it emits.
+    /// </summary>
+    internal static readonly PairVocabulary RecipePair = new("left_slot", "right_slot", "left_item", "right_item");
+
+    /// <summary>
+    /// How `dye_clothing_with_item` names the same two positions: the GARMENT it recolours and the dye item that
+    /// recolours it. A different vocabulary because it is a different intent - the fields cannot be unified without
+    /// changing the wire.
+    /// </summary>
+    internal static readonly PairVocabulary DyePair = new("garment_slot", "dye_slot", "garment_item", "dye_item");
+
     private TailoringMenu? tailoringRecipeTable;
 
     /// <summary>
@@ -168,29 +180,26 @@ internal sealed partial class ExecutionManager
             return admissionRejection;
 
         Farmer player = Game1.player;
-        string location = player.currentLocation?.NameOrUniqueName ?? "unknown";
-        string identity = $"target={expectedTargetId};left_slot={leftSlot};right_slot={rightSlot};location={location}";
+        var terminal = new TerminalRecorder(this, requestId, executionId, TailoringIdentity(RecipePair, expectedTargetId, leftSlot, rightSlot, player.currentLocation?.NameOrUniqueName ?? "unknown"));
 
-        if (!TryReadTailoringSlot(player, leftSlot, out Item? leftItem))
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "tailoring_left_slot_invalid", $"{identity};inventory_slots={player.Items.Count};left_item=none");
+        if (!TryReadTailoringSlot(player, leftSlot, out Item? leftItem)) return terminal.SlotRejected("tailoring_left_slot_invalid", RecipePair, player.Items.Count, "none");
         if (leftSlot == rightSlot || !TryReadTailoringSlot(player, rightSlot, out Item? rightItem))
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "tailoring_right_slot_invalid", $"{identity};inventory_slots={player.Items.Count};left_item={leftItem.QualifiedItemId};right_item={(leftSlot == rightSlot ? "same_slot" : "none")}");
+            return terminal.SlotRejected("tailoring_right_slot_invalid", RecipePair, player.Items.Count, leftItem.QualifiedItemId, leftSlot == rightSlot ? "same_slot" : "none");
 
         if (!TryParseTailoringTargetKind(expectedTargetId, out string publishedKind) || !string.Equals(publishedKind, TailoringRecipeKind, StringComparison.Ordinal))
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "tailoring_target_not_found", $"{identity};left_item={leftItem.QualifiedItemId};right_item={rightItem.QualifiedItemId};published_kind={DescribeTailoringTargetKind(expectedTargetId)}");
+            return terminal.PairRejected("tailoring_target_not_found", RecipePair, leftItem.QualifiedItemId, rightItem.QualifiedItemId, "published_kind", DescribeTailoringTargetKind(expectedTargetId));
 
         TailoringMenu menu = this.TailoringRecipeTable();
         string? kind = ClassifyTailoringPair(menu, leftItem, rightItem, out TailorItemRecipe? recipe);
         if (string.Equals(kind, TailoringDyeKind, StringComparison.Ordinal))
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "tailoring_dye_route_required", $"{identity};left_item={leftItem.QualifiedItemId};right_item={rightItem.QualifiedItemId};reason=the_pair_has_no_recipe_only_a_dye_colour");
+            return terminal.Rejected("tailoring_dye_route_required", EvidenceDetail.Of(RecipePair.ItemFirst, leftItem.QualifiedItemId).Field(RecipePair.ItemSecond, rightItem.QualifiedItemId).Field("reason", "the_pair_has_no_recipe_only_a_dye_colour"));
         if (kind is null && IsColourPickerOnlyPair(leftItem, rightItem))
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "tailoring_colour_picker_required", $"{identity};left_item={leftItem.QualifiedItemId};right_item={rightItem.QualifiedItemId};reason=the_native_branch_defers_the_colour_to_a_free_rgb_picker");
-        if (kind is null || recipe is null)
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "tailoring_no_recipe", $"{identity};left_item={leftItem.QualifiedItemId};right_item={rightItem.QualifiedItemId}");
+            return terminal.Rejected("tailoring_colour_picker_required", EvidenceDetail.Of(RecipePair.ItemFirst, leftItem.QualifiedItemId).Field(RecipePair.ItemSecond, rightItem.QualifiedItemId).Field("reason", "the_native_branch_defers_the_colour_to_a_free_rgb_picker"));
+        if (kind is null || recipe is null) return terminal.PairRejected("tailoring_no_recipe", RecipePair, leftItem.QualifiedItemId, rightItem.QualifiedItemId);
 
         string liveTargetId = BuildTailoringTargetId(TailoringRecipeKind, leftItem, rightItem);
         if (!string.Equals(liveTargetId, expectedTargetId, StringComparison.Ordinal))
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "tailoring_target_changed", $"{identity};live={liveTargetId};left_item={leftItem.QualifiedItemId};right_item={rightItem.QualifiedItemId}");
+            return terminal.LiveTargetRejected("tailoring_target_changed", RecipePair, liveTargetId, leftItem.QualifiedItemId, rightItem.QualifiedItemId);
 
         string leftId = leftItem.QualifiedItemId;
         string rightId = rightItem.QualifiedItemId;
@@ -206,13 +215,12 @@ internal sealed partial class ExecutionManager
         }
         catch (Exception nativeException)
         {
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Uncertain, "tailoring_native_exception", $"{identity};left_item={leftId};right_item={rightId};native_exception={nativeException.GetType().Name};native_call_ran_unknown=true");
+            return terminal.NativeExceptionUncertain("tailoring_native_exception", RecipePair, leftId, rightId, nativeException);
         }
 
-        if (product is null)
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "tailoring_output_unavailable", $"{identity};left_item={leftId};right_item={rightId}");
+        if (product is null) return terminal.PairRejected("tailoring_output_unavailable", RecipePair, leftId, rightId);
         if (ReferenceEquals(product, leftItem))
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "tailoring_in_place_combination", $"{identity};left_item={leftId};right_item={rightId};native_branch=in_place");
+            return terminal.Rejected("tailoring_in_place_combination", EvidenceDetail.Of(RecipePair.ItemFirst, leftId).Field(RecipePair.ItemSecond, rightId).Field("native_branch", "in_place"));
 
         string outputId = product.QualifiedItemId;
         // Exactly the consumption the menu's own completion performs: the left spot always, the
@@ -241,18 +249,15 @@ internal sealed partial class ExecutionManager
             && outputAfter == outputBefore + delivered
             && (dropped == 0 || droppedDebris == 1);
         string disposition = dropped == 0 ? "inventory" : delivered == 0 ? "dropped_on_ground" : "partially_dropped";
-        string evidence = string.Create(CultureInfo.InvariantCulture,
-            $"{identity};left={leftId};right={rightId};output={outputId};"
-            + $"left_before={leftBefore};left_after={leftAfter};right_before={rightBefore};right_after={rightAfter};right_spent={spendRight.ToString().ToLowerInvariant()};"
-            + $"output_before={outputBefore};output_after={outputAfter};delivered={delivered};dropped={dropped};disposition={disposition};dropped_debris={droppedDebris}");
+        EvidenceDetail evidence = EvidenceDetail.Of("left", leftId).Field("right", rightId).Field("output", outputId)
+            .Field("left_before", leftBefore).Field("left_after", leftAfter).Field("right_before", rightBefore).Field("right_after", rightAfter)
+            .Flag("right_spent", spendRight).Field("output_before", outputBefore).Field("output_after", outputAfter)
+            .Field("delivered", delivered).Field("dropped", dropped).Field("disposition", disposition).Field("dropped_debris", droppedDebris);
 
-        if (!materialsConsumed || !outputCreated)
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Uncertain, "tailoring_postcondition_unavailable", evidence);
-        if (dropped == 0)
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Succeeded, "clothing_tailored", evidence);
-        if (delivered == 0)
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Succeeded, "clothing_tailored", evidence);
-        return this.RememberTerminal(requestId, executionId, ExecutionState.PartiallySucceeded, "clothing_tailoring_output_dropped", evidence);
+        if (!materialsConsumed || !outputCreated) return terminal.Uncertain("tailoring_postcondition_unavailable", evidence);
+        return dropped == 0 || delivered == 0
+            ? terminal.Succeeded("clothing_tailored", evidence)
+            : terminal.PartiallySucceeded("clothing_tailoring_output_dropped", evidence);
     }
 
     /// <summary>
@@ -271,27 +276,25 @@ internal sealed partial class ExecutionManager
             return admissionRejection;
 
         Farmer player = Game1.player;
-        string location = player.currentLocation?.NameOrUniqueName ?? "unknown";
-        string identity = $"target={expectedTargetId};garment_slot={leftSlot};dye_slot={rightSlot};location={location}";
+        var terminal = new TerminalRecorder(this, requestId, executionId, TailoringIdentity(DyePair, expectedTargetId, leftSlot, rightSlot, player.currentLocation?.NameOrUniqueName ?? "unknown"));
 
         if (!TryReadTailoringSlot(player, leftSlot, out Item? garmentItem) || garmentItem is not Clothing garment)
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "tailoring_left_slot_invalid", $"{identity};inventory_slots={player.Items.Count};garment_item=none");
+            return terminal.SlotRejected("tailoring_left_slot_invalid", DyePair, player.Items.Count, "none");
         if (leftSlot == rightSlot || !TryReadTailoringSlot(player, rightSlot, out Item? dyeItem))
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "tailoring_right_slot_invalid", $"{identity};inventory_slots={player.Items.Count};garment_item={garmentItem.QualifiedItemId};dye_item={(leftSlot == rightSlot ? "same_slot" : "none")}");
+            return terminal.SlotRejected("tailoring_right_slot_invalid", DyePair, player.Items.Count, garmentItem.QualifiedItemId, leftSlot == rightSlot ? "same_slot" : "none");
 
         if (!TryParseTailoringTargetKind(expectedTargetId, out string publishedKind) || !string.Equals(publishedKind, TailoringDyeKind, StringComparison.Ordinal))
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "tailoring_target_not_found", $"{identity};garment_item={garmentItem.QualifiedItemId};dye_item={dyeItem.QualifiedItemId};published_kind={DescribeTailoringTargetKind(expectedTargetId)}");
+            return terminal.PairRejected("tailoring_target_not_found", DyePair, garmentItem.QualifiedItemId, dyeItem.QualifiedItemId, "published_kind", DescribeTailoringTargetKind(expectedTargetId));
 
         if (!garment.dyeable.Value)
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "dye_clothing_garment_not_dyeable", $"{identity};garment_item={garmentItem.QualifiedItemId};dyeable=false");
+            return terminal.Rejected("dye_clothing_garment_not_dyeable", EvidenceDetail.Of(DyePair.ItemFirst, garmentItem.QualifiedItemId).Flag("dyeable", false));
 
         Color? dyeColour = TailoringMenu.GetDyeColor(dyeItem);
-        if (dyeColour is null)
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "dye_clothing_no_colour", $"{identity};garment_item={garmentItem.QualifiedItemId};dye_item={dyeItem.QualifiedItemId}");
+        if (dyeColour is null) return terminal.PairRejected("dye_clothing_no_colour", DyePair, garmentItem.QualifiedItemId, dyeItem.QualifiedItemId);
 
         string liveTargetId = BuildTailoringTargetId(TailoringDyeKind, garmentItem, dyeItem);
         if (!string.Equals(liveTargetId, expectedTargetId, StringComparison.Ordinal))
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "tailoring_target_changed", $"{identity};live={liveTargetId};garment_item={garmentItem.QualifiedItemId};dye_item={dyeItem.QualifiedItemId}");
+            return terminal.LiveTargetRejected("tailoring_target_changed", DyePair, liveTargetId, garmentItem.QualifiedItemId, dyeItem.QualifiedItemId);
 
         string garmentId = garmentItem.QualifiedItemId;
         string dyeId = dyeItem.QualifiedItemId;
@@ -310,7 +313,7 @@ internal sealed partial class ExecutionManager
         }
         catch (Exception nativeException)
         {
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Uncertain, "dye_clothing_native_exception", $"{identity};garment_item={garmentId};dye_item={dyeId};colour_before={FormatColour(colourBefore)};native_exception={nativeException.GetType().Name};native_call_ran_unknown=true");
+            return terminal.NativeExceptionUncertain("dye_clothing_native_exception", DyePair, garmentId, dyeId, FormatColour(colourBefore), nativeException);
         }
 
         if (spendRight && rightSlot < player.Items.Count)
@@ -327,11 +330,14 @@ internal sealed partial class ExecutionManager
         bool colourChanged = !colourAfter.Equals(colourBefore);
         bool prismaticSettled = prismaticAfter == (string.Equals(dyeId, TailoringPrismaticShardId, StringComparison.Ordinal) || prismaticBefore);
 
-        string evidence = string.Create(CultureInfo.InvariantCulture, $"{identity};garment={garmentId};dye={dyeId};colour_before={FormatColour(colourBefore)};colour_expected={FormatColour(dyeColour.Value)};colour_after={FormatColour(colourAfter)};strength={strength};strength_source={strengthSource};colour_changed={colourChanged.ToString().ToLowerInvariant()};prismatic_after={prismaticAfter.ToString().ToLowerInvariant()};dye_before={dyeBefore};dye_after={dyeAfter};dye_spent={spendRight.ToString().ToLowerInvariant()};colour_route=TailoringMenu.GetDyeColor");
+        EvidenceDetail evidence = EvidenceDetail.Of("garment", garmentId).Field("dye", dyeId)
+            .Field("colour_before", FormatColour(colourBefore)).Field("colour_expected", FormatColour(dyeColour.Value)).Field("colour_after", FormatColour(colourAfter))
+            .Field("strength", strength).Field("strength_source", strengthSource).Flag("colour_changed", colourChanged).Flag("prismatic_after", prismaticAfter)
+            .Field("dye_before", dyeBefore).Field("dye_after", dyeAfter).Flag("dye_spent", spendRight).Field("colour_route", "TailoringMenu.GetDyeColor");
 
         return colourApplied && consumed && stillOwned && prismaticSettled
-            ? this.RememberTerminal(requestId, executionId, ExecutionState.Succeeded, "clothing_dyed", evidence)
-            : this.RememberTerminal(requestId, executionId, ExecutionState.Uncertain, "dye_clothing_postcondition_unavailable", evidence);
+            ? terminal.Succeeded("clothing_dyed", evidence)
+            : terminal.Uncertain("dye_clothing_postcondition_unavailable", evidence);
     }
 
     /// <summary>
@@ -539,6 +545,14 @@ internal sealed partial class ExecutionManager
 
     /// <summary>One garment's current colour as three comma-joined bytes, the shape the evidence uses.</summary>
     internal static string FormatColour(Color colour) => $"{colour.R},{colour.G},{colour.B}";
+
+    /// <summary>
+    /// The identity every terminal of one tailoring request carries: the target the request named, the two slots it
+    /// named them in, and the location it was standing in. It is a detail like any other - the same builder, the same
+    /// separators - and it is built in ONE place so the two actions cannot spell it differently.
+    /// </summary>
+    internal static EvidenceDetail TailoringIdentity(PairVocabulary pair, string expectedTargetId, int firstSlot, int secondSlot, string location) =>
+        EvidenceDetail.Of("target", expectedTargetId).Field(pair.SlotFirst, firstSlot).Field(pair.SlotSecond, secondSlot).Field("location", location);
 
     private static string DescribeTailoringTargetKind(string expectedTargetId) =>
         TryParseTailoringTargetKind(expectedTargetId, out string kind) ? kind : "unrecognized";
