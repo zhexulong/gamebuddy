@@ -122,6 +122,24 @@ function inFlightRows(text: string): string[] {
   );
 }
 
+/**
+ * Every line of the `<in-flight>` block that is NOT a row it reports: the header, a node row and the truncation line are
+ * the block's whole vocabulary, so anything else is a sentence about the rows rather than a row.
+ *
+ * The property is the census's `fact_block_states_what_a_block_means` read on the delivered text: what a block MEANS is
+ * the floor's, and a fact block that explains its own rows is a second spelling of it.
+ */
+function inFlightNonRowLines(text: string): string[] {
+  const block = /<in-flight>\n([\s\S]*?)\n<\/in-flight>/u.exec(text)?.[1];
+  if (block === undefined) return [];
+  return block.split("\n").filter((line) => {
+    if (/^in_flight:settled=\d+;total=\d+;remaining=\d+（计划 \S+ 还没结算）$/u.test(line)) return false;
+    if (/^- \d+\/\d+ \S+ \S+（已等 \d+ 秒）$/u.test(line)) return false;
+    if (/^其余 \d+ 步未列出（这个计划一共 \d+ 步）$/u.test(line)) return false;
+    return true;
+  });
+}
+
 /** A pump whose in-flight reading comes from `observer`, so one test's programme cannot reach another's batch. */
 function pumpReading(observer: ReturnType<typeof createProgramProgressObserver>, nowMs: number): CompanionEventPump {
   return new CompanionEventPump(() => observer.inFlight(nowMs));
@@ -154,8 +172,19 @@ test("in_flight_programme_absent_from_batch: round46's 07:26:04 batch says the p
   assert.match(text, /本轮无新观察/u, `the world facts of this turn are round46's: ${text}`);
   assert.match(text, /<in-flight>\n/u, `the batch carries the programme in flight: ${text}`);
   assert.match(text, /in_flight:settled=0;total=2;remaining=2/u, "and the journal's own numbers for it");
-  assert.match(text, /还没结算/u, "the block's own words say the programme has not settled");
-  assert.match(text, /还没结算，就等于一步都还没做成/u, "and that none of it has happened yet");
+  assert.match(
+    text,
+    /（计划 plan_46_enter_exit 还没结算）/u,
+    "the block's own words say the programme has not settled",
+  );
+  // And the header is where that stops: 0 settled of 2, 2 remaining. What those numbers MEAN - that dispatched is not
+  // done - is drawn by the numbers themselves, so the block carries no sentence under the rows saying it; the block
+  // used to end with 「还没结算，就等于一步都还没做成」, which was the floor's subject stated a second time.
+  assert.deepEqual(
+    inFlightNonRowLines(text),
+    [],
+    `every line of the block is a row it reports, not a sentence about what the rows mean: ${text}`,
+  );
   assert.deepEqual(
     inFlightRows(text),
     ["1/2 enter_exit pending", "2/2 enter_exit pending"],

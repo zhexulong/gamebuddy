@@ -548,21 +548,6 @@ function composeNearbyTargets(world: Snapshot): readonly string[] {
 // ---------------------------------------------------------------------------------------------------------------
 
 /**
- * What the block says about every row it just printed: dispatched is not done.
- *
- * <p>
- * THIS SENTENCE IS THE FIX, and it is a STATEMENT rather than an instruction. Measured 2026-11-11 (`round46`):
- * `plan_work` was accepted at 07:25:53 with `settled: false, remaining: 2`; she spoke 11 s later
- * (`*推开门，晨风凉凉地扑在脸上* 门前这片草和石头还横着呢…`), corrected the plan at 07:26:17, spoke again 9 s after that
- * (`*靴底踩着屋里的木地板往西挪*`), and the world was first observed moving at 07:26:34. Neither batch said a step was
- * outstanding, so "I sent it" and "it happened" were the same sentence to her. A "don't narrate work you haven't
- * done" rule would be the wrong shape - she was not told the work was outstanding, so the rule would be scolding her
- * for the batch's silence. This line is the fact the batch owed her.
- * </p>
- */
-const NOT_YET_TRUE = "上面这些只是派出去了：还没结算，就等于一步都还没做成。";
-
-/**
  * `<in-flight>`: the programme she has dispatched, with its own words drawing the line at `settled`.
  *
  * <p>
@@ -577,7 +562,9 @@ const NOT_YET_TRUE = "上面这些只是派出去了：还没结算，就等于�
  * (`identity-profile.ts`, from `FACT_BRIEF_BLOCKS`), so the block's own first line is no longer the only place its
  * meaning comes from: `in_flight:settled=0;total=2;remaining=2（计划 plan_… 还没结算）` stays readable as nothing but
  * what it is, which is what a batch needs when a reader - a person, a run audit, or the model - arrives with no floor
- * in hand.
+ * in hand. Nothing follows the rows to explain them, for that same reason: `settled=0;total=2;remaining=2` IS the fact
+ * that dispatched is not done, and a sentence saying it would be the block explaining what it means, which is the
+ * floor's subject.
  * </p>
  *
  * <p>
@@ -613,7 +600,6 @@ function inFlightProgrammeLines(programme: InFlightProgramme): readonly string[]
   }
   if (programme.omitted > 0)
     lines.push(`其余 ${String(programme.omitted)} 步未列出（这个计划一共 ${String(programme.total)} 步）`);
-  lines.push(NOT_YET_TRUE);
   return lines;
 }
 
