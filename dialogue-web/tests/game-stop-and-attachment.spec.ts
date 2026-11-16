@@ -7,11 +7,10 @@
  * control is pressed twice.
  */
 import { expect, test } from "./frontend-coverage";
-import { token, csrfToken, draft, game, root, openGameDrawer } from "./composed-reference-game-fixtures";
+import { token, csrfToken, draft, game, root, openGameDrawer, stubGameRead } from "./composed-reference-game-fixtures";
 
 test("Game STOP is generation-bound, single-flight, rereads stopped, and remains independent from Chat Stop", async ({ page }) => {
   let stopRequests = 0;
-  let stateRequests = 0;
   const attachedGame = {
     ...game,
     game: {
@@ -42,11 +41,12 @@ test("Game STOP is generation-bound, single-flight, rereads stopped, and remains
     await new Promise((resolve) => setTimeout(resolve, 50));
     await route.fulfill({ status: 204, body: "" });
   });
-  await page.route("**/api/composed-reference-game/v1/state", (route) => {
-    stateRequests += 1;
-    const projection = stopRequests === 0 ? attachedGame : stoppedGame;
-    return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ ...root, game: projection }) });
-  });
+  // The mount's arrival read, and the only `/state` read this journey takes: a Game command re-reads the
+  // Game slice on `/game`, below, and never the aggregate root that carries the conversation beside it.
+  await page.route("**/api/composed-reference-game/v1/state", (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ ...root, game: attachedGame }) }),
+  );
+  const gameRead = await stubGameRead(page, () => (stopRequests === 0 ? attachedGame : stoppedGame));
   await page.route("**/api/tavern/v1/draft", (route) =>
     route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(draft) }),
   );
@@ -59,7 +59,9 @@ test("Game STOP is generation-bound, single-flight, rereads stopped, and remains
   await expect(page.getByRole("button", { name: "Stop", exact: true })).toHaveCount(0);
   await gameStop.dblclick();
   await expect.poll(() => stopRequests).toBe(1);
-  await expect.poll(() => stateRequests).toBe(2);
+  // The stop's own confirmation read, and the fact the panel then states: one command, one read of the
+  // Game slice, and the attachment it reports is what the panel draws.
+  await expect.poll(() => gameRead.reads()).toBe(1);
   await expect(panel).toContainText("ConnectionStopped");
   await expect(gameStop).toHaveCount(0);
   // The conversation is a peer surface, so proving it stayed independent of the
@@ -95,10 +97,12 @@ test("stale-generation Game STOP rereads a newer attachment without mutating it"
     expect(route.request().postDataJSON()).toMatchObject({ expectedAttachmentGeneration: 1 });
     await route.fulfill({ status: 409, contentType: "application/json", body: JSON.stringify({ code: "game_attachment_conflict" }) });
   });
-  await page.route("**/api/composed-reference-game/v1/state", (route) => {
-    const projection = stopRequests === 0 ? attachedGame : newerGame;
-    return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ ...root, game: projection }) });
-  });
+  await page.route("**/api/composed-reference-game/v1/state", (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ ...root, game: attachedGame }) }),
+  );
+  // The stale generation is reconciled by reading the Game slice, so the read that follows the refusal is
+  // the one that has to report the newer attachment.
+  const gameRead = await stubGameRead(page, () => (stopRequests === 0 ? attachedGame : newerGame));
   await page.route("**/api/tavern/v1/draft", (route) =>
     route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(draft) }),
   );
@@ -108,6 +112,9 @@ test("stale-generation Game STOP rereads a newer attachment without mutating it"
   const panel = page.getByRole("region", { name: "Game state" });
   await panel.getByRole("button", { name: "Stop game" }).click();
   await expect.poll(() => stopRequests).toBe(1);
+  // The refusal is reconciled by one read of the Game slice, and that read found generation 2 - which is
+  // why the panel keeps offering Stop against the new generation instead of reporting an uncertain stop.
+  await expect.poll(() => gameRead.reads()).toBe(1);
   await expect(panel.getByRole("button", { name: "Stop game" })).toBeVisible();
   await expect(panel).not.toContainText("The game stop result is uncertain");
   await page.waitForTimeout(50);
@@ -129,7 +136,6 @@ test("uncertain Game STOP preserves its generation key and renders authoritative
     game: { ...attachedGame.game, connectionStatus: "failed" },
   };
   const keys: string[] = [];
-  let stateRequests = 0;
   await page.route("**/api/composed-reference-game/v1/bootstrap", (route) =>
     route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ ...root, game: attachedGame }) }),
   );
@@ -142,11 +148,10 @@ test("uncertain Game STOP preserves its generation key and renders authoritative
     expect(command.expectedAttachmentGeneration).toBe(2);
     await route.fulfill({ status: 409, contentType: "application/json", body: JSON.stringify({ code: "state_unavailable" }) });
   });
-  await page.route("**/api/composed-reference-game/v1/state", (route) => {
-    stateRequests += 1;
-    const projection = keys.length === 0 ? attachedGame : failedGame;
-    return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ ...root, game: projection }) });
-  });
+  await page.route("**/api/composed-reference-game/v1/state", (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ ...root, game: attachedGame }) }),
+  );
+  const gameRead = await stubGameRead(page, () => (keys.length === 0 ? attachedGame : failedGame));
   await page.route("**/api/tavern/v1/draft", (route) =>
     route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(draft) }),
   );
@@ -156,7 +161,7 @@ test("uncertain Game STOP preserves its generation key and renders authoritative
   const panel = page.getByRole("region", { name: "Game state" });
   await panel.getByRole("button", { name: "Stop game" }).click();
   await expect.poll(() => keys.length).toBe(1);
-  await expect.poll(() => stateRequests).toBe(2);
+  await expect.poll(() => gameRead.reads()).toBe(1);
   await expect(panel).toContainText("ConnectionConnection failed");
   await expect(panel.getByRole("button", { name: "Stop game" })).toHaveCount(0);
   await expect(panel).toContainText("The game stop result is uncertain");
@@ -179,7 +184,6 @@ test("failed Game disconnect reread permits a fresh-key user retry", async ({ pa
     game: { ...attachedGame.game, connectionStatus: "failed" },
   };
   const keys: string[] = [];
-  let stateReads = 0;
   await page.route("**/api/composed-reference-game/v1/bootstrap", (route) =>
     route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ ...root, game: attachedGame }) }),
   );
@@ -195,15 +199,12 @@ test("failed Game disconnect reread permits a fresh-key user retry", async ({ pa
     }
     await route.fulfill({ status: 204, body: "" });
   });
-  await page.route("**/api/composed-reference-game/v1/state", (route) => {
-    stateReads += 1;
-    const projection = keys.length === 0 ? { ...root, game: attachedGame } : keys.length === 1 ? { ...root, game: failedGame } : root;
-    return route.fulfill({
-      status: 200,
-      contentType: "application/json",
-      body: JSON.stringify(projection),
-    });
-  });
+  await page.route("**/api/composed-reference-game/v1/state", (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ ...root, game: attachedGame }) }),
+  );
+  const gameRead = await stubGameRead(page, () =>
+    keys.length === 0 ? attachedGame : keys.length === 1 ? failedGame : game,
+  );
   await page.route("**/api/tavern/v1/draft", (route) =>
     route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(draft) }),
   );
@@ -214,18 +215,20 @@ test("failed Game disconnect reread permits a fresh-key user retry", async ({ pa
   const disconnect = panel.getByRole("button", { name: "Disconnect game" });
   await disconnect.click();
   await expect.poll(() => keys.length).toBe(1);
+  await expect.poll(() => gameRead.reads()).toBe(1);
   await expect(panel).toContainText("ConnectionConnection failed");
   await disconnect.click();
   await expect.poll(() => keys.length).toBe(2);
   expect(keys[1]).not.toBe(keys[0]);
-  await expect.poll(() => stateReads).toBe(3);
+  // One confirmation read per attempt: the failed one that found the retained attachment, and the
+  // admitted one that found the session gone.
+  await expect.poll(() => gameRead.reads()).toBe(2);
   await expect(disconnect).toHaveCount(0);
 });
 
 
-test("attached Game drawer disconnect is distinct, double-activation is one command, and rereads none", async ({ page }) => {
+test("attached Game drawer disconnect is distinct, double-activation is one command, and rereads the game slice once", async ({ page }) => {
   let disconnectRequests = 0;
-  let stateRequests = 0;
   const attachedGame = {
     ...game,
     game: {
@@ -252,11 +255,10 @@ test("attached Game drawer disconnect is distinct, double-activation is one comm
     await new Promise((resolve) => setTimeout(resolve, 50));
     await route.fulfill({ status: 204, body: "" });
   });
-  await page.route("**/api/composed-reference-game/v1/state", (route) => {
-    stateRequests += 1;
-    const projection = disconnectRequests === 0 ? { ...root, game: attachedGame } : root;
-    return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(projection) });
-  });
+  await page.route("**/api/composed-reference-game/v1/state", (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ ...root, game: attachedGame }) }),
+  );
+  const gameRead = await stubGameRead(page, () => (disconnectRequests === 0 ? attachedGame : game));
   await page.route("**/api/tavern/v1/draft", (route) =>
     route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(draft) }),
   );
@@ -268,7 +270,8 @@ test("attached Game drawer disconnect is distinct, double-activation is one comm
   await expect(page.getByRole("button", { name: "Stop", exact: true })).toHaveCount(0);
   await disconnect.dblclick();
   await expect.poll(() => disconnectRequests).toBe(1);
-  await expect.poll(() => stateRequests).toBe(2);
+  // The double activation spent one command and one confirmation read of the Game slice.
+  await expect.poll(() => gameRead.reads()).toBe(1);
   await expect(panel).toContainText("ConnectionNo game connection");
   await expect(disconnect).toHaveCount(0);
 });

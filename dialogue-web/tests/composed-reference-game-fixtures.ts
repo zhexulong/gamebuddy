@@ -184,11 +184,22 @@ export const jsonOk = (body: unknown) => ({
  * rather than in each spec.
  *
  * `projection` may be a thunk: most journeys answer a different game slice once their command landed.
+ *
+ * The returned `reads()` is the count of the reads the panel made, because that is what a journey
+ * asserting "the command caused a reread" now has to count: `/state` answers the mount's arrival read
+ * only (the shell reads it for the World Info binding), so a counter on it measures the arrival and
+ * nothing a Game control did. Every journey that used to assert on a `/state` counter asserts on this.
  */
-export async function stubGameRead(page: Page, projection: unknown | (() => unknown) = game): Promise<void> {
-  await page.route("**/api/composed-reference-game/v1/game", (route) =>
-    route.fulfill(jsonOk(typeof projection === "function" ? (projection as () => unknown)() : projection)),
-  );
+export async function stubGameRead(
+  page: Page,
+  projection: unknown | (() => unknown) = game,
+): Promise<Readonly<{ reads(): number }>> {
+  let reads = 0;
+  await page.route("**/api/composed-reference-game/v1/game", (route) => {
+    reads += 1;
+    return route.fulfill(jsonOk(typeof projection === "function" ? (projection as () => unknown)() : projection));
+  });
+  return Object.freeze({ reads: () => reads });
 }
 
 /**
