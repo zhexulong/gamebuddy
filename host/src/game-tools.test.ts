@@ -2255,17 +2255,48 @@ test("a selection is a NEW question about the same revision, so the unchanged sh
 
 test("a selection the rows do not have is refused BY NAME, before the bridge is asked", async () => {
   const { tools, refresh } = selectionIntegration();
+  // ONE CASE PER REFUSAL ARM of `readObservationSelection`, which is read in this order: the top-level vocabulary, then
+  // `limit`, then the conditions (their own vocabulary, the rectangle's two halves, its axes and its families), then the
+  // enumerated tiles, and only then the size the two halves together cover. The table is hand-written rather than
+  // derived - the codes are template strings the module emits, not a declared union - so a NEW arm has to be added
+  // here by hand; the case that would catch a reordering is `limit` and `select` both being wrong.
   const refused = [
     [{ region: { x0: 60, y0: 18, x1: 62, y1: 20 } }, "observation_selection_unknown_key:region"],
+    [[], "invalid_tool_parameters"],
+    [{ limit: 0 }, "observation_selection_limit_invalid:0"],
+    // Both halves wrong at once: this is the case that catches a reordering, because it names the arm the order
+    // promises to reach FIRST.
+    [{ limit: 0, select: [] }, "observation_selection_limit_invalid:0"],
+    [{ limit: 25 }, "observation_selection_limit_invalid:25"],
     [{ select: [{ kinds: ["weeds"] }] }, "observation_selection_unknown_kind:weeds"],
+    [
+      { select: [{ x: { from: 0, to: 1 }, y: { from: 0, to: 1 }, kinds: ["weedTargets", "nope"] }] },
+      "observation_selection_unknown_kind:nope",
+    ],
+    [{ select: ["weeds"] }, "observation_selection_axis_invalid:select"],
     [{ select: [{ x: { from: 60, to: 62 } }] }, "observation_selection_axis_partial:y"],
     [{ select: [{ x: { from: 62, to: 60 }, y: { from: 18, to: 20 } }] }, "observation_selection_axis_invalid:x"],
+    [{ select: [{ x: { from: 0, to: 1, step: 0 }, y: { from: 0, to: 1 } }] }, "observation_selection_axis_invalid:x"],
+    [{ select: [{ x: { from: 0, to: 1 }, y: { from: 2 } }] }, "observation_selection_axis_invalid:y"],
     [
       { select: [{ x: { from: 60, to: 62 }, y: { from: 18, to: 20 }, step: 2 }] },
       "observation_selection_unknown_key:select.step",
     ],
     [{ select: [] }, "observation_selection_empty"],
+    // The conditions are read before the tiles: an empty `select` beside a malformed tile answers the `select`.
+    [{ select: [], tiles: [[0, 0.5]] }, "observation_selection_empty"],
+    [{ tiles: [] }, "observation_selection_empty"],
+    [
+      { select: Array.from({ length: 9 }, () => ({ kinds: ["weedTargets"] })) },
+      "observation_selection_too_many_ranges:9:8",
+    ],
+    [
+      { select: [{ kinds: Array.from({ length: 13 }, () => "weedTargets") }] },
+      "observation_selection_too_many_kinds:13:12",
+    ],
     [{ tiles: [[0, 0.5]] }, "observation_selection_tile_invalid:[0,0.5]"],
+    [{ tiles: [[0, 0], [0]] }, "observation_selection_tile_invalid:[0]"],
+    [{ tiles: Array.from({ length: 33 }, () => [0, 0]) }, "observation_selection_too_many_tiles:33:32"],
     [
       { select: [{ x: { from: 0, to: 1000 }, y: { from: 0, to: 1000 } }] },
       "observation_selection_too_many_tiles:1002001:4096",
