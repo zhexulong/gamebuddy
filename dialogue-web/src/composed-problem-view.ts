@@ -131,9 +131,12 @@ export function problemStepPresentation(
   step: ProblemStep,
   labels: Messages,
 ): Readonly<{ stepLine: string | null; drawsOwnRead: boolean }> {
+  const drawsOwnRead = step.kind === "control" && step.id === PROBLEM_RETRY_READ;
   return {
-    stepLine: stepSentence(step, labels),
-    drawsOwnRead: step.kind === "control" && step.id === PROBLEM_RETRY_READ,
+    // The own read IS the step, so it has no sentence: `stepSentence` answers a `control` with "the step
+    // is the control this sentence names", which drawn above the button names a second step beside it.
+    stepLine: drawsOwnRead ? null : stepSentence(step, labels),
+    drawsOwnRead,
   };
 }
 
