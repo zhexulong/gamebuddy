@@ -281,21 +281,16 @@ public sealed class InventoryAddressabilityTests
 
     // ---- the sources each assertion reads ---------------------------------------------------------------
 
-    private static IReadOnlyList<string> BridgeSnapshotParameterNames(string models)
-    {
-        // Comments first: the record is heavily documented, and a prose line such as "// ... state ..." parses as a
-        // parameter name once the declaration is split on commas.
-        models = StripLineComments(models);
-        int start = models.IndexOf("public sealed record BridgeSnapshot(", StringComparison.Ordinal);
-        start.Should().BeGreaterThanOrEqualTo(0, "BridgeSnapshot must be declared in the Core models");
-        int open = models.IndexOf('(', start);
-        int close = MatchingClose(models, open, '(', ')');
-        return TopLevelSegments(models.Substring(open + 1, close - open - 1))
-            .Select(segment => Regex.Match(segment.Split('=')[0], "([A-Za-z_][A-Za-z0-9_]*)\\s*$", RegexOptions.CultureInvariant))
-            .Where(match => match.Success)
-            .Select(match => match.Groups[1].Value)
-            .ToArray();
-    }
+    /// <summary>
+    /// The fields <c>BridgeSnapshot</c> declares.
+    ///
+    /// The reading itself lives in <see cref="WireRecordSource"/> because it is shared with
+    /// <see cref="PublishedFieldParserGateTests"/>, which refuses a shape the parser reads as an attribute's argument:
+    /// a parser only this file drove could be corrected here and broken there by the same attribute - the inputs are
+    /// the same file, so the reader is one reader.
+    /// </summary>
+    private static IReadOnlyList<string> BridgeSnapshotParameterNames(string models) =>
+        WireRecordSource.DeclaredMembers(models, "BridgeSnapshot").Select(member => member.Name).ToArray();
 
     private static IReadOnlyList<string> BridgeSnapshotFieldNames() =>
         BridgeSnapshotParameterNames(
@@ -367,8 +362,8 @@ public sealed class InventoryAddressabilityTests
         int start = source.IndexOf(callPrefix, StringComparison.Ordinal);
         start.Should().BeGreaterThanOrEqualTo(0, $"{callPrefix} must exist");
         int open = source.IndexOf('(', start);
-        int close = MatchingClose(source, open, '(', ')');
-        return TopLevelSegments(StripLineComments(source.Substring(open + 1, close - open - 1)));
+        int close = WireRecordSource.MatchingClose(source, open, '(', ')');
+        return WireRecordSource.TopLevelSegments(WireRecordSource.StripLineComments(source.Substring(open + 1, close - open - 1)));
     }
 
     // ---- small text helpers ------------------------------------------------------------------------------
@@ -378,51 +373,6 @@ public sealed class InventoryAddressabilityTests
     /// carries no per-property override that would escape it.
     /// </summary>
     private static string CamelCase(string name) => char.ToLowerInvariant(name[0]) + name.Substring(1);
-
-    private static int MatchingClose(string text, int open, char opening, char closing)
-    {
-        int depth = 0;
-        for (int index = open; index < text.Length; index++)
-        {
-            if (text[index] == opening) depth++;
-            else if (text[index] == closing && --depth == 0) return index;
-        }
-
-        throw new InvalidOperationException($"{opening} at {open} is not closed");
-    }
-
-    private static IReadOnlyList<string> TopLevelSegments(string text)
-    {
-        List<string> segments = new();
-        int depth = 0;
-        int start = 0;
-        for (int index = 0; index < text.Length; index++)
-        {
-            char character = text[index];
-            if (character is '(' or '[' or '{') depth++;
-            else if (character is ')' or ']' or '}') depth--;
-            else if (character == ',' && depth == 0)
-            {
-                segments.Add(text.Substring(start, index - start));
-                start = index + 1;
-            }
-        }
-
-        if (start < text.Length) segments.Add(text.Substring(start));
-        return segments.Select(segment => segment.Trim()).Where(segment => segment.Length > 0).ToArray();
-    }
-
-    /// <summary>
-    /// Strip `//` line comments before splitting: the call site is heavily commented and a comment carrying a paren or a
-    /// comma would move both the call's closing paren and the argument boundaries.
-    /// </summary>
-    private static string StripLineComments(string text) => string.Join(
-        "\n",
-        text.Split('\n').Select(line =>
-        {
-            int comment = line.IndexOf("//", StringComparison.Ordinal);
-            return comment == -1 ? line : line.Substring(0, comment);
-        }));
 
     // ---- repository paths --------------------------------------------------------------------------------
 
