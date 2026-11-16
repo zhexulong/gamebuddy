@@ -35,19 +35,26 @@ const SOURCES = {
   factBrief: "host/src/fact-brief.ts",
   vocabulary: "host/src/game-world-vocabulary.ts",
   hud: "host/src/snapshot-hud.ts",
-  playerDisposition: "host/src/player-disposition.ts",
+  playerPanel: "host/src/player-panel.ts",
   playerHud: "host/src/player-hud.ts",
 };
 
 /** A renderer that reaches the PLAYER's own surface: the audience this tree has none of, declared here for the proofs. */
 const PLAYER_HUD_RENDERER = Object.freeze({ path: SOURCES.playerHud, audience: "player" });
 /** A second player-audience renderer, for the proofs that need a field the companion does NOT render. */
-const PLAYER_DISPOSITION_RENDERER = Object.freeze({ path: SOURCES.playerDisposition, audience: "player" });
-const PLAYER_DISPOSITION = [
+const PLAYER_PANEL_RENDERER = Object.freeze({ path: SOURCES.playerPanel, audience: "player" });
+/**
+ * The player's panel, printing a fact the companion's text no longer carries: the professions a milestone branch wrote.
+ *
+ * `actorDispositionDetail` was the fixture here and stopped being one: the merged paragraph prints it (`身体: …`), so an
+ * exemption for it is `stale_rendering_exemption` before a `player_only` claim can be judged. `professions` is exempt and
+ * printed by no companion renderer, which is the shape a `player_only` declaration needs to be testable at all.
+ */
+const PLAYER_PANEL = [
   'import type { Snapshot } from "./protocol.js";',
   "",
-  "export function formatPlayerDisposition(snapshot: Snapshot): string {",
-  '  return `held ${String(snapshot.actorDispositionDetail ?? "none")}`;',
+  "export function formatPlayerProfessions(snapshot: Snapshot): string {",
+  "  return `professions ${String((snapshot.professions ?? []).length)}`;",
   "}",
   "",
 ].join("\n");
@@ -79,7 +86,7 @@ async function withFixtureRoot(specs, run) {
 }
 
 /** The sources this gate reads, each optionally rewritten, as one fixture tree. */
-function tree({ protocol, factBrief, vocabulary } = {}) {
+function tree({ protocol, factBrief, vocabulary, hud } = {}) {
   return {
     [SOURCES.protocol]: protocol ?? readReal(SOURCES.protocol),
     [SOURCES.factBrief]: factBrief ?? readReal(SOURCES.factBrief),
@@ -93,10 +100,10 @@ function tree({ protocol, factBrief, vocabulary } = {}) {
 /** The tree as it would be if a player-facing surface existed: the fixture renderer that prints two wire fields. */
 const treeWithAPlayerSurface = (specs = {}) => ({ ...tree(specs), [SOURCES.playerHud]: PLAYER_HUD });
 
-/** The same, for the field the companion deliberately does not print: a player panel that states what holds the body. */
-const treeWithAPlayerDispositionSurface = (specs = {}) => ({
+/** The same, for the field the companion deliberately does not print: a player panel that states the professions. */
+const treeWithAPlayerPanelSurface = (specs = {}) => ({
   ...tree(specs),
-  [SOURCES.playerDisposition]: PLAYER_DISPOSITION,
+  [SOURCES.playerPanel]: PLAYER_PANEL,
 });
 
 /** The prose as it read before the water line existed: the call, and the function that produced it, gone. */
@@ -206,19 +213,19 @@ test("a fact printed only for the player is named, because the player's surface 
 });
 
 test("a player_only declaration must say why, and the player surface must really print the field", async () => {
-  // `actorDispositionDetail` is the fixture because it is exempt and NOT rendered by the companion's paragraph: a
+  // `professions` is the fixture because it is exempt and NOT rendered by the companion's paragraph: a
   // declaration that "the player has it" can be tested there without a stale-rendering check masking the answer.
   const declared = { reason: "the player's panel shows it", owedBy: "host/src/fact-brief.ts", player_only: " " };
-  const blank = await withFixtureRoot(treeWithAPlayerDispositionSurface(), (root) =>
+  const blank = await withFixtureRoot(treeWithAPlayerPanelSurface(), (root) =>
     auditSnapshotRendering({
       root,
-      renderers: [...RENDERER_SOURCES, PLAYER_DISPOSITION_RENDERER],
-      exemptions: { ...RENDERING_EXEMPTIONS, actorDispositionDetail: declared },
+      renderers: [...RENDERER_SOURCES, PLAYER_PANEL_RENDERER],
+      exemptions: { ...RENDERING_EXEMPTIONS, professions: declared },
     }),
   );
   assert.deepEqual(
     codes(blank.violations),
-    ["player_only_without_reason:actorDispositionDetail"],
+    ["player_only_without_reason:professions"],
     "a declaration with no reason is the defect it was meant to document",
   );
 
@@ -227,27 +234,27 @@ test("a player_only declaration must say why, and the player surface must really
       root,
       exemptions: {
         ...RENDERING_EXEMPTIONS,
-        actorDispositionDetail: { ...declared, player_only: "the player's panel states what holds the body" },
+        professions: { ...declared, player_only: "the player's panel counts the professions" },
       },
     }),
   );
   assert.deepEqual(
     codes(unbacked.violations),
-    ["player_only_without_a_player_renderer:actorDispositionDetail"],
+    ["player_only_without_a_player_renderer:professions"],
     "no player-audience renderer prints it, so 'the player has it' is a claim nothing holds",
   );
 
   // The declaration holds only where BOTH are true: a written reason, and a player surface that prints the field.
-  const backed = await withFixtureRoot(treeWithAPlayerDispositionSurface(), (root) =>
+  const backed = await withFixtureRoot(treeWithAPlayerPanelSurface(), (root) =>
     auditSnapshotRendering({
       root,
-      renderers: [...RENDERER_SOURCES, PLAYER_DISPOSITION_RENDERER],
+      renderers: [...RENDERER_SOURCES, PLAYER_PANEL_RENDERER],
       exemptions: {
         ...RENDERING_EXEMPTIONS,
-        actorDispositionDetail: {
+        professions: {
           ...declared,
           player_only:
-            "the player's panel states what holds the body; she learns it from the paragraph's own line instead",
+            "the player's panel counts the professions; she reads the milestone's own answer instead when it is chosen",
         },
       },
     }),
@@ -265,7 +272,7 @@ test("a renderer that reaches nobody clears nothing, whenever one reappears", as
         'import type { Snapshot } from "./protocol.js";',
         "",
         "export function formatHud(snapshot: Snapshot): string {",
-        '  return `held ${String(snapshot.actorDispositionDetail ?? "none")}`;',
+        "  return `professions ${String((snapshot.professions ?? []).length)}`;",
         "}",
         "",
       ].join("\n"),
@@ -276,7 +283,7 @@ test("a renderer that reaches nobody clears nothing, whenever one reappears", as
         renderers: [...RENDERER_SOURCES, { path: SOURCES.hud, audience: "unread" }],
       }),
   );
-  const held = dispositionOf(reading, "actorDispositionDetail");
+  const held = dispositionOf(reading, "professions");
   assert.equal(held?.renderedTo, "neither", "text delivered to nobody is not text she read");
   assert.equal(held?.printedBy, SOURCES.hud, "the report still names the module that printed it");
   assert.equal(held?.printedTo, "unread", "and where that module's text goes");
@@ -296,7 +303,7 @@ test("an exemption expires both ways: rendered now, or no longer published", asy
   const rendered = await withFixtureRoot(tree(), (root) =>
     auditSnapshotRendering({
       root,
-      exemptions: { ...RENDERING_EXEMPTIONS, stamina: RENDERING_EXEMPTIONS.actorDispositionDetail },
+      exemptions: { ...RENDERING_EXEMPTIONS, stamina: RENDERING_EXEMPTIONS.warps },
     }),
   );
   assert.deepEqual(
@@ -307,7 +314,7 @@ test("an exemption expires both ways: rendered now, or no longer published", asy
   const gone = await withFixtureRoot(tree(), (root) =>
     auditSnapshotRendering({
       root,
-      exemptions: { ...RENDERING_EXEMPTIONS, retiredField: RENDERING_EXEMPTIONS.actorDispositionDetail },
+      exemptions: { ...RENDERING_EXEMPTIONS, retiredField: RENDERING_EXEMPTIONS.warps },
     }),
   );
   assert.deepEqual(

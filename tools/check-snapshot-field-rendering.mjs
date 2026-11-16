@@ -109,7 +109,11 @@ const UNREAD = "unread";
  * <p>
  * The `[State HUD: …]` block was the third audience's only member: it composed text from the same `Snapshot` and
  * delivered it to nobody, so 22 of 120 fields were printed and read by no one. It is gone - the three facts nobody else
- * rendered moved into the paragraph, and the rest were already there - so `printedToNoReader` now reads 0. The audience
+ * rendered moved into the paragraph, and the rest were already there - so `printedToNoReader` now reads 0 for the members
+ * this table declares. A second piece of such text is NOT declared here and is reported through the field it strands:
+ * `snapshot-projection.ts` composes `[Game Snapshot Projection v1: …]`, the snapshot fact carries it as
+ * `contextProjection`, and nothing that composes her text prints it - which is why `sleepAdmitsHere` sits in
+ * `RENDERING_EXEMPTIONS` above with that reading rather than crediting it a renderer. The audience
  * stays, because the next renderer wired to nothing must be namable rather than invisible. What makes a module a member
  * of this set is that it COMPOSES TEXT FROM THE SNAPSHOT - it is read here field
  * by field. A module that merely reads a snapshot field to decide something is not a renderer; adding one would credit
@@ -228,6 +232,15 @@ export const RENDERING_EXEMPTIONS = Object.freeze({
     reason:
       "the number of distinct (family, reason) rows the excluded register's cap left out, paired with `discoveryExclusions`. Without it a bounded register reads as complete - the same defect the truncation counts exist for, one layer out.",
     owedBy: "host/src/snapshot-projection.ts",
+  },
+  sleepAdmitsHere: {
+    reason:
+      "the Mod's own verdict on whether `sleep()` is admitted where she stands, rendered by `snapshot-projection.ts`'s " +
+      "`- Sleep:` line into `[Game Snapshot Projection v1: …]` - and that text rides the snapshot fact as " +
+      '`contextProjection`, which no composer she reads prints: `fact-brief.ts`\'s `factLine` answers "" for the ' +
+      "`snapshot` kind and `<world-state>` is built from the raw payload. So the line is written and reaches no reader, " +
+      "and where the day may end is a fact `<world-state>` does not carry today.",
+    owedBy: "host/src/fact-brief.ts",
   },
 });
 
