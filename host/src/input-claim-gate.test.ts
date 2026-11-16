@@ -387,13 +387,23 @@ const RECORDED: readonly Readonly<{
       "revision, the other about the fact line naming a held tool. Different referents behind the same four words.",
   }),
   Object.freeze({
-    slug: "你正在和自小一起长大的发小-user-同屏联机开黑打-星露谷物语",
+    slug: "只说你自己的-user-的反应和话留给他自己-村里谁笑了",
     first: "assets/tavern/presets/amber-game.json:prompts.content",
     second: "magic-context-companion-guidance.ts:DESK_GUIDANCE_ZH",
     kind: "distinct",
     why:
-      "the preset says who she is playing with and in what game; the desk guidance says what her context is. The shared " +
-      "words are 一起 and 星露谷, the game both are about.",
+      "the preset forbids speaking FOR the player — his reactions, his words, and what a villager said that she never heard — " +
+      "while the brief lists what the archive CONTAINS. The shared bigrams are 你自/自己/你说/看到, which is the vocabulary of " +
+      "a second person and of seeing, not one claim stated twice.",
+  }),
+  Object.freeze({
+    slug: "说过的事不用再总结一遍-你是发小-不是客服",
+    first: "assets/tavern/presets/amber-game.json:prompts.content",
+    second: "magic-context-companion-guidance.ts:DESK_GUIDANCE_ZH",
+    kind: "distinct",
+    why:
+      "the preset's subject is the register and the shape of the reply — do not re-summarise, you are a friend and not " +
+      "customer service — and the brief's subject is the archive's contents. They share only the bigrams 说过/过的/的事.",
   }),
   Object.freeze({
     slug: "反全知与元语言禁用-anti-omniscience-只说你自己的",
