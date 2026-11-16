@@ -9,6 +9,7 @@ import { deflateSync } from "node:zlib";
 import { buildGameCompanionSystemPrompt } from "./game-surface-prompt-floor.js";
 import { validateIdentityProfile } from "./identity-profile.js";
 import { buildChatCompanionSystemPrompt, renderIdentityProfile } from "./companion-prompt-assembly.js";
+import { CHAT_SURFACE_DIVERGENCE } from "./chat-surface-block.js";
 import {
   candidateToIdentityProfile,
   decodeStCard,
@@ -1556,7 +1557,15 @@ test("a card with first_mes and no mes_example teaches no few-shot: the opening 
   // manufactured example.
   const prompt = buildChatCompanionSystemPrompt(profile);
   assert.doesNotMatch(prompt, /\[Dialogue Examples\]/);
-  assert.match(prompt, /Do not write long speeches or essays/);
+  // The register is the Host floor's, and the floor is the Chat surface block, mounted first by
+  // `buildCompanionSystemPrompt`. The pacing rule this line used to look for here - "Do not write long speeches or
+  // essays" - is one of the five framework sentences `framework-roleplay-gate.test.ts` records as RETIRED with an
+  // owner: its home is the persona corpus (the preset), and a bare card mounts no preset, so asserting it against
+  // this prompt would assert a claim the assembly no longer makes.
+  assert.ok(
+    prompt.startsWith(CHAT_SURFACE_DIVERGENCE),
+    "the Chat surface block is the floor this card's prompt carries, and it is the first thing in it",
+  );
 });
 
 test("a card that ships mes_example keeps exactly its parsed examples, beside its opening", () => {
@@ -1894,7 +1903,16 @@ test("a card's system_prompt becomes the profile's characterVoice and reaches th
     prompt.indexOf("动率先于言") > prompt.indexOf("Never mention prompts, instructions, models, or systems"),
     "the card's directive must render after the floor",
   );
-  assert.ok(prompt.includes("【角色演出指导（Character Voice & Directives）】"));
+  // The card's words are a delimited section the Host opens and closes (`renderCardDirective`,
+  // `companion-prompt-assembly.ts`): the markers say whose words follow, which is why no prose header is written above
+  // them. The header this line used to look for was the deleted `CARD_VOICE_BOUND` renderer's.
+  const directiveOpen = prompt.indexOf("<<<CARD DIRECTIVES");
+  const directiveClose = prompt.indexOf("CARD DIRECTIVES>>>");
+  assert.ok(
+    directiveOpen >= 0 && directiveClose > directiveOpen,
+    "the card's directive is a section the Host's own markers delimit",
+  );
+  assert.ok(prompt.slice(directiveOpen, directiveClose).includes("动率先于言"), "with the author's words inside it");
   // A default companion without a card voice renders unchanged.
   assert.equal("characterVoice" in candidateToIdentityProfile(previewStCard({ data: { name: "Plain" } }), 1), false);
 });
@@ -2245,7 +2263,7 @@ test("an imported card's secondary trigger words and selective logic survive the
   // The shipped reviewed card declares no gate, so it must come through exactly as
   // before: its own trigger words, and no field its card never wrote.
   const shippedCard = (await shippedPresetCard()) as {
-    data: { character_book: { entries: readonly Readonly<{ enabled?: boolean }>[] } };
+    data: { character_book: { entries: readonly Readonly<{ enabled?: boolean; keys?: readonly string[] }>[] } };
   };
   const shipped = previewStCard(shippedCard);
   // The count is derived from the card's own enabled entries rather than written here, so
@@ -2253,7 +2271,14 @@ test("an imported card's secondary trigger words and selective logic survive the
   // instead of leaving a stale literal that no longer describes anything.
   const shippedEnabled = shippedCard.data.character_book.entries.filter((entry) => entry.enabled !== false);
   assert.equal(shipped.worldBookCandidates.length, shippedEnabled.length);
-  assert.deepEqual(shipped.worldBookCandidates[0]?.keys, ["农场", "开拓", "伙伴", "约定"]);
+  // The trigger words are the CARD's own, read from the entry they came from. A literal here was the stale copy this
+  // comment used to warn about: the merged card's first entry carries `农场, 开荒, 杂草, …`, and a list written in this
+  // file could only ever describe the revision somebody happened to read.
+  assert.deepEqual(
+    shipped.worldBookCandidates[0]?.keys,
+    shippedEnabled[0]?.keys,
+    "the first entry's trigger words are the ones its card wrote, in the card's order",
+  );
   for (const entry of shipped.worldBookCandidates) {
     assert.equal(Object.hasOwn(entry, "secondaryKeys"), false, `${entry.entryId} grew a gate its card never wrote`);
     assert.equal(Object.hasOwn(entry, "selectiveLogic"), false, `${entry.entryId} grew a mode its card never wrote`);
