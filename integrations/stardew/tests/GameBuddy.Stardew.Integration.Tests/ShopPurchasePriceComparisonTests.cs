@@ -140,6 +140,16 @@ public sealed class ShopPurchasePriceComparisonTests
             .Purchasable.Should().Be(1, "20 is the item's value: the number that let this request through before");
     }
 
+    [Fact]
+    public void AnItemTradeWithZeroPriceIsAffordableEvenWithEmptyPurse()
+    {
+        (long affordable, int purchasable) =
+            ExecutionManager.ShopPurchaseCapacity(new ItemStockInformation(0, 5), currencyHeld: 0, requestedQuantity: 2);
+
+        affordable.Should().Be(2, "a 0g item trade does not require currency, so any requested amount is affordable");
+        purchasable.Should().Be(2, "the stock has 5 available and 2 were requested");
+    }
+
     /// <summary>
     /// The price the purchase path judges by is read from the stock entry it buys from - one fact, one spelling.
     ///

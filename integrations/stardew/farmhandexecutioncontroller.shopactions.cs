@@ -603,8 +603,10 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
     /// </para>
     /// <para>
     /// <c>Math.Max(1, ...)</c> is not a price: a row that trades an item instead of gold carries <c>Price = 0</c>
-    /// (the engine writes it, ShopBuilder.cs:226), so it keeps that row from dividing by zero and leaves it affordable
-    /// for any non-empty purse. The trade itself is enforced by the engine's own purchase, not by this count.
+    /// (the engine writes it, ShopBuilder.cs:226) and is answered before that division, because what it asks for is the
+    /// item and not gold - so it is affordable whatever the purse holds, empty included. The division keeps the guard
+    /// anyway: `ShopPurchaseCurrencySourceShapeTests` reads that exact expression to prove this count divides the shop's
+    /// own currency rather than the purse. The trade itself is enforced by the engine's own purchase, not by this count.
     /// </para>
     /// </summary>
     internal static (long Affordable, int Purchasable) ShopPurchaseCapacity(
@@ -612,7 +614,9 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
         long currencyHeld,
         int requestedQuantity)
     {
-        long affordable = currencyHeld / Math.Max(1, charged.Price);
+        long affordable = charged.Price <= 0
+            ? requestedQuantity
+            : (currencyHeld / Math.Max(1, charged.Price));
         return (affordable, (int)Math.Min(Math.Min(requestedQuantity, charged.Stock), affordable));
     }
 
