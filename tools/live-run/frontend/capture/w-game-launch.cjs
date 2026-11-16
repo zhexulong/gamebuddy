@@ -128,7 +128,9 @@ const {
   describeGameState,
   describeLaunchPlateau,
   describeLaunchProgress,
+  gameLocaleMismatch,
   lifecycleShapeOf,
+  liveGameLocaleOf,
   notMeasuredLine,
   readinessOf,
   responseStampForPress,
@@ -1501,6 +1503,10 @@ async function hostAnswers(port) {
         game: lastSmapiLine(),
       }),
     );
+  const expectedGameLocale = typeof launch.state?.locale?.locale === "string" ? launch.state.locale.locale : null;
+  const gameSaveLoadedLine = launchGameLog.facts?.[CHAIN_STEPS.saveLoaded]?.line ?? null;
+  const gameLocale = { expected: expectedGameLocale, saw: liveGameLocaleOf(gameSaveLoadedLine) };
+  const localeMismatch = gameLocaleMismatch({ expected: expectedGameLocale, saveLoadedLine: gameSaveLoadedLine });
   record("launch", {
     settled: readinessOf(launched) !== "pending",
     plateaued,
@@ -1514,11 +1520,28 @@ async function hostAnswers(port) {
     cabinReads: { ...cabinReads },
     gameLog: lastSmapiLine(),
     gameLogChainFacts: launchGameLog,
+    gameLocale,
     hostAnswers: await hostAnswers(launch.state?.port),
     pageEvents: pageEvents.slice(-12),
   });
   const launchProblem = problems.get("game/launch") ?? null;
   if (launchProblem !== null) return await refuse(browser, LAUNCH_STEPS.launch, { code: launchProblem.code, cause: launchProblem.cause, guardian });
+
+  /*
+   * The language the launched game is really in, read from the line SMAPI echoed when it loaded the save.
+   * It is the product's own fact - the engine's localized-asset suffix, empty for English - and it is the
+   * only witness of whether this run measured the product in the language it configured. A run that seeded
+   * a language and got another one is red BY NAME here instead of being readable only by someone who
+   * happens to notice the English on screen.
+   */
+  say(
+    `launched game locale: ${JSON.stringify(gameLocale)}${localeMismatch === null ? " (the run and the game agree)" : ""}`,
+  );
+  if (localeMismatch !== null) {
+    facts.detail = `the launched game's own log says ${JSON.stringify(localeMismatch.line)}: the run is configured for ${localeMismatch.expected} and the game is in ${localeMismatch.saw}`;
+    say(`FAILED: ${localeMismatch.code}`);
+    return await conclude(browser, { verdict: VERDICTS.failed, code: localeMismatch.code, exit: 1 });
+  }
 
   /*
    * ---- 4. the guide's third step. Reached whenever the launch has not already produced an attachment:

@@ -126,6 +126,52 @@ export function blockedByProductLine(gap, detail) {
   return `${BLOCKED_BY_PRODUCT_PREFIX} ${gap}: ${detail}`;
 }
 
+/** The verdict the game-launch driver gives a game that reads a different language than the run's. */
+export const GAME_LOCALE_MISMATCH_CODE = "game_locale_mismatch";
+
+/**
+ * The live locale SMAPI echoed on the launched game's own line (`Context: loaded save '<slot>',
+ * starting <date>, locale set to <x>`, or the bare `Context: locale set to <x>`), canonised to the
+ * product's BCP-47 grammar.
+ *
+ * SMAPI prints the engine's own localized-asset suffix: EMPTY for English - the game's only empty
+ * suffix, which `integrations/stardew/NativeChatPresentationPolicy.cs` states in the Mod - and
+ * `zh (zh-CN)` / `zh-CN` for a translated locale. `null` when the line carries no locale at all, so
+ * "nobody read it" and "it was English" never look alike.
+ */
+export function liveGameLocaleOf(line) {
+  if (typeof line !== "string") return null;
+  const match = /locale set to ([^.\n]*)/u.exec(line);
+  if (match === null) return null;
+  const raw = match[1].trim();
+  if (raw.length === 0) return "en-US";
+  const parenthesised = /\(([^)]+)\)\s*$/u.exec(raw);
+  const value = (parenthesised === null ? raw : parenthesised[1]).trim();
+  return value.length === 0 ? "en-US" : value;
+}
+
+/**
+ * `{ code, expected, saw, line }` when the launched game reads another language than the run's own;
+ * `null` when the two agree, when the run seeded no expectation, or when nothing was measured.
+ *
+ * The game applies `startup_preferences.languageCode` asynchronously from the title-menu update, and a
+ * native world entry driven before that locks the session into the default locale for its whole life -
+ * so the product would be measured in a language it was never configured for. That is a defect, not a
+ * detail. Measured 2026-11-16 (`.live-runs/gamewait2` and every launch that day): the game logged
+ * `locale set to .` - English - while the run's own preference was zh-CN.
+ */
+export function gameLocaleMismatch({ expected, saveLoadedLine }) {
+  if (typeof expected !== "string" || expected.length === 0) return null;
+  const saw = liveGameLocaleOf(saveLoadedLine);
+  if (saw === null || saw === expected) return null;
+  return {
+    code: `${GAME_LOCALE_MISMATCH_CODE}:expected ${expected}, saw '${saw}'`,
+    expected,
+    saw,
+    line: saveLoadedLine,
+  };
+}
+
 /** `{ gap, detail }` when the driver reported a product gap; `null` when it reported none. */
 export function readBlockedByProduct(text) {
   if (typeof text !== "string") return null;

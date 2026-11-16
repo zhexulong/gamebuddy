@@ -50,11 +50,13 @@ import {
   describeGameState,
   describeLaunchPlateau,
   describeLaunchProgress,
+  gameLocaleMismatch,
   guardianCanArm,
   LAUNCH_PLATEAU_MS,
   LAUNCH_STEPS,
   LIFECYCLE_SHAPES,
   lifecycleShapeOf,
+  liveGameLocaleOf,
   notMeasuredLine,
   PRODUCT_GAPS,
   readBlockedByProduct,
@@ -578,4 +580,39 @@ test("the Mod's stamp belongs to the press only within the freshness window, and
   assert.equal(responseStampForPress(FARMHAND_RUN.attachmentResponse, 1_794_705_400_000), null);
   assert.equal(responseStampForPress(FARMHAND_RUN.attachmentResponse, null), null);
   assert.equal(responseStampForPress(null, FARMHAND_RUN.confirmPressedAtMs), null);
+});
+
+/*
+ * ---- the launched game's own language ----
+ *
+ * The lines below are the ones this machine really wrote: the frontend live run's game (English,
+ * 2026-11-16 16:27 and `.live-runs/gamewait2`, 2026-11-14) and the game live run's (Chinese, the same
+ * machine and the same `startup_preferences`). The verdict is red-proofed against the first of them.
+ */
+const SAVE_LINE_ENGLISH =
+  "[16:27:27 TRACE SMAPI] Context: loaded save 'GameBuddyFarm_451234657', starting summer 1 Y1, locale set to . Main player with 1 player online.";
+const SAVE_LINE_CHINESE =
+  "[18:30:15 TRACE SMAPI] Context: loaded save 'GameBuddyFixtureStable2_451844707', starting spring 1 Y1, locale set to zh-CN. Single-player.";
+
+test("the game's own locale line reads as the product spells it, both ways", () => {
+  assert.equal(liveGameLocaleOf(SAVE_LINE_ENGLISH), "en-US", "the empty suffix is English and nothing else");
+  assert.equal(liveGameLocaleOf(SAVE_LINE_CHINESE), "zh-CN");
+  // The bare form SMAPI writes when it applies the language, before any save is loaded.
+  assert.equal(liveGameLocaleOf("[18:30:15 TRACE SMAPI] Context: locale set to zh (zh-CN)."), "zh-CN");
+  // Nothing measured is not English: a line with no locale at all answers null.
+  assert.equal(liveGameLocaleOf("[16:27:27 TRACE SMAPI] Context: loaded save 'x'."), null);
+  assert.equal(liveGameLocaleOf(null), null);
+});
+
+test("a game in another language than the run's is red by name, and agreement is silent", () => {
+  const mismatch = gameLocaleMismatch({ expected: "zh-CN", saveLoadedLine: SAVE_LINE_ENGLISH });
+  assert.equal(mismatch.code, "game_locale_mismatch:expected zh-CN, saw 'en-US'");
+  assert.equal(mismatch.saw, "en-US");
+  assert.equal(mismatch.line, SAVE_LINE_ENGLISH);
+
+  assert.equal(gameLocaleMismatch({ expected: "zh-CN", saveLoadedLine: SAVE_LINE_CHINESE }), null);
+  // The run seeded no expectation: the game's own preference is the authority and nothing is claimed.
+  assert.equal(gameLocaleMismatch({ expected: null, saveLoadedLine: SAVE_LINE_ENGLISH }), null);
+  // No save line: nothing was measured, so nothing is failed.
+  assert.equal(gameLocaleMismatch({ expected: "zh-CN", saveLoadedLine: null }), null);
 });
