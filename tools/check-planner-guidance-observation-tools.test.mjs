@@ -6,13 +6,14 @@
  * cases inject a tool the tree does not have, which is the whole claim: the set is the declaration's, so a tool nobody
  * has written yet arrives red instead of arriving invisible.
  *
- * red-proof: inject  the rectangle sentence deleted from the planner's text -> `examined 9 named 0 reason 6`,
- *   `planner_guidance_omits_tool:stardew_inspect_tiles` beside `stardew_look_up` and `stardew_observe`, blocked, asserted
- *   by "the guidance before the rectangle sentence is red on stardew_inspect_tiles"
+ * red-proof: inject  the rectangle sentence deleted from the planner's text -> `examined 8 named 1 reason 6`,
+ *   `planner_guidance_omits_tool:stardew_observe` beside nothing else, failed, asserted by "the guidance before the
+ *   rectangle sentence is red on stardew_observe" - that sentence is the only place a planning turn learns a shape is
+ *   one rectangle the observation tool still answers
  * red-proof: inject  only `stardew_look_up`'s name removed -> that tool alone is named, so a finding points at the tool
  *   that went missing and not at the sentence it sat in
- * red-proof: inject  a tenth `defineTool` added to the producer -> `planner_guidance_omits_tool:stardew_inspect_crops`
- *   over `examined 10`, so the population is the declaration's and covers tools nobody has written yet
+ * red-proof: inject  a ninth `defineTool` added to the producer -> `planner_guidance_omits_tool:stardew_inspect_crops`
+ *   over `examined 9`, so the population is the declaration's and covers tools nobody has written yet
  * red-proof: inject  `blankCommentText` made the identity in the gate -> two cases fail: a comment inside
  *   `planWorkDescription` counting as a mention, and a `name:` key inside a producer comment becoming a tool
  * red-proof: inject  `observationToolNames` returning before it walks the producer -> 10 of 13 cases fail, so the derived
@@ -58,8 +59,8 @@ const reportOf = (result) => JSON.parse(renderReport(result).lines.at(-1));
 /** The rule ids the report calls out, in report order. */
 const rulesOf = (report, status) => report.checks.filter((entry) => entry.status === status).map((entry) => entry.id);
 
-/** The opening and closing words of the rectangle sentence, so the red proofs read the tree instead of quoting it. */
-const RECTANGLE_LINE_START = "A piece of work with a SHAPE";
+/** The opening words of the rectangle sentence, so the red proofs read the tree instead of quoting it. */
+const RECTANGLE_LINE_START = "A SHAPE - a 3-wide";
 const NEXT_SENTENCE = "One call the compiler refuses";
 
 /** The guidance exactly as it read before the rectangle sentence existed, derived from the text itself. */
@@ -81,7 +82,7 @@ test("the real tree: every observation tool the Game surface mounts is named in 
   assert.deepEqual(codes(result), [], "the planner's text and the reason table together must account for every tool");
   assert.equal(result.status, "passed");
   assert.ok(
-    result.examined.observationTools >= 9,
+    result.examined.observationTools >= 8,
     `only ${result.examined.observationTools} observation tools were derived; a collapse this large means the producer ` +
       "stopped being read, not that the surface got smaller",
   );
@@ -90,9 +91,16 @@ test("the real tree: every observation tool the Game surface mounts is named in 
     result.examined.observationTools,
     "every examined tool is either named or carries a reason - the two counts are the population, not a sample of it",
   );
+  // THE RECTANGLE QUERY IS WHAT THIS GATE WAS WRITTEN FOR, and it is now a SELECTION on the observation tool: the
+  // sentence that used to name a separate tool names the one tool and its own `select` instead.
   assert.ok(
-    result.named.includes("stardew_inspect_tiles"),
-    "the rectangle query is the tool this gate was written for: a task with a shape is a rectangle, not another observe",
+    result.named.includes("stardew_observe"),
+    "a task with a shape is a rectangle queried through stardew_observe, so the planner's text must name it",
+  );
+  assert.equal(
+    result.tools.includes("stardew_inspect_tiles"),
+    false,
+    "the rectangle's own tool is deleted; a name no longer mounted may not stay in this population",
   );
 });
 
@@ -158,11 +166,11 @@ test("the verdict line prints the population, the named count and the reason cou
   );
 });
 
-test("the guidance before the rectangle sentence is red on stardew_inspect_tiles", () => {
+test("the guidance before the rectangle sentence is red on stardew_observe", () => {
   const result = check({ [GUIDANCE_PATH]: guidanceBeforeRectangleLine() });
   assert.equal(result.status, "failed");
   assert.ok(
-    codes(result).includes("planner_guidance_omits_tool:stardew_inspect_tiles"),
+    codes(result).includes("planner_guidance_omits_tool:stardew_observe"),
     `the reading that made this gate necessary must still be red; got ${codes(result).join(", ") || "(nothing)"}`,
   );
 });
@@ -185,7 +193,7 @@ test("a tool nobody has written yet is red by being added to the declaration", (
   );
   assert.notEqual(withNewTool, PRODUCER, "the producer's tool array is no longer where this case injects a member");
   const result = check({ [PRODUCER_PATH]: withNewTool });
-  assert.equal(result.examined.observationTools, 10);
+  assert.equal(result.examined.observationTools, 9);
   assert.deepEqual(codes(result), ["planner_guidance_omits_tool:stardew_inspect_crops"]);
 });
 
@@ -200,10 +208,10 @@ test("a mention that lives only in a comment inside the function is not a mentio
   assert.ok(withComment.includes(declaration), "planWorkDescription's declaration is gone");
   const commented = withComment.replace(
     declaration,
-    `${declaration}\n  // stardew_inspect_tiles answers a rectangle, but this line is a comment, not text the model reads.`,
+    `${declaration}\n  // stardew_observe answers a rectangle, but this line is a comment, not text the model reads.`,
   );
-  assert.equal(plannerGuidanceText(commented)?.includes("stardew_inspect_tiles"), false);
-  assert.ok(codes(check({ [GUIDANCE_PATH]: commented })).includes("planner_guidance_omits_tool:stardew_inspect_tiles"));
+  assert.equal(plannerGuidanceText(commented)?.includes("stardew_observe"), false);
+  assert.ok(codes(check({ [GUIDANCE_PATH]: commented })).includes("planner_guidance_omits_tool:stardew_observe"));
 });
 
 test("the producer's own comments do not become tools", () => {

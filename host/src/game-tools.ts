@@ -31,6 +31,7 @@ import {
   type SelectionAnswer,
   type SelectionAxis,
   type SelectionPredicate,
+  type SelectionRectangle,
   MAX_TARGET_TILES_SHOWN,
   OBSERVATION_ENUMERATED_TILE_LIMIT,
   OBSERVATION_SELECTION_RANGE_LIMIT,
@@ -39,8 +40,11 @@ import {
   TARGET_FAMILY_LABELS,
   axisTileCount,
   selectObservedRows,
+  selectTileAreaRows,
   selectionDisagreements,
   selectionGateReport,
+  selectionRectangle,
+  tileSelectionDisagreements,
   withoutRowFamilies,
 } from "./game-world-vocabulary.js";
 import { type ObservationBudget, boundObservedSnapshot } from "./stardew-observation-budget.js";
@@ -185,6 +189,17 @@ type TileAreaReadIntegration = {
   tileArea(request: TileAreaRequest): Promise<TileAreaResult>;
 };
 
+/**
+ * One rectangle read's outcome: the Mod's answer, or the refusal the model is given instead.
+ *
+ * `detail` is the Mod's own words when it refused. It is kept for `details` and never for the model: the Mod spells its
+ * refusal with the name of the tool this read used to be mounted as, and a caller taught that name would ask for a tool
+ * that does not exist - the Host's own sentence carries the same limit and the same size without it.
+ */
+type RectangleRead =
+  | Readonly<{ ok: true; result: TileAreaResult }>
+  | Readonly<{ ok: false; code: string; hint: string; detail: string | null }>;
+
 /** The wire's own bound on one selection coordinate, matching the rectangle arithmetic the tile reader accepts. */
 const SELECTION_COORDINATE_LIMIT = 1000;
 /** Families one condition may name; past this the caller wants a narrower question, not a longer list. */
@@ -215,6 +230,14 @@ type ObservationDetails = Readonly<{
   selection: SelectionAnswer | null;
   selectionGate: string | null;
   snapshotJson: string | null;
+  /**
+   * The Mod's own words when it refused the rectangle, kept for an operator and never handed to the model.
+   *
+   * The Mod spells its refusal with the name of the tool this read used to be mounted as, and a model told that name
+   * would call a tool that no longer exists; the model gets the Host's sentence, which carries the same limit and the
+   * same size.
+   */
+  selectionRefusal: string | null;
 }>;
 
 const refused = (code: string, hint: string): Readonly<{ ok: false; code: string; hint: string }> => ({
@@ -409,17 +432,68 @@ export function createStardewObservationTools(
   // The snapshot revision this tool last ANSWERED with. An observation that finds the revision it already
   // stated is one line, because the caller already has the world.
   let observedRevisionShown: number | undefined;
+  /**
+   * One rectangle read, through the Mod, in one round trip.
+   *
+   * THE BOUND IS THE MOD'S (`TileAreaQuery.AreaLimit`), which is why this request carries no area check: a refusal the
+   * Mod answers is the one that names that limit beside the size that was asked for, and a Host-side copy of the number
+   * would be a second opinion the model could be told instead of the truth.
+   */
+  const readRectangle = async (rectangle: SelectionRectangle): Promise<RectangleRead> => {
+    const reader = (integration as Partial<TileAreaReadIntegration>).tileArea;
+    if (typeof reader !== "function")
+      return {
+        ok: false,
+        code: "tile_area_query_unavailable",
+        hint: "这次会话没有矩形读取通道，这块格子读不到；用不带参数的 observe 看整块世界，或用 `tiles` 逐格问已发布的行。",
+        detail: null,
+      };
+    let result: TileAreaResult;
+    try {
+      result = await (integration as TileAreaReadIntegration).tileArea({
+        x: rectangle.x,
+        y: rectangle.y,
+        w: rectangle.w,
+        h: rectangle.h,
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return {
+        ok: false,
+        code: "tile_area_query_failed",
+        hint: `矩形读取失败了（${message}）：世界可能没在推进，先重新 observe 一次再问，别在这个循环里重试。`,
+        detail: message,
+      };
+    }
+    if (result.status === "answered") return { ok: true, result };
+    const size = result.w * result.h;
+    return {
+      ok: false,
+      code: `observation_rectangle_refused:${result.status}:${String(size)}:${String(result.areaLimit)}`,
+      hint:
+        result.status === "area_too_large"
+          ? `${String(result.w)}×${String(result.h)} 共 ${String(size)} 格，超过一次能读的 ${String(
+              result.areaLimit,
+            )} 格：把 x 或 y 收窄成更短的条，或分几次问。`
+          : `Mod 拒绝了这个 ${String(result.w)}×${String(result.h)} 的矩形（${result.status}）：换一个落在这张地图上、有世界状态的矩形再问。`,
+      detail: result.detail,
+    };
+  };
   const observe = defineTool({
     name: "stardew_observe",
     label: "Observe Stardew",
     description:
       "Read the latest authoritative Stardew Farmhand snapshot by asking the Mod for a fresh observation. This never changes the game. Always call this again after any action that changes location or world state; the previous result may describe a location you have already left. " +
-      "With NO argument you get the whole bounded world. To ask about a SHAPE instead - 'the 3-wide, 20-long strip', 'the row along the fence', 'what is on these three tiles' - pass a SELECTION and the answer is that filter over the rows this snapshot already published (it re-reads none of them from the world): " +
-      "`select` is a union of conditions, each { x?: {from,to,step?}, y?: {from,to,step?}, kinds?: [family,...] } - a rectangle, a stride (`step: 2` is every other tile), or kinds alone (every published row of those families wherever it stands); " +
-      "`tiles` is a union of explicit [x,y] tiles for any shape a rectangle cannot say. Both are unioned when both are given. " +
-      "`kinds` are the family names the observation already publishes (weedTargets, treeStumpTargets, soilTiles, debrisTargets, ...) and an unknown one is refused by name. " +
-      "`limit` (1-24, default 6) is how many rows of each kind are listed; the rest are COUNTED, never dropped. " +
-      "The answer always has one shape: how many tiles the selection named (with rows / measured-empty / unreadable), then per kind its count, then the nearest rows. The three zeroes stay apart: a tile inside the published area with nothing on it is EMPTY, a tile outside it is named UNREADABLE, and a kind this observation never published is NOT MEASURED.",
+      "With NO argument you get the whole bounded world. To ask about a SHAPE instead - 'the 3-wide, 20-long strip', 'the row along the fence', 'what is on these three tiles' - pass a SELECTION and the answer is about that shape: " +
+      "`select` is a union of conditions, each { x?: {from,to,step?}, y?: {from,to,step?}, kinds?: [family,...] } - a rectangle, a stride (`step: 2` is every other tile), or kinds alone (every published row of those families wherever it stands); `tiles` is a union of explicit [x,y] tiles for any shape a rectangle cannot say. Both are unioned when both are given. " +
+      "ONE RECTANGLE - `x` and `y` together and no `kinds` - is answered PER TILE in ONE round trip: the Mod reads every tile of it, and each row carries tillable (would the Hoe admit this tile), occupant (the engine's own name for what is stored on it, 'none' when it is free), occupantKind (what stands there in the very words a for_each `where: [{ occupant: ... }]` filter takes, so a row can be filtered with the same word a loop is written in), hoed / watered / crop (the soil's state), and passable (would the pathfinder step onto it now). Ask for the rectangle whenever the task has a shape instead of observing again and guessing the tiles in between: the observation's own families are only a square window around you, so a long strip is not in them. A rectangle has a SIZE limit, and a bigger one is REFUSED by name with the limit and the size you asked for. " +
+      "`kinds` are the family names the observation already publishes (weedTargets, treeStumpTargets, soilTiles, debrisTargets, ...), and a condition that names them is filtered over the rows this snapshot ALREADY published - a family row says where something stands and nothing about the tiles between them, so name `kinds` only when that is the question. An unknown one is refused by name. " +
+      "`limit` (1-" +
+      String(OBSERVATION_SELECTION_ROWS_LIMIT_MAX) +
+      ", default " +
+      String(MAX_TARGET_TILES_SHOWN) +
+      ") is how many rows of each kind are listed; the rest are COUNTED, never dropped. " +
+      "The answer always has one shape: how many tiles the selection named (with rows / measured-empty / unreadable), then per kind its count, then the nearest rows. The three zeroes stay apart: a tile that was read and has nothing on it is EMPTY, a tile the answer carries no row for is named UNREADABLE, and a kind this observation never published is NOT MEASURED.",
     parameters: Type.Object(
       {
         select: Type.Optional(
@@ -473,6 +547,7 @@ export function createStardewObservationTools(
             selection: null as SelectionAnswer | null,
             selectionGate: null as string | null,
             snapshotJson: null,
+            selectionRefusal: null,
           },
         };
       const selection = asked.selection;
@@ -520,13 +595,42 @@ export function createStardewObservationTools(
       // content now names it, and the reasonCode does too.
       const staleAfterFailedRefresh = available && refresh === "cached" && refreshError !== null;
       const revision = observed === null ? undefined : observed.revision;
-      // THE SELECTION is a filter over the rows this snapshot already publishes, so it is answered from `observed`
-      // (the one authority) and its gate runs before anything is handed to the model.
+      // THE SELECTION IS ANSWERED FROM WHERE THE QUESTION LIVES. A rectangle names TILES, and a tile no family
+      // published is one only the Mod can read, so that is a single `tile_area` round trip; a kind filter or an
+      // enumerated tile names published ROWS and is filtered out of the snapshot this answer just admitted. Either way
+      // the answer's shape, its gate and the three zeroes are the same, and nothing reaches the model before the gate
+      // has run.
       let selectionAnswer: SelectionAnswer | null = null;
       let selectionGate: string | null = null;
+      const rectangle = selection === null ? null : selectionRectangle(selection);
       if (selection !== null && observed !== null) {
-        const answer = selectObservedRows(observed, selection, asked.limit);
-        const disagreements = selectionDisagreements(observed, selection, answer);
+        const read = rectangle === null ? null : await readRectangle(rectangle);
+        if (read !== null && !read.ok)
+          return {
+            content: [{ type: "text" as const, text: `${read.code}。${read.hint}` }],
+            details: {
+              available,
+              refresh,
+              refreshError,
+              reasonCode: read.code,
+              observationBudget: bounded === null ? null : bounded.budget,
+              selection: null as SelectionAnswer | null,
+              selectionGate: null as string | null,
+              snapshotJson: available ? JSON.stringify(snapshot) : null,
+              selectionRefusal: read.detail,
+            },
+          };
+        let answer: SelectionAnswer;
+        let disagreements: readonly string[];
+        if (read === null) {
+          const fromRows = selectObservedRows(observed, selection, asked.limit);
+          answer = fromRows;
+          disagreements = selectionDisagreements(observed, selection, fromRows);
+        } else {
+          const fromTiles = selectTileAreaRows(read.result, selection, asked.limit, observed.tile);
+          answer = fromTiles;
+          disagreements = tileSelectionDisagreements(read.result, fromTiles);
+        }
         selectionGate = selectionGateReport();
         // A summary that does not add up is refused, not shipped: the model would have no way to tell which of the two
         // numbers is the wrong one.
@@ -547,6 +651,7 @@ export function createStardewObservationTools(
               selection: answer,
               selectionGate,
               snapshotJson: available ? JSON.stringify(snapshot) : null,
+              selectionRefusal: null,
             },
           };
         selectionAnswer = answer;
@@ -615,6 +720,7 @@ export function createStardewObservationTools(
           // `observations examined N · kinds K · disagreeing 0`: the gate's own population and verdict.
           selectionGate,
           snapshotJson: available ? JSON.stringify(snapshot) : null,
+          selectionRefusal: null,
         },
       };
     },
@@ -750,72 +856,6 @@ export function createStardewObservationTools(
               affordanceSurface(),
             );
       return lookupResult(answer, snapshot !== null);
-    },
-  });
-  /**
-   * One rectangle of the live world, in one round trip.
-   *
-   * The published soil family is a square window around the actor with a cap, so a task with a SHAPE - a 3x20 strip, a
-   * row along a fence - could only be planned from what happened to be in view: measured round42, a 3x20 request
-   * produced a 7x8 blob at 55% density while the companion re-observed every three or four tiles and inferred her own
-   * work from the list's silence. This is a question, not an action: no receipt, no postcondition and no program node,
-   * so a plan may ask it inside a planning turn, and it is mounted in the OBSERVATION class beside `stardew_look_up`
-   * for the same reason that one is - the answer is a reading of the world, never a way to change it.
-   */
-  const inspectTiles = defineTool({
-    name: "stardew_inspect_tiles",
-    label: "Inspect Stardew Tiles",
-    description:
-      "Read any RECTANGLE of the current location in one call, and ask this whenever the task has a shape - 'a 3-wide, " +
-      "20-long strip', 'the row along the fence', 'the 5x5 around the shed' - instead of observing again and guessing the " +
-      "tiles in between: the observation's soil family is only a square window around you, so a long strip is not in it. " +
-      "x,y is the rectangle's north-west tile and w,h its width and height in tiles; w*h is at most 100, and a bigger " +
-      "rectangle is REFUSED by name with the limit and the size you asked for. Every row carries tillable (would the Hoe " +
-      "admit this tile), occupant (the engine's own name for what is stored on it, 'none' when it is free), occupantKind " +
-      "(what stands there in the words a for_each where filter uses - 'weed', 'stone', 'crop', 'grass', 'tree', " +
-      "'tree_stump', 'object', 'terrain' or 'none' - so a row can be filtered in JavaScript with the same word a loop's " +
-      "where: [{ occupant: ... }] writes), hoed / watered / crop (the soil's state), and passable (would the pathfinder " +
-      "step onto it now). The header names the " +
-      "location and the snapshot revision the answer describes. It changes nothing.",
-    parameters: Type.Object(
-      {
-        x: Type.Integer({ minimum: -1000, maximum: 1000 }),
-        y: Type.Integer({ minimum: -1000, maximum: 1000 }),
-        w: Type.Integer({ minimum: 1, maximum: 1000 }),
-        h: Type.Integer({ minimum: 1, maximum: 1000 }),
-      },
-      { additionalProperties: false },
-    ),
-    execute: async (_toolCallId, params) => {
-      const args = requireStrictObject(params);
-      const keys = Object.keys(args);
-      if (
-        keys.length !== 4 ||
-        !["x", "y", "w", "h"].every((key) => keys.includes(key)) ||
-        !Number.isSafeInteger(args.x) ||
-        (args.x as number) < -1000 ||
-        (args.x as number) > 1000 ||
-        !Number.isSafeInteger(args.y) ||
-        (args.y as number) < -1000 ||
-        (args.y as number) > 1000 ||
-        !Number.isSafeInteger(args.w) ||
-        (args.w as number) < 1 ||
-        (args.w as number) > 1000 ||
-        !Number.isSafeInteger(args.h) ||
-        (args.h as number) < 1 ||
-        (args.h as number) > 1000
-      )
-        throw new Error("invalid_tool_parameters");
-      const reader = (integration as Partial<TileAreaReadIntegration>).tileArea;
-      if (typeof reader !== "function") throw new Error("tile_area_query_unavailable");
-      return navigationResult(
-        await (integration as TileAreaReadIntegration).tileArea({
-          x: args.x as number,
-          y: args.y as number,
-          w: args.w as number,
-          h: args.h as number,
-        }),
-      );
     },
   });
   const execution = defineTool({
@@ -974,7 +1014,7 @@ export function createStardewObservationTools(
     );
   };
 
-  const tools: Array<ReturnType<typeof defineTool>> = [observe, lookup, execution, catalog, search, inspectTiles];
+  const tools: Array<ReturnType<typeof defineTool>> = [observe, lookup, execution, catalog, search];
   {
     // constant mount; readiness re-checked at execution
     tools.push(

@@ -16,7 +16,7 @@
  * </p>
  */
 
-import type { Snapshot } from "./protocol.js";
+import type { Snapshot, TileAreaResult, TileAreaRow } from "./protocol.js";
 
 const SEASON_NAMES_ZH = ["春季", "夏季", "秋季", "冬季"] as const;
 const SEASON_NAMES_EN = ["Spring", "Summer", "Fall", "Winter"] as const;
@@ -1206,14 +1206,19 @@ export type SelectedRow = Readonly<{
  */
 export type SelectedKindCoverage = "measured" | "empty" | "beyond_extent" | "not_published";
 
-/** One kind's rows inside the selection, with everything the answer does not name counted. */
-export type SelectedKind = Readonly<{
+/**
+ * One kind's rows inside the selection, with everything the answer does not name counted.
+ *
+ * THE ROW TYPE IS THE ANSWER'S, not this type's: a published family's rows are `SelectedRow`, and the tiles a rectangle
+ * read returned are `TileAreaRow`. Both carry a tile, which is all the accounting below needs.
+ */
+export type SelectedKind<Row extends Readonly<{ x: number; y: number }> = SelectedRow> = Readonly<{
   kind: string;
   label: string;
   /** Rows of this kind the selection picked. The answer's summary states this number and nothing else. */
   count: number;
   /** The nearest `limit` of them. */
-  shown: readonly SelectedRow[];
+  shown: readonly Row[];
   /** Picked rows this answer does not name: the cap, plus every row carrying no readable tile. */
   omitted: number;
   /** Picked rows with no readable tile. Counted in `count` and in `omitted`, never silently dropped. */
@@ -1238,11 +1243,10 @@ export type SelectionTiles = Readonly<{
   kindOnlyConditions: number;
 }>;
 
-/** One answer shape for every selector. */
-export type SelectionAnswer = Readonly<{
+/** The fields every selection answer carries, whatever it was answered FROM. */
+type SelectionAnswerFields = Readonly<{
   verdict: "measured" | "empty" | "beyond_extent" | "not_measured";
   tiles: SelectionTiles;
-  kinds: readonly SelectedKind[];
   /** Families this observation published that the request's kind filter left out of this answer. */
   kindsOutsideScope: number;
   /** The extent of every row this observation published, or `undefined` when it published none it could place. */
@@ -1252,6 +1256,19 @@ export type SelectionAnswer = Readonly<{
   /** The model-facing block: counts first, then the nearest rows, then every absence named. */
   text: string;
 }>;
+
+/**
+ * One answer shape for every selector, in the row type of the question that was asked.
+ *
+ * A SELECTION IS A QUESTION ABOUT TILES, so the answer's `rowType` says which reading produced it: `family` is the rows
+ * the observation already published (`selectObservedRows`), `tile` is the rectangle the Mod read for this call
+ * (`selectTileAreaRows`). The counts, the omission, the three zeroes and the block's shape are one in both.
+ */
+export type FamilySelectionAnswer = SelectionAnswerFields &
+  Readonly<{ rowType: "family"; kinds: readonly SelectedKind[] }>;
+export type TileSelectionAnswer = SelectionAnswerFields &
+  Readonly<{ rowType: "tile"; kinds: readonly SelectedKind<TileAreaRow>[] }>;
+export type SelectionAnswer = FamilySelectionAnswer | TileSelectionAnswer;
 
 const tileKey = (x: number, y: number): string => `${String(x)},${String(y)}`;
 
@@ -1342,7 +1359,7 @@ export function selectObservedRows(
   snapshot: Snapshot,
   selection: ObservationSelection,
   limit: number,
-): SelectionAnswer {
+): FamilySelectionAnswer {
   const named = namedSelectionTiles(selection);
   const extent = observedRowExtent(snapshot);
   const scope = scopedKinds(selection);
@@ -1431,7 +1448,8 @@ export function selectObservedRows(
     unreadableNamed: Object.freeze(unreadableNamed),
     kindOnlyConditions,
   });
-  const answer: SelectionAnswer = Object.freeze({
+  const answer: FamilySelectionAnswer = Object.freeze({
+    rowType: "family" as const,
     verdict: verdictOf(kinds, tiles),
     tiles,
     kinds: Object.freeze(kinds),
@@ -1473,7 +1491,10 @@ function selectionMeetsExtent(
   return false;
 }
 
-function verdictOf(kinds: readonly SelectedKind[], tiles: SelectionTiles): SelectionAnswer["verdict"] {
+function verdictOf(
+  kinds: readonly Readonly<{ coverage: SelectedKindCoverage }>[],
+  tiles: SelectionTiles,
+): SelectionAnswer["verdict"] {
   const measured = kinds.some((kind) => kind.coverage === "measured");
   if (measured) return "measured";
   const published = kinds.filter((kind) => kind.coverage !== "not_published");
@@ -1506,7 +1527,7 @@ function selectionSpelling(selection: ObservationSelection, namedTileCount: numb
  * family the request put in scope is accounted for: rows it picked, or the "nothing here" line, or `未测`, or the
  * extent sentence. A family that printed nothing would be the one omission this block cannot have.
  */
-function renderSelectionAnswer(answer: SelectionAnswer, revision: number): string {
+function renderSelectionAnswer(answer: FamilySelectionAnswer, revision: number): string {
   const lines: string[] = [];
   const named = answer.tiles.named;
   const conditions = answer.tiles.kindOnlyConditions;
@@ -1577,6 +1598,215 @@ function verdictSentence(answer: SelectionAnswer): string {
   return "";
 }
 
+// ---------------------------------------------------------------------------------------------------------------
+// A RECTANGLE: the one question a published row cannot answer.
+// ---------------------------------------------------------------------------------------------------------------
+//
+// A family row says only WHERE something stands, and the families an observation publishes are a square window around
+// the actor. A task with a SHAPE - "a 3-wide, 20-long strip", "the row along the fence" - asks a different question:
+// what is on every tile of THIS rectangle, the empty ones included, and can the actor stand on each. Measured
+// `round42`: a 3x20 request produced a 7x8 blob at 55% density from the published families while the companion
+// re-observed every three or four tiles and inferred her own work from the list's silence.
+//
+// So a selection that names a rectangle is answered by ONE `tile_area_request`: the Mod reads the tiles of the location
+// the actor is standing in, and the ANSWER KEEPS THE SELECTION'S OWN SHAPE - per-kind counts (the kind is the tile's
+// `occupantKind`, the word a `for_each` `where: [{ occupant: ... }]` filter is decided against), the nearest rows with
+// every fact a plan needs, and every tile the answer did not read counted and named.
+
+/**
+ * The word the Mod publishes for a tile nothing stands on - `TileOccupantKind.None`, which is
+ * `FarmhandForEachHealing.NoOccupant`.
+ *
+ * ONE HOST COPY, held to the Mod's constant by `tool-capability-lost-in-a-merge.test.ts`. The "measured empty" bucket is
+ * decided by THIS word, so a Mod-side rename the Host did not follow would move every free tile into `withRows` and the
+ * three zeroes would report a strip of open ground as full.
+ */
+export const TILE_OCCUPANT_NONE = "none";
+
+/** The rectangle one selection names outright: the north-west tile, then its width and height in tiles. */
+export type SelectionRectangle = Readonly<{ x: number; y: number; w: number; h: number }>;
+
+/**
+ * The one rectangle a selection names, or `null` when the selection is a question about published rows instead.
+ *
+ * THE BOUNDARY IS THE SELECTED THING. `kinds` names FAMILIES and a family row is what it filters, so a kind filter stays
+ * with `selectObservedRows`. One rectangle with no kind filter is the question only the Mod can answer, because it is
+ * about tiles no family would have published. A stride stays with the rectangle: it chooses which of the READ tiles the
+ * answer counts, and it is the rectangle's own arithmetic.
+ */
+export function selectionRectangle(selection: ObservationSelection): SelectionRectangle | null {
+  if (selection.tiles.length > 0 || selection.predicates.length !== 1) return null;
+  const [predicate] = selection.predicates;
+  if (predicate === undefined || predicate.kinds !== undefined) return null;
+  if (predicate.x === undefined || predicate.y === undefined) return null;
+  return Object.freeze({
+    x: predicate.x.from,
+    y: predicate.y.from,
+    w: predicate.x.to - predicate.x.from + 1,
+    h: predicate.y.to - predicate.y.from + 1,
+  });
+}
+
+/** `yes`/`no`, so a row reads as a sentence rather than as a number a caller has to interpret. */
+const yesNo = (value: boolean): string => (value ? "yes" : "no");
+
+/** One tile row as the block prints it: the occupant word first, because that is the word a filter takes. */
+function tileRowText(row: TileAreaRow): string {
+  return `(${String(row.x)},${String(row.y)}) ${row.occupantKind} occupant=${row.occupant} tillable=${yesNo(
+    row.tillable,
+  )} hoed=${yesNo(row.hoed)} watered=${yesNo(row.watered)} crop=${yesNo(row.crop)} passable=${yesNo(row.passable)}`;
+}
+
+/**
+ * The rows one rectangle read answered, counted per `occupantKind` - the selection answer in its tile row type.
+ *
+ * ORDER is the module's own: Chebyshev distance from her tile, then x, then y, so the nearest tile of the strip is the
+ * one she reaches first - and the kinds come in the order those ordered rows first mention them, so the answer is a
+ * reading of the strip rather than of a table's key order.
+ *
+ * THE THREE ZEROES ARE PER TILE HERE, which is what reading buys: a named tile whose row says `occupantKind: none` is
+ * MEASURED AND EMPTY; a named tile the answer carries no row for is UNREADABLE and is named; and an answer that read
+ * none of the rectangle is NOT MEASURED rather than empty.
+ */
+export function selectTileAreaRows(
+  result: Readonly<TileAreaResult>,
+  selection: ObservationSelection,
+  limit: number,
+  actor: Readonly<{ x: number; y: number }> | undefined,
+): TileSelectionAnswer {
+  const named = namedSelectionTiles(selection);
+  const readableActor = actor !== undefined && Number.isFinite(actor.x) && Number.isFinite(actor.y);
+  const distance = (tile: Readonly<{ x: number; y: number }>): number =>
+    readableActor ? Math.max(Math.abs(tile.x - actor.x), Math.abs(tile.y - actor.y)) : 0;
+  const ordered = (result.rows ?? [])
+    .filter((row) => named.has(tileKey(row.x, row.y)))
+    .sort((left, right) => distance(left) - distance(right) || left.x - right.x || left.y - right.y);
+
+  const rowsOfKind = new Map<string, TileAreaRow[]>();
+  for (const row of ordered) {
+    const existing = rowsOfKind.get(row.occupantKind);
+    if (existing === undefined) rowsOfKind.set(row.occupantKind, [row]);
+    else existing.push(row);
+  }
+  const kinds: SelectedKind<TileAreaRow>[] = [];
+  for (const [kind, rows] of rowsOfKind) {
+    const shown = rows.slice(0, limit);
+    kinds.push(
+      Object.freeze({
+        kind,
+        // The kind IS the word the row carries, so nothing here maps one vocabulary onto another.
+        label: kind,
+        count: rows.length,
+        shown: Object.freeze(shown.map((row) => Object.freeze(row))),
+        omitted: rows.reduce((total, _row, index) => total + (index < shown.length ? 0 : 1), 0),
+        unplaced: 0,
+        published: rows.length,
+        // Every row here was READ: the Mod answered about this tile, so a kind it carries is measured.
+        coverage: "measured" as const,
+      }),
+    );
+  }
+
+  const byTile = new Map(ordered.map((row) => [tileKey(row.x, row.y), row]));
+  const unreadableNamed: string[] = [];
+  let withRows = 0;
+  let empty = 0;
+  let unreadable = 0;
+  for (const key of named) {
+    const row = byTile.get(key);
+    if (row === undefined) {
+      unreadable += 1;
+      if (unreadableNamed.length < MAX_COUNTED_FAMILIES_NAMED) unreadableNamed.push(key.replace(",", "，"));
+      continue;
+    }
+    if (row.occupantKind === TILE_OCCUPANT_NONE) empty += 1;
+    else withRows += 1;
+  }
+  const tiles: SelectionTiles = Object.freeze({
+    named: named.size,
+    withRows,
+    empty,
+    unreadable,
+    unreadableNamed: Object.freeze(unreadableNamed),
+    kindOnlyConditions: 0,
+  });
+  const answer: TileSelectionAnswer = Object.freeze({
+    rowType: "tile" as const,
+    verdict: kinds.length > 0 ? "measured" : named.size > 0 ? "not_measured" : "empty",
+    tiles,
+    kinds: Object.freeze(kinds),
+    kindsOutsideScope: 0,
+    extent: Object.freeze({ x0: result.x, y0: result.y, x1: result.x + result.w - 1, y1: result.y + result.h - 1 }),
+    spelling: selectionSpelling(selection, named.size),
+    text: "",
+  });
+  return Object.freeze({ ...answer, text: renderTileAnswer(answer, result) });
+}
+
+/** The model-facing block for a rectangle read: what was read, then the counts, then the rows, then the absences. */
+function renderTileAnswer(answer: TileSelectionAnswer, result: Readonly<TileAreaResult>): string {
+  const lines: string[] = [];
+  lines.push(
+    `矩形（revision ${String(result.revision)}）：${String(result.w)}×${String(result.h)} = ${String(
+      result.w * result.h,
+    )} 格，一次读取，位置 ${result.location ?? "未命名"}。这些格是 Mod 逐格读出来的，不是已发布行拼出来的。`,
+  );
+  lines.push(
+    `格子：${String(answer.tiles.withRows)} 格有东西 · ${String(answer.tiles.empty)} 格测过是空的 · ${String(
+      answer.tiles.unreadable,
+    )} 格没读到${answer.tiles.unreadableNamed.length === 0 ? "" : `（${answer.tiles.unreadableNamed.join("、")}）`}`,
+  );
+  const total = answer.kinds.reduce((sum, kind) => sum + kind.count, 0);
+  const shown = answer.kinds.reduce((sum, kind) => sum + kind.shown.length, 0);
+  const omitted = answer.kinds.reduce((sum, kind) => sum + kind.omitted, 0);
+  if (total > 0)
+    lines.push(
+      `这块里的格：${answer.kinds
+        .map((kind) => `${kind.label} ${String(kind.count)}`)
+        .join(" · ")}（共 ${String(total)} 格；列出 ${String(shown)} 格，其余 ${String(omitted)} 格未列出）`,
+    );
+  for (const kind of answer.kinds)
+    lines.push(
+      `${kind.label} ${String(kind.count)} 格：${kind.shown.map(tileRowText).join(" ")}${
+        kind.omitted > 0 ? ` 其余 ${String(kind.omitted)} 格未列出` : ""
+      }`,
+    );
+  if (answer.tiles.unreadable > 0)
+    lines.push("没读到的格子不是空的：那几格的 occupant 和 tillable 这次没有人回答，别当成空地。");
+  if (total === 0) lines.push(verdictSentence(answer));
+  return lines.join("\n");
+}
+
+/**
+ * Every way a rectangle answer disagrees with the rows it was built from. Empty means the construction holds.
+ *
+ * The recount reads the SAME rows the answer was built from, so a lost row, a kind that swallowed its neighbour's tile,
+ * or a cap applied to the wrong list is a red gate naming the drifting kind rather than a number nobody can check.
+ */
+export function tileSelectionDisagreements(
+  result: Readonly<TileAreaResult>,
+  answer: TileSelectionAnswer,
+): readonly string[] {
+  const rows = result.rows ?? [];
+  const read = new Set(rows.map((row) => tileKey(row.x, row.y)));
+  const codes: string[] = [];
+  for (const kind of answer.kinds) {
+    const recount = rows.filter((row) => row.occupantKind === kind.kind).length;
+    if (recount !== kind.count || kind.count !== kind.shown.length + kind.omitted)
+      codes.push(selectionDisagreementCode(answer.spelling, kind.kind));
+    if (kind.shown.some((row) => row.occupantKind !== kind.kind || !read.has(tileKey(row.x, row.y))))
+      codes.push(`region_summary_includes_a_row_outside_the_selection:${answer.spelling}:${kind.kind}`);
+  }
+  if (answer.kinds.reduce((sum, kind) => sum + kind.count, 0) !== rows.length)
+    codes.push(`region_rows_unaccounted:${answer.spelling}`);
+  if (answer.tiles.named !== answer.tiles.withRows + answer.tiles.empty + answer.tiles.unreadable)
+    codes.push(`region_tile_accounting_disagrees:${answer.spelling}`);
+  selectionGateCounters.observations += 1;
+  selectionGateCounters.kinds += answer.kinds.length;
+  selectionGateCounters.disagreements += codes.length;
+  return Object.freeze(codes);
+}
+
 /** The observation with every published row family removed, so a selection answer does not print the world twice. */
 export function withoutRowFamilies(snapshot: Readonly<Record<string, unknown>>): Readonly<Record<string, unknown>> {
   const stripped: Record<string, unknown> = { ...snapshot };
@@ -1617,7 +1847,7 @@ export function selectionDisagreementCode(spelling: string, kind: string): strin
 export function selectionDisagreements(
   snapshot: Snapshot,
   selection: ObservationSelection,
-  answer: SelectionAnswer,
+  answer: FamilySelectionAnswer,
 ): readonly string[] {
   const named = namedSelectionTiles(selection);
   const admissions = new Map(

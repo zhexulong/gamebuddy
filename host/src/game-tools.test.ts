@@ -6,7 +6,14 @@ import { ExecutionCorrelationLedger } from "./execution-correlation-ledger.js";
 import type { StardewBridgeConnection } from "./game-connection.js";
 import { createStardewActionTools, createStardewObservationTools, type MoveCapableIntegration } from "./game-tools.js";
 import { GameConnectionTestClient } from "./test-support/game-connection-test-client.js";
-import { newEnvelope, validateExecutionRequest, type ActionRegistration, type Scope } from "./protocol.js";
+import {
+  newEnvelope,
+  validateExecutionRequest,
+  type ActionRegistration,
+  type Scope,
+  type TileAreaRequest,
+  type TileAreaResult,
+} from "./protocol.js";
 import { TEST_MOD_REGISTRATIONS } from "./stardew-test-fixtures.js";
 import { STARDEW_GAME_INTEGRATION_ADAPTER } from "./stardew-game-integration-adapter.js";
 
@@ -2177,7 +2184,7 @@ const selectionExecute = async (tools: ReturnType<typeof createStardewObservatio
 test("stardew_observe answers the rectangle it was given, and the environment is still stated", async () => {
   const { tools, refresh } = selectionIntegration();
   const { text, details } = await selectionExecute(tools, {
-    select: [{ x: { from: 60, to: 62 }, y: { from: 18, to: 20 } }],
+    select: [{ x: { from: 60, to: 62 }, y: { from: 18, to: 20 }, kinds: ["weedTargets", "grassTargets"] }],
   });
   assert.equal(refresh(), 1, "a selection is answered from a fresh observation, not from a stale cache");
   assert.match(text, /选中（revision 383）/u, `the answer says what was selected and which revision: ${text}`);
@@ -2218,7 +2225,7 @@ test("stardew_observe enumerates tiles: one inside the published extent, one nam
 test("stardew_observe limits how many rows a kind lists, and counts the rest", async () => {
   const { tools } = selectionIntegration();
   const { text, details } = await selectionExecute(tools, {
-    select: [{ x: { from: 60, to: 62 }, y: { from: 18, to: 21 } }],
+    select: [{ x: { from: 60, to: 62 }, y: { from: 18, to: 21 }, kinds: ["weedTargets"] }],
     limit: 2,
   });
   const weeds = details.selection?.kinds?.find((kind) => kind.kind === "weedTargets");
@@ -2280,4 +2287,65 @@ test("no selection is exactly today's observation", async () => {
   assert.equal(text.includes("选中"), false, "the plain answer is the whole world block, unchanged");
   assert.equal(details.selection, null);
   assert.match(text, /\(61,10\)|草丛/u, `the world block still names the nearby families: ${text}`);
+});
+
+test("the rectangle key is what sends a selection to the world; a kind filter reads no tile", async () => {
+  // THE DISPATCH BOUNDARY IS THE WHOLE MERGE. A rectangle names TILES, and a tile no family published is one only the
+  // Mod can read; a kind filter names FAMILY ROWS, which this answer already holds. A selection that quietly took the
+  // wrong path would either cost a round trip for a question the snapshot answers, or answer a rectangle from rows that
+  // never described its tiles.
+  const reads: TileAreaRequest[] = [];
+  const answered = (request: TileAreaRequest): TileAreaResult => ({
+    status: "answered",
+    detail: null,
+    x: request.x,
+    y: request.y,
+    w: request.w,
+    h: request.h,
+    location: "Farm",
+    revision: 383,
+    areaLimit: 100,
+    rows: Array.from({ length: request.w * request.h }, (_unused, index) => ({
+      x: request.x + (index % request.w),
+      y: request.y + Math.floor(index / request.w),
+      tillable: true,
+      occupant: "none",
+      occupantKind: "none",
+      hoed: false,
+      watered: false,
+      crop: false,
+      passable: true,
+    })),
+    omitted: 0,
+  });
+  const integration = {
+    state: { connected: true, snapshot: selectionSnapshot(), latestReasonCode: null, latestReceipt: null },
+    observe: async () => {},
+    tileArea: async (request: TileAreaRequest) => {
+      reads.push(request);
+      return answered(request);
+    },
+  };
+  const tools = createStardewObservationTools(integration as never);
+
+  const rectangle = await selectionExecute(tools, { select: [{ x: { from: 60, to: 62 }, y: { from: 18, to: 20 } }] });
+  assert.deepEqual(
+    reads,
+    [{ x: 60, y: 18, w: 3, h: 3 }],
+    "a rectangle is one read of the world, of exactly that shape",
+  );
+  assert.equal(rectangle.details.selection?.tiles?.named, 9, "and it names the tiles it read");
+
+  const filtered = await selectionExecute(tools, {
+    select: [{ x: { from: 60, to: 62 }, y: { from: 18, to: 20 }, kinds: ["weedTargets"] }],
+  });
+  assert.equal(reads.length, 1, "a kind filter re-reads no tile: the rows it answers are already in hand");
+  assert.equal(
+    filtered.details.selection?.kinds?.find((kind) => kind.kind === "weedTargets")?.count,
+    9,
+    "and the published rows still answer it",
+  );
+  const enumerated = await selectionExecute(tools, { tiles: [[60, 18]] });
+  assert.equal(reads.length, 1, "an enumerated tile names a place whose published row is the answer, not a new read");
+  assert.equal(enumerated.details.selection?.tiles?.named, 1);
 });

@@ -79,10 +79,12 @@
  * `blocked` when a prerequisite or the population could not be read, `failed` when a rule has a finding; the verdict
  * line above the report carries the same word. `tools/lib/harness-conformance.mjs` reads that line.
  *
- * red-proof: inject  the guidance as it read before the rectangle sentence (the name deleted from the text) -> `examined 9
- *   named 0 reason 6`, `planner_guidance_omits_tool:stardew_inspect_tiles`, `...:stardew_look_up`, `...:stardew_observe`,
- *   failed, exit 1 - measured on the text as it read before the sentence was added, and reproduced by
- *   tools/check-planner-guidance-observation-tools.test.mjs deleting it
+ * red-proof: inject  the guidance as it read before the rectangle sentence (the name deleted from the text) -> `examined 8
+ *   named 1 reason 6`, `planner_guidance_omits_tool:stardew_observe`, failed, exit 1 - reproduced by
+ *   tools/check-planner-guidance-observation-tools.test.mjs deleting it. Before the rectangle query became a selection on
+ *   the observation tool, the same reading was red on `stardew_inspect_tiles` beside `stardew_look_up` and
+ *   `stardew_observe` (`examined 9 named 0 reason 6`): the tool that answered it is gone, and the sentence now points at
+ *   the one that answers it
  * red-proof: inject  only `stardew_look_up`'s name removed -> that tool alone is named, so the finding points at the tool
  *   that went missing and not at the sentence it was in
  * red-proof: inject  a tenth `defineTool` added to the producer -> `planner_guidance_omits_tool:stardew_inspect_crops`,

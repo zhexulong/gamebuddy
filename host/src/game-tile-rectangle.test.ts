@@ -16,19 +16,25 @@ import {
 } from "./protocol.js";
 
 /**
- * `stardew_inspect_tiles`: one RECTANGLE of the live world in one round trip.
+ * One RECTANGLE of the live world, through `stardew_observe` - the tool that absorbed the rectangle query.
  *
  * <p>
  * Measured round42, live: a 3-wide x 20-long strip was asked for, the observation's soil family is a square window
  * around the actor with a cap, and the run produced a 7x8 blob at 55% density over 21 two-or-three-node scripts while
- * the companion re-observed every three or four tiles. The missing channel is the whole finding: nothing she could ask
+ * the companion re-observed every three or four tiles. The missing channel was the whole finding: nothing she could ask
  * answered "what is at (44..46, 12..31)".
  * </p>
  * <p>
- * What this file pins is the ANSWER CONTRACT and the FRAME: the tool forwards exactly the rectangle it was asked for,
- * the Mod's answer reaches the model verbatim (including its own refusals - the Host does not decide the area bound),
- * and the bytes on the wire are the bytes the protocol validator and the committed schema both admit. The frame half
- * matters because a key the Host does not know rejects the WHOLE envelope, which this repo has paid for three times.
+ * What this file pins is the FRAME and the ANSWER CONTRACT of that channel, now that the tool which used to own it is
+ * gone: a selection naming a rectangle forwards exactly that rectangle, the Mod's answer reaches the model verbatim in
+ * its own facts (including its own refusals - the Host does not decide the area bound), and the bytes on the wire are
+ * the bytes the protocol validator and the committed schema both admit. The frame half matters because a key the Host
+ * does not know rejects the WHOLE envelope, which this repo has paid for three times.
+ * </p>
+ * <p>
+ * THE CAPABILITIES the deleted tool promised are not asserted here: they belong to
+ * `tool-capability-lost-in-a-merge.test.ts`, which reads its population from the wire and from the Mod instead of from
+ * this file's memory.
  * </p>
  */
 
@@ -127,56 +133,37 @@ function integration(tileArea?: (request: TileAreaRequest) => Promise<TileAreaRe
   return connection;
 }
 
+/** The strip as a selection: `x` and `y` together are the rectangle, and nothing else is a shape. */
+const strip = (x: number, y: number, w: number, h: number) => ({
+  select: [{ x: { from: x, to: x + w - 1 }, y: { from: y, to: y + h - 1 } }],
+});
+
 async function ask(connection: StardewBridgeConnection, params: unknown) {
-  const tool = createStardewObservationTools(connection).find(
-    (candidate) => candidate.name === "stardew_inspect_tiles",
-  );
-  assert.ok(tool, "stardew_inspect_tiles is mounted in the observation class, beside stardew_look_up");
-  const result = await tool.execute("inspect_tiles_01", params, new AbortController().signal, () => {}, {} as never);
-  const text = result.content[0];
-  assert.ok(text !== undefined && text.type === "text", "the answer is one text block, like every observation tool");
-  return { text: text.text, body: JSON.parse(text.text) as Record<string, unknown> };
+  const tool = createStardewObservationTools(connection).find((candidate) => candidate.name === "stardew_observe");
+  assert.ok(tool, "the rectangle is a question stardew_observe answers; it is the observation class's one tool for it");
+  const result = await tool.execute("observe_01", params as never, new AbortController().signal, () => {}, {} as never);
+  const content = result.content[0];
+  assert.ok(content !== undefined && content.type === "text", "the answer is one text block, like every observation");
+  return { text: content.text, details: result.details as unknown as Record<string, unknown> };
 }
 
-test("the rectangle is forwarded exactly as asked, and the Mod's answer reaches the model verbatim", async () => {
+test("the rectangle is forwarded exactly as asked, and the Mod's rows reach the model", async () => {
   const asked: TileAreaRequest[] = [];
   const connection = integration(async (request) => {
     asked.push(request);
     return answered(request.x, request.y, request.w, request.h);
   });
 
-  const { body } = await ask(connection, { x: 44, y: 12, w: 3, h: 20 });
+  const { text, details } = await ask(connection, strip(44, 12, 3, 20));
 
   assert.deepEqual(asked, [{ x: 44, y: 12, w: 3, h: 20 }], "the four numbers are the whole request");
-  const rows = body.rows as readonly Record<string, unknown>[];
-  assert.equal(rows.length, 60, "a 3x20 strip is 60 rows, which is the shape the round42 run could not ask for");
-  assert.deepEqual(Object.keys(body).sort(), [
-    "areaLimit",
-    "detail",
-    "h",
-    "location",
-    "omitted",
-    "revision",
-    "rows",
-    "status",
-    "w",
-    "x",
-    "y",
-  ]);
-  assert.equal(body.status, "answered");
-  assert.equal(body.revision, snapshot.revision, "the answer names the snapshot it describes");
-  assert.equal((rows.length as number) + (body.omitted as number), 3 * 20, "published plus omitted is the rectangle");
-  assert.deepEqual(Object.keys(rows[0] ?? {}).sort(), [
-    "crop",
-    "hoed",
-    "occupant",
-    "occupantKind",
-    "passable",
-    "tillable",
-    "watered",
-    "x",
-    "y",
-  ]);
+  const selection = (details as unknown as { selection: { rowType: string; revision?: number } }).selection;
+  assert.equal(selection.rowType, "tile", "a rectangle answers in the tile row type");
+  assert.equal(asked.length, 1, "one round trip, which is the whole point of asking for a rectangle");
+  // Sixty tiles, of which the ones with a tree are the ones the strip's own rows report.
+  assert.match(text, /3×20 = 60 格/u, `the answer states the shape it read: ${text}`);
+  assert.match(text, /格子：/u, "and how many tiles hold something");
+  assert.match(text, /revision 412/u, "the answer names the snapshot it describes");
 });
 
 test("an over-area answer is the MOD's refusal, delivered with the limit and the size that was asked for", async () => {
@@ -186,36 +173,25 @@ test("an over-area answer is the MOD's refusal, delivered with the limit and the
     return overTheArea(request.x, request.y, request.w, request.h);
   });
 
-  const { body } = await ask(connection, { x: 0, y: 0, w: 11, h: 10 });
+  const { text, details } = await ask(connection, strip(0, 0, 11, 10));
 
   assert.equal(asked.length, 1, "the bound is the Mod's to enforce; the Host must not pre-empt it with a schema error");
-  assert.equal(body.status, "area_too_large");
-  assert.equal(body.detail, "inspect_tiles_area_too_large:100:11x10");
-  assert.equal(body.rows, null, "a refusal publishes no short list that could read as a complete answer");
-});
-
-test("a malformed rectangle is refused by the tool with one code, before anything reaches the bridge", async () => {
-  const asked: TileAreaRequest[] = [];
-  const connection = integration(async (request) => {
-    asked.push(request);
-    return answered(request.x, request.y, request.w, request.h);
-  });
-
-  for (const params of [
-    { x: 0, y: 0, w: 0, h: 5 },
-    { x: 0, y: 0, w: 3, h: 0 },
-    { x: 0, y: 0, w: 3 },
-    { x: 0, y: 0, w: 3, h: 5, extra: 1 },
-    { x: 0.5, y: 0, w: 3, h: 5 },
-    { x: "0", y: 0, w: 3, h: 5 },
-  ])
-    await assert.rejects(ask(connection, params), /invalid_tool_parameters/u, JSON.stringify(params));
-
-  assert.deepEqual(asked, [], "a malformed question is not sent; the Mod never sees it");
+  assert.match(text, /11×10/u, `the refusal names the size that was asked for: ${text}`);
+  assert.match(text, /100 格/u, `and the limit it broke: ${text}`);
+  assert.equal((details as unknown as { selection: unknown }).selection, null, "a refusal publishes no rows");
 });
 
 test("a session with no rectangle reader says so instead of answering an empty rectangle", async () => {
-  await assert.rejects(ask(integration(), { x: 44, y: 12, w: 3, h: 20 }), /tile_area_query_unavailable/u);
+  const { text, details } = await ask(integration(), strip(44, 12, 3, 20));
+  assert.match(text, /^tile_area_query_unavailable/u, text);
+  assert.equal((details as unknown as { reasonCode: string }).reasonCode, "tile_area_query_unavailable");
+});
+
+test("a rectangle is still a READ: no argument and no selection is exactly the whole world", async () => {
+  const connection = integration(async (request) => answered(request.x, request.y, request.w, request.h));
+  const plain = await ask(connection, {});
+  assert.equal(plain.text.includes("矩形（"), false, "the plain observation is not a rectangle read");
+  assert.equal((plain.details as unknown as { selection: unknown }).selection, null);
 });
 
 test("the frames both sides send are the frames the protocol validator and the committed schema admit", async () => {
