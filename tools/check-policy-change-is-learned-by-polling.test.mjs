@@ -1,3 +1,15 @@
+/**
+ * The falsifier suite's own red proofs, in the form the gate-red-proof audit reads.
+ *
+ * red-proof: history  run over HEAD's own `ModEntry.cs` - the commit before the frame landed, still holding the
+ *                    120-tick poll - the gate exits 1 with
+ *                    `policy_change_is_learned_by_polling:integrations/stardew/ModEntry.cs:1896:39`, which is the
+ *                    line the review measured.
+ * red-proof: inject   a `helper.ReadConfig<ModConfig>()` inside `PolicyPoller.Update` over a throwaway tree ->
+ *                    `status: failed`, `periodic: 1`, and the finding names that file; deleting the startup load ->
+ *                    `blocked`, "the startup load is missing". Both are asserted below, so the injection is code
+ *                    rather than a claim.
+ */
 import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
