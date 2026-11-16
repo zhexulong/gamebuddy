@@ -1,6 +1,6 @@
 {
   "note": "Cognitive complexity and class size recorded from the commit named in `revision`: per member, per class and per type size. Members are keyed by qualified signature (not file:line, so moving a method between the partials of its class is not a new offender, and a lambda by its nearest named owner plus its ordinal, so inserting lines above it is not one either); `file` and `line` are recorded for the reader. A ts member that reads at Biome's ceiling carries `saturated: true`, because 255 is that producer's floor and not a count - it cannot be grown past and it cannot be verified to have held still. An entry may carry a `reason` naming the commit that bought its growth, and `--update` keeps it. Re-record with `node tools/check-cognitive-complexity.mjs --update` in its own commit. The ts numbers come from Biome's complexity/noExcessiveCognitiveComplexity and the cs numbers from this gate's own S3776 implementation over tree-sitter-c-sharp; the two are never compared or summed, so each carries its own `producer`.",
-  "revision": "6cc7915c",
+  "revision": "83ae46f0",
   "producers": {
     "ts": "biome 2.2.4 complexity/noExcessiveCognitiveComplexity (maxAllowedComplexity 30 from biome.json)",
     "cs": "SonarSource S3776 over @vscode/tree-sitter-wasm 0.3.1 tree-sitter-c-sharp.wasm, implemented by tools/check-cognitive-complexity.mjs"
@@ -27,7 +27,7 @@
       "language": "cs",
       "name": "BridgeProtocol.ExecutionArgumentProperties(string?)",
       "file": "integrations/stardew/src/Core/Protocol/BridgeProtocol.cs",
-      "line": 2275,
+      "line": 2309,
       "value": 63,
       "reason": "recorded at 604844a6: 60 -> 63, and `line` -> 2275. Two commits touch this file in b047bb19..604844a6 (ecf18222, 5a068fa9) and both are wire work: the charged-use fields and sweep_scythe's arc fact each add a property arm to this projection. 63 is the ceiling now."
     },
@@ -117,7 +117,7 @@
       "language": "cs",
       "name": "ExecutionManager.DescribeActiveExecution()",
       "file": "integrations/stardew/farmhandexecutioncontroller.cs",
-      "line": 1323,
+      "line": 1328,
       "value": 99
     },
     {
@@ -511,7 +511,7 @@
       "language": "ts",
       "name": "host/src/continuity-semantic-game-runtime-materializer/continuity-semantic-game-runtime-materializer.ts#execute",
       "file": "host/src/continuity-semantic-game-runtime-materializer/continuity-semantic-game-runtime-materializer.ts",
-      "line": 347,
+      "line": 346,
       "value": 38
     },
     {
@@ -519,7 +519,7 @@
       "language": "ts",
       "name": "host/src/continuity-semantic-game-runtime-materializer/continuity-semantic-game-runtime-materializer.ts#materializeEnter#lambda13",
       "file": "host/src/continuity-semantic-game-runtime-materializer/continuity-semantic-game-runtime-materializer.ts",
-      "line": 1522,
+      "line": 1521,
       "value": 48,
       "reason": "the same function the record called `materializeEnter#lambda11`, at the same 48: Biome reports 48 for the callback passed to `materializeExactEnter` in both trees (`72582adf` at line 1514, HEAD at line 1522). Only the ID moved, and this gate names an anonymous function by its nearest named owner plus `anonymousOrdinal`, which counts the anonymous functions in that owner's subtree (11 at `72582adf`, 13 at HEAD). The two added are `1f9ae023`'s `tracedStep` wrappers around the recovery-journal open and the recovery-binding read. Nothing was raised: 48 stays the ceiling, and this row exists because the identity moved, not because the number did."
     },
@@ -640,15 +640,15 @@
       "language": "ts",
       "name": "host/src/fact-brief.ts#worldFactLine",
       "file": "host/src/fact-brief.ts",
-      "line": 774,
-      "value": 40
+      "line": 717,
+      "value": 36
     },
     {
       "id": "ts:host/src/game-tools.ts#createStardewActionTools",
       "language": "ts",
       "name": "host/src/game-tools.ts#createStardewActionTools",
       "file": "host/src/game-tools.ts",
-      "line": 1009,
+      "line": 1569,
       "value": 113,
       "reason": "111 -> 113 for one mount block: `sweep_scythe` was enrolled as a staged candidate but no block handed it to the Agent, so the arm existed with no tool behind it. The block is a descriptor check plus a mount, i.e. the same two decisions every neighbouring arm makes; folding the arms into one table is the shape this number is pointing at, not something this unit takes on."
     },
@@ -657,15 +657,7 @@
       "language": "ts",
       "name": "host/src/game-tools.ts#execute",
       "file": "host/src/game-tools.ts",
-      "line": 188,
-      "value": 54
-    },
-    {
-      "id": "ts:host/src/game-tools.ts#execute#2",
-      "language": "ts",
-      "name": "host/src/game-tools.ts#execute#2",
-      "file": "host/src/game-tools.ts",
-      "line": 344,
+      "line": 970,
       "value": 44
     },
     {
@@ -729,15 +721,16 @@
       "language": "ts",
       "name": "host/src/protocol.ts#diagnoseSnapshot",
       "file": "host/src/protocol.ts",
-      "line": 4654,
-      "value": 63
+      "line": 4710,
+      "value": 65,
+      "reason": "63 -> 65 in `251b0da0`: the one added arm is the optional `sleepAdmitsHere` guard (`!== undefined && !== null && typeof !== \\\"boolean\\\"`), which refuses a non-boolean night verdict by name (`invalid_snapshot:sleepAdmitsHere`). Not extracted: folding that test into a shared `isBooleanOrAbsent` helper is a change to protocol.ts's guard set, outside this unit's bounds, and doing it for this one field while the neighbouring optional-field guards stay inline would be a second spelling of one rule rather than one."
     },
     {
       "id": "ts:host/src/protocol.ts#isValidActionDescriptor",
       "language": "ts",
       "name": "host/src/protocol.ts#isValidActionDescriptor",
       "file": "host/src/protocol.ts",
-      "line": 5673,
+      "line": 5763,
       "value": 174
     },
     {
@@ -745,7 +738,7 @@
       "language": "ts",
       "name": "host/src/protocol.ts#validateBridgeMessage",
       "file": "host/src/protocol.ts",
-      "line": 2483,
+      "line": 2539,
       "value": 66
     },
     {
@@ -770,7 +763,7 @@
       "language": "ts",
       "name": "host/src/runtime-core.internal.ts#createRuntimeWithFixedToolsCore",
       "file": "host/src/runtime-core.internal.ts",
-      "line": 975,
+      "line": 969,
       "value": 173
     },
     {
@@ -1143,8 +1136,8 @@
       "parts": 1,
       "file": "integrations/stardew/src/Core/Protocol/BridgeProtocol.cs",
       "line": 13,
-      "value": 550,
-      "reason": "recorded at 604844a6: 547 -> 550, `lines` 2410 -> 2421 over the same 141 methods - the two wire commits (ecf18222, 5a068fa9) again, which is the same growth `ExecutionArgumentProperties` records at member level."
+      "value": 558,
+      "reason": "550 -> 558 in `a3e6eb34`, the batch-node row table reaching the model: the two new overloads `IsProofShape(string?,string?,string?)` and `IsProofShape(JsonElement)` each test the proof shape against `BODY_PROGRAM_PROOF_NODE_STATES`, and `IsValidBodyProgramNodeStatus` gained the two `MayCarryProof` state guards plus `evidence`/`postconditionVerification` in its key list. Growth in branches, not a re-partition: the type is still one part and its 143 methods include the two new ones."
     },
     {
       "id": "cs:BridgeSession",
@@ -1158,10 +1151,10 @@
     {
       "id": "cs:ExecutionManager",
       "name": "ExecutionManager",
-      "parts": 51,
-      "file": "integrations/stardew/farmhandexecutioncontroller.actorstateactions.cs",
-      "line": 143,
-      "value": 4553
+      "parts": 52,
+      "file": "integrations/stardew/ExecutionEvidence.cs",
+      "line": 106,
+      "value": 4552
     },
     {
       "id": "cs:ModEntry",
@@ -1248,9 +1241,9 @@
       "files": 1,
       "file": "integrations/stardew/src/Core/Protocol/BridgeProtocol.cs",
       "line": 13,
-      "lines": 2421,
-      "methods": 141,
-      "reason": "lines 2410 -> 2421 at 604844a6 over the same 141 methods and 1 part; the two wire commits, matching the 547 -> 550 class row."
+      "lines": 2455,
+      "methods": 143,
+      "reason": "lines 2421 -> 2455 and methods 141 -> 143 in `a3e6eb34` (+38/-4 in the file): the two `IsProofShape` overloads, one for the typed status row and one for a `JsonElement`, which is the wire row's other half."
     },
     {
       "id": "cs:BridgeProtocolSerializationTests",
@@ -1277,13 +1270,13 @@
     {
       "id": "cs:ExecutionManager",
       "name": "ExecutionManager",
-      "parts": 51,
-      "files": 50,
-      "file": "integrations/stardew/farmhandexecutioncontroller.actorstateactions.cs",
-      "line": 143,
-      "lines": 24058,
+      "parts": 52,
+      "files": 51,
+      "file": "integrations/stardew/ExecutionEvidence.cs",
+      "line": 106,
+      "lines": 24181,
       "methods": 838,
-      "reason": "parts 47 -> 51 and methods 806 -> 838, and this is both a re-partition and growth, measured per commit over 72582adf..HEAD. The four new parts are `213d8c87` (tiletargetrequest), `d7a2ba90` (targetdiscovery), `c57e932b` (frameloop) and `c90d7887` (verdicts); 53 members moved between partials and 6 were renamed in place (`ExecuteBreakRockSource` -> `ExecuteBreakRock` and its kin in `2a8cec24`, `3a96abed`, `ab9c5990`), none of which changes a count. The +32 methods are declared, not moved in: 213d8c87 +1, 071c55b5 +1, 6247f158 +5, db3e5b91 +1, ccda3a4f -1, 1e27df1e +2, 67cf82ac +5, dc0daf06 +1, 118569cd +1, 4e718135 +2, 2a8cec24 +7, c90d7887 +2, ab9c5990 +4, 386ee627 +1. The lines FELL 27295 -> 24058 because `a3096aca` deleted 3,801 comment lines from this type and the seam work took another 126 outward, and the class complexity fell with it (4622 -> 4553): the class gained declarations and lost branches."
+      "reason": "parts 51 -> 52 and files 50 -> 51 in `287e227a`, which added this type's 51st partial declaration: `integrations/stardew/ExecutionEvidence.cs`, +182 lines there and +55/-41 in `farmhandexecutioncontroller.tailoringactions.cs` where the code it absorbed came from. `2f037eed` then rewrote two comment lines of the new partial (+9/-7). Lines 24058 -> 24181 over the SAME 838 methods and the class complexity FELL 4553 -> 4552: a re-partition of one declaration, not a member and not a branch."
     },
     {
       "id": "cs:FarmhandActionCatalog",
@@ -1377,9 +1370,9 @@
       "files": 1,
       "file": "integrations/stardew/src/Core/BodyPrograms/OpenBodyProgramJournalAuthority.cs",
       "line": 19,
-      "lines": 1209,
+      "lines": 1211,
       "methods": 61,
-      "reason": "1174 -> 1209 lines and 60 -> 61 methods at one part throughout: `df79b260` +6 lines (a cutscene waited out) and `e2a6ae87` +29 lines with the new method `AttributeExecution(string?)`."
+      "reason": "lines 1209 -> 1211 in `a3e6eb34` (+5/-3 in the file) at the same 61 methods and the same one part: `TryComplete`'s `provesEffect` stopped spelling the outcome set and asks `BodyProgramValidation.MayCarryProof`, the declaration the wire validator refuses a frame by, and the two lines that replaced it are its comment. A re-partition of one authority plus a comment, not a member."
     },
     {
       "id": "cs:RouteReenteringBodyProgramExecutor",
@@ -1399,9 +1392,9 @@
       "files": 1,
       "file": "integrations/stardew/SleepAndAdvanceDayLifecycle.cs",
       "line": 43,
-      "lines": 1884,
-      "methods": 55,
-      "reason": "50 -> 55 methods and 1683 -> 1884 lines in one commit, `e0d376cd` (a menu the night raises and nothing owns is named and released): `DecideOvernightMenuStep`, `DescribeOvernightMenuRelease`, `DescribeOvernightMenuNotRecognised`, `ReleaseOvernightMenu` and `ReleaseUnrecognisedOvernightMenu` are the five. Growth, not a re-partition: the type has one part and still has one."
+      "lines": 1898,
+      "methods": 56,
+      "reason": "methods 55 -> 56 and lines 1884 -> 1898 in `251b0da0` (+16/-2 in the file): the one new member is `HomeOf(GameLocation?)`, the type's single declaration of the room the night's eligibility admits - `TryEnterEligibility` refuses `not_home` from it, `WalkToBed` asks it for the bed spot, and the snapshot publishes it as `sleepAdmitsHere`. One part before and after."
     },
     {
       "id": "cs:StardewBodyController",
@@ -1421,9 +1414,9 @@
       "files": 1,
       "file": "integrations/stardew/tests/GameBuddy.Stardew.Integration.Tests/TargetFamilyCompletenessTests.cs",
       "line": 34,
-      "lines": 1547,
+      "lines": 1590,
       "methods": 12,
-      "reason": "1536 -> 1547 lines at the same 12 methods, in `55e4a27e`: the enclosing test type grew with the nested `TargetFamilyWorld` fixture it builds."
+      "reason": "lines 1547 -> 1590 in `664224bb` (+45/-2 in the file) at the same 12 methods and the same one part: the enclosing test type grew with the nested `TargetFamilyWorld` fixture it builds, whose own five new helpers are the row below. Length is the whole fact - the type declares cases, not branches."
     },
     {
       "id": "cs:TargetFamilyCompletenessTests.TargetFamilyWorld",
@@ -1432,9 +1425,9 @@
       "files": 1,
       "file": "integrations/stardew/tests/GameBuddy.Stardew.Integration.Tests/TargetFamilyCompletenessTests.cs",
       "line": 352,
-      "lines": 1228,
-      "methods": 65,
-      "reason": "64 -> 65 methods and 1217 -> 1228 lines in `55e4a27e`, which added the fixture helper `PlaceObjectAt(int,int,string,string,int)`; its complexity is unchanged at 82."
+      "lines": 1271,
+      "methods": 70,
+      "reason": "methods 65 -> 70 and lines 1228 -> 1271 in `664224bb`, which added five fixture helpers: `TileSheet()`, `MakeWater(int,int)`, `MakeWall(int,int)`, `ClearWall(int,int)` and `RemoveResourceClump(int,int)`. `TileSheet()` is the tile-sheet setup extracted out of `MakeDiggable`, so it is a move plus four new fixture verbs; the nested type's complexity is unchanged at 82."
     }
   ]
 }
