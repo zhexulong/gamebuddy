@@ -354,6 +354,27 @@ async function waitForPanel(page, { name, panel, item = null, timeoutMs = 20000,
 }
 
 /**
+ * Whether the shell is SHOWING the conversation, as opposed to merely carrying it.
+ *
+ * The conversation is the one surface that stays MOUNTED while another one is selected: the shell
+ * parks it in `.surface-slot-parked` (`visibility: hidden`, never `display: none`, so the transcript
+ * keeps its scroll offset) and renders every other peer conditionally. `[data-testid="chat-surface"]`
+ * is therefore on the page on EVERY surface, and "is it there" answers yes to a question about which
+ * surface is shown - which is how six creates were reported as landed without committing an opening
+ * (`frontend-final-r2.stage`: every attempt answered `committed_opening=null landed=true`, and the
+ * run's own threads show no Chat was made).
+ *
+ * The shell's statement of which surface takes the region is the URL (`useSurfaceRoute`:
+ * `shownSurface = openPanel ?? CHAT_PANEL`, design/104 §2): the conversation is `panel=chat` or no
+ * `panel` word at all, and the picker standing over the Chats list is `panel=chats`.
+ */
+const conversationShown = () => {
+  if (document.querySelector('[data-testid="chat-surface"]') === null) return false;
+  const panel = new URLSearchParams(window.location.hash.slice(1)).get("panel");
+  return panel === null || panel === "chat";
+};
+
+/**
  * Create one Chat through the product's own New Chat control, and answer how it really went.
  *
  * One control, two jobs, decided by the catalogue: a companion with openings to choose from opens
@@ -369,7 +390,10 @@ async function waitForPanel(page, { name, panel, item = null, timeoutMs = 20000,
  *
  * Creating lands IN the created Chat: the shell selects it and moves the region to the chat
  * surface. `landed` is that surface, read after the picker has been answered; `committed` is the
- * opening index this driver pressed, so a refusal (`landed: false`) names what was tried.
+ * opening index this driver pressed, so a refusal (`landed: false`) names what was tried. The
+ * surface is read by `conversationShown`, never by the conversation's presence on the page: a
+ * mounted-but-parked conversation made this helper answer `landed` on the first round without ever
+ * pressing the commit, so the Chat was never created and the list stayed at one row.
  */
 async function createChat(page, { openingIndex = 0, settleMs = 1500, rounds = 20 } = {}) {
   const started = await page.evaluate(() => {
@@ -383,8 +407,7 @@ async function createChat(page, { openingIndex = 0, settleMs = 1500, rounds = 20
   let committed = null;
   for (let round = 0; round < rounds; round += 1) {
     await page.waitForTimeout(settleMs);
-    if (await page.evaluate(() => document.querySelector('[data-testid="chat-surface"]') !== null))
-      return { started, committed, landed: true };
+    if (await page.evaluate(conversationShown)) return { started, committed, landed: true };
     const commit = page.locator('[data-testid="opening-option-commit"]').nth(openingIndex);
     if ((await commit.count()) > 0 && (await commit.isVisible().catch(() => false))) {
       await commit.click({ timeout: 10000 }).catch(() => undefined);
@@ -410,6 +433,7 @@ module.exports = {
   readDurableTranscript,
   canStartTurn,
   classifyComposer,
+  conversationShown,
   createChat,
 };
 

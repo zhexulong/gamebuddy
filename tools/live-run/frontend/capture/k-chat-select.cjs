@@ -15,7 +15,7 @@
 // took a named skip and the run lost 55-chat-select-switched.png and the 41b/41c shots. A create that
 // does not land is reported as a driver failure rather than a skip: the scenario is runnable, and a
 // control that answers a click without making a Chat is the defect to say out loud.
-const { connect, reporter, PAGE_HELPERS, activateSurface, shot, createChat, observe, observationStart } = require("./common.cjs");
+const { connect, reporter, PAGE_HELPERS, activateSurface, shot, createChat, conversationShown, observe, observationStart } = require("./common.cjs");
 
 const rowsFact = () => {
   const surface = document.querySelector('[data-testid="chats-surface"]');
@@ -46,7 +46,6 @@ const clickChatSelect = ({ index }) => {
 };
 
 const surfaceFacts = () => ({
-  chatSurfacePresent: document.querySelector('[data-testid="chat-surface"]') !== null,
   chatsSurfacePresent: document.querySelector('[data-testid="chats-surface"]') !== null,
   timelineTitleBand: (() => {
     const heading = document.querySelector(".timeline .timeline-heading h1");
@@ -103,12 +102,14 @@ const bandExpectedFromRow = (titleText) => titleText.replace(/\s*\d+$/u, "").tri
   let after = null;
   for (let attempt = 0; attempt < 30; attempt += 1) {
     await page.waitForTimeout(1500);
-    after = await page.evaluate(surfaceFacts);
-    if (after.chatSurfacePresent && !after.chatsSurfacePresent) break;
+    after = { ...(await page.evaluate(surfaceFacts)), conversationShown: await page.evaluate(conversationShown) };
+    if (after.conversationShown) break;
   }
   say("=== ITEM: after choosing the other conversation (surface) ===");
   say(JSON.stringify(after, null, 1));
-  say(`surface after: ${after.chatSurfacePresent ? "chat-surface" : after.chatsSurfacePresent ? "chats-surface (did not move)" : "?"}`);
+  say(
+    `surface after: ${after.conversationShown ? "chat-surface" : after.chatsSurfacePresent ? "chats-surface (did not move)" : "?"}`,
+  );
   say(`timeline title band after: ${JSON.stringify(after.timelineTitleBand)}`);
   say(`title matches the chosen conversation's own name (${JSON.stringify(expectedBand)}): ${after.timelineTitleBand === expectedBand}`);
   await shot(page, "55-chat-select-switched.png");

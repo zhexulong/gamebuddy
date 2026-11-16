@@ -3,7 +3,7 @@
 // shows a raw `*` or `{{`. The row meta line is clamped to two lines (height, line clamp, chars
 // inside the box, plus a forced 160-char preview probe — the wire's own maximum), and the meta
 // colour's contrast against its card is measured at both widths.
-const { connect, reporter, PAGE_HELPERS, activateSurface, shot, readDurableTranscript, createChat, observe, observationStart } = require("./common.cjs");
+const { connect, reporter, PAGE_HELPERS, activateSurface, shot, readDurableTranscript, createChat, conversationShown, observe, observationStart } = require("./common.cjs");
 
 const RENAME = "重命名契约行";
 /** The three controls every active row carries, by the accessible name the surface gives them. */
@@ -499,7 +499,7 @@ function snapshotDifference(before, after) {
     let backSelected = false;
     for (let attempt = 0; attempt < 20 && backSelected === false; attempt += 1) {
       await page.waitForTimeout(1500);
-      if (await page.evaluate(() => document.querySelector('[data-testid="chat-surface"]') !== null)) {
+      if (await page.evaluate(conversationShown)) {
         await activateSurface(page, "会话");
         await page.waitForTimeout(1000);
       }

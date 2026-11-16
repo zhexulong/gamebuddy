@@ -7,7 +7,7 @@
 // editor (`data-opening-editor`). The chat the picker creates is NOT the mounted one, so the choice
 // is proven twice: the panel's own card for the created Chat, and the transcript's first row after
 // switching to that Chat — read from the row the panel itself previews with the chosen text.
-const { connect, reporter, PAGE_HELPERS, activateSurface, shot, observe, observationStart, waitForPanel } = require("./common.cjs");
+const { connect, reporter, PAGE_HELPERS, activateSurface, shot, observe, observationStart, waitForPanel, conversationShown } = require("./common.cjs");
 
 const NEW_CHAT = '[data-testid="new-chat"]';
 // The opening editor mounts with its section before its card read lands, so every read of it waits for
@@ -187,7 +187,7 @@ const clickOption = (index) => {
     }
     say("=== ITEM: the new Chat's first line (the transcript's own row 0) ===");
     say(JSON.stringify(rows.slice(0, 2), null, 1));
-    say(`the surface the shell left us on: chat-surface=${await page.evaluate(() => document.querySelector('[data-testid="chat-surface"]') !== null)}`);
+    say(`the surface the shell left us on: chat-surface=${await page.evaluate(conversationShown)}`);
     // The chosen opening is the one the Chat opened on, compared as rendered structure: the chooser's
     // own option (its action line and its line) against the row's beat element and its spoken text.
     const first = rows[0] ?? null;
@@ -256,7 +256,7 @@ const clickOption = (index) => {
   await page.locator(NEW_CHAT).first().click();
   await page.waitForTimeout(2600);
   const singlePicker = await page.evaluate(pickerFacts);
-  const landed = await page.evaluate(() => document.querySelector('[data-testid="chat-surface"]') !== null);
+  const landed = await page.evaluate(conversationShown);
   say(`picker present: ${singlePicker.present}; options=${singlePicker.optionCount ?? 0}`);
   say(`the New Chat created the conversation outright (the shell landed in it): ${landed}`);
   await shot(page, "85-new-chat-single-opening-1440x900.png");
