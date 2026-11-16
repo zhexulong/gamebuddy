@@ -275,8 +275,12 @@ const MEASURE = () => {
     windowScrollY: round(window.scrollY),
     card: card === null ? null : box(card),
     roster: roster === null ? null : box(roster),
+    // The scrollers of the surfaces ON SCREEN. The conversation is the one surface the shell keeps
+    // mounted while another one is selected - remounting the transcript would take the reader's place
+    // in it - and it is parked with `visibility: hidden`: still laid out, so `getClientRects` alone
+    // does not exclude it.
     surfaceContent: [...document.querySelectorAll<HTMLElement>(".surface-content")]
-      .filter((node) => node.getClientRects().length > 0)
+      .filter((node) => node.getClientRects().length > 0 && getComputedStyle(node).visibility !== "hidden")
       .map((node) => ({ scrollTop: round(node.scrollTop), scrollHeight: node.scrollHeight, clientHeight: node.clientHeight })),
     activeElement: {
       tag: document.activeElement?.tagName ?? null,

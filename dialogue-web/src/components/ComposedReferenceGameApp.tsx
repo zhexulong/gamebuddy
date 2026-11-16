@@ -1710,73 +1710,88 @@ export function ComposedReferenceGameApp() {
                   />
                 </div>
               )}
-              {shownSurface === CHAT_PANEL && chatProblem === null && (
-                <ChatSurface
-                  transcript={view.session.snapshot.chat.transcript}
-                  preview={preview}
-                  companionName={view.session.snapshot.chat.companion.name}
-                  companionHandle={view.session.snapshot.chat.companion.handle}
-                  companionDigest={avatarDigests[view.session.snapshot.chat.companion.handle]}
-                  chatTitle={view.session.snapshot.chat.title}
-                  labels={labels()}
-                  pending={chatMutation}
-                  uiState={chatUIState}
-                  notice={
-                    pollFailure !== null
-                      ? labels().chatRequestUnconfirmed
-                      : (streamNotice ??
-                        sendFailure ??
-                        messageMutationNotice ??
-                        terminalTurnNotice(view, labels()) ??
-                        openingNotice)
-                  }
-                  arrivalNotice={arrivalReads.chatArrivalNotice}
-                  replyTruncated={view.session.snapshot.chat.turn?.truncated === true}
-                  onSwipe={(messageHandle, direction) => void handleSwipe(messageHandle, direction)}
-                  onSwipeRemove={handleSwipeRemoveArm}
-                  onSwipeRemoveConfirm={(messageHandle, targetIndex) =>
-                    void handleSwipeRemoveConfirm(messageHandle, targetIndex)
-                  }
-                  onSwipeRemoveCancel={handleSwipeRemoveCancel}
-                  onRegenerate={(messageHandle) => void handleRegenerate(messageHandle)}
-                  onOpeningVariant={(messageHandle, direction) => void handleOpeningVariant(messageHandle, direction)}
-                  onActFromHere={handleActFromHere}
-                  onActRewind={(messageHandle, expectedOrder) => void handleActRewind(messageHandle, expectedOrder)}
-                  onActFork={(messageHandle) => void handleActFork(messageHandle)}
-                  onActCancel={handleActCancel}
-                  onEdit={(messageHandle, expectedOrder, text) => void handleEdit(messageHandle, expectedOrder, text)}
-                  onDelete={handleDeleteArm}
-                  onDeleteConfirm={(messageHandle, expectedOrder) =>
-                    void handleDeleteConfirm(messageHandle, expectedOrder)
-                  }
-                  onDeleteCancel={handleDeleteCancel}
-                  value={inputText}
-                  onChange={writeInput}
-                  onSend={() => void handleSend()}
-                  onStop={() => void handleStop()}
-                  onOpenSettings={openSettings}
-                  voice={view.session.snapshot.voice}
-                  settingsAction={{
-                    label: labels().chatModelSettings,
-                    expanded: modelPopoutOpen,
-                    onClick: () => setModelPopoutOpen(true),
-                    ref: modelPopoutEntryRef,
-                  }}
-                  composerFieldRef={composerFieldRef}
-                  restoreFocusTo={chatEntryRef}
-                  draftActions={{
-                    onSave: () => void handleDraftMutation("save"),
-                    onDiscard: () => void handleDraftMutation("discard"),
-                    // The row's own visibility is the composer's: it shows while a
-                    // durable draft exists, while there is fresh text to keep as
-                    // a first draft, or while a failed attempt has nothing else to
-                    // report it. `durable` is what keeps Discard (and the "saved"
-                    // wording) honest - the first draft is saved through this
-                    // same command, under the same revision CAS.
-                    durable: view.draft.text !== null,
-                    notice: draftNotice,
-                  }}
-                />
+              {/* The conversation is the one surface that stays mounted while another one is
+                  selected, and it does so for the transcript's own sake: `Timeline` is a live scroll
+                  box whose mount effect follows the newest content, so remounting it is a reader put
+                  back at the tail. This slot keeps the surface mounted and laid out while it is
+                  parked (`.surface-slot-parked` takes it out of the flow and hides it with
+                  `visibility`, never `display: none` - that would take the box away, and with it both
+                  the offset the browser holds and the follow rule: measured, see
+                  `timeline-position-survives-a-surface-switch.spec.ts`). `visibility: hidden` is also
+                  what keeps the parked surface out of the accessibility tree, so the conversation's
+                  one announcement region says nothing while it is parked. Nothing else may join this
+                  slot: one conversation is one transcript and one announcement channel, and every
+                  other peer keeps what it has by unmounting because it has no live scroll box to
+                  lose. */}
+              {chatProblem === null && (
+                <div className={shownSurface === CHAT_PANEL ? "surface-slot" : "surface-slot surface-slot-parked"}>
+                  <ChatSurface
+                    transcript={view.session.snapshot.chat.transcript}
+                    preview={preview}
+                    companionName={view.session.snapshot.chat.companion.name}
+                    companionHandle={view.session.snapshot.chat.companion.handle}
+                    companionDigest={avatarDigests[view.session.snapshot.chat.companion.handle]}
+                    chatTitle={view.session.snapshot.chat.title}
+                    labels={labels()}
+                    pending={chatMutation}
+                    uiState={chatUIState}
+                    notice={
+                      pollFailure !== null
+                        ? labels().chatRequestUnconfirmed
+                        : (streamNotice ??
+                          sendFailure ??
+                          messageMutationNotice ??
+                          terminalTurnNotice(view, labels()) ??
+                          openingNotice)
+                    }
+                    arrivalNotice={arrivalReads.chatArrivalNotice}
+                    replyTruncated={view.session.snapshot.chat.turn?.truncated === true}
+                    onSwipe={(messageHandle, direction) => void handleSwipe(messageHandle, direction)}
+                    onSwipeRemove={handleSwipeRemoveArm}
+                    onSwipeRemoveConfirm={(messageHandle, targetIndex) =>
+                      void handleSwipeRemoveConfirm(messageHandle, targetIndex)
+                    }
+                    onSwipeRemoveCancel={handleSwipeRemoveCancel}
+                    onRegenerate={(messageHandle) => void handleRegenerate(messageHandle)}
+                    onOpeningVariant={(messageHandle, direction) => void handleOpeningVariant(messageHandle, direction)}
+                    onActFromHere={handleActFromHere}
+                    onActRewind={(messageHandle, expectedOrder) => void handleActRewind(messageHandle, expectedOrder)}
+                    onActFork={(messageHandle) => void handleActFork(messageHandle)}
+                    onActCancel={handleActCancel}
+                    onEdit={(messageHandle, expectedOrder, text) => void handleEdit(messageHandle, expectedOrder, text)}
+                    onDelete={handleDeleteArm}
+                    onDeleteConfirm={(messageHandle, expectedOrder) =>
+                      void handleDeleteConfirm(messageHandle, expectedOrder)
+                    }
+                    onDeleteCancel={handleDeleteCancel}
+                    value={inputText}
+                    onChange={writeInput}
+                    onSend={() => void handleSend()}
+                    onStop={() => void handleStop()}
+                    onOpenSettings={openSettings}
+                    voice={view.session.snapshot.voice}
+                    settingsAction={{
+                      label: labels().chatModelSettings,
+                      expanded: modelPopoutOpen,
+                      onClick: () => setModelPopoutOpen(true),
+                      ref: modelPopoutEntryRef,
+                    }}
+                    composerFieldRef={composerFieldRef}
+                    restoreFocusTo={chatEntryRef}
+                    draftActions={{
+                      onSave: () => void handleDraftMutation("save"),
+                      onDiscard: () => void handleDraftMutation("discard"),
+                      // The row's own visibility is the composer's: it shows while a
+                      // durable draft exists, while there is fresh text to keep as
+                      // a first draft, or while a failed attempt has nothing else to
+                      // report it. `durable` is what keeps Discard (and the "saved"
+                      // wording) honest - the first draft is saved through this
+                      // same command, under the same revision CAS.
+                      durable: view.draft.text !== null,
+                      notice: draftNotice,
+                    }}
+                  />
+                </div>
               )}
               <GameSurface
                 selected={shownSurface === GAME_PANEL}

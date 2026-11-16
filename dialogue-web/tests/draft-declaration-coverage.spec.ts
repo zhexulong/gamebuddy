@@ -171,7 +171,10 @@ async function barSurfaces(page: Page): Promise<BarSurface[]> {
   // one entry that is not a surface. It names itself from the catalogue, so a rename moves both.
   for (const label of labels.filter((candidate) => candidate !== catalogue.appBarMore)) {
     await page.getByRole("button", { name: label, exact: true }).click();
-    const region = page.locator("main#main-content [data-testid$='-surface']");
+    // The region the entry shows. The conversation is the one surface the shell keeps mounted while
+    // another one is selected - remounting the transcript would take the reader's place in it - so
+    // "the region" is the surface on screen, not the only one in the document.
+    const region = page.locator("main#main-content [data-testid$='-surface']").filter({ visible: true });
     await expect(region, `the ${label} entry shows one surface region`).toHaveCount(1);
     const testId = (await region.getAttribute("data-testid")) ?? "";
     surfaces.push({ name: testId.replace(/-surface$/u, ""), label, testId });

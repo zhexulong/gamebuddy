@@ -750,6 +750,11 @@
     display: flex;
     flex-direction: column;
     overflow: hidden;
+    /* The region is the containing block for a surface the shell parks instead of unmounting
+       (`.surface-slot-parked`, appended below): a parked conversation keeps the box it has when
+       selected, which is how the browser keeps its scroll offset. Everything else in this region is
+       in the flow of this column, so the containment changes no other box. */
+    position: relative;
     width: 100%;
     margin: 0 auto;
     padding: 0 16px;
@@ -7377,5 +7382,50 @@
     color: var(--text-secondary);
     font-size: 12px;
     line-height: 1.5;
+  }
+  /* ==========================================================================
+   A surface the shell keeps mounted instead of unmounting
+
+   One surface does that: the conversation. `Timeline` is a live scroll box - it follows the newest
+   content from a mount effect, because `atBottomRef` starts true - so remounting it on every return
+   from another surface is a reader put back at the tail. The shell parks it instead: this slot is
+   the surface's place in the region, and while another surface is selected the slot leaves the flow
+   and stops being drawn.
+
+   WHY `visibility` AND NOT `display: none` (the `hidden` attribute). Both were measured on the
+   shipped engine, a scroller at scrollTop 600 of a 5546 px transcript in a 233 px viewport:
+
+       ancestor display:none        before 600/5546/233   parked 0/0/0          after 600/5546/233
+       ancestor visibility:hidden   before 600/5546/233   parked 600/5546/233   after 600/5546/233
+
+   `display: none` keeps the offset in THIS engine and loses the box: while parked every number reads
+   0, so the transcript's own follow - a layout effect writing `scrollTop = scrollHeight` - is blind
+   for as long as the player is on another surface, and a reply that lands then is not followed. It
+   is also Chromium's behaviour rather than a contract, which is a poor foundation for a reading
+   position. `visibility: hidden` keeps the box exactly as it is, so the browser's own scroll offset
+   is the record and there is no second authority to restore from. It also takes the subtree out of
+   the accessibility tree (a parked conversation announces nothing) and out of the tab order.
+
+   WHY `position: absolute`. The slot has to keep the box it has while SELECTED, and the selected
+   surface has to keep the whole region - one box, two states. Out of the flow at `inset: 0` the
+   parked slot is the region's padding box; `padding-inline: inherit` gives its content the width the
+   surface gets in the flow (the region's own inline padding, read from it rather than written again),
+   so the parked box and the selected box are the same box and nothing re-wraps under the reader.
+
+   Appended block; the rules above are untouched.
+   ========================================================================== */
+
+  .surface-slot {
+    display: flex;
+    flex-direction: column;
+    flex: 1 1 0%;
+    min-height: 0;
+  }
+
+  .surface-slot-parked {
+    position: absolute;
+    inset: 0;
+    padding-inline: inherit;
+    visibility: hidden;
   }
 } /* end @layer theme.polish */

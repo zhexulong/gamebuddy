@@ -334,7 +334,9 @@ test.describe("A: the conversation's claim about a model is the send path's own 
     // The button goes to the surface that fixes it.
     await banner.getByRole("button", { name: "Open settings", exact: true }).click();
     await expect(page.getByTestId("settings-surface")).toBeVisible();
-    await expect(page.getByTestId("chat-surface")).toHaveCount(0);
+    // The conversation gives the region up rather than being covered by it: it stays mounted (a
+    // remount would take the reader's place in the transcript) and is not drawn.
+    await expect(page.getByTestId("chat-surface")).toBeHidden();
   });
 
   test("a profile store the Host cannot serve reads the same way, because the player's next step is the same", async ({

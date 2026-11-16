@@ -293,7 +293,13 @@ test("defect 2: the player's own line is not repeated above the bubble", async (
  * the browser computed for it.
  */
 const headingFocusReading = () => {
-  const heading = document.querySelector<HTMLElement>(".surface-header h2")!;
+  // The surface ON SCREEN, not merely the first one in the document: the conversation is the one
+  // surface the shell keeps mounted while another one is selected (remounting the transcript would
+  // take the reader's place in it), and it is parked with `visibility: hidden`.
+  const surface = [...document.querySelectorAll<HTMLElement>("main#main-content [data-testid$='-surface']")].find(
+    (node) => getComputedStyle(node).visibility !== "hidden",
+  )!;
+  const heading = surface.querySelector<HTMLElement>(".surface-header h2")!;
   const style = getComputedStyle(heading);
   return {
     text: (heading.textContent ?? "").trim(),

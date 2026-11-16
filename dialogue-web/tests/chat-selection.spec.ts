@@ -516,7 +516,9 @@ test("a turn_in_flight selection answer leaves the player on the Chats list", as
   // The refusal is stated, and the player is still where they were.
   await expect(chats.getByRole("status")).toContainText("runtime stayed where it is");
   await expect(page.getByTestId("chats-surface")).toBeVisible();
-  await expect(page.getByTestId("chat-surface")).toHaveCount(0);
+  // The conversation was not switched to: it is still the surface behind the Chats list, mounted (the
+  // shell keeps it mounted so a reading position survives a glance at another surface) and not drawn.
+  await expect(page.getByTestId("chat-surface")).toBeHidden();
 });
 
 
