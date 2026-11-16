@@ -22,6 +22,15 @@
  * questions the project actually asks, so the gate cannot agree with a hand-edited list by
  * construction; the list has to agree with them.
  *
+ * AND THE LIST IS ONLY HALF OF THE FACT. The lane is a partition of the suite: what this project
+ * compiles, and what `excluded-files.tsv` excuses with a reason. That second list was read by
+ * `run-nogame-tests.mjs` alone, so this gate could not see a file in NEITHER list - measured
+ * 2026-11-16, three files shipped that way (`ExecutionEvidenceWireTests.cs`,
+ * `SweepTargetRefusalNamingTests.cs`, `WaterTargetApproachTests.cs`) and this gate printed that the
+ * project's file list matched the measurements exactly while the runner went red about them. The
+ * partition is now read from `tools/lib/nogame-partition.mjs`, the one authority both readers share,
+ * and it is judged here with the member printed either way: `neither X` and `both B` both fail.
+ *
  * A static scan for game-layer TYPES was measured and rejected: it disagreed with the compiler on
  * 14 of the 148 files (10 it called game-free that the compiler refused, 4 the reverse) because
  * many files name those types only inside documentation and string literals while the types they
@@ -37,12 +46,22 @@
  *
  * red-proof: history  four suite files shipped without a line in the project's `<Compile Include>` list -
  *   BodyProgramJournalSchemaTests.cs (cdacf139), SeedSupplyAddressSourceShapeTests.cs (80965015), SuiteRedProofTests.cs
- *   (df96b6a1), TileTargetRequestSeamTests.cs (213d8c87) - and the tree still carries them, so this is the tree's own
- *   reading rather than a replay: `headless_file_not_included: <file>` per file, exit 1.
+ *   (df96b6a1), TileTargetRequestSeamTests.cs (213d8c87) - and the tree still carried them, so this is the tree's own
+ *   reading rather than a replay: `headless_file_not_included: <file>` per file, exit 1. The four are in the project's
+ *   list today; the marker records the reading that made this gate, not a claim about the current tree.
  *
- * That reading is the tree's today: the gate is RED at HEAD for this reason, and the four files are in neither the
- * project's list nor `excluded-files.tsv`, so the no-game lane runs none of them. The repair is the no-game project's
- * own list, not this gate, which is why the red is reported rather than worked around here.
+ * red-proof: history  three suite files shipped with no row in EITHER list -
+ *   `integrations/stardew/tests/GameBuddy.Stardew.Integration.Tests/ExecutionEvidenceWireTests.cs` (287e227a),
+ *   `integrations/stardew/tests/GameBuddy.Stardew.Integration.Tests/SweepTargetRefusalNamingTests.cs` (e34023f2) and
+ *   `integrations/stardew/tests/GameBuddy.Stardew.Integration.Tests/WaterTargetApproachTests.cs` (664224bb) ->
+ *   `nogame_test_file_has_no_partition_row:` three times beside `files examined 300 - partitioned 61 - excluded 236 -
+ *   neither 3 - both 0`, exit 1; the rows that fixed them turn the same reading into `neither 0 - both 0`.
+ *
+ * THE ONE RED THAT IS NOT THIS GATE'S. `FarmhandInitializationReachabilityGateTests.cs` has a `reference-tree` row and
+ * is out of the project, and this gate's derivation calls it headless because the file spells neither the tree nor the
+ * helper that does (`DecompiledSource`, whose own file is excluded for reading it): `headless_file_not_included` on it,
+ * pre-existing since `ff1e4408`. The table is right and the derivation is one hop short, which is a repair to the
+ * second condition above rather than to the partition.
  */
 
 export const gateDeclaration = {
@@ -53,17 +72,27 @@ export const gateDeclaration = {
 };
 
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { cleanOutputLines } from "./lib/subprocess-output.mjs";
+import {
+  compiledFiles,
+  excludedRows,
+  ownSourceFindings,
+  partitionFindings,
+  populationLine,
+  projectRowFindings,
+  reasonFindings,
+  suiteFiles,
+  treePartition,
+  unreadableCompileRows,
+  PROJECT,
+  SUITE_DIR,
+} from "./lib/nogame-partition.mjs";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const SUITE_RELATIVE = "integrations/stardew/tests/GameBuddy.Stardew.Integration.Tests";
-const SUITE_DIR = join(ROOT, SUITE_RELATIVE);
-const PROJECT_DIR = join(ROOT, "integrations/stardew/tests/GameBuddy.Stardew.NoGame.Tests");
-const PROJECT = join(PROJECT_DIR, "GameBuddy.Stardew.NoGame.Tests.csproj");
 const CORE_PROJECT = join(ROOT, "integrations/stardew/src/Core/GameBuddy.Stardew.Core.csproj");
 
 /** Upper bound on fixpoint rounds. Each round removes at least one file, so the loop terminates
@@ -85,42 +114,6 @@ const REFERENCE_TREE = "StardewValleyDecompiled";
 /** Whether one suite file reads the gitignored decompiled tree. */
 function readsReferenceTree(name) {
   return readFileSync(join(SUITE_DIR, name), "utf8").includes(REFERENCE_TREE);
-}
-
-/** The suite's top-level `.cs` files - the population the subset is drawn from. */
-export function suiteFiles() {
-  return readdirSync(SUITE_DIR)
-    .filter((name) => name.endsWith(".cs") && statSync(join(SUITE_DIR, name)).isFile())
-    .sort();
-}
-
-/**
- * The set the project actually compiles, read off its `<Compile Include>` lines. Every entry
- * must point OUTSIDE the project directory - the project includes the suite's files from their
- * one location and holds no copy, and a forked copy that stays green while the originals drift
- * is exactly the failure this whole lane exists to prevent.
- */
-export function projectFiles() {
-  const project = readFileSync(PROJECT, "utf8");
-  const prefix = "../GameBuddy.Stardew.Integration.Tests/";
-  const files = [];
-  for (const match of project.matchAll(/<Compile\s+Include="([^"]+)"\s+Link="/gu)) {
-    const path = match[1].replace(/\\/gu, "/");
-    if (!path.startsWith(prefix)) {
-      throw new Error(
-        `stardew_nogame_subset_copied_source: ${match[1]} is not a file of the integration suite - ` +
-          "this project includes the suite's files, it never holds its own copy",
-      );
-    }
-    files.push(path.slice(prefix.length));
-  }
-  const own = readdirSync(PROJECT_DIR)
-    .filter((name) => name.endsWith(".cs") && statSync(join(PROJECT_DIR, name)).isFile())
-    .sort();
-  if (own.length > 0) {
-    throw new Error(`stardew_nogame_subset_copied_source: ${PROJECT_DIR} holds ${own.join(", ")}`);
-  }
-  return files.sort();
 }
 
 /** The project's own package and framework settings, so the probe build asks the same question
@@ -187,7 +180,10 @@ function build(project) {
     });
     return { ok: true, output: stdout };
   } catch (error) {
-    return { ok: false, output: `${String(error?.stdout ?? "")}\n${String(error?.stderr ?? "")}` };
+    return {
+      ok: false,
+      output: `${String(error?.stdout ?? "")}\n${String(error?.stderr ?? "")}`,
+    };
   }
 }
 
@@ -257,12 +253,28 @@ function main(argv) {
   const json = argv.includes("--json");
   const list = argv.includes("--list");
 
+  // The partition half of the subject, read from the one module both readers share, and printed before anything is
+  // built: it needs no compiler, and a file in neither list is the drift that went unreported here while the runner
+  // about the same files was red - `nogame_test_file_has_no_partition_row:<file>` per file. The compiler half below is
+  // the other question (is what the project DOES compile still headless?), and an unavailable compiler must not take
+  // this reading down with it.
+  const partition = treePartition();
+  process.stdout.write(`stardew_nogame_subset: ${populationLine(partition)}\n`);
+  const partitionRows = excludedRows();
+  const partitionHalf = [
+    ...partitionFindings(partition),
+    ...projectRowFindings(unreadableCompileRows()),
+    ...ownSourceFindings(),
+    ...reasonFindings(partitionRows),
+  ];
+
   const derivedResult = deriveGameFreeFiles();
   if (derivedResult.derived === null) {
     process.stdout.write(
       `${[
         "stardew_nogame_subset: FAILED - the compiler could not be made to accept any subset",
         `stardew_nogame_subset: ${derivedResult.rounds} rounds, ${derivedResult.refused.length} of ${derivedResult.total} files refused`,
+        ...partitionHalf.map((finding) => `stardew_nogame_subset: ${finding.text}`),
         ...derivedResult.stalled.map((line) => `  ${line}`),
       ].join("\n")}\n`,
     );
@@ -272,28 +284,45 @@ function main(argv) {
 
   const derived = derivedResult.derived;
   const referenceTree = derivedResult.referenceTree;
-  const project = projectFiles();
+  const project = compiledFiles();
   const missing = derived.filter((name) => !project.includes(name));
   const extra = project.filter((name) => !derived.includes(name));
+  const report = (file, rule, detail) => ({
+    file,
+    rule,
+    detail,
+    text: `${rule}: ${file} - ${detail}`,
+  });
   const findings = [
-    ...missing.map((file) => ({
-      file,
-      rule: "headless_file_not_included",
-      detail: `compiles against GameBuddy.Stardew.Core alone and reads no gitignored input, so the no-game lane must run it; add it to the <Compile Include> list`,
-    })),
+    ...missing.map((file) =>
+      report(
+        file,
+        "headless_file_not_included",
+        "compiles against GameBuddy.Stardew.Core alone and reads no gitignored input, so the no-game lane must run " +
+          "it; add it to the <Compile Include> list",
+      ),
+    ),
     ...extra.map((file) =>
       referenceTree.includes(file)
-        ? {
+        ? report(
             file,
-            rule: "included_file_needs_reference_tree",
-            detail: `its source reads ${REFERENCE_TREE}, which /ref/ gitignores, so a hosted checkout has no tree for it to read; remove it from the <Compile Include> list and record the reason in excluded-files.tsv`,
-          }
-        : {
+            "included_file_needs_reference_tree",
+            `its source reads ${REFERENCE_TREE}, which /ref/ gitignores, so a hosted checkout has no tree for it to ` +
+              "read; remove it from the <Compile Include> list and record the reason in excluded-files.tsv",
+          )
+        : report(
             file,
-            rule: "included_file_not_headless",
-            detail: `the compiler refused it without a game, so it cannot run in the no-game lane; remove it from the <Compile Include> list`,
-          },
+            "included_file_not_headless",
+            "the compiler refused it without a game, so it cannot run in the no-game lane; remove it from the " +
+              "<Compile Include> list",
+          ),
     ),
+    ...partitionHalf.map((finding) => ({
+      file: finding.member,
+      rule: finding.code,
+      detail: finding.text,
+      text: finding.text,
+    })),
   ];
 
   if (json) {
@@ -306,7 +335,18 @@ function main(argv) {
           rounds: derivedResult.rounds,
           refused: derivedResult.refused.length,
           referenceTree: referenceTree.length,
-          findings,
+          partition: {
+            examined: partition.examined,
+            partitioned: partition.partitioned,
+            excluded: partition.excluded,
+            neither: partition.neither.length,
+            both: partition.both.length,
+          },
+          findings: findings.map(({ file, rule, detail }) => ({
+            file,
+            rule,
+            detail,
+          })),
         },
         null,
         2,
@@ -327,9 +367,10 @@ function main(argv) {
       `${[
         `stardew_nogame_subset: ${derived.length} of ${derivedResult.total} suite files compile against GameBuddy.Stardew.Core alone and read no gitignored input`,
         `stardew_nogame_subset: ${derivedResult.refused.length} need a game or the Mod assembly, ${referenceTree.length} compile headless but read the gitignored ${REFERENCE_TREE} tree${referenceTree.length === 0 ? "" : ` (${referenceTree.join(", ")})`}, and the project includes ${project.length}`,
-        ...findings.map((finding) => `stardew_nogame_subset: ${finding.rule}: ${finding.file} - ${finding.detail}`),
+        ...findings.map((finding) => `stardew_nogame_subset: ${finding.text}`),
         findings.length === 0
-          ? "stardew_nogame_subset: the project's file list matches the compiler and the reference-tree measurement exactly"
+          ? "stardew_nogame_subset: the project's file list matches the compiler and the reference-tree measurement " +
+            "exactly, and every suite file it does not compile has a row in excluded-files.tsv"
           : `stardew_nogame_subset: ${findings.length} file(s) disagree with the measurements`,
       ].join("\n")}\n`,
     );
