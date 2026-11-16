@@ -540,10 +540,9 @@ export const EXEMPTIONS = Object.freeze([
   {
     path: "tools/check-dotnet-target-and-language.mjs",
     reason:
-      "debt: measured red at HEAD - no TargetFramework here is inside its support window, so the gate names sixteen " +
-      "projects to move to net10.0/net10.0-windows and the fix is an SDK this machine has not got (no .NET 10 in " +
-      "`dotnet --list-sdks`), not a rung · measured projects examined 30, supported 0, forced by an external constraint 12, " +
-      "unsupported 16, langversion in a csproj 0 at 61053fb21dfc",
+      "elsewhere: the framework it names as the replacement is now the one every project targets - measured at 2026-11-16, " +
+      "projects examined 30, supported 16, forced by an external constraint 12, declared 2, unsupported 0 - so a rung would " +
+      "add a reading with no work left in it; the gate reddens on its own the day a framework leaves support",
     runsIn: "pnpm check:dotnet-target-and-language",
   },
   {
