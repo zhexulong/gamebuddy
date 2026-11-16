@@ -411,6 +411,75 @@ public sealed class CompanionBubbleTests
         presentation.Should().Contain("return this.TrySendNativeChat(", "the chat write stays the method's return value, so a failed bubble cannot silently become the delivery outcome");
     }
 
+    // ---------------------------------------------------------------------------------------
+    // The slot: which engine passes a line is drawn over, and where the engine puts its own labels.
+    //
+    // WHY THIS PIN EXISTS. The bubble's draw moved from a postfix on the world layer (Game1.cs:14119) to SMAPI's
+    // world-draw event (Game1.cs:14200), and `drawWeather` (:14123) and `DrawLightmapOnScreen` (:14135) sit BETWEEN the
+    // two. So the companion's line is now drawn above rain and snow and outside the lightmap - a real change in
+    // layering that "position, text, lifetime and geometry unchanged" was true of in coordinates and false of in pixels,
+    // and that twenty bubble tests could not see because not one of them compared the draw site with the engine's frame.
+    // This pin asserts the two facts that can be asserted without a frame: the code DECLARES its slot in one place with
+    // its consequence, and the declared slot is the one the draw site implies. The visual claim stays `live: not
+    // measured`.
+    // ---------------------------------------------------------------------------------------
+
+    [Fact]
+    public void TheBubbleSlotIsDeclaredAndIsTheSlotTheDrawSiteUses()
+    {
+        string declared = ModEntry.CompanionBubbleSlot;
+        declared.Should().Be("above_weather_outside_lightmap", "the declared slot names both relations, not one");
+
+        // The declaration is prose the next reader has to be able to act on: which relation, what it costs, and where
+        // the game puts its own comparable labels. Every fragment below is a fact the test then checks against the
+        // engine's own source, so the words cannot drift into a claim nobody re-read.
+        string mod = ReadModEntry();
+        AssertPresent(mod, "ABOVE THE WEATHER, OUTSIDE THE LIGHTMAP", "the declared slot, in the code that draws it");
+        AssertPresent(mod, "drawWeather", "... naming the pass it is drawn after: the weather");
+        AssertPresent(mod, "DrawLightmapOnScreen", "... and the lighting pass it is drawn after");
+        AssertPresent(mod, "ReverseSubtract", "... and what that pass does: it subtracts, so being outside it means not being darkened");
+        AssertPresent(mod, "NPC.cs:5223", "... beside the engine's own comparable: a character's words above their head");
+        AssertPresent(mod, "Object.cs:5494", "... a hovered sign's own text");
+        AssertPresent(mod, "PetBowl.cs:137", "... and a pet bowl's name");
+        AssertPresent(mod, "live: not measured", "and that nobody has looked at the frame, so the declaration is a slot and not a sighting");
+
+        // THE ENGINE SAYS WHERE THOSE LINES ARE, and says why the two layers are not the same one. If the game's own
+        // frame moves, this pin fails on the line it moved from rather than quietly describing the old one.
+        AssertLinesContain(Path.Combine(DecompiledRelativeRoot, "StardewValley", "Game1.cs"), new (int Line, string Fragment)[]
+        {
+            (1185, "ColorBlendFunction = BlendFunction.ReverseSubtract"),
+            (14119, "currentLocation.drawAboveAlwaysFrontLayer(spriteBatch);"),
+            (14123, "drawWeather(time, target_screen);"),
+            (14135, "DrawLightmapOnScreen(time, target_screen);"),
+            (14200, "hooks.OnRendered(RenderSteps.World, spriteBatch, time, target_screen);"),
+        });
+        AssertLinesContain(Path.Combine(DecompiledRelativeRoot, "StardewValley", "NPC.cs"), new (int Line, string Fragment)[]
+        {
+            (5223, "SpriteText.drawStringWithScrollCenteredAt(b, textAboveHead,"),
+        });
+
+        // And the declaration matches the draw site: one subscription, and the event it names is the one the declared
+        // slot describes.
+        AssertBubbleSlotDeclared("ModEntry.cs", mod);
+    }
+
+    [Fact]
+    public void TheSlotGateFiresOnADrawSiteThatMovedWithoutTheDeclaration()
+    {
+        // FALSIFIER, on the mechanism this pin exists for: the same assertion, handed a bubble drawn from the HUD event
+        // instead. A draw that moves to another pass changes what a player sees, so it must change the declaration.
+        const string moved = "helper.Events.Display.RenderedHud += this.OnRenderedWorld;";
+        string relocated = ReadModEntry().Replace(
+            "helper.Events.Display.RenderedWorld += this.OnRenderedWorld;",
+            moved,
+            StringComparison.Ordinal);
+        relocated.Should().Contain(moved, "the fixture has to actually move the subscription, or the falsifier proves nothing");
+
+        Exception thrown = Assert.ThrowsAny<Exception>(() => AssertBubbleSlotDeclared("ModEntry.cs", relocated));
+        thrown.Message.Should().Contain("RenderedHud", "the failure names the pass the draw moved to")
+            .And.Contain(ModEntry.CompanionBubbleSlot, "and the slot the code still declares");
+    }
+
     [Fact]
     public void TheBubbleCannotBeReachedThroughTheNpcOnlySeam()
     {
@@ -437,6 +506,39 @@ public sealed class CompanionBubbleTests
         File.ReadAllText(Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, RepositoryRelativeRoot, relativePath)));
 
     private static string ReadModEntry() => ReadRepositoryFile(Path.Combine("integrations", "stardew", "ModEntry.cs"));
+
+    /// <summary>
+    /// The engine slot a draw site implies, derived from the event it subscribes to - or a token naming the site this
+    /// reading does not know. An event name is the slot: each SMAPI display event is raised from exactly one place in the
+    /// engine's frame, and the declaration beside the draw site names which one.
+    /// </summary>
+    private static string DrawnSlot(string source)
+    {
+        string[] subscriptions = source.Split('\n')
+            .Select(line => line.Trim())
+            .Where(line => line.Contains("helper.Events.Display.", StringComparison.Ordinal) && line.Contains("+=", StringComparison.Ordinal))
+            .ToArray();
+        if (subscriptions.Length != 1)
+            return $"not_one_draw_site:{subscriptions.Length}";
+        return subscriptions[0].Contains("Display.RenderedWorld", StringComparison.Ordinal)
+            ? "above_weather_outside_lightmap"
+            : $"undeclared_slot:{subscriptions[0]}";
+    }
+
+    /// <summary>
+    /// Fails when the slot the draw site uses is not the slot the code declares, naming both: a bubble that moved up or
+    /// down the engine's frame without the sentence beside it changing is the defect this file exists for.
+    /// </summary>
+    private static void AssertBubbleSlotDeclared(string path, string source)
+    {
+        string drawn = DrawnSlot(source);
+        if (string.Equals(drawn, ModEntry.CompanionBubbleSlot, StringComparison.Ordinal))
+            return;
+        Assert.Fail(
+            $"{path}: the bubble is drawn from '{drawn}', and the slot declared beside it is '{ModEntry.CompanionBubbleSlot}'. "
+            + "A draw that moves to another pass changes whether weather covers a line and whether the lightmap darkens it: "
+            + "name the new relation and its consequence where the slot is declared, and the engine quote that justifies it");
+    }
 
     private static string ReadCompanionBubble() => ReadRepositoryFile(Path.Combine("integrations", "stardew", "CompanionBubble.cs"));
 

@@ -190,6 +190,9 @@ public sealed partial class ModEntry : Mod
         helper.Events.GameLoop.ReturnedToTitle += this.OnReturnedToTitle;
         helper.Events.Multiplayer.ModMessageReceived += this.OnModMessageReceived;
         helper.Events.Display.RenderedWorld += this.OnRenderedWorld;
+        // The declared slot travels into the Mod's own log: the draw site is an event subscription, so nothing in a live
+        // run's log would otherwise say which engine passes a companion line is drawn over (see CompanionBubbleSlot).
+        this.Monitor.Log($"[companion-bubble] slot={CompanionBubbleSlot}", LogLevel.Trace);
 
         helper.ConsoleCommands.Add("gamebuddy_farmhands", "List authoritative local-co-op player and Farmhand identities without changing game state.", this.FarmhandsCommand);
         helper.ConsoleCommands.Add("gamebuddy_status", "Print the configured AI Farmhand's authoritative snapshot on its local screen.", this.StatusCommand);
@@ -2613,6 +2616,34 @@ public sealed partial class ModEntry : Mod
             $"[companion-bubble] received;speaker={message.SpeakerPlayerId};chars={message.Text.Length}",
             LogLevel.Trace);
     }
+
+    /// <summary>
+    /// WHERE A COMPANION LINE SITS IN THE ENGINE'S FRAME - DECIDED HERE, IN CODE, BECAUSE THE DRAW SITE ALONE DOES NOT SAY IT.
+    ///
+    /// <para>
+    /// SLOT: ABOVE THE WEATHER, OUTSIDE THE LIGHTMAP. The consequence, in the engine's own terms: rain and snow are
+    /// painted before this slot (<c>Game1.cs:14123</c>, <c>drawWeather</c>), so weather never falls in front of a line she
+    /// is saying; and the lightmap pass (<c>Game1.cs:14135</c>, <c>DrawLightmapOnScreen</c>) is painted before it too, so
+    /// the <c>ReverseSubtract</c> blend it applies (<c>Game1.cs:1185</c>) never darkens her words - at 02:00 the bubble
+    /// stays at full brightness while the world it hangs in is dimmed.
+    /// </para>
+    /// <para>
+    /// THE GAME'S OWN WORLD-SPACE LABELS ARE NOT ON THIS LAYER, and the difference is written down rather than assumed: a
+    /// character's words above their head (<c>NPC.cs:5223</c>, drawn from <c>NPC.draw</c>), a hovered sign's own text
+    /// (<c>Object.cs:5494</c>) and a pet bowl's name (<c>PetBowl.cs:137</c>) are all drawn inside the map's own draw -
+    /// below the weather and inside the lightmap - so the engine darkens them with the world. This slot is what an
+    /// event-based draw reaches: <c>Game1.cs:14200</c>, <c>hooks.OnRendered(RenderSteps.World, ...)</c>, is the seam
+    /// SMAPI raises as <c>Display.RenderedWorld</c>, and it runs after both of those passes. Reaching the engine's own
+    /// layer again would mean reinstating the draw-layer postfix this file removed because one frame entered it once per
+    /// declaration.
+    /// </para>
+    /// <para>
+    /// THE VISUAL RESULT HAS NOT BEEN LOOKED AT: <c>live: not measured</c>. This declares the slot and its consequence,
+    /// not what a player sees. If a companion line must be darkened with the world, THIS declaration is what changes -
+    /// and <c>CompanionBubbleTests</c> fails the moment the draw site moves without it.
+    /// </para>
+    /// </summary>
+    internal const string CompanionBubbleSlot = "above_weather_outside_lightmap";
 
     /// <summary>
     /// Draws the live companion lines once per frame, from SMAPI's own world-draw event.
