@@ -175,6 +175,23 @@ export const jsonOk = (body: unknown) => ({
 });
 
 /**
+ * The Game slice's own read, for every journey that presses a Game control.
+ *
+ * `GameSurface` re-reads `GET …/game`, never the aggregate root: the panel's reads are the game's own,
+ * and the aggregate carries the whole conversation beside the game's few hundred bytes
+ * (`game-slice-reads-are-the-panels-own.spec.ts` pins both halves of that). A journey that mounts a
+ * composed root therefore has to answer this read as well, which is why it lives beside the document
+ * rather than in each spec.
+ *
+ * `projection` may be a thunk: most journeys answer a different game slice once their command landed.
+ */
+export async function stubGameRead(page: Page, projection: unknown | (() => unknown) = game): Promise<void> {
+  await page.route("**/api/composed-reference-game/v1/game", (route) =>
+    route.fulfill(jsonOk(typeof projection === "function" ? (projection as () => unknown)() : projection)),
+  );
+}
+
+/**
  * One player row's own shape, read from the row itself.
  *
  * It exists so the send journey can compare the optimistic row with the settled

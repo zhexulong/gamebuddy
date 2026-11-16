@@ -6,9 +6,9 @@ import { type TavernStateSnapshotV1, validateSnapshot } from "./reference-pipeli
  *
  * The composed broker owns bootstrap/session identity and returns one strict
  * root. Nested Chat operations deliberately stay on the existing
- * `tavern_browser_api/v1` client; this module only owns the composed bootstrap
- * and authoritative state read. In particular, it never reads Tavern
- * `/bootstrap` or `/state` as a composed refresh source.
+ * `tavern_browser_api/v1` client; this module only owns the composed bootstrap,
+ * the authoritative state read, and the Game slice's own read. In particular, it
+ * never reads Tavern `/bootstrap` or `/state` as a composed refresh source.
  */
 
 const COMPOSED_REFERENCE_GAME_BROWSER_API_V1 = "composed_reference_game_browser_api/v1" as const;
@@ -465,6 +465,17 @@ type StardewCabinConfirmationV1 = Readonly<{
 export type ComposedReferenceGameBrowserApi = Readonly<{
   bootstrap(bootstrapToken: string): Promise<ComposedReferenceGameBrowserRootV1>;
   readState(): Promise<ComposedReferenceGameBrowserRootV1>;
+  /**
+   * The Game slice alone, from the game's own route.
+   *
+   * A Game read is not a Chat read: the aggregate root carries the whole conversation beside the game's
+   * few hundred bytes, so a panel polling it once a second re-reads a transcript it does not render -
+   * and makes the Host re-project that transcript from its durable store, once per poll, for nothing.
+   * This is the same projection, from the same Host seam and the same closed validator, without the
+   * Chat half. It is a read, never a session writer: `bootstrap`/`readState` remain the only calls that
+   * adopt a CSRF token.
+   */
+  readGameState(): Promise<GameBrowserStateV1>;
   activateLifecycle(): Promise<void>;
   setupGame(request: GameSetupRequestV1): Promise<void>;
   launchGame(request: GameLaunchRequestV1): Promise<void>;
@@ -945,6 +956,22 @@ function isGameProjection(value: unknown): value is GameBrowserStateV1 {
 }
 
 /**
+ * Validates the Game slice's own read.
+ *
+ * The same closed projection the aggregate root's `game` half carries, so the slice cannot come to mean
+ * two things depending on which route answered it - and, like the aggregate's `mismatched_composed_session`
+ * rule, a reply from a session this client does not hold is never rendered as Game state. The aggregate
+ * compares the two halves against each other; a standalone read compares against the one session the
+ * client already adopted.
+ */
+function validateGameState(value: unknown, csrfToken: string | undefined): GameBrowserStateV1 {
+  if (!isGameProjection(value)) throw new ComposedReferenceGameProtocolError("invalid_composed_game");
+  if (csrfToken !== undefined && value.csrfToken !== csrfToken)
+    throw new ComposedReferenceGameProtocolError("mismatched_composed_session");
+  return value;
+}
+
+/**
  * Validates the exact composed root and both nested redacted projections.
  * Validation is closed at every object boundary: additive fields are not
  * silently ignored, and a foreign profile is never rendered as Game state.
@@ -1097,6 +1124,11 @@ export function createComposedReferenceGameBrowserApi(
       );
       csrfToken = root.chat.csrfToken;
       return root;
+    },
+    async readGameState(): Promise<GameBrowserStateV1> {
+      return exchange(fetchLike, "/api/composed-reference-game/v1/game", { method: "GET" }, (value) =>
+        validateGameState(value, csrfToken),
+      );
     },
     async activateLifecycle(): Promise<void> {
       // The route carries no command body: the admission already names the exact

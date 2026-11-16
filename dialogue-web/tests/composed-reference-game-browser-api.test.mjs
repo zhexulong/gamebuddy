@@ -196,6 +196,53 @@ test("composed Game projection admits the action-authority statuses while stayin
   );
 });
 
+test("composed client reads the Game slice on its own route, with the aggregate's closed validator", async () => {
+  // The Game panel's reads are the game's own: the same projection the aggregate root nests, fetched from
+  // `…/game` so a poll once a second does not carry the conversation. The route, the method and the
+  // credentials are the whole of what makes that true, so they are asserted exactly.
+  const recorder = transport(jsonResponse(root()), jsonResponse(gameSnapshot()));
+  const api = createComposedReferenceGameBrowserApi(recorder.fetch);
+  const opened = await api.bootstrap(HANDLE);
+  const slice = await api.readGameState();
+
+  assert.equal(opened.chat.csrfToken, HANDLE);
+  assert.equal(slice.game.attachment.status, "none");
+  assert.deepEqual(
+    recorder.calls.map(({ input, init }) => ({ input, method: init.method, credentials: init.credentials })),
+    [
+      { input: "/api/composed-reference-game/v1/bootstrap", method: "POST", credentials: "same-origin" },
+      { input: "/api/composed-reference-game/v1/game", method: "GET", credentials: "same-origin" },
+    ],
+  );
+
+  // Closed at every object boundary, exactly like the aggregate's game half.
+  for (const forged of [
+    { ...gameSnapshot(), chat: root().chat },
+    { ...gameSnapshot(), additive: true },
+    gameSnapshot({ launchPath: "C:/forged" }),
+    gameSnapshot({ connectionStatus: "connected" }),
+  ]) {
+    const forgedApi = createComposedReferenceGameBrowserApi(
+      transport(jsonResponse(root()), jsonResponse(forged)).fetch,
+    );
+    await forgedApi.bootstrap(HANDLE);
+    await assert.rejects(forgedApi.readGameState(), ComposedReferenceGameProtocolError);
+  }
+
+  // A reply that belongs to another browser session is never rendered as Game state: the aggregate
+  // compares its two halves, and this read compares against the one session the client already adopted.
+  const otherSession = transport(
+    jsonResponse(root()),
+    jsonResponse({ ...gameSnapshot(), csrfToken: "B".repeat(42) + "A" }),
+  );
+  const sessionBound = createComposedReferenceGameBrowserApi(otherSession.fetch);
+  await sessionBound.bootstrap(HANDLE);
+  await assert.rejects(
+    sessionBound.readGameState(),
+    (error) => error instanceof ComposedReferenceGameProtocolError && error.reason === "mismatched_composed_session",
+  );
+});
+
 test("composed client reports bounded server problems without accepting additive fields", async () => {
   const unavailable = transport(jsonResponse({ code: "state_unavailable" }, 409));
   await assert.rejects(

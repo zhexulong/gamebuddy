@@ -366,12 +366,20 @@ export function GameSurface({
    * What a Game operation needs to know about its own command - did the thing I acted on change - is the
    * Game projection's own attachment generation, which each handler compares against the generation it
    * acted on.
+   *
+   * And it reads the game's OWN route, not the aggregate root. The panel re-reads after every Game command
+   * and once a second through both bounded waits (the cabin handoff, the reopen/resume convergence), and
+   * `/state` answers the whole conversation beside the game's few hundred bytes: measured on a 200-message
+   * Chat, 35 135 B per poll of which 34 303 B was the Chat half and 683 B the game's - and, on the Host,
+   * one durable transcript re-projection per poll (`facade.read()` -> `threads.resumeThread`) for a
+   * transcript this surface renders no field of. `/game` is that same Game projection from the same Host
+   * seam, so the slice cannot drift between the two routes.
    */
   const rereadGame = async (): Promise<void> => {
-    const root = await composedApi.readState();
+    const game = await composedApi.readGameState();
     const current = readView();
     if (current.kind !== "ready") return;
-    commit({ ...current, root });
+    commit({ ...current, root: { ...current.root, game } });
   };
 
   /**
