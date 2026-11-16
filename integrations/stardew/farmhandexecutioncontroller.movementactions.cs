@@ -760,14 +760,14 @@ internal sealed partial class ExecutionManager
         {
             IReadOnlyList<BridgeDoor> exits = DiscoverExitTiles(Game1.player);
             // Measured 2026-11-14 (`round42`, day 6): she stood on `(3,11)`, the farmhouse door was at `(3,12)`, and she
-            // named her own tile. One orthogonal step was all that stood between her and the way out, so that request is
-            // the transition rather than a refusal - and the rule is the GOAL ("leave this location"), not the coordinate
-            // she named: a request that names a DIFFERENT door which resolves never reaches this branch, so honouring the
+            // named her own tile. One step was all that stood between her and the way out, so that request is the
+            // transition rather than a refusal - and the rule is the GOAL ("leave this location"), not the coordinate she
+            // named: a request that names a DIFFERENT door which resolves never reaches this branch, so honouring the
             // named door and taking the one beside her cannot disagree. The step is not taken by MOVING the body onto the
             // warp tile: the engine fires a warp from `Farmer.MovePositionImpl` (Farmer.cs:8586) and from nothing else, so a
             // position write would leave the body parked on a buffer tile design §3.1.1 forbids and fire no trigger; the
             // door is entered from where she stands, exactly as the native click entry does at its own radius-1 gate.
-            if (AdjacentExitStep(exits, actorTile) is { } step)
+            if (AdjacentExitStep(exits, Game1.player) is { } step)
             {
                 doorPoint = new Microsoft.Xna.Framework.Point(step.X, step.Y);
                 doorWarp = isDoor ? ResolveDoorWarp(location, doorPoint) : null;
@@ -942,23 +942,33 @@ internal sealed partial class ExecutionManager
     ///
     /// <para>
     /// The rule is the GOAL, not the coordinate: <c>enter_exit</c> and <c>travel</c> mean "leave this location", so when
-    /// the nearest exit this location publishes is ONE ORTHOGONAL STEP from the actor, that exit is the way out - whether
-    /// or not the tile she named was the door. The named tile is where she thought the way out was; she stood on `3,11`
-    /// and named `3,11` while the door was at `3,12` (`round42`), and a request naming a DIFFERENT door that resolves is
-    /// honoured before this decision is ever reached, because the caller runs only when the named tile resolved nothing.
+    /// the nearest exit this location publishes is a tile the actor can CLICK, that exit is the way out - whether or not
+    /// the tile she named was the door. Reach is asked of the engine's own gate (<see cref="IsWithinRangeOfRequest"/>,
+    /// <c>Utility.tileWithinRadiusOfPlayer</c>, Utility.cs:4100-4109: BOTH axes tested against the radius), never of a
+    /// distance recomputed here. A sum of the two axis deltas is Manhattan, and it disagrees with that gate on every
+    /// diagonal: the door at `3,12` from an actor on `2,11` is one tile away and a tile the player can click
+    /// (Game1.cs:11509 gates the action path on that same predicate), while the sum reads 2 and refused it. Measured
+    /// 2026-11-14: 15 refusals at `you=44,57 nearest=43,56` - one Chebyshev step, two Manhattan.
+    /// </para>
+    ///
+    /// <para>
+    /// The named tile is where she thought the way out was: she stood on `3,11` and named `3,11` while the door was at
+    /// `3,12` (`round42`), and a request naming a DIFFERENT door that resolves is honoured before this decision is
+    /// reached, because the caller runs only when the named tile resolved nothing.
     /// </para>
     /// </summary>
     internal static (int X, int Y, int Distance)? AdjacentExitStep(
         IReadOnlyList<BridgeDoor> exits,
-        (int X, int Y) actor)
+        Farmer actor)
     {
-        IReadOnlyList<BridgeDoor> ordered = ExitsNearestFirst(exits, actor);
+        (int X, int Y) actorTile = ((int)actor.Tile.X, (int)actor.Tile.Y);
+        IReadOnlyList<BridgeDoor> ordered = ExitsNearestFirst(exits, actorTile);
         if (ordered.Count == 0) return null;
 
         BridgeDoor nearest = ordered[0];
-        if (Math.Abs(nearest.SourceX - actor.X) + Math.Abs(nearest.SourceY - actor.Y) != 1)
+        if (!IsWithinRangeOfRequest((nearest.SourceX, nearest.SourceY), actor))
             return null;
-        return (nearest.SourceX, nearest.SourceY, ExitDistance((nearest.SourceX, nearest.SourceY), actor));
+        return (nearest.SourceX, nearest.SourceY, ExitDistance((nearest.SourceX, nearest.SourceY), actorTile));
     }
 
     internal static string DescribeExitRefusal(

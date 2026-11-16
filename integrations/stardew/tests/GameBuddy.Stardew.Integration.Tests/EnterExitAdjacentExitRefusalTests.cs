@@ -99,7 +99,7 @@ public sealed class EnterExitAdjacentExitRefusalTests
         world.Location.warps.Add(new Warp(3, 12, "Farm", 64, 15, flipFarmer: false));
         world.PlaceActorAt(3, 11);
 
-        ExecutionManager.AdjacentExitStep(ExecutionManager.DiscoverExitTiles(Game1.player), (3, 11))
+        ExecutionManager.AdjacentExitStep(ExecutionManager.DiscoverExitTiles(Game1.player), Game1.player)
             .Should().Be((3, 12, 1), "enter_exit means leave this location, and the way out is one step south of her");
     }
 
@@ -137,7 +137,7 @@ public sealed class EnterExitAdjacentExitRefusalTests
         world.Location.warps.Add(new Warp(41, 65, "Forest", 56, 33, flipFarmer: false));
         world.PlaceActorAt(41, 64);
 
-        ExecutionManager.AdjacentExitStep(ExecutionManager.DiscoverExitTiles(Game1.player), (41, 64))
+        ExecutionManager.AdjacentExitStep(ExecutionManager.DiscoverExitTiles(Game1.player), Game1.player)
             .Should().Be((41, 65, 1), "round19's tile is an edge warp; the actor stands one tile north of it");
 
         // The naming half of the same shape, from a tile she could not step from: five rows away, so the refusal
@@ -149,18 +149,94 @@ public sealed class EnterExitAdjacentExitRefusalTests
     }
 
     /// <summary>
-    /// The step is ORTHOGONAL. A door on the diagonal is two steps of walking, not the one the actor is standing
-    /// beside, and the native click entry does not reach it at its own radius either.
+    /// A door on the DIAGONAL is one step, because the engine's click gate counts both axes against the radius.
+    ///
+    /// <para>
+    /// `Utility.tileWithinRadiusOfPlayer` (Utility.cs:4100-4109) is `Math.Abs(x - f.Tile.X) <= tileRadius &amp;&amp;
+    /// Math.Abs(y - f.Tile.Y) <= tileRadius` - Chebyshev, the same predicate `Game1.checkAction` gates the ordinary
+    /// action path on (Game1.cs:11509), and `Building.doAction`'s entry is reached through it (Building.cs:948). So the
+    /// door at `(3,12)` is a tile the player can click from `(2,11)`, and this case previously asserted the opposite on
+    /// the reasoning that "the native click entry does not reach it at its own radius either" - which the engine's own
+    /// body refutes. The number this test reads is a count of the axis deltas the engine does NOT add together.
+    /// </para>
     /// </summary>
     [Fact]
-    public void ADoorOnTheDiagonalIsNotTheOneStep()
+    public void TheDoorOnTheDiagonalIsTheOneStepTheEngineReaches()
     {
         using var world = HeadlessWorld.Create();
         world.Location.warps.Add(new Warp(3, 12, "Farm", 64, 15, flipFarmer: false));
         world.PlaceActorAt(2, 11);
 
-        ExecutionManager.AdjacentExitStep(ExecutionManager.DiscoverExitTiles(Game1.player), (2, 11))
-            .Should().BeNull("a diagonal door is two orthogonal steps away");
+        Utility.tileWithinRadiusOfPlayer(3, 12, 1, Game1.player).Should().BeTrue(
+            "the engine's own click gate admits the diagonal tile; this is the fact the refusal was measured against");
+        ExecutionManager.AdjacentExitStep(ExecutionManager.DiscoverExitTiles(Game1.player), Game1.player)
+            .Should().Be((3, 12, 1), "a diagonal door is one Chebyshev step away and the player can click it");
+    }
+
+    /// <summary>
+    /// Two steps away is still refused - the other side of the same boundary, so the case above cannot pass by admitting
+    /// every tile. A door the engine's gate does not reach is not this predicate's to grant: getting the actor within one
+    /// step of it is an APPROACH, and that is the next unit rather than a wider radius here.
+    /// </summary>
+    [Fact]
+    public void ADoorTwoStepsAwayIsStillNotTheOneStep()
+    {
+        using var world = HeadlessWorld.Create();
+        world.Location.warps.Add(new Warp(4, 13, "Farm", 64, 15, flipFarmer: false));
+        world.PlaceActorAt(2, 11);
+
+        Utility.tileWithinRadiusOfPlayer(4, 13, 1, Game1.player).Should().BeFalse(
+            "the engine does not admit a tile two columns and two rows away either");
+        ExecutionManager.AdjacentExitStep(ExecutionManager.DiscoverExitTiles(Game1.player), Game1.player)
+            .Should().BeNull("two Chebyshev steps is an approach, not this transition");
+    }
+
+    /// <summary>
+    /// The Mod's exit admission agrees with the engine's own gate at EVERY offset in a two-tile window - the differential
+    /// reading, taken from the engine's function rather than from a distance spelled here.
+    ///
+    /// <para>
+    /// This is the gate for the class: `directional_radius_disagrees_with_the_engine:&lt;site&gt;:&lt;metric&gt;`. The truth table
+    /// is produced by <c>Utility.tileWithinRadiusOfPlayer</c> itself, so a change to the Mod's metric shows up as the one
+    /// offset where the two disagree instead of as a defect a live run has to find. The diagonal rows are the ones that
+    /// were wrong: the engine admits `(+1,+1)` and a Manhattan sum does not.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void TheExitAdmissionAgreesWithTheEngineGateAtEveryOffset()
+    {
+        using var world = HeadlessWorld.Create();
+        var disagreements = new List<string>();
+        int admitted = 0;
+        for (int dx = -2; dx <= 2; dx++)
+        {
+            for (int dy = -2; dy <= 2; dy++)
+            {
+                world.Location.warps.Clear();
+                world.Location.warps.Add(new Warp(10 + dx, 10 + dy, "Farm", 64, 15, flipFarmer: false));
+                world.PlaceActorAt(10, 10);
+
+                bool engine = Utility.tileWithinRadiusOfPlayer(10 + dx, 10 + dy, 1, Game1.player);
+                bool mod = ExecutionManager.AdjacentExitStep(
+                    ExecutionManager.DiscoverExitTiles(Game1.player), Game1.player) is not null;
+                if (engine) admitted += 1;
+                if (engine != mod)
+                {
+                    disagreements.Add(
+                        "directional_radius_disagrees_with_the_engine:"
+                        + "farmhandexecutioncontroller.movementactions.cs:AdjacentExitStep:"
+                        + $"offset={dx},{dy};engine={engine};mod={mod}");
+                }
+            }
+        }
+
+        int square = (2 * ExecutionManager.NativeInteractionRadius + 1)
+            * (2 * ExecutionManager.NativeInteractionRadius + 1);
+        admitted.Should().Be(
+            square,
+            "the engine's window is the square of its radius around the actor - nine tiles for radius 1, not the five "
+            + "an axis-summed window would admit");
+        disagreements.Should().BeEmpty(string.Join("\n", disagreements));
     }
 
     /// <summary>

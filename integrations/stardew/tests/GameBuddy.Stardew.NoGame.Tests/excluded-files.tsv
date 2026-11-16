@@ -70,6 +70,7 @@ DeclaredToolSelectionTests.cs	mod-assembly	Axe, DeclaredToolResolution, FishingR
 DecompiledSource.cs	reference-tree	StardewValleyDecompiled named in its source; /ref/ is gitignored, so a hosted checkout has no tree to read
 DestinationSearchByteBudgetEquivalenceTests.cs	mod-assembly	Navigation, DestinationSearchResult, NavigationBindingContext
 destinationsearchtests.cs	mod-assembly	Navigation, DerivedDestinationSet, DestinationSearchResult, NavigationBindingContext, NavigationSourceNode
+DirectionalRadiusCensusTests.cs	game	EngineParityCandidateScan@EngineParityCandidateScan.cs (the shared comment stripper), whose own row is game (Microsoft.Xna.Framework)
 DispatchEnvelopeTests.cs	mod-assembly	ExecutionManager
 DoorRangeIsTileSpaceTests.cs	game	Xna, Farmer, Game1, GameLocation, Netcode
 DoorTargetsInteriorExitTests.cs	game	Xna, Netcode, StardewValley, GameLocation
