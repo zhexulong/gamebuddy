@@ -51,11 +51,19 @@ import {
 } from "./lib/process-ledger.mjs";
 import { describeGameCleanup, recordedGameProcesses, recordRunGame, survivingGameIdentities } from "./lib/run-game.mjs";
 import {
+  closeRunInvocation,
+  describeReaper,
+  openRunInvocation,
+  reapRunOrphans,
+  writeReaperReading,
+} from "./lib/run-reaper.mjs";
+import {
   describeLeftovers,
   describeTeardown,
   inspectRunLeftovers,
   registeredRunProcesses,
   registerRunProcess,
+  retireRunProcesses,
   teardownRun,
   writeLeftoversReading,
 } from "./lib/run-owner.mjs";
@@ -434,6 +442,19 @@ async function main() {
   // is why a stepwise session is never pulled out from under the operator by a re-run of one phase.
   let closed = false;
   /*
+   * Before anything of this run exists, take back what a HARD-KILLED invocation of this stage left: nothing runs an
+   * exit handler through a `taskkill /F`, so the game that invocation opened is still on screen and the guardian
+   * deliberately keeps it (product rule #3023). The population, the three identity checks and the refusal to touch
+   * a stage another invocation still holds are all in `lib/run-reaper.mjs`; this is the one call site.
+   */
+  const previousInvocation = openRunInvocation({ paths, phase });
+  const reaped = reapRunOrphans({ paths, previous: previousInvocation });
+  writeReaperReading(paths, reaped);
+  for (const line of describeReaper(reaped)) console.log(line);
+  // What that invocation left belongs to it, and is settled: retire it so this run neither claims to have killed it
+  // nor reports it as a process still holding this stage.
+  retireRunProcesses(paths, [...reaped.terminated, ...reaped.alreadyGone]);
+  /*
    * The ledger is opened here and closed on the way out, around the same teardown: its "before" snapshot has
    * to predate the first process this invocation creates, and its "after" snapshot has to follow the last one
    * it stops. A ledger opened inside `close()` would have nothing to compare.
@@ -442,6 +463,9 @@ async function main() {
   const close = ({ code, reason, teardown }) => {
     if (closed) return code;
     closed = true;
+    // This invocation is no longer in flight: from here on, what it leaves running was left on purpose (a
+    // stepwise session) or has just been asserted gone - either way the next run must not reap it.
+    closeRunInvocation(paths);
     // The game this run started is recorded BEFORE anything is torn down, from the only authority for it: the
     // process table, filtered for the game's own images and matched to this run's mods root. The sweep below
     // cannot see it (`Stardew Valley.exe` is launched with no arguments), and the product deliberately keeps a

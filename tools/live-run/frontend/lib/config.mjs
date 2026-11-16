@@ -67,6 +67,15 @@ export function runPaths(run) {
     /* The post-run assertion's reading: what was still alive, and who held the CDP port, after teardown. */
     leftoversFile: join(stage, "state", "leftovers.json"),
     /*
+     * The invocation currently holding this stage (`lib/run-reaper.mjs`): written when a run starts and removed by
+     * `close()`. Its presence at the next run's start, with its own process gone, is the one fact that says the
+     * previous invocation was HARD-killed - and therefore that what it registered is an orphan rather than the
+     * session a stepwise run left for the next phase.
+     */
+    inflightFile: join(stage, "state", "inflight.json"),
+    /* What the reaper took back from a hard-killed invocation, so the fact outlives the terminal that printed it. */
+    reaperFile: join(stage, "state", "reaper.json"),
+    /*
      * The run's process ledger: a scoped record of only the processes this run created or touched, each with
      * the ownership marker that claimed it (`lib/process-ledger.mjs`). Written on every way out, whichever
      * phase failed, because the processes are the run's until its teardown has proved otherwise.
