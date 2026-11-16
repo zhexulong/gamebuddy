@@ -45,6 +45,7 @@ import {
 } from "./composed-chat-shell-state";
 import { ContextDrawer } from "./ContextDrawer";
 import { newIdempotencyKey } from "./composed-reference-game-view";
+import { createDraftMutation, type DraftNotice } from "./draft-mutation";
 import { GameSurface } from "./GameSurface";
 import { MemorySurface } from "./MemorySurface";
 import { createManagementPipelineApi } from "./management-surface-panels";
@@ -140,7 +141,7 @@ export function ComposedReferenceGameApp() {
   // The durable draft's authoring state is the composer's own field (see the
   // seeding effect below); what stays here is the closed outcome line its
   // Save/Discard report through.
-  const [draftNotice, setDraftNotice] = useState<Readonly<{ kind: "success" | "failure"; text: string }> | null>(null);
+  const [draftNotice, setDraftNotice] = useState<DraftNotice | null>(null);
   /**
    * The last send this surface could not complete, in the failure's own sentence.
    *
@@ -882,66 +883,23 @@ export function ComposedReferenceGameApp() {
   };
 
   /**
-   * Durable draft authoring, merged from the removed management surface: the
-   * PUT/DELETE carries this mount's exact expected revision and the validated
-   * durable read-back replaces the draft - nothing is ever guessed locally.
+   * The one envelope both durable-draft controls run through (`draft-mutation`): the PUT/DELETE that
+   * carries this mount's exact expected revision, and what a refusal of it may do to the composer.
    *
-   * The composed Chat projection pins the reference profile's operation list,
-   * which declares no `draft.save`/`draft.discard`, so there is no capability
-   * flag to gate these two controls on and the served route IS the capability -
-   * the same rule `management-surface-panels.tsx` documents for a panel mounted
-   * here. A rejected mutation is therefore reported, never hidden.
-   *
-   * Any rejection first re-reads the authoritative durable draft: a rejected
-   * write means the durable draft may no longer match this mount's revision (a
-   * stale tab's 409 draft/selection conflict), so the mounted draft takes the
-   * server read-back and the next save is the compare-and-swap the route asks
-   * for. The read-back is AUTHORITY, never text: it must not reach the composer,
-   * which holds whatever the player is writing. An earlier version seeded it
-   * there, so a 409 or a network blip replaced the sentence in flight with the
-   * Host's older copy - player input discarded by a failure the player did not
-   * cause. A read-back may only become the field's text on a success (`seedDraft`
-   * below) or through the seeding effect above, which leaves a locally edited field
-   * alone when the revision it was seeded at moves.
+   * It is handed the shell's own seams rather than owning them - the committed view, the composer's
+   * field, the three draft routes, the seeded draft, the notice and the catalogue - so neither control
+   * can spell the compare-and-swap, the read-back, or the rule about what a read-back may reach, for
+   * itself.
    */
-  const handleDraftMutation = async (kind: "save" | "discard"): Promise<void> => {
-    const current = viewRef.current;
-    if (current.kind !== "ready" || current.session.snapshot.selection === null) return;
-    try {
-      const command = {
-        apiVersion: 1 as const,
-        selectionGeneration: current.session.snapshot.selection.generation,
-        expectedRevision: current.draft.revision,
-        ...(kind === "save" ? { text: inputTextRef.current.trim() } : {}),
-      };
-      const result =
-        kind === "save"
-          ? await managementPipelineApiRef.current.saveDraft(
-              command as { apiVersion: 1; selectionGeneration: number; expectedRevision: number; text: string },
-              current.session.snapshot.csrfToken,
-            )
-          : await managementPipelineApiRef.current.discardDraft(command, current.session.snapshot.csrfToken);
-      seedDraft(result);
-      setDraftNotice({ kind: "success", text: labels().success });
-      commit({ ...current, draft: result });
-    } catch (error) {
-      // The refusal's own sentence, not a generic one: a stale draft and a forbidden draft read differently to the
-      // player, and every other mutation on this surface already words itself through the catalogue.
-      const sentence = declaredProblemSentence(error, labels()) ?? labels().failure;
-      setDraftNotice({ kind: "failure", text: sentence });
-      try {
-        const draft = await managementPipelineApiRef.current.readDraft();
-        const fresh = viewRef.current;
-        // `commit` only - never `seedDraft`: the revision is what the next save compares and swaps
-        // against, and the words stay the player's. The seeding effect leaves a locally edited field
-        // alone when the revision it was seeded at moves, so this cannot reach the composer either.
-        if (fresh.kind === "ready") commit({ ...fresh, draft });
-      } catch {
-        // The read-back failed too, so this mount keeps the revision it had; the notice above is what
-        // the player reads, and the next save states the same conflict again rather than guessing.
-      }
-    }
-  };
+  const handleDraftMutation = createDraftMutation({
+    viewRef,
+    inputTextRef,
+    api: managementPipelineApiRef.current,
+    seedDraft,
+    setDraftNotice,
+    commit,
+    labels,
+  });
 
   /**
    * Takes the single-flight latch and the busy projection for one message mutation, and spends the last
