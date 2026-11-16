@@ -137,12 +137,38 @@ export const DESKTOP_HOST_CLOSE_STEP_FAILED = "desktop_host_close_step_failed";
  * This is a hang detector, not a latency budget. A step is a sequence of
  * operations that are each bounded elsewhere - containing the AI role through its
  * Job Object, joining an in-flight endgame, releasing the presentation port - so
- * a legitimately slow step settles well inside this. It is deliberately far
- * above the per-operation waits those steps use (a minute for a Guardian
- * operation), because naming a step that is still making progress as failed would
- * abandon work the product still owns.
+ * a legitimately slow step settles well inside this.
+ *
+ * The value is DERIVED, not chosen: it is the largest operation any step waits on. A
+ * detector below that would name a step that is legitimately inside its own bounded
+ * operation as failed, i.e. abandon work the product still owns. Two steps own such an
+ * operation today and each of them names its own number: `drain_game_lifecycle` waits on
+ * the arm/contain operation budget (`DESKTOP_RUNTIME_OPERATION_WAIT_BUDGET_MS`), and
+ * `reflect_session` on the reflection's own timeout (`DEFAULT_REFLECTION_TIMEOUT_MS`).
+ * `desktop-host-reclamation-budget.test.ts` holds the invariant - every step's owned
+ * operation must fit inside this one - so the next step that grows a five-minute call
+ * reddens a gate instead of quietly spending the exit's whole deadline.
  */
-export const DESKTOP_HOST_DRAIN_TIMEOUT_MS = 300_000;
+export const DESKTOP_HOST_DRAIN_TIMEOUT_MS = 60_000;
+
+/**
+ * How long the WHOLE reclamation may take: what the Desktop launcher waits for this
+ * process to leave before it treats the process as hung and terminates it.
+ *
+ * It is the per-step detector times the number of declared steps, so the two numbers
+ * cannot drift apart: a step can never believe it has more time than the launcher will
+ * wait for all of them together. The launcher does not keep its own copy - the entry
+ * publishes this value in the bootstrap acknowledgement it already writes
+ * (`drainDeadlineMs`, `host/src/bootstrap/wire/desktop-runtime-bootstrap.internal.ts:1364`)
+ * and the Desktop reads it there (`desktop/GameBuddy.Desktop/RuntimeSupervisor.cs`,
+ * `CloseAsync`: the one place that waits, and the watch whose expiry names
+ * `host_teardown_timeout`).
+ *
+ * The bound covers the most the table can cost, which is every step running once: the
+ * composition runs six of them and the fixed entry appends the two it owns. A launch with
+ * fewer children costs less than this, never more.
+ */
+export const DESKTOP_HOST_DRAIN_DEADLINE_MS = DESKTOP_HOST_DRAIN_TIMEOUT_MS * DESKTOP_HOST_RECLAMATION_STEPS.length;
 
 export type DesktopHostReclamationStepOutcome = Readonly<{
   step: DesktopHostReclamationStep;

@@ -21,6 +21,7 @@ import {
 import {
   boundedReclamationCode,
   buildDesktopHostExitReason,
+  DESKTOP_HOST_DRAIN_DEADLINE_MS,
   DESKTOP_HOST_DRAIN_TIMEOUT_MS,
   runDesktopHostReclamation,
   type DesktopHostExitReason,
@@ -1372,6 +1373,11 @@ async function writeAcknowledgement(frame: DesktopHostBootstrapFrame): Promise<v
       inventoryDigest: frame.inventoryDigest,
       runtimeAdmissionSha256: frame.runtimeAdmissionSha256,
       rootLayoutSchema,
+      // The whole exit reclamation's deadline, in milliseconds. The launcher waits this long
+      // for this process to leave before it treats it as hung and terminates it, and this is
+      // the only copy of that number: it is derived from the reclamation's own step table
+      // (`desktop-host-reclamation.ts`), so a launcher constant cannot drift away from it.
+      drainDeadlineMs: DESKTOP_HOST_DRAIN_DEADLINE_MS,
       sessionEntry: sessionEntryForSurface(process.env.GAMEBUDDY_HOST_SURFACE),
     })}\n`,
     "utf8",

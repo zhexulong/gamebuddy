@@ -46,8 +46,8 @@ export type CompanionSessionReflectionInput = Readonly<{
   timeoutMs?: number;
 }>;
 
-/** Far below the reclamation's own 300s drain budget: this is a courtesy, not a teardown. */
-const DEFAULT_REFLECTION_TIMEOUT_MS = 60_000;
+/** Far below the reclamation's own per-step drain detector: this is a courtesy, not a teardown. */
+export const DEFAULT_REFLECTION_TIMEOUT_MS = 60_000;
 
 /**
  * Runs one reflection against an existing runtime root.
