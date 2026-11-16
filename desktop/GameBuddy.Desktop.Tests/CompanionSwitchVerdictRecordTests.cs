@@ -104,6 +104,39 @@ public sealed class CompanionSwitchVerdictRecordTests
     }
 
     [Fact]
+    public async Task Only_the_most_recent_twenty_verdicts_survive_the_launch_that_writes_them()
+    {
+        await using var fixture = await DisposableRootFixture.CreateAsync();
+        var refused = new CompanionSwitchOutcome(
+            CompanionSwitchStatus.Refused,
+            "companion_switch_target_authority_incomplete",
+            "companion-first",
+            "companion-target",
+            CompanionSwitchRefusalLifetime.Permanent,
+            null);
+
+        // One verdict per launch that refuses, and an install stuck on a permanent refusal launches
+        // without end: this is the unbounded collection, so twenty-three launches are written to
+        // prove where it stops.
+        var firstLaunch = new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero);
+        for (var launch = 0; launch < 23; launch += 1)
+        {
+            CompanionSwitchVerdictRecord.WriteForTesting(fixture.OperationalRoot, refused, firstLaunch.AddMinutes(launch));
+        }
+
+        var kept = Directory.GetFiles(fixture.OperationalRoot, "companion-switch-*.json")
+            .Select(path => Path.GetFileName(path) ?? string.Empty)
+            .OrderBy(name => name, StringComparer.Ordinal)
+            .ToArray();
+
+        // The newest twenty, not any twenty: the three oldest launches are the ones that went, and
+        // the newest is still the one an operator opens.
+        Assert.Equal(20, kept.Length);
+        Assert.Equal("companion-switch-2026-01-01T00-03-00-000Z.json", kept[0]);
+        Assert.Equal("companion-switch-2026-01-01T00-22-00-000Z.json", kept[^1]);
+    }
+
+    [Fact]
     public void The_launch_entry_hands_the_switch_outcome_to_the_verdict_record()
     {
         var source = File.ReadAllText(ProgramSource());

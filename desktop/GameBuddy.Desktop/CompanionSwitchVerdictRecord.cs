@@ -44,6 +44,16 @@ internal static class CompanionSwitchVerdictRecord
     internal const string RefusedOutcome = "companion_switch_refused";
 
     /// <summary>
+    /// How many verdicts are kept. One is written per launch that refuses, so this counts launches
+    /// and not choices: an installation stuck on a permanent refusal writes one every time it starts,
+    /// which is exactly the unbounded case this bound exists for, and a player who relaunches after a
+    /// refusal does it a handful of times. Twenty is a reading window an operator can use - the
+    /// newest names the state, and the ones behind it answer "did this repeat, and how often" for a
+    /// week of daily relaunches - while staying far above any single troubleshooting session.
+    /// </summary>
+    private const int RetainedVerdicts = 20;
+
+    /// <summary>
     /// The steps for the one refusal no later launch can answer - a companion whose parked authority
     /// was never finished. No Host will ever open that root and no launch may delete it on her
     /// behalf, so the only way forward is a human moving it aside, and the record has to say so.
@@ -66,13 +76,22 @@ internal static class CompanionSwitchVerdictRecord
     /// other outcome: a switch that happened is in the identity record, and a launch with nothing
     /// to do produced no fact about a player's choice.
     /// </summary>
-    internal static void Write(string operationalRoot, CompanionSwitchOutcome outcome)
+    internal static void Write(string operationalRoot, CompanionSwitchOutcome outcome) =>
+        Write(operationalRoot, outcome, DateTimeOffset.UtcNow);
+
+    /// <summary>
+    /// The same write with the instant named. The instant IS the file's name, so a test that has to
+    /// prove what the bound keeps cannot wait out twenty-three launches to get twenty-three names.
+    /// </summary>
+    internal static void WriteForTesting(string operationalRoot, CompanionSwitchOutcome outcome, DateTimeOffset recordedAt) =>
+        Write(operationalRoot, outcome, recordedAt);
+
+    private static void Write(string operationalRoot, CompanionSwitchOutcome outcome, DateTimeOffset recordedAt)
     {
         if (outcome.Status != CompanionSwitchStatus.Refused || outcome.Code is not { } code) return;
 
         try
         {
-            var recordedAt = DateTimeOffset.UtcNow;
             var record = new Dictionary<string, object?>(StringComparer.Ordinal)
             {
                 ["schema"] = Schema,
@@ -89,10 +108,45 @@ internal static class CompanionSwitchVerdictRecord
             File.WriteAllText(
                 Path.Combine(operationalRoot, $"companion-switch-{stamp}.json"),
                 JsonSerializer.Serialize(record) + "\n");
+            Prune(operationalRoot);
         }
         catch
         {
             // A diagnostic that cannot be written is never a second failure of the launch it describes.
+        }
+    }
+
+    /// <summary>
+    /// Keeps the newest <see cref="RetainedVerdicts"/> verdicts and removes the rest. The name
+    /// carries a fixed-width UTC instant, so ordinal order over the names is chronological order and
+    /// no file has to be opened to know how old it is. A verdict that cannot be removed is left for
+    /// the launch after this one: the bound is a diagnostic's, and it may not become a second failure
+    /// of the launch it describes.
+    /// </summary>
+    private static void Prune(string operationalRoot)
+    {
+        string[] verdicts;
+        try
+        {
+            verdicts = Directory.GetFiles(operationalRoot, "companion-switch-*.json");
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            return;
+        }
+
+        if (verdicts.Length <= RetainedVerdicts) return;
+        Array.Sort(verdicts, (left, right) => StringComparer.Ordinal.Compare(Path.GetFileName(left), Path.GetFileName(right)));
+        for (var index = 0; index < verdicts.Length - RetainedVerdicts; index += 1)
+        {
+            try
+            {
+                File.Delete(verdicts[index]);
+            }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+            {
+                // Left for the next launch, which prunes again after its own write.
+            }
         }
     }
 
