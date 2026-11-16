@@ -310,15 +310,14 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
                 NativeSleepPrompt.AcceptResponseKey,
                 StringComparison.Ordinal))
         {
-            string owner = FarmhandActionCatalog.DayCrossingActionId;
             return this.RememberTerminal(
                 request.RequestId,
                 executionId,
                 ExecutionState.Rejected,
                 "native_sleep_prompt_owned_by_sleep",
                 $"modal_type=DialogueBox;question=true;response_key={offeredResponses[offeredIndex].responseKey}"
-                    + $";question_key={NativeSleepPrompt.QuestionKey};owning_action={owner}",
-                hint: $"Answering Yes here ends the day. Dispatch `{owner}` instead - it answers this prompt and crosses the night with a receipt.");
+                    + $";question_key={NativeSleepPrompt.QuestionKey};owning_action={FarmhandActionCatalog.DayCrossingActionId}",
+                hint: $"Answering Yes here ends the day. Dispatch `{FarmhandActionCatalog.DayCrossingActionId}` instead - it answers this prompt and crosses the night with a receipt.");
         }
 
         // The offered response ITSELF, key and text together: it is the object the native click path answers with
