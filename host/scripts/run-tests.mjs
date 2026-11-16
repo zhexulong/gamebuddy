@@ -313,6 +313,8 @@ export function chunkTestFiles(paths, batchSize = DEFAULT_TEST_BATCH_SIZE) {
           )
         : new Error(message);
     const failures = new Array(batch.length);
+    /** One reading per file: the child's own summary, or the reason there is none. */
+    const fileReadings = new Array(batch.length);
     let nextIndex = 0;
     let stopped = false;
     /**
@@ -343,7 +345,7 @@ export function chunkTestFiles(paths, batchSize = DEFAULT_TEST_BATCH_SIZE) {
       };
       const heartbeat = reportHeartbeat(`${batchLabel}:file=${label}`);
       try {
-        await run([path], {
+        const completed = await run([path], {
           timeoutMs: budgetMs,
           onHeartbeat: (beat) => {
             const moment = readings();
@@ -360,6 +362,12 @@ export function chunkTestFiles(paths, batchSize = DEFAULT_TEST_BATCH_SIZE) {
             silence.sawOutput = true;
           },
         });
+        // The child's own summary is read HERE, on the success path: a file that passed is what most of the run's tests
+        // are, and a total built only from failures would report the numerator without the denominator.
+        const text = typeof completed?.output === "string" ? completed.output : undefined;
+        silence.maxGapMs = Math.max(silence.maxGapMs, now() - silence.lastOutputAtMs);
+        outputSilence.maxGapMs = Math.max(outputSilence.maxGapMs, silence.maxGapMs);
+        return { ok: true, text, summary: readTestSummary(text), textRead: text !== undefined };
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         const moment = readings();
@@ -369,13 +377,12 @@ export function chunkTestFiles(paths, batchSize = DEFAULT_TEST_BATCH_SIZE) {
         // `sawOutput` travels with the failure: it is the reading `child_alive_after_output:kind=` publishes, and
         // the batch summary's `no_output` kind is derived from this same field rather than from a second opinion
         // about the child's text.
-        return { ok: false, message, moment, sawOutput: silence.sawOutput };
+        //
+        // A FAILING child still reports its own counts (`fail 1`), so its summary is read from the text the supervisor
+        // kept beside the message. That is where the run's `fail N` comes from; the failure record says which test.
+        const text = childOutput(message);
+        return { ok: false, message, moment, sawOutput: silence.sawOutput, text, summary: readTestSummary(text), textRead: true };
       }
-      // Only a COMPLETED file contributes to the baseline the threshold is measured against: a killed file's silence
-      // is the defect being measured, and letting it raise the threshold would teach the runner to ignore the next one.
-      silence.maxGapMs = Math.max(silence.maxGapMs, now() - silence.lastOutputAtMs);
-      outputSilence.maxGapMs = Math.max(outputSilence.maxGapMs, silence.maxGapMs);
-      return { ok: true };
     };
   const runOne = async (index) => {
     const path = batch[index];
@@ -384,6 +391,7 @@ export function chunkTestFiles(paths, batchSize = DEFAULT_TEST_BATCH_SIZE) {
         // A file the suite deadline stopped from starting produced no output itself, and says so in the same
         // fields a run file does, so the batch summary never has to guess.
         failures[index] = { path, error: runnerError("test_suite_timeout", suite), output: "", sawOutput: false };
+        fileReadings[index] = { path, summary: undefined, textRead: false, failed: true };
         stopped = true;
         return;
     }
@@ -395,6 +403,7 @@ export function chunkTestFiles(paths, batchSize = DEFAULT_TEST_BATCH_SIZE) {
     // above the slowest legitimate test (tens of seconds).
     const budgetMs = Math.min(fileRemainingMs, perFileMs);
     const attempt = await runWatched(path, budgetMs);
+    fileReadings[index] = { path, summary: attempt.summary, textRead: attempt.textRead, failed: !attempt.ok };
     if (attempt.ok) return;
     // Only a child the supervisor had to KILL is a budget expiry. Anything else - a non-zero
     // exit, a spawn error - is the child's own failure and must keep its own message, output
@@ -459,6 +468,9 @@ export function chunkTestFiles(paths, batchSize = DEFAULT_TEST_BATCH_SIZE) {
         // The retry is watched the same way as the first attempt: a second budget kill must say why that child was
         // still alive too, and the retry is the run where "it passed alone" is told apart from "it passed and leaked".
         const attempt = await runWatched(path, retryBudgetMs);
+        // The retry replaces the first attempt's reading too: the file is reported once, with the counts of the attempt
+        // the run actually stands on.
+        fileReadings[index] = { path, summary: attempt.summary, textRead: attempt.textRead, failed: !attempt.ok };
         if (attempt.ok) {
           console.error(`host_test_suite_file_retry_outcome:suite=${batchLabel}:file=${label}:outcome=passed`);
           failures[index] = undefined;
@@ -480,7 +492,10 @@ export function chunkTestFiles(paths, batchSize = DEFAULT_TEST_BATCH_SIZE) {
     }
     // Report the earliest-launched failure so the batch stays deterministic
     // instead of surfacing whichever child happened to lose the race.
-    return failures.filter((failure) => failure !== undefined);
+    return {
+      failures: failures.filter((failure) => failure !== undefined),
+      readings: fileReadings.filter((reading) => reading !== undefined),
+    };
   }
 
 /**
@@ -508,6 +523,91 @@ const ASSERTION_FAILURE_CAUSES = /AssertionError|ERR_ASSERTION|Expected values t
 export function isEnvironmentalFailure(error) {
   const text = error instanceof Error ? error.message : String(error);
   return !ASSERTION_FAILURE_CAUSES.test(text) && ENVIRONMENTAL_FAILURE_CAUSES.test(text);
+}
+
+/**
+ * One Node test child's own summary, read from the child's own output.
+ *
+ * WHY THIS EXISTS. `pnpm --dir host test` published 452 files, 46 batches and "18 failing files" - and could not say
+ * how many TESTS failed, because only three of its 46 batch summaries printed a count. Every lane's report for a day
+ * read `tests: not measured`, and "18 files failed" cannot tell one failing assertion from four hundred. Node prints the
+ * count itself, per child, in six lines of its own report; this reads them.
+ *
+ * FAIL-CLOSED. The six labels must all be present and `tests` must close as pass + fail + skipped + todo + cancelled.
+ * A reporter that changes shape therefore yields `undefined` - "no summary" - rather than a plausible smaller number:
+ * the run then names that file instead of publishing a total that quietly lost tests.
+ */
+const SUMMARY_LABELS = Object.freeze(["tests", "pass", "fail", "skipped", "todo", "cancelled"]);
+const SUMMARY_LINE = /^ℹ (tests|pass|fail|skipped|todo|cancelled)\s+(\d+)\s*$/u;
+
+export function readTestSummary(outputText) {
+  const counts = new Map();
+  for (const line of String(outputText ?? "").split("\n")) {
+    const match = SUMMARY_LINE.exec(line.replace(/\r$/u, ""));
+    if (match !== null) counts.set(match[1], Number(match[2]));
+  }
+  if (SUMMARY_LABELS.some((label) => !counts.has(label))) return undefined;
+  const [tests, pass, fail, skipped, todo, cancelled] = SUMMARY_LABELS.map((label) => counts.get(label));
+  if (tests !== pass + fail + skipped + todo + cancelled) return undefined;
+  return Object.freeze({ tests, pass, fail, skipped, todo, cancelled });
+}
+
+/**
+ * What a run's tests add up to, and what it could not read.
+ *
+ * `files` counts the files a summary was read for, so it can disagree with the files the run started - and it must,
+ * because a file that failed before its first test printed no summary. `batches_without_a_summary` is the batches where
+ * NO file produced a readable summary: a batch that prints nothing is `not measured`, not zero.
+ */
+export function suiteTotalsLine(totals) {
+  const parts = [
+    `host_test_suite_totals:files ${totals.files}`,
+    `tests ${totals.tests}`,
+    `pass ${totals.pass}`,
+    `fail ${totals.fail}`,
+    `skipped ${totals.skipped}`,
+    `batches_without_a_summary: ${totals.batchesWithoutSummary}`,
+  ];
+  if (totals.filesWithoutSummary > 0) parts.push(`files_without_a_summary: ${totals.filesWithoutSummary}`);
+  return parts.join(" · ");
+}
+
+/** One empty totals record: the accumulator every examined batch folds into. */
+function emptyTotals() {
+  return {
+    files: 0,
+    tests: 0,
+    pass: 0,
+    fail: 0,
+    skipped: 0,
+    batchesWithoutSummary: 0,
+    filesWithoutSummary: 0,
+    /** Files whose own text held no summary AND whose failure does not explain it: the reading a run must not pass on. */
+    unexplained: [],
+  };
+}
+
+/** Fold one examined batch's per-file readings into the run's totals. */
+function foldBatchTotals(totals, readings) {
+  let withSummary = 0;
+  for (const reading of readings) {
+    if (reading === undefined) continue;
+    if (reading.summary === undefined) {
+      totals.filesWithoutSummary += 1;
+      // A failed file's own failure says why it printed no summary, so only a file that SUCCEEDED without one is a
+      // loss of information: nothing else in the run accounts for it.
+      if (reading.failed === false && reading.textRead) totals.unexplained.push(relativePath(reading.path));
+      continue;
+    }
+    withSummary += 1;
+    totals.files += 1;
+    totals.tests += reading.summary.tests;
+    totals.pass += reading.summary.pass;
+    totals.fail += reading.summary.fail;
+    totals.skipped += reading.summary.skipped;
+  }
+  if (withSummary === 0) totals.batchesWithoutSummary += 1;
+  return totals;
 }
 
 /** One child's message, bounded: a single file's output must not bury the reading printed beside it. */
@@ -722,7 +822,7 @@ function notRunBatchLine(entry) {
  * reader needs the reason, not just the name), every batch that did not run, and the population reading
  * itself - so the exit code and the message say the same thing.
  */
-function suiteFailureMessage({ suite, failures, notRun, population }) {
+function suiteFailureMessage({ suite, failures, notRun, population, totalsLine }) {
   const head =
     failures.length > 0
       ? `test_suite_failed:${failures.length} file(s): ${failures.map((failure) => relativePath(failure.path)).join(", ")}`
@@ -734,6 +834,7 @@ function suiteFailureMessage({ suite, failures, notRun, population }) {
     ...failures.map((failure) => `${relativePath(failure.path)}: ${boundedMessage(failure.error)}`),
     ...notRun.map(notRunBatchLine),
     population,
+    ...(totalsLine === undefined ? [] : [totalsLine]),
   ].join("\n");
 }
 
@@ -788,6 +889,9 @@ export async function runTestBatches(paths, {
   // derived from it, and its final value is published, so the two cannot drift apart.
   const outputSilence = { maxGapMs: 0 };
   let failedBatches = 0;
+  // What the run's tests add up to, folded from each child's own summary as its batch is examined. The population line
+  // says which files ran; this says how many tests they held, which is the reading no lane could previously publish.
+  const totals = emptyTotals();
   // Batches from `from` on are coverage this run does not have. Each keeps the reason the run ended,
   // because "remaining 34 not run" without a reason is the reading this change replaces.
   const markNotRun = (from, reason) => {
@@ -802,9 +906,9 @@ export async function runTestBatches(paths, {
       break;
     }
     console.error(`host_test_suite_batch_start:suite=${batchLabel}:files=${batch.length}:paths=${batchFilesForLog(batch)}:remaining_ms=${remainingMs}`);
-    let batchFailures;
+    let batchRun;
     try {
-      batchFailures = await runBatchFiles({ batch, batchLabel, concurrency, deadlineMs, perFileMs, run, now, suite, outputSilence, keepGoing, retryEnvironmental });
+      batchRun = await runBatchFiles({ batch, batchLabel, concurrency, deadlineMs, perFileMs, run, now, suite, outputSilence, keepGoing, retryEnvironmental });
     } catch (error) {
       // A batch whose own run threw handed back no verdict for its files. That is missing coverage, and
       // recording it is what keeps the suite running instead of ending it here.
@@ -815,6 +919,8 @@ export async function runTestBatches(paths, {
       }
       continue;
     }
+    foldBatchTotals(totals, batchRun.readings);
+    const batchFailures = batchRun.failures;
     if (batchFailures.length === 0) continue;
     failedBatches += 1;
     failures.push(...batchFailures);
@@ -865,8 +971,37 @@ export async function runTestBatches(paths, {
   });
   for (const entry of notRun) console.error(notRunBatchLine(entry));
   console.error(population);
-  if (notRun.length === 0 && failures.length === 0) return;
-  throw new Error(suiteFailureMessage({ suite, failures, notRun, population }));
+  // The totals, on every exit path: the population says which files ran, this says how many tests they held and how
+  // many of those failed. A green suite and a suite of zero tests used to print the same thing.
+  const totalsLine = suiteTotalsLine(totals);
+  console.error(totalsLine);
+  const reading = Object.freeze({
+    suite,
+    files: totals.files,
+    tests: totals.tests,
+    pass: totals.pass,
+    fail: totals.fail,
+    skipped: totals.skipped,
+    batchesWithoutSummary: totals.batchesWithoutSummary,
+    filesWithoutSummary: totals.filesWithoutSummary,
+    totalsLine,
+  });
+  // A file that PASSED and printed no summary is time the run cannot account for: nothing failed, nothing was killed,
+  // and the totals are quietly smaller than the suite. That is the same defect as a batch that printed nothing, one
+  // level down, so it fails the run and names the file instead of shrinking the denominator.
+  if (totals.unexplained.length > 0) {
+    const failure = new Error(
+      `test_suite_totals_incomplete:${suite}:${totals.unexplained.length} file(s) printed no readable test summary: ${totals.unexplained.join(", ")}`,
+    );
+    failure.reading = reading;
+    throw failure;
+  }
+  if (notRun.length === 0 && failures.length === 0) return reading;
+  const failure = new Error(suiteFailureMessage({ suite, failures, notRun, population, totalsLine }));
+  // The reading travels on the failure: the phase runner above has to be able to publish ONE total for the whole run,
+  // and a suite that failed still counted every test it ran.
+  failure.reading = reading;
+  throw failure;
 }
 
 /**
