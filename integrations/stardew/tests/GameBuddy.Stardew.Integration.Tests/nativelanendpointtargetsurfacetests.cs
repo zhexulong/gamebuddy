@@ -17,10 +17,11 @@ public sealed class NativeLanEndpointTargetSurfaceTests
         PropertyInfo port = nativeServer.FieldType.GetProperty("Port", BindingFlags.Instance | BindingFlags.Public)!;
         PropertyInfo status = nativeServer.FieldType.GetProperty("Status", BindingFlags.Instance | BindingFlags.Public)!;
 
+        // The expected type is constructed at runtime, so the generic Be<T>() cannot express it.
         servers.FieldType.Should().Be(typeof(List<>).MakeGenericType(typeof(Server)));
         nativeServer.FieldType.FullName.Should().Be("Lidgren.Network.NetServer");
         port.DeclaringType!.FullName.Should().Be("Lidgren.Network.NetPeer");
-        port.PropertyType.Should().Be(typeof(int));
+        port.PropertyType.Should().Be<int>();
         status.DeclaringType!.FullName.Should().Be("Lidgren.Network.NetPeer");
         status.PropertyType.FullName.Should().Be("Lidgren.Network.NetPeerStatus");
     }

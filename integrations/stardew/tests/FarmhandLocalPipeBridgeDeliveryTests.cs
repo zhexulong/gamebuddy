@@ -389,7 +389,7 @@ internal static class FarmhandLocalPipeBridgeDeliveryTests
     /// </summary>
     private static void RunUnconfirmedTerminalClassificationMatchesWireAndHostTerminalStates()
     {
-        Require(((ExecutionState[])Enum.GetValues(typeof(ExecutionState))).Length == 12,
+        Require(Enum.GetValues<ExecutionState>().Length == 12,
             "the classification partition must cover the exact Mod execution-state vocabulary.");
         foreach (ExecutionState state in new[]
         {

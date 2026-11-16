@@ -107,9 +107,9 @@ public sealed class FishingCatchableOverrideClassificationTests
         // WHICH type answers is the fact the farm's redirect precision turns on, so it is asserted rather than assumed:
         // a mod farm type that inherits Farm.getFish must be decided by Farm's own logic.
         FishingCatchableQuery.OwnFishSamplerDeclaredBy(typeof(StardewValley.Farm))
-            .Should().Be(typeof(StardewValley.Farm));
+            .Should().Be<StardewValley.Farm>();
         FishingCatchableQuery.OwnFishSamplerDeclaredBy(typeof(StardewValley.Locations.Beach))
-            .Should().Be(typeof(StardewValley.GameLocation), "an inheriting location ends at the engine's own sampler");
+            .Should().Be<StardewValley.GameLocation>("an inheriting location ends at the engine's own sampler");
     }
 
     /// <summary>
