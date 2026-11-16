@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { type CompanionArrivalHistory, companionArrivalFact } from "./companion-arrival-fact.js";
+import { companionArrivalFact } from "./companion-arrival-fact.js";
 import type { CompanionInterruption, StopAdmission } from "./companion-interruption.js";
 import type { CompanionLiveSourceEvidenceSink } from "./companion-live-source-attestation.js";
 import {
@@ -433,10 +433,7 @@ export class CompanionHostService {
   #integrationAdmissionOpen = true;
   /** Set by the one call that completes attach: only an attached session may greet on arrival. */
   #attached = false;
-  /**
-   * The live half of the arrival's once-only rule; the durable half is the Game session's own
-   * transcript (see `companion-arrival-fact.ts`).
-   */
+  /** The arrival's once-only rule: one mounted session opens one arrival turn (`companion-arrival-fact.ts`). */
   #arrivalSaid = false;
   /** The notice identities this session has already delivered (see `native-notice-fact.ts`). */
   readonly #nativeNotices = new NativeNoticeLedger();
@@ -510,7 +507,6 @@ export class CompanionHostService {
     private readonly turnTracker = new GameTurnLineageTracker(),
     private readonly bindIntegrationReceipt?: (receipt: ExecutionReceipt) => void,
     private readonly liveSourceEvidence?: CompanionLiveSourceEvidenceSink,
-    private readonly arrivalHistory?: CompanionArrivalHistory,
     /**
      * Cancel the Body Program the companion is currently running, fenced by the STOP epoch.
      *
@@ -1054,16 +1050,12 @@ export class CompanionHostService {
   }
 
   /**
-   * Says "the companion has just arrived, and the world clock has ticked" at most once per Game
-   * session. `companion-arrival-fact.ts` owns the fact and the why; this owns the two once-only
-   * decisions and the delivery, which is the same pump every other fact uses.
+   * Says "the companion has arrived, and the world clock has ticked" at most once per mounted session.
+   * `companion-arrival-fact.ts` owns the fact and the why; this owns the once-only decision and the
+   * delivery, which is the same pump every other fact uses.
    */
   #sayArrivalOnce(snapshot: Readonly<Record<string, unknown>>): void {
     if (this.#arrivalSaid) return;
-    if (this.arrivalHistory?.alreadySaid() === true) {
-      this.#arrivalSaid = true;
-      return;
-    }
     const arrival = companionArrivalFact(snapshot);
     // No usable clock yet: attach alone says nothing, and the once-only switch stays unmade so the
     // first real reading may still speak.

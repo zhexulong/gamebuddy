@@ -36,7 +36,6 @@ import {
 import { materializeAuthenticatedStardewLaunchPorts } from "../stardew-integration-launcher-body-program.internal.js";
 import { StardewLogicalActionRecoveryJournal } from "../stardew-logical-action-recovery-journal.js";
 import type { LiveSourceAttester } from "../companion-live-source-attestation.js";
-import { companionArrivalAlreadySaid } from "../companion-arrival-fact.js";
 import type { CompanionInterruption } from "../companion-interruption.js";
 import { CompanionLoop, type CompanionTurnVolatileContext } from "../companion-loop.js";
 import {
@@ -1712,11 +1711,6 @@ export function createHostGameRuntimeMaterializer(
           constructed.turnTracker,
           runtime.bindIntegrationReceipt,
           liveSourceAttester,
-          // The durable half of "she greets once": this Game session's own Pi transcript already holds
-          // the batch that carried the arrival fact if a previous mount delivered it.
-          Object.freeze({
-            alreadySaid: () => companionArrivalAlreadySaid(runtime.sessionManager),
-          }),
           // The last mile of "the player speaks and the work stops". The Mod has been able to cancel a program since
           // the journal was written, but nothing on this side ever asked: a STOP sealed the model and left the body
           // walking, because a submitted program is immutable and the Mod only refuses NEW intents.
