@@ -642,6 +642,22 @@ const GATES_WITH_FALSIFIER = Object.freeze([
   // no longer has is a finding, a raise is refused without a reason and records the three deltas with one, and an empty or
   // absent directory is blocked rather than green.
   "check-stardew-family-size.mjs",
+  // Prints `files examined F · declarations D · entity-touching N · thread hops H · off-loop closure C` and
+  // `methods examined N · provably on the loop M · dispatched D · undeclared U` plus a `checks[]` verdict whose three
+  // entries are the entity-touching finding, the unresolved call site and a stale declaration, so its default run is the
+  // report this suite reads. Its falsifier is tools/check-stardew-game-thread-affinity.test.mjs: an entity read in a
+  // helper the pipe worker reaches is `game_entity_touched_off_the_game_thread`, the same tree without that line is
+  // clean, a `new Timer` hop reaches its callback, an undecidable call with an entity-touching candidate is
+  // `game_thread_unresolved_call` until declared and `game_thread_declaration_stale` once its site is gone, and a tree
+  // with no hop at all is blocked rather than green.
+  "check-stardew-game-thread-affinity.mjs",
+  // Prints `handlers examined N · clean C · allocating A · recorded R` plus a `checks[]` verdict whose three entries are
+  // the unrecorded allocation, the stale baseline entry and an unresolved subscription, so its default run is the report
+  // this suite reads. Its falsifier is tools/check-stardew-tick-handler-allocation.test.mjs: a `new List` in a registered
+  // handler is `tick_handler_allocates`, recording it is clean, deleting the record is the same red, a locally declared
+  // handler is resolved from its registration rather than its name, a `-=` subscription adds no member, text
+  // concatenated in a loop is named while the same `+` on numbers is not, and a tree registering no handler is blocked.
+  "check-stardew-tick-handler-allocation.mjs",
 ]);
 
 /** How long a gate's default run may take before it is reported as having printed nothing. */
