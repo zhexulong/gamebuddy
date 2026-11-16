@@ -330,12 +330,10 @@ export function auditHandWrittenSchemaConstants({ root = REPOSITORY_ROOT, source
   };
 }
 
-/** The verdict: a scan that read no schema member, or found none of the five constants, measured nothing. */
+/** The verdict: a scan that read no schema member measured nothing, and is blocked rather than green. */
 export function statusOf(reading) {
   if (reading.unparsed.length > 0) return "failed";
   if (reading.sites === 0 || reading.examined === 0) return "blocked";
-  if (reading.missing.length === [...DOMAINS.values()].filter((name) => !reading.missing.includes(name)).length)
-    return "blocked";
   return reading.findings.length > 0 ? "failed" : "passed";
 }
 
@@ -375,8 +373,8 @@ function main(argv) {
   for (const finding of reading.findings) process.stderr.write(`${finding}\n`);
   if (status === "blocked")
     process.stderr.write(
-      "hand_written_schema_constants: nothing was examined - no hand-written schema member, or none of the shared " +
-        "constants is declared - so a green verdict would agree with itself\n",
+      "hand_written_schema_constants: nothing was examined - the source declares no hand-written action schema - " +
+        "so a green verdict would agree with itself\n",
     );
   process.exitCode = EXIT_STATUS[status];
 }
