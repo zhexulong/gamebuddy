@@ -223,39 +223,56 @@ test("block_coverage: every block the composer emits is in the closed set, and e
  * The prompt floor's block sentence, as ONE place the count can come from.
  *
  * <p>
- * The floor (`game-surface-prompt-floor.ts`) introduces the delivery in prose - "the message opens with your partner's
- * own words … then the machine's report follows as prose in four blocks - &lt;world-state&gt; … and
- * &lt;execution-result&gt;" - and that `four` is READ FROM `FACT_BRIEF_BLOCKS.length` rather than typed, which is the
- * property this test holds. It was typed once: `<in-flight>` made the set five on 2026-11-11 while the paragraph still
- * said four, and `identity-profile.ts` and `game-surface-prompt-floor.test-support.ts` carried another lane's
- * uncommitted hunk for that paragraph at the time.
+ * The floor (`game-surface-prompt-floor.ts` `fact_batch_blocks`) introduces the delivery in prose - "Every turn's message
+ * is the machine's report, in 4 blocks - &lt;world-state&gt; … &lt;execution-result&gt;" - and that `4` is READ FROM
+ * `FACT_BRIEF_BLOCKS.length` rather than typed, which is the property this test holds. It was typed once: `<in-flight>`
+ * made the set five on 2026-11-11 while the paragraph still said four, and `identity-profile.ts` and
+ * `game-surface-prompt-floor.test-support.ts` carried another lane's uncommitted hunk for that paragraph at the time.
  * </p>
  *
  * <p>
- * SO THE DRIFT IS NAMED RATHER THAN SILENT. While the floor's number disagrees with the closed set the test SKIPS with
- * `floor_block_count_owes_update:identity-profile.ts`, which names the file that owes the fix. It is not a green check:
- * `skip` is the one node:test verdict that says "not run" rather than "passed", and the moment the floor's count is
- * regenerated from `FACT_BRIEF_BLOCKS.length` both assertions below go live - the count AND the member names.
+ * WHAT WAS WRONG WITH THE FIRST FIX, and why this one refuses to skip. It matched the sentence's PHRASING - `prose in
+ * (\d|[a-z]+) blocks` - and when the rule was rewritten (2026-11-23, "follows as prose in four blocks" became "the
+ * machine's report, in 4 blocks") the pattern stopped matching anything. The guard then called `context.skip` with
+ * `floor_says_-1_blocks`, which is the one node:test verdict that says "not run" rather than "passed": a green line in
+ * the summary, and the count unexamined on every run since. A guard that skips when it cannot read its population is not
+ * a guard. So the population is now the CLOSED SET - the sentence that names every block `FACT_BRIEF_BLOCKS` declares,
+ * whatever its wording - and both ways of losing it are red: no such sentence (`floor_block_sentence_absent`), and a
+ * sentence whose number is not the set's length (`floor_block_count_owes_update`).
  * </p>
  */
-test("floor_block_count_owes_update: the prompt floor states the closed set's own length, and names each member", (context) => {
+test("floor_block_count: the prompt floor states the closed set's own length, and names each member", () => {
   const floor = buildGameCompanionSystemPrompt(DEFAULT_IDENTITY_PROFILE);
+  const sentences = floor.split(/(?<=[.!?。！？])\s+/u).filter((piece) => piece.trim() !== "");
+  const carriers = sentences.filter((sentence) => FACT_BRIEF_BLOCKS.every((name) => sentence.includes(`<${name}>`)));
+  assert.equal(
+    carriers.length,
+    1,
+    `floor_block_sentence_absent: ${String(carriers.length)} sentence(s) of the Game prompt name all ` +
+      `${String(FACT_BRIEF_BLOCKS.length)} blocks of FACT_BRIEF_BLOCKS, so the count this gate is about is stated nowhere ` +
+      "and a green verdict would be a statement about nothing",
+  );
+  const sentence = carriers[0] ?? "";
   const NUMBER_WORDS = ["zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten"];
-  const paragraph = /prose in (?:\d|[a-z]+) blocks?[^.]*\./u.exec(floor)?.[0] ?? "";
-  const stated = Number.parseInt(/prose in (\d+)/u.exec(floor)?.[1] ?? "", 10);
-  const statedWord = NUMBER_WORDS.indexOf(/prose in ([a-z]+) blocks?/u.exec(floor)?.[1] ?? "");
-  const counts = Number.isNaN(stated) ? statedWord : stated;
-  if (counts !== FACT_BRIEF_BLOCKS.length)
-    return context.skip(
-      `floor_block_count_owes_update:identity-profile.ts:floor_says_${String(counts)}_blocks;FACT_BRIEF_BLOCKS_is_${String(FACT_BRIEF_BLOCKS.length)}`,
-    );
-  const named = [...new Set([...paragraph.matchAll(/<([a-z-]+)>/gu)].map((match) => match[1] ?? ""))].sort();
+  const token = /(\d+|[a-z]+)\s+blocks?\b/u.exec(sentence)?.[1] ?? "";
+  const stated = /^\d+$/u.test(token) ? Number.parseInt(token, 10) : NUMBER_WORDS.indexOf(token);
+  assert.notEqual(
+    stated,
+    -1,
+    `floor_block_count_absent: this sentence names every block and states no count at all: ${JSON.stringify(sentence)}`,
+  );
+  assert.equal(
+    stated,
+    FACT_BRIEF_BLOCKS.length,
+    `floor_block_count_owes_update:game-surface-prompt-floor.ts:fact_batch_blocks:floor_says_${String(stated)}_blocks;FACT_BRIEF_BLOCKS_is_${String(FACT_BRIEF_BLOCKS.length)}`,
+  );
+  const named = [...new Set([...sentence.matchAll(/<([a-z-]+)>/gu)].map((match) => match[1] ?? ""))].sort();
   assert.deepEqual(
     named,
     [...FACT_BRIEF_BLOCKS].sort(),
     "the floor names the blocks the delivery carries, and no block it does not",
   );
-  process.stdout.write(`floor_blocks examined ${String(counts)} of FACT_BRIEF_BLOCKS\n`);
+  process.stdout.write(`floor_blocks examined ${String(stated)} of FACT_BRIEF_BLOCKS\n`);
 });
 
 test("player_speech_head: the player's words are the head of the message, untouched, and outside every block", () => {

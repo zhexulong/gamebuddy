@@ -8,7 +8,8 @@ import { fileURLToPath } from "node:url";
 import { EXPRESSION_ONLY_ACTION_IDS, STARDEW_ACTION_TOOL_NAMES } from "./action-registry.js";
 import { GAME_DELIVERY_PACING } from "./companion-delivery-pacing.js";
 import { buildGameCompanionSystemPrompt } from "./game-surface-prompt-floor.js";
-import { MOUNTED_GAME_SURFACE_TOOL_NAMES } from "./game-surface-prompt-floor.test-support.js";
+import { BUILDER_METHODS, MOUNTED_GAME_SURFACE_TOOL_NAMES } from "./game-surface-prompt-floor.test-support.js";
+import { SLEEPING_IS_AN_ACTION } from "./games/stardew/prompt/stardew-game-conduct.js";
 import {
   createIdentityProfileBinding,
   DEFAULT_IDENTITY_PROFILE,
@@ -225,10 +226,43 @@ test("the Game conduct names how a day ends, so going to bed is an act rather th
   // companion knew announcing was not the act; what nothing said is that the day's end is an
   // ACTION at all, in the same vocabulary as every other action. It went looking for one named
   // "sleep", found none, and chose silence.
+  //
+  // RE-DERIVED, NOT DELETED. This case used to assert the sentence "The day ends by going to bed and
+  // sleeping, and that is an action like any other", which a later rewrite of the rule replaced: it was
+  // red against a tree that carried the fact, which is a test that has stopped working - it would have
+  // stayed red until someone deleted it, or gone green the moment the rule and this case were deleted
+  // together. The fact is `SLEEPING_IS_AN_ACTION`'s now, so what is asserted here is the JOIN between
+  // that rule and the prompt the player's Game runs on, and between the call it shows and the plan
+  // surface's own vocabulary.
   const game = buildGameCompanionSystemPrompt(DEFAULT_IDENTITY_PROFILE);
-  assert.match(game, /The day ends by going to bed and sleeping, and that is an action like any other/);
-  // The failure itself, ruled out as the mechanism: a spoken goodnight leaves the day untouched.
+  assert.ok(
+    game.includes(SLEEPING_IS_AN_ACTION),
+    "floor_rule_left_the_prompt:SLEEPING_IS_AN_ACTION - the rule that says how a day ends is declared but never composed into the Game prompt, so going to bed is a guess at an action id again",
+  );
+  // THE FAILURE ITSELF, ruled out as the mechanism: a spoken goodnight leaves the day untouched.
   assert.match(game, /leaves the day exactly where it was/);
+  // WHERE the day ends is stated by this rule and by nothing else now: the companion walked off into the
+  // fields to sleep because nothing said the bed is inside, and a rule deleted on the belief that another
+  // said it would leave her standing at the farmhouse door. (`BED_IS_INSIDE` left the floor on 2026-11-23
+  // for the Mod's refusal - `SleepAndAdvanceDayLifecycle.cs` answers `not_home` - and this clause is what
+  // the floor still owes her: walk inside first.)
+  assert.match(
+    game,
+    /after entering the farmhouse/u,
+    "the floor no longer says the day ends inside the farmhouse, so the bed is somewhere in the valley",
+  );
+  // AND THE ACTION ID IS NOT A GUESS. The measured failure was a body looking for an action named "sleep"
+  // and giving up, so the id this rule teaches is resolved against the plan builder's real vocabulary - the
+  // method list the live surface's own registrations produce - rather than accepted because it reads well.
+  const taught = /builder\.([a-z_]+)\(\)/u.exec(SLEEPING_IS_AN_ACTION)?.[1];
+  assert.ok(
+    taught !== undefined,
+    "the rule that says the day's end is an action no longer names the plan call that makes it one",
+  );
+  assert.ok(
+    BUILDER_METHODS.includes(taught),
+    `floor_teaches_an_unknown_action:builder.${taught}() - the plan surface publishes ${String(BUILDER_METHODS.length)} methods and ${taught} is not one of them, so the one call this rule shows is refused as plan_script_unknown_action`,
+  );
   // It stays a fact about how a day ends, never a nightly duty: the conduct already grounds the
   // clock and the 02:00 pass-out, and an order to sleep at a stated hour would be the per-turn
   // obligation no card asked for.
