@@ -1,10 +1,6 @@
 import { GAME_DELIVERY_PACING } from "./companion-delivery-pacing.js";
 import { FACT_BRIEF_BLOCKS, type FactBriefBlock } from "./fact-brief.js";
-import {
-  BED_IS_INSIDE,
-  CONTENT_IDS_IN_WORDS,
-  SLEEPING_IS_AN_ACTION,
-} from "./games/stardew/prompt/stardew-game-conduct.js";
+import { CONTENT_IDS_IN_WORDS, SLEEPING_IS_AN_ACTION } from "./games/stardew/prompt/stardew-game-conduct.js";
 import { type IdentityProfile } from "./identity-profile.js";
 import { buildCompanionSystemPrompt } from "./companion-prompt-assembly.js";
 import type { GamePromptAddition } from "./settings/player-preference-store.js";
@@ -22,8 +18,8 @@ import type { GamePromptAddition } from "./settings/player-preference-store.js";
  * <p>
  * The rules are split by OWNER, and this module composes them into the one list the model reads. What holds for any game
  * surface is written below: machine-block semantics, the bubble's delivery unit, the receipt vocabulary, body language
- * through the mounted tools, the register of a person rather than a helper. What is true only of this save format - the
- * bed inside the house, the day's end, `(T)Hoe` - is Stardew's, in
+ * through the mounted tools. What is true only of this save format - the day's end inside the house, `(T)Hoe` - is
+ * Stardew's, in
  * `games/stardew/prompt/stardew-game-conduct.ts`, and is spliced in at the position it reads at. The order is
  * `GAME_SURFACE_INTERACTION_CONDUCT`'s, and it is the order of the prompt.
  * </p>
@@ -35,9 +31,8 @@ import type { GamePromptAddition } from "./settings/player-preference-store.js";
  * </p>
  *
  * <ul>
- *  <li>FLOOR - what she must never do: break character, speak out of world or as a helper, or violate a product
- *    safety/contract rule. A pacing bound that only forbids a monologue ("do not write long speeches") is floor. The
- *    prompt owns this.</li>
+ *  <li>FLOOR - what she must never do: break character, speak out of world, or violate a product safety/contract rule.
+ *    A pacing bound that only forbids a monologue ("do not write long speeches") is floor. The prompt owns this.</li>
  *  <li>FORM - how long a turn is, how many action beats it carries, what shape the prose takes. THE CARD OWNS THIS;
  *    the prompt says nothing about it. A prompt-written shape rule beats a card that teaches the opposite shape, which
  *    is exactly how a character whose every example opens with a `*...*` micro-action flattened into dialogue-only
@@ -66,9 +61,10 @@ import type { GamePromptAddition } from "./settings/player-preference-store.js";
  * persona owns her voice and every rule about when, whether or how much she speaks (`assets/tavern/presets/` - the card's
  * own directive, which every Game session mounts as `characterVoice`, and the preset the surface mounts); the floor owns
  * what the blocks and the receipts MEAN, what counts as an action, and what the SURFACE does; a tool description owns
- * only how to call the tool. The floor may state the bubble's size, the renderer's markdown, the machine vocabulary of a
- * receipt and the ban on speaking as a helper. It may not hang a speech act on a state, a reply or a count - not as a
- * command, not as a permission, and not as a claim about what the surface will carry.
+ * only how to call the tool. The floor may state the bubble's size, the renderer's markdown and the machine vocabulary of a
+ * receipt. It may not hang a speech act on a state, a reply or a count - not as a
+ * command, not as a permission, and not as a claim about what the surface will carry. Nor may it state a register: the
+ * customer-service wording left on 2026-11-23 (below), because tone is the persona's on this axis as much as a count is.
  * </p>
  *
  * <p>
@@ -84,6 +80,29 @@ import type { GamePromptAddition } from "./settings/player-preference-store.js";
  * own directive and were deleted rather than moved (one spelling: 先接住人 / 不报进度 / 遇上卡路只说眼前障碍); the one rule
  * nothing else stated - never hand the choice of the next move back, with its concrete-question boundary - moved to the
  * preset the Game surface mounts (`amber-game.json`).
+ * </p>
+ *
+ * <p>
+ * TWO MORE RULES LEFT ON 2026-11-23, and the order of that unit was the point: the guards for both were repaired FIRST, so
+ * the deletions could be seen. Deleting a rule whose guard cannot fail makes the floor smaller and the tree greener at the
+ * same time (see `fb9dbb44`, and the two guards that now fail by name - `floor_rule_left_the_prompt:SLEEPING_IS_AN_ACTION`
+ * and `floor_block_count_owes_update`).
+ * </p>
+ *
+ * <p>
+ * `BED_IS_INSIDE` stated what the SURFACE refuses - going to bed from the fields - and the surface does refuse it: the day's
+ * end answers `not_home` from its own lifecycle (`SleepAndAdvanceDayLifecycle.cs`), which is the Mod's fact and the Mod's
+ * test. What the floor still owes her is WHERE the day ends, because a companion that walked into the fields to sleep is the
+ * run this rule was written from; `SLEEPING_IS_AN_ACTION` states it ("after entering the farmhouse"), and
+ * `identity-profile.test.ts` holds that clause against the assembled prompt rather than against a second rule.
+ * </p>
+ *
+ * <p>
+ * `never_a_customer` stated the assistant register, and the register is tone: the card's own directive already bans it in her
+ * own words (绝无半分低姿态保姆腔或客套, asserted in `identity-profile.test.ts`), and the Game preset now states the one
+ * thing the card's class does not spell out - the concrete customer-service phrasing - in `amber-game.json`'s Main, which is
+ * the layer every Game live run mounts. The phrasing that remains in the conduct is the markdown the BUBBLE cannot draw,
+ * which is a surface fact and stays.
  * </p>
  */
 
@@ -297,18 +316,11 @@ export const GAME_SURFACE_CONDUCT_RULES = {
       "the two tools that move her body, mounted for her because expression is one step by nature, the one argument each takes, and the three bracketed forms it never draws.",
     text: "Body language has its own tool, mounted beside the plan builder because a gesture is one step by nature and must not wait behind the work: `stardew_express_emote` raises an overhead emote balloon and takes one `emote` word, and `stardew_face_direction` turns you to a cardinal direction and takes one `direction` word - each tool's own parameters spell out the words it accepts, and neither is a step inside stardew_plan_work. Write no bracketed stage direction at all - （转身微笑）, [sighs], *a sigh* - because none of them is a body your partner can see: a full-width parenthesis is an audio tag the voice channel performs instead of speaking （轻声）, and an asterisk beat is dropped from the bubble entirely, so the gesture happens nowhere and the words around it are what reaches your partner.",
   },
-  never_a_customer: {
-    class: "FLOOR",
-    reason:
-      "never speak as a helper: the assistant register and the closing offer of further help are what give her away.",
-    text: "Talk to your partner, never to a customer. The assistant register and customer-service warmth both give you away: no 当然可以, no 祝你玩得开心, no 还有什么需要吗, no closing line that offers further help, and no summarising back what you just said you would do.",
-  },
 } as const satisfies Readonly<Record<string, GameSurfaceConductRule>>;
 
 /** The floor as the model reads it: each entry's own text, in reading order, with the game modules' rules spliced in. */
 export const GAME_SURFACE_INTERACTION_CONDUCT = [
   GAME_SURFACE_CONDUCT_RULES.fact_batch_blocks.text,
-  BED_IS_INSIDE,
   SLEEPING_IS_AN_ACTION,
   GAME_SURFACE_CONDUCT_RULES.one_bubble_of_size.text,
   GAME_SURFACE_CONDUCT_RULES.one_utterance_per_reply.text,
@@ -316,7 +328,6 @@ export const GAME_SURFACE_INTERACTION_CONDUCT = [
   GAME_SURFACE_CONDUCT_RULES.machine_fields_translated.text,
   CONTENT_IDS_IN_WORDS,
   GAME_SURFACE_CONDUCT_RULES.body_language_is_native.text,
-  GAME_SURFACE_CONDUCT_RULES.never_a_customer.text,
 ].join("\n");
 
 /**

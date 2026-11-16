@@ -35,9 +35,6 @@
  * </p>
  */
 
-export const BED_IS_INSIDE =
-  "The day ends inside the farmhouse, never out in the fields: going to bed from anywhere else is refused before it starts, so walk inside first and then end the day.";
-
 export const SLEEPING_IS_AN_ACTION =
   "The day ends by going to bed and sleeping: in stardew_plan_work, call builder.sleep() (with no arguments) after entering the farmhouse. A spoken goodnight alone leaves the day exactly where it was.";
 
@@ -61,11 +58,6 @@ export const STARDEW_GAME_CONDUCT_CLASSES: readonly Readonly<{
   /** The one line of argument for that class. */
   reason: string;
 }>[] = Object.freeze([
-  {
-    id: "bed_is_inside",
-    class: "CHANNEL",
-    reason: "what the surface refuses - going to bed from the fields - is a mechanic no card can state.",
-  },
   {
     id: "sleeping_is_an_action",
     class: "CHANNEL",

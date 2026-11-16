@@ -33,17 +33,17 @@ const REPOSITORY_ROOT = (() => {
 })();
 
 /**
- * The Chat preset's `main` text, read from the file a Chat session mounts.
+ * The preset `main` text, read from the file a session mounts.
  *
  * A rule that left the framework or the card is re-derived from the document that states it now, so this file never
  * carries a second copy of authored prose that would go stale the moment the preset is rewritten.
  */
-function presetMainText(): string {
-  const document = JSON.parse(
-    readFileSync(join(REPOSITORY_ROOT, "assets", "tavern", "presets", "amber-chat.json"), "utf8"),
-  ) as { prompts?: readonly { identifier?: string; content?: string }[] };
+function presetMainText(file = "amber-chat.json"): string {
+  const document = JSON.parse(readFileSync(join(REPOSITORY_ROOT, "assets", "tavern", "presets", file), "utf8")) as {
+    prompts?: readonly { identifier?: string; content?: string }[];
+  };
   for (const prompt of document.prompts ?? []) if (prompt.identifier === "main") return prompt.content ?? "";
-  throw new Error("amber-chat.json has no main entry");
+  throw new Error(`${file} has no main entry`);
 }
 
 test("IdentityProfile canonical hash is stable", () => {
@@ -477,13 +477,15 @@ test("the house's own form is the live line's, not a book entry waiting on a key
   assert.doesNotMatch(buildChatCompanionSystemPrompt(DEFAULT_IDENTITY_PROFILE), /kitchen|stove/u);
 });
 
-test("the Game floor no longer puts a line in a refusal, and still forbids the service register", () => {
+test("the Game floor no longer puts a line in a refusal, and the register is the persona's now", () => {
   // Two registers the companion falls into when it has no line for them: the
   // Mod's reason for a refusal (a live run read `gift_given` / `quest_25_completed`
   // aloud) and the host answering a customer ("好的，我这就为您……"). Both are
   // machine talk in the player's ear. The refusal half is the card's sentence now
-  // (「遇上卡路、没体力、天黑，只讲眼前这道障碍，不讲原因、不讲规则」); the register half is the
-  // floor's contract and stays.
+  // (「遇上卡路、没体力、天黑，只讲眼前这道障碍，不讲原因、不讲规则」); the register half left this floor on
+  // 2026-11-23 for the two layers that own tone, and it left AFTER the guards here could fail - the
+  // card states the class in her own words and the Game preset states the wording, so a deletion that
+  // lost the fact shows up as a red line below rather than as a quieter prompt.
   const game = buildGameCompanionSystemPrompt(DEFAULT_IDENTITY_PROFILE);
   assert.doesNotMatch(game, /the player hears a person's reaction to the obstacle/);
   assert.doesNotMatch(game, /no reason code, no exhaustion threshold, no field name/);
@@ -492,8 +494,23 @@ test("the Game floor no longer puts a line in a refusal, and still forbids the s
     /只讲眼前这道障碍/u,
     "the obstacle in her own words has to be stated by the layer that owns it, or the deletion was a loss",
   );
-  assert.match(game, /assistant register/);
-  assert.match(game, /祝你玩得开心/);
+  assert.doesNotMatch(
+    game,
+    /never to a customer|customer-service warmth/iu,
+    "the floor states the customer register again: tone is the persona's, and the floor may not command a register",
+  );
+  assert.doesNotMatch(game, /祝你玩得开心/u, "and the concrete service phrasing is the preset's, not the floor's");
+  // THE CLASS, stated by the card the product actually mounts (`characterVoice` is in every Game prompt).
+  assert.match(
+    DEFAULT_COMPANION_PRESET.profile.characterVoice?.text ?? "",
+    /保姆腔/u,
+    "no layer bans the low-posture helper register any more, so the deletion was a loss rather than a move",
+  );
+  // THE WORDING, stated by the Game preset the surface mounts: a class on its own left the measured run
+  // answering "好的，我这就为您……" in a service voice the card had banned in the abstract.
+  const gamePreset = presetMainText("amber-game.json");
+  assert.match(gamePreset, /不是客服/u, "amber-game.json no longer forbids the customer register in her voice");
+  assert.match(gamePreset, /还有什么需要吗/u, "and it no longer names the closing offer of further help");
   // The two correctness lines this block already carried stay untouched: an
   // unobserved NPC reaction and the emote channel are contract, not style.
   assert.match(game, /never claim an NPC smiled, beamed, was delighted, or said something on your account/);
