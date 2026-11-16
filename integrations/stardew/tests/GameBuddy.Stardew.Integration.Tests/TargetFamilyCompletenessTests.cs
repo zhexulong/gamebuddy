@@ -572,6 +572,14 @@ public sealed class TargetFamilyCompletenessTests
         internal void MakeDiggable(int x, int y)
         {
             xTile.Layers.Layer back = this.Farm.map.GetLayer("Back")!;
+            xTile.Tiles.Tile tile = new xTile.Tiles.StaticTile(back, this.TileSheet(), xTile.Tiles.BlendMode.Alpha, 0);
+            tile.Properties["Diggable"] = "T";
+            back.Tiles[x, y] = tile;
+        }
+
+        /// <summary>The map's one tile sheet, added the first time a tile is built because a `StaticTile` needs one.</summary>
+        private xTile.Tiles.TileSheet TileSheet()
+        {
             if (this.farmTileSheet is null)
             {
                 this.farmTileSheet = new xTile.Tiles.TileSheet(
@@ -579,9 +587,44 @@ public sealed class TargetFamilyCompletenessTests
                     new xTile.Dimensions.Size(64, 64), new xTile.Dimensions.Size(64, 64));
                 this.Farm.map.AddTileSheet(this.farmTileSheet);
             }
-            xTile.Tiles.Tile tile = new xTile.Tiles.StaticTile(back, this.farmTileSheet, xTile.Tiles.BlendMode.Alpha, 0);
-            tile.Properties["Diggable"] = "T";
+
+            return this.farmTileSheet;
+        }
+
+        /// <summary>
+        /// A WATER tile: the map's own `Water` declaration on the Back tile, and nothing else.
+        ///
+        /// <para>
+        /// The declaration is all a cast asks for, and the Buildings tile a real map might carry over water must NOT
+        /// be added here. Measured 2026-11-16: `GameLocation.isTileFishable` answers FALSE as soon as the same tile
+        /// carries a Buildings-layer tile (`isOpenWater`), so the pair "fishable" and "blocked by the Buildings layer"
+        /// cannot both hold, and a fixture that wrote both published nothing at all.
+        /// </para>
+        /// </summary>
+        internal void MakeWater(int x, int y)
+        {
+            xTile.Layers.Layer back = this.Farm.map.GetLayer("Back")!;
+            xTile.Tiles.Tile tile = new xTile.Tiles.StaticTile(back, this.TileSheet(), xTile.Tiles.BlendMode.Alpha, 0);
+            tile.Properties["Water"] = "T";
             back.Tiles[x, y] = tile;
+        }
+
+        /// <summary>A Buildings-layer tile with no `Passable` property - the wall `isTilePassable` refuses.</summary>
+        internal void MakeWall(int x, int y) =>
+            this.Farm.map.GetLayer("Buildings")!.Tiles[x, y] =
+                new xTile.Tiles.StaticTile(this.Farm.map.GetLayer("Buildings")!, this.TileSheet(), xTile.Tiles.BlendMode.Alpha, 0);
+
+        /// <summary>And the wall taken back down, which is what opens the shore in the round-trip case.</summary>
+        internal void ClearWall(int x, int y) => this.Farm.map.GetLayer("Buildings")!.Tiles[x, y] = null!;
+
+        /// <summary>Takes the clump at a tile out of the location's own clump layer - the clear a tool swing performs.</summary>
+        internal void RemoveResourceClump(int x, int y)
+        {
+            foreach (StardewValley.TerrainFeatures.ResourceClump clump in this.Farm.resourceClumps.ToArray())
+            {
+                if ((int)clump.Tile.X == x && (int)clump.Tile.Y == y)
+                    this.Farm.resourceClumps.Remove(clump);
+            }
         }
 
         internal void PutInPackSlot(int slot, string qualifiedItemId, int stack)
