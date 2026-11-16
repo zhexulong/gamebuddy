@@ -107,6 +107,29 @@ export function processesWithCommandLine(text) {
   };
 }
 
+/**
+ * Every process whose IMAGE NAME matches `pattern`, with its command line, as `{ rows, examined }`.
+ *
+ * This answers the question the command-line sweep cannot: the game a run launched is
+ * `StardewModdingAPI.exe` and the `Stardew Valley.exe` under it, and the client's command line is nothing
+ * but its own image path - it names no run directory at all, so a sweep for this run's stage root can never
+ * see it. The Mod loader is the one that carries `--mods-path <run>`, and that is how the run recognises
+ * the game it caused.
+ *
+ * `null` when this machine could not be asked, and for the same reason as the command-line query: an answer
+ * that examined nothing is a probe that broke, not a machine running no game.
+ */
+export function processesWithImageName(pattern) {
+  if (typeof pattern !== "string" || pattern.length === 0) return null;
+  const measured = answered(["-NameLike", pattern]);
+  if (measured === null) return null;
+  if (!Number.isSafeInteger(measured.examined) || measured.examined <= 0) return null;
+  return {
+    examined: measured.examined,
+    rows: measured.rows.map(shape).filter((row) => row.pid !== process.pid && !row.commandLine.includes(PROBE_SCRIPT)),
+  };
+}
+
 /** Who holds a TCP port: `{ status: "listening", pid }`, `{ status: "free" }`, or `{ status: "unavailable" }`. */
 export function portListener(port) {
   if (!Number.isSafeInteger(port) || port <= 0) return { status: "unavailable" };

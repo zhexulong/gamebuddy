@@ -7,6 +7,9 @@
 #   -CommandLineLike <text>   every row whose command line CONTAINS <text>, compared ordinally - a path
 #                             containing `[` is a path, not a wildcard pattern
 #   -ListenerPort <n>         the pid LISTENING on that TCP port, as `{ listenerPort, pid }`
+#   -NameLike <regex>         every row whose IMAGE NAME matches (the game a run started is named by its
+#                             image, never by the run directory in its arguments: the loader carries
+#                             `--mods-path <run>`, the game under it carries nothing but its own path)
 #   -Table                    every process, WITHOUT its command line: `{ pid, parentPid, name, startTime }`.
 #                             The run's ledger needs the whole pid set and the parent relation twice per
 #                             run (before, and after teardown) and needs neither command line for it.
@@ -21,6 +24,7 @@
 param(
   [int]$ProcessId = 0,
   [string]$CommandLineLike = '',
+  [string]$NameLike = '',
   [int]$ListenerPort = 0,
   [switch]$Table
 )
@@ -53,6 +57,7 @@ foreach ($row in @($rows)) {
   $examined += 1
   $commandLine = [string]$row.CommandLine
   if ($CommandLineLike -ne '' -and $commandLine.IndexOf($CommandLineLike, [System.StringComparison]::OrdinalIgnoreCase) -lt 0) { continue }
+  if ($NameLike -ne '' -and ([string]$row.Name) -notmatch $NameLike) { continue }
   if ($Table) {
     Emit ([pscustomobject]@{
       pid = [int]$row.ProcessId
