@@ -1524,14 +1524,20 @@ function literalUnionSchema(literals: readonly TSchema[]): TSchema {
  * cannot widen what an action accepts - it can only make the Host's description of the argument less exact.
  */
 function candidateArgumentSchema(name: string, declaredType?: string): TSchema {
-  // The Mod's own declaration wins: a name-convention guess can contradict the wire validator, which is how a
-  // mounted tool came to describe integers as strings. `expectedTargetId` keeps its tighter string bound, and the
-  // name refinements below only apply where the declared type is absent.
+  // The tile and the backpack slot are the two arguments whose domain the WIRE declares as a predicate
+  // (`isTileCoordinate`, `isToolSlot`) and whose numbers every mounted tool states again. Read first, ahead of the
+  // declared type, because the type branch's ceiling described a value the validator refuses: measured 2026-11-16,
+  // 17 descriptor-derived mounts offered `x`/`y` up to 100000 and `slot` up to 100000 while `tileRow`/`slotRow`
+  // answered `invalid_*_tile`/`invalid_*_slot` above 1000 and 36 - the `charge` defect one layer down, where the
+  // schema and the validator disagree about the RANGE instead of about the argument set.
+  if (name === "slot") return Type.Integer({ minimum: 0, maximum: 36 });
+  if (name === "x" || name === "y") return Type.Integer({ minimum: 0, maximum: 1000 });
+  // The Mod's own declaration wins over the remaining name conventions: a name-convention guess can contradict the
+  // wire validator, which is how a mounted tool came to describe integers as strings. `expectedTargetId` keeps its
+  // tighter string bound, and the name refinements below only apply where the declared type is absent.
   if (declaredType === "integer" || declaredType === "number")
     return Type.Integer({ minimum: name === "quantity" ? 1 : 0, maximum: 100000 });
   if (declaredType === "string" && name === "expectedTargetId") return Type.String({ minLength: 1, maxLength: 128 });
-  if (name === "slot") return Type.Integer({ minimum: 0, maximum: 36 });
-  if (name === "x" || name === "y") return Type.Integer({ minimum: 0, maximum: 1000 });
   if (name === "quantity") return Type.Integer({ minimum: 1, maximum: 9999 });
   if (name === "expectedTargetId") return Type.String({ minLength: 1, maxLength: 128 });
   if (declaredType === "boolean") return Type.Boolean();

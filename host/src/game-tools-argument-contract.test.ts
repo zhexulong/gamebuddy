@@ -769,6 +769,75 @@ test("an expression action is no longer a plan example, and its closed set is on
 });
 
 /**
+ * A whole-number value a mounted tool ADMITS and the Host's own validator REFUSES.
+ *
+ * <p>
+ * The suite's other probes hand each declared argument its schema's FLOOR, which is how a schema that declares too
+ * little is caught; none of them ever hands it the CEILING, so a schema that declares too MUCH passed every one of
+ * them. That is the defect this test exists for, and it had already shipped: measured 2026-11-16, fifteen
+ * descriptor-derived mounts described `x`/`y` and `slot` as any whole number up to 100000, while `tileRow`/`slotRow`
+ * answered `invalid_*_tile`/`invalid_*_slot` above 1000 and 36 - 34 values the schemas admitted and the Host refused. The model was told the value was admissible and the
+ * Host refused the call built from it before the bridge - the `charge` class one layer down, where the schema and the
+ * validator disagree about the RANGE instead of about the argument set.
+ * </p>
+ *
+ * <p>
+ * THE POPULATION IS THE TOOLS THE HOST REALLY BUILDS: every registration comes from the generated
+ * `action-surface.v1.json`, `createStardewActionTools` builds the set a session is handed, and each whole-number
+ * argument that declares a ceiling contributes one probe. THE AUTHORITY IS THE VALIDATOR ITSELF - the refusal
+ * compared is the product's own `reasonCode`, not a second description of the range written here.
+ * </p>
+ *
+ * <p>
+ * TWO CONTROLS decide whether an argument can be probed at all, because a refusal does not say WHY it refused. Some
+ * tools take a tile or a slot that must equal one the snapshot published, so EVERY value but that one is refused and
+ * the ceiling says nothing about the range; those actions are excluded and NAMED, never counted as measured. The
+ * controls are the schema's own floor and the next value up: where both are accepted, the range really is what the
+ * validator is judging.
+ * </p>
+ */
+test("every whole-number value a mounted tool admits is one the Host's own validator accepts", async () => {
+  const mounted = mountedTools();
+  assert.ok(mounted.length > 0, "blocked: no tool was mounted, so this gate examines nothing");
+  const findings: string[] = [];
+  const notMeasured: string[] = [];
+  let examined = 0;
+  for (const tool of mounted) {
+    const required = declaredArgumentKeys(tool.schema, true);
+    const args = argsFor(tool.schema, required, tool.action);
+    for (const key of required) {
+      const node = propertiesOf(tool.schema)[key] as JsonObject | undefined;
+      if (node?.type !== "integer" && node?.type !== "number") continue;
+      if (typeof node.maximum !== "number") continue;
+      const floor = typeof node.minimum === "number" ? node.minimum : 1;
+      // The controls: two values INSIDE the declared range. A refusal at either means this action pins the value to
+      // one the snapshot published, so the ceiling is not a statement about its range.
+      const inside = floor + 1 <= node.maximum ? floor + 1 : node.maximum;
+      const control = await tool.call(args);
+      const interior = await tool.call({ ...args, [key]: inside });
+      if (control.refusal !== null || interior.refusal !== null) {
+        notMeasured.push(`${tool.action}.${key}:${control.refusal ?? interior.refusal}`);
+        continue;
+      }
+      examined += 1;
+      const ceiling = await tool.call({ ...args, [key]: node.maximum });
+      if (ceiling.refusal !== null)
+        findings.push(`host_offers_a_value_the_wire_refuses:${tool.name}:${key}=${node.maximum}:${ceiling.refusal}`);
+    }
+  }
+  assert.ok(
+    examined > 0,
+    "blocked: no mounted tool declares a bounded whole-number argument whose range the validator judges, so every schema agrees with itself",
+  );
+  assert.deepEqual(
+    findings,
+    [],
+    `a value the schema admits and the validator refuses is a call the model is told it may make: ${findings.join(" | ")}` +
+      ` [not measured, the action pins the value to a published target: ${notMeasured.join(", ")}]`,
+  );
+});
+
+/**
  * The loop closes: a call built ONLY from the rendered `till_soil` schema passes the real validator.
  * Every other test here compares statements about the schema - its names, its bounds, what the mount forwards. This one
  * hands the schema's own required arguments to `validateExecutionRequest`, so the two halves are tied by behaviour: while
