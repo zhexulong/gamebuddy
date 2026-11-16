@@ -174,7 +174,11 @@ export function reapRunOrphans({
       examined,
       tableExamined: table.examined,
       skipped: [
-        { pid: previous.pid, role: "invocation", reason: "an earlier invocation of this stage is still running" },
+        {
+          pid: previous.pid,
+          role: "invocation",
+          reason: `an earlier invocation of this stage is still running (phase ${String(previous.phase)}, started ${String(previous.at)}) - this run does not take a running invocation's processes`,
+        },
       ],
     });
 
@@ -264,10 +268,6 @@ export function describeReaper(reading) {
       `${REAPER_PREFIX}: nothing to reap - no earlier invocation of ${String(reading.stageRoot)} died without closing (examined ${String(reading.examined)} recorded identities; a stepwise session it left behind is the next phase's input, not an orphan)`,
     ];
   const lines = [];
-  if (reading.evidence === "previous_invocation_alive")
-    lines.push(
-      `reaper_skipped: ${String(invocation.pid)}: an earlier invocation of this stage is still running (phase ${String(invocation.phase)}, started ${String(invocation.at)}) - this run does not take a running invocation's processes`,
-    );
   for (const entry of reading.terminated) lines.push(`reaper_terminated: ${entry.pid}(${entry.role})`);
   for (const entry of reading.alreadyGone) lines.push(`reaper_already_gone: ${entry.pid}`);
   for (const entry of reading.couldNotTerminate) lines.push(`reaper_could_not_terminate: ${entry.pid}`);
