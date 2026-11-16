@@ -24,6 +24,14 @@
  * 30-day window would cost ~13 minutes, and at 14 ms/commit (the window's own measured 41.0 s for `--name-only`) it
  * costs 41 s. A report a lane will not run is a report nobody reads, so `--numstat` is not used anywhere in this file.
  *
+ * THE WINDOW ENDS AT THIS TREE'S OWN HEAD, NOT AT THE WALL CLOCK. Measured 2026-11-17: `--since=30.days` read
+ * 2,903 commits and then 2,904 an hour later, because other lanes kept committing - and on a work tree whose HEAD was
+ * four days old it silently measured a 26-day window, since the walk starts at that HEAD while the boundary came from
+ * today. Anchored at HEAD's committer date (`git log -1 --format=%cI`) the table is a function of (commit, window):
+ * the same command on the same revision prints the same rows, which is the only proof a reading can offer in place
+ * of a red one - and it is what makes `--root <worktree-at-an-old-rev>` mean "this reading, taken then". The anchor
+ * is printed on the first line of every run.
+ *
  * THE WINDOW IS 30 DAYS because the record this was tested against is a 30-day record: every shipped defect commit
  * named in `design/tasks/active/21_OPEN_FINDINGS_2026_11_15_NIGHT.md` and `.tmp/night-red-proofs.md` lands between
  * 2026-11-13 and 2026-11-15, and 2,904 of this repository's 5,129 commits are 30 days old or newer - so the window
@@ -31,15 +39,16 @@
  *
  * WHERE THIS READING WOULD HAVE HELPED, AND WHERE IT IS BLIND (measured, the 15 fix commits of 2026-11-13..15,
  * 26 product files). Run on the tree as it stood at 43299f2a - the commit before the first of those fixes - with the
- * same 30-day window and today's code (`--root <worktree>`), 15 of the 26 files the fixes would touch were ALREADY in
- * that tree's top decile (309 of 3,098 files, so a 10% cut held 58% of the coming breakage): `i18n.ts` at rank 5,
- * `management-pipeline-api.ts` at 7, `tavern/browser-contract/index.ts` at 8, `ComposedReferenceGameApp.tsx` at 19.
- * The 11 misses are the honest limit of the metric, and they are two shapes: files the fix CREATED (`preset-segments.ts`
- * and `preset-request-segments.ts` at 1 revision each, `composed-reference-game-view.ts` at 0) - a churn ranking cannot
- * see a file that has no history, which is why a defect in a two-day-old file is invisible here - and files outside the
- * population's extension set, of which the largest is `dialogue-web/src/style.css` (185 commits and 15,348 changed lines
- * over the 90-day window, and no line ceiling, so it is not in this report at all; the fix for that is a ceiling in the
- * size ratchet, not a second file list here).
+ * same 30-day window and today's code (`--root <worktree>`), 14 of the 26 files the fixes would touch were ALREADY in
+ * that tree's top decile (309 of 3,098 files, so a 10% cut held 54% of the coming breakage): `tavern/browser-contract/
+ * index.ts` at rank 5, `i18n.ts` at 6, `management-pipeline-api.ts` at 7, `ComposedReferenceGameApp.tsx` at 18.
+ * The 12 misses are the honest limit of the metric, and they are three shapes: files that carried one revision or none
+ * when that window closed (`preset-macros.ts`, `preset-segments.ts`, `preset-request-segments.ts` at 1 each and
+ * `composed-reference-game-view.ts` at 0) - a churn ranking cannot see a file with no history, which is why a defect
+ * in a two-day-old file is invisible here - files whose churn had not yet accumulated (`MarkdownMessage.tsx` at 568 of
+ * 3,098, `ProblemView.tsx` at 1,263), and files outside the population's extension set, of which the largest is
+ * `dialogue-web/src/style.css` (185 commits and 15,348 changed lines over the 90-day window, and no line ceiling, so
+ * it is not in this report at all; the fix for that is a ceiling in the size ratchet, not a second file list here).
  *
  * WHAT A ROW DOES NOT SAY:
  *
@@ -66,8 +75,8 @@
  *   node tools/audit-hotspots.mjs --why-not-a-gate       # the retrospection that kept this a report
  *
  * red-proof: inject  `score: commits * lines` -> `score: commits + lines` in rank() -> `rank.1`, `rank.2`, `locate.1`
- *   and `report.4` fail - the table and the located rank both stop being the product of the two numbers - while 9 of
- *   the 13 cases stay green, and the unmodified suite is 13 of 13 (tools/audit-hotspots.test.mjs)
+ *   and `report.4` fail - the table and the located rank both stop being the product of the two numbers - while 10 of
+ *   the 14 cases stay green, and the unmodified suite is 14 of 14 (tools/audit-hotspots.test.mjs)
  *
  * WHERE IT RUNS. `pnpm hotspots` (`package.json`), and `tools/check-prelive-gate-registry.mjs` exempts it from the
  * prelive ladder as `report:` with the numbers in the reason: it exits 0 whatever the ranking says, so a rung would
@@ -102,12 +111,26 @@ const normalize = (path) => path.split(sep).join("/");
 /**
  * Revisions per path inside the window, from the repository's own log.
  *
+ * THE WINDOW ENDS AT THE TREE'S OWN HEAD, not at the wall clock. Measured 2026-11-17: with `--since=30.days` a
+ * reading taken twice an hour apart disagreed (2,903 and then 2,904 commits) because other lanes kept committing,
+ * and a reading taken on a work tree whose HEAD is four days old silently measured a 26-day window - `git log`
+ * walks back from that HEAD, so the boundary has to be that HEAD's date. Anchored this way the table is a function
+ * of (commit, window) and the same command on the same revision prints the same rows, which is the only proof a
+ * reading can offer in place of a red one.
+ *
  * `--name-only` rather than `--numstat` (see the header for the two measurements), and no `--find-renames`: a renamed
  * file is counted under the name it carried at that commit, so a rename shows up as revisions on both names instead
  * of being silently credited to one.
  */
 export function measureChurn(root, windowDays = WINDOW_DAYS) {
-  const raw = execFileSync("git", ["log", `--since=${windowDays}.days`, "--name-only", "--format=\u0001%H"], {
+  const anchor = execFileSync("git", ["log", "-1", "--format=%cI"], {
+    cwd: root,
+    encoding: "utf8",
+    windowsHide: true,
+    stdio: ["ignore", "pipe", "pipe"],
+  }).trim();
+  const since = new Date(Date.parse(anchor) - windowDays * 86_400_000).toISOString();
+  const raw = execFileSync("git", ["log", `--since=${since}`, "--name-only", "--format=\u0001%H"], {
     cwd: root,
     encoding: "utf8",
     maxBuffer: 256 * 1024 * 1024,
@@ -125,7 +148,7 @@ export function measureChurn(root, windowDays = WINDOW_DAYS) {
     if (path === "") continue;
     revisions.set(path, (revisions.get(path) ?? 0) + 1);
   }
-  return { commits, revisions };
+  return { anchor, commits, revisions };
 }
 
 /** The import a relative specifier resolves to inside `population`, or `null` - the four readings in the header. */
@@ -219,7 +242,7 @@ function main(argv) {
   );
 
   if (!Number.isInteger(windowDays) || windowDays < 1) {
-    console.error(`hotspots_blocked:window_unreadable:${String(valueOf(argv, "--window"))}`);
+    console.error(`hotspots_blocked:window_invalid:${String(valueOf(argv, "--window"))}`);
     return 2;
   }
   let measured;
@@ -234,9 +257,18 @@ function main(argv) {
     console.error(`hotspots_blocked:population_empty:${root}`);
     return 2;
   }
-  const { commits, revisions } = measureChurn(root, windowDays);
+  let churn;
+  try {
+    churn = measureChurn(root, windowDays);
+  } catch (error) {
+    console.error(
+      `hotspots_blocked:window_unreadable:${error instanceof Error ? error.message.split("\n")[0] : String(error)}`,
+    );
+    return 2;
+  }
+  const { anchor, commits, revisions } = churn;
   if (commits === 0) {
-    console.error(`hotspots_blocked:window_empty:${windowDays}d:${root}`);
+    console.error(`hotspots_blocked:window_empty:${windowDays}d:${anchor}:${root}`);
     return 2;
   }
 
@@ -260,6 +292,7 @@ function main(argv) {
       `${JSON.stringify(
         {
           windowDays,
+          anchor,
           commits,
           examined: sizes.size,
           busy: [...revisions.keys()].filter((file) => sizes.has(file)).length,
@@ -276,7 +309,7 @@ function main(argv) {
 
   const busy = [...revisions.keys()].filter((file) => sizes.has(file)).length;
   console.log(
-    `hotspot report: window ${windowDays} days · ${commits} commits · frequency = revisions touching the file · size = lines at HEAD`,
+    `hotspot report: window ${windowDays} days ending ${anchor} · ${commits} commits · frequency = revisions touching the file · size = lines at HEAD`,
   );
   console.log(
     `files examined ${sizes.size} · extensions ${[...extensions].map(([extension, count]) => `${extension} ${count}`).join(" ")}`,

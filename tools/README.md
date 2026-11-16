@@ -568,13 +568,15 @@ than the decile alone, because 18 of the 26 product defect files *are* named by 
 enters the top decile` needs last week's membership, and 75 files enter and 75 leave the decile every week.
 A threshold would therefore need a 208-row hotspot baseline, which this repository does not keep.
 
-Run on the tree at `43299f2a` — the commit before the first of those fixes — **15 of the 26 files the fixes
-would touch were already in that tree's top decile** (`i18n.ts` rank 5, `management-pipeline-api.ts` 7,
-`tavern/browser-contract/index.ts` 8, `ComposedReferenceGameApp.tsx` 19). The misses are the metric's honest
-limit and they are two shapes: files the fix itself created (one revision or none, invisible to a churn
-ranking) and files outside the population's extension set — the largest being `dialogue-web/src/style.css`,
-185 commits and 15,348 changed lines over the 90-day window, with no line ceiling, so it is not in this report
-at all.
+Run on the tree at `43299f2a` — the commit before the first of those fixes — **14 of the 26 files the fixes
+would touch were already in that tree's top decile** (`tavern/browser-contract/index.ts` rank 5, `i18n.ts` 6,
+`management-pipeline-api.ts` 7, `ComposedReferenceGameApp.tsx` 18). The misses are the metric's honest
+limit and they are three shapes: files that carried one revision or none when that window closed
+(`preset-macros.ts`, `preset-segments.ts`, `preset-request-segments.ts` at 1 each,
+`composed-reference-game-view.ts` at 0 — invisible to a churn ranking), files whose churn had not yet
+accumulated (`MarkdownMessage.tsx` at 568 of 3,098), and files outside the population's extension set — the
+largest being `dialogue-web/src/style.css`, 185 commits and 15,348 changed lines over the 90-day window,
+with no line ceiling, so it is not in this report at all.
 
 `replay-gate-on-history` cannot measure this reading and says so: it extracts each revision with `git archive`,
 which carries no `.git`, so the run is `not_measured  reason=findings_unreadable  exit=2` with

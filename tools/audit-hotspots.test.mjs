@@ -9,8 +9,8 @@
  * `files examined 0` and exits 0 is the defect `tools/check-gate-populations.mjs` exists for.
  *
  * red-proof: inject  `score: commits * lines` -> `score: commits + lines` in rank() -> `rank.1`, `rank.2`, `locate.1`
- *   and `report.4` fail (the table and the located rank both stop being the product of the two numbers) while 9 of the
- *   13 cases stay green; unmodified, all thirteen pass (tools/audit-hotspots.test.mjs)
+ *   and `report.4` fail (the table and the located rank both stop being the product of the two numbers) while 10 of the
+ *   14 cases stay green; unmodified, all fourteen pass (tools/audit-hotspots.test.mjs)
  */
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
@@ -160,13 +160,34 @@ test("measureChurn.1: revision counts come from the log, one per commit, over th
   }
 });
 
-test("measureChurn.2: a repository whose commits are older than the window has no revisions in it", () => {
-  const root = repository({ "src/a.ts": "// a\n" });
+test("measureChurn.2: the window ends at this tree's own HEAD, so a commit older than it does not count", () => {
+  const root = repository(
+    { "src/old.ts": "// old\n" },
+    { GIT_AUTHOR_DATE: "2020-01-01T00:00:00Z", GIT_COMMITTER_DATE: "2020-01-01T00:00:00Z" },
+  );
   try {
-    const old = { GIT_AUTHOR_DATE: "2020-01-01T00:00:00Z", GIT_COMMITTER_DATE: "2020-01-01T00:00:00Z" };
+    write(root, { "src/new.ts": "// new\n" });
+    commit(root);
+    const { anchor, commits, revisions } = measureChurn(root, 30);
+    assert.ok(Date.parse(anchor) - Date.parse("2020-01-05T00:00:00Z") > 0, "the anchor is the newest commit's date");
+    assert.equal(commits, 1);
+    assert.equal(revisions.get("src/new.ts"), 1);
+    assert.equal(revisions.get("src/old.ts"), undefined);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("measureChurn.3: an old tree is measured as of its own date, not as of today", () => {
+  const old = { GIT_AUTHOR_DATE: "2020-01-01T00:00:00Z", GIT_COMMITTER_DATE: "2020-01-01T00:00:00Z" };
+  const root = repository({ "src/a.ts": "// a\n" }, old);
+  try {
     write(root, { "src/a.ts": "// a2\n" });
-    commit(root, old);
-    assert.equal(measureChurn(root, 30).commits, 0);
+    commit(root, { GIT_AUTHOR_DATE: "2020-01-10T00:00:00Z", GIT_COMMITTER_DATE: "2020-01-10T00:00:00Z" });
+    const { anchor, commits, revisions } = measureChurn(root, 30);
+    assert.equal(anchor.slice(0, 10), "2020-01-10");
+    assert.equal(commits, 2);
+    assert.equal(revisions.get("src/a.ts"), 2);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -233,13 +254,14 @@ test("report.2: a work tree with no file at all is blocked, never a pass over no
   }
 });
 
-test("report.3: a window whose commits are all older than it is blocked, not reported as calm", () => {
-  const old = { GIT_AUTHOR_DATE: "2020-01-01T00:00:00Z", GIT_COMMITTER_DATE: "2020-01-01T00:00:00Z" };
-  const root = repository({ "src/a.ts": "// a\n" }, old);
+test("report.3: a work tree with files but no commit at all is blocked, not reported as calm", () => {
+  const root = mkdtempSync(join(tmpdir(), "gb-hotspots-uncommitted-"));
   try {
+    git(root, ["init", "--initial-branch=main"]);
+    write(root, { "src/a.ts": "// a\n" });
     const run = at(root, ["--window", "30"]);
     assert.equal(run.status, 2);
-    assert.match(run.stderr, /hotspots_blocked:window_empty/u);
+    assert.match(run.stderr, /hotspots_blocked:window_unreadable/u);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
