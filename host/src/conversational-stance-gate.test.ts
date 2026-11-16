@@ -969,7 +969,7 @@ test("the fact-text reader names the paragraph that shipped, and passes the sent
         "export const NOTICE = 'The game\'s own notice: It\'s getting late...';",
         "export const VOICE = '上一句语音在播放中被玩家打断（玩家后来开口说话），玩家没有听到那句话的结尾。';",
         "export const DISPATCHED = '上面这些只是派出去了：还没结算，就等于一步都还没做成。';",
-        "export const STALE = '（world_state_stale:5;352;900000（这块世界观察停在 5 轮之前，世界已经不是这样了；先看一眼再动手））';",
+        "export const STALE = '（world_state_stale:5;352;900000（这块世界观察停在 5 轮之前，世界已经不是这样了））';",
         "pump.enqueueFact(NOTICE, FACT_PRODUCER.nativeNotice);",
       ].join("\n"),
     ],
@@ -980,7 +980,11 @@ test("the fact-text reader names the paragraph that shipped, and passes the sent
     passing.mandates.map((finding) => finding.sentence),
     [],
     "the fact itself, the game's own notice, the cut-off voice note, dispatched-is-not-done and the stale parenthetical " +
-      "are statements: a reader that reds on them would delete the facts it exists to protect",
+      "are statements: a reader that reds on them would delete the facts it exists to protect. THE STALE ONE HAD TO " +
+      "CHANGE: it shipped ending `；先看一眼再动手`, which is an order, and citing it here as a statement is how the order " +
+      "survived two gates — this reader's classes are speech and form and cannot name an action command, so the class " +
+      "that owns it is the census's `fact_block_issues_an_instruction`, which reds on the shipped sentence. The note as " +
+      "it now reads states the age and stops there",
   );
   assert.deepEqual(
     passing.formFindings.map((finding) => finding.sentence),

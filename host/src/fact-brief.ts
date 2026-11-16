@@ -286,7 +286,7 @@ export function composeWorldState(reading: WorldStateReading | undefined): strin
   const parts: string[] = [];
   if (reading.ageTurns >= WORLD_STATE_STALE_TURNS)
     parts.push(
-      `${worldStateStaleCode(reading)}（这块世界观察停在 ${String(reading.ageTurns)} 轮之前、${String(Math.round(reading.ageMs / 1000))} 秒之前，世界已经不是这样了；先看一眼再动手）`,
+      `${worldStateStaleCode(reading)}（这块世界观察停在 ${String(reading.ageTurns)} 轮之前、${String(Math.round(reading.ageMs / 1000))} 秒之前，世界已经不是这样了）`,
     );
   else if (reading.ageTurns >= 1) parts.push(`（这是 ${reading.ageTurns} 轮之前看到的，世界已经不一样了）`);
   const environment = formatGameEnvironmentFacts(world, true);

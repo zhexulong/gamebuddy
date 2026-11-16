@@ -5,7 +5,15 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 import { FACT_PRODUCER, CompanionEventPump, MAX_BATCH_BYTES, type WorldFact } from "./event-pump.js";
-import { composeFactBrief, composeWorldState, FACT_BRIEF_BLOCKS, unchangedWorldAnswer } from "./fact-brief.js";
+import { assertReportsWithoutInstructing } from "./fact-block-prose.test-support.js";
+import {
+  composeFactBrief,
+  composeWorldState,
+  FACT_BRIEF_BLOCKS,
+  WORLD_STATE_STALE_TURNS,
+  unchangedWorldAnswer,
+  worldStateStaleCode,
+} from "./fact-brief.js";
 import { createStardewObservationTools } from "./game-tools.js";
 import {
   MAX_TARGET_FAMILIES_SHOWN,
@@ -322,6 +330,29 @@ test("the world block names its revision and its freshness, and never claims to 
   assert.match(stale, /（这是 3 轮之前看到的，世界已经不一样了）/u, "and how old the reading is, in words");
   const nothing = composeWorldState(undefined);
   assert.equal(nothing, "<world-state>\n世界：尚未收到观察\n</world-state>");
+});
+
+test("the stale note states how old the reading is, and states no order beside it", () => {
+  // Past the declared bound the age becomes the token itself, and the sentence inside it shipped a second clause —
+  // `；先看一眼再动手`. That clause is an order, which the census's `fact_block_issues_an_instruction` owns and a fact
+  // block has no authority to give: the note reports the age and what the age means, and stops there.
+  const stale = { ageTurns: WORLD_STATE_STALE_TURNS, revision: 1205, ageMs: 900_000 };
+  const text = composeWorldState({ snapshot: world, ...stale });
+  // The note is the token and the parenthetical that says what it means, wherever the block puts them.
+  const at = text.indexOf(worldStateStaleCode(stale));
+  assert.ok(
+    at >= 0,
+    `${String(WORLD_STATE_STALE_TURNS)} turns of silence is past the declared bound, so the age is the token: ${text}`,
+  );
+  const close = text.indexOf("）", at);
+  const note = text.slice(at, close < 0 ? text.length : close + 1);
+  assert.match(
+    note,
+    new RegExp(`${String(stale.ageTurns)} 轮之前`, "u"),
+    `the sentence says the age in words: ${note}`,
+  );
+  assert.match(note, /世界已经不是这样了/u, `and what that age means for the reading: ${note}`);
+  assertReportsWithoutInstructing(note, "the world-state stale note");
 });
 
 test("the world block names the objects she acts on, with their tiles", () => {

@@ -15,6 +15,7 @@ import {
   withoutRowFamilies,
 } from "./game-world-vocabulary.js";
 import type { ObservationSelection } from "./game-world-vocabulary.js";
+import { assertReportsWithoutInstructing } from "./fact-block-prose.test-support.js";
 import type { Snapshot, TileAreaResult } from "./protocol.js";
 
 /**
@@ -98,30 +99,9 @@ function assertBodyLineNamesAWayOut(line: string, holder: string, zh = true): vo
 }
 
 /**
- * A command head, in either language, plus the timing word a label uses to turn a feasibility into a deadline.
- *
- * The closed classes are what separates a report from an order: `重试可行` states a feasibility and `retry now` sets a
- * moment she is told to act on — the same claim, one of them as a command. A fact block reports (⑤); a way forward names
- * a state. The list is deliberately about the HEADS a command starts at, because `别处` and `别提` are not commands.
+ * The property: a way-forward pair names a state in both halves. Read from `fact-block-prose.test-support` so the same
+ * detector covers the world-state note; the falsifier below is the two sentences this repo shipped.
  */
-const COMMAND_HEAD = new RegExp(
-  [
-    String.raw`(?:^|[。！？：；，、\n])\s*(?:先|请|务必|记得|别(?!处|人|的|提|再)|不要|不必|只能|应当|应该|一定要|记住)`,
-    String.raw`(?:^|[.;:!?]\s+|\n)\s*(?:do not|don't|never|always|make sure|remember|please|only)\b`,
-    String.raw`\b(?:now|immediately|right away|at once)\b`,
-  ].join("|"),
-  "iu",
-);
-
-/**
- * The property: a fact block states what it read and stops there. Throwing here is what makes the guard its own
- * falsifier — the sentences this repo shipped are fed to it below.
- */
-function assertReportsWithoutInstructing(text: string, what: string): void {
-  assert.equal(COMMAND_HEAD.test(text), false, `${what} reports; this one instructs: ${text}`);
-  assert.ok(text.trim().length > 0, `an empty ${what} states nothing at all`);
-}
-
 test("body_state_names_a_way_out: neither half of a way-forward pair instructs", () => {
   // Two languages, two claims: `重试可行` reports a feasibility and `retry now` ordered her to act. A pair that disagrees
   // is a second claim nobody owns, so every key is read in both halves rather than the half that happens to be Chinese.
