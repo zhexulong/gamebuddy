@@ -399,7 +399,7 @@ export function installationHintLabel(labels: Messages, hint: string | null): st
 
 /**
  * The companion capability board: what the composed Game projection publishes
- * about the companion, as readable cards.
+ * about the companion.
  *
  * It is a derivation over the published projection and deliberately *not* a
  * list of abilities. `game_browser_api/v1` publishes the capability surface as
@@ -410,6 +410,14 @@ export function installationHintLabel(labels: Messages, hint: string | null): st
  * when nothing has been published, instead of inventing a static list
  * (design/104 §8 requires a safe capability summary; §10 forbids rendering a
  * raw enum, an operation id or an internal name as player text).
+ *
+ * One line, and the facts behind it. The board occupies a single line of the
+ * Game panel and spends it on the one fact a player wants there - how much the
+ * game says the companion can do - so the published summary is read on the fold
+ * and everything else waits to be opened. The three sentences below are three
+ * different answers, and the middle one is the reason the board reads
+ * `attachment` at all: a game that is attached and has published nothing yet is
+ * not the same state as a session with no game in it.
  *
  * This is the one place that turns those facts into player text, so no
  * component ever renders the projection's own vocabulary.
@@ -426,7 +434,15 @@ export type CapabilityBoardCard = Readonly<{
 
 export type CapabilityBoard = Readonly<{
   title: string;
-  lead: string;
+  /**
+   * The board's one line: the only text it renders until the player opens it,
+   * and it is one line at both measured viewports.
+   */
+  line: string;
+  /**
+   * The published facts, stated one per row inside the disclosure. They are the
+   * detail behind the line, never a grid on the fold.
+   */
   cards: readonly CapabilityBoardCard[];
   /**
    * Present exactly while the session has published no capability at all: what
@@ -458,7 +474,11 @@ export function deriveCapabilityBoard(labels: Messages, projection: GameProjecti
   const companionName = projection.companionName ?? labels.gameBoardCompanionTitle;
   return Object.freeze({
     title: labels.gameBoardTitle,
-    lead: summary.available ? withCount(labels.gameBoardPublishedLead, summary.count) : labels.gameBoardUnpublishedLead,
+    line: summary.available
+      ? withCount(labels.gameBoardLinePublished, summary.count)
+      : projection.attachment.status === "attached"
+        ? labels.gameBoardLineAttachedEmpty
+        : labels.gameBoardLineNoGame,
     cards: Object.freeze([
       Object.freeze({
         key: "companion" as const,

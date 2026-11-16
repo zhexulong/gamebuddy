@@ -178,13 +178,13 @@ void test("the Host's own note becomes the player's sentence, never the Host's E
   assert.equal(installationHintLabel(labels, "another producer sentence"), sentence);
 });
 
-void test("the capability board states the published facts, and waits when nothing is published", () => {
+void test("the capability board states one line, and which silence a session is in", () => {
   const labels = messages("en");
-  const projection = (available: boolean, count: number, companionName: string | null) => ({
+  const projection = (available: boolean, count: number, companionName: string | null, attached = true) => ({
     prerequisites: { status: "met" as const, detectedGame: null, missingItems: [] },
     instance: { status: "running" as const, gameTitle: null, generation: 1 },
     compatibility: { status: "compatible" as const, message: null },
-    attachment: { status: "attached" as const, generation: 1 },
+    attachment: attached ? { status: "attached" as const, generation: 1 } : { status: "none" as const, generation: 0 },
     connectionStatus: "connected_idle" as const,
     actionAuthority: "active" as const,
     role: "companion" as const,
@@ -200,18 +200,24 @@ void test("the capability board states the published facts, and waits when nothi
     published.cards.map((card) => card.key),
     ["companion", "abilities", "action"],
   );
-  assert.ok(published.lead.includes("7"), "the published count is not stated");
+  assert.ok(published.line.includes("7"), "the published count is not stated");
   assert.equal(published.waiting, null, "a published surface still reads as waiting");
   assert.equal(published.cards[0].title, "Mira");
   // The board is a derivation of the projection, not a mutation surface.
   assert.ok(Object.isFrozen(published) && Object.isFrozen(published.cards));
 
-  const unpublished = deriveCapabilityBoard(labels, projection(false, 0, null));
-  assert.equal(unpublished.waiting, labels.gameBoardWaiting);
-  assert.equal(unpublished.cards[0].title, labels.gameBoardCompanionTitle);
+  // A game that is attached and has published nothing is NOT a session with no game:
+  // both publish `{ available: false, count: 0 }`, and only the attachment tells them
+  // apart, so they must not share a sentence.
+  const attachedEmpty = deriveCapabilityBoard(labels, projection(false, 0, null));
+  assert.equal(attachedEmpty.line, labels.gameBoardLineAttachedEmpty);
+  assert.equal(attachedEmpty.waiting, labels.gameBoardWaiting);
+  const noGame = deriveCapabilityBoard(labels, projection(false, 0, null, false));
+  assert.equal(noGame.line, labels.gameBoardLineNoGame);
+  assert.notEqual(noGame.line, attachedEmpty.line, "two silences cannot read as one fact");
   // What the board is waiting for is never a fallback list of abilities.
-  assert.equal(unpublished.lead, labels.gameBoardUnpublishedLead);
-  assert.notEqual(unpublished.cards[1].detail, published.cards[1].detail);
+  assert.equal(noGame.cards[0].title, labels.gameBoardCompanionTitle);
+  assert.notEqual(noGame.cards[1].detail, published.cards[1].detail);
 });
 
 void test("every installation state reaches the player as a sentence, in both catalogues", () => {

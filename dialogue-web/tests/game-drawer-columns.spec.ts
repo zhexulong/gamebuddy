@@ -293,3 +293,64 @@ test("a published capability board keeps its own cell and its own cards", async 
     wide.viewport.height,
   );
 });
+
+/**
+ * The board is one line, in both states, at both viewports.
+ *
+ * The operator's constraint on this panel is that the capability board must not take much
+ * space, and "one line" is a layout fact rather than a copy rule: `getClientRects()`
+ * returns one rect per line box, so a wrapped sentence reports 2 and a truncated one
+ * still reports 1. `open` is read from the `<details>` itself, so "the facts cost nothing
+ * until they are asked for" is the element's own state and not the absence of a rule.
+ *
+ * The printed numbers are the delivered height of the board (heading + one row) and of the
+ * drawer that holds it, at 1440x900 and at 400x800, in both states.
+ */
+test("the capability board is one line at both viewports, with its facts closed", async ({ page }) => {
+  for (const published of [false, true]) {
+    await mountGame(page, { published });
+    for (const viewport of [
+      { width: 1440, height: 900 },
+      { width: 400, height: 800 },
+    ]) {
+      await page.setViewportSize(viewport);
+      const reading = await page.evaluate(() => {
+        const round = (value: number) => Math.round(value);
+        const board = document.querySelector<HTMLElement>('[data-testid="game-capability-board"]');
+        const details = board?.querySelector<HTMLElement>("details") ?? null;
+        const line = board?.querySelector<HTMLElement>(".game-capability-line") ?? null;
+        const drawer = document.querySelector<HTMLElement>(".composed-game-drawer");
+        return {
+          board: round(board?.getBoundingClientRect().height ?? 0),
+          drawer: round(drawer?.getBoundingClientRect().height ?? 0),
+          rows: line?.getClientRects().length ?? 0,
+          line: round(line?.getBoundingClientRect().height ?? 0),
+          open: details?.open ?? null,
+        };
+      });
+      const where = `${published ? "published" : "unpublished"} @${viewport.width}x${viewport.height}`;
+      console.log(`[capability-board ${where}] ${JSON.stringify(reading)}`);
+      expect(reading.open, `${where}: the facts open themselves`).toBe(false);
+      expect(reading.rows, `${where}: the one line wraps (${reading.rows} line boxes)`).toBe(1);
+      // Heading, the 10 px gap and one disclosure row: the whole board, and nothing else.
+      expect(reading.board, `${where}: the board is ${reading.board} px tall`).toBeLessThanOrEqual(100);
+
+      // What the same board costs the player who does ask: the height the pre-change board
+      // always spent on the fold, now paid only on demand.
+      await page.getByTestId("game-capability-board").locator("summary").click();
+      const opened = await page.evaluate(() => {
+        const board = document.querySelector<HTMLElement>('[data-testid="game-capability-board"]');
+        const details = board?.querySelector<HTMLElement>("details") ?? null;
+        return {
+          board: Math.round(board?.getBoundingClientRect().height ?? 0),
+          open: details?.open ?? null,
+        };
+      });
+      console.log(`[capability-board ${where} opened] ${JSON.stringify(opened)}`);
+      expect(opened.open, `${where}: the facts did not open`).toBe(true);
+      expect(opened.board, `${where}: the open board is ${opened.board} px tall`).toBeGreaterThan(reading.board);
+      // Put it back: the next viewport is measured in the state a player arrives in.
+      await page.getByTestId("game-capability-board").locator("summary").click();
+    }
+  }
+});

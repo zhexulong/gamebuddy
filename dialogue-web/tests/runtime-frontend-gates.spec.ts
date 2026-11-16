@@ -1357,9 +1357,12 @@ test("game.1: a published capability surface renders as readable board cards, ne
   const panel = page.getByTestId("game-state-panel");
   const board = panel.getByTestId("game-capability-board");
   await expect(board).toHaveAttribute("data-capability-state", "published");
-  // The published summary is what a player reads: the count, in a sentence.
-  await expect(board).toContainText("7");
+  // The published summary is what a player reads on the fold: the count, in a sentence.
+  await expect(board.locator(".game-capability-line")).toContainText("7");
 
+  // The facts behind that line are the pressed-for detail, not the fold: open the row
+  // before reading them, which is also what proves the disclosure works.
+  await board.locator("summary").click();
   const cards = board.locator("[data-capability-card]");
   expect(await cards.count(), "the board renders a card per published fact").toBe(3);
   for (const card of await cards.all()) {
@@ -1380,7 +1383,7 @@ test("game.2: with nothing published the board states what it waits for instead 
   const panel = page.getByTestId("game-state-panel");
   const board = panel.getByTestId("game-capability-board");
   await expect(board).toHaveAttribute("data-capability-state", "unpublished");
-  await expect(board).toContainText("has not published what your companion can do with you yet");
+  await expect(board).toContainText("No game is running, so nothing is published yet");
   await expect(board).toContainText("come from the game itself");
 
   const text = await panel.innerText();

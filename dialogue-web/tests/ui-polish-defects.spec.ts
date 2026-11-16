@@ -1466,18 +1466,14 @@ test("defect 10: the empty capability state is a single element with a single na
 
   const board = page.getByTestId("game-capability-board");
   await expect(board).toHaveAttribute("data-capability-state", "unpublished");
-  // One element, one sentence: no card, and the region carries no list at all.
+  // One row, one sentence: no card, and the region carries no list at all.
   await expect(board.locator("[data-capability-card]")).toHaveCount(0);
   await expect(board.locator(".game-capability-cards")).toHaveCount(0);
-  await expect(board.locator("p")).toHaveCount(1);
-  // The whole absence is stated once, in the board's own words, and says what it
-  // is waiting for rather than only that there is nothing.
-  const sentence = ((await board.locator("p").innerText()) ?? "").replace(/\s+/gu, " ").trim();
-  console.log(`[defect-10 empty board] ${JSON.stringify(sentence)}`);
-  expect(sentence, "the empty board states the absence in one sentence").toContain(
-    "has not published what your companion can do with you yet",
-  );
-  expect(sentence, "and it names what it is waiting for").toContain("come from the game itself");
+  // The whole absence is stated in the board's own words, and says which silence it is
+  // rather than only that there is nothing; the explanation is one press away.
+  await expect(board).toContainText("No game is running, so nothing is published yet.");
+  await expect(board).toContainText("come from the game itself");
+  console.log(`[defect-10 empty board] ${JSON.stringify((await board.innerText()).replace(/\s+/gu, " "))}`);
 
   // No second element on the whole panel says the same thing: the three-card
   // shape cannot come back through a sibling region.

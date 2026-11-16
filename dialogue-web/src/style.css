@@ -5578,9 +5578,24 @@
     gap: 10px;
   }
 
-  .game-capability-lead {
+  /* The disclosure the board's one line lives in. The row itself is the shared
+     disclosure's row (`.custom-disclosure > summary`), so this rule only states the
+     box: the board adds no padding of its own and the row's height is the touch
+     target every other disclosure row is. */
+  .game-capability-detail {
     margin: 0;
+  }
+
+  /* The board's one line, and the whole of it until the player opens the row: the
+     count the game publishes, or which of the two silences this session is. It
+     overrides the shared summary's 12/600 because this is a sentence rather than a
+     control's label. Measured after the change, it is one line at 1440x900 and at
+     400x800, in both states, in both catalogues. */
+  .game-capability-line {
+    flex: 1 1 auto;
+    min-width: 0;
     font-size: 13px;
+    font-weight: 400;
     line-height: 1.6;
     color: var(--text-secondary);
     overflow-wrap: anywhere;
@@ -5590,7 +5605,7 @@
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(min(200px, 100%), 1fr));
     gap: 10px;
-    margin: 0;
+    margin: 10px 0 0;
     padding: 0;
     list-style: none;
   }
@@ -5628,7 +5643,7 @@
   }
 
   .game-capability-waiting {
-    margin: 0;
+    margin: 10px 0 0;
     font-size: 13px;
     line-height: 1.6;
     /* This line is the whole board while nothing is published, so it is live

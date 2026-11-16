@@ -1291,8 +1291,12 @@ const en = {
   // sentence here is player language for one published fact, so a raw enum, an
   // operation id or an ability id is never rendered (design/104 §10).
   gameBoardTitle: "What you can do together",
-  gameBoardPublishedLead: "The game reports {{count}} things your companion can do with you.",
-  gameBoardUnpublishedLead: "This session has not published what your companion can do with you yet.",
+  // The board's one line. Each states one published fact, and the three are three
+  // different answers: how much the game says the companion can do, a game that is
+  // here and has published nothing, and a session with no game in it at all.
+  gameBoardLinePublished: "{{count}} things your companion can do with you.",
+  gameBoardLineAttachedEmpty: "The game is here and has published nothing yet.",
+  gameBoardLineNoGame: "No game is running, so nothing is published yet.",
   gameBoardWaiting:
     "The companion's abilities come from the game itself. They appear here once the game reports them for the farm you are playing.",
   gameBoardCompanionTitle: "Your companion",
@@ -2347,8 +2351,9 @@ const zh: Messages = {
   // 绝不是手写的能力清单：每句话都是某一个已发布事实的玩家语言，
   // 因此原始枚举、操作 id 或能力 id 永远不会出现在界面上（design/104 §10）。
   gameBoardTitle: "和伙伴一起能做的事",
-  gameBoardPublishedLead: "游戏公布了 {{count}} 件伙伴可以和你一起做的事。",
-  gameBoardUnpublishedLead: "这次会话还没有公布伙伴可以和你一起做的事。",
+  gameBoardLinePublished: "伙伴可以和你一起做 {{count}} 件事。",
+  gameBoardLineAttachedEmpty: "游戏已经在，但还没有公布可做的事。",
+  gameBoardLineNoGame: "还没有游戏在运行，因此没有可公布的事。",
   gameBoardWaiting: "伙伴能做的事由游戏本身决定。游戏为你正在玩的农场报上来之后，它们会出现在这里。",
   gameBoardCompanionTitle: "你的伙伴",
   gameBoardCompanionPresent: "{{name}} 已经在农场里陪你。",

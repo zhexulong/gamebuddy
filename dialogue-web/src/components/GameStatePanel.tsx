@@ -71,9 +71,10 @@ const GAME_CREATE_FORM_ID = "game-create-form";
  * can take.
  *
  * The board is derived from the capability surface the composed game
- * projection publishes - it is never a hand-written ability list, and while the
- * session has published none it says that in one sentence instead of one card
- * per absent fact.
+ * projection publishes - it is never a hand-written ability list - and it is one
+ * line: the count the game reports, or which of the two silences this session is
+ * in. The facts behind that line are one press away, closed by default, so the
+ * published state costs the fold a row rather than a card grid.
  *
  * Each step of the guide carries its controls first and the feedback those
  * controls produce directly below them, so a player reads "what is true, what
@@ -111,8 +112,8 @@ const GAME_CREATE_FORM_ID = "game-create-form";
  *   `game-resume`, `game-resume-cancel`, `game-create`) rather than a second
  *   set of them;
  * - the board keeps `data-testid="game-capability-board"` (on the board region,
- *   so its lead and its waiting sentence read with its cards) with
- *   `data-capability-state="published" | "unpublished"`, and the guide keeps
+ *   so its one line and the facts behind it read with the region they belong to)
+ *   with `data-capability-state="published" | "unpublished"`, and the guide keeps
  *   `data-testid="game-start-guide"`;
  * - the guide's step 1 carries `data-guide-action="activate" | "setup"` naming the
  *   one control it leads with (from `forwardActions`), draws that control and no
@@ -1105,18 +1106,16 @@ function capabilityCardIcon(icon: CapabilityBoardCard["icon"]) {
  * The companion capability board: what the companion can do with the player,
  * derived from the capability surface the composed game projection publishes.
  *
- * With a published summary it renders exactly the cards `deriveCapabilityBoard`
- * produced from that projection, and nothing else.
+ * It is one line, and the facts behind it. The line is the whole board until the
+ * player opens the disclosure: the published count when the game has answered,
+ * and, when it has not, which of the two silences this is - a session with no game
+ * in it, or a game that is here and has published nothing yet. The three cards
+ * cost their height only to a player who asked for them (`board.cards`), so the
+ * panel's first viewport spends itself on the step the player can take.
  *
- * With none, it renders one sentence instead of one card per absent fact. The
- * three cards are the same absence told three times - "no companion", "nothing
- * published", "no acting authority" - and each one costs the fold a card's worth
- * of height to say that the session has nothing to say. `board.waiting !== null`
- * is the state that names this (the same `data-capability-state="unpublished"`
- * the region already carried), and the sentence is still the board's own: the
- * abilities come from the game, and they appear once it reports them for the farm
- * being played (design/26 §1: absent beats a disabled lookalike, and an invented
- * list is worse than either).
+ * The disclosure is the product's shared one (`.custom-disclosure`): the marker
+ * is the chevron the JSX places, the row is the touch target every other
+ * disclosure row is, and the open state is the browser's.
  */
 function CapabilityBoardView({ board }: { board: CapabilityBoard }) {
   const unpublished = board.waiting !== null;
@@ -1130,13 +1129,14 @@ function CapabilityBoardView({ board }: { board: CapabilityBoard }) {
       <h3 className="game-group-title" id="game-capability-board-heading">
         {board.title}
       </h3>
-      {unpublished ? (
-        <p className="game-capability-waiting">
-          {board.lead} {board.waiting}
-        </p>
-      ) : (
-        <>
-          <p className="game-capability-lead">{board.lead}</p>
+      <details className="custom-disclosure game-capability-detail">
+        <summary>
+          <ChevronDown size={16} aria-hidden="true" />
+          <span className="game-capability-line">{board.line}</span>
+        </summary>
+        {unpublished ? (
+          <p className="game-capability-waiting">{board.waiting}</p>
+        ) : (
           <ul className="game-capability-cards">
             {board.cards.map((card) => (
               <li className="game-capability-card" data-capability-card={card.key} key={card.key}>
@@ -1148,8 +1148,8 @@ function CapabilityBoardView({ board }: { board: CapabilityBoard }) {
               </li>
             ))}
           </ul>
-        </>
-      )}
+        )}
+      </details>
     </section>
   );
 }
