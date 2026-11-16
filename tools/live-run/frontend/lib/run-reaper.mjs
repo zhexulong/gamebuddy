@@ -108,7 +108,7 @@ function leavesFirst(records, byPid) {
     if (seen.has(pid)) return 0;
     seen.add(pid);
     const parentPid = byPid.get(pid)?.parentPid;
-    if (!Number.isSafeInteger(parentPid) || !recorded.has(parentPid)) return 0;
+    if (!(Number.isSafeInteger(parentPid) && recorded.has(parentPid))) return 0;
     return 1 + depth(parentPid, seen);
   };
   return [...records].sort((left, right) => depth(right.pid) - depth(left.pid));
@@ -178,9 +178,6 @@ export function reapRunOrphans({
       ],
     });
 
-  // The stage's own root as the OS spells it: the operator may start a run with a relative `--out`, while a
-  // command line always carries the absolute path.
-  const stagePath = resolve(stageRoot).toLowerCase();
   const stagePids = new Set((readStage(resolve(stageRoot))?.rows ?? []).map((row) => row.pid));
   const anchorPids = new Set(records.filter((record) => record.role === GAME_LOADER_ROLE).map((record) => record.pid));
 
