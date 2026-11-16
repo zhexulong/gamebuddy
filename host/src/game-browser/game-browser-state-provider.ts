@@ -240,12 +240,6 @@ function projectGameBrowserState(
       companionName: null,
       selectedSave: null,
       capabilitySummary: projectCapabilitySummary(views.capabilityView),
-      // The coordinator's launch terminality is the only honest source of a
-      // failed Game outcome this provider can attest: it is set once the owned
-      // Player Host launch or attestation correlation failed and the owner was
-      // quarantined. The browser refreshes recover this fact from the root
-      // state instead of trusting volatile client memory.
-      latestOutcome: launchFailed ? "failed" : "none",
     }),
   });
 }
@@ -321,7 +315,6 @@ function compatibilityProjection(
     return { status: "warning", message: "This Stardew installation is below the advisory minimum." };
   return { status: "warning", message: "This Stardew installation is compatible but unverified." };
 }
-
 
 function validateContext(context: GameBrowserReadStateContext): void {
   if (
