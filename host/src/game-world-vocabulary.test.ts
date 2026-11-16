@@ -9,11 +9,13 @@ import {
   TARGET_FAMILY_LABELS,
   axisTileCount,
   selectObservedRows,
+  selectTileAreaRows,
   selectionDisagreements,
   selectionGateReport,
   withoutRowFamilies,
 } from "./game-world-vocabulary.js";
-import type { Snapshot } from "./protocol.js";
+import type { ObservationSelection } from "./game-world-vocabulary.js";
+import type { Snapshot, TileAreaResult } from "./protocol.js";
 
 /**
  * `body_state_names_a_way_out`: a held body says who holds it and what to do next, never only that it cannot act.
@@ -94,6 +96,63 @@ function assertBodyLineNamesAWayOut(line: string, holder: string, zh = true): vo
     `"cannot act" is the reading that made her stop submitting; a line may not end there: ${line}`,
   );
 }
+
+/**
+ * A command head, in either language, plus the timing word a label uses to turn a feasibility into a deadline.
+ *
+ * The closed classes are what separates a report from an order: `重试可行` states a feasibility and `retry now` sets a
+ * moment she is told to act on — the same claim, one of them as a command. A fact block reports (⑤); a way forward names
+ * a state. The list is deliberately about the HEADS a command starts at, because `别处` and `别提` are not commands.
+ */
+const COMMAND_HEAD = new RegExp(
+  [
+    String.raw`(?:^|[。！？：；，、\n])\s*(?:先|请|务必|记得|别(?!处|人|的|提|再)|不要|不必|只能|应当|应该|一定要|记住)`,
+    String.raw`(?:^|[.;:!?]\s+|\n)\s*(?:do not|don't|never|always|make sure|remember|please|only)\b`,
+    String.raw`\b(?:now|immediately|right away|at once)\b`,
+  ].join("|"),
+  "iu",
+);
+
+/**
+ * The property: a fact block states what it read and stops there. Throwing here is what makes the guard its own
+ * falsifier — the sentences this repo shipped are fed to it below.
+ */
+function assertReportsWithoutInstructing(text: string, what: string): void {
+  assert.equal(COMMAND_HEAD.test(text), false, `${what} reports; this one instructs: ${text}`);
+  assert.ok(text.trim().length > 0, `an empty ${what} states nothing at all`);
+}
+
+test("body_state_names_a_way_out: neither half of a way-forward pair instructs", () => {
+  // Two languages, two claims: `重试可行` reports a feasibility and `retry now` ordered her to act. A pair that disagrees
+  // is a second claim nobody owns, so every key is read in both halves rather than the half that happens to be Chinese.
+  const chinese = Object.entries(BODY_WAY_FORWARD_ZH);
+  const english = new Map(Object.entries(BODY_WAY_FORWARD_EN));
+  assert.ok(chinese.length > 0, "a zero population would agree with itself");
+  assert.deepEqual(
+    [...english.keys()].sort(),
+    chinese.map(([key]) => key).sort(),
+    "the two halves answer the same keys",
+  );
+  for (const [key, label] of chinese) {
+    assertReportsWithoutInstructing(label, `the Chinese half of ${key}`);
+    assertReportsWithoutInstructing(english.get(key) ?? "", `the English half of ${key}`);
+  }
+});
+
+test("body_state_names_a_way_out: the guard refuses the sentences it was written for", () => {
+  assert.throws(
+    () => assertReportsWithoutInstructing("body: busy · held by: transient · next: retry now", "the English half"),
+    /this one instructs/u,
+  );
+  assert.throws(
+    () =>
+      assertReportsWithoutInstructing(
+        "没读到的格子不是空的：那几格的 occupant 和 tillable 这次没有人回答，别当成空地。",
+        "the unreadable bucket",
+      ),
+    /this one instructs/u,
+  );
+});
 
 test("body_state_names_a_way_out: every wire disposition does, in both languages", () => {
   const kinds = wireDispositionKinds();
@@ -215,6 +274,51 @@ test("body_state_names_a_way_out: the answers are a closed set, so a reader can 
     const answer = (matched.groups.answer ?? "").trim();
     assert.ok(WAY_FORWARD_ZH.includes(answer), `"${answer}" is a fifth answer nobody declared: ${line}`);
   }
+});
+
+test("a rectangle read that did not read every tile reports the gap and does not order", () => {
+  // The three zeroes are PER TILE on this path, and the block's sentence shipped an order after the fact: `别当成空地`
+  // says what `没有人回答` already said, as a command. A fact block reports; the order belongs to nobody here.
+  const selection: ObservationSelection = {
+    predicates: [{ x: { from: 60, to: 61 }, y: { from: 18, to: 19 } }],
+    tiles: [],
+  };
+  const tile = (x: number, y: number) => ({
+    x,
+    y,
+    occupantKind: "none",
+    occupant: "none",
+    tillable: true,
+    hoed: false,
+    watered: false,
+    crop: false,
+    passable: true,
+  });
+  const result: TileAreaResult = {
+    status: "answered",
+    detail: null,
+    x: 60,
+    y: 18,
+    w: 2,
+    h: 2,
+    location: "Farm",
+    revision: 383,
+    areaLimit: 100,
+    // Three of the four named tiles: the Mod under-read, and the fourth is the third zero rather than an empty tile.
+    rows: [tile(60, 18), tile(61, 18), tile(60, 19)],
+    omitted: 0,
+  };
+  const answer = selectTileAreaRows(result, selection, 6, { x: 60, y: 19 });
+  assert.equal(answer.tiles.named, 4, "the selection names the rectangle it asked for");
+  assert.equal(answer.tiles.unreadable, 1, `the tile nobody answered is unreadable: ${answer.text}`);
+  assert.equal(answer.tiles.empty, 3, "and it is not the measured zero beside it");
+  assert.match(answer.text, /没读到/u, `the block counts the gap: ${answer.text}`);
+  assert.match(
+    answer.text,
+    /没有人回答/u,
+    `the block names what is missing rather than staying silent: ${answer.text}`,
+  );
+  assertReportsWithoutInstructing(answer.text, "the rectangle answer");
 });
 
 // ---------------------------------------------------------------------------------------------------------------

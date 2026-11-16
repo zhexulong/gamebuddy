@@ -529,7 +529,7 @@ export const BODY_WAY_FORWARD_ZH: Readonly<Record<BodyWayForward, string>> = Obj
 
 export const BODY_WAY_FORWARD_EN: Readonly<Record<BodyWayForward, string>> = Object.freeze({
   await_settlement: "await settlement",
-  retry_now: "retry now",
+  retry_now: "retry is possible",
   next_turn: "later turn",
   unknown: "unknown",
 });
@@ -1771,8 +1771,7 @@ function renderTileAnswer(answer: TileSelectionAnswer, result: Readonly<TileArea
         kind.omitted > 0 ? ` 其余 ${String(kind.omitted)} 格未列出` : ""
       }`,
     );
-  if (answer.tiles.unreadable > 0)
-    lines.push("没读到的格子不是空的：那几格的 occupant 和 tillable 这次没有人回答，别当成空地。");
+  if (answer.tiles.unreadable > 0) lines.push("没读到的格子不是空的：那几格的 occupant 和 tillable 这次没有人回答。");
   if (total === 0) lines.push(verdictSentence(answer));
   return lines.join("\n");
 }
