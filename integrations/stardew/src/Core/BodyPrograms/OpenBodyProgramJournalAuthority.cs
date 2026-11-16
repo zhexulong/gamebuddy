@@ -642,7 +642,7 @@ public sealed class OpenBodyProgramJournalAuthority
     public BodyProgramControllerResult<BodyProgramTerminalResult> TryComplete(HostAdmissionGrant grant, BodyProgramTerminalResult result)
     {
         if (!MayOperateOnPrograms) return BodyProgramControllerResult.Failure<BodyProgramTerminalResult>(BodyProgramControllerResultCode.RecoveryRequired);
-        if (result is null || !Enum.IsDefined(typeof(BodyProgramNodeOutcome), result.Outcome)) return BodyProgramControllerResult.Failure<BodyProgramTerminalResult>(BodyProgramControllerResultCode.InvalidInput);
+        if (result is null || !Enum.IsDefined<BodyProgramNodeOutcome>(result.Outcome)) return BodyProgramControllerResult.Failure<BodyProgramTerminalResult>(BodyProgramControllerResultCode.InvalidInput);
         if (!TryGrant(grant, BodyProgramNodeState.Running, out BodyProgramJournalProgram? program, out BodyProgramJournalNode? node, out VerifiedBodyProgramNode? descriptor, out BodyProgramControllerResultCode failure)
             || node!.GrantId != grant.GrantId) return BodyProgramControllerResult.Failure<BodyProgramTerminalResult>(failure == BodyProgramControllerResultCode.Succeeded ? BodyProgramControllerResultCode.GrantMismatch : failure);
         if (grant.ExecutionBinding is null || !Equals(node.ExecutionBinding, grant.ExecutionBinding) || !Equals(result.Execution, grant.ExecutionBinding)) return BodyProgramControllerResult.Failure<BodyProgramTerminalResult>(BodyProgramControllerResultCode.ExecutionBindingMismatch);
