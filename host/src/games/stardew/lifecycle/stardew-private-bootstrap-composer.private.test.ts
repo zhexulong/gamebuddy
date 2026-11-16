@@ -3,7 +3,7 @@ import { mkdir, readdir, readFile, rename, rm, symlink, writeFile } from "node:f
 import { basename, dirname, join, resolve } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { FarmhandBridgeConnectionNotAvailableError } from "../../../containment/runtime/contract/game-runtime.js";
+import { FarmhandBridgeConnectionNotAvailableError } from "./stardew-private-bootstrap-composer.core.internal.js";
 import { bindWindowsStaleLockReclaimer, pathLockPath, withPathLock } from "../../../path-lock.js";
 import { PlayerPreferenceStore, playerPreferencePath } from "../../../settings/player-preference-store.js";
 import type {

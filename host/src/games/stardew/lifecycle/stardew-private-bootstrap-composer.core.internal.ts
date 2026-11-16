@@ -62,10 +62,7 @@ import {
 } from "../stardew-mod-action-policy-projection.js";
 import type { Scope } from "../../../protocol.js";
 import { createStardewRoleLifecycleFacade } from "../../../stardew-role-lifecycle-facade.js";
-import {
-  ContainmentRoleAlreadyContainedError,
-  FarmhandBridgeConnectionNotAvailableError,
-} from "../../../containment/runtime/contract/game-runtime.js";
+import { ContainmentRoleAlreadyContainedError } from "../../../containment/runtime/contract/game-runtime.js";
 import type {
   TypedPrivateGameAuthorizationProducer,
   TypedPrivateGameFacts,
@@ -2088,6 +2085,38 @@ export type StardewPrivateFarmhandBridgeConnection = Readonly<{
   token: string;
   launchGeneration: string;
 }>;
+
+/**
+ * The exact owner's Farmhand bridge connection authority is not in the state the
+ * caller requires. One refusal, two callers, and (before this identity existed)
+ * two different meanings read off the same message text:
+ *
+ * - this composition refuses to consume a connection that is not `available`
+ *   (the one-shot connection was already consumed, or is not armed yet), which
+ *   the lifecycle reads as "this attach cannot be built here, defer it";
+ * - this composition refuses to arm a fresh activation because the previous one
+ *   never fully ended, which the lifecycle reads as "the owner's first one-shot
+ *   activation is still intact", the state a create launches through.
+ *
+ * Both refusals are legitimately reported by the same composition probe, so the
+ * lifecycle cannot distinguish them by call site; it distinguishes the two
+ * readings by which probe it just ran. What it must NOT do is distinguish them by
+ * comparing a message literal that only this module can see: renaming the text
+ * would silently turn "still intact, launch through it" into a hard failure, or
+ * turn a real refusal into something the lifecycle tolerates.
+ *
+ * The identity is declared here, beside the `bridgeConnectionState` fact and the
+ * connection type it reports on, rather than in the containment contract both
+ * sides used to import: that contract is the layer every game shares, and its own
+ * README states it does not know game names. Both sides import this module, so the
+ * two still cannot drift without the shared type changing.
+ */
+export class FarmhandBridgeConnectionNotAvailableError extends Error {
+  public constructor(message: string) {
+    super(message);
+    this.name = "FarmhandBridgeConnectionNotAvailableError";
+  }
+}
 
 type StardewPrivateBridgeMaterial = Readonly<{
   readonly configJson: string;

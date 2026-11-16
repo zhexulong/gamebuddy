@@ -123,7 +123,7 @@ import type {
   ProductionGameSessionWorldBindingTerminalInput,
 } from "./continuity-semantic-store/continuity-semantic-production-store.js";
 import type { RedactedRecoveryOutcome, RoleLaunchOperation } from "./containment/runtime/contract/game-runtime.js";
-import { FarmhandBridgeConnectionNotAvailableError } from "./containment/runtime/contract/game-runtime.js";
+import { FarmhandBridgeConnectionNotAvailableError } from "./games/stardew/lifecycle/stardew-private-bootstrap-composer.core.internal.js";
 import { createStardewRoleLifecycleFacade, type StardewRoleLifecycleReader } from "./stardew-role-lifecycle-facade.js";
 import { composeCoordinatorRoleLifecycleView } from "./stardew-role-lifecycle-projection.internal.js";
 import type {
@@ -1162,11 +1162,11 @@ export function isResumeAttachDeferredError(error: unknown): boolean {
  * exactly the state the untouched-reservation launch needs. Any other error is
  * left alone, so a genuinely unavailable fresh generation still fails closed.
  *
- * The test is the platform contract's typed identity rather than the refusal's
- * message text, because the composition is the only side that can see the text:
- * renaming it there would silently reclassify this state as a hard failure here,
- * with no test on either side going red. The identity is exported from the port
- * both sides project, so the two cannot drift without the shared type changing.
+ * The test is the composition's typed identity rather than the refusal's message
+ * text, because the composition is the only side that can see the text: renaming
+ * it there would silently reclassify this state as a hard failure here, with no
+ * test on either side going red. The identity is declared beside the composition
+ * fact it reports on, so the two cannot drift without the shared type changing.
  */
 export function isFirstFarmhandAiClientActivationIntact(error: unknown): boolean {
   return error instanceof FarmhandBridgeConnectionNotAvailableError;
@@ -2500,8 +2500,8 @@ function createCoordinator(
    * The core is the only authority for that fact -- `launchStates.aiClient` and
    * `bridgeConnectionState` are its own fields -- and
    * `prepareFreshFarmhandAiClientActivation` asserts exactly that pair before it
-   * reserves, rotates or stops anything, failing closed with the platform
-   * contract's `FarmhandBridgeConnectionNotAvailableError` while the previous
+   * reserves, rotates or stops anything, failing closed with its own
+   * `FarmhandBridgeConnectionNotAvailableError` while the previous
    * activation was not fully consumed. Asking it here, with no side effect
    * before its own assertion, is what makes the two impossible to disagree: a
    * mirrored coordinator latch could not see the composition's partial
