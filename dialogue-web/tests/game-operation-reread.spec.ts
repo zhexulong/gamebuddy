@@ -105,6 +105,13 @@ async function stubHost(page: Page, state: HostState): Promise<{ stateReads: () 
     stateReads += 1;
     return route.fulfill(jsonOk(composedRoot(state)));
   });
+  // The operation's own read is the Game slice's, so it is counted here: `/state` above answers the mount's
+  // arrival read, and the read below is the one a Game command takes - the read that used to spend the
+  // streaming preview.
+  await page.route("**/api/composed-reference-game/v1/game", (route) => {
+    stateReads += 1;
+    return route.fulfill(jsonOk(composedRoot(state).game));
+  });
   await page.route("**/api/composed-reference-game/v1/game/stardew/cabins", (route) =>
     route.fulfill(jsonOk({ apiVersion: 1, choices: [] })),
   );

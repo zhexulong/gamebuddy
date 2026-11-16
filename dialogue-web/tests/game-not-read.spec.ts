@@ -95,6 +95,13 @@ async function stubHost(page: Page): Promise<{ stateReads: () => number }> {
     stateReads += 1;
     return route.fulfill(jsonOk(composedRoot(UNREAD_GAME)));
   });
+  // "Read my game again" is the panel's own read of the Game slice, so that is the read this journey counts:
+  // the counter spans both routes so "the panel asked the Host again" stays a fact whichever route carries
+  // it, and a Game control's read can no longer be mistaken for the mount's arrival read.
+  await page.route("**/api/composed-reference-game/v1/game", (route) => {
+    stateReads += 1;
+    return route.fulfill(jsonOk(composedRoot(UNREAD_GAME).game));
+  });
   // The cabin handoff is read while a launched Player Host awaits attestation; here there is
   // nothing to hand over, and the panel's own state is what this journey is about.
   await page.route("**/api/composed-reference-game/v1/game/stardew/cabins", (route) =>

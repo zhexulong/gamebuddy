@@ -259,21 +259,27 @@ test.describe("B2 installation discovery: route-mocked UI behavior", () => {
     });
     // The Host's projection before and after the registration: the ready registration is
     // the only thing that moves, exactly as `game-browser-state-provider.ts` derives it.
+    const projection = () => ({
+      ...root,
+      game: {
+        ...root.game,
+        game: {
+          ...root.game.game,
+          prerequisites: confirmed
+            ? { status: "met", detectedGame: "Stardew Valley", missingItems: [] }
+            : root.game.game.prerequisites,
+        },
+      },
+    });
     await page.route("**/api/composed-reference-game/v1/state", (route) => {
       stateReads.push(confirmed ? "met" : "unknown");
-      const body = {
-        ...root,
-        game: {
-          ...root.game,
-          game: {
-            ...root.game.game,
-            prerequisites: confirmed
-              ? { status: "met", detectedGame: "Stardew Valley", missingItems: [] }
-              : root.game.game.prerequisites,
-          },
-        },
-      };
-      return route.fulfill(jsonOk(body));
+      return route.fulfill(jsonOk(projection()));
+    });
+    // The confirm's own re-read is the Game slice's, and the counter spans both routes so "the surface
+    // reread the authoritative projection" is a fact whichever route carries it.
+    await page.route("**/api/composed-reference-game/v1/game", (route) => {
+      stateReads.push(confirmed ? "met" : "unknown");
+      return route.fulfill(jsonOk(projection().game));
     });
 
     await page.goto(`/#profile=composed-reference-game&boot=${token}`);

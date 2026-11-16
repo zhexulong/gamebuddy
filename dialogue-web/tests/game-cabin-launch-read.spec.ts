@@ -26,6 +26,7 @@ import {
   openGameDrawer,
   root,
   stagedGame,
+  stubGameRead,
   token,
 } from "./composed-reference-game-fixtures";
 
@@ -62,8 +63,11 @@ test("a launch makes the panel read the cabin again until it arrives, and then s
     return route.fulfill(jsonOk(cabinReads === 1 ? noCabinYet : cabinArrived));
   });
   await page.route("**/api/composed-reference-game/v1/state", (route) =>
-    route.fulfill(jsonOk({ ...root, game: launchRequests === 0 ? stagedGame : launchingGame })),
+    route.fulfill(jsonOk({ ...root, game: stagedGame })),
   );
+  // The launch's own reread publishes `launching` on the Game slice's route; the mount's arrival read
+  // stays on `/state` above, before any command.
+  await stubGameRead(page, () => (launchRequests === 0 ? stagedGame : launchingGame));
   await page.route("**/api/tavern/v1/draft", (route) => route.fulfill(jsonOk(draft)));
 
   await page.goto(`/#profile=composed-reference-game&boot=${token}`);
@@ -126,8 +130,9 @@ test("a launching game says whether the cabin is in hand or still being asked fo
       return route.fulfill(jsonOk(cabinReads <= 2 ? noCabinYet : cabinArrived));
     });
     await page.route("**/api/composed-reference-game/v1/state", (route) =>
-      route.fulfill(jsonOk({ ...root, game: launchRequests === 0 ? stagedGame : launchingGame })),
+      route.fulfill(jsonOk({ ...root, game: stagedGame })),
     );
+    await stubGameRead(page, () => (launchRequests === 0 ? stagedGame : launchingGame));
     await page.route("**/api/tavern/v1/draft", (route) => route.fulfill(jsonOk(draft)));
 
     await page.goto(`/?locale=${locale}#profile=composed-reference-game&boot=${token}`);
@@ -186,8 +191,11 @@ test("a launch the game never answers leaves a stated step, and the refresh cont
     return route.fulfill(jsonOk(noCabinYet));
   });
   await page.route("**/api/composed-reference-game/v1/state", (route) =>
-    route.fulfill(jsonOk({ ...root, game: launchRequests === 0 ? stagedGame : launchingGame })),
+    route.fulfill(jsonOk({ ...root, game: stagedGame })),
   );
+  // The launch's own reread, which is what keeps this wait alive: the projection it publishes is the
+  // one the panel reads on its own route, so the wait knows the launch can still answer.
+  await stubGameRead(page, () => (launchRequests === 0 ? stagedGame : launchingGame));
   await page.route("**/api/tavern/v1/draft", (route) => route.fulfill(jsonOk(draft)));
 
   await page.goto(`/#profile=composed-reference-game&boot=${token}`);

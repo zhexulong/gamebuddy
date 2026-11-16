@@ -88,6 +88,10 @@ function composedRoot(facts: GameFacts) {
 async function stubHost(page: Page, facts: GameFacts): Promise<void> {
   await page.route("**/api/composed-reference-game/v1/bootstrap", (route) => route.fulfill(jsonOk(composedRoot(facts))));
   await page.route("**/api/composed-reference-game/v1/state", (route) => route.fulfill(jsonOk(composedRoot(facts))));
+  // The panel's own reads are the Game slice's: `/state` above answers the mount's arrival read, and every
+  // read a Game command takes - the confirmation read, the stale-generation reconciliation, the bounded
+  // convergence of a resume or a reopen - arrives here.
+  await page.route("**/api/composed-reference-game/v1/game", (route) => route.fulfill(jsonOk(gameProjection(facts))));
   await page.route("**/api/composed-reference-game/v1/game/stardew/cabins", (route) =>
     route.fulfill({
       status: 409,
@@ -118,6 +122,9 @@ test("End the game arms a confirm that says it cannot be undone, and only the co
   let facts: GameFacts = ATTACHED_CONNECTED;
   await stubHost(page, ATTACHED_CONNECTED);
   await page.route("**/api/composed-reference-game/v1/state", (route) => route.fulfill(jsonOk(composedRoot(facts))));
+  // The facts move when the terminal command is admitted, so both reads follow the same record: the
+  // newest registration is the one Playwright matches.
+  await page.route("**/api/composed-reference-game/v1/game", (route) => route.fulfill(jsonOk(gameProjection(facts))));
   await page.route("**/api/composed-reference-game/v1/game/endgame", async (route) => {
     endgameRequests += 1;
     expect(route.request().postDataJSON()).toMatchObject({ confirm: true, expectedAttachmentGeneration: 1 });
@@ -260,6 +267,11 @@ test("a Stop that does not succeed says so and leaves the player a control that 
   await page.route("**/api/composed-reference-game/v1/state", (route) =>
     route.fulfill(jsonOk(composedRoot(stopRequests === 0 ? ATTACHED_CONNECTED : stopRefused))),
   );
+  // The stop's own confirmation read is the Game slice's, and it is what states the degraded-but-attached
+  // shape a failed stop really produces.
+  await page.route("**/api/composed-reference-game/v1/game", (route) =>
+    route.fulfill(jsonOk(gameProjection(stopRequests === 0 ? ATTACHED_CONNECTED : stopRefused))),
+  );
   await page.route("**/api/composed-reference-game/v1/game/stop", async (route) => {
     stopRequests += 1;
     await route.fulfill({
@@ -352,6 +364,7 @@ test("a failed Resume offers Retry, Cancel and Start new game, and each one carr
   let createRequests = 0;
   let facts: GameFacts = attachedDropped;
   await stubHost(page, attachedDropped);  await page.route("**/api/composed-reference-game/v1/state", (route) => route.fulfill(jsonOk(composedRoot(facts))));
+  await page.route("**/api/composed-reference-game/v1/game", (route) => route.fulfill(jsonOk(gameProjection(facts))));
   await page.route("**/api/composed-reference-game/v1/game/resume", async (route) => {
     const command = route.request().postDataJSON() as { idempotencyKey: string };
     resumeKeys.push(command.idempotencyKey);
