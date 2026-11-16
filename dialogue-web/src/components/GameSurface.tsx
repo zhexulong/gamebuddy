@@ -14,6 +14,7 @@ import {
 import {
   deriveGameLifecycleControlAvailability,
   deriveGameSessionControls,
+  setupStagedNothing,
   type CabinLaunchWaitState,
 } from "../game-lifecycle-controls";
 import { gameOperationFailure, type GameOperationFailure } from "../composed-problem-view";
@@ -560,14 +561,15 @@ export function GameSurface({
       setGameSetupNotStaged(notStaged);
       setGameSetupFailure(notStaged ? null : gameOperationFailure(error, labels));
       const latest = readView();
+      // A retry may use a fresh key exactly when the authoritative reading proves this attempt staged
+      // nothing; a reading that staged something keeps the key, because the command may already have
+      // been admitted (see `setupStagedNothing`).
       if (
         !notStaged &&
         error instanceof ComposedReferenceGameProblemError &&
         error.code === "game_unavailable" &&
         rereadSucceeded &&
-        latest.kind === "ready" &&
-        latest.root.game?.game.prerequisites.status === "unknown" &&
-        latest.root.game.game.instance.status === "none"
+        setupStagedNothing(latest.kind === "ready" ? latest.root.game : null)
       )
         gameSetupKeyRef.current = undefined;
     } finally {

@@ -39,11 +39,15 @@ import type { GameBrowserStateV1, StardewCabinChoiceV1 } from "./composed-refere
  * enabled without it is a control whose only possible answer is a refusal, which
  * is what this bound removes.
  *
- * Setup is deliberately not gated the same way: it is offered behind the guide's
- * "already enabled companion play?" disclosure, and the Host's answer there
- * (`game_prerequisites_missing`) already reads as the prerequisite rather than as
- * a fault. Gating it would remove the one escape a player who believes their
- * attempt is already staged needs.
+ * Setup keeps its offer in this derivation - `pre_activation` is the shape the panel draws it in,
+ * and `GameSurface`'s handler guards on it - but the PANEL withholds the press while
+ * `activationBlockedBy` names the missing registration. The premise setup needs is the same one
+ * activation needs: the coordinator refuses setup until an attempt is staged
+ * (`stardew_player_host_launch_not_staged` in
+ * `stardew-production-lifecycle-coordinator.internal.ts`), and nothing can be staged without the
+ * registration. So in that shape setup's only answer was "enable companion play" - the control the
+ * same step has just withheld - and the offer stood beside a reason it contradicted. The step that
+ * can act there is the installation panel on this page, which `gameInstallationRequired` names.
  *
  * A client-side guard must not add a further condition of its own here: these
  * flags are exactly what the Host's projection distinguishes, and the
@@ -712,3 +716,22 @@ export const CABIN_HANDOFF_INPUTS: Readonly<Record<CabinViewState["kind"], Cabin
   unavailable: Object.freeze({ kind: "unavailable" as const, reread: false }),
   missing: Object.freeze({ kind: "missing" as const, reread: false }),
 });
+
+/**
+ * Whether an authoritative reading proves the setup attempt staged NOTHING.
+ *
+ * This is the fact a retry's idempotency key turns on, and it is deliberately not a fact about the
+ * installation. A setup command whose attempt staged nothing can be retried under a fresh key without
+ * risking a duplicate, and the coordinator re-executes it; an attempt that staged something must be
+ * retried under the SAME key, because the command may already have been admitted and a new key would
+ * repeat its side effect rather than ask what happened.
+ *
+ * `instance.status`/`instance.generation` are the Host's own words for "nothing is staged";
+ * `prerequisites` is a fact about the registration, and reading that here is how the rule came to fire
+ * only in the shape where the panel no longer offers the press at all (a registered folder is what
+ * makes setup offered - see `deriveGameLifecycleControlAvailability`). `handleGameLaunch` already asks
+ * the same question the same way.
+ */
+export function setupStagedNothing(game: GameBrowserStateV1 | null): boolean {
+  return game !== null && game.game.instance.status === "none" && game.game.instance.generation < 1;
+}

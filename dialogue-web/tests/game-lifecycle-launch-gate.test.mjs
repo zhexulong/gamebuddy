@@ -47,6 +47,7 @@ import {
   GAME_SESSION_PHASES,
   CABIN_HANDOFF_INPUTS,
   CABIN_HANDOFF_KINDS,
+  setupStagedNothing,
 } from "../src/game-lifecycle-controls.ts";
 import { messages } from "../src/i18n.ts";
 import { instanceLabel } from "../src/game-presentation.ts";
@@ -201,6 +202,47 @@ test("before the player's game folder is registered the activation control is wi
   assert.equal(controls.phase, "pre_activation", "nothing is staged, so the phase is unchanged");
   assert.deepEqual([...controls.forwardActions], ["activate", "setup"]);
   assert.equal(controls.installationRequired, true, "the panel withholds the press and states the reason");
+});
+
+/**
+ * The retry key's rule, both halves, over the client's own phase population.
+ *
+ * `setupStagedNothing` is what `handleGameSetup` reads to decide whether a refused attempt may be
+ * retried under a fresh idempotency key, and the temptation this gate removes is reading it off the
+ * installation instead: the panel offers setup only while a registration exists, so a rule phrased on
+ * `prerequisites.status === "unknown"` could never fire in the shape where the press exists, and the
+ * player's retry after a terminal failure replayed a cached rejection. The two directions are the
+ * whole rule: nothing staged -> a fresh key is safe, because the command's side effect is not on the
+ * game; something staged -> the SAME key, because the command may already have been admitted.
+ */
+test("a setup retry may use a fresh key exactly when the reading proves nothing was staged", () => {
+  const registered = GAME_SESSION_INPUTS.pre_activation.game;
+  const staged = GAME_SESSION_INPUTS.activated_not_launched.game;
+  const launching = GAME_SESSION_INPUTS.launching.game;
+
+  assert.equal(setupStagedNothing(registered), true, "a registered folder with nothing staged is retryable");
+  // The same projection with no registration: the rule is about staged-ness, so it answers the same.
+  // Reading `prerequisites` here is the bug this gate exists for.
+  const unregistered = {
+    ...registered,
+    game: {
+      ...registered.game,
+      prerequisites: { status: "unknown", detectedGame: null, missingItems: [] },
+    },
+  };
+  assert.equal(
+    setupStagedNothing(unregistered),
+    true,
+    "the registration is a separate fact and must not move this rule",
+  );
+
+  assert.equal(
+    setupStagedNothing(staged),
+    false,
+    "an attempt that staged a Player Host is NOT retryable under a fresh key: the command may have been admitted",
+  );
+  assert.equal(setupStagedNothing(launching), false, "a launch in flight staged something too");
+  assert.equal(setupStagedNothing(null), false, "no projection proves nothing, so it proves no such thing");
 });
 
 test("a running lifecycle stays running and is never a launch-from-idle candidate", async () => {

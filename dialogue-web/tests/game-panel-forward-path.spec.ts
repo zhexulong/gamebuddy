@@ -112,6 +112,7 @@ test("an unconfirmed cabin confirmation offers a step of its own that sends no s
 
 test("with no installation registered the enable control is withheld and its reason is stated", async ({ page }) => {
   let activationRequests = 0;
+  await page.setViewportSize({ width: 400, height: 800 });
   await page.route("**/api/composed-reference-game/v1/bootstrap", (route) => route.fulfill(jsonOk(root)));
   await page.route("**/api/composed-reference-game/v1/game/stardew/cabins", (route) =>
     route.fulfill(jsonOk({ apiVersion: 1, choices: [] })),
@@ -152,6 +153,25 @@ test("with no installation registered the enable control is withheld and its rea
   const reason = panel.getByTestId("game-installation-required");
   await expect(reason).toBeVisible();
   await expect(reason).toContainText(/Choose your game folder in Game installation on this page/u);
+
+  // Step 1's OTHER staging press has the same premise as activation, and it is withheld for the same
+  // reason: the coordinator refuses setup until an attempt is staged
+  // (`stardew_player_host_launch_not_staged`, `stardew-production-lifecycle-coordinator.internal.ts`),
+  // and nothing is staged without the registration this step is asking for. Offering it was a press
+  // whose only answer was "enable companion play" - the control held back four lines above it.
+  await expect(panel.getByTestId("game-guide-step-one-alternate")).toHaveCount(0);
+  await expect(stepOne.getByTestId("game-setup")).toHaveCount(0);
+
+  // Withheld, not a dead end: the control that can act in this state is the installation panel's own,
+  // and it is inside the first viewport at 400x800 (this panel leads the guide here, because choosing
+  // the folder is the only step that can succeed - `GameSurface`'s `gettingGoing`).
+  const chooseFolder = page.getByRole("button", { name: "Choose game folder" });
+  await expect(chooseFolder).toBeVisible();
+  const box = await chooseFolder.boundingBox();
+  expect(
+    box !== null && box.y >= -1 && box.y + box.height <= 800 && box.x >= -1 && box.x + box.width <= 400,
+    `the only control that can act is outside the first viewport: ${JSON.stringify(box)}`,
+  ).toBe(true);
 });
 
 test("with the installation registered the same step offers the enable control, so the reason was not the whole answer", async ({ page }) => {

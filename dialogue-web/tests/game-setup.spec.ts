@@ -15,6 +15,9 @@ import {
   root,
   openGameDrawer,
   openStagingAlternate,
+  installedRoot,
+  jsonOk,
+  stubGameRead,
   stagedGame,
   cabinChoiceHandle,
   expiresAtMs,
@@ -23,9 +26,18 @@ import {
 test("cancelled Game setup rereads unknown and a later player retry uses a fresh key", async ({ page }) => {
   const keys: string[] = [];
   let stateReads = 0;
-  await page.route("**/api/composed-reference-game/v1/bootstrap", (route) =>
-    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(root) }),
-  );
+  /**
+   * Whether the reads still find the folder registered.
+   *
+   * The journey begins in the only shape in which the setup press is offered at all - a ready
+   * installation registration, which the panel reads as `prerequisites: "met"` - and the cancelled
+   * attempt's own reread is what finds it withdrawn. That is the reading the fresh-key rule is about
+   * (`prerequisites: "unknown"` after the attempt), and it is also what withdraws the offer: the step
+   * this state has is the installation panel's. Registering the folder again is what brings the press
+   * back, and the retry below is that press.
+   */
+  let registered = true;
+  await page.route("**/api/composed-reference-game/v1/bootstrap", (route) => route.fulfill(jsonOk(installedRoot)));
   await page.route("**/api/composed-reference-game/v1/game/stardew/cabins", (route) =>
     route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ apiVersion: 1, choices: [] }) }),
   );
@@ -36,8 +48,13 @@ test("cancelled Game setup rereads unknown and a later player retry uses a fresh
     await route.fulfill({ status: 204, body: "" });
   });
   await page.route("**/api/composed-reference-game/v1/state", (route) => {
+    return route.fulfill(jsonOk(registered ? installedRoot : root));
+  });
+  // The panel's own re-read is the Game slice's route, and counting it here is what keeps the
+  // journey's "the command caused a reread" assertion true whichever route carries it.
+  await stubGameRead(page, () => {
     stateReads += 1;
-    return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(root) });
+    return (registered ? installedRoot : root).game;
   });
   await page.route("**/api/tavern/v1/draft", (route) =>
     route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(draft) }),
@@ -48,6 +65,9 @@ test("cancelled Game setup rereads unknown and a later player retry uses a fresh
   const panel = page.getByRole("region", { name: "Game state" });
   await openStagingAlternate(panel);
   const setup = panel.getByRole("button", { name: "Set up Stardew Valley" });
+  // The attempt the Host cancelled answered without a registration, and the reread is what finds it
+  // out.
+  registered = false;
   await setup.click();
   await expect.poll(() => keys.length).toBe(1);
   // `stateReads` is a count of a request the surface makes on its own schedule, so a poll that
@@ -58,7 +78,17 @@ test("cancelled Game setup rereads unknown and a later player retry uses a fresh
   // the second half below still proves the retry added one more.
   await expect.poll(() => stateReads).toBeGreaterThanOrEqual(1);
   const readsAfterFirstAttempt = stateReads;
-  await setup.click();
+  // The reread withdrew the offer with the registration: the step this state offers is the
+  // installation panel's, not a second press of a command whose premise is gone.
+  await expect(panel.getByTestId("game-guide-step-one-alternate")).toHaveCount(0);
+  await expect(panel.getByTestId("game-installation-required")).toBeVisible();
+  // The player registers the folder again in that panel and comes back to this one, where the press
+  // is offered once more.
+  registered = true;
+  await page.getByRole("button", { name: "Chat", exact: true }).click();
+  await page.getByRole("button", { name: "Game", exact: true }).click();
+  await openStagingAlternate(panel);
+  await panel.getByRole("button", { name: "Set up Stardew Valley" }).click();
   await expect.poll(() => keys.length).toBe(2);
   expect(keys[1]).not.toBe(keys[0]);
   await expect.poll(() => stateReads).toBeGreaterThanOrEqual(readsAfterFirstAttempt + 1);
@@ -69,9 +99,10 @@ test("cancelled Game setup rereads unknown and a later player retry uses a fresh
 test("terminal Game setup failure permits only an authoritative fresh-key player retry", async ({ page }) => {
   const keys: string[] = [];
   let stateReads = 0;
-  await page.route("**/api/composed-reference-game/v1/bootstrap", (route) =>
-    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(root) }),
-  );
+  // The control-bearing journey mounts the projection the press needs (`installedRoot`): setup is
+  // offered while a ready installation registration exists, and the projection never moves here, so
+  // the reading below is about the command's own terminal answer and the retry's key.
+  await page.route("**/api/composed-reference-game/v1/bootstrap", (route) => route.fulfill(jsonOk(installedRoot)));
   await page.route("**/api/composed-reference-game/v1/game/stardew/cabins", (route) =>
     route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ apiVersion: 1, choices: [] }) }),
   );
@@ -86,7 +117,11 @@ test("terminal Game setup failure permits only an authoritative fresh-key player
   });
   await page.route("**/api/composed-reference-game/v1/state", (route) => {
     stateReads += 1;
-    return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(root) });
+    return route.fulfill(jsonOk(installedRoot));
+  });
+  await stubGameRead(page, () => {
+    stateReads += 1;
+    return installedRoot.game;
   });
   await page.route("**/api/tavern/v1/draft", (route) =>
     route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(draft) }),
@@ -103,6 +138,9 @@ test("terminal Game setup failure permits only an authoritative fresh-key player
   await expect(panel).toContainText("Game setup could not be verified");
   await setup.click();
   await expect.poll(() => keys.length).toBe(2);
+  // The retry is a fresh-key attempt because the authoritative reading proves this attempt staged
+  // nothing (`setupStagedNothing`), which is the fact the rule reads - not whether a game folder is
+  // registered. The folder IS registered here: that is the shape the press is offered in.
   expect(keys[1]).not.toBe(keys[0]);
   await expect.poll(() => stateReads).toBe(2);
   await expect(panel).not.toContainText("C:\\Games\\Stardew Valley");
@@ -112,9 +150,7 @@ test("terminal Game setup failure permits only an authoritative fresh-key player
 test("uncertain Game setup reread preserves the exact key for manual replay", async ({ page }) => {
   const keys: string[] = [];
   let stateReads = 0;
-  await page.route("**/api/composed-reference-game/v1/bootstrap", (route) =>
-    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(root) }),
-  );
+  await page.route("**/api/composed-reference-game/v1/bootstrap", (route) => route.fulfill(jsonOk(installedRoot)));
   await page.route("**/api/composed-reference-game/v1/game/stardew/cabins", (route) =>
     route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ apiVersion: 1, choices: [] }) }),
   );
@@ -125,7 +161,11 @@ test("uncertain Game setup reread preserves the exact key for manual replay", as
   });
   await page.route("**/api/composed-reference-game/v1/state", (route) => {
     stateReads += 1;
-    return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(root) });
+    return route.fulfill(jsonOk(installedRoot));
+  });
+  await stubGameRead(page, () => {
+    stateReads += 1;
+    return installedRoot.game;
   });
   await page.route("**/api/tavern/v1/draft", (route) =>
     route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(draft) }),
@@ -167,9 +207,10 @@ test("Game setup projects Host-owned launch generation and launch rereads actual
       instance: { status: "launching", gameTitle: "Stardew Valley", generation: 0 },
     },
   };
-  await page.route("**/api/composed-reference-game/v1/bootstrap", (route) =>
-    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(root) }),
-  );
+  // The press is offered only while the registration exists, so the mount is the installed shape; the
+  // transition this journey measures is the one the setup command's own reread publishes
+  // (installed -> staged -> launching), and it is the same transition it measured before.
+  await page.route("**/api/composed-reference-game/v1/bootstrap", (route) => route.fulfill(jsonOk(installedRoot)));
   // The mount read finds no cabin - the farm is not loaded - and the post-launch wait's first ask
   // finds hers. That is what ends the wait, so this journey spends no budget: the launch's own
   // reread is the last state read before it, and the wait's attempt is the one after.
@@ -214,8 +255,14 @@ test("Game setup projects Host-owned launch generation and launch rereads actual
   });
   await page.route("**/api/composed-reference-game/v1/state", (route) => {
     stateReads += 1;
-    const projection = setupRequests === 0 ? root.game : launchRequests === 0 ? stagedGame : launchingGame;
+    const projection = setupRequests === 0 ? installedRoot.game : launchRequests === 0 ? stagedGame : launchingGame;
     return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ ...root, game: projection }) });
+  });
+  // The panel's own re-read is the Game slice's route: the same projection this journey moves
+  // through, counted as the reread the command caused.
+  await stubGameRead(page, () => {
+    stateReads += 1;
+    return setupRequests === 0 ? installedRoot.game : launchRequests === 0 ? stagedGame : launchingGame;
   });
   await page.route("**/api/tavern/v1/draft", (route) =>
     route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(draft) }),
@@ -270,9 +317,7 @@ test("Game setup ignores a Chat draft that moves under the composed state it rer
   const keys: string[] = [];
   let stateReads = 0;
   let draftReads = 0;
-  await page.route("**/api/composed-reference-game/v1/bootstrap", (route) =>
-    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(root) }),
-  );
+  await page.route("**/api/composed-reference-game/v1/bootstrap", (route) => route.fulfill(jsonOk(installedRoot)));
   await page.route("**/api/composed-reference-game/v1/game/stardew/cabins", (route) =>
     route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ apiVersion: 1, choices: [] }) }),
   );
@@ -281,18 +326,24 @@ test("Game setup ignores a Chat draft that moves under the composed state it rer
     keys.push(command.idempotencyKey);
     await route.fulfill({ status: 204, body: "" });
   });
-  // The Game projection never moves: only the composed root's Game half is
-  // served, exactly as it was, so any Game failure here can only come from Chat.
-  // The mount reads `bootstrap`, so the first `/state` here is already the Game
-  // reread - and it reports the Chat draft the player moved to while the command
-  // was in flight (revision 5).
+  // The Game projection never moves: only the composed root's Chat half is served with the draft the
+  // player moved to while the command was in flight (revision 5), so any Game failure here can only
+  // come from Chat. The mount reads `bootstrap`, so the first `/state` here is already the Game
+  // reread - and it still reports the installed Game projection the press needs.
   await page.route("**/api/composed-reference-game/v1/state", (route) => {
     stateReads += 1;
     const moved = {
-      ...root,
-      chat: { ...root.chat, chat: { ...root.chat.chat, draft: { revision: 5, present: true, text: "The player kept typing." } } },
+      ...installedRoot,
+      chat: {
+        ...installedRoot.chat,
+        chat: { ...installedRoot.chat.chat, draft: { revision: 5, present: true, text: "The player kept typing." } },
+      },
     };
     return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(moved) });
+  });
+  await stubGameRead(page, () => {
+    stateReads += 1;
+    return installedRoot.game;
   });
   // No route answers the draft here, and none is expected to: the moved revision
   // above is the only one this page can serve, and a request for the body is the
@@ -323,7 +374,12 @@ test("Game setup ignores a Chat draft that moves under the composed state it rer
   await expect(setup).toBeVisible();
   await setup.click();
   await expect.poll(() => keys.length).toBe(2);
-  expect(keys[1]).not.toBe(keys[0]);
+  // The second press reaches the Host again, and it need NOT carry a different key: the coordinator
+  // deletes a dismissed registration from its own idempotency cache (`gameSetups.delete` on a
+  // cancelled selection in `stardew-production-lifecycle-coordinator.internal.ts`), so a same-key
+  // replay re-executes instead of replaying a cached success. This journey's subject is the Chat
+  // draft, so what it asserts is the press reaching the Host with no draft read - the key-identity
+  // rule has its own journey above, where the attempt staged nothing.
   expect(draftReads).toBe(0);
 });
 

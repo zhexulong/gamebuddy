@@ -492,25 +492,35 @@ export function GameStatePanel({
                         {labels.gameInstallationRequired}
                       </p>
                     )}
-                    {stagingAction === "activate" && lifecycle.setup.available && (
-                      <details className="custom-disclosure" data-testid="game-guide-step-one-alternate">
-                        <summary>
-                          <ChevronDown size={16} aria-hidden="true" />
-                          {labels.gameGuideStepOneAlternate}
-                        </summary>
-                        <button
-                          type="button"
-                          className="game-action"
-                          data-testid="game-setup"
-                          disabled={lifecycle.setup.active}
-                          onClick={handlers.setup}
-                        >
-                          <Settings size={16} aria-hidden="true" />
-                          {labels.gameSetup}
-                        </button>
-                        <p className="game-subpanel-note">{labels.gameSetupHint}</p>
-                      </details>
-                    )}
+                    {/* Setup's own offer follows the same fact, because it has the same premise:
+                        the coordinator refuses it until activation has staged the attempt
+                        (`stardew_player_host_launch_not_staged`), and activation cannot stage
+                        anything without the registration. Offering it here was a press whose only
+                        answer was "enable companion play" - a control this very step is holding
+                        back. What stands in its place is the installation step above, in words:
+                        `gameInstallationRequired` names the panel on this page that registers the
+                        folder, and the enable control appears as soon as it does. */}
+                    {stagingAction === "activate" &&
+                      lifecycle.setup.available &&
+                      !session.controls.installationRequired && (
+                        <details className="custom-disclosure" data-testid="game-guide-step-one-alternate">
+                          <summary>
+                            <ChevronDown size={16} aria-hidden="true" />
+                            {labels.gameGuideStepOneAlternate}
+                          </summary>
+                          <button
+                            type="button"
+                            className="game-action"
+                            data-testid="game-setup"
+                            disabled={lifecycle.setup.active}
+                            onClick={handlers.setup}
+                          >
+                            <Settings size={16} aria-hidden="true" />
+                            {labels.gameSetup}
+                          </button>
+                          <p className="game-subpanel-note">{labels.gameSetupHint}</p>
+                        </details>
+                      )}
                     {lifecycle.activation.active && (
                       <p className="game-status" data-tone="progress" role="status">
                         {labels.gameActivationInProgress}
