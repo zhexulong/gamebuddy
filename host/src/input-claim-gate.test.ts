@@ -8,7 +8,6 @@ import ts from "typescript";
 import { GAME_SURFACE_CONDUCT_RULES } from "./game-surface-prompt-floor.js";
 import * as stardewConduct from "./games/stardew/prompt/stardew-game-conduct.js";
 import { buildCompanionDeskGuidance } from "./magic-context-companion-guidance.js";
-import { GAME_SESSION_INSPECTION_DESCRIPTION } from "./tool-surface.js";
 
 /**
  * GATE `input_claim_stated_twice`: one instruction, one writer.
@@ -55,10 +54,11 @@ import { GAME_SESSION_INSPECTION_DESCRIPTION } from "./tool-surface.js";
  * <p>
  * THE POPULATION is derived, never listed by hand: the floor's rules come from `GAME_SURFACE_CONDUCT_RULES`, the
  * Stardew module's from `STARDEW_GAME_CONDUCT_CLASSES` joined to the module's own exports (a class row naming no export
- * throws instead of shrinking the population), the desk protocol from the function that renders it, the inspection
- * description from the constant that is mounted, and every other writer is scanned out of its source file - every string
- * literal, attributed to the declaration that holds it. The personas and worldbooks are read from the files the Game
- * session mounts. Zero population is blocked, and the counts are printed on every run.
+ * throws instead of shrinking the population), the desk protocol from the function that renders it, and every other
+ * writer is scanned out of its source file - every string literal, attributed to the declaration that holds it. The
+ * personas and worldbooks are read from the files the Game session mounts. Zero population is blocked, and the counts are
+ * printed on every run. `tool-surface.ts` is NOT a writer here: the surface stopped rewriting a mounted tool's
+ * description (its own words are the extension's), and `tool-surface.private.test.ts` is what holds that.
  * </p>
  */
 
@@ -236,10 +236,6 @@ function population(): readonly Unit[] {
       writer: "magic-context-companion-guidance.ts:DESK_GUIDANCE_ZH",
       text: buildCompanionDeskGuidance("zh-CN"),
     }),
-    Object.freeze({
-      writer: "tool-surface.ts:GAME_SESSION_INSPECTION_DESCRIPTION",
-      text: GAME_SESSION_INSPECTION_DESCRIPTION,
-    }),
   );
   for (const file of [
     "host/src/identity-profile.ts",
@@ -407,27 +403,6 @@ const RECORDED: readonly Readonly<{
     why:
       "these are two ALTERNATIVE Main Prompts, never both mounted: a session binds exactly one preset, so the rule is the " +
       "preset's once and each document has to state it or a session on the other surface loses it.",
-  }),
-  Object.freeze({
-    slug: "speak-voice-lines-above",
-    first: "companion-prompt-assembly.ts:CARD_VOICE_BOUND",
-    second: "game-surface-prompt-floor.ts:body_language_is_native",
-    kind: "distinct",
-    why:
-      "they share the words speak, voice and happen and state two different facts: the bound says what the lines above a " +
-      "voice DESCRIBE, so a card's text never holds the last position, while the Game floor's body-channel sentence says " +
-      "which mounted tool a gesture goes through and that the bubble drops a bracketed beat. One is about position, the " +
-      "other about where a body is expressed.",
-  }),
-  Object.freeze({
-    slug: "speak-voice-lines-above",
-    first: "companion-prompt-assembly.ts:CARD_VOICE_BOUND",
-    second: "companion-prompt-assembly.ts:PLAYER_ADDITION_BOUND",
-    kind: "distinct",
-    why:
-      "two authored blocks, two closing lines: the card's says a voice changes how she sounds rather than the situation, " +
-      "the player's says the player's words shape her part in it. One line at the end of the prompt would bound only the " +
-      "LAST block, and the card's is the block that must never speak last.",
   }),
 ]);
 

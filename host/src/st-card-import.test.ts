@@ -8,11 +8,7 @@ import test from "node:test";
 import { deflateSync } from "node:zlib";
 import { buildGameCompanionSystemPrompt } from "./game-surface-prompt-floor.js";
 import { validateIdentityProfile } from "./identity-profile.js";
-import {
-  buildChatCompanionSystemPrompt,
-  CARD_VOICE_BOUND,
-  renderIdentityProfile,
-} from "./companion-prompt-assembly.js";
+import { buildChatCompanionSystemPrompt, renderIdentityProfile } from "./companion-prompt-assembly.js";
 import { COMPANION_ACTION_SYNTAX } from "./chat-surface-block.js";
 import {
   candidateToIdentityProfile,
@@ -1561,14 +1557,17 @@ test("a card's system_prompt becomes the profile's characterVoice and reaches th
     prompt.includes("包裹在 * * 中。"),
     "the card's directive reaches the prompt inside its declared section, with no Host header invented around it",
   );
+  // The section's own closing marker holds that position. It is the Host's delimiter, not a sentence: what keeps the
+  // card out of the last slot is where the block sits in the request, asserted by position in
+  // `companion-prompt-assembly.test.ts`.
   assert.equal(
-    prompt.trimEnd().endsWith(CARD_VOICE_BOUND),
+    prompt.trimEnd().endsWith("CARD DIRECTIVES>>>"),
     true,
-    "the bound holds the last position, so the author's text never gets the last word",
+    "the marker that closes the card's section holds the last position of the assembled prompt",
   );
   assert.ok(
-    prompt.indexOf("包裹在 * * 中。") < prompt.indexOf(CARD_VOICE_BOUND),
-    "and the bound follows the card's own text",
+    prompt.indexOf("包裹在 * * 中。") < prompt.indexOf("CARD DIRECTIVES>>>"),
+    "and the closing marker follows the card's own text",
   );
   assert.match(prompt, /<<<CARD DIRECTIVES/u, "the section's own opening marker is present");
   // A default companion without a card voice renders unchanged.
@@ -1651,14 +1650,15 @@ test("a card directive that tries to cancel a floor rule still renders the floor
     prompt.indexOf(COMPANION_ACTION_SYNTAX) < prompt.indexOf(malicious),
     "the floor must precede the card's directive",
   );
-  // The card's text never holds the last word: the bound that closes its block follows it and says what a voice reaches.
-  // Stated once, affirmatively - the two retired precedences (`d50c3017`) are refused by name below, because they are the
-  // register this tree used to answer an imported card with, and a reworded threat would pass a position check alone.
+  // The card's text never holds the last word: the Host's closing marker follows it, and the position of the block in
+  // the request is what bounds it (`companion-prompt-assembly.test.ts`). The two retired precedences (`d50c3017`) are
+  // refused by name below, because they are the register this tree used to answer an imported card with and a reworded
+  // threat would pass a position check alone.
   assert.ok(
-    prompt.indexOf(CARD_VOICE_BOUND) > prompt.indexOf(malicious),
-    "the bound follows the card's directive, so the card is never the last word",
+    prompt.indexOf("CARD DIRECTIVES>>>") > prompt.indexOf(malicious),
+    "the section's closing marker follows the card's directive, so the card is never the last text in it",
   );
-  assert.equal(prompt.trimEnd().endsWith(CARD_VOICE_BOUND), true, "and it is the prompt's own last line");
+  assert.equal(prompt.trimEnd().endsWith("CARD DIRECTIVES>>>"), true, "and it is the prompt's own last line");
   assert.doesNotMatch(prompt, /cannot add to, take away from, or loosen|what is stated above/u);
 });
 

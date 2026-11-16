@@ -107,13 +107,7 @@ import {
 import { createPresetStore } from "./tavern/preset-store.js";
 import { TAVERN_ENVIRONMENT_PROVIDER_ID } from "./tavern/provider-catalog.js";
 import { resolveTavernPaths } from "./tavern/tavern-paths.js";
-import {
-  applyToolDescriptionOverrides,
-  assertToolSurface,
-  type DeclaredToolGroup,
-  planToolSurface,
-  type ToolSurfacePlan,
-} from "./tool-surface.js";
+import { assertToolSurface, type DeclaredToolGroup, planToolSurface, type ToolSurfacePlan } from "./tool-surface.js";
 import { createWorldBookTools, type WorldBookBinding } from "./worldbook.js";
 export { identityKey, resolveRuntimePaths };
 export type { CompanionModelConfig, CompanionThinkingLevel, RuntimePaths };
@@ -1611,7 +1605,6 @@ export async function createRuntimeWithFixedToolsCore(
           tools: [...extension.tools.keys()],
         })),
       });
-      applyToolDescriptionOverrides(loader.getExtensions().extensions, planned);
       return planned;
     },
   );

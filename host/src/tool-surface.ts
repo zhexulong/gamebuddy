@@ -94,86 +94,39 @@ export type DeclaredExtension = Readonly<{
   toolClass: ToolCapabilityClass;
 }>;
 
-/**
- * What the Game surface's archive family is FOR is not stated here; how each call is shaped is.
+/*
+ * WHAT THIS MODULE DOES NOT DO ANY MORE: IT DOES NOT WRITE A TOOL'S DESCRIPTION.
  *
  * <p>
- * The semantics live in `magic-context-companion-guidance.ts`, which is mounted as this surface's primary guidance
- * section: what the archive holds, that a stamp is not a delete, that an item not in view is a thing to search for
- * before answering that it was never done, and what `ctx_note` and `ctx_memory` are for. This constant states the one
- * thing a mounted prompt cannot state about a tool - the argument each call takes - because a caller who has the rule
- * and not the shape asks the model to guess. `input-claim-gate.test.ts` fails by name if a claim from the guidance is
- * written here again.
+ * It used to. A table keyed by capability class replaced the description of every tool in that class on the Game
+ * surface, because the Magic Context extension writes for a coding agent - `ctx_search` is "everything that ever
+ * happened in this project" - and the Game surface is where a farmhand who has just forgotten her own morning reads it.
+ * The rewrite was measured against that: on a 34-minute run she used `ctx_reduce` (the tool that SHRINKS) six times and
+ * never called either of the two that read her history back.
  * </p>
  *
  * <p>
- * The wording was once the semantics too, and the reason it was replaced is the reason the split exists: the vendor
- * writes for a coding agent, and measured on a 34-minute Game run she used `ctx_reduce` (the tool that SHRINKS) six
- * times and never called either of the two that read her history back. A description that has to be translated before
- * it applies to her is a description that does not apply to her - and a second copy of an instruction is how the two
- * copies disagree later.
- * </p>
- */
-export const GAME_SESSION_INSPECTION_DESCRIPTION = `Your own earlier turns, read back from the archive.
-
-ctx_search - phrase it as a question carrying the words you expect back.
-ctx_expand - tag=N is a §N§ tag or a [dropped §N§] placeholder; message=N and start/end are message ordinals, such as the ones a <session-history> heading or a ctx_search hit shows.
-ctx_reduce - tag=N, the same handle ctx_expand takes.`;
-
-/** One surface's own wording, per capability class. */
-export type ClassDescriptionOverrides = Readonly<
-  Record<CompanionSurface, Readonly<Partial<Record<ToolCapabilityClass, string>>>>
->;
-
-/**
- * The words a surface gives a whole CLASS of tools, in place of what the extension registered.
- *
- * <p>
- * The Magic Context extension writes for a coding agent: `ctx_search` is "everything that ever happened in this
- * project, not just what is on your desk" and `ctx_expand` is "original content that is no longer on your desk".
- * The Game surface is where a farmhand who has just forgotten her own morning reads them, and measured on a
- * 34-minute run she used `ctx_reduce` (the tool that SHRINKS) six times and never called either of the two that
- * read her history back. A description that has to be translated before it applies to her is a description that
- * does not apply to her.
+ * WHY IT IS REFUSED RATHER THAN DERIVED. A projection is the only shape an override may take: text read off the
+ * registered `definition` itself - `name`, `parameters`' property names, enum members - so it cannot disagree with the
+ * tool. This one could not be made into that, because it did not add a rendering of the declaration; it added claims the
+ * tools already declare, in a compressed second spelling. `ctx_search`'s own description says "phrase `query` as a
+ * natural-language question that still carries the exact terms you expect"; `ctx_expand`'s says "`tag=N`: the number from
+ * a §N§ tag or a `[dropped §N§]` placeholder ... `message=N`, `start`/`end`: message ordinals, the positions shown in
+ * `<session-history>` headings" - which is the override's two argument lines. The one claim that is NOT the tool's is the
+ * audience: that this archive is her own earlier turns rather than a repository's history. That claim belongs to the
+ * surface's guidance block, which is mounted as the primary section and states it (`magic-context-companion-guidance.ts`,
+ * "`ctx_search` reads that archive: what you said, decided, saw or were told, including your own earlier actions and
+ * their tool results"). So the claim keeps one writer, and the tool keeps its own words.
  * </p>
  *
  * <p>
- * One table, keyed by the same capability classes this module already declares - NOT by tool name. The population
- * it applies to is the plan's own classification, so a tool the extension registers tomorrow arrives with its
- * class's wording and no edit here; a second list of names saying "these are the session-inspection tools" is
- * exactly the defect this module replaced. Chat states its emptiness rather than omitting the key, so a surface
- * added to the union must answer this question instead of inheriting silence.
+ * AND THE MECHANISM WAS THE WORSE HALF. It installed by CLASS, so a tool the extension registered tomorrow arrived
+ * carrying a sentence written before it existed, and nothing in the tree could notice: the author of the override never
+ * saw the tool it rewrote. `tool-surface.private.test.ts` now asserts the inverse over the real mounted set - every
+ * mounted tool's description is byte-identical to what its extension registered - and `input-claim-gate.test.ts` no
+ * longer lists this module as a writer of model input, because it is not one.
  * </p>
  */
-export const CLASS_DESCRIPTION_OVERRIDES: ClassDescriptionOverrides = Object.freeze({
-  game: Object.freeze({ session_inspection: GAME_SESSION_INSPECTION_DESCRIPTION }),
-  chat: Object.freeze({}),
-});
-
-/**
- * Give every tool the plan classifies into an overridden class the words this surface owns.
- *
- * <p>
- * Called at MOUNT time: a loader's registered definitions are what Pi reads when it builds the session's tool
- * registry, so the description the provider receives is the one set here. Nothing about the tool's execution
- * changes - the schema, the handler and the identity are the extension's, and only the sentence the model reads
- * is the surface's. A definition belongs to one loader (each runtime constructs its own, and the extension
- * registers its tools per load), so writing it here cannot reach another surface's copy.
- * </p>
- */
-export function applyToolDescriptionOverrides(
-  registered: readonly Readonly<{ tools: ReadonlyMap<string, Readonly<{ definition: ToolDefinition }>> }>[],
-  plan: ToolSurfacePlan,
-): void {
-  const overrides = CLASS_DESCRIPTION_OVERRIDES[plan.surface];
-  for (const extension of registered) {
-    for (const [name, entry] of extension.tools) {
-      const description = overrides[toolClassOf(plan, name)];
-      if (description === undefined) continue;
-      entry.definition.description = description;
-    }
-  }
-}
 
 /** What an extension actually registered, as the loader reports it before any session exists. */
 export type RegisteredExtensionTools = Readonly<{

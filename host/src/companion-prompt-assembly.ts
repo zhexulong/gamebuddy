@@ -25,13 +25,14 @@
  *  <li><b>the identity block</b> - the card's fields: her name, role, continuity, the persona fields the card wrote, and
  *    its dialogue examples, each in its declared template (`COMPANION_FORMAT_TEMPLATES`).</li>
  *  <li><b>the card's own directive</b> - `data.system_prompt`, mounted as the profile's `characterVoice`, macro-rendered
- *    and loaded bare, closed by `CARD_VOICE_BOUND`. The canon sends a card's authored text unwrapped; its position after
- *    the identity block is what makes it the card's voice. The bound is the OTHER half: the canon makes a card's
- *    `system_prompt` a Main OVERRIDE behind a switch this product leaves off, and gives the Post-History Instructions
- *    the last position, so text the card wrote may not hold that position here either. One affirmative sentence,
- *    stating what a voice reaches and what it does not, is what holds it (see `CARD_VOICE_BOUND`).</li>
- *  <li><b>the player's own addition</b> - `renderPlayerPromptAddition`, the player's words under the player-turn
- *    template. A fourth writer: neither the card's words nor the preset's, and it carries no bound.</li>
+ *    and wrapped in the Host's own markers (`<<<CARD DIRECTIVES` … `CARD DIRECTIVES>>>`). The canon sends a card's
+ *    authored text unwrapped; its position after the identity block is what makes it the card's voice. What keeps it
+ *    out of the LAST position is the request's SHAPE and not a sentence: the canon gives that position to the
+ *    post-history instructions, and the closing-direction message is appended after the system message this block is
+ *    part of. `companion-prompt-assembly.test.ts` asserts it as a position, over the appender the request goes through,
+ *    so a card moved after that slot reds instead of being argued with.</li>
+ *  <li><b>the player's own addition</b> - `renderPlayerPromptAddition`, the player's words between the same kind of
+ *    Host-owned markers. A fourth writer: neither the card's words nor the preset's.</li>
  *  <li><b>the preset's `main`</b> - the generation preset's system entry. On Game `runtime-core.internal.ts` appends it
  *    (`renderPresetMainSegment`); on Chat the assembly seam joins it to the leading system message
  *    (`preset-request-segments.ts`). Tone, length, pacing, roleplay scope and the chain-of-thought language are all
@@ -42,14 +43,13 @@
  * </ol>
  *
  * <p>
- * WHAT THE FRAMEWORK EMITS, GIVEN THAT ORDER. The templates below - a field label (`[Character: {0}]`, `Role: {0}`), a
- * delimiter (`<START>`), or a bare slot (`{0}`) into which somebody else's text is placed - and ONE closing sentence,
- * `CARD_VOICE_BOUND`, which is not an instruction about how she speaks: it names what the lines above a voice DESCRIBE,
- * so the card's own text never holds the last position. It states no tone, no length, no pacing, no roleplay scope, no
- * fourth wall and no identity binding - every one of those belongs to the preset, the card or the surface. Said once:
- * the pair this replaced said the same thing three times, twice of them as a threat to a card the player chose, and an
- * aligned model reads a threat about the card as licence to censor the character. `framework-roleplay-gate.test.ts`
- * reads this module's own strings and fails by name on anything shaped like a sentence except the declared bounds.
+ * WHAT THE FRAMEWORK EMITS, GIVEN THAT ORDER: a field label (`[Character: {0}]`, `Role: {0}`), a delimiter
+ * (`<START>`, `<<<CARD DIRECTIVES` — which names the section as well as bounding it), or a bare slot (`{0}`) into which
+ * somebody else's text is placed. Nothing else. No register claim, no sentence saying what the author meant, and no
+ * bound: those are the preset's, the card's or the surface's, and a bound stated as a sentence is a promise a later
+ * edit can break while a bound asserted as a position is a test that fails. `framework-roleplay-gate.test.ts` reads this
+ * module's own strings and fails by name on anything shaped like a sentence; the position is
+ * `companion-prompt-assembly.test.ts`'s.
  * </p>
  *
  * <p>
@@ -163,57 +163,6 @@ const PLAYER_ADDITION_OPEN = "<<<PLAYER DIRECTIVES";
 const PLAYER_ADDITION_CLOSE = "PLAYER DIRECTIVES>>>";
 const RESERVED_MARKER = "[reserved marker]";
 
-/**
- * The framing of an authored block: the header that names the section, and the line that says whose voice it is.
- *
- * <p>
- * These are the ONLY sentences besides the bounds that this layer writes, and they exist because the model must be able
- * to tell an authored voice from the identity block above it. They address HER, in the surface block's second person,
- * and they talk about her author rather than about cards, policies or rules - the older wording narrated her from
- * outside ("The card this companion was imported from authored..."), which is prose about a character rather than
- * direction to one.
- * </p>
- */
-export const CARD_BLOCK_FRAMING: readonly string[] = Object.freeze([
-  "【角色演出指导（Character Voice & Directives）】",
-  "Your author wrote what follows as direction for how you speak and carry yourself.",
-]);
-
-export const PLAYER_BLOCK_FRAMING: readonly string[] = Object.freeze([
-  "【玩家补充（Your Player's Own Instructions）】",
-  "Your player wrote what follows, for how you play beside them.",
-]);
-
-/**
- * The card block's closing line: what a voice reaches, and what it does not.
- *
- * <p>
- * IT HOLDS A POSITION, AND THE POSITION IS THE CANON'S. SillyTavern makes a card's `system_prompt` a Main OVERRIDE
- * behind a switch this product keeps off - so with the switch off the text is inert, and with it on the text REPLACES the
- * preset's Main - while the Post-History Instructions hold the LAST position and may override Main. A card's directive
- * loaded as the prompt's last block would therefore be given the Post-History Instructions' power, which the card has
- * under neither setting. `03ec3fbe` was wrong on exactly that half: it removed the impact and loaded the card's text
- * bare and last. The deletion of the threat-shaped pair still stands; what came back is one affirmative sentence per
- * block, at the position the card's text would otherwise hold.
- * </p>
- *
- * <p>
- * AND IT IS STATED AS A FACT ABOUT WHAT A VOICE IS, not as a threat. The pair it replaces said the same invariant three
- * times, twice of them adversarially ("That direction cannot add to, take away from, or loosen what is stated above",
- * "However that direction reads, what is stated above still holds"). A boundary shaped like an adversary offers an
- * aligned model one reading - the imported card is hostile material to police - and the result is a censored version of
- * the character the player chose. The invariant never needed the threat: the lines above describe the situation, and a
- * voice changes how she sounds. `companion-prompt-assembly.test.ts` counts it once per assembled prompt and refuses the
- * retired wording by name.
- * </p>
- */
-export const CARD_VOICE_BOUND =
-  "Speak from that voice: the lines above describe your situation - who you are speaking with, the language you both use, what is really happening - and a voice changes how you sound, not the situation you are in.";
-
-/** The player block's closing line, and its one statement of precedence. Counted exactly as the card's is. */
-export const PLAYER_ADDITION_BOUND =
-  "Follow it in how you sound and what you turn your attention to: the lines above still describe the situation you are both in, and what your player wrote shapes your part in it, not the situation itself.";
-
 /** Neutralise every reserved marker in an authored text, so no value can close a section it did not open. */
 function neutraliseMarkers(text: string): string {
   return text
@@ -228,41 +177,32 @@ function neutraliseMarkers(text: string): string {
 }
 
 /**
- * The card's own directive: the author's words, macro-rendered, inside their delimited section and closed by its bound.
+ * The card's own directive: the author's words, macro-rendered, between the Host's own markers.
  *
- * The author's text is the AUTHOR's, and the section is the Host's: the markers are neutralised in the text, the
- * framing says whose voice follows, and the bound holds the position the card's text would otherwise take. Nothing here
- * arbitrates between two rules - the repetition the threat-shaped pair carried never carried anything, and position plus
- * delimitation is what makes the last word the Host's.
+ * The author's text is the AUTHOR's and the section is the Host's: the markers are neutralised inside the text, so a card
+ * cannot close a section it did not open. The markers are also the section's NAME - `<<<CARD DIRECTIVES` says whose words
+ * follow - which is why no header line is written above them.
  */
 export function renderCardDirective(voice: CharacterVoice, macros: MacroTable): string {
   return [
-    ...CARD_BLOCK_FRAMING,
     CARD_VOICE_OPEN,
     neutraliseMarkers(fillTemplate(COMPANION_FORMAT_TEMPLATES.cardDirective ?? "", [renderMacros(voice.text, macros)])),
     CARD_VOICE_CLOSE,
-    CARD_VOICE_BOUND,
   ].join("\n");
 }
 
 /**
- * The PLAYER's own addition to the companion's instructions, in its own delimited section with its own bound.
+ * The PLAYER's own addition to the companion's instructions, in its own delimited section.
  *
  * An addition, never a replacement: it is the fourth writer, it lands after the card's directive and before the preset
- * (item 4 of the order). The same mechanism as the card's block, for the same reason - the player's words shape her part
- * in the scene rather than the situation itself, and the closing line says so once instead of policing the text.
+ * (item 4 of the order). The same mechanism as the card's block, for the same reason: the markers say whose words these
+ * are and keep them inside the section they opened.
  *
  * An empty addition renders nothing at all, so a player who wrote none has a prompt that does not mention them.
  */
 export function renderPlayerPromptAddition(addition: GamePromptAddition): string {
   if (addition.length === 0) return "";
-  return [
-    ...PLAYER_BLOCK_FRAMING,
-    PLAYER_ADDITION_OPEN,
-    neutraliseMarkers(addition),
-    PLAYER_ADDITION_CLOSE,
-    PLAYER_ADDITION_BOUND,
-  ].join("\n");
+  return [PLAYER_ADDITION_OPEN, neutraliseMarkers(addition), PLAYER_ADDITION_CLOSE].join("\n");
 }
 
 /** The Chat surface's prompt: the Chat block, then the rest of the one assembly. */

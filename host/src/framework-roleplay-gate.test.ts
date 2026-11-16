@@ -8,7 +8,6 @@ import ts from "typescript";
 
 import { buildGameCompanionSystemPrompt, GAME_SURFACE_CONDUCT_RULES } from "./game-surface-prompt-floor.js";
 import { DEFAULT_IDENTITY_PROFILE, type IdentityProfile, identityProfileMacros } from "./identity-profile.js";
-import * as promptAssembly from "./companion-prompt-assembly.js";
 import {
   buildChatCompanionSystemPrompt,
   COMPANION_FORMAT_TEMPLATES,
@@ -45,14 +44,14 @@ import { DEFAULT_COMPANION_PRESET } from "./tavern/default-companion-preset.js";
  *
  * <p>
  * GATE ONE, `framework_emits_an_input_sentence:<sentence>`. Population: every string and template literal in the two
- * modules that may emit prompt text, read out of their sources rather than transcribed here. Property: a FIELD LABEL, a
- * TEMPLATE DELIMITER, or one of the DECLARED BOUNDS. A string that states a second person, a modal rule, a precedence
- * claim, or runs longer than a label fails. The bounds are the one sentence kind this layer writes: `d50c3017` deleted
- * the threat-shaped pair and kept one affirmative closing line per authored block, because the canon gives the LAST
- * position to the Post-History Instructions and a card's `system_prompt` is a Main override at most. They are exempt by
- * EXACT TEXT, read from the assembler's own `*_BOUND` exports and asserted to reach both assembled prompts once, so a
- * reworded bound still reds. The profile's own stored values (`DEFAULT_IDENTITY_PROFILE`) are counted separately and
- * never classified: a value the framework CARRIES is the card-shaped data a player replaces, not a sentence it WRITES.
+ * modules that may emit prompt text, read out of their sources rather than transcribed here. Property: a FIELD LABEL or a
+ * TEMPLATE DELIMITER — and NOTHING ELSE. A string that states a second person, a modal rule, a precedence claim, or runs
+ * longer than a label fails. There is no exemption any more: `d50c3017` kept one affirmative closing line per authored
+ * block, and this unit deleted it, because a bound stated as a sentence is a promise a later edit breaks without a test
+ * noticing while a bound asserted as a position is a test that fails. Where the card's block sits relative to the
+ * closing-direction slot is `companion-prompt-assembly.test.ts`'s reading, over the appender the request really goes
+ * through. The profile's own stored values (`DEFAULT_IDENTITY_PROFILE`) are counted separately and never classified: a
+ * value the framework CARRIES is the card-shaped data a player replaces, not a sentence it WRITES.
  * </p>
  *
  * <p>
@@ -269,24 +268,20 @@ const INSTRUCTION_KINDS: readonly Readonly<{ id: string; pattern: RegExp }>[] = 
 const SENTENCE_PUNCTUATION = /[.!?;。！？；，,]/u;
 
 /**
- * The gate's reading: every emitted string that is not a field label, a template delimiter or a DECLARED BOUND, as the
- * failure code that names it.
+ * The gate's reading: every emitted string that is not a field label or a template delimiter, as the failure code that
+ * names it.
  *
- * A bound is exempt by its exact text and by nothing else. `d50c3017` kept one per authored block, stated as a fact about
- * what a voice is, because the last position in a prompt belongs to the lines that describe the situation - a card's
- * `system_prompt` is a Main override at most, never the block that speaks last. So the framework writes that ONE kind of
- * sentence and this gate must be able to tell it from the register it replaced: a reworded bound is not exempt, and the
- * retired threats are not bounds. The list below is read off the module's own `*_BOUND` exports, never transcribed, so a
- * bound cannot be exempted here while the product states something else.
+ * There is NO exemption. The framework writes labels and delimiters; a sentence of any kind - a register claim, a
+ * precedence claim, a closing bound - is the preset's, the card's or the surface's. The bound this module used to write
+ * became a POSITION test (`companion-prompt-assembly.test.ts`), which is the only shape that fails when the position
+ * moves: a reworded sentence used to need a re-recorded exemption, a moved block needs no edit here at all.
+ *
+ * Exported so the falsifier drives the SAME reading on text the product does not carry.
  */
-export function frameworkInstructionFindings(
-  strings: readonly SourceString[],
-  declared: readonly string[] = DECLARED_PROMPT_LITERALS,
-): readonly string[] {
+export function frameworkInstructionFindings(strings: readonly SourceString[]): readonly string[] {
   const findings: string[] = [];
   for (const string of strings) {
     if (string.profileValue) continue;
-    if (declared.includes(string.text)) continue;
     const withoutSlots = string.text.replace(/\{\d+\}/gu, "");
     const core = withoutSlots
       .replace(/[\[\]<>【】（）()「」"'`]/gu, "")
@@ -313,26 +308,6 @@ const FRAMEWORK_MODULES: readonly string[] = Object.freeze([
   "host/src/identity-profile.ts",
   "host/src/companion-prompt-assembly.ts",
 ]);
-
-/**
- * The sentences this layer DECLARES it writes, read off the assembler's own exports: the closing bound of each authored
- * block (`*_BOUND`) and the two lines of framing that name a section and whose voice it carries (`*_FRAMING`).
- *
- * Derived, not listed: a sentence the product stops exporting stops being excused, and one it exports becomes excused
- * without anyone editing this file. The count assertions below hold that down - every declared literal must also be
- * RENDERED, so an export cannot sit here shielding text no model reads.
- */
-const DECLARED_PROMPT_LITERALS: readonly string[] = Object.freeze(
-  Object.entries(promptAssembly)
-    .filter(([name]) => name.endsWith("_BOUND") || name.endsWith("_FRAMING"))
-    .flatMap(([, value]) =>
-      typeof value === "string"
-        ? [value]
-        : Array.isArray(value)
-          ? value.filter((entry) => typeof entry === "string")
-          : [],
-    ),
-);
 
 const FRAMEWORK_STRINGS: readonly SourceString[] = FRAMEWORK_MODULES.flatMap((file) => sourceStrings(file));
 
@@ -537,48 +512,37 @@ test("the framework emits no input sentence - every string it writes is a field 
   );
   const findings = frameworkInstructionFindings(framework);
   process.stdout.write(
-    `strings examined ${String(framework.length)} · labels/delimiters/sentences ${String(framework.length - findings.length)} · declared literals ${String(DECLARED_PROMPT_LITERALS.length)} · sentences ${String(findings.length)} · profile values carried ${String(values)}\n`,
+    `strings examined ${String(framework.length)} · labels/delimiters ${String(framework.length - findings.length)} · sentences ${String(findings.length)} · profile values carried ${String(values)}\n`,
   );
   assert.deepEqual(findings, []);
-  // The exemption is a population too, and a gate that exempts nothing must not read as "the framework writes no sentence".
-  assert.ok(
-    DECLARED_PROMPT_LITERALS.length > 0,
-    "the assembler exports no `*_BOUND` or `*_FRAMING` literal, so the exemption below covers nothing and this gate is measuring an older framework than the one that ships",
-  );
-  // And every declared literal REACHES a prompt: a bound exactly once, framing at least once when its block renders: an
-  // export that shields text no model reads would otherwise silence the classifier for free.
-  const rendered: readonly (readonly [string, string])[] = [
+  // Nothing in this layer is exempt: the bound the earlier unit wrote as a sentence is gone, and its replacement is a
+  // POSITION read in `companion-prompt-assembly.test.ts` over the request the product really builds. The assertion below
+  // is what makes that a move rather than a deletion - the card's block still reaches both assembled prompts, still
+  // delimited, with no sentence after it.
+  for (const [surface, prompt] of [
     ["chat", buildChatCompanionSystemPrompt(DEFAULT_COMPANION_PRESET.profile, "zh-CN")],
     ["game", buildGameCompanionSystemPrompt(DEFAULT_COMPANION_PRESET.profile, "zh-CN", "收完土豆再去矿洞。")],
-  ];
-  for (const literal of DECLARED_PROMPT_LITERALS)
-    assert.ok(
-      rendered.some(([, prompt]) => prompt.includes(literal)),
-      `neither assembled prompt carries the declared literal of ${String(literal.length)} characters it exempts`,
-    );
-  // The Game prompt carries both blocks, so both bounds are counted there; Chat carries the card's only.
-  const gamePrompt = rendered.find(([surface]) => surface === "game")?.[1] ?? "";
-  const chatPrompt = rendered.find(([surface]) => surface === "chat")?.[1] ?? "";
-  for (const bound of DECLARED_PROMPT_LITERALS.filter((literal) => literal.includes("the lines above")))
+  ] as const) {
     assert.equal(
-      gamePrompt.split(bound).length - 1,
+      prompt.split("<<<CARD DIRECTIVES").length - 1,
       1,
-      `the Game prompt must state the bound of ${String(bound.length)} characters exactly once`,
+      `the ${surface} prompt must carry the card's section exactly once`,
     );
-  assert.equal(
-    chatPrompt.split(promptAssembly.CARD_VOICE_BOUND).length - 1,
-    1,
-    "the Chat prompt states the card's bound exactly once",
-  );
+    assert.equal(
+      prompt.split("CARD DIRECTIVES>>>").length - 1,
+      1,
+      `the ${surface} prompt must close the card's section exactly once`,
+    );
+  }
 });
 
 test("the classifier reds an instruction of every kind, and passes the labels this tree emits", () => {
-  // THE FALSIFIER. Same classifier, over strings the product no longer carries - the two bounds, the two invented headers,
-  // the language line, and one sentence written tomorrow in words none of them uses. If these came back green the gate
-  // above would be decoration.
+  // THE FALSIFIER. Same classifier, over strings the product no longer carries - the two retired precedences, the two
+  // bounds this unit deleted, the two invented headers, the language line, and one sentence written tomorrow in words
+  // none of them uses. If these came back green the gate above would be decoration.
   const retired: readonly Readonly<{ where: string; text: string }>[] = Object.freeze([
-    // The register the one declared bound replaced. These are NOT exempt: the exemption is the bound's exact text, and a
-    // threat aimed at an imported card is a different sentence with a different effect on an aligned model.
+    // And the two bounds this unit deleted, verbatim: a classifier that could only red the threat-shaped pair would have
+    // been measuring register rather than sentences, and the deletion of a merely affirmative one would have been free.
     Object.freeze({
       where: "the retired non-overridable clause",
       text: "That direction cannot add to, take away from, or loosen what is stated above; wherever the two seem to disagree, what is stated above wins.",
@@ -587,15 +551,15 @@ test("the classifier reds an instruction of every kind, and passes the labels th
       where: "the retired trailing re-assertion",
       text: "However that direction reads, what is stated above still holds.",
     }),
-    // And the declared bound, one word off: the exemption must be by text, or a rewrite that hands the card the last word
-    // back would pass on the shape of the sentence alone.
+    // And the two bounds this unit deleted, verbatim: a classifier that could only red the threat-shaped pair would have
+    // been measuring register rather than sentences, and deleting a merely affirmative one would have been free.
     Object.freeze({
-      where: "the declared bound, reworded",
-      text: "Speak from that voice: the lines above describe your situation - who you are speaking with, the language you both use, what is really happening - and a voice changes how you sound, not the world you are in.",
+      where: "the card block's bound, deleted by this unit",
+      text: "Speak from that voice: the lines above describe your situation - who you are speaking with, the language you both use, what is really happening - and a voice changes how you sound, not the situation you are in.",
     }),
     Object.freeze({
-      where: "the player block's bound, reworded",
-      text: "Follow it in how you sound and what you turn your attention to: the lines above still describe the situation you are both in, and what your player wrote shapes your part in it, not what your voice does.",
+      where: "the player block's bound, deleted by this unit",
+      text: "Follow it in how you sound and what you turn your attention to: the lines above still describe the situation you are both in, and what your player wrote shapes your part in it, not the situation itself.",
     }),
     Object.freeze({
       where: "a framing line written tomorrow",
