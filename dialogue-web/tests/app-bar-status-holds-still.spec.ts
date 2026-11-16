@@ -40,6 +40,15 @@
  *   x=957.9375, 961.8125, 974.359375, 946.203125` (spread 28.16 px, tracking the badge's own 121.28 ->
  *   137.70), and the click test's long-name case times out at 5000 ms. With the two declarations as they
  *   ship, the same eight readings are 0.00 px and the four clicks land in 50-63 ms.
+ *
+ * WHAT THIS DOES NOT GUARD, stated so it is not read as a claim about the whole bar: the model badge's
+ * own x DOES move with the game's word (`.app-bar-status`, 647.59 / 630.72 / 618.17 / 646.33 at 1440x900
+ * en, width constant 61.77), because it is the game badge's left neighbour in the same run — and the
+ * companion's name moves with it by the same 29.42 px / 13 px, since that name is what gives the space up.
+ * Both are cosmetic and deliberately not pinned: the badge is a `role="status"` span with no pointer
+ * affordance, so its movement cannot cost a click, and holding it still would mean reserving the word's
+ * longest width out of the name at every viewport - a permanent 29.42 px / 13 px for nothing a player can
+ * act on differently.
  */
 import { type Page, expect, test } from "./frontend-coverage";
 import { game, jsonOk, root, token } from "./composed-reference-game-fixtures";
