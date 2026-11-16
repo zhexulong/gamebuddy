@@ -1,4 +1,5 @@
 // @zone contract:platform
+import { assertNever } from "./assert-never.js";
 import { type TavernStateSnapshotV1, validateSnapshot } from "./reference-pipeline-api.js";
 
 /**
@@ -1035,6 +1036,9 @@ function validateGameFactPatch(value: unknown): GameFactPatchV1 {
     case "selectedWorld": {
       if (!isNullableLabel(game.selectedWorld, MAX_GAME_LABEL_LENGTH)) throw invalid;
       return value as unknown as GameFactPatchV1;
+    }
+    default: {
+      return assertNever(value.fact);
     }
   }
 }

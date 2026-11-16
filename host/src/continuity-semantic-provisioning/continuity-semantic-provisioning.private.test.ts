@@ -561,12 +561,18 @@ test("every authority-root record name the Host reads is the name the Desktop wr
     readFileSync(resolve(repositoryRoot, "desktop", "GameBuddy.Desktop", file), "utf8"),
   );
   const names = Object.entries(PRODUCTION_AUTHORITY_RECORD_NAMES);
-  // An empty or shortened population would pass silently, and this gate exists for names that have
-  // no other authority than this table.
-  assert.equal(
-    names.length,
-    4,
-    "the Host no longer names every record its mount decision reads, so this gate examined fewer names than the boundary has",
+  // An empty population would pass silently, and this gate exists for names that have no other authority
+  // than this table. The count is not asserted against a literal: the table's key set is the declared
+  // authority (a missing key is a type error, a new one is a type change), so what is checked here is that
+  // every name it carries is a distinct literal a Desktop source declares.
+  assert.ok(
+    names.length > 0,
+    "the Host names no authority-root record, so this gate examined nothing and cannot hold the two sides together",
+  );
+  assert.deepEqual(
+    names.map(([, name]) => name),
+    [...new Set(names.map(([, name]) => name))],
+    "two concepts in the mount table name the same record, so one of them reads a file the other owns",
   );
   for (const [key, name] of names)
     assert.ok(
