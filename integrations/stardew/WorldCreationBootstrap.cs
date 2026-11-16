@@ -37,18 +37,31 @@ internal sealed class WorldCreationBootstrap
     private readonly IMonitor monitor;
     private readonly Func<IReadOnlyList<WorldSaveIdentity>?> readExistingWorlds;
     private readonly Action<string> requestNativeWorldEntry;
+    private readonly LiveGameLocaleWait? liveLocaleWait;
     private bool nativeEntryRequested;
     private bool creationRequested;
     private bool terminal;
+
+    /// <summary>
+    /// How long the native entry may be held back while the engine applies the locale the
+    /// run is configured for. Stardew reaches it within a second or two of the main menu
+    /// (the Preview fixture waits for the same fact on every run), so this is a spacious
+    /// ceiling rather than a budget anything healthy spends.
+    /// </summary>
+    internal const int LiveLocaleTimeoutSeconds = 30;
 
     internal WorldCreationBootstrap(
         WorldCreationConfig config,
         IMonitor monitor,
         Func<IReadOnlyList<WorldSaveIdentity>?>? readExistingWorlds = null,
-        Action<string>? requestNativeWorldEntry = null)
+        Action<string>? requestNativeWorldEntry = null,
+        LiveGameLocaleWait? liveLocaleWait = null)
     {
         this.config = config;
         this.monitor = monitor;
+        // Absent means the run configured no locale, which is the only case in which this
+        // path may act without waiting: the game's own locale is then the authority.
+        this.liveLocaleWait = liveLocaleWait;
         // The two native edges are injectable so the decision and the state
         // machine above them stay testable: enumerating the player's real save
         // folder and performing a native save load both need the live game, and
@@ -132,9 +145,10 @@ internal sealed class WorldCreationBootstrap
     /// <summary>
     /// Main-menu tick. Resolves the staged request into exactly one native entry
     /// (create, or enter the save this request already created) once the title
-    /// menu is live and no world exists yet. Idempotent: a second call after a
-    /// successful request is a no-op, and a request that cannot be answered
-    /// unambiguously fails closed without creating or loading anything.
+    /// menu is live, the configured locale is the live one, and no world exists
+    /// yet. Idempotent: a second call after a successful request is a no-op, and
+    /// a request that cannot be answered unambiguously - or whose locale never
+    /// arrives - fails closed without creating or loading anything.
     /// </summary>
     internal void TryCreate()
     {
@@ -152,9 +166,12 @@ internal sealed class WorldCreationBootstrap
         }
         if (Game1.activeClickableMenu is not TitleMenu titleMenu)
             return;
-        // The decision is made once, on the first tick that the title screen
-        // owns the screen — the same boundary the native save list itself is
-        // driven from. It reads the saves folder once and has no side effect.
+        if (this.HoldsForLiveLocale())
+            return;
+        // The decision is made once, on the first tick the title screen owns
+        // the screen with the configured locale already live - the same boundary
+        // the native save list itself is driven from. It reads the saves folder
+        // once and has no side effect.
         WorldCreationPlan plan = WorldCreationDecision.Decide(this.config, this.readExistingWorlds());
         if (plan.Outcome == WorldCreationOutcome.Refuse)
         {
@@ -167,6 +184,32 @@ internal sealed class WorldCreationBootstrap
             return;
         }
         this.CreateNewWorld(titleMenu);
+    }
+
+    /// <summary>
+    /// Whether this tick must be held back because the run's configured language is not
+    /// the live game locale yet.
+    ///
+    /// This path acts on the first tick the title screen owns, and Stardew applies
+    /// <c>startup_preferences.languageCode</c> asynchronously from that same update. Acting
+    /// here would enter a world before the engine reached the configured language, and the
+    /// session then stays in the default locale (measured 2026-11-16: <c>languageCode=zh</c>
+    /// on disk, <c>locale set to .</c> - English - in the launched game). The wait is the
+    /// fixture path's own (see <see cref="LiveGameLocaleWait"/>); a locale that never
+    /// arrives fails the request closed by name instead of creating a world in a language
+    /// the run was not configured for.
+    /// </summary>
+    internal bool HoldsForLiveLocale()
+    {
+        if (this.liveLocaleWait is null)
+            return false;
+        LiveGameLocaleWaitState localeWait = this.liveLocaleWait.Evaluate();
+        if (localeWait == LiveGameLocaleWaitState.Expired)
+        {
+            this.FailClosed($"world_creation_waits_for_live_locale ({this.liveLocaleWait.Describe()})");
+            return true;
+        }
+        return localeWait == LiveGameLocaleWaitState.Waiting;
     }
 
     /// <summary>

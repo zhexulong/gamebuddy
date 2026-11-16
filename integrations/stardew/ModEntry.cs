@@ -127,6 +127,7 @@ public sealed partial class ModEntry : Mod
     private bool hostAutomationServerStarted;
     private bool hostAutomationTerminal;
     private long hostAutomationDeadlineUnixMs;
+    private LiveGameLocaleWait? hostAutomationLocaleWait;
     private long nextFarmhandProvisionerAttemptAtMs;
     private bool hostAutomationSaveMenuOpened;
     private bool hostAutomationObservedAiClient;
@@ -135,6 +136,7 @@ public sealed partial class ModEntry : Mod
     private bool nativeLocalPlayerFixtureInitialized;
     private bool nativeLocalPlayerFixtureTerminal;
     private long nativeLocalPlayerFixtureDeadlineUnixMs;
+    private LiveGameLocaleWait? nativeLocalPlayerFixtureLocaleWait;
 
     private bool nativeLocalPlayerFixtureBootstrapInvoked;
     private bool nativeLocalPlayerFixtureBootstrapTerminal;
@@ -311,7 +313,16 @@ public sealed partial class ModEntry : Mod
                 this.Monitor.Log("GameBuddy rejected the formal Player Host WorldCreation configuration: a non-empty farm/player/favorite identity and CreateOnce are required.", LogLevel.Error);
                 return;
             }
-            this.worldCreationBootstrap = new WorldCreationBootstrap(this.config.WorldCreation, this.Monitor);
+            this.worldCreationBootstrap = new WorldCreationBootstrap(
+                this.config.WorldCreation,
+                this.Monitor,
+                // The player's single configured language, read through the same resolver the
+                // companion presentation uses: the native entry waits until the live game locale
+                // is that language instead of loading the world before Stardew applies it.
+                liveLocaleWait: new LiveGameLocaleWait(
+                    this.config.PresentationLocale,
+                    WorldCreationBootstrap.LiveLocaleTimeoutSeconds * 1_000L,
+                    live => NativeChatPresentationPolicy.IsSameLocale(this.config.PresentationLocale, live)));
             this.Monitor.Log("GameBuddy formal Player Host world creation armed: the Mod will drive the native new-game entry once at the main menu and observe the physical slot it assigns.", LogLevel.Info);
         }
         if (this.config.NativeLocalPlayerFixture?.Enable == true)

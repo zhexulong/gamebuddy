@@ -117,18 +117,17 @@ public sealed partial class ModEntry : Mod
         // required live locale locks the whole run into the fallback/default
         // font and chat locale, exactly like HostAutomation does; wait for it
         // within the same bounded fixture timeout.
-        string configuredPresentationLocale = this.config.PresentationLocale ?? string.Empty;
-        if (!string.IsNullOrWhiteSpace(configuredPresentationLocale)
-            && !NativeChatPresentationPolicy.IsFixtureLiveLocaleAvailable(
-                configuredPresentationLocale,
-                NativeChatPresentationPolicy.CurrentBcp47Locale()))
+        this.nativeLocalPlayerFixtureLocaleWait ??= new LiveGameLocaleWait(
+            this.config.PresentationLocale,
+            fixture.TimeoutSeconds * 1_000L,
+            live => NativeChatPresentationPolicy.IsFixtureLiveLocaleAvailable(this.config.PresentationLocale, live));
+        LiveGameLocaleWaitState localeWait = this.nativeLocalPlayerFixtureLocaleWait.Evaluate();
+        if (localeWait != LiveGameLocaleWaitState.Ready)
         {
-            if (this.nativeLocalPlayerFixtureDeadlineUnixMs == 0)
-                this.nativeLocalPlayerFixtureDeadlineUnixMs = now + fixture.TimeoutSeconds * 1_000L;
-            if (now >= this.nativeLocalPlayerFixtureDeadlineUnixMs)
+            if (localeWait == LiveGameLocaleWaitState.Expired)
             {
                 this.nativeLocalPlayerFixtureTerminal = true;
-                this.Monitor.Log($"GameBuddy native-local-player fixture timed out waiting for presentation locale {configuredPresentationLocale} before loading the observed save slot.", LogLevel.Error);
+                this.Monitor.Log($"GameBuddy native-local-player fixture timed out waiting for presentation locale {this.nativeLocalPlayerFixtureLocaleWait.RequiredLocale} before loading the observed save slot.", LogLevel.Error);
             }
             return;
         }
@@ -1897,13 +1896,14 @@ private static (Vector2 TargetTile, Vector2 StandingTile)? FindNativeLocalChestF
         // initialization has reached the required live locale: a load first
         // locks the game into the fallback/default font for this whole run.
         long now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-        if (!this.hostAutomationStarted && !NativeChatPresentationPolicy.IsFixtureLiveLocaleAvailable(
-                automation.RequireFixtureLiveLocale,
-                NativeChatPresentationPolicy.CurrentBcp47Locale()))
+        this.hostAutomationLocaleWait ??= new LiveGameLocaleWait(
+            automation.RequireFixtureLiveLocale,
+            Math.Clamp(automation.TimeoutSeconds, 10, 300) * 1_000L,
+            live => NativeChatPresentationPolicy.IsFixtureLiveLocaleAvailable(automation.RequireFixtureLiveLocale, live));
+        LiveGameLocaleWaitState localeWait = this.hostAutomationLocaleWait.Evaluate();
+        if (!this.hostAutomationStarted && localeWait != LiveGameLocaleWaitState.Ready)
         {
-            if (this.hostAutomationDeadlineUnixMs == 0)
-                this.hostAutomationDeadlineUnixMs = now + Math.Clamp(automation.TimeoutSeconds, 10, 300) * 1_000L;
-            if (now >= this.hostAutomationDeadlineUnixMs)
+            if (localeWait == LiveGameLocaleWaitState.Expired)
             {
                 this.hostAutomationTerminal = true;
                 this.PublishFixtureReadiness(automation, "fixture_blocked", "fixture_live_locale_unavailable");

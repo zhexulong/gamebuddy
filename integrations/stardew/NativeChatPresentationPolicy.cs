@@ -8,8 +8,16 @@ namespace GameBuddy.Stardew;
 internal static class NativeChatPresentationPolicy
 {
     /// <summary>Exact BCP-47 locale carried on the Host bridge, never an enum label.</summary>
-    internal static bool IsCurrentLocale(string? locale) =>
-        IsValidBcp47Locale(locale) && locale == CurrentBcp47Locale();
+    internal static bool IsCurrentLocale(string? locale) => IsSameLocale(locale, CurrentBcp47Locale());
+
+    /// <summary>
+    /// Whether one locale surface names exactly the other BCP-47 locale.
+    ///
+    /// The pure half of <see cref="IsCurrentLocale"/>: callers that have already observed the
+    /// live locale (a game-locale wait, a refusal line) ask this instead of re-reading the game.
+    /// </summary>
+    internal static bool IsSameLocale(string? locale, string? current) =>
+        IsValidBcp47Locale(locale) && string.Equals(locale, current, System.StringComparison.Ordinal);
 
     internal static bool IsValidBcp47Locale(string? locale) =>
         locale is not null

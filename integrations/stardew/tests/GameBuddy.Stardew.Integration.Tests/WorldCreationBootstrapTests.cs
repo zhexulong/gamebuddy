@@ -285,7 +285,80 @@ public sealed class WorldCreationBootstrapTests
         }
     }
 
+    // ---- (e) the native entry waits for the run's configured locale ------------------
+
+    [Fact]
+    public void HoldsForLiveLocale_WithoutAConfiguredLocale_NeverHolds()
+    {
+        // A run that configured no language leaves the live game locale in charge, which is
+        // the Mod's own fallback for `PresentationLocale`. Nothing is held and nothing refused.
+        WorldCreationBootstrap bootstrap = CreateBootstrap();
+
+        bootstrap.HoldsForLiveLocale().Should().BeFalse();
+        ReadPrivateField<bool>(bootstrap, "terminal").Should().BeFalse();
+    }
+
+    [Fact]
+    public void HoldsForLiveLocale_HoldsUntilTheConfiguredLocaleIsLive()
+    {
+        // Stardew applies startup_preferences.languageCode asynchronously from the title-menu
+        // update, so the tick on which the title screen first owns the screen must not drive
+        // the native entry: entering a world there keeps the whole session in the default
+        // locale (measured 2026-11-16: languageCode=zh on disk, `locale set to .` live).
+        string liveLocale = string.Empty;
+        long nowUnixMs = 1_000;
+        RecordingMonitor monitor = new();
+        WorldCreationBootstrap bootstrap = CreateBootstrapReadingLocale("zh-CN", monitor, () => liveLocale, () => nowUnixMs);
+
+        bootstrap.HoldsForLiveLocale().Should().BeTrue();
+        ReadPrivateField<bool>(bootstrap, "terminal").Should().BeFalse();
+        ReadPrivateField<bool>(bootstrap, "creationRequested").Should().BeFalse();
+
+        liveLocale = "zh-CN";
+
+        bootstrap.HoldsForLiveLocale().Should().BeFalse();
+    }
+
+    [Fact]
+    public void HoldsForLiveLocale_WhenTheLocaleNeverArrives_FailsClosedByNameAndRequestsNothing()
+    {
+        // The refusal a player can act on: the game's own language disagrees with the one this
+        // session is configured for, so no world is created in the wrong language.
+        long nowUnixMs = 1_000;
+        RecordingMonitor monitor = new();
+        WorldCreationBootstrap bootstrap =
+            CreateBootstrapReadingLocale("zh-CN", monitor, () => string.Empty, () => nowUnixMs);
+
+        bootstrap.HoldsForLiveLocale().Should().BeTrue();
+        nowUnixMs += WorldCreationBootstrap.LiveLocaleTimeoutSeconds * 1_000L;
+
+        bootstrap.HoldsForLiveLocale().Should().BeTrue();
+        ReadPrivateField<bool>(bootstrap, "terminal").Should().BeTrue();
+        ReadPrivateField<bool>(bootstrap, "creationRequested").Should().BeFalse();
+        bootstrap.ObservedSaveSlot.Should().BeEmpty();
+        monitor.Lines.Should().Contain(
+            line => line.Contains("world_creation_waits_for_live_locale", StringComparison.Ordinal)
+                && line.Contains("wanted zh-CN", StringComparison.Ordinal)
+                && line.Contains("saw ''", StringComparison.Ordinal),
+            "the refusal names the code and both locales, so an operator can read what disagreed");
+    }
+
     // ---- native-state helpers -------------------------------------------------------
+
+    private static WorldCreationBootstrap CreateBootstrapReadingLocale(
+        string requiredLocale,
+        RecordingMonitor monitor,
+        Func<string> readLiveLocale,
+        Func<long> readNowUnixMs) =>
+        new(
+            StagedForm(),
+            monitor,
+            liveLocaleWait: new LiveGameLocaleWait(
+                requiredLocale,
+                WorldCreationBootstrap.LiveLocaleTimeoutSeconds * 1_000L,
+                live => NativeChatPresentationPolicy.IsSameLocale(requiredLocale, live),
+                readLiveLocale,
+                readNowUnixMs));
 
     /// <summary>
     /// Run <paramref name="body"/> with the two native "a world is already here"
