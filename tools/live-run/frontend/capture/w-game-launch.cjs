@@ -544,8 +544,12 @@ function gameLogChainFacts(launchBeganMs) {
     };
   const facts = {};
   for (const { rung, pattern } of CHAIN_LOG_PATTERNS) {
-    const match = [...tail.lines].reverse().map((line) => pattern.exec(line)).find((candidate) => candidate !== null);
-    if (match !== undefined) facts[rung] = { line: match[0], captured: match[1] ?? null };
+    // `line` is the fragment the rung names; `raw` is the whole SMAPI line it was found on, which is what
+    // a reader of a DIFFERENT fact on that line needs (the launch locale lives at the end of the save-loaded
+    // line, outside the pattern). Measured 2026-11-16: reading the locale out of `line` found nothing, so the
+    // verdict said the run and the game agreed while the game was English.
+    const found = [...tail.lines].reverse().map((text) => ({ text, match: pattern.exec(text) })).find((entry) => entry.match !== null);
+    if (found !== undefined) facts[rung] = { line: found.match[0], captured: found.match[1] ?? null, raw: found.text };
   }
   return { read: true, writtenAtMs: tail.writtenAtMs, reason: null, facts };
 }
@@ -1504,7 +1508,7 @@ async function hostAnswers(port) {
       }),
     );
   const expectedGameLocale = typeof launch.state?.locale?.locale === "string" ? launch.state.locale.locale : null;
-  const gameSaveLoadedLine = launchGameLog.facts?.[CHAIN_STEPS.saveLoaded]?.line ?? null;
+  const gameSaveLoadedLine = launchGameLog.facts?.[CHAIN_STEPS.saveLoaded]?.raw ?? null;
   const gameLocale = { expected: expectedGameLocale, saw: liveGameLocaleOf(gameSaveLoadedLine) };
   const localeMismatch = gameLocaleMismatch({ expected: expectedGameLocale, saveLoadedLine: gameSaveLoadedLine });
   record("launch", {
@@ -1535,7 +1539,13 @@ async function hostAnswers(port) {
    * happens to notice the English on screen.
    */
   say(
-    `launched game locale: ${JSON.stringify(gameLocale)}${localeMismatch === null ? " (the run and the game agree)" : ""}`,
+    localeMismatch !== null
+      ? `launched game locale: ${JSON.stringify(gameLocale)} - the run is configured for ${localeMismatch.expected} and the game is in ${localeMismatch.saw}`
+      : `launched game locale: ${JSON.stringify(gameLocale)}${
+          gameLocale.saw === null
+            ? " (nothing measured: the game never logged a save load)"
+            : " (the run and the game agree)"
+        }`,
   );
   if (localeMismatch !== null) {
     facts.detail = `the launched game's own log says ${JSON.stringify(localeMismatch.line)}: the run is configured for ${localeMismatch.expected} and the game is in ${localeMismatch.saw}`;
