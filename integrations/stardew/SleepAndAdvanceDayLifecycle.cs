@@ -554,6 +554,20 @@ internal sealed class SleepAndAdvanceDayLifecycle
     /// </summary>
     internal static bool RefusesForPausedClock(bool timePasses, bool ownSleepPrompt) => !timePasses && !ownSleepPrompt;
 
+    /// <summary>
+    /// The room this night's own eligibility admits: the farmhouse, and the cabin the Farmhand lives in (a Cabin is a
+    /// FarmHouse, so both answer here). Answers null outside them, which is the <c>not_home</c> refusal.
+    ///
+    /// <para>
+    /// ONE DECLARATION, THREE READERS: the eligibility gate refuses from it, <see cref="WalkToBed"/> needs the same
+    /// house to ask for its bed spot, and the snapshot publishes <c>sleepAdmitsHere</c> from it. The projection that tells
+    /// the companion where her day can end reads that published answer rather than restating the rule - it said "from
+    /// wherever you are" while this gate was already refusing `not_home`, because the check lives here (a few frames
+    /// after `RequestLocalAdvanceDay` answered `accepted`) and not in the dispatch the projection's author read.
+    /// </para>
+    /// </summary>
+    internal static FarmHouse? HomeOf(GameLocation? location) => location as FarmHouse;
+
     private bool TryEnterEligibility(out string reason)
     {
         reason = "ok";
@@ -578,7 +592,7 @@ internal sealed class SleepAndAdvanceDayLifecycle
         if (Game1.eventUp) { reason = "event_up"; return false; }
         // Cabin derives from FarmHouse, so this admits the AI Farmhand's own
         // cabin as well as the host's farmhouse.
-        if (Game1.currentLocation is not FarmHouse) { reason = "not_home"; return false; }
+        if (HomeOf(Game1.currentLocation) is null) { reason = "not_home"; return false; }
         // A co-op night must not be started alone, and this MUST hold before the
         // multiplayer branch is chosen: `Game1.IsMultiplayer` is
         // `otherFarmers.Count > 0`, so a host that sleeps while its partner is
@@ -785,7 +799,7 @@ internal sealed class SleepAndAdvanceDayLifecycle
     private const int BedWalkNodeBudget = 10000;
 
     private bool WalkToBed()
-    {        if (Game1.player.currentLocation is not FarmHouse farmHouse)
+    {        if (HomeOf(Game1.player.currentLocation) is not { } farmHouse)
             return false;
         Point bedSpot = farmHouse.GetPlayerBedSpot();
         var bedTile = new Vector2(bedSpot.X, bedSpot.Y);

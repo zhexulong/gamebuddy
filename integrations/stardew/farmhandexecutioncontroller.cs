@@ -1293,7 +1293,12 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             FarmBuildingTargetsOmitted: farmBuildingTargets is null ? null : farmBuildingTargetsOmitted,
             SeedSupplyTargets: seedSupplyTargets,
             SeedSupplyTargetsOmitted: seedSupplyTargets is null ? null : seedSupplyTargetsOmitted,
-            WaterTargets: advertisedCapabilities.Contains("fish_here", StringComparer.Ordinal) ? DiscoverWaterTargets(player) : null
+            WaterTargets: advertisedCapabilities.Contains("fish_here", StringComparer.Ordinal) ? DiscoverWaterTargets(player) : null,
+            // The same `HomeOf` the night's own eligibility refuses `not_home` from, so the projection's Sleep line can
+            // state where the day ends instead of claiming it ends anywhere. Published on every ready-world snapshot:
+            // it is one type test, and a line that needed the `sleep` capability to be advertised would be silent on
+            // exactly the surface that most needs to say "go home first".
+            SleepAdmitsHere: SleepAndAdvanceDayLifecycle.HomeOf(player.currentLocation) is not null
         );
         if (!exclusionFamilyAdvertised) return snapshot;
         return snapshot with

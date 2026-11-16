@@ -2687,6 +2687,12 @@
         "actionable": {
           "type": "boolean"
         },
+        "sleepAdmitsHere": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
         "capabilities": {
           "type": "array",
           "items": {

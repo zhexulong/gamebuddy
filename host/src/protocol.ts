@@ -249,6 +249,19 @@ export type Snapshot = Readonly<{
   stamina: number;
   health: number;
   actionable: boolean;
+  /**
+   * Whether the LOCATION half of the night's own eligibility admits where the actor stands.
+   *
+   * `SleepAndAdvanceDayLifecycle.HomeOf` is the executor's one declaration of it: the same test `TryEnterEligibility`
+   * refuses `not_home` from, and the same one `WalkToBed` asks for the bed spot. The projection's Sleep line states
+   * where the day can end from this field, because the rule cannot be read off `location` on this side: the executor
+   * admits the FarmHouse TYPE (which the Farmhand's Cabin also is), while `location` is the map's own name.
+   *
+   * Only the location half: a paused clock, an open menu, a running event, a pass-out and the co-op minimum are
+   * separate and transient, so `true` does not promise `sleep` succeeds now. Absent when no world is ready; older Mod
+   * snapshots omit it.
+   */
+  sleepAdmitsHere?: boolean | null;
   capabilities: readonly string[];
   catalogRevision: number;
   enabledActionIds: readonly string[];
@@ -2338,6 +2351,7 @@ export const SNAPSHOT_KEYS = [
   "currentToolSlotItem",
   "inventorySlots",
   "actionable",
+  "sleepAdmitsHere",
   "capabilities",
   "catalogRevision",
   "pendingLevelUps",
@@ -4723,6 +4737,14 @@ function diagnoseSnapshot(value: Record<string, unknown>): string {
   }
   if (!isFiniteNumber(value.health)) return "invalid_snapshot:health";
   if (typeof value.actionable !== "boolean") return "invalid_snapshot:actionable";
+  // The night's location verdict, which the projection's Sleep line reads: a number here would be read as a verdict by
+  // a `=== true` test and silently refuse a night the executor admits.
+  if (
+    value.sleepAdmitsHere !== undefined &&
+    value.sleepAdmitsHere !== null &&
+    typeof value.sleepAdmitsHere !== "boolean"
+  )
+    return "invalid_snapshot:sleepAdmitsHere";
   if (!isBcp47Locale(value.presentationLocale)) return "invalid_snapshot:presentationLocale";
   // Time context: bounded non-negative integers, so no consumer can be handed a
   // nonsense clock. Zero is the "unknown" value the Mod uses when the world is
@@ -4856,6 +4878,9 @@ function snapshotDecisionScalarsAccepted(value: Record<string, unknown>): boolea
     (value.actorDispositionActionOwned === undefined || typeof value.actorDispositionActionOwned === "boolean") &&
     isFiniteNumber(value.health) &&
     typeof value.actionable === "boolean" &&
+    (value.sleepAdmitsHere === undefined ||
+      value.sleepAdmitsHere === null ||
+      typeof value.sleepAdmitsHere === "boolean") &&
     (value.currentTool === undefined || value.currentTool === null || typeof value.currentTool === "string") &&
     // The tool slot and the item occupying it, the pair `currentTool` is answered with: a slot is a non-negative
     // integer and the occupant is a qualified id or absent. Both were named only by the diagnostic.

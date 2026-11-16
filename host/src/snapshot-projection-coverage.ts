@@ -45,6 +45,9 @@ export const REQUIRED_PROJECTED_KEYS = Object.freeze([
   "weather",
   "catalogRevision",
   "capabilities",
+  // The night's own location verdict: the `Sleep:` line states where the day can end from it, because the condition is
+  // the executor's FarmHouse TYPE test and `location` is a map name that cannot answer it. Measured 2026-11-23: the line
+  // said "from wherever you are" while `SleepAndAdvanceDayLifecycle` refused `not_home`.
   // The current map's live kitchen: the per-turn line answers "is there a stove here" from it, which is what
   // the farmhouse's own form is (it gains its kitchen with its upgrade). Measured 2026-11-05.
   "cookingStationTargets",

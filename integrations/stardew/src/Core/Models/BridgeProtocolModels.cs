@@ -1035,7 +1035,13 @@ public sealed record BridgeSnapshot(
     // The tiles this location's own engine predicates say a rod may be cast at - the discovery projection `fish_here`'s
     // expectedTargetId comes from. Published only while `fish_here` is advertised. Defaulted and LAST for the same reason
     // as its siblings above: the positional list is already closed by the parameters before them.
-    IReadOnlyList<BridgeWaterTarget>? WaterTargets = null);
+    IReadOnlyList<BridgeWaterTarget>? WaterTargets = null,
+    // Whether the LOCATION half of the night's own eligibility admits where the actor stands - the same `HomeOf`
+    // declaration `TryEnterEligibility` refuses `not_home` from, read on the game thread. Only the location half: the
+    // clock, an open menu, a running event and the co-op minimum are separate and transient, so this answers "can the
+    // day end here" and never "will `sleep` succeed now". Absent when no world is ready. Nullable and LAST for the same
+    // reason as its siblings: the positional list is already closed by the parameters before them.
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] bool? SleepAdmitsHere = null);
 
 public sealed record BridgeActiveExecution(
     string ExecutionId,

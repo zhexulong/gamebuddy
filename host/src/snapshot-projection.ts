@@ -299,11 +299,44 @@ export function projectPetContext(snapshot: Snapshot): readonly PetContextProjec
  * When the sleep hint starts appearing. 18:00 is where a farm day stops being worth starting another task, and the
  * number exists only so the hint is not printed all morning.
  *
- * It is deliberately NOT an engine rule: the executor ends the day on request, at any hour. If a real precondition is
- * ever added to `sleep`, this errs in the harmless direction - a hint that is too eager - and the executor's refusal is
- * what tells the caller.
+ * It is deliberately NOT an engine rule: the executor ends the day on request, at any hour, and the ONE precondition it
+ * does enforce - where she stands - is published (`sleepAdmitsHere`) and stated by the line rather than filtered here. A
+ * threshold that also hid the line outside the house would leave her with no hint at all about how the day ends.
  */
 const SLEEP_HINT_FROM_TIME_OF_DAY = 1800;
+
+/**
+ * The three forms the `Sleep:` line takes, one per state of the Mod's own `sleepAdmitsHere`.
+ *
+ * <p>
+ * WHY THE VERDICT IS A FIELD AND NOT THIS FILE'S OPINION. This line said the day ends "from wherever you are", and the
+ * night's own eligibility refuses `not_home` outside the house. The projection was not lying about the dispatch it read:
+ * `RequestLocalAdvanceDay` really does answer `accepted` after the bound actor, world readiness and admission and no
+ * location test at all - the refusal happens a few frames later on the game thread, inside
+ * `SleepAndAdvanceDayLifecycle.TryEnterEligibility`. So the condition cannot be restated here from the location NAME
+ * either: the executor admits the FarmHouse TYPE (which the Farmhand's Cabin also is) while `location` is the map's own
+ * name. The Mod therefore publishes the answer from the same `HomeOf` declaration the refusal comes from, and this table
+ * is only the wording of each answer. `snapshot-projection-executor-preconditions.test.ts` holds the line to it, and
+ * fails by naming the action if a state ever claims a day end the executor refuses.
+ * </p>
+ */
+export const SLEEP_DAY_END_TEXT = Object.freeze({
+  /** The night admits this room, so the line may say so. */
+  admitsHere: "- Sleep: `sleep()` ends the day from here - the actor walks to her own bed and the save advances",
+  /** The executor would answer `not_home`, so the line says what would change that instead of inviting the call. */
+  refusesHere:
+    "- Sleep: `sleep()` is refused here (`not_home`) - the day ends only inside your own farmhouse or cabin, so walk home first",
+  /** No verdict was published (no world ready, or a Mod older than the field): the rule, and no claim about her tile. */
+  unmeasured:
+    "- Sleep: `sleep()` ends the day only from inside your own farmhouse or cabin - the actor walks to her own bed and the save advances",
+});
+
+/** The `Sleep:` line for a published verdict: the one place the three answers are chosen. */
+export function sleepDayEndText(sleepAdmitsHere: boolean | null | undefined): string {
+  if (sleepAdmitsHere === true) return SLEEP_DAY_END_TEXT.admitsHere;
+  if (sleepAdmitsHere === false) return SLEEP_DAY_END_TEXT.refusesHere;
+  return SLEEP_DAY_END_TEXT.unmeasured;
+}
 
 export function projectGameSnapshotContext(
   snapshot: Snapshot | null | undefined,
@@ -352,14 +385,11 @@ export function projectGameSnapshotContext(
             // `Actionable: true` is not the promise it looks like.
             `- Modal: ${movement.holdingModal} - owns the screen${openedBy(movement.holdingModalActionOwned)}: the game clock does not advance and no other action can run until it is cleared; dismiss_modal closes an informational menu, answer_dialogue a question`,
           ]),
-      // `sleep` has no location precondition and no clock precondition: `RequestLocalAdvanceDay` checks the bound actor,
-      // world readiness and admission, then runs the lifecycle from wherever the actor stands. So this line must claim
-      // neither, and it says exactly what the executor enforces.
-      //
-      // The threshold below is a PRESENTATION choice - a hint nobody needs at 09:00 - and must never be read as a gate.
-      ...(clock.timeOfDay >= SLEEP_HINT_FROM_TIME_OF_DAY
-        ? ["- Sleep: `sleep()` ends the day from wherever you are - the actor goes to bed and the save advances"]
-        : []),
+      // `sleep` has ONE durable precondition and it is about where she stands: the night's own eligibility refuses
+      // `not_home` outside the house a few frames after the dispatch has already answered `accepted`, which is exactly
+      // why an earlier version of this line claimed the day ends anywhere. The Mod publishes the answer
+      // (`sleepAdmitsHere`, from the same `HomeOf` declaration the refusal comes from) and `sleepDayEndText` states it.
+      ...(clock.timeOfDay >= SLEEP_HINT_FROM_TIME_OF_DAY ? [sleepDayEndText(snapshot.sleepAdmitsHere)] : []),
       `- Farming: Stamina=${snapshot.stamina}, Exhausted=${snapshot.exhausted === true}, Health=${snapshot.health}, SoilTiles=${farming.soilTilesCount}, CanTill=${farming.canTill}, CanWater=${farming.canWater}`,
       `- Tools: Slots=${inventory.inventorySlots}, Equipped=${currentTool}, Labels=${toolLabels.join(", ")}`,
       `- Carrying: ${carryingText(inventory.carrying)}`,

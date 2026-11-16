@@ -475,28 +475,47 @@ test("a snapshot with no modal in the way renders no modal line at all", () => {
   assert.equal(held.movement.holdingModal, "ShippingMenu");
 });
 
-test("the sleep hint states what the executor enforces, and claims no location", () => {
-  // Rewritten because the first version asserted the WRONG thing as normal: it required "in FarmHouse", while
-  // `RequestLocalAdvanceDay` (the handler behind `sleep`) checks the bound actor, world readiness and admission and
-  // nothing about where the actor stands. The old line therefore hid a working affordance from a companion on the farm
-  // and claimed a bed it never consulted.
+test("the sleep hint states the executor's own location precondition", () => {
+  // THIS TEST ASSERTED THE LIE. Its first version required "in FarmHouse" (wrong: it read the dispatch), its second
+  // required NEITHER a location NOR a bed (also wrong: `RequestLocalAdvanceDay` has no location test, but the night's own
+  // eligibility refuses `not_home` outside the house a few frames later, in `TryEnterEligibility`). The condition is the
+  // executor's, it is published as `sleepAdmitsHere` by `HomeOf`, and
+  // `snapshot-projection-executor-preconditions.test.ts` holds that derivation. What is pinned here is what she reads.
   const daytime = projectGameSnapshotContext({ ...modalSource, location: "FarmHouse", timeOfDay: 1200 }, 1_000, 1_250);
   if (!daytime.available) throw new Error("projection_unavailable");
   assert.doesNotMatch(daytime.text, /Sleep:/, "no hint in the middle of the day");
 
-  const evening = projectGameSnapshotContext({ ...modalSource, location: "FarmHouse", timeOfDay: 2200 }, 1_000, 1_250);
+  const evening = projectGameSnapshotContext(
+    { ...modalSource, location: "FarmHouse", timeOfDay: 2200, sleepAdmitsHere: true },
+    1_000,
+    1_250,
+  );
   if (!evening.available) throw new Error("projection_unavailable");
   // Scoped to the HINT LINE: the projection prints `- Location: FarmHouse` as an ordinary fact, so a whole-text
   // negative assertion would fail for the right reason and tell us nothing.
   const hintLine = evening.text.split("\n").find((line) => line.startsWith("- Sleep:")) ?? "";
   assert.match(hintLine, /\bsleep\(\)/u, "it names the action the surface publishes");
-  assert.doesNotMatch(hintLine, /FarmHouse|Bed:/u, "and claims neither a location nor a bed it did not consult");
+  assert.match(hintLine, /from here/u, "inside the room the night admits, it says the day can end here");
+  assert.match(hintLine, /own bed/u, "and that the walk to the bed is the executor's, so she does not plan it herself");
 
-  const elsewhere = projectGameSnapshotContext({ ...modalSource, location: "Farm", timeOfDay: 2200 }, 1_000, 1_250);
-  if (!elsewhere.available) throw new Error("projection_unavailable");
-  assert.match(
-    elsewhere.text,
-    /Sleep:/u,
-    "the hint is published on the farm too, because the executor does not care where the actor stands",
+  // Outside the house: the hint is still published - she needs to know how the day ends - and it claims no day end at
+  // her tile. The reason code is the executor's own, so the receipt she might already have is recognizable.
+  const elsewhere = projectGameSnapshotContext(
+    { ...modalSource, location: "Farm", timeOfDay: 2200, sleepAdmitsHere: false },
+    1_000,
+    1_250,
   );
+  if (!elsewhere.available) throw new Error("projection_unavailable");
+  assert.match(elsewhere.text, /Sleep:/u, "the hint is published outside the house too");
+  const elsewhereLine = elsewhere.text.split("\n").find((line) => line.startsWith("- Sleep:")) ?? "";
+  assert.doesNotMatch(elsewhereLine, /from here/u, "and claims no day end where the executor refuses one");
+  assert.match(elsewhereLine, /not_home/u, "it names the refusal the executor would answer");
+  assert.match(elsewhereLine, /farmhouse or cabin/u, "and the room that would admit it");
+
+  // An unpublished verdict (no world ready, or a Mod older than the field) states the rule and no verdict at all.
+  const unmeasured = projectGameSnapshotContext({ ...modalSource, location: "Farm", timeOfDay: 2200 }, 1_000, 1_250);
+  if (!unmeasured.available) throw new Error("projection_unavailable");
+  const unmeasuredLine = unmeasured.text.split("\n").find((line) => line.startsWith("- Sleep:")) ?? "";
+  assert.doesNotMatch(unmeasuredLine, /from here/u, "an unmeasured verdict claims nothing about her tile");
+  assert.match(unmeasuredLine, /farmhouse or cabin/u, "and still states where the day can end");
 });
